@@ -16,6 +16,7 @@ import {
   OMP_DISABLED_SERVERS_KEY,
   parseClientConfiguration,
   parseZcodeFallbackConfiguration,
+  retainClientRegistrationFields,
   serializeClientConfiguration,
   withClientServers,
   type ClientConfigurationDocument,
@@ -745,7 +746,10 @@ const clientConfigurationDesired = (
     "enabledTools" in previous
   )
     registration.enabledTools = previous.enabledTools;
-  return {
+  // Keep fields the user added to REA's own entry, such as OMP `timeout`. A
+  // legacy OpenCode V1 entry migrating into a V2 table keeps only its
+  // environment, because its other fields belong to the V1 shape.
+  return retainClientRegistrationFields(format, previous, {
     ...registration,
     ...(client.name === "codex" || client.name === "grok_build"
       ? {
@@ -773,7 +777,7 @@ const clientConfigurationDesired = (
             recommendedMcpToolTimeoutMs(validated.value.timeoutInputs),
         }
       : {}),
-  };
+  });
 };
 
 const positiveTimeout = (

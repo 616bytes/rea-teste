@@ -73,9 +73,10 @@ Other fields you added to that entry, such as OMP's `timeout` or Codex's
 client-specific keys. It removes remote-server keys such as `url`, `headers`,
 `oauth_resource`, and `tcp` that contradict the local command, and an entry-level
 `enabled: false` or (outside Grok Build) `disabled: true`, so the registration
-is active. An existing entry without a `command` is a remote server and is
-replaced whole. A legacy OpenCode entry moved into the native `mcp.servers`
-table keeps only its environment.
+is active. A non-boolean `enabled` or `disabled` value is removed too, because
+registration status accepts only booleans. An existing entry without a
+`command` is a remote server and is replaced whole. A legacy OpenCode entry
+moved into the native `mcp.servers` table keeps only its environment.
 Setup and doctor report a malformed REA environment map or invalid runtime
 setting before setup writes files. Repair the named setting in the client
 configuration; setup does not silently discard the rest of the map.

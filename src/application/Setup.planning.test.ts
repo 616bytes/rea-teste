@@ -336,7 +336,7 @@ describe("setup plan application", () => {
       `startup_timeout_sec, which setup sets to ${String(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)}`,
     );
     expect(result.plannedActions[0]?.detail).toContain(
-      "remote-server keys and switches that turn the server off, which are removed",
+      "non-boolean enabled or disabled values, which are removed",
     );
     expect(host.hopperInstalls).toBe(0);
     expect(host.configurations).toBe(0);
@@ -412,7 +412,7 @@ describe("setup approval disclosure", () => {
       `startup_timeout_sec, which setup sets to ${String(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)}`,
     );
     expect(result.plannedActions[0]?.detail).toContain(
-      "The entry disabled flag is kept.",
+      "A boolean entry disabled flag is kept.",
     );
   });
 

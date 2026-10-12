@@ -1546,8 +1546,11 @@ const REGISTRATION_REMOTE_KEYS: Readonly<Record<string, true>> = {
 /**
  * Whether setup replaces or removes an existing entry key. Setup registers an
  * active server, so entry-level switches that turn it off are removed too.
- * Grok Build's entry `disabled` is kept, matching registration status, which
- * reads only Grok's root `disabled_mcp_servers` list.
+ * Non-boolean `enabled` or `disabled` values are removed as well: registration
+ * status requires booleans, and retaining a string would leave doctor invalid
+ * after setup reports success. Grok Build's boolean entry `disabled` is kept,
+ * matching registration status, which reads only Grok's root
+ * `disabled_mcp_servers` list.
  */
 const registrationManagedKey = (
   dialect: ClientRegistrationDialect,
@@ -1556,6 +1559,7 @@ const registrationManagedKey = (
 ): boolean =>
   Object.hasOwn(REGISTRATION_LAUNCHER_KEYS, key) ||
   Object.hasOwn(REGISTRATION_REMOTE_KEYS, key) ||
+  ((key === "enabled" || key === "disabled") && typeof value !== "boolean") ||
   (key === "enabled" && value === false) ||
   (key === "disabled" && value === true && dialect !== "grok");
 

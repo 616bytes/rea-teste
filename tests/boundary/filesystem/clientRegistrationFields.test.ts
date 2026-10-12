@@ -102,6 +102,7 @@ it.each([
     expect(await clientConfigurationAligned(client, {}, command)).toBe(true);
     expect(await inspectClientConfiguration(client, {}, command)).toEqual({
       status: "already_current",
+      dialect,
     });
     expect(await configureClientConfiguration(client, {}, command)).toEqual({
       status: "unchanged",

@@ -454,15 +454,21 @@ describe("setup approval disclosure", () => {
         format: "opencode",
       },
     ];
+    host.clientInspections.set("opencode", {
+      status: "update",
+      dialect: "opencode_v2",
+    });
 
     const result = await runSetup(
       { ...options(false), dryRun: true, clientIds: ["opencode"] },
       host,
     );
 
-    expect(result.plannedActions[0]?.detail).toContain(
+    const detail = result.plannedActions[0]?.detail ?? "";
+    expect(detail).toContain(
       "A legacy OpenCode entry moved into the native server table keeps only its environment.",
     );
+    expect(detail).not.toContain(`enabled with ${JSON.stringify(true)}`);
   });
 });
 

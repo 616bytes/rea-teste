@@ -332,11 +332,13 @@ describe("setup plan application", () => {
     expect(result.plannedActions.map(({ id }) => id)).toEqual([
       "configure_client:codex",
     ]);
-    expect(result.plannedActions[0]?.detail).toContain(
-      `startup_timeout_sec, which setup sets to ${String(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)}`,
+    // Codex keeps a positive caller-selected timeout, so the plan must not
+    // claim setup replaces it.
+    expect(result.plannedActions[0]?.detail).not.toContain(
+      "startup_timeout_sec with",
     );
     expect(result.plannedActions[0]?.detail).toContain(
-      "non-boolean enabled or disabled values, which are removed",
+      "registration fields that do not parse are removed",
     );
     expect(host.hopperInstalls).toBe(0);
     expect(host.configurations).toBe(0);
@@ -400,6 +402,7 @@ describe("setup approval disclosure", () => {
         name: "grok_build",
         displayName: "Grok Build",
         configPath: "/grok.toml",
+        format: "grok",
       },
     ];
 
@@ -409,10 +412,10 @@ describe("setup approval disclosure", () => {
     );
 
     expect(result.plannedActions[0]?.detail).toContain(
-      `startup_timeout_sec, which setup sets to ${String(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)}`,
+      `startup_timeout_sec with ${JSON.stringify(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)}`,
     );
     expect(result.plannedActions[0]?.detail).toContain(
-      "A boolean entry disabled flag is kept.",
+      "A boolean disabled value is kept.",
     );
   });
 
@@ -425,6 +428,7 @@ describe("setup approval disclosure", () => {
         name: "copilot_cli",
         displayName: "GitHub Copilot CLI",
         configPath: "/copilot.json",
+        format: "copilot_cli",
       },
     ];
 
@@ -434,7 +438,29 @@ describe("setup approval disclosure", () => {
     );
 
     expect(result.plannedActions[0]?.detail).toContain(
-      "tools, which setup sets to every tool",
+      `tools with ${JSON.stringify(["*"])}`,
+    );
+  });
+
+  it("discloses that a legacy OpenCode entry keeps only its environment", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.skill = "unchanged";
+    host.clients = [
+      {
+        name: "opencode",
+        displayName: "OpenCode",
+        configPath: "/opencode.json",
+      },
+    ];
+
+    const result = await runSetup(
+      { ...options(false), dryRun: true, clientIds: ["opencode"] },
+      host,
+    );
+
+    expect(result.plannedActions[0]?.detail).toContain(
+      "A legacy OpenCode entry moved into the native server table keeps only its environment.",
     );
   });
 });

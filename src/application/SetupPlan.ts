@@ -1,4 +1,4 @@
-import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
+import { describeClientRegistrationRetention } from "./ClientConfigurationDocument.js";
 import { classifyClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
   linuxHopperInstallDisclosure,
@@ -377,7 +377,14 @@ const clientConfigurationDetail = (
   const entries = Object.entries(environment)
     .sort(([left], [right]) => compareUnicodeCodePoints(left, right))
     .map(([name, value]) => `${name}=${value}`);
-  const retainedFields = localEntryDisclosure(client.name);
+  const dialect =
+    client.format === undefined || client.format === "unsupported"
+      ? "json"
+      : client.format;
+  const retainedFields = describeClientRegistrationRetention(
+    client.name,
+    dialect,
+  );
   const environmentDetail =
     entries.length === 0
       ? ` No additional provider environment variables. Existing server environment overrides are retained. ${retainedFields}`
@@ -389,20 +396,4 @@ const clientConfigurationDetail = (
     : "";
   const persistence = registrationPersistenceDetail(client);
   return `Add the REA MCP registration for ${client.displayName ?? client.name}; preserve unrelated configuration. The backup path reflects the configuration inspected for this plan; if that file changes before execution, setup will select a recovery path for its current contents. Command: ${command.map((part) => JSON.stringify(part)).join(" ")}.${environmentDetail}${hopperDetail}${persistence === undefined ? "" : ` ${persistence}`}`;
-};
-
-/** Say which entry fields setup rewrites, removes, or keeps before approval. */
-const localEntryDisclosure = (clientName: string): string => {
-  const rewritten =
-    clientName === "codex" || clientName === "grok_build"
-      ? `startup_timeout_sec, which setup sets to ${String(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)}, `
-      : clientName === "copilot_cli"
-        ? "tools, which setup sets to every tool, "
-        : "";
-  const removed =
-    clientName === "grok_build"
-      ? "remote-server keys, an enabled: false switch, and non-boolean enabled or disabled values, which are removed. A boolean entry disabled flag is kept."
-      : "remote-server keys, switches that turn the server off, and non-boolean enabled or disabled values, which are removed.";
-  const exceptions = rewritten === "" ? removed : `${rewritten}and ${removed}`;
-  return `On an existing local command entry, user fields are kept except ${exceptions} When that entry is remote, its other fields are replaced.`;
 };

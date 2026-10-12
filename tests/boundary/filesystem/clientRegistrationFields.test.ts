@@ -138,6 +138,32 @@ it("drops Codex oauth_resource from a local command entry", async () => {
   });
 });
 
+it("drops malformed registration fields from a local command entry", async () => {
+  const root = await createTestTempDirectory("rea-registration-schema-");
+  const configPath = join(root, "mcp.json");
+  const client: SetupClient = { name: "cursor", format: "json", configPath };
+  const existing = {
+    ...clientRegistrationEntry("json", ["rea-old", "mcp"], environment),
+    timeout: 600000,
+    startup_timeout_sec: "30",
+    tools: "*",
+  };
+  await writeFile(
+    configPath,
+    serializeClientConfiguration(configurationWith("json", existing), "json"),
+  );
+  expect(await configureClientConfiguration(client, {}, command)).toMatchObject(
+    { status: "configured" },
+  );
+  expect(
+    parseClientConfiguration(await readFile(configPath, "utf8"), "json").servers
+      .rea,
+  ).toEqual({
+    ...clientRegistrationEntry("json", command, environment),
+    timeout: 600000,
+  });
+});
+
 it("drops malformed activation switches from a local command entry", async () => {
   const root = await createTestTempDirectory("rea-registration-switches-");
   const configPath = join(root, "mcp.json");

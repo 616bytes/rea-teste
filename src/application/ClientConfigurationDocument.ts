@@ -23,7 +23,9 @@ import {
 } from "jsonc-parser";
 import { z } from "zod";
 
+import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { registrationFieldAccepted } from "./ClientRegistrationShape.js";
 import type { SetupClient } from "./SupportedClients.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
@@ -1543,14 +1545,16 @@ const REGISTRATION_REMOTE_KEYS: Readonly<Record<string, true>> = {
   tcp: true,
 };
 
+/** Grok registration status ignores the entry `disabled` flag. */
+const keepsGrokDisabledFlag = (dialect: ClientRegistrationDialect): boolean =>
+  dialect === "grok";
+
 /**
  * Whether setup replaces or removes an existing entry key. Setup registers an
  * active server, so entry-level switches that turn it off are removed too.
- * Non-boolean `enabled` or `disabled` values are removed as well: registration
- * status requires booleans, and retaining a string would leave doctor invalid
- * after setup reports success. Grok Build's boolean entry `disabled` is kept,
- * matching registration status, which reads only Grok's root
- * `disabled_mcp_servers` list.
+ * A registration-status field that does not parse is removed as well, using
+ * the same schemas doctor uses, so setup cannot report success for a value
+ * doctor will reject. Grok Build's boolean entry `disabled` is kept.
  */
 const registrationManagedKey = (
   dialect: ClientRegistrationDialect,
@@ -1559,9 +1563,9 @@ const registrationManagedKey = (
 ): boolean =>
   Object.hasOwn(REGISTRATION_LAUNCHER_KEYS, key) ||
   Object.hasOwn(REGISTRATION_REMOTE_KEYS, key) ||
-  ((key === "enabled" || key === "disabled") && typeof value !== "boolean") ||
+  !registrationFieldAccepted(key, value) ||
   (key === "enabled" && value === false) ||
-  (key === "disabled" && value === true && dialect !== "grok");
+  (key === "disabled" && value === true && !keepsGrokDisabledFlag(dialect));
 
 /**
  * Apply REA's new entry over an existing local command entry. REA's keys take
@@ -1587,6 +1591,53 @@ export const retainClientRegistrationFields = (
     ),
   );
   return { ...retained, ...registration };
+};
+
+/**
+ * Grok Build always receives REA's startup timeout. Codex and Kimi keep a
+ * positive caller-selected timeout, so setup does not replace theirs.
+ */
+export const applyRegistrationStartupTimeout = (
+  clientName: string,
+  registration: Readonly<Record<string, unknown>>,
+): Record<string, unknown> =>
+  clientName === "grok_build"
+    ? {
+        ...registration,
+        startup_timeout_sec: MCP_STARTUP_POLICY.codexStartupTimeoutSeconds,
+      }
+    : { ...registration };
+
+/**
+ * Approval-plan text for the retention rules above. Rewritten keys are the
+ * ones the fresh entry sets beyond its launcher, so the sentence cannot name
+ * a field the writer does not replace.
+ */
+export const describeClientRegistrationRetention = (
+  clientName: string,
+  dialect: ClientRegistrationDialect,
+): string => {
+  const replaced = Object.entries(
+    applyRegistrationStartupTimeout(
+      clientName,
+      clientRegistrationEntry(dialect, ["rea", "mcp"], {}),
+    ),
+  )
+    .filter(([key]) => !Object.hasOwn(REGISTRATION_LAUNCHER_KEYS, key))
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key} with ${JSON.stringify(value)}`);
+  const removed = keepsGrokDisabledFlag(dialect)
+    ? "Remote-server keys, an enabled: false switch, and registration fields that do not parse are removed. A boolean disabled value is kept."
+    : "Remote-server keys, switches that turn the server off, and registration fields that do not parse are removed.";
+  const replacement =
+    replaced.length === 0
+      ? removed
+      : `Setup replaces ${replaced.join(" and ")}. ${removed}`;
+  const legacy =
+    clientName === "opencode"
+      ? " A legacy OpenCode entry moved into the native server table keeps only its environment."
+      : "";
+  return `On an existing local command entry, other user fields are kept. ${replacement} When that entry is remote, its other fields are replaced.${legacy}`;
 };
 
 /** Parse one Gemini policy at its source boundary before consolidating scopes. */

@@ -139,6 +139,32 @@ it("drops Codex oauth_resource from a local command entry", async () => {
   });
 });
 
+it("drops a Codex tools array from a local command entry", async () => {
+  const root = await createTestTempDirectory("rea-registration-codex-tools-");
+  const configPath = join(root, "config.toml");
+  const client: SetupClient = { name: "codex", format: "toml", configPath };
+  const existing = {
+    ...clientRegistrationEntry("toml", ["rea-old", "mcp"], environment),
+    tool_timeout_sec: 900,
+    tools: ["*"],
+  };
+  await writeFile(
+    configPath,
+    serializeClientConfiguration(configurationWith("toml", existing), "toml"),
+  );
+  expect(await configureClientConfiguration(client, {}, command)).toMatchObject(
+    { status: "configured" },
+  );
+  expect(
+    parseClientConfiguration(await readFile(configPath, "utf8"), "toml").servers
+      .rea,
+  ).toEqual({
+    ...clientRegistrationEntry("toml", command, environment),
+    startup_timeout_sec: MCP_STARTUP_POLICY.codexStartupTimeoutSeconds,
+    tool_timeout_sec: 900,
+  });
+});
+
 it("drops malformed registration fields from a local command entry", async () => {
   const root = await createTestTempDirectory("rea-registration-schema-");
   const configPath = join(root, "mcp.json");

@@ -340,6 +340,9 @@ describe("setup plan application", () => {
     expect(result.plannedActions[0]?.detail).toContain(
       "registration fields that do not parse are removed",
     );
+    expect(result.plannedActions[0]?.detail).toContain(
+      "A tools value is removed.",
+    );
     expect(host.hopperInstalls).toBe(0);
     expect(host.configurations).toBe(0);
   });
@@ -469,6 +472,36 @@ describe("setup approval disclosure", () => {
       "A legacy OpenCode entry moved into the native server table keeps only its environment.",
     );
     expect(detail).not.toContain(`enabled with ${JSON.stringify(true)}`);
+  });
+
+  it("describes Cordis fields the Harness writer replaces", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.skill = "unchanged";
+    host.clients = [
+      {
+        name: "dsh",
+        displayName: "DeepSeek Harness",
+        configPath: "/cordis.patch.yml",
+        format: "dsh",
+      },
+    ];
+
+    const result = await runSetup(
+      { ...options(false), dryRun: true, clientIds: ["dsh"] },
+      host,
+    );
+    const detail = result.plannedActions[0]?.detail ?? "";
+    const [executable = "rea", ...args] = host.registrationCommand;
+
+    expect(detail).toContain(
+      "Other fields on the existing Cordis server are kept.",
+    );
+    expect(detail).toContain(`serverName with ${JSON.stringify("rea")}`);
+    expect(detail).toContain(`transport with ${JSON.stringify("stdio")}`);
+    expect(detail).toContain(`command with ${JSON.stringify(executable)}`);
+    expect(detail).toContain(`args with ${JSON.stringify(args)}`);
+    expect(detail).not.toContain("Remote-server keys");
   });
 });
 

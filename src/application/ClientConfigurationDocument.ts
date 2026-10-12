@@ -1550,6 +1550,13 @@ const keepsGrokDisabledFlag = (dialect: ClientRegistrationDialect): boolean =>
   dialect === "grok";
 
 /**
+ * Copilot rewrites `tools` as a string array. Other clients do not: Codex
+ * expects a map and rejects a sequence (`invalid type: sequence, expected a map`).
+ */
+const keepsCopilotTools = (dialect: ClientRegistrationDialect): boolean =>
+  dialect === "copilot_cli";
+
+/**
  * Whether setup replaces or removes an existing entry key. Setup registers an
  * active server, so entry-level switches that turn it off are removed too.
  * A registration-status field that does not parse is removed as well, using
@@ -1564,6 +1571,7 @@ const registrationManagedKey = (
   Object.hasOwn(REGISTRATION_LAUNCHER_KEYS, key) ||
   Object.hasOwn(REGISTRATION_REMOTE_KEYS, key) ||
   !registrationFieldAccepted(key, value) ||
+  (key === "tools" && !keepsCopilotTools(dialect)) ||
   (key === "enabled" && value === false) ||
   (key === "disabled" && value === true && !keepsGrokDisabledFlag(dialect));
 
@@ -1629,10 +1637,11 @@ export const describeClientRegistrationRetention = (
   const removed = keepsGrokDisabledFlag(dialect)
     ? "Remote-server keys, an enabled: false switch, and registration fields that do not parse are removed. A boolean disabled value is kept."
     : "Remote-server keys, switches that turn the server off, and registration fields that do not parse are removed.";
+  const tools = keepsCopilotTools(dialect) ? "" : " A tools value is removed.";
   const replacement =
     replaced.length === 0
-      ? removed
-      : `Setup replaces ${replaced.join(" and ")}. ${removed}`;
+      ? `${removed}${tools}`
+      : `Setup replaces ${replaced.join(" and ")}. ${removed}${tools}`;
   const legacy =
     dialect === "opencode_v2"
       ? " A legacy OpenCode entry moved into the native server table keeps only its environment."

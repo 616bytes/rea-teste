@@ -75,9 +75,12 @@ client-specific keys. It removes remote-server keys such as `url`, `headers`,
 `enabled: false` or (outside Grok Build) `disabled: true`, so the registration
 is active. A registration field that does not parse, including a non-boolean
 `enabled` or `disabled` and a malformed `startup_timeout_sec` or `tools`, is
-removed too. An existing entry without a
-`command` is a remote server and is replaced whole. A legacy OpenCode entry
-moved into the native `mcp.servers` table keeps only its environment.
+removed too. A `tools` value is removed except on GitHub Copilot CLI, which
+replaces it with `["*"]`; Codex rejects a `tools` sequence. An existing entry
+without a `command` is a remote server and is replaced whole. DeepSeek Harness
+keeps other fields on the existing Cordis server and replaces `serverName`,
+`transport`, `command`, and `args`. A legacy OpenCode entry moved into the
+native `mcp.servers` table keeps only its environment.
 Setup and doctor report a malformed REA environment map or invalid runtime
 setting before setup writes files. Repair the named setting in the client
 configuration; setup does not silently discard the rest of the map.

@@ -1,3 +1,4 @@
+import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
 import { classifyClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
   linuxHopperInstallDisclosure,
@@ -376,10 +377,7 @@ const clientConfigurationDetail = (
   const entries = Object.entries(environment)
     .sort(([left], [right]) => compareUnicodeCodePoints(left, right))
     .map(([name, value]) => `${name}=${value}`);
-  const retainedFields =
-    client.name === "grok_build"
-      ? "On an existing local command entry, other fields are retained. Remote-server keys and an enabled: false switch are removed; the entry disabled flag is kept. When that entry is remote, its other fields are replaced."
-      : "On an existing local command entry, other fields are retained. Remote-server keys and switches that turn the server off are removed. When that entry is remote, its other fields are replaced.";
+  const retainedFields = localEntryDisclosure(client.name);
   const environmentDetail =
     entries.length === 0
       ? ` No additional provider environment variables. Existing server environment overrides are retained. ${retainedFields}`
@@ -391,4 +389,20 @@ const clientConfigurationDetail = (
     : "";
   const persistence = registrationPersistenceDetail(client);
   return `Add the REA MCP registration for ${client.displayName ?? client.name}; preserve unrelated configuration. The backup path reflects the configuration inspected for this plan; if that file changes before execution, setup will select a recovery path for its current contents. Command: ${command.map((part) => JSON.stringify(part)).join(" ")}.${environmentDetail}${hopperDetail}${persistence === undefined ? "" : ` ${persistence}`}`;
+};
+
+/** Say which entry fields setup rewrites, removes, or keeps before approval. */
+const localEntryDisclosure = (clientName: string): string => {
+  const rewritten =
+    clientName === "codex" || clientName === "grok_build"
+      ? `startup_timeout_sec, which setup sets to ${String(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)}, `
+      : clientName === "copilot_cli"
+        ? "tools, which setup sets to every tool, "
+        : "";
+  const removed =
+    clientName === "grok_build"
+      ? "remote-server keys and an enabled: false switch, which are removed. The entry disabled flag is kept."
+      : "remote-server keys and switches that turn the server off, which are removed.";
+  const exceptions = rewritten === "" ? removed : `${rewritten}and ${removed}`;
+  return `On an existing local command entry, user fields are kept except ${exceptions} When that entry is remote, its other fields are replaced.`;
 };

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
 import { runSetup } from "./Setup.js";
 import type { SetupProgressEvent } from "./SetupTypes.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
@@ -332,32 +333,13 @@ describe("setup plan application", () => {
       "configure_client:codex",
     ]);
     expect(result.plannedActions[0]?.detail).toContain(
-      "Remote-server keys and switches that turn the server off are removed",
+      `startup_timeout_sec, which setup sets to ${String(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)}`,
+    );
+    expect(result.plannedActions[0]?.detail).toContain(
+      "remote-server keys and switches that turn the server off, which are removed",
     );
     expect(host.hopperInstalls).toBe(0);
     expect(host.configurations).toBe(0);
-  });
-
-  it("keeps Grok Build's entry disabled flag in the approval plan", async () => {
-    const host = new FakeSetupHost();
-    host.hopper = "/Applications/Hopper";
-    host.skill = "unchanged";
-    host.clients = [
-      {
-        name: "grok_build",
-        displayName: "Grok Build",
-        configPath: "/grok.toml",
-      },
-    ];
-
-    const result = await runSetup(
-      { ...options(false), dryRun: true, clientIds: ["grok_build"] },
-      host,
-    );
-
-    expect(result.plannedActions[0]?.detail).toContain(
-      "the entry disabled flag is kept",
-    );
   });
 
   it("installs Hopper when unattended authorization is explicit", async () => {
@@ -405,6 +387,55 @@ describe("setup plan application", () => {
     expect(result.status).toBe("ready");
     expect(result.appliedActions).toEqual([]);
     expect(host.hopperInstalls).toBe(0);
+  });
+});
+
+describe("setup approval disclosure", () => {
+  it("keeps Grok Build's entry disabled flag in the approval plan", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.skill = "unchanged";
+    host.clients = [
+      {
+        name: "grok_build",
+        displayName: "Grok Build",
+        configPath: "/grok.toml",
+      },
+    ];
+
+    const result = await runSetup(
+      { ...options(false), dryRun: true, clientIds: ["grok_build"] },
+      host,
+    );
+
+    expect(result.plannedActions[0]?.detail).toContain(
+      `startup_timeout_sec, which setup sets to ${String(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)}`,
+    );
+    expect(result.plannedActions[0]?.detail).toContain(
+      "The entry disabled flag is kept.",
+    );
+  });
+
+  it("discloses that Copilot tool selection is replaced", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.skill = "unchanged";
+    host.clients = [
+      {
+        name: "copilot_cli",
+        displayName: "GitHub Copilot CLI",
+        configPath: "/copilot.json",
+      },
+    ];
+
+    const result = await runSetup(
+      { ...options(false), dryRun: true, clientIds: ["copilot_cli"] },
+      host,
+    );
+
+    expect(result.plannedActions[0]?.detail).toContain(
+      "tools, which setup sets to every tool",
+    );
   });
 });
 

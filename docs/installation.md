@@ -71,7 +71,7 @@ Other fields you added to that entry, such as OMP's `timeout` or Codex's
 `tool_timeout_sec`, are kept. Setup rewrites only the launch keys (`command`,
 `args`, `type` or `transport`, and the environment map) and REA's
 client-specific keys. It removes remote-server keys such as `url`, `headers`,
-and `oauth_resource` that contradict the local command, and an entry-level
+`oauth_resource`, and `tcp` that contradict the local command, and an entry-level
 `enabled: false` or (outside Grok Build) `disabled: true`, so the registration
 is active. An existing entry without a `command` is a remote server and is
 replaced whole. A legacy OpenCode entry moved into the native `mcp.servers`

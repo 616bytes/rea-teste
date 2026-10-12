@@ -138,6 +138,35 @@ it("drops Codex oauth_resource from a local command entry", async () => {
   });
 });
 
+it("drops a Qwen tcp endpoint from a local command entry", async () => {
+  const root = await createTestTempDirectory("rea-registration-tcp-");
+  const configPath = join(root, "settings.json");
+  const client: SetupClient = {
+    name: "qwen_code",
+    format: "json",
+    configPath,
+  };
+  const existing = {
+    ...clientRegistrationEntry("json", ["rea-old", "mcp"], environment),
+    timeout: 600000,
+    tcp: "ws://stale.example/mcp",
+  };
+  await writeFile(
+    configPath,
+    serializeClientConfiguration(configurationWith("json", existing), "json"),
+  );
+  expect(await configureClientConfiguration(client, {}, command)).toMatchObject(
+    { status: "configured" },
+  );
+  expect(
+    parseClientConfiguration(await readFile(configPath, "utf8"), "json").servers
+      .rea,
+  ).toEqual({
+    ...clientRegistrationEntry("json", command, environment),
+    timeout: 600000,
+  });
+});
+
 it("replaces a remote server entry instead of merging its fields", async () => {
   const root = await createTestTempDirectory("rea-registration-remote-");
   const configPath = join(root, "mcp.json");

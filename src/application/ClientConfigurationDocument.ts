@@ -1538,6 +1538,9 @@ const REGISTRATION_REMOTE_KEYS: Readonly<Record<string, true>> = {
   // Codex serializes `--oauth-resource` as `oauth_resource` and rejects it on
   // a command entry (`oauth_resource is not supported for stdio`).
   oauth_resource: true,
+  // Qwen treats `tcp` as a websocket endpoint and prefers it over `command`,
+  // so a command entry that still has `tcp` stays remote.
+  tcp: true,
 };
 
 /**

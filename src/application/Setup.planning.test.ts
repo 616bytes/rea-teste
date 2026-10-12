@@ -332,10 +332,32 @@ describe("setup plan application", () => {
       "configure_client:codex",
     ]);
     expect(result.plannedActions[0]?.detail).toContain(
-      "replaced when that entry is remote",
+      "Remote-server keys and switches that turn the server off are removed",
     );
     expect(host.hopperInstalls).toBe(0);
     expect(host.configurations).toBe(0);
+  });
+
+  it("keeps Grok Build's entry disabled flag in the approval plan", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.skill = "unchanged";
+    host.clients = [
+      {
+        name: "grok_build",
+        displayName: "Grok Build",
+        configPath: "/grok.toml",
+      },
+    ];
+
+    const result = await runSetup(
+      { ...options(false), dryRun: true, clientIds: ["grok_build"] },
+      host,
+    );
+
+    expect(result.plannedActions[0]?.detail).toContain(
+      "the entry disabled flag is kept",
+    );
   });
 
   it("installs Hopper when unattended authorization is explicit", async () => {

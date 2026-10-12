@@ -377,7 +377,9 @@ const clientConfigurationDetail = (
     .sort(([left], [right]) => compareUnicodeCodePoints(left, right))
     .map(([name, value]) => `${name}=${value}`);
   const retainedFields =
-    "Other fields are retained on an existing local command entry and replaced when that entry is remote.";
+    client.name === "grok_build"
+      ? "On an existing local command entry, other fields are retained. Remote-server keys and an enabled: false switch are removed; the entry disabled flag is kept. When that entry is remote, its other fields are replaced."
+      : "On an existing local command entry, other fields are retained. Remote-server keys and switches that turn the server off are removed. When that entry is remote, its other fields are replaced.";
   const environmentDetail =
     entries.length === 0
       ? ` No additional provider environment variables. Existing server environment overrides are retained. ${retainedFields}`

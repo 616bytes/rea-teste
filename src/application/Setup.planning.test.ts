@@ -451,6 +451,7 @@ describe("setup approval disclosure", () => {
         name: "opencode",
         displayName: "OpenCode",
         configPath: "/opencode.json",
+        format: "opencode",
       },
     ];
 

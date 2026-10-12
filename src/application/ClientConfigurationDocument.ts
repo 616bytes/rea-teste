@@ -1634,7 +1634,7 @@ export const describeClientRegistrationRetention = (
       ? removed
       : `Setup replaces ${replaced.join(" and ")}. ${removed}`;
   const legacy =
-    clientName === "opencode"
+    dialect === "opencode"
       ? " A legacy OpenCode entry moved into the native server table keeps only its environment."
       : "";
   return `On an existing local command entry, other user fields are kept. ${replacement} When that entry is remote, its other fields are replaced.${legacy}`;

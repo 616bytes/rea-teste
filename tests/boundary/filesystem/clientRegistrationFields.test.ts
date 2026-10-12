@@ -110,6 +110,34 @@ it.each([
   },
 );
 
+it("drops Codex oauth_resource from a local command entry", async () => {
+  const root = await createTestTempDirectory(
+    "rea-registration-oauth-resource-",
+  );
+  const configPath = join(root, "config.toml");
+  const client: SetupClient = { name: "codex", format: "toml", configPath };
+  const existing = {
+    ...clientRegistrationEntry("toml", ["rea-old", "mcp"], environment),
+    tool_timeout_sec: 900,
+    oauth_resource: "https://stale.example/resource",
+  };
+  await writeFile(
+    configPath,
+    serializeClientConfiguration(configurationWith("toml", existing), "toml"),
+  );
+  expect(await configureClientConfiguration(client, {}, command)).toMatchObject(
+    { status: "configured" },
+  );
+  expect(
+    parseClientConfiguration(await readFile(configPath, "utf8"), "toml").servers
+      .rea,
+  ).toEqual({
+    ...clientRegistrationEntry("toml", command, environment),
+    startup_timeout_sec: MCP_STARTUP_POLICY.codexStartupTimeoutSeconds,
+    tool_timeout_sec: 900,
+  });
+});
+
 it("replaces a remote server entry instead of merging its fields", async () => {
   const root = await createTestTempDirectory("rea-registration-remote-");
   const configPath = join(root, "mcp.json");

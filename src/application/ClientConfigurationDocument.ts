@@ -1535,6 +1535,9 @@ const REGISTRATION_REMOTE_KEYS: Readonly<Record<string, true>> = {
   env_http_headers: true,
   bearer_token_env_var: true,
   oauth: true,
+  // Codex serializes `--oauth-resource` as `oauth_resource` and rejects it on
+  // a command entry (`oauth_resource is not supported for stdio`).
+  oauth_resource: true,
 };
 
 /**

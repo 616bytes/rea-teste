@@ -102,12 +102,14 @@ const inspectPrivilegedSchemes = (
 ): void => {
   const list = argumentNode(node.arguments[0]);
   const entries = t.isArrayExpression(list) ? list.elements : [list];
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
     const candidate = entry ?? undefined;
     const scheme = objectProperty(candidate, "scheme");
     addProtocol(context, {
       node,
-      located: t.isObjectExpression(candidate) ? candidate : node,
+      // Each present entry keeps its own range; holes share the call's.
+      located: candidate ?? node,
+      entry: index,
       api: "registerSchemesAsPrivileged",
       role: "privileged-scheme",
       session,
@@ -117,7 +119,10 @@ const inspectPrivilegedSchemes = (
   }
 };
 
-/** Privilege keys explicitly set to literal `true`; null when the object is not literal. */
+/**
+ * Privilege keys whose effective (last) value is literal `true`; null when the
+ * object is not a literal with static keys. A later key wins, as at runtime.
+ */
 const enabledPrivileges = (
   entry: t.Node | undefined,
   context: JavaScriptFindingContext,
@@ -132,7 +137,8 @@ const enabledPrivileges = (
     return null;
   }
   const enabled: string[] = [];
-  for (const property of lookup.property.value.properties) {
+  const decided = new Set<string>();
+  for (const property of lookup.property.value.properties.toReversed()) {
     const key = t.isObjectProperty(property)
       ? semanticStaticPropertyName(property.key, property.computed)
       : "";
@@ -140,6 +146,8 @@ const enabledPrivileges = (
       context.accumulator.unknownFindings += 1;
       return null;
     }
+    if (decided.has(key)) continue;
+    decided.add(key);
     if (t.isBooleanLiteral(property.value, { value: true })) enabled.push(key);
     else if (!t.isBooleanLiteral(property.value))
       context.accumulator.unknownFindings += 1;
@@ -151,6 +159,8 @@ interface ProtocolInput {
   readonly node: t.CallExpression | t.OptionalCallExpression;
   /** The source range reported for this finding; defaults to the call. */
   readonly located?: t.Node;
+  /** Array position for one of several entries passed to a single call. */
+  readonly entry?: number;
   readonly api: string;
   readonly role: Role;
   readonly session: Session;
@@ -176,7 +186,7 @@ const addProtocol = (
   };
   addLocatedFinding(context, {
     collection: context.accumulator.protocols,
-    key: `electron-protocol\0${input.api}`,
+    key: `electron-protocol\0${input.api}\0${String(input.entry ?? "")}`,
     node: located,
     value: finding,
   });

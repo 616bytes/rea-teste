@@ -94,6 +94,30 @@ describe("Electron custom protocol registrations", () => {
     ]);
   });
 
+  it("keeps one finding per entry when entries are not object literals", () => {
+    expect(
+      protocolsOf(`
+        const { protocol } = require("electron");
+        protocol.registerSchemesAsPrivileged([firstScheme, secondScheme]);
+      `),
+    ).toMatchObject([
+      { scheme: { status: "dynamic", expression: "firstScheme" } },
+      { scheme: { status: "dynamic", expression: "secondScheme" } },
+    ]);
+  });
+
+  it("uses the last value of a repeated privilege key", () => {
+    expect(
+      protocolsOf(`
+        const { protocol } = require("electron");
+        protocol.registerSchemesAsPrivileged([{
+          scheme: "app",
+          privileges: { secure: true, standard: true, secure: false, standard: true },
+        }]);
+      `),
+    ).toMatchObject([{ enabled_privileges: ["standard"] }]);
+  });
+
   it.each([
     [
       "a local object named protocol",

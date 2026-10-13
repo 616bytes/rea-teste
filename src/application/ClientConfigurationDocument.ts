@@ -1572,7 +1572,7 @@ const registrationManagedKey = (
   Object.hasOwn(REGISTRATION_LAUNCHER_KEYS, key) ||
   Object.hasOwn(REGISTRATION_REMOTE_KEYS, key) ||
   !registrationFieldAccepted(dialect, key, value) ||
-  (key === "tools" && !keepsCopilotTools(dialect)) ||
+  (key === "tools" && dialect !== "toml" && !keepsCopilotTools(dialect)) ||
   (key === "enabled" && value === false) ||
   (key === "enable" && value === false && dialect === "zcode") ||
   (key === "disabled" && value === true && !keepsGrokDisabledFlag(dialect));

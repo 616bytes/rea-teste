@@ -8,6 +8,13 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { importReferenceSource } from "../application/ReferenceSourceImport.js";
 import { projectReferenceSourceImportError } from "../application/ReferenceSourceImportTypes.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
+import {
+  PERSISTED_SETTINGS,
+  readUserConfig,
+  unsetUserConfig,
+  writeUserConfig,
+  type PersistedSetting,
+} from "../config/userConfig.js";
 import { parseConfig } from "../config/parseConfig.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
@@ -30,6 +37,8 @@ export const registerUtilityCommands = (
   analysis: Pick<DirectAnalysis, "runProviderAnalysis" | "runSessionStatus">,
 ): void => {
   const { runProviderAnalysis } = analysis;
+
+  registerConfigCommand(cli, logger, environment);
   registerCapabilityCommands(cli, logger, analysis);
   registerNativeCommands(cli, logger, runProviderAnalysis);
   registerNativeCallCommands(cli, logger, runProviderAnalysis);
@@ -405,3 +414,114 @@ const mergeReferenceSourceCleanup = (
         reason: `${first.reason}; ${second.reason}`,
         resources: [...new Set([...first.resources, ...second.resources])],
       };
+
+/**
+ * Register `rea config`, the user-owned persistence surface for provider
+ * settings (env > config file > auto-detect).
+ */
+const registerConfigCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
+): void => {
+  cli.command(CLI_COMMANDS.config, {
+    description: "Show or persist provider settings in the user config file",
+    args: z.object({}),
+    options: z.object({
+      set: z
+        .array(z.string())
+        .default([])
+        .describe(
+          "NAME=VALUE pairs to persist (repeatable); e.g. --set GHIDRA_INSTALL_DIR=/opt/ghidra",
+        ),
+      unset: z
+        .array(z.string())
+        .default([])
+        .describe("Setting names to remove from the config file (repeatable)"),
+      get: z
+        .string()
+        .optional()
+        .describe("Print the effective value and source for one setting"),
+    }),
+    run: async ({ options }) => {
+      const mergedEnv = { ...environment };
+      const result: Record<string, { value: string; source: string }> = {};
+      const persistable = PERSISTED_SETTINGS as readonly string[];
+      // The injected environment is already merged (env > config file), so
+      // the raw ambient process environment decides which side won.
+      const rawEnvironment = process.env as Record<string, string | undefined>;
+      for (const name of persistable) {
+        const effective = mergedEnv[name];
+        if (effective === undefined || effective.length === 0) continue;
+        const source = rawEnvironment[name] !== undefined ? "env" : "config";
+        result[name] = { value: effective, source };
+      }
+      if (options.get !== undefined) {
+        const entry = result[options.get];
+        if (entry === undefined) {
+          process.stdout.write(`${options.get}: not set (auto-detect)\n`);
+          return;
+        }
+        process.stdout.write(
+          `${options.get}: ${entry.value} (${entry.source})\n`,
+        );
+        return;
+      }
+      if (options.set.length > 0) {
+        const settings: Partial<Record<PersistedSetting, string>> = {};
+        for (const pair of options.set) {
+          const eq = pair.indexOf("=");
+          if (eq <= 0) {
+            process.stderr.write(`--set expects NAME=VALUE, got: ${pair}\n`);
+            process.exitCode = 1;
+            return;
+          }
+          const name = pair.slice(0, eq);
+          if (!persistable.includes(name)) {
+            process.stderr.write(
+              `${name} is not a persistable setting; supported: ${persistable.join(", ")}\n`,
+            );
+            process.exitCode = 1;
+            return;
+          }
+          settings[name as PersistedSetting] = pair.slice(eq + 1);
+        }
+        await writeUserConfig(
+          environment as Readonly<NodeJS.ProcessEnv>,
+          settings,
+        );
+        process.stdout.write(
+          `Saved ${Object.keys(settings).join(", ")} to the user config file\n`,
+        );
+      }
+      if (options.unset.length > 0) {
+        const removed = await unsetUserConfig(
+          environment as Readonly<NodeJS.ProcessEnv>,
+          options.unset.filter((name) =>
+            persistable.includes(name),
+          ) as readonly PersistedSetting[],
+        );
+        process.stdout.write(
+          removed.length > 0
+            ? `Removed ${removed.join(", ")} from the user config file\n`
+            : "Nothing to remove; the config file has no matching settings\n",
+        );
+      }
+      if (
+        options.set.length === 0 &&
+        options.unset.length === 0 &&
+        options.get === undefined
+      ) {
+        if (Object.keys(result).length === 0) {
+          process.stdout.write(
+            "No provider settings configured; see rea config --help\n",
+          );
+          return;
+        }
+        for (const [name, entry] of Object.entries(result)) {
+          process.stdout.write(`${name}: ${entry.value} (${entry.source})\n`);
+        }
+      }
+    },
+  });
+};

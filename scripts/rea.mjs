@@ -69,7 +69,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   writeStdout(result.output);
   process.exitCode = result.exitCode;
 } else {
-  const { cliConfigurationError, createCli } =
+  const { cliConfigurationError, createCli, environmentWithUserConfig } =
     await import("../dist/cli-runtime/cli.js");
   const { createCliResultOutput } =
     await import("../dist/cli-runtime/cliResultOutput.js");
@@ -82,9 +82,14 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   guardClosedStdout();
   const cliArgs = normalizeCliOutputArguments(args);
   const outputArguments = validateCliOutputArguments(cliArgs);
-  const configurationError = cliConfigurationError(process.env);
-  if (configurationError !== undefined) {
-    process.stderr.write(`${configurationError}\n`);
+  const userConfig = await environmentWithUserConfig(process.env);
+  const configurationError = userConfig.ok
+    ? cliConfigurationError(process.env)
+    : userConfig.error;
+  if (!userConfig.ok || configurationError !== undefined) {
+    process.stderr.write(
+      `${userConfig.ok ? configurationError : userConfig.error}\n`,
+    );
     process.exitCode = 1;
   } else if (!outputArguments.ok) {
     writeStdout(renderCliOutputArgumentError(outputArguments));
@@ -92,7 +97,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   } else {
     let wroteOutput = false;
     const resultOutput = createCliResultOutput(cliArgs, process.stdout);
-    await createCli(process.env, resultOutput).serve(cliArgs, {
+    await createCli(userConfig.environment, resultOutput).serve(cliArgs, {
       stdout: (output) => {
         if (resultOutput?.handled) {
           if (resultOutput.failed && !stdoutClosed)

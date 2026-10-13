@@ -573,3 +573,40 @@ describe("compact depth cap with dependent keywords", () => {
     },
   );
 });
+
+describe("compact depth cap fallbacks", () => {
+  it("states any JSON value when dropping not leaves nothing", () => {
+    const schema = {
+      type: "object",
+      properties: { payload: { not: nested(9, { type: "string" }) } },
+    };
+    const { schema: capped } = compactAdvertisedInputSchema(schema, 13 * 1024);
+    const payload = (capped.properties as Record<string, unknown>).payload;
+    // Kimi reads an empty schema as a string.
+    expect(payload).toEqual({
+      type: ["null", "boolean", "object", "array", "number", "string"],
+    });
+    expectWidened(schema, capped, [
+      { payload: 5 },
+      { payload: nestedValue(9, 123) },
+    ]);
+  });
+
+  it("keeps a reduced root open when it drops patternProperties", () => {
+    const deep = { x: nestedValue(12, "value") };
+    const schema = {
+      type: "object",
+      patternProperties: { "^x$": {} },
+      additionalProperties: false,
+      enum: [deep],
+    };
+    const { schema: reduced, presentation } = compactAdvertisedInputSchema(
+      schema,
+      13 * 1024,
+    );
+    expect(presentation).toBe("reduced");
+    expect(reduced).not.toHaveProperty("additionalProperties");
+    expect(new Ajv2020({ strict: false }).compile(schema)(deep)).toBe(true);
+    expectWidened(schema, reduced, [deep]);
+  });
+});

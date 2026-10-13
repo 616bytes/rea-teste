@@ -414,8 +414,10 @@ If OpenCode's model provider rejects the tool list because a schema
 "exceeds the maximum nesting depth of 10 levels"
 ([#2813](https://github.com/morluto/rea/issues/2813)), add
 `"REA_MCP_INPUT_SCHEMA_PROFILE": "compact"` to the REA entry's environment and
-restart OpenCode. Compact input schemas stay within ten levels; REA still
-validates complete canonical inputs.
+restart OpenCode. REA's MCP boundary tests check that every compact input
+schema stays within ten levels, and REA still validates complete canonical
+inputs. The native OpenCode verifier does not yet run in compact mode, so this
+workaround has not been confirmed in an OpenCode session.
 
 Grok Build loads `[mcp_servers.rea]` from `$GROK_HOME/config.toml`, or from
 `~/.grok/config.toml` when `GROK_HOME` is unset or empty. Setup edits that server

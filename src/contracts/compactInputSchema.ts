@@ -362,6 +362,10 @@ const capSchemaDepth = (
     out[key] = capped;
   }
   if (changed) drop(unevaluatedKeys);
+  // Dropping `not` or `if` can leave nothing, and Kimi reads an empty schema
+  // as a string; say "any JSON value" explicitly, or let the parent do it.
+  if (changed && Object.keys(out).length === 0)
+    return depth + ANY_JSON_VALUE_DEPTH <= maximum ? anyJsonValue() : undefined;
   return schemaTreeDepth(out, depth) <= maximum ? out : undefined;
 };
 
@@ -430,7 +434,10 @@ const reduceToShallowProperties = (
     ...(typeof schema.minProperties === "number"
       ? { minProperties: schema.minProperties }
       : {}),
-    ...(schema.additionalProperties === false
+    // Without its patternProperties, a closed object would reject names
+    // the canonical schema accepts, so it stays open.
+    ...(schema.additionalProperties === false &&
+    schema.patternProperties === undefined
       ? { additionalProperties: false }
       : {}),
   };

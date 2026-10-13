@@ -80,8 +80,43 @@ error, through the CLI and MCP — 16 cases total.
 Out-of-range scope validation against `code_length` landed earlier (flagged
 `out_of_range`, raw values preserved).
 
-## Pending
+## Second independent review — JAR/multi-release + out-of-range (three angles)
 
+A second three-angle review ran against the JAR/multi-release and out-of-range
+changes. Confirmed fixed:
+
+- MAJOR — the `Multi-Release: true` manifest attribute was not checked, so
+  `META-INF/versions/<N>/` entries were honored even on a plain JAR where the
+  runtime ignores them. The provider now reads the main manifest; versioned
+  selection on a non-multi-release JAR is refused, and versioned directories are
+  restricted to integers `>= 9` with no leading zeros.
+- MAJOR — duplicate ZIP members at one entry/release were silently collapsed
+  (last-wins) while selection reasoned about the first. Duplicate members at the
+  selected entry/release are now refused as an ambiguous identity.
+- MAJOR — `release` without `entry` was silently ignored yet recorded in
+  Evidence. The input schema now rejects that combination at the shared boundary.
+- MINOR — `scopeOutOfRange` start boundary corrected to `>=` (JVMS: start_pc <
+  code_length); CLI `--release` uses `z.coerce.number().int().nonnegative()`.
+- A non-JDK adapter test (`JvmClassFileProvider.test.ts`) builds JARs in-process
+  with `@zip.js` and covers base/explicit-release/absent-release/missing-entry/
+  non-multi-release/loose-with-entry, so the JAR path has coverage without a JDK.
+
+The reviews verified correct: `resolveJarSelection` (exact match, never nearest;
+explicit, non-combining), `classifyJarEntry` near-miss rejection, `#readEntryBytes`
+sizing and bomb-bound, subject identity, merged repeatable tables, layering,
+contract extension, and effect-audit honesty.
+
+## Pending (documented limitations)
+
+- The JAR subject digest (`hashStableFile`) and the class-entry read
+  (`ZipArtifactReader`) are two independent opens, so a concurrent in-place
+  rewrite of the JAR between them is a narrow TOCTOU window on `artifact.sha256`
+  vs the decoded bytes (the loose-class path is atomic). Closing it needs a
+  shared admitted descriptor across the hash and the reader.
+- Peak memory is bounded by the 32 MiB input and the 8 MiB post-build output
+  budget (mirroring the Go/Rust readers), but a crafted class can still build a
+  large transient result before the output guard trips; a pre-allocation entry
+  cap during decode would tighten this.
 - Truncated-table, R8/ProGuard scrambled-table, and `SourceDebugExtension`
   opacity cases in the real lane (unit-covered today).
 - `npm run check:pr` and full module-boundary/architecture guards at PR time.

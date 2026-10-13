@@ -182,7 +182,7 @@ const scopeOutOfRange = (
   startPc: number,
   length: number,
   codeLength: number,
-): boolean => startPc > codeLength || startPc + length > codeLength;
+): boolean => startPc >= codeLength || startPc + length > codeLength;
 
 const decodeLocalVariableTable = (
   infos: readonly Uint8Array[],

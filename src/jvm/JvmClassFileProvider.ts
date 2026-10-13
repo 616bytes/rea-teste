@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 
 import { createAnalysisExecution } from "../application/AnalysisProvider.js";
@@ -26,19 +27,48 @@ import {
 } from "../domain/jvm/javaDebugMetadataReport.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { hashStableFile } from "../filesystem/StableFileHash.js";
-import {
-  classifyJarEntry,
-  type JarEntryCandidate,
-  resolveJarSelection,
-} from "./jarClassEntry.js";
+import { classifyJarEntry, resolveJarSelection } from "./jarClassEntry.js";
 import { JVM_LIMITS, JVM_PROVIDER_IDENTITY } from "./JvmClassFileRelease.js";
-import { createHash } from "node:crypto";
 import { jvmClassFileFailure, mapParseError } from "./jvmFailures.js";
 
 const OPERATION = "inspect_jvm_debug_metadata";
 
 const sha256 = (bytes: Uint8Array): string =>
   createHash("sha256").update(bytes).digest("hex");
+
+/**
+ * A JAR is multi-release only when its main manifest section carries
+ * `Multi-Release: true` (JAR File Specification). Otherwise META-INF/versions
+ * entries are inert resources the runtime never loads. Parses only the main
+ * section (up to the first blank line), honoring line continuations.
+ */
+const isMultiReleaseManifest = (bytes: Uint8Array): boolean => {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  } catch {
+    return false;
+  }
+  const logical: string[] = [];
+  for (const line of text.split(/\r\n|\r|\n/)) {
+    if (line === "") break; // end of the main section
+    if (line.startsWith(" ") && logical.length > 0)
+      logical[logical.length - 1] += line.slice(1); // value continuation
+    else logical.push(line);
+  }
+  for (const attribute of logical) {
+    const colon = attribute.indexOf(":");
+    if (colon < 0) continue;
+    if (attribute.slice(0, colon).trim().toLowerCase() === "multi-release")
+      return (
+        attribute
+          .slice(colon + 1)
+          .trim()
+          .toLowerCase() === "true"
+      );
+  }
+  return false;
+};
 
 const execution = (
   result: JavaDebugMetadataResult,
@@ -127,32 +157,19 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       JVM_LIMITS.archiveMetadataBytes,
     );
     try {
-      const matches = new Map<string, ArtifactEntry>();
-      const candidates: JarEntryCandidate[] = [];
-      for await (const member of reader.entries(options?.signal)) {
-        if (member.kind !== "file" || member.encrypted) continue;
-        const candidate = classifyJarEntry(member.path, entry);
-        if (candidate === undefined) continue;
-        candidates.push(candidate);
-        matches.set(member.path, member);
-      }
-      const selection = resolveJarSelection(candidates, input.release);
-      if (!selection.ok)
-        return err(this.#selectionError(selection, jar, entry));
-      const selectedMember = matches.get(selection.path);
-      if (selectedMember === undefined)
-        return err(
-          this.#selectionError(
-            { reason: "not-found", available: [] },
-            jar,
-            entry,
-          ),
-        );
+      const selected = await this.#selectJarMember(
+        reader,
+        entry,
+        input.release,
+        jar,
+        options?.signal,
+      );
+      if (!selected.ok) return selected;
       if (options?.signal?.aborted)
         return err(new AnalysisCancelledError(OPERATION));
       const classBytes = await this.#readEntryBytes(
         reader,
-        selectedMember,
+        selected.value.member,
         options?.signal,
       );
       const parsed = parseJavaClassFile(classBytes);
@@ -164,7 +181,7 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
           container: "jar",
           selectedEntry: {
             entry,
-            release: selection.release,
+            release: selected.value.release,
             sha256: sha256(classBytes),
             bytes: classBytes.length,
           },
@@ -176,6 +193,79 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     } finally {
       await reader.close();
     }
+  }
+
+  /**
+   * Enumerate the archive once, honor the Multi-Release manifest, and resolve
+   * the caller's entry/release to exactly one member — refusing an inert
+   * versioned selection, an absent release, or an ambiguous duplicate.
+   */
+  async #selectJarMember(
+    reader: ZipArtifactReader,
+    entry: string,
+    requestedRelease: number | undefined,
+    jar: string,
+    signal: AbortSignal | undefined,
+  ): Promise<
+    Result<
+      { readonly member: ArtifactEntry; readonly release: number | null },
+      AnalysisError
+    >
+  > {
+    let manifestEntry: ArtifactEntry | undefined;
+    const byRelease = new Map<number | null, ArtifactEntry[]>();
+    for await (const member of reader.entries(signal)) {
+      if (member.kind !== "file" || member.encrypted) continue;
+      if (member.path === "META-INF/MANIFEST.MF") {
+        manifestEntry = member;
+        continue;
+      }
+      const candidate = classifyJarEntry(member.path, entry);
+      if (candidate === undefined) continue;
+      const members = byRelease.get(candidate.release) ?? [];
+      members.push(member);
+      byRelease.set(candidate.release, members);
+    }
+    const multiRelease =
+      manifestEntry !== undefined &&
+      isMultiReleaseManifest(
+        await this.#readEntryBytes(reader, manifestEntry, signal),
+      );
+    if (!multiRelease && requestedRelease !== undefined)
+      return err(
+        this.#inputError(
+          "release",
+          `${jar} is not a multi-release JAR (no Multi-Release: true manifest attribute); META-INF/versions entries are inert, so only the base entry is selectable.`,
+        ),
+      );
+    // Outside a multi-release JAR, versioned entries never load; drop them.
+    const effective = new Map<number | null, ArtifactEntry[]>();
+    if (multiRelease) for (const [r, m] of byRelease) effective.set(r, m);
+    else {
+      const base = byRelease.get(null);
+      if (base !== undefined) effective.set(null, base);
+    }
+    const candidates = [...effective.entries()].map(([release, members]) => ({
+      release,
+      path: members[0]!.path,
+    }));
+    const selection = resolveJarSelection(candidates, requestedRelease);
+    if (!selection.ok) return err(this.#selectionError(selection, jar, entry));
+    const selectedMembers = effective.get(selection.release) ?? [];
+    if (selectedMembers.length !== 1)
+      return err(
+        this.#inputError(
+          "entry",
+          `${jar} holds ${String(selectedMembers.length)} members at the selected entry and release; the identity is ambiguous, so no member is chosen.`,
+        ),
+      );
+    return ok({ member: selectedMembers[0]!, release: selection.release });
+  }
+
+  #inputError(field: "entry" | "release", message: string): AnalysisInputError {
+    return new AnalysisInputError(OPERATION, undefined, [
+      { path: [field], reason: "invalid_value", message },
+    ]);
   }
 
   /** Buffer one archive member, bounded by the class-file input budget. */

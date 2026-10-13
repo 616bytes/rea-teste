@@ -30,8 +30,10 @@ export const registerJvmCommands = (
         .describe(
           "Class member path to select inside the JAR, e.g. com/example/Foo.class",
         ),
-      release: z
-        .string()
+      release: z.coerce
+        .number()
+        .int()
+        .nonnegative()
         .optional()
         .describe(
           "Multi-release JAR version whose override of --entry to select",
@@ -52,7 +54,7 @@ export const registerJvmCommands = (
                     : { entry: options.entry }),
                   ...(options.release === undefined
                     ? {}
-                    : { release: Number(options.release) }),
+                    : { release: options.release }),
                 },
                 { signal },
               );

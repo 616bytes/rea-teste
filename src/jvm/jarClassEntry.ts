@@ -41,7 +41,13 @@ export const classifyJarEntry = (
   const slash = rest.indexOf("/");
   if (slash <= 0) return undefined;
   const version = rest.slice(0, slash);
-  if (!/^[0-9]+$/.test(version) || rest.slice(slash + 1) !== entry)
+  // The JAR spec only honors versioned directories named by an integer >= 9,
+  // with no leading zeros; lower or non-canonical numbers are inert resources.
+  if (
+    !/^[1-9][0-9]*$/.test(version) ||
+    Number(version) < 9 ||
+    rest.slice(slash + 1) !== entry
+  )
     return undefined;
   return { release: Number(version), path: memberPath };
 };

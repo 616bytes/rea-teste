@@ -15,26 +15,37 @@ const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const presence = z.enum(["absent", "present", "malformed"]);
 
 /** All artifacts are explicitly selected local files; references never trigger acquisition. */
-export const inspectJvmDebugMetadataInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
-    "Absolute selected local .class artifact, or a .jar when entry is given",
-  ),
-  entry: z
-    .string()
-    .min(1)
-    .optional()
-    .describe(
-      "Class member path to select inside a JAR at path, e.g. com/example/Foo.class",
+export const inspectJvmDebugMetadataInputSchema = z
+  .strictObject({
+    path: localPathStringSchema.describe(
+      "Absolute selected local .class artifact, or a .jar when entry is given",
     ),
-  release: z
-    .number()
-    .int()
-    .nonnegative()
-    .optional()
-    .describe(
-      "Multi-release JAR version whose override of entry to select; omit for the base entry",
-    ),
-});
+    entry: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Class member path to select inside a JAR at path, e.g. com/example/Foo.class",
+      ),
+    release: z
+      .number()
+      .int()
+      .nonnegative()
+      .optional()
+      .describe(
+        "Multi-release JAR version whose override of entry to select; omit for the base entry",
+      ),
+  })
+  .superRefine((value, ctx) => {
+    // A multi-release override only has meaning when selecting a JAR entry.
+    if (value.release !== undefined && value.entry === undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["release"],
+        message:
+          "release is only meaningful together with entry (a JAR member).",
+      });
+  });
 export type InspectJvmDebugMetadataInput = z.infer<
   typeof inspectJvmDebugMetadataInputSchema
 >;

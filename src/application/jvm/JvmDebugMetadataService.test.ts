@@ -33,7 +33,67 @@ class Blob {
     this.parts.push(...b);
     return this;
   }
+  raw(bytes: readonly number[]): this {
+    // Append without spreading: a large table would overflow the call stack.
+    for (const byte of bytes) this.parts.push(byte);
+    return this;
+  }
+  attr(nameIndex: number, info: readonly number[]): this {
+    return this.u2(nameIndex).u4(info.length).raw(info);
+  }
 }
+
+/**
+ * A class whose single method's Code carries several near-maximal
+ * LineNumberTable attributes, so the projected result far exceeds the inline
+ * output budget. Pool: 1 "Code", 2 "LineNumberTable", 3 "Big", 4 Class->3,
+ * 5 "m", 6 "()V".
+ */
+const overBudgetClass = (): Uint8Array => {
+  const maxTable = (): number[] => {
+    const b = new Blob().u2(0xffff);
+    for (let i = 0; i < 0xffff; i += 1) b.u2(i & 0xffff).u2(1);
+    return b.parts;
+  };
+  const code = new Blob()
+    .u2(0)
+    .u2(0)
+    .u4(1)
+    .u1(0xb1)
+    .u2(0) // max_stack/locals, code, exception table
+    .u2(6); // attributes_count: 6 LineNumberTable attrs -> ~393k merged entries
+  for (let i = 0; i < 6; i += 1) code.attr(2, maxTable());
+  const cls = new Blob()
+    .u4(0xcafebabe)
+    .u2(0)
+    .u2(52)
+    .u2(7)
+    .u1(CONSTANT_TAG.utf8)
+    .utf8("Code")
+    .u1(CONSTANT_TAG.utf8)
+    .utf8("LineNumberTable")
+    .u1(CONSTANT_TAG.utf8)
+    .utf8("Big")
+    .u1(CONSTANT_TAG.class)
+    .u2(3)
+    .u1(CONSTANT_TAG.utf8)
+    .utf8("m")
+    .u1(CONSTANT_TAG.utf8)
+    .utf8("()V")
+    .u2(0x0021)
+    .u2(4)
+    .u2(0)
+    .u2(0)
+    .u2(0)
+    .u2(1)
+    .u2(0x0001)
+    .u2(5)
+    .u2(6)
+    .u2(1)
+    .attr(1, code.parts)
+    .u2(0);
+  return Uint8Array.from(cls.parts);
+};
 
 /** Minimal `Example` class: `<init>()V` with a Code attribute, class-level SourceFile. */
 const minimalClass = (): Uint8Array =>
@@ -128,5 +188,14 @@ describe("JvmDebugMetadataService", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error._tag).toBe("AnalysisInputError");
+  });
+
+  it("refuses a class whose decoded result exceeds the inline output budget", async () => {
+    const path = join(dir, "Big.class");
+    await writeFile(path, overBudgetClass());
+    const result = await service.inspect({ path });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisResourceConstraintError");
   });
 });

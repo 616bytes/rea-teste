@@ -150,6 +150,36 @@ describe("decodeClassDebugMetadata", () => {
     });
   });
 
+  it("merges multiple LineNumberTable attributes into one table (JVMS §4.7.12)", () => {
+    // A Code attribute may carry the table split across several attributes;
+    // the full table is their union, not just the first.
+    const code = codeAttrInfo(
+      subAttrs(
+        2,
+        new Blob().attr(4, lineNumberTable([[0, 1]])).attr(
+          4,
+          lineNumberTable([
+            [5, 2],
+            [9, 3],
+          ]),
+        ),
+      ).parts,
+    );
+    const cls = parseJavaClassFile(
+      classWith(new Blob().u2(1).attr(3, code), new Blob().u2(0)),
+    );
+    expect(cls.ok).toBe(true);
+    if (!cls.ok) return;
+    const method = decodeClassDebugMetadata(cls.value).methods[0]!;
+    expect(method.lineNumbers.presence).toBe("present");
+    expect(method.lineNumbers.declaredCount).toBe(3);
+    expect(method.lineNumbers.entries).toEqual([
+      { startPc: 0, lineNumber: 1 },
+      { startPc: 5, lineNumber: 2 },
+      { startPc: 9, lineNumber: 3 },
+    ]);
+  });
+
   it("surfaces reused local slots without collapsing the entries", () => {
     const code = codeAttrInfo(
       subAttrs(

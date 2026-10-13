@@ -102,12 +102,7 @@ export type JavaClassFileParseError =
   | {
       readonly kind: "budget-exceeded";
       readonly offset: number;
-      readonly resource:
-        | "constant-pool"
-        | "interfaces"
-        | "fields"
-        | "methods"
-        | "attributes";
+      readonly resource: "interfaces" | "fields" | "methods" | "attributes";
       readonly declared: number;
       readonly remaining: number;
     };
@@ -179,6 +174,8 @@ const decodeModifiedUtf8 = (
   bytes: Uint8Array,
   at: number,
 ): Result<string, JavaClassFileParseError> => {
+  const isContinuation = (byte: number | undefined): boolean =>
+    byte !== undefined && (byte & 0xc0) === 0x80;
   let out = "";
   let i = 0;
   while (i < bytes.length) {
@@ -188,13 +185,17 @@ const decodeModifiedUtf8 = (
       out += String.fromCharCode(a);
       i += 1;
     } else if (a < 0xe0) {
-      if (i + 1 >= bytes.length)
+      if (i + 1 >= bytes.length || !isContinuation(bytes[i + 1]))
         return err({ kind: "invalid-utf8", offset: at });
       const b = bytes[i + 1]!;
       out += String.fromCharCode(((a & 0x1f) << 6) | (b & 0x3f));
       i += 2;
     } else {
-      if (i + 2 >= bytes.length)
+      if (
+        i + 2 >= bytes.length ||
+        !isContinuation(bytes[i + 1]) ||
+        !isContinuation(bytes[i + 2])
+      )
         return err({ kind: "invalid-utf8", offset: at });
       const b = bytes[i + 1]!;
       const c = bytes[i + 2]!;

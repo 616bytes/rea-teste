@@ -6,7 +6,10 @@ import type {
 } from "../application/jvm/JvmDebugMetadataPort.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
 import { parseJavaClassFile } from "../domain/jvm/javaClassFile.js";
 import {
   buildJavaDebugMetadataResult,
@@ -46,6 +49,21 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
         sha256: selected.sha256,
         bytes: selected.bytes.length,
       });
+      // Input bounds do not bound the projected result; a crafted class can
+      // declare millions of table entries. Refuse past the inline budget
+      // instead of emitting oversized Evidence (mirrors the Go/Rust readers).
+      if (
+        Buffer.byteLength(JSON.stringify(result), "utf8") >
+        JVM_LIMITS.outputBytes
+      )
+        return err(
+          new AnalysisResourceConstraintError(
+            OPERATION,
+            "transport",
+            `Decoded debug metadata for ${input.path} exceeds the inline output budget; no partial success is returned.`,
+            { maximum_output_bytes: JVM_LIMITS.outputBytes },
+          ),
+        );
       return ok(
         createAnalysisExecution(result, JVM_PROVIDER_IDENTITY, {
           subject: {

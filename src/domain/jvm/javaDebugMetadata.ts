@@ -94,43 +94,69 @@ export interface ClassDebugMetadata {
   readonly methods: readonly MethodDebugMetadata[];
 }
 
+type NamedAttribute = {
+  readonly name: string | null;
+  readonly info: Uint8Array;
+};
+
+/** First matching attribute's info. For names JVMS permits at most once (Code, SourceFile, SourceDebugExtension). */
 const findAttribute = (
-  attributes: readonly {
-    readonly name: string | null;
-    readonly info: Uint8Array;
-  }[],
+  attributes: readonly NamedAttribute[],
   name: string,
 ): Uint8Array | null => attributes.find((a) => a.name === name)?.info ?? null;
 
 /**
- * Decode a fixed-stride table. Reads up to the self-declared count, stopping
- * early if the buffer runs short; a short read marks the table `malformed`
- * while keeping every entry decoded before it.
+ * Every matching attribute's info, in order. JVMS §4.7.12–14 permit multiple
+ * LineNumberTable / LocalVariableTable / LocalVariableTypeTable attributes in
+ * one Code attribute; the full table is their union.
+ */
+const collectAttributes = (
+  attributes: readonly NamedAttribute[],
+  name: string,
+): readonly Uint8Array[] =>
+  attributes.filter((a) => a.name === name).map((a) => a.info);
+
+/**
+ * Decode a fixed-stride table, merging every occurrence of a repeatable
+ * attribute into one table. Reads up to each occurrence's self-declared count,
+ * stopping early if its buffer runs short; a short read or trailing bytes mark
+ * the whole table `malformed` while keeping every entry decoded before it.
  */
 const decodeTable = <T>(
-  info: Uint8Array | null,
+  infos: readonly Uint8Array[],
   stride: number,
   decodeEntry: (cursor: ByteCursor) => T,
 ): DebugTable<T> => {
-  if (info === null)
+  if (infos.length === 0)
     return { presence: "absent", declaredCount: 0, entries: [] };
-  const cursor = new ByteCursor(info);
-  const countResult = cursor.u2();
-  if (!countResult.ok) {
-    return { presence: "malformed", declaredCount: 0, entries: [] };
-  }
-  const declaredCount = countResult.value;
   const entries: T[] = [];
-  for (let i = 0; i < declaredCount; i += 1) {
-    if (cursor.remaining < stride) {
-      return { presence: "malformed", declaredCount, entries };
+  let declaredCount = 0;
+  let malformed = false;
+  for (const info of infos) {
+    const cursor = new ByteCursor(info);
+    const countResult = cursor.u2();
+    if (!countResult.ok) {
+      malformed = true;
+      continue;
     }
-    entries.push(decodeEntry(cursor));
+    declaredCount += countResult.value;
+    let short = false;
+    for (let i = 0; i < countResult.value; i += 1) {
+      if (cursor.remaining < stride) {
+        short = true;
+        break;
+      }
+      entries.push(decodeEntry(cursor));
+    }
+    // A short read, or trailing bytes past the declared entries, is malformed
+    // rather than silently ignored (JVMS fixes attribute_length exactly).
+    if (short || cursor.remaining !== 0) malformed = true;
   }
-  // Trailing bytes beyond the declared entries make the attribute malformed rather than silently ignored.
-  const presence: AttributePresence =
-    cursor.remaining === 0 ? "present" : "malformed";
-  return { presence, declaredCount, entries };
+  return {
+    presence: malformed ? "malformed" : "present",
+    declaredCount,
+    entries,
+  };
 };
 
 const u2 = (cursor: ByteCursor): number => {
@@ -140,18 +166,18 @@ const u2 = (cursor: ByteCursor): number => {
 };
 
 const decodeLineNumberTable = (
-  info: Uint8Array | null,
+  infos: readonly Uint8Array[],
 ): DebugTable<LineNumberEntry> =>
-  decodeTable(info, 4, (cursor) => ({
+  decodeTable(infos, 4, (cursor) => ({
     startPc: u2(cursor),
     lineNumber: u2(cursor),
   }));
 
 const decodeLocalVariableTable = (
-  info: Uint8Array | null,
+  infos: readonly Uint8Array[],
   pool: readonly ConstantPoolEntry[],
 ): DebugTable<LocalVariableEntry> =>
-  decodeTable(info, 10, (cursor) => {
+  decodeTable(infos, 10, (cursor) => {
     const startPc = u2(cursor);
     const length = u2(cursor);
     const nameIndex = u2(cursor);
@@ -169,10 +195,10 @@ const decodeLocalVariableTable = (
   });
 
 const decodeLocalVariableTypeTable = (
-  info: Uint8Array | null,
+  infos: readonly Uint8Array[],
   pool: readonly ConstantPoolEntry[],
 ): DebugTable<LocalVariableTypeEntry> =>
-  decodeTable(info, 10, (cursor) => {
+  decodeTable(infos, 10, (cursor) => {
     const startPc = u2(cursor);
     const length = u2(cursor);
     const nameIndex = u2(cursor);
@@ -269,14 +295,14 @@ export const decodeMethodDebugMetadata = (
     subCursor === null || (subAttrs !== null && !subAttrs.ok);
 
   const lineNumbers = decodeLineNumberTable(
-    findAttribute(attributes, "LineNumberTable"),
+    collectAttributes(attributes, "LineNumberTable"),
   );
   const localVariables = decodeLocalVariableTable(
-    findAttribute(attributes, "LocalVariableTable"),
+    collectAttributes(attributes, "LocalVariableTable"),
     pool,
   );
   const localVariableTypes = decodeLocalVariableTypeTable(
-    findAttribute(attributes, "LocalVariableTypeTable"),
+    collectAttributes(attributes, "LocalVariableTypeTable"),
     pool,
   );
 

@@ -220,6 +220,10 @@ export const providerCatalog = (sources) => {
       ),
     },
     {
+      identity: sources.jvmProvider.JVM_PROVIDER_IDENTITY,
+      contracts: sources.jvmContracts.JVM_TOOL_CONTRACTS,
+    },
+    {
       identity: sources.evmProvider.EVMOLE_PROVIDER_IDENTITY,
       contracts: sources.evmContracts.EVM_TOOL_CONTRACTS,
     },

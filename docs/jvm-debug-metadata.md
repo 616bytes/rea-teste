@@ -71,7 +71,11 @@ metadata identity stays separate from any decompiler output. Standalone `.class`
 inspection is independent of the Android/JADX lane and of the JVM runtime
 (JDWP) proposal. A malformed or truncated class file is reported through the
 tagged error algebra rather than throwing or over-allocating. A single class
-file far over the input budget is refused before allocation.
+file far over the input budget is refused before allocation, and a decoded
+result that would exceed the inline output budget is refused rather than
+returned oversized. Scope ranges (`start_pc`/`length`) are surfaced as declared;
+they are not yet validated against the method's code length, so an
+out-of-range scope is reported as-is rather than flagged.
 
 Verified by the `verify:jvm` real lane, which compiles owned `javac` fixtures
 with `-g` and `-g:none`, cross-checks every decoded fact against `javap`, and

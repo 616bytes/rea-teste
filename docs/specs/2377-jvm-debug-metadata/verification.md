@@ -42,8 +42,31 @@ and stdio MCP in Evidence parity, validates a real third-party JAR class
 truncated-input error surfaces. 10 cases pass; the reader never mutates the
 selected bytes. Skips cleanly when no JDK is present.
 
+## Independent review (three angles)
+
+Three independent reviews (correctness/spec, security/resource/scope,
+architecture/conventions) ran against the branch. Confirmed fixed:
+
+- MAJOR — split (multiple) `LineNumberTable` / `LocalVariableTable` /
+  `LocalVariableTypeTable` attributes are now merged into one table (JVMS
+  §4.7.12–14), not truncated to the first; covered by a decode test.
+- MAJOR — the projected result is now bounded by an 8 MiB inline output budget
+  (`AnalysisResourceConstraintError`), mirroring the Go/Rust readers; covered by
+  a service test.
+- MAJOR — `JVM_PROVIDER_IDENTITY` is now surfaced in the generated provider
+  catalog (`providers[]` attributes `inspect_jvm_debug_metadata`).
+- MINOR — modified-UTF8 continuation bytes are validated (`invalid-utf8` on a
+  malformed sequence); the dead `budget-exceeded:"constant-pool"` variant is
+  removed.
+
+The reviews verified correct: modified-UTF8 (including CESU-8 supplementary
+pairs), constant-pool two-slot rule, Code-header skip, table strides/field
+order, projection, layering, reuse, effect audit, and the deferral seam.
+
 ## Pending
 
+- Out-of-range scope validation against `code_length` (reported as-is today;
+  a false fact is not emitted).
 - JAR entry selection and multi-release resolution (separate change, reusing
   `ZipArtifactReader`), with its fixture matrix (multi-release, truncated-table,
   R8/ProGuard scrambled tables, `SourceDebugExtension` opacity in the lane).

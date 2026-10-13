@@ -63,13 +63,27 @@ The reviews verified correct: modified-UTF8 (including CESU-8 supplementary
 pairs), constant-pool two-slot rule, Code-header skip, table strides/field
 order, projection, layering, reuse, effect audit, and the deferral seam.
 
+## JAR entry + multi-release (landed)
+
+`entry` selects one class member from a `.jar` (read through the shared
+`ZipArtifactReader`), and `release` selects a `META-INF/versions/<N>/` override.
+Selection is explicit and non-combining: an omitted release reads the base; a
+requested release must match a present override or the call is refused with the
+available versions (`resolveJarSelection`, unit-tested). The JAR's digest is
+streamed (`hashStableFile`, bounded by `archiveBytes`); the class entry is read
+bounded by `inputBytes`. The subject is the JAR (`format: "zip"`) and the result
+carries `container` + `selected_entry`. `verify:jvm` now builds a real
+multi-release JAR (base at release 11, override at 17) and asserts base vs
+explicit-17 selection (distinct SHA), absent-release refusal, and missing-entry
+error, through the CLI and MCP — 16 cases total.
+
+Out-of-range scope validation against `code_length` landed earlier (flagged
+`out_of_range`, raw values preserved).
+
 ## Pending
 
-- Out-of-range scope validation against `code_length` (reported as-is today;
-  a false fact is not emitted).
-- JAR entry selection and multi-release resolution (separate change, reusing
-  `ZipArtifactReader`), with its fixture matrix (multi-release, truncated-table,
-  R8/ProGuard scrambled tables, `SourceDebugExtension` opacity in the lane).
+- Truncated-table, R8/ProGuard scrambled-table, and `SourceDebugExtension`
+  opacity cases in the real lane (unit-covered today).
 - `npm run check:pr` and full module-boundary/architecture guards at PR time.
   `docs:check` currently fails only on a pre-existing, unrelated `README_tr`
   link drift.

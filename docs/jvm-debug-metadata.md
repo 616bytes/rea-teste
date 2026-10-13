@@ -13,25 +13,43 @@ CLI and MCP share one workflow and return artifact-bound Evidence inline.
 
 ```sh
 rea inspect-jvm-debug-metadata /path/Example.class
+# Select one class entry inside a JAR:
+rea inspect-jvm-debug-metadata /path/app.jar --entry com/example/Service.class
+# Select a multi-release override explicitly:
+rea inspect-jvm-debug-metadata /path/app.jar --entry com/example/Service.class --release 17
 ```
 
-The MCP method is `inspect_jvm_debug_metadata`; its only argument is the absolute
-local `path`:
+The MCP method is `inspect_jvm_debug_metadata`. Pass the absolute local `path`
+(a `.class` file, or a `.jar` with `entry`); for a multi-release JAR add
+`release` to select an override:
 
 ```json
 {
   "name": "inspect_jvm_debug_metadata",
-  "arguments": { "path": "/path/Example.class" }
+  "arguments": {
+    "path": "/path/app.jar",
+    "entry": "com/example/Service.class",
+    "release": 17
+  }
 }
 ```
+
+A JAR entry is selected explicitly: an omitted `release` reads the base entry,
+and a requested `release` must match a present `META-INF/versions/<N>/` override
+or the call is refused with the available versions — metadata is never combined
+across versions.
 
 ## Interpret the result
 
 The normalized result binds every fact to exact identity:
 
-- `artifact` — selected `path`, exact-byte `sha256`, and `bytes`. The reader does
+- `artifact` — the selected local file's `path`, exact-byte `sha256`, and
+  `bytes` (the `.class` file, or the `.jar` for a JAR entry). The reader does
   not mutate the selected bytes; `sha256` identifies them, not authenticity or
   the producing compiler.
+- `container` — `class-file` or `jar`. `selected_entry` is `null` for a loose
+  class file, or the selected `entry`, `release` (null for base), `sha256`, and
+  `bytes` of the class bytes read from the JAR.
 - `class` — `internal_name` (decompiler representation), `major_version`,
   `minor_version`.
 - `source_file` — `presence` (`present` | `absent` | `malformed`) and the

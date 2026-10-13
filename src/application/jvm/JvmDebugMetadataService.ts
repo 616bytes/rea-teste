@@ -72,7 +72,15 @@ export class JvmDebugMetadataService {
     return ok(
       createEvidence(execution.subject, execution.provider, {
         operation: OPERATION,
-        parameters: input.data,
+        parameters: {
+          path: input.data.path,
+          ...(input.data.entry === undefined
+            ? {}
+            : { entry: input.data.entry }),
+          ...(input.data.release === undefined
+            ? {}
+            : { release: input.data.release }),
+        },
         result: report.data,
         ...(execution.rawResult === null
           ? {}

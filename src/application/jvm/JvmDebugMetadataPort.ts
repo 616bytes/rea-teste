@@ -7,9 +7,9 @@ import type { InspectJvmDebugMetadataInput } from "../../domain/jvm/javaDebugMet
 import type { EvidenceSubjectTarget } from "../../domain/evidence.js";
 import type { Result } from "../../domain/result.js";
 
-/** Successful JVM inspection must identify the selected local class file. */
+/** Successful JVM inspection identifies the selected local file: a class file or its JAR. */
 export type JvmDebugMetadataExecution = Omit<AnalysisExecution, "subject"> & {
-  readonly subject: EvidenceSubjectTarget & { readonly format: "file" };
+  readonly subject: EvidenceSubjectTarget & { readonly format: "file" | "zip" };
 };
 
 /** Replaceable offline class-file reader, independent of target execution and network clients. */

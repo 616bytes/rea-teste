@@ -15,4 +15,8 @@ export const JVM_LIMITS = {
    * than returning oversized Evidence, mirroring the Go/Rust in-process readers.
    */
   outputBytes: 8 * 1024 * 1024,
+  /** Ceiling on a selected JAR's size (its digest is streamed, not retained). */
+  archiveBytes: 512 * 1024 * 1024,
+  /** Ceiling on a JAR's central-directory metadata read. */
+  archiveMetadataBytes: 16 * 1024 * 1024,
 } as const;

@@ -23,27 +23,31 @@ const environment = Object.fromEntries(
 );
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 
+const probeTool = async (candidate) => {
+  // javac/javap/java accept -version; jar only accepts --version.
+  for (const flag of ["-version", "--version"]) {
+    try {
+      await execute(candidate, [flag]);
+      return true;
+    } catch {
+      /* try the next flag */
+    }
+  }
+  return false;
+};
+
 const resolveJdkTool = async (tool) => {
   const home = environment.JAVA_HOME;
   if (home !== undefined && isAbsolute(home)) {
     const candidate = join(home, "bin", tool);
-    try {
-      await execute(candidate, ["-version"]);
-      return candidate;
-    } catch {
-      /* fall through to PATH */
-    }
+    if (await probeTool(candidate)) return candidate;
   }
-  try {
-    await execute(tool, ["-version"]);
-    return tool;
-  } catch {
-    return undefined;
-  }
+  return (await probeTool(tool)) ? tool : undefined;
 };
 
 const javac = await resolveJdkTool("javac");
 const javap = await resolveJdkTool("javap");
+const jarTool = await resolveJdkTool("jar");
 if (javac === undefined || javap === undefined) {
   if (process.argv.includes("--require-tools"))
     throw new Error(
@@ -92,15 +96,20 @@ const javapFacts = async (classPath) => {
 const classNameOf = (classPath) =>
   classPath.replace(/.*\//, "").replace(/\.class$/, "");
 
-const inspectCli = async (path) => {
+const inspectCli = async (path, extra = {}) => {
+  const args = [entrypoint, "inspect-jvm-debug-metadata", path];
+  if (extra.entry !== undefined) args.push("--entry", extra.entry);
+  if (extra.release !== undefined)
+    args.push("--release", String(extra.release));
+  args.push("--format", "json");
   try {
     return JSON.parse(
       (
-        await execute(
-          process.execPath,
-          [entrypoint, "inspect-jvm-debug-metadata", path, "--format", "json"],
-          { env: environment, timeout: 120_000, maxBuffer: 64 * 1024 * 1024 },
-        )
+        await execute(process.execPath, args, {
+          env: environment,
+          timeout: 120_000,
+          maxBuffer: 64 * 1024 * 1024,
+        })
       ).stdout,
     );
   } catch (cause) {
@@ -141,20 +150,20 @@ try {
     "output schema invalid",
   );
 
-  const inspectMcp = async (path) => {
+  const inspectMcp = async (path, extra = {}) => {
     const reply = await client.callTool({
       name: "inspect_jvm_debug_metadata",
-      arguments: { path },
+      arguments: { path, ...extra },
     });
     return reply;
   };
 
   /** CLI and MCP must agree, the output must validate, and javap must confirm. */
-  const inspectBoth = async (path) => {
-    const cliValue = await inspectCli(path);
+  const inspectBoth = async (path, extra = {}) => {
+    const cliValue = await inspectCli(path, extra);
     assert.equal(cliValue.category, undefined, JSON.stringify(cliValue));
     const cli = parseEvidence(cliValue);
-    const reply = await inspectMcp(path);
+    const reply = await inspectMcp(path, extra);
     assert.notEqual(reply.isError, true, mcpTextValue(reply));
     assert.ok(
       ajv.validate(advertised.outputSchema, reply.structuredContent),
@@ -309,6 +318,99 @@ class Debuggable<T> {
           realOracle.descriptors.has(m.descriptor),
         `real-jar descriptor ${m.descriptor} not reported by javap`,
       );
+  }
+
+  // Multi-release JAR: base + a release-17 override of the same class entry,
+  // read through the JAR entry path (ZipArtifactReader + explicit selection).
+  if (jarTool !== undefined) {
+    const entry = "com/example/Service.class";
+    const baseDir = join(workspace, "mr-base", "com", "example");
+    const v17Dir = join(workspace, "mr-v17", "com", "example");
+    await mkdir(baseDir, { recursive: true });
+    await mkdir(v17Dir, { recursive: true });
+    const svc = (body) =>
+      `package com.example; class Service { int value(int a) { ${body} } }\n`;
+    await writeFile(
+      join(workspace, "mr-base", "Service.java"),
+      svc("return a;"),
+    );
+    await writeFile(
+      join(workspace, "mr-v17", "Service.java"),
+      svc("int doubled = a * 2; return doubled;"),
+    );
+    const baseClasses = join(workspace, "mr-base-out");
+    const v17Classes = join(workspace, "mr-v17-out");
+    // A multi-release JAR's base must target a version no newer than its
+    // versioned overrides, so build the base at 11 and the override at 17.
+    await execute(
+      javac,
+      [
+        "-g",
+        "--release",
+        "11",
+        "-d",
+        baseClasses,
+        join(workspace, "mr-base", "Service.java"),
+      ],
+      { env: environment },
+    );
+    await execute(
+      javac,
+      [
+        "-g",
+        "--release",
+        "17",
+        "-d",
+        v17Classes,
+        join(workspace, "mr-v17", "Service.java"),
+      ],
+      { env: environment },
+    );
+    const jarPath = join(workspace, "app.jar");
+    await execute(
+      jarTool,
+      [
+        "--create",
+        "--file",
+        jarPath,
+        "-C",
+        baseClasses,
+        ".",
+        "--release",
+        "17",
+        "-C",
+        v17Classes,
+        ".",
+      ],
+      { env: environment },
+    );
+
+    // Omitted release -> base entry.
+    const baseReport = await inspectBoth(jarPath, { entry });
+    assert.equal(baseReport.container, "jar");
+    assert.equal(baseReport.selected_entry.entry, entry);
+    assert.equal(baseReport.selected_entry.release, null);
+    assert.equal(baseReport.class.internal_name, "com/example/Service");
+    assert.equal(baseReport.artifact.path, jarPath);
+
+    // Explicit release 17 -> the versioned override, a distinct class body.
+    const v17Report = await inspectBoth(jarPath, { entry, release: 17 });
+    assert.equal(v17Report.selected_entry.release, 17);
+    assert.notEqual(
+      v17Report.selected_entry.sha256,
+      baseReport.selected_entry.sha256,
+      "release 17 override must differ from the base entry",
+    );
+
+    // An absent release is refused explicitly, never silently combined.
+    const absent = await inspectCli(jarPath, { entry, release: 11 });
+    assert.equal(absent.category, "invalid_input", JSON.stringify(absent));
+    // A missing entry is reported as not found.
+    const missing = await inspectCli(jarPath, {
+      entry: "com/example/Nope.class",
+    });
+    assert.equal(missing.category, "invalid_input", JSON.stringify(missing));
+    cases += 2;
   }
 
   // Error surfaces: non-class bytes and a truncated class file.

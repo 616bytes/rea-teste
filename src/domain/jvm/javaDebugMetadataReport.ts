@@ -17,8 +17,23 @@ const presence = z.enum(["absent", "present", "malformed"]);
 /** All artifacts are explicitly selected local files; references never trigger acquisition. */
 export const inspectJvmDebugMetadataInputSchema = z.strictObject({
   path: localPathStringSchema.describe(
-    "Absolute selected local .class artifact path",
+    "Absolute selected local .class artifact, or a .jar when entry is given",
   ),
+  entry: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Class member path to select inside a JAR at path, e.g. com/example/Foo.class",
+    ),
+  release: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe(
+      "Multi-release JAR version whose override of entry to select; omit for the base entry",
+    ),
 });
 export type InspectJvmDebugMetadataInput = z.infer<
   typeof inspectJvmDebugMetadataInputSchema
@@ -75,6 +90,17 @@ export const javaDebugMetadataResultSchema = z.strictObject({
     sha256: digest,
     bytes: z.number().int().nonnegative(),
   }),
+  container: z.enum(["class-file", "jar"]),
+  /** The selected JAR member, or null when the artifact is a loose class file. */
+  selected_entry: z
+    .strictObject({
+      entry: z.string().min(1),
+      /** The multi-release version selected, or null for the base entry. */
+      release: z.number().int().nonnegative().nullable(),
+      sha256: digest,
+      bytes: z.number().int().nonnegative(),
+    })
+    .nullable(),
   class: z.strictObject({
     internal_name: z.string().nullable(),
     major_version: z.number().int().nonnegative(),
@@ -115,6 +141,19 @@ const resolveThisClassName = (cls: JavaClassFile): string | null => {
     : null;
 };
 
+/** The selected JAR member when the artifact is an archive, else a loose class file. */
+export type JavaDebugMetadataSource =
+  | { readonly container: "class-file" }
+  | {
+      readonly container: "jar";
+      readonly selectedEntry: {
+        readonly entry: string;
+        readonly release: number | null;
+        readonly sha256: string;
+        readonly bytes: number;
+      };
+    };
+
 /** Project a framed class file into the validated public result. */
 export const buildJavaDebugMetadataResult = (
   classFile: JavaClassFile,
@@ -123,12 +162,23 @@ export const buildJavaDebugMetadataResult = (
     readonly sha256: string;
     readonly bytes: number;
   },
+  source: JavaDebugMetadataSource = { container: "class-file" },
 ): JavaDebugMetadataResult => {
   const evidence = buildJavaDebugMetadataEvidence(
     decodeClassDebugMetadata(classFile),
   );
   return {
     artifact,
+    container: source.container,
+    selected_entry:
+      source.container === "jar"
+        ? {
+            entry: source.selectedEntry.entry,
+            release: source.selectedEntry.release,
+            sha256: source.selectedEntry.sha256,
+            bytes: source.selectedEntry.bytes,
+          }
+        : null,
     class: {
       internal_name: resolveThisClassName(classFile),
       major_version: classFile.majorVersion,
@@ -201,4 +251,4 @@ export const javaDebugMetadataMatchesSubject = (
 ): boolean =>
   artifact.sha256 === subject.sha256 &&
   artifact.path === subject.path &&
-  subject.format === "file";
+  (subject.format === "file" || subject.format === "zip");

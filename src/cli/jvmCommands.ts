@@ -17,11 +17,27 @@ export const registerJvmCommands = (
   const service = jvmDebugMetadataModule.create(environment);
   cli.command(jvmDebugMetadataModule.cliCommand, {
     description:
-      "Inspect compiler-emitted debug metadata in a selected local JVM .class file",
+      "Inspect compiler-emitted debug metadata in a selected local JVM .class file or JAR entry",
     args: z.object({
-      path: z.string().describe("Local .class artifact"),
+      path: z
+        .string()
+        .describe("Local .class artifact, or a .jar when --entry is given"),
     }),
-    run: ({ args }) =>
+    options: z.object({
+      entry: z
+        .string()
+        .optional()
+        .describe(
+          "Class member path to select inside the JAR, e.g. com/example/Foo.class",
+        ),
+      release: z
+        .string()
+        .optional()
+        .describe(
+          "Multi-release JAR version whose override of --entry to select",
+        ),
+    }),
+    run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
         try {
           return await logCliCommand(
@@ -29,7 +45,15 @@ export const registerJvmCommands = (
             jvmDebugMetadataModule.cliCommand,
             async () => {
               const result = await service.inspect(
-                { path: resolve(args.path) },
+                {
+                  path: resolve(args.path),
+                  ...(options.entry === undefined
+                    ? {}
+                    : { entry: options.entry }),
+                  ...(options.release === undefined
+                    ? {}
+                    : { release: Number(options.release) }),
+                },
                 { signal },
               );
               return result.ok

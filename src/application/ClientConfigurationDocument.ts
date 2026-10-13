@@ -1558,10 +1558,11 @@ const keepsCopilotTools = (dialect: ClientRegistrationDialect): boolean =>
 
 /**
  * Whether setup replaces or removes an existing entry key. Setup registers an
- * active server, so entry-level switches that turn it off are removed too.
- * A registration-status field that does not parse is removed as well, using
- * the same schemas doctor uses, so setup cannot report success for a value
- * doctor will reject. Grok Build's boolean entry `disabled` is kept.
+ * active server, so entry-level switches that turn it off are removed too,
+ * including ZCode's native `enable: false`. A registration-status field that
+ * does not parse is removed as well, using the same schemas doctor uses, so
+ * setup cannot report success for a value doctor will reject. Grok Build's
+ * boolean entry `disabled` is kept.
  */
 const registrationManagedKey = (
   dialect: ClientRegistrationDialect,
@@ -1573,6 +1574,7 @@ const registrationManagedKey = (
   !registrationFieldAccepted(key, value) ||
   (key === "tools" && !keepsCopilotTools(dialect)) ||
   (key === "enabled" && value === false) ||
+  (key === "enable" && value === false && dialect === "zcode") ||
   (key === "disabled" && value === true && !keepsGrokDisabledFlag(dialect));
 
 /**

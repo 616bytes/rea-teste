@@ -72,9 +72,10 @@ Other fields you added to that entry, such as OMP's `timeout` or Codex's
 `args`, `type` or `transport`, and the environment map) and REA's
 client-specific keys. It removes remote-server keys such as `url`, `headers`,
 `oauth_resource`, and `tcp` that contradict the local command, and an entry-level
-`enabled: false` or (outside Grok Build) `disabled: true`, so the registration
-is active. A registration field that does not parse, including a non-boolean
-`enabled` or `disabled` and a malformed `startup_timeout_sec` or `tools`, is
+`enabled: false`, ZCode's `enable: false`, or (outside Grok Build)
+`disabled: true`, so the registration is active. A registration field that
+does not parse, including a non-boolean `enabled` or `disabled` and a
+malformed `startup_timeout_sec` or `tools`, is
 removed too. A `tools` value is removed except on GitHub Copilot CLI, which
 replaces it with `["*"]`; Codex rejects a `tools` sequence. An existing entry
 without a `command` is a remote server and is replaced whole. DeepSeek Harness

@@ -410,6 +410,12 @@ JSONC exist. The ordinary XDG global configuration still participates when a
 custom directory is selected. Doctor checks the merged user registration; uninstall removes
 REA-owned entries from every applicable user file so an older entry cannot
 become active again. Malformed applicable files block setup before changes.
+If OpenCode's model provider rejects the tool list because a schema
+"exceeds the maximum nesting depth of 10 levels"
+([#2813](https://github.com/morluto/rea/issues/2813)), add
+`"REA_MCP_INPUT_SCHEMA_PROFILE": "compact"` to the REA entry's environment and
+restart OpenCode. Compact input schemas stay within ten levels; REA still
+validates complete canonical inputs.
 
 Grok Build loads `[mcp_servers.rea]` from `$GROK_HOME/config.toml`, or from
 `~/.grok/config.toml` when `GROK_HOME` is unset or empty. Setup edits that server

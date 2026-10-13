@@ -1,7 +1,11 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
-import { compactAdvertisedInputSchema } from "./compactInputSchema.js";
+import {
+  COMPACT_INPUT_SCHEMA_MAX_DEPTH,
+  compactAdvertisedInputSchema,
+  schemaTreeDepth,
+} from "./compactInputSchema.js";
 
 const serializedBytes = (value: unknown): number =>
   Buffer.byteLength(JSON.stringify(value), "utf8");
@@ -79,6 +83,33 @@ const oversizedPairSchema = (): Record<string, unknown> => {
     required: ["before", "after"],
     additionalProperties: false,
   };
+};
+
+/** Nest `leaf` under `levels` single-property objects. */
+const nested = (levels: number, leaf: Record<string, unknown>): unknown =>
+  levels === 0
+    ? leaf
+    : {
+        type: "object",
+        properties: { next: nested(levels - 1, leaf) },
+        required: ["next"],
+        additionalProperties: false,
+      };
+
+const nestedValue = (levels: number, leaf: unknown): unknown =>
+  levels === 0 ? leaf : { next: nestedValue(levels - 1, leaf) };
+
+/** Every input the original accepts, the capped advertisement accepts too. */
+const expectWidened = (
+  original: Record<string, unknown>,
+  capped: Record<string, unknown>,
+  inputs: readonly unknown[],
+): void => {
+  const ajv = new Ajv2020({ strict: false });
+  const before = ajv.compile(original);
+  const after = ajv.compile(capped);
+  for (const input of inputs)
+    if (before(input)) expect(after(input), JSON.stringify(input)).toBe(true);
 };
 
 describe("compact advertised input schema", () => {
@@ -333,5 +364,130 @@ describe("compact input schema budget and reduction", () => {
     );
     expect(presentation).toBe("inline");
     expect(serializedBytes(schema)).toBeLessThanOrEqual(13312);
+  });
+});
+
+describe("compact advertised input schema depth cap", () => {
+  it("keeps the levels that fit and accepts any value below them", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        mode: { type: "string", enum: ["fast", "full"] },
+        tree: nested(8, { type: "string", minLength: 3 }),
+      },
+      required: ["mode", "tree"],
+      additionalProperties: false,
+    };
+    expect(schemaTreeDepth(schema)).toBeGreaterThan(
+      COMPACT_INPUT_SCHEMA_MAX_DEPTH,
+    );
+    const { schema: capped, presentation } = compactAdvertisedInputSchema(
+      schema,
+      13 * 1024,
+    );
+    expect(presentation).toBe("capped");
+    expect(schemaTreeDepth(capped)).toBeLessThanOrEqual(
+      COMPACT_INPUT_SCHEMA_MAX_DEPTH,
+    );
+    const validate = new Ajv2020({ strict: false }).compile(capped);
+    // Shallow structure is still enforced by the advertisement.
+    expect(validate({ tree: nestedValue(8, "deep") })).toBe(false);
+    expect(validate({ mode: "slow", tree: nestedValue(8, "deep") })).toBe(
+      false,
+    );
+    expect(validate({ mode: "fast", tree: {}, extra: 1 })).toBe(false);
+    expectWidened(schema, capped, [
+      { mode: "fast", tree: nestedValue(8, "deep") },
+      { mode: "full", tree: nestedValue(8, "abc") },
+    ]);
+    // Below the cap the server's canonical schema owns validation.
+    expect(validate({ mode: "fast", tree: nestedValue(8, "x") })).toBe(true);
+  });
+
+  it("turns a oneOf with a widened branch into anyOf", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        value: {
+          oneOf: [nested(5, { type: "string" }), { type: "integer" }],
+        },
+      },
+      required: ["value"],
+    };
+    const { schema: capped, presentation } = compactAdvertisedInputSchema(
+      schema,
+      13 * 1024,
+    );
+    expect(presentation).toBe("capped");
+    const value = (capped.properties as Record<string, unknown>)
+      .value as Record<string, unknown>;
+    expect(value).not.toHaveProperty("oneOf");
+    expect(value.anyOf).toHaveLength(2);
+    // An integer now matches both alternatives, which oneOf would reject.
+    expectWidened(schema, capped, [
+      { value: 7 },
+      { value: nestedValue(5, "text") },
+    ]);
+    expect(new Ajv2020({ strict: false }).compile(capped)({ value: 7 })).toBe(
+      true,
+    );
+  });
+
+  // Each input is accepted by the original only because a deep part fails
+  // to match, which a wrongly widened `not` or `if` would stop rejecting.
+  it.each([
+    [
+      "not",
+      { not: nested(9, { type: "string" }) },
+      ["not"],
+      [{ payload: nestedValue(9, 123) }, { payload: {} }],
+    ],
+    [
+      "if",
+      {
+        if: {
+          properties: { next: nested(8, { const: "x" }) },
+          required: ["next"],
+        },
+        then: { required: ["kind"] },
+        else: { required: ["other"] },
+      },
+      ["if", "then", "else"],
+      [
+        { payload: { next: nestedValue(8, "y"), other: 1 } },
+        { payload: { next: nestedValue(8, "x"), kind: 1 } },
+      ],
+    ],
+  ] as const)(
+    "drops %s instead of widening it, since that would narrow the schema",
+    (_keyword, conditional, removed, inputs) => {
+      const schema = {
+        type: "object",
+        properties: { payload: { type: "object", ...conditional } },
+      };
+      const { schema: capped } = compactAdvertisedInputSchema(
+        schema,
+        13 * 1024,
+      );
+      const payload = (capped.properties as Record<string, unknown>)
+        .payload as Record<string, unknown>;
+      for (const keyword of removed)
+        expect(payload).not.toHaveProperty(keyword);
+      expect(payload.type).toBe("object");
+      const original = new Ajv2020({ strict: false }).compile(schema);
+      for (const input of inputs) expect(original(input)).toBe(true);
+      expectWidened(schema, capped, inputs);
+    },
+  );
+
+  it("leaves schemas within the depth limit unchanged", () => {
+    const schema = {
+      type: "object",
+      properties: { tree: nested(2, { type: "string" }) },
+    };
+    expect(compactAdvertisedInputSchema(schema, 13 * 1024)).toMatchObject({
+      presentation: "inline",
+      schema,
+    });
   });
 });

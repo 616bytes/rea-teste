@@ -17,6 +17,10 @@ import {
   COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
   parseMcpInputSchemaProfile,
 } from "../../../src/config/mcpInputSchemaProfile.js";
+import {
+  COMPACT_INPUT_SCHEMA_MAX_DEPTH,
+  schemaTreeDepth,
+} from "../../../src/contracts/compactInputSchema.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { ToolResultDelivery } from "../../../src/server/toolResult.js";
@@ -194,6 +198,16 @@ describe("MCP compact schema constraints", () => {
     expect(
       tooDeep.map(({ name, inputSchema }) => [name, schemaDepth(inputSchema)]),
     ).toEqual([]);
+  });
+
+  it("advertises every tool input schema within the client nesting limit", async () => {
+    const server = compactServer();
+    registerCatalog(server);
+    const tools = await listToolsThroughTransport(server);
+    const deep = tools
+      .map(({ name, inputSchema }) => [name, schemaTreeDepth(inputSchema)])
+      .filter(([, depth]) => Number(depth) > COMPACT_INPUT_SCHEMA_MAX_DEPTH);
+    expect(deep).toEqual([]);
   });
 
   it("keeps output schemas and tool descriptions identical to the default profile", async () => {

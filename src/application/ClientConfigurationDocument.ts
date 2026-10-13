@@ -1571,7 +1571,7 @@ const registrationManagedKey = (
 ): boolean =>
   Object.hasOwn(REGISTRATION_LAUNCHER_KEYS, key) ||
   Object.hasOwn(REGISTRATION_REMOTE_KEYS, key) ||
-  !registrationFieldAccepted(key, value) ||
+  !registrationFieldAccepted(dialect, key, value) ||
   (key === "tools" && !keepsCopilotTools(dialect)) ||
   (key === "enabled" && value === false) ||
   (key === "enable" && value === false && dialect === "zcode") ||

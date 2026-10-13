@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ClientRegistrationDialect } from "./ClientConfigurationDocument.js";
 
 /**
  * Registration-status fields doctor parses on every client. User fields
@@ -22,18 +23,23 @@ export const registrationSchema = z
   })
   .passthrough();
 
-const registrationShape = registrationSchema.shape;
+// Codex's timeouts stay in the shared schema, which doctor parses for every client.
+const codexRegistrationSchema = registrationSchema.extend({
+  enabled_tools: z.array(z.string()).optional(),
+  disabled_tools: z.array(z.string()).optional(),
+});
 
-const isRegistrationField = (
-  key: string,
-): key is keyof typeof registrationShape =>
-  Object.hasOwn(registrationShape, key);
+/** Client-specific parsing is shared by retention and registration diagnostics. */
+export const registrationSchemaFor = (dialect: ClientRegistrationDialect) =>
+  dialect === "toml" ? codexRegistrationSchema : registrationSchema;
 
-/** Whether a retained entry value is one registration status can parse. */
+/** Whether a retained field satisfies the selected client's known contract. */
 export const registrationFieldAccepted = (
+  dialect: ClientRegistrationDialect,
   key: string,
   value: unknown,
-): boolean =>
-  isRegistrationField(key)
-    ? registrationShape[key].safeParse(value).success
-    : true;
+): boolean => {
+  const shape: Readonly<Record<string, z.ZodType>> = registrationSchemaFor(dialect).shape;
+  const field = Object.hasOwn(shape, key) ? shape[key] : undefined;
+  return field === undefined || field.safeParse(value).success;
+};

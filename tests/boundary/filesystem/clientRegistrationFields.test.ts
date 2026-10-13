@@ -270,3 +270,23 @@ it("replaces a remote server entry instead of merging its fields", async () => {
       .rea,
   ).toEqual(clientRegistrationEntry("json", command, {}));
 });
+
+it.each([
+  ["tool_timeout_sec", "900"],
+  ["enabled_tools", "analyze_function"],
+  ["disabled_tools", [123]],
+] as const)("repairs invalid Codex field %s before reporting alignment", async (field, value) => {
+  const root = await createTestTempDirectory("rea-codex-field-repair-");
+  const configPath = join(root, "config.toml");
+  const client: SetupClient = { name: "codex", format: "toml", configPath };
+  await writeFile(configPath, serializeClientConfiguration({ mcp_servers: {
+    rea: { command: "rea", args: ["mcp"], [field]: value, timeout_note: "keep" },
+  } }, "toml"));
+  expect((await configureClientConfiguration(client, {}, command)).status).toBe("configured");
+  const entry = parseClientConfiguration(await readFile(configPath, "utf8"), "toml").servers.rea;
+  // Setup writes its own tool_timeout_sec for Codex, so only the invalid value must be gone.
+  expect(entry).not.toHaveProperty(field, value);
+  expect(entry).toHaveProperty("timeout_note", "keep");
+  expect(await clientConfigurationAligned(client, {}, command)).toBe(true);
+  expect((await configureClientConfiguration(client, {}, command)).status).toBe("unchanged");
+});

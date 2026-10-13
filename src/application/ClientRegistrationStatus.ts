@@ -12,7 +12,10 @@ import { isAbsolute, resolve } from "node:path";
 import { z } from "zod";
 import { valid } from "semver";
 
-import { registrationSchema, registrationSchemaFor } from "./ClientRegistrationShape.js";
+import {
+  registrationSchema,
+  registrationSchemaFor,
+} from "./ClientRegistrationShape.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import {
@@ -435,7 +438,9 @@ const parseRegistration = (
       args,
     });
   }
-  const registration = registrationSchemaFor(client.format ?? "json").parse(value);
+  const registration = registrationSchemaFor(client.format ?? "json").parse(
+    value,
+  );
   if (
     client.format === "kimi" &&
     registration.transport !== undefined &&

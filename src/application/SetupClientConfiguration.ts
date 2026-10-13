@@ -580,7 +580,6 @@ const inspectClientDocument = async (
         "The existing configuration is malformed. Repair it before setup applies any other changes.",
     };
   }
-
 };
 
 const clientRegistrationDialect = (

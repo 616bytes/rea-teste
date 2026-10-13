@@ -39,7 +39,8 @@ export const registrationFieldAccepted = (
   key: string,
   value: unknown,
 ): boolean => {
-  const shape: Readonly<Record<string, z.ZodType>> = registrationSchemaFor(dialect).shape;
+  const shape: Readonly<Record<string, z.ZodType>> =
+    registrationSchemaFor(dialect).shape;
   const field = Object.hasOwn(shape, key) ? shape[key] : undefined;
   return field === undefined || field.safeParse(value).success;
 };

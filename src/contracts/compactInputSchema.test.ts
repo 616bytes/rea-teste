@@ -491,3 +491,85 @@ describe("compact advertised input schema depth cap", () => {
     });
   });
 });
+
+describe("compact depth cap with dependent keywords", () => {
+  it("drops maxContains when it widens contains", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        list: {
+          type: "array",
+          contains: nested(7, { const: "match" }),
+          maxContains: 1,
+        },
+      },
+    };
+    const { schema: capped } = compactAdvertisedInputSchema(schema, 13 * 1024);
+    const list = (capped.properties as Record<string, unknown>).list as Record<
+      string,
+      unknown
+    >;
+    expect(list).not.toHaveProperty("maxContains");
+    // One item matches the original; the other differs only below the cap.
+    const input = {
+      list: [nestedValue(7, "match"), nestedValue(7, "other")],
+    };
+    expect(new Ajv2020({ strict: false }).compile(schema)(input)).toBe(true);
+    expectWidened(schema, capped, [input]);
+  });
+
+  it.each([
+    [
+      "a dropped if",
+      {
+        type: "object",
+        properties: { next: {} },
+        if: {
+          properties: { next: nested(8, { const: "x" }) },
+          required: ["next"],
+        },
+        then: { properties: { kind: {} } },
+        unevaluatedProperties: false,
+      },
+      { next: nestedValue(8, "x"), kind: 1 },
+    ],
+    [
+      "a replaced allOf branch",
+      {
+        type: "object",
+        properties: {
+          a: {
+            type: "object",
+            properties: {
+              b: {
+                type: "object",
+                properties: {
+                  c: {
+                    type: "object",
+                    allOf: [{ properties: { foo: { type: "string" } } }],
+                    unevaluatedProperties: false,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      { a: { b: { c: { foo: "kept" } } } },
+    ],
+  ] as const)(
+    "drops unevaluatedProperties that relied on %s",
+    (_case, schema, input) => {
+      expect(schemaTreeDepth(schema)).toBeGreaterThan(
+        COMPACT_INPUT_SCHEMA_MAX_DEPTH,
+      );
+      const { schema: capped } = compactAdvertisedInputSchema(
+        schema,
+        13 * 1024,
+      );
+      expect(JSON.stringify(capped)).not.toContain("unevaluatedProperties");
+      expect(new Ajv2020({ strict: false }).compile(schema)(input)).toBe(true);
+      expectWidened(schema, capped, [input]);
+    },
+  );
+});

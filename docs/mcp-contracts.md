@@ -749,7 +749,10 @@ JSON Schema:
   advertised as accepting any JSON value. The result only ever accepts more
   than the canonical schema: a `oneOf` with a widened alternative becomes
   `anyOf`, and a `not` or an `if` with its `then` and `else` is left out
-  rather than widened, since widening those would narrow the schema. The
+  rather than widened, since widening those would narrow the schema. A
+  widened `contains` loses its `maxContains`, and `unevaluatedProperties` and
+  `unevaluatedItems` leave any schema object that capping changed, because
+  removed or replaced parts no longer mark what they had evaluated. The
   default `full` profile is not depth-limited.
 
 Boundary tests pin every advertised compact schema to the budget and the

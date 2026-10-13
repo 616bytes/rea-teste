@@ -261,12 +261,22 @@ const narrowingWhenWidened: Readonly<Record<string, readonly string[]>> = {
   if: ["if", "then", "else"],
 };
 
+// Evaluation annotations from a removed or replaced subschema no longer mark
+// properties or items as evaluated, so these leave whenever their object
+// changes rather than rejecting what the removed parts had allowed.
+const unevaluatedKeys = ["unevaluatedProperties", "unevaluatedItems"];
+
+const sameItems = (left: readonly unknown[], right: readonly unknown[]) =>
+  left.length === right.length &&
+  left.every((child, index) => child === right[index]);
+
 /**
  * Keep every schema level that fits within `maximum` and replace a subschema
  * that does not with one accepting every JSON value, or drop it where an
  * accepting schema would narrow its parent. The result only ever accepts
- * more than its input. Returns undefined when this node cannot fit even then,
- * so its parent replaces it instead.
+ * more than its input. Unchanged subschemas keep their identity. Returns
+ * undefined when this node cannot fit even then, so its parent replaces it
+ * instead.
  */
 const capSchemaDepth = (
   node: unknown,
@@ -276,6 +286,12 @@ const capSchemaDepth = (
   if (schemaTreeDepth(node, depth) <= maximum) return node;
   if (!isSchemaObject(node)) return undefined;
   const dropped = new Set<string>();
+  const drop = (names: readonly string[]): void => {
+    for (const name of names) {
+      dropped.add(name);
+      delete out[name];
+    }
+  };
   const capChild = (child: unknown, childDepth: number): unknown => {
     const capped = capSchemaDepth(child, childDepth, maximum);
     if (capped !== undefined) return capped;
@@ -283,7 +299,20 @@ const capSchemaDepth = (
       ? anyJsonValue()
       : undefined;
   };
+  const capList = (
+    value: readonly unknown[],
+  ): { items: unknown[]; replaced: boolean } | undefined => {
+    const exact = value.map((child) =>
+      capSchemaDepth(child, depth + 2, maximum),
+    );
+    const items = exact.map((child, index) =>
+      child === undefined ? capChild(value[index], depth + 2) : child,
+    );
+    if (items.some((child) => child === undefined)) return undefined;
+    return { items, replaced: exact.some((child) => child === undefined) };
+  };
   const out: Record<string, unknown> = {};
+  let changed = false;
   for (const [key, value] of Object.entries(node)) {
     if (dropped.has(key)) continue;
     let capped: unknown = value;
@@ -293,58 +322,46 @@ const capSchemaDepth = (
         capChild(child, depth + 2),
       ]);
       if (entries.some(([, child]) => child === undefined)) return undefined;
-      capped = Object.fromEntries(entries);
+      if (entries.some(([name, child]) => child !== value[name as string]))
+        capped = Object.fromEntries(entries);
     } else if (schemaArrays.has(key) && Array.isArray(value)) {
-      const exact = value.map((child) =>
-        capSchemaDepth(child, depth + 2, maximum),
-      );
-      const items = exact.map((child, index) =>
-        child === undefined ? capChild(value[index], depth + 2) : child,
-      );
-      if (items.some((child) => child === undefined)) return undefined;
-      // A widened branch can make a value match two alternatives, which oneOf
-      // rejects; anyOf accepts everything the oneOf did.
-      if (
-        key === "oneOf" &&
-        items.some((child, index) => child !== value[index])
-      ) {
-        if (Object.hasOwn(node, "anyOf")) return undefined;
-        out.anyOf = items;
-        continue;
+      const list = capList(value);
+      if (list === undefined) return undefined;
+      if (!sameItems(list.items, value)) {
+        capped = list.items;
+        // A widened branch can make a value match two alternatives, which
+        // oneOf rejects; anyOf accepts everything the oneOf did.
+        if (key === "oneOf") {
+          if (Object.hasOwn(node, "anyOf")) return undefined;
+          out.anyOf = capped;
+          changed = true;
+          continue;
+        }
       }
-      capped = items;
     } else if (schemaChildren.has(key)) {
       const narrowing = narrowingWhenWidened[key];
-      const exact = Array.isArray(value)
-        ? value.map((child) => capSchemaDepth(child, depth + 2, maximum))
-        : capSchemaDepth(value, depth + 1, maximum);
-      const fits = Array.isArray(exact)
-        ? exact.every((child) => child !== undefined)
-        : exact !== undefined;
-      const changed =
-        Array.isArray(exact) && Array.isArray(value)
-          ? exact.some((child, index) => child !== value[index])
-          : exact !== value;
-      if (narrowing !== undefined && changed) {
-        for (const name of narrowing) {
-          dropped.add(name);
-          delete out[name];
-        }
-        continue;
-      } else if (fits) capped = exact;
-      else {
-        capped = Array.isArray(value)
-          ? value.map((child) => capChild(child, depth + 2))
-          : capChild(value, depth + 1);
-        if (
-          capped === undefined ||
-          (Array.isArray(capped) && capped.some((child) => child === undefined))
-        )
-          return undefined;
+      if (Array.isArray(value)) {
+        const list = capList(value);
+        if (list === undefined) return undefined;
+        if (!sameItems(list.items, value)) capped = list.items;
+      } else {
+        capped = capSchemaDepth(value, depth + 1, maximum);
+        if (capped === undefined && narrowing === undefined)
+          capped = capChild(value, depth + 1);
+        if (capped === undefined && narrowing === undefined) return undefined;
       }
+      if (capped !== value && narrowing !== undefined) {
+        drop(narrowing);
+        changed = true;
+        continue;
+      }
+      // A wider `contains` can match more items than maxContains allows.
+      if (capped !== value && key === "contains") drop(["maxContains"]);
     }
+    if (capped !== value) changed = true;
     out[key] = capped;
   }
+  if (changed) drop(unevaluatedKeys);
   return schemaTreeDepth(out, depth) <= maximum ? out : undefined;
 };
 

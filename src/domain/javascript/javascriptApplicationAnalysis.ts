@@ -55,6 +55,7 @@ const electronBoundarySummarySchema = z.strictObject({
   resolved_utility_entrypoints: countSchema,
   native_addon_bindings: countSchema,
   resolved_native_addon_bindings: countSchema,
+  protocol_registrations: countSchema,
 });
 
 const reconstructionStatisticsSchema = z.strictObject({

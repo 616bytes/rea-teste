@@ -156,6 +156,66 @@ it("keeps arbitrary template expressions unresolved while retaining literal name
   ).toBe("unknown");
 });
 
+it("retains complete returned objects with all supported primitive computed keys", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    export function create() {
+      return { [\`token\`]: "VALUE", [true]: 1, [false]: 2, [null]: 3 };
+    }
+  `);
+  expect(
+    ir.callables.find(({ name }) => name === "create")?.returnSites[0]?.value,
+  ).toEqual({
+    status: "object",
+    unknownProperties: false,
+    omittedProperties: 0,
+    properties: [
+      {
+        name: "false",
+        presence: "present",
+        value: { status: "literal", value: 2 },
+      },
+      {
+        name: "null",
+        presence: "present",
+        value: { status: "literal", value: 3 },
+      },
+      {
+        name: "token",
+        presence: "present",
+        value: { status: "literal", value: "VALUE" },
+      },
+      {
+        name: "true",
+        presence: "present",
+        value: { status: "literal", value: 1 },
+      },
+    ],
+  });
+});
+
+it("preserves partial returned-object coverage for an unresolved computed key", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    export function create(key) { return { [\`token\`]: "VALUE", [key]: 1 }; }
+  `);
+  expect(
+    ir.callables.find(({ name }) => name === "create")?.returnSites[0]?.value,
+  ).toEqual({
+    status: "object",
+    unknownProperties: true,
+    omittedProperties: 1,
+    properties: [
+      {
+        name: "token",
+        presence: "present",
+        value: {
+          status: "unknown",
+          reason: "A later property may overwrite this value.",
+        },
+      },
+    ],
+  });
+});
+
 it("retains supported primitive literal method names", () => {
   const ir = analyzeJavaScriptSemantics(`
     const target = { [\`task\`]() { return 42; } };

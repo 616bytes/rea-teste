@@ -29,9 +29,17 @@ const codexRegistrationSchema = registrationSchema.extend({
   disabled_tools: z.array(z.string()).optional(),
 });
 
+const zcodeRegistrationSchema = registrationSchema.extend({
+  enable: z.boolean().optional(),
+});
+
 /** Client-specific parsing is shared by retention and registration diagnostics. */
 export const registrationSchemaFor = (dialect: ClientRegistrationDialect) =>
-  dialect === "toml" ? codexRegistrationSchema : registrationSchema;
+  dialect === "toml"
+    ? codexRegistrationSchema
+    : dialect === "zcode"
+      ? zcodeRegistrationSchema
+      : registrationSchema;
 
 /** Whether a retained field satisfies the selected client's known contract. */
 export const registrationFieldAccepted = (

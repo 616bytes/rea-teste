@@ -430,7 +430,7 @@ export const describeDshRegistrationRetention = (
     .filter((key) => Object.hasOwn(entry, key))
     .sort((left, right) => left.localeCompare(right))
     .map((key) => `${key} with ${JSON.stringify(entry[key])}`);
-  return `Other fields on the existing Cordis server are kept. Setup replaces ${replaced.join(", ")}. Environment overrides are merged.`;
+  return `Other fields on the existing Cordis server are kept, except the row-level disabled flag is removed to activate the registration. Setup replaces ${replaced.join(", ")}. Environment overrides are merged.`;
 };
 
 export const dshClientRegistrationEntry = (

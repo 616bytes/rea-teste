@@ -34,6 +34,7 @@ const localVariableEntry = z.strictObject({
   name: z.string().nullable(),
   descriptor: z.string().nullable(),
   slot: z.number().int().nonnegative(),
+  out_of_range: z.boolean(),
 });
 const localVariableTypeEntry = z.strictObject({
   start_pc: z.number().int().nonnegative(),
@@ -41,6 +42,7 @@ const localVariableTypeEntry = z.strictObject({
   name: z.string().nullable(),
   signature: z.string().nullable(),
   slot: z.number().int().nonnegative(),
+  out_of_range: z.boolean(),
 });
 const table = <Entry extends z.ZodTypeAny>(entry: Entry) =>
   z.strictObject({
@@ -162,6 +164,7 @@ export const buildJavaDebugMetadataResult = (
           name: e.name,
           descriptor: e.descriptor,
           slot: e.slot,
+          out_of_range: e.outOfRange,
         })),
       },
       local_variable_type_table: {
@@ -173,6 +176,7 @@ export const buildJavaDebugMetadataResult = (
           name: e.name,
           signature: e.signature,
           slot: e.slot,
+          out_of_range: e.outOfRange,
         })),
       },
       reused_slots: [...m.reusedSlots],

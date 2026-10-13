@@ -41,7 +41,8 @@ The normalized result binds every fact to exact identity:
 - `methods[]` — each with `name`, `descriptor`, debugging `state`, and the three
   decoded tables:
   - `line_number_table` — `start_pc` → `line_number` entries.
-  - `local_variable_table` — `start_pc`, `length`, `name`, `descriptor`, `slot`.
+  - `local_variable_table` — `start_pc`, `length`, `name`, `descriptor`, `slot`,
+    and `out_of_range` (the scope lies outside the method's code length).
   - `local_variable_type_table` — as above with a generic `signature`.
   - `reused_slots` — slots that appear in more than one local-variable entry.
     Reuse is legal; a reused slot may denote different variables across disjoint
@@ -73,9 +74,9 @@ inspection is independent of the Android/JADX lane and of the JVM runtime
 tagged error algebra rather than throwing or over-allocating. A single class
 file far over the input budget is refused before allocation, and a decoded
 result that would exceed the inline output budget is refused rather than
-returned oversized. Scope ranges (`start_pc`/`length`) are surfaced as declared;
-they are not yet validated against the method's code length, so an
-out-of-range scope is reported as-is rather than flagged.
+returned oversized. A local-variable scope whose `[start_pc, start_pc+length)`
+lies outside the method's code length is surfaced as declared and flagged
+`out_of_range: true`, never silently corrected.
 
 Verified by the `verify:jvm` real lane, which compiles owned `javac` fixtures
 with `-g` and `-g:none`, cross-checks every decoded fact against `javap`, and

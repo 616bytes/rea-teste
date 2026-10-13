@@ -180,6 +180,33 @@ describe("decodeClassDebugMetadata", () => {
     ]);
   });
 
+  it("flags a local-variable scope that lies outside the method code length", () => {
+    // codeAttrInfo sets code_length = 1.
+    const code = codeAttrInfo(
+      subAttrs(
+        1,
+        new Blob().attr(
+          5,
+          localVariableTable([
+            { startPc: 0, length: 1, slot: 0 }, // within [0,1]
+            { startPc: 0, length: 5, slot: 1 }, // extends past code_length
+          ]),
+        ),
+      ).parts,
+    );
+    const cls = parseJavaClassFile(
+      classWith(new Blob().u2(1).attr(3, code), new Blob().u2(0)),
+    );
+    expect(cls.ok).toBe(true);
+    if (!cls.ok) return;
+    const entries = decodeClassDebugMetadata(cls.value).methods[0]!
+      .localVariables.entries;
+    expect(entries[0]!.outOfRange).toBe(false);
+    expect(entries[1]!.outOfRange).toBe(true);
+  });
+});
+
+describe("decodeClassDebugMetadata — states and edge cases", () => {
   it("surfaces reused local slots without collapsing the entries", () => {
     const code = codeAttrInfo(
       subAttrs(

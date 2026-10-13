@@ -45,6 +45,8 @@ export interface LocalVariableEntry {
   readonly descriptor: string | null;
   /** The local-variable array slot; wide (long/double) locals occupy this slot and the next. */
   readonly slot: number;
+  /** The scope `[startPc, startPc+length)` lies outside the method's code length. */
+  readonly outOfRange: boolean;
 }
 
 export interface LocalVariableTypeEntry {
@@ -55,6 +57,8 @@ export interface LocalVariableTypeEntry {
   readonly signatureIndex: number;
   readonly signature: string | null;
   readonly slot: number;
+  /** The scope `[startPc, startPc+length)` lies outside the method's code length. */
+  readonly outOfRange: boolean;
 }
 
 /** Overall debugging-readiness of one method's body. */
@@ -173,9 +177,17 @@ const decodeLineNumberTable = (
     lineNumber: u2(cursor),
   }));
 
+/** A scope lies outside the code when it starts at/after the end or extends past it. */
+const scopeOutOfRange = (
+  startPc: number,
+  length: number,
+  codeLength: number,
+): boolean => startPc > codeLength || startPc + length > codeLength;
+
 const decodeLocalVariableTable = (
   infos: readonly Uint8Array[],
   pool: readonly ConstantPoolEntry[],
+  codeLength: number,
 ): DebugTable<LocalVariableEntry> =>
   decodeTable(infos, 10, (cursor) => {
     const startPc = u2(cursor);
@@ -191,12 +203,14 @@ const decodeLocalVariableTable = (
       descriptorIndex,
       descriptor: resolveConstantUtf8(pool, descriptorIndex),
       slot,
+      outOfRange: scopeOutOfRange(startPc, length, codeLength),
     };
   });
 
 const decodeLocalVariableTypeTable = (
   infos: readonly Uint8Array[],
   pool: readonly ConstantPoolEntry[],
+  codeLength: number,
 ): DebugTable<LocalVariableTypeEntry> =>
   decodeTable(infos, 10, (cursor) => {
     const startPc = u2(cursor);
@@ -212,11 +226,14 @@ const decodeLocalVariableTypeTable = (
       signatureIndex,
       signature: resolveConstantUtf8(pool, signatureIndex),
       slot,
+      outOfRange: scopeOutOfRange(startPc, length, codeLength),
     };
   });
 
-/** Advance a cursor past the fixed Code header and exception table to its sub-attributes. */
-const seekCodeSubAttributes = (code: Uint8Array): ByteCursor | null => {
+/** Advance past the fixed Code header and exception table to its sub-attributes, keeping code_length. */
+const seekCodeSubAttributes = (
+  code: Uint8Array,
+): { readonly cursor: ByteCursor; readonly codeLength: number } | null => {
   const cursor = new ByteCursor(code);
   if (!cursor.u2().ok) return null; // max_stack
   if (!cursor.u2().ok) return null; // max_locals
@@ -228,7 +245,7 @@ const seekCodeSubAttributes = (code: Uint8Array): ByteCursor | null => {
     !cursor.slice(exceptionTableLength.value * 8).ok
   )
     return null;
-  return cursor;
+  return { cursor, codeLength: codeLength.value };
 };
 
 const computeReusedSlots = (
@@ -288,11 +305,11 @@ export const decodeMethodDebugMetadata = (
     };
   }
 
-  const subCursor = seekCodeSubAttributes(code);
-  const subAttrs = subCursor ? parseAttributes(subCursor, pool) : null;
+  const seeked = seekCodeSubAttributes(code);
+  const subAttrs = seeked ? parseAttributes(seeked.cursor, pool) : null;
   const attributes = subAttrs && subAttrs.ok ? subAttrs.value : [];
-  const codeMalformed =
-    subCursor === null || (subAttrs !== null && !subAttrs.ok);
+  const codeMalformed = seeked === null || (subAttrs !== null && !subAttrs.ok);
+  const codeLength = seeked?.codeLength ?? 0;
 
   const lineNumbers = decodeLineNumberTable(
     collectAttributes(attributes, "LineNumberTable"),
@@ -300,10 +317,12 @@ export const decodeMethodDebugMetadata = (
   const localVariables = decodeLocalVariableTable(
     collectAttributes(attributes, "LocalVariableTable"),
     pool,
+    codeLength,
   );
   const localVariableTypes = decodeLocalVariableTypeTable(
     collectAttributes(attributes, "LocalVariableTypeTable"),
     pool,
+    codeLength,
   );
 
   const state = codeMalformed

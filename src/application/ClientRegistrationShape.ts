@@ -25,6 +25,9 @@ export const registrationSchema = z
 
 // Codex's timeouts stay in the shared schema, which doctor parses for every client.
 const codexRegistrationSchema = registrationSchema.extend({
+  required: z.boolean().optional(),
+  cwd: z.string().optional(),
+  env_vars: z.array(z.string()).optional(),
   enabled_tools: z.array(z.string()).optional(),
   disabled_tools: z.array(z.string()).optional(),
 });

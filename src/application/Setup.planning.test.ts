@@ -495,7 +495,7 @@ describe("setup approval disclosure", () => {
     const [executable = "rea", ...args] = host.registrationCommand;
 
     expect(detail).toContain(
-      "Other fields on the existing Cordis server are kept.",
+      'Other fields on the existing Cordis server are kept, except the row-level disabled flag is removed to activate the registration and name is set to "@deepseek-ai/dsh-mcp-client".',
     );
     expect(detail).toContain(`serverName with ${JSON.stringify("rea")}`);
     expect(detail).toContain(`transport with ${JSON.stringify("stdio")}`);

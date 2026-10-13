@@ -1639,7 +1639,12 @@ export const describeClientRegistrationRetention = (
   const removed = keepsGrokDisabledFlag(dialect)
     ? "Remote-server keys, an enabled: false switch, and registration fields that do not parse are removed. A boolean disabled value is kept."
     : "Remote-server keys, switches that turn the server off, and registration fields that do not parse are removed.";
-  const tools = keepsCopilotTools(dialect) ? "" : " A tools value is removed.";
+  const tools =
+    dialect === "toml"
+      ? " Invalid Codex tools values are removed; valid per-tool maps are kept."
+      : keepsCopilotTools(dialect)
+        ? ""
+        : " A tools value is removed.";
   const replacement =
     replaced.length === 0
       ? `${removed}${tools}`

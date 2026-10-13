@@ -165,6 +165,33 @@ it("drops a Codex tools array from a local command entry", async () => {
   });
 });
 
+it("retains valid Codex per-tool approval maps", async () => {
+  const root = await createTestTempDirectory(
+    "rea-registration-codex-tool-map-",
+  );
+  const configPath = join(root, "config.toml");
+  const client: SetupClient = { name: "codex", format: "toml", configPath };
+  const tools = {
+    inspect_android_package: { approval_mode: "approve" },
+  };
+  const existing = {
+    ...clientRegistrationEntry("toml", ["rea-old", "mcp"], environment),
+    tools,
+  };
+  await writeFile(
+    configPath,
+    serializeClientConfiguration(configurationWith("toml", existing), "toml"),
+  );
+
+  expect(await configureClientConfiguration(client, {}, command)).toMatchObject(
+    { status: "configured" },
+  );
+  expect(
+    parseClientConfiguration(await readFile(configPath, "utf8"), "toml").servers
+      .rea,
+  ).toMatchObject({ tools });
+});
+
 it("drops malformed registration fields from a local command entry", async () => {
   const root = await createTestTempDirectory("rea-registration-schema-");
   const configPath = join(root, "mcp.json");

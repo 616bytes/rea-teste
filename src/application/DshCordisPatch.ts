@@ -430,7 +430,7 @@ export const describeDshRegistrationRetention = (
     .filter((key) => Object.hasOwn(entry, key))
     .sort((left, right) => left.localeCompare(right))
     .map((key) => `${key} with ${JSON.stringify(entry[key])}`);
-  return `Other fields on the existing Cordis server are kept, except the row-level disabled flag is removed to activate the registration and name is set to ${JSON.stringify(DSH_CLIENT_PACKAGE)}. Setup replaces ${replaced.join(", ")}. Environment overrides are merged.`;
+  return `Other fields on the retained Cordis server row are kept. Duplicate existing rows with id ${JSON.stringify(DSH_ENTRY_ID)} are collapsed to one canonical row, so fields unique to removed rows are discarded. The row-level disabled flag is removed to activate the registration and name is set to ${JSON.stringify(DSH_CLIENT_PACKAGE)}. Setup replaces ${replaced.join(", ")}. Environment overrides are merged.`;
 };
 
 export const dshClientRegistrationEntry = (

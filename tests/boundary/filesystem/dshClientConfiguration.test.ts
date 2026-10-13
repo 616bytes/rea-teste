@@ -359,7 +359,8 @@ describe("DeepSeek Harness registration identity", () => {
   it("discloses duplicate row removal in the setup plan detail", () => {
     const detail = describeDshRegistrationRetention(command);
     expect(detail).toContain('Duplicate existing rows with id "rea-mcp"');
-    expect(detail).toContain("fields unique to removed rows are discarded");
+    expect(detail).toContain("using the last matching row");
+    expect(detail).toContain("fields unique to earlier rows are discarded");
   });
 
   it("reports a foreign server name as stale instead of aligned", async () => {

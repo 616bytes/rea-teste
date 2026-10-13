@@ -13,6 +13,7 @@ import { z } from "zod";
 import { valid } from "semver";
 
 import {
+  type ParsedClientRegistration,
   registrationSchema,
   registrationSchemaFor,
 } from "./ClientRegistrationShape.js";
@@ -303,7 +304,7 @@ export const readClientRegistrationInspections = async (
 };
 
 const registrationActivation = (
-  registration: z.output<typeof registrationSchema>,
+  registration: ParsedClientRegistration,
   client: SetupClient,
   parsed: ClientConfigurationDocument,
 ): "enabled" | "disabled" =>
@@ -323,7 +324,7 @@ const registrationAligned = ({
   platform,
   kimiInputSchemaProfileSelected,
 }: {
-  readonly registration: z.output<typeof registrationSchema>;
+  readonly registration: ParsedClientRegistration;
   readonly client: SetupClient;
   readonly currentCommandPath: string | undefined;
   readonly platform: NodeJS.Platform;
@@ -416,7 +417,7 @@ const registrationAligned = ({
 const parseRegistration = (
   value: unknown,
   client: SetupClient,
-): z.output<typeof registrationSchema> => {
+): ParsedClientRegistration => {
   if (client.format === "dsh")
     return registrationSchema
       .pick({ command: true, args: true, serverName: true, transport: true })
@@ -509,7 +510,7 @@ const configuredStatus = (
 
 const timeoutAdvisory = (
   client: SetupClient,
-  registration: z.output<typeof registrationSchema>,
+  registration: ParsedClientRegistration,
   timeoutInputs: McpToolTimeoutInputs,
 ): string | undefined => {
   const toolTimeout =

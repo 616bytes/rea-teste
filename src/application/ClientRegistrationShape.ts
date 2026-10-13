@@ -25,13 +25,29 @@ export const registrationSchema = z
 
 // Codex's timeouts stay in the shared schema, which doctor parses for every client.
 const codexRegistrationSchema = registrationSchema.extend({
-  tools: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
+  tools: z
+    .record(
+      z.string(),
+      z
+        .object({
+          approval_mode: z
+            .enum(["auto", "prompt", "writes", "approve"])
+            .optional(),
+        })
+        .passthrough(),
+    )
+    .optional(),
   required: z.boolean().optional(),
   cwd: z.string().optional(),
   env_vars: z.array(z.string()).optional(),
   enabled_tools: z.array(z.string()).optional(),
   disabled_tools: z.array(z.string()).optional(),
 });
+
+/** Parsed registrations can use Codex's per-tool object map instead of arrays. */
+export type ParsedClientRegistration =
+  | z.output<typeof registrationSchema>
+  | z.output<typeof codexRegistrationSchema>;
 
 const zcodeRegistrationSchema = registrationSchema.extend({
   enable: z.boolean().optional(),

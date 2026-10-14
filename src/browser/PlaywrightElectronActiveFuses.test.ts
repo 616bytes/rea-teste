@@ -1,6 +1,6 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ELECTRON_FUSE_STATE_BYTES } from "../domain/electron/electronFuses.js";
@@ -95,19 +95,56 @@ describe("assertNodeCliInspectArgumentsSupported", () => {
   });
 
   it("rethrows when signal is aborted during reading", async () => {
-    const root = await createTestTempDirectory("rea-fuse-preflight-");
-    const binaryPath = join(root, "test-binary");
-    const image = thinFuseImage(OBSIDIAN_FUSE_BYTES);
-    await writeFile(binaryPath, image.bytes);
-
     const controller = new AbortController();
-    controller.abort();
+    const readFuseImage = vi.fn(async () => {
+      controller.abort();
+      throw new Error("aborted during read");
+    });
 
     await expect(
-      assertNodeCliInspectArgumentsSupported(binaryPath, {
+      assertNodeCliInspectArgumentsSupported("/nonexistent/binary", {
         signal: controller.signal,
+        readFuseImage,
       }),
     ).rejects.toThrow();
+    expect(readFuseImage).toHaveBeenCalledOnce();
+  });
+
+  it("rejects macOS app bundle when framework binary has disabled inspect fuse", async () => {
+    const root = await createTestTempDirectory("rea-fuse-mac-bundle-");
+    const appBundle = join(root, "Obsidian.app");
+    const launcherBinary = join(appBundle, "Contents", "MacOS", "Obsidian");
+    const frameworkDir = join(
+      appBundle,
+      "Contents",
+      "Frameworks",
+      "Electron Framework.framework",
+      "Versions",
+      "A",
+    );
+    await mkdir(join(appBundle, "Contents", "MacOS"), { recursive: true });
+    await mkdir(frameworkDir, { recursive: true });
+
+    // Launcher binary has no sentinel:
+    await writeFile(launcherBinary, Buffer.from("dummy launcher binary"));
+
+    // Framework binary has the disabled fuse wire:
+    const frameworkBinary = join(frameworkDir, "Electron Framework");
+    await writeFile(frameworkBinary, thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes);
+
+    await expect(
+      assertNodeCliInspectArgumentsSupported(launcherBinary),
+    ).rejects.toThrow(AnalysisUnsupportedTargetError);
+
+    try {
+      await assertNodeCliInspectArgumentsSupported(launcherBinary);
+    } catch (error) {
+      expect(error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+      const targetError = error as AnalysisUnsupportedTargetError;
+      expect(targetError.operation).toBe("capture_electron_scenario");
+      expect(targetError.path).toBe(launcherBinary);
+      expect(targetError.message).toContain("EnableNodeCliInspectArguments");
+    }
   });
 
   it("evaluates matching architecture slice in universal Mach-O binary", async () => {

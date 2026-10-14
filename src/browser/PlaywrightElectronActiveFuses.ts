@@ -1,4 +1,7 @@
+import { basename, dirname } from "node:path";
+
 import { AnalysisUnsupportedTargetError } from "../domain/analysisErrorCore.js";
+import { resolveElectronFuseTarget } from "../electron/ElectronFusePath.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
 
 const OPERATION = "capture_electron_scenario" as const;
@@ -7,7 +10,18 @@ const NODE_CLI_INSPECT_ARGUMENTS_FUSE_INDEX = 3;
 export interface InspectArgumentsPreflightOptions {
   readonly signal?: AbortSignal;
   readonly readFuseImage?: typeof readElectronFuseImage;
+  readonly resolveFuseTarget?: typeof resolveElectronFuseTarget;
 }
+
+const appBundleDirectoryOf = (executablePath: string): string | null => {
+  let current = dirname(executablePath);
+  while (true) {
+    if (basename(current).endsWith(".app")) return current;
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+};
 
 /**
  * Pre-flight verification for active Electron scenario capture.
@@ -28,9 +42,22 @@ export const assertNodeCliInspectArgumentsSupported = async (
 ): Promise<void> => {
   options?.signal?.throwIfAborted();
   const reader = options?.readFuseImage ?? readElectronFuseImage;
+  const resolver = options?.resolveFuseTarget ?? resolveElectronFuseTarget;
   try {
+    let targetPath = executablePath;
+    const bundleDir = appBundleDirectoryOf(executablePath);
+    if (bundleDir !== null) {
+      try {
+        const resolved = await resolver(bundleDir, options?.signal);
+        targetPath = resolved.file.path;
+      } catch (cause: unknown) {
+        if (options?.signal?.aborted) throw cause;
+        targetPath = executablePath;
+      }
+    }
+
     const image = await reader(
-      executablePath,
+      targetPath,
       options?.signal !== undefined ? { signal: options.signal } : undefined,
     );
     if (image.slices.length === 0) return;

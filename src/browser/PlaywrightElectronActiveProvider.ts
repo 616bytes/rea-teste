@@ -95,10 +95,14 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         application: input.application_path,
         root: input.application_root,
       };
-      await assertNodeCliInspectArgumentsSupported(paths.executable, {
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-        readFuseImage: this.readFuseImage,
-      });
+      await runWithExecutionLimits(
+        assertNodeCliInspectArgumentsSupported(paths.executable, {
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+          readFuseImage: this.readFuseImage,
+        }),
+        options.signal,
+        startupDeadline,
+      );
       const captureBaseline =
         await systemProcessOwnershipHost.captureBaseline?.(options.signal);
       if (options.signal?.aborted)

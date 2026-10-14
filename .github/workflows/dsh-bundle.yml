@@ -180,10 +180,11 @@ jobs:
                 gh release upload "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY"
               fi
             done
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
           else
             gh release create "$RELEASE_TAG" release-artifacts/* \
               --repo "$GITHUB_REPOSITORY" \
+              --latest=false \
               --target "$GITHUB_SHA" \
               --title "REA for DeepSeek Harness ${RELEASE_TAG}" \
               --notes-file integrations/deepseek-harness/RELEASE_NOTES.md

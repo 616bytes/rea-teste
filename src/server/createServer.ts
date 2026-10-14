@@ -22,6 +22,8 @@ import { registerRecordedCrashTools } from "./registerRecordedCrashTools.js";
 import { createRecordedCrashService } from "../composition/binaryDiagnostics.js";
 import { createGoBinaryService } from "../composition/go.js";
 import type { GoBinaryService } from "../application/go/GoBinaryService.js";
+import { createElectronFuseService } from "../composition/electronFuses.js";
+import type { ElectronFuseService } from "../application/electron/ElectronFuseService.js";
 import { registerGoTools } from "./registerGoTools.js";
 import { createRustBinaryService } from "../composition/rust.js";
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
@@ -39,8 +41,9 @@ import {
   type ToolResultDelivery,
 } from "./toolResult.js";
 import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
+import { parseMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
 import {
-  COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+  compactPresentationForMcpInputSchemaProfile,
   parseMcpInputSchemaProfile,
 } from "../config/mcpInputSchemaProfile.js";
 import type { CompactInputSchemaPresentation } from "./EvidenceMcpServer.js";
@@ -156,6 +159,7 @@ export interface CreateServerOptions {
   readonly binaryLayout?: BinaryLayoutService;
   readonly goBinary?: GoBinaryService;
   readonly rustBinary?: RustBinaryService;
+  readonly electronFuses?: ElectronFuseService;
   readonly recordedCrash?: RecordedCrashService;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
@@ -250,6 +254,7 @@ const createMcpServer = (
   session: BinarySessionPort | undefined,
   delivery: ToolResultDelivery,
   compactPresentation: CompactInputSchemaPresentation | undefined,
+  omitOutputSchemas: boolean,
 ): EvidenceMcpServer =>
   new EvidenceMcpServer(
     {
@@ -269,6 +274,7 @@ const createMcpServer = (
       : (evidence) => session.recordEvidence(evidence),
     delivery,
     compactPresentation,
+    omitOutputSchemas,
   );
 
 /**
@@ -283,6 +289,7 @@ export const createServer = (
   const session = source.kind === "session" ? source.session : undefined;
   const analysis = source.kind === "session" ? source.session : source.analysis;
   const environment = snapshotEnvironment(options.environment ?? process.env);
+  const omitOutputSchemas = outputSchemasOmitted(environment);
   const providerEnvironment = captureProviderEnvironment(
     options.providerEnvironment,
     environment,
@@ -330,6 +337,7 @@ export const createServer = (
     session,
     delivery,
     selectCompactInputSchemaPresentation(environment),
+    omitOutputSchemas,
   );
   const gdbSessions = new GdbSessionManager({
     environment: providerEnvironment,
@@ -569,6 +577,10 @@ export const createServer = (
         : { availabilityPolicy: availability.policy }),
       androidAnalysisAvailability: (signal) =>
         android.inspectAvailability(signal),
+      adbAnalysisAvailability: (signal) =>
+        adbDevice.inspectAvailability(signal),
+      apktoolAnalysisAvailability: (signal) =>
+        apktool.inspectAvailability(signal),
       startedAt,
     });
   }
@@ -587,6 +599,16 @@ const selectToolResultDelivery = (
   return createToolResultDelivery(configured.value);
 };
 
+const outputSchemasOmitted = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+): boolean => {
+  const configured = parseMcpOutputSchemaProfile(
+    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE,
+  );
+  if (!configured.ok) throw configured.error;
+  return configured.value === "off";
+};
+
 const selectCompactInputSchemaPresentation = (
   environment: Readonly<NodeJS.ProcessEnv>,
 ): CompactInputSchemaPresentation | undefined => {
@@ -594,9 +616,7 @@ const selectCompactInputSchemaPresentation = (
     environment.REA_MCP_INPUT_SCHEMA_PROFILE,
   );
   if (!configured.ok) throw configured.error;
-  return configured.value === "compact"
-    ? { budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES }
-    : undefined;
+  return compactPresentationForMcpInputSchemaProfile(configured.value);
 };
 
 const registerConfiguredAnalysisTools = (
@@ -869,6 +889,7 @@ const registerObservationTools = ({
     evidenceById,
     electron: options.electronObservation,
     electronActive: options.electronActiveObservation,
+    electronFuses: options.electronFuses ?? createElectronFuseService(),
     observationLoadFailure:
       options.optionalProviderLoadFailures?.electronObservation,
     activeLoadFailure:

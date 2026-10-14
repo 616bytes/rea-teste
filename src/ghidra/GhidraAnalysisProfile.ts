@@ -136,7 +136,8 @@ export const resolveGhidraAnalysisProfile = async (
             "address-first-unique-target-source-mapping-v2",
           instruction_flow_evidence: "decoded-return-pcode-v1",
           instruction_references: "exact-address-incoming-v1",
-          function_boundary_observations: "ghidra-terminal-call-limitations-v2",
+          function_boundary_observations:
+            "ghidra-function-boundary-limitations-v3",
           no_return_repair:
             installation.platform === "win32"
               ? "disabled-windows-p0"
@@ -218,7 +219,7 @@ export const resolveGhidraAnalysisProfile = async (
         ].sort(),
         import_mode: "ephemeral-source-immutable",
         ...(target.format === "pe"
-          ? { pdb_observations: "program-info-v1" }
+          ? { pdb_observations: "program-info-v5" }
           : {}),
         annotation_policy: "atomic-function-entry-metadata-v1",
         load_image_observations: "source-mappings-entry-context-v2",
@@ -232,7 +233,8 @@ export const resolveGhidraAnalysisProfile = async (
           "address-first-unique-target-source-mapping-v2",
         instruction_flow_evidence: "decoded-return-pcode-v1",
         instruction_references: "exact-address-incoming-v1",
-        function_boundary_observations: "ghidra-terminal-call-limitations-v2",
+        function_boundary_observations:
+          "ghidra-function-boundary-limitations-v3",
         no_return_repair:
           installation.platform === "win32"
             ? "disabled-windows-p0"

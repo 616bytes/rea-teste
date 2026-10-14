@@ -114,6 +114,14 @@ export class HopperProvider implements AnalysisProviderCandidate {
         reason: `Hopper cannot directly analyze ${target.kind} targets.`,
         diagnostics,
       };
+    if (target.kind === "database" && this.platform === "darwin")
+      return {
+        status: "unsupported",
+        code: "target_kind_unsupported",
+        reason:
+          "This Hopper macOS launcher cannot start REA's analysis bridge when opening a saved Hopper database. Open an executable target instead; saved-database analysis is unavailable until Hopper exposes a database launch route that runs the bridge script.",
+        diagnostics,
+      };
     if (target.kind === "database")
       return {
         status: "supported",
@@ -280,7 +288,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
           ...(preparedImage === undefined
             ? []
             : [
-                "REA loaded a verified thin Mach-O slice from the original FAT64 source. Identity and file offsets refer to the original file. The owned temporary image and its Hopper document close together, including on MCP shutdown.",
+                "REA loaded a verified thin Mach-O slice from the original FAT source. Identity and file offsets refer to the original file. The owned temporary image and its Hopper document close together, including on MCP shutdown.",
               ]),
           ...(CAPABILITIES.find(
             (descriptor) => descriptor.operation === operation,

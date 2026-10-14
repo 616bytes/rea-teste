@@ -189,10 +189,15 @@ export const androidResultSchemas = {
     class_name: z.string(),
     method: method,
     overload_count: z.number().int().positive(),
-    representation: z.enum(["java", "smali"]),
+    representation: z.enum(["java", "smali"]).nullable(),
     body_status: z.enum(["available", "not_available"]),
     body_unavailable_reason: z
-      .enum(["native", "abstract", "no_decompiled_body"])
+      .enum([
+        "native",
+        "abstract",
+        "conflicting_access_flags",
+        "no_decompiled_body",
+      ])
       .nullable(),
     fell_back: z.boolean(),
     markers: z.array(z.string()),

@@ -186,8 +186,19 @@ public class ReaJadxMetadataRegression {
     }
     require(flagSummary.getAsJsonArray("methods").size() == expectedFlags.size(), "Flag fixture method inventory changed");
     call(handle, bridge, "get_method_body", methodArguments("fixture.AccessFlags", "generated"));
+    MethodNode generated = holder.current().getClasses().stream()
+        .filter(cls -> cls.getFullName().equals("fixture.AccessFlags"))
+        .findFirst().orElseThrow().getClassNode().getMethods().stream()
+        .filter(method -> method.getMethodInfo().getName().equals("generated"))
+        .findFirst().orElseThrow();
+    var originalAccessFlags = generated.getAccessFlags();
+    generated.setAccessFlags(originalAccessFlags.containsFlag(0x8)
+        ? originalAccessFlags.remove(0x8) : originalAccessFlags.add(0x8));
+    require(generated.getAccessFlags().rawValue() != originalAccessFlags.rawValue(),
+        "Fixture failed to change live method modifiers");
     require(flagSummary.equals(call(handle, bridge, "get_class_summary", arguments("fixture.AccessFlags"))),
-        "Frozen method flags changed after decompilation");
+        "Frozen method flags changed after live modifier mutation");
+    generated.setAccessFlags(originalAccessFlags);
     JsonObject ordinary = call(handle, bridge, "get_method_body", methodArguments(classNames[1], "touch"));
     require(ordinary.get("mode").getAsString().equals("java") && ordinary.get("body").getAsString().contains("COUNT"),
         "Ordinary executable method no longer produces Java");

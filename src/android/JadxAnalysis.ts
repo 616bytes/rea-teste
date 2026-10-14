@@ -234,18 +234,23 @@ const inspectMethod = async (
       "overload_index",
       `Index ${index} is outside the ${candidates.length} matching overloads.`,
     );
-  const absentBodyReason = selected.access_flag_names.includes("native")
-    ? "native"
-    : selected.access_flag_names.includes("abstract")
-      ? "abstract"
-      : null;
+  const isNative = selected.access_flag_names.includes("native");
+  const isAbstract = selected.access_flag_names.includes("abstract");
+  const absentBodyReason =
+    isNative && isAbstract
+      ? "conflicting_access_flags"
+      : isNative
+        ? "native"
+        : isAbstract
+          ? "abstract"
+          : null;
   if (absentBodyReason !== null)
     return androidResultSchemas.inspect_android_method.parse({
       engine,
       class_name: summary.full_name,
       method: selected,
       overload_count: candidates.length,
-      representation: "java",
+      representation: null,
       body_status: "not_available",
       body_unavailable_reason: absentBodyReason,
       fell_back: false,
@@ -290,7 +295,7 @@ const inspectMethod = async (
     class_name: summary.full_name,
     method: selected,
     overload_count: candidates.length,
-    representation: body.mode,
+    representation: bodyUnavailable ? null : body.mode,
     body_status: bodyUnavailable ? "not_available" : "available",
     body_unavailable_reason: bodyUnavailable ? "no_decompiled_body" : null,
     fell_back: body.fell_back,

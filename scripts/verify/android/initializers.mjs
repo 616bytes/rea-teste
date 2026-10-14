@@ -88,6 +88,7 @@ export const verifyAndroidInitializers = async ({
           result.body_status,
           reason === null ? "available" : "not_available",
         );
+        assert.equal(result.representation, reason === null ? "java" : null);
         if (reason !== null) assert.equal(result.source.text, "");
       },
     })),

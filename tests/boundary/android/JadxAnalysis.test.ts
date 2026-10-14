@@ -400,6 +400,7 @@ it("preserves raw DEX method flags and decodes method-specific modifiers", async
 it.each([
   [0x101, "native"],
   [0x401, "abstract"],
+  [0x501, "conflicting_access_flags"],
 ] as const)(
   "reports absent bodies from flags %i without asking for decompiled text",
   async (flags, reason) => {
@@ -431,8 +432,11 @@ it.each([
       engine,
     );
     expect(result).toMatchObject({
+      representation: null,
       body_status: "not_available",
       body_unavailable_reason: reason,
+      markers: [],
+      fell_back: false,
       method: { access_flags: flags },
       source: { text: "" },
     });
@@ -460,7 +464,7 @@ it.each(["", "// method exists but has no decompiled body (native/abstract)"])(
                 overload_count: 1,
                 mode: "java",
                 fell_back: false,
-                markers: [],
+                markers: ["observed_engine_marker"],
                 body: text,
               },
         ),
@@ -480,8 +484,11 @@ it.each(["", "// method exists but has no decompiled body (native/abstract)"])(
       engine,
     );
     expect(result).toMatchObject({
+      representation: null,
       body_status: "not_available",
       body_unavailable_reason: "no_decompiled_body",
+      markers: ["observed_engine_marker"],
+      source: { text },
     });
   },
 );

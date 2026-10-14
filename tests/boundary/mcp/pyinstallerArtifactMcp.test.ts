@@ -10,7 +10,7 @@ import {
   cArchiveExecutable,
   pyzArchive,
 } from "../../../src/artifacts/pyinstaller/CArchive.fixture.js";
-import { artifactInspectionOutputSchema } from "../../../src/domain/artifactInspection.js";
+import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -61,7 +61,7 @@ it("inventories a PyInstaller executable through inspect_artifact", async () => 
     arguments: {},
   });
   expect(inspected.isError).not.toBe(true);
-  const inspection = artifactInspectionOutputSchema.parse(
+  const inspection = artifactInspectionResultSchema.parse(
     parseEvidence(inspected.structuredContent).normalized_result,
   );
   expect(inspection.subject.root_format).toBe("pyinstaller");

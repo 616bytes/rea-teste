@@ -79,7 +79,7 @@ it("inventories a 2.1 archive, nested PYZ modules, and derived bytecode", async 
   );
   const snapshot = await scanCanonicalArtifactInventory(path);
   expect(snapshot.manifest.root_format).toBe("pyinstaller");
-  expect(snapshot.coverage_status).toBe("complete");
+  expect(snapshot.coverage.status).toBe("complete");
   const root = snapshot.occurrences.find(
     (occurrence) => occurrence.logical_path === ".",
   );

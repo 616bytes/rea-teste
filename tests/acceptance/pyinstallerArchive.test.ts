@@ -11,7 +11,7 @@ import {
   cArchiveExecutable,
   pyzArchive,
 } from "../../src/artifacts/pyinstaller/CArchive.fixture.js";
-import { artifactInspectionOutputSchema } from "../../src/domain/artifactInspection.js";
+import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { artifactExtractionResultSchema } from "../../src/domain/artifactGraph.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -61,7 +61,7 @@ it("lists CArchive members and the Python version through inspect-artifact", asy
     path,
     "--json",
   ]);
-  const inspection = artifactInspectionOutputSchema.parse(
+  const inspection = artifactInspectionResultSchema.parse(
     parseEvidence(JSON.parse(result.stdout)).normalized_result,
   );
   expect(inspection.subject.root_format).toBe("pyinstaller");

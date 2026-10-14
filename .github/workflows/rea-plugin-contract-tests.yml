@@ -1,0 +1,29 @@
+name: REA plugin contract tests
+
+on:
+  push:
+    branches:
+      - feat/lucas-profile-roadmap
+  pull_request:
+    branches:
+      - main
+      - feat/claude-code-codex-plugin
+      - feat/lucas-profile-roadmap
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plugin-contract:
+    name: Plugin structure and compatibility contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run plugin contract tests
+        run: node --test plugins/rea-agent-plugin/tests/plugin-contract.test.mjs

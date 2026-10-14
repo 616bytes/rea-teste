@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
-describe("CommonJS exports alias lifetime across statements", () => {
-  const exportedNames = (source: string): (string | null)[] =>
-    analyzeJavaScriptSemantics(source)
-      .moduleLinks.filter(({ kind }) => kind === "commonjs-export")
-      .map(({ exportedName }) => exportedName);
+const exportedNames = (source: string): (string | null)[] =>
+  analyzeJavaScriptSemantics(source)
+    .moduleLinks.filter(({ kind }) => kind === "commonjs-export")
+    .map(({ exportedName }) => exportedName);
 
+describe("CommonJS exports alias lifetime across statements", () => {
   it.each([
     [
       "a module.exports object replacement",
@@ -26,6 +26,13 @@ describe("CommonJS exports alias lifetime across statements", () => {
       `exports = {};
        exports.parse = () => ({ kind: "result" });`,
       [],
+    ],
+    [
+      "a replacement followed by another fresh replacement",
+      `module.exports = {};
+       exports.parse = () => 1;
+       module.exports = {};`,
+      ["default", "default"],
     ],
     [
       "a replacement followed by a module.exports write",
@@ -110,6 +117,28 @@ describe("CommonJS exports alias lifetime across statements", () => {
       "a write whose own statement reconnects the alias",
       `module.exports = {};
        exports.parse = module.exports = exports;`,
+      ["default", "parse", "default"],
+    ],
+    [
+      "a later module.exports assignment from the exports alias",
+      `module.exports = {};
+       exports.parse = () => 1;
+       module.exports = exports;`,
+      ["default", "parse", "default"],
+    ],
+    [
+      "a later module.exports assignment of the rebound alias",
+      `exports = {};
+       exports.parse = () => 1;
+       module.exports = exports;`,
+      ["parse", "default"],
+    ],
+    [
+      "a later module.exports assignment of an unknown value",
+      `const saved = exports;
+       module.exports = {};
+       exports.parse = () => 1;
+       module.exports = saved;`,
       ["default", "parse", "default"],
     ],
     [

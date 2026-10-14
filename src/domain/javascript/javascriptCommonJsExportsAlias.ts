@@ -22,6 +22,12 @@ interface ExportsAliasTimeline {
   /** Relation in force before each top-level expression statement runs. */
   readonly before: ReadonlyMap<t.Statement, ExportsAliasRelation>;
   /**
+   * Statements followed by a rebinding that may make `module.exports` the
+   * object the alias denotes now (`module.exports = exports`), which would
+   * export properties written to it in between.
+   */
+  readonly reexportedLater: ReadonlySet<t.Statement>;
+  /**
    * False when a rebinding or an escape of `module` falls outside the
    * straight-line top-level statements, so statement order proves nothing.
    */
@@ -73,7 +79,11 @@ export const isDetachedCommonJsExportsWrite = (
   const statement = topLevelStatement(node, state);
   if (statement === undefined) return false;
   const timeline = timelineOf(state);
-  return timeline.sequenced && timeline.before.get(statement) === "detached";
+  return (
+    timeline.sequenced &&
+    timeline.before.get(statement) === "detached" &&
+    !timeline.reexportedLater.has(statement)
+  );
 };
 
 /** Walk right-hand assignment chains up to a top-level expression statement. */
@@ -105,6 +115,7 @@ const timelineOf = (
   if (cached !== undefined) return cached;
   const before = new Map<t.Statement, ExportsAliasRelation>();
   const rebindings = new Set<t.Node>();
+  const chains: { statement: t.Statement; reexports: boolean }[] = [];
   let relation: ExportsAliasRelation = "connected";
   for (const statement of state.program.body) {
     if (!t.isExpressionStatement(statement)) continue;
@@ -113,11 +124,19 @@ const timelineOf = (
     // property write lands, so the relation before it proves nothing there.
     if (chain === null) before.set(statement, relation);
     else for (const target of chain.targets) rebindings.add(target);
+    chains.push({ statement, reexports: chain?.reexports === true });
     if (chain === null) continue;
     relation = chain.relation;
   }
+  const reexportedLater = new Set<t.Statement>();
+  let reexports = false;
+  for (const chain of chains.toReversed()) {
+    if (reexports) reexportedLater.add(chain.statement);
+    reexports ||= chain.reexports;
+  }
   const timeline = {
     before,
+    reexportedLater,
     sequenced: !hasUnsequencedRebinding(rebindings, state),
   };
   timelines.set(state.program, timeline);
@@ -135,6 +154,8 @@ const rebindingChain = (
 ): {
   readonly targets: readonly t.Node[];
   readonly relation: ExportsAliasRelation;
+  /** Assigns `module.exports` something other than a freshly created value. */
+  readonly reexports: boolean;
 } | null => {
   const targets: t.Node[] = [];
   let alias = false;
@@ -155,16 +176,16 @@ const rebindingChain = (
     value = unwrapJavaScriptExpression(value.right).node;
   }
   if (targets.length === 0) return null;
-  if (!simple) return { targets, relation: "unknown" };
-  if (alias && moduleExports) return { targets, relation: "connected" };
+  const fresh = simple && isFreshAssignmentResult(value);
+  const reexports = moduleExports && !fresh;
+  if (!simple) return { targets, relation: "unknown", reexports };
+  if (alias && moduleExports)
+    return { targets, relation: "connected", reexports };
   const other = alias
     ? isCommonJsModuleExports(value, state)
     : isUnshadowedGlobal(value, state, "exports");
-  if (other) return { targets, relation: "connected" };
-  return {
-    targets,
-    relation: isFreshAssignmentResult(value) ? "detached" : "unknown",
-  };
+  if (other) return { targets, relation: "connected", reexports };
+  return { targets, relation: fresh ? "detached" : "unknown", reexports };
 };
 
 /**

@@ -2,8 +2,8 @@
 
 This experiment addresses [#3132](https://github.com/morluto/rea/issues/3132).
 Its runtime baseline is `ca1b2f8608c52ed721d3576ba5eeb1d66717b08c`.
-Production APIs and defaults are unchanged. SDK/model costs are not yet measured;
-the corpus and independent stored-byte checks below establish no performance win.
+Production APIs and defaults are unchanged. Formal SDK/model costs are not yet
+measured; the corpus and preflight checks below establish no token/time win.
 
 ## Genuine public corpus
 
@@ -21,8 +21,8 @@ authentication values, configs or detailed results are committed.
 
 `corpus.json` pins download URLs, file sizes, SHA-256, Git blob IDs, directory
 coverage and question ordinals. Downloaded bytes match their Git blob and
-SHA-256. A third public 103-session archive was inspected during corpus discovery
-but is outside the selected cohort. Archive comments report their producer
+SHA-256. A third public 103-session archive is pinned as an admission-negative
+probe, outside completed-question comparisons. Archive comments report their producer
 versions; no local Fiddler installation or independent producer-version proof
 is claimed.
 
@@ -52,7 +52,61 @@ python3 experiments/analysis-efficiency/saz-oracle.py xbox-clear_nomp.saz /absol
 python3 experiments/analysis-efficiency/saz-oracle.py xbox-clear_mp_cs10.saz /absolute/clear_mp_cs10.saz
 ```
 
-The baseline build and five oracle regressions passed on Linux. Real CLI/MCP
-selection equivalence, model task correctness/costs and other platform behavior
-remain unverified at this corpus checkpoint. Detailed outputs stay in the private
-lab; missing resource counters remain unknown.
+The baseline build, five oracle regressions and the SDK checker semantics passed
+on Linux. Real MCP preflight checks verify control retained pages/repeated reads,
+the large ordinal-selected result, and large complete-workflow recovery. The
+default large MCP return completes analysis but exceeds the existing 10 MiB stdio
+receive-buffer budget; its exact returned retained Evidence reference supports
+summary and complete pages. Recovery preserves the failed RPC and every follow-up
+call, and matches the independently checked necessary facts from direct selection.
+This transport limit is not a decoding timeout. Formal repetitions and actual
+model tasks remain unrun; preflight observations are not eligible cost pairs.
+
+The 103-session `xbox-x49_mp_cs21.saz` candidate contains an empty stored response
+member `raw/099_s.txt`, lacking an HTTP header/body separator. On this baseline,
+whole-capture admission fails with `invalid_request` / `invalid_format`. Its
+ordinals `[102, 0, 51]` were fixed before inspecting its transaction facts. The
+failed attempt/source member is preserved as a negative probe; no parser repair
+or successful-task comparison is claimed for that archive.
+
+Actual-model correctness/costs and other platform behavior remain unverified.
+Detailed outputs stay private; missing resource counters remain unknown.
+
+The large selected CLI workflow also matches independent bytes and MCP facts,
+parameters and Evidence ID. A separate default complete CLI attempt hit the
+provider's 30-second timeout under the one-CPU guard; that failed attempt is
+preserved separately from the successful-analysis MCP receive-buffer failure.
+It does not prove a general CLI failure or identify an engine-stage cause.
+
+Ten grading preflight cases cover valid actual Evidence, wrong final digests,
+unknown citations, missing limitations, answer order, failed calls before/after
+valid data, semantic-ID corruption and actual large retained recovery. Their
+answers/events are injected checker tests, not actual model trials. An invalid
+later duplicate is rejected by the domain's semantic-ID owner and does not erase
+earlier authenticated observations.
+
+## SDK and model reproduction
+
+```sh
+node experiments/analysis-efficiency/measure.mjs \
+  --runtime-root /absolute/frozen-runtime --revision ca1b2f8608c52ed721d3576ba5eeb1d66717b08c \
+  --artifact xbox-clear_nomp.saz --path /absolute/clear_nomp.saz \
+  --output /absolute/new-result-dir --schemas selected --saz-selection focused
+node experiments/analysis-efficiency/saz-model-prompt.mjs \
+  --artifact xbox-clear_nomp.saz --selection focused > /absolute/prompt.txt
+```
+
+Use the same runtime, inputs, explicit provider settings and resource profile
+within a cost cohort; retain runtime/workflow/oracle/settings fingerprints. Repeat
+both core archives with baseline/focused/focused/baseline order and retain all
+failures/recovery RPCs. The `retained` diagnostic workflow also measures preview,
+two complete pages and a repeated first page. Preview omits headers, so preview
+alone is not equivalent to the complete header/body question.
+
+Run real Codex tasks through `agent-trial.py` with an isolated temporary profile,
+the two exact `inspect_web_network_capture` / `inspect_analysis_view` tools,
+the same requested model/reasoning and at least two baseline/focused pairs for
+the control. Grade cited observations with `review-saz.mjs`, an independently
+produced oracle and the tested runtime. Count whole-task input/output tokens,
+cached input, elapsed time and all calls; parsed JSON bytes are not model tokens.
+Only executed trials may fill the current unverified cost/model scope above.

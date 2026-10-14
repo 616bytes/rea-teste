@@ -413,6 +413,26 @@
         "members": 3939,
         "expanded_bytes": 9223820
       }
+    },
+    {
+      "id": "xbox-x49_mp_cs21.saz",
+      "file": "x49_mp_cs21.saz",
+      "bytes": 572224,
+      "sha256": "97cdca8b0608e3f11995fd64b64390b9fd8d8e3efcac89f517f24b44968047f6",
+      "provenance": {
+        "project": "Microsoft Xbox Live Trace Analyzer",
+        "version": "ad880ff00b26c4cae5e3c8864d3df438a03890ba",
+        "url": "https://raw.githubusercontent.com/microsoft/xbox-live-trace-analyzer/ad880ff00b26c4cae5e3c8864d3df438a03890ba/Source/TestData/CertWarnings/x49_mp_cs21.saz",
+        "git_blob": "e7794c44892ca4fa1729fa012e698e8284337f15",
+        "license": "MIT; upstream LICENSE.md",
+        "producer_archive_comment": "Fiddler (v4.6.2.26757) Session Archive. See https://fiddler2.com"
+      },
+      "saz_question": {
+        "record_ordinals": [102, 0, 51],
+        "total_records": 103,
+        "members": 315,
+        "expanded_bytes": 1301927
+      }
     }
   ]
 }

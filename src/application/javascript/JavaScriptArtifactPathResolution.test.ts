@@ -1686,6 +1686,46 @@ describe("legacy subpath separator and backslash refusals", () => {
       }),
     ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
   });
+
+  // A whole-segment percent-encoded dot reaches a file only after URL
+  // dot-segment rewriting — including the control-character spellings that
+  // become %2e once HTML/URL stripping removes the tab — so those subpaths
+  // refuse with the canonical-syntax limitation like the acceptance suite
+  // pins, while partial escapes inside one filename stay loadable.
+  it("rejects whole-segment encoded dots on legacy ESM subpaths with the canonical-syntax limitation", () => {
+    const files = fileMap([
+      file("src/importer.mjs", "root"),
+      file(
+        "node_modules/legacy/package.json",
+        "root",
+        '{"name":"legacy","main":"lib.js"}',
+      ),
+      file("node_modules/legacy/lib.js", "root"),
+      file("node_modules/legacy/feature.js", "root"),
+      file("node_modules/legacy/child/feature.js", "root"),
+    ]);
+    for (const declaredPath of [
+      "legacy/child/%2e%2e/feature.js",
+      "legacy/child/%2\te%2\te/feature.js",
+      "legacy/child/.%2\nE/feature.js",
+      "legacy/feature.js/%2e",
+    ])
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "src/importer.mjs",
+          context: "module-specifier",
+          moduleKind: "import",
+          files,
+        }),
+      ).toMatchObject({
+        resolution_status: "rejected",
+        resolved_path: null,
+        limitations: expect.arrayContaining([
+          "Encoded dot or separator bytes are rejected before artifact path resolution.",
+        ]),
+      });
+  });
 });
 
 describe("generic package entry heuristics", () => {

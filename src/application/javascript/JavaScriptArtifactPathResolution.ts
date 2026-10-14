@@ -609,6 +609,23 @@ const encodedSubpathSeparator = (subpath: string): string | null => {
   return null;
 };
 
+// True when one path segment carries percent escapes and decodes, as a whole
+// segment, to "." or "..". Raw dot segments are excluded: they belong to URL
+// normalization and its directory-form answers.
+const encodedWholeDotSegment = (path: string): string | null => {
+  for (const segment of path.split("/")) {
+    if (!segment.includes("%")) continue;
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      return null;
+    }
+    if (decoded === "." || decoded === "..") return segment;
+  }
+  return null;
+};
+
 const relativeCandidate = (sourcePath: string, declared: string): string =>
   declared.startsWith("/")
     ? declared.slice(1)
@@ -891,10 +908,18 @@ const resolveLegacyEsmSubpath = (
   directory: string,
   subpath: string,
 ): CandidateResolution => {
-  const declarationRejection = rejectDeclaration(
-    stripQueryAndFragment(htmlUrlText(subpath)),
-    true,
-  );
+  const declaredSubpath = stripQueryAndFragment(htmlUrlText(subpath));
+  // A whole-segment percent-encoded dot names a file only after URL
+  // dot-segment rewriting, including the control-character spellings that
+  // become %2e once HTML/URL stripping removes the tab. Refuse those with
+  // the canonical-syntax message like every other encoded boundary; raw dot
+  // segments keep flowing to the URL's directory-form answer, and partial
+  // escapes inside an ordinary filename stay loadable.
+  if (encodedWholeDotSegment(declaredSubpath) !== null)
+    return unresolvedCandidate("rejected", [
+      "Encoded dot or separator bytes are rejected before artifact path resolution.",
+    ]);
+  const declarationRejection = rejectDeclaration(declaredSubpath, true);
   if (declarationRejection !== null) return declarationRejection;
   const metadataUrl = packageMetadataUrl(
     posix.join(directory, "package.json"),

@@ -109,11 +109,18 @@ const resolveInternalSpecifier = (
   // Preserve directory intent before normalization removes terminal dot segments.
   const directoryReference =
     specifier.endsWith("/") || [".", ".."].includes(posix.basename(specifier));
-  const suffixes = ["", ".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx"];
-  const candidates = suffixes.flatMap((suffix) => [
-    ...(directoryReference ? [] : [`${normalized}${suffix}`]),
-    posix.join(normalized, `index${suffix}`),
-  ]);
+  const suffixes = [".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx"];
+  // Node probes the exact path and every file extension before a directory
+  // index, and never loads a bare extensionless index, so `./dep` prefers a
+  // sibling file over `dep/index`.
+  const candidates = [
+    ...(directoryReference ? [] : [normalized]),
+    ...suffixes.flatMap((suffix) =>
+      directoryReference
+        ? [posix.join(normalized, `index${suffix}`)]
+        : [`${normalized}${suffix}`, posix.join(normalized, `index${suffix}`)],
+    ),
+  ];
   // Retain present runtime files first; substitute only a missing counterpart.
   // Counterparts cover explicit filenames, not directory/index resolution.
   if (!directoryReference)

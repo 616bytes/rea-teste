@@ -6,6 +6,32 @@ import { parseReferenceSourceEntries } from "./ReferenceSourceImportEntries.js";
 import { historicalSourceLanguages } from "../domain/referenceSourceGraph.js";
 import type { ReferenceSourceRead } from "../reference/ReferenceSourceReaderTypes.js";
 
+const sourceRead = (
+  files: readonly (readonly [string, string])[],
+): ReferenceSourceRead => ({
+  root: "/selected/source",
+  entries: files.map(([path, content]) => ({
+    status: "read",
+    kind: "file",
+    path,
+    bytes: Buffer.from(content),
+    size: Buffer.byteLength(content),
+  })),
+  bytesRead: files.reduce(
+    (sum, [, content]) => sum + Buffer.byteLength(content),
+    0,
+  ),
+  limitations: [],
+});
+
+const parseSourceFiles = (
+  files: readonly (readonly [string, string])[],
+): ReturnType<typeof parseReferenceSourceEntries> =>
+  parseReferenceSourceEntries(
+    sourceRead(files),
+    new Set(files.map(([path]) => path)),
+  );
+
 it("projects an unsupported non-regular entry as unknown kind instead of file", () => {
   const read: ReferenceSourceRead = {
     root: "/selected/source",
@@ -61,6 +87,50 @@ it("keeps a failed regular file as file kind", () => {
     limitations: [
       "Entry could not be read This file could not be read. Check its permissions, then try again.",
     ],
+  });
+});
+
+it("prefers a sibling file over an extensionless directory index", () => {
+  const parsed = parseSourceFiles([
+    ["main.cjs", 'require("./dep");\n'],
+    ["dep.js", 'module.exports = "sibling file";\n'],
+    ["dep/index", 'module.exports = "extensionless index";\n'],
+  ]);
+  expect(parsed.relationships).toContainEqual({
+    from_path: "main.cjs",
+    to: "dep.js",
+    kind: "requires",
+    resolution: "internal",
+    parse_state: "parsed",
+  });
+});
+
+it("keeps a directory index ahead of a source-only sibling extension", () => {
+  const parsed = parseSourceFiles([
+    ["main.cjs", 'require("./dep");\n'],
+    ["dep.cjs", 'module.exports = "source-only sibling";\n'],
+    ["dep/index.js", 'module.exports = "directory index";\n'],
+  ]);
+  expect(parsed.relationships).toContainEqual({
+    from_path: "main.cjs",
+    to: "dep/index.js",
+    kind: "requires",
+    resolution: "internal",
+    parse_state: "parsed",
+  });
+});
+
+it("resolves a directory spelling to its JavaScript index", () => {
+  const parsed = parseSourceFiles([
+    ["main.cjs", 'require("./dep/");\n'],
+    ["dep/index.js", 'module.exports = "directory index";\n'],
+  ]);
+  expect(parsed.relationships).toContainEqual({
+    from_path: "main.cjs",
+    to: "dep/index.js",
+    kind: "requires",
+    resolution: "internal",
+    parse_state: "parsed",
   });
 });
 

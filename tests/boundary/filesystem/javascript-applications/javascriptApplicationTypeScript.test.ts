@@ -125,6 +125,150 @@ it("resolves erased wrappers through the composed application graph", async () =
   expect(parseJavaScriptSource(source, "app.mts")?.errors).toEqual([]);
 });
 
+it("retains Electron entrypoint facts through erased TypeScript path-value wrappers", async () => {
+  const applications: ApplicationAnalysis[] = [];
+  for (const [preload, worker, serviceName] of [
+    ['"./preload.js"', '"./worker.js"', '"kept"'],
+    [
+      '("./preload.js" as const)',
+      '("./worker.js" as const)',
+      '("kept" as const)',
+    ],
+  ]) {
+    applications.push(
+      await analyzeFiles(
+        new Map([
+          ["package.json", '{"main":"input.ts","type":"commonjs"}'],
+          [
+            "input.ts",
+            `const { BrowserWindow, utilityProcess } = require("electron");
+             new BrowserWindow({ webPreferences: { preload: ${preload} } });
+             utilityProcess.fork(${worker}, [], { serviceName: ${serviceName} });`,
+          ],
+          ["preload.js", "void 'preload';\n"],
+          ["worker.js", "void 'worker';\n"],
+        ]),
+      ),
+    );
+  }
+
+  const entrypointFacts = (analysis: ApplicationAnalysis) => {
+    const nodes = new Map(
+      analysis.graph.nodes.map((node) => [node.node_id, node]),
+    );
+    const windows = analysis.graph.nodes.filter(
+      ({ kind }) => kind === "browser-window",
+    );
+    const utilities = analysis.graph.nodes.filter(
+      ({ kind }) => kind === "electron-utility",
+    );
+    const windowIds = new Set(windows.map(({ node_id }) => node_id));
+    const preloadLoads = analysis.graph.edges.filter(
+      ({ source_node_id, relation }) =>
+        windowIds.has(source_node_id) && relation === "loads",
+    );
+    const entrypointIds = new Set([
+      ...preloadLoads.map(({ target_node_id }) => target_node_id),
+      ...utilities.map(({ node_id }) => node_id),
+    ]);
+    // Several provenance edges can identify the same entrypoint asset.
+    const assetMappings = new Map(
+      analysis.graph.edges
+        .filter(
+          ({ source_node_id, relation }) =>
+            entrypointIds.has(source_node_id) && relation === "maps_to",
+        )
+        .map(({ source_node_id, target_node_id, properties }) => {
+          const identity = [
+            nodes.get(source_node_id)?.kind,
+            properties.resolved_path,
+            properties.resolution_status,
+            nodes
+              .get(target_node_id)
+              ?.observations.find(
+                ({ properties: target }) => typeof target.path === "string",
+              )?.properties.path,
+          ];
+          return [
+            canonicalJson(identity, "Electron entrypoint asset identity"),
+            identity,
+          ] as const;
+        }),
+    );
+    return {
+      summary: analysis.summary,
+      windows: windows.flatMap(({ observations }) =>
+        observations.map(({ properties }) => properties),
+      ),
+      utilities: utilities.flatMap(({ observations }) =>
+        observations
+          .filter(
+            ({ evidence }) =>
+              evidence.extractor.operation === "observe-utility-process-fork",
+          )
+          .map(({ properties }) => properties),
+      ),
+      preloadLoads: preloadLoads.map(({ properties }) => properties),
+      assetMappings: [...assetMappings]
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+        .map(([, identity]) => identity),
+    };
+  };
+
+  const [plain, wrapped] = applications.map(entrypointFacts);
+  expect(plain).toMatchObject({
+    summary: {
+      browser_windows: 1,
+      explicit_web_preferences: 1,
+      preload_entrypoints: 1,
+      utility_processes: 1,
+      resolved_utility_entrypoints: 1,
+    },
+    windows: [
+      {
+        source_path: "input.ts",
+        options_status: "object-literal",
+        web_preferences_status: "object-literal",
+        web_preferences: [
+          {
+            name: "preload",
+            value: {
+              status: "literal",
+              value: "./preload.js",
+              expression: null,
+            },
+          },
+        ],
+        preload_path: "./preload.js",
+        preload_resolution_context: "module-specifier",
+        absence_means_default: false,
+      },
+    ],
+    utilities: [
+      {
+        module_path: "./worker.js",
+        module_resolution_context: "module-specifier",
+        module_expression: null,
+        service_name: "kept",
+      },
+    ],
+    preloadLoads: [
+      {
+        declared_path: "./preload.js",
+        resolution_context: "module-specifier",
+        resolved_path: "preload.js",
+        resolution_status: "resolved",
+        limitations: [],
+      },
+    ],
+    assetMappings: [
+      ["electron-preload", "preload.js", "resolved", "preload.js"],
+      ["electron-utility", "worker.js", "resolved", "worker.js"],
+    ],
+  });
+  expect(wrapped).toEqual(plain);
+});
+
 it("applies TypeScript .mts ambiguity rules while retaining unambiguous generics", () => {
   expect(
     parseJavaScriptSource(

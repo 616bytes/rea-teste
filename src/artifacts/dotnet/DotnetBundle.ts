@@ -234,13 +234,15 @@ class BundleCursor {
       if ((byte & 128) !== 0) continue;
       if (length > MAX_PATH_BYTES)
         limit(".NET bundle string exceeds its decoded-byte budget");
+      // Source failures are not encoding failures. Acquire bytes outside the
+      // decoder boundary so I/O and cancellation retain their original cause.
+      const bytes = await this.take(length);
       try {
         return new TextDecoder("utf-8", {
           fatal: true,
           ignoreBOM: true,
-        }).decode(await this.take(length));
+        }).decode(bytes);
       } catch (cause) {
-        if (cause instanceof ArtifactReaderFailure) throw cause;
         throw new ArtifactReaderFailure(
           "format",
           "Invalid UTF-8 in .NET bundle manifest",

@@ -162,6 +162,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
     } catch (cause) {
       if (cause instanceof RegularFileAdmissionFailure)
         this.#owner = cause.owner;
+      abortIfNeeded(signal);
       throw cause;
     }
   }

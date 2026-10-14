@@ -354,6 +354,81 @@ it("finds a split marker and uses the first apphost marker, including offset zer
 const sha = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
 
+it("preserves source I/O failures while reading a manifest string across the cache boundary", async () => {
+  const root = await createTestTempDirectory("rea-dotnet-metadata-io-");
+  const path = join(root, "host.exe");
+  const name = "a".repeat(64 * 1024);
+  const fixture = dotnetBundleFixture([
+    { path: name, bytes: Buffer.from("x") },
+  ]);
+  await writeFile(path, fixture.bytes);
+  const handle = await open(path, "r");
+  const originalRead = handle.read.bind(handle);
+  const failure = Object.assign(new Error("manifest source read failed"), {
+    code: "EIO",
+  });
+  // The first cache fills successfully. Reading the long path then needs a
+  // new positional read, so this exercises string acquisition, not decoding.
+  handle.read = ((
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ) => {
+    if (position > fixture.headerOffset) return Promise.reject(failure);
+    return originalRead(buffer, offset, length, position);
+  }) as typeof handle.read;
+  try {
+    await expect(
+      readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
+    ).rejects.toBe(failure);
+  } finally {
+    await handle.close();
+  }
+});
+
+it.each([3, 4])(
+  "validates the version 2+ configuration extent for file type %s",
+  async (fileType) => {
+    const root = await createTestTempDirectory("rea-dotnet-config-");
+    const path = join(root, "host.exe");
+    const fixture = dotnetBundleFixture([
+      { path: "config.json", bytes: Buffer.from("{}"), fileType },
+    ]);
+    // Three UInt32 fields and the fixture's BinaryWriter string precede the
+    // deps.json/runtimeconfig.json offset-size pairs, followed by UInt64 flags.
+    const configuration =
+      fixture.headerOffset + 12 + 1 + Buffer.byteLength("owned-fixture");
+    const selected = configuration + (fileType - 3) * 16;
+    fixture.bytes.writeBigUInt64LE(BigInt(fixture.offsets[0]!), selected);
+    fixture.bytes.writeBigUInt64LE(2n, selected + 8);
+    fixture.bytes.writeBigUInt64LE(1n, configuration + 32);
+    await writeFile(path, fixture.bytes);
+    const handle = await open(path, "r+");
+    try {
+      expect(
+        (
+          await readDotnetBundle(
+            handle,
+            fixture.bytes.length,
+            fixture.headerOffset,
+          )
+        ).files,
+      ).toMatchObject([{ path: "config.json", fileType, size: 2 }]);
+      fixture.bytes.writeBigUInt64LE(3n, selected + 8);
+      await handle.write(fixture.bytes, 0, fixture.bytes.length, 0);
+      await expect(
+        readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
+      ).rejects.toMatchObject({
+        reason: "format",
+        message: expect.stringContaining("configuration location disagrees"),
+      });
+    } finally {
+      await handle.close();
+    }
+  },
+);
+
 it("retains compressed-source I/O failures and leaves a borrowed descriptor to its owner", async () => {
   const root = await createTestTempDirectory("rea-dotnet-io-");
   const path = join(root, "host.exe");
@@ -426,5 +501,36 @@ it.each(["elf", "mach-o"] as const)(
     expect(await readFile(join(outputRoot, "App.dll"))).toEqual(
       Buffer.from("owned assembly bytes"),
     );
+  },
+);
+
+it.each(["pe", "elf"] as const)(
+  "keeps an unbundled %s host native and refuses empty extraction",
+  async (format) => {
+    const root = await createTestTempDirectory("rea-dotnet-unbundled-");
+    const path = join(root, "template.bin");
+    const fixture = dotnetBundleFixture();
+    fixture.bytes.writeBigUInt64LE(0n, 536);
+    if (format === "elf") Buffer.from("7f454c46", "hex").copy(fixture.bytes);
+    await writeFile(path, fixture.bytes);
+    const inventory = await inventoryArtifact(path, {
+      resourceScope: new ArtifactResourceScope(),
+    });
+    expect(inventory.manifest.root_format).toBe(format);
+    expect(inventory.occurrences.map((entry) => entry.logical_path)).toEqual([
+      ".",
+    ]);
+    const outputRoot = join(root, "output");
+    await expect(
+      extractArtifact({
+        inputPath: path,
+        inputFormat: format,
+        outputRoot,
+        environment: process.env,
+        integrityPolicy: "fail",
+        resourceScope: new ArtifactResourceScope(),
+      }),
+    ).rejects.toMatchObject({ _tag: "AnalysisUnsupportedTargetError" });
+    await expect(access(outputRoot)).rejects.toThrow();
   },
 );

@@ -76,6 +76,7 @@ import {
 import { isJavaScriptRpcClientFactory } from "./javascriptRpcEndpoints.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { SemanticPropertyPathCoverage } from "./javascriptSemanticPropertyPaths.js";
+import { indexCommonJsExportReceiversSteps } from "./javascriptCommonJsExportReceivers.js";
 import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
 
 interface BindPatternInput {
@@ -169,12 +170,13 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   yield* collectDefinitionsSteps(file.program, state);
   yield* indexJavaScriptAmbientWritesSteps(file.program, state);
   yield* collectSemanticMemberMutationsSteps(file.program, state);
+  const commonJsReceivers = yield* indexCommonJsExportReceiversSteps(state);
   yield* traverseJavaScriptAstSteps(file.program, {
-    enter: (node) => collectSemanticModuleLink(node, state),
+    enter: (node) => collectSemanticModuleLink(node, state, commonJsReceivers),
   });
   const typeImports = parsedJSDocTypeImports(file.program);
   for (const declaration of typeImports.declarations)
-    collectSemanticModuleLink(declaration, state);
+    collectSemanticModuleLink(declaration, state, commonJsReceivers);
   yield;
   const references = yield* collectSemanticReferencesSteps(file.program, state);
   const parserPartial = file.errors.length > 0 || !typeImports.complete;

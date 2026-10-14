@@ -413,9 +413,7 @@ const computeBuiltinBindingPath = (
     builtinEscapes(binding, state).some(
       ({ path, node }) =>
         affectsBuiltinPath(path, selectedPath) &&
-        // Escaping a selected value cannot replace its owning slot. An
-        // escaped containing object can still replace that slot.
-        (!selectedValue || path.length < selectedPath.length) &&
+        (!selectedValue || builtinEscapeCanAffectSlot(path, selectedPath)) &&
         !semanticTopLevelEffectFollowsCapture(
           capture,
           node,
@@ -586,6 +584,14 @@ const affectsBuiltinPath = (
     semanticPropertyPathKeyMatches(key, selected[index]!),
   );
 
+/** Only a definite selected value escape leaves its owning slot intact. */
+const builtinEscapeCanAffectSlot = (
+  path: JavaScriptSemanticPropertyPath,
+  selected: readonly string[],
+): boolean =>
+  path.length < selected.length ||
+  path.some((key) => key === null || typeof key === "object");
+
 const BUILTIN_RECEIVER_METHODS: Readonly<Record<string, ReadonlySet<string>>> =
   {
     fs: new Set([
@@ -738,7 +744,7 @@ const requiredModuleChanged = (
       ) &&
       (kind === "write" ||
         !selectedValue ||
-        path.length < identity.path.length),
+        builtinEscapeCanAffectSlot(path, identity.path)),
   );
 };
 

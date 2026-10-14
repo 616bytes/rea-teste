@@ -12,7 +12,10 @@ import {
   type ArtifactEntry,
 } from "../artifacts/ArtifactReader.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  peekArtifactMagic,
+  readStableArtifact,
+} from "../artifacts/readStableArtifact.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -124,6 +127,23 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     input: InspectJvmDebugMetadataInput,
     options?: ExecutionOptions,
   ): Promise<Result<JvmDebugMetadataExecution, AnalysisError>> {
+    // Classify by magic before admitting the whole file under the class-file
+    // byte budget: an archive (most APKs/JARs exceed that budget) must be
+    // steered to `entry` selection, not rejected as oversized or "not a class
+    // file". The peek reads only the leading bytes, regardless of total size.
+    const magic = await peekArtifactMagic(input.path, 4, options?.signal);
+    if (looksLikeZip(magic))
+      return err(
+        new AnalysisUnsupportedTargetError(
+          OPERATION,
+          input.path,
+          "The selected file is a ZIP/JAR archive, not a single .class file.",
+          {
+            remediationAction:
+              "Pass entry to select a class member inside the JAR, e.g. entry=com/example/Foo.class (and release for a multi-release override).",
+          },
+        ),
+      );
     const selected = await readStableArtifact(
       input.path,
       JVM_LIMITS.inputBytes,
@@ -132,23 +152,7 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     if (options?.signal?.aborted)
       return err(new AnalysisCancelledError(OPERATION));
     const parsed = parseJavaClassFile(selected.bytes);
-    if (!parsed.ok) {
-      // A JAR selected without `entry` reaches this path and fails as bad-magic.
-      // Point the caller at member selection instead of "not a class file".
-      if (parsed.error.kind === "bad-magic" && looksLikeZip(selected.bytes))
-        return err(
-          new AnalysisUnsupportedTargetError(
-            OPERATION,
-            input.path,
-            "The selected file is a ZIP/JAR archive, not a single .class file.",
-            {
-              remediationAction:
-                "Pass entry to select a class member inside the JAR, e.g. entry=com/example/Foo.class (and release for a multi-release override).",
-            },
-          ),
-        );
-      return err(mapParseError(parsed.error, input.path));
-    }
+    if (!parsed.ok) return err(mapParseError(parsed.error, input.path));
     const result = buildJavaDebugMetadataResult(parsed.value, {
       path: input.path,
       sha256: selected.sha256,

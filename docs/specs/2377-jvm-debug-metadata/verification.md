@@ -127,6 +127,32 @@ Unit/service suite is now 40 tests (6 files); `verify:jvm` remains 16 cases.
 `tsc --noEmit` clean; `oxlint` reports only the pre-existing non-blocking
 `max-params` warning on `#selectJarMember`.
 
+## Real-artifact exercise via CLI and live MCP (landed)
+
+Ran the built CLI and the live stdio MCP server against real on-disk artifacts
+(not fixtures):
+
+- `netty-handler-4.1.93.Final.jar` → `ChannelTrafficShapingHandler.class`: 10
+  methods, all `present`, `SourceFile ChannelTrafficShapingHandler.java`.
+  Cross-checked against `javap -v`: 10 `LineNumberTable` + 10 `LocalVariableTable`
+  blocks — exact match. CLI and MCP returned byte-identical Evidence (same entry
+  SHA-256, coverage).
+- `gson-2.11.0.jar` (real `Multi-Release: true`): base `Gson.class` selects
+  `release:null`; `module-info.class` with no release is refused (base absent,
+  available `[9]`); `--release 9` selects the versioned override
+  (`internal_name module-info`); `--release 11` is refused. Same over MCP.
+- Real APKs from the Downloads folder (31–152 MiB ZIPs): selecting one without an
+  `entry` returns `unsupported_target` steering the caller to member selection;
+  `--entry classes.dex` is refused as not a class file; a missing member is a
+  `not-found` input error. Verified over both CLI and MCP.
+
+This exercise exposed a real defect in the first usability fix: an archive larger
+than the 32 MiB class-file budget (most APKs) was rejected as oversized _before_
+the ZIP magic could be examined, so the caller saw "select a smaller artifact"
+instead of the member-selection hint. Fixed by classifying on a bounded magic
+peek (`peekArtifactMagic`, leading bytes only, independent of total size) before
+admitting the file under the class-file budget; covered by new adapter tests.
+
 ## Pending (documented limitations)
 
 - The JAR subject digest (`hashStableFile`) and the class-entry read

@@ -12,6 +12,7 @@ import {
   AnalysisProtocolError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JebOperation } from "../domain/jeb/jebAnalysis.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 
@@ -26,6 +27,8 @@ const RELEVANT_ENGINE_TOOLS = new Set<string>(Object.values(JEB_ENGINE_TOOLS));
 
 /** Injectable MCP boundary used by the provider and conformance tests. */
 export interface JebMcpConnection {
+  /** Monotone identity for successfully acquired sessions; zero before acquisition. */
+  readonly sessionGeneration: number;
   /** Connect lazily and return advertised names used by REA. */
   connect(signal?: AbortSignal): Promise<readonly string[]>;
   /** Refresh support for REA operations from the live engine catalog. */
@@ -114,6 +117,7 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
     disposal: Promise<void> | undefined;
   }
   let state: ConnectionState | undefined;
+  let sessionGeneration = 0;
   let closing: Promise<void> | undefined;
   let closed = false;
 
@@ -166,6 +170,35 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
     }
   };
 
+  const invalidate = async (
+    owner: ConnectionState,
+    cause: unknown,
+  ): Promise<never> => {
+    owner.tools = undefined;
+    owner.signal.abort(cause);
+    try {
+      await dispose(owner);
+    } catch (cleanupCause: unknown) {
+      if (cause instanceof AnalysisError)
+        throw cause.retainSecondaryFailure(
+          new AnalysisProtocolError("JEB MCP connection cleanup failed", {
+            cause: cleanupCause,
+          }),
+          {
+            cleanup_error: "JEB MCP connection cleanup failed",
+            cleanup_recovery:
+              "The next operation or close call retries the retained connection cleanup.",
+          },
+        );
+      throw new AggregateError(
+        [cause, cleanupCause],
+        "JEB MCP operation and cleanup failed",
+        { cause },
+      );
+    }
+    throw cause;
+  };
+
   const connect = async (signal?: AbortSignal): Promise<readonly string[]> => {
     if (signal?.aborted === true) throw new AnalysisCancelledError("jeb_mcp");
     if (closing !== undefined) await closing;
@@ -206,6 +239,7 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
         });
         const tools = await readToolNames(owner.client, deadline.signal);
         owner.tools = tools;
+        sessionGeneration += 1;
         return tools;
       } catch (cause: unknown) {
         const failure =
@@ -214,17 +248,7 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
                 cause,
               })
             : cause;
-        owner.signal.abort(failure);
-        try {
-          await dispose(owner);
-        } catch (cleanupCause: unknown) {
-          throw new AggregateError(
-            [failure, cleanupCause],
-            "JEB MCP connection acquisition and cleanup failed",
-            { cause: failure },
-          );
-        }
-        throw failure;
+        return invalidate(owner, failure);
       } finally {
         deadline.dispose();
       }
@@ -242,6 +266,9 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
   };
 
   return {
+    get sessionGeneration() {
+      return sessionGeneration;
+    },
     connect,
     async listTools(signal) {
       const existing = state?.tools !== undefined;
@@ -266,14 +293,15 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
         return refreshed;
       } catch (cause: unknown) {
         if (deadline.interruption === "timeout")
-          throw new AnalysisTimeoutError(
-            "jeb_mcp_catalog",
-            discoveryTimeoutMs,
-            { cause },
+          return invalidate(
+            owner,
+            new AnalysisTimeoutError("jeb_mcp_catalog", discoveryTimeoutMs, {
+              cause,
+            }),
           );
         if (deadline.interruption === "cancelled")
           throw new AnalysisCancelledError("jeb_mcp_catalog", { cause });
-        throw cause;
+        return invalidate(owner, cause);
       } finally {
         deadline.dispose();
       }
@@ -291,26 +319,33 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
         requestTimeoutMs,
         requestSignal,
       );
+      let result: unknown;
       try {
-        const result = await owner.client.callTool(
+        result = await owner.client.callTool(
           { name, arguments: args },
           { timeout: deadline.remainingMs(), signal: deadline.signal },
         );
-        return decodeJebToolResult(result);
       } catch (cause: unknown) {
         if (deadline.interruption === "timeout")
-          throw new AnalysisTimeoutError(name, requestTimeoutMs, { cause });
+          return invalidate(
+            owner,
+            new AnalysisTimeoutError(name, requestTimeoutMs, { cause }),
+          );
         if (requestSignal.aborted)
           throw new AnalysisCancelledError(name, { cause });
         if (
           cause instanceof SdkError &&
           cause.code === SdkErrorCode.RequestTimeout
         )
-          throw new AnalysisTimeoutError(name, requestTimeoutMs, { cause });
-        throw cause;
+          return invalidate(
+            owner,
+            new AnalysisTimeoutError(name, requestTimeoutMs, { cause }),
+          );
+        return invalidate(owner, cause);
       } finally {
         deadline.dispose();
       }
+      return decodeJebToolResult(result);
     },
     async close() {
       closed = true;

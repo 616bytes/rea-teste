@@ -1353,9 +1353,11 @@ describe("NIBArchive single-object connectors", () => {
       "Some recognized NIBArchive connectors declare no resolvable owner; they carry no connection evidence and are reported as omissions.",
     );
   });
+});
 
-  // Only an absent NSSource marks an annotation; an encoded but unusable one
-  // is still a connection whose owner cannot be resolved.
+// Only an absent NSSource marks an annotation; an encoded but unusable one is
+// still a connection whose owner cannot be resolved.
+describe("NIBArchive connectors with unusable sources", () => {
   it.each([
     ["nil", null],
     ["a non-reference value", 7],

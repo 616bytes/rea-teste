@@ -66,6 +66,8 @@ Kurulum, REA'yı ajanınıza kaydeder ve uyumlu iş akışı talimatlarını yü
 
 ## Hızlı başlangıç
 
+Linux'ta Ghidra, JADX, donanım yazılımı araçlarının başlatılması ve statik JavaScript/Electron analizi, süreç sahipliği denetimleri için REA'nın `PATH` değişkeninde procps uyumlu bir `ps` gerektirir. Kurtarma adımları `docs/installation.md` belgesindeki "Linux owned-process prerequisite" bölümündedir.
+
 ### Ajanınızı yapılandırın
 
 Node.js ve npm yüklüyken şu komutu çalıştırın:
@@ -151,7 +153,7 @@ REA; Node.js 22.x (>=22.19), 24.x (>=24.11) veya 26+ ve npm gerektirir. Ek araç
 | EVM bayt kodu                           | Yönlendirme seçicileri, bayt ofsetleri, çıkarımla belirlenen argümanlar ve durum değiştirilebilirliği       | Linux x64 üzerinde yerel ham bayt/onaltılık girdi; [çevrimdışı EVM rehberi](../evm-bytecode.md)                                    |
 | SQLite veritabanları                    | Tablolar, sütunlar, index'ler, view'lar, trigger'lar ve seçilen sıradan tablo satırları                     | Yerel database/WAL snapshot'ı; native SQLite sınırlarıyla Node.js 24.x >=24.15 veya 26+                                            |
 | Kaydedilmiş Linux çökmeleri             | Ham note kayıtları, kaydedilen her iş parçacığının yazmaçları/sinyalleri ve isteğe bağlı eşleme adayları    | Linux x64 üzerinde çağıranın sağladığı pwntools; isteğe bağlı GDB/pwndbg; [kaydedilmiş çökmeler](../recorded-crashes.md)           |
-| JavaScript / Electron                   | Modüller, içe aktarmalar, kaynak haritaları, rotalar, IPC ve yerel eklenti ilişkileri                       | Node.js ve npm; [uygulama analizi](../javascript-application-workflows.md)                                                         |
+| JavaScript / Electron                   | Modüller, içe aktarmalar, kaynak haritaları, rotalar, IPC ve yerel eklenti ilişkileri                       | Node.js ve npm; Linux: procps uyumlu `ps`; [uygulama analizi](../javascript-application-workflows.md)                              |
 | Web siteleri                            | Sayfa yapısı, betikler, ağ gözlemleri ve istenen ekran görüntüleri                                          | Chrome ailesinden bir tarayıcı; [tarayıcı analizi](../browser-observation.md)                                                      |
 | Kaydedilmiş ağ yakalamaları             | İstekler, yanıtlar, erişilebilir yük içerikleri ve kaynak konumları                                         | HAR veya Fiddler Everywhere SAZ; Linux'ta native mitmproxy için mitmdump; [ağ yakalama rehberi](../web-network-captures.md)        |
 | .NET derlemeleri                        | Meta veriler, CIL talimatları, bildirilmiş yerel bağımlılıklar ve derleme karşılaştırmaları                 | Statik inceleme; [yönetilen kod rehberi](../managed-code-analysis.md)                                                              |
@@ -168,6 +170,8 @@ REA; Node.js 22.x (>=22.19), 24.x (>=24.11) veya 26+ ve npm gerektirir. Ek araç
 | Süreç davranışı                         | Terminal çıktısı, etkileşimler, sonlanma ve dosya sistemi gözlemleri, çalıştırma karşılaştırmaları          | Yerel PTY ile Linux/macOS; [süreç yakalama](../process-capture.md)                                                                 |
 
 Statik JavaScript ve .NET incelemesi, uygulamayı çalıştırmadan sağlanan dosyaları okur. Çalışma zamanı yakalaması, seçilen hedefi kullanıcı izinlerinizle çalıştırır veya onunla etkileşime girer; her çalışma zamanı rehberi etkilerini açıklar.
+
+Çevrimdışı yerel ikili dosya incelemesi için REA, çağıranın sağladığı GNU objdump ve Rizin araçlarını da destekler. Sağlayıcı kurulumu, CLI komutları ve Evidence sınırlamaları için [tersine mühendislik araçları rehberine](../reverse-engineering-tools.md) bakın. REA bu sağlayıcılardan hiçbirini yüklemez veya güncellemez.
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
@@ -216,7 +220,7 @@ Derin yerel kod analizi bunlardan birini kullanır. Statik JavaScript ve .NET in
 <details>
 <summary><strong>Önce Hopper'ı başlatmam gerekiyor mu?</strong></summary>
 
-REA, bir işlem gerektirdiğinde Hopper'ı başlatır. macOS'ta ilk çalıştırmada demo modunu seçmenizi veya lisansınızı etkinleştirmenizi isteyen bir iletişim kutusu açılabilir. [Hopper başlatma ve sorun giderme](../installation.md#launcher-paths-and-troubleshooting) belgesine bakın.
+REA, bir işlem gerektirdiğinde Hopper'ı başlatır. macOS'ta ilk çalıştırmada demo modunu seçmenizi veya lisansınızı etkinleştirmenizi isteyen bir iletişim kutusu açılabilir. İlk CLI/MCP işleminizden veya gözetimsiz bir işten önce bu istemi aynı kullanıcı oturumunda tamamlayın. Gerekirse Hopper'ı elle açın. [Hopper başlatma ve sorun giderme](../installation.md#launcher-paths-and-troubleshooting) belgesine bakın.
 
 </details>
 
@@ -246,7 +250,7 @@ REA hedefleri yerel olarak analiz eder. Ajanınız araç sonuçlarını alır ve
 
 Önce güncelleyin; yakın tarihli bir sürüm hatayı düzeltmiş olabilir.
 
-npm ile yüklenen CLI için:
+`npm install --global` veya `bun add --global` ile yüklenen CLI için:
 
 ```bash
 rea update

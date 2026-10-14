@@ -393,7 +393,78 @@ describe("JavaScript semantic analysis: structure 2", () => {
       ]);
     },
   );
+});
 
+describe("CommonJS receiver lifetimes", () => {
+  it.each([
+    "module.exports = {}; exports.parse = () => 1;",
+    "exports = {}; exports.parse = () => 1;",
+    "exports.parse = () => 1; module.exports = {};",
+    "module.exports.parse = () => 1; module.exports = [];",
+    'module.exports = {}; exports.status = "enabled";',
+    "module.exports = exports = {}; module.exports = {}; exports.parse = () => 1;",
+  ])(
+    "excludes a detached CommonJS receiver across statements: %s",
+    (source) => {
+      const ir = analyzeJavaScriptSemantics(source);
+      expect(
+        ir.moduleLinks.filter(
+          ({ exportedName }) =>
+            exportedName === "parse" || exportedName === "status",
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it.each([
+    "exports.parse = () => 1;",
+    "module.exports = {}; module.exports.parse = () => 1;",
+    "module.exports = {}; exports = module.exports; exports.parse = () => 1;",
+    "module.exports = exports = {}; exports.parse = () => 1;",
+    "exports = module.exports = {}; exports.parse = () => 1;",
+    "module.exports = module.exports; exports.parse = () => 1;",
+    "module.exports = external; exports = module.exports; exports.parse = () => 1;",
+    "module.exports = external; module.exports.parse = () => 1;",
+    "exports.parse = (exports = {} , () => 1);",
+    "exports.parse = (module.exports = {}); module.exports = exports;",
+    "(module.exports = {}, exports = module.exports, exports.parse = () => 1);",
+  ])("retains a connected CommonJS receiver: %s", (source) => {
+    expect(analyzeJavaScriptSemantics(source).moduleLinks).toContainEqual(
+      expect.objectContaining({
+        kind: "commonjs-export",
+        exportedName: "parse",
+      }),
+    );
+  });
+
+  it.each([
+    "module.exports = external; exports.parse = () => 1;",
+    "if (flag) module.exports = {}; exports.parse = () => 1;",
+    "flag && (module.exports = {}); exports.parse = () => 1;",
+    "holder ||= (module.exports = {}); exports.parse = () => 1;",
+    "invoke?.(module.exports = {}); exports.parse = () => 1;",
+    "const { value = (module.exports = {}) } = source; exports.parse = () => 1;",
+    "module[key] = {}; exports.parse = () => 1;",
+    "exports.parse = () => 1; if (flag) module.exports = {};",
+    "function replace() { module.exports = {}; } exports.parse = () => 1; replace();",
+    "function replace() { exports = {}; } replace(); exports.parse = () => 1;",
+    "module.exports = {}; function install() { exports.parse = () => 1; } install();",
+    "for (exports of values) {} exports.parse = () => 1;",
+    "({ exports } = external); exports.parse = () => 1;",
+    "module = {}; module.exports = {}; module.exports.parse = () => 1;",
+  ])("keeps uncertain CommonJS receiver identity unresolved: %s", (source) => {
+    expect(analyzeJavaScriptSemantics(source).moduleLinks).toContainEqual(
+      expect.objectContaining({
+        kind: "commonjs-export",
+        exportedName: "parse",
+        callableId: null,
+        localName: null,
+      }),
+    );
+  });
+});
+
+describe("JavaScript semantic analysis: write references", () => {
   it("classifies destructuring and loop targets as writes, not reads", () => {
     const ir = analyzeJavaScriptSemantics(`
       let a, b, c;

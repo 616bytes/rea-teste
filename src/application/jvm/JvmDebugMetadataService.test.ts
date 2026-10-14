@@ -190,12 +190,14 @@ describe("JvmDebugMetadataService", () => {
     expect(result.error._tag).toBe("AnalysisInputError");
   });
 
-  it("refuses a class whose decoded result exceeds the inline output budget", async () => {
+  it("refuses a class with too many declared table entries before allocating them", async () => {
     const path = join(dir, "Big.class");
     await writeFile(path, overBudgetClass());
     const result = await service.inspect({ path });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+    // The pre-count guard trips, not the post-build output guard.
+    expect(result.error.message).toContain("before allocation");
   });
 });

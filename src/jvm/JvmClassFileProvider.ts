@@ -24,6 +24,7 @@ import {
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { parseJavaClassFile } from "../domain/jvm/javaClassFile.js";
+import { countDebugEntries } from "../domain/jvm/javaDebugMetadata.js";
 import {
   buildJavaDebugMetadataResult,
   type InspectJvmDebugMetadataInput,
@@ -153,6 +154,8 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       return err(new AnalysisCancelledError(OPERATION));
     const parsed = parseJavaClassFile(selected.bytes);
     if (!parsed.ok) return err(mapParseError(parsed.error, input.path));
+    const tooMany = this.#rejectIfTooManyEntries(parsed.value, input.path);
+    if (tooMany) return err(tooMany);
     const result = buildJavaDebugMetadataResult(parsed.value, {
       path: input.path,
       sha256: selected.sha256,
@@ -203,6 +206,8 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       );
       const parsed = parseJavaClassFile(classBytes);
       if (!parsed.ok) return err(mapParseError(parsed.error, jar));
+      const tooMany = this.#rejectIfTooManyEntries(parsed.value, jar);
+      if (tooMany) return err(tooMany);
       const result = buildJavaDebugMetadataResult(
         parsed.value,
         { path: jar, sha256: jarDigest.sha256, bytes: jarDigest.bytes },
@@ -329,6 +334,25 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       chunks.push(chunk);
     }
     return Buffer.concat(chunks, size);
+  }
+
+  /**
+   * Refuse before the (potentially ~50x) expansion into entry objects: a crafted
+   * class near the input budget can declare millions of fixed-stride table
+   * entries. The pre-count reads only table headers and allocates nothing.
+   */
+  #rejectIfTooManyEntries(
+    classFile: Parameters<typeof countDebugEntries>[0],
+    path: string,
+  ): AnalysisResourceConstraintError | undefined {
+    const entries = countDebugEntries(classFile);
+    if (entries <= JVM_LIMITS.maxDebugEntries) return undefined;
+    return new AnalysisResourceConstraintError(
+      OPERATION,
+      "memory",
+      `${path} declares ${String(entries)} debug-table entries, over the ${String(JVM_LIMITS.maxDebugEntries)} limit; refused before allocation.`,
+      { maximum_debug_entries: JVM_LIMITS.maxDebugEntries },
+    );
   }
 
   #rejectIfOversized(

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { CONSTANT_TAG, parseJavaClassFile } from "./javaClassFile.js";
-import { decodeClassDebugMetadata } from "./javaDebugMetadata.js";
+import {
+  countDebugEntries,
+  decodeClassDebugMetadata,
+} from "./javaDebugMetadata.js";
 
 class Blob {
   readonly parts: number[] = [];
@@ -296,5 +299,46 @@ describe("decodeClassDebugMetadata — states and edge cases", () => {
       presence: "absent",
       name: null,
     });
+  });
+});
+
+describe("countDebugEntries", () => {
+  it("sums declared table entries plus one per method, without decoding them", () => {
+    const code = codeAttrInfo(
+      subAttrs(
+        2,
+        new Blob()
+          .attr(
+            4,
+            lineNumberTable([
+              [0, 5],
+              [1, 6],
+              [2, 7],
+            ]),
+          )
+          .attr(5, localVariableTable([{ startPc: 0, length: 1, slot: 0 }])),
+      ).parts,
+    );
+    const cls = parseJavaClassFile(
+      classWith(new Blob().u2(1).attr(3, code), new Blob().u2(0)),
+    );
+    expect(cls.ok).toBe(true);
+    if (!cls.ok) return;
+    // 1 method + 3 line entries + 1 local entry
+    expect(countDebugEntries(cls.value)).toBe(5);
+  });
+
+  it("clamps a lying declared count to the bytes actually present", () => {
+    // Declared count 1000, but only two 4-byte entries follow; capacity wins.
+    const lyingTable = new Blob().u2(1000).u2(0).u2(5).u2(1).u2(6).parts;
+    const code = codeAttrInfo(
+      subAttrs(1, new Blob().attr(4, lyingTable)).parts,
+    );
+    const cls = parseJavaClassFile(
+      classWith(new Blob().u2(1).attr(3, code), new Blob().u2(0)),
+    );
+    expect(cls.ok).toBe(true);
+    if (!cls.ok) return;
+    expect(countDebugEntries(cls.value)).toBe(1 + 2); // method + clamped entries
   });
 });

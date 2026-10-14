@@ -341,6 +341,40 @@ export const decodeMethodDebugMetadata = (
   };
 };
 
+/** Fixed byte strides of the repeatable debug tables (JVMS §4.7.12–14). */
+const DEBUG_TABLE_STRIDES: ReadonlyArray<readonly [string, number]> = [
+  ["LineNumberTable", 4],
+  ["LocalVariableTable", 10],
+  ["LocalVariableTypeTable", 10],
+];
+
+/**
+ * Upper bound on the debug-table entries {@link decodeClassDebugMetadata} would
+ * materialize, counted without allocating a single entry object: it reads only
+ * each table's `count` prefix, clamped by the bytes actually present. A caller
+ * enforcing a resource budget uses this to refuse a crafted class before the
+ * (potentially ~50x) expansion into entry objects, not after.
+ */
+export const countDebugEntries = (cls: JavaClassFile): number => {
+  let total = cls.methods.length; // each method projects to one object
+  for (const method of cls.methods) {
+    const code = findAttribute(method.attributes, "Code");
+    if (code === null) continue;
+    const seeked = seekCodeSubAttributes(code);
+    if (seeked === null) continue;
+    const sub = parseAttributes(seeked.cursor, cls.constantPool);
+    if (!sub.ok) continue;
+    for (const [name, stride] of DEBUG_TABLE_STRIDES)
+      for (const info of collectAttributes(sub.value, name)) {
+        if (info.length < 2) continue;
+        const declared = (info[0]! << 8) | info[1]!;
+        const capacity = Math.floor((info.length - 2) / stride);
+        total += Math.min(declared, capacity);
+      }
+  }
+  return total;
+};
+
 /** Decode class-level debug attributes and every method's debug tables. */
 export const decodeClassDebugMetadata = (
   cls: JavaClassFile,

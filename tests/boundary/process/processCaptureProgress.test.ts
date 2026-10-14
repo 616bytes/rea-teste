@@ -11,6 +11,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import { captureProcessScenario } from "../../../src/process/capture/ProcessHarness.js";
+import { ProcessCaptureResourceScope } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { snapshotRoots } from "../../../src/process/capture/FilesystemSnapshot.js";
 import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -585,8 +586,13 @@ itWithCaptureCapability(
     });
 
     expect(capture.exitCode).toBe(1);
-    expect(capture.stdout).toContain('"code":"process_capture_failed"');
-    const last = capture.lines.at(-1)?.update;
+    expect(
+      analysisCliErrorEnvelopeSchema.parse(JSON.parse(capture.stdout)),
+    ).toMatchObject({ code: "process_capture_failed" });
+    const updates = capture.lines.map(({ update }) => update);
+    assertMonotonic(updates);
+    expect(updates.filter(({ terminal }) => terminal === true)).toHaveLength(1);
+    const last = updates.at(-1);
     expect(last).toMatchObject({ phase: "cleanup", terminal: true });
     expect(last?.details.disposition).toBe("failed");
     expect(
@@ -605,7 +611,7 @@ itWithCaptureCapability(
   "reports the cleanup a preparation released when it fails after allocating its root",
   async () => {
     const controller = new AbortController();
-    const terminal: string[] = [];
+    const terminal: { readonly phase: string; readonly message: string }[] = [];
 
     const result = await captureProcessScenario(
       parseProcessScenario({
@@ -626,21 +632,81 @@ itWithCaptureCapability(
       undefined,
       {
         report: async (update) => {
-          if (update.terminal === true) terminal.push(update.message);
+          if (update.terminal === true)
+            terminal.push({ phase: update.phase, message: update.message });
         },
       },
     );
 
     expect(result.ok).toBe(false);
     expect(terminal).toHaveLength(1);
+    expect(terminal[0]?.phase).toBe("cleanup");
     expect(
-      parseProgressMessage(terminal[0] ?? ""),
+      parseProgressMessage(terminal[0]?.message ?? ""),
       "the released root is reported as cleaned, not as never allocated",
     ).toMatchObject({
       disposition: "cancelled",
       owned_process_group: "not_required",
       terminal_renderer: "not_required",
       temporary_root: "cleaned",
+    });
+  },
+  30_000,
+);
+
+class RootRemovalDenied extends ProcessCaptureResourceScope {
+  override async release(
+    options: Parameters<ProcessCaptureResourceScope["release"]>[0],
+  ) {
+    // The real release removes the root; the report then claims it did not.
+    const released = await super.release(options);
+    return {
+      ...released,
+      temporary_root: { state: "failed", reason: "fixture root denied" },
+    } as const;
+  }
+}
+
+itWithCaptureCapability(
+  "reports a failed root cleanup of a preparation that failed after allocating its root",
+  async () => {
+    const controller = new AbortController();
+    const terminal: string[] = [];
+
+    const result = await captureProcessScenario(
+      parseProcessScenario({
+        executable: process.execPath,
+        arguments: childScript("console.log('ready')"),
+        timeout_ms: 5_000,
+      }),
+      controller.signal,
+      process.platform,
+      process.env,
+      async (...snapshotArguments) => {
+        const snapshot = await snapshotRoots(...snapshotArguments);
+        controller.abort();
+        return snapshot;
+      },
+      undefined,
+      {
+        report: async (update) => {
+          if (update.terminal === true) terminal.push(update.message);
+        },
+      },
+      new RootRemovalDenied(),
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(
+        result.error,
+        "an incomplete cleanup, not a plain cancellation, is the cause",
+      ).toMatchObject({ reason: "cleanup_incomplete" });
+    expect(terminal).toHaveLength(1);
+    expect(parseProgressMessage(terminal[0] ?? "")).toMatchObject({
+      owned_process_group: "not_required",
+      terminal_renderer: "not_required",
+      temporary_root: "failed",
     });
   },
   30_000,

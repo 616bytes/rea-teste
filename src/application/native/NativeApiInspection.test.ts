@@ -37,6 +37,7 @@ it.each([
     parameters: { procedure: dossier.procedure.address },
     result: jsonValueSchema.parse(result),
     upstreamProfile: undefined,
+    upstreamLimitations: [],
   });
   expect(evidence.limitations).toEqual(
     expect.arrayContaining([

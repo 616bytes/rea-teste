@@ -28,6 +28,10 @@ import { nativeApiBoundarySchema } from "../domain/native/nativeApiBoundary.js";
 import { nativeValueFlowSchema } from "../domain/native/nativeValueFlow.js";
 import { decompilerCompletenessSchema } from "../domain/native/decompilerCompleteness.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
+import {
+  relationshipCoverageSchema,
+  type RelationshipCoverage,
+} from "../domain/relationshipCoverage.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import {
@@ -327,6 +331,7 @@ const ghidraFunctionDossier = functionDossierSchema
       ...value.comments.map(({ address }) => address),
       ...value.callers.map(({ address }) => address),
       ...value.callees.map(({ address }) => address),
+      ...(value.unresolved_calls ?? []).map(({ address }) => address),
       ...value.incoming_references.flatMap(referenceAddresses),
       ...value.outgoing_references.flatMap(referenceAddresses),
       ...value.referenced_strings.flatMap(({ address, source_address }) => [
@@ -439,6 +444,7 @@ const functionBoundaryObservationOperations: ReadonlySet<GhidraFunctionOperation
 const functionObservationEnvelope = z.strictObject({
   value: z.unknown(),
   limitations: z.array(z.string()),
+  relationship_coverage: relationshipCoverageSchema.exactOptional(),
   selection: z
     .strictObject({
       file_offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
@@ -458,6 +464,7 @@ export interface ParsedGhidraFunctionResult {
   readonly value: JsonValue;
   readonly limitations: readonly string[];
   readonly locations?: readonly EvidenceLocation[];
+  readonly relationshipCoverage?: RelationshipCoverage;
 }
 
 /** Require exact, bounded Java-bridge function output before creating Evidence. */
@@ -468,6 +475,7 @@ export const parseGhidraFunctionResult = (
   let observation: {
     readonly value: unknown;
     readonly limitations: readonly string[];
+    readonly relationship_coverage?: RelationshipCoverage;
     readonly selection?: z.infer<
       typeof functionObservationEnvelope
     >["selection"];
@@ -476,13 +484,17 @@ export const parseGhidraFunctionResult = (
     const envelope = functionObservationEnvelope.safeParse(value);
     if (
       !envelope.success ||
+      (operation !== "analyze_function" &&
+        operation !== "procedure_callers" &&
+        operation !== "procedure_callees" &&
+        envelope.data.relationship_coverage !== undefined) ||
       (operation !== "procedure_pseudo_code" &&
         envelope.data.selection !== undefined)
     )
       return err(
         new AnalysisOutputError(
           operation,
-          "Ghidra bridge omitted the function observation envelope",
+          "Ghidra bridge returned an invalid function observation envelope for this operation",
           envelope.success ? undefined : { cause: envelope.error },
         ),
       );
@@ -499,6 +511,9 @@ export const parseGhidraFunctionResult = (
             ? annotationLimitationsProjection.parse(parsed.data).dossier
                 .limitations
             : observation.limitations,
+        ...(observation.relationship_coverage === undefined
+          ? {}
+          : { relationshipCoverage: observation.relationship_coverage }),
         ...(observation.selection === undefined
           ? {}
           : {

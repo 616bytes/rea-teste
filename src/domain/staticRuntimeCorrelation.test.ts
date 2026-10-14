@@ -14,6 +14,9 @@ import { FUNCTION_COMPARISON_EXAMPLE } from "../contracts/functionComparisonExam
 import { FUNCTION_COMPARISON_PROVIDER } from "./functionComparisonProvider.js";
 import { compareArtifacts } from "./artifactComparison.js";
 import type { JsonValue } from "./jsonValue.js";
+import { jsonValueSchema } from "./jsonValue.js";
+import { functionDossierSchema } from "./hopperValues.js";
+import { compareFunctions } from "./functionComparison.js";
 import {
   correlateStaticAndRuntime,
   staticRuntimeCorrelationInputSchema,
@@ -275,6 +278,70 @@ describe("static/runtime comparison compatibility controls", () => {
   });
 });
 
+it("keeps text, assembly and unavailable CFG caveats on their selected correlations", () => {
+  const source = FUNCTION_COMPARISON_EXAMPLE.left;
+  const left = createEvidence(
+    { path: "/tmp/unavailable-cfg", sha256: "a".repeat(64), format: "mach-o" },
+    source.provider,
+    {
+      operation: source.operation,
+      parameters: source.parameters,
+      result: jsonValueSchema.parse({
+        ...functionDossierSchema.parse(source.normalized_result),
+        basic_blocks: [{ start: "0x1000", end: "0x1000", successors: [] }],
+      }),
+      confidence: source.confidence,
+      authority: source.authority,
+    },
+  );
+  const right = FUNCTION_COMPARISON_EXAMPLE.right;
+  const computed = compareFunctions(left, right);
+  const comparison = createEvidence(undefined, staticComparison.provider, {
+    predicateType: "rea.function-comparison",
+    operation: "compare_functions",
+    parameters: {
+      left_evidence_id: left.evidence_id,
+      right_evidence_id: right.evidence_id,
+    },
+    result: jsonValueSchema.parse(computed),
+    confidence: "derived",
+    authority: "analyst-inference",
+    limitations: computed.limitations,
+    evidenceLinks: [left.evidence_id, right.evidence_id],
+  });
+  const input = mapping(processComparison("unchanged"), "static_only");
+  const result = correlateStaticAndRuntime({
+    ...input,
+    static_comparisons: [comparison],
+    mappings: ["pseudocode", "assembly", "cfg"].map((dimension) => ({
+      ...input.mappings[0],
+      static: {
+        comparison_evidence_id: comparison.evidence_id,
+        selector: { kind: "function", dimension },
+      },
+    })),
+  });
+  expect(result.status).toBe("unknown");
+  const caveats = new Map(
+    result.correlations.items.map((item) => [
+      item.static.selector.kind === "function"
+        ? item.static.selector.dimension
+        : "artifact",
+      item.limitations.join(" "),
+    ]),
+  );
+  expect(caveats.get("pseudocode")).toMatch(/generated-name normalization/u);
+  expect(caveats.get("pseudocode")).not.toMatch(
+    /Assembly is opaque|CFG addresses/u,
+  );
+  expect(caveats.get("assembly")).toMatch(/Assembly is opaque/u);
+  expect(caveats.get("assembly")).not.toMatch(/CFG addresses/u);
+  expect(caveats.get("cfg")).toMatch(/CFG addresses/u);
+  expect(caveats.get("cfg")).not.toMatch(
+    /generated-name normalization|Assembly is opaque/u,
+  );
+});
+
 describe("static/runtime correlation", () => {
   it("accepts real runtime dimensions and rejects removed protocol dimensions", () => {
     const runtime = processComparison("unchanged");
@@ -315,6 +382,9 @@ describe("static/runtime correlation", () => {
     );
     expect(result.limitations.join(" ")).toMatch(
       /does not establish causality/u,
+    );
+    expect(result.correlations.items[0]?.limitations.join(" ")).toMatch(
+      /generated-name normalization/u,
     );
   });
 

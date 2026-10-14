@@ -63,6 +63,7 @@ export const assertNodeCliInspectArgumentsSupported = async (
     }
   } catch (cause: unknown) {
     if (cause instanceof AnalysisUnsupportedTargetError) throw cause;
+    options?.signal?.throwIfAborted();
     // Missing sentinels, format failures, or unreadable fuses leave inspection capability unknown; proceed with launch.
   }
 };

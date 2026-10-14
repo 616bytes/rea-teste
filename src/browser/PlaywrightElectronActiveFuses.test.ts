@@ -5,7 +5,9 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ELECTRON_FUSE_STATE_BYTES } from "../domain/electron/electronFuses.js";
 import {
+  elfFuseImage,
   OBSIDIAN_FUSE_BYTES,
+  peFuseImage,
   thinFuseImage,
   thinMacho,
   universalFuseImage,
@@ -70,6 +72,44 @@ describe("assertNodeCliInspectArgumentsSupported", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("rejects Windows PE binary when EnableNodeCliInspectArguments fuse is disabled", async () => {
+    const root = await createTestTempDirectory("rea-fuse-preflight-");
+    const binaryPath = join(root, "disabled-pe.exe");
+    const image = peFuseImage(OBSIDIAN_FUSE_BYTES);
+    await writeFile(binaryPath, image.bytes);
+
+    await expect(
+      assertNodeCliInspectArgumentsSupported(binaryPath),
+    ).rejects.toThrow(AnalysisUnsupportedTargetError);
+  });
+
+  it("rejects Linux ELF binary when EnableNodeCliInspectArguments fuse is disabled", async () => {
+    const root = await createTestTempDirectory("rea-fuse-preflight-");
+    const binaryPath = join(root, "disabled-elf");
+    const image = elfFuseImage(OBSIDIAN_FUSE_BYTES);
+    await writeFile(binaryPath, image.bytes);
+
+    await expect(
+      assertNodeCliInspectArgumentsSupported(binaryPath),
+    ).rejects.toThrow(AnalysisUnsupportedTargetError);
+  });
+
+  it("rethrows when signal is aborted during reading", async () => {
+    const root = await createTestTempDirectory("rea-fuse-preflight-");
+    const binaryPath = join(root, "test-binary");
+    const image = thinFuseImage(OBSIDIAN_FUSE_BYTES);
+    await writeFile(binaryPath, image.bytes);
+
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      assertNodeCliInspectArgumentsSupported(binaryPath, {
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow();
+  });
+
   it("evaluates matching architecture slice in universal Mach-O binary", async () => {
     const root = await createTestTempDirectory("rea-fuse-preflight-");
     const binaryPath = join(root, "universal-app");
@@ -81,7 +121,7 @@ describe("assertNodeCliInspectArgumentsSupported", () => {
       await expect(
         assertNodeCliInspectArgumentsSupported(binaryPath),
       ).resolves.toBeUndefined();
-    } else if (process.arch === "x64") {
+    } else {
       await expect(
         assertNodeCliInspectArgumentsSupported(binaryPath),
       ).rejects.toThrow(AnalysisUnsupportedTargetError);

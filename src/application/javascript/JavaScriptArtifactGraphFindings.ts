@@ -213,7 +213,13 @@ const addEndpoint = (
     identity: artifactLocalIdentity(
       input.file.sha256,
       input.value.kind,
-      JSON.stringify([input.value.interpretation ?? "literal", key]),
+      // Partial expressions and complete values can share text (`target` vs
+      // `"target"`), so partial endpoints keep a disjoint identity segment.
+      JSON.stringify([
+        input.value.interpretation ?? "literal",
+        ...(partial ? ["partial"] : []),
+        key,
+      ]),
     ),
     observations: [
       {

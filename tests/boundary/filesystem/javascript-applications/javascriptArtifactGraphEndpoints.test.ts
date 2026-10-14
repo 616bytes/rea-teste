@@ -126,3 +126,35 @@ it("keeps partial network endpoints visible through artifact graph projection", 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+it("keeps a partial expression and a complete literal with the same text distinct", async () => {
+  const root = await createTestTempDirectory("rea-js-endpoint-identity-");
+  await writeFile(join(root, "app.js"), 'fetch(target); fetch("target");');
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const analysis = analyzeJavaScriptArtifactFiles(files);
+    const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
+    const targets = graph.nodes.filter(({ kind }) => kind === "endpoint");
+    const partial = targets.find(({ observations }) =>
+      observations.some(
+        ({ properties }) =>
+          properties.value === "target" && properties.resolution === "partial",
+      ),
+    );
+    const complete = targets.find(({ observations }) =>
+      observations.some(
+        ({ properties }) =>
+          properties.value === "target" && properties.resolution === undefined,
+      ),
+    );
+
+    expect(partial).toBeDefined();
+    expect(complete).toBeDefined();
+    expect(partial?.node_id).not.toBe(complete?.node_id);
+  } finally {
+    await reader.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -64,6 +64,71 @@ describe("partially resolved network endpoints", () => {
     ]);
   });
 
+  it("resolves a URL path against a literal base", () => {
+    expect(
+      endpoints(`
+        const u = new URL("/socket", "https://api.example.com");
+        fetch(u);
+      `),
+    ).toEqual([
+      {
+        kind: "network",
+        value: "https://api.example.com/socket",
+        mechanism: "call:fetch",
+      },
+    ]);
+  });
+
+  it("keeps a URL object with a non-literal base partial", () => {
+    expect(
+      endpoints(`
+        const u = new URL("/socket", apiUrl);
+        fetch(u);
+      `),
+    ).toEqual([
+      {
+        kind: "network",
+        value: "u",
+        mechanism: "call:fetch",
+        resolution: "partial",
+      },
+    ]);
+  });
+
+  it("keeps a mutated URL object partial", () => {
+    expect(
+      endpoints(`
+        const u = new URL("wss://old.example/socket");
+        u.hostname = "new.example";
+        fetch(u);
+      `),
+    ).toEqual([
+      {
+        kind: "network",
+        value: "u",
+        mechanism: "call:fetch",
+        resolution: "partial",
+      },
+    ]);
+  });
+
+  it("strips credentials from retained template expressions", () => {
+    expect(
+      endpoints("fetch(`https://alice:secret@api.example.com/items/${id}`);"),
+    ).toEqual([
+      {
+        kind: "network",
+        value: "`https://api.example.com/items/${id}`",
+        mechanism: "call:fetch",
+        resolution: "partial",
+      },
+    ]);
+  });
+
+  it("does not treat a local .fetch method as a partial network target", () => {
+    expect(endpoints("cache.fetch(key);")).toEqual([]);
+  });
+
   it("resolves a constant config property forwarded to WebSocket", () => {
     expect(
       endpoints(`

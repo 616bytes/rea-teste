@@ -451,15 +451,22 @@ const inspectEndpointCall = (
     });
 };
 
-/** Network APIs whose request target is never a collection key or setting name. */
+/**
+ * Network APIs whose request target is never a collection key or setting name.
+ * Member `.fetch` is excluded: local cache and service-worker style methods
+ * share the name without making a request; the literal path is unchanged.
+ */
 const isUnambiguousNetworkCall = (name: string): boolean =>
   name === "fetch" ||
-  name.endsWith(".fetch") ||
   name === "WebSocket" ||
   name === "EventSource" ||
   name.endsWith(".EventSource") ||
   name === "sendBeacon" ||
   name.endsWith(".sendBeacon");
+
+/** Remove URL userinfo from retained expression text without touching interpolations. */
+const stripExpressionCredentials = (expression: string): string =>
+  expression.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/giu, "$1");
 
 /** A literal endpoint, candidate, or partially resolved request target. */
 type ResolvedNetworkEndpointArgument = JavaScriptEndpointArgument & {
@@ -493,7 +500,9 @@ const unresolvedNetworkEndpointArgument = (
   );
   return {
     kind: "endpoint",
-    value: resolved ?? sourceSlice(context.source, argument),
+    value:
+      resolved ??
+      stripExpressionCredentials(sourceSlice(context.source, argument)),
     ...(resolved === undefined ? { resolution: "partial" as const } : {}),
   };
 };
@@ -507,6 +516,32 @@ const resolvedRequestTarget = (
   if (evaluated.status === "literal" && typeof evaluated.value === "string")
     return evaluated.value;
   return urlObjectRequestTarget(node, bindings);
+};
+
+/**
+ * Identifiers whose member properties are written anywhere in the program.
+ * The static pass does not run the semantic member-mutation collector, so
+ * writes that could change a URL object after construction are detected
+ * syntactically once per parse; name-based matching only forces partials.
+ */
+const mutatedMemberRootsByProgram = new WeakMap<t.Program, Set<string>>();
+
+const mutatedMemberRootNames = (program: t.Program): Set<string> => {
+  const cached = mutatedMemberRootsByProgram.get(program);
+  if (cached !== undefined) return cached;
+  const roots = new Set<string>();
+  traverseJavaScriptAst(program, {
+    enter: (node) => {
+      let member: t.Node | undefined;
+      if (t.isAssignmentExpression(node)) member = node.left;
+      else if (t.isUpdateExpression(node)) member = node.argument;
+      if (member === undefined || !t.isMemberExpression(member)) return;
+      const root = unwrapJavaScriptExpression(member.object).node;
+      if (t.isIdentifier(root)) roots.add(root.name);
+    },
+  });
+  mutatedMemberRootsByProgram.set(program, roots);
+  return roots;
 };
 
 /**
@@ -533,14 +568,32 @@ const urlObjectRequestTarget = (
   }
   if (!t.isIdentifier(target)) return undefined;
   const binding = resolveSemanticBindingState(bindings, target, target.name);
-  if (binding === undefined || binding.mutable) return undefined;
+  // Member writes through the binding can change the URL object after
+  // construction; the static pass does not collect member mutations.
+  if (
+    binding === undefined ||
+    binding.mutable ||
+    mutatedMemberRootNames(bindings.program).has(target.name)
+  )
+    return undefined;
   const [initializer, ...rest] = binding.initializers;
   if (initializer === undefined || rest.length > 0) return undefined;
   const initialized = unwrapJavaScriptExpression(initializer.node).node;
   if (!t.isNewExpression(initialized)) return undefined;
   const callee = unwrapJavaScriptExpression(initialized.callee).node;
   if (!isUnmodifiedGlobalReference(callee, bindings, "URL")) return undefined;
-  return stringValue(initialized.arguments[0]);
+  const input = stringValue(initialized.arguments[0]);
+  if (input === undefined) return undefined;
+  // A single literal matches the literal endpoint path's exact text.
+  if (initialized.arguments.length <= 1) return input;
+  const base = stringValue(initialized.arguments[1]);
+  if (base === undefined || initialized.arguments.length > 2) return undefined;
+  try {
+    return new URL(input, base).href;
+  } catch {
+    // The URL constructor would have thrown; the binding cannot exist at runtime.
+    return undefined;
+  }
 };
 
 /** Record tRPC procedures, tRPC link URLs and named GraphQL operations. */

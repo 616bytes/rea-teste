@@ -50,7 +50,7 @@ if (portable && claude) {
   check(portable.name === claude.name, "portable and Claude Code manifest names match");
 }
 
-for (const relativePath of ["README.md", "TESTING.md", ".mcp.json"]) {
+for (const relativePath of ["README.md", "TESTING.md", "AGENT_WORKFLOW.md", ".mcp.json", "templates/agent-task.md", "templates/agent-handoff.md"]) {
   check(exists(relativePath), "required file exists: " + relativePath);
 }
 

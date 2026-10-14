@@ -103,6 +103,49 @@ it("recovers exports when the factory declares only its module parameter", () =>
   ]);
 });
 
+it.each([
+  [
+    "module = {}, exports, r",
+    "module.exports = { parse: value => value };",
+    ["parse"],
+  ],
+  ["e = {}, t, r", "e.exports = { parse: value => value };", ["parse"]],
+  ["module, exports = {}, r", "exports.parse = value => value;", ["parse"]],
+  ["e, t = {}, r", "t.parse = value => value;", ["parse"]],
+  [
+    "module = {}, exports = {}, r",
+    'Object.defineProperty(module.exports, "named", {}); r.d(exports, { declared: () => 1 });',
+    ["declared", "named"],
+  ],
+  [
+    "e = {}, t = {}, r",
+    'Object.defineProperty(e.exports, "named", {}); r.d(t, { declared: () => 1 });',
+    ["declared", "named"],
+  ],
+  [
+    "module = {}, exports = {}, r",
+    "function shadow(module = {}, exports = {}) { module.exports.fake = 1; exports.fake = 1; } { const module = { exports: {} }; const exports = {}; module.exports.fake = 1; exports.fake = 1; } module.exports.real = 1; exports.other = 1;",
+    ["other", "real"],
+  ],
+  [
+    "e = {}, t = {}, r",
+    "function shadow(e = {}, t = {}) { e.exports.fake = 1; t.fake = 1; } { const e = { exports: {} }; const t = {}; e.exports.fake = 1; t.fake = 1; } e.exports.real = 1; t.other = 1;",
+    ["other", "real"],
+  ],
+] as const)(
+  "owns exports through defaulted factory parameters: %s",
+  (parameters, body, exports) => {
+    const analysis =
+      analyzeJavaScriptStaticSource(`globalThis.webpackChunkApp.push([[1], {
+    17(${parameters}) { ${body} }
+  }]);`);
+    expect(analysis.parse_status).toBe("complete");
+    expect(analysis.bundler_registrations[0]?.modules).toMatchObject([
+      { module_key: "17", exports },
+    ]);
+  },
+);
+
 it("does not resolve a parameter named require as a module dependency", () => {
   const analysis = analyzeJavaScriptStaticSource(
     `function run(require) { return require("./ghost.cjs"); }`,

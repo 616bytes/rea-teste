@@ -10,7 +10,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
-  "renamed bundler module parameters retain export evidence through CLI and MCP",
+  "renamed and defaulted bundler parameters retain export evidence through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-bundler-exports-");
     await writeFile(
@@ -18,13 +18,13 @@ cliTest(
       `
     throw new Error("This analysis fixture must not execute");
     globalThis.webpackChunkApp.push([[1], {
-      17(module, exports) { module.exports = { parse: value => value }; },
-      18(e, t, r) {
+      17(module = {}, exports = {}) { module.exports = { parse: value => value }; },
+      18(e = {}, t = {}, r) {
         e.exports = { parse: value => value };
         e.exports.extra = 1;
         Object.defineProperty(e.exports, "named", { value: 1 });
-        r.d(e.exports, { declared: () => 1 });
-        function shadow(e) { e.exports.fake = 1; }
+        r.d(t, { declared: () => 1 });
+        function shadow(e = {}, t = {}) { e.exports.fake = 1; t.fake = 1; }
       },
       19(e) { e.exports = { parse: value => value }; }
     }]);

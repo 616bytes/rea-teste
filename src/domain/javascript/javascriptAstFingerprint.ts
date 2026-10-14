@@ -43,6 +43,9 @@ export const collectJavaScriptExports = (
   const factoryBindings = parameters
     .slice(0, 2)
     .map((parameter) =>
+      t.isAssignmentPattern(parameter) ? parameter.left : parameter,
+    )
+    .map((parameter) =>
       bindings !== undefined && t.isIdentifier(parameter)
         ? resolveSemanticBindingState(bindings, parameter, parameter.name)
             ?.bindingId

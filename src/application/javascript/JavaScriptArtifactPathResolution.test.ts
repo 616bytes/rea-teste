@@ -1178,6 +1178,102 @@ describe("package subpath legacy lookup and metadata failures", () => {
   });
 });
 
+describe("legacy subpath separator and backslash refusals", () => {
+  // Node 22, 24, and 26 reject a bare ES module specifier whose subpath
+  // percent-decodes to a path separator with ERR_INVALID_MODULE_SPECIFIER,
+  // CommonJS never percent-decodes, and CommonJS on the POSIX ground truth
+  // treats a backslash as a literal filename character. None of these may
+  // produce an edge into the package.
+  it("does not resolve legacy subpaths that hide separators or backslashes", () => {
+    const files = fileMap([
+      file("src/importer.mjs", "root"),
+      file("src/importer.cjs", "root"),
+      file(
+        "node_modules/legacy/package.json",
+        "root",
+        '{"name":"legacy","main":"lib.js"}',
+      ),
+      file("node_modules/legacy/lib.js", "root"),
+      file("node_modules/legacy/sub/y.js", "root"),
+      file("node_modules/legacy/sub%5cy.js", "root"),
+      file("node_modules/legacy/foo.bar.js", "root"),
+    ]);
+    for (const declaredPath of [
+      "legacy/sub%2fy.js",
+      "legacy/sub%5cy.js",
+      "legacy/..%2foutside.js",
+    ])
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "src/importer.mjs",
+          context: "module-specifier",
+          moduleKind: "import",
+          files,
+        }),
+      ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+    expect(
+      resolve({
+        declaredPath: "legacy/sub\\y.js",
+        sourcePath: "src/importer.cjs",
+        context: "module-specifier",
+        moduleKind: "require",
+        files,
+      }),
+    ).toMatchObject({ resolution_status: "not-found", resolved_path: null });
+    // Encoded separators are refused, but an encoded dot inside one segment
+    // stays loadable, and CommonJS keeps percent escapes literal.
+    expect(
+      resolve({
+        declaredPath: "legacy/foo%2ebar.js",
+        sourcePath: "src/importer.mjs",
+        context: "module-specifier",
+        moduleKind: "import",
+        files,
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "node_modules/legacy/foo.bar.js",
+    });
+    expect(
+      resolve({
+        declaredPath: "legacy/sub%5cy.js",
+        sourcePath: "src/importer.cjs",
+        context: "module-specifier",
+        moduleKind: "require",
+        files,
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "node_modules/legacy/sub%5cy.js",
+    });
+  });
+
+  // Node 24.15 rejects an ES module specifier whose package name contains a
+  // backslash with ERR_INVALID_MODULE_SPECIFIER; self-reference must not
+  // borrow the enclosing package's exports target.
+  it("rejects an ESM self-reference whose package name contains a backslash", () => {
+    const files = fileMap([
+      file("src/importer.mjs", "root"),
+      file(
+        "package.json",
+        "root",
+        JSON.stringify({ name: "bad\\name", exports: "./safe.js" }),
+      ),
+      file("safe.js", "root"),
+    ]);
+    expect(
+      resolve({
+        declaredPath: "bad\\name",
+        sourcePath: "src/importer.mjs",
+        context: "module-specifier",
+        moduleKind: "import",
+        files,
+      }),
+    ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+  });
+});
+
 describe("generic package entry heuristics", () => {
   it.each([
     ['{"main":"actual.cjs","module":"bundler.mjs"}', "actual.cjs"],

@@ -427,6 +427,24 @@ const decodeModuleUrlPath = (
     : decoded;
 };
 
+// Node rejects a bare ES module specifier whose subpath percent-decodes to a
+// path separator before any package lookup; encoded dots within one segment
+// stay loadable. CommonJS never percent-decodes, so this check is ESM-only.
+// Malformed escapes fall through so the decoder reports them with its own
+// reason.
+const encodedSubpathSeparator = (subpath: string): string | null => {
+  for (const segment of subpath.slice(2).split("/")) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      return null;
+    }
+    if (decoded.includes("/") || decoded.includes("\\")) return segment;
+  }
+  return null;
+};
+
 const relativeCandidate = (sourcePath: string, declared: string): string =>
   declared.startsWith("/")
     ? declared.slice(1)
@@ -442,10 +460,19 @@ const bareModuleCandidate = (
     ]);
   if (
     input.moduleKind === "import" &&
-    (request.packageName.startsWith(".") || request.packageName.includes("%"))
+    (request.packageName.startsWith(".") ||
+      request.packageName.includes("%") ||
+      request.packageName.includes("\\"))
   )
     return unresolvedCandidate("rejected", [
-      "ES module package names cannot start with a dot or contain percent signs.",
+      "ES module package names cannot start with a dot or contain percent signs or backslashes.",
+    ]);
+  if (
+    input.moduleKind === "import" &&
+    encodedSubpathSeparator(request.packageSubpath) !== null
+  )
+    return unresolvedCandidate("rejected", [
+      `The ES module subpath of ${JSON.stringify(input.declaredPath)} percent-decodes to a path separator; Node rejects such specifiers before any package lookup.`,
     ]);
   const self = packageSelfCandidate(input, request);
   if (self !== null) return self;
@@ -682,6 +709,15 @@ const resolvePackageDependency = (
         ? decodeModuleUrlPath(stripQueryAndFragment(subpath.slice(2)))
         : subpath.slice(2);
     if (typeof fileSubpath !== "string") return fileSubpath;
+    // CommonJS never treats a backslash as a separator, and inventoried
+    // logical paths cannot contain one, so a specifier that does can never
+    // name a file. Resolving it through the joined-path normalizer would
+    // launder the backslash into a directory boundary.
+    if (input.moduleKind === "require" && fileSubpath.includes("\\"))
+      return exactPackageTargetNotFound(
+        `${directory}/${fileSubpath.replaceAll("\\", "/")}`,
+        "CommonJS subpath",
+      );
     const candidate = confineCandidate(`${directory}/${fileSubpath}`);
     if (input.moduleKind === "import" && typeof candidate === "string")
       return resolveLegacyEsmSubpath(input, candidate);
@@ -1466,7 +1502,7 @@ const notFoundCandidate = (): Extract<
 
 const exactPackageTargetNotFound = (
   path: string,
-  targetKind: "exports" | "imports" | "ESM subpath",
+  targetKind: "exports" | "imports" | "ESM subpath" | "CommonJS subpath",
 ): CandidateResolution => ({
   resolvedPath: null,
   status: "not-found",

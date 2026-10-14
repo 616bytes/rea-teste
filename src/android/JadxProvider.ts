@@ -122,7 +122,7 @@ const executionError = (context: {
       stderr.length === 0
         ? " The launcher produced no diagnostics before it stopped."
         : ` Java diagnostics: ${stderr}`;
-    const reason = `Java could not start REA's Android bridge using ${session.transport.options.command}: ${cause instanceof Error ? cause.message : String(cause)}.${diagnostics} The selected JDK's compiler module and the engine archive passed REA's checks before this launch, so neither is what stopped it.`;
+    const reason = `Java could not start REA's Android bridge using ${session.transport.options.command}: ${cause instanceof Error ? cause.message : String(cause)}.${diagnostics} REA's pre-launch checks confirmed the selected JDK lists jdk.compiler and that the engine archive holds its expected entry names. Those checks do not establish that the launcher runs or that the whole archive is intact, so this reports what the launcher said instead of naming a cause.`;
     return new AnalysisCapabilityUnavailableError(
       "jadx",
       request.operation,

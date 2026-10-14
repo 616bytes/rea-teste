@@ -844,10 +844,14 @@ it("classifies a heap shortage that stops the bridge before the handshake", asyn
     },
   });
   expect(projected.message).toContain("heap");
-  // The JDK and engine archive passed REA's checks before this launch, so a
-  // start failure must not send the caller back to inspect them.
+  // The pre-launch checks establish the module listing and the archive's entry
+  // names, not that either one is what stopped the launcher, so a start failure
+  // reports the launcher's own output instead of naming them as the cause.
   expect(projected.message).not.toContain("JRE");
   expect(projected.remediation.action).toContain("REA_JADX_HEAP_MIB");
+  // `_JAVA_OPTIONS` overrides the command-line -Xmx, so advice that named only
+  // the variables the command line wins against could change nothing.
+  expect(projected.remediation.action).toContain("_JAVA_OPTIONS");
   await provider.close();
   await verifyCleanup(launches);
 });

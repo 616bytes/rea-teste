@@ -44,6 +44,11 @@ it("publishes REA_JADX_MCP_JAR as registration environment when the configured J
       },
     ],
   });
+  // An unset REA setting leaves the heap to the launching environment, which
+  // includes the JVM option variables REA passes through unchanged, so the
+  // detail reports them instead of claiming the heap is ergonomics alone.
+  const heap = inspection.checks.find(({ name }) => name === "heap");
+  expect(heap?.detail).toContain("_JAVA_OPTIONS");
 });
 
 it("reports the requested heap without judging whether an APK fits in it", async () => {

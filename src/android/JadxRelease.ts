@@ -29,11 +29,12 @@ export const JADX_JVM_OPTIONS_REMEDIATION =
  * heap is what the failing run had, which does not establish what the APK
  * needs, so this names the setting instead of a target size; the wording holds
  * when no heap was observed either. It also states the precedence, because REA
- * passes the value as an explicit command-line `-Xmx` and Java lets that
- * override `JAVA_TOOL_OPTIONS`.
+ * passes the value as an explicit command-line `-Xmx`: Java lets that override
+ * `JAVA_TOOL_OPTIONS` and `JDK_JAVA_OPTIONS`, while `_JAVA_OPTIONS` overrides
+ * the command line, so advice that named only the former could change nothing.
  */
 export const JADX_HEAP_EXHAUSTION_REMEDIATION =
-  "Raise the JADX worker heap in the environment that starts REA: set REA_JADX_HEAP_MIB to a larger size in MiB (for example 8192). REA passes that value as an explicit -Xmx on the worker command line, so JAVA_TOOL_OPTIONS governs the worker heap only while REA_JADX_HEAP_MIB is unset. REA supplies no default heap, and a reported heap is the limit that run had, not what the APK requires.";
+  "Raise the JADX worker heap in the environment that starts REA: set REA_JADX_HEAP_MIB to a larger size in MiB (for example 8192). REA passes that value as an explicit -Xmx on the worker command line, so JAVA_TOOL_OPTIONS and JDK_JAVA_OPTIONS govern the worker heap only while REA_JADX_HEAP_MIB is unset; _JAVA_OPTIONS overrides the command line, so clear or raise it as well. REA supplies no default heap, and a reported heap is the limit that run had, not what the APK requires.";
 
 /** Remediation when the host cannot run the Android JADX subprocess. */
 export const JADX_UNSUPPORTED_HOST_REMEDIATION =

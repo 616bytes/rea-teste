@@ -272,10 +272,11 @@ limit described above; any other start failure stays `capability_unavailable`. A
 launcher that stops before writing anything, such as a `-Xmx` below the JVM's own
 minimum, leaves none, and REA reports that it produced no diagnostics rather than
 pointing at output that does not exist. The selected JDK's compiler module and
-the engine archive are checked before that launch, so a runnable JRE alone, or a
-damaged engine archive, is reported by those checks with their own recovery
-rather than inferred from a start failure. Missing or ambiguous class and method
-selections are
+the engine archive are checked before that launch: those checks establish the
+JDK's module listing and the archive's expected entry names, so a start failure
+is reported from the launcher's own output rather than attributed to them, and
+it can still have a cause they do not cover. Missing or ambiguous class and
+method selections are
 input failures; discover names with `search_android_classes` and
 `inspect_android_class` before correcting the selected argument.
 
@@ -318,9 +319,12 @@ run observed, and is `null` when a heap shortage ended the worker before any
 runtime fact arrived; a failure before the bridge answers also keeps the
 launcher's own output in `details.captured_output`. The failure's remediation
 names `REA_JADX_HEAP_MIB`, which REA passes as an explicit command-line `-Xmx`
-and which therefore overrides `JAVA_TOOL_OPTIONS`. That heap is the failing
+and which therefore overrides `JAVA_TOOL_OPTIONS` and `JDK_JAVA_OPTIONS`, while
+`_JAVA_OPTIONS` overrides the command line and must be cleared or raised as
+well. That heap is the failing
 run's limit, not the package's requirement. `rea doctor --provider jadx` states
-the requested heap and warns when none is set, but it reads configuration
+the requested heap, or that REA asks for none and the heap comes from the
+launching environment, and it never fails the provider; it reads configuration
 without starting the engine, so it reports neither the effective heap nor
 whether one package fits.
 

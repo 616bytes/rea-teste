@@ -126,13 +126,13 @@ describe("stringified structured tool arguments", () => {
     expect(calls[0]).toEqual({ note: jsonText });
   });
 
-  it("recovers arguments on application-validated registrations", async () => {
+  it("keeps JSON-looking strings intact on application-validated registrations", async () => {
     const { client, calls } = await connect((server, record) => {
       server.registerTool(
-        "record_origins",
+        "inspect_capture_path",
         {
           inputSchema: applicationValidatedInputSchema(
-            z.object({ allowed_origins: z.array(z.string()) }),
+            z.object({ path: z.string() }),
           ),
         },
         (input: unknown) => {
@@ -143,11 +143,11 @@ describe("stringified structured tool arguments", () => {
     });
 
     await client.callTool({
-      name: "record_origins",
-      arguments: { allowed_origins: JSON.stringify(["https://example.com"]) },
+      name: "inspect_capture_path",
+      arguments: { path: "[]" },
     });
 
-    expect(calls[0]).toEqual({ allowed_origins: ["https://example.com"] });
+    expect(calls[0]).toEqual({ path: "[]" });
   });
 
   it("still rejects structured text that is not JSON", async () => {

@@ -39,6 +39,8 @@ const structuredArgumentText = (supplied: unknown): unknown => {
  * validation failure, and native JSON values are untouched. Recovery applies
  * to the argument bag as a whole, so a call that mixes recovered structured
  * arguments with JSON text a string parameter accepts keeps its rejection.
+ * Application-owned validators are excluded: they always accept, so recovery
+ * could replace a JSON-looking string the handler would have accepted.
  */
 export const acceptStringifiedStructuredArguments = (
   schema: StandardSchemaWithJSON,
@@ -46,6 +48,7 @@ export const acceptStringifiedStructuredArguments = (
   const standard = schema["~standard"];
   if (standard === undefined || typeof standard.validate !== "function")
     return schema;
+  if (standard.vendor === "rea-application") return schema;
   return {
     "~standard": {
       ...standard,

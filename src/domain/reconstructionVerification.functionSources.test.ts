@@ -16,6 +16,7 @@ import {
   type JsonValue,
 } from "./jsonValue.js";
 import { createResidualUnknown } from "./residualUnknown.js";
+import { FUNCTION_COMPARISON_PROVIDER } from "./functionComparisonProvider.js";
 
 import { compareFunctions } from "./functionComparison.js";
 import { verifyReconstruction } from "./reconstructionVerification.js";
@@ -108,11 +109,7 @@ const plural = {
   left_evidence_ids: [left.evidence_id],
   right_evidence_ids: [right.evidence_id],
 };
-const provider = {
-  id: "rea-function-comparison",
-  name: "REA function comparison",
-  version: "2",
-};
+const provider = FUNCTION_COMPARISON_PROVIDER;
 const baselineResult = compareFunctions(left, right);
 
 const comparison = (

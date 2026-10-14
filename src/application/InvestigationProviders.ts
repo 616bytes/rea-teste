@@ -3,6 +3,9 @@ import {
   createAnalysisProfile,
   type AnalysisProfileCommitment,
 } from "../domain/analysisProfile.js";
+import { FUNCTION_COMPARISON_PROVIDER } from "../domain/functionComparisonProvider.js";
+
+export { FUNCTION_COMPARISON_PROVIDER } from "../domain/functionComparisonProvider.js";
 
 /** Provider identity for deterministic composed analysis workflows. */
 export const REA_WORKFLOW_PROVIDER = {
@@ -117,13 +120,6 @@ export const ARTIFACT_COMPARISON_PROVIDER = {
   id: "rea-artifact-comparison",
   name: "REA artifact comparison",
   version: "1",
-} as const;
-
-/** Provider identity for deterministic cross-function comparisons. */
-export const FUNCTION_COMPARISON_PROVIDER = {
-  id: "rea-function-comparison",
-  name: "REA function comparison",
-  version: "2",
 } as const;
 
 /** Provider identity for deterministic Evidence bundle comparisons. */

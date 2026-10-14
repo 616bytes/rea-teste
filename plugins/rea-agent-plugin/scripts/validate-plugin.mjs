@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -50,11 +50,7 @@ if (portable && claude) {
   check(portable.name === claude.name, "portable and Claude Code manifest names match");
 }
 
-for (const relativePath of [
-  "README.md",
-  ".mcp.json",
-  "skills/reverse-engineer-anything/SKILL.md",
-]) {
+for (const relativePath of ["README.md", "TESTING.md", ".mcp.json"]) {
   check(exists(relativePath), "required file exists: " + relativePath);
 }
 
@@ -72,18 +68,30 @@ if (mcp) {
   }
 }
 
-const skillPath = resolve(pluginRoot, "skills/reverse-engineer-anything/SKILL.md");
-if (existsSync(skillPath)) {
+const skillsRoot = resolve(pluginRoot, "skills");
+let skillDirectories = [];
+try {
+  skillDirectories = readdirSync(skillsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+} catch (error) {
+  errors.push("skills/: unable to read skills directory (" + error.message + ")");
+}
+
+check(skillDirectories.length >= 2, "plugin contains at least two reusable skills");
+
+for (const entry of skillDirectories) {
+  const skillName = entry.name;
+  const skillPath = resolve(skillsRoot, skillName, "SKILL.md");
+  check(existsSync(skillPath), "skill " + skillName + " has a SKILL.md file");
+  if (!existsSync(skillPath)) continue;
+
   const skill = readFileSync(skillPath, "utf8");
   const frontmatter = skill.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  check(Boolean(frontmatter), "skill has YAML frontmatter");
+  check(Boolean(frontmatter), "skill " + skillName + " has YAML frontmatter");
   if (frontmatter) {
-    check(/^name:\s*reverse-engineer-anything\s*$/m.test(frontmatter[1]), "skill frontmatter name matches its directory");
-    check(/^description:\s*.+$/m.test(frontmatter[1]), "skill frontmatter includes a description");
+    check(new RegExp("^name:\\s*" + skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*$", "m").test(frontmatter[1]), "skill " + skillName + " frontmatter name matches its directory");
+    check(/^description:\s*.+$/m.test(frontmatter[1]), "skill " + skillName + " has a description");
   }
-  for (const requiredHeading of ["## Core rules", "## Investigation workflow", "## Target-specific guidance"]) {
-    check(skill.includes(requiredHeading), "skill includes section: " + requiredHeading);
-  }
+  check(skill.includes("## "), "skill " + skillName + " has documented sections");
 }
 
 console.log("REA plugin validation: " + checks.length + " checks passed; " + errors.length + " failed.\n");

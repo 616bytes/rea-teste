@@ -10,7 +10,10 @@ import {
   electronStaticValue,
   objectProperty,
 } from "./electronStaticAnalysisValues.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyName,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
 import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
 import { argumentNode, range } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
@@ -100,10 +103,11 @@ const inspectPrivilegedSchemes = (
   session: Session,
   context: JavaScriptFindingContext,
 ): void => {
-  const list = argumentNode(node.arguments[0]);
+  // TypeScript assertions such as `[...] as const` do not change the value.
+  const list = typeless(argumentNode(node.arguments[0]));
   const entries = t.isArrayExpression(list) ? list.elements : [list];
   for (const [index, entry] of entries.entries()) {
-    const candidate = entry ?? undefined;
+    const candidate = typeless(entry ?? undefined);
     const scheme = objectProperty(candidate, "scheme");
     addProtocol(context, {
       node,
@@ -129,16 +133,15 @@ const enabledPrivileges = (
 ): readonly string[] | null => {
   const lookup = objectProperty(entry, "privileges");
   if (lookup.status === "missing") return [];
-  if (
-    lookup.status !== "explicit" ||
-    !t.isObjectExpression(lookup.property.value)
-  ) {
+  const privileges =
+    lookup.status === "explicit" ? typeless(lookup.property.value) : undefined;
+  if (!t.isObjectExpression(privileges)) {
     context.accumulator.unknownFindings += 1;
     return null;
   }
   const enabled: string[] = [];
   const decided = new Set<string>();
-  for (const property of lookup.property.value.properties.toReversed()) {
+  for (const property of privileges.properties.toReversed()) {
     const key = t.isObjectProperty(property)
       ? semanticStaticPropertyName(property.key, property.computed)
       : "";
@@ -204,3 +207,8 @@ const schemeValue = (
         expression: boundedExpression(context.source, located),
       }
     : electronStaticValue(context.source, scheme);
+
+const typeless = (node: t.Node | null | undefined): t.Node | undefined =>
+  node === null || node === undefined
+    ? undefined
+    : unwrapJavaScriptExpression(node).node;

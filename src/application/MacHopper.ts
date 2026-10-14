@@ -10,7 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, posix } from "node:path";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { z } from "zod";
@@ -22,10 +22,9 @@ import {
   downloadHopperPackage,
   HOPPER_DOWNLOAD_BYTES,
 } from "./HopperDownload.js";
+import { joinPosixPath } from "./PosixPath.js";
 
 const execFileAsync = promisify(execFile);
-const portableJoin = (...segments: string[]): string =>
-  posix.join(...segments).replaceAll("\\", "/");
 const RELEASES_URL =
   "https://www.hopperapp.com/include/files-api.php?request=releases&public=true";
 const DOWNLOAD_PREFIX = "https://www.hopperapp.com:443/downloader/public/";
@@ -156,7 +155,7 @@ export const installMacHopper = async (
         ))
       )
         return { status: "failed", reason: "copy" };
-      const launcherPath = portableJoin(destination, "Contents/MacOS/hopper");
+      const launcherPath = joinPosixPath(destination, "Contents/MacOS/hopper");
       if (!(await host.launcherReady(launcherPath)))
         return { status: "failed", reason: "launcher_missing" };
       await host.openApplication(destination);

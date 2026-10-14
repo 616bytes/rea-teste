@@ -1,10 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { posix } from "node:path";
 
 import { z } from "zod";
-
-const portableJoin = (...segments: string[]): string =>
-  posix.join(...segments).replaceAll("\\", "/");
+import { joinPosixPath } from "./PosixPath.js";
 
 /** Standard executable names and locations used to discover Homebrew. */
 const HOMEBREW_COMMANDS = [
@@ -53,7 +50,7 @@ export const installedCaskAppdir = async (
   let text: string;
   try {
     text = await readFile(
-      portableJoin(caskroom, token, ".metadata", "config.json"),
+      joinPosixPath(caskroom, token, ".metadata", "config.json"),
       "utf8",
     );
   } catch (cause: unknown) {
@@ -77,6 +74,6 @@ export const installedCaskAppdir = async (
     config.data.default?.appdir;
   if (appdir === undefined) return undefined;
   return appdir.startsWith("~/")
-    ? portableJoin(home, appdir.slice(2))
-    : appdir.replaceAll("\\", "/");
+    ? joinPosixPath(home, appdir.slice(2))
+    : appdir;
 };

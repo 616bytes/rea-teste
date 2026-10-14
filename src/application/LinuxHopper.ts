@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, posix } from "node:path";
+import { join } from "node:path";
 
 import { execFileBoundedOutput } from "../process/ExecFileBoundedOutput.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
@@ -10,12 +10,11 @@ import {
   downloadHopperPackage,
   HOPPER_DOWNLOAD_BYTES,
 } from "./HopperDownload.js";
+import { joinPosixPath } from "./PosixPath.js";
 
 /** Package-manager output retained per stream without stopping the command. */
 const PACKAGE_MANAGER_OUTPUT_BYTES = 64 * 1024;
 const DOWNLOAD_PREFIX = "https://www.hopperapp.com:443/downloader/public/";
-const portableJoin = (...segments: string[]): string =>
-  posix.join(...segments).replaceAll("\\", "/");
 const SUPPORTED_HOPPER_SHA256 = new Set([
   "0294ced141cc373468ee22d8343e7dac41980cb05a937994ca81c9f09afe7ded",
   "1339f9e58377442b0c6fcb0dfc3cec20d593cc557408521fad9a00dbc6b8da13",
@@ -294,7 +293,7 @@ export const installLinuxHopper = async (
       if (!packageIntegrityMatches(archiveDownload.bytes, release))
         return { status: "failed", reason: "integrity" };
       temporary = await host.createTemporaryDirectory();
-      const archive = portableJoin(
+      const archive = joinPosixPath(
         temporary,
         `hopper.${distribution.packageFamily}`,
       );
@@ -342,7 +341,7 @@ export const installLinuxHopper = async (
 
 /** Canonical launcher path for a legacy user-local Linux Hopper installation. */
 export const linuxHopperLauncherPath = (home: string): string =>
-  portableJoin(home, ".local/share/rea/hopper/bin/Hopper");
+  joinPosixPath(home, ".local/share/rea/hopper/bin/Hopper");
 
 /** REA's managed Linux install path, preferred when no explicit launcher is set. */
 export const REA_MANAGED_LINUX_HOPPER_LAUNCHER = "/opt/hopper/bin/Hopper";

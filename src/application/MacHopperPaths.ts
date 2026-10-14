@@ -1,21 +1,18 @@
 import { readdirSync } from "node:fs";
-import { posix } from "node:path";
-
-const portableJoin = (...segments: string[]): string =>
-  posix.join(...segments).replaceAll("\\", "/");
+import { joinPosixPath } from "./PosixPath.js";
 
 export const MAC_HOPPER_APPLICATION_DIRECTORY = "/Applications";
 export const MAC_HOPPER_APPLICATION_NAME = "Hopper Disassembler.app";
 export const MAC_HOPPER_USER_APPLICATIONS_DIRECTORY = "Applications";
 
-export const MAC_HOPPER_SYSTEM_LAUNCHER = portableJoin(
+export const MAC_HOPPER_SYSTEM_LAUNCHER = joinPosixPath(
   MAC_HOPPER_APPLICATION_DIRECTORY,
   MAC_HOPPER_APPLICATION_NAME,
   "Contents/MacOS/hopper",
 );
 
 export const macHopperUserApplicationPath = (homeDirectory: string): string =>
-  portableJoin(
+  joinPosixPath(
     homeDirectory,
     MAC_HOPPER_USER_APPLICATIONS_DIRECTORY,
     MAC_HOPPER_APPLICATION_NAME,
@@ -25,14 +22,14 @@ export const macHopperApplicationRoots = (
   homeDirectory: string,
 ): readonly string[] => [
   MAC_HOPPER_APPLICATION_DIRECTORY,
-  portableJoin(homeDirectory, MAC_HOPPER_USER_APPLICATIONS_DIRECTORY),
+  joinPosixPath(homeDirectory, MAC_HOPPER_USER_APPLICATIONS_DIRECTORY),
 ];
 
 export const macHopperCanonicalLauncherCandidates = (
   homeDirectory: string,
 ): readonly string[] => [
   MAC_HOPPER_SYSTEM_LAUNCHER,
-  portableJoin(
+  joinPosixPath(
     macHopperUserApplicationPath(homeDirectory),
     "Contents/MacOS/hopper",
   ),
@@ -52,7 +49,7 @@ export const macHopperRenamedLauncherCandidates = (
             MAC_HOPPER_APPLICATION_NAME.toLocaleLowerCase("en-US"),
       )
       .sort()
-      .map((name) => portableJoin(root, name, "Contents/MacOS/hopper")),
+      .map((name) => joinPosixPath(root, name, "Contents/MacOS/hopper")),
   );
 
 const localBundleNames = (root: string): readonly string[] => {

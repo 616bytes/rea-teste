@@ -63,6 +63,7 @@ const artifactFormatSchema = z.enum([
   "entitlements",
   "directory",
   "file",
+  "pyinstaller",
   "unknown",
 ]);
 

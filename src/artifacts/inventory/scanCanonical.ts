@@ -2,6 +2,7 @@ import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySn
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
+import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 
 import { lstat } from "node:fs/promises";
 import type { Stats } from "node:fs";
@@ -222,6 +223,8 @@ const buildInventorySnapshot = async (
     format: rootFormat,
     path,
   });
+  if (reader instanceof PyInstallerArtifactReader)
+    rootOccurrence.limitations.push(...reader.observedFacts());
   for (const occurrence of input.occurrences)
     if (
       occurrence.parent_occurrence_id === null &&

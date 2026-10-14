@@ -10,6 +10,9 @@ import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSche
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
+import { captureProcessScenario } from "../../../src/process/capture/ProcessHarness.js";
+import { snapshotRoots } from "../../../src/process/capture/FilesystemSnapshot.js";
+import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -594,6 +597,51 @@ itWithCaptureCapability(
       ],
       "nothing was allocated, so each documented cleanup state is not required",
     ).toEqual(["not_required", "not_required", "not_required"]);
+  },
+  30_000,
+);
+
+itWithCaptureCapability(
+  "reports the cleanup a preparation released when it fails after allocating its root",
+  async () => {
+    const controller = new AbortController();
+    const terminal: string[] = [];
+
+    const result = await captureProcessScenario(
+      parseProcessScenario({
+        executable: process.execPath,
+        arguments: childScript("console.log('ready')"),
+        timeout_ms: 5_000,
+      }),
+      controller.signal,
+      process.platform,
+      process.env,
+      // Cancelling once the snapshot is taken fails the preparation after the
+      // temporary root exists, so preparation releases that root.
+      async (...snapshotArguments) => {
+        const snapshot = await snapshotRoots(...snapshotArguments);
+        controller.abort();
+        return snapshot;
+      },
+      undefined,
+      {
+        report: async (update) => {
+          if (update.terminal === true) terminal.push(update.message);
+        },
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(terminal).toHaveLength(1);
+    expect(
+      parseProgressMessage(terminal[0] ?? ""),
+      "the released root is reported as cleaned, not as never allocated",
+    ).toMatchObject({
+      disposition: "cancelled",
+      owned_process_group: "not_required",
+      terminal_renderer: "not_required",
+      temporary_root: "cleaned",
+    });
   },
   30_000,
 );

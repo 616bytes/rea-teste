@@ -203,6 +203,8 @@ describe("CommonJS receiver lifetimes through stdio MCP and CLI", () => {
     "module.exports.parse = VALUE; module.exports = {};",
     "module.exports = {}; exports = module.exports; module.exports = {}; exports.parse = VALUE;",
     'module.exports = {}; exports.parse = "enabled";',
+    'module.exports = {}; Reflect.set(module, "other", exports); exports.parse = VALUE;',
+    "module.exports = {}; let wrapper = module; wrapper = {}; Object.assign(wrapper, { exports }); exports.parse = VALUE;",
   ])("excludes detached public export receivers: %s", async (source) => {
     const fixture = await analyzeVersions(
       (count) =>
@@ -246,6 +248,7 @@ describe("CommonJS receiver lifetimes through stdio MCP and CLI", () => {
     "exports.parse = VALUE;",
     "module.exports = {}; module.exports.parse = VALUE;",
     "module.exports = {}; exports = module.exports; exports.parse = VALUE;",
+    "exports.parse = VALUE; Object.assign(module.exports, { other: exports });",
   ])("retains connected public export receivers: %s", async (source) => {
     const fixture = await analyzeVersions(
       (count) =>
@@ -272,6 +275,14 @@ describe("CommonJS receiver lifetimes through stdio MCP and CLI", () => {
     "exports.parse = VALUE; if (false) module.exports = {};",
     "function replace() { module.exports = {}; } exports.parse = VALUE;",
     "function replace() { exports = {}; } exports.parse = VALUE;",
+    'const holder = {}; ({ [(module.exports = exports, "x")]: holder.x } = (module.exports = {})); exports.parse = VALUE;',
+    'const { [(module.exports = exports, "x")]: value } = (module.exports = {}); exports.parse = VALUE;',
+    "const [value = (module.exports = exports)] = (module.exports = []); exports.parse = VALUE;",
+    "module.exports = {}; Object.assign(module, { exports }); exports.parse = VALUE;",
+    'module.exports = {}; Object.defineProperty(module, "exports", { value: exports }); exports.parse = VALUE;',
+    'module.exports = {}; Reflect.set(module, "exports", exports); exports.parse = VALUE;',
+    "module.exports = {}; const assign = Object.assign; assign.call(null, module, { exports }); exports.parse = VALUE;",
+    "module.exports = {}; const wrapper = module; Object.assign(wrapper, { exports }); exports.parse = VALUE;",
   ])(
     "keeps execution-dependent receiver identity uncertain: %s",
     async (source) => {

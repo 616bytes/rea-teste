@@ -10,6 +10,7 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
+import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 
 export type CommonJsExportReceiverEffect =
   | "connected"
@@ -43,6 +44,16 @@ export const commonJsExportName = (
 type Identity = t.Node | null;
 type Execution = "ordered" | "conditional" | "deferred";
 
+/** Pattern evaluation follows the RHS, unlike Babel's child visit order. */
+const hasDestructuringEvaluationOrder = (node: t.Node): boolean => {
+  const pattern = t.isAssignmentExpression(node)
+    ? unwrapJavaScriptExpression(node.left).node
+    : t.isVariableDeclarator(node)
+      ? node.id
+      : undefined;
+  return t.isObjectPattern(pattern) || t.isArrayPattern(pattern);
+};
+
 /**
  * Capture receivers before their RHS, then compare with the final public
  * identity. Fresh allocations prove distinctness; explicit wrapper reads
@@ -65,6 +76,19 @@ export function* indexCommonJsExportReceiversSteps(
   const values = new WeakMap<t.Node, Identity>();
   const captures = new Map<t.AssignmentExpression, Identity>();
   const execution: Execution[] = [];
+  const publicCallWrites = new WeakSet<t.Node>();
+  // Consume the shared write owner's resolved aliases, intrinsic invocation
+  // and keyed mutator facts instead of reinterpreting call names here.
+  for (const { node, path } of state.ambientWriteEffects) {
+    if (
+      (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+      path[0] === "commonjs-module" &&
+      path.length <= 2 &&
+      (path.length === 1 ||
+        semanticPropertyPathKeyMatches(path[1] ?? null, "exports"))
+    )
+      publicCallWrites.add(node);
+  }
   const valueOf = (node: t.Node): Identity => {
     const value = unwrapJavaScriptExpression(node).node;
     // An opaque result may alias another object, but reading the current
@@ -103,6 +127,9 @@ export function* indexCommonJsExportReceiversSteps(
         outer === "deferred" || t.isFunction(node) || t.isClass(node)
           ? "deferred"
           : outer === "conditional" ||
+              // Mark the whole operation: a later tree-visited RHS must not
+              // restore certainty after an earlier tree-visited pattern write.
+              hasDestructuringEvaluationOrder(node) ||
               t.isIfStatement(node) ||
               t.isSwitchStatement(node) ||
               t.isLoop(node) ||
@@ -144,6 +171,10 @@ export function* indexCommonJsExportReceiversSteps(
     },
     exit: (node) => {
       const mode = execution.pop() ?? "conditional";
+      if (publicCallWrites.has(node)) {
+        if (mode === "deferred") deferredReplacement = true;
+        else publicIdentity = null;
+      }
       if (t.isAssignmentExpression(node)) {
         const left = unwrapJavaScriptExpression(node.left).node;
         const identity =

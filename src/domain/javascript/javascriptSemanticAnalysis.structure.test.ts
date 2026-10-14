@@ -397,12 +397,31 @@ describe("JavaScript semantic analysis: structure 2", () => {
 
 describe("CommonJS receiver lifetimes", () => {
   it.each([
+    'Object.defineProperty(module.exports, "other", { value: exports });',
+    "Object.assign(module.exports, { other: exports });",
+  ])(
+    "keeps the receiver identity intact when mutating its contents: %s",
+    (mutation) => {
+      const ir = analyzeJavaScriptSemantics(
+        `exports.parse = () => 1; ${mutation}`,
+      );
+      const exported = ir.moduleLinks.find(
+        ({ exportedName }) => exportedName === "parse",
+      );
+      expect(exported?.callableId).toEqual(expect.any(String));
+    },
+  );
+
+  it.each([
     "module.exports = {}; exports.parse = () => 1;",
     "exports = {}; exports.parse = () => 1;",
     "exports.parse = () => 1; module.exports = {};",
     "module.exports.parse = () => 1; module.exports = [];",
     'module.exports = {}; exports.status = "enabled";',
     "module.exports = exports = {}; module.exports = {}; exports.parse = () => 1;",
+    'module.exports = {}; Reflect.set(module, "other", exports); exports.parse = () => 1;',
+    'module.exports = {}; Object.defineProperty(globalThis.module, "exports", { value: exports }); exports.parse = () => 1;',
+    "module.exports = {}; let wrapper = module; wrapper = {}; Object.assign(wrapper, { exports }); exports.parse = () => 1;",
   ])(
     "excludes a detached CommonJS receiver across statements: %s",
     (source) => {
@@ -452,6 +471,14 @@ describe("CommonJS receiver lifetimes", () => {
     "for (exports of values) {} exports.parse = () => 1;",
     "({ exports } = external); exports.parse = () => 1;",
     "module = {}; module.exports = {}; module.exports.parse = () => 1;",
+    'const holder = {}; ({ [(module.exports = exports, "x")]: holder.x } = (module.exports = {})); exports.parse = () => 1;',
+    'const { [(module.exports = exports, "x")]: value } = (module.exports = {}); exports.parse = () => 1;',
+    "const [value = (module.exports = exports)] = (module.exports = []); exports.parse = () => 1;",
+    "module.exports = {}; Object.assign(module, { exports }); exports.parse = () => 1;",
+    'module.exports = {}; Object.defineProperty(module, "exports", { value: exports }); exports.parse = () => 1;',
+    'module.exports = {}; Reflect.set(module, "exports", exports); exports.parse = () => 1;',
+    "module.exports = {}; const assign = Object.assign; assign.call(null, module, { exports }); exports.parse = () => 1;",
+    "module.exports = {}; const wrapper = module; Object.assign(wrapper, { exports }); exports.parse = () => 1;",
   ])("keeps uncertain CommonJS receiver identity unresolved: %s", (source) => {
     expect(analyzeJavaScriptSemantics(source).moduleLinks).toContainEqual(
       expect.objectContaining({

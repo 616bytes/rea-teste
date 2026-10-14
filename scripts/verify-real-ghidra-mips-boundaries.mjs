@@ -18,6 +18,10 @@ import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { functionDossierSchema } from "../dist/domain/hopperValues.js";
 
 // Static source-owned controls. Never execute an ELF or acquire a toolchain.
+if (!["darwin", "linux"].includes(process.platform))
+  throw new Error(
+    "MIPS boundary verification requires a Linux/macOS Ghidra host with verified process lineage.",
+  );
 if (!process.env.GHIDRA_INSTALL_DIR || !process.env.JAVA_HOME)
   throw new Error(
     "Supply GHIDRA_INSTALL_DIR and JAVA_HOME for the MIPS32 positive control.",
@@ -98,7 +102,7 @@ try {
       await client.connect(transport);
       for (const [path, pattern] of [
         [original.path, /MIPS I.*load-delay semantics/u],
-        [gnuPath, /SHT_GNU_ATTRIBUTES.*uninspected/u],
+        [gnuPath, /GNU floating-point ABI attribute/u],
       ]) {
         const error = requireMcpToolError(
           await invoke("open_binary", { path, provider_id: "ghidra" }),

@@ -55,6 +55,7 @@ export interface ReverseEngineeringServiceOptions {
   readonly runOwned?: typeof runOwnedCommand;
   readonly digest?: typeof digestFile;
   readonly stat?: (path: string) => Promise<Stats>;
+  readonly open?: (path: string, flags: number) => Promise<FileHandle>;
 }
 
 interface ReverseEngineeringCommandRunner {
@@ -84,6 +85,7 @@ export class ReverseEngineeringService {
   readonly #run: ReverseEngineeringCommandRunner;
   readonly #digest: typeof digestFile;
   readonly #stat: (path: string) => Promise<Stats>;
+  readonly #open: (path: string, flags: number) => Promise<FileHandle>;
   readonly #pendingCleanup = new Map<
     ProviderProcessSupervisor,
     {
@@ -114,6 +116,7 @@ export class ReverseEngineeringService {
       );
     this.#digest = options.digest ?? digestFile;
     this.#stat = options.stat ?? statPath;
+    this.#open = options.open ?? open;
   }
 
   /** Ask retained process owners to settle cleanup before admitting more work. */
@@ -303,7 +306,7 @@ export class ReverseEngineeringService {
     let digest: string | undefined;
     try {
       if (absolutePath !== undefined)
-        digest = await this.#digest(absolutePath, signal, this.#stat);
+        digest = await this.#digest(absolutePath, signal, this.#stat, this.#open);
     } catch (cause) {
       const code = (cause as NodeJS.ErrnoException).code;
       if (signal?.aborted)
@@ -542,7 +545,7 @@ export class ReverseEngineeringService {
       if (!cleanupOnlyFailure) completionStatus = "unknown";
     } else {
       try {
-        digestAfter = await this.#digest(absolutePath, signal, this.#stat);
+        digestAfter = await this.#digest(absolutePath, signal, this.#stat, this.#open);
       } catch {
         // Preserve the provider's collected observations if the artifact vanished or became unreadable.
       }
@@ -865,6 +868,7 @@ const digestFile = async (
   path: string,
   signal?: AbortSignal,
   stat: (path: string) => Promise<Stats> = statPath,
+  openArtifact: (path: string, flags: number) => Promise<FileHandle> = open,
 ): Promise<string> => {
   const info = await statWithDeadline(path, signal, stat);
   if (!info.isFile())
@@ -911,7 +915,7 @@ const digestFile = async (
     // The path may be replaced between the stat above and this open; a FIFO
     // would block a worker. Open non-blocking and classify the opened handle.
     handle = await Promise.race([
-      open(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0)).then(
+      openArtifact(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0)).then(
         (opened) => {
           if (interruption !== undefined)
             void opened.close().catch(() => undefined);

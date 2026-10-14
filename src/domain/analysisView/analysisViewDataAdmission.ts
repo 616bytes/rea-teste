@@ -17,11 +17,15 @@ export const admitAnalysisViewData = (
   reserve?: (bytes: number) => Result<void, AnalysisError>,
 ): Result<void, AnalysisError> => {
   const ancestors = new Set<object>();
+  // A single bounded stack preserves diagnostics without per-node path copies.
+  const path: (string | number)[] = inline
+    ? ["source", "evidence"]
+    : ["source"];
   const invalid = (): Result<never, AnalysisError> =>
     err(
       new AnalysisInputError("inspect_analysis_view", undefined, [
         {
-          path: ["source"],
+          path: [...path],
           reason: "invalid_value",
           message:
             "Parent data must contain bounded ordinary JSON data without cycles or accessors.",
@@ -46,10 +50,14 @@ export const admitAnalysisViewData = (
     if (typeof item !== "object" || item === null) return ok(undefined);
     ancestors.add(item);
     const child = (key: string | number): Result<void, AnalysisError> => {
+      path.push(key);
       const descriptor = Object.getOwnPropertyDescriptor(item, key);
-      if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
-        return invalid();
-      return visit(descriptor.value, depth + 1);
+      const admitted =
+        descriptor === undefined || !Object.hasOwn(descriptor, "value")
+          ? invalid()
+          : visit(descriptor.value, depth + 1);
+      path.pop();
+      return admitted;
     };
     // Walk depth-first without copying the graph. Aliases are examined each time
     // the schema copies them, so byte reservations retain the same accounting.

@@ -453,7 +453,10 @@ it.each(["summary", "capture", "api-surface"] as const)(
     expect(parsed.source.evidence).toBe(evidence);
     expect(inspectAnalysisView(input)).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisInputError" },
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [{ path: ["source", "evidence", "normalized_result"] }],
+      },
     });
     expect(accessed).toBe(false);
     expect(
@@ -488,7 +491,14 @@ it.each(["summary", "capture", "api-surface"] as const)(
     });
     const cyclic: Record<string, unknown> = {};
     cyclic["self"] = cyclic;
-    for (const data of [nested, hidden, array, inherited, cyclic]) {
+    const cases: { data: unknown; path: (string | number)[] }[] = [
+      { data: nested, path: ["value"] },
+      { data: hidden, path: ["value"] },
+      { data: array, path: [0] },
+      { data: inherited, path: [] },
+      { data: cyclic, path: ["self"] },
+    ];
+    for (const { data, path } of cases) {
       // A complete envelope reaches payload parsing and Evidence authentication.
       const input = {
         source: {
@@ -505,7 +515,10 @@ it.each(["summary", "capture", "api-surface"] as const)(
       ])
         expect(result).toMatchObject({
           ok: false,
-          error: { _tag: "AnalysisInputError" },
+          error: {
+            _tag: "AnalysisInputError",
+            issues: [{ path: ["source", "evidence", "raw_result", ...path] }],
+          },
         });
     }
     expect(accessed).toBe(false);

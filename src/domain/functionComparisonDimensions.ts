@@ -121,12 +121,14 @@ const compareText = (
   right: string,
   context: ComparisonContext,
 ): FunctionDimension => {
-  const limitations =
-    dimension === "assembly"
+  const limitations = [
+    "Exact provider text is compared without address or generated-name normalization; layout-only differences do not establish a behavior change.",
+    ...(dimension === "assembly"
       ? [
           "Assembly is opaque provider text; relocation normalization is unavailable.",
         ]
-      : [];
+      : []),
+  ];
   if (context.providersDiffer)
     return unresolvedDimension({
       dimension,
@@ -149,6 +151,7 @@ const compareText = (
       leftCount: [...left].length,
       rightCount: [...right].length,
       limitations: [
+        ...limitations,
         "Bounded line diff exceeded its time or edit-distance limit.",
       ],
     });
@@ -330,8 +333,12 @@ const compareCalls = (
   const leftValues = callProjection(left);
   const rightValues = callProjection(right);
   const coverageLimitations = [
-    ...left.callCoverageLimitations.map((reason) => `Left: ${reason}`),
-    ...right.callCoverageLimitations.map((reason) => `Right: ${reason}`),
+    ...left.callCoverageBlockers.map((reason) => `Left: ${reason}`),
+    ...right.callCoverageBlockers.map((reason) => `Right: ${reason}`),
+  ];
+  const coverageDiagnostics = [
+    ...left.callCoverageDiagnostics.map((reason) => `Left: ${reason}`),
+    ...right.callCoverageDiagnostics.map((reason) => `Right: ${reason}`),
   ];
   if (coverageLimitations.length > 0)
     return unresolvedDimension({
@@ -339,7 +346,7 @@ const compareCalls = (
       links: context.links,
       leftCount: leftValues.length,
       rightCount: rightValues.length,
-      limitations: coverageLimitations,
+      limitations: [...coverageLimitations, ...coverageDiagnostics],
     });
   if ([...leftValues, ...rightValues].some(({ name }) => isAutoName(name)))
     return unresolvedDimension({
@@ -349,6 +356,7 @@ const compareCalls = (
       rightCount: rightValues.length,
       limitations: [
         "Address-derived callee or caller names cannot be matched safely.",
+        ...coverageDiagnostics,
       ],
     });
   return compareValues(
@@ -356,6 +364,7 @@ const compareCalls = (
     sorted(leftValues),
     sorted(rightValues),
     context,
+    coverageDiagnostics,
   );
 };
 
@@ -397,6 +406,7 @@ const compareValues = (
   left: unknown,
   right: unknown,
   context: ComparisonContext,
+  limitations: readonly string[] = [],
 ): FunctionDimension => {
   const leftJson = canonicalJson(left, "Function comparison");
   const rightJson = canonicalJson(right, "Function comparison");
@@ -409,6 +419,6 @@ const compareValues = (
     leftCount: Array.isArray(left) ? left.length : null,
     rightCount: Array.isArray(right) ? right.length : null,
     textDelta: null,
-    limitations: [],
+    limitations,
   });
 };

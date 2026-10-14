@@ -300,6 +300,19 @@ describe("decodeClassDebugMetadata — states and edge cases", () => {
       name: null,
     });
   });
+
+  it("marks a SourceFile whose length is not exactly u2 as malformed", () => {
+    // A 3-byte SourceFile attribute (JVMS fixes it at a single u2 index).
+    const cls = parseJavaClassFile(
+      classWith(new Blob().u2(0), new Blob().u2(1).attr(8, [0, 9, 0])),
+    );
+    expect(cls.ok).toBe(true);
+    if (!cls.ok) return;
+    expect(decodeClassDebugMetadata(cls.value).sourceFile).toEqual({
+      presence: "malformed",
+      name: null,
+    });
+  });
 });
 
 describe("countDebugEntries", () => {

@@ -387,12 +387,15 @@ export const decodeClassDebugMetadata = (
   if (sourceFileInfo !== null) {
     const cursor = new ByteCursor(sourceFileInfo);
     const indexResult = cursor.u2();
-    sourceFile = indexResult.ok
-      ? {
-          presence: "present",
-          name: resolveConstantUtf8(cls.constantPool, indexResult.value),
-        }
-      : { presence: "malformed", name: null };
+    // SourceFile_attribute is a single u2 index (JVMS §4.7.10): a length other
+    // than exactly 2 bytes is malformed, not a usable name.
+    sourceFile =
+      indexResult.ok && sourceFileInfo.length === 2
+        ? {
+            presence: "present",
+            name: resolveConstantUtf8(cls.constantPool, indexResult.value),
+          }
+        : { presence: "malformed", name: null };
   }
 
   const sdeInfo = findAttribute(cls.attributes, "SourceDebugExtension");

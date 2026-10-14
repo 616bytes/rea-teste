@@ -20,6 +20,18 @@ The MCP configuration launches the published `rea-agents` npm package using `npx
 - `.claude-plugin/plugin.json`: Claude Code plugin manifest.
 - `.mcp.json`: REA MCP server registration.
 - `skills/reverse-engineer-anything/SKILL.md`: evidence-first investigation workflow.
+- `scripts/validate-plugin.mjs`: static package validator.
+- `TESTING.md`: validation scope and limitations.
+
+## Automated package checks
+
+From the repository root, run:
+
+```bash
+node plugins/rea-agent-plugin/scripts/validate-plugin.mjs
+```
+
+The same static validation runs through GitHub Actions when the plugin package or its workflow changes. A passing check does **not** replace the real installation and end-to-end checks described below and in [TESTING.md](./TESTING.md).
 
 ## Use with Codex
 

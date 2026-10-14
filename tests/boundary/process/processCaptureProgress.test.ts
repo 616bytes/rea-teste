@@ -99,12 +99,20 @@ const writeScenario = async (
 
 const runCaptureCli = async (
   scenarioPath: string,
-  options: { readonly stopOnRunning?: boolean } = {},
+  options: {
+    readonly stopOnRunning?: boolean;
+    readonly environment?: Readonly<Record<string, string>>;
+  } = {},
 ): Promise<CliCapture> => {
   const child = spawn(
     process.execPath,
     ["scripts/rea.mjs", "capture-process", scenarioPath, "--json"],
-    { stdio: ["ignore", "pipe", "pipe"] },
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+      ...(options.environment === undefined
+        ? {}
+        : { env: { ...process.env, ...options.environment } }),
+    },
   );
   let stdout = "";
   let stderr = "";
@@ -553,6 +561,39 @@ itWithCaptureCapability(
     expect(cancelling.notifications.join("\n")).not.toMatch(
       /setInterval|CHILD/u,
     );
+  },
+  30_000,
+);
+
+itWithCaptureCapability(
+  "reports not-required cleanup states when preparation fails before anything is allocated",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-progress-tmp-");
+    // Windows reads TEMP and TMP; the other platforms read TMPDIR.
+    const missing = join(root, "missing");
+    const scenario = await writeScenario("rea-process-progress-prepare-", {
+      executable: process.execPath,
+      arguments: childScript("console.log('ready')"),
+      timeout_ms: 5_000,
+    });
+
+    const capture = await runCaptureCli(scenario, {
+      environment: { TMPDIR: missing, TEMP: missing, TMP: missing },
+    });
+
+    expect(capture.exitCode).toBe(1);
+    expect(capture.stdout).toContain('"code":"process_capture_failed"');
+    const last = capture.lines.at(-1)?.update;
+    expect(last).toMatchObject({ phase: "cleanup", terminal: true });
+    expect(last?.details.disposition).toBe("failed");
+    expect(
+      [
+        last?.details.owned_process_group,
+        last?.details.terminal_renderer,
+        last?.details.temporary_root,
+      ],
+      "nothing was allocated, so each documented cleanup state is not required",
+    ).toEqual(["not_required", "not_required", "not_required"]);
   },
   30_000,
 );

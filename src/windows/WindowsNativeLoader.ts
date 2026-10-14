@@ -129,7 +129,7 @@ export const loadWindowsNativeAuthority = (
       manifest.artifact !== target.artifact
     )
       throw new Error(
-        `Windows native artifact targets ${manifest.architecture}, not this ${architecture} host`,
+        `Windows native manifest declares ${manifest.architecture} artifact ${manifest.artifact}; this ${architecture} host requires ${target.artifact}`,
       );
     const artifact = host.readArtifact(target.artifact);
     if (

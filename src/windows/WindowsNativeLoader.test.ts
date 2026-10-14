@@ -241,21 +241,30 @@ describe("packaged Windows native architecture binding", () => {
     ]);
   });
 
-  it("rejects a manifest for another architecture before reading the artifact", () => {
-    const arm64 = fixture({}, "arm64");
-    const x64 = fixture();
-    expect(
-      loadWindowsNativeAuthority({
-        ...arm64.host,
-        readManifest: () => x64.manifest,
-      }),
-    ).toMatchObject({
-      available: false,
-      failureStage: "artifact",
-      reason: expect.stringContaining("targets x64"),
-    });
-    expect(arm64.requested).toEqual([]);
-  });
+  it.each([
+    { architecture: "x64" },
+    { artifact: "rea-windows-x64.node" },
+    { architecture: "x64", artifact: "rea-windows-x64.node" },
+  ])(
+    "rejects a manifest declaring another target before reading the artifact: %j",
+    (override) => {
+      const value = fixture({}, "arm64");
+      expect(
+        loadWindowsNativeAuthority({
+          ...value.host,
+          readManifest: () => ({ ...value.manifest, ...override }),
+        }),
+      ).toMatchObject({
+        available: false,
+        failureStage: "artifact",
+        reason: expect.stringContaining(
+          "this arm64 host requires rea-windows-arm64.node",
+        ),
+      });
+      expect(value.requested).toEqual([]);
+      expect(value.loads()).toBe(0);
+    },
+  );
 
   it("rejects an inspection reporting another architecture", () => {
     const arm64 = fixture({}, "arm64");

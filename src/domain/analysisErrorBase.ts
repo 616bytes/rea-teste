@@ -118,6 +118,13 @@ export abstract class AnalysisError extends Error {
     this.partialObservation ??= observation;
     return this;
   }
+
+  /** Preserve completed command output when a later lifecycle step fails. */
+  retainCapturedOutput(output: AnalysisCapturedOutput): this {
+    if (this.capturedOutput === undefined)
+      Object.assign(this, { capturedOutput: { ...output } });
+    return this;
+  }
 }
 import type {
   PartialProcessCaptureObservation,

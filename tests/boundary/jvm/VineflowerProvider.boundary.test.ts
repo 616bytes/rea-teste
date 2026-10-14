@@ -6,7 +6,8 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { basename, dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createRequire } from "node:module";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
@@ -166,6 +167,71 @@ it("publishes verified sources and provenance from a copied input", async () => 
   }
 });
 
+it("passes two ordered immutable classpath snapshots and records their provenance", async () => {
+  const f = await fixture(`
+    const external = process.argv.filter(value => value.startsWith('--add-external=')).map(value => value.slice('--add-external='.length));
+    fs.writeFileSync(path.join(process.env.REA_VINEFLOWER_TEST_ROOT, 'classpath.json'), JSON.stringify({
+      paths: external.map(value => path.resolve(value)),
+      bytes: external.map(value => [...fs.readFileSync(value)]),
+    }));
+    fs.writeFileSync('generated/Probe.java', 'class Probe {}');
+  `);
+  const dependencies = [
+    join(f.root, "first.jar"),
+    join(f.root, "Second.class"),
+  ];
+  await writeOrderedZip(dependencies[0]!, ["dependency/First.class"]);
+  await writeFile(dependencies[1]!, Buffer.from("cafebabe000000340002", "hex"));
+  const bytes = await Promise.all(dependencies.map((path) => readFile(path)));
+  try {
+    const result = await f.provider.execute({
+      operation: "decompile_jvm_artifact",
+      input: {
+        path: f.path,
+        output_directory: f.output,
+        classpath: dependencies,
+      },
+    });
+    if (!result.ok) throw result.error;
+    const value = jvmResultSchemas.decompile_jvm_artifact.parse(
+      result.value.result,
+    );
+    const observed = JSON.parse(
+      await readFile(join(f.root, "classpath.json"), "utf8"),
+    ) as {
+      paths: string[];
+      bytes: number[][];
+    };
+    expect(observed.bytes).toEqual(bytes.map((content) => [...content]));
+    expect(
+      observed.paths.map((path) => [basename(dirname(path)), basename(path)]),
+    ).toEqual([
+      ["inputs", "dependency-0.jar"],
+      ["inputs", "dependency-1.class"],
+    ]);
+    expect(observed.paths).not.toEqual(dependencies);
+    const identities = dependencies.map((path, index) => ({
+      path,
+      bytes: bytes[index]!.length,
+      sha256: createHash("sha256").update(bytes[index]!).digest("hex"),
+    }));
+    expect(value.dependencies).toEqual(identities);
+    expect(
+      JSON.parse(await readFile(value.manifest.path, "utf8")),
+    ).toMatchObject({
+      dependencies: identities,
+    });
+    for (const [index, path] of dependencies.entries()) {
+      expect(await readFile(path)).toEqual(bytes[index]);
+      await expect(lstat(observed.paths[index]!)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }
+  } finally {
+    await f.provider.close();
+  }
+});
+
 it("refuses existing output, symlink input and malformed class headers", async () => {
   const f = await fixture("process.exit(99);");
   try {
@@ -244,31 +310,98 @@ it("cancels an owned worker and rolls back output", async () => {
   }
 });
 
-it("rejects traversal archives before running the decompiler", async () => {
-  const f = await fixture(
-    "fs.writeFileSync(path.join(process.env.REA_VINEFLOWER_TEST_ROOT, 'ran'), 'yes');",
-  );
-  const archive = join(f.root, "unsafe.jar");
-  await writeOrderedZip(archive, ["../escape.class"]);
-  try {
-    expect(await f.provider.execute(request(archive, f.output))).toMatchObject({
-      ok: false,
-    });
-    await expect(lstat(join(f.root, "ran"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    await expect(lstat(f.output)).rejects.toMatchObject({ code: "ENOENT" });
-  } finally {
-    await f.provider.close();
-  }
-});
+it.each(["cancellation", "deadline"])(
+  "rolls back output when %s occurs while commit checks are pending",
+  async (reason) => {
+    const f = await fixture(
+      "fs.writeFileSync('generated/Probe.java', 'class Probe {}');",
+    );
+    const controller = new AbortController();
+    const deadline =
+      reason === "deadline"
+        ? vi
+            .spyOn(AbortSignal, "timeout")
+            .mockReturnValueOnce(controller.signal)
+        : undefined;
+    const commit = SafeOutputTree.prototype.commit;
+    const spy = vi
+      .spyOn(SafeOutputTree.prototype, "commit")
+      .mockImplementation(function (this: SafeOutputTree, signal) {
+        const pending = commit.call(this, signal);
+        controller.abort();
+        return pending;
+      });
+    try {
+      expect(
+        await f.provider.execute(
+          request(f.path, f.output),
+          reason === "cancellation" ? { signal: controller.signal } : {},
+        ),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          _tag:
+            reason === "cancellation"
+              ? "AnalysisCancelledError"
+              : "AnalysisTimeoutError",
+        },
+      });
+      await expect(lstat(f.output)).rejects.toMatchObject({ code: "ENOENT" });
+      spy.mockRestore();
+      deadline?.mockRestore();
+      expect(await f.provider.execute(request(f.path, f.output))).toMatchObject(
+        {
+          ok: true,
+        },
+      );
+    } finally {
+      spy.mockRestore();
+      deadline?.mockRestore();
+      await f.provider.close();
+    }
+  },
+);
+
+it.each([
+  { reason: "traversal", entries: ["../escape.class"] },
+  {
+    reason: "normalized prefix conflict",
+    entries: ["caf\u00e9", "cafe\u0301/Probe.class"],
+  },
+])(
+  "rejects $reason archives before running the decompiler",
+  async ({ entries }) => {
+    const f = await fixture(
+      "fs.writeFileSync(path.join(process.env.REA_VINEFLOWER_TEST_ROOT, 'ran'), 'yes');",
+    );
+    const archive = join(f.root, "unsafe.jar");
+    await writeOrderedZip(archive, entries);
+    try {
+      expect(
+        await f.provider.execute(request(archive, f.output)),
+      ).toMatchObject({
+        ok: false,
+      });
+      await expect(lstat(join(f.root, "ran"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(lstat(f.output)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await f.provider.close();
+    }
+  },
+);
 
 it("preserves archive entry paths and the selected prefix", async () => {
   const f = await fixture(
     "if (!process.argv.includes('--only=fixture/Probe')) process.exit(9); await writeArchive({'fixture/Probe.java': 'package fixture; class Probe {}'});",
   );
   const archive = join(f.root, "selected.jar");
-  await writeOrderedZip(archive, ["fixture/Probe.class"]);
+  await writeOrderedZip(archive, [
+    "fixture/Probe.class",
+    "assets/cafe\u0301.txt",
+  ]);
+  const original = await readFile(archive);
   try {
     const result = await f.provider.execute({
       operation: "decompile_jvm_artifact",
@@ -287,6 +420,7 @@ it("preserves archive entry paths and the selected prefix", async () => {
       "sources/fixture/Probe.java",
     ]);
     expect(value.class_prefix).toBe("fixture/Probe");
+    expect(await readFile(archive)).toEqual(original);
   } finally {
     await f.provider.close();
   }
@@ -296,13 +430,19 @@ it.each(["original", "snapshot"])(
   "refuses changed %s bytes before publication",
   async (selection) => {
     const f = await fixture(
-      `const selected = ${selection === "original" ? "path.join(process.env.REA_VINEFLOWER_TEST_ROOT, 'Probe.class')" : "process.argv.at(-2)"}; fs.chmodSync(selected, 0o600); fs.appendFileSync(selected, 'changed'); fs.writeFileSync(path.join(process.argv.at(-1), 'Probe.java'), 'class Probe {}');`,
+      `const selected = ${selection === "original" ? "path.join(process.env.REA_VINEFLOWER_TEST_ROOT, 'Probe.class')" : "process.argv.at(-2)"}; fs.chmodSync(selected, 0o600); fs.appendFileSync(selected, 'changed'); console.error('fixture changed input warning'); fs.writeFileSync(path.join(process.argv.at(-1), 'Probe.java'), 'class Probe {}');`,
     );
     try {
       expect(await f.provider.execute(request(f.path, f.output))).toMatchObject(
         {
           ok: false,
-          error: { _tag: "AnalysisArtifactChangedError" },
+          error: {
+            _tag: "AnalysisArtifactChangedError",
+            capturedOutput: {
+              stderr: "fixture changed input warning\n",
+              exit_code: 0,
+            },
+          },
         },
       );
       await expect(lstat(f.output)).rejects.toMatchObject({ code: "ENOENT" });
@@ -353,6 +493,69 @@ it("retains failed output cleanup for close to retry", async () => {
   }
   await expect(lstat(f.output)).rejects.toMatchObject({ code: "ENOENT" });
 });
+
+it.each(["retry succeeds", "retry fails"])(
+  "retains successful engine diagnostics when workspace cleanup %s",
+  async (outcome) => {
+    const f = await fixture(
+      "console.log('fixture stdout'); console.error('fixture warning'); fs.writeFileSync('generated/Probe.java', 'class Probe {}');",
+    );
+    const rollback = SafeOutputTree.prototype.rollback;
+    let attempts = 0;
+    let workspace: string | undefined;
+    const spy = vi
+      .spyOn(SafeOutputTree.prototype, "rollback")
+      .mockImplementation(function (this: SafeOutputTree) {
+        if (this.outputRoot !== f.output) {
+          workspace = this.outputRoot;
+          if (++attempts === 1 || outcome === "retry fails")
+            return Promise.reject(
+              new Error("fixture workspace cleanup failure"),
+            );
+        }
+        return rollback.call(this);
+      });
+    try {
+      const result = await f.provider.execute(request(f.path, f.output));
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          capturedOutput: {
+            stdout: "fixture stdout\n",
+            stderr: "fixture warning\n",
+            exit_code: 0,
+            truncated: false,
+          },
+          cleanupIncomplete: outcome === "retry fails",
+        },
+      });
+      if (outcome === "retry fails") {
+        expect((await lstat(workspace!)).isDirectory()).toBe(true);
+        expect(await f.provider.inspectAvailability()).toMatchObject({
+          status: "unavailable",
+          diagnostics: { cleanup_pending: true },
+        });
+        await expect(f.provider.close()).rejects.toMatchObject({
+          cleanupIncomplete: true,
+          capturedOutput: {
+            stdout: "fixture stdout\n",
+            stderr: "fixture warning\n",
+          },
+        });
+      } else {
+        await expect(lstat(f.output)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(await f.provider.inspectAvailability()).toMatchObject({
+          status: "available",
+        });
+      }
+    } finally {
+      spy.mockRestore();
+      await f.provider.close();
+    }
+    await expect(lstat(workspace!)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(f.output)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
 
 it("preserves a published manifest when descriptor cleanup remains pending", async () => {
   const f = await fixture(

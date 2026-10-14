@@ -18,7 +18,10 @@ import {
   readDirectoryIdentity,
   type DirectoryIdentity,
 } from "../artifacts/SafeOutputTreeIdentity.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisCapturedOutput,
+} from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -78,6 +81,7 @@ const LIMITATIONS = [
 type Resources = {
   scope: ArtifactResourceScope;
   observation?: AnalysisExecution;
+  capturedOutput?: AnalysisCapturedOutput;
   root?: string;
   rootIdentity?: DirectoryIdentity;
   inputs?: SafeOutputTree;
@@ -240,10 +244,12 @@ export class VineflowerProvider implements JvmAnalysisPort {
         );
         await this.#cleanupWorkspace(resources);
         checkJvmCancellation(signal);
-        await resources.output!.commit();
+        await resources.output!.commit(signal);
       }
     } catch (cause: unknown) {
       failure = normalizeFailure(cause, request.operation, signal);
+      if (resources.capturedOutput !== undefined)
+        failure.retainCapturedOutput(resources.capturedOutput);
       if (deadline.aborted && !options?.signal?.aborted)
         failure = new AnalysisTimeoutError(request.operation, timeoutMs, {
           cause: failure,
@@ -354,6 +360,7 @@ export class VineflowerProvider implements JvmAnalysisPort {
       "decompile_jvm_artifact",
       signal,
     );
+    resources.capturedOutput = captureOutput(run);
     await assertPathIdentity(resources.root, resources.rootIdentity);
     if (stagingIdentity !== undefined)
       await assertPathIdentity(staging, stagingIdentity);
@@ -492,7 +499,7 @@ export class VineflowerProvider implements JvmAnalysisPort {
       this.#pending = undefined;
       return undefined;
     } catch (cause: unknown) {
-      return new ProviderCleanupError(
+      const failure = new ProviderCleanupError(
         "vineflower",
         [
           ...(resources.root === undefined ? [] : [resources.root]),
@@ -514,6 +521,9 @@ export class VineflowerProvider implements JvmAnalysisPort {
         },
         { operation: "decompile_jvm_artifact", cause },
       );
+      return resources.capturedOutput === undefined
+        ? failure
+        : failure.retainCapturedOutput(resources.capturedOutput);
     }
   }
 }
@@ -529,15 +539,7 @@ const normalizeFailure = (
   if (cause instanceof OwnedCommandFailure) {
     const snapshot = cause.snapshot;
     const capturedOutput =
-      snapshot === null
-        ? undefined
-        : {
-            stdout: snapshot.stdout.text,
-            stderr: snapshot.stderr.text,
-            truncated: snapshot.diagnosticTruncated === true,
-            exit_code: snapshot.exitCode ?? null,
-            signal: snapshot.signal ?? null,
-          };
+      snapshot === null ? undefined : captureOutput(snapshot);
     const options = {
       cause,
       ...(capturedOutput === undefined ? {} : { capturedOutput }),
@@ -575,3 +577,13 @@ const normalizeFailure = (
     diagnostics: { reason: message(cause) },
   });
 };
+
+const captureOutput = (
+  snapshot: ProviderProcessSnapshot,
+): AnalysisCapturedOutput => ({
+  stdout: snapshot.stdout.text,
+  stderr: snapshot.stderr.text,
+  truncated: snapshot.diagnosticTruncated === true,
+  exit_code: snapshot.exitCode ?? null,
+  signal: snapshot.signal ?? null,
+});

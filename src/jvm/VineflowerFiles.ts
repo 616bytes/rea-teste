@@ -155,13 +155,8 @@ const validateArchive = async (
       const budget = new JvmMetadataBudget();
       for await (const entry of reader.entries(signal)) {
         budget.add(entry.path);
-        const normalized = normalizeArtifactPath(entry.path);
-        if (normalized !== entry.path.replace(/\/$/u, ""))
-          throw new ArtifactReaderFailure(
-            "path",
-            `Archive path would change during normalization: ${entry.path}`,
-          );
-        paths.add(normalized, entry.kind);
+        // Normalize only the safety/collision key; the archive snapshot keeps member spellings.
+        paths.add(normalizeArtifactPath(entry.path), entry.kind);
         if (entry.kind === "symlink" || entry.encrypted)
           throw new ArtifactReaderFailure(
             "format",

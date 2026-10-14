@@ -21,13 +21,20 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const requested =
-  process.argv.slice(2).filter((value) => !value.startsWith("-"));
-const providers = requested.length === 0 ? ["objdump", "rizin", "gdb"] : requested;
+const requested = process.argv
+  .slice(2)
+  .filter((value) => !value.startsWith("-"));
+const providers =
+  requested.length === 0 ? ["objdump", "rizin", "gdb"] : requested;
 const receiptPath = join(root, "reverse-providers-real.json");
 const receipt = {
   ran_at_utc: new Date().toISOString(),
-  host: { platform: process.platform, arch: process.arch, kernel: null, locale: null },
+  host: {
+    platform: process.platform,
+    arch: process.arch,
+    kernel: null,
+    locale: null,
+  },
   providers: {},
   assertions: [],
   cleaned_up: {},
@@ -69,11 +76,23 @@ const countProcesses = (name) => {
 };
 
 const cli = (args) =>
-  JSON.parse(run(process.execPath, [join(root, "scripts/rea.mjs"), ...args, "--format", "json"]));
+  JSON.parse(
+    run(process.execPath, [
+      join(root, "scripts/rea.mjs"),
+      ...args,
+      "--format",
+      "json",
+    ]),
+  );
 
 const cliFailure = (args) => {
   try {
-    run(process.execPath, [join(root, "scripts/rea.mjs"), ...args, "--format", "json"]);
+    run(process.execPath, [
+      join(root, "scripts/rea.mjs"),
+      ...args,
+      "--format",
+      "json",
+    ]);
     return null;
   } catch (cause) {
     return String(cause.stdout ?? cause.message ?? cause).slice(0, 400);
@@ -112,11 +131,17 @@ const openInferiorTty = () =>
     };
     helper.stdout.on("data", onData);
     helper.once("error", reject);
-    setTimeout(() => reject(new Error("inferior TTY helper did not report a path")), 10_000);
+    setTimeout(
+      () => reject(new Error("inferior TTY helper did not report a path")),
+      10_000,
+    );
   });
 
 const verifyObjdump = async (fixture, expectedDigest) => {
-  const observed = { version: firstLine("objdump", ["--version"]), operations: {} };
+  const observed = {
+    version: firstLine("objdump", ["--version"]),
+    operations: {},
+  };
   receipt.providers.objdump = observed;
   for (const operation of [
     "file_headers",
@@ -131,7 +156,8 @@ const verifyObjdump = async (fixture, expectedDigest) => {
     const result = evidence.raw_result ?? {};
     observed.operations[operation] = {
       exit_code: result.exit_code,
-      stdout_bytes: typeof result.stdout === "string" ? result.stdout.length : 0,
+      stdout_bytes:
+        typeof result.stdout === "string" ? result.stdout.length : 0,
       artifact_changed: result.artifact_changed,
       completion_status: result.completion_status,
     };
@@ -176,7 +202,9 @@ const verifyRizin = async (fixture, expectedDigest) => {
   const result = evidence.raw_result ?? {};
   observed.operation = {
     exit_code: result.exit_code,
-    stdout_head: String(result.stdout ?? "").split("\n").slice(0, 2),
+    stdout_head: String(result.stdout ?? "")
+      .split("\n")
+      .slice(0, 2),
     artifact_changed: result.artifact_changed,
   };
   check(
@@ -193,7 +221,8 @@ const verifyRizin = async (fixture, expectedDigest) => {
   );
   check(
     "rizin preserved artifact identity",
-    result.artifact_changed === false && result.artifact_sha256_after === expectedDigest,
+    result.artifact_changed === false &&
+      result.artifact_sha256_after === expectedDigest,
     `after=${result.artifact_sha256_after} changed=${result.artifact_changed}`,
   );
 };
@@ -221,7 +250,11 @@ const verifyGdb = async (fixture, expectedDigest) => {
   const { helper, path: inferiorTty } = await openInferiorTty();
   observed.inferior_tty = inferiorTty;
   try {
-    const started = structured(await callTool(client, "start_gdb_session", { inferior_tty: inferiorTty }));
+    const started = structured(
+      await callTool(client, "start_gdb_session", {
+        inferior_tty: inferiorTty,
+      }),
+    );
     observed.mi_version = started.mi_version;
     check(
       "gdb started a persistent MI session",
@@ -232,17 +265,32 @@ const verifyGdb = async (fixture, expectedDigest) => {
     const sessionId = started.session_id;
     if (typeof sessionId !== "string") return;
 
-    for (const command of [`file ${fixture}`, "break main", "run", "info registers rip"]) {
-      const response = await callTool(client, "gdb_console", { session_id: sessionId, command });
+    for (const command of [
+      `file ${fixture}`,
+      "break main",
+      "run",
+      "info registers rip",
+    ]) {
+      const response = await callTool(client, "gdb_console", {
+        session_id: sessionId,
+        command,
+      });
       const result = structured(response).raw_result ?? {};
       check(
         `gdb console ran ${JSON.stringify(command)}`,
-        response.isError !== true && typeof result.mi === "string" && result.mi.length > 0,
-        JSON.stringify({ mi: result.mi, console: result.console?.slice(0, 60) }),
+        response.isError !== true &&
+          typeof result.mi === "string" &&
+          result.mi.length > 0,
+        JSON.stringify({
+          mi: result.mi,
+          console: result.console?.slice(0, 60),
+        }),
       );
     }
 
-    const status = structured(await callTool(client, "gdb_session_status", { session_id: sessionId }));
+    const status = structured(
+      await callTool(client, "gdb_session_status", { session_id: sessionId }),
+    );
     observed.status = {
       state: status.state,
       mi_version: status.mi_version,
@@ -255,11 +303,14 @@ const verifyGdb = async (fixture, expectedDigest) => {
       JSON.stringify(observed.status),
     );
 
-    const closed = structured(await callTool(client, "close_gdb_session", { session_id: sessionId }));
+    const closed = structured(
+      await callTool(client, "close_gdb_session", { session_id: sessionId }),
+    );
     observed.close = closed;
     check(
       "gdb closed the session with an explicit target state",
-      closed.target_state === "none_observed" || closed.target_state === "unknown",
+      closed.target_state === "none_observed" ||
+        closed.target_state === "unknown",
       JSON.stringify(closed),
     );
   } finally {
@@ -286,14 +337,23 @@ const verifyGdb = async (fixture, expectedDigest) => {
   const controlTty = await openInferiorTty();
   observed.one_shot = {};
   try {
-    const accepted = cli(["debug-with-gdb", "info files", "--inferior-tty", controlTty.path]);
+    const accepted = cli([
+      "debug-with-gdb",
+      "info files",
+      "--inferior-tty",
+      controlTty.path,
+    ]);
     observed.one_shot.accepted = (accepted.raw_result ?? {}).completion_status;
     check(
       "gdb one-shot accepted an ordinary console command",
       typeof accepted.evidence_id === "string",
       JSON.stringify(observed.one_shot.accepted),
     );
-    for (const command of ["shell echo contained", "!echo contained", "info files &"]) {
+    for (const command of [
+      "shell echo contained",
+      "!echo contained",
+      "info files &",
+    ]) {
       const failure = cliFailure([
         "debug-with-gdb",
         command,

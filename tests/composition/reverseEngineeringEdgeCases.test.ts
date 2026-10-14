@@ -1039,8 +1039,8 @@ it.each([
       expect(result.ok).toBe(true);
       if (result.ok)
         expect(result.value.limitations).toContain(
-            `Captured ${streams} bytes contain invalid or incomplete UTF-8; replacement characters in the text capture do not preserve the original bytes.`,
-          );
+          `Captured ${streams} bytes contain invalid or incomplete UTF-8; replacement characters in the text capture do not preserve the original bytes.`,
+        );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -1105,9 +1105,7 @@ it("settles a stalled artifact open on cancellation and closes the late handle o
 
 it("maps a stalled artifact open to the digest deadline error", async () => {
   const { directory, path } = await createArtifact();
-  const openArtifact = vi.fn(
-    () => new Promise<FileHandle>(() => undefined),
-  );
+  const openArtifact = vi.fn(() => new Promise<FileHandle>(() => undefined));
   const service = new ReverseEngineeringService({
     open: openArtifact,
     run: async () => ({ stdout: "", stderr: "" }),

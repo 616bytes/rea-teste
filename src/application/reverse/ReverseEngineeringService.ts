@@ -306,7 +306,12 @@ export class ReverseEngineeringService {
     let digest: string | undefined;
     try {
       if (absolutePath !== undefined)
-        digest = await this.#digest(absolutePath, signal, this.#stat, this.#open);
+        digest = await this.#digest(
+          absolutePath,
+          signal,
+          this.#stat,
+          this.#open,
+        );
     } catch (cause) {
       const code = (cause as NodeJS.ErrnoException).code;
       if (signal?.aborted)
@@ -545,7 +550,12 @@ export class ReverseEngineeringService {
       if (!cleanupOnlyFailure) completionStatus = "unknown";
     } else {
       try {
-        digestAfter = await this.#digest(absolutePath, signal, this.#stat, this.#open);
+        digestAfter = await this.#digest(
+          absolutePath,
+          signal,
+          this.#stat,
+          this.#open,
+        );
       } catch {
         // Preserve the provider's collected observations if the artifact vanished or became unreadable.
       }

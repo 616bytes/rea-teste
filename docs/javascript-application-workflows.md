@@ -77,6 +77,12 @@ registrations/removals and dispatch, Node timers and cancellation handles, async
 defaults, request construction and response consumers, parse/coercion/
 validation boundaries, and built-in resource acquisition/release.
 
+Timer cancellation resolves a scalar local handle when the existing write and
+statement-order analysis admits one preceding schedule in the same callable.
+Reassignments select the value at the cancellation point; conditional or
+cross-callable writes, projections, loops, and unsupported expression ordering
+retain candidates or explicit timer unknowns.
+
 Mutation tracking covers explicit member assignments, updates, deletion, and
 loop assignment targets, including the supported local aliases and shared
 nested references. Calls conservatively invalidate exposed mutable references;

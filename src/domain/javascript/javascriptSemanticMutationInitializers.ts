@@ -368,6 +368,29 @@ export const semanticReadInitializers = (
   JavaScriptSemanticBindingState,
   "initializers" | "referenceInitializers"
 > => {
+  return selectInitializers(
+    binding,
+    readPosition(read, parents),
+    parents,
+    true,
+  );
+};
+
+/** Require an admitted statement order rather than a conservative read fallback. */
+export const semanticInitializerPrecedesRead = (
+  initializer: t.Node,
+  read: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  const source = directInitializerPosition(initializer, parents);
+  const target = readPosition(read, parents);
+  return source !== null && target !== null && positionPrecedes(source, target);
+};
+
+const readPosition = (
+  read: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): StatementPosition | null => {
   let position: StatementPosition | null = null;
   let current = read;
   for (
@@ -375,7 +398,7 @@ export const semanticReadInitializers = (
     parent;
     parent = parents.get(current)
   ) {
-    if (t.isLoop(parent)) return binding;
+    if (t.isLoop(parent)) return null;
     if (t.isFunction(parent)) break;
     if (position === null) {
       if (t.isVariableDeclarator(parent)) {
@@ -387,7 +410,7 @@ export const semanticReadInitializers = (
     }
     current = parent;
   }
-  return selectInitializers(binding, position, parents, true);
+  return position;
 };
 
 const selectInitializers = (

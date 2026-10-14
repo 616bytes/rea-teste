@@ -63,7 +63,7 @@ export const assignedSemanticResultBindings = (
     if (
       pattern !== undefined &&
       source !== null &&
-      assignedSourceIs(node, source)
+      semanticAssignedResultSource(source) === node
     )
       return projectedPatternBindings(pattern, state);
     if (semanticCallableIdForNode(owner) !== null) return [];
@@ -71,7 +71,8 @@ export const assignedSemanticResultBindings = (
   return [];
 };
 
-const assignedSourceIs = (node: t.Node, source: t.Node): boolean => {
+/** Unwrap the assigned result using the same transparent syntax for every collector. */
+export const semanticAssignedResultSource = (source: t.Node): t.Node => {
   let value = source;
   while (true) {
     if (t.isAwaitExpression(value)) value = value.argument;
@@ -81,7 +82,7 @@ const assignedSourceIs = (node: t.Node, source: t.Node): boolean => {
       value = unwrapped;
     }
   }
-  return value === node;
+  return value;
 };
 
 const projectedPatternBindings = (

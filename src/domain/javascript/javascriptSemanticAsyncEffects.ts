@@ -8,6 +8,10 @@ import type {
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
 import { semanticStaticPropertyName } from "./javascriptAstValues.js";
 import {
+  semanticInitializerPrecedesRead,
+  semanticReadInitializers,
+} from "./javascriptSemanticMutationInitializers.js";
+import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
@@ -20,6 +24,7 @@ import {
   dataEffectLiteralString,
   dataEffectMemberCallee,
   assignedSemanticResultBindings,
+  semanticAssignedResultSource,
   scalarAssignedResultBinding,
   semanticProjectedBindingFacts,
 } from "./javascriptSemanticDataEffectHelpers.js";
@@ -119,7 +124,7 @@ export const collectJavaScriptSemanticAsyncEffects = (
   });
   return {
     eventOperations: events,
-    timerOperations: resolveTimers(timers),
+    timerOperations: resolveTimers(timers, state),
   };
 };
 
@@ -241,6 +246,7 @@ const collectTimer = (input: TimerCollectionInput): void => {
 
 const resolveTimers = (
   candidates: readonly TimerCandidate[],
+  state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticTimerOperation[] => {
   const schedulesByBinding = new Map<string, TimerCandidate[]>();
   for (const candidate of candidates) {
@@ -258,10 +264,11 @@ const resolveTimers = (
     }
   }
   return candidates.map((candidate) => {
-    const linked =
-      candidate.kind === "cancel" && candidate.handleBindingId !== null
-        ? (schedulesByBinding.get(candidate.handleBindingId) ?? [])
-        : [];
+    const target = resolveTimerCancellation(
+      candidate,
+      schedulesByBinding,
+      state,
+    );
     return {
       timerId: timerId(candidate),
       kind: candidate.kind,
@@ -270,24 +277,63 @@ const resolveTimers = (
       ownerCallableId: candidate.ownerCallableId,
       handleBindingId: candidate.handleBindingId,
       projectedResultBindings: candidate.projectedResultBindings,
-      linkedTimerId:
-        linked.length === 1 && linked[0] !== undefined
-          ? timerId(linked[0])
-          : null,
+      linkedTimerId: target.linkedTimerId,
       delayMilliseconds: timerDelay(candidate),
       resolution:
-        candidate.kind === "schedule"
-          ? "complete"
-          : linked.length === 1 &&
-              !linked[0]?.projectedResultBindings.some(
-                ({ bindingId }) => bindingId === candidate.handleBindingId,
-              )
-            ? "complete"
-            : linked.length > 1
-              ? "partial"
-              : "unresolved",
+        candidate.kind === "schedule" ? "complete" : target.resolution,
     };
   });
+};
+
+const resolveTimerCancellation = (
+  candidate: TimerCandidate,
+  schedulesByBinding: ReadonlyMap<string, readonly TimerCandidate[]>,
+  state: JavaScriptSemanticAnalysisState,
+): Pick<JavaScriptSemanticTimerOperation, "linkedTimerId" | "resolution"> => {
+  const binding =
+    candidate.kind === "cancel" && candidate.handleBindingId !== null
+      ? state.bindingsById.get(candidate.handleBindingId)
+      : undefined;
+  if (binding === undefined)
+    return { linkedTimerId: null, resolution: "unresolved" };
+  // A lexical binding is only an ownership key. Use the shared write inventory
+  // at this read before admitting any schedule as the current handle value.
+  const reaching = semanticReadInitializers(
+    binding,
+    candidate.node,
+    state.parentsByNode,
+  );
+  const sources = new Set(
+    reaching.initializers.map(({ node }) => semanticAssignedResultSource(node)),
+  );
+  const linked = (schedulesByBinding.get(binding.bindingId) ?? []).filter(
+    (schedule) => sources.has(schedule.node),
+  );
+  const [schedule] = linked;
+  const [initializer] = reaching.initializers;
+  const complete =
+    linked.length === 1 &&
+    schedule !== undefined &&
+    schedule.ownerCallableId === candidate.ownerCallableId &&
+    reaching.initializers.length === 1 &&
+    reaching.referenceInitializers.length === 0 &&
+    initializer !== undefined &&
+    initializer.projection.length === 0 &&
+    !state.conditionallySkippedExpressions.has(initializer.node) &&
+    semanticInitializerPrecedesRead(
+      initializer.node,
+      candidate.node,
+      state.parentsByNode,
+    );
+  return {
+    linkedTimerId:
+      linked.length === 1 && schedule !== undefined ? timerId(schedule) : null,
+    resolution: complete
+      ? "complete"
+      : linked.length > 0
+        ? "partial"
+        : "unresolved",
+  };
 };
 
 const timerMethod = (

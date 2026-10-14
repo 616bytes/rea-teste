@@ -11,6 +11,14 @@ export const evidenceRecordFiltersSchema = z.strictObject({
   target_sha256: digestSchema.optional(),
   analysis_profile_digest: digestSchema.optional(),
   procedure_address: z.string().min(1).optional(),
+  query: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Case-insensitive literal text search; every whitespace-separated term must occur in the record's normalized result or limitations",
+    ),
 });
 export type EvidenceRecordFilters = z.infer<typeof evidenceRecordFiltersSchema>;
 
@@ -73,6 +81,14 @@ export const evidenceBundleSummarySchema = z.strictObject({
       retention: z.literal("complete-record"),
       limitation_count: countSchema,
       native_dossier: nativeSummarySchema,
+      query_match: z
+        .strictObject({
+          path: z.string(),
+          snippet: z.string(),
+          match_start: countSchema,
+          match_length: countSchema,
+        })
+        .nullable(),
     }),
   ),
 });
@@ -114,7 +130,68 @@ const nativeSummary = (
   };
 };
 
-/** Discover retained Evidence without reading or copying its complete payloads. */
+type QueryMatch = NonNullable<
+  EvidenceBundleSummary["records"][number]["query_match"]
+>;
+
+const SNIPPET_CONTEXT = 30;
+
+const pointerSegment = (key: string | number): string =>
+  String(key).replaceAll("~", "~0").replaceAll("/", "~1");
+
+/**
+ * Match every term against string leaves of the record's result and
+ * limitations, reporting the first leaf containing the first term.
+ */
+const matchQuery = (
+  evidence: Evidence,
+  terms: readonly string[],
+): QueryMatch | undefined => {
+  const pending = new Set(terms);
+  let first: QueryMatch | undefined;
+  const stack: [unknown, string][] = [
+    [evidence.limitations, "/limitations"],
+    [evidence.normalized_result, "/normalized_result"],
+  ];
+  while (stack.length > 0 && (pending.size > 0 || first === undefined)) {
+    const [value, path] = stack.pop()!;
+    if (typeof value === "string") {
+      const lower = value.toLowerCase();
+      for (const term of pending)
+        if (lower.includes(term)) pending.delete(term);
+      const at = lower.indexOf(terms[0]!);
+      if (first === undefined && at !== -1) {
+        // Case folding can change length; then offsets refer to the folded text.
+        const text = lower.length === value.length ? value : lower;
+        const start = Math.max(0, at - SNIPPET_CONTEXT);
+        const end = Math.min(
+          text.length,
+          at + terms[0]!.length + SNIPPET_CONTEXT,
+        );
+        const prefix = start > 0 ? "…" : "";
+        first = {
+          path,
+          snippet:
+            prefix + text.slice(start, end) + (end < text.length ? "…" : ""),
+          match_start: prefix.length + at - start,
+          match_length: terms[0]!.length,
+        };
+      }
+    } else if (Array.isArray(value)) {
+      for (let i = value.length - 1; i >= 0; i--)
+        stack.push([value[i], `${path}/${i}`]);
+    } else if (value !== null && typeof value === "object") {
+      for (const [key, child] of Object.entries(value).reverse())
+        stack.push([child, `${path}/${pointerSegment(key)}`]);
+    }
+  }
+  return pending.size === 0 ? first : undefined;
+};
+
+/**
+ * Discover retained Evidence; payloads are read only when a text query is
+ * selected, and are never copied into the summary beyond a bounded snippet.
+ */
 export const summarizeEvidenceBundle = (
   bundle: EvidenceBundle,
   filters: EvidenceRecordFilters = {},
@@ -122,6 +199,7 @@ export const summarizeEvidenceBundle = (
   const selectedFilters: Record<string, string> = {};
   for (const [field, value] of Object.entries(filters))
     if (value !== undefined) selectedFilters[field] = value;
+  const terms = filters.query?.toLowerCase().split(/\s+/).filter(Boolean);
   const records: EvidenceBundleSummary["records"] = [];
   for (const evidence of bundle.records) {
     if (
@@ -142,6 +220,9 @@ export const summarizeEvidenceBundle = (
         filters.procedure_address !== native.procedure_address)
     )
       continue;
+    const queryMatch =
+      terms === undefined ? undefined : matchQuery(evidence, terms);
+    if (terms !== undefined && queryMatch === undefined) continue;
     records.push({
       evidence_id: evidence.evidence_id,
       subject: evidence.subject,
@@ -153,6 +234,7 @@ export const summarizeEvidenceBundle = (
       retention: "complete-record",
       limitation_count: evidence.limitations.length,
       native_dossier: native,
+      query_match: queryMatch ?? null,
     });
   }
   return {

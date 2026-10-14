@@ -53,3 +53,35 @@ it("preserves native identity independently of missing or incompatible value-flo
     ]),
   );
 });
+
+it("selects records containing every query term literally and reports a snippet", () => {
+  const record = (strings: string[]) =>
+    createEvidence(
+      { path: "/fixtures/app.asar", format: "asar", sha256: "b".repeat(64) },
+      { id: "provider", name: "Provider", version: "1" },
+      { operation: "list_strings", parameters: {}, result: { strings } },
+    );
+  const bundle = createEvidenceBundle([
+    record(["x".repeat(40) + "LOWER(title) LIKE :t0 ESCAPE", "100%_done"]),
+    record(["LOWER(title) only"]),
+  ]);
+  const summary = summarizeEvidenceBundle(bundle, { query: "  like  lower " });
+  expect(summary.matching_records).toBe(1);
+  const match = summary.records[0]!.query_match!;
+  expect(match.path).toBe("/normalized_result/strings/0");
+  expect(
+    match.snippet.slice(
+      match.match_start,
+      match.match_start + match.match_length,
+    ),
+  ).toBe("LIKE");
+  expect(match.snippet.startsWith("…")).toBe(true);
+  // Wildcard characters are literal text, not patterns.
+  expect(
+    summarizeEvidenceBundle(bundle, { query: "%_" }).matching_records,
+  ).toBe(1);
+  expect(
+    summarizeEvidenceBundle(bundle, { query: "x_x" }).matching_records,
+  ).toBe(0);
+  expect(summarizeEvidenceBundle(bundle).records[0]!.query_match).toBeNull();
+});

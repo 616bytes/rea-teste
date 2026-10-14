@@ -606,7 +606,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
 
 // Windows resolves dot components before directory links in Win32 paths.
 cliTest
-  .skipIf(process.platform === "win32")
+  .skipIf(process.platform === "win32" || !SQLITE_NATIVE_LIMITS_AVAILABLE)
   .for(["absolute", "relative"] as const)(
   "inspects the database a %s selection with a symlink before a parent segment names",
   async (mode, { cli }) => {

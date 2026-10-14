@@ -1,8 +1,9 @@
 import { constants } from "node:fs";
 import { access, readdir, stat } from "node:fs/promises";
+import { posix } from "node:path";
+
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
-import { join } from "node:path";
 
 import { analysisErrorRemediationAction } from "../domain/analysisErrorPresentation.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
@@ -45,6 +46,9 @@ import {
   scopeDoctorChecks,
   type DoctorScopeReport,
 } from "./DoctorScope.js";
+
+const portableJoin = (...segments: string[]): string =>
+  posix.join(...segments).replaceAll("\\", "/");
 
 /** One actionable environment diagnostic. */
 export interface DoctorCheck {
@@ -514,7 +518,10 @@ export const systemDoctorHost = (
         );
         return appdir === undefined
           ? undefined
-          : join(appdir, "Hopper Disassembler.app/Contents/MacOS/hopper");
+          : portableJoin(
+              appdir,
+              "Hopper Disassembler.app/Contents/MacOS/hopper",
+            );
       });
     },
     manualHopperPaths: () => manualHopperPaths(homeDirectory),

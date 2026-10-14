@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -8,6 +8,9 @@ import {
   macHopperLauncherCandidates,
   macHopperRenamedLauncherCandidates,
 } from "./MacHopperPaths.js";
+
+const portableJoin = (...segments: string[]): string =>
+  posix.join(...segments).replaceAll("\\", "/");
 
 describe("macOS Hopper launcher paths", () => {
   const home = "/fixture/home";
@@ -47,7 +50,7 @@ describe("macOS Hopper launcher paths", () => {
     try {
       await mkdir(appDirectory, { recursive: true });
       expect([...macHopperLauncherCandidates(temporary)]).toContain(
-        join(appDirectory, "Contents/MacOS/hopper"),
+        portableJoin(appDirectory, "Contents/MacOS/hopper"),
       );
     } finally {
       await rm(temporary, { recursive: true, force: true });

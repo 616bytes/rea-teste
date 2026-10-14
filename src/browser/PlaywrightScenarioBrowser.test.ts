@@ -1,5 +1,10 @@
 import { afterEach, expect, it, vi } from "vitest";
-import type { Browser } from "playwright-core";
+import type {
+  Browser,
+  BrowserContext,
+  CDPSession,
+  Page,
+} from "playwright-core";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import {
@@ -243,6 +248,173 @@ it("closes an attached connection when cancellation starts target discovery", as
   });
   expect(connectedBrowser.contexts).toHaveBeenCalledOnce();
   expect(connectedBrowser.close).toHaveBeenCalledOnce();
+});
+
+it("restores its environment overrides before releasing an attached browser", async () => {
+  const cleanupOrder: string[] = [];
+  const discoverySession = {
+    send: vi.fn(async () => ({ targetInfo: { targetId: "page-1" } })),
+    detach: vi.fn(async () => undefined),
+  } as unknown as CDPSession;
+  const environmentSession = {
+    send: vi.fn(async (method: string, parameters?: unknown) => {
+      if (
+        method === "Emulation.setTimezoneOverride" &&
+        (parameters as { timezoneId?: string }).timezoneId === ""
+      )
+        cleanupOrder.push("timezone");
+      if (
+        method === "Emulation.setLocaleOverride" &&
+        (parameters as { locale?: string }).locale === ""
+      )
+        cleanupOrder.push("locale");
+      if (method === "Emulation.clearDeviceMetricsOverride")
+        cleanupOrder.push("device-metrics");
+    }),
+    detach: vi.fn(async () => {
+      cleanupOrder.push("session");
+    }),
+  } as unknown as CDPSession;
+  const page = {
+    emulateMedia: vi.fn(async (options) => {
+      if (options?.colorScheme === null) cleanupOrder.push("media");
+    }),
+  } as unknown as Page;
+  const context = {
+    pages: () => [page],
+    newCDPSession: vi
+      .fn()
+      .mockResolvedValueOnce(discoverySession)
+      .mockResolvedValueOnce(environmentSession),
+  } as unknown as BrowserContext;
+  const browser = {
+    close: vi.fn(async () => {
+      cleanupOrder.push("browser");
+    }),
+    contexts: () => [context],
+    version: () => "fixture",
+  } as unknown as Pick<Browser, "contexts" | "close" | "version">;
+  const scenario = browserScenarioSchema.parse({
+    browser: {
+      mode: "connect",
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "page-1",
+    },
+    start_url: { url: "https://example.test" },
+    actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
+  });
+
+  const opened = await openPlaywrightScenarioBrowser(
+    scenario,
+    {},
+    {
+      launcher: {
+        connectOverCDP: async () => browser,
+        launchPersistentContext: async () => {
+          throw new Error("Unexpected launch");
+        },
+      },
+    },
+  );
+  await opened.cleanup.close();
+
+  expect(environmentSession.send).toHaveBeenCalledWith(
+    "Emulation.setLocaleOverride",
+    { locale: "en-US" },
+  );
+  expect(environmentSession.send).toHaveBeenCalledWith(
+    "Emulation.setLocaleOverride",
+    { locale: "" },
+  );
+  expect(environmentSession.send).toHaveBeenCalledWith(
+    "Emulation.setTimezoneOverride",
+    { timezoneId: "" },
+  );
+  expect(environmentSession.send).toHaveBeenCalledWith(
+    "Emulation.clearDeviceMetricsOverride",
+  );
+  expect(page.emulateMedia).toHaveBeenLastCalledWith({
+    colorScheme: null,
+    reducedMotion: null,
+  });
+  expect(environmentSession.detach).toHaveBeenCalledOnce();
+  expect(browser.close).toHaveBeenCalledOnce();
+  expect(cleanupOrder).toEqual([
+    "timezone",
+    "locale",
+    "device-metrics",
+    "media",
+    "session",
+    "browser",
+  ]);
+});
+
+it("retains attached environment ownership until a failed reset can be retried", async () => {
+  let localeResetAttempts = 0;
+  const discoverySession = {
+    send: vi.fn(async () => ({ targetInfo: { targetId: "page-1" } })),
+    detach: vi.fn(async () => undefined),
+  } as unknown as CDPSession;
+  const environmentSession = {
+    send: vi.fn(async (method: string, parameters?: unknown) => {
+      if (
+        method === "Emulation.setLocaleOverride" &&
+        (parameters as { locale?: string }).locale === ""
+      ) {
+        localeResetAttempts += 1;
+        if (localeResetAttempts === 1) throw new Error("reset interrupted");
+      }
+    }),
+    detach: vi.fn(async () => undefined),
+  } as unknown as CDPSession;
+  const page = {
+    emulateMedia: vi.fn(async () => undefined),
+  } as unknown as Page;
+  const context = {
+    pages: () => [page],
+    newCDPSession: vi
+      .fn()
+      .mockResolvedValueOnce(discoverySession)
+      .mockResolvedValueOnce(environmentSession),
+  } as unknown as BrowserContext;
+  const browser = {
+    close: vi.fn(async () => undefined),
+    contexts: () => [context],
+    version: () => "fixture",
+  } as unknown as Pick<Browser, "contexts" | "close" | "version">;
+  const scenario = browserScenarioSchema.parse({
+    browser: {
+      mode: "connect",
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "page-1",
+    },
+    start_url: { url: "https://example.test" },
+    actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
+  });
+  const opened = await openPlaywrightScenarioBrowser(
+    scenario,
+    {},
+    {
+      launcher: {
+        connectOverCDP: async () => browser,
+        launchPersistentContext: async () => {
+          throw new Error("Unexpected launch");
+        },
+      },
+    },
+  );
+
+  await expect(opened.cleanup.close()).rejects.toMatchObject({
+    reason: "cleanup_failed",
+    cleanup: { reason: "reset interrupted" },
+  });
+  expect(browser.close).not.toHaveBeenCalled();
+  expect(environmentSession.detach).not.toHaveBeenCalled();
+
+  await opened.cleanup.close();
+  expect(localeResetAttempts).toBe(2);
+  expect(environmentSession.detach).toHaveBeenCalledOnce();
+  expect(browser.close).toHaveBeenCalledOnce();
 });
 
 it("cancels same-target queued connection before acquiring a browser", async () => {

@@ -968,7 +968,7 @@ exit 1`,
       include_artifact: false,
     },
   });
-  expect(result).toMatchObject({ width: 4, height: 3 });
+  expect(result).toMatchObject({ width: 4, height: 3, keyguard_showing: null });
   expect(result).not.toHaveProperty("artifact");
   expect(
     await readFile(join(output, "screen.png")).then(
@@ -998,6 +998,37 @@ exit 1`,
       data_base64: written.toString("base64"),
     },
   });
+});
+
+it("records whether the keyguard was showing right after the frame", async () => {
+  const { binary, root } = await writeAdbStub(
+    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ] && [ "$3" = "exec-out" ]; then
+  printf '\\211PNG\\r\\n\\032\\n\\0\\0\\0\\rIHDR\\0\\0\\0\\004\\0\\0\\0\\003'
+  exit 0
+fi
+if [ "$1" = "-s" ] && [ "$3" = "shell" ] && [ "$4 $5 $6" = "dumpsys window displays" ]; then
+  printf 'WINDOW MANAGER DISPLAY CONTENTS\\n    isKeyguardShowing=true\\n'
+  exit 0
+fi
+exit 1`,
+  );
+  const execution = await providerOver(binary).execute({
+    operation: "capture_adb_screen",
+    input: {
+      serial: "emulator-5554",
+      output_directory: join(root, "locked"),
+      include_artifact: false,
+    },
+  });
+  expect(execution.ok).toBe(true);
+  if (!execution.ok) return;
+  expect(execution.value.result).toMatchObject({
+    keyguard_showing: true,
+  });
+  expect(execution.value.limitations).toContain(
+    "The keyguard was showing right after the frame; the PNG likely shows the lock screen, not the foreground app",
+  );
 });
 
 it("lists processes, features, and services through fixed commands", async () => {

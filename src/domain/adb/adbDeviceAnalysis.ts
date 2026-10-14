@@ -576,6 +576,11 @@ export const adbResultSchemas = {
       height: z.number().int().positive().nullable(),
       /** Present only when the capture was requested with `include_artifact`. */
       artifact: webScreenshotArtifactSchema.optional(),
+      /**
+       * Keyguard declaration read right after the frame; null when the window
+       * manager did not declare it. Absent from captures made before it existed.
+       */
+      keyguard_showing: z.boolean().nullable().optional(),
     })
     .superRefine((capture, context) => {
       if (

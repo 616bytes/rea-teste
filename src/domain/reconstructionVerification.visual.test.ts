@@ -118,6 +118,7 @@ const webCapture = (
 const adbCapture = (
   bytes: Buffer,
   artifact: WebScreenshotArtifact | null = null,
+  keyguardShowing?: boolean | null,
 ): Evidence => {
   const capture = createWebScreenshotArtifact(bytes);
   return createEvidence(
@@ -144,6 +145,9 @@ const adbCapture = (
         width: SIZE,
         height: SIZE,
         ...(artifact === null ? {} : { artifact }),
+        ...(keyguardShowing === undefined
+          ? {}
+          : { keyguard_showing: keyguardShowing }),
       }),
       confidence: "observed",
       authority: "external-service",
@@ -440,6 +444,40 @@ describe("visual claim limitations", () => {
     expect(result.recommended_probes).toMatchObject([
       { operation: "capture_web_screenshot", claim_ids: ["home-screen"] },
     ]);
+  });
+
+  it("stays unknown when an ADB source was captured on the lock screen", () => {
+    const beforeArtifact = createWebScreenshotArtifact(png());
+    const afterBytes = png([5]);
+    const afterArtifact = createWebScreenshotArtifact(afterBytes);
+    const before = webCapture(beforeArtifact, "original");
+    const after = adbCapture(afterBytes, afterArtifact, true);
+    const comparison = screenshotComparison(beforeArtifact, afterArtifact);
+    const result = verify(visualSpec(comparison, before, after), [
+      comparison,
+      before,
+      after,
+    ]);
+    expect(result.status).toBe("unknown");
+    expect(result.claims.items[0]?.visual?.recomputed).toBe(true);
+    expect(result.claims.items[0]?.limitations).toContain(
+      `Source ${after.evidence_id} was captured while the device keyguard was showing; its pixels likely show the lock screen, not the application. Unlock the device and recapture.`,
+    );
+  });
+
+  it("keeps an unlocked ADB source decisive", () => {
+    const beforeArtifact = createWebScreenshotArtifact(png());
+    const afterBytes = png([5]);
+    const afterArtifact = createWebScreenshotArtifact(afterBytes);
+    const before = webCapture(beforeArtifact, "original");
+    const after = adbCapture(afterBytes, afterArtifact, false);
+    const comparison = screenshotComparison(beforeArtifact, afterArtifact);
+    const result = verify(visualSpec(comparison, before, after), [
+      comparison,
+      before,
+      after,
+    ]);
+    expect(result.status).toBe("pass");
   });
 
   it("stays unknown when the comparison used a different threshold", () => {

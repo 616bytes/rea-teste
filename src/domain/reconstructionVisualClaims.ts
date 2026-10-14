@@ -31,6 +31,8 @@ interface ScreenshotSource {
   readonly sha256: string;
   /** Inline pixels; null when the capture retains only its digest. */
   readonly artifact: WebScreenshotArtifact | null;
+  /** True when the device declared its keyguard right after the frame. */
+  readonly lockScreen: boolean;
   readonly dimensions: {
     readonly width: number;
     readonly height: number;
@@ -90,6 +92,10 @@ export const visualClaimFacts = (
     if (source.artifact === null)
       limitations.push(
         `Source ${source.evidence.evidence_id} retains only its PNG digest; its pixels are unavailable in the Evidence bundle, so the comparison cannot be recomputed. Recapture ADB screens with include_artifact to retain them.`,
+      );
+    if (source.lockScreen)
+      limitations.push(
+        `Source ${source.evidence.evidence_id} was captured while the device keyguard was showing; its pixels likely show the lock screen, not the application. Unlock the device and recapture.`,
       );
   }
   if (claim.channel_threshold !== diff.channel_threshold)
@@ -208,7 +214,13 @@ const readScreenshotSource = (evidence: Evidence): ScreenshotSource => {
   ) {
     // The artifact schema verifies the inline bytes against their sealed digest.
     const { artifact } = webScreenshotSchema.parse(evidence.normalized_result);
-    return { evidence, sha256: artifact.sha256, artifact, dimensions: null };
+    return {
+      evidence,
+      sha256: artifact.sha256,
+      artifact,
+      lockScreen: false,
+      dimensions: null,
+    };
   }
   if (
     evidence.operation === "capture_adb_screen" &&
@@ -223,6 +235,7 @@ const readScreenshotSource = (evidence: Evidence): ScreenshotSource => {
       evidence,
       sha256: capture.sha256,
       artifact: capture.artifact ?? null,
+      lockScreen: capture.keyguard_showing === true,
       dimensions:
         capture.width === null || capture.height === null
           ? null

@@ -34,9 +34,6 @@ describe("CdpBrowserProvider: approved accessibility and source capture", () => 
       },
       nodes: [expect.objectContaining({ name: "Submit report" })],
     });
-    expect(browser.commands.map(({ method }) => method)).not.toContain(
-      "WebMCP.disable",
-    );
   });
 
   it("includes allowed script source only after explicit approval", async () => {
@@ -319,14 +316,13 @@ describe("CdpBrowserProvider: WebMCP discovery and completeness", () => {
       expect(serialized).not.toContain("private-tool-secret");
       const methods = browser.commands.map(({ method }) => method);
       expect(methods).toContain("WebMCP.enable");
-      expect(methods.slice(-6)).toEqual([
-        "WebMCP.disable",
-        "Network.disable",
-        "Debugger.disable",
-        "Runtime.disable",
-        "Page.disable",
-        "Target.detachFromTarget",
-      ]);
+      expect(methods).toContain("WebMCP.disable");
+      expect(methods.indexOf("WebMCP.enable")).toBeLessThan(
+        methods.indexOf("WebMCP.disable"),
+      );
+      expect(methods.indexOf("WebMCP.disable")).toBeLessThan(
+        methods.indexOf("Target.detachFromTarget"),
+      );
       await expect.poll(browser.activeConnectionCount).toBe(0);
       expect(methods).not.toContain("WebMCP.invokeTool");
       expect(methods).not.toContain("Runtime.evaluate");

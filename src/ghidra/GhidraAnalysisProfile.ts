@@ -14,6 +14,7 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { GhidraInstallationInspection } from "./GhidraInstallation.js";
 import {
+  isLegacyMipsAdmission,
   ghidraMipsProfileParameters,
   ghidraMipsLanguageOverride,
 } from "./GhidraMipsProfile.js";
@@ -164,9 +165,12 @@ export const resolveGhidraAnalysisProfile = async (
   const dosCom = target.format === "dos-com";
   const dos = dosMz || dosCom;
   const pinnedLanguage = ghidraPinnedLanguage(target);
+  const callerMaySelectLegacyMipsLanguage =
+    target.architecture === "mips" && isLegacyMipsAdmission(target);
   if (
     pinnedLanguage !== undefined &&
     target.architecture !== "powerpc" &&
+    !callerMaySelectLegacyMipsLanguage &&
     languageOverride !== undefined &&
     (languageOverride.languageId !== pinnedLanguage.languageId ||
       (languageOverride.compilerSpecId !== undefined &&
@@ -219,7 +223,7 @@ export const resolveGhidraAnalysisProfile = async (
         ].sort(),
         import_mode: "ephemeral-source-immutable",
         ...(target.format === "pe"
-          ? { pdb_observations: "program-info-v1" }
+          ? { pdb_observations: "program-info-v5" }
           : {}),
         annotation_policy: "atomic-function-entry-metadata-v1",
         load_image_observations: "source-mappings-entry-context-v2",

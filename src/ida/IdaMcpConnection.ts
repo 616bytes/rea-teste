@@ -9,6 +9,7 @@ import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   Client,
   ProtocolError,
+  SdkError,
   SdkErrorCode,
   SdkHttpError,
   StreamableHTTPClientTransport,
@@ -22,6 +23,7 @@ import type { IdaConfiguration } from "./IdaConfiguration.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
+  AnalysisTimeoutError,
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
@@ -44,6 +46,10 @@ export interface IdaMcpConnection {
    */
   detach(): void;
 }
+
+export type IdaMcpConnectionDependencies = Readonly<{
+  createDiagnosticRedactor?: typeof createIdaDiagnosticRedactor;
+}>;
 
 const toolResultSchema = z.object({
   isError: z.boolean().optional(),
@@ -332,9 +338,12 @@ const retainedTransportCause = (cause: unknown, message: string): Error => {
 export const createIdaMcpConnection = (
   config: IdaConfiguration,
   environment: Readonly<NodeJS.ProcessEnv>,
+  dependencies: IdaMcpConnectionDependencies = {},
 ): IdaMcpConnection => {
   const client = new Client({ name: "rea-ida-provider", version: "1" });
-  const redactor = createIdaDiagnosticRedactor(config);
+  const redactor = (
+    dependencies.createDiagnosticRedactor ?? createIdaDiagnosticRedactor
+  )(config);
   let stderr = Buffer.alloc(0);
   let stderrBytes = 0;
   const transportFailure = (
@@ -382,6 +391,11 @@ export const createIdaMcpConnection = (
       stdout_bytes: 0,
       stderr_bytes: stderrBytes,
     };
+    if (cause instanceof SdkError && cause.code === SdkErrorCode.RequestTimeout)
+      throw new AnalysisTimeoutError(operation, config.timeoutMs, {
+        cause: failure,
+        capturedOutput,
+      });
     if (bufferLimit !== null)
       throw new AnalysisResourceConstraintError(
         operation,
@@ -436,12 +450,12 @@ export const createIdaMcpConnection = (
     async connect() {
       await client
         .connect(transport, { timeout: config.timeoutMs })
-        .catch(transportFailure);
+        .catch((cause: unknown) => transportFailure(cause, "ida_mcp_connect"));
       const catalog = await client
         .listTools(undefined, {
           timeout: config.timeoutMs,
         })
-        .catch(transportFailure);
+        .catch((cause: unknown) => transportFailure(cause, "ida_mcp_catalog"));
       return catalog.tools.map(({ name }) => name);
     },
     async call(name, args) {
@@ -456,7 +470,9 @@ export const createIdaMcpConnection = (
     async readResource(uri) {
       const response = await client
         .readResource({ uri }, { timeout: config.timeoutMs })
-        .catch(transportFailure);
+        .catch((cause: unknown) =>
+          transportFailure(cause, "ida_mcp_read_resource"),
+        );
       const resource = z
         .object({
           contents: z

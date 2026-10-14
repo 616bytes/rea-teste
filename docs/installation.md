@@ -147,7 +147,8 @@ identity remains available at `identity.catalog`.
 
 Setup pins package-runner MCP registrations to the exact installed REA version,
 installs the matching skill and on-demand references in the same plan, and adds
-`startup_timeout_sec = 30` for Codex and Grok Build.
+`startup_timeout_sec = 30` for Codex and Grok Build. Codex also receives a
+`tool_timeout_sec` derived from known provider startup plus operation headroom.
 
 ## Limit REA to one project or agent profile
 
@@ -259,14 +260,14 @@ Register with the variable unset:
 <!-- x-release-please-start-version -->
 
 ```bash
-claude mcp add --scope local rea -- npx -y rea-agents@6.4.0 mcp
+claude mcp add --scope local rea -- npx -y rea-agents@6.5.0 mcp
 ```
 
 On native Windows, use the same project directory and wrap the package-runner
 shim so the stdio client can launch it:
 
 ```powershell
-claude mcp add --scope local rea -- cmd.exe /d /c npx -y rea-agents@6.4.0 mcp
+claude mcp add --scope local rea -- cmd.exe /d /c npx -y rea-agents@6.5.0 mcp
 ```
 
 <!-- x-release-please-end -->
@@ -398,8 +399,9 @@ The npm release checked on **2026-10-11** was **6.4.0**, published from
 [`a56f7bb6`](https://github.com/morluto/rea/commit/a56f7bb668ab23fec8d33f7af353ac7ed2fe1895).
 The actual registry package accepted dry-run setup plans for the 17 client IDs
 in that release, including Qwen Code, Pi and Hermes. DeepSeek Harness (`dsh`)
-is on main and is not in npm 6.4.0; `rea setup --client dsh` against `@latest`
-reports an unsupported client until a release containing it is published.
+is included from 6.5.0 and was absent from the checked npm 6.4.0 package.
+The 6.4.0 registry check does not establish 6.5.0 publication or live DeepSeek
+API integration.
 OpenCode's plan selected
 `OPENCODE_CONFIG_DIR` even when that directory did not yet exist. These checks
 used an isolated home on macOS with Node 24; they verify planning and argument
@@ -584,6 +586,8 @@ system application, the canonical application installed by `rea setup` under
 diagnostic; to use a Homebrew-installed launcher for CLI/MCP startup, set
 `HOPPER_LAUNCHER_PATH` to the path reported by doctor. REA does not run Homebrew
 while loading runtime configuration.
+Automatic discovery accepts executable regular files, including file symlinks,
+and skips directories.
 On Linux, it prefers executable `/opt/hopper/bin/Hopper`, then executable
 `~/.local/share/rea/hopper/bin/Hopper`, followed by `/opt/hopper-v4/bin/hopper`
 and `/usr/bin/hopper`; if none exists, the former remains the diagnostic
@@ -631,6 +635,20 @@ If startup reports `Cannot launch Hopper! Connection is invalid.` or waits for
 bridge readiness, check Hopper for a pending demo, license, or loader dialog.
 Complete the dialog and retry. If REA reports `cleanup_incomplete`, follow the
 retained-resource guidance below before reopening the target.
+
+On macOS, Hopper can show an `Executing Python Script...` overlay while the REA
+bridge serves an active MCP connection. Long-lived MCP clients can keep that
+connection open across agent turns, so the overlay may remain visible after the
+analysis calls finish; by itself, it does not establish a stalled startup. REA
+does not automatically idle-close a still-connected target. When the
+investigation is finished, export an Evidence bundle first if you need to keep
+the session ledger, then call `close_binary`; set `snapshot_path` to save a
+provider-neutral analysis snapshot as part of closing. A successful close
+shuts down the REA bridge and clears its overlay; REA does not control the
+macOS Hopper application lifetime.
+The Hopper GUI Cancel button's behavior for this bridge has not been verified;
+`close_binary` is the supported cleanup path.
+
 Hopper serializes analysis requests. Cancelling a wait can leave provider work
 running, which the session reports. Successful decompilation is cached until
 a relevant rename or comment changes it.
@@ -1054,7 +1072,7 @@ For a client that requires manual configuration, use:
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@6.4.0", "mcp"]
+      "args": ["-y", "rea-agents@6.5.0", "mcp"]
     }
   }
 }

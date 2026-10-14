@@ -32,7 +32,10 @@ import {
   registerEvidenceTools,
   registerUnknownTools,
 } from "./registerSessionRecordTools.js";
-import { registerSessionStatusTool } from "./registerSessionStatusTool.js";
+import {
+  registerSessionStatusTool,
+  type SessionAvailabilityProbes,
+} from "./registerSessionStatusTool.js";
 import { sessionAvailabilityPolicy } from "./sessionAvailabilityPolicy.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import { logToolExecution } from "./toolLogging.js";
@@ -143,7 +146,7 @@ const registerProcessTools = ({
   );
 };
 
-export interface LifecycleToolRegistration {
+export interface LifecycleToolRegistration extends SessionAvailabilityProbes {
   readonly server: EvidenceMcpServer;
   readonly session: BinarySessionPort;
   readonly logger: Logger;
@@ -152,15 +155,6 @@ export interface LifecycleToolRegistration {
   readonly statusContract: ReturnType<typeof toolContract<"binary_session">>;
   readonly startedAt: string;
   readonly availabilityPolicy: () => AvailabilityPolicy;
-  readonly androidAnalysisAvailability: (
-    signal: AbortSignal,
-  ) => Promise<ProviderAvailability>;
-  readonly adbAnalysisAvailability?: (
-    signal: AbortSignal,
-  ) => Promise<ProviderAvailability>;
-  readonly apktoolAnalysisAvailability?: (
-    signal: AbortSignal,
-  ) => Promise<ProviderAvailability>;
   readonly closeProcessResources: () => Promise<Result<null, AnalysisError>>;
   readonly retryReverseEngineeringCleanup?: (
     operation: string,
@@ -171,31 +165,11 @@ const registerLifecycleTools = (
   registration: LifecycleToolRegistration,
   artifactResources: ArtifactResourceScope,
 ): void => {
-  const {
-    server,
-    session,
-    statusContract,
-    startedAt,
-    availabilityPolicy,
-    androidAnalysisAvailability,
-    adbAnalysisAvailability,
-    apktoolAnalysisAvailability,
-  } = registration;
   registerOpenLifecycleTool(registration, artifactResources);
   registerCloseLifecycleTool(registration);
   registerSessionStatusTool({
-    server,
-    session,
-    contract: statusContract,
-    startedAt,
-    availabilityPolicy,
-    androidAnalysisAvailability,
-    ...(adbAnalysisAvailability === undefined
-      ? {}
-      : { adbAnalysisAvailability }),
-    ...(apktoolAnalysisAvailability === undefined
-      ? {}
-      : { apktoolAnalysisAvailability }),
+    ...registration,
+    contract: registration.statusContract,
   });
 };
 
@@ -262,22 +236,13 @@ const registerOpenLifecycleTool = (
 };
 
 /** Register MCP-only target lifecycle operations on a long-lived session. */
-export interface SessionToolOptions {
+export interface SessionToolOptions extends Partial<SessionAvailabilityProbes> {
   readonly artifactResources: ArtifactResourceScope;
   readonly retryReverseEngineeringCleanup?: (
     operation: string,
   ) => Promise<Result<null, AnalysisError>>;
   readonly startedAt?: string;
   readonly availabilityPolicy?: () => AvailabilityPolicy;
-  readonly androidAnalysisAvailability?: (
-    signal: AbortSignal,
-  ) => Promise<ProviderAvailability>;
-  readonly adbAnalysisAvailability?: (
-    signal: AbortSignal,
-  ) => Promise<ProviderAvailability>;
-  readonly apktoolAnalysisAvailability?: (
-    signal: AbortSignal,
-  ) => Promise<ProviderAvailability>;
 }
 
 const registerContextTools = (
@@ -344,6 +309,7 @@ export const registerSessionTools = (
   const processResources = new ProcessCaptureResourceScope();
   registerLifecycleTools(
     {
+      ...options,
       server,
       session,
       logger,

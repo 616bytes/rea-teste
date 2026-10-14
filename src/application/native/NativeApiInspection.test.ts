@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { functionDossierSchema } from "../../domain/hopperValues.js";
-import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
+import {
+  ghidraFunctionDossier,
+  ghidraNativeApiBoundary,
+} from "../../domain/ghidraValues.fixture.js";
 import { nativeApiBoundarySchema } from "../../domain/native/nativeApiBoundary.js";
 import { projectNativeApiInspection } from "./NativeApiInspection.js";
 
@@ -47,7 +50,9 @@ describe("native API switch uncertainty", () => {
         jump_tables: [{ ...table, default_targets: [defaultTarget] }],
       },
     });
-    expect(projectNativeApiInspection(complete).residual_unknowns).toEqual([]);
+    expect(projectNativeApiInspection(complete).residual_unknowns).toEqual(
+      ghidraNativeApiBoundary().prototype_check_limitations,
+    );
     const unresolved = functionDossierSchema.parse({
       ...complete,
       native_api: {
@@ -124,7 +129,10 @@ describe("native API inspection", () => {
         prototype_diagnostics: [diagnostic],
         signature_source: "analysis",
       },
-      residual_unknowns: [unknown],
+      residual_unknowns: [
+        ...ghidraNativeApiBoundary().prototype_check_limitations,
+        unknown,
+      ],
     });
   });
 

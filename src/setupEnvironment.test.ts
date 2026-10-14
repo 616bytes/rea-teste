@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
+import * as macHopperInstaller from "./application/MacHopper.js";
 import { runSetup } from "./application/Setup.js";
 import { options } from "./application/Setup.fixture.js";
 import { systemSetupHost } from "./application/SetupHost.js";
@@ -92,6 +93,89 @@ it("composes provider diagnostics from selected configuration rather than ambien
   expect(JSON.stringify(inspections)).not.toContain("/ambient/");
 });
 
+it("includes the macOS Hopper installer diagnostic in setup remediation", async () => {
+  const install = vi
+    .spyOn(macHopperInstaller, "installMacHopper")
+    .mockResolvedValue({
+      status: "failed",
+      reason: "mount",
+      diagnostic: "hdiutil attach exited 1:\n\u001b[31mresource busy\u001b[0m",
+    });
+  const host = systemSetupHost(
+    createDoctorHostFixture({ platform: "darwin" }),
+    { HOME: "/fixture/home", USERPROFILE: "/fixture/home" },
+  );
+  try {
+    const result = await host.installHopper(false);
+    expect(result).toMatchObject({
+      status: "failed",
+      code: "mount_failed",
+      remediation: expect.stringContaining(
+        "Installer detail: hdiutil attach exited 1: resource busy",
+      ),
+    });
+    if (result.status !== "failed") throw new Error("expected setup failure");
+    expect(result.remediation).not.toContain("\u001b");
+  } finally {
+    await host.close?.();
+    install.mockRestore();
+  }
+});
+
+it("preserves a validated selected JEB endpoint in setup registrations without claiming live readiness", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-jeb-setup-"));
+  const endpoint = "http://127.0.0.1:8425/mcp/";
+  const ambientEndpoint = "http://127.0.0.1:8426/mcp";
+  vi.stubEnv("REA_JEB_MCP_URL", ambientEndpoint);
+  try {
+    const environment = {
+      HOME: root,
+      USERPROFILE: root,
+      CODEX_HOME: join(root, "codex"),
+      REA_JEB_MCP_URL: endpoint,
+    };
+    const doctorHost = createSystemDoctorHost(environment);
+    const setupHost = systemSetupHost(doctorHost, environment);
+    const state = await setupHost.initialSetupState();
+
+    expect(state.providerEnvironment).toHaveProperty(
+      "REA_JEB_MCP_URL",
+      endpoint,
+    );
+    const planned = await runSetup(
+      {
+        ...options(false),
+        dryRun: true,
+        clientIds: ["codex"],
+        installSkill: false,
+      },
+      setupHost,
+    );
+    expect(planned.status).toBe("planned");
+    expect(JSON.stringify(planned.plannedActions)).toContain(endpoint);
+    expect(JSON.stringify(planned.plannedActions)).not.toContain(
+      ambientEndpoint,
+    );
+
+    expect(
+      createSystemDoctorHost({}).providerRegistrationEnvironment?.(),
+    ).toEqual({});
+    expect(
+      createSystemDoctorHost({
+        REA_JEB_MCP_URL: "http://127.0.0.1:8425/mcp",
+      }).providerRegistrationEnvironment?.(),
+    ).toEqual({ REA_JEB_MCP_URL: "http://127.0.0.1:8425/mcp" });
+    expect(
+      createSystemDoctorHost({
+        REA_JEB_MCP_URL: "https://example.com/mcp",
+      }).providerRegistrationEnvironment?.(),
+    ).toEqual({});
+  } finally {
+    vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("passes only selected environment to updater subprocesses and drops npm invocation identity", async () => {
   vi.stubEnv("REA_UPDATE_MARKER", "ambient");
   const result = await runUpdateCommand(
@@ -128,3 +212,31 @@ it.each([
     });
   },
 );
+
+it("registers the selected Windows package runner after canonicalizing environment aliases", async () => {
+  const environment = snapshotEnvironment(
+    {
+      NPM_COMMAND: "run",
+      npm_command: "exec",
+      NPM_CONFIG_USER_AGENT: "npm/10.9.0 node/v24.11.0 win32 x64",
+    },
+    "win32",
+  );
+  expect(environment).toEqual({
+    NPM_COMMAND: "exec",
+    NPM_CONFIG_USER_AGENT: "npm/10.9.0 node/v24.11.0 win32 x64",
+  });
+  expect(invokingPackageRunner(environment, "win32")).toBe("npx");
+
+  const host = systemSetupHost(
+    createDoctorHostFixture({ platform: "win32" }),
+    environment,
+  );
+  try {
+    expect(host.registrationCommand).toEqual(
+      packageRunnerRegistrationCommand("npx", "win32"),
+    );
+  } finally {
+    await host.close?.();
+  }
+});

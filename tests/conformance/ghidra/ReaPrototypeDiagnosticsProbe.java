@@ -145,20 +145,25 @@ public class ReaPrototypeDiagnosticsProbe extends GhidraScript {
                     new ParameterImpl("fixed_input", IntegerDataType.dataType, currentProgram));
                 function.setVarArgs(true);
             }
-            if (function.getName().equals("rea_shared_cleanup")) {
-                SymbolIterator symbols = currentProgram.getSymbolTable().getSymbols("rea_shared_return");
+            if (function.getName().equals("rea_shared_cleanup") || function.getName().equals("rea_unowned_tail")) {
+                boolean sharedCleanup = function.getName().equals("rea_shared_cleanup");
+                SymbolIterator symbols = currentProgram.getSymbolTable().getSymbols(sharedCleanup ? "rea_shared_return" : "rea_unowned_return");
                 if (!symbols.hasNext()) throw new IllegalStateException("Missing shared return oracle");
                 Symbol returned = symbols.next();
                 Function accidentalEntry = currentProgram.getFunctionManager().getFunctionAt(returned.getAddress());
                 if (accidentalEntry != null) currentProgram.getFunctionManager().removeFunction(returned.getAddress());
                 function.setBody(new AddressSet(function.getEntryPoint(), returned.getAddress().subtract(1)));
                 function.setNoReturn(false);
-                function.updateFunction("__stdcall", new ReturnParameterImpl(IntegerDataType.dataType, currentProgram),
-                    Function.FunctionUpdateType.DYNAMIC_STORAGE_ALL_PARAMS, true, SourceType.ANALYSIS,
-                    new ParameterImpl("a", IntegerDataType.dataType, currentProgram),
-                    new ParameterImpl("b", IntegerDataType.dataType, currentProgram),
-                    new ParameterImpl("c", IntegerDataType.dataType, currentProgram),
-                    new ParameterImpl("d", IntegerDataType.dataType, currentProgram));
+                if (sharedCleanup)
+                    function.updateFunction("__stdcall", new ReturnParameterImpl(IntegerDataType.dataType, currentProgram),
+                        Function.FunctionUpdateType.DYNAMIC_STORAGE_ALL_PARAMS, true, SourceType.ANALYSIS,
+                        new ParameterImpl("a", IntegerDataType.dataType, currentProgram),
+                        new ParameterImpl("b", IntegerDataType.dataType, currentProgram),
+                        new ParameterImpl("c", IntegerDataType.dataType, currentProgram),
+                        new ParameterImpl("d", IntegerDataType.dataType, currentProgram));
+                else
+                    function.updateFunction("__cdecl", new ReturnParameterImpl(VoidDataType.dataType, currentProgram),
+                        Function.FunctionUpdateType.DYNAMIC_STORAGE_ALL_PARAMS, true, SourceType.ANALYSIS);
                 currentProgram.getListing().getInstructionBefore(returned.getAddress()).setFlowOverride(FlowOverride.NONE);
             }
         }

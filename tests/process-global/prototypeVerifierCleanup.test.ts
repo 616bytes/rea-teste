@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -22,7 +22,54 @@ const control = vi.hoisted(() => ({
   supervisor: undefined as ProviderProcessSupervisor | undefined,
   workspace: undefined as string | undefined,
   allowCleanup: false,
+  failRuntimeSetup: false,
 }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    mkdir: (...args: Parameters<typeof actual.mkdir>) => {
+      if (control.failRuntimeSetup && String(args[0]).endsWith("/runtime"))
+        throw new Error("runtime setup failed");
+      return actual.mkdir(...args);
+    },
+  };
+});
+
+it
+  .runIf(process.platform === "linux" && process.arch === "x64")
+  .each(["runtime", "bridge"])(
+  "removes the workspace when %s setup fails before launch",
+  async (stage) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-prototype-setup-test-"));
+    const previousTmp = process.env.TMPDIR;
+    const previousRunId = process.env.REA_PROCESS_RUN_ID;
+    const buildFixture = vi.fn();
+    try {
+      process.env.TMPDIR = root;
+      control.failRuntimeSetup = stage === "runtime";
+      await expect(
+        verifyGhidraPrototypeDiagnostics({
+          installation: { analyzeHeadlessPath: "unused-test-producer" },
+          entrypoint: join(root, "missing-package", "scripts", "rea.mjs"),
+          buildFixture,
+        }),
+      ).rejects.toThrow(
+        stage === "runtime" ? "runtime setup failed" : "ENOENT",
+      );
+      expect(buildFixture).not.toHaveBeenCalled();
+      expect(await readdir(root)).toEqual([]);
+    } finally {
+      control.failRuntimeSetup = false;
+      if (previousTmp === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previousTmp;
+      if (previousRunId === undefined) delete process.env.REA_PROCESS_RUN_ID;
+      else process.env.REA_PROCESS_RUN_ID = previousRunId;
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 // Inject a hung producer and an unavailable ownership observation, while retaining
 // the actual supervisor, child streams, assembly build, and workspace lifecycle.

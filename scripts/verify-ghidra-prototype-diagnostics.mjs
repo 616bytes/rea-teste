@@ -63,18 +63,18 @@ export async function verifyGhidraPrototypeDiagnostics({
   );
   const run = createVerifierRun();
   const workspace = await mkdtemp(join(tmpdir(), "rea-prototype-proof-"));
-  const runtime = join(workspace, "runtime");
-  await mkdir(runtime);
-  const object = join(workspace, "prototype.o");
-  const target = join(workspace, "prototype");
-  const bridge = await realpath(
-    join(dirname(entrypoint), "../bridge/ghidra/ReaGhidraBridge.java"),
-  );
-  const helper = join(dirname(bridge), "ReaGhidraPrototypeDiagnostics.java");
-  const producerOutput = join(workspace, "producer.json");
   let retainWorkspace = false;
   let verifierFinished = false;
   try {
+    const runtime = join(workspace, "runtime");
+    await mkdir(runtime);
+    const object = join(workspace, "prototype.o");
+    const target = join(workspace, "prototype");
+    const bridge = await realpath(
+      join(dirname(entrypoint), "../bridge/ghidra/ReaGhidraBridge.java"),
+    );
+    const helper = join(dirname(bridge), "ReaGhidraPrototypeDiagnostics.java");
+    const producerOutput = join(workspace, "producer.json");
     await buildFixture({ object, target });
     const targetDigest = digest(await readFile(target));
     const sourceDigests = [

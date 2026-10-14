@@ -34,6 +34,8 @@ public final class ReaGhidraPrototypeDiagnostics {
     // Bound the aggregate forwarding evidence retained in one dossier.
     private static final int FORWARDING_EVIDENCE_BUDGET = 256;
     private static final int CLEANUP_CHECK_BUDGET = 256;
+    private static final String UNOWNED_EPILOGUE = "Epilogue ownership is unknown on part of the checked path; its applicability to this function remains unknown.";
+    private record EpilogueReturn(Instruction instruction, boolean owned) {}
 
     public static JsonObject inspect(Program program, Function function,
             FunctionPrototype prototype, TaskMonitor monitor,
@@ -49,7 +51,7 @@ public final class ReaGhidraPrototypeDiagnostics {
             return result;
         }
         limitations.add("Stack-read checks cover the straight-line entry prefix before its first architectural or raw p-code control transfer. Calls, joins, aliases and dynamic stack adjustments are not propagated; absence of a diagnostic does not establish prototype consistency.");
-        limitations.add("Return cleanup is compared with recovered stack-storage extent including compiler-model slot padding, not a source argument count. Custom or unknown slot allocation is not classified as a cleanup conflict. Shared epilogues are followed for at most 16 simple instructions without expanding owned-body ranges; indirect flows, tail calls and longer paths remain unknown.");
+        limitations.add("Return cleanup is compared with explicit compiler-model cleanup when known, independently of slot allocation, or with recovered stack-storage extent when allocation is supported. Cleanup bytes do not establish a source argument count. Shared epilogues are followed for at most 16 simple instructions without expanding owned-body ranges; unowned paths remain observations, and indirect flows, tail calls and longer paths remain unknown.");
         limitations.add("Return-register forwarding is a bounded EAX observation, not proof of a source return type. x87 instructions preserve inputs and operations, not a complete expression, missing multiplier, signedness or compiler identity.");
         List<Varnode> parameters = new ArrayList<>();
         List<long[]> slots = new ArrayList<>();
@@ -76,7 +78,7 @@ public final class ReaGhidraPrototypeDiagnostics {
             }
         }
         if (knownAllocation) stackEnd = 4 + ((stackEnd - 4 + 3) / 4) * 4;
-        if (!knownAllocation) limitations.add("Compiler-model x86 stack-slot allocation could not be established; padding reads and return cleanup remain observations or unknowns.");
+        if (!knownAllocation) limitations.add("Compiler-model x86 stack-slot allocation could not be established; padding reads remain observations or unknowns, and cleanup is checked only against an independently known compiler-model byte count.");
         Long expectedCleanup = model != null && !model.isProgramExtension() && !model.isMerged() &&
             model.getExtrapop() != PrototypeModel.UNKNOWN_EXTRAPOP && model.getExtrapop() >= model.getStackshift()
             ? (long) model.getExtrapop() - model.getStackshift() : null;
@@ -195,6 +197,7 @@ public final class ReaGhidraPrototypeDiagnostics {
         JsonArray forwardingFacts = new JsonArray();
         Set<Address> forwardingAddresses = new HashSet<>();
         boolean forwardingLimited = false;
+        boolean forwardingOwnershipUnknown = false;
         int cleanupChecks = 0;
         boolean cleanupLimited = false;
         InstructionIterator instructions = program.getListing().getInstructions(function.getBody(), true);
@@ -202,25 +205,31 @@ public final class ReaGhidraPrototypeDiagnostics {
             monitor.checkCancelled();
             Instruction item = instructions.next();
             boolean directJump = item.getFlowType().isJump() && !item.getFlowType().isComputed();
-            if (knownAllocation && (isReturn(item) || directJump)) {
+            Address externalTarget = null;
+            if (directJump) {
+                Address[] targets = item.getFlows();
+                if (targets.length == 1 && !function.getBody().contains(targets[0])) externalTarget = targets[0];
+            }
+            boolean returnedInBody = isReturn(item);
+            if ((knownAllocation || expectedCleanup != null) && (returnedInBody || externalTarget != null)) {
                 if (cleanupChecks == CLEANUP_CHECK_BUDGET) cleanupLimited = true;
                 else {
                     cleanupChecks++;
-                    if (isReturn(item) && !reportedReturns.contains(item.getAddress()))
-                        cleanupDiagnostic(item, null, stackEnd - 4, prototype, expectedCleanup, claim,
+                    if (returnedInBody)
+                        cleanupDiagnostic(item, null, true, stackEnd - 4, prototype, expectedCleanup, claim,
                             diagnostics, reportedReturns, addressText);
-                    if (directJump) {
-                        Address[] targets = item.getFlows();
-                        if (targets.length == 1 && !function.getBody().contains(targets[0])) {
-                            Instruction returned = epilogueReturn(program, function, targets[0], eax, false, monitor);
-                            if (returned != null) {
-                                if (!reportedReturns.contains(returned.getAddress()))
-                                    cleanupDiagnostic(returned, item, stackEnd - 4, prototype, expectedCleanup, claim,
-                                        diagnostics, reportedReturns, addressText);
-                            }
-                            else limitations.add("Shared epilogue or tail-call target from " + addressText.apply(item.getAddress()) +
-                                " could not be established within the bounded cleanup check.");
+                    if (externalTarget != null) {
+                        EpilogueReturn epilogue = epilogueReturn(program, function, externalTarget, eax, false, monitor);
+                        if (epilogue != null) {
+                            // An in-body return is checked independently by this scan;
+                            // an unowned detour must not mask that stronger observation.
+                            Instruction returned = epilogue.instruction();
+                            if (!function.getBody().contains(returned.getAddress()))
+                                cleanupDiagnostic(returned, item, epilogue.owned(), stackEnd - 4, prototype, expectedCleanup, claim,
+                                    diagnostics, reportedReturns, addressText);
                         }
+                        else limitations.add("Shared epilogue or tail-call target from " + addressText.apply(item.getAddress()) +
+                            " could not be established within the bounded cleanup check.");
                     }
                 }
             }
@@ -230,10 +239,13 @@ public final class ReaGhidraPrototypeDiagnostics {
                 forwardingLimited = true;
                 continue;
             }
-            Instruction returned = epilogueReturn(program, function, item.getFallThrough(), eax, true, monitor);
-            if (returned == null) continue;
+            EpilogueReturn epilogue = epilogueReturn(program, function, item.getFallThrough(), eax, true, monitor);
+            if (epilogue == null) continue;
+            Instruction returned = epilogue.instruction();
+            forwardingOwnershipUnknown |= !epilogue.owned();
             if (forwardingAddresses.add(item.getAddress())) forwardingFacts.add(evidence("call-site", item,
-                "Call followed by a simple epilogue with no raw p-code write to EAX.", addressText));
+                "Call followed by a simple epilogue with no raw p-code write to EAX." +
+                (epilogue.owned() ? "" : " " + UNOWNED_EPILOGUE), addressText));
             if (forwardingAddresses.add(returned.getAddress())) forwardingFacts.add(evidence("return", returned,
                 "Return reached with a checked call's EAX register unmodified by its epilogue.", addressText));
         }
@@ -258,7 +270,8 @@ public final class ReaGhidraPrototypeDiagnostics {
             }
             diagnostics.add(diagnostic("return-register-forwarding", "observation",
                 "The recovered return type is " + prototype.getReturnType().getDisplayName() + ".", forwardingFacts,
-                "EAX may be an incidental live register. Callee return semantics, caller data flow and the source return type require corroboration."));
+                "EAX may be an incidental live register. Callee return semantics, caller data flow and the source return type require corroboration." +
+                (forwardingOwnershipUnknown ? " " + UNOWNED_EPILOGUE : "")));
         }
         if (forwardingLimited) limitations.add("Return-register forwarding reached its 256-fact evidence budget; remaining call paths or incoming references were not examined for forwarding. Cleanup checks retain their separate coverage.");
         if (cleanupLimited) limitations.add("Return-cleanup checks reached their 256-candidate budget; remaining in-body returns and direct branches to shared epilogues were not examined.");
@@ -344,17 +357,19 @@ public final class ReaGhidraPrototypeDiagnostics {
         return node.isConstant() && signedConstant(node) == value;
     }
 
-    private static Instruction epilogueReturn(Program program, Function function, Address start,
+    private static EpilogueReturn epilogueReturn(Program program, Function function, Address start,
             Register eax, boolean preserveEax, TaskMonitor monitor) throws Exception {
         Set<Address> visited = new HashSet<>();
         Address address = start;
+        boolean owned = true;
         for (int count = 0; count < EPILOGUE_INSTRUCTIONS && address != null && visited.add(address); count++) {
             monitor.checkCancelled();
             Function owner = program.getFunctionManager().getFunctionContaining(address);
             if (owner != null && !owner.equals(function)) return null; // A separate function can own an interior epilogue.
+            if (owner == null) owned = false;
             Instruction item = program.getListing().getInstructionAt(address);
             if (item == null) return null;
-            if (isReturn(item)) return item;
+            if (isReturn(item)) return new EpilogueReturn(item, owned);
             if (preserveEax && writesRegister(item, eax)) return null;
             if (item.getFlowType().isJump() && !item.getFlowType().isConditional() && !item.getFlowType().isComputed()) {
                 Address[] targets = item.getFlows();
@@ -372,7 +387,7 @@ public final class ReaGhidraPrototypeDiagnostics {
         return null;
     }
 
-    private static void cleanupDiagnostic(Instruction returned, Instruction branch, long extent,
+    private static void cleanupDiagnostic(Instruction returned, Instruction branch, boolean owned, long extent,
             FunctionPrototype prototype, Long expectedCleanup, String claim, JsonArray diagnostics, Set<Address> reported,
             java.util.function.Function<Address, String> addressText) {
         if (!reported.add(returned.getAddress()) || !returned.getMnemonicString().equalsIgnoreCase("RET")) return;
@@ -383,11 +398,12 @@ public final class ReaGhidraPrototypeDiagnostics {
         if (expectedCleanup != null ? cleanup == expectedCleanup :
                 prototype.isVarArg() || cleanup == extent) return;
         JsonArray facts = new JsonArray();
-        if (branch != null) facts.add(evidence("branch", branch, "Direct branch to a shared epilogue outside the owned body; no body range was added.", addressText));
+        if (branch != null) facts.add(evidence("branch", branch, "Direct branch to a possible shared epilogue outside the owned body; no body range was added.", addressText));
         facts.add(evidence("return", returned, "RET explicitly cleans up " + cleanup + " bytes, compared with " + extent + " recovered stack-argument bytes." +
             (expectedCleanup == null ? " Compiler-model cleanup is unknown." : " The compiler model requires " + expectedCleanup + " argument-cleanup bytes."), addressText));
-        diagnostics.add(diagnostic("stack-cleanup", expectedCleanup == null ? "observation" : "conflict", claim, facts,
-            "Hidden parameters, stack padding, custom calling conventions and incomplete parameter recovery remain possible. Cleanup bytes do not prove a source argument count."));
+        diagnostics.add(diagnostic("stack-cleanup", expectedCleanup == null || !owned ? "observation" : "conflict", claim, facts,
+            "Hidden parameters, stack padding, custom calling conventions and incomplete parameter recovery remain possible. Cleanup bytes do not prove a source argument count." +
+            (owned ? "" : " " + UNOWNED_EPILOGUE)));
     }
 
     private static JsonObject evidence(String kind, Instruction instruction, String detail,

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { connectGhidraMcp, sessionEvidence } from "./ghidraMcpHarness.js";
-import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
+import {
+  ghidraFunctionDossier,
+  ghidraNativeApiBoundary,
+} from "../../../src/domain/ghidraValues.fixture.js";
 import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { ok } from "../../../src/domain/result.js";
@@ -83,6 +86,7 @@ describe("Ghidra MCP native API evidence", () => {
   }, 30_000);
 
   it("returns complete native API boundaries without output-cap unknowns", async () => {
+    const scope = ghidraNativeApiBoundary().prototype_check_limitations;
     const harness = await connectGhidraMcp("ghidra-native-api");
     const { mcp, session } = harness;
     try {
@@ -112,7 +116,7 @@ describe("Ghidra MCP native API evidence", () => {
           ],
         },
         unsupported_branches: [],
-        residual_unknowns: [],
+        residual_unknowns: scope,
       });
       expect(
         (
@@ -121,7 +125,9 @@ describe("Ghidra MCP native API evidence", () => {
             arguments: {},
           })
         ).structuredContent,
-      ).toMatchObject({ result: { items: [] } });
+      ).toMatchObject({
+        result: { items: scope.map((question) => ({ question })) },
+      });
     } finally {
       await harness.close();
     }

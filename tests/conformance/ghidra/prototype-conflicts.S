@@ -36,6 +36,8 @@ _start:
     call rea_variadic_control
     call rea_variadic_cleanup_conflict
     call rea_long_entry_prefix
+    call rea_unowned_tail
+    call rea_many_internal_jumps
     ret
 .size _start, .-_start
 
@@ -286,5 +288,29 @@ rea_long_entry_prefix:
     .endr
     ret
 .size rea_long_entry_prefix, .-rea_long_entry_prefix
+
+// A tail destination that has no function owner is not proof that its RET
+// implements the caller's cleanup contract, even when EAX survives the path.
+.globl rea_unowned_tail, rea_unowned_return
+.type rea_unowned_tail, @function
+rea_unowned_tail:
+    call rea_conversion_helper
+    jmp rea_unowned_return
+.size rea_unowned_tail, .-rea_unowned_tail
+rea_unowned_return:
+    ret $4
+
+// Internal branches do not consume the external-epilogue/return probe budget.
+.globl rea_many_internal_jumps
+.type rea_many_internal_jumps, @function
+rea_many_internal_jumps:
+    .rept 256
+    test %eax, %eax
+    jne 1f
+    nop
+1:
+    .endr
+    ret $4
+.size rea_many_internal_jumps, .-rea_many_internal_jumps
 
 .section .note.GNU-stack,"",@progbits

@@ -244,7 +244,24 @@ export function assertPrototypeDiagnosticsReport(report) {
       /0 bytes.*4 recovered/u,
     );
   }
-  const custom = noConflict("rea_custom_allocation_control");
+  const unowned = noConflict("rea_unowned_tail");
+  for (const kind of ["stack-cleanup", "return-register-forwarding"]) {
+    const diagnostic = has(unowned, kind);
+    assert.equal(diagnostic.classification, "observation");
+    assert.match(diagnostic.residual_unknowns.join(" "), /ownership.*unknown/u);
+  }
+  const internalJumps = dossier("rea_many_internal_jumps");
+  assert.equal(has(internalJumps, "stack-cleanup").classification, "conflict");
+  assert.doesNotMatch(
+    internalJumps.prototype_check_limitations.join(" "),
+    /256-candidate budget/u,
+  );
+  const custom = dossier("rea_custom_allocation_control");
+  assert.equal(has(custom, "stack-cleanup").classification, "conflict");
+  assert.match(
+    has(custom, "stack-cleanup").evidence[0].detail,
+    /requires 0 argument-cleanup bytes/u,
+  );
   assert.match(
     custom.prototype_check_limitations.join(" "),
     /allocation could not be established/u,

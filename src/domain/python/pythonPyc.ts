@@ -258,7 +258,6 @@ export const pythonPycSchema = z
   });
 
 export type PythonPyc = z.infer<typeof pythonPycSchema>;
-export type PythonPycHeader = z.infer<typeof pythonPycHeaderSchema>;
 export type InspectPythonPycInput = z.infer<typeof inspectPythonPycInputSchema>;
 
 export const PYTHON_PYC_CONST_PREVIEW_LIMIT = constPreviewLimit;

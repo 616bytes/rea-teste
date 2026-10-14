@@ -219,3 +219,42 @@ describe("packaged Windows native admission", () => {
     });
   });
 });
+
+describe("source checkout artifact diagnostics", () => {
+  it("names the missing artifact and its recovery path on a source checkout (ENOENT), instead of a raw filesystem error", () => {
+    const value = fixture();
+    const missing = Object.assign(
+      new Error(
+        "ENOENT: no such file or directory, open '...\\rea\\native\\windows\\build\\manifest.json'",
+      ),
+      { code: "ENOENT" },
+    );
+    const loaded = loadWindowsNativeAuthority({
+      ...value.host,
+      readManifest: () => {
+        throw missing;
+      },
+    });
+    expect(loaded.available).toBe(false);
+    expect(loaded).toMatchObject({ failureStage: "artifact" });
+    if (loaded.available) throw new Error("unreachable");
+    expect(loaded.reason).toContain("native/windows/build");
+    expect(loaded.reason).toContain("build:windows-native");
+    expect(loaded.reason).toContain("npm tarball");
+    expect(loaded.reason).not.toContain("ENOENT");
+  });
+
+  it("keeps the original failure text for non-missing artifact errors", () => {
+    const value = fixture();
+    const corrupted = Object.assign(new Error("boom"), { code: "EIO" });
+    const loaded = loadWindowsNativeAuthority({
+      ...value.host,
+      readManifest: () => {
+        throw corrupted;
+      },
+    });
+    expect(loaded.available).toBe(false);
+    if (loaded.available) throw new Error("unreachable");
+    expect(loaded.reason).toContain("boom");
+  });
+});

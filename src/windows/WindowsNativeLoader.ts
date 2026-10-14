@@ -139,6 +139,17 @@ export const loadWindowsNativeAuthority = (
     const inspection = parsed.data;
     return { available: true, authority: { call: binding.call, inspection } };
   } catch (cause: unknown) {
+    if (
+      cause instanceof Error &&
+      (cause as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return {
+        available: false,
+        failureStage: "artifact",
+        reason:
+          "REA Windows native artifact is missing from this checkout: native/windows/build/{manifest.json, rea-windows-x64.node} is gitignored in source installs and ships only in the npm package. Run npm run build:windows-native (Linux cross-compile lane) or copy the two files from the matching-version npm tarball into native/windows/build/.",
+      };
+    }
     return {
       available: false,
       failureStage: "artifact",

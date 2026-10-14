@@ -26,6 +26,28 @@ its manifest. Release CI builds both, and `prepublishOnly` rejects a missing,
 stale, mismatched, or wrong-architecture artifact. A development tarball built
 without this lane reports Windows native controls as unavailable.
 
+### Source checkouts on Windows
+
+A `git clone` does not contain `build/` (it is gitignored), so on a Windows
+source install every provider-backed operation is rejected at admission and
+`rea doctor` reports the native authority as unavailable. Two recovery paths,
+no environment override:
+
+```sh
+# Option A: build the artifact locally (requires the Linux cross-compile lane)
+npm run build:windows-native
+
+# Option B: copy the two published files from the matching-version npm tarball
+# (manifest.json + rea-windows-x64.node) into native/windows/build/
+npm pack rea-agents@<package version from package.json>
+mkdir -p native/windows/build
+tar -xzf rea-agents-<version>.tgz -C native/windows/build --strip-components=3 package/native/windows/build
+```
+
+The loader still enforces package version, ABI, Node-API compatibility, PE
+architecture, and SHA-256 after the copy, so a mismatched or tampered artifact
+keeps failing admission exactly as before.
+
 ## Boundaries
 
 - Opaque Node objects carry a native type tag, resource kind, and closed state.

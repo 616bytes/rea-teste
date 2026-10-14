@@ -73,23 +73,6 @@ const expectedNativeTarget = nativeFixtureTarget(
   process.platform,
   process.arch,
 );
-const fixtureRoot = await mkdtemp(join(tmpdir(), "rea-ghidra-fixtures-"));
-const sourcePath = fileURLToPath(
-  new URL("../tests/conformance/ghidra/inventory.c", import.meta.url),
-);
-const crossFormatSourcePath = fileURLToPath(
-  new URL("../tests/conformance/ghidra/cross-format.c", import.meta.url),
-);
-const debugPath = join(fixtureRoot, "rea-ghidra-inventory-debug");
-const layoutPath = join(fixtureRoot, "rea-ghidra-layout.o");
-const strippedPath = join(fixtureRoot, "rea-ghidra-inventory-stripped");
-const jumpTablePath = join(fixtureRoot, "rea-ghidra-inventory-jump");
-const arm64ElfPath = join(fixtureRoot, "rea-ghidra-cross-arm64");
-const peObjectPath = join(fixtureRoot, "rea-ghidra-cross-x86_64.obj");
-const pePath = join(fixtureRoot, "rea-ghidra-cross-x86_64.exe");
-const peImportLibraryPath = join(fixtureRoot, "rea-ghidra-cross-x86_64.lib");
-const machObjectPath = join(fixtureRoot, "rea-ghidra-cross-x86_64.o");
-const malformedPath = join(fixtureRoot, "rea-ghidra-malformed");
 const compiler = process.env.REA_CC ?? "cc";
 const clang = process.env.REA_CLANG ?? "clang";
 const lld = process.env.REA_LLD ?? "ld.lld";
@@ -141,7 +124,24 @@ for (const [command, role] of toolchain) {
     );
   }
 }
+const fixtureRoot = await mkdtemp(join(tmpdir(), "rea-ghidra-fixtures-"));
 try {
+  const sourcePath = fileURLToPath(
+    new URL("../tests/conformance/ghidra/inventory.c", import.meta.url),
+  );
+  const crossFormatSourcePath = fileURLToPath(
+    new URL("../tests/conformance/ghidra/cross-format.c", import.meta.url),
+  );
+  const debugPath = join(fixtureRoot, "rea-ghidra-inventory-debug");
+  const layoutPath = join(fixtureRoot, "rea-ghidra-layout.o");
+  const strippedPath = join(fixtureRoot, "rea-ghidra-inventory-stripped");
+  const jumpTablePath = join(fixtureRoot, "rea-ghidra-inventory-jump");
+  const arm64ElfPath = join(fixtureRoot, "rea-ghidra-cross-arm64");
+  const peObjectPath = join(fixtureRoot, "rea-ghidra-cross-x86_64.obj");
+  const pePath = join(fixtureRoot, "rea-ghidra-cross-x86_64.exe");
+  const peImportLibraryPath = join(fixtureRoot, "rea-ghidra-cross-x86_64.lib");
+  const machObjectPath = join(fixtureRoot, "rea-ghidra-cross-x86_64.o");
+  const malformedPath = join(fixtureRoot, "rea-ghidra-malformed");
   const common = ["-O0", "-g", "-fno-inline"];
   if (expectedNativeTarget.format === "elf") common.push("-fno-pie", "-no-pie");
   await exec(compiler, [...common, sourcePath, "-o", debugPath]);

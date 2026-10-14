@@ -207,6 +207,7 @@ it("keeps the public cleanup client and workspace after incomplete binary close,
   try {
     const failure = await retirePrototypePublicClient({
       client,
+      closeTransport: vi.fn().mockResolvedValue(undefined),
       opened: true,
       workspace,
       primaryFailure,
@@ -245,6 +246,7 @@ it("retries failed transport close without repeating successful provider cleanup
   const onCleanupComplete = vi.fn().mockResolvedValue(undefined);
   const failure = await retirePrototypePublicClient({
     client,
+    closeTransport: vi.fn().mockResolvedValue(undefined),
     opened: true,
     workspace: "/owned/prototype",
     onCleanupComplete,

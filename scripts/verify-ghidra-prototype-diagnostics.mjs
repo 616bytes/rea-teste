@@ -227,6 +227,7 @@ async function verifyPublicWorkflows({
     env,
     stderr: "pipe",
   });
+  const closeTransport = createPrototypeTransportCleanup(transport);
   let stderrTail = "";
   transport.stderr?.on("data", (chunk) => {
     stderrTail = (stderrTail + chunk.toString("utf8")).slice(-65536);
@@ -334,6 +335,7 @@ async function verifyPublicWorkflows({
   } finally {
     await retirePrototypePublicClient({
       client,
+      closeTransport,
       opened,
       workspace,
       primaryFailure,
@@ -343,9 +345,47 @@ async function verifyPublicWorkflows({
   return observations;
 }
 
-/** Keep the connected client as cleanup owner until close_binary is confirmed. */
+/** Retain a positive stdio close observation without changing SDK shutdown. */
+export function createPrototypeTransportCleanup(transport, timeoutMs = 1000) {
+  let started = false;
+  const start = transport.start.bind(transport);
+  transport.start = async () => {
+    started = true;
+    await start();
+  };
+  const previousOnClose = transport.onclose;
+  const closed = new Promise((resolve) => {
+    // Client.connect chains this callback, including during initialization failure.
+    transport.onclose = () => {
+      resolve();
+      previousOnClose?.();
+    };
+  });
+  return async () => {
+    // The client may not own this transport when negotiation fails before attach.
+    await transport.close();
+    if (!started) return;
+    let timer;
+    try {
+      await Promise.race([
+        closed,
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("MCP transport close was not observed")),
+            timeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+
+/** Keep the client and transport as owners until provider and stdio close. */
 export async function retirePrototypePublicClient({
   client,
+  closeTransport,
   opened,
   workspace,
   primaryFailure,
@@ -362,6 +402,7 @@ export async function retirePrototypePublicClient({
         binaryClosed = true;
       }
       await client.close();
+      await closeTransport();
       await onCleanupComplete();
     },
   };

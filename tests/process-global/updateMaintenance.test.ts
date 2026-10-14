@@ -1,4 +1,11 @@
-import { mkdir, readFile, rm, writeFile, access } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+  access,
+  rename,
+} from "node:fs/promises";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -18,6 +25,140 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const entryPoint = resolve("scripts/rea.mjs");
 let home: string;
+
+describe("installed optional native module readiness", () => {
+  const fixture = async (source?: string) => {
+    const packageRoot = join(home, "installed REA 测试");
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "rea-agents", version: "6.5.0" }),
+    );
+    if (source !== undefined) {
+      const fridaRoot = join(packageRoot, "node_modules", "frida");
+      await mkdir(fridaRoot, { recursive: true });
+      await writeFile(
+        join(fridaRoot, "package.json"),
+        JSON.stringify({
+          name: "frida",
+          version: "17.23.2",
+          type: "module",
+          main: "index.js",
+          scripts: {
+            install: "node -e \"process.stdout.write('scoped install')\"",
+          },
+        }),
+      );
+      await writeFile(join(fridaRoot, "index.js"), source);
+    }
+    return { manager: "npm", prefix: home, packageRoot } as const;
+  };
+
+  it("loads the freshly installed module without invoking its device manager", async () => {
+    const installation = await fixture(
+      'export const getDeviceManager = () => { throw new Error("must not enumerate devices"); };',
+    );
+    expect(
+      await systemUpdateHost().optionalProviderReadiness(installation),
+    ).toEqual([{ provider: "frida", scope: "native-module", status: "ready" }]);
+  });
+
+  it("preserves load errors and scopes explicit script recovery to the resolved dependency", async () => {
+    const installation = await fixture(
+      'throw new Error("missing test native binding");',
+    );
+    const result =
+      await systemUpdateHost().optionalProviderReadiness(installation);
+    expect(result).toMatchObject([
+      {
+        provider: "frida",
+        status: "unavailable",
+        reason: "module-load-failed",
+        detail: "Error: missing test native binding",
+        recovery: {
+          command: [
+            "npm",
+            "--prefix",
+            join(installation.packageRoot, "node_modules", "frida"),
+            "run",
+            "install",
+            "--ignore-scripts=false",
+          ],
+          workingDirectory: installation.packageRoot,
+        },
+      },
+    ]);
+    const readiness = result[0];
+    if (readiness?.status === "ready" || readiness?.recovery === undefined)
+      throw new Error("Expected explicit recovery command.");
+    const repaired = await runUpdateCommand(
+      readiness.recovery.command,
+      process.env,
+      "structured",
+      readiness.recovery.workingDirectory,
+    );
+    expect(repaired).toMatchObject({ ok: true });
+    if (repaired.ok) expect(repaired.value).toContain("scoped install");
+  });
+
+  it("resolves a hoisted optional dependency and scopes Bun recovery to that exact package", async () => {
+    const installation = await fixture(
+      'throw new Error("hoisted binding unavailable");',
+    );
+    const hoistedRoot = join(home, "node_modules", "frida");
+    await mkdir(dirname(hoistedRoot), { recursive: true });
+    await rename(
+      join(installation.packageRoot, "node_modules", "frida"),
+      hoistedRoot,
+    );
+    expect(
+      await systemUpdateHost().optionalProviderReadiness({
+        ...installation,
+        manager: "bun",
+        globalDirectory: home,
+      }),
+    ).toMatchObject([
+      {
+        status: "unavailable",
+        recovery: {
+          command: ["bun", "run", "--cwd", hoistedRoot, "install"],
+          workingDirectory: installation.packageRoot,
+        },
+      },
+    ]);
+  });
+
+  it("does not propose an install command when the resolved package has no install script", async () => {
+    const installation = await fixture('throw new Error("no install script");');
+    await writeFile(
+      join(installation.packageRoot, "node_modules", "frida", "package.json"),
+      JSON.stringify({ name: "frida", main: "index.js", type: "module" }),
+    );
+    const result =
+      await systemUpdateHost().optionalProviderReadiness(installation);
+    expect(result).toMatchObject([
+      { status: "unavailable", reason: "module-load-failed" },
+    ]);
+    expect(result[0]).not.toHaveProperty("recovery");
+  });
+
+  it("reports an absent optional package without proposing a no-op rebuild", async () => {
+    const installation = await fixture();
+    const result =
+      await systemUpdateHost().optionalProviderReadiness(installation);
+    expect(result).toMatchObject([
+      { status: "unavailable", reason: "dependency-absent" },
+    ]);
+    expect(result[0]).not.toHaveProperty("recovery");
+  });
+
+  it("keeps a probe process failure unknown rather than blaming a missing native binding", async () => {
+    const installation = await fixture("process.exit(2);");
+    expect(
+      await systemUpdateHost().optionalProviderReadiness(installation),
+    ).toMatchObject([{ status: "unknown", reason: "probe-failed" }]);
+  });
+});
 
 beforeEach(async () => {
   home = await createTestTempDirectory("rea-update-maintenance-");

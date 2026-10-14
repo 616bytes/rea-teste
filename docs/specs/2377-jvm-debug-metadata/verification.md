@@ -123,9 +123,10 @@ small items, all fixed:
   (`0x80–0xbf`) used as a two-byte lead, while still accepting the legal
   `0xc0 0x80` encoding of U+0000. Covered by two new domain tests.
 
-Unit/service suite is now 40 tests (6 files); `verify:jvm` remains 16 cases.
+Unit/service suite was 40 tests (6 files) at this point; `verify:jvm` 16 cases.
 `tsc --noEmit` clean; `oxlint` reports only the pre-existing non-blocking
-`max-params` warning on `#selectJarMember`.
+`max-params` warning on `#selectJarMember`. (The Fable-review section below
+raises the suite to 53 tests in 7 files.)
 
 ## Real-artifact exercise via CLI and live MCP (landed)
 
@@ -153,19 +154,45 @@ instead of the member-selection hint. Fixed by classifying on a bounded magic
 peek (`peekArtifactMagic`, leading bytes only, independent of total size) before
 admitting the file under the class-file budget; covered by new adapter tests.
 
-## Pending (documented limitations)
+## Second independent (Fable) review — resolved (landed)
 
-- The JAR subject digest (`hashStableFile`) and the class-entry read
-  (`ZipArtifactReader`) are two independent opens, so a concurrent in-place
-  rewrite of the JAR between them is a narrow TOCTOU window on `artifact.sha256`
-  vs the decoded bytes (the loose-class path is atomic). Closing it needs a
-  shared admitted descriptor across the hash and the reader.
-- Peak memory is bounded by the 32 MiB input and the 8 MiB post-build output
-  budget (mirroring the Go/Rust readers), but a crafted class can still build a
-  large transient result before the output guard trips; a pre-allocation entry
-  cap during decode would tighten this.
-- Truncated-table, R8/ProGuard scrambled-table, and `SourceDebugExtension`
-  opacity cases in the real lane (unit-covered today).
+A full independent review on the Fable model ran against the branch and the
+spec/plan. Fixed in commits on this branch:
+
+- BLOCKING — the contract effect-wording gate (`toolEffects.test.ts`) failed:
+  "No Java executes" matches the execution-wording pattern but the tool was not
+  in `EXECUTION_WORDING_EXCEPTIONS`. Added (an earlier verification claim that
+  the effect audit was green had not run this specific gate — now it does).
+- RESOURCE (was "pending" below) — decoded entries are now capped by a cheap
+  pre-count (`countDebugEntries`) and `maxDebugEntries` before any entry object
+  is allocated; a 30 MiB crafted class with ~8M declared entries is refused in
+  ~1 ms (previously ~1.5 GiB RSS). The "bounded before allocation" claim is now
+  true, not aspirational.
+- IDENTITY (was "pending" below) — the JAR is admitted once via
+  `openRegularFile(symlinks:"reject")`; members and the digest are read through
+  that one descriptor (`hashStableRootArtifactHandle`), re-validated at the end,
+  so the TOCTOU window is closed and the symlink policy is consistent. The hash
+  runs only after selection, so refusals skip the full-archive hash.
+- An encrypted matching member is refused as unavailable-not-absent; a Mach-O
+  universal binary (shared `0xCAFEBABE`) is steered to `inspect_macho`.
+- Coverage: added unit tests for encrypted members, the Mach-O steer, symlink
+  rejection, release-without-entry, already-aborted cancellation, CESU-8
+  supplementary pairs, and the over-entry pre-count guard.
+- Docs truthed up: spec states/ordering/unknowns/bounds wording; tasks.md status.
+
+Unit/service suite is now 53 tests (7 files); `verify:jvm` 16 cases.
+
+## Still owed (follow-ups, not blocking)
+
+- A JDK-free CLI/MCP workflow test (e.g. `localToolContracts` pathRequests plus
+  a boundary MCP case) so CI without a JDK still exercises the tool end to end.
+- Real-lane fixtures for a truncated-table and an R8/ProGuard scrambled-table
+  class (unit-covered today).
+- Discoverability surfaces (README capability row, reverse-engineer-anything
+  skill source, `architecture.mermaid`) — F8.
+- F9–F11 decoder-strictness and ergonomics one-liners (SourceFile length check,
+  duplicate single-attribute → malformed, HotSpot-reject parity, a `detail`
+  summary mode).
 - `npm run check:pr` and full module-boundary/architecture guards at PR time.
   `docs:check` currently fails only on a pre-existing, unrelated `README_tr`
   link drift.

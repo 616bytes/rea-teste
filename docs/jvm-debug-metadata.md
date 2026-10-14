@@ -50,8 +50,8 @@ The normalized result binds every fact to exact identity:
 - `container` — `class-file` or `jar`. `selected_entry` is `null` for a loose
   class file, or the selected `entry`, `release` (null for base), `sha256`, and
   `bytes` of the class bytes read from the JAR.
-- `class` — `internal_name` (decompiler representation), `major_version`,
-  `minor_version`.
+- `class` — `internal_name` (the JVM binary name from the constant pool, e.g.
+  `com/example/Foo`; not decompiler output), `major_version`, `minor_version`.
 - `source_file` — `presence` (`present` | `absent` | `malformed`) and the
   declared `name` when present.
 - `source_debug_extension` — `presence` and opaque `byte_length`. The bytes are
@@ -89,13 +89,17 @@ supplied source bytes are never claimed to match a `SourceFile` name. Debug
 metadata identity stays separate from any decompiler output. Standalone `.class`
 inspection is independent of the Android/JADX lane and of the JVM runtime
 (JDWP) proposal. A malformed or truncated class file is reported through the
-tagged error algebra rather than throwing or over-allocating. A single class
-file far over the input budget is refused before allocation, and a decoded
-result that would exceed the inline output budget is refused rather than
-returned oversized. A local-variable scope whose `[start_pc, start_pc+length)`
+tagged error algebra rather than throwing. A single class file far over the
+input budget is refused before allocation; a class declaring more debug-table
+entries than the budget is refused by a pre-count before any entry is allocated;
+and a decoded result that would still exceed the inline output budget is refused
+rather than returned oversized. A local-variable scope whose `[start_pc, start_pc+length)`
 lies outside the method's code length is surfaced as declared and flagged
 `out_of_range: true`, never silently corrected.
 
 Verified by the `verify:jvm` real lane, which compiles owned `javac` fixtures
-with `-g` and `-g:none`, cross-checks every decoded fact against `javap`, and
-exercises the CLI and MCP in parity against real application bytecode.
+with `-g` and `-g:none` and cross-checks the decoded facts against `javap` —
+`SourceFile`, `LineNumberTable` entry counts, and `LocalVariableTable` /
+`LocalVariableTypeTable` presence and method descriptors (not individual
+pc→line pairs or slot scopes) — then exercises the CLI and MCP in parity against
+real application bytecode.

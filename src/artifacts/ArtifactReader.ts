@@ -23,6 +23,13 @@ export interface ArtifactEntry {
   readonly executable: boolean;
   readonly encrypted: boolean;
   readonly byteOffset: number | null;
+  /** Stored source extent; expanded size may differ for compressed members. */
+  readonly byteLength?: number;
+  readonly dotnetBundle?: {
+    readonly major_version: number;
+    readonly minor_version: number;
+    readonly file_type: number;
+  };
   readonly declaredSha256: string | null;
   readonly unpacked: boolean;
   readonly limitations: readonly string[];
@@ -62,6 +69,9 @@ export const sameArtifactSourceIdentity = (
 export const copyArtifactEntry = (entry: ArtifactEntry): ArtifactEntry => ({
   ...entry,
   limitations: [...entry.limitations],
+  ...(entry.dotnetBundle === undefined
+    ? {}
+    : { dotnetBundle: { ...entry.dotnetBundle } }),
   ...(entry.sourceIdentity === undefined
     ? {}
     : { sourceIdentity: { ...entry.sourceIdentity } }),
@@ -79,6 +89,10 @@ export const sameArtifactEntry = (
   entry.executable === produced.executable &&
   entry.encrypted === produced.encrypted &&
   entry.byteOffset === produced.byteOffset &&
+  entry.byteLength === produced.byteLength &&
+  entry.dotnetBundle?.major_version === produced.dotnetBundle?.major_version &&
+  entry.dotnetBundle?.minor_version === produced.dotnetBundle?.minor_version &&
+  entry.dotnetBundle?.file_type === produced.dotnetBundle?.file_type &&
   entry.declaredSha256 === produced.declaredSha256 &&
   entry.unpacked === produced.unpacked &&
   entry.adapterKey === produced.adapterKey &&
@@ -118,7 +132,12 @@ export interface ArtifactTraversalOptions {
 
 /** Read-only adapter over one directory, archive, or virtual container. */
 export interface ArtifactReader {
-  readonly format: "directory" | ZipPackageFormat | "asar" | "file";
+  readonly format:
+    | "directory"
+    | ZipPackageFormat
+    | "asar"
+    | "file"
+    | "dotnet-bundle";
   entries(
     signal?: AbortSignal,
     options?: ArtifactTraversalOptions,

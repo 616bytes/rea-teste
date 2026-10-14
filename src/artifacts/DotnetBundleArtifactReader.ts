@@ -240,8 +240,13 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
     } catch (cause) {
       abortIfNeeded(signal);
       if (cause instanceof ArtifactReaderFailure) throw cause;
+      const malformedCompression =
+        inflater !== undefined &&
+        cause instanceof Error &&
+        "code" in cause &&
+        ["Z_DATA_ERROR", "Z_BUF_ERROR"].includes(String(cause.code));
       throw new ArtifactReaderFailure(
-        inflater === undefined ? "io" : "format",
+        malformedCompression ? "format" : "io",
         `Could not read .NET bundle member: ${file.path}`,
         { cause },
       );

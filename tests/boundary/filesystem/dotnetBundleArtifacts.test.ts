@@ -354,6 +354,48 @@ it("finds a split marker and uses the first apphost marker, including offset zer
 const sha = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
 
+it("retains compressed-source I/O failures and leaves a borrowed descriptor to its owner", async () => {
+  const root = await createTestTempDirectory("rea-dotnet-io-");
+  const path = join(root, "host.exe");
+  await writeFile(
+    path,
+    dotnetBundleFixture([
+      {
+        path: "compressed",
+        bytes: Buffer.from("owned".repeat(1024)),
+        compressed: true,
+      },
+    ]).bytes,
+  );
+  const handle = await open(path, "r");
+  const reader = new DotnetBundleArtifactReader(path, {
+    handle,
+    initial: await handle.stat(),
+  });
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    handle.read = (async () => {
+      throw Object.assign(new Error("injected source read failure"), {
+        code: "EIO",
+      });
+    }) as typeof handle.read;
+    const stream = await reader.open(entries[0]!);
+    await expect(
+      (async () => {
+        for await (const _chunk of stream) {
+          /* Exhaust until the injected failure. */
+        }
+      })(),
+    ).rejects.toMatchObject({ reason: "io", cause: { code: "EIO" } });
+    await reader.close();
+    expect((await handle.stat()).isFile()).toBe(true);
+  } finally {
+    await reader.close();
+    await handle.close();
+  }
+});
+
 it.each(["elf", "mach-o"] as const)(
   "routes %s bundle bytes without a filename hint",
   async (format) => {

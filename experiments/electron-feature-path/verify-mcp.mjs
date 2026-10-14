@@ -11,8 +11,8 @@ import { estimateTokenCount } from "tokenx";
 import { z } from "zod";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { parseEvidenceBundle } from "../../dist/domain/evidenceBundle.js";
-import { requireMcpToolError } from "../../scripts/lib/mcp-verifier-results.mjs";
 import { createMcpLifecycle } from "./mcp-lifecycle.mjs";
+import { createVerifierRun, retainVerifierOwner } from "./verifier-run.mjs";
 import { traceSchema } from "./trace-contract.mjs";
 import { verifyNoTokenOwnedProcesses } from "../../dist/process/ProcessOwnership.js";
 import {
@@ -55,6 +55,7 @@ const sourcePaths = [
   join(fixture, "..", "trace-contract.mjs"),
   fileURLToPath(import.meta.url),
   fileURLToPath(new URL("mcp-lifecycle.mjs", import.meta.url)),
+  fileURLToPath(new URL("verifier-run.mjs", import.meta.url)),
 ];
 const sourceDigests = await Promise.all(
   sourcePaths.map(async (path) => ({
@@ -121,10 +122,9 @@ const lifecycle = createMcpLifecycle({
       { name: "close_binary", arguments: {} },
       { timeout: 30000 },
     );
-    await writeFile(
-      join(output, "cancellation-drain.json"),
+    run.observeReply("close_binary", drain);
+    await run.diagnostic("cancellation-drain.json", () =>
       JSON.stringify(drain),
-      { flag: "wx" },
     );
     assert.notEqual(drain.isError, true, "Session drain failed");
     const ownershipBytes = await readFile(join(output, "ownership.json"));
@@ -145,10 +145,8 @@ const lifecycle = createMcpLifecycle({
         processGroupId: ownership.launcher_pid,
       },
     );
-    await writeFile(
-      join(output, "cancellation-process-check.json"),
+    await run.diagnostic("cancellation-process-check.json", () =>
       JSON.stringify(check),
-      { flag: "wx" },
     );
     assert.equal(
       check.cleaned,
@@ -163,8 +161,28 @@ const lifecycle = createMcpLifecycle({
     };
   },
 });
+const run = createVerifierRun({
+  lifecycle,
+  closeClient: () => client.close(),
+  closeTransport: () => transport.close(),
+  closeHost: () => systemProcessOwnershipHost.close?.(),
+  writeArtifact: (name, bytes) =>
+    writeFile(join(output, name), bytes, { flag: "wx" }),
+  // Keep the process and connection available for manual recovery even if
+  // every diagnostic destination or the inspector fails.
+  retainOwner: retainVerifierOwner,
+  reportRetention: () => {
+    process.exitCode = 1;
+    console.error(
+      `Cleanup unverified; retaining the owned MCP server connection. Diagnostics: ${output}`,
+    );
+  },
+  onFailure: (stage, cause) => {
+    process.exitCode = 1;
+    console.error(`Verifier ${stage} failed: ${String(cause)}`);
+  },
+});
 const started = performance.now();
-let cleanupIncomplete = false;
 const cancel = () => lifecycle.cancel();
 process.on("SIGINT", cancel);
 process.on("SIGTERM", cancel);
@@ -183,34 +201,37 @@ try {
     actual_model_tokens: null,
   };
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const call = async (name, args) => {
+  const call = async (name, args, stage) => {
     lifecycle.throwIfCancelled();
     const tool = listed.tools.find((item) => item.name === name);
     assert.ok(tool, `Missing ${name}`);
     await writeFile(
-      join(output, `${name}-request.json`),
+      join(output, `${name}${stage ? `-${stage}` : ""}-request.json`),
       JSON.stringify({ name, arguments: args }),
       { flag: "wx" },
     );
     assert.ok(ajv.validate(tool.inputSchema, args), JSON.stringify(ajv.errors));
     const reply = await lifecycle.call(name, args);
+    // Cleanup facts belong to the reply boundary, before serialization,
+    // token accounting, or artifact writes can fail.
+    const facts = run.observeReply(name, reply);
     const replyJson = JSON.stringify(reply);
     tokenEstimates.requests_and_replies +=
       estimateTokenCount(JSON.stringify({ name, arguments: args })) +
       estimateTokenCount(replyJson);
-    await writeFile(join(output, `${name}.json`), replyJson, {
-      flag: "wx",
-    });
-    if (reply.isError) {
-      const error = requireMcpToolError(reply);
-      cleanupIncomplete ||= error.code === "cleanup_incomplete";
-    }
+    await writeFile(
+      join(output, `${name}${stage ? `-${stage}` : ""}.json`),
+      replyJson,
+      {
+        flag: "wx",
+      },
+    );
     assert.notEqual(reply.isError, true, `${name} failed; see ${output}`);
     assert.ok(
       ajv.validate(tool.outputSchema, reply.structuredContent),
       JSON.stringify(ajv.errors),
     );
-    return reply.structuredContent;
+    return facts.evidence ?? reply.structuredContent;
   };
 
   const staticSummary = parseEvidence(
@@ -229,10 +250,29 @@ try {
       seed: { kind: "channel", value: "prototype:export", match: "exact" },
     }),
   );
+  // Summary replies omit the complete retained parent. Persist and validate
+  // it before capture can fail or cancellation can clear the session ledger.
+  await call(
+    "export_evidence_bundle",
+    {
+      path: join(output, "evidence-checkpoint.json"),
+    },
+    "before-capture",
+  );
+  const checkpoint = parseEvidenceBundle(
+    JSON.parse(
+      await readFile(join(output, "evidence-checkpoint.json"), "utf8"),
+    ),
+  );
+  assert.ok(
+    checkpoint.records.some(
+      (record) =>
+        record.evidence_id ===
+        staticSummary.normalized_result.parent_evidence_id,
+    ),
+    "Checkpoint omitted the complete static parent",
+  );
   if (values["cancel-after-ready"]) {
-    await call("export_evidence_bundle", {
-      path: join(output, "evidence-bundle.json"),
-    });
     const waitForReady = async () => {
       const deadline = performance.now() + 15000;
       while (performance.now() < deadline) {
@@ -251,24 +291,26 @@ try {
       () => lifecycle.cancel("Fixture readiness deadline elapsed"),
     );
   }
-  const capture = parseEvidence(
-    await call("capture_electron_scenario", {
-      executable_path: executable,
-      application_path: join(fixture, "main.cjs"),
-      application_root: fixture,
-      args: [output, ...(values.baseline ? ["baseline"] : [])],
-      actions: values["cancel-after-ready"]
-        ? [{ kind: "click", step_id: "blocked", selector: "#never-exists" }]
-        : [
-            { kind: "click", step_id: "export", selector: "#export" },
-            { kind: "click", step_id: "flush", selector: "#flush" },
-            { kind: "click", step_id: "barrier", selector: "#flushed" },
-          ],
-    }),
-  );
-  await call("export_evidence_bundle", {
-    path: join(output, "evidence-bundle.json"),
+  const capture = await call("capture_electron_scenario", {
+    executable_path: executable,
+    application_path: join(fixture, "main.cjs"),
+    application_root: fixture,
+    args: [output, ...(values.baseline ? ["baseline"] : [])],
+    actions: values["cancel-after-ready"]
+      ? [{ kind: "click", step_id: "blocked", selector: "#never-exists" }]
+      : [
+          { kind: "click", step_id: "export", selector: "#export" },
+          { kind: "click", step_id: "flush", selector: "#flush" },
+          { kind: "click", step_id: "barrier", selector: "#flushed" },
+        ],
   });
+  await call(
+    "export_evidence_bundle",
+    {
+      path: join(output, "evidence-bundle.json"),
+    },
+    "after-capture",
+  );
   const bundleBytes = await readFile(join(output, "evidence-bundle.json"));
   const bundle = parseEvidenceBundle(JSON.parse(bundleBytes.toString("utf8")));
   assert.ok(
@@ -364,13 +406,12 @@ try {
 } catch (cause) {
   if (!values["cancel-after-ready"] || cause?.code !== "cancelled_verified") {
     process.exitCode = 1;
-    await writeFile(
-      join(output, "failure.json"),
+    run.recordFailure("verification", cause);
+    await run.diagnostic("failure.json", () =>
       JSON.stringify({
         code: cause?.code ?? "verification_failed",
         message: String(cause),
       }),
-      { flag: "wx" },
     );
     console.error(`Verification failed; diagnostics: ${output}`);
   } else {
@@ -396,37 +437,23 @@ try {
 } finally {
   process.off("SIGINT", cancel);
   process.off("SIGTERM", cancel);
-  if (lifecycle.state().safe_to_close && !cleanupIncomplete) {
-    await client.close();
-    await transport.close();
-  } else {
-    console.error(
-      `Cleanup unverified; retaining the owned MCP server connection. Diagnostics: ${output}`,
+  await run.finalize(async () => {
+    await run.diagnostic(
+      "server-stderr.txt",
+      () => lifecycle.stderrSnapshot().bytes,
     );
-    process.exitCode = 1;
-  }
-  const { bytes, ...stderrCoverage } = lifecycle.stderrSnapshot();
-  await writeFile(join(output, "server-stderr.txt"), bytes, {
-    flag: "wx",
+    await run.diagnostic("lifecycle.json", () => {
+      const { bytes: _bytes, ...stderrCoverage } = lifecycle.stderrSnapshot();
+      return JSON.stringify(
+        {
+          ...lifecycle.state(),
+          cleanup_unverified: run.state().cleanup_unverified,
+          server_pid: transport.pid ?? null,
+          stderr: stderrCoverage,
+        },
+        null,
+        2,
+      );
+    });
   });
-  await writeFile(
-    join(output, "lifecycle.json"),
-    JSON.stringify(
-      {
-        ...lifecycle.state(),
-        cleanup_incomplete: cleanupIncomplete,
-        server_pid: transport.pid ?? null,
-        stderr: stderrCoverage,
-      },
-      null,
-      2,
-    ),
-    { flag: "wx" },
-  );
-  await systemProcessOwnershipHost.close?.();
-  if (!lifecycle.state().safe_to_close || cleanupIncomplete) {
-    // Do not let an uncaught top-level exception tear down the stdio owner.
-    // Keep this process and its connection available for manual recovery.
-    await new Promise(() => {});
-  }
 }

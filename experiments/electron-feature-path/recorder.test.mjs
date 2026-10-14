@@ -201,93 +201,163 @@ for (const boundary of ["handler", "file-writer"]) {
   });
 }
 
-test("outside effects have no invocation and detached effects retain inactive lineage", async () => {
+test("outside effects have no invocation or handler lifetime", () => {
   const capture = recorder();
-  const gate = deferred();
   const write = valueOf(capture.wrapFileWriter(() => 7));
   assert.equal(write(selectedPath), 7);
-  let detached;
-  const handler = valueOf(
-    capture.wrapHandler("save", () => {
-      detached = gate.promise.then(() => write(selectedPath));
-      return "done";
-    }),
-  );
-  assert.equal(handler(), "done");
-  gate.resolve();
-  assert.equal(await detached, 7);
   const events = capture.snapshot().events;
-  const handlerStart = events.find(
-    (event) => event.kind === "handler" && event.phase === "started",
-  );
-  const effects = events.filter((event) => event.kind === "file-write");
+  assert.equal(events.length, 2);
   assert.ok(
-    effects
-      .slice(0, 2)
-      .every((event) => event.invocation_id === null && !event.within_handler),
-  );
-  assert.ok(
-    effects
-      .slice(2)
-      .every(
-        (event) =>
-          event.invocation_id === handlerStart.invocation_id &&
-          !event.within_handler,
-      ),
-  );
-  assert.ok(
-    events.findIndex(
-      (event) => event.kind === "handler" && event.phase === "returned",
-    ) <
-      events.findIndex(
-        (event) => event.kind === "file-write" && event.invocation_id !== null,
-      ),
+    events.every(
+      (event) => event.invocation_id === null && event.within_handler === false,
+    ),
   );
 });
 
-test("later effects preserve unknown handler lifetime after an opaque completion", async () => {
-  for (const completion of ["thenable", "unobservable-promise"]) {
+for (const completion of [
+  { name: "primitive return", phase: "returned", lifetime: false },
+  { name: "sync throw", phase: "threw", lifetime: false },
+  { name: "Promise fulfillment", phase: "fulfilled", lifetime: false },
+  { name: "Promise rejection", phase: "rejected", lifetime: false },
+  {
+    name: "opaque object",
+    phase: "returned_completion_unknown",
+    lifetime: null,
+  },
+  {
+    name: "opaque function",
+    phase: "returned_completion_unknown",
+    lifetime: null,
+  },
+  {
+    name: "opaque thenable",
+    phase: "returned_completion_unknown",
+    lifetime: null,
+  },
+  {
+    name: "observer setup failure",
+    phase: "returned_completion_unknown",
+    lifetime: null,
+  },
+]) {
+  test(`${completion.name} updates terminal handler lifetime before recording and preserves detached lineage`, async () => {
     const capture = recorder();
     const later = deferred();
+    const settlement = deferred();
     const write = valueOf(capture.wrapFileWriter(() => "written"));
     let detached;
     let reads = 0;
-    const result =
-      completion === "thenable"
-        ? // oxlint-disable-next-line unicorn/no-thenable -- Regression: this then getter must remain untouched.
-          Object.defineProperty({}, "then", {
-            get() {
-              reads += 1;
-              throw new Error("unexpected then read");
-            },
-          })
-        : Object.defineProperty(Promise.resolve("settled"), "constructor", {
-            get() {
-              throw new Error("unobservable constructor");
-            },
-          });
+    const cause = new Error("handler failure");
+    let result = "returned value";
+    if (completion.name === "opaque object") result = {};
+    if (completion.name === "opaque function") result = () => {};
+    if (completion.name === "opaque thenable") {
+      // oxlint-disable-next-line unicorn/no-thenable -- Regression: this getter must remain untouched while completion stays unknown.
+      result = Object.defineProperty({}, "then", {
+        get() {
+          reads += 1;
+          throw new Error("unexpected then read");
+        },
+      });
+    }
+    if (completion.phase === "fulfilled" || completion.phase === "rejected")
+      result = settlement.promise;
+    if (completion.name === "observer setup failure")
+      result = Object.defineProperty(settlement.promise, "constructor", {
+        configurable: true,
+        get() {
+          throw new Error("unobservable constructor");
+        },
+      });
     const handler = valueOf(
       capture.wrapHandler("save", () => {
+        assert.equal(write(selectedPath), "written");
         detached = later.promise.then(() => write(selectedPath));
+        if (completion.phase === "threw") throw cause;
+        return result;
+      }),
+    );
+    if (completion.phase === "threw")
+      assert.throws(handler, (error) => error === cause);
+    else assert.equal(handler(), result);
+    if (completion.phase === "fulfilled") {
+      settlement.resolve("settled");
+      assert.equal(await result, "settled");
+    } else if (completion.phase === "rejected") {
+      const rejected = assert.rejects(result, (error) => error === cause);
+      settlement.reject(cause);
+      await rejected;
+    } else if (completion.name === "observer setup failure") {
+      delete result.constructor;
+      settlement.resolve("settled");
+      assert.equal(await result, "settled");
+    }
+    const beforeDetached = capture.snapshot().events;
+    const handlerEvents = beforeDetached.filter(
+      (event) => event.kind === "handler",
+    );
+    assert.equal(handlerEvents.length, 2);
+    const [start, terminal] = handlerEvents;
+    assert.equal(start.phase, "started");
+    assert.equal(start.within_handler, true);
+    assert.equal(terminal.phase, completion.phase);
+    assert.equal(terminal.within_handler, completion.lifetime);
+    assert.equal(terminal.invocation_id, start.invocation_id);
+    const insideEffects = beforeDetached.filter(
+      (event) => event.kind === "file-write",
+    );
+    assert.equal(insideEffects.length, 2);
+    assert.ok(insideEffects.every((event) => event.within_handler === true));
+    later.resolve();
+    assert.equal(await detached, "written");
+    assert.equal(reads, 0);
+    const events = capture.snapshot().events;
+    const effects = events.filter((event) => event.kind === "file-write");
+    assert.equal(effects.length, 4);
+    assert.ok(
+      effects.every((event) => event.invocation_id === start.invocation_id),
+    );
+    assert.ok(
+      effects
+        .slice(2)
+        .every((event) => event.within_handler === completion.lifetime),
+    );
+    assert.ok(effects[2].sequence > terminal.sequence);
+  });
+}
+
+test("a pending file effect reports its parent lifetime when the effect settles", async () => {
+  for (const result of ["completed", {}]) {
+    const capture = recorder();
+    const pendingWrite = deferred();
+    const write = valueOf(capture.wrapFileWriter(() => pendingWrite.promise));
+    let effect;
+    const handler = valueOf(
+      capture.wrapHandler("save", () => {
+        effect = write(selectedPath);
         return result;
       }),
     );
     assert.equal(handler(), result);
-    later.resolve();
-    assert.equal(await detached, "written");
-    assert.equal(reads, 0);
+    assert.equal(effect, pendingWrite.promise);
+    pendingWrite.resolve("written");
+    assert.equal(await effect, "written");
     const events = capture.snapshot().events;
     const handlerStart = events.find(
       (event) => event.kind === "handler" && event.phase === "started",
     );
     const effects = events.filter((event) => event.kind === "file-write");
-    assert.equal(effects.length, 2);
+    assert.deepEqual(eventPhases(effects), ["started", "fulfilled"]);
+    assert.equal(effects[0].within_handler, true);
+    assert.equal(
+      effects[1].within_handler,
+      typeof result === "string" ? false : null,
+    );
     assert.ok(
       effects.every(
         (event) => event.invocation_id === handlerStart.invocation_id,
       ),
     );
-    assert.ok(effects.every((event) => event.within_handler === null));
   }
 });
 

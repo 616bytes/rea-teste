@@ -29,7 +29,10 @@ without being claimed as observed file effects.
 
 `within_handler` is `true` while observed handler lifetime is active, `false`
 after observed completion (or outside a handler), and `null` when completion
-cannot be observed. Detached callbacks retain their invocation lineage; that
+cannot be observed. Every handler terminal event updates lifetime before recording:
+primitive returns, throws and Promise settlement report `false`; unobservable
+completion reports `null`. File-effect events report the parent handler's lifetime
+when that effect is observed. Detached callbacks retain their invocation lineage; that
 lineage does not prove a business cause or a UI association. Opaque thenables
 are not inspected. Promise completion observation can read constructor/species
 and affect unhandled-rejection reporting. Failed observer installation preserves
@@ -64,6 +67,11 @@ channel, captures clicks through `capture_electron_scenario`, and compares the
 experimental trace to the resulting file. A second explicit IPC round trip and a
 visible UI barrier flush observations after the export handler; no sleep is used
 to infer that relation. Source bytes are checked before and after the run.
+Before capture in every mode, `evidence-checkpoint.json` is exported and validated
+to contain the complete static parent. A checkpoint failure prevents capture.
+Successful capture also exports `evidence-bundle.json`; the two exports retain
+separate stage-named raw requests/replies. Thus a settled failed capture still
+leaves the complete parent available after server shutdown.
 Complete canonical Evidence is exported alongside the raw MCP replies; the
 experimental trace has a separate digest and authority. Cancellation requests
 are relayed to the observed JSON-RPC request ID. The MCP server suppresses the
@@ -74,7 +82,11 @@ baseline. Neither a missing reply nor a drain acknowledgement alone proves
 cleanup. Unrelated unreadable processes remain explicit in the ownership result.
 Only that dedicated ownership token is recorded, not the ambient environment.
 Uncertain cleanup keeps the verifier and server owned rather than force-closing
-them. Bounded stderr includes complete/truncated accounting.
+them. Cleanup facts are parsed and latched before reply serialization or artifact
+writes. Diagnostic failures are collected independently and cannot bypass final
+owner retention; a referenced timer keeps Node alive even when resource handles
+have disappeared. Malformed cleanup replies remain unknown. Bounded stderr includes
+complete/truncated accounting.
 
 Exercise real cancellation after the fixture acknowledges readiness with another
 new directory and `--cancel-after-ready`. The verifier deliberately waits on a
@@ -111,23 +123,32 @@ session and verified token-owned process absence, preserving unrelated unreadabl
 process observations. The earlier cancellation experiment exposed the SDK's
 suppressed-reply behavior; it is not counted as a passing cleanup test.
 
-The prototype has 40 passing Node tests, including an actual installed MCP SDK
-cancellation test. Existing Electron CLI/MCP/main-hook boundary tests contribute
-another 16 passing cases. These results do not establish other Electron versions,
+The prototype has 61 passing Node tests, including actual installed MCP SDK
+cancellation, ENOSPC/diagnostic failure injection, a real Node retention subprocess,
+and real stdio MCP failed-capture/checkpoint-collision regressions. The latter use
+a self-authored non-executable file and do not launch Electron; their POSIX
+permission checks are skipped on Windows. Existing Electron CLI/MCP/main-hook
+boundary tests contribute another 16 passing cases. These results do not establish other Electron versions,
 Linux/Windows, arbitrary applications, renderer/preload execution or native calls.
 
-The following completed-task measurements use the same fixture and four normal
-MCP calls (static summary, channel trace, capture, bundle export), including full
-catalog discovery/schema validation. The baseline disables only the experimental
+The following completed-task measurements use the same fixture and five normal
+MCP calls (static summary, channel trace, checkpoint export, capture, final bundle
+export), including full catalog discovery/schema validation. The baseline disables only the experimental
 wrappers and produces the same file; it cannot report the new relation.
 
 | Mode                      | Elapsed s | Reported CPU s | Sampled family RSS MiB | Payload token estimate |
 | ------------------------- | --------: | -------------: | ---------------------: | ---------------------: |
-| Baseline, first measured  |      5.82 |           6.80 |                  1,316 |              1,092,800 |
-| Prototype, first measured |      4.85 |           6.29 |                  1,476 |              1,092,789 |
-| Baseline, repeated        |      5.02 |           6.40 |                  1,484 |              1,092,802 |
-| Prototype, repeated       |      4.82 |           6.15 |                  1,589 |              1,092,791 |
-| Cancellation proof        |      5.07 |           6.25 |                  1,487 |             Unmeasured |
+| Baseline, first measured  |      6.28 |           7.18 |                  1,348 |              1,097,108 |
+| Prototype, first measured |      5.27 |           6.77 |                  1,289 |              1,092,963 |
+| Baseline, repeated        |      5.28 |           6.74 |                  1,261 |              1,105,396 |
+| Prototype, repeated       |      5.22 |           6.77 |                  1,274 |              1,105,385 |
+| Cancellation proof        |      5.22 |           6.65 |                  1,316 |             Unmeasured |
+
+Before the checkpoint/retention fixes, four-call normal runs of the same completed
+fixture workflow measured 4.82–5.82 s elapsed, 6.15–6.80 s reported CPU,
+1,316–1,589 MiB sampled family RSS and 1,092,789–1,092,802 estimated payload tokens.
+The checkpoint adds an export; metadata and host conditions also vary, so these
+samples do not isolate its overhead. Cancellation includes a separate drain request.
 
 Every run starts fresh Node/MCP/Electron processes and a new profile. Repeats may
 benefit from OS file caches; true OS-cold and warm-result-cache runs are unmeasured.

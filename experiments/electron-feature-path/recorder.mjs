@@ -22,14 +22,6 @@ const invalid = (message) => ({
 
 const withinHandler = (scope) =>
   scope?.status === "unknown" ? null : scope?.status === "active";
-const finish = (record, operation, phase, scope) => {
-  record({
-    ...operation,
-    phase,
-    within_handler: withinHandler(scope),
-  });
-};
-
 const execute = ({
   operation,
   receiver,
@@ -39,6 +31,10 @@ const execute = ({
   complete,
   record,
 }) => {
+  const finish = (phase, status = "completed") => {
+    complete(status);
+    record({ ...start, phase, within_handler: withinHandler(scope) });
+  };
   record({
     ...start,
     phase: "started",
@@ -48,8 +44,7 @@ const execute = ({
   try {
     result = Reflect.apply(operation, receiver, args);
   } catch (cause) {
-    finish(record, start, "threw", scope);
-    complete("completed");
+    finish("threw");
     throw cause;
   }
   if (types.isPromise(result)) {
@@ -58,32 +53,22 @@ const execute = ({
     try {
       Promise.prototype.then.call(
         result,
-        () => {
-          finish(record, start, "fulfilled", scope);
-          complete("completed");
-        },
-        () => {
-          finish(record, start, "rejected", scope);
-          complete("completed");
-        },
+        () => finish("fulfilled"),
+        () => finish("rejected"),
       );
     } catch {
       // A Promise subclass or constructor getter can reject observer setup.
       // Keep the original return value and explicitly lose completion coverage.
-      complete("unknown");
-      finish(record, start, "returned_completion_unknown", scope);
+      finish("returned_completion_unknown", "unknown");
     }
   } else {
     // Do not access or invoke an arbitrary thenable's .then getter.
     const unknownCompletion =
       result !== null &&
       (typeof result === "object" || typeof result === "function");
-    complete(unknownCompletion ? "unknown" : "completed");
     finish(
-      record,
-      start,
       unknownCompletion ? "returned_completion_unknown" : "returned",
-      scope,
+      unknownCompletion ? "unknown" : "completed",
     );
   }
   return result;

@@ -42,6 +42,17 @@ export function verifySazOracleIdentity(artifact, oracle) {
   assert.deepEqual(oracle.record_ordinals, entry.saz_question.record_ordinals);
 }
 
+export function sazEvidenceParameters(input, totalRecords) {
+  return {
+    capture_path: input.capture_path,
+    format: input.format,
+    record_ordinals:
+      input.record_ordinals ??
+      Array.from({ length: totalRecords }, (_, index) => index),
+    sensitive_value_count: input.sensitive_values.length,
+  };
+}
+
 export function verifySazRecords(records, oracle) {
   assert.equal(oracle.kind, "saz", "Wrong independent question");
   assert.equal(
@@ -239,11 +250,10 @@ export async function measureSazEntry({ values, call, inputSha }) {
     }
     if (evidence !== undefined) {
       assert.equal(evidence.operation, "inspect_web_network_capture");
-      const { sensitive_values, ...parameters } = input;
-      assert.deepEqual(evidence.parameters, {
-        ...parameters,
-        sensitive_value_count: sensitive_values.length,
-      });
+      assert.deepEqual(
+        evidence.parameters,
+        sazEvidenceParameters(input, oracle.total_records),
+      );
       const report = checked(evidence, webNetworkCaptureSchema);
       assert.equal(report.format, "saz");
       assert.equal(report.total_records, oracle.total_records);

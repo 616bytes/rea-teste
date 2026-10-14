@@ -7,6 +7,7 @@ import {
   sazRequest,
   verifySazRecords,
   verifySazOracleIdentity,
+  sazEvidenceParameters,
 } from "./saz-entry.mjs";
 
 const { values } = parseArgs({
@@ -127,11 +128,10 @@ for (const call of calls) {
       }
       assert.ok(detail === undefined || detail === "complete");
       assert.equal(evidence.operation, "inspect_web_network_capture");
-      const { sensitive_values, ...parameters } = input;
-      assert.deepEqual(evidence.parameters, {
-        ...parameters,
-        sensitive_value_count: sensitive_values.length,
-      });
+      assert.deepEqual(
+        evidence.parameters,
+        sazEvidenceParameters(input, oracle.total_records),
+      );
       const report = webNetworkCaptureSchema.parse(evidence.normalized_result);
       assert.equal(report.total_records, oracle.total_records);
       assert.equal(report.format, "saz");

@@ -9,7 +9,11 @@ test("SAZ verification preserves source identities, duplicate headers and encode
   ).href;
   const source = `
     import assert from 'node:assert/strict';
-    import {verifySazRecords,verifySazOracleIdentity,sazRequest} from ${JSON.stringify(moduleUrl)};
+    import {verifySazRecords,verifySazOracleIdentity,sazRequest,sazEvidenceParameters} from ${JSON.stringify(moduleUrl)};
+    const omitted=sazRequest('xbox-clear_nomp.saz','/tmp/sample.saz','baseline');
+    assert.equal(Object.hasOwn(omitted,'record_ordinals'),false);
+    assert.deepEqual(sazEvidenceParameters(omitted,3),{capture_path:'/tmp/sample.saz',format:'saz',record_ordinals:[0,1,2],sensitive_value_count:0});
+    assert.deepEqual(sazEvidenceParameters(sazRequest('xbox-clear_nomp.saz','/tmp/sample.saz','focused'),13).record_ordinals,[12,0,6]);
     const empty={bytes:0,sha256:'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',content_base64:'',text:''};
     const raw=[12,0,6].map(ordinal=>{
       const session_id=String(ordinal+1).padStart(2,'0');

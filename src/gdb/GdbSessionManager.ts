@@ -387,7 +387,15 @@ const verifyGdbInferiorOutputSink = async (
       "GDB cannot confirm live inferior output descriptors outside Linux /proc.",
     );
   const statPath = `/proc/${pid}/stat`;
-  const before = parseLinuxProcessStartTime(await readFile(statPath, "utf8"));
+  let beforeStat: string | undefined;
+  try {
+    beforeStat = await readFile(statPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      throw new Error("GDB could not establish the live inferior identity.");
+    throw error;
+  }
+  const before = parseLinuxProcessStartTime(beforeStat);
   if (before === undefined)
     throw new Error("GDB could not establish the live inferior identity.");
   const ttyPath = await realpath(selectedTty);
@@ -396,19 +404,37 @@ const verifyGdbInferiorOutputSink = async (
     throw new Error("The selected GDB output sink is not a character device.");
   for (const descriptor of ["1", "2"]) {
     const descriptorPath = `/proc/${pid}/fd/${descriptor}`;
-    const destination = await readlink(descriptorPath);
-    const observed = await stat(descriptorPath);
-    if (
-      observed.dev !== tty.dev ||
-      observed.ino !== tty.ino ||
-      (observed.mode & fsConstants.S_IFMT) !== fsConstants.S_IFCHR ||
-      (await realpath(destination)) !== ttyPath
-    )
-      throw new Error(
-        `GDB inferior descriptor ${descriptor} no longer points to the selected TTY.`,
-      );
+    try {
+      const destination = await readlink(descriptorPath);
+      const observed = await stat(descriptorPath);
+      if (
+        observed.dev !== tty.dev ||
+        observed.ino !== tty.ino ||
+        (observed.mode & fsConstants.S_IFMT) !== fsConstants.S_IFCHR ||
+        (await realpath(destination)) !== ttyPath
+      )
+        throw new Error(
+          `GDB inferior descriptor ${descriptor} no longer points to the selected TTY.`,
+        );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT")
+        throw new Error(
+          `GDB inferior descriptor ${descriptor} no longer points to the selected TTY.`,
+        );
+      throw error;
+    }
   }
-  const after = parseLinuxProcessStartTime(await readFile(statPath, "utf8"));
+  let afterStat: string | undefined;
+  try {
+    afterStat = await readFile(statPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      throw new Error(
+        "The GDB inferior identity changed during descriptor readback.",
+      );
+    throw error;
+  }
+  const after = parseLinuxProcessStartTime(afterStat);
   if (after !== before)
     throw new Error(
       "The GDB inferior identity changed during descriptor readback.",

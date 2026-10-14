@@ -23,10 +23,12 @@ import type {
 } from "../../../src/process/ProviderProcess.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { parseLinuxProcessStartTime } from "../../../src/process/ProcessOwnershipObservation.js";
+import { createProviderSpawnTracker } from "../../support/gdbProviderSpawnTracking.js";
 import { expectGdbSessionStarted } from "./gdbTestHelpers.js";
 
 let directory: string | undefined;
 const managers: GdbSessionManager[] = [];
+const providerSpawns = createProviderSpawnTracker();
 
 it.each([
   ["empty list", "1^done,groups=[]", 0],
@@ -1104,6 +1106,9 @@ const managerFor = async (
     platform: "linux",
     environment: { REA_GDB_COMMAND: await createProvider(body) },
     ...options,
+    ...(options.spawnProcess === undefined
+      ? { spawnProcess: providerSpawns.spawnProcess }
+      : {}),
   });
   managers.push(manager);
   return manager;
@@ -1134,6 +1139,7 @@ afterEach(async () => {
       .splice(0)
       .map((manager) => manager.closeAll().catch(() => undefined)),
   );
+  providerSpawns.killSurvivors();
   if (directory !== undefined)
     await rm(directory, { recursive: true, force: true });
   directory = undefined;

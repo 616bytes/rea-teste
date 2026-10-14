@@ -13,6 +13,11 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticScopeState,
 } from "./javascriptSemanticState.js";
+import {
+  isCommonJsModuleExports,
+  isDetachedCommonJsExportsWrite,
+  isFreshAssignmentResult,
+} from "./javascriptCommonJsExportsAlias.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
@@ -476,6 +481,7 @@ const collectCommonJsExport = (
     ? null
     : commonJsExportReceiverEffect(node.right, state);
   if (receiverEffect === "detached") return;
+  if (isDetachedCommonJsExportsWrite(node, state)) return;
   // Simple assignment chains yield their rightmost assigned value. Compound
   // and logical writes also depend on the previous value, so remain unknown.
   let value =
@@ -520,19 +526,6 @@ const commonJsExportReceiverEffect = (
     value = value.right;
   }
   return null;
-};
-
-const isFreshAssignmentResult = (node: t.Node): boolean => {
-  let value = node;
-  while (t.isAssignmentExpression(value, { operator: "=" }))
-    value = value.right;
-  return (
-    t.isArrowFunctionExpression(value) ||
-    t.isFunctionExpression(value) ||
-    t.isClassExpression(value) ||
-    t.isObjectExpression(value) ||
-    t.isArrayExpression(value)
-  );
 };
 
 const addModuleLink = (
@@ -852,11 +845,3 @@ const commonJsExportName = (
   if (isCommonJsModuleExports(node, state)) return "default";
   return undefined;
 };
-
-const isCommonJsModuleExports = (
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): boolean =>
-  (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
-  isUnshadowedGlobal(node.object, state, "module") &&
-  semanticStaticPropertyKey(node.property, node.computed) === "exports";

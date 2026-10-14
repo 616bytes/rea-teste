@@ -7,11 +7,15 @@
 
 > Este documento descreve meus objetivos pessoais de experimentação e contribuição. Não representa uma declaração oficial dos mantenedores do REA nem afirma que as funcionalidades planejadas já estão implementadas.
 
-## Por que comecei a trabalhar nos plugins
+## Por que fiz este fork
 
-Decidi investigar e mexer na integração por um motivo prático: **não estava conseguindo instalar e usar o plugin no Claude Code da forma que precisava**. Em vez de depender de uma configuração que eu não conseguia fazer funcionar, comecei a estudar como as peças se conectam — plugin, skills, configuração MCP, instruções do agente e ferramentas disponíveis.
+Eu normalmente não tenho o costume de sair mexendo nos repositórios de outras pessoas. Neste caso, porém, era um projeto que eu queria muito conseguir usar, mas não consegui fazer a integração funcionar como precisava. Em vez de simplesmente desistir, decidi criar um fork para estudar o projeto e tentar ajudar a resolver os problemas que encontrei, mantendo minhas experiências isoladas da branch principal.
 
-O objetivo não é apenas fazer os arquivos existirem. Quero conseguir instalar, iniciar, testar e diagnosticar a integração, entendendo o que cada parte faz e quais limitações ainda existem.
+Minha ideia é seguir uma ordem: **primeiro fortalecer e validar as skills; depois, construir e configurar um servidor MCP que o Claude consiga usar de verdade**. Quero que as skills sejam úteis, claras e testáveis, e que o MCP permita ao cliente descobrir e executar ferramentas de maneira verificável — não apenas ter arquivos de configuração que parecem corretos.
+
+Esse trabalho também tem um objetivo concreto para mim: preciso dessas ferramentas para avançar no [NEXORA](https://github.com/Lucas-Belucci-Bellini/NEXORA), meu projeto de engine. Quero estudar como as ferramentas e as engines existentes são organizadas, entender seus conceitos e aplicar o que aprender em uma implementação própria. Como o NEXORA é desenvolvido em Rust, não vou presumir que código de uma engine feita em outra linguagem possa ser copiado diretamente; a intenção é compreender a arquitetura e adaptar as ideias com testes.
+
+Fiz o fork para poder investigar, experimentar e propor melhorias por meio de uma branch própria e de pull requests. Não estou afirmando que já resolvi os problemas originais: quero documentar o que funciona, o que falha e o que ainda precisa ser comprovado.
 
 ## O que pretendo adicionar
 

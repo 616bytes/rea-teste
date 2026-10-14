@@ -190,6 +190,26 @@ describe("JvmDebugMetadataService", () => {
     expect(result.error._tag).toBe("AnalysisInputError");
   });
 
+  it("rejects a release without an entry at the input boundary", async () => {
+    const result = await service.inspect({
+      path: join(dir, "Example.class"),
+      release: 17,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisInputError");
+  });
+
+  it("reports cancellation before any read when the signal is already aborted", async () => {
+    const result = await service.inspect(
+      { path: join(dir, "Example.class") },
+      { signal: AbortSignal.abort() },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+  });
+
   it("refuses a class with too many declared table entries before allocating them", async () => {
     const path = join(dir, "Big.class");
     await writeFile(path, overBudgetClass());

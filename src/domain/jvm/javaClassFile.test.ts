@@ -157,6 +157,45 @@ describe("parseJavaClassFile framing", () => {
     expect(result.error.kind).toBe("invalid-utf8");
   });
 
+  it("decodes a CESU-8 supplementary pair (U+1F600) to its UTF-16 surrogates", () => {
+    // Modified UTF-8 encodes a supplementary character as two 3-byte sequences,
+    // one per UTF-16 surrogate (CESU-8): U+1F600 -> D83D DE00.
+    const threeByte = (unit: number): number[] => [
+      0xe0 | (unit >> 12),
+      0x80 | ((unit >> 6) & 0x3f),
+      0x80 | (unit & 0x3f),
+    ];
+    const encoded = [...threeByte(0xd83d), ...threeByte(0xde00)];
+    const head = new Blob()
+      .u4(0xcafebabe)
+      .u2(0)
+      .u2(52)
+      .u2(2)
+      .u1(CONSTANT_TAG.utf8)
+      .u2(encoded.length);
+    const tail = new Blob()
+      .u2(0x0021) // access_flags
+      .u2(0) // this_class
+      .u2(0) // super_class
+      .u2(0) // interfaces
+      .u2(0) // fields
+      .u2(0) // methods
+      .u2(0); // class attributes
+    const bytes = Uint8Array.from([
+      ...head.bytes(),
+      ...encoded,
+      ...tail.bytes(),
+    ]);
+    const result = parseJavaClassFile(bytes);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.constantPool[1]).toEqual({
+      tag: 1,
+      kind: "utf8",
+      value: "😀",
+    });
+  });
+
   it("accepts the modified-UTF8 0xC0 0x80 encoding of U+0000", () => {
     const blob = new Blob()
       .u4(0xcafebabe)

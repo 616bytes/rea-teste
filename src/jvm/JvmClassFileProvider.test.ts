@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -74,37 +74,37 @@ const buildZip = async (
 const MR_MANIFEST = "Manifest-Version: 1.0\r\nMulti-Release: true\r\n\r\n";
 const PLAIN_MANIFEST = "Manifest-Version: 1.0\r\n\r\n";
 
+let dir: string;
+const provider = new JvmClassFileProvider();
+
+beforeAll(async () => {
+  dir = await mkdtemp(join(tmpdir(), "rea-jvm-jar-"));
+});
+afterAll(async () => {
+  await provider.close();
+  await rm(dir, { recursive: true, force: true });
+});
+
+const writeJar = async (name: string, bytes: Uint8Array): Promise<string> => {
+  const path = join(dir, name);
+  await writeFile(path, bytes);
+  return path;
+};
+
+const mrJar = async (): Promise<string> =>
+  writeJar(
+    "mr.jar",
+    await buildZip([
+      { name: "META-INF/MANIFEST.MF", text: MR_MANIFEST },
+      { name: ENTRY, bytes: minimalClass(52) },
+      {
+        name: "META-INF/versions/17/com/example/Foo.class",
+        bytes: minimalClass(61),
+      },
+    ]),
+  );
+
 describe("JvmClassFileProvider JAR entry selection", () => {
-  let dir: string;
-  const provider = new JvmClassFileProvider();
-
-  beforeAll(async () => {
-    dir = await mkdtemp(join(tmpdir(), "rea-jvm-jar-"));
-  });
-  afterAll(async () => {
-    await provider.close();
-    await rm(dir, { recursive: true, force: true });
-  });
-
-  const writeJar = async (name: string, bytes: Uint8Array): Promise<string> => {
-    const path = join(dir, name);
-    await writeFile(path, bytes);
-    return path;
-  };
-
-  const mrJar = async (): Promise<string> =>
-    writeJar(
-      "mr.jar",
-      await buildZip([
-        { name: "META-INF/MANIFEST.MF", text: MR_MANIFEST },
-        { name: ENTRY, bytes: minimalClass(52) },
-        {
-          name: "META-INF/versions/17/com/example/Foo.class",
-          bytes: minimalClass(61),
-        },
-      ]),
-    );
-
   it("selects the base entry when no release is requested", async () => {
     const result = await provider.inspect({
       path: await mrJar(),
@@ -179,7 +179,9 @@ describe("JvmClassFileProvider JAR entry selection", () => {
     const base = await provider.inspect({ path, entry: ENTRY });
     expect(base.ok).toBe(true);
   });
+});
 
+describe("JvmClassFileProvider JAR safety and format", () => {
   it("fails cleanly when entry is given but the path is not an archive", async () => {
     const loose = await writeJar("Loose.class", minimalClass(52));
     const result = await provider.inspect({ path: loose, entry: ENTRY });
@@ -208,5 +210,41 @@ describe("JvmClassFileProvider JAR entry selection", () => {
       selected_entry: { entry: string };
     };
     expect(r.selected_entry.entry).toBe(ENTRY);
+  });
+
+  it("reports an encrypted matching member as unavailable, not absent", async () => {
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add(ENTRY, new Uint8ArrayReader(minimalClass(52)), {
+      password: "secret",
+    });
+    const path = await writeJar("encrypted.jar", await writer.close());
+    const result = await provider.inspect({ path, entry: ENTRY });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+    expect(result.error.message.toLowerCase()).toContain("encrypted");
+  });
+
+  it("steers a Mach-O universal binary (shared 0xCAFEBABE magic) to inspect_macho", async () => {
+    // Fat header: magic CAFEBABE, nfat_arch = 2 -> u2@6 = 2, below any class major.
+    const fat = Uint8Array.from([
+      0xca, 0xfe, 0xba, 0xbe, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    const path = await writeJar("universal.bin", fat);
+    const result = await provider.inspect({ path });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+    const remediation = (result.error as { remediationAction?: string })
+      .remediationAction;
+    expect(remediation).toContain("inspect_macho");
+  });
+
+  it("refuses to follow a symlinked JAR", async () => {
+    const real = await mrJar();
+    const link = join(dir, "link.jar");
+    await symlink(real, link);
+    const result = await provider.inspect({ path: link, entry: ENTRY });
+    expect(result.ok).toBe(false);
   });
 });

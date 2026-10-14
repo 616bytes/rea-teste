@@ -250,6 +250,48 @@ it("reconnects after a catalog refresh loses its session without replaying the r
 });
 
 it.each(["tools/call", "tools/list"])(
+  "preserves the session failure for an overlapping %s without caller cancellation or replay",
+  async (method) => {
+    const endpoint = await startEndpoint();
+    try {
+      await endpoint.connection.connect();
+      const received = endpoint.holdNextRequest(method);
+      const caller = new AbortController();
+      const pending =
+        method === "tools/call"
+          ? endpoint.connection.call("open_project", {}, caller.signal)
+          : endpoint.connection.listTools(caller.signal);
+      const rejected = pending.catch((cause: unknown) => cause);
+      await received;
+      endpoint.restart();
+      const failure = await endpoint.connection
+        .call("list_units", {})
+        .catch((cause: unknown) => cause);
+      const overlappingFailure = await rejected;
+      expect(caller.signal.aborted).toBe(false);
+      expect(overlappingFailure).not.toBeInstanceOf(AnalysisCancelledError);
+      expect(failure).toMatchObject({
+        message: expect.stringContaining("Session not found"),
+      });
+      expect(overlappingFailure).toBe(failure);
+      expect(endpoint.handshakes()).toBe(1);
+      expect(endpoint.calls).toEqual(
+        method === "tools/call"
+          ? ["open_project", "list_units"]
+          : ["list_units"],
+      );
+      expect(endpoint.catalogs()).toBe(method === "tools/list" ? 2 : 1);
+      await expect(
+        endpoint.connection.call("get_client_information", {}),
+      ).resolves.toMatchObject({ success: true, generation: 2 });
+      expect(endpoint.handshakes()).toBe(2);
+    } finally {
+      await endpoint.close();
+    }
+  },
+);
+
+it.each(["tools/call", "tools/list"])(
   "reconnects after a %s timeout while preserving its typed failure",
   async (method) => {
     const endpoint = await startEndpoint(200, {
@@ -323,6 +365,11 @@ it("retains the typed timeout when disposal fails and retries owned cleanup befo
   const close = vi.spyOn(Client.prototype, "close");
   try {
     await endpoint.connection.connect();
+    const catalogReceived = endpoint.holdNextRequest("tools/list");
+    const overlapping = endpoint.connection
+      .listTools()
+      .catch((cause: unknown) => cause);
+    await catalogReceived;
     close.mockRejectedValueOnce(cleanupFailure);
     const received = endpoint.holdNextRequest();
     const pending = endpoint.connection.call("open_project", {});
@@ -331,6 +378,7 @@ it("retains the typed timeout when disposal fails and retries owned cleanup befo
     const failure = await rejected;
     expect(failure).toBeInstanceOf(AnalysisTimeoutError);
     if (!(failure instanceof AnalysisTimeoutError)) throw failure;
+    expect(await overlapping).toBe(failure);
     expect(projectAnalysisError(failure)).toMatchObject({
       code: "provider_timeout",
       details: {
@@ -357,6 +405,11 @@ it("retains failed cleanup ownership and does not reuse the invalid session befo
   const close = vi.spyOn(Client.prototype, "close");
   try {
     await endpoint.connection.call("get_client_information", {});
+    const received = endpoint.holdNextRequest();
+    const overlapping = endpoint.connection
+      .call("list_units", {})
+      .catch((cause: unknown) => cause);
+    await received;
     close
       .mockRejectedValueOnce(cleanupFailure)
       .mockRejectedValueOnce(cleanupFailure);
@@ -372,11 +425,24 @@ it("retains failed cleanup ownership and does not reuse the invalid session befo
         expect.objectContaining({ errors: [cleanupFailure] }),
       ],
     });
+    expect(await overlapping).toMatchObject({
+      cause: expect.objectContaining({
+        message: expect.stringContaining("Session not found"),
+      }),
+      errors: [
+        expect.anything(),
+        expect.objectContaining({ errors: [cleanupFailure] }),
+      ],
+    });
     await expect(endpoint.connection.call("list_units", {})).rejects.toThrow(
       /cleanup failed/,
     );
     expect(endpoint.handshakes()).toBe(1);
-    expect(endpoint.calls).toEqual(["get_client_information", "open_project"]);
+    expect(endpoint.calls).toEqual([
+      "get_client_information",
+      "list_units",
+      "open_project",
+    ]);
     await expect(
       endpoint.connection.call("list_units", {}),
     ).resolves.toMatchObject({
@@ -407,9 +473,18 @@ it("refreshes engine provenance after a session reconnect before reporting a new
       provider: { version: "fixture-1" },
       result: { engine: { version: "fixture-1", gui_client: false } },
     });
+    const received = endpoint.holdNextRequest();
+    const overlapping = provider.execute(request);
+    await received;
     endpoint.restart();
     const failed = await provider.execute(request);
-    expect(failed.ok).toBe(false);
+    for (const result of [failed, await overlapping]) {
+      if (result.ok) throw new Error("Expected session failure");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "capability_unavailable",
+      });
+      expect(result.error.message).toContain("Session not found");
+    }
     const recovered = await provider.execute(request);
     if (!recovered.ok) throw recovered.error;
     expect(recovered.value).toMatchObject({

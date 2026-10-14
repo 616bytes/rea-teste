@@ -114,6 +114,7 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
     readonly signal: AbortController;
     tools: readonly string[] | undefined;
     acquisition: Promise<readonly string[]> | undefined;
+    invalidation: Promise<never> | undefined;
     disposal: Promise<void> | undefined;
   }
   let state: ConnectionState | undefined;
@@ -170,33 +171,38 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
     }
   };
 
-  const invalidate = async (
+  const invalidate = (
     owner: ConnectionState,
     cause: unknown,
   ): Promise<never> => {
+    if (owner.invalidation !== undefined) return owner.invalidation;
     owner.tools = undefined;
     owner.signal.abort(cause);
-    try {
-      await dispose(owner);
-    } catch (cleanupCause: unknown) {
-      if (cause instanceof AnalysisError)
-        throw cause.retainSecondaryFailure(
-          new AnalysisProtocolError("JEB MCP connection cleanup failed", {
-            cause: cleanupCause,
-          }),
-          {
-            cleanup_error: "JEB MCP connection cleanup failed",
-            cleanup_recovery:
-              "The next operation or close call retries the retained connection cleanup.",
-          },
+    const invalidation = (async () => {
+      try {
+        await dispose(owner);
+      } catch (cleanupCause: unknown) {
+        if (cause instanceof AnalysisError)
+          throw cause.retainSecondaryFailure(
+            new AnalysisProtocolError("JEB MCP connection cleanup failed", {
+              cause: cleanupCause,
+            }),
+            {
+              cleanup_error: "JEB MCP connection cleanup failed",
+              cleanup_recovery:
+                "The next operation or close call retries the retained connection cleanup.",
+            },
+          );
+        throw new AggregateError(
+          [cause, cleanupCause],
+          "JEB MCP operation and cleanup failed",
+          { cause },
         );
-      throw new AggregateError(
-        [cause, cleanupCause],
-        "JEB MCP operation and cleanup failed",
-        { cause },
-      );
-    }
-    throw cause;
+      }
+      throw cause;
+    })();
+    owner.invalidation = invalidation;
+    return invalidation;
   };
 
   const connect = async (signal?: AbortSignal): Promise<readonly string[]> => {
@@ -225,6 +231,7 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
       signal: new AbortController(),
       tools: undefined,
       acquisition: undefined,
+      invalidation: undefined,
       disposal: undefined,
     };
     state = owner;
@@ -299,7 +306,7 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
               cause,
             }),
           );
-        if (deadline.interruption === "cancelled")
+        if (signal?.aborted === true || closed)
           throw new AnalysisCancelledError("jeb_mcp_catalog", { cause });
         return invalidate(owner, cause);
       } finally {
@@ -331,7 +338,7 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
             owner,
             new AnalysisTimeoutError(name, requestTimeoutMs, { cause }),
           );
-        if (requestSignal.aborted)
+        if (signal?.aborted === true || closed)
           throw new AnalysisCancelledError(name, { cause });
         if (
           cause instanceof SdkError &&

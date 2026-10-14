@@ -198,7 +198,6 @@ jobs:
   direct-git-install:
     name: Test Desktop Add-plugin Git URL with pnpm
     needs: [contract, native-harness]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:

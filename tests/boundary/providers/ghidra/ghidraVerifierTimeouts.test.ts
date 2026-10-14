@@ -4,7 +4,10 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { resolveGhidraVerifierTimeouts } from "../../../../scripts/lib/ghidra-verifier-timeouts.mjs";
+import {
+  createGhidraVerifierMcpOperations,
+  resolveGhidraVerifierTimeouts,
+} from "../../../../scripts/lib/ghidra-verifier-timeouts.mjs";
 import { verifyGhidraFileOffsets } from "../../../../scripts/lib/real-ghidra-file-offsets.mjs";
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
@@ -20,7 +23,7 @@ describe("Ghidra verifier timeout ownership", () => {
       }),
     ).toEqual({
       clientOptions: { startupTimeoutMs: 600_000 },
-      publicRequestTimeoutMs: 840_000,
+      requestOptions: { timeout: 840_000 },
     });
   });
 
@@ -33,8 +36,27 @@ describe("Ghidra verifier timeout ownership", () => {
       }),
     ).toEqual({
       clientOptions: { startupTimeoutMs },
-      publicRequestTimeoutMs: MAX_TIMER_DELAY_MS,
+      requestOptions: { timeout: MAX_TIMER_DELAY_MS },
     });
+  });
+
+  it("uses the public request budget for initialization and every tool call", async () => {
+    const transport = { name: "transport" };
+    const request = { name: "procedure_pseudo_code" };
+    const response = { content: [] };
+    const connect = vi.fn(async () => undefined);
+    const callTool = vi.fn(async () => response);
+    const requestOptions = { timeout: 840_000 };
+    const operations = createGhidraVerifierMcpOperations(
+      { connect, callTool },
+      requestOptions,
+    );
+
+    await operations.connect(transport);
+    await expect(operations.callTool(request)).resolves.toBe(response);
+
+    expect(connect).toHaveBeenCalledWith(transport, requestOptions);
+    expect(callTool).toHaveBeenCalledWith(request, requestOptions);
   });
 
   it("rejects a combined timer overflow before reading the target", async () => {

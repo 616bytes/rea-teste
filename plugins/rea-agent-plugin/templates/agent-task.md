@@ -3,24 +3,29 @@
 Copy this template into a task, issue, or prompt for Claude Code/Codex.
 
 ## Problem
+
 What is wrong or missing? Include observed behavior, not only a proposed solution.
 
 ## Expected outcome
+
 What should a user be able to observe when the task is complete?
 
 ## Scope
+
 - Repository and branch:
 - Relevant files/modules:
 - In scope:
 - Explicitly out of scope:
 
 ## Evidence
+
 - Reproduction or source locations:
 - Logs/artifacts (redacted):
 - What is confirmed:
 - What remains a hypothesis or unknown:
 
 ## Constraints
+
 - Compatibility requirements:
 - Permissions/authorization:
 - Side effects to avoid:
@@ -28,6 +33,7 @@ What should a user be able to observe when the task is complete?
 - Public APIs or formats that must remain compatible:
 
 ## Acceptance criteria
+
 - [ ] Observable behavior:
 - [ ] Regression tests:
 - [ ] Documentation:
@@ -35,6 +41,7 @@ What should a user be able to observe when the task is complete?
 - [ ] Provider/platform coverage:
 
 ## Agent instructions
+
 - Read the repository's `AGENTS.md` and `CONTRIBUTING.md` first.
 - Inspect git status and preserve unrelated work.
 - Propose a small plan before broad changes.
@@ -46,4 +53,5 @@ What should a user be able to observe when the task is complete?
 - Ask before consequential actions when authorization, target, or side effects are unclear.
 
 ## Required handoff
+
 State the behavior changed, files touched, tests run and results, gaps, risks, branch/commit/PR status, and human decisions needed.

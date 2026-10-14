@@ -18,6 +18,7 @@ Help the human contribute to the REA codebase using the repository's own archite
 ## Work intake
 
 Before implementation, write a short task contract:
+
 - **Problem:** observed behavior or missing capability.
 - **Expected outcome:** externally observable behavior that will change.
 - **Scope:** exact modules, formats, providers, and interfaces involved.
@@ -42,6 +43,7 @@ If essential authority, target identity, expected behavior, or destructive side 
 Choose checks based on the touched code. Start with the narrowest useful tests, then expand as justified.
 
 Common project checks include:
+
 - `npm run test:local -- PATH...` for focused source tests.
 - `npm run test:focused -- PATH...` when test artifacts are required.
 - `npm run check:fast` for fast typecheck/lint and pre-push validation.
@@ -51,6 +53,7 @@ Common project checks include:
 Consult the current `package.json` and `CONTRIBUTING.md` before relying on any command. Do not install or upgrade unrelated software. Do not claim a test passed unless it actually ran and the exit result was observed.
 
 In the report, classify each check as:
+
 - **PASS:** executed and passed.
 - **FAIL:** executed and failed, with the relevant output.
 - **NOT RUN:** not executed, with the reason.
@@ -80,6 +83,7 @@ For provider-dependent work, distinguish simulated/provider-independent checks f
 ## Required final handoff
 
 Always finish with:
+
 1. **Outcome:** what changed and what did not.
 2. **Files:** key paths and rationale.
 3. **Verification:** PASS / FAIL / NOT RUN / BLOCKED / SOURCE REVIEW ONLY, with exact commands.

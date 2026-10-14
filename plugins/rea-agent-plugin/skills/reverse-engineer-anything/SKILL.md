@@ -23,24 +23,29 @@ Use REA's MCP tools to investigate software that the user owns or is explicitly 
 ## Investigation workflow
 
 ### Phase A — Frame the question
+
 - Restate the behavior the user wants to understand.
 - Identify the authorized target and its version/platform.
 - Define a concrete question and what evidence would answer it.
 - List constraints and avoid collecting unrelated data.
 
 ### Phase B — Check readiness
+
 - Discover REA's current tool catalog and session state.
 - Check whether the needed operation and provider are available.
 - If unavailable, explain the exact prerequisite and offer a supported alternative. Do not repeatedly call an unavailable tool.
 
 ### Phase C — Inspect
+
 - Choose the least invasive suitable path: source/artifact inspection, metadata, static analysis, then runtime observation if necessary.
 - Trace only relevant components and boundaries.
 - Cross-check important conclusions with a second independent signal when practical.
 - Preserve exact evidence references and note version/context.
 
 ### Phase D — Synthesize
+
 Provide:
+
 - **Question**
 - **Findings** (confirmed / likely / unknown)
 - **Evidence** (tool results and source locations)
@@ -50,6 +55,7 @@ Provide:
 - **Remaining uncertainties**
 
 ### Phase E — Implement and verify (only if requested)
+
 - Inspect the destination project's existing architecture before editing.
 - Propose a small plan and keep changes scoped to the requested feature.
 - Avoid overwriting unrelated work or changing public interfaces without need.

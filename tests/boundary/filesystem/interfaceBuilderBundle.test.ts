@@ -1353,6 +1353,62 @@ describe("NIBArchive single-object connectors", () => {
       "Some recognized NIBArchive connectors declare no resolvable owner; they carry no connection evidence and are reported as omissions.",
     );
   });
+
+  // Only an absent NSSource marks an annotation; an encoded but unusable one
+  // is still a connection whose owner cannot be resolved.
+  it.each([
+    ["nil", null],
+    ["a non-reference value", 7],
+  ] as const)(
+    "still counts an AppKit connector whose NSSource is %s as ownerless",
+    async (_label, source) => {
+      const root = await createTestTempDirectory("rea-ib-unusable-source-");
+      const bundle = join(root, "Example.app");
+      await mkdir(bundle, { recursive: true });
+      await writeFile(
+        join(bundle, "Window.nib"),
+        encodeNibArchiveFixture({
+          classes: [
+            "NSCustomObject",
+            "NSButton",
+            "NSNibOutletConnector",
+            "NSString",
+          ],
+          objects: [
+            { classIndex: 0, values: {} },
+            { classIndex: 1, values: {} },
+            {
+              classIndex: 2,
+              values: {
+                NSSource: source,
+                NSDestination: { ref: 1 },
+                NSLabel: { ref: 3 },
+              },
+            },
+            { classIndex: 3, values: { "NS.bytes": "button" } },
+          ],
+        }),
+      );
+
+      const analysis = await analyzeInterfaceBuilderBundle({
+        bundlePath: bundle,
+        targetSha256: "e".repeat(64),
+      });
+
+      expect(analysis.graph.coverage).toContainEqual(
+        expect.objectContaining({
+          facet: "connections:Window.nib",
+          status: "partial",
+          reason: "connection_unresolved",
+          omitted: 1,
+        }),
+      );
+      expect(analysis.graph.truncated).toBe(true);
+      expect(analysis.limitations).toContain(
+        "Some recognized NIBArchive connectors declare no resolvable owner; they carry no connection evidence and are reported as omissions.",
+      );
+    },
+  );
 });
 
 // This exact file is already selected by the unchanged native Apple CI lane.

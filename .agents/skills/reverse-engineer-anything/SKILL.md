@@ -1,6 +1,6 @@
 ---
 name: reverse-engineer-anything
-description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
+description: Reverse engineer native, JVM, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
   version: "42"
 ---
@@ -79,7 +79,7 @@ is within the authorized scope, use `npx -y rea-agents@latest` in its place.
 Configuration repair starts with a read-only setup plan; show paths, backups and
 skill replacement before applying authorized changes. Preserve existing approval
 and target-execution boundaries. REA setup never installs or upgrades unrelated
-software, including Node.js, npm, Homebrew, Java, Ghidra, IDA, JADX, Binwalk or Unblob.
+software, including Node.js, npm, Homebrew, Java, Ghidra, IDA, JADX, Vineflower, Binwalk or Unblob.
 
 ## Route the target first
 
@@ -95,6 +95,12 @@ explicit path or endpoint and do not need it.
 - Android APK code, classes, methods, or incoming references:
   `inspect_android_package`, then focused Android tools when advertised.
   Archive member inventory still uses the archive route above.
+- JVM `.class`, `.jar`, or `.zip` code: `decompile_jvm_artifact` with the
+  supplied absolute input path and a caller-selected new output directory.
+  `inspect_jvm_decompiler` diagnoses the caller-installed Vineflower launcher.
+  Preserve the manifest, hashes and limitations; derived Java is not original
+  Scala source or runtime-equivalence proof. See the JVM workflow in
+  `references/native-and-artifacts.md`.
 - Managed PE/CLI assembly: `inspect_managed_artifact`.
 - Firmware image: `inspect_firmware_regions` when advertised. Use
   `extract_firmware` when extraction is requested, with a caller-selected new
@@ -321,7 +327,7 @@ as complete while required questions remain open.
 
 ## Read only the relevant guide
 
-- Native binaries, managed assemblies, archives, and extraction:
+- Native binaries, JVM bytecode, managed assemblies, archives, and extraction:
   [references/native-and-artifacts.md](references/native-and-artifacts.md)
 - ASARs, extracted JavaScript, feature tracing, and version comparison:
   [references/javascript-applications.md](references/javascript-applications.md)

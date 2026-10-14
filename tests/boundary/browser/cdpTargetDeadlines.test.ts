@@ -11,22 +11,43 @@ import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 
-// Exercise the real transport's production budget without waiting twenty seconds.
+// Keep real socket scheduling; expire only a timer whose owning phase is ready.
 beforeEach(() => {
-  const schedule = globalThis.setTimeout;
-  vi.spyOn(globalThis, "setTimeout").mockImplementation(((
-    callback,
-    milliseconds,
-    ...args
-  ) =>
-    schedule(
-      callback,
-      milliseconds === WEB_RUNTIME_LIMITS.commandTimeoutMs ? 100 : milliseconds,
-      ...args,
-    )) as typeof setTimeout);
+  vi.spyOn(globalThis, "setTimeout");
+  vi.spyOn(globalThis, "clearTimeout");
 });
 
 afterEach(() => vi.restoreAllMocks());
+
+const activeTimers = (milliseconds: number) => {
+  const scheduled = vi.mocked(globalThis.setTimeout);
+  const cleared = vi.mocked(globalThis.clearTimeout);
+  return scheduled.mock.calls.flatMap(([callback, delay], index) => {
+    const result = scheduled.mock.results[index];
+    if (
+      delay !== milliseconds ||
+      result?.type !== "return" ||
+      cleared.mock.calls.some(([timer]) => timer === result.value)
+    )
+      return [];
+    return [{ callback, timer: result.value }];
+  });
+};
+
+const expireTimer = (milliseconds: number): void => {
+  const timers = activeTimers(milliseconds);
+  expect(timers).toHaveLength(1);
+  const timer = timers[0];
+  if (timer === undefined) throw new Error("Expected one active timer");
+  try {
+    timer.callback();
+    if (milliseconds === WEB_RUNTIME_LIMITS.commandTimeoutMs)
+      expect(globalThis.clearTimeout).toHaveBeenCalledWith(timer.timer);
+  } finally {
+    // The observation callback resolves naturally without cancelling its timer.
+    clearTimeout(timer.timer);
+  }
+};
 
 it("bounds a stalled WebSocket handshake and releases its socket", async () => {
   const sockets = new Set<Socket>();
@@ -40,13 +61,16 @@ it("bounds a stalled WebSocket handshake and releases its socket", async () => {
   if (address === null || typeof address === "string")
     throw new Error("Expected a TCP address");
   try {
-    await expect(
+    const rejection = expect(
       CdpConnection.connect(
         `ws://127.0.0.1:${String(address.port)}/target`,
         "inspect_web_page",
-        AbortSignal.timeout(1_000),
+        AbortSignal.timeout(10_000),
       ),
     ).rejects.toMatchObject({ reason: "timeout" });
+    await vi.waitFor(() => expect(sockets.size).toBe(1), { timeout: 5_000 });
+    expireTimer(WEB_RUNTIME_LIMITS.commandTimeoutMs);
+    await rejection;
     await vi.waitFor(() => expect(sockets.size).toBe(0));
   } finally {
     for (const socket of sockets) socket.destroy();
@@ -59,14 +83,23 @@ it.each(["Target.attachToTarget", "Page.enable", "Runtime.enable"])(
   async (hangOnMethod) => {
     const browser = await startFakeCdpBrowser({ hangOnMethod });
     try {
-      const result = await new CdpBrowserProvider().inspectPage(
+      const pending = new CdpBrowserProvider().inspectPage(
         inspectWebPageInputSchema.parse({
           cdp_endpoint: browser.endpoint,
           target_id: "allowed-page",
           observation_ms: 0,
         }),
-        { signal: AbortSignal.timeout(1_000) },
+        { signal: AbortSignal.timeout(10_000) },
       );
+      await vi.waitFor(
+        () =>
+          expect(browser.commands.map(({ method }) => method)).toContain(
+            hangOnMethod,
+          ),
+        { timeout: 5_000 },
+      );
+      expireTimer(WEB_RUNTIME_LIMITS.commandTimeoutMs);
+      const result = await pending;
       if (result.ok) throw new Error("Expected a target command timeout");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "provider_timeout",
@@ -89,9 +122,19 @@ it("ignores a late timed-out reply and keeps following commands correlated", asy
     "inspect_web_page",
   );
   try {
-    await expect(
-      connection.send("Page.enable", {}, undefined, AbortSignal.timeout(1_000)),
+    const rejection = expect(
+      connection.send(
+        "Page.enable",
+        {},
+        undefined,
+        AbortSignal.timeout(10_000),
+      ),
     ).rejects.toMatchObject({ reason: "timeout" });
+    await vi.waitFor(() => expect(browser.commands).toHaveLength(1), {
+      timeout: 5_000,
+    });
+    expireTimer(WEB_RUNTIME_LIMITS.commandTimeoutMs);
+    await rejection;
     const command = browser.commands[0];
     if (command === undefined)
       throw new Error("Expected the timed-out command");
@@ -106,9 +149,11 @@ it("ignores a late timed-out reply and keeps following commands correlated", asy
 it.each(["success", "rejection", "abort", "disconnect"])(
   "releases handshake and command timers on %s",
   async (outcome) => {
-    const cleared = vi.spyOn(globalThis, "clearTimeout");
+    const cleared = vi.mocked(globalThis.clearTimeout);
     const browser = await startFakeCdpBrowser({
-      ...(outcome === "abort" ? { hangOnMethod: "Runtime.enable" } : {}),
+      ...(outcome === "abort" || outcome === "success"
+        ? { hangOnMethod: "Runtime.enable" }
+        : {}),
       ...(outcome === "disconnect" ? { closeOnMethod: "Runtime.enable" } : {}),
     });
     const controller = new AbortController();
@@ -134,6 +179,17 @@ it.each(["success", "rejection", "abort", "disconnect"])(
                   ? "AnalysisCancelledError"
                   : "BrowserObservationError",
             });
+      if (outcome === "success") {
+        await vi.waitFor(() => expect(browser.commands).toHaveLength(1), {
+          timeout: 5_000,
+        });
+        // A healthy reply may take longer than the former 100 ms test budget.
+        await new Promise<void>((resolve) => setTimeout(resolve, 250));
+        const command = browser.commands[0];
+        if (command === undefined)
+          throw new Error("Expected a pending command");
+        browser.emitRawMessage(JSON.stringify({ id: command.id, result: {} }));
+      }
       if (outcome === "abort") controller.abort();
       await assertion;
       const scheduled = vi.mocked(globalThis.setTimeout);
@@ -161,14 +217,23 @@ it.each(["Runtime.enable", "Debugger.enable"])(
       hangOnMethod,
     });
     try {
-      const result = await new V8InspectorProvider().observe(
+      const pending = new V8InspectorProvider().observe(
         {
           inspector_endpoint: inspector.endpoint,
           target_id: inspector.targetId,
           observation_ms: 0,
         },
-        { signal: AbortSignal.timeout(1_000) },
+        { signal: AbortSignal.timeout(10_000) },
       );
+      await vi.waitFor(
+        () =>
+          expect(inspector.commands.map(({ method }) => method)).toContain(
+            hangOnMethod,
+          ),
+        { timeout: 5_000 },
+      );
+      expireTimer(WEB_RUNTIME_LIMITS.commandTimeoutMs);
+      const result = await pending;
       if (result.ok) throw new Error("Expected an Inspector command timeout");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "provider_timeout",
@@ -187,14 +252,24 @@ it.each(["Runtime.enable", "Debugger.enable"])(
 
 it("keeps the chosen observation window independent of command deadlines", async () => {
   const browser = await startFakeCdpBrowser();
+  const observationMs = WEB_RUNTIME_LIMITS.commandTimeoutMs + 250;
   try {
-    const result = await new CdpBrowserProvider().inspectPage(
+    const pending = new CdpBrowserProvider().inspectPage(
       inspectWebPageInputSchema.parse({
         cdp_endpoint: browser.endpoint,
         target_id: "allowed-page",
-        observation_ms: 250,
+        observation_ms: observationMs,
       }),
     );
+    await vi.waitFor(
+      () => expect(activeTimers(observationMs)).toHaveLength(1),
+      {
+        timeout: 5_000,
+      },
+    );
+    expect(activeTimers(WEB_RUNTIME_LIMITS.commandTimeoutMs)).toHaveLength(0);
+    expireTimer(observationMs);
+    const result = await pending;
     expect(result.ok).toBe(true);
   } finally {
     await browser.close();

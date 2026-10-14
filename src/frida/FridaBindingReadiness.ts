@@ -3,7 +3,10 @@ import { z } from "zod";
 
 import type { OptionalProviderReadiness } from "../domain/OptionalProviderReadiness.js";
 import { safeParseJson } from "../domain/safeJson.js";
-import { execFileOutput } from "../process/ExecFileOutput.js";
+import {
+  execFileOutput,
+  execFileOutputFailure,
+} from "../process/ExecFileOutput.js";
 
 // Resolve from the installation being checked, not this updater's cached modules.
 // Import only: never create a device manager, enumerate devices or control a target.
@@ -125,6 +128,12 @@ export const fridaBindingReadiness = async (
           }),
     };
   } catch (cause: unknown) {
-    return unknown(cause instanceof Error ? cause.message : String(cause));
+    const message = cause instanceof Error ? cause.message : String(cause);
+    const capture = execFileOutputFailure(cause);
+    if (capture === undefined) return unknown(message);
+    const { stdout, stderr, ...metadata } = capture;
+    return unknown(
+      `${message}\nProcess: ${JSON.stringify(metadata)}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+    );
   }
 };

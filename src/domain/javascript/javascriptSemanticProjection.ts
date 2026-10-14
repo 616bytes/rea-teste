@@ -745,7 +745,6 @@ const isNoncomputedClassMemberKey = (
 ): boolean =>
   (t.isClassMethod(parent) ||
     t.isClassProperty(parent) ||
-    t.isClassAccessorProperty(parent) ||
     t.isTSDeclareMethod(parent)) &&
   parent.key === node &&
   !parent.computed;

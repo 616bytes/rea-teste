@@ -309,6 +309,27 @@ describe("JavaScript semantic analysis: class member keys", () => {
     expect(ir.references.filter(({ name }) => name === "marker")).toEqual([]);
   });
 
+  it("does not read an outer binding through TypeScript class member names", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const marker = "seed";
+      abstract class Holder {
+        declare marker: string;
+        abstract marker(): void;
+        abstract [marker](): void;
+      }
+      class Overloads {
+        marker(): void;
+        marker(value?: number) {}
+      }
+    `);
+    // Only the computed abstract key evaluates the outer binding.
+    expect(
+      ir.references
+        .filter(({ name }) => name === "marker")
+        .map(({ role, location }) => `${role}@${location.start.line}`),
+    ).toEqual(["read@6"]);
+  });
+
   it("does not capture an outer binding through a noncomputed method name", () => {
     const ir = analyzeJavaScriptSemantics(`
       function outer() {

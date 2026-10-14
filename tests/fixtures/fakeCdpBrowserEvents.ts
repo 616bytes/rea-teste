@@ -72,7 +72,7 @@ const emitMainWebMcpTools = (
           properties: inputSchemaProperties,
           required: ["orderId"],
         },
-        annotations: {
+        annotations: options.webMcpAnnotations ?? {
           ...webMcpToolAnnotations,
           consequential: Object.hasOwn(options, "webMcpConsequential")
             ? options.webMcpConsequential

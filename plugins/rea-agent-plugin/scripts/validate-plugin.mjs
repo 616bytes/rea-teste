@@ -16,7 +16,7 @@ function readJson(relativePath) {
   try {
     return JSON.parse(readFileSync(resolve(pluginRoot, relativePath), "utf8"));
   } catch (error) {
-    errors.push(\`${relativePath}: invalid or unreadable JSON (\${error.message})\`);
+    errors.push(relativePath + ": invalid or unreadable JSON (" + error.message + ")");
     return null;
   }
 }
@@ -36,9 +36,9 @@ for (const [label, manifest] of [
   ["Codex", codex],
 ]) {
   if (!manifest) continue;
-  check(manifest.name === "rea-reverse-engineering", \`\${label} manifest has the expected plugin name\`);
-  check(typeof manifest.version === "string" && /^\d+\.\d+\.\d+$/.test(manifest.version), \`\${label} manifest has a semantic version\`);
-  check(typeof manifest.description === "string" && manifest.description.trim().length > 0, \`\${label} manifest has a description\`);
+  check(manifest.name === "rea-reverse-engineering", label + " manifest has the expected plugin name");
+  check(typeof manifest.version === "string" && /^\d+\.\d+\.\d+$/.test(manifest.version), label + " manifest has a semantic version");
+  check(typeof manifest.description === "string" && manifest.description.trim().length > 0, label + " manifest has a description");
 }
 
 if (portable && codex) {
@@ -55,7 +55,7 @@ for (const relativePath of [
   ".mcp.json",
   "skills/reverse-engineer-anything/SKILL.md",
 ]) {
-  check(exists(relativePath), \`required file exists: \${relativePath}\`);
+  check(exists(relativePath), "required file exists: " + relativePath);
 }
 
 if (portable) {
@@ -82,12 +82,12 @@ if (existsSync(skillPath)) {
     check(/^description:\s*.+$/m.test(frontmatter[1]), "skill frontmatter includes a description");
   }
   for (const requiredHeading of ["## Core rules", "## Investigation workflow", "## Target-specific guidance"]) {
-    check(skill.includes(requiredHeading), \`skill includes section: \${requiredHeading}\`);
+    check(skill.includes(requiredHeading), "skill includes section: " + requiredHeading);
   }
 }
 
-console.log(\`REA plugin validation: \${checks.length} checks passed; \${errors.length} failed.\\n\`);
-for (const item of checks) console.log(\`PASS  \${item}\`);
-for (const item of errors) console.error(\`FAIL  \${item}\`);
+console.log("REA plugin validation: " + checks.length + " checks passed; " + errors.length + " failed.\n");
+for (const item of checks) console.log("PASS  " + item);
+for (const item of errors) console.error("FAIL  " + item);
 
 if (errors.length > 0) process.exitCode = 1;

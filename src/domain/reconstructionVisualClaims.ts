@@ -89,7 +89,7 @@ export const visualClaimFacts = (
       );
     if (source.artifact === null)
       limitations.push(
-        `Source ${source.evidence.evidence_id} retains only its PNG digest; its pixels are unavailable in the Evidence bundle, so the comparison cannot be recomputed.`,
+        `Source ${source.evidence.evidence_id} retains only its PNG digest; its pixels are unavailable in the Evidence bundle, so the comparison cannot be recomputed. Recapture ADB screens with include_artifact to retain them.`,
       );
   }
   if (claim.channel_threshold !== diff.channel_threshold)
@@ -214,13 +214,15 @@ const readScreenshotSource = (evidence: Evidence): ScreenshotSource => {
     evidence.operation === "capture_adb_screen" &&
     evidence.predicate_type === "rea.analysis"
   ) {
+    // The capture schema binds an opted-in artifact to the reported digest
+    // and size; the artifact schema verifies the inline bytes against both.
     const capture = adbResultSchemas.capture_adb_screen.parse(
       evidence.normalized_result,
     );
     return {
       evidence,
       sha256: capture.sha256,
-      artifact: null,
+      artifact: capture.artifact ?? null,
       dimensions:
         capture.width === null || capture.height === null
           ? null

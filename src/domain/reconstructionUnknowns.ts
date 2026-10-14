@@ -146,7 +146,7 @@ const defaultProbe = (
         ? {
             operation: "capture_web_screenshot",
             rationale:
-              "Recapture both screens with retained pixels under one viewport and compare them with the declared threshold.",
+              "Recapture both screens with retained pixels under one viewport (capture_web_screenshot, or capture_adb_screen with include_artifact) and compare them with the declared threshold.",
           }
         : {
             operation: "inspect_artifact",

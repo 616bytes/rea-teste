@@ -114,16 +114,23 @@ const webCapture = (
     },
   });
 
-const adbCapture = (bytes: Buffer): Evidence => {
-  const artifact = createWebScreenshotArtifact(bytes);
+/** ADB screen capture; `artifact` embeds the opted-in inline PNG. */
+const adbCapture = (
+  bytes: Buffer,
+  artifact: WebScreenshotArtifact | null = null,
+): Evidence => {
+  const capture = createWebScreenshotArtifact(bytes);
   return createEvidence(
     undefined,
     { id: "adb", name: "Android Debug Bridge", version: "fixture" },
     {
       predicateType: "rea.analysis",
       operation: "capture_adb_screen",
-      parameters: { serial: "emulator-5554" },
-      result: {
+      parameters: {
+        serial: "emulator-5554",
+        include_artifact: artifact !== null,
+      },
+      result: jsonValueSchema.parse({
         client: {
           binary_path: "/usr/bin/adb",
           path_source: "path",
@@ -132,11 +139,12 @@ const adbCapture = (bytes: Buffer): Evidence => {
         },
         serial: "emulator-5554",
         local_path: "/tmp/adb-capture/screen.png",
-        bytes: artifact.bytes,
-        sha256: artifact.sha256,
+        bytes: capture.bytes,
+        sha256: capture.sha256,
         width: SIZE,
         height: SIZE,
-      },
+        ...(artifact === null ? {} : { artifact }),
+      }),
       confidence: "observed",
       authority: "external-service",
     },
@@ -336,6 +344,81 @@ describe("visual claim outcomes", () => {
   });
 });
 
+describe("visual claims over ADB captures", () => {
+  /** Original ADB capture with retained pixels against a web reconstruction. */
+  const adbFixture = (changed: readonly number[]) => {
+    const beforeBytes = png();
+    const beforeArtifact = createWebScreenshotArtifact(beforeBytes);
+    const afterArtifact = createWebScreenshotArtifact(png(changed));
+    return {
+      before: adbCapture(beforeBytes, beforeArtifact),
+      after: webCapture(afterArtifact, "reconstruction"),
+      comparison: screenshotComparison(beforeArtifact, afterArtifact),
+      beforeBytes,
+      beforeArtifact,
+    };
+  };
+
+  it("recomputes a pass from an ADB capture that retains its pixels", () => {
+    const { before, after, comparison } = adbFixture([5]);
+    const result = verify(visualSpec(comparison, before, after), [
+      comparison,
+      before,
+      after,
+    ]);
+    expect(result.status).toBe("pass");
+    expect(result.claims.items[0]).toMatchObject({
+      status: "pass",
+      observed_status: "unchanged",
+      visual: { changed_pixels: 1, changed_ratio: 1 / 16, recomputed: true },
+    });
+  });
+
+  it("recomputes a fail from an ADB capture that retains its pixels", () => {
+    const { before, after, comparison } = adbFixture([0, 1, 2, 3]);
+    const result = verify(visualSpec(comparison, before, after), [
+      comparison,
+      before,
+      after,
+    ]);
+    expect(result.status).toBe("fail");
+    expect(result.claims.items[0]).toMatchObject({
+      status: "fail",
+      observed_status: "changed",
+      visual: { changed_pixels: 4, changed_ratio: 0.25, recomputed: true },
+    });
+  });
+
+  it("rejects an ADB artifact that is not the PNG the capture reports", () => {
+    const { after, comparison, beforeBytes } = adbFixture([5]);
+    const other = createWebScreenshotArtifact(png([6]));
+    const mismatched = adbCapture(beforeBytes, other);
+    expect(() =>
+      verify(visualSpec(comparison, mismatched, after), [
+        comparison,
+        mismatched,
+        after,
+      ]),
+    ).toThrow("Screen capture artifact disagrees with the captured PNG");
+  });
+
+  it("rejects ADB inline bytes that disagree with their sealed digest", () => {
+    const { after, comparison, beforeBytes, beforeArtifact } = adbFixture([5]);
+    const forged = adbCapture(beforeBytes, {
+      ...createWebScreenshotArtifact(png([6])),
+      sha256: beforeArtifact.sha256,
+      bytes: beforeArtifact.bytes,
+    });
+    expect(() =>
+      verify(visualSpec(comparison, forged, after), [
+        comparison,
+        forged,
+        after,
+      ]),
+    ).toThrow("Screenshot artifact digest or size mismatch");
+  });
+});
+
 describe("visual claim limitations", () => {
   it("stays unknown when a source capture retains only its digest", () => {
     const beforeArtifact = createWebScreenshotArtifact(png());
@@ -352,7 +435,7 @@ describe("visual claim limitations", () => {
     expect(result.status).toBe("unknown");
     expect(result.claims.items[0]?.visual?.recomputed).toBe(false);
     expect(result.claims.items[0]?.limitations).toContain(
-      `Source ${after.evidence_id} retains only its PNG digest; its pixels are unavailable in the Evidence bundle, so the comparison cannot be recomputed.`,
+      `Source ${after.evidence_id} retains only its PNG digest; its pixels are unavailable in the Evidence bundle, so the comparison cannot be recomputed. Recapture ADB screens with include_artifact to retain them.`,
     );
     expect(result.recommended_probes).toMatchObject([
       { operation: "capture_web_screenshot", claim_ids: ["home-screen"] },

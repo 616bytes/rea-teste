@@ -30,6 +30,8 @@ on:
       - "src/process/**"
       - "src/artifacts/readStableArtifact.ts"
       - "scripts/verify-packet-capture.mjs"
+      - "scripts/fixtures/tls-key-log-capture.mjs"
+      - "scripts/lib/verifier-run.mjs"
       - ".github/workflows/real-packet-capture.yml"
       - "package*.json"
       - ".nvmrc"

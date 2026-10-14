@@ -8,6 +8,7 @@ import { err } from "../domain/result.js";
 import { ArtifactAnalysisResources } from "./ArtifactAnalysisResources.js";
 import { readLinuxResourceLimits } from "./LinuxResourceLimits.js";
 import { ProviderProcessSupervisor } from "./ProviderProcess.js";
+import { OwnedCommandFailure } from "./OwnedCommand.js";
 
 it("projects the specific reason and member evidence for retained cleanup", async () => {
   const producer = Object.assign(new EventEmitter(), {
@@ -83,3 +84,52 @@ it("projects the specific reason and member evidence for retained cleanup", asyn
     },
   });
 });
+
+it.each([
+  ["cancelled", null, "AnalysisCancelledError"],
+  ["timeout", null, "AnalysisTimeoutError"],
+  ["output-limit", null, "AnalysisResourceConstraintError"],
+  ["process", "SIGXFSZ", "AnalysisResourceConstraintError"],
+] as const)(
+  "keeps observed stream sizes for a %s failure whose output text was withheld",
+  (reason, signal, tag) => {
+    const resources = new ArtifactAnalysisResources(
+      "fixture-provider",
+      "fixture-operation",
+      readStableArtifact,
+      readLinuxResourceLimits,
+      { message: "busy", details: {} },
+    );
+    const failure = new OwnedCommandFailure(reason, "fixture failure", {
+      stdout: { text: "", bytes: 0, observedBytes: 5000 },
+      stderr: { text: "", bytes: 0, observedBytes: 17 },
+      exitCode: null,
+      signal,
+    });
+    const limits = { command_timeout_ms: 1, output_bytes: 1 };
+    const withheld = resources.commandFailure(
+      failure,
+      limits,
+      undefined,
+      "fixture-operation",
+      true,
+    );
+    expect(withheld._tag).toBe(tag);
+    expect(withheld.capturedOutput).toEqual({
+      stdout: "",
+      stderr: "",
+      truncated: false,
+      exit_code: null,
+      signal,
+      stdout_bytes: 5000,
+      stderr_bytes: 17,
+    });
+    // Without withholding the projection keeps its existing shape.
+    expect(
+      Object.keys(
+        resources.commandFailure(failure, limits, undefined).capturedOutput ??
+          {},
+      ),
+    ).toEqual(["stdout", "stderr", "truncated", "exit_code", "signal"]);
+  },
+);

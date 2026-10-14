@@ -106,6 +106,27 @@ explicit, non-combining), `classifyJarEntry` near-miss rejection, `#readEntryByt
 sizing and bomb-bound, subject identity, merged repeatable tables, layering,
 contract extension, and effect-audit honesty.
 
+## Third review — usability and decoder strictness (landed)
+
+A fourth-angle pass (architecture/security/correctness/usability) surfaced three
+small items, all fixed:
+
+- USABILITY — a `.jar` selected without `entry` previously failed as `bad-magic`
+  ("not a class file"). The provider now detects the ZIP signature and returns an
+  `AnalysisUnsupportedTargetError` whose remediation points at `entry` (and
+  `release`) selection.
+- USABILITY — a requested `entry` is normalized once at the JAR boundary
+  (`normalizeJarEntryPath`: backslashes → `/`, leading slashes stripped) so a
+  caller-supplied `\com\example\Foo.class` or `/com/...` resolves to the internal
+  member path; the canonical form is what `selected_entry.entry` records.
+- CORRECTNESS — modified-UTF8 decoding now rejects a stray continuation byte
+  (`0x80–0xbf`) used as a two-byte lead, while still accepting the legal
+  `0xc0 0x80` encoding of U+0000. Covered by two new domain tests.
+
+Unit/service suite is now 40 tests (6 files); `verify:jvm` remains 16 cases.
+`tsc --noEmit` clean; `oxlint` reports only the pre-existing non-blocking
+`max-params` warning on `#selectJarMember`.
+
 ## Pending (documented limitations)
 
 - The JAR subject digest (`hashStableFile`) and the class-entry read

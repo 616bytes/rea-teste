@@ -185,7 +185,10 @@ const decodeModifiedUtf8 = (
       out += String.fromCharCode(a);
       i += 1;
     } else if (a < 0xe0) {
-      if (i + 1 >= bytes.length || !isContinuation(bytes[i + 1]))
+      // A 2-byte sequence leads with 110xxxxx (>= 0xc0); 0x80-0xbf are
+      // continuation bytes and are never valid as a lead. (0xc0 0x80 remains
+      // the modified-UTF8 encoding of U+0000 and stays accepted.)
+      if (a < 0xc0 || i + 1 >= bytes.length || !isContinuation(bytes[i + 1]))
         return err({ kind: "invalid-utf8", offset: at });
       const b = bytes[i + 1]!;
       out += String.fromCharCode(((a & 0x1f) << 6) | (b & 0x3f));

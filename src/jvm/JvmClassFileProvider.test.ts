@@ -185,4 +185,28 @@ describe("JvmClassFileProvider JAR entry selection", () => {
     const result = await provider.inspect({ path: loose, entry: ENTRY });
     expect(result.ok).toBe(false);
   });
+
+  it("guides the caller to entry selection when a JAR is given without entry", async () => {
+    const result = await provider.inspect({ path: await mrJar() });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+    const remediation = (result.error as { remediationAction?: string })
+      .remediationAction;
+    expect(remediation).toContain("entry");
+  });
+
+  it("normalizes a leading slash and backslashes in the requested entry", async () => {
+    const path = await mrJar();
+    const backslashed = await provider.inspect({
+      path,
+      entry: "\\com\\example\\Foo.class",
+    });
+    expect(backslashed.ok).toBe(true);
+    if (!backslashed.ok) return;
+    const r = backslashed.value.result as {
+      selected_entry: { entry: string };
+    };
+    expect(r.selected_entry.entry).toBe(ENTRY);
+  });
 });

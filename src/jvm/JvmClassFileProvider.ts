@@ -18,6 +18,7 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { parseJavaClassFile } from "../domain/jvm/javaClassFile.js";
 import {
@@ -27,7 +28,11 @@ import {
 } from "../domain/jvm/javaDebugMetadataReport.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { hashStableFile } from "../filesystem/StableFileHash.js";
-import { classifyJarEntry, resolveJarSelection } from "./jarClassEntry.js";
+import {
+  classifyJarEntry,
+  normalizeJarEntryPath,
+  resolveJarSelection,
+} from "./jarClassEntry.js";
 import { JVM_LIMITS, JVM_PROVIDER_IDENTITY } from "./JvmClassFileRelease.js";
 import { jvmClassFileFailure, mapParseError } from "./jvmFailures.js";
 
@@ -35,6 +40,10 @@ const OPERATION = "inspect_jvm_debug_metadata";
 
 const sha256 = (bytes: Uint8Array): string =>
   createHash("sha256").update(bytes).digest("hex");
+
+/** Local-file-header, empty-archive, and spanned signatures all open with "PK". */
+const looksLikeZip = (bytes: Uint8Array): boolean =>
+  bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b;
 
 /**
  * A JAR is multi-release only when its main manifest section carries
@@ -101,7 +110,7 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
           ? await this.#inspectClassFile(input, options)
           : await this.#inspectJarEntry(
               input.path,
-              input.entry,
+              normalizeJarEntryPath(input.entry),
               input,
               options,
             );
@@ -123,7 +132,23 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     if (options?.signal?.aborted)
       return err(new AnalysisCancelledError(OPERATION));
     const parsed = parseJavaClassFile(selected.bytes);
-    if (!parsed.ok) return err(mapParseError(parsed.error, input.path));
+    if (!parsed.ok) {
+      // A JAR selected without `entry` reaches this path and fails as bad-magic.
+      // Point the caller at member selection instead of "not a class file".
+      if (parsed.error.kind === "bad-magic" && looksLikeZip(selected.bytes))
+        return err(
+          new AnalysisUnsupportedTargetError(
+            OPERATION,
+            input.path,
+            "The selected file is a ZIP/JAR archive, not a single .class file.",
+            {
+              remediationAction:
+                "Pass entry to select a class member inside the JAR, e.g. entry=com/example/Foo.class (and release for a multi-release override).",
+            },
+          ),
+        );
+      return err(mapParseError(parsed.error, input.path));
+    }
     const result = buildJavaDebugMetadataResult(parsed.value, {
       path: input.path,
       sha256: selected.sha256,

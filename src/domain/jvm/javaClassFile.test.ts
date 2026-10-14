@@ -138,6 +138,53 @@ describe("parseJavaClassFile framing", () => {
     expect(result.error.kind).toBe("truncated");
   });
 
+  it("rejects a Utf8 constant whose lead byte is a stray continuation byte", () => {
+    // A two-byte modified-UTF8 lead is 110xxxxx (>= 0xc0); 0x80 is a bare
+    // continuation byte and must not be decoded as a valid character.
+    const blob = new Blob()
+      .u4(0xcafebabe)
+      .u2(0)
+      .u2(52)
+      .u2(2) // constant_pool_count = 2 (one entry at index 1)
+      .u1(CONSTANT_TAG.utf8)
+      .u2(2) // length = 2 bytes
+      .u1(0x80) // invalid lead
+      .u1(0x80)
+      .bytes();
+    const result = parseJavaClassFile(blob);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe("invalid-utf8");
+  });
+
+  it("accepts the modified-UTF8 0xC0 0x80 encoding of U+0000", () => {
+    const blob = new Blob()
+      .u4(0xcafebabe)
+      .u2(0)
+      .u2(52)
+      .u2(2)
+      .u1(CONSTANT_TAG.utf8)
+      .u2(2)
+      .u1(0xc0)
+      .u1(0x80)
+      .u2(0x0021)
+      .u2(0)
+      .u2(0)
+      .u2(0)
+      .u2(0)
+      .u2(0)
+      .u2(0)
+      .bytes();
+    const result = parseJavaClassFile(blob);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.constantPool[1]).toEqual({
+      tag: 1,
+      kind: "utf8",
+      value: "\u0000",
+    });
+  });
+
   it("refuses an impossible method count instead of allocating", () => {
     const blob = new Blob()
       .u4(0xcafebabe)

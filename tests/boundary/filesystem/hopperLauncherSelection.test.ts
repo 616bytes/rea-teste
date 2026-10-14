@@ -4,26 +4,25 @@ import { dirname, join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { MAC_HOPPER_SYSTEM_LAUNCHER } from "../../../src/application/MacHopperPaths.js";
 import { defaultHopperLauncherPath } from "../../../src/config/parseConfig.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 // A real system installation legitimately precedes this isolated user fixture.
-const installedSystemHopper = (): boolean => {
+const installedSystemHopper = (home: string): boolean => {
   try {
-    accessSync(MAC_HOPPER_SYSTEM_LAUNCHER, constants.X_OK);
-    return statSync(MAC_HOPPER_SYSTEM_LAUNCHER).isFile();
+    const launcher = defaultHopperLauncherPath("darwin", home);
+    accessSync(launcher, constants.X_OK);
+    return statSync(launcher).isFile();
   } catch {
     return false;
   }
 };
 
-it
-  .skipIf(installedSystemHopper())
-  .each(["Hopper Disassembler.app", "Hopper A.app"])(
+it.for(["Hopper Disassembler.app", "Hopper A.app"])(
   "skips a directory launcher in %s and selects a real file",
-  async (name) => {
+  async (name, context) => {
     const home = await createTestTempDirectory("rea-hopper-selection-");
+    if (installedSystemHopper(home)) context.skip();
     const invalid = join(home, "Applications", name, "Contents/MacOS/hopper");
     const valid = join(home, "Applications/Hopper Z.app/Contents/MacOS/hopper");
     await mkdir(invalid, { recursive: true });

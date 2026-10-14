@@ -70,11 +70,7 @@ it("rejects a ZIP central directory larger than the metadata read budget", async
   const writer = new ZipWriter(new Uint8ArrayWriter());
   const comment = "c".repeat(65_000);
   for (let index = 0; index < 129; index += 1)
-    await writer.add(
-      `entry-${index}.txt`,
-      new TextReader("x"),
-      { comment },
-    );
+    await writer.add(`entry-${index}.txt`, new TextReader("x"), { comment });
   await writeFile(archive, await writer.close());
   expect((await stat(archive)).size).toBeGreaterThan(
     ZIP_METADATA_READ_MAX_BYTES,

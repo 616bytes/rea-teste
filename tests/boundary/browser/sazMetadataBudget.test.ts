@@ -1,11 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import {
-  Uint8ArrayReader,
-  Uint8ArrayWriter,
-  ZipWriter,
-} from "@zip.js/zip.js";
+import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it } from "vitest";
 
 import { decodeSazCapture } from "../../../src/browser/history/SazCapture.js";

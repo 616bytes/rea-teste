@@ -55,10 +55,7 @@ it("threads the selected host and environment into system diagnostics", async ()
   await host.macosVersion();
   await host.executable(process.execPath);
 
-  expect(calls.map(({ command }) => command)).toEqual([
-    "which",
-    "sw_vers",
-  ]);
+  expect(calls.map(({ command }) => command)).toEqual(["which", "sw_vers"]);
   expect(
     calls.every(({ environment: observed }) => observed === environment),
   ).toBe(true);
@@ -110,9 +107,9 @@ it("does not run a linker probe for a supported Linux Hopper launcher", async ()
     },
   });
 
-  await expect(
-    host.supportedLinuxHopper("/verified/hopper"),
-  ).resolves.toBe(true);
+  await expect(host.supportedLinuxHopper("/verified/hopper")).resolves.toBe(
+    true,
+  );
   expect(calls).toEqual([]);
 });
 

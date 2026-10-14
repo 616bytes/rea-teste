@@ -359,8 +359,9 @@ export const linuxHopperLauncherCandidates = (
 /** Compose package-manager and pinned-launcher checks from the caller environment. */
 export const systemLinuxHopperInstallHost = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  supportsLauncher: (path: string) => Promise<boolean> =
-    linuxHopperBinarySupported,
+  supportsLauncher: (
+    path: string,
+  ) => Promise<boolean> = linuxHopperBinarySupported,
 ): LinuxHopperInstallHost => ({
   distribution: readLinuxDistribution,
   download: downloadHopperPackage,
@@ -371,8 +372,7 @@ export const systemLinuxHopperInstallHost = (
   async launcherStatus(path) {
     try {
       await access(path);
-      if (!(await supportsLauncher(path)))
-        return "unsupported_hopper_build";
+      if (!(await supportsLauncher(path))) return "unsupported_hopper_build";
       return "ready";
     } catch (cause: unknown) {
       // best-effort cleanup: optional launcher probing; unreadable means missing.

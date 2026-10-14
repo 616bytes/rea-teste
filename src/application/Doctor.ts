@@ -592,9 +592,7 @@ const readMacosVersion = async (
   }
 };
 
-const executableAvailable = async (
-  path: string,
-): Promise<boolean> => {
+const executableAvailable = async (path: string): Promise<boolean> => {
   try {
     await access(path, constants.X_OK);
     return (await stat(path)).isFile();

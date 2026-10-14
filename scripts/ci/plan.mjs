@@ -10,11 +10,14 @@ const HOST_TEST_OWNERS = ["apple", "package", "sqlite"];
 // workflows' release, publication and self-hosted runner safeguards.
 const GUARDED_WORKFLOWS = new Set([
   ".github/workflows/pr-title.yml",
+  ".github/workflows/pr-readiness.yml",
   ".github/workflows/ci-full-pr.yml",
   ".github/workflows/release.yml",
+  ".github/workflows/release-recovery.yml",
   ".github/workflows/real-ghidra-windows.yml",
   ".github/workflows/sqlite-runtime.yml",
   ".github/workflows/ci-timings.yml",
+  ".github/workflows/mutation.yml",
 ]);
 // Sources compiled by build-conformance-fixtures.mjs. The readiness journey
 // analyzes the built C fixture as well as its own applications.

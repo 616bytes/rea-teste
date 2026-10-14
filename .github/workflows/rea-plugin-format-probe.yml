@@ -1,0 +1,60 @@
+name: REA plugin formatter probe
+
+on:
+  pull_request:
+    paths:
+      - "plugins/rea-agent-plugin/**"
+      - ".github/workflows/rea-plugin-format-probe.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  format-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Format only plugin files reported by the checker
+        run: |
+          node_modules/.bin/oxfmt --write \
+            plugins/rea-agent-plugin/.claude-plugin/plugin.json \
+            plugins/rea-agent-plugin/.codex-plugin/plugin.json \
+            plugins/rea-agent-plugin/.mcp.json \
+            plugins/rea-agent-plugin/plugin.json \
+            plugins/rea-agent-plugin/scripts/validate-plugin.mjs \
+            plugins/rea-agent-plugin/skills/rea-repository-contributor/SKILL.md \
+            plugins/rea-agent-plugin/skills/reverse-engineer-anything/SKILL.md \
+            plugins/rea-agent-plugin/templates/agent-handoff.md \
+            plugins/rea-agent-plugin/templates/agent-task.md
+
+      - name: Emit formatted files for deterministic repair
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          const paths = [
+            "plugins/rea-agent-plugin/.claude-plugin/plugin.json",
+            "plugins/rea-agent-plugin/.codex-plugin/plugin.json",
+            "plugins/rea-agent-plugin/.mcp.json",
+            "plugins/rea-agent-plugin/plugin.json",
+            "plugins/rea-agent-plugin/scripts/validate-plugin.mjs",
+            "plugins/rea-agent-plugin/skills/rea-repository-contributor/SKILL.md",
+            "plugins/rea-agent-plugin/skills/reverse-engineer-anything/SKILL.md",
+            "plugins/rea-agent-plugin/templates/agent-handoff.md",
+            "plugins/rea-agent-plugin/templates/agent-task.md"
+          ];
+          for (const path of paths) {
+            console.log("FORMAT_PROBE_B64 " + path + " " + readFileSync(path).toString("base64"));
+          }
+          NODE

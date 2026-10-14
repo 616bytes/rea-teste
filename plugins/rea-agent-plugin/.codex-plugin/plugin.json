@@ -1,29 +1,18 @@
 {
   "name": "rea-reverse-engineering",
-  "version": "1.0.0",
-  "description": "Evidence-first software investigation workflows powered by REA (Reverse Engineer Anything).",
-  "author": {
-    "name": "Lucas Belucci Bellini",
-    "url": "https://github.com/Lucas-Belucci-Bellini"
-  },
+  "version": "1.1.0",
+  "description": "75 evidence-first software investigation and repository contribution skills, with specialist agent role briefs.",
+  "author": {"name":"Lucas Belucci Bellini","url":"https://github.com/Lucas-Belucci-Bellini"},
   "homepage": "https://rea.tools/",
   "repository": "https://github.com/Lucas-Belucci-Bellini/rea",
   "license": "MIT",
-  "keywords": [
-    "reverse-engineering",
-    "software-analysis",
-    "mcp",
-    "binary-analysis",
-    "electron",
-    "dotnet",
-    "android"
-  ],
+  "keywords": ["reverse-engineering","software-analysis","mcp","binary-analysis","agent-skills","repository-contribution","claude-code","codex"],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "REA Reverse Engineering",
     "shortDescription": "Investigate software with evidence",
-    "longDescription": "Use REA's MCP tools and evidence-first workflows to inspect authorized software, trace behavior and dependencies, explain findings with confidence levels, and validate compatible implementations.",
+    "longDescription": "Use 75 curated REA skills and the MCP server to investigate authorized software, map architecture, validate provider boundaries, improve tests, and prepare reviewed repository changes.",
     "developerName": "Lucas Belucci Bellini",
     "websiteURL": "https://rea.tools/"
   }

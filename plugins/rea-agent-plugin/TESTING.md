@@ -1,6 +1,6 @@
 # REA plugin validation and integration testing
 
-## Static package validation
+## Static validation
 
 Run from the repository root:
 
@@ -8,24 +8,23 @@ Run from the repository root:
 node plugins/rea-agent-plugin/scripts/validate-plugin.mjs
 ```
 
-The validator checks that manifests and MCP configuration are valid JSON, that plugin names and versions agree, that required files exist, that the MCP entry point uses the expected published `rea-agents` package, and that every bundled skill has a `SKILL.md` with matching frontmatter metadata.
+The validator checks JSON manifests and version parity, MCP configuration, existence/metadata for each skill, minimum skill count, catalog-link consistency, specialist-agent frontmatter/count, and required docs. It checks structure; it does not prove every workflow works in a real client.
 
-GitHub Actions runs the same static validation for pull requests and pushes that change the plugin package or its workflow.
+## Real-client checklist
 
-## Real-client integration checklist
+Test with current supported versions of Claude Code and Codex; record versions/output and do not mark a check passed without running it.
 
-Run these checks manually in supported, current versions of Claude Code and Codex. Record the exact versions and outputs; do not mark an item passed without running it.
+- [ ] Install/load the plugin for that client version.
+- [ ] Confirm all 75 skills can be discovered/browsed.
+- [ ] In Claude Code, confirm specialist definitions appear and a real subagent returns a read-only evidence-based report.
+- [ ] In Codex, confirm skills/MCP discovery and determine whether this surface provides actual subagent delegation; role files alone are not proof.
+- [ ] Confirm the `rea` MCP server starts and exposes tools.
+- [ ] Run read-only analysis on authorized software/data.
+- [ ] In a REA checkout, ask the agent to read `AGENTS.md`/`CONTRIBUTING.md`, inspect Git state, and propose a small test-backed task.
+- [ ] Verify unrelated work is preserved, tests are added when appropriate, and commands/results are represented accurately.
+- [ ] Verify agents do not mark PRs ready, attest to human review, merge, or bypass checks.
+- [ ] Record failure details, provider prerequisites, and unsupported components.
 
-- [ ] Install or load the plugin using the documented workflow for the client version.
-- [ ] Confirm the plugin and both bundled skills are discoverable.
-- [ ] Confirm the `rea` MCP server starts and exposes its tools.
-- [ ] Run a small read-only analysis against a file or application you own or are authorized to inspect.
-- [ ] Confirm the report distinguishes confirmed evidence, hypotheses, unknowns, and provider limitations.
-- [ ] In a REA checkout, ask the agent to read `AGENTS.md` and `CONTRIBUTING.md`, inspect git status, and propose a small change before editing.
-- [ ] Verify the agent preserves unrelated work, adds focused tests when appropriate, and reports commands/results accurately.
-- [ ] Verify the agent does not mark a PR ready, attest to human review, merge, or bypass repository checks.
-- [ ] Record failures, environment details, and any provider-specific prerequisites.
+## What static checks do not prove
 
-## What static validation does not prove
-
-A passing static check is not a full integration test. It does not install Claude Code or Codex, launch the remote npm package, verify provider availability, prove that an analysis works end-to-end, or prove that an agent can create branches or PRs with the user's credentials. Those checks depend on the real client, local environment, installed providers, and granted permissions.
+Passing validation does not install clients, launch the published `rea-agents` package, confirm MCP discovery, start external providers, verify real-provider output, or prove GitHub write permission. Those require the real client, local environment, provider installation, and explicit permissions.

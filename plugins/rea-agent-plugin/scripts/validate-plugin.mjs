@@ -6,96 +6,92 @@ import { fileURLToPath } from "node:url";
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const errors = [];
 const checks = [];
-
-function check(condition, message) {
-  if (condition) checks.push(message);
-  else errors.push(message);
-}
-
+function check(condition, message) { if (condition) checks.push(message); else errors.push(message); }
 function readJson(relativePath) {
-  try {
-    return JSON.parse(readFileSync(resolve(pluginRoot, relativePath), "utf8"));
-  } catch (error) {
-    errors.push(relativePath + ": invalid or unreadable JSON (" + error.message + ")");
-    return null;
-  }
+  try { return JSON.parse(readFileSync(resolve(pluginRoot, relativePath), "utf8")); }
+  catch (error) { errors.push(relativePath + ": invalid or unreadable JSON (" + error.message + ")"); return null; }
 }
-
-function exists(relativePath) {
-  return existsSync(resolve(pluginRoot, relativePath));
-}
+function exists(relativePath) { return existsSync(resolve(pluginRoot, relativePath)); }
 
 const portable = readJson("plugin.json");
 const claude = readJson(".claude-plugin/plugin.json");
 const codex = readJson(".codex-plugin/plugin.json");
 const mcp = readJson(".mcp.json");
-
-for (const [label, manifest] of [
-  ["portable", portable],
-  ["Claude Code", claude],
-  ["Codex", codex],
-]) {
+for (const [label, manifest] of [["portable",portable],["Claude Code",claude],["Codex",codex]]) {
   if (!manifest) continue;
-  check(manifest.name === "rea-reverse-engineering", label + " manifest has the expected plugin name");
-  check(typeof manifest.version === "string" && /^\d+\.\d+\.\d+$/.test(manifest.version), label + " manifest has a semantic version");
-  check(typeof manifest.description === "string" && manifest.description.trim().length > 0, label + " manifest has a description");
+  check(manifest.name === "rea-reverse-engineering", label + " manifest has expected plugin name");
+  check(typeof manifest.version === "string" && /^\\d+\\.\\d+\\.\\d+$/.test(manifest.version), label + " manifest has semantic version");
+  check(typeof manifest.description === "string" && manifest.description.trim().length > 0, label + " manifest has description");
 }
-
 if (portable && codex) {
-  check(portable.version === codex.version, "portable and Codex manifest versions match");
-  check(portable.name === codex.name, "portable and Codex manifest names match");
+  check(portable.version === codex.version, "portable and Codex versions match");
+  check(portable.name === codex.name, "portable and Codex names match");
 }
 if (portable && claude) {
-  check(portable.version === claude.version, "portable and Claude Code manifest versions match");
-  check(portable.name === claude.name, "portable and Claude Code manifest names match");
+  check(portable.version === claude.version, "portable and Claude versions match");
+  check(portable.name === claude.name, "portable and Claude names match");
 }
-
-for (const relativePath of ["README.md", "TESTING.md", "AGENT_WORKFLOW.md", ".mcp.json", "templates/agent-task.md", "templates/agent-handoff.md"]) {
-  check(exists(relativePath), "required file exists: " + relativePath);
+for (const path of ["README.md","TESTING.md","AGENT_WORKFLOW.md","AGENTS_AND_SUBAGENTS.md","SKILLS_CATALOG.md",".mcp.json","templates/agent-task.md","templates/agent-handoff.md"]) {
+  check(exists(path), "required file exists: " + path);
 }
-
 if (portable) {
-  check(typeof portable.skills === "string" && exists(portable.skills.replace(/^\.\//, "")), "portable manifest points to an existing skills directory");
-  check(typeof portable.mcpServers === "string" && exists(portable.mcpServers.replace(/^\.\//, "")), "portable manifest points to an existing MCP configuration");
+  check(typeof portable.skills === "string" && exists(portable.skills.replace(/^\\.\\//, "")), "portable manifest points to existing skills directory");
+  check(typeof portable.mcpServers === "string" && exists(portable.mcpServers.replace(/^\\.\\//, "")), "portable manifest points to existing MCP configuration");
 }
-
 if (mcp) {
   const server = mcp.mcpServers?.rea;
   check(Boolean(server), ".mcp.json declares the rea MCP server");
   if (server) {
     check(server.command === "npx", "REA MCP server uses npx");
-    check(Array.isArray(server.args) && server.args.includes("rea-agents@latest") && server.args.includes("mcp"), "REA MCP command invokes the published rea-agents MCP entry point");
+    check(Array.isArray(server.args) && server.args.includes("rea-agents@latest") && server.args.includes("mcp"), "MCP invokes published rea-agents entry point");
   }
 }
 
 const skillsRoot = resolve(pluginRoot, "skills");
 let skillDirectories = [];
-try {
-  skillDirectories = readdirSync(skillsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
-} catch (error) {
-  errors.push("skills/: unable to read skills directory (" + error.message + ")");
-}
-
-check(skillDirectories.length >= 2, "plugin contains at least two reusable skills");
-
+try { skillDirectories = readdirSync(skillsRoot, {withFileTypes:true}).filter(e=>e.isDirectory()); }
+catch (error) { errors.push("skills/: unable to read directory (" + error.message + ")"); }
+check(skillDirectories.length >= 70, "plugin includes at least 70 skills (found " + skillDirectories.length + ")");
+const catalog = exists("SKILLS_CATALOG.md") ? readFileSync(resolve(pluginRoot,"SKILLS_CATALOG.md"),"utf8") : "";
+const catalogSlugs = new Set([...catalog.matchAll(/\\]\\(\\.\\/skills\\/([a-z0-9-]+)\\/SKILL\\.md\\)/g)].map(m=>m[1]));
+check(Boolean(catalog), "skills catalog exists and is readable");
+const allSlugs = new Set();
 for (const entry of skillDirectories) {
-  const skillName = entry.name;
-  const skillPath = resolve(skillsRoot, skillName, "SKILL.md");
-  check(existsSync(skillPath), "skill " + skillName + " has a SKILL.md file");
-  if (!existsSync(skillPath)) continue;
-
-  const skill = readFileSync(skillPath, "utf8");
-  const frontmatter = skill.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  check(Boolean(frontmatter), "skill " + skillName + " has YAML frontmatter");
-  if (frontmatter) {
-    check(new RegExp("^name:\\s*" + skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*$", "m").test(frontmatter[1]), "skill " + skillName + " frontmatter name matches its directory");
-    check(/^description:\s*.+$/m.test(frontmatter[1]), "skill " + skillName + " has a description");
+  const name=entry.name, path=resolve(skillsRoot,name,"SKILL.md");
+  check(existsSync(path), "skill "+name+" has SKILL.md");
+  if(!existsSync(path)) continue;
+  const content=readFileSync(path,"utf8"), fm=content.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);
+  check(Boolean(fm), "skill "+name+" has YAML frontmatter");
+  if(fm) {
+    check(fm[1].split(/\\r?\\n/).some(line=>line===("name: "+name)), "skill "+name+" frontmatter name matches directory");
+    check(/^description:\\s*.+$/m.test(fm[1]), "skill "+name+" has a description");
+    check(content.length>=700, "skill "+name+" contains substantive workflow guidance");
   }
-  check(skill.includes("## "), "skill " + skillName + " has documented sections");
+  check(content.includes("## "), "skill "+name+" has documented sections");
+  check(catalogSlugs.has(name), "skill "+name+" is linked from catalog");
+  allSlugs.add(name);
 }
+for(const slug of catalogSlugs) check(allSlugs.has(slug), "catalog link resolves to skill "+slug);
 
-console.log("REA plugin validation: " + checks.length + " checks passed; " + errors.length + " failed.\n");
-for (const item of checks) console.log("PASS  " + item);
-for (const item of errors) console.error("FAIL  " + item);
-
-if (errors.length > 0) process.exitCode = 1;
+const agentsRoot=resolve(pluginRoot,"agents");
+let agentFiles=[];
+try { agentFiles=readdirSync(agentsRoot,{withFileTypes:true}).filter(e=>e.isFile()&&e.name.endsWith(".md")); }
+catch(error) { errors.push("agents/: unable to read agent directory ("+error.message+")"); }
+check(agentFiles.length>=8, "plugin includes at least eight specialist agent definitions");
+for(const entry of agentFiles) {
+  const name=entry.name.replace(/\\.md$/,""), content=readFileSync(resolve(agentsRoot,entry.name),"utf8");
+  const fm=content.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);
+  check(Boolean(fm), "agent "+name+" has YAML frontmatter");
+  if(fm) {
+    check(fm[1].split(/\\r?\\n/).some(line=>line===("name: "+name)), "agent "+name+" name matches filename");
+    check(/^description:\\s*.+$/m.test(fm[1]), "agent "+name+" has a description");
+    check(/^tools:\\s*.+$/m.test(fm[1]), "agent "+name+" declares tools");
+  }
+  check(content.length>=700, "agent "+name+" contains substantive role guidance");
+  check(content.includes("## "), "agent "+name+" has documented sections");
+}
+console.log("REA plugin validation: "+checks.length+" checks passed; "+errors.length+" failed.\\n");
+for(const item of checks) console.log("PASS  "+item);
+for(const item of errors) console.error("FAIL  "+item);
+console.log("Inventory: "+skillDirectories.length+" skills, "+agentFiles.length+" specialist agent definitions.");
+if(errors.length>0) process.exitCode=1;

@@ -1,78 +1,75 @@
 # REA Reverse Engineering Plugin
 
-A packaged agent plugin for **Claude Code** and **Codex**. It combines evidence-first software investigation with a repository-contribution workflow.
+A packaged plugin for **Claude Code** and **Codex**, with **75 REA skills** and **11 specialist agent definitions**. It supports evidence-first reverse engineering and repository contributions.
 
-REA's upstream project already provides an interactive setup flow for Claude Code and Codex. This folder is an additional portable plugin package; it does not replace the main repository's existing setup tooling.
+## Included
 
-## What agents can do
+- **75 skills:** 2 foundational skills plus 73 task-specific workflows for issue intake, architecture, static analysis, providers, execution boundaries, tests, performance, docs, packaging, and PR handoff.
+- **11 specialist agents:** Claude Code subagents in `agents/` for coordination, triage, architecture, reverse engineering, provider work, implementation, testing, scope review, performance, docs, and independent review.
+- **Portable skill layer:** Codex and Claude Code can use the skill catalog. The current Codex plugin manifest registers skills and MCP, not automatic subagent discovery from `agents/`. In Codex, treat agent files as role briefs unless the installed surface confirms actual subagent delegation.
+- **REA MCP server:** `.mcp.json` launches the published `rea-agents@latest` package, not unpublished source changes in this fork.
 
-The bundled skills support two connected workflows:
+Start with [SKILLS_CATALOG.md](./SKILLS_CATALOG.md), [AGENTS_AND_SUBAGENTS.md](./AGENTS_AND_SUBAGENTS.md), and [AGENT_WORKFLOW.md](./AGENT_WORKFLOW.md). Use [the task contract](./templates/agent-task.md) and [handoff template](./templates/agent-handoff.md) for contribution work.
 
-- **Investigate software:** gather evidence about an authorized application's behavior, structure, dependencies, and implementation constraints.
-- **Contribute to the REA repository:** understand repository instructions, frame an issue, inspect code, plan a scoped fix, add tests/docs, run checks, and prepare a reviewable handoff.
+## Authority and safety limits
 
-See [AGENT_WORKFLOW.md](./AGENT_WORKFLOW.md) for the recommended end-to-end loop. Use [the task contract](./templates/agent-task.md) to assign work and [the handoff template](./templates/agent-handoff.md) to report results consistently.
+The plugin does not grant GitHub credentials, filesystem access, branch-push rights, provider licenses, or merge authority. Agent operations depend on the connected client, environment, available tools, and user permissions. Current repository rules and contribution-scope boundaries remain authoritative.
 
-The plugin does not grant GitHub permissions, credentials, filesystem access, branch-push rights, or merge authority. Actual operations depend on the connected agent's tools and permissions. Repository policy remains authoritative: a human must review and own the final diff and readiness decision.
+Agents must preserve unrelated changes, avoid working directly on `main`, report checks honestly, leave human readiness declarations unchecked, and never attest to human review, approve their own changes, merge, change branch protection, or bypass required checks.
 
 ## Requirements
 
-- Node.js version supported by REA and npm.
+- Supported Node.js/npm runtime.
 - Network access for the first `npx` package run.
-- An authorized target for analysis.
-- Depending on the target, optional analysis providers such as Hopper, Ghidra, IDA, JADX, adb, or other tools documented by REA.
+- Software/data the user owns or is authorized to analyze.
+- Optional analysis providers only for workflows that need them.
 
-The MCP configuration launches the published `rea-agents` npm package using `npx -y rea-agents@latest mcp`. That means it follows the published package, **not uncommitted changes in this GitHub fork**. To test source changes in this repository, use its development instructions and local CLI instead.
+## Important files
 
-## Package contents
-
-- `plugin.json`: portable Agent Plugins manifest.
+- `plugin.json`: portable manifest.
+- `.claude-plugin/plugin.json`: Claude Code manifest.
 - `.codex-plugin/plugin.json`: Codex-compatible manifest.
-- `.claude-plugin/plugin.json`: Claude Code plugin manifest.
 - `.mcp.json`: REA MCP server registration.
-- `skills/reverse-engineer-anything/SKILL.md`: evidence-first investigation workflow.
-- `skills/rea-repository-contributor/SKILL.md`: repository contribution workflow for coding agents.
-- `templates/agent-task.md`: reusable task contract.
-- `templates/agent-handoff.md`: consistent implementation report.
-- `scripts/validate-plugin.mjs`: static package validator.
-- `AGENT_WORKFLOW.md`: end-to-end agent workflow and authority boundaries.
-- `TESTING.md`: validation scope and limitations.
+- `skills/*/SKILL.md`: workflows.
+- `agents/*.md`: Claude Code specialist definitions and reusable role briefs.
+- `SKILLS_CATALOG.md`: skill inventory and routing index.
+- `AGENTS_AND_SUBAGENTS.md`: subagent routing and client caveats.
+- `scripts/validate-plugin.mjs`: structural/count/catalog validator.
+- `TESTING.md`: static and real-client test procedures.
 
-## Automated package checks
+## Validate
 
-From the repository root, run:
+Run from the repository root:
 
 ```bash
 node plugins/rea-agent-plugin/scripts/validate-plugin.mjs
 ```
 
-The same static validation runs through GitHub Actions when the plugin package or its workflow changes. A passing check does **not** replace the real installation and end-to-end checks described below and in [TESTING.md](./TESTING.md).
+The GitHub workflow runs the same static validator. Static checks do not install Claude Code/Codex, launch a real provider, or prove end-to-end analysis.
 
 ## Use with Codex
 
-Use the folder `plugins/rea-agent-plugin` as the plugin root in a supported Codex plugin/marketplace workflow. For local testing, add this folder as a plugin source/marketplace entry using the instructions for your installed Codex version, then enable **REA Reverse Engineering** and start a new session.
+Select `plugins/rea-agent-plugin` as the plugin root using the supported workflow for the installed Codex version. Enable **REA Reverse Engineering** and start a new session. Check actual subagent support instead of assuming the role files are auto-registered.
 
 ## Use with Claude Code
 
-Add this directory as a local plugin marketplace/source according to the Claude Code plugin documentation, then install/enable `rea-reverse-engineering`. Restart Claude Code after installation and confirm the `rea` MCP server is available.
+Add this directory as a local plugin marketplace/source using the installed version's supported workflow, install/enable `rea-reverse-engineering`, restart, and confirm skills, specialist subagents, and the `rea` MCP server are discoverable.
 
-If you prefer REA's built-in setup, run:
+The main REA setup workflow is:
 
 ```bash
 npx rea-agents@latest setup
 ```
 
-Choose Claude Code and/or Codex, review the exact configuration changes, approve them, and restart the selected agent. This path installs the workflow and registers the matching MCP server.
+Review configuration changes before approving them.
 
 ## Verify the connection
 
-1. Start a new agent session.
-2. Confirm the plugin and both skills are discoverable.
-3. Confirm the `rea` MCP server is listed and its tools are available.
-4. Ask for a small, read-only analysis of a file or application you own or are authorized to inspect.
-5. For repository work, ask the agent to summarize `AGENTS.md` and `CONTRIBUTING.md`, propose a tiny test-backed change, and report exactly which checks it actually ran.
-6. If REA is missing, run the relevant readiness checks from the main repository's `docs/installation.md`; do not assume an analysis provider is installed just because MCP connected.
+1. Run the static validator.
+2. In Claude Code, delegate one read-only architecture/triage task and inspect the evidence returned by the actual subagent.
+3. In Codex, confirm skill/MCP discovery and determine whether real subagent delegation is available.
+4. Run a read-only analysis against software/data you own or are authorized to inspect.
+5. In a REA checkout, verify the agent reads `AGENTS.md` and `CONTRIBUTING.md`, inspects Git state, adds focused tests when appropriate, and reports actual command results.
+6. Record exact client versions, provider availability, unrun checks, and failures.
 
-## Safety and license notes
-
-Analyze only software and data you own or are authorized to examine. Runtime analysis may have side effects. Commercial tools remain subject to their own licenses. The plugin does not grant licenses to external tools or bypass access controls.
+Analyze only authorized software. Runtime analysis may have side effects. External tools remain subject to their licenses. A disclaimer does not create permission or containment and does not override REA contribution-scope rules.

@@ -1137,6 +1137,39 @@ on the shell `PATH`. Use the setup command above for the guided setup
 journey, `npx -y rea-agents@latest` for unattended one-off commands, or install globally
 with `npm install --global rea-agents` for a shell-visible `rea` command.
 
+### MCP launch fails with npm EOVERRIDE
+
+`npx` can inspect the working directory's `package.json` before starting REA.
+If npm rejects a dependency override there, the MCP launch fails with
+`EOVERRIDE` even when REA is already cached. This can affect clients such as
+OpenCode that launch local MCP servers from the selected workspace. REA has
+not started at this point, so it cannot return an MCP error or repair the
+workspace's npm configuration.
+
+Use an installed REA executable to avoid package-runner dependency inspection:
+
+1. From a directory outside the affected project, install REA with
+   `npm install --global rea-agents`.
+2. In a normal shell, run the installed executable to preview the registration:
+
+   ```bash
+   rea setup --client opencode --dry-run
+   ```
+
+3. Run `rea setup --client opencode`, review the proposed changes, and approve
+   them. Replace `opencode` with your [client ID](#supported-agents) as needed.
+4. Restart the client and reconnect from the affected workspace.
+
+Run setup through `rea`, not `npx` or `npm exec`: package-runner setup registers
+the package runner again. Installed setup registers the executable entrypoint;
+on Windows it registers Node and the REA script by absolute path. If `rea` is
+not found, make the global npm executable directory available on your shell's
+`PATH` first. Keep the selected workspace as the MCP working directory so
+relative input paths retain their meaning. There is no need to change the
+project's dependency overrides to use this recovery route.
+
+### Optional curl installer
+
 The optional curl wrapper installs only the global npm package:
 
 ```bash

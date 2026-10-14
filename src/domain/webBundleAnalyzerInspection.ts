@@ -308,11 +308,8 @@ const addWebMcpDeclaration = (
   const declaredProperties = t.isObjectExpression(schema)
     ? objectValue(schema, "properties")
     : undefined;
-  const propertyObject = t.isObjectExpression(declaredProperties)
-    ? declaredProperties
-    : schema;
-  const schemaPropertyNames = t.isObjectExpression(propertyObject)
-    ? propertyObject.properties.flatMap((property) =>
+  const schemaPropertyNames = t.isObjectExpression(declaredProperties)
+    ? declaredProperties.properties.flatMap((property) =>
         t.isObjectProperty(property)
           ? [
               semanticStaticPropertyName(property.key, property.computed),

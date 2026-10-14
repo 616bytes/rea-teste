@@ -1022,6 +1022,41 @@ describe("web metadata key semantics", () => {
   });
 });
 
+describe.each(["inputSchema", "input_schema"])("WebMCP %s fields", (key) => {
+  it.each([
+    { schema: '{ type: "object" }', names: [] },
+    { schema: '{ type: "object", properties: fields }', names: [] },
+    { schema: '{ type: "object", properties: null }', names: [] },
+    {
+      schema: '{ type: "object", properties: { actual: { type: "string" } } }',
+      names: ["actual"],
+    },
+  ])(
+    "reports only literal property names from $schema",
+    ({ schema, names }) => {
+      const result = analyzeCapturedWebBundle(
+        inspection(
+          `document.modelContext.registerTool({ name: "lookup", description: "Lookup tool", ${key}: ${schema} });`,
+        ),
+      );
+
+      expect(result.observations.webmcp_declarations).toEqual([
+        {
+          name: "lookup",
+          description: "Lookup tool",
+          schema_property_names: names,
+          trust: "page-declared-untrusted",
+          location: {
+            script_key: `scr_${"1".repeat(64)}`,
+            line: 1,
+            column: 0,
+          },
+        },
+      ]);
+    },
+  );
+});
+
 it("retains WebMCP declarations through optional member and call chaining", () => {
   const result = analyzeCapturedWebBundle(
     inspection(`

@@ -69,11 +69,30 @@ export function* collectSemanticMemberMutationsSteps(
     node: t.Node | undefined,
   ): void => {
     const identity = semanticRequireExportsIdentity(specifier, path);
+    let effectPath = identity.path;
+    // Only known value slots are primitive. Unknown or inherited selections
+    // can expose the container prototype and affect any subsequently read slot.
+    if (
+      effect === "escape" &&
+      identity.specifier === "process" &&
+      effectPath.length === 2 &&
+      (effectPath[0] === "env" || effectPath[0] === "argv")
+    ) {
+      const selected = effectPath[1];
+      if (
+        (typeof selected === "string" || typeof selected === "number") &&
+        (effectPath[0] === "env"
+          ? !Object.hasOwn(Object.prototype, selected)
+          : selected === "length" || semanticArrayIndex(selected) !== null)
+      )
+        return;
+      effectPath = [effectPath[0], null];
+    }
     const key = JSON.stringify([
       "required",
       identity.specifier,
       effect,
-      identity.path,
+      effectPath,
       node?.start,
       node?.end,
     ]);
@@ -81,7 +100,7 @@ export function* collectSemanticMemberMutationsSteps(
     recordedRequiredEffects.add(key);
     recordedEffectCount += 1;
     const effects = state.requiredModuleEffects.get(identity.specifier) ?? [];
-    effects.push({ path: identity.path, node, kind: effect });
+    effects.push({ path: effectPath, node, kind: effect });
     state.requiredModuleEffects.set(identity.specifier, effects);
   };
   // Ambient indexing owns aliases of global objects. Consume its canonical

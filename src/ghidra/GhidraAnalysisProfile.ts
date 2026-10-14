@@ -41,7 +41,7 @@ import {
   NATIVE_AOT_PROFILE_CONTRACT_REVISION,
 } from "../domain/native/nativeAotPe.js";
 
-const PROTOTYPE_CONSISTENCY_EVIDENCE = "bounded-x86-32-listing-pcode-v5";
+const PROTOTYPE_CONSISTENCY_EVIDENCE = "bounded-x86-32-listing-pcode-v6";
 const callRelationshipCoverage = "function-body-call-coverage-v5";
 
 /**

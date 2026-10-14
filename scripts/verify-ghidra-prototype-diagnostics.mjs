@@ -26,7 +26,10 @@ import { OwnedCommandFailure } from "../dist/process/OwnedCommand.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
-import { assertPrototypeDiagnosticsReport } from "./verify-ghidra-prototype-diagnostics-assertions.mjs";
+import {
+  assertPrototypeDiagnosticsReport,
+  assertPublicPrototypeDiagnostics,
+} from "./verify-ghidra-prototype-diagnostics-assertions.mjs";
 
 const exec = promisify(execFile);
 const defaultEntrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
@@ -258,6 +261,7 @@ async function verifyPublicWorkflows({
       "rea_stack_x87",
       "rea_cleanup_conflict",
       "rea_cleanup_control",
+      "rea_stack_control",
       "rea_forward_return",
       "rea_overwrite_return",
     ]) {
@@ -298,38 +302,7 @@ async function verifyPublicWorkflows({
         `${procedure}: CLI/MCP unknowns differ`,
       );
       const diagnostics = dossier.native_api.prototype_diagnostics;
-      if (procedure === "rea_stack_x87") {
-        assert.deepEqual(dossier.native_api.parameters, []);
-        assert.ok(
-          diagnostics.some(
-            (item) =>
-              item.kind === "stack-parameter-read" &&
-              item.classification === "conflict",
-          ),
-        );
-        assert.ok(diagnostics.some((item) => item.kind === "x87-expression"));
-      } else if (procedure === "rea_cleanup_conflict") {
-        assert.equal(dossier.native_api.parameters.length, 4);
-        assert.ok(diagnostics.some((item) => item.kind === "stack-cleanup"));
-      } else if (procedure === "rea_cleanup_control")
-        assert.deepEqual(
-          diagnostics.filter((item) => item.classification === "conflict"),
-          [],
-        );
-      else if (procedure === "rea_forward_return")
-        assert.ok(
-          diagnostics.some(
-            (item) =>
-              item.kind === "return-register-forwarding" &&
-              item.classification === "observation",
-          ),
-        );
-      else
-        assert.ok(
-          !diagnostics.some(
-            (item) => item.kind === "return-register-forwarding",
-          ),
-        );
+      assertPublicPrototypeDiagnostics(procedure, dossier.native_api);
       for (const facet of ["native_api", "assembly"]) {
         const view = await call("inspect_analysis_view", {
           source: {

@@ -38,6 +38,8 @@ _start:
     call rea_long_entry_prefix
     call rea_unowned_tail
     call rea_many_internal_jumps
+    call rea_wrapped_parameter_control
+    call rea_wrapped_store_control
     ret
 .size _start, .-_start
 
@@ -312,5 +314,26 @@ rea_many_internal_jumps:
     .endr
     ret $4
 .size rea_many_internal_jumps, .-rea_many_internal_jumps
+
+// Pointer arithmetic wraps at 32 bits. These two SUBs restore entry ESP.
+.globl rea_wrapped_parameter_control, rea_wrapped_store_control
+.type rea_wrapped_parameter_control, @function
+rea_wrapped_parameter_control:
+    mov %esp, %ecx
+    sub $0x80000000, %ecx
+    sub $0x80000000, %ecx
+    mov 4(%ecx), %eax
+    ret
+.size rea_wrapped_parameter_control, .-rea_wrapped_parameter_control
+
+.type rea_wrapped_store_control, @function
+rea_wrapped_store_control:
+    mov %esp, %ecx
+    sub $0x80000000, %ecx
+    sub $0x80000000, %ecx
+    movl $7, 8(%ecx)
+    mov 8(%esp), %eax
+    ret
+.size rea_wrapped_store_control, .-rea_wrapped_store_control
 
 .section .note.GNU-stack,"",@progbits

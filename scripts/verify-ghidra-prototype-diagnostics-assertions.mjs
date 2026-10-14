@@ -131,6 +131,8 @@ export function assertPrototypeDiagnosticsReport(report) {
     "rea_local_control",
     "rea_stack_control",
     "rea_written_slot_control",
+    "rea_wrapped_parameter_control",
+    "rea_wrapped_store_control",
     "rea_unknown_store_control",
     "rea_conditional_pointer_control",
     "rea_dynamic_stack_control",
@@ -146,6 +148,7 @@ export function assertPrototypeDiagnosticsReport(report) {
   );
   for (const [name, pattern] of [
     ["rea_written_slot_control", /data written by this entry prefix/u],
+    ["rea_wrapped_store_control", /data written by this entry prefix/u],
     ["rea_unknown_store_control", /unresolved aliasing/u],
     ["rea_conditional_pointer_control", /Raw p-code control flow/u],
     ["rea_userop_control", /unsupported user-op/u],
@@ -296,4 +299,58 @@ export function assertPrototypeDiagnosticsReport(report) {
     "observation",
   );
   return { checks: checked, check_count: checked.length, scope: report.scope };
+}
+
+/** Natural ELF/GCC imports do not have the seeded Windows prototype metadata. */
+export function assertPublicPrototypeDiagnostics(procedure, boundary) {
+  const diagnostics = boundary.prototype_diagnostics;
+  if (procedure === "rea_stack_x87") {
+    assert.deepEqual(boundary.parameters, []);
+    assert.ok(
+      diagnostics.some(
+        (item) =>
+          item.kind === "stack-parameter-read" &&
+          item.classification === "conflict",
+      ),
+    );
+    assert.ok(diagnostics.some((item) => item.kind === "x87-expression"));
+  } else if (
+    procedure === "rea_cleanup_conflict" ||
+    procedure === "rea_cleanup_control"
+  ) {
+    // Both RET immediates violate the naturally recovered caller-cleaned model.
+    // Only the seeded Windows probe makes rea_cleanup_control a stdcall control.
+    assert.equal(boundary.calling_convention, "__cdecl");
+    assert.equal(boundary.parameters.length, 4);
+    assert.ok(
+      diagnostics.some(
+        (item) =>
+          item.kind === "stack-cleanup" && item.classification === "conflict",
+      ),
+    );
+  } else if (procedure === "rea_stack_control") {
+    assert.equal(boundary.calling_convention, "__cdecl");
+    assert.equal(boundary.parameters.length, 1);
+    assert.deepEqual(
+      diagnostics.filter((item) => item.classification === "conflict"),
+      [],
+    );
+  } else if (procedure === "rea_forward_return") {
+    assert.ok(
+      diagnostics.some(
+        (item) =>
+          item.kind === "return-register-forwarding" &&
+          item.classification === "observation",
+      ),
+    );
+  } else {
+    assert.equal(
+      procedure,
+      "rea_overwrite_return",
+      "Unknown public prototype control",
+    );
+    assert.ok(
+      !diagnostics.some((item) => item.kind === "return-register-forwarding"),
+    );
+  }
 }

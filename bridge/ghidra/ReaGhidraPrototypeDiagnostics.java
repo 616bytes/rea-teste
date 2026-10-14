@@ -300,17 +300,21 @@ public final class ReaGhidraPrototypeDiagnostics {
     }
 
     private static Long propagatedOffset(PcodeOp operation, Map<Varnode, Long> offsets) {
+        // ESP-relative aliases live in the x86-32 address space. Keep a single
+        // signed displacement modulo 2^32 for both LOAD and STORE consumers;
+        // widening or narrowing a pointer does not preserve this affine model.
+        if (operation.getOutput().getSize() != 4) return null;
         if (operation.getOpcode() == PcodeOp.COPY) return offsets.get(operation.getInput(0));
         if (operation.getOpcode() != PcodeOp.INT_ADD && operation.getOpcode() != PcodeOp.INT_SUB) return null;
         Long left = offsets.get(operation.getInput(0));
         Varnode right = operation.getInput(1);
         if (left != null && right.isConstant()) {
             long constant = signedConstant(right);
-            return operation.getOpcode() == PcodeOp.INT_ADD ? left + constant : left - constant;
+            return (long) (int) (operation.getOpcode() == PcodeOp.INT_ADD ? left + constant : left - constant);
         }
         if (operation.getOpcode() == PcodeOp.INT_ADD && operation.getInput(0).isConstant()) {
             Long rightOffset = offsets.get(right);
-            if (rightOffset != null) return rightOffset + signedConstant(operation.getInput(0));
+            if (rightOffset != null) return (long) (int) (rightOffset + signedConstant(operation.getInput(0)));
         }
         return null;
     }

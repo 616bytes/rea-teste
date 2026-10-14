@@ -99,7 +99,7 @@ public class ReaPrototypeDiagnosticsProbe extends GhidraScript {
             HighFunctionDBUtil.commitParamsToDatabase(recovered.getHighFunction(), true,
                 ReturnCommitOption.COMMIT, SourceType.ANALYSIS);
             function.setSignatureSource(SourceType.ANALYSIS);
-            if (java.util.Set.of("rea_written_slot_control", "rea_unknown_store_control", "rea_conditional_pointer_control", "rea_dynamic_stack_control", "rea_userop_control", "rea_long_entry_prefix").contains(function.getName()))
+            if (java.util.Set.of("rea_written_slot_control", "rea_wrapped_store_control", "rea_unknown_store_control", "rea_conditional_pointer_control", "rea_dynamic_stack_control", "rea_userop_control", "rea_long_entry_prefix").contains(function.getName()))
                 function.updateFunction("__cdecl", new ReturnParameterImpl(VoidDataType.dataType, currentProgram),
                     Function.FunctionUpdateType.DYNAMIC_STORAGE_ALL_PARAMS, true, SourceType.ANALYSIS);
             if (java.util.Set.of("rea_forward_clear_xor", "rea_forward_clear_sub", "rea_forward_clear_and", "rea_forward_clear_test", "rea_many_forwarding").contains(function.getName()))
@@ -113,7 +113,7 @@ public class ReaPrototypeDiagnosticsProbe extends GhidraScript {
             if (function.getName().equals("rea_undefined_pointer_return"))
                 function.updateFunction("__cdecl", new ReturnParameterImpl(new PointerDataType(Undefined4DataType.dataType), currentProgram),
                     Function.FunctionUpdateType.DYNAMIC_STORAGE_ALL_PARAMS, true, SourceType.USER_DEFINED);
-            if (function.getName().equals("rea_cdecl_cleanup_conflict"))
+            if (function.getName().equals("rea_cdecl_cleanup_conflict") || function.getName().equals("rea_wrapped_parameter_control"))
                 function.updateFunction("__cdecl", new ReturnParameterImpl(IntegerDataType.dataType, currentProgram),
                     Function.FunctionUpdateType.DYNAMIC_STORAGE_ALL_PARAMS, true, SourceType.USER_DEFINED,
                     new ParameterImpl("input", IntegerDataType.dataType, currentProgram));

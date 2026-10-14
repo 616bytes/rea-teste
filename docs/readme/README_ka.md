@@ -1,6 +1,6 @@
 <div align="center">
 
-[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · **ქართული**
+[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · [Ελληνικά](README_el.md) · **ქართული**
 
 # REA: Reverse Engineer Anything
 
@@ -299,7 +299,7 @@ npx rea-agents@latest setup
 
 ## ვარსკვლავების ისტორია
 
-🎉 **110,000 GitHub ვარსკვლავი - დიდი მადლობა!**
+🎉 **200,000 GitHub ვარსკვლავი - დიდი მადლობა!**
 
 მადლობა ყველას, ვინც იყენებს REA-ს, აფიქსირებს შეცდომებს, ითხოვს ახალ ფუნქციებს, ამოწმებს ბილდებს და წვლილი შეაქვს პროექტის განვითარებაში.
 

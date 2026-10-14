@@ -114,6 +114,12 @@
     "dir": "ltr"
   },
   {
+    "code": "el",
+    "name": "Ελληνικά",
+    "readme": "docs/readme/README_el.md",
+    "dir": "ltr"
+  },
+  {
     "code": "ka",
     "name": "ქართული",
     "readme": "docs/readme/README_ka.md",

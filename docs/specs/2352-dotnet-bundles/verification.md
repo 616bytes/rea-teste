@@ -24,10 +24,13 @@ Executed on Windows x64 with Node 24.18.0, npm 11.16.0, and .NET SDK 8.0.416
   One POSIX-only regular-file assertion was skipped on Windows. Two existing
   `ArtifactOccurrenceIdentity.test.ts` POSIX mode assertions fail on Windows;
   both also failed on an isolated, unmodified `242e2b0` source snapshot with the
-  same results. No test assertions or platform selectors were weakened.
+  same results. The final source tree then passed all 42 selected tests in an
+  isolated WSL Ubuntu checkout with independent Linux dependencies, including
+  both POSIX assertions and all 20 bundle boundary tests. No test assertions or
+  platform selectors were weakened.
 - `npm run check:ci`, `npm run docs:check` and `npm run verify:test-discovery`
   passed. The dedicated temporary-directory hygiene runner passed both new
-  files (20 tests before the final I/O regression), with no owned residues.
+  files (21 tests on the final implementation), with no owned residues.
 
 The compiled CLI/MCP acceptance workflow took 8.4 seconds in a repeated run
 with existing build artifacts and a fresh session/workspace. Model token usage,

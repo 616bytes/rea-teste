@@ -182,6 +182,7 @@
     "verify:apktool": "npm run build:cached && node scripts/verify-apktool.mjs",
     "verify:pcap": "npm run build:cached && node scripts/verify-pcap.mjs",
     "verify:flutter": "npm run build:cached && node scripts/verify-flutter.mjs",
+    "verify:jvm": "npm run build:cached && node scripts/verify-jvm.mjs",
     "verify:adb": "npm run build:cached && node scripts/verify-adb.mjs",
     "verify:ghidra": "npm run build:cached && node scripts/verify-real-ghidra.mjs",
     "verify:ghidra:seeds": "npm run build:cached && node scripts/verify/ghidra/seeds.mjs",

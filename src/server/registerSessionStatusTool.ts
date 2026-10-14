@@ -26,6 +26,9 @@ export interface SessionAvailabilityProbes {
   readonly androidAnalysisAvailability: (
     signal: AbortSignal,
   ) => Promise<ProviderAvailability>;
+  readonly jvmAnalysisAvailability?: (
+    signal: AbortSignal,
+  ) => Promise<ProviderAvailability>;
   readonly adbAnalysisAvailability?: (
     signal: AbortSignal,
   ) => Promise<ProviderAvailability>;
@@ -57,6 +60,7 @@ export const registerSessionStatusTool = (
     startedAt,
     availabilityPolicy,
     androidAnalysisAvailability,
+    jvmAnalysisAvailability,
     adbAnalysisAvailability,
     apktoolAnalysisAvailability,
     jebAnalysisAvailability,
@@ -70,17 +74,20 @@ export const registerSessionStatusTool = (
         server.server,
       );
       let androidAvailability: ProviderAvailability;
+      let jvmAvailability: ProviderAvailability | undefined;
       let adbAvailability: ProviderAvailability | undefined;
       let apktoolAvailability: ProviderAvailability | undefined;
       let jebAvailability: JebAnalysisAvailability | undefined;
       try {
-        const [android, adb, apktool, jeb] = await Promise.all([
+        const [android, jvm, adb, apktool, jeb] = await Promise.all([
           androidAnalysisAvailability(context.mcpReq.signal),
+          jvmAnalysisAvailability?.(context.mcpReq.signal) ?? undefined,
           adbAnalysisAvailability?.(context.mcpReq.signal) ?? undefined,
           apktoolAnalysisAvailability?.(context.mcpReq.signal) ?? undefined,
           jebAnalysisAvailability?.(context.mcpReq.signal) ?? undefined,
         ] as const);
         androidAvailability = android;
+        jvmAvailability = jvm;
         adbAvailability = adb;
         apktoolAvailability = apktool;
         jebAvailability = jeb;
@@ -98,6 +105,9 @@ export const registerSessionStatusTool = (
         {
           ...availabilityPolicy(),
           androidAnalysisAvailability: androidAvailability,
+          ...(jvmAvailability === undefined
+            ? {}
+            : { jvmAnalysisAvailability: jvmAvailability }),
           ...(adbAvailability === undefined
             ? {}
             : { adbAnalysisAvailability: adbAvailability }),

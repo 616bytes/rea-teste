@@ -31,7 +31,8 @@ const checks = ({ node = true, host = true } = {}) => [
 describe("packaged setup support derivation", () => {
   it("keeps an installer-untested REA-supported distribution out of the automated Hopper path", () => {
     // The doctor host check passes on Kali, so reading installer applicability
-    // from it promised an automated install the packaged setup never offers.
+    // from it promised an automated install the packaged setup never offers,
+    // and Hopper readiness that setup never provides there.
     expect(
       packageSetupSupport(checks(), {
         platform: "linux",
@@ -39,14 +40,15 @@ describe("packaged setup support derivation", () => {
       }),
     ).toEqual({
       supportedSetupHost: true,
-      hopperReadinessRequired: true,
+      hopperReadinessRequired: false,
       hopperSetupSupported: false,
     });
   });
 
   it("keeps an arm64 host off the x86_64-only automated Hopper path", () => {
     // ubuntu-24.04-arm runs REA, but every pinned Linux Hopper package is
-    // x86_64, so packaged setup must not expect an automated install there.
+    // x86_64, so packaged setup must not expect an automated install or
+    // Hopper readiness there.
     expect(
       packageSetupSupport(checks(), {
         platform: "linux",
@@ -54,7 +56,7 @@ describe("packaged setup support derivation", () => {
       }),
     ).toEqual({
       supportedSetupHost: true,
-      hopperReadinessRequired: true,
+      hopperReadinessRequired: false,
       hopperSetupSupported: false,
     });
   });

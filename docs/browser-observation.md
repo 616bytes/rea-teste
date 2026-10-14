@@ -301,6 +301,12 @@ REA retains local observation data and removes only URL userinfo credentials, ex
   uses `websocket_connections` and `websocket_frames`. Drops in other event kinds
   and the aggregate total do not by themselves limit HTTP inventory. Proven
   modifications remain reportable despite incomplete inventory.
+  Repeated identical HTTP content samples establish multiplicity changes only
+  with complete request inventories; limited inventories retain known content
+  comparisons without interpreting duplicate sample counts as changes.
+  WebSocket stream inventories and connection counts likewise require complete
+  WebSocket coverage. Redirect resource types use only shared known metadata:
+  an omitted type leaves equality unknown rather than proving a modification.
 - Console observations with a stack source retain call type, argument types, timestamp, and source location. When console text capture is selected, already-delivered primitive values are retained verbatim; objects, getters, and remote properties are never expanded.
 - WebSocket observations retain direction, opcode, and payload byte length. When shape capture is selected, text frames are classified as text or complete value-free JSON shape; binary bytes, hashes, prefixes, and raw frames are never retained.
 - Storage observations always redact values. Key names, IndexedDB names, and cache names require `include_storage_keys`; stable content fingerprints require the additional `include_storage_fingerprints` selection. Cookie fingerprints cover cookies applicable to the current main-frame URL, including its path, rather than every cookie path on that origin. Other storage remains scoped to the origin. Cache bodies above 64 KiB and partial IndexedDB remote objects make fingerprint coverage incomplete, so identical observations remain `unknown`.

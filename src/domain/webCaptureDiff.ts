@@ -304,39 +304,50 @@ const networkResponseFields = [
   "mime_type",
   "encoded_data_length",
 ] as const;
-type NetworkResponseField = (typeof networkResponseFields)[number];
+const redirectMetadataFields = [
+  ...networkResponseFields,
+  "resource_type",
+] as const;
+type NetworkMetadataField = (typeof redirectMetadataFields)[number];
 
-const sharedNetworkResponseFields = (
+/** Own both comparable fields and completeness instead of deriving it from set sizes. */
+const sharedNetworkMetadata = (
   before: WebPageInspection,
   after: WebPageInspection,
-): ReadonlyMap<string, ReadonlySet<NetworkResponseField>> => {
-  const shared = new Map<string, Set<NetworkResponseField>>();
+): {
+  readonly fields: ReadonlyMap<string, ReadonlySet<NetworkMetadataField>>;
+  readonly complete: boolean;
+} => {
+  const shared = new Map<string, Set<NetworkMetadataField>>();
+  let complete = true;
+  const retainKnownFields = (
+    identity: string,
+    metadata: Pick<
+      WebPageInspection["network"]["requests"][number],
+      NetworkMetadataField
+    >,
+    required: readonly NetworkMetadataField[],
+  ): void => {
+    const fields = shared.get(identity) ?? new Set(required);
+    for (const field of required)
+      if (metadata[field] === null) {
+        fields.delete(field);
+        complete = false;
+      }
+    shared.set(identity, fields);
+  };
   for (const inspection of [before, after])
     for (const request of inspection.network.requests) {
       const identity = networkIdentity(request);
-      retainSharedResponseFields(shared, identity, request);
+      retainKnownFields(identity, request, networkResponseFields);
       for (const [index, redirect] of (request.redirects ?? []).entries())
-        retainSharedResponseFields(
-          shared,
+        retainKnownFields(
           redirectNetworkIdentity(identity, index),
           redirect,
+          redirectMetadataFields,
         );
     }
-  return shared;
-};
-
-const retainSharedResponseFields = (
-  shared: Map<string, Set<NetworkResponseField>>,
-  identity: string,
-  response: Pick<
-    WebPageInspection["network"]["requests"][number],
-    NetworkResponseField
-  >,
-): void => {
-  const fields = shared.get(identity) ?? new Set(networkResponseFields);
-  for (const field of networkResponseFields)
-    if (response[field] === null) fields.delete(field);
-  shared.set(identity, fields);
+  return { fields: shared, complete };
 };
 
 const redirectNetworkIdentity = (identity: string, index: number): string =>
@@ -362,20 +373,22 @@ const networkDimension = (
   const requestsComplete = [before, after].every((inspection) =>
     networkInventoryComplete(inspection, ["network_requests"]),
   );
-  const requestIdentities = networkIdentityCoverage(before, after);
   const webSocketInventoryComplete = [before, after].every((inspection) =>
     networkInventoryComplete(inspection, [
       "websocket_connections",
       "websocket_frames",
     ]),
   );
-  const responseFields = sharedNetworkResponseFields(before, after);
-  const responseFieldsComplete = [...responseFields.values()].every(
-    (fields) => fields.size === networkResponseFields.length,
-  );
+  const requestIdentities = networkIdentityCoverage(before, after);
+  const metadata = sharedNetworkMetadata(before, after);
   const selected = bodyShapesSelected(before) && bodyShapesSelected(after);
   const webSocketShapes =
     webSocketShapesSelected(before) && webSocketShapesSelected(after);
+  const projection = {
+    metadataFields: metadata.fields,
+    ambiguousIdentities: requestIdentities.ambiguousIdentities,
+    inventoryComplete: requestsComplete,
+  };
   const sources = new Map<string, BodyShapeSources>();
   if (selected) {
     const observedSources = (inspection: WebPageInspection) => {
@@ -435,23 +448,17 @@ const networkDimension = (
   );
   const compared = compareDimension(
     new Map([
-      ...networkMap(
-        before,
-        sources,
-        responseFields,
-        requestIdentities.ambiguousIdentities,
-      ),
-      ...webSocketMetadataMap(beforeWebSockets),
+      ...networkMap(before, sources, projection),
+      ...(webSocketInventoryComplete
+        ? webSocketMetadataMap(beforeWebSockets)
+        : []),
       ...beforeWebSocketPayload,
     ]),
     new Map([
-      ...networkMap(
-        after,
-        sources,
-        responseFields,
-        requestIdentities.ambiguousIdentities,
-      ),
-      ...webSocketMetadataMap(afterWebSockets),
+      ...networkMap(after, sources, projection),
+      ...(webSocketInventoryComplete
+        ? webSocketMetadataMap(afterWebSockets)
+        : []),
       ...afterWebSocketPayload,
     ]),
     requestsComplete &&
@@ -470,9 +477,9 @@ const networkDimension = (
         ? requestsComplete
         : identity.startsWith("ws_") && webSocketInventoryComplete,
   );
-  if (responseFieldsComplete) return compared;
+  if (metadata.complete) return compared;
   const responseEvidenceReason =
-    "HTTP response or redirect status, MIME type, or byte-count evidence is incomplete.";
+    "HTTP response or redirect status, MIME type, byte count, or resource-type evidence is incomplete.";
   if (compared.status === "changed") return compared;
   return {
     status: "unknown",
@@ -488,62 +495,71 @@ const networkDimension = (
 const networkMap = (
   inspection: WebPageInspection,
   sources: ReadonlyMap<string, BodyShapeSources>,
-  responseFields: ReadonlyMap<string, ReadonlySet<NetworkResponseField>>,
-  ambiguousIdentities: ReadonlySet<string>,
+  projection: {
+    readonly metadataFields: ReadonlyMap<
+      string,
+      ReadonlySet<NetworkMetadataField>
+    >;
+    readonly ambiguousIdentities: ReadonlySet<string>;
+    readonly inventoryComplete: boolean;
+  },
 ): ReadonlyMap<string, string> => {
-  const grouped = new Map<string, unknown[]>();
+  const grouped = new Map<string, string[]>();
   for (const request of inspection.network.requests) {
     const identity = networkIdentity(request);
     // A missing type can move repeated requests between these buckets. Neither
     // their counts nor fingerprints establish a change to that typed group.
-    if (ambiguousIdentities.has(identity)) continue;
+    if (projection.ambiguousIdentities.has(identity)) continue;
     const shapes = sources.get(identity);
     const values = grouped.get(identity) ?? [];
     const response: Record<string, unknown> = {};
-    for (const field of responseFields.get(identity) ?? [])
+    for (const field of projection.metadataFields.get(identity) ?? [])
       response[field] = request[field];
-    values.push({
-      ...response,
-      redirects: (request.redirects ?? []).map(
-        (
-          {
-            request_timestamp: _requestTimestamp,
-            redirect_event_timestamp: _redirectEventTimestamp,
-            ...redirect
+    values.push(
+      digestCanonicalValue({
+        ...response,
+        redirects: (request.redirects ?? []).map(
+          (
+            {
+              request_timestamp: _requestTimestamp,
+              redirect_event_timestamp: _redirectEventTimestamp,
+              ...redirect
+            },
+            index,
+          ) => {
+            const response: Partial<
+              Record<NetworkMetadataField, number | string>
+            > = {};
+            for (const field of projection.metadataFields.get(
+              redirectNetworkIdentity(identity, index),
+            ) ?? [])
+              if (redirect[field] !== null) response[field] = redirect[field];
+            return {
+              url: redirect.url,
+              response_url: redirect.response_url,
+              method: redirect.method,
+              ...response,
+            };
           },
-          index,
-        ) => {
-          const response: Partial<
-            Record<NetworkResponseField, number | string>
-          > = {};
-          for (const field of responseFields.get(
-            redirectNetworkIdentity(identity, index),
-          ) ?? [])
-            if (redirect[field] !== null) response[field] = redirect[field];
-          return {
-            url: redirect.url,
-            response_url: redirect.response_url,
-            method: redirect.method,
-            resource_type: redirect.resource_type,
-            ...response,
-          };
-        },
-      ),
-      initiator: request.initiator,
-      ...(shapes?.request === true
-        ? { request_shape: request.body_shapes.request }
-        : {}),
-      ...(shapes?.response === true
-        ? { response_shape: request.body_shapes.response }
-        : {}),
-    });
+        ),
+        initiator: request.initiator,
+        ...(shapes?.request === true
+          ? { request_shape: request.body_shapes.request }
+          : {}),
+        ...(shapes?.response === true
+          ? { response_shape: request.body_shapes.response }
+          : {}),
+      }),
+    );
     grouped.set(identity, values);
   }
   return new Map(
     [...grouped].map(([identity, values]) => [
       identity,
       digestCanonicalValue(
-        values.map((value) => digestCanonicalValue(value)).sort(),
+        // Repeated samples do not establish multiplicity across omissions;
+        // keep their known content without interpreting missing rows as change.
+        (projection.inventoryComplete ? values : [...new Set(values)]).sort(),
       ),
     ]),
   );

@@ -21,7 +21,7 @@ export const jvmInputSchemas = {
     class_prefix: localPathStringSchema
       .min(1)
       .regex(
-        /^[^./\\\s][^.\\\s]*$/u,
+        /^[^.\x2f\\\s][^.\\\s]*$/u,
         "Use a JVM slash-name prefix, for example org/example/Widget",
       )
       .optional(),

@@ -1,0 +1,21 @@
+{
+  "name": "rea-reverse-engineering",
+  "version": "1.0.0",
+  "description": "Evidence-first software investigation workflows powered by REA (Reverse Engineer Anything).",
+  "author": {
+    "name": "Lucas Belucci Bellini",
+    "url": "https://github.com/Lucas-Belucci-Bellini"
+  },
+  "homepage": "https://rea.tools/",
+  "repository": "https://github.com/Lucas-Belucci-Bellini/rea",
+  "license": "MIT",
+  "keywords": [
+    "reverse-engineering",
+    "software-analysis",
+    "mcp",
+    "binary-analysis",
+    "electron",
+    "dotnet",
+    "android"
+  ]
+}

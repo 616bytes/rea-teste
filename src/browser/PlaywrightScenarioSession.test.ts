@@ -153,7 +153,9 @@ const fixture = () => {
   mocks.storage = {
     initialize: vi.fn(async () => undefined),
     settle: vi.fn(async () => undefined),
-    close: vi.fn(async () => undefined),
+    close: vi.fn(async (stopLoading = false) => ({
+      loadingStopped: stopLoading,
+    })),
   };
   return { cleanup, page, storage: mocks.storage };
 };
@@ -254,6 +256,49 @@ it("transfers attached navigation stopping after storage cleanup fails", async (
       ([method]) => method === "Page.stopLoading",
     ),
   ).toHaveLength(2);
+  expect(cleanup.close).toHaveBeenCalledTimes(1);
+});
+
+it("transfers a late stop request after storage has already released", async () => {
+  const { cleanup, storage } = fixture();
+  const cancellation = new AbortController();
+  storage?.close.mockResolvedValue({ loadingStopped: false });
+  const attached = browserScenarioSchema.parse({
+    ...scenario,
+    browser: {
+      mode: "connect",
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "target",
+    },
+    environment: { service_workers: "block" },
+  });
+  const session = await PlaywrightScenarioSession.open(
+    attached,
+    {},
+    {
+      signal: cancellation.signal,
+    },
+  );
+  const restorationFailure = new Error("registration restoration failed");
+  let failRestoration = true;
+  mocks.policySend.mockImplementation(async (method: string) => {
+    if (method === "Runtime.evaluate" && failRestoration) {
+      failRestoration = false;
+      throw restorationFailure;
+    }
+    return policyResponse(method);
+  });
+
+  await expect(session.close(false)).rejects.toBe(restorationFailure);
+  expect(cleanup.close).not.toHaveBeenCalled();
+  cancellation.abort();
+  await expect(session.close()).resolves.toBe("disconnected-external");
+  expect(storage?.close.mock.calls).toEqual([[false], [true]]);
+  expect(
+    mocks.policySend.mock.calls.filter(
+      ([method]) => method === "Page.stopLoading",
+    ),
+  ).toHaveLength(1);
   expect(cleanup.close).toHaveBeenCalledTimes(1);
 });
 

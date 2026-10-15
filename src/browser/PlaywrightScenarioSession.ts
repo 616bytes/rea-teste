@@ -270,7 +270,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         let browserFailure: { readonly cause: unknown } | undefined;
         if (!storageReleased) {
           try {
-            await storage?.close(storageStopsLoading);
+            const result = await storage?.close(storageStopsLoading);
+            if (storageStopsLoading && result?.loadingStopped !== true)
+              policyStopsLoading = true;
           } catch (failure: unknown) {
             storageFailure = { cause: failure };
             // Ownership transfers only after the storage attempt is no longer
@@ -407,7 +409,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
       this.#policyStopsLoading = true;
     if (!this.#storageReleased) {
       try {
-        await this.storage?.close(stopLoading);
+        const result = await this.storage?.close(stopLoading);
+        if (stopLoading && result?.loadingStopped !== true)
+          this.#policyStopsLoading = true;
       } catch (failure: unknown) {
         storageFailure = { cause: failure };
         if (stopLoading) this.#policyStopsLoading = true;

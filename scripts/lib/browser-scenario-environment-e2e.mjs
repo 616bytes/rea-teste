@@ -33,9 +33,6 @@ const environmentExpression = `{
   dpr: devicePixelRatio, width: innerWidth, height: innerHeight
 }`;
 const expression = `JSON.stringify(${environmentExpression})`;
-const languageExpression = `JSON.stringify({
-  language: navigator.language, languages: [...navigator.languages]
-})`;
 const scenarioSnapshotExpression = `JSON.stringify({
   timeOrigin: performance.timeOrigin,
   environment: ${environmentExpression},
@@ -110,13 +107,22 @@ const assertCallerLanguage = (capture, baseline) => {
   for (const step of capture.steps) {
     const text = step.artifacts.dom.value.text;
     const observed = /<pre id="language">([^<]+)<\/pre>/u.exec(text);
-    assert.ok(observed, "DOM omitted the navigator language observations");
+    assert.ok(
+      observed,
+      "DOM omitted the navigator/request language observations",
+    );
     assert.deepEqual(JSON.parse(observed[1]), baseline);
   }
 };
 
 /** Verify actual attached-page emulation and restoration across scenario outcomes. */
 export async function verifyScenarioEnvironment(endpoint, targetId, origin) {
+  const languageExpression = `(async () => JSON.stringify({
+    language: navigator.language, languages: [...navigator.languages],
+    request_language: await (await fetch(
+      ${JSON.stringify(`${origin}/scenario-request-language`)}, { cache: "no-store" }
+    )).json()
+  }))()`;
   const targets = await (await fetch(`${endpoint}/json/list`)).json();
   const target = targets.find(({ id }) => id === targetId);
   assert.ok(target, "External fixture target is missing");
@@ -128,6 +134,7 @@ export async function verifyScenarioEnvironment(endpoint, targetId, origin) {
     const value = await connection.send("Runtime.evaluate", {
       expression: expressionToRead,
       returnByValue: true,
+      awaitPromise: true,
     });
     assert.equal(value.result.type, "string");
     return JSON.parse(value.result.value);

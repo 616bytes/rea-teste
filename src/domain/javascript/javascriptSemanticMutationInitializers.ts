@@ -73,6 +73,17 @@ const positionPrecedes = (
       left.declaratorIndex >= 0 &&
       left.declaratorIndex < right.declaratorIndex));
 
+/** Field values run on construction; computed keys run at class definition. */
+const isDeferredInstanceFieldValue = (
+  node: t.Node,
+  child: t.Node | undefined,
+): boolean =>
+  (t.isClassProperty(node) ||
+    t.isClassPrivateProperty(node) ||
+    t.isClassAccessorProperty(node)) &&
+  !node.static &&
+  node.value === child;
+
 /** Order effects only in a non-repeating top-level activation. */
 export const semanticTopLevelEffectFollowsCapture = (
   capture: t.Node,
@@ -85,14 +96,7 @@ export const semanticTopLevelEffectFollowsCapture = (
     let child: t.Node | undefined;
     while (node !== undefined) {
       if (t.isFunction(node) || t.isLoop(node)) return null;
-      if (
-        (t.isClassProperty(node) ||
-          t.isClassPrivateProperty(node) ||
-          t.isClassAccessorProperty(node)) &&
-        !node.static &&
-        node.value === child
-      )
-        return null;
+      if (isDeferredInstanceFieldValue(node, child)) return null;
       if (t.isVariableDeclarator(node)) declarator = node;
       if (selected === null && t.isStatement(node))
         selected = statementPosition(node, parents, declarator);
@@ -359,7 +363,7 @@ export const semanticMutationInitializers = (
   };
 };
 
-/** Locate a read in its statement body without assuming loop iteration order. */
+/** Locate a read without ordering across repetitions or deferred field values. */
 const semanticReadPosition = (
   read: t.Node,
   parents: WeakMap<t.Node, t.Node>,
@@ -371,7 +375,8 @@ const semanticReadPosition = (
     parent;
     parent = parents.get(current)
   ) {
-    if (t.isLoop(parent)) return null;
+    if (t.isLoop(parent) || isDeferredInstanceFieldValue(parent, current))
+      return null;
     if (t.isFunction(parent)) break;
     if (position === null) {
       if (t.isVariableDeclarator(parent)) {

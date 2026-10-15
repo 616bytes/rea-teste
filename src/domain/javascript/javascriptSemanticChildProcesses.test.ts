@@ -38,6 +38,87 @@ it("selects a new spawned child at each straight-line receiver read", () => {
   ]);
 });
 
+it.each([
+  "class Stop { field = child.kill(); }",
+  "class Stop { #field = child.kill(); }",
+  "class Stop { ['field'] = child.kill(); }",
+  "const Stop = class { field = (0, child.kill()); };",
+  "class Stop { field = class { [child.kill()] = 0; }; }",
+  "class Stop { stop() { child.kill(); } }",
+  "class Stop { field = () => child.kill(); }",
+])(
+  "retains both child candidates across a deferred read: %s",
+  (declaration) => {
+    const ir = analyze(`
+    let child = spawn('old');
+    ${declaration}
+    child = spawn('new');
+    new Stop();
+  `);
+    expect(ir.childProcessSpawns).toHaveLength(2);
+    expect(ir.childProcessInteractions[0]?.linkedProcessIds).toHaveLength(2);
+    expect(ir.childProcessInteractions).toEqual([
+      expect.objectContaining({
+        linkedProcessIds: expect.arrayContaining(
+          ir.childProcessSpawns.map(({ processId }) => processId),
+        ),
+        resolution: "partial",
+      }),
+    ]);
+  },
+);
+
+it("does not prove an assignment-only child precedes an instance field read", () => {
+  const ir = analyze(`
+    let child;
+    child = spawn('assigned');
+    class Stop { field = child.kill(); }
+    new Stop();
+  `);
+  expect(ir.childProcessInteractions).toMatchObject([
+    {
+      linkedProcessIds: [ir.childProcessSpawns[0]!.processId],
+      resolution: "partial",
+    },
+  ]);
+});
+
+it.each([
+  "class Stop { static field = child.kill(); }",
+  "class Stop { static #field = child.kill(); }",
+  "class Stop { [child.kill()] = 0; }",
+])("resolves reads evaluated at class definition: %s", (declaration) => {
+  const ir = analyze(`
+    let child = spawn('old');
+    ${declaration}
+    child = spawn('new');
+    new Stop();
+  `);
+  expect(ir.childProcessInteractions).toMatchObject([
+    {
+      linkedProcessIds: [ir.childProcessSpawns[0]!.processId],
+      resolution: "complete",
+    },
+  ]);
+});
+
+it.each(["const", "let"])(
+  "preserves a stable %s child across an instance field read",
+  (kind) => {
+    const ir = analyze(`
+      ${kind} child = spawn('stable');
+      class Stop { field = child.kill(); }
+      new Stop();
+    `);
+    expect(ir.childProcessInteractions).toMatchObject([
+      {
+        linkedProcessIds: [ir.childProcessSpawns[0]!.processId],
+        resolution: "complete",
+      },
+    ]);
+  },
+);
+
 it("retains a saved alias at its capture and marks a late alias uncertain", () => {
   const ir = analyze(`
     let child = spawn('old');

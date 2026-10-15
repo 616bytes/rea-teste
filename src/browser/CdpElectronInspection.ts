@@ -100,8 +100,8 @@ const runElectronInspection = async (
   state: ElectronInspectionState,
   startedAt: string,
 ): Promise<ElectronPageInspection> => {
-  const frames = await authorizeInitialFrames(context, state);
-  const main = frames.at(0);
+  const initialFrames = await authorizeInitialFrames(context);
+  const main = initialFrames.at(0);
   if (main === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   state.mainFrameId = main.frame_id;
@@ -111,8 +111,22 @@ const runElectronInspection = async (
     "inspect_electron_page",
     context.signal,
   );
+  // Attribute content against the current authorized inventory, not the tree
+  // from before the observation window.
+  const frames = await readCurrentFrames(context, state.completeness);
   const captured = await captureElectronContent(context, state, frames);
-  await assertStableMainFrame(context, state, main.file_path);
+  const finalFrames = await assertStableMainFrame(
+    context,
+    state,
+    main.file_path,
+  );
+  if (digestCanonicalValue(frames) !== digestCanonicalValue(finalFrames)) {
+    for (const section of ["frames", "scripts", "workers"] as const)
+      state.completeness.attachLimited(section);
+    state.limitations.push(
+      "The frame inventory changed during content capture; frame membership and dependent attribution are incomplete.",
+    );
+  }
   await report(context.progress, 3, "Electron inspection complete");
   return {
     browser: context.discovery.version,
@@ -137,7 +151,6 @@ const runElectronInspection = async (
 
 const authorizeInitialFrames = async (
   context: ElectronContext,
-  state: ElectronInspectionState,
 ): Promise<ElectronPageInspection["frames"]> => {
   await report(context.progress, 1, "Authorizing Electron file frames");
   await context.connection.send(
@@ -146,13 +159,21 @@ const authorizeInitialFrames = async (
     context.sessionId,
     context.signal,
   );
+  // Initial frames authorize attachment; the later inventory owns coverage.
+  return await readCurrentFrames(context, new CdpCaptureCompleteness());
+};
+
+const readCurrentFrames = async (
+  context: ElectronContext,
+  completeness: CdpCaptureCompleteness,
+): Promise<ElectronPageInspection["frames"]> => {
   const result = await context.connection.send(
     "Page.getFrameTree",
     {},
     context.sessionId,
     context.signal,
   );
-  const frames = await captureFrames(result, state.completeness);
+  const frames = await captureFrames(result, completeness);
   if (frames[0] === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   return frames;
@@ -212,7 +233,7 @@ const assertStableMainFrame = async (
   context: ElectronContext,
   state: ElectronInspectionState,
   expectedPath: string,
-): Promise<void> => {
+): Promise<ElectronPageInspection["frames"]> => {
   const result = await context.connection.send(
     "Page.getFrameTree",
     {},
@@ -224,6 +245,20 @@ const assertStableMainFrame = async (
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   if (state.navigationDuringCapture || afterPath !== expectedPath)
     throw new BrowserObservationError("inspect_web_page", "target_changed");
+  const completeness = new CdpCaptureCompleteness();
+  const frames = await captureFrames(result, completeness);
+  if (
+    completeness
+      .snapshot()
+      .conditions.some((condition) => condition !== "complete_within_window")
+  ) {
+    for (const section of ["frames", "scripts", "workers"] as const)
+      state.completeness.attachLimited(section);
+    state.limitations.push(
+      "The final frame inventory was incomplete; frame stability could not be fully verified.",
+    );
+  }
+  return frames;
 };
 
 const navigatedFrameId = (event: CdpEvent): string | undefined => {

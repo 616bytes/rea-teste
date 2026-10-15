@@ -1,0 +1,8 @@
+.git
+.cache
+build
+coverage
+dist
+node_modules
+*.log
+website/node_modules

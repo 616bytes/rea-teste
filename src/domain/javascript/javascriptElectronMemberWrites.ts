@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 
 import {
   semanticStaticPropertyKey,
+  semanticWriteSiteTarget,
   semanticWriteTargets,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -83,6 +84,7 @@ export function* collectJavaScriptIdentityWritesSteps(
   origin: (
     root: t.Node,
     kind: "binding" | "member" | "opaque-call",
+    writeSite: t.Node,
   ) => readonly (readonly (string | null)[])[],
   intrinsicInvocation: (
     node: t.CallExpression | t.OptionalCallExpression,
@@ -114,7 +116,7 @@ export function* collectJavaScriptIdentityWritesSteps(
   ): void => {
     const invocation = intrinsicInvocation(node);
     if (invocation?.kind === "opaque") {
-      for (const scope of origin(node, "opaque-call"))
+      for (const scope of origin(node, "opaque-call", node))
         retain(node, scope, "opaque");
       return;
     }
@@ -142,15 +144,17 @@ export function* collectJavaScriptIdentityWritesSteps(
         // A known mutator with an opaque argument list can overwrite any
         // captured intrinsic. Do not turn an unexamined target into proof.
         if (target === undefined || t.isSpreadElement(target)) {
-          for (const scope of origin(node, "opaque-call"))
+          for (const scope of origin(node, "opaque-call", node))
             retain(node, scope, "opaque");
         }
         if (t.isNode(target) && !t.isSpreadElement(target)) {
-          const identities = origin(target, "member");
+          const identities = origin(target, "member", node);
           if (identities.length > 0) {
             const key = keyedMutators.has(method ?? "")
               ? [staticString(arguments_?.[1]) ?? null]
-              : [];
+              : // Mutating a target's contents does not replace the target.
+                // Retain an unknown child key, rather than its own identity.
+                [null];
             for (const identity of identities)
               retain(
                 node,
@@ -160,7 +164,7 @@ export function* collectJavaScriptIdentityWritesSteps(
                   : "mutate-object",
               );
           } else if (!freshObject(target)) {
-            for (const scope of origin(node, "opaque-call"))
+            for (const scope of origin(node, "opaque-call", node))
               retain(node, scope, "opaque");
           }
         }
@@ -169,7 +173,7 @@ export function* collectJavaScriptIdentityWritesSteps(
   };
   const retainTarget = (leaf: t.Node, effect: t.Node): void => {
     if (t.isIdentifier(leaf)) {
-      for (const identity of origin(leaf, "binding"))
+      for (const identity of origin(leaf, "binding", effect))
         retain(effect, identity, "replace-value");
       return;
     }
@@ -177,7 +181,7 @@ export function* collectJavaScriptIdentityWritesSteps(
     if (!t.isMemberExpression(member) && !t.isOptionalMemberExpression(member))
       return;
     const key = semanticStaticPropertyKey(member.property, member.computed);
-    for (const identity of origin(member.object, "member"))
+    for (const identity of origin(member.object, "member", effect))
       retain(effect, [...identity, key], "replace-value");
   };
   const targetOf = (node: t.Node): t.Node | undefined =>

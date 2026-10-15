@@ -596,37 +596,76 @@ const relativeCandidate = (sourcePath: string, declared: string): string =>
     : posix.join(posix.dirname(sourcePath), declared);
 
 /**
- * Resolve a URL path reference against a canonical directory. URL dot
- * segments remove the previous segment even when it is empty, so
- * `assets//../app.js` names `assets/app.js`. An empty segment that remains
- * cannot name a canonical artifact file; a trailing one is directory form.
+ * A URL path during reference resolution. Above-root `..` markers are kept
+ * apart from segments, so a later `..` cannot cancel an escape, while empty
+ * segments stay removable until the final path is formed.
  */
-const urlRelativeCandidate = (
-  directory: string,
+interface UrlPathState {
+  readonly escapes: number;
+  readonly segments: readonly string[];
+}
+
+const urlDirectoryState = (directory: string): UrlPathState => ({
+  escapes: 0,
+  segments: directory === "" || directory === "." ? [] : directory.split("/"),
+});
+
+/**
+ * Apply URL dot segments: `..` removes the previous segment even when it is
+ * empty, so `assets//../app.js` names `assets/app.js`. A final `.` or `..`
+ * leaves directory form, as the URL parser does.
+ */
+const applyUrlReference = (
+  base: UrlPathState,
   reference: string,
-): string | CandidateResolution => {
+): UrlPathState => {
   const absolute = reference.startsWith("/");
-  const segments =
-    absolute || directory === "" || directory === "."
-      ? []
-      : directory.split("/");
-  let escapes = 0;
-  for (const part of (absolute ? reference.slice(1) : reference).split("/")) {
-    if (part === ".") continue;
-    if (part !== "..") segments.push(part);
-    else if (segments.length > 0) segments.pop();
-    else escapes += 1;
+  const segments = absolute ? [] : [...base.segments];
+  let escapes = absolute ? 0 : base.escapes;
+  const parts = (absolute ? reference.slice(1) : reference).split("/");
+  for (const [index, part] of parts.entries()) {
+    if (part !== "." && part !== "..") {
+      segments.push(part);
+      continue;
+    }
+    if (part === "..")
+      if (segments.length > 0) segments.pop();
+      else escapes += 1;
+    if (index === parts.length - 1) segments.push("");
   }
-  if (segments.at(-1) === "") segments.pop();
+  return { escapes, segments };
+};
+
+/** A relative reference replaces the base URL's final path segment. */
+const urlBaseDirectory = (base: UrlPathState): UrlPathState => ({
+  escapes: base.escapes,
+  segments: base.segments.slice(0, -1),
+});
+
+/**
+ * Form the artifact candidate. A remaining empty segment cannot name a
+ * canonical artifact file; a trailing one is directory form. Confinement
+ * rejects a candidate that keeps an above-root marker.
+ */
+const urlPathCandidate = (path: UrlPathState): string | CandidateResolution => {
+  const segments =
+    path.segments.at(-1) === "" ? path.segments.slice(0, -1) : path.segments;
   if (segments.includes(""))
     return unresolvedCandidate("unavailable", [
       "Repeated URL path separators cannot be mapped to an exact canonical artifact file.",
     ]);
-  // Confinement rejects a reference that climbs above the artifact root.
-  return [...Array.from({ length: escapes }, () => ".."), ...segments].join(
-    "/",
-  );
+  return [
+    ...Array.from({ length: path.escapes }, () => ".."),
+    ...segments,
+  ].join("/");
 };
+
+/** Resolve a URL path reference against a canonical directory. */
+const urlRelativeCandidate = (
+  directory: string,
+  reference: string,
+): string | CandidateResolution =>
+  urlPathCandidate(applyUrlReference(urlDirectoryState(directory), reference));
 
 const bareModuleCandidate = (
   input: ResolveArtifactPathInput,
@@ -1119,16 +1158,20 @@ const htmlCandidate = (
     return unresolvedCandidate("rejected", [
       "The document base href path percent-decodes to NUL or to bytes that are not UTF-8.",
     ]);
-  const basePath = urlRelativeCandidate(
-    posix.dirname(input.sourcePath),
+  // Keep the base's empty segments and escapes until the reference is
+  // applied; only the final path must name a canonical artifact file.
+  const baseState = applyUrlReference(
+    urlDirectoryState(posix.dirname(input.sourcePath)),
     decodedBase,
   );
-  if (typeof basePath !== "string") return basePath;
-  if (declaredPath === "")
-    return exactUrlPathCandidate(decodedBase, basePath, "HTML");
-  return urlRelativeCandidate(
-    htmlBaseDirectory(decodedBase, basePath),
-    declaredPath,
+  if (declaredPath === "") {
+    const basePath = urlPathCandidate(baseState);
+    return typeof basePath === "string"
+      ? exactUrlPathCandidate(decodedBase, basePath, "HTML")
+      : basePath;
+  }
+  return urlPathCandidate(
+    applyUrlReference(urlBaseDirectory(baseState), declaredPath),
   );
 };
 
@@ -1152,9 +1195,6 @@ const urlPathIsDirectory = (path: string): boolean =>
   path.endsWith("/..") ||
   path === "." ||
   path === "..";
-
-const htmlBaseDirectory = (base: string, basePath: string): string =>
-  urlPathIsDirectory(base) ? basePath : posix.dirname(basePath);
 
 const confineCandidate = (candidate: string): string | CandidateResolution => {
   const normalized = normalizeJoinedLogicalPath(candidate);

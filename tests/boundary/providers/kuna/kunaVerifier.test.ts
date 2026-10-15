@@ -82,8 +82,9 @@ it.each([
     const root = await createTestTempDirectory("rea-kuna-verifier-cleanup-");
     const kuna = await writeFakeKuna(root, {
       functions: [
-        { name: "rea_checksum", addr: "0x1000" },
-        { name: "rea_classify", addr: "0x1040" },
+        { name: "main", addr: "0x1000" },
+        { name: "rea_checksum", addr: "0x1040" },
+        { name: "rea_classify", addr: "0x1080" },
       ],
     });
     const nm = join(root, "nm");
@@ -91,7 +92,7 @@ it.each([
     // discovery are simulated to isolate the verifier's cleanup contract.
     await writeFile(
       nm,
-      `#!${process.execPath}\nprocess.stdout.write("00001000 T rea_checksum\\n00001040 T rea_classify\\n");\n`,
+      `#!${process.execPath}\nprocess.stdout.write("00001000 T main\\n00001040 T rea_checksum\\n00001080 T rea_classify\\n");\n`,
       { mode: 0o755 },
     );
     const proxy = join(root, "proxy.mjs");
@@ -166,6 +167,8 @@ await exited;
       expect(JSON.stringify(report.failures)).toContain(
         "injected verification failure",
       );
+    if (rejectClose && !rejectRead)
+      expect(report.failures[0].causes).toHaveLength(1);
     if (rejectClose) {
       const cache = await readFile(cacheRecord, "utf8");
       expect(cache).toBe(join(report.retained_workspace, "cache"));

@@ -27,6 +27,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { execFileOutput } from "../dist/process/ExecFileOutput.js";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import { verifyKunaReferences } from "./lib/kuna-reference-verifier.mjs";
 import {
   assertVerifierCleanupComplete,
   completeVerifierRun,
@@ -75,12 +76,12 @@ const FIXTURE_SOURCE = String.raw`
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-unsigned rea_checksum(const unsigned char *p, size_t n) {
+__attribute__((noinline)) unsigned rea_checksum(const unsigned char *p, size_t n) {
   unsigned h = 2166136261u;
   for (size_t i = 0; i < n; i++) h = (h ^ p[i]) * 16777619u;
   return h;
 }
-int rea_classify(int c) {
+__attribute__((noinline)) int rea_classify(int c) {
   switch (c) {
   case 'a': return 1; case 'e': return 2; case 'i': return 3;
   case 'o': return 4; case 'u': return 5; default: return c > 'z' ? -1 : 0;
@@ -252,7 +253,7 @@ const quality = (text) => ({
 });
 
 /** Verify Kuna on one binary and measure its cold and warm answers. */
-const verifyKuna = async (path, functions) => {
+const verifyKuna = async (path, functions, expectedCaller) => {
   const sha256 = createHash("sha256")
     .update(await readFile(path))
     .digest("hex");
@@ -266,6 +267,13 @@ const verifyKuna = async (path, functions) => {
         listed.value.some((entry) => entry.address === address),
         `${name} at ${address} is missing from Kuna's procedure list for ${path}`,
       );
+      const references = await verifyKunaReferences({
+        call: cold.call,
+        cacheRoot,
+        name,
+        address,
+        expectedCaller,
+      });
       const pseudocode = await cold.call("procedure_pseudo_code", {
         procedure: address,
       });
@@ -335,6 +343,7 @@ const verifyKuna = async (path, functions) => {
         response_bytes: exported.bytes,
         dossier_response_bytes: dossier.bytes,
         ...quality(exported.value),
+        references,
       });
     }
   } catch (cause) {
@@ -466,12 +475,15 @@ try {
   const fixtureFunctions = await symbolAddresses(built, [
     "rea_checksum",
     "rea_classify",
+    "main",
   ]);
-  assert.equal(fixtureFunctions.size, 2, "Fixture symbols were not found");
+  assert.equal(fixtureFunctions.size, 3, "Fixture symbols were not found");
+  const fixtureMain = fixtureFunctions.get("main");
+  fixtureFunctions.delete("main");
   for (const binary of [built, stripped])
     results.push({
       binary: binary.slice(workspace.length + 1),
-      kuna: await verifyKuna(binary, [...fixtureFunctions]),
+      kuna: await verifyKuna(binary, [...fixtureFunctions], fixtureMain),
     });
 
   // Caller-built matrix.

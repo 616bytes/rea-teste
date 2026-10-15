@@ -149,7 +149,12 @@ export const artifactFamilyClusteringResultSchema = z.strictObject({
     members_examined: z.number().int().positive(),
     members_with_complete_inventory: z.number().int().nonnegative(),
     members_with_unknown_inventory: z.number().int().nonnegative(),
-    /** Complete members that declare a minority coverage scope, so were not clustered. */
+    /**
+     * Members with complete inventories whose declared coverage scope is not the
+     * clustered scope; with no strict majority no scope is settled, so every
+     * complete member counts. Incomplete members are counted by
+     * `members_with_unknown_inventory` and keep their own scope in their row.
+     */
     members_outside_member_scope: z.number().int().nonnegative(),
     /** Complete members whose root digest is derived from their graph, not root bytes. */
     members_without_byte_root_digest: z.number().int().nonnegative(),
@@ -527,12 +532,15 @@ export const clusterArtifactFamilies = (
   const completeInventories = parsed.filter((entry) =>
     declaresCompleteInventory(entry.inventory),
   ).length;
-  const outsideMemberScope =
-    majorityScope === null
-      ? parsed.length
-      : parsed.filter(
-          (entry) => entry.inventory.coverage.scope !== majorityScope,
-        ).length;
+  // Counted on the scope axis only, and only for members whose own inventory is
+  // complete: an incomplete member is already explained by the unknown-inventory
+  // count, and its declared scope stays visible in its own row. With no strict
+  // majority no scope is settled, so every complete member is outside it.
+  const outsideMemberScope = parsed.filter(
+    (entry) =>
+      declaresCompleteInventory(entry.inventory) &&
+      entry.inventory.coverage.scope !== majorityScope,
+  ).length;
   return {
     status: statusFor({ compared, examined: members.length }),
     summary: {

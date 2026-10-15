@@ -413,6 +413,8 @@ describe("clusterArtifactFamilies coverage and paging", () => {
         item.includes("with no strict majority"),
       ),
     ).toBe(true);
+    // No scope was settled, so every complete member sits outside it.
+    expect(result.summary.members_outside_member_scope).toBe(2);
   });
 
   it("clusters the strict majority scope and leaves the minority unplaced", () => {
@@ -441,6 +443,31 @@ describe("clusterArtifactFamilies coverage and paging", () => {
     expect(result.summary.members_with_unknown_inventory).toBe(0);
     expect(result.summary.members_outside_member_scope).toBe(1);
     expect(result.coverage.members_outside_member_scope).toBe(1);
+  });
+
+  it("counts scope exclusions on the scope axis only", () => {
+    const result = cluster([
+      member("alpha", { rootSha: sha("a") }),
+      member("beta", { rootSha: sha("a") }),
+      // An incomplete minority-scope member is explained by its own inventory
+      // declaration, not by the scope count.
+      member("gamma", {
+        rootSha: sha("b"),
+        coverageScope: "container-entries",
+        coverageStatus: "unknown",
+      }),
+    ]);
+
+    expect(result.coverage.member_scope).toBe("root");
+    expect(result.summary.members_outside_member_scope).toBe(0);
+    expect(result.summary.members_with_unknown_inventory).toBe(1);
+    expect(result.summary.members_with_complete_inventory).toBe(2);
+    const unplaced = result.families.find(
+      ({ family_id }) => family_id === "unplaced",
+    );
+    expect(unplaced?.unknown_members[0]?.coverage_scope).toBe(
+      "container-entries",
+    );
   });
 
   it("pages families while the counts and the member index stay complete", () => {

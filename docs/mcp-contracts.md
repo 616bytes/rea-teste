@@ -75,8 +75,11 @@ member, so repeated caller labels never merge two members and a row keeps its
 source Evidence even when no family row exists. Inventory completeness and
 coverage scope are separate facts: `members_with_complete_inventory` and
 `members_with_unknown_inventory` describe what each member declared, while
-`members_outside_member_scope` counts complete members that declared a
-minority scope and were therefore not clustered.
+`members_outside_member_scope` counts members with complete inventories
+whose declared scope is not the clustered scope (with no strict majority, every
+complete member). An incomplete member is explained by
+`members_with_unknown_inventory` instead and keeps its own declared scope in its
+row.
 `coverage.families_offset` and `coverage.families_limit` state the page the
 call returned.
 

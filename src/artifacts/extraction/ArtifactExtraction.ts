@@ -221,7 +221,11 @@ const materializeSelection = async ({
   const extracted: ExtractedOccurrence[] = [];
   try {
     try {
-      output = await SafeOutputTree.create(input.outputRoot);
+      output = await SafeOutputTree.create(
+        input.outputRoot,
+        process.platform,
+        sourcePath,
+      );
     } catch (cause: unknown) {
       if (cause instanceof SafeOutputTreeCreationFailure) output = cause.tree;
       throw cause;

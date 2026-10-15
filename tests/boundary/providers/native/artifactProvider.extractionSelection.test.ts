@@ -162,33 +162,32 @@ describe("selected artifact extraction", () => {
     }
   });
 
-  it("does not promote a nested archive member when its containing file is excluded", async () => {
-    const root = await createTestTempDirectory("rea-nested-selection-");
-    const path = join(root, "outer.zip");
-    await writeFile(
-      path,
-      await archive([
-        ["inner.zip", await archive([["nested.txt", "nested"]])],
-        ["direct.txt", "direct"],
-      ]),
-    );
-    const parsed = await parseBinaryTarget(path);
-    if (!parsed.ok) throw parsed.error;
-    const inventory = await inventoryOf(parsed.value);
-    const nested = inventory.occurrences.find(
-      ({ logical_path }) => logical_path === "inner.zip/nested.txt",
-    );
-    if (nested === undefined)
-      throw new Error("Nested fixture was not inventoried");
-    const output = join(root, "output");
-    const result = await extract(parsed.value, output, [nested.occurrence_id]);
-    expect(result).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisInputError" },
-    });
-    await expect(lstat(output)).rejects.toMatchObject({ code: "ENOENT" });
+  it("does not promote nested inventory records when their containing file is excluded", async () => {
+    const data = await fixture();
+    const container = {
+      ...data.selected,
+      occurrence_id: `occ_${"a".repeat(64)}`,
+      logical_path: "inner.zip",
+    };
+    const nested = {
+      ...data.selected,
+      occurrence_id: `occ_${"b".repeat(64)}`,
+      parent_occurrence_id: container.occurrence_id,
+      logical_path: "inner.zip/nested.txt",
+    };
+    const occurrences = [...data.inventory.occurrences, container, nested];
+    expect(() =>
+      selectArtifactExtractionOccurrences(occurrences, [nested.occurrence_id]),
+    ).toThrow("not a regular file or slice exposed by the active reader");
+    expect(
+      selectArtifactExtractionOccurrences(occurrences, [
+        container.occurrence_id,
+      ]).selected,
+    ).toEqual([container]);
   });
+});
 
+describe("selected extraction ownership and rollback", () => {
   it("never overwrites a caller-owned destination", async () => {
     const data = await fixture();
     const output = join(data.root, "existing");

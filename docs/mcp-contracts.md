@@ -655,6 +655,7 @@ keeps the fresh `rea-extracted-<uuid>` directory under Node's temporary director
 (`TMPDIR` on POSIX). Successful output persists after the call and client close;
 the caller owns its later removal. A failed extraction rolls back only its own
 output and reports any cleanup failure.
+An output root inside the source directory, including a symlink alias, is refused.
 
 Obtain exact IDs from the active artifact's inventory. Omitting `occurrence_ids`
 extracts all regular entries exposed by the active reader. An explicit selection

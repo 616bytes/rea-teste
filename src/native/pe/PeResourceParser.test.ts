@@ -290,12 +290,14 @@ describe("PE resource section virtual extent", () => {
     const fixture = peResourceFixture();
     const { virtualSize } = sectionSizes(fixture);
     const rva = 0x2000 + virtualSize;
+    const expectedOffset =
+      fixture.bytes.readUInt32LE(fixture.sectionAt + 20) + virtualSize;
     fixture.bytes.writeUInt32LE(rva, fixture.dataOffsets[0]);
     fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
     const result = await parse(fixture.bytes);
     expect(result.resources[0]?.payload).toMatchObject({
       rva,
-      location: { offset: expect.any(Number), bytes: 0 },
+      location: { offset: expectedOffset, bytes: 0 },
       sha256: createHash("sha256").update(Buffer.alloc(0)).digest("hex"),
     });
 
@@ -305,6 +307,30 @@ describe("PE resource section virtual extent", () => {
     await expect(parse(pastBoundary.bytes)).rejects.toMatchObject({
       reason: "format",
       message: "Resource RVA has missing or overlapping section mappings.",
+    });
+  });
+
+  it("prefers a section starting at a shared boundary over a section ending there for empty payloads", async () => {
+    const fixture = peResourceFixture();
+    const { virtualSize } = sectionSizes(fixture);
+    const sharedRva = 0x2000 + virtualSize;
+    const secondRawOffset = fixture.bytes.length;
+    const secondPayload = Buffer.from("SECOND");
+    const bytes = Buffer.concat([fixture.bytes, secondPayload]);
+    bytes.writeUInt16LE(2, 0x86);
+    const secondSection = fixture.sectionAt + 40;
+    bytes.writeUInt32LE(secondPayload.length, secondSection + 8);
+    bytes.writeUInt32LE(sharedRva, secondSection + 12);
+    bytes.writeUInt32LE(secondPayload.length, secondSection + 16);
+    bytes.writeUInt32LE(secondRawOffset, secondSection + 20);
+    bytes.writeUInt32LE(sharedRva, fixture.dataOffsets[0]);
+    bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
+
+    const result = peResourcesSchema.parse(await parse(bytes));
+    expect(result.resources[0]?.payload).toMatchObject({
+      rva: sharedRva,
+      location: { offset: secondRawOffset, bytes: 0 },
+      sha256: createHash("sha256").update(Buffer.alloc(0)).digest("hex"),
     });
   });
 

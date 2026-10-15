@@ -52,6 +52,13 @@ export interface CallGraphCallees {
   readonly coverage: RelationshipCoverage;
 }
 
+/** Root-only call destinations, before optional display-name resolution. */
+export interface CallGraphTargets {
+  readonly addresses: readonly string[];
+  readonly limitations: readonly string[];
+  readonly coverage: RelationshipCoverage;
+}
+
 /** No function edges can be observed when the server lacks the graph tool. */
 export const unavailableCallGraph = (reason: string): CallGraphCallees => ({
   callees: [],
@@ -75,13 +82,13 @@ export const unavailableCallGraph = (reason: string): CallGraphCallees => ({
  * root all fail the read. Cancellation still propagates. Truncation the upstream
  * declares inside a valid reply stays a limitation.
  */
-export const readCallGraphCallees = async (
+export const readCallGraphTargets = async (
   call: (
     tool: string,
     args: Readonly<Record<string, JsonValue>>,
   ) => Promise<JsonValue>,
   address: string,
-): Promise<CallGraphCallees> => {
+): Promise<CallGraphTargets> => {
   const raw = await call("callgraph", { roots: [address], max_depth: 0 });
   const parsed = modernCallGraphSchema.safeParse(raw);
   const row = parsed.success ? parsed.data[0] : undefined;
@@ -121,10 +128,37 @@ export const readCallGraphCallees = async (
     coverageLimitations.push(POSSIBLY_TRUNCATED_LIMITATION);
   }
 
+  return {
+    addresses: targets,
+    limitations,
+    coverage: {
+      ...(coverageLimitations.length === 0
+        ? { status: "complete" as const }
+        : {
+            status: "partial" as const,
+            limitations: coverageLimitations,
+          }),
+      diagnostics,
+    },
+  };
+};
+
+/** Resolve display names after the call-edge producer has established destinations. */
+export const readCallGraphCallees = async (
+  call: (
+    tool: string,
+    args: Readonly<Record<string, JsonValue>>,
+  ) => Promise<JsonValue>,
+  address: string,
+): Promise<CallGraphCallees> => {
+  const graph = await readCallGraphTargets(call, address);
+  const targets = graph.addresses;
+  const limitations = [...graph.limitations];
+  const diagnostics = [...(graph.coverage.diagnostics ?? [])];
   const names = new Map<string, string>();
   if (targets.length > 0) {
     try {
-      const raw = await call("lookup_funcs", { queries: targets });
+      const raw = await call("lookup_funcs", { queries: [...targets] });
       const parsed = modernLookupBatchSchema.safeParse(raw);
       if (!parsed.success) {
         const limitation =
@@ -165,14 +199,6 @@ export const readCallGraphCallees = async (
       };
     }),
     limitations,
-    coverage: {
-      ...(coverageLimitations.length === 0
-        ? { status: "complete" as const }
-        : {
-            status: "partial" as const,
-            limitations: coverageLimitations,
-          }),
-      diagnostics,
-    },
+    coverage: { ...graph.coverage, diagnostics },
   };
 };

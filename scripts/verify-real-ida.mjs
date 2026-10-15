@@ -193,7 +193,7 @@ const mcp = async (cliDossier) => {
       ["procedure_address", { procedure: dossier.procedure.name }],
       ["procedure_assembly", { procedure: dossier.procedure.address }],
       ["procedure_callees", { procedure: dossier.procedure.address }],
-      ...(config.mode === "attached" && config.protocol !== "native"
+      ...(dossier.facet_availability?.callers?.available === true
         ? [["procedure_callers", { procedure: dossier.procedure.address }]]
         : []),
       ["search_procedures", { pattern: dossier.procedure.name }],

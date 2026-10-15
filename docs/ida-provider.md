@@ -137,6 +137,20 @@ For guided registration, set `REA_IDA_MCP_CONFIG` before `rea setup --client <cl
 
 ## Coverage and evidence
 
+The modern headless profile supports direct callers when upstream advertises
+`callgraph`. REA reads incoming entry-point `xrefs_to` as candidates, deduplicates
+their owning functions, and confirms each candidate with a depth-zero call graph.
+Code references alone never establish a call: jump-only and data references are
+excluded unless a function also has a confirmed call edge. No target execution
+or arbitrary Python evaluation is used. Discovery covers references to the
+selected function entry, so caller coverage remains partial: interior-only
+references and unresolved indirect calls remain unknown. Truncated or unassigned
+candidates add explicit limitations. A truncated candidate graph still proves an edge it contains, but
+cannot exclude a candidate whose edge was omitted. Each candidate requires one
+root-only graph read, without resolving unrelated callee display names. A missing
+graph tool leaves direct callers unavailable; an erroneous or inconsistent graph
+fails the read. The native attached profile retains its existing caller limitation.
+
 All profiles support procedure/string inventory and literal or regex search, procedure resolution, pseudocode, assembly, raw function instructions, resolved callees, incoming address references, and a function dossier. Inventories and modern pseudocode/assembly follow upstream pagination. Upstream limits on modern xrefs and callees are retained as explicit truncation limitations. In the modern headless profile, targets that are not proven x86-only use processor-neutral `callgraph` edges instead of the x86 instruction checks in upstream `callees` (mrexodia/ida-pro-mcp#549). REA requests depth zero: the pinned upstream emits the root's outgoing edges without scanning child functions, then REA batches function-name lookup for those addresses. The graph covers recognized function destinations only; imports and other non-function targets remain unknown. A server without `callgraph` returns an empty relationship list with an explicit coverage limitation. Graph and path workflows retain those limitations alongside observed edges. A failed or inconsistent graph reply remains an error. A transport-level truncated preview is rejected rather than reported as complete evidence; the error preserves upstream retrieval guidance.
 
 All profiles expose `list_documents` as the single target admitted for the session. Attached mode verifies its digest against IDA metadata before returning it; headless mode binds the digest-checked private input. `inspect_address_context`, `trace_feature`, and `binary_overview` can therefore resolve that identity without upstream document-listing tools. Segment enumeration is optional: when the selected profile cannot provide it, `binary_overview` still returns document and procedure/string counts and omits `segments` and `segment_count`; omission means unobserved, not empty. The modern headless profile also supports `resolve_containing_procedure`. An address resolves through upstream `lookup_funcs` to the canonical entry of the function that contains it; the body stays unavailable like other IDA identities. When no function contains it, REA reads the database-scoped minimal `survey_binary` and reports `not_in_procedure` for an address inside one of its segments (ends are exclusive) and `outside_segments` otherwise. A missing, truncated or inconsistent survey fails the read instead of guessing a reason. `trace_feature` marks a trace truncated, with a residual unknown for that address, when upstream caps the references it returned. Attached profiles do not declare address containment resolution.

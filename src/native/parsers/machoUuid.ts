@@ -92,6 +92,16 @@ const parseDwarfdumpRows = (
   return { kind: "rows", rows };
 };
 
+/**
+ * lipo names an arm64e slice with its pointer-auth ABI version (`arm64e.v1`),
+ * while dwarfdump reports the CPU-family name (`arm64e`) for the slice it was
+ * asked about. Compare families so a versioned selection still finds its row.
+ * Other variants (`arm64e.x1`) are distinct subtypes that the tools address
+ * only by their exact name, so they are left to match exactly.
+ */
+const dwarfdumpArchitectureName = (architecture: string): string =>
+  architecture.replace(/\.v\d+$/u, "");
+
 const selectDwarfdumpRow = (
   rows: readonly DwarfdumpUuidRow[],
   selectedArchitecture: string | null,
@@ -101,7 +111,9 @@ const selectDwarfdumpRow = (
     selectedArchitecture === null
       ? rows
       : rows.filter(
-          ({ architecture }) => architecture === selectedArchitecture,
+          ({ architecture }) =>
+            dwarfdumpArchitectureName(architecture) ===
+            dwarfdumpArchitectureName(selectedArchitecture),
         );
   const validRows = selectedRows.filter(({ value }) => MACHO_UUID.test(value));
   const distinctValid = new Set(

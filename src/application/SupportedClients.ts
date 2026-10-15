@@ -616,6 +616,16 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "json",
   },
   {
+    // MiniMax Code reads the profile MCP file `~/.minimax/mcp.json` (plain
+    // `mcpServers` JSON) and personal skills from `~/.minimax/skills`.
+    name: "minimax-code",
+    displayName: "MiniMax Code",
+    skillPath: [".minimax", "skills"],
+    configPath: [".minimax", "mcp.json"],
+    markerPath: [".minimax"],
+    format: "json",
+  },
+  {
     name: "grok_build",
     displayName: "Grok Build",
     configPath: (context: ClientPathContext) =>

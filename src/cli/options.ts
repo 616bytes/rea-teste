@@ -1,3 +1,5 @@
+import { z } from "incur";
+
 import {
   executableFormatHintSchema,
   type ExecutableFormatHint,
@@ -10,6 +12,17 @@ import {
 import { analysisProviderSelectorSchema } from "../contracts/providerSelection.js";
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
 import type { Logger } from "pino";
+
+/**
+ * A decimal integer read from CLI text, at least `min`. `z.coerce.number()`
+ * reads "" and whitespace as 0 and also admits hex, binary, exponent and
+ * signed spellings, so an unset shell variable became a valid index.
+ */
+export const cliIntegerArgument = (min: number) =>
+  z
+    .string()
+    .regex(/^(?:0|[1-9][0-9]*)$/u, "Expected a decimal integer")
+    .pipe(z.coerce.number<string>().int().safe().min(min));
 
 export const providerSelectionOption = analysisProviderSelectorSchema
   .optional()

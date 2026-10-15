@@ -64,13 +64,16 @@ describe("client configuration filesystem lifecycle", () => {
       "copilot_cli",
       "commandcode",
       "qwen_code",
+      "kimi",
       "vscode",
       "trae",
+      "workbuddy",
       "grok_build",
       "omp",
       "pi",
       "hermes",
       "qoder",
+      "droid",
       "zcode",
       "dsh",
       "grok_bot",
@@ -109,6 +112,7 @@ describe("client configuration filesystem lifecycle", () => {
     expect(configured).toContain("[mcp_servers.rea]");
     expect(configured).toContain('command = "rea"');
     expect(configured).toContain("startup_timeout_sec = 30");
+    expect(configured).toContain("tool_timeout_sec = 450");
     expect(configured).toContain('GHIDRA_INSTALL_DIR = "/opt/ghidra"');
     expect(configured).toContain('JAVA_HOME = "/opt/jdk-21"');
     expect(
@@ -131,7 +135,7 @@ describe("client configuration filesystem lifecycle", () => {
     await mkdir(dirname(configPath), { recursive: true });
     await writeFile(
       configPath,
-      `[mcp_servers.rea]\ncommand = "rea"\nargs = ["mcp"]\nstartup_timeout_sec = 30\n\n[mcp_servers.rea.env]\nJAVA_HOME = "/opt/jdk-21"\nHOPPER_LAUNCHER_PATH = "/Hopper Path"\nGHIDRA_INSTALL_DIR = "/opt/ghidra"\n`,
+      `[mcp_servers.rea]\ncommand = "rea"\nargs = ["mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n\n[mcp_servers.rea.env]\nJAVA_HOME = "/opt/jdk-21"\nHOPPER_LAUNCHER_PATH = "/Hopper Path"\nGHIDRA_INSTALL_DIR = "/opt/ghidra"\n`,
     );
 
     const original = await readFile(configPath, "utf8");
@@ -151,7 +155,52 @@ describe("client configuration filesystem lifecycle", () => {
       readFile(`${configPath}.rea.backup`, "utf8"),
     ).rejects.toThrow();
   });
+});
 
+describe("Codex MCP tool deadlines", () => {
+  it("derives the Codex tool deadline from an explicit Ghidra startup allowance", async () => {
+    const home = await createTestTempDirectory("rea-codex-long-timeout-");
+    roots.push(home);
+    const configPath = join(home, ".codex/config.toml");
+    await mkdir(dirname(configPath), { recursive: true });
+    expect(
+      await configureClientConfiguration(
+        { name: "codex", configPath, format: "toml" },
+        { REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700001" },
+        ["rea", "mcp"],
+      ),
+    ).toMatchObject({ status: "configured" });
+    expect(await readFile(configPath, "utf8")).toContain(
+      "tool_timeout_sec = 2821",
+    );
+    expect(await readFile(configPath, "utf8")).toContain(
+      'REA_GHIDRA_STARTUP_TIMEOUT_MS = "2700001"',
+    );
+  });
+
+  it("preserves positive caller-selected Codex startup and tool deadlines", async () => {
+    const home = await createTestTempDirectory("rea-codex-custom-timeout-");
+    roots.push(home);
+    const configPath = join(home, ".codex/config.toml");
+    await mkdir(dirname(configPath), { recursive: true });
+    await writeFile(
+      configPath,
+      '[mcp_servers.rea]\ncommand = "old-rea"\nargs = ["mcp"]\nstartup_timeout_sec = 5\ntool_timeout_sec = 10\n',
+    );
+    expect(
+      await configureClientConfiguration(
+        { name: "codex", configPath, format: "toml" },
+        {},
+        ["rea", "mcp"],
+      ),
+    ).toMatchObject({ status: "configured" });
+    const configured = await readFile(configPath, "utf8");
+    expect(configured).toContain("startup_timeout_sec = 5");
+    expect(configured).toContain("tool_timeout_sec = 10");
+  });
+});
+
+describe("client configuration filesystem lifecycle", () => {
   it("updates a symlink target without replacing the TOML config symlink", async () => {
     const home = await createTestTempDirectory("rea-toml-symlink-");
     roots.push(home);
@@ -1332,7 +1381,7 @@ describe("Codex configuration comments", () => {
       await configureClientConfiguration(
         { name: "codex", configPath, format: "toml" },
         {},
-        ["/isolated prefix/bin/rea", "mcp"],
+        [PRODUCT_IDENTITY.cliBinary, "mcp"],
       ),
     ).toMatchObject({ status: "configured" });
     const configured = await readFile(configPath, "utf8");
@@ -1502,7 +1551,7 @@ describe("client configuration filesystem removal", () => {
       cursor,
       JSON.stringify({
         mcpServers: {
-          rea: { command: "/isolated prefix/bin/rea", args: ["mcp"] },
+          rea: { command: PRODUCT_IDENTITY.cliBinary, args: ["mcp"] },
           other: { command: "other" },
         },
       }),
@@ -1894,14 +1943,11 @@ describe("client configuration filesystem failure reporting", () => {
         remove: () => Promise.reject(new Error("SECRET removal failure")),
       }),
     );
-    expect(result.items).toContainEqual(
-      expect.objectContaining({
-        name: "skill",
-        status: "failed",
-        detail: expect.stringContaining(
-          `Managed file could not be removed: ${join(skillRoot, "SKILL.md")}`,
-        ),
-      }),
+    const skillItem = result.items.find(({ name }) => name === "skill");
+    expect(skillItem?.status).toBe("failed");
+    expect(skillItem?.detail).toContain(`shared (${skillRoot}): failed (`);
+    expect(skillItem?.detail).toContain(
+      `Managed file could not be removed: ${join(skillRoot, "SKILL.md")}`,
     );
     expect(JSON.stringify(result)).not.toContain("SECRET");
     expect(await readFile(join(skillRoot, "SKILL.md"), "utf8")).toBe(
@@ -1939,6 +1985,42 @@ describe("client configuration filesystem failure reporting", () => {
           "user-authored",
         );
       }),
+    );
+  });
+});
+
+describe("skill root client identifier labels", () => {
+  it("labels each retained or removed skill root by its client identifier", async () => {
+    const home = await createTestTempDirectory("rea-uninstall-skill-labels-");
+    roots.push(home);
+    const customClaudeDirectory = join(home, "claude-config");
+    const sharedRoot = join(home, ".agents/skills/reverse-engineer-anything");
+    const claudeRoot = join(
+      customClaudeDirectory,
+      "skills/reverse-engineer-anything",
+    );
+    await mkdir(sharedRoot, { recursive: true });
+    await mkdir(claudeRoot, { recursive: true });
+    await writeFile(
+      join(sharedRoot, "SKILL.md"),
+      "---\nname: another-skill\n---\n# Not REA-owned\n",
+    );
+    await writeFile(join(claudeRoot, "SKILL.md"), ownedSkillManifest);
+
+    const skillItem = await systemUninstallHost(home, testFileSystem, {
+      CLAUDE_CONFIG_DIR: customClaudeDirectory,
+    }).removeSkill();
+
+    expect(skillItem.name).toBe("skill");
+    expect(skillItem.detail).toContain(`shared (${sharedRoot}): retained (`);
+    expect(skillItem.detail).toContain(
+      `claude_code (${claudeRoot}): removed (`,
+    );
+    await expect(
+      readFile(join(claudeRoot, "SKILL.md"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(join(sharedRoot, "SKILL.md"), "utf8")).toContain(
+      "another-skill",
     );
   });
 });

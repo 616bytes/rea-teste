@@ -186,6 +186,18 @@ describe("curl installer scenarios", { timeout: 20_000 }, () => {
   });
 });
 
+describe("installer reported version", { timeout: 20_000 }, () => {
+  it("rejects an empty version from a successful installed command", async () => {
+    const fixture = await createFixture();
+    await expect(
+      runInstaller(fixture, ["--version", "0.3.0"], { FAKE_REA_VERSION: "" }),
+    ).rejects.toMatchObject({
+      stderr:
+        "REA installation failed: the installed REA version could not be read. Reinstall the requested version, then retry.\n",
+    });
+  });
+});
+
 describe("installer TTY fallback", { timeout: 20_000 }, () => {
   it("skips automatic setup when stderr is redirected", async () => {
     const fixture = await createFixture();
@@ -209,13 +221,7 @@ describe("installer TTY fallback", { timeout: 20_000 }, () => {
         cwd: process.cwd(),
         env: {
           ...process.env,
-          HOME: fixture.home,
-          TMPDIR: fixture.temporary,
-          PATH: `${fixture.bin}:/usr/bin:/bin`,
-          FAKE_NPM_LOG: fixture.npmLog,
-          FAKE_REA_LOG: fixture.reaLog,
-          FAKE_REA_SOURCE: join(fixture.bin, "rea-source"),
-          FAKE_NPM_PREFIX: join(fixture.home, ".npm-global"),
+          ...installerEnvironment(fixture),
           TERM: "xterm-256color",
         },
         name: "xterm-256color",
@@ -398,6 +404,20 @@ describe("native macOS installer", { timeout: 20_000 }, () => {
 });
 
 describe("installer semantic version parsing", { timeout: 20_000 }, () => {
+  it("rejects an explicitly empty version instead of selecting latest", async () => {
+    const fixture = await createFixture();
+    await expect(
+      runInstaller(fixture, ["--version", "", "--dry-run"]),
+    ).rejects.toMatchObject({
+      stdout: "",
+      stderr:
+        "REA installation failed: version must be an exact semantic version.\n",
+    });
+    await expect(readFile(fixture.npmLog, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it.each([
     "1.2.3-01",
     "1.2.3-$(printf unexpected)",
@@ -565,7 +585,7 @@ if [ -n "\${FAKE_CURL_BODY:-}" ]; then printf '%s' "$FAKE_CURL_BODY"; else print
       `#!/bin/sh
 printf '%s\n' "$*" >> "$FAKE_REA_LOG"
 [ "\${FAKE_REA_VERSION_FAIL:-}" = "1" ] && exit 1
-[ "$1" = "--version" ] && printf '%s\n' "\${FAKE_REA_VERSION:-0.3.0}"
+[ "$1" = "--version" ] && printf '%s\n' "\${FAKE_REA_VERSION-0.3.0}"
 exit 0
 `,
     ),
@@ -581,6 +601,19 @@ const executable = async (path: string, source: string): Promise<void> => {
   await chmod(path, 0o755);
 };
 
+/** Fixture-owned installer environment shared by the exec, pipe and PTY runs. */
+const installerEnvironment = (
+  fixture: InstallerFixture,
+): Record<string, string> => ({
+  HOME: fixture.home,
+  TMPDIR: fixture.temporary,
+  PATH: `${fixture.bin}:/usr/bin:/bin`,
+  FAKE_NPM_LOG: fixture.npmLog,
+  FAKE_REA_LOG: fixture.reaLog,
+  FAKE_REA_SOURCE: join(fixture.bin, "rea-source"),
+  FAKE_NPM_PREFIX: join(fixture.home, ".npm-global"),
+});
+
 const runInstaller = async (
   fixture: InstallerFixture,
   args: readonly string[] = [],
@@ -590,13 +623,7 @@ const runInstaller = async (
   execFileAsync("/bin/bash", [script, ...args], {
     env: {
       ...process.env,
-      HOME: fixture.home,
-      TMPDIR: fixture.temporary,
-      PATH: `${fixture.bin}:/usr/bin:/bin`,
-      FAKE_NPM_LOG: fixture.npmLog,
-      FAKE_REA_LOG: fixture.reaLog,
-      FAKE_REA_SOURCE: join(fixture.bin, "rea-source"),
-      FAKE_NPM_PREFIX: join(fixture.home, ".npm-global"),
+      ...installerEnvironment(fixture),
       ...overrides,
     },
   });
@@ -618,13 +645,7 @@ const runPipedInstaller = async (
   new Promise((resolve, reject) => {
     const child = spawn("/bin/bash", ["-s", "--", ...args], {
       env: {
-        HOME: fixture.home,
-        TMPDIR: fixture.temporary,
-        PATH: `${fixture.bin}:/usr/bin:/bin`,
-        FAKE_NPM_LOG: fixture.npmLog,
-        FAKE_REA_LOG: fixture.reaLog,
-        FAKE_REA_SOURCE: join(fixture.bin, "rea-source"),
-        FAKE_NPM_PREFIX: join(fixture.home, ".npm-global"),
+        ...installerEnvironment(fixture),
         ...overrides,
       },
       stdio: ["pipe", "pipe", "pipe"],

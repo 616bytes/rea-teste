@@ -50,6 +50,13 @@ export interface AnalysisExecution {
   readonly limitations: readonly string[];
   /** Provider-owned completeness assessment for caller/callee observations. */
   readonly relationshipCoverage?: RelationshipCoverage;
+  /**
+   * Whether the provider capped an `xrefs` read: true when it reported a
+   * truncation, false when it explicitly reported none. Absent when it reports
+   * nothing, which is not a completeness claim. Never part of Evidence or tool
+   * output.
+   */
+  readonly referencesTruncated?: boolean;
   readonly locations: readonly EvidenceLocation[];
   readonly subject: EvidenceSubjectTarget | null;
 }
@@ -59,6 +66,7 @@ interface CreateAnalysisExecutionOptions {
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly limitations?: readonly string[];
   readonly relationshipCoverage?: RelationshipCoverage;
+  readonly referencesTruncated?: boolean;
   readonly locations?: readonly EvidenceLocation[];
   readonly subject?: EvidenceSubjectTarget;
 }
@@ -103,6 +111,9 @@ export function createAnalysisExecution(
             options.relationshipCoverage,
           ),
         }),
+    ...(options.referencesTruncated === undefined
+      ? {}
+      : { referencesTruncated: options.referencesTruncated }),
     locations: [...(options.locations ?? [])],
     subject: options.subject ?? null,
   };
@@ -264,6 +275,12 @@ export type ProviderTargetSupport =
       readonly diagnostics: Readonly<Record<string, JsonValue>>;
     };
 
+/** One owner-observed availability/capability snapshot for provider discovery. */
+export interface AnalysisProviderReadinessSnapshot {
+  readonly availability: ProviderAvailability;
+  readonly capabilities: readonly CapabilityDescriptor[];
+}
+
 /** Deep provider candidate discoverable before one target-bound route is chosen. */
 export interface AnalysisProviderCandidate extends AnalysisProvider {
   resolveAnalysisProfile(
@@ -271,5 +288,6 @@ export interface AnalysisProviderCandidate extends AnalysisProvider {
     options?: AnalysisProfileResolutionOptions,
   ): Promise<Result<AnalysisProfileResolution, AnalysisError>>;
   inspectAvailability(): ProviderAvailability;
+  inspectReadinessSnapshot?(): AnalysisProviderReadinessSnapshot;
   inspectTargetSupport(target: BinaryTarget): ProviderTargetSupport;
 }

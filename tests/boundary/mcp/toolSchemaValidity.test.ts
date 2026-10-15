@@ -9,6 +9,7 @@ import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { emptyArraySchema } from "../../../src/domain/emptyArraySchema.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
+import { arrayItemSchemaError } from "../../fixtures/mcpClientSchemaConstraints.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
 interface ToolSchemas {
@@ -35,7 +36,11 @@ function schemaErrors(tools: readonly ToolSchemas[]): string[] {
         if (!ajv.validateSchema(schema))
           return [`${tool.name}.${kind}: ${ajv.errorsText(ajv.errors)}`];
         ajv.compile(schema);
-        return [];
+        const clientError = arrayItemSchemaError(
+          schema,
+          `${tool.name}.${kind}`,
+        );
+        return clientError === undefined ? [] : [clientError];
       } catch (cause: unknown) {
         return [
           `${tool.name}.${kind}: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -112,6 +117,12 @@ function expectKnownAuthorityHints(tools: readonly ToolSchemas[]): void {
       idempotentHint: false,
       openWorldHint: false,
     },
+    start_gdb_session: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     export_web_scripts: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -142,6 +153,12 @@ function expectKnownAuthorityHints(tools: readonly ToolSchemas[]): void {
     import_evidence_bundle: {
       readOnlyHint: false,
       destructiveHint: false,
+    },
+    execute_rizin_command: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
     },
   } as const;
 
@@ -215,6 +232,46 @@ function resolveReference(schema: unknown, reference: string): unknown {
     value = Reflect.get(value, key);
   }
   return value;
+}
+
+function localReferenceExpansions(schema: Record<string, unknown>): number {
+  // Clients that render SDK declarations from the advertised input expand
+  // schema-local references against a shared per-input budget; Pi 1.1.0
+  // code-mode allows 32 and renders every later reference as `unknown`.
+  // Count conservatively: every resolvable, non-cyclic reference occurrence
+  // reached while walking the input, never the definitions themselves.
+  let count = 0;
+  const visit = (node: unknown, active: ReadonlySet<string>): void => {
+    if (Array.isArray(node)) {
+      node.forEach((child) => visit(child, active));
+      return;
+    }
+    if (!isRecord(node)) return;
+    if (typeof node.$ref === "string" && !active.has(node.$ref)) {
+      const target = resolveReference(schema, node.$ref);
+      if (target !== undefined) {
+        count += 1;
+        visit(target, new Set([...active, node.$ref]));
+        return;
+      }
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (
+        [
+          "$defs",
+          "definitions",
+          "examples",
+          "default",
+          "const",
+          "enum",
+        ].includes(key)
+      )
+        continue;
+      visit(value, active);
+    }
+  };
+  visit(schema, new Set());
+  return count;
 }
 
 function recursiveReferences(tools: readonly ToolSchemas[]): string[] {
@@ -674,6 +731,14 @@ it("ships nonrecursive input and output schemas in the generated catalog", () =>
   expect(recursiveReferences(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
 });
 
+it("keeps advertised input references within the client expansion budget", () => {
+  for (const tool of GENERATED_MCP_TOOL_CATALOG)
+    expect(
+      localReferenceExpansions(tool.inputSchema),
+      `${tool.name} exhausts the shared reference-expansion budget`,
+    ).toBeLessThanOrEqual(32);
+});
+
 it("rejects unresolved output-schema references even for uncalled tools", () => {
   const errors = schemaErrors([
     {
@@ -704,6 +769,26 @@ it("validates each tool independently when output schema IDs repeat", () => {
   expect(errors).toHaveLength(1);
   expect(errors[0]).toContain("broken.outputSchema");
   expect(errors[0]).toContain("missing");
+});
+
+it("checks client array constraints in schema positions while preserving literal metadata", () => {
+  const schema = {
+    type: "object",
+    properties: { examples: { type: "array", items: { type: "string" } } },
+    examples: [{ type: "array" }],
+    default: { type: "array" },
+    const: { type: "array" },
+    enum: [{ type: "array" }],
+  };
+  expect(arrayItemSchemaError(schema, "literal")).toBeUndefined();
+  expect(
+    arrayItemSchemaError(
+      { ...schema, properties: { examples: { type: "array" } } },
+      "broken",
+    ),
+  ).toBe(
+    "broken.properties.examples: tool parameters array type must have items",
+  );
 });
 
 it.each([false, true])(

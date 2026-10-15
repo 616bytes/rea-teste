@@ -118,14 +118,21 @@ it("reuses only scheduled qualification and preserves every explicit full reques
   ).toBe("fast");
 });
 
-it("keeps every translated root README and authored guide on the documentation lane", async () => {
+it("keeps every translated README and authored guide on the documentation lane", async () => {
   const { directory, base } = await fixture();
   const readmes = (await readdir(new URL("../../../", import.meta.url))).filter(
     (name) => /^README(?:_.*)?\.md$/u.test(name),
   );
+  const translated = (
+    await readdir(new URL("../../../docs/readme/", import.meta.url))
+  )
+    .filter((name) => /^README_.*\.md$/u.test(name))
+    .map((name) => `docs/readme/${name}`);
   expect(readmes).toContain("README.md");
+  expect(translated.length).toBeGreaterThan(0);
   const head = await change(directory, [
     ...readmes,
+    ...translated,
     "docs/guide.md",
     "AGENTS.md",
     "CONTRIBUTING.md",
@@ -134,6 +141,51 @@ it("keeps every translated root README and authored guide on the documentation l
     code: false,
     package: false,
     docs: true,
+  });
+});
+
+it.each(["cjs", "cts", "js", "jsx", "mjs", "mts", "ts", "tsx"])(
+  "selects static checks for authored documentation code (%s) without provider lanes",
+  async (extension) => {
+    const { directory, base } = await fixture();
+    const head = await change(directory, [
+      `docs/.vitepress/helpers/navigation.${extension}`,
+    ]);
+    const plan = await classify(directory, base, head);
+    const { CI_FLAGS } = await loadScopes();
+    expect(plan).toMatchObject({ tier: "fast", code: true, docs: true });
+    for (const flag of CI_FLAGS)
+      if (flag !== "code" && flag !== "docs") expect(plan[flag]).toBe(false);
+  },
+);
+
+it("retains code checks when documentation code is removed or renamed to Markdown", async () => {
+  const { directory } = await fixture();
+  const base = await change(directory, ["docs/.vitepress/config.ts"]);
+  await git(directory, [
+    "mv",
+    "docs/.vitepress/config.ts",
+    "docs/configuration.md",
+  ]);
+  const head = await commit(directory);
+  expect(await classify(directory, base, head)).toMatchObject({
+    code: true,
+    docs: true,
+    runtime: false,
+    package: false,
+  });
+});
+
+it("selects code checks for documentation filenames containing line separators", async () => {
+  const { directory, base } = await fixture();
+  const head = await change(directory, [
+    "docs/.vitepress/navigation\u2028menu.ts",
+  ]);
+  expect(await classify(directory, base, head)).toMatchObject({
+    code: true,
+    docs: true,
+    runtime: false,
+    package: false,
   });
 });
 
@@ -198,7 +250,7 @@ it("emits an observational owner proposal without changing ordinary or full port
 it("does not charge a documentation PR for unrelated implementation updates on main", async () => {
   const { directory, base } = await fixture();
   await git(directory, ["switch", "-c", "docs/change"]);
-  const head = await change(directory, ["README_zh-TW.md"]);
+  const head = await change(directory, ["docs/readme/README_zh-TW.md"]);
   await git(directory, ["switch", "main"]);
   const advancedBase = await change(directory, ["src/anotherProvider.ts"]);
   expect(advancedBase).not.toBe(base);
@@ -207,6 +259,84 @@ it("does not charge a documentation PR for unrelated implementation updates on m
     package: false,
   });
 });
+
+it.each([
+  "src/gdb/GdbSessionManager.ts",
+  "src/rizin/RizinDebugSessionManager.ts",
+  "src/cutter/CutterBridgeClient.ts",
+  "src/objdump/ObjdumpCommand.ts",
+  "tests/boundary/providers/GdbSessionManagerCoverage.test.ts",
+  "tests/boundary/providers/GdbCommandQueue.test.ts",
+  "tests/boundary/providers/RizinDebugSessionCoverage.part3.test.ts",
+  "tests/boundary/providers/RizinCommandTimeout.test.ts",
+  "tests/boundary/providers/RizinTimeoutEvidence.test.ts",
+  "tests/boundary/providers/GdbSessionReviewRegressions.test.ts",
+  "tests/boundary/providers/gdbTestHelpers.ts",
+  "tests/boundary/providers/RizinDebugSessionReviewRegressions.test.ts",
+  "tests/boundary/mcp/gdbCancellationMcp.test.ts",
+  "tests/boundary/mcp/rizinDebuggerCancellationMcp.test.ts",
+  "tests/composition/reverseEngineeringAdmission.test.ts",
+  "tests/support/reverseEngineeringMcpHarness.ts",
+  "tests/support/reverseEngineeringCompositionEdgeCases.ts",
+  "tests/support/reverseEngineeringCompositionFixtures.ts",
+  "tests/support/reverseEngineeringService.ts",
+  "tests/support/ownedRizinCommandEvidenceTests.ts",
+  "tests/support/reverseDebuggerMcpTestHelpers.ts",
+  "tests/boundary/cli/gdbStartupCleanupCli.test.ts",
+  "vitest.reverse-tools.config.ts",
+  "vitest.reverse-tools-semantics.config.ts",
+  "stryker.config.mjs",
+  "stryker.semantics.config.mjs",
+  "tsconfig.reverse-tools-mutation.json",
+  "scripts/prepare-reverse-tools-mutation.mjs",
+  "scripts/lib/reverse-tools-mutation-targets.mjs",
+])(
+  "selects the reverse-tool coverage and mutation gate for %s",
+  async (path) => {
+    const { directory, base } = await fixture();
+    const head = await change(directory, [path]);
+    expect(await classify(directory, base, head)).toMatchObject({
+      code: true,
+      reverse_tools: true,
+    });
+  },
+);
+
+const reverseToolsVitestConfig = await readFile(
+  new URL("../../../vitest.reverse-tools.config.ts", import.meta.url),
+  "utf8",
+);
+const reverseToolsVitestInputs = [
+  ...reverseToolsVitestConfig.matchAll(/"((?:\.\/)?(?:src|tests)\/[^"]+)"/gu),
+].flatMap((match) =>
+  match[1] === undefined ? [] : [match[1].replace(/^\.\//u, "")],
+);
+const reverseToolsMutationConfig = JSON.parse(
+  await readFile(
+    new URL("../../../tsconfig.reverse-tools-mutation.json", import.meta.url),
+    "utf8",
+  ),
+) as { include: string[] };
+const reverseToolsInputs = [
+  ...new Set([
+    ...reverseToolsVitestInputs,
+    ...reverseToolsMutationConfig.include.map((path) =>
+      path.replace(/^\.\//u, ""),
+    ),
+  ]),
+];
+
+it.each(reverseToolsInputs)(
+  "selects the reverse-tool quality gate for configured input %s",
+  async (path) => {
+    const { directory, base } = await fixture();
+    const head = await change(directory, [path]);
+    expect(await classify(directory, base, head)).toMatchObject({
+      code: true,
+      reverse_tools: true,
+    });
+  },
+);
 
 it.each([
   "src/README.md",
@@ -240,7 +370,7 @@ it("retains complete checks when implementation is renamed into documentation", 
 
 it("keeps main pushes scoped when a successful ancestor baseline is available", async () => {
   const { directory, base } = await fixture();
-  const head = await change(directory, ["README_ja.md"]);
+  const head = await change(directory, ["docs/readme/README_ja.md"]);
   expect(await classify(directory, base, head, "push")).toMatchObject({
     tier: "fast",
     code: false,
@@ -450,6 +580,10 @@ it.each([
     },
   ],
   [
+    "scripts/verify-solidity-metadata.mjs",
+    { code: true, evm: true, browser: false, package: false },
+  ],
+  [
     "src/browser/execution/evaluate.ts",
     {
       code: true,
@@ -466,11 +600,18 @@ it.each([
   ],
   ["website/src/index.ts", { code: false, website: true, package: false }],
   [
+    "website/public/examples/notes-electron/preload.js",
+    { code: true, website: true, package: false },
+  ],
+  [
     "website/locales/zh-CN/messages.po",
     { code: false, website: true, package: false },
   ],
   ["scripts/website_i18n.py", { code: false, website: true, package: false }],
-  ["README_ja.md", { code: false, docs: true, website: true, package: false }],
+  [
+    "docs/readme/README_ja.md",
+    { code: false, docs: true, website: true, package: false },
+  ],
   [
     ".github/workflows/website-pages.yml",
     { code: false, website: true, package: false },
@@ -514,6 +655,10 @@ it.each([
   [
     "src/windows/Example.ts",
     { code: true, runtime: true, package: true, apple: false, evm: false },
+  ],
+  [
+    "src/domain/javascript/javascriptRuntimeStaticCandidates.ts",
+    { code: true, runtime: true, package: true, javascript_recovery: true },
   ],
   ["install.sh", { code: true, runtime: true, package: true, evm: false }],
   [
@@ -752,6 +897,10 @@ it("rejects skipped selected work while allowing unselected lanes to skip", asyn
 
 it.each([
   [
+    ".github/workflows/mutation.yml",
+    { workflows: true, code: true, reverse_tools: true, package: false },
+  ],
+  [
     ".github/workflows/sqlite-runtime.yml",
     { workflows: true, code: true, package: false, website: false },
   ],
@@ -775,7 +924,16 @@ it.each([
     "tsconfig.build.json",
     { code: true, package: true, browser: true, evm: true },
   ],
-  ["docs/.vitepress/config.ts", { code: false, docs: true, package: false }],
+  ["docs/.vitepress/config.ts", { code: true, docs: true, package: false }],
+  [
+    "docs/package.json",
+    { code: true, docs: true, runtime: false, package: false },
+  ],
+  [
+    "docs/.vitepress/package.json",
+    { code: true, docs: true, runtime: false, package: false },
+  ],
+  ["docs/data.json", { code: false, docs: true, package: false }],
   ["CHANGELOG.md", { code: false, docs: true, package: false }],
   ["SECURITY.md", { code: false, docs: true, package: false }],
   [".github/pull_request_template.md", { code: false, docs: true }],
@@ -791,6 +949,10 @@ it.each([
   ["scripts/unknown-website-helper.mjs", { code: true, package: true }],
   [
     ".github/workflows/release.yml",
+    { workflows: true, code: true, package: false, website: false },
+  ],
+  [
+    ".github/workflows/pr-readiness.yml",
     { workflows: true, code: true, package: false, website: false },
   ],
   [
@@ -920,7 +1082,7 @@ it.each(["workflow_dispatch", "schedule"])(
 it("honors ci:full for successive PR revisions", async () => {
   const { directory, base } = await fixture();
   const first = await change(directory, ["README.md"]);
-  const second = await change(directory, ["README_ja.md"]);
+  const second = await change(directory, ["docs/readme/README_ja.md"]);
   for (const head of [first, second]) {
     expect(
       await classify(directory, base, head, "pull_request", true),

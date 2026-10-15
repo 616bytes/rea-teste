@@ -19,6 +19,10 @@ import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { runOwnedCommand } from "../process/OwnedCommand.js";
+import type {
+  ProviderProcessSupervisor,
+  ProviderProcessStopResult,
+} from "../process/ProviderProcess.js";
 import { capturedSqliteOutput } from "./SqliteDatabaseFailures.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 
@@ -36,6 +40,7 @@ const replySchema = z.discriminatedUnion("ok", [
     reason: z.enum([
       "format",
       "selection",
+      "column-selection",
       "unsupported",
       "unavailable",
       "output-limit",
@@ -48,6 +53,14 @@ const replySchema = z.discriminatedUnion("ok", [
 export type SqliteWorkerLauncher = NonNullable<
   Parameters<typeof runOwnedCommand>[2]
 >["launcher"];
+
+// Each input rejection names the caller argument that requires correction.
+const rejectedArgument = {
+  format: "path",
+  unsupported: "path",
+  selection: "table",
+  "column-selection": "columns",
+} as const;
 
 const rejectedReply = (
   reply: z.output<typeof replySchema> & { ok: false },
@@ -83,7 +96,7 @@ const rejectedReply = (
     );
   return new AnalysisInputError(operation, { capturedOutput }, [
     {
-      path: [reply.reason === "selection" ? "table" : "path"],
+      path: [rejectedArgument[reply.reason]],
       reason: "invalid_format",
       message: reply.message,
     },
@@ -100,6 +113,10 @@ export const executeSqliteDatabaseWorker = async (request: {
   readonly launcher?: SqliteWorkerLauncher;
   readonly signal?: AbortSignal;
   readonly captured: (output: AnalysisCapturedOutput) => void;
+  readonly retainCleanup?: (
+    owner: ProviderProcessSupervisor,
+    result: Extract<ProviderProcessStopResult, { status: "incomplete" }>,
+  ) => void;
 }): Promise<z.output<typeof inspectionSchema>> => {
   const requestPath = join(request.root, "request.json");
   const replyPath = join(request.root, "reply.json");
@@ -134,6 +151,9 @@ export const executeSqliteDatabaseWorker = async (request: {
     {
       ...(request.signal === undefined ? {} : { signal: request.signal }),
       ...(request.launcher === undefined ? {} : { launcher: request.launcher }),
+      ...(request.retainCleanup === undefined
+        ? {}
+        : { retainCleanup: request.retainCleanup }),
     },
   );
   const capturedOutput = capturedSqliteOutput(execution);

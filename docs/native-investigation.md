@@ -227,6 +227,10 @@ nodes and edges. Node payloads are bounded to 8 MiB and serialized results to
 32 MiB. Pagination returns edges whose source is on the node page and preserves
 stable IDs for endpoints outside that page.
 
+Within one value trace, each exact procedure selector is attempted at most once,
+including failed analyses. Failures remain unknown observations and do not
+establish canonical function identity. A new trace can retry those selectors.
+
 The raw Java `is_dead` flag can remain set after Ghidra decodes a live block;
 `block_membership` reports actual syntax-tree membership separately.
 
@@ -319,7 +323,16 @@ complete observation.
   digest are preserved; key interpretation follows the pinned plist decoder.
 - `decode_interface_builder` / `rea decode-interface-builder <app>` reads
   compiled storyboard and nib resources into objects, outlets, actions,
-  connections and controller/class names. `verify:interface-builder` compiles
+  connections and controller/class names. A full app graph is often several
+  megabytes (XLD.app: 6.7 MB, about 2M tokens, which also exceeds the default
+  MCP response budget), so MCP callers should pass `detail: "summary"`. The
+  summary keeps every decoded document and node/edge/coverage counts and
+  retains the complete Evidence; page rows with `inspect_analysis_view`
+  `view: {kind: "interface-builder", collection: "nodes", document:
+  "Contents/Resources/Base.lproj/MainMenu.nib", offset: 0, limit: 64}`.
+  `document` selects rows whose evidence names that exact
+  `documents[].relative_path` (nodes and edges only); `source_truncated` keeps
+  graph incompleteness visible on every page. `verify:interface-builder` compiles
   a source-owned AppKit XIB with `ibtool`. Storyboards require an installed
   iOS platform; unsupported archive forms remain explicit.
   XML plist archives accept UTF-8 and BOM-marked UTF-16 in either byte order.
@@ -365,7 +378,12 @@ complete observation.
   property: `N` means `nonatomic`; a complete typed attribute string without
   `N` means the Objective-C default `atomic`;
   missing or incomplete attribute metadata leaves `atomicity` and any
-  unestablished read-only value null. `is_meta_class`, `is_root_class`, and
+  unestablished read-only value null. A type attribute whose quoted class name
+  never closes is incomplete and marks `objc_properties_categories` partial
+  with `property_attributes_incomplete`. A property record that cannot be
+  decoded, such as one with an empty or unmapped name, is reported as
+  `property_decode_failed` at its entry address while sibling properties are
+  retained. `is_meta_class`, `is_root_class`, and
   `ivar_count` are also nullable when the selected provider exposes only symbol
   names. Class implementation methods have null `is_required` and `is_optional`
   fields because those facts apply to protocol declarations; decoded protocol
@@ -468,16 +486,20 @@ user's permissions and may change files, show UI or use the network.
 
 Debugging must be allowed for the user (Developer Tools access). A
 hardened-runtime target without `com.apple.security.get-task-allow` cannot be
-debugged; `inspect_signature` reports this as the debugger-attach facet, and
-the tool fails with a `debugger-attach-denied` reason.
+debugged; `inspect_signature` reports the signature's `hardened_runtime` value
+and its `entitlements`, including `com.apple.security.get-task-allow` when it
+is present. A denied trace reports the `debugger-attach-denied` reason.
 
 ## Provider and verification boundaries
 
 Install a Ghidra 12.1.x release and the 64-bit full JDK it declares, then configure REA to
 use them. Ghidra analysis supports Linux x64/arm64 and macOS x64/arm64; each installation requires
 the matching native decompiler. Experimental Windows x64 P0 admits native
-x86 and x86-64 PE applications and DLLs on local NTFS using bundled Job Object ownership,
-protected runtime DACLs, and handle-based path admission. See [Windows Ghidra P0](windows-ghidra-p0.md) and
+x86 and x86-64 PE applications and DLLs, plus explicitly selected
+[raw NMOS 6502 images](raw-binary.md#nmos-6502) with a caller-supplied load address,
+on fixed local NTFS volumes. Other raw CPU families remain unsupported on Windows.
+The boundary uses bundled Job Object ownership, protected runtime DACLs, and
+handle-based path admission. See [Windows Ghidra P0](windows-ghidra-p0.md) and
 [issue #527](https://github.com/morluto/rea/issues/527).
 On Linux and macOS, `annotate_native_function` atomically edits a function name
 and entry comments in the ephemeral database, returning refreshed analysis
@@ -520,6 +542,12 @@ unresolved runtime/value semantics remain visible in results.
 
 ## Interface Builder hierarchy coverage
 
+A document's `hierarchy_complete` flag follows its own hierarchy coverage.
+If graph limits omit a hierarchy source or destination, or prevent a hierarchy
+edge or traversal from being retained, that document reports partial hierarchy
+coverage. Retained unresolved edges remain in the graph and do not add to the
+omitted-edge count. Coverage is evaluated separately for each document.
+
 A keyed-archive hierarchy UID without an object-table entry marks the hierarchy
 as partial while preserving decoded objects and known links. UID 0 remains
 archived nil and does not count as a missing reference. Archive and evidence
@@ -546,3 +574,23 @@ Value projection preserves serialized node kinds, IDs, references and pagination
 Exact and ambiguous value counts describe emitted root/object value instances;
 a root and an object may contain the same value. Archive digests identify the
 original bytes.
+
+Dates are reported as `{ "$plist_type": "date", "iso8601": "<timestamp>" }`. A
+date the decoder cannot represent, such as an XML date with a year beyond 9999
+or a negative year, is reported as `{ "$plist_type": "date", "iso8601": null }`
+with a counted limitation; the rest of the plist or archive is still decoded.
+`inspect_plist` and Interface Builder decoding use the same projection.
+
+## Locate a byte signature
+
+Use `search_bytes` after opening a target with Ghidra to locate a known constant
+or instruction sequence. For example, `{"pattern":"48 8B ?? ?? 89","limit":100}`
+returns ordered addresses with segments, source file offsets and containing
+procedures. The CLI equivalent is
+`rea search-bytes ./program '48 8B ?? ?? 89' --provider ghidra`.
+Use `start`/`end` to constrain the inclusive address window, and continue with
+`next_cursor` until `complete` is true. Inspect `searched` for page coverage and
+skipped uninitialized blocks. A missing match does not establish absence from
+uninitialized memory or across block boundaries. See
+[Ghidra byte search](ghidra-provider.md#masked-byte-search) for mask and coverage
+semantics. This query never executes or modifies target bytes.

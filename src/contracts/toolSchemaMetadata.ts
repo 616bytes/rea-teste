@@ -2,7 +2,11 @@ import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
 import { advertisedInputExamples } from "./advertisedInputExamples.js";
-import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
+import {
+  advertisedReferenceExpansionBudget,
+  inputSchemaWithinReferenceExpansionBudget,
+  presentInputJsonSchema,
+} from "./inputSchemaPresentation.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 
 const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
@@ -66,11 +70,37 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
       });
       const examples = advertisedInputExamples(contract);
       return {
-        ...presentInputJsonSchema(shared, fallbackPropertyDescription),
+        // Sharing definitions only helps clients that resolve them. A client
+        // rendering declarations from a shared expansion budget degrades
+        // every reference past it to `unknown`, so an input whose shared form
+        // exceeds the budget is re-projected without shared definitions.
+        ...inputSchemaWithinReferenceExpansionBudget(
+          presentInputJsonSchema(shared, fallbackPropertyDescription),
+          () =>
+            presentInputJsonSchema(
+              project({
+                ...options,
+                libraryOptions: {
+                  ...options.libraryOptions,
+                  reused: "inline",
+                },
+              }),
+              fallbackPropertyDescription,
+            ),
+          advertisedReferenceExpansionBudget,
+        ),
         ...(examples.length === 0 ? {} : { examples }),
       };
     },
   );
+
+/** Return the same complete input JSON Schema projection registered on MCP. */
+export const advertisedInputJsonSchema = <Contract extends ToolContract>(
+  contract: Contract,
+): Record<string, unknown> =>
+  toolInputSchemaWithMetadata(contract)["~standard"].jsonSchema.input({
+    target: "draft-2020-12",
+  }) as Record<string, unknown>;
 
 /** Share output definitions and content-bound validator identities on the wire. */
 export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
@@ -116,7 +146,10 @@ export const transformAdvertisedInputJsonSchema = <Schema>(
   const byTarget = new Map<string, Record<string, unknown>>();
   const transformedInput = (options: unknown): unknown => {
     const target = Reflect.get(options as object, "target");
-    if (typeof target === "string") {
+    const cacheable =
+      typeof target === "string" &&
+      Reflect.get(options as object, "libraryOptions") === undefined;
+    if (cacheable) {
       const cached = byTarget.get(target);
       if (cached !== undefined) return cached;
     }
@@ -124,7 +157,7 @@ export const transformAdvertisedInputJsonSchema = <Schema>(
     const transformed = isSchemaRecord(projected)
       ? transform(projected)
       : projected;
-    if (typeof target === "string" && isSchemaRecord(transformed))
+    if (cacheable && isSchemaRecord(transformed))
       byTarget.set(target, transformed);
     return transformed;
   };

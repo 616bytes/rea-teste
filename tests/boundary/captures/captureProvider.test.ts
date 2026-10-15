@@ -11,6 +11,9 @@ import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { Cli } from "incur";
+import { registerCaptureCommands } from "../../../src/cli/captureCommands.js";
+import { silentLogger } from "../../../src/logger.js";
 
 // A command-boundary simulator: real process ownership/filesystem, not real TShark coverage.
 const fixture = async (mode = "ok", failCleanup = false) => {
@@ -50,6 +53,8 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
     },
     async (input) => {
       calls++;
+      if (mode === "launch-failure" && !input.arguments.includes("--version"))
+        throw Object.assign(new Error("spawn E2BIG"), { code: "E2BIG" });
       if (mode === "file-limit" && !input.arguments.includes("--version")) {
         const stdout = { text: "", bytes: 0, observedBytes: 0 };
         const stderr = {
@@ -249,6 +254,21 @@ it.each([
         name.startsWith("decoder-"),
       ),
     ).toEqual([]);
+  },
+);
+
+it.each(["capture", "fields"] as const)(
+  "does not attribute the version probe's output to a %s command that fails to launch",
+  async (operation) => {
+    const f = await fixture("launch-failure");
+    const result =
+      operation === "capture"
+        ? await f.service.inspect({ path: f.path, fields: ["ip.addr"] })
+        : await f.service.inspectFields({ kind: "fields" });
+    if (result.ok) throw new Error("Expected launch failure");
+    expect(f.calls()).toBe(2);
+    expect(result.error.message).toContain("spawn E2BIG");
+    expect(result.error.capturedOutput).toBeUndefined();
   },
 );
 
@@ -621,6 +641,37 @@ it("retains completed discovery on late cancellation and cleanup failure", async
           cleanupIncomplete: true,
         });
     }
+    f.allowCleanup();
+    await f.service.close();
+  }
+});
+
+it("preserves discovery resource ownership through CLI shutdown retries", async () => {
+  const f = await fixture("cleanup", true);
+  const cli = Cli.create("discovery-cleanup", { sync: false });
+  registerCaptureCommands(cli, silentLogger, {}, f.service);
+  let stdout = "";
+  try {
+    await cli.serve(
+      ["inspect-packet-fields", "--query", "usb", "--format", "json"],
+      {
+        stdout: (text) => {
+          stdout += text;
+        },
+        exit: () => {},
+      },
+    );
+    expect(JSON.parse(stdout)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        diagnostics: {
+          cleanup_error: {
+            details: { operation: "inspect_packet_fields" },
+          },
+        },
+      },
+    });
+  } finally {
     f.allowCleanup();
     await f.service.close();
   }

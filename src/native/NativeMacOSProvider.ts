@@ -7,7 +7,7 @@ import { inspectAppleDispatchMetadata } from "./AppleDispatchMetadata.js";
 import { observeNativeUi } from "./NativeUiObservation.js";
 import { LldbCallTracer, type NativeCallTracer } from "./LldbCallTracer.js";
 import { observeNativeCalls } from "./NativeCallObservation.js";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { open, realpath, stat } from "node:fs/promises";
 
 import { z } from "zod";
@@ -62,6 +62,7 @@ import {
   NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
   NativeCommandFailure,
   XcrunCommandRunner,
+  failureCapture,
   type NativeCommandCleanupFailure,
   type NativeCommandCapture,
   type NativeCommandRunner,
@@ -73,7 +74,7 @@ import {
 } from "./SignatureTargetBinding.js";
 import { parseCodeSignature } from "./parsers/codesign.js";
 import { parseDemangledSymbols } from "./parsers/demangle.js";
-import { parseLipoArchitectures } from "./parsers/lipo.js";
+import { parseLipoOutput } from "./parsers/lipo.js";
 import {
   parsePlistJson,
   parsePlistXml,
@@ -507,7 +508,10 @@ class NativeMacOSClient implements AnalysisClient {
     );
     if (!capture.ok) return capture;
     const provenance = [invocation(capture.value, this.target.path)];
-    const architectures = parseLipoArchitectures(capture.value.stdout);
+    const { architectures } = parseLipoOutput(
+      capture.value.stdout,
+      this.target.path,
+    );
     const result = listArchitecturesSchema.parse({
       architectures: {
         items: architectures,
@@ -561,6 +565,19 @@ class NativeMacOSClient implements AnalysisClient {
   async #inspectSignature(
     signal?: AbortSignal,
   ): Promise<Result<NativeObservation, AnalysisError>> {
+    // This provider's signature inspection covers Mach-O code signatures
+    // only. On another container, codesign's "not signed" verdict cannot
+    // see a format-level signature such as a xar pkg signature, so
+    // reporting it would claim unsigned for a layer that was never
+    // evaluated.
+    if (this.target.kind !== "executable" || !isMachOFormat(this.target.format))
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          IDENTITY.id,
+          "inspect_signature",
+          "Active artifact is not Mach-O; its container-level signature layer is not evaluated by codesign.",
+        ),
+      );
     return withSignatureTarget(
       this.target,
       this.#signatureResources,
@@ -981,15 +998,8 @@ const translateCodeSignExitFailure = (
       "nonzero-exit",
       capture.exitCode,
       undefined,
-      {
-        stdout: capture.stdout,
-        stderr: capture.stderr,
-        stdoutBytes: capture.stdoutBytes,
-        stderrBytes: capture.stderrBytes,
-        exitCode: capture.exitCode,
-        signal: capture.signal,
-        truncated: false,
-      },
+      // Accepted output stays complete until the provider decides it failed.
+      failureCapture(capture, false),
     ),
   );
 
@@ -1084,7 +1094,7 @@ const unreadablePlist = (
 ): AnalysisError => {
   const sentence = reason.endsWith(".") ? reason : `${reason}.`;
   // Name the default that is missing and the selection that still works.
-  const missingDefault = `The target has no readable Contents/Info.plist at ${path}: ${sentence} Select another plist in the target with the path input (CLI: --relative-path).`;
+  const missingDefault = `The target has no readable default plist at ${path}: ${sentence} Select another plist in the target with the path input (CLI: --relative-path).`;
   return requested === undefined
     ? new AnalysisCapabilityUnavailableError(
         IDENTITY.id,
@@ -1140,6 +1150,15 @@ const requireRegularPlist = async (
   }
 };
 
+/** The bundle whose Contents/MacOS directory directly holds `path`. */
+const macOSBundleRoot = (path: string): string | undefined => {
+  const programs = dirname(path);
+  const contents = dirname(programs);
+  return basename(programs) === "MacOS" && basename(contents) === "Contents"
+    ? dirname(contents)
+    : undefined;
+};
+
 const resolvePlistPath = async (
   target: BinaryTarget,
   requested: string | undefined,
@@ -1149,8 +1168,13 @@ const resolvePlistPath = async (
     if (requested !== undefined && isAbsolute(requested))
       return ok(resolve(requested));
     const sourceMetadata = await stat(source);
-    const root = sourceMetadata.isDirectory() ? source : dirname(target.path);
+    const root = sourceMetadata.isDirectory()
+      ? source
+      : (macOSBundleRoot(target.path) ?? dirname(target.path));
     if (requested !== undefined) return ok(resolve(root, requested));
+    // A selected plist file is itself the plist to inspect.
+    if (target.kind === "artifact" && target.format === "plist")
+      return ok(target.path);
     // A bundle target records the Info.plist its program file was declared
     // in: Contents/Info.plist, or the root plist of an iOS-style bundle.
     return ok(target.bundleInfoPlist ?? resolve(root, "Contents/Info.plist"));

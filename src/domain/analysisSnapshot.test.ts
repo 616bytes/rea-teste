@@ -52,7 +52,7 @@ const snapshotWithHistoricalEvidence = () => {
   };
   return {
     current,
-    snapshot: {
+    snapshot: analysisSnapshotSchema.parse({
       target,
       binding,
       entries: [entry],
@@ -66,11 +66,32 @@ const snapshotWithHistoricalEvidence = () => {
           result: { summary: "unprofiled" },
         }),
       ]),
-    } satisfies AnalysisSnapshot,
+    }),
   };
 };
 
 describe("analysis snapshot target identity", () => {
+  it("keeps 6502 confined to executable raw snapshots", () => {
+    const target = {
+      sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+      kind: "executable",
+      architecture: "6502",
+    };
+    expect(
+      analysisSnapshotSchema.shape.target.safeParse({
+        ...target,
+        format: "pe",
+      }).success,
+    ).toBe(false);
+    expect(
+      analysisSnapshotSchema.shape.target.safeParse({
+        ...target,
+        format: "raw-binary",
+        entry_point: "0x8001",
+      }).success,
+    ).toBe(true);
+  });
+
   it("partitions raw snapshots and query identities by the canonical entry", () => {
     const target: BinaryTarget = {
       path: "/fixture/image.bin",
@@ -117,6 +138,48 @@ describe("analysis snapshot target identity", () => {
     expect(snapshotTarget(ANALYSIS_SNAPSHOT_TARGET)).not.toHaveProperty(
       "entry_point",
     );
+  });
+});
+
+describe("analysis snapshot nested subject contract", () => {
+  it("rejects raw-only 6502 in nested detected execution subjects", () => {
+    const { snapshot } = snapshotWithHistoricalEvidence();
+    const entry = snapshot.entries[0];
+    if (entry === undefined) throw new Error("Fixture has no snapshot entry");
+    const malformedSubject = {
+      ...entry.execution.subject,
+      format: "pe",
+      architecture: "6502",
+    };
+    expect(
+      analysisSnapshotSchema.safeParse({
+        ...snapshot,
+        entries: [
+          {
+            ...entry,
+            execution: {
+              ...entry.execution,
+              subject: malformedSubject,
+            },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      analysisSnapshotSchema.safeParse({
+        ...snapshot,
+        workflow_entries: [
+          {
+            ...entry,
+            execution: {
+              ...entry.execution,
+              analysis_profile: snapshot.binding.analysis_profile,
+              subject: malformedSubject,
+            },
+          },
+        ],
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -171,6 +234,7 @@ describe("analysis snapshot contract", () => {
               raw_result: null,
               provider: binding.provider,
               limitations: [],
+              relationship_coverage: null,
               locations: [],
               subject: target,
             },
@@ -199,6 +263,7 @@ describe("analysis snapshot contract", () => {
         raw_result: null,
         provider: binding.provider,
         limitations: [],
+        relationship_coverage: null,
         locations: [],
         subject: {
           path: "a\u0000b",
@@ -230,6 +295,7 @@ describe("analysis snapshot contract", () => {
         raw_result: null,
         provider: binding.provider,
         limitations: [],
+        relationship_coverage: null,
         locations: [],
         subject: null,
       },
@@ -393,6 +459,7 @@ describe("analysis snapshot Evidence binding", () => {
         raw_result: rawResult,
         provider: binding.provider,
         limitations: ["fixture limitation"],
+        relationship_coverage: null,
         locations: [{ kind: "address" as const, address: "0x1000" }],
         subject,
       },
@@ -417,10 +484,20 @@ describe("analysis snapshot Evidence binding", () => {
       workflow_entries: [],
       evidence_bundle: createEvidenceBundle([evidence]),
     };
-    const parsedLegacySnapshot = parseAnalysisSnapshot(snapshot);
+    const parsedSnapshot = parseAnalysisSnapshot(snapshot);
     expect(
-      parsedLegacySnapshot.entries[0]?.execution.relationship_coverage,
+      parsedSnapshot.entries[0]?.execution.relationship_coverage,
     ).toBeNull();
+
+    const missingCoverage = structuredClone(snapshot);
+    const missingCoverageEntry = missingCoverage.entries[0];
+    if (missingCoverageEntry === undefined)
+      throw new Error("snapshot entry missing");
+    Reflect.deleteProperty(
+      missingCoverageEntry.execution,
+      "relationship_coverage",
+    );
+    expect(() => parseAnalysisSnapshot(missingCoverage)).toThrow();
 
     expect(() =>
       parseAnalysisSnapshot({

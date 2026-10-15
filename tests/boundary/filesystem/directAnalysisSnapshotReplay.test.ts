@@ -1,5 +1,5 @@
 import { parseConfig } from "../../../src/config/parseConfig.js";
-import { writeFile } from "node:fs/promises";
+import { symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -14,7 +14,7 @@ import type {
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import { ok } from "../../../src/domain/result.js";
+import { err, ok } from "../../../src/domain/result.js";
 import {
   readAnalysisSnapshot,
   writeAnalysisSnapshot,
@@ -40,6 +40,7 @@ import {
 } from "../../fixtures/binarySession.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
+import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   CAPABILITIES as GHIDRA_CAPABILITIES,
@@ -135,6 +136,7 @@ interface SnapshotProviderOptions {
   readonly profile?: ReturnType<typeof createAnalysisProfile>;
   readonly identity?: ProviderIdentity;
   readonly supportedOperations?: readonly CapabilityDescriptor["operation"][];
+  readonly limitations?: readonly string[];
 }
 
 const makeProvider = (
@@ -208,6 +210,7 @@ const makeProvider = (
             createAnalysisExecution(result, profile.provider, {
               analysisProfile: profile,
               rawResult: result,
+              limitations: options.limitations ?? [],
             }),
           );
         },
@@ -242,6 +245,7 @@ const createSnapshotReplayFixture = async (
       return {
         readConfiguration: () => parseConfig({}),
         createBinarySession: () => createTestBinarySession(provider),
+        createArtifactBinarySession: () => createTestBinarySession(provider),
         createManagedBinarySession: () => createTestBinarySession(provider),
       };
     },
@@ -252,11 +256,11 @@ const withAlternateWorkflowProfile = (
   snapshot: AnalysisSnapshot,
   path: string,
   current: Evidence,
-): AnalysisSnapshot => {
-  const alternateProfile = createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
+  alternateProfile = createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
     workflow: "binary_overview",
     fixture: "alternate-profile",
-  });
+  }),
+): AnalysisSnapshot => {
   if (
     typeof current.normalized_result !== "object" ||
     current.normalized_result === null ||
@@ -396,7 +400,159 @@ describe("snapshot output cleanup lifecycle", () => {
   });
 });
 
+const verifyWindowsSnapshotAdmission = async (
+  selectedPath: "direct" | "junction",
+): Promise<void> => {
+  const fixture = await createSnapshotReplayFixture(
+    "rea-direct-snapshot-junction-",
+  );
+  const rawPath = join(dirname(fixture.path), "image.bin");
+  await writeFile(rawPath, Buffer.from("a92a60", "hex"));
+  const linked = join(dirname(fixture.path), "linked");
+  const linkedPath = join(linked, basename(rawPath));
+  const identity = { ...GHIDRA_PROVIDER_IDENTITY, version: "12.1.4" };
+  const profile = createAnalysisProfile(identity, {
+    fixture: true,
+  });
+  const baseProvider = fixture.createProvider({
+    identity,
+    profile,
+    supportedOperations: ["search_strings"],
+  });
+  let rejectAdmission = false;
+  const provider: AnalysisProvider = {
+    ...baseProvider,
+    createClient: (target, profile, context) => {
+      const client = baseProvider.createClient(target, profile, context);
+      return {
+        ...client,
+        execute: (operation, parameters, options) =>
+          rejectAdmission && operation === "search_strings"
+            ? Promise.resolve(
+                err(new ProviderAdapterError("ghidra", operation)),
+              )
+            : client.execute(operation, parameters, options),
+      };
+    },
+  };
+  const dependencies = fixture.dependencies(provider);
+  const arguments_ = { pattern: "fixture", document: "fixture" };
+  const options = {
+    snapshotPath: fixture.snapshotPath,
+    formatHint: "raw-binary" as const,
+    architecture: "6502" as const,
+    entryPoint: "0x8001",
+  };
+  const first = await runDirectAnalysis(
+    dependencies,
+    rawPath,
+    "search_strings",
+    arguments_,
+    options,
+  );
+  expect(first).toMatchObject({ operation: "search_strings" });
+  expect(fixture.starts).toHaveLength(1);
+  if (selectedPath === "junction")
+    await symlink(dirname(fixture.path), linked, "junction");
+  rejectAdmission = true;
+  const second = await runDirectAnalysis(
+    dependencies,
+    selectedPath === "junction" ? linkedPath : rawPath,
+    "search_strings",
+    arguments_,
+    options,
+  );
+  expect(second).toMatchObject({ error: "Analysis failed" });
+  expect(fixture.starts).toHaveLength(2);
+  expect(
+    fixture.calls.filter((call) => call === "search_strings"),
+  ).toHaveLength(1);
+};
+
+it.each([
+  { tool: "binary_overview", arguments: {}, priorRevision: 4 },
+  {
+    tool: "inspect_native_api",
+    arguments: { procedure: "0x1000" },
+    priorRevision: 1,
+  },
+] as const)(
+  "refreshes unattributed $tool Evidence and replays the current revision",
+  async (scenario) => {
+    const fixture = await createSnapshotReplayFixture("rea-prior-coverage-");
+    const limitation = "Original PDB names may be missing.";
+    const provider = fixture.createProvider({
+      supportedOperations: workflowProviderOperations,
+      limitations: [limitation],
+    });
+    const dependencies = fixture.dependencies(provider);
+    const options = { snapshotPath: fixture.snapshotPath };
+    const first = parseEvidence(
+      await runDirectAnalysis(
+        dependencies,
+        fixture.path,
+        scenario.tool,
+        scenario.arguments,
+        options,
+      ),
+    );
+    const saved = await readAnalysisSnapshot(fixture.snapshotPath);
+    if (!saved.ok) throw saved.error;
+    const priorProfile = createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
+      upstream_analysis_profile: saved.value.binding.analysis_profile,
+      ...(scenario.priorRevision === undefined
+        ? {}
+        : { workflow_revision: scenario.priorRevision }),
+    });
+    const prior = withAlternateWorkflowProfile(
+      saved.value,
+      fixture.path,
+      { ...first, limitations: ["Derived by an REA composed workflow."] },
+      priorProfile,
+    );
+    const written = await withArtifactResourceScope((resources) =>
+      writeAnalysisSnapshot(prior, fixture.snapshotPath, true, resources),
+    );
+    if (!written.ok) throw written.error;
+    const refreshed = parseEvidence(
+      await runDirectAnalysis(
+        dependencies,
+        fixture.path,
+        scenario.tool,
+        scenario.arguments,
+        options,
+      ),
+    );
+    expect(refreshed.limitations).toEqual(
+      expect.arrayContaining(first.limitations),
+    );
+    expect(refreshed.analysis_profile?.digest).not.toBe(priorProfile.digest);
+    expect(refreshed.normalized_result).toEqual(first.normalized_result);
+    const starts = [...fixture.starts];
+    const calls = [...fixture.calls];
+    const replayed = await runDirectAnalysis(
+      dependencies,
+      fixture.path,
+      scenario.tool,
+      scenario.arguments,
+      options,
+    );
+    expect(replayed).toEqual(refreshed);
+    expect(fixture.starts).toEqual(starts);
+    expect(fixture.calls).toEqual(calls);
+  },
+);
+
 describe("direct analysis composed snapshot replay", () => {
+  it.skipIf(process.platform !== "win32")(
+    "does not replay a CLI snapshot through a Windows junction",
+    () => verifyWindowsSnapshotAdmission("junction"),
+  );
+  it.skipIf(process.platform !== "win32")(
+    "does not replay a CLI snapshot before native admission on a canonical path",
+    () => verifyWindowsSnapshotAdmission("direct"),
+  );
+
   it.each([
     {
       tool: "search_strings",
@@ -516,7 +672,7 @@ describe("Ghidra composed workflow snapshot replay", () => {
     { tool: "inspect_native_api", arguments: { procedure: "0x1000" } },
     { tool: "trace_feature", arguments: { query: "fixture" } },
   ] as const)(
-    "persists and replays $tool with production Ghidra capability policies",
+    "persists $tool with production Ghidra capability policies",
     async ({ tool, arguments: parameters }) => {
       const fixture = await createSnapshotReplayFixture("rea-ghidra-workflow-");
       const profile = createAnalysisProfile(
@@ -554,8 +710,14 @@ describe("Ghidra composed workflow snapshot replay", () => {
         { snapshotPath: fixture.snapshotPath },
       );
       expect(replay).toEqual(first);
-      expect(fixture.starts).toHaveLength(1);
-      expect(fixture.calls).toEqual(initialCalls);
+      if (process.platform === "win32") {
+        // The first provider call in a new CLI session admits its source.
+        expect(fixture.starts).toHaveLength(2);
+        expect(fixture.calls.length).toBeGreaterThan(initialCalls.length);
+      } else {
+        expect(fixture.starts).toHaveLength(1);
+        expect(fixture.calls).toEqual(initialCalls);
+      }
     },
   );
 });
@@ -839,6 +1001,7 @@ describe("workflow snapshot profile and cancellation binding", () => {
     const dependencies: DirectAnalysisDependencies = {
       readConfiguration: () => parseConfig({}),
       createBinarySession: () => session,
+      createArtifactBinarySession: () => session,
       createManagedBinarySession: () => session,
     };
     const result = await runDirectAnalysis(

@@ -26,6 +26,29 @@ its manifest. Release CI builds both, and `prepublishOnly` rejects a missing,
 stale, mismatched, or wrong-architecture artifact. A development tarball built
 without this lane reports Windows native controls as unavailable.
 
+## Restore the artifact in a source checkout
+
+The source tree omits `native/windows/build/` from Git. To run Windows
+provider-backed workflows from a checkout without the MinGW build lane, extract
+the two files from the published `rea-agents` tarball whose version exactly
+matches the checkout's `package.json` version. Do not use `latest` or copy files
+from another REA version; the loader verifies the manifest version, ABI,
+architecture, and addon digest before it grants authority.
+
+From the checkout root, replace `<matching-version>` with the `version` in
+`package.json`:
+
+```sh
+npm pack rea-agents@<matching-version>
+tar -xzf rea-agents-<matching-version>.tgz
+mkdir -p native/windows/build
+cp package/native/windows/build/manifest.json native/windows/build/
+cp package/native/windows/build/rea-windows-x64.node native/windows/build/
+```
+
+This is a manual recovery step. REA does not fetch or install the artifact
+automatically. Alternatively, build it using the Linux/MinGW lane above.
+
 ## Boundaries
 
 - Opaque Node objects carry a native type tag, resource kind, and closed state.
@@ -88,10 +111,14 @@ without this lane reports Windows native controls as unavailable.
 - Cleanup walks locked directory objects, removes files by handle, and unlinks
   reparse entries without traversing their targets. Failed removal retains the
   root and ancestor leases for retry; a partially removed runtime accepts only
-  cleanup, and its registry entry remains until removal succeeds. Normal close, cancellation,
+  cleanup, and its registry entry remains until removal succeeds. The owned root
+  handle includes attribute-write access so cleanup can clear a read-only marker,
+  matching the child cleanup handles. Normal close, cancellation,
   startup failure, and timeout release provider resources. Abrupt owner death
-  kills the owned job; it can leave private runtime files for later operator
-  cleanup and does not claim transactional deletion after a crash.
+  kills the owned job. The Android provider additionally uses a detached helper
+  that owns its private runtime directory and cleans it when the owner pipe
+  closes. Other providers can leave private runtime files after owner death;
+  helper death and host power loss are not transactional deletion.
 
 Windows failures retain their constraint, requested coordinate, Win32 code,
 and system message. Unsupported filesystems and reparse paths are distinct
@@ -115,8 +142,10 @@ the supported device/UNC namespaces; existing admission checks still apply.
 
 The bearer-token descriptor remains under its immutable private lease until
 `runtime_close` on Windows; POSIX removes the descriptor after the bridge reads
-it. Job ownership guarantees process termination on owner death, not deletion
-of private files after a crash. SUBST drive aliases and changing DOS-device
+it. Job ownership guarantees process termination on owner death. Android's
+detached workspace helper provides a separate cleanup owner for that provider,
+but simultaneous helper death or power loss can still leave private files.
+SUBST drive aliases and changing DOS-device
 namespaces are outside the verified P0 scope and are not detected as a separate
 alias policy. Mounted-folder paths that report a reparse tag are rejected by
 component admission; broader namespace variants remain unverified. Preserve
@@ -129,8 +158,11 @@ npm run verify:windows-native
 npm run verify:ghidra:windows
 ```
 
-The native inspection probe retains its directory owner if deletion fails. A
-later availability query retries that cleanup before creating another probe;
+An unpublished runtime retains its directory and parent handles if validation,
+result publication, or rollback fails. Errors retain the original failure and
+any rollback failure. Later runtime creation or native inspection retries that
+exact owner before allocating another directory. The same owner covers the
+native inspection probe. A later availability query retries failed probe cleanup;
 successful admission and static artifact failures remain cached. Environment
 teardown makes one final cleanup attempt and reports a persistent failure to
 stderr rather than claiming the directory was removed.
@@ -147,10 +179,14 @@ On Windows, after compiling the runtime:
 node scripts/verify-windows-native-inspection.mjs
 ```
 
-This artifact injects one access-denied disposition result while using a real
-NTFS directory. The verifier checks retained ownership, recovery on a later
-query, cached successful admission, and cleanup on environment teardown. It
-does not reproduce or identify the host-dependent cause reported in #1701.
+This artifact injects an access-denied disposition result while using real
+NTFS directories, and separately denies post-create validation and rollback.
+The verifier checks retained ownership after inspection and direct runtime
+creation failures, recovery on later admission, cached successful inspection,
+and cleanup on environment teardown. It
+renames the retained probe and recreates its old path, checking that cleanup
+removes the owned inode while preserving the replacement directory.
+It does not reproduce or identify the host-dependent cause reported in #1701.
 The fixture is stored under `.cache/` and is excluded from the shipped addon.
 
 The native lane checks DACL readback independently, source write/replacement
@@ -163,9 +199,14 @@ V8 heap flags cannot bound (limit notification, peak commit at the limit, all
 members settled, with the notification present in the first native exit report
 and the wrapper's exit event), and a control under the same limit that
 completes normally.
-An optional independently built
-`tests/fixtures/windows/processBoundary.cc` executable adds breakaway and
-caller/child token observations and an in-place ancestor reparse attempt:
+A separately built `tests/fixtures/windows/processBoundary.cc` executable adds
+breakaway, caller/child token and environment semantics observations and an
+in-place ancestor reparse attempt. The lane skips all of them when the
+executable is absent, so both Windows workflows cross-build it in the same
+MinGW job that builds their artifact and pass it: the capability and package
+lane in `.github/workflows/ci.yml`, and the real Ghidra proof run in
+`.github/workflows/real-ghidra-windows.yml`. Build it locally with any Windows
+C++ compiler, or the same way they do, and pass its path:
 
 ```powershell
 node scripts/verify-windows-native.mjs . C:\fixtures\process-boundary.exe

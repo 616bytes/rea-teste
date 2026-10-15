@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { digestSchema } from "../../domain/digests.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
+import { JAVASCRIPT_AST_FINGERPRINT_ALGORITHM } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type {
   JavaScriptSemanticProperty,
   JavaScriptSemanticValue,
@@ -157,6 +158,7 @@ const electron = z
         z.strictObject({
           entry_kind: z.enum(["bridge-member", "ipc-handler"]),
           entry: z.string(),
+          entry_path: strings.optional(),
           channel: z.string().nullable(),
           terminal: z.string(),
           resolution: z.literal("candidate"),
@@ -180,6 +182,13 @@ const electron = z
             z.strictObject({ expression: z.string(), location: range }),
           ),
         }),
+      )
+      .transform((paths) =>
+        paths.map(({ entry_kind, entry, entry_path, ...rest }) =>
+          entry_path === undefined
+            ? { entry_kind, entry, ...rest }
+            : { entry_kind, entry, entry_path, ...rest },
+        ),
       )
       .optional(),
     browser_windows: z.array(
@@ -319,6 +328,7 @@ export const javaScriptWorkerStaticAnalysisSchema = z
         kind: z.enum(["route", "network"]),
         value: z.string(),
         mechanism: z.string(),
+        interpretation: z.literal("candidate").exactOptional(),
       }),
     ),
     storage: z.array(
@@ -355,7 +365,9 @@ export const javaScriptWorkerStaticAnalysisSchema = z
             exports: strings,
             location: range,
             structural_fingerprint_sha256: digestSchema,
-            structural_fingerprint_algorithm: z.literal("babel-ast-v1"),
+            structural_fingerprint_algorithm: z.literal(
+              JAVASCRIPT_AST_FINGERPRINT_ALGORITHM,
+            ),
           }),
         ),
         location: range,

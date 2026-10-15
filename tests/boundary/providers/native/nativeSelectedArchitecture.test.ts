@@ -27,7 +27,7 @@ const sliceSelectingRunner = (
     calls.push({ tool, arguments_ });
     const expected = tool === "dyld_info" ? dyldArchitecture : selected;
     if (
-      !["file", "lipo"].includes(tool) &&
+      tool !== "lipo" &&
       !arguments_.some(
         (argument, index) =>
           argument === expected ||
@@ -101,6 +101,12 @@ it.each([
     selected: "arm64e",
     dyldArchitecture: "arm64e.v1",
   },
+  // arm64e.x1 is its own subtype: otool and nm cannot reach it as arm64e.
+  {
+    architectures: ["x86_64", "arm64e.x1"],
+    selected: "arm64e.x1",
+    dyldArchitecture: "arm64e.x1",
+  },
 ] as const)(
   "selects the $dyldArchitecture slice of a universal arm64e target",
   async ({ architectures, selected, dyldArchitecture }) => {
@@ -154,6 +160,59 @@ it.each([
         .filter(({ tool }) => tool === "dyld_info")
         .every(({ arguments_ }) => arguments_.includes(dyldArchitecture)),
     ).toBe(true);
+    // vtool has no spelling for a variant subtype, so it is skipped rather
+    // than pointed at another slice.
+    const variant = selected.includes(".");
+    expect(calls.some(({ tool }) => tool === "vtool")).toBe(!variant);
+    expect(
+      result.value.limitations.some((limitation) =>
+        limitation.startsWith(`vtool cannot select the ${selected} slice`),
+      ),
+    ).toBe(variant);
+  },
+);
+
+it.each([
+  ["ordinary", "/owned/universal", "\n"],
+  ["LF Non-fat text", "/owned/\nNon-fat file: forged", "\n"],
+  ["CRLF Non-fat text", "/owned/\r\nNon-fat file: forged", "\r\n"],
+])(
+  "projects universal segment evidence into the selected slice's container offsets with %s path framing",
+  async (_description, path, lineEnding) => {
+    const records = (await nativeFixture("lipo-fat.txt")).replace(
+      /^Fat header in:[^\r\n]*\r?\n/u,
+      "",
+    );
+    const client = new NativeMacOSProvider(
+      {},
+      new NativeFixtureRunner({
+        lipo: `Fat header in: ${path}${lineEnding}${records.replaceAll("\n", lineEnding)}`,
+      }),
+      "darwin",
+    ).createClient(nativeMachoTarget(path));
+    const result = await client.execute("inspect_macho", {});
+    if (!result.ok) throw result.error;
+    expect(result.value.result).toMatchObject({
+      selected_architecture: { container_file_offset: 32768 },
+    });
+    expect(result.value.locations).toContainEqual({
+      kind: "file-offset-range",
+      start: 32768,
+      end: 40960,
+    });
+    expect(result.value.locations).toContainEqual({
+      kind: "file-offset",
+      offset: 36864,
+    });
+    expect(result.value.locations).not.toContainEqual({
+      kind: "file-offset-range",
+      start: 0,
+      end: 8192,
+    });
+    // Normalized tool fields keep their slice-relative meaning.
+    const normalized = inspectMachoSchema.parse(result.value.result);
+    expect(normalized.segments.items[0]?.file_offset).toBe(0);
+    expect(normalized.entrypoints.items[0]?.file_offset).toBe(4096);
   },
 );
 
@@ -186,34 +245,6 @@ it.each([
     });
   },
 );
-
-it("projects universal segment evidence into the selected slice's container offsets", async () => {
-  const client = new NativeMacOSProvider(
-    {},
-    new NativeFixtureRunner(),
-    "darwin",
-  ).createClient(nativeMachoTarget("/owned/universal"));
-  const result = await client.execute("inspect_macho", {});
-  if (!result.ok) throw result.error;
-  expect(result.value.locations).toContainEqual({
-    kind: "file-offset-range",
-    start: 32768,
-    end: 40960,
-  });
-  expect(result.value.locations).toContainEqual({
-    kind: "file-offset",
-    offset: 36864,
-  });
-  expect(result.value.locations).not.toContainEqual({
-    kind: "file-offset-range",
-    start: 0,
-    end: 8192,
-  });
-  // Normalized tool fields keep their slice-relative meaning.
-  const normalized = inspectMachoSchema.parse(result.value.result);
-  expect(normalized.segments.items[0]?.file_offset).toBe(0);
-  expect(normalized.entrypoints.items[0]?.file_offset).toBe(4096);
-});
 
 it.each([
   {
@@ -297,3 +328,38 @@ it.each([
     });
   },
 );
+
+it("reports the selected 32-bit slice's word size and byte order beside a 64-bit slice", async () => {
+  const i386Header = (await nativeFixture("otool-load.txt")).replace(
+    "0xfeedfacf 16777228",
+    "0xfeedface        7",
+  );
+  const fixtures = new NativeFixtureRunner({
+    lipo: [
+      "architecture x86_64\n    cputype 16777223\n    cpusubtype 3\n    offset 0\n    size 8192\n    align 2^14 (16384)",
+      "architecture i386\n    cputype 7\n    cpusubtype 3\n    offset 16384\n    size 8192\n    align 2^14 (16384)",
+    ].join("\n"),
+    "otool:-h": i386Header,
+    dwarfdump:
+      "UUID: 01234567-89AB-CDEF-0123-456789ABCDEF (i386) /owned/universal\n",
+  });
+  const base = nativeMachoTarget("/owned/universal");
+  const result = await new NativeMacOSProvider(
+    {},
+    sliceSelectingRunner(fixtures, "i386", "i386"),
+    "darwin",
+  )
+    .createClient({
+      ...base,
+      architecture: "x86",
+      availableArchitectures: ["x86_64", "x86"],
+    })
+    .execute("inspect_macho", {});
+
+  if (!result.ok) throw result.error;
+  expect(result.value.result).toMatchObject({
+    selected_architecture: { name: "i386", container_file_offset: 16384 },
+    word_size: 32,
+    endian: "little",
+  });
+});

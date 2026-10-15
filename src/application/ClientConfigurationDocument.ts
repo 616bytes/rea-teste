@@ -1,9 +1,4 @@
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
-import {
-  parse as parseYaml,
-  parseDocument as parseYamlDocument,
-  stringify as stringifyYaml,
-} from "yaml";
 import { isDeepStrictEqual } from "node:util";
 
 import {
@@ -12,6 +7,11 @@ import {
   editDshDocument,
   dshClientRegistrationEntry,
 } from "./DshCordisPatch.js";
+import {
+  editHermesConfigurationYaml,
+  parseHermesConfigurationYaml,
+  stringifyHermesConfigurationYaml,
+} from "./HermesConfigurationYaml.js";
 import {
   applyEdits,
   findNodeAtLocation,
@@ -110,15 +110,21 @@ const parseDocument = (
     return requireObject(parseToml(text), "The configuration root");
   // Pi loads `mcp.json` with a strict `JSON.parse` and no BOM tolerance, so
   // comments, trailing commas, a BOM, or an empty existing file must be
-  // rejected instead of registering into a document Pi cannot load.
-  if (format === "pi")
+  // rejected instead of registering into a document the client cannot load.
+  // Kimi also reads mcp.json with JSON.parse and an empty-file fallback.
+  if (format === "pi" || format === "kimi") {
+    if (format === "kimi" && text.trim().length === 0) return {};
     return requireObject(JSON.parse(text), "The configuration root");
+  }
   // An empty file, which some clients create before any server is added,
   // holds no settings to preserve.
   if (isEmptyClientConfigurationText(text)) return {};
   // Hermes stores MCP servers in `mcp_servers` inside a YAML document.
   if (format === "hermes")
-    return requireObject(parseYaml(text), "The configuration root");
+    return requireObject(
+      parseHermesConfigurationYaml(text),
+      "The configuration root",
+    );
   // ZCode loads nonempty native files with strict JSON.parse.
   if (format === "zcode")
     return requireObject(JSON.parse(text), "The configuration root");
@@ -161,7 +167,7 @@ export const parseZcodeFallbackConfiguration = (
         ? {}
         : requireObject(document.mcpServers, "ZCode fallback mcpServers"),
     serversPath: ["mcpServers"],
-    dialect: "json",
+    dialect: "zcode_fallback",
     legacyServers: {},
   };
 };
@@ -177,6 +183,7 @@ export const parseClientConfiguration = (
   if (format === undefined || format === "unsupported")
     throw new TypeError("client does not have a supported MCP config format");
   // DeepSeek Harness stores a Cordis patch list, not a server table.
+  if (format === "zcode_fallback") return parseZcodeFallbackConfiguration(text);
   if (format === "dsh") return parseDshCordisDocument(text);
   const document = parseDocument(text, format);
   const serversKey = clientConfigurationServersKey(format);
@@ -1412,19 +1419,18 @@ const serializeHermesConfiguration = (
     originalText === undefined ||
     isEmptyClientConfigurationText(originalText)
   )
-    return stringifyYaml(document);
+    return stringifyHermesConfigurationYaml(document);
   const serversKey = clientConfigurationServersKey("hermes");
   const servers = document[serversKey];
   const entry =
     typeof servers === "object" && servers !== null
       ? (servers as Record<string, unknown>)[PRODUCT_IDENTITY.mcpServerKey]
       : undefined;
-  const yamlDocument = parseYamlDocument(originalText);
-  if (entry === undefined)
-    yamlDocument.deleteIn([serversKey, PRODUCT_IDENTITY.mcpServerKey]);
-  else yamlDocument.setIn([serversKey, PRODUCT_IDENTITY.mcpServerKey], entry);
-  // Editing REA must not reflow unrelated user prompts or other YAML scalars.
-  return yamlDocument.toString({ lineWidth: 0 });
+  return editHermesConfigurationYaml(
+    originalText,
+    [serversKey, PRODUCT_IDENTITY.mcpServerKey],
+    entry,
+  );
 };
 
 /** Build the stdio entry shape expected by one client's configuration dialect. */
@@ -1443,6 +1449,13 @@ export const clientRegistrationEntry = (
         ...(Object.keys(environment).length === 0
           ? {}
           : { environment: { ...environment } }),
+      };
+    case "kimi":
+      // Kimi infers stdio from command; it uses `transport`, not `type`.
+      return {
+        command: executable,
+        args,
+        ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
       };
     case "opencode_v2":
       // V2 connects servers unless `disabled` is true.
@@ -1508,12 +1521,25 @@ export const parseGeminiMcpPolicy = (parsed: ClientConfigurationDocument) =>
     .passthrough()
     .parse(parsed.document.mcp ?? {});
 
+/** One server-name comparison for the exclusion, intersection and membership rules below. */
+const normalizeGeminiServerName = (name: string): string =>
+  name.toLowerCase().trim();
+
 /** Gemini consolidates excludes by union and allowlists by normalized intersection. */
 export const geminiServerPolicyBlock = (
   policies: readonly ReturnType<typeof parseGeminiMcpPolicy>[],
   serverKey: string,
 ): string | undefined => {
-  if (policies.some(({ excluded }) => excluded?.includes(serverKey)))
+  // Hand-authored settings cannot be assumed to spell the product key exactly,
+  // so every rule compares normalized names. Testing the consolidated list
+  // against the raw key instead would make the outcome depend on which policy
+  // supplied the spelling that survived the intersection.
+  const key = normalizeGeminiServerName(serverKey);
+  if (
+    policies.some(({ excluded }) =>
+      excluded?.some((name) => normalizeGeminiServerName(name) === key),
+    )
+  )
     return `Gemini mcp.excluded blocks ${serverKey}. Review the selected settings policies before rerunning setup.`;
   const allowlists = policies.flatMap(({ allowed }) =>
     allowed === undefined ? [] : [allowed],
@@ -1521,11 +1547,9 @@ export const geminiServerPolicyBlock = (
   const allowed = allowlists.reduce<string[] | undefined>(
     (previous, current) => {
       if (previous === undefined) return current;
-      const normalized = new Set(
-        current.map((name) => name.toLowerCase().trim()),
-      );
+      const normalized = new Set(current.map(normalizeGeminiServerName));
       return previous.filter((name) =>
-        normalized.has(name.toLowerCase().trim()),
+        normalized.has(normalizeGeminiServerName(name)),
       );
     },
     undefined,
@@ -1534,7 +1558,7 @@ export const geminiServerPolicyBlock = (
   if (
     allowed !== undefined &&
     allowed.length > 0 &&
-    !allowed.includes(serverKey)
+    !allowed.some((name) => normalizeGeminiServerName(name) === key)
   )
     return `Gemini mcp.allowed does not include ${serverKey}. Review the selected settings policies before rerunning setup.`;
   return undefined;

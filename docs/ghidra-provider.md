@@ -7,6 +7,8 @@ Executable bytes remain unchanged.
 
 Use [installation](installation.md#ghidra) for supported hosts, prerequisites,
 configuration, startup deadlines, resource controls, and cleanup recovery.
+[Linux Ghidra launches](installation.md#linux-owned-process-prerequisite) also
+require a procps-compatible `ps` on REA's `PATH` for process ownership checks.
 [Windows P0](windows-ghidra-p0.md) has its own admission and lifecycle boundary;
 [NativeAOT observations](ghidra-nativeaot.md) include a built-in read-only PE
 snapshot parser and a separate optional annotation extension. Check the
@@ -40,6 +42,26 @@ or undefined literals, including Rust strings, may be absent; an empty result
 does not prove text is absent. Both list and search Evidence carry this
 limitation. When an address is known, use `read_bytes` and `xrefs` to inspect
 bytes and references.
+
+## PE debug-symbol coverage
+
+The post-analysis handshake reports Ghidra's PDB Program Information attributes:
+the referenced file, GUID, hexadecimal age, legacy signature, version, and
+`PDB Loaded` state. Absent attributes remain null. PE Evidence carries a
+limitation when a PDB reference is present but Ghidra reports it as not loaded,
+or its load state is unknown. A bridge without this report leaves PDB coverage
+unknown. A reported loaded state is a Ghidra observation, not an independent
+PDB identity or complete symbol-coverage attestation, and retains an inline
+coverage caveat. Handshake PDB strings share a 4096 UTF-16-unit serialization
+budget (at most 24 KiB after JSON escaping); whole attributes that do not fit
+are omitted with an explicit resource limitation, rather than truncated.
+
+Original names and types may be missing even when auto-analysis completes.
+An empty name search does not establish that a function is absent; use
+`list_procedures` and address-based analysis to inspect recovered functions.
+REA imports a private executable copy and does not admit a caller-selected
+PDB companion. This reporting does not search symbol servers, copy a sibling
+PDB, or change analyzer settings.
 
 ## Loaded addresses and file offsets
 
@@ -131,14 +153,18 @@ overview merely because its source artifact is unchanged.
 
 Function extents and instruction completeness refer to Ghidra's analyzed body.
 An inferred no-return call can terminate that body before subsequent bytes.
-Pseudocode, assembly, procedure info, instruction windows, and dossiers report
-observed terminal call sites in Evidence limitations, including resolved callee
-names, addresses, and FunctionManager flags when available. Instruction windows
-and dossiers also retain these warnings in their result limitations. An
-unresolved callee or unestablished terminal-flow basis remains explicit. These
-observations qualify the analysis; they do not prove that a no-return flag is
-incorrect or recover excluded code. Analysis profiles version this observation
-contract so older snapshots cannot replay unqualified results.
+Pseudocode, assembly, procedure info, instruction windows, incoming and outgoing
+references, callee and caller reads, and dossiers report observed terminal call sites in Evidence limitations,
+including resolved callee names, addresses, and FunctionManager flags when
+available. On x86-32, the same views also report the exact Borland/Delphi-style
+FS exception-registration pattern when its handler address falls outside the
+function body. This is a static registration observation; it does not establish
+handler execution or change the body. Instruction windows and dossiers also
+retain these warnings in their result limitations. An unresolved callee or
+unestablished terminal-flow basis remains explicit. These observations qualify
+the analysis; they do not prove that a no-return flag is incorrect or recover
+excluded code. Analysis profiles version this observation contract so older
+snapshots cannot replay unqualified results.
 
 On non-Windows hosts, the ephemeral import repair clears no-return flags on the
 known returning external ABI names `malloc`, `__tls_get_addr`, `memcpy`, `memset`,
@@ -168,7 +194,7 @@ host/provider acceptance run with only the host compiler.
 
 `npm run verify:ghidra:windows` checks source-owned native x86-64 PE applications;
 `-- --x86` selects x86 and `-- --dll` selects DLLs, and the flags can be combined.
-These lanes check all 25 read-only operations, target/snapshot/import SHA-256 linkage,
+These lanes check all 26 read-only operations, target/snapshot/import SHA-256 linkage,
 and project, endpoint, process, and runtime cleanup. The independent native
 lane checks DACLs, handle admission, cancellation, and Job Object lifecycle.
 `npm run verify:ghidra:windows:package` packs and installs REA into an isolated
@@ -177,3 +203,32 @@ It accepts the same architecture and DLL flags and verifies the selected PE role
 in the analysis profile.
 All lanes require matching native controls; package startup alone establishes
 only package compatibility.
+
+## Masked byte search
+
+`search_bytes` (`rea search-bytes PATH '48 8B ?? ?? 89' --provider ghidra`)
+searches initialized analyzed memory, including loader fixups. Supply hexadecimal
+byte pairs, with `??` for any byte. An optional equal-length hexadecimal `mask`
+selects bits: `pattern: "a0"`, `mask: "f0"` matches bytes from `a0` through `af`.
+Wildcards remain unconstrained even with an explicit mask. At least one bit
+must be constrained.
+
+Optional `start` and `end` addresses are inclusive and select one address space.
+A match must end at or before `end`, so `end` set inside a match excludes it.
+Without bounds, loaded memory blocks are eligible, in Ghidra address order.
+Blocks that are not loaded (file parts such as `.symtab`) and overlay blocks are
+listed in `searched.skipped_not_loaded` and are not searched; pass `start` or
+`end` in their address space to search them.
+Overlapping matches are included; matches never cross block boundaries.
+Each match reports its address, segment, unique source file offset (or null),
+and containing procedure (or null).
+
+Pages default to 100 matches and accept 1 to 1000. Pass `next_cursor` as `cursor`
+with the same target, profile, pattern, mask and bounds to continue. `complete`
+means no further matches remain. `searched.blocks` and `searched.bytes` describe
+the inclusive memory ranges examined for this page, including lookahead for the
+next match. Coverage can overlap between pages; do not sum it as unique memory.
+`searched.skipped_uninitialized` lists eligible uninitialized blocks on every
+page. These blocks are never searched. Cancellation returns a typed error,
+discards the active Ghidra database, and does not return a successful partial page.
+Hopper byte search remains unavailable until its implementation is verified.

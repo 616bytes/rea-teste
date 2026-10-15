@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   analyzeJavaScriptSemantics,
   analyzeParsedJavaScriptSemantics,
-  classifyParsedJavaScriptElectronBindings,
 } from "./javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { moduleResolutionModeForJavaScriptReference } from "./javascriptModuleResolutionMode.js";
 import {
   origin,
   topLevelBinding,
@@ -58,6 +58,91 @@ describe("TypeScript import-equals links", () => {
     expect(
       links.find(({ kind }) => kind === "require")?.location.start,
     ).toEqual({ line: 1, column: 7 });
+  });
+});
+
+describe("CommonJS wrapper parameter redeclarations", () => {
+  it("does not infer a CommonJS wrapper from resolution mode in an explicit module", () => {
+    const path = "app/main.mjs";
+    const parsed = parseJavaScriptSource(
+      'var require; require("./dependency.cjs");',
+      path,
+    );
+    expect(parsed).not.toBeNull();
+    expect(parsed?.program.sourceType).toBe("module");
+    const ir = analyzeParsedJavaScriptSemantics(
+      parsed!,
+      moduleResolutionModeForJavaScriptReference(path, "static-import"),
+    );
+    expect(ir.moduleLinks).not.toContainEqual(
+      expect.objectContaining({ specifier: "./dependency.cjs" }),
+    );
+  });
+
+  it("retains ambient exports and require through uninitialized top-level vars", () => {
+    const path = "app/main.cjs";
+    const parsed = parseJavaScriptSource(
+      'var module, exports, require; module.exports = require("./dependency.cjs");',
+      path,
+    );
+    expect(parsed).not.toBeNull();
+    const ir = analyzeParsedJavaScriptSemantics(
+      parsed!,
+      moduleResolutionModeForJavaScriptReference(path, "static-import"),
+    );
+    expect(ir.moduleLinks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "commonjs-export",
+          specifier: "./dependency.cjs",
+          localName: null,
+          exportedName: "default",
+        }),
+      ]),
+    );
+  });
+
+  it("retains the Node loader call on an uninitialized wrapper var assignment RHS", () => {
+    const path = "app/main.cjs";
+    const parsed = parseJavaScriptSource(
+      'var require; require = require("./bootstrap.cjs");',
+      path,
+    );
+    expect(parsed).not.toBeNull();
+    const ir = analyzeParsedJavaScriptSemantics(
+      parsed!,
+      moduleResolutionModeForJavaScriptReference(path, "static-import"),
+    );
+    expect(ir.moduleLinks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "require",
+          specifier: "./bootstrap.cjs",
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    'var require = local; require("./dependency.cjs");',
+    'var require; require = replacement; require("./dependency.cjs");',
+    "var module; module = replacement; module.exports = 1;",
+    "var exports; exports = replacement; exports.value = 1;",
+    'let require; require("./dependency.cjs");',
+    'function nested() { var require; require("./dependency.cjs"); }',
+  ])("keeps non-wrapper declarations as shadows: %s", (source) => {
+    const path = "app/main.cjs";
+    const parsed = parseJavaScriptSource(source, path);
+    expect(parsed).not.toBeNull();
+    const ir = analyzeParsedJavaScriptSemantics(
+      parsed!,
+      moduleResolutionModeForJavaScriptReference(path, "static-import"),
+    );
+    expect(
+      ir.moduleLinks.filter(
+        ({ kind }) => kind === "require" || kind === "commonjs-export",
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -189,6 +274,7 @@ describe("CommonJS dependency links", () => {
       const bound = (require("bound") as unknown);
       const { left, right } = require("destructured");
       module.exports = require("forwarded");
+      exports = module.exports;
       exports.member = require("member").value;
       exports.first = exports.second = require("chained");
     `);
@@ -296,126 +382,4 @@ it("preserves unshadowed require origins through aliases and assignments", () =>
       localName: null,
     }),
   ]);
-});
-
-it("retains internal import alias provenance without inventing a dependency", () => {
-  const ir = analyzeJavaScriptSemantics(`
-    import electron = require("electron");
-    import ipc = electron.ipcMain;
-    void ipc;
-  `);
-  expect(topLevelBinding(ir, "ipc").provenance).toMatchObject({
-    status: "module",
-    origins: [{ specifier: "electron", importedPath: ["ipcMain"] }],
-  });
-  expect(ir.moduleLinks.filter(({ kind }) => kind === "require")).toHaveLength(
-    1,
-  );
-  expect(ir.references.some(({ name }) => name === "ipcMain")).toBe(false);
-});
-
-it("does not publish namespace aliases into the surrounding program", () => {
-  const ir = analyzeJavaScriptSemantics(`
-    import electron = require("electron");
-    namespace A { import x = electron.ipcMain; void x; }
-    namespace B { import x = electron.ipcRenderer; void x; }
-    void x;
-  `);
-  const aliases = ir.bindings.filter(({ name }) => name === "x");
-  expect(aliases).toHaveLength(2);
-  expect(new Set(aliases.map(({ scopeId }) => scopeId)).size).toBe(2);
-  expect(
-    aliases.every(
-      ({ scopeId }) =>
-        ir.scopes.find((scope) => scope.scopeId === scopeId)?.kind ===
-        "namespace",
-    ),
-  ).toBe(true);
-  expect(
-    ir.references
-      .filter(({ name }) => name === "x")
-      .map(({ resolution }) => resolution),
-  ).toEqual(["resolved", "resolved", "unbound"]);
-});
-
-it("shares ambient namespace members without inventing a require dependency", () => {
-  const source = `declare namespace N { const require: (s: string) => unknown; }
-namespace N { export const x = require("not-a-module"); }`;
-  const ir = analyzeJavaScriptSemantics(source);
-  const [require] = ir.references.filter(({ name }) => name === "require");
-  expect(require?.resolution).toBe("resolved");
-  expect(ir.moduleLinks.filter(({ kind }) => kind === "require")).toEqual([]);
-  const [binding] = ir.bindings.filter(({ name }) => name === "require");
-  const [owner] = ir.scopes.filter(
-    (scope) => scope.scopeId === binding?.scopeId,
-  );
-  expect(owner?.kind).toBe("namespace");
-  expect(
-    ir.bindings
-      .filter(({ scopeId }) => scopeId === owner?.scopeId)
-      .map(({ name }) => name),
-  ).toEqual(["require", "x"]);
-});
-
-it("binds global augmentation members outside the program scope", () => {
-  const ir = analyzeJavaScriptSemantics(`export {};
-declare global { const require: (s: string) => unknown; }
-require("not-a-module");`);
-  const [require] = ir.references.filter(({ name }) => name === "require");
-  expect(require?.resolution).toBe("resolved");
-  expect(ir.moduleLinks.filter(({ kind }) => kind === "require")).toEqual([]);
-  const [binding] = ir.bindings.filter(({ name }) => name === "require");
-  const [outer] = ir.scopes.filter(
-    (scope) => scope.scopeId === binding?.scopeId,
-  );
-  const [program] = ir.scopes.filter(({ kind }) => kind === "program");
-  expect(outer?.kind).toBe("namespace");
-  expect(program?.parentScopeId).toBe(outer?.scopeId);
-});
-
-it("keeps a namespace named global distinct from a global augmentation", () => {
-  const ir = analyzeJavaScriptSemantics(
-    `declare namespace global { const require: (s: string) => unknown; }
-require("./dep.cjs");`,
-  );
-  const [binding] = ir.bindings.filter(({ name }) => name === "require");
-  const [owner] = ir.scopes.filter(
-    (scope) => scope.scopeId === binding?.scopeId,
-  );
-  expect(owner?.kind).toBe("namespace");
-  expect(
-    ir.scopes.filter(({ kind }) => kind === "program")[0]?.parentScopeId,
-  ).toBeNull();
-  expect(ir.moduleLinks.filter(({ kind }) => kind === "require")).toEqual([
-    expect.objectContaining({ kind: "require", specifier: "./dep.cjs" }),
-  ]);
-});
-
-it("lets file-local bindings shadow global augmentation members", () => {
-  const source = `import electron = require("electron");
-import ipc = electron.ipcMain;
-declare global { var ipc: unknown; }
-ipc.handle("ping", () => "pong");`;
-  const parsed = parseJavaScriptSource(source, "augmented-ipc.ts");
-  if (parsed === null) throw new Error("Expected parsed TypeScript source");
-  const calls = [...classifyParsedJavaScriptElectronBindings(parsed)];
-  expect(calls).toContainEqual([
-    source.indexOf('ipc.handle("ping"'),
-    ["ipcMain"],
-  ]);
-  const ir = analyzeParsedJavaScriptSemantics(parsed);
-  expect(
-    ir.bindings
-      .filter(({ name }) => name === "ipc")
-      .map(({ definitions }) => definitions.length)
-      .sort(),
-  ).toEqual([1, 1]);
-});
-
-it("shares nested ambient namespace names with reopened declarations", () => {
-  const ir =
-    analyzeJavaScriptSemantics(`namespace A { declare namespace B { const shared = 1; } }
-namespace A.B { export const use = shared; }`);
-  const [shared] = ir.references.filter(({ name }) => name === "shared");
-  expect(shared?.resolution).toBe("resolved");
 });

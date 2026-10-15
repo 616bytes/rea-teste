@@ -87,3 +87,146 @@ it.each([
     );
   },
 );
+
+it.each([
+  { label: "omitted", property: "", shown: "bitness unknown" },
+  {
+    label: "empty",
+    property: "sun.arch.data.model =\n",
+    shown: 'bitness unknown (sun.arch.data.model = "")',
+  },
+  {
+    label: "malformed",
+    property: "sun.arch.data.model = 64junk\n",
+    shown: 'bitness unknown (sun.arch.data.model = "64junk")',
+  },
+  {
+    label: "not exactly representable",
+    property: "sun.arch.data.model = 9007199254740993\n",
+    shown: 'bitness unknown (sun.arch.data.model = "9007199254740993")',
+  },
+])("keeps $label Java bitness unresolved", async ({ property, shown }) => {
+  const root = await createTestTempDirectory("rea-java-bitness-");
+  const configuredHome = join(root, "selected-jdk");
+  const reportedHome = join(root, "reported-jdk");
+  const installDir = join(root, "ghidra");
+  await mkdir(join(installDir, "Ghidra"), { recursive: true });
+  await mkdir(join(reportedHome, "bin"), { recursive: true });
+  await writeFile(
+    join(
+      reportedHome,
+      "bin",
+      process.platform === "win32" ? "javac.exe" : "javac",
+    ),
+    "fixture",
+    {
+      mode: 0o755,
+    },
+  );
+  await writeFile(
+    join(installDir, "Ghidra", "application.properties"),
+    `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=17\n`,
+  );
+  mockSpawnSync.mockReturnValue({
+    stdout: "",
+    stderr: `    java.version = 21.0.11\n    java.home = ${reportedHome}\n${property}`,
+    status: 0,
+  });
+
+  const inspection = inspectGhidraInstallation({
+    environment: {},
+    installDir,
+    javaHome: configuredHome,
+  });
+
+  expect(inspection.status).toBe("unavailable");
+  expect(inspection.checks.find(({ name }) => name === "java")).toMatchObject({
+    status: "failed",
+    code: "version_unresolved",
+    detail: expect.stringContaining(shown),
+  });
+  expect(
+    inspection.checks.find(({ name }) => name === "java")?.detail,
+  ).not.toMatch(/(?:0-bit|9007199254740992-bit)/);
+});
+
+it("keeps a known 32-bit Java report classified as unsupported", async () => {
+  const root = await createTestTempDirectory("rea-java-bitness-known-");
+  const configuredHome = join(root, "selected-jdk");
+  const reportedHome = join(root, "reported-jdk");
+  const installDir = join(root, "ghidra");
+  await mkdir(join(installDir, "Ghidra"), { recursive: true });
+  await mkdir(join(reportedHome, "bin"), { recursive: true });
+  await writeFile(
+    join(
+      reportedHome,
+      "bin",
+      process.platform === "win32" ? "javac.exe" : "javac",
+    ),
+    "fixture",
+    {
+      mode: 0o755,
+    },
+  );
+  await writeFile(
+    join(installDir, "Ghidra", "application.properties"),
+    `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=17\n`,
+  );
+  mockSpawnSync.mockReturnValue({
+    stdout: "",
+    stderr: `    java.version = 21.0.11\n    java.home = ${reportedHome}\n    sun.arch.data.model = 32\n`,
+    status: 0,
+  });
+
+  const inspection = inspectGhidraInstallation({
+    environment: {},
+    installDir,
+    javaHome: configuredHome,
+  });
+
+  expect(inspection.checks.find(({ name }) => name === "java")).toMatchObject({
+    status: "failed",
+    code: "unsupported_version",
+    detail: expect.stringContaining("32-bit"),
+  });
+});
+
+it("bounds the Java version probe and reports an over-budget probe as a failed Java check", async () => {
+  const root = await createTestTempDirectory("rea-java-probe-bound-");
+  const configuredHome = join(root, "selected-jdk");
+  const installDir = join(root, "ghidra");
+  await mkdir(join(installDir, "Ghidra"), { recursive: true });
+  await writeFile(
+    join(installDir, "Ghidra", "application.properties"),
+    `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=17\n`,
+  );
+  // A chatty or hostile JVM that overruns the capture budget: spawnSync reports
+  // ENOBUFS, which the probe already treats as a failed observation.
+  mockSpawnSync.mockReturnValue({
+    stdout: "",
+    stderr: "java.version = 21.0.11\n",
+    status: null,
+    error: Object.assign(new Error("spawnSync /java ENOBUFS"), {
+      code: "ENOBUFS",
+    }),
+  });
+
+  const inspection = inspectGhidraInstallation({
+    environment: {},
+    installDir,
+    javaHome: configuredHome,
+  });
+
+  const [, , options] = mockSpawnSync.mock.calls[0] as [
+    string,
+    readonly string[],
+    { readonly maxBuffer?: number },
+  ];
+  expect(options.maxBuffer).toBe(1024 * 1024);
+  expect(inspection.javaVersion).toBeNull();
+  expect(inspection.javaHome).toBe(configuredHome);
+  expect(inspection.checks.find(({ name }) => name === "java")).toMatchObject({
+    status: "failed",
+    code: "runtime_missing",
+  });
+});

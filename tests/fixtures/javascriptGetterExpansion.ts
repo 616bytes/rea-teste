@@ -51,3 +51,27 @@ export const bundledGetterSource = (classes = 20): string => `
   ).join("\n")}
   const unrelated = 42;
 `;
+
+export const ordinaryConstructedEscapeSource = (
+  getters: number,
+  classes = 1,
+  calls = 1,
+  isStatic = false,
+): string => {
+  const repeat = (count: number, source: (index: number) => string) =>
+    Array.from({ length: count }, (_, index) => source(index)).join("\n");
+  const tail = 'import x from "dep"; const unrelated = 42;';
+  if (classes > 1)
+    return (
+      repeat(
+        classes,
+        (owner) => `class K${owner} ${owner ? `extends K${owner - 1}` : ""} {
+      ${repeat(getters, (index) => `get f${owner}_${index}() { return this[M].f${owner}_${(index + 1) % getters}; }`)}
+    }`,
+      ) + ` consume(new K${classes - 1}()); ${tail}`
+    );
+  const prefix = isStatic ? "static " : "";
+  return `class C {
+    ${repeat(getters, (index) => `${prefix}_g${index} = {}; ${prefix}get g${index}() { return this._g${index}; }`)}
+  } ${repeat(calls, () => `consume(${isStatic ? "C" : "new C()"});`)} ${calls > 1 ? tail : ""}`;
+};

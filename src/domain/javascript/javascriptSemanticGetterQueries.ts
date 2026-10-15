@@ -39,6 +39,7 @@ export class SemanticObjectReferenceSet {
       reference.path,
       owner === undefined ? null : this.#owners.get(owner),
       reference.escapes === true,
+      reference.widenedGetterResult === true,
     ]);
     const paths =
       this.#nodes.get(reference.node) ?? new Map<string, Reference>();
@@ -65,7 +66,13 @@ export class SemanticGetterQuery {
 
   retain(reference: Reference, escapes = false): void {
     // Direct fields keep their write suffix; only getter jobs widen omitted paths.
-    this.#references.add(escapes ? { ...reference, escapes: true } : reference);
+    this.#references.add({
+      ...reference,
+      ...(escapes ? { escapes: true } : {}),
+      ...(this.#fallback && this.#current !== undefined
+        ? { widenedGetterResult: true }
+        : {}),
+    });
   }
 
   #known(

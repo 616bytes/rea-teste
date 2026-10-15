@@ -8,6 +8,7 @@ import {
   bundledGetterSource,
   getterExpansionSource,
   plainGetterSource,
+  ordinaryConstructedEscapeSource,
 } from "../../../tests/fixtures/javascriptGetterExpansion.js";
 
 const expectUnrelatedFacts = (
@@ -25,6 +26,59 @@ const expectUnrelatedFacts = (
     }),
   );
 };
+
+it.each([
+  {
+    name: "600 instance getters",
+    getters: 600,
+    classes: 1,
+    calls: 1,
+    isStatic: false,
+  },
+  {
+    name: "600 static getters",
+    getters: 600,
+    classes: 1,
+    calls: 1,
+    isStatic: true,
+  },
+  {
+    name: "50-class hierarchy",
+    getters: 20,
+    classes: 50,
+    calls: 1,
+    isStatic: false,
+  },
+  {
+    name: "300 calls with 50 getters",
+    getters: 50,
+    classes: 1,
+    calls: 300,
+    isStatic: false,
+  },
+] as const)(
+  "keeps ordinary escapes complete with $name",
+  ({ getters, classes, calls, isStatic }) => {
+    const ir = analyzeJavaScriptSemantics(
+      ordinaryConstructedEscapeSource(getters, classes, calls, isStatic),
+    );
+    expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
+  },
+);
+
+it("preserves the existing ordinary constructed escape limitation", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    const shared = { value: 1 };
+    class Inner { alias = shared; }
+    mutate(new Inner());
+    const result = shared.value;
+  `);
+  expect(onlyBinding(ir, "result").value).toEqual({
+    status: "literal",
+    value: 1,
+  });
+  expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
+});
 
 it.each([
   [
@@ -79,6 +133,98 @@ it("preserves direct field writes with 600 acyclic getters during retry", () => 
   `);
   expect(onlyBinding(ir, "result").value.status).toBe("unknown");
   expect(ir.coverage.resourceLimits).toEqual(["getter-expansion"]);
+  expectUnrelatedFacts(ir);
+});
+
+it.each([
+  ["constructed instance", "alias = shared;", "return new Inner();"],
+  ["class constructor", "static alias = shared;", "return Inner;"],
+  ["inline class", "", "return class { static alias = shared; };"],
+  ["global constructed alias", "alias = shared;", "return external;"],
+  [
+    "constructed object member",
+    "alias = shared;",
+    "return container.external;",
+  ],
+  [
+    "local constructed alias",
+    "alias = shared;",
+    "const constructed = new Inner(); return constructed;",
+  ],
+])("escapes fields of a widened %s getter result", (_name, fields, body) => {
+  const ir = analyzeJavaScriptSemantics(`
+      import imported from "dep";
+      const shared = { value: 1 };
+      class Inner { ${fields} }
+      const external = new Inner();
+      const container = { external };
+      consume(external);
+      class Outer {
+        get result() { ${body} }
+        get grow() { return this.grow.more; }
+      }
+      new Outer()[key].alias.value = 2;
+      const result = shared.value;
+      const unrelated = 42;
+    `);
+  expect(onlyBinding(ir, "result").value.status).toBe("unknown");
+  expect(ir.coverage.resourceLimits).toEqual(["getter-expansion"]);
+  expectUnrelatedFacts(ir);
+});
+
+it("escapes constructed getter results after the query state budget is exhausted", () => {
+  const getters = Array.from(
+    { length: 600 },
+    (_, index) => `get field${index}() { return this._field${index}; }`,
+  ).join("\n");
+  const ir = analyzeJavaScriptSemantics(`
+    import imported from "dep";
+    const shared = { value: 1 };
+    class Inner { alias = shared; }
+    class Outer { ${getters} get result() { return new Inner(); } }
+    new Outer()[key].alias.value = 2;
+    const result = shared.value;
+    const unrelated = 42;
+  `);
+  expect(onlyBinding(ir, "result").value.status).toBe("unknown");
+  expect(ir.coverage.resourceLimits).toEqual(["getter-expansion"]);
+  expectUnrelatedFacts(ir);
+});
+
+it("follows nested constructed fields after widening a getter result", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import imported from "dep";
+    const shared = { value: 1 };
+    class Leaf { alias = shared; }
+    class Inner { child = new Leaf(); }
+    class Outer {
+      get result() { return new Inner(); }
+      get grow() { return this.grow.more; }
+    }
+    new Outer()[key].child.alias.value = 2;
+    const result = shared.value;
+    const unrelated = 42;
+  `);
+  expect(onlyBinding(ir, "result").value.status).toBe("unknown");
+  expect(ir.coverage.resourceLimits).toEqual(["getter-expansion"]);
+  expectUnrelatedFacts(ir);
+});
+
+it("keeps replacing a constructed field separate from mutating its former value", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import imported from "dep";
+    const shared = { value: 1 };
+    class Inner { alias = shared; }
+    class Outer { get result() { return new Inner(); } }
+    new Outer().result.alias = { value: 2 };
+    const result = shared.value;
+    const unrelated = 42;
+  `);
+  expect(onlyBinding(ir, "result").value).toEqual({
+    status: "literal",
+    value: 1,
+  });
+  expect(ir.coverage.status).toBe("complete");
   expectUnrelatedFacts(ir);
 });
 

@@ -22,6 +22,8 @@ export interface JavaScriptSemanticObjectReference {
   readonly node: t.Node;
   readonly path: PropertyPath;
   readonly escapes?: true;
+  /** A retry omitted suffixes, so escaping constructed children must cover them. */
+  readonly widenedGetterResult?: true;
   /** The allocation owned by this binding, rather than a read of its prior value. */
   readonly ownerInitializer?: t.Node;
 }

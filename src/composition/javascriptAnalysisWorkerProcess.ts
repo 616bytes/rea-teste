@@ -1,10 +1,7 @@
 import { moduleResolutionModeForJavaScriptReference } from "../domain/javascript/javascriptModuleResolutionMode.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { analyzeParsedJavaScriptStaticSourceSteps } from "../domain/javascript/javascriptStaticAnalysis.js";
-import {
-  analyzeParsedJavaScriptSemanticsSteps,
-  classifyParsedJavaScriptOpenReceiversSteps,
-} from "../domain/javascript/javascriptSemanticAnalysis.js";
+import { analyzeParsedJavaScriptSemanticsSteps } from "../domain/javascript/javascriptSemanticAnalysis.js";
 import { failedJavaScriptStaticAnalysis } from "../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import { projectJavaScriptModuleSemantics } from "../domain/javascript/javascriptModuleSemanticIr.js";
 import {
@@ -33,9 +30,6 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     return null;
   }
   await callbacks.phase("static");
-  const receivers = await completeJavaScriptAnalysisSteps(
-    classifyParsedJavaScriptOpenReceiversSteps(parsed),
-  );
   const staticImportResolutionMode = moduleResolutionModeForJavaScriptReference(
     file.path,
     "static-import",
@@ -44,7 +38,6 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     analyzeParsedJavaScriptStaticSourceSteps(
       file.text.value,
       parsed,
-      receivers,
       staticImportResolutionMode,
     ),
   );

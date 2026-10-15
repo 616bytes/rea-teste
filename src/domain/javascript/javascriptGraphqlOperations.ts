@@ -231,7 +231,6 @@ const graphqlDocumentSource = (
   index: JavaScriptBindingIndex,
 ): Omit<GraphqlSourceCopy, "operations"> | undefined => {
   const dependencies: GraphqlSourceDependency[] = [];
-  if (!graphqlContainerOwnership(node, index, dependencies)) return undefined;
   const loc = graphqlSourceObjectValue(
     semanticFinalObjectProperty(node, "loc"),
     index,
@@ -245,7 +244,10 @@ const graphqlDocumentSource = (
           index,
           dependencies,
         );
-  return source === undefined ? undefined : { source, dependencies };
+  return source !== undefined &&
+    graphqlContainerOwnership(node, index, dependencies)
+    ? { source, dependencies }
+    : undefined;
 };
 
 /** Follow containment to the binding that can expose or mutate this document. */

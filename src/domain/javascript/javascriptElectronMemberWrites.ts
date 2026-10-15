@@ -45,6 +45,20 @@ export const electronMemberPath = (
   return { root, members: members.toReversed() };
 };
 
+/**
+ * The canonical identity of the function a captured invocation member read
+ * stores: an alias of `callable.call` holds Function.prototype.call's own
+ * function object, so reads and writes through the alias share this path.
+ */
+export const intrinsicInvocationMemberPath = (
+  member: t.MemberExpression | t.OptionalMemberExpression,
+): readonly string[] => [
+  "intrinsic",
+  "Function",
+  "prototype",
+  semanticStaticPropertyKey(member.property, member.computed) ?? "call",
+];
+
 /** A known intrinsic callable and its examined positional arguments. */
 export interface JavaScriptIntrinsicInvocation {
   readonly kind: "known" | "opaque";

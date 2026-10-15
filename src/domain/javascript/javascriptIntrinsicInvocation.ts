@@ -1,6 +1,9 @@
 import * as t from "@babel/types";
 
-import type { JavaScriptIntrinsicInvocation } from "./javascriptElectronMemberWrites.js";
+import {
+  intrinsicInvocationMemberPath,
+  type JavaScriptIntrinsicInvocation,
+} from "./javascriptElectronMemberWrites.js";
 import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
@@ -122,13 +125,7 @@ export const resolveJavaScriptIntrinsicInvocation = (
           const memberPath: readonly string[] | undefined =
             member === undefined
               ? undefined
-              : [
-                  "intrinsic",
-                  "Function",
-                  "prototype",
-                  semanticStaticPropertyKey(member.property, member.computed) ??
-                    "call",
-                ];
+              : intrinsicInvocationMemberPath(member);
           if (explicitReceiver && !t.isExpression(receiver))
             return {
               kind: "opaque",

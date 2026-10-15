@@ -17,6 +17,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import {
   electronMemberPath,
+  intrinsicInvocationMemberPath,
   javaScriptIdentityWriteOffset,
   type JavaScriptIdentityWriteKind,
   type JavaScriptIntrinsicInvocation,
@@ -477,6 +478,18 @@ export const createSemanticModuleInterop = (
       : undefined;
   };
 
+  // The read side resolves an alias of `callable.call` to the stored member
+  // function's identity; writes through the alias must land on that same path
+  // or they can never invalidate the captured read.
+  const capturedInvocationMemberPath = (
+    node: t.Node,
+  ): readonly string[] | undefined => {
+    const member = capturedInvocationMember(node);
+    return member === undefined
+      ? undefined
+      : intrinsicInvocationMemberPath(member);
+  };
+
   const activeBoundValues = new WeakSet<t.Node>();
   const boundIntrinsic = (
     node: t.Node,
@@ -768,6 +781,7 @@ export const createSemanticModuleInterop = (
         capturedInvocationMember,
       ),
     boundIntrinsic,
+    capturedInvocationMemberPath,
     staticString,
     isFreshObject,
     opaqueMutationPath,

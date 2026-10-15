@@ -72,7 +72,10 @@ const collectedWrites = (source: string) => {
         const { root, members } = electronMemberPath(node);
         const path =
           interop.intrinsicPath(root) ??
-          (kind === "member" ? interop.boundIntrinsic(root)?.path : undefined);
+          (kind === "member"
+            ? (interop.boundIntrinsic(root)?.path ??
+              interop.capturedInvocationMemberPath(root))
+            : undefined);
         return path === undefined ? [] : [[...path, ...members]];
       },
       (node) => {
@@ -269,6 +272,36 @@ describe("identifier-aliased intrinsic invocation members", () => {
       );
       expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
       expect(writes).toContainEqual(["intrinsic"]);
+    },
+  );
+
+  it.each([
+    ["call", "invoke.call(change,null,{value:customCreate});"],
+    ["apply", "invoke.apply(change,[null,{value:customCreate}]);"],
+  ])(
+    "reads a member replaced through the captured function's alias: %s",
+    (member, invoke) => {
+      // `invoke` IS Function.prototype.call, so `invoke.${member}` names the
+      // same property slot as `Function.prototype.call.${member}` — a write
+      // through the alias must reach the captured-member identity the read
+      // side checks.
+      const { invocations, writes } = collectedWrites(
+        `const change = Object.defineProperty.bind(null,Object,"create");
+        const invoke = change.call;
+        invoke.${member} = replacement;
+        ${invoke}`,
+      );
+      expect(writes).toContainEqual([
+        "intrinsic",
+        "Function",
+        "prototype",
+        "call",
+        member,
+      ]);
+      expect(invocations.at(-1)).toEqual(
+        expect.objectContaining({ kind: "opaque" }),
+      );
+      expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
     },
   );
 

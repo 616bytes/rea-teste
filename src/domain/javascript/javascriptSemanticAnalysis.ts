@@ -600,7 +600,8 @@ export function* indexJavaScriptElectronIdentitySteps(
         exported === undefined
           ? (interop.intrinsicPath(root) ??
             (kind === "member"
-              ? interop.boundIntrinsic(root)?.path
+              ? (interop.boundIntrinsic(root)?.path ??
+                interop.capturedInvocationMemberPath(root))
               : undefined))
           : ["electron", ...exported];
       return path === undefined ? [] : [[...path, ...members]];

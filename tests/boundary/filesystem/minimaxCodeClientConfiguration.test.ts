@@ -27,7 +27,7 @@ const minimaxCodePath = (
   env: Parameters<typeof supportedClients>[2] = {},
 ) =>
   supportedClients(home, platform, env).find(
-    ({ name }) => name === "minimax-code",
+    ({ name }) => name === "minimax_code",
   );
 
 describe("MiniMax Code configuration paths", () => {
@@ -47,14 +47,37 @@ describe("MiniMax Code configuration paths", () => {
     expect(minimaxCodePath("/home/a")?.format).toBe("json");
   });
 
+  it("honors MINIMAX_DATA_DIR before MAVIS_DATA_DIR and the home default", () => {
+    const both = { MINIMAX_DATA_DIR: "/data/mm", MAVIS_DATA_DIR: "/data/mv" };
+    expect(minimaxCodePath("/home/a", "linux", both)?.configPath).toBe(
+      join("/data/mm", "mcp.json"),
+    );
+    expect(minimaxCodePath("/home/a", "linux", both)?.markerPath).toBe(
+      "/data/mm",
+    );
+    expect(
+      minimaxCodePath("/home/a", "linux", { MAVIS_DATA_DIR: "/data/mv" })
+        ?.configPath,
+    ).toBe(join("/data/mv", "mcp.json"));
+    expect(
+      minimaxCodePath("/home/a", "linux", { MINIMAX_DATA_DIR: "  " })
+        ?.configPath,
+    ).toBe(join("/home/a", ".minimax", "mcp.json"));
+    expect(
+      skillDestinations("/home/a", ["minimax_code"], both).map(
+        ({ path }) => path,
+      ),
+    ).toEqual([join("/data/mm", "skills", "reverse-engineer-anything")]);
+  });
+
   it("resolves the personal skills directory under the home root", () => {
     expect(
-      skillDestinations("/home/a", ["minimax-code"]).map(({ path }) => path),
+      skillDestinations("/home/a", ["minimax_code"]).map(({ path }) => path),
     ).toEqual([
       join("/home/a", ".minimax", "skills", "reverse-engineer-anything"),
     ]);
     expect(
-      skillDestinations("C:\\Users\\a", ["minimax-code"], {}, "win32").map(
+      skillDestinations("C:\\Users\\a", ["minimax_code"], {}, "win32").map(
         ({ path }) => path,
       ),
     ).toEqual([
@@ -65,7 +88,7 @@ describe("MiniMax Code configuration paths", () => {
 
 describe("MiniMax Code JSON registration", () => {
   const minimaxCodeClient = async () => {
-    const home = await createTestTempDirectory("rea-minimax-code-");
+    const home = await createTestTempDirectory("rea-minimax_code-");
     const client = minimaxCodePath(home, process.platform);
     if (client?.markerPath === undefined)
       throw new Error("missing MiniMax Code client");
@@ -103,7 +126,7 @@ describe("MiniMax Code JSON registration", () => {
           platform: process.platform,
           environment: {},
         })
-      ).find(({ client }) => client === "minimax-code"),
+      ).find(({ client }) => client === "minimax_code"),
     ).toMatchObject({ state: "aligned", command });
   });
 

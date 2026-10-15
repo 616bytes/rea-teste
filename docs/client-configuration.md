@@ -329,14 +329,15 @@ through WorkBuddy are verified.
 
 For [MiniMax Code](https://github.com/MiniMax-AI/minimax-code) (`mcode`), setup
 writes `mcpServers.rea` into the profile-level `~/.minimax/mcp.json`, a plain
-`mcpServers` JSON file. Entries carry `command`, `args`, and `env`. MiniMax Code
+`mcpServers` JSON file. Entries carry `command` and `args`. MiniMax Code
 discovers personal skills from `~/.minimax/skills`, so setup installs its skill
 copy there. Setup detects MiniMax Code from the `~/.minimax` directory.
 
 Setup preserves every other server and top-level key when it upserts `rea`.
 MiniMax Code also reads a project-level `<workspace>/.mcp.json`, which setup
-does not touch. Custom data directories, named profiles, and the legacy
-`~/.mavis` directory are not detected. Run `/mcp reload` or start a new
+does not touch. When `MINIMAX_DATA_DIR` (or `MAVIS_DATA_DIR`) is set, setup
+uses that directory instead of `~/.minimax`. Named profiles
+(`~/.minimax-<profile>`) and the legacy `~/.mavis` directory are not detected. Run `/mcp reload` or start a new
 session to pick up the change.
 
 ## ZCode

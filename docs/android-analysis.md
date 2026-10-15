@@ -178,8 +178,9 @@ with `inspect_android_method` using its `top_class` and `method_name`.
   evidence that the view is unused.
 - `r_fields` lists `R$type` declarations; `origin: "jadx_generated"` marks an R
   class JADX synthesized from the resource table because the APK has none.
-- `total_sites` is exact; `coverage: "partial"` means `max_sites_per_resource`
-  bounded the returned `sites`.
+- `total_sites` and `total_r_fields` are exact; `coverage: "partial"` means
+  `max_sites_per_resource` or the bridge's 8 MiB transport budget bounded the
+  returned `sites` or `r_fields`.
 - The scan does not read layout XML, data binding, or reflection
   (`getIdentifier`), and a literal equal to an id is not proof of a view
   lookup. Views referenced only from layouts can show zero code sites.

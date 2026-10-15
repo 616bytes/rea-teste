@@ -312,10 +312,10 @@ const results: Readonly<Record<string, unknown>> = {
     client: clientIdentity,
     serial: "emulator-5554",
     status: "completed",
+    actions: [{ type: "key", key: "BACK" }],
     executed: [
       {
         index: 0,
-        action: { type: "key", key: "BACK" },
         command: ["input", "keyevent", "KEYCODE_BACK"],
         resolved_node: null,
       },

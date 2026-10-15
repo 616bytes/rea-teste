@@ -57,6 +57,7 @@ export const androidInputSchemas = {
       .array(
         z
           .string()
+          .max(512)
           .regex(
             /^(?:[A-Za-z][A-Za-z0-9_.]*:)?[a-z][a-z0-9_-]*\/[A-Za-z0-9_.$]+$/u,
             "Resource must be [package:]type/name, as uiautomator reports resource-id",
@@ -249,6 +250,7 @@ export const androidResultSchemas = {
         table: z.enum(["app", "framework"]),
         resolution: z.enum(["resolved", "unresolved"]),
         ids: z.array(z.string().regex(/^0x[0-9a-f]{8}$/u)),
+        total_r_fields: z.number().int().nonnegative(),
         r_fields: z.array(
           z.strictObject({
             class_name: z.string(),
@@ -258,6 +260,7 @@ export const androidResultSchemas = {
           }),
         ),
         total_sites: z.number().int().nonnegative(),
+        /** partial: max_sites_per_resource or the transport budget bounded the lists. */
         coverage: z.enum(["complete", "partial"]),
         sites: z.array(
           z.strictObject({

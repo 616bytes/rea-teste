@@ -270,6 +270,7 @@ class ReaJadxBridge {
     List<List<Map<String, Object>>> sites = new ArrayList<>();
     List<List<Map<String, Object>>> declarations = new ArrayList<>();
     int[] totals = new int[requests.size()];
+    int[] fieldTotals = new int[requests.size()];
     for (int index = 0; index < requests.size(); index++) {
       ResourceRequest request = requests.get(index);
       for (int id : request.ids())
@@ -281,6 +282,11 @@ class ReaJadxBridge {
     }
     int[] scanned = {0};
     List<ClassNode> classNodes = root == null ? List.of() : root.getClasses();
+    // Sites and declarations share the transport budget left after the fixed
+    // response; matches past it are still counted so coverage stays partial.
+    InvokeBudget budget = new InvokeBudget(MAX_XREF_TEXT_BYTES
+        - escapedJsonBytes(resourceResponse(requests, maxSites, Integer.MAX_VALUE,
+            Integer.MAX_VALUE, Integer.MAX_VALUE, null, null, null, null)));
     for (ClassNode cls : classNodes) {
       String rawName = cls.getRawName();
       int marker = rawName.lastIndexOf(".R$");
@@ -291,11 +297,14 @@ class ReaJadxBridge {
           String fieldName = field.getFieldInfo().getName();
           List<Integer> matches = fieldReads.get(type + "/" + fieldName);
           if (matches == null) continue;
-          for (int index : matches)
-            if (requests.get(index).framework() == frameworkClass)
-              declarations.get(index).add(Map.of("class_name", rawName, "field_name", fieldName,
-                  // JADX synthesizes an app R class from the resource table when the APK lacks one.
-                  "origin", cls.getClsData() == null ? "jadx_generated" : "dex"));
+          for (int index : matches) {
+            if (requests.get(index).framework() != frameworkClass) continue;
+            fieldTotals[index]++;
+            Map<String, Object> declaration = Map.of("class_name", rawName, "field_name", fieldName,
+                // JADX synthesizes an app R class from the resource table when the APK lacks one.
+                "origin", cls.getClsData() == null ? "jadx_generated" : "dex");
+            if (budget.admit(declaration)) declarations.get(index).add(declaration);
+          }
         }
       }
       for (MethodNode method : cls.getMethods()) {
@@ -334,12 +343,21 @@ class ReaJadxBridge {
           }
           for (int index : matched) {
             totals[index]++;
-            if (sites.get(index).size() < maxSites)
-              sites.get(index).add(resourceSite(kind, cls, method, insn.getOffset(), opcode));
+            if (sites.get(index).size() >= maxSites) continue;
+            Map<String, Object> site = resourceSite(kind, cls, method, insn.getOffset(), opcode);
+            if (budget.admit(site)) sites.get(index).add(site);
           }
         });
       }
     }
+    return json(resourceResponse(requests, maxSites, classNodes.size(), scanned[0], app.size(),
+        totals, fieldTotals, sites, declarations));
+  }
+
+  /** Response shape; null lists produce the empty, maximal-count skeleton used for budgeting. */
+  private static Map<String, Object> resourceResponse(List<ResourceRequest> requests, int maxSites,
+      int classes, int methods, int appNames, int[] totals, int[] fieldTotals,
+      List<List<Map<String, Object>>> sites, List<List<Map<String, Object>>> declarations) {
     List<Map<String, Object>> results = new ArrayList<>();
     for (int index = 0; index < requests.size(); index++) {
       ResourceRequest request = requests.get(index);
@@ -350,18 +368,19 @@ class ReaJadxBridge {
       result.put("name", request.name());
       result.put("table", request.framework() ? "framework" : "app");
       result.put("ids", request.ids());
-      result.put("r_fields", declarations.get(index));
-      result.put("total_sites", totals[index]);
-      result.put("sites", sites.get(index));
+      result.put("total_r_fields", fieldTotals == null ? Integer.MAX_VALUE : fieldTotals[index]);
+      result.put("r_fields", declarations == null ? List.of() : declarations.get(index));
+      result.put("total_sites", totals == null ? Integer.MAX_VALUE : totals[index]);
+      result.put("sites", sites == null ? List.of() : sites.get(index));
       results.add(result);
     }
     Map<String, Object> response = new LinkedHashMap<>();
-    response.put("classes_scanned", classNodes.size());
-    response.put("methods_scanned", scanned[0]);
-    response.put("app_resource_names", app.size());
+    response.put("classes_scanned", classes);
+    response.put("methods_scanned", methods);
+    response.put("app_resource_names", appNames);
     response.put("max_sites", maxSites);
     response.put("resources", results);
-    return json(response);
+    return response;
   }
 
   private CallToolResult handle(String name, JsonObject args) {

@@ -421,7 +421,7 @@ export const ADB_TOOL_CONTRACTS = [
     name: "send_adb_input",
     ...toolContractMetadata("send_adb_input"),
     description:
-      "Inject input events in order: tap, tap_element (exact selector over a fresh hierarchy dump), long_press, swipe, text (printable ASCII into the focused field), or key (HOME, BACK, APP_SWITCH, ENTER, ... or a keycode). A device- and UI-mutating tool for dynamic analysis. Stops at the first failure; the executed list echoes each action and resolved node and can be replayed as a recorded sequence.",
+      "Inject input events in order: tap, tap_element (exact selector over a fresh hierarchy dump), long_press, swipe, text (printable ASCII into the focused field), or key (HOME, BACK, APP_SWITCH, ENTER, ... or a keycode). A device- and UI-mutating tool for dynamic analysis. Stops at the first failure. The result's actions list holds the completed actions and can be passed back as actions to replay the sequence; executed reports the argv and resolved node of each.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.send_adb_input,
     outputSchema: evidenceResultOf(adbResultSchemas.send_adb_input),

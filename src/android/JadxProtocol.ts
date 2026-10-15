@@ -116,6 +116,7 @@ export const jadxResourceReferencesSchema = z.object({
       name: z.string(),
       table: z.enum(["app", "framework"]),
       ids: z.array(z.number().int()),
+      total_r_fields: count,
       r_fields: z.array(
         z.object({
           class_name: z.string(),

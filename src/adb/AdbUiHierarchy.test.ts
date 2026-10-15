@@ -106,3 +106,14 @@ test("parses bounds strictly", () => {
   });
   expect(parseUiBounds("[0,0][10]")).toBe(null);
 });
+
+test("keeps empty bounds but gives them no tappable center", () => {
+  const { nodes } = parseUiHierarchyXml(
+    '<hierarchy rotation="0"><node bounds="[0,0][0,0]" /><node bounds="[5,5][9,5]" /></hierarchy>',
+    10,
+  );
+  expect(nodes.map(({ bounds, center }) => [bounds, center])).toEqual([
+    [{ left: 0, top: 0, right: 0, bottom: 0 }, null],
+    [{ left: 5, top: 5, right: 9, bottom: 5 }, null],
+  ]);
+});

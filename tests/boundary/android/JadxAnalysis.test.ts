@@ -388,6 +388,7 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
         name: "search",
         table: "app",
         ids: [0x7f0c0523],
+        total_r_fields: 1,
         r_fields: [
           {
             class_name: "fixture.R$id",
@@ -405,6 +406,7 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
         name: "title",
         table: "framework",
         ids: [0x01020016],
+        total_r_fields: 1,
         r_fields: [],
         total_sites: 0,
         sites: [],
@@ -416,6 +418,7 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
         name: "missing",
         table: "app",
         ids: [],
+        total_r_fields: 0,
         r_fields: [],
         total_sites: 0,
         sites: [],
@@ -458,7 +461,8 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
         coverage: "partial",
         sites: [site],
       },
-      { table: "framework", ids: ["0x01020016"], coverage: "complete" },
+      // A declaration dropped by the transport budget still makes coverage partial.
+      { table: "framework", ids: ["0x01020016"], coverage: "partial" },
       { package_name: null, resolution: "unresolved", ids: [] },
     ],
   });

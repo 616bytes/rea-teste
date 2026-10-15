@@ -80,6 +80,20 @@ it("reports boot completion from the device boot properties", async () => {
   });
 });
 
+it("probes again at the deadline when the interval exceeds the timeout", async () => {
+  const { binary } = await writeAdbStub("");
+  const result = await resultOf(binary, {
+    operation: "wait_adb_boot",
+    input: {
+      serial: "emulator-5554",
+      timeout_ms: 1_000,
+      poll_interval_ms: 2_000,
+    },
+  });
+  expect(result).toMatchObject({ outcome: "timed_out", probes: 2 });
+  expect(result.waited_ms).toBeGreaterThanOrEqual(1_000);
+});
+
 it("times out with the last observed properties while still booting", async () => {
   const { binary } = await writeAdbStub("");
   expect(
@@ -170,6 +184,12 @@ it("sends input as fixed argv and resolves element selectors", async () => {
   expect(await readFile(log, "utf8")).toContain(
     "-s emulator-5554 shell input tap 200 230",
   );
+  // The returned actions replay unchanged through the same input contract.
+  const replayed = await resultOf(binary, {
+    operation: "send_adb_input",
+    input: { serial: "emulator-5554", settle_ms: 0, actions: result.actions },
+  });
+  expect(replayed.executed).toEqual(result.executed);
 });
 
 it("stops at an ambiguous selector without tapping", async () => {

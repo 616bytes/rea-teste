@@ -23,6 +23,7 @@ export interface AdbUiNode {
   /** Source `bounds` attribute, retained when it does not parse. */
   readonly bounds_source: string | null;
   readonly bounds: AdbUiBounds | null;
+  /** Tappable point; null when bounds are absent, malformed, or empty. */
   readonly center: { readonly x: number; readonly y: number } | null;
   readonly clickable: boolean | null;
   readonly long_clickable: boolean | null;
@@ -128,7 +129,9 @@ export const parseUiHierarchyXml = (
       bounds_source: boundsSource,
       bounds,
       center:
-        bounds === null
+        bounds === null ||
+        bounds.right <= bounds.left ||
+        bounds.bottom <= bounds.top
           ? null
           : {
               x: Math.floor((bounds.left + bounds.right) / 2),

@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { z } from "incur";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
@@ -6,6 +5,7 @@ import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisSe
 import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
 import { createAdbDeviceAnalysisProvider } from "../composition/adb.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AdbOperation } from "../domain/adb/adbDeviceAnalysis.js";
@@ -496,14 +496,8 @@ export const registerAdbCommands = (
       actions: z
         .string()
         .min(1)
-        .optional()
-        .describe("JSON array of actions, as send_adb_input accepts"),
-      "actions-file": z
-        .string()
-        .min(1)
-        .optional()
         .describe(
-          "JSON file holding an actions array, such as a recorded executed list",
+          "Inline JSON array of actions, or a JSON file holding one (such as a saved result's actions list)",
         ),
       "settle-ms": z
         .number()
@@ -512,51 +506,14 @@ export const registerAdbCommands = (
         .describe("Delay after each action in milliseconds (default 300)"),
     }),
     run: async ({ args, options }) => {
-      const refuse = (message: string) =>
-        logCliCommand(logger, CLI_COMMANDS.sendAdbInput, async () => {
-          throw new AnalysisInputError("send_adb_input", undefined, [
-            {
-              path: ["actions"],
-              reason: "invalid_format",
-              message,
-              expected: "JSON array of actions",
-            },
-          ]);
-        });
-      if (
-        (options.actions === undefined) ===
-        (options["actions-file"] === undefined)
-      )
-        return refuse("Pass exactly one of --actions or --actions-file.");
-      let source: string;
-      try {
-        source =
-          options.actions ?? (await readFile(options["actions-file"]!, "utf8"));
-      } catch (cause) {
-        return refuse(
-          `Cannot read --actions-file: ${cause instanceof Error ? cause.message : String(cause)}`,
-        );
-      }
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(source);
-      } catch {
-        return refuse("Actions are not valid JSON.");
-      }
-      // Accept a recorded send_adb_input result's executed list as a replay.
-      const actions = Array.isArray(parsed)
-        ? parsed.map((entry: unknown) =>
-            typeof entry === "object" &&
-            entry !== null &&
-            "action" in entry &&
-            "command" in entry
-              ? entry.action
-              : entry,
-          )
-        : parsed;
+      const actions = await parseCliJsonInput(
+        options.actions,
+        "send_adb_input",
+      );
+      if (!actions.ok) return actions.error;
       return execute(CLI_COMMANDS.sendAdbInput, "send_adb_input", {
         serial: args.serial,
-        actions,
+        actions: actions.value,
         ...(options["settle-ms"] === undefined
           ? {}
           : { settle_ms: options["settle-ms"] }),

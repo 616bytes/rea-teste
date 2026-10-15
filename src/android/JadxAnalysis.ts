@@ -419,7 +419,9 @@ const traceResourceReferences = async (
     scan.resources.some(
       (resource, index) =>
         resource.requested !== request.input.resource_ids[index] ||
-        resource.sites.length > Math.min(resource.total_sites, scan.max_sites),
+        resource.sites.length >
+          Math.min(resource.total_sites, scan.max_sites) ||
+        resource.r_fields.length > resource.total_r_fields,
     )
   )
     throw new AnalysisOutputError(
@@ -439,10 +441,14 @@ const traceResourceReferences = async (
       table: resource.table,
       resolution: resource.ids.length === 0 ? "unresolved" : "resolved",
       ids: resource.ids.map(resourceIdHex),
+      total_r_fields: resource.total_r_fields,
       r_fields: resource.r_fields,
       total_sites: resource.total_sites,
       coverage:
-        resource.sites.length < resource.total_sites ? "partial" : "complete",
+        resource.sites.length < resource.total_sites ||
+        resource.r_fields.length < resource.total_r_fields
+          ? "partial"
+          : "complete",
       sites: resource.sites,
     })),
     scan_unit: "dex_instruction",

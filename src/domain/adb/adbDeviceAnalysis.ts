@@ -487,7 +487,7 @@ export const adbInputSchemas = {
       .min(1)
       .max(64)
       .describe(
-        "Input actions executed in order; the returned executed list can be replayed as-is",
+        "Input actions executed in order; a result's actions list can be passed back as-is to replay it",
       ),
     settle_ms: z
       .number()
@@ -1000,10 +1000,12 @@ export const adbResultSchemas = {
     client,
     serial: z.string().min(1),
     status: z.enum(["completed", "stopped"]),
+    /** The completed actions, replayable as send_adb_input actions. */
+    actions: z.array(adbInputActionSchema),
+    /** Per completed action, in the same order: argv sent and resolved node. */
     executed: z.array(
       z.strictObject({
         index: z.number().int().nonnegative(),
-        action: adbInputActionSchema,
         command: z.array(z.string()),
         resolved_node: uiNodeResult.nullable(),
       }),

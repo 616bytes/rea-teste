@@ -74,14 +74,17 @@ export const waitForBoot = async (
   ];
   for (;;) {
     probes += 1;
-    const remaining = input.timeout_ms - (Date.now() - started);
+    const probeBudget = input.timeout_ms - (Date.now() - started);
     const ran = await runAdb(
       operation,
       context.serial,
       context.binary,
       adbArguments(context.serial, ["shell", "sh", "-c", BOOT_PROBE_SCRIPT]),
       {
-        timeoutMs: Math.max(1_000, Math.min(BOOT_PROBE_TIMEOUT_MS, remaining)),
+        timeoutMs: Math.max(
+          1_000,
+          Math.min(BOOT_PROBE_TIMEOUT_MS, probeBudget),
+        ),
         maxOutputBytes: BOOT_PROBE_MAX_OUTPUT_BYTES,
       },
       context.signal,
@@ -105,7 +108,9 @@ export const waitForBoot = async (
     }
     const waited = Date.now() - started;
     const completed = properties[0] === "1";
-    if (completed || waited + input.poll_interval_ms > input.timeout_ms)
+    // Probe once more at the deadline instead of stopping a full interval early.
+    const remaining = input.timeout_ms - waited;
+    if (completed || remaining <= 0)
       return ok({
         serial: context.serial,
         outcome: completed
@@ -119,7 +124,11 @@ export const waitForBoot = async (
         last_probe_error: lastError,
       });
     try {
-      await delay(input.poll_interval_ms, undefined, (context.signal === undefined ? {} : { signal: context.signal }));
+      await delay(
+        Math.min(input.poll_interval_ms, remaining),
+        undefined,
+        context.signal === undefined ? {} : { signal: context.signal },
+      );
     } catch (cause) {
       return err(new AnalysisCancelledError(operation, { cause }));
     }
@@ -398,6 +407,15 @@ const planInput = async (
         UI_SELECTOR_MAX_NODES,
       );
       if (!dumped.ok) return dumped;
+      // A capped dump cannot prove a selector is unambiguous.
+      if (dumped.value.hierarchy.truncated)
+        return err(
+          new AnalysisUnsupportedTargetError(
+            operation,
+            context.serial,
+            `The window hierarchy has ${String(dumped.value.hierarchy.node_count)} nodes, beyond the ${String(UI_SELECTOR_MAX_NODES)}-node selector limit; tap by coordinates instead`,
+          ),
+        );
       const matches = selectUiNodes(
         dumped.value.hierarchy.nodes,
         action.selector,
@@ -432,7 +450,7 @@ const planInput = async (
           new AnalysisUnsupportedTargetError(
             operation,
             context.serial,
-            `The matching node has no parseable bounds: ${node.bounds_source ?? "absent"}`,
+            `The matching node has no tappable area: ${node.bounds_source ?? "bounds absent"}`,
           ),
         );
       return ok({
@@ -449,9 +467,9 @@ export const sendInput = async (
   input: z.infer<typeof adbInputSchemas.send_adb_input>,
 ) => {
   const operation = "send_adb_input";
+  const actions: AdbInputAction[] = [];
   const executed: {
     index: number;
-    action: AdbInputAction;
     command: string[];
     resolved_node: ReturnType<typeof projectUiNode> | null;
   }[] = [];
@@ -459,7 +477,11 @@ export const sendInput = async (
   for (const [index, action] of input.actions.entries()) {
     if (index > 0 && input.settle_ms > 0) {
       try {
-        await delay(input.settle_ms, undefined, (context.signal === undefined ? {} : { signal: context.signal }));
+        await delay(
+          input.settle_ms,
+          undefined,
+          context.signal === undefined ? {} : { signal: context.signal },
+        );
       } catch (cause) {
         return err(new AnalysisCancelledError(operation, { cause }));
       }
@@ -495,9 +517,9 @@ ${ran.value.stderr}`.trim();
       };
       break;
     }
+    actions.push(action);
     executed.push({
       index,
-      action,
       command: [...planned.value.argv],
       resolved_node: planned.value.resolvedNode,
     });
@@ -505,6 +527,7 @@ ${ran.value.stderr}`.trim();
   return ok({
     serial: context.serial,
     status: failure === null ? ("completed" as const) : ("stopped" as const),
+    actions,
     executed,
     failure,
   });

@@ -145,6 +145,8 @@ const readPackageMains = (
 const RESOLUTION_SUFFIXES: readonly (readonly string[])[] = [
   [""],
   [".ts"],
+  [".mts"],
+  [".cts"],
   [".js"],
   [".mjs"],
   [".cjs"],

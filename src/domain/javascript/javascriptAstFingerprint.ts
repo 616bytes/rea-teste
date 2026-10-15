@@ -6,7 +6,6 @@ import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
-  propertyName,
   runtimeFunctionParameters,
   semanticStaticPropertyKey,
 } from "./javascriptAstValues.js";
@@ -78,6 +77,8 @@ export const collectJavaScriptExports = (
 const semanticTokens = (node: t.Node): string[] => {
   const tokens = [`node:${node.type}`];
   if (t.isStringLiteral(node)) tokens.push(`string:${node.value}`);
+  else if (t.isBigIntLiteral(node)) tokens.push(`bigint:${node.value}`);
+  else if (t.isDirectiveLiteral(node)) tokens.push(`directive:${node.value}`);
   else if (t.isNumericLiteral(node))
     tokens.push(`number:${String(node.value)}`);
   else if (t.isBooleanLiteral(node))
@@ -86,21 +87,25 @@ const semanticTokens = (node: t.Node): string[] => {
     tokens.push(`regexp:${node.pattern}/${node.flags}`);
   else if (t.isTemplateElement(node))
     tokens.push(`template:${JSON.stringify(node.value)}`);
-  else if (t.isBinaryExpression(node) || t.isLogicalExpression(node))
-    tokens.push(`operator:${node.operator}`);
-  else if (t.isUnaryExpression(node) || t.isUpdateExpression(node))
+  else if (
+    t.isBinaryExpression(node) ||
+    t.isLogicalExpression(node) ||
+    t.isUnaryExpression(node) ||
+    t.isUpdateExpression(node) ||
+    t.isAssignmentExpression(node)
+  )
     tokens.push(`operator:${node.operator}`);
   if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
     // A computed identifier names a local binding, not a fixed member.
     tokens.push(`computed:${String(node.computed)}`);
     if (!node.computed) {
-      const property = propertyName(node.property);
-      if (property !== "") tokens.push(`property:${property}`);
+      const property = semanticStaticPropertyKey(node.property, false);
+      if (property !== null) tokens.push(`property:${property}`);
     }
   }
   if ((t.isObjectProperty(node) || t.isObjectMethod(node)) && !node.computed) {
-    const key = propertyName(node.key);
-    if (key !== "") tokens.push(`key:${key}`);
+    const key = semanticStaticPropertyKey(node.key, false);
+    if (key !== null) tokens.push(`key:${key}`);
   }
   return tokens;
 };

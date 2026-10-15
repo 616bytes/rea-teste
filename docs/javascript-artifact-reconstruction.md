@@ -294,13 +294,16 @@ suffix. Utility calls such as `useUtils().invoice.list.fetch()`, `useQueries`,
 and links whose callee was renamed by a minifier are not recognized.
 
 Each recovered bundle module retains the exact factory-source digest. A complete
-bounded AST also receives a `babel-ast-v2` structural fingerprint that ignores
+bounded AST also receives a `babel-ast-v3` structural fingerprint that ignores
 ordinary identifier names while retaining syntax, literals, operators, object
 keys, and member properties. Computed member identifiers retain their access
 syntax without treating a local variable's spelling as a fixed property; template
-literal contents remain part of the fingerprint. Version comparison keeps the
-algorithm in its matching key, so retained `babel-ast-v1` fingerprints cannot match
-these new fingerprints. Re-analyze both snapshots to compare their new structure.
+literal contents remain part of the fingerprint. Bigint values and keys,
+directive text, and assignment operators also retain their distinct values.
+Version comparison keeps the algorithm in its matching key, so retained
+`babel-ast-v1` and `babel-ast-v2` fingerprints cannot match these new fingerprints
+through structural equality. Their Evidence remains usable through other matching
+tiers. Re-analyze both snapshots to compare their new structure.
 If fingerprint construction reaches its structural
 bound, the fingerprint is unavailable and its status is `truncated`; a bounded
 prefix is never presented as a complete stable fingerprint.

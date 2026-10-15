@@ -5,6 +5,19 @@ import { fingerprintJavaScriptAst } from "./javascriptAstFingerprint.js";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 describe("JavaScript AST fingerprints", () => {
+  it.each([
+    ["bigint values", "exports.v = 1n;", "exports.v = 2n;"],
+    ["bigint object keys", "exports.v = {1n: 1};", "exports.v = {2n: 1};"],
+    ["directives", '"use strict";', '"use asm";'],
+    ["assignment reads", "exports.v = 1;", "exports.v += 1;"],
+    ["arithmetic assignments", "exports.v += 1;", "exports.v -= 1;"],
+    ["logical assignments", "exports.v ||= 1;", "exports.v ??= 1;"],
+  ])("distinguishes %s", (_name, left, right) => {
+    expect(fingerprintJavaScriptAst(parse(left))).not.toBe(
+      fingerprintJavaScriptAst(parse(right)),
+    );
+  });
+
   it("includes complete literal values in the fingerprint", () => {
     const prefix = "x".repeat(1_024);
     const left = parse(`const value = ${JSON.stringify(`${prefix}left`)};`);
@@ -67,7 +80,7 @@ it("keeps renamed computed-key bundle modules structurally matchable", () => {
     .bundler_registrations[0]?.modules[0];
   expect(before).toBeDefined();
   expect(after).toBeDefined();
-  expect(before?.structural_fingerprint_algorithm).toBe("babel-ast-v2");
+  expect(before?.structural_fingerprint_algorithm).toBe("babel-ast-v3");
   expect(before?.source_sha256).not.toBe(after?.source_sha256);
   expect(before?.structural_fingerprint_sha256).toMatch(/^[a-f0-9]{64}$/u);
   expect(before?.structural_fingerprint_sha256).toBe(

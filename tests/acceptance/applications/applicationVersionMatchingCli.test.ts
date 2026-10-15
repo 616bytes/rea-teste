@@ -10,6 +10,100 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
+  "retains bundle literals and operators while matching renamed local bindings",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-fingerprint-version-");
+    const pairs = [
+      ["bigint", "exports.v = 1n;", "exports.v = 2n;"],
+      ["key", "exports.v = {1n: 1};", "exports.v = {2n: 1};"],
+      ["directive", '"use strict";', '"use asm";'],
+      ["assignment", "exports.v = 1;", "exports.v += 1;"],
+      ["string", 'exports.v = "left";', 'exports.v = "right";'],
+      [
+        "rename",
+        "const key = selectKey(); exports.read = value[key];",
+        "const selector = selectKey(); exports.read = value[selector];",
+      ],
+    ] as const;
+    const versions = [];
+    for (const side of [1, 2] as const) {
+      const application = join(root, String(side));
+      await mkdir(application);
+      for (const [name, left, right] of pairs)
+        await writeFile(
+          join(application, `${name}.js`),
+          `globalThis.webpackChunkApp.push([[1], {17(module, exports) {${side === 1 ? left : right}}}]);`,
+        );
+      const response = await cli.run({
+        arguments: ["analyze-javascript-application", application, "--json"],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(response.exitCode, response.stderr).toBe(0);
+      versions.push(parseEvidence(response.json));
+    }
+    const [left, right] = versions;
+    if (left === undefined || right === undefined)
+      throw new Error("Missing bundle version Evidence");
+    const analyses = versions.map(({ normalized_result }) =>
+      javascriptApplicationAnalysisResultSchema.parse(normalized_result),
+    );
+    const modules = analyses.map(({ graph }) => {
+      expect(graph.coverage.status).toBe("complete");
+      return new Map(
+        graph.nodes.flatMap((node) =>
+          node.observations.flatMap(({ properties, evidence }) =>
+            typeof properties.structural_fingerprint_sha256 === "string"
+              ? [[properties.path, { node, properties, evidence }] as const]
+              : [],
+          ),
+        ),
+      );
+    });
+    const inputPath = join(root, "comparison.json");
+    await writeFile(inputPath, JSON.stringify({ left, right }));
+    const response = await cli.run({
+      arguments: ["compare-application-versions", inputPath, "--json"],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const result = applicationVersionComparisonResultSchema.parse(
+      parseEvidence(response.json).normalized_result,
+    );
+    for (const [name] of pairs) {
+      const a = modules[0]?.get(`${name}.js`);
+      const b = modules[1]?.get(`${name}.js`);
+      if (a === undefined || b === undefined)
+        throw new Error(`Missing ${name} bundle module`);
+      expect(a.evidence.coverage.status).toBe("complete");
+      expect(b.evidence.coverage.status).toBe("complete");
+      expect(a.properties.source_sha256).not.toBe(b.properties.source_sha256);
+      expect(
+        a.properties.structural_fingerprint_sha256 ===
+          b.properties.structural_fingerprint_sha256,
+        name,
+      ).toBe(name === "rename");
+      const item = result.items.find(
+        ({ left_node_id }) => left_node_id === a.node.node_id,
+      );
+      expect(item).toMatchObject(
+        name === "rename"
+          ? {
+              right_node_id: b.node.node_id,
+              status: "changed",
+              match: {
+                status: "matched",
+                basis: "structural-fingerprint",
+                confidence: "medium",
+              },
+            }
+          : { right_node_id: null, match: { status: "unmatched" } },
+      );
+    }
+    expect(result.matching.structural_fingerprint).toBe(1);
+  },
+);
+
+cliTest(
   "pairs repeated factory bodies by identity when application versions retain a shared bundle",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-version-matching-");

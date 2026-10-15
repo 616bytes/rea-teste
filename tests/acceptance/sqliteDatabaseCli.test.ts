@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect, onTestFinished } from "vitest";
@@ -134,6 +134,44 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
     expect(await readFile(path)).toEqual(before);
   },
 );
+
+for (const expectedErrno of ["ELOOP", "ENAMETOOLONG"] as const) {
+  cliTest.skipIf(expectedErrno === "ELOOP" && process.platform === "win32")(
+    `reports an initial ${expectedErrno} path failure through CLI and MCP`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-sqlite-path-failure-");
+      const path =
+        expectedErrno === "ELOOP"
+          ? join(root, "cycle-a", "selected.db")
+          : join(root, "a".repeat(300), "selected.db");
+      if (expectedErrno === "ELOOP") {
+        await symlink("cycle-b", join(root, "cycle-a"));
+        await symlink("cycle-a", join(root, "cycle-b"));
+      }
+      const result = await cli.run({
+        arguments: ["inspect-sqlite-database", path, "--json"],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(result.exitCode).toBe(1);
+      const expectedError = {
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["path"],
+              reason: "invalid_value",
+              message: expect.stringContaining(expectedErrno),
+            },
+          ],
+        },
+      };
+      expect(result.json).toMatchObject(expectedError);
+      const { call } = await connectLocalToolsMcp();
+      const response = await call("inspect_sqlite_database", { path });
+      expect(parseMcpToolError(response).error).toMatchObject(expectedError);
+    },
+  );
+}
 
 cliTest(
   "discovers SQLite runtime availability before inspecting a database through CLI and MCP",

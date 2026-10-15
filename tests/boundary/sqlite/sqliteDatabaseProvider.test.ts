@@ -466,6 +466,39 @@ nativeTest.each(["absent.db", "absent-parent/absent.db"])(
   },
 );
 
+for (const expectedErrno of ["ELOOP", "ENAMETOOLONG"] as const) {
+  const test =
+    expectedErrno === "ELOOP" && process.platform === "win32" ? it.skip : it;
+  test(`classifies an initial ${expectedErrno} path failure as an invalid value`, async () => {
+    const workspace = await createTestWorkspace("rea-sqlite-path-failure-");
+    onTestFinished(() => removeTestWorkspace(workspace.root));
+    const path =
+      expectedErrno === "ELOOP"
+        ? workspace.path("cycle-a", "selected.db")
+        : workspace.path(`${"a".repeat(300)}`, "selected.db");
+    if (expectedErrno === "ELOOP") {
+      await symlink("cycle-b", workspace.path("cycle-a"));
+      await symlink("cycle-a", workspace.path("cycle-b"));
+    }
+    const provider = createProvider();
+    onTestFinished(() => provider.close());
+    const result = await provider.inspect({ path });
+    if (result.ok) throw new Error("Expected a path failure");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: expect.stringContaining(expectedErrno),
+          },
+        ],
+      },
+    });
+  });
+}
+
 it("attributes table and column selection failures to their own arguments", async () => {
   const { database } = await createFixture();
   const provider = createProvider();

@@ -1,5 +1,6 @@
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
+import { dirname } from "node:path";
 
 import type {
   DoctorProviderCheck,
@@ -137,16 +138,29 @@ const cacheCheck = async (
       };
     await access(cacheRoot, constants.W_OK | constants.X_OK);
   } catch (cause: unknown) {
-    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
-      return {
-        name: "cache",
-        ok: true,
-        code: null,
-        detail: `REA creates the Kuna project cache at ${cacheRoot} on first use.`,
-        remediation: null,
-        classification: "config_drift",
-        details,
-      };
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") {
+      const creatable = await nearestDirectoryWritable(cacheRoot);
+      return creatable.ok
+        ? {
+            name: "cache",
+            ok: true,
+            code: null,
+            detail: `REA creates the Kuna project cache at ${cacheRoot} on first use.`,
+            remediation: null,
+            classification: "config_drift",
+            details,
+          }
+        : {
+            name: "cache",
+            ok: false,
+            code: "open_options_invalid",
+            detail: `REA cannot create the Kuna cache root ${cacheRoot}: ${creatable.reason}`,
+            remediation:
+              "Set REA_KUNA_CACHE_DIR to a directory the REA process user can create or write.",
+            classification: "config_drift",
+            details,
+          };
+    }
     return {
       name: "cache",
       ok: false,
@@ -167,4 +181,31 @@ const cacheCheck = async (
     classification: "config_drift",
     details,
   };
+};
+
+/** Whether the nearest existing ancestor is a directory REA may create entries in. */
+const nearestDirectoryWritable = async (
+  path: string,
+): Promise<
+  { readonly ok: true } | { readonly ok: false; readonly reason: string }
+> => {
+  let candidate = dirname(path);
+  for (;;) {
+    try {
+      if (!(await stat(candidate)).isDirectory())
+        return { ok: false, reason: `${candidate} is not a directory.` };
+      await access(candidate, constants.W_OK | constants.X_OK);
+      return { ok: true };
+    } catch (cause: unknown) {
+      const missing =
+        cause instanceof Error && "code" in cause && cause.code === "ENOENT";
+      const parent = dirname(candidate);
+      if (!missing || parent === candidate)
+        return {
+          ok: false,
+          reason: `${candidate} is not writable: ${cause instanceof Error ? cause.message : String(cause)}`,
+        };
+      candidate = parent;
+    }
+  }
 };

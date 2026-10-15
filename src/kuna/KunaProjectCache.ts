@@ -9,6 +9,7 @@ import {
   rm,
   stat,
   utimes,
+  writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -31,7 +32,6 @@ import {
   kunaExportFailure,
   readKunaExport,
   type KunaExport,
-  type KunaExportOutcome,
   type KunaExportStatus,
   type KunaProcessLauncher,
 } from "./KunaProjectExport.js";
@@ -48,6 +48,9 @@ const CACHE_LAYOUT = 1;
 const MANIFEST_MAX_BYTES = 64 * 1024;
 
 const KEY_PATTERN = /^[0-9a-f]{64}$/u;
+
+/** Marks staging that an unproven Kuna process may still be writing into. */
+const RETAINED_MARKER = ".retained";
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 
 /** Inputs that determine an export's content. Each one is part of the cache key. */
@@ -130,7 +133,14 @@ export interface KunaProjectRequest {
   readonly onStatus?: (status: KunaExportStatus) => void;
 }
 
+interface StagedResult {
+  readonly result: Result<KunaProject, AnalysisError>;
+  /** Set when an owned process may still write into staging. */
+  readonly retainStaging: boolean;
+}
+
 interface InflightBuild {
+  readonly key: string;
   readonly promise: Promise<Result<KunaProject, AnalysisError>>;
   readonly controller: AbortController;
   readonly listeners: Set<(status: KunaExportStatus) => void>;
@@ -188,7 +198,10 @@ export class KunaProjectCache {
   readonly #maxBytes: number;
   readonly #staleStagingMs: number;
   readonly #launcher: KunaProcessLauncher | undefined;
+  /** Builds new requests may join, at most one per key. */
   readonly #inflight = new Map<string, InflightBuild>();
+  /** Every build not yet settled, including abandoned ones a retry replaced. */
+  readonly #unfinished = new Set<InflightBuild>();
   readonly #verified = new Map<string, KunaProject>();
   readonly #pins = new Map<string, number>();
   readonly #retained: ProviderCleanupError[] = [];
@@ -231,8 +244,10 @@ export class KunaProjectCache {
   ): Promise<KunaProject | undefined> {
     const verified = this.#verified.get(key);
     if (verified !== undefined) {
-      await this.#touch(key);
-      return verified;
+      // Another process may have evicted it since this one verified it.
+      if (await this.#touch(key)) return verified;
+      this.#verified.delete(key);
+      return undefined;
     }
     const entry = join(this.#root, "projects", key);
     let text: string;
@@ -276,8 +291,8 @@ export class KunaProjectCache {
       return undefined;
     }
     const project = { key, directory, manifest, ...parsed.value };
+    if (!(await this.#touch(key))) return undefined;
     this.#verified.set(key, project);
-    await this.#touch(key);
     return project;
   }
 
@@ -307,13 +322,16 @@ export class KunaProjectCache {
       for (const listener of listeners) listener(status);
     });
     const created: InflightBuild = {
+      key,
       promise,
       controller,
       listeners,
       waiters: 0,
     };
     this.#inflight.set(key, created);
+    this.#unfinished.add(created);
     void promise.then(() => {
+      this.#unfinished.delete(created);
       if (this.#inflight.get(key) === created) this.#inflight.delete(key);
     });
     return this.#await(created, request);
@@ -322,7 +340,7 @@ export class KunaProjectCache {
   /** Wait for every build in flight and report cleanup this cache still owns. */
   async close(): Promise<Result<null, ProviderCleanupError>> {
     await Promise.allSettled(
-      [...this.#inflight.values()].map((entry) => entry.promise),
+      [...this.#unfinished].map((entry) => entry.promise),
     );
     if (this.#retained.length === 0) return ok(null);
     return err(
@@ -378,6 +396,7 @@ export class KunaProjectCache {
     signal: AbortSignal,
     onStatus: (status: KunaExportStatus) => void,
   ): Promise<Result<KunaProject, AnalysisError>> {
+    let staging: string;
     try {
       const existing = await this.lookup(key, signal);
       if (existing !== undefined) return ok(existing);
@@ -387,23 +406,70 @@ export class KunaProjectCache {
         ),
       );
       await this.#sweep(signal);
-      const staging = await mkdtemp(join(this.#root, "staging", "build-"));
-      const outcome = await exportKunaProject({
-        installation: request.installation,
-        targetPath: request.targetPath,
-        targetSha256: request.targetSha256,
-        workspace: staging,
-        output: join(staging, "entry", "project"),
-        signal,
-        onStatus,
-        launcher: this.#launcher,
-      }).catch((cause: unknown): KunaExportOutcome => ({
-        kind: "done",
-        result: err(kunaExportFailure(cause, signal)),
-      }));
-      // An unproven process may still write into staging; it stays owned here.
-      if (outcome.kind === "retained") return err(this.#retain(outcome.error));
-      const published = outcome.result.ok
+      staging = await mkdtemp(join(this.#root, "staging", "build-"));
+    } catch (cause: unknown) {
+      return err(kunaExportFailure(cause, signal));
+    }
+    const built = await this.#exportAndPublish(
+      key,
+      staging,
+      request,
+      signal,
+      onStatus,
+    ).catch((cause: unknown): StagedResult => ({
+      result: err(kunaExportFailure(cause, signal)),
+      retainStaging: false,
+    }));
+    if (built.retainStaging) return built.result;
+    try {
+      await rm(staging, { recursive: true, force: true });
+    } catch (cause: unknown) {
+      return err(
+        this.#retain(
+          new ProviderCleanupError(
+            KUNA_PROVIDER_ID,
+            [staging],
+            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { operation: KUNA_EXPORT_OPERATION, cause },
+          ),
+        ),
+      );
+    }
+    if (built.result.ok)
+      // The entry is published either way; a failed eviction retries on the next publish.
+      await this.#evict(key).catch(() => undefined);
+    return built.result;
+  }
+
+  async #exportAndPublish(
+    key: string,
+    staging: string,
+    request: KunaProjectRequest,
+    signal: AbortSignal,
+    onStatus: (status: KunaExportStatus) => void,
+  ): Promise<StagedResult> {
+    const outcome = await exportKunaProject({
+      installation: request.installation,
+      targetPath: request.targetPath,
+      targetSha256: request.targetSha256,
+      workspace: staging,
+      output: join(staging, "entry", "project"),
+      signal,
+      onStatus,
+      launcher: this.#launcher,
+    });
+    if (outcome.kind === "retained") {
+      // An unproven process may still write into staging. Mark it so no sweep,
+      // here or in another process, removes it, and keep it owned here.
+      await writeFile(
+        join(staging, RETAINED_MARKER),
+        `${JSON.stringify({ reason: outcome.error.diagnostics?.["reason"] ?? null, resources: outcome.error.cleanupResources })}\n`,
+        { mode: 0o600 },
+      ).catch(() => undefined);
+      return { result: err(this.#retain(outcome.error)), retainStaging: true };
+    }
+    return {
+      result: outcome.result.ok
         ? await this.#publish(
             key,
             staging,
@@ -411,30 +477,9 @@ export class KunaProjectCache {
             outcome.result.value,
             signal,
           )
-        : outcome.result;
-      try {
-        await rm(staging, { recursive: true, force: true });
-      } catch (cause: unknown) {
-        return err(
-          this.#retain(
-            new ProviderCleanupError(
-              KUNA_PROVIDER_ID,
-              [staging],
-              {
-                reason: cause instanceof Error ? cause.message : String(cause),
-              },
-              { operation: KUNA_EXPORT_OPERATION, cause },
-            ),
-          ),
-        );
-      }
-      if (!published.ok) return published;
-      // The entry is published either way; a failed eviction retries on the next publish.
-      await this.#evict(key).catch(() => undefined);
-      return published;
-    } catch (cause: unknown) {
-      return err(kunaExportFailure(cause, signal));
-    }
+        : outcome.result,
+      retainStaging: false,
+    };
   }
 
   /** Record the manifest and publish the staged export under its key. */
@@ -497,14 +542,24 @@ export class KunaProjectCache {
     return ok(project);
   }
 
-  /** Remove abandoned staging and evicted entries; both are REA-owned by layout. */
+  /**
+   * Remove abandoned staging and evicted entries; both are REA-owned by
+   * layout. Staging marked as retained belongs to a process REA could not
+   * prove stopped, so it is never swept.
+   */
   async #sweep(signal: AbortSignal): Promise<void> {
     const now = Date.now();
     for (const name of await readdir(join(this.#root, "staging"))) {
       signal.throwIfAborted();
       const path = join(this.#root, "staging", name);
       const status = await lstat(path).catch(() => undefined);
-      if (status !== undefined && now - status.mtimeMs > this.#staleStagingMs)
+      if (status === undefined || now - status.mtimeMs <= this.#staleStagingMs)
+        continue;
+      const retained = await lstat(join(path, RETAINED_MARKER)).then(
+        () => true,
+        (cause: unknown) => !isMissing(cause),
+      );
+      if (!retained)
         await rm(path, { recursive: true, force: true }).catch(() => undefined);
     }
     for (const name of await readdir(join(this.#root, "trash")))
@@ -559,11 +614,16 @@ export class KunaProjectCache {
     await rm(trash, { recursive: true, force: true }).catch(() => undefined);
   }
 
-  async #touch(key: string): Promise<void> {
+  /** Mark an entry recently used; false when it is no longer published. */
+  async #touch(key: string): Promise<boolean> {
     const now = new Date();
-    await utimes(join(this.#root, "projects", key), now, now).catch(
-      () => undefined,
-    );
+    try {
+      await utimes(join(this.#root, "projects", key), now, now);
+      return true;
+    } catch (cause: unknown) {
+      // Recency is advisory; only a missing entry changes the answer.
+      return !isMissing(cause);
+    }
   }
 
   async #readBounded(path: string): Promise<string> {

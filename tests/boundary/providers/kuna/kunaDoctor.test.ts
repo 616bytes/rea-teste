@@ -104,3 +104,33 @@ it("reports a cache root REA cannot use without creating anything", async () => 
     detail: expect.stringContaining(`cached in ${existing}`),
   });
 });
+
+it("reports a cache root REA cannot create under its nearest existing parent", async () => {
+  const root = await createTestTempDirectory("rea-kuna-doctor-create-");
+  const kuna = await writeFakeKuna(root);
+  const readOnly = join(root, "read-only");
+  await mkdir(readOnly, { mode: 0o500 });
+  const occupied = join(root, "occupied");
+  await writeFile(occupied, "not a directory");
+
+  const underReadOnly = await inspectKunaProvider({
+    REA_KUNA_COMMAND: kuna,
+    REA_KUNA_CACHE_DIR: join(readOnly, "nested", "cache"),
+  });
+  const underFile = await inspectKunaProvider({
+    REA_KUNA_COMMAND: kuna,
+    REA_KUNA_CACHE_DIR: join(occupied, "cache"),
+  });
+
+  expect(underReadOnly.checks[1]).toMatchObject({
+    name: "cache",
+    ok: false,
+    detail: expect.stringContaining(`${readOnly} is not writable`),
+  });
+  expect(underFile.checks[1]).toMatchObject({
+    name: "cache",
+    ok: false,
+    // stat reports ENOTDIR for a path beneath a regular file.
+    detail: expect.stringContaining("not a directory"),
+  });
+});

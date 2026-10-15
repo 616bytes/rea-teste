@@ -11,9 +11,18 @@ export interface FakeKunaFunction {
 /** Scripted behavior of the fake `kuna` executable for one test. */
 export interface FakeKunaBehavior {
   /** Text printed by `--version`; `exit` fails the probe instead. */
-  readonly version?: { readonly stdout: string } | { readonly exit: number };
+  readonly version?:
+    | { readonly stdout: string }
+    | { readonly exit: number }
+    | { readonly ignoreTerm: true };
   readonly inventory?: "ok" | "not-json" | "hang";
-  readonly project?: "ok" | "exit-failure" | "hang" | "miscounted" | "silent";
+  readonly project?:
+    | "ok"
+    | "exit-failure"
+    | "hang"
+    | "miscounted"
+    | "silent"
+    | "block-manifest";
   readonly functions?: readonly FakeKunaFunction[];
   /** Extra `.asm` bytes, for capacity tests. */
   readonly asmPadding?: number;
@@ -38,7 +47,8 @@ const hang = () => setInterval(() => {}, 1000);
 if (args[0] === "--version") {
   const version = behavior.version ?? { stdout: "kuna 1.833\n" };
   if ("exit" in version) { process.stderr.write("version probe failed\n"); process.exit(version.exit); }
-  process.stdout.write(version.stdout);
+  if ("ignoreTerm" in version) { process.on("SIGTERM", () => {}); hang(); }
+  else process.stdout.write(version.stdout);
 } else if (args[0] === "functions") {
   const mode = behavior.inventory ?? "ok";
   if (mode === "hang") hang();
@@ -66,6 +76,8 @@ if (args[0] === "--version") {
     fs.writeFileSync(path.join(output, stem + ".h"), "#pragma once\n");
     fs.writeFileSync(path.join(output, stem + ".asm"), "; asm\n" + "x".repeat(behavior.asmPadding ?? 0));
     fs.writeFileSync(path.join(output, "README.md"), "# " + stem + "\n");
+    // Occupy the manifest path so REA's publication write fails.
+    if (mode === "block-manifest") fs.mkdirSync(path.join(output, "..", "manifest.json"));
     const failed = functions.filter((fn) => fn.error !== undefined).length;
     const reported = mode === "miscounted" ? functions.length + 1 : functions.length - failed;
     if (mode !== "silent") process.stdout.write("wrote " + output + ": " + stem + ".c (" + c.length + " bytes); functions: " + reported + " ok, " + failed + " failed\n");

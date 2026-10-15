@@ -86,6 +86,8 @@ export const inspectKunaInstallation = async (
   options: {
     readonly platform?: NodeJS.Platform;
     readonly signal?: AbortSignal;
+    /** Probe deadline; tests shorten it. */
+    readonly probeTimeoutMs?: number;
   } = {},
 ): Promise<Result<KunaInstallation, KunaReadinessFailure>> => {
   const configuration = readKunaConfiguration(environment, options.platform);
@@ -117,12 +119,15 @@ export const inspectKunaInstallation = async (
     );
   }
 
+  const deadline = options.probeTimeoutMs ?? VERSION_PROBE_TIMEOUT_MS;
   let stdout: string;
   try {
     ({ stdout } = await execFileOutput(executable, ["--version"], {
       env: kunaChildEnvironment(configuration.value),
-      timeout: VERSION_PROBE_TIMEOUT_MS,
+      timeout: deadline,
       maxBuffer: VERSION_PROBE_MAX_OUTPUT_BYTES,
+      // Escalate to SIGKILL so an executable that ignores SIGTERM cannot hang doctor.
+      stopSignal: "SIGTERM",
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     }));
   } catch (cause: unknown) {
@@ -138,7 +143,7 @@ export const inspectKunaInstallation = async (
         signal: output?.signal ?? null,
         killed: output?.killed ?? false,
         output_truncated: output?.outputTruncated ?? false,
-        deadline_ms: VERSION_PROBE_TIMEOUT_MS,
+        deadline_ms: deadline,
       },
     );
   }

@@ -186,3 +186,27 @@ it("parses cache, timeout and job settings at the configuration boundary", () =>
       error: { code: "open_options_invalid", setting },
     });
 });
+
+it("stops a version probe that ignores SIGTERM instead of waiting on it", async () => {
+  const root = await createTestTempDirectory("rea-kuna-probe-term-");
+  const kuna = await writeFakeKuna(root, { version: { ignoreTerm: true } });
+  const started = Date.now();
+
+  const result = await inspectKunaInstallation(
+    { REA_KUNA_COMMAND: kuna },
+    // Long enough for Node to start the fake and install its SIGTERM handler.
+    { probeTimeoutMs: 1500 },
+  );
+
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      code: "version_unresolved",
+      diagnostics: { killed: true, deadline_ms: 1500 },
+    },
+  });
+  // The deadline plus ExecFileOutput's bounded kill grace, never an open-ended wait.
+  expect(Date.now() - started).toBeLessThan(15_000);
+  const pid = (await fakeKunaCalls(kuna))[0]?.pid ?? 0;
+  expect(() => process.kill(pid, 0)).toThrow();
+}, 20_000);

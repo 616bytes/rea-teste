@@ -4,6 +4,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  rename,
   utimes,
   writeFile,
 } from "node:fs/promises";
@@ -535,8 +536,121 @@ it("keeps staging owned when a cancelled Kuna process cannot be proven stopped",
   });
   const staged = await entries(cacheRoot, "staging");
   expect(staged).toHaveLength(1);
+  expect(await readdir(join(cacheRoot, "staging", staged[0] ?? ""))).toContain(
+    ".retained",
+  );
   if (!closed.ok)
     expect(closed.error.cleanupResources).toContain(
       join(cacheRoot, "staging", staged[0] ?? ""),
     );
+});
+
+it("rebuilds an entry another cache instance evicted after this one verified it", async () => {
+  const { kuna, installation, cacheRoot, cache, target } = await fixture(
+    "rea-kuna-evicted-elsewhere-",
+  );
+  const input = await target("program");
+  const built = await cache.build({ installation, ...input });
+  if (!built.ok) throw built.error;
+  // Another process retires the entry the way #discard does.
+  await mkdir(join(cacheRoot, "trash"), { recursive: true });
+  await rename(
+    join(cacheRoot, "projects", built.value.key),
+    join(cacheRoot, "trash", "evicted"),
+  );
+
+  expect(await cache.lookup(built.value.key)).toBeUndefined();
+  const rebuilt = await cache.build({ installation, ...input });
+
+  expect(rebuilt.ok).toBe(true);
+  expect(await callsOf(kuna, "decompile-project")).toHaveLength(2);
+  expect(await entries(cacheRoot, "projects")).toEqual([built.value.key]);
+});
+
+it("reports an abandoned build's unproven cleanup even after a retry replaced it", async () => {
+  const { kuna, installation, cacheRoot, target } = await fixture(
+    "rea-kuna-replaced-",
+    { project: "hang" },
+  );
+  let exports = 0;
+  const cache = new KunaProjectCache(cacheRoot, {
+    maxBytes: 64 * 1024 ** 2,
+    staleStagingMs: 24 * 60 * 60 * 1000,
+    launcher: async (options) => {
+      const spawned = await spawnOwnedProviderProcess(options);
+      if (options.arguments[0] !== "decompile-project" || ++exports > 1)
+        return spawned;
+      // The first export stops slowly and cannot prove its group gone.
+      return {
+        ...spawned,
+        cleanup: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          await cleanupOwnedProcessGroup(spawned.ownership);
+          return { cleaned: false, reason: "first export unverified" };
+        },
+      };
+    },
+  });
+  const input = await target("program");
+  const first = new AbortController();
+  const firstBuild = cache.build({
+    installation,
+    ...input,
+    signal: first.signal,
+  });
+  await expect.poll(() => callsOf(kuna, "decompile-project")).toHaveLength(1);
+  first.abort();
+  await firstBuild;
+
+  // A retry for the same key starts while the first is still stopping.
+  const second = new AbortController();
+  const secondBuild = cache.build({
+    installation,
+    ...input,
+    signal: second.signal,
+  });
+  await expect.poll(() => callsOf(kuna, "decompile-project")).toHaveLength(2);
+  second.abort();
+  await secondBuild;
+
+  expect(await cache.close()).toMatchObject({
+    ok: false,
+    error: { diagnostics: { reason: "first export unverified" } },
+  });
+});
+
+it("never sweeps staging marked as retained, however old", async () => {
+  const { installation, cacheRoot, cache, target } = await fixture(
+    "rea-kuna-sweep-retained-",
+  );
+  const retained = join(cacheRoot, "staging", "build-retained");
+  await mkdir(retained, { recursive: true });
+  await writeFile(join(retained, ".retained"), "{}\n");
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  await utimes(retained, twoDaysAgo, twoDaysAgo);
+
+  expect(
+    (await cache.build({ installation, ...(await target("program")) })).ok,
+  ).toBe(true);
+
+  expect(await entries(cacheRoot, "staging")).toEqual(["build-retained"]);
+});
+
+it("removes its staging when publication itself fails", async () => {
+  const { installation, cacheRoot, cache, target } = await fixture(
+    "rea-kuna-publish-failure-",
+    { project: "block-manifest" },
+  );
+
+  const result = await cache.build({
+    installation,
+    ...(await target("program")),
+  });
+
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "ProviderAdapterError" },
+  });
+  expect(await entries(cacheRoot, "staging")).toEqual([]);
+  expect(await entries(cacheRoot, "projects")).toEqual([]);
 });

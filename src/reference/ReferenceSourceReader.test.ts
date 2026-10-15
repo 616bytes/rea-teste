@@ -87,4 +87,32 @@ describe("reference source reader reconciliation", () => {
       targetState: "internal",
     });
   });
+
+  it("does not reconcile after cancellation", () => {
+    const entries: ReferenceSourceEntry[] = [
+      {
+        status: "read",
+        kind: "symlink",
+        path: "alias.txt",
+        target: "hidden/target.txt",
+        targetState: "internal",
+      },
+      {
+        status: "failed",
+        kind: "directory",
+        path: "hidden",
+        code: "io",
+        message: "EACCES",
+      },
+    ];
+    const controller = new AbortController();
+    controller.abort();
+
+    reconcileSymlinksBelowUnreadableDirectories(entries, controller.signal);
+
+    expect(entries[0]).toMatchObject({
+      status: "read",
+      targetState: "internal",
+    });
+  });
 });

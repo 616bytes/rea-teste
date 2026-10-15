@@ -1,3 +1,5 @@
+import { posix } from "node:path";
+
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { err, ok } from "../domain/result.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -66,7 +68,8 @@ const readSource = async (
     bytesRead: 0,
   };
   const traversal = await traverse(state);
-  reconcileSymlinksBelowUnreadableDirectories(state.entries);
+  if (!isAborted(state.signal))
+    reconcileSymlinksBelowUnreadableDirectories(state.entries, state.signal);
   state.entries.sort((left, right) =>
     compareUnicodeCodePoints(left.path, right.path),
   );
@@ -87,20 +90,26 @@ const readSource = async (
  */
 export const reconcileSymlinksBelowUnreadableDirectories = (
   entries: ReferenceSourceEntry[],
+  signal?: AbortSignal,
 ): void => {
   const observedPaths = new Set(entries.map(({ path }) => path));
-  const unreadableDirectories = entries.flatMap((entry) =>
-    entry.status === "failed" && entry.kind === "directory" ? [entry.path] : [],
+  const unreadableDirectories = new Set(
+    entries.flatMap((entry) =>
+      entry.status === "failed" && entry.kind === "directory"
+        ? [entry.path]
+        : [],
+    ),
   );
-  if (unreadableDirectories.length === 0) return;
+  if (unreadableDirectories.size === 0 || isAborted(signal)) return;
 
   for (const [index, entry] of entries.entries()) {
+    if (isAborted(signal)) return;
     if (
       entry.status !== "read" ||
       entry.kind !== "symlink" ||
       entry.targetState !== "internal" ||
       observedPaths.has(entry.target) ||
-      !unreadableDirectories.some((path) => entry.target.startsWith(`${path}/`))
+      !hasUnreadableAncestor(entry.target, unreadableDirectories, signal)
     )
       continue;
     entries[index] = {
@@ -112,6 +121,22 @@ export const reconcileSymlinksBelowUnreadableDirectories = (
         "Symbolic link target is inside a directory that could not be enumerated",
     };
   }
+};
+
+const hasUnreadableAncestor = (
+  target: string,
+  unreadableDirectories: ReadonlySet<string>,
+  signal: AbortSignal | undefined,
+): boolean => {
+  for (
+    let candidate = posix.dirname(target);
+    candidate !== "." && candidate !== "/";
+    candidate = posix.dirname(candidate)
+  ) {
+    if (isAborted(signal)) return false;
+    if (unreadableDirectories.has(candidate)) return true;
+  }
+  return false;
 };
 
 const traverse = async (

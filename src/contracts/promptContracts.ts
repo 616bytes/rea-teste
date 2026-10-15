@@ -317,6 +317,67 @@ export const PROMPT_CONTRACTS = [
     ],
   },
   {
+    name: "review_native_vulnerabilities",
+    title: "Review native vulnerabilities",
+    description:
+      "Guide a defensive static review of a native binary while separating observed paths, inferred input control, mitigations, and unknowns.",
+    objective:
+      "For each candidate defect, distinguish a statically observed path cited by Evidence, input controllability labeled as an Inference with confidence, and Unknown when no static path is found or indirect calls remain unresolved. Label CWE class and severity as Inferences, and keep the review defensive and remediation-oriented.",
+    arguments: {
+      review_focus: required(
+        "Input parser, entry point, or sink class to review",
+      ),
+      target_path: optional(
+        "Absolute target path; omit when the intended target is already open",
+      ),
+      document: optional("Open analysis document to inspect", "document"),
+      procedure: optional(
+        "Known procedure, parser, or entry-point name or address",
+        "procedure",
+      ),
+      provider_id: optional(
+        "Provider to use; omit to keep the current provider selection",
+        "provider",
+      ),
+    },
+    steps: [
+      {
+        tools: ["open_binary"],
+        instruction:
+          "Use the requested target and open it only when needed for static analysis. This workflow does not execute the target.",
+      },
+      {
+        tools: ["inspect_binary_layout", "inspect_signature"],
+        instruction:
+          "Collect available mitigation facts such as canaries, NX, ASLR, and RELRO. Report only static inferences returned by these tools; unavailable facts remain Unknown, and mitigations do not prove protection or its absence.",
+      },
+      {
+        tools: ["list_names", "search_procedures", "find_xrefs_to_name"],
+        instruction:
+          "Find candidate imports, references, and entry-point procedures relevant to the requested focus. When procedure is omitted, select an entry point only when Evidence supports it; otherwise keep the entry point Unknown. Common sink starting points include strcpy, strcat, sprintf, gets, memcpy, alloca, system, popen, and exec-family names; this list is not exhaustive or a code catalog.",
+      },
+      {
+        tools: ["analyze_function", "trace_native_values"],
+        instruction:
+          "Build function context and trace relevant values from input-handling code toward each candidate sink; cite the returned Evidence for observed relationships.",
+      },
+      {
+        tools: [
+          "trace_call_path",
+          "build_call_path",
+          "resolve_native_call_targets",
+        ],
+        instruction:
+          "When an entry point is supported by Evidence, check paths from it to each candidate. Unresolved indirect calls and missing paths in incomplete coverage remain Unknown; no path found is not proof of unreachability.",
+      },
+      {
+        tools: ["record_unknown"],
+        instruction:
+          "Track unresolved reachability, input controllability, or mitigation facts as Unknowns rather than filling gaps with assumptions. Tools can record Evidence and Unknowns in the REA session but do not modify the target. Keep findings defensive and remediation-oriented; exclude exploit instructions, payloads, shellcode, ROP or JOP chains, heap-grooming recipes, and mitigation-bypass techniques. A trigger condition or precondition is enough.",
+      },
+    ],
+  },
+  {
     name: "audit_residual_unknowns",
     title: "Audit residual unknowns",
     description:

@@ -30,6 +30,7 @@ import type { RustBinaryService } from "../application/rust/RustBinaryService.js
 import { registerRustTools } from "./registerRustTools.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
+import { registerUiStateTransitionTool } from "./registerUiStateTransitionTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { FridaInstrumentationManager } from "../frida/FridaInstrumentationManager.js";
 import { registerFridaTools } from "./registerFridaTools.js";
@@ -663,6 +664,13 @@ const registerConfiguredAnalysisTools = (
     withAdmittedAnalysis,
   );
   registerAnalysisViewTool(
+    server,
+    toolLogger,
+    evidenceById,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerUiStateTransitionTool(
     server,
     toolLogger,
     evidenceById,

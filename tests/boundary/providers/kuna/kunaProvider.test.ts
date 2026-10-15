@@ -15,6 +15,7 @@ import { expect, it as test, vi } from "vitest";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../../../src/domain/jsonValue.js";
 import type { KunaProcessLauncher } from "../../../../src/kuna/KunaCommand.js";
+import type { AnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "../../../../src/kuna/KunaLimits.js";
@@ -760,17 +761,17 @@ it.each([
     behavior: { project: "hang" } as const,
     environment: { REA_KUNA_PROJECT_TIMEOUT_MS: "300" },
     cause: "AnalysisTimeoutError",
-    change: "raise REA_KUNA_PROJECT_TIMEOUT_MS above 300 ms or REA_KUNA_JOBS",
+    next: "To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above 300 ms or raise REA_KUNA_JOBS in the environment that starts REA. REA reads Kuna settings when it starts, so restart REA, then reopen the target.",
   },
   {
     behavior: { project: "exit-failure" } as const,
     environment: {},
     cause: "ProviderAdapterError",
-    change: "resolve the reported failure",
+    next: "To retry, resolve the reported failure, then reopen the target.",
   },
 ])(
   "reports a failed export as not retryable in its session ($cause)",
-  async ({ behavior, environment, cause, change }) => {
+  async ({ behavior, environment, cause, next }) => {
     const { open } = await session(
       "rea-kuna-export-unavailable-",
       behavior,
@@ -788,14 +789,18 @@ it.each([
           _tag: "AnalysisCapabilityUnavailableError",
           retryable: false,
           diagnostics: { export_error: cause },
-          userMessage: expect.stringContaining(
-            `To retry, ${change}, then reopen the target.`,
-          ),
         });
+        expect(result.error.userMessage?.endsWith(next)).toBe(true);
+        // The export's own output stays on the error callers receive.
+        expect(result.error.capturedOutput).toEqual(
+          (result.error.cause as AnalysisError).capturedOutput,
+        );
+        expect(result.error.capturedOutput).toBeDefined();
         expect((result.error.cause as { _tag?: string })._tag).toBe(cause);
         expect(projectAnalysisError(result.error)).toMatchObject({
           code: "capability_unavailable",
           retryable: false,
+          details: { captured_output: expect.any(Object) },
         });
       }
     } finally {

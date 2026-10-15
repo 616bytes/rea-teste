@@ -145,7 +145,8 @@ const failure = (operation: string, cause: unknown): AnalysisError =>
 /**
  * How a request that needs the export reports the export's failure. A session
  * never rebuilds a failed export, so repeating the request cannot succeed; the
- * error says what to change before reopening the target. Cancellation and
+ * error says what to change before reopening the target. Kuna settings are read
+ * when REA starts, so changing one also needs a restart. Cancellation and
  * unproven cleanup keep their own errors, which callers must still observe.
  */
 const exportUnavailable = (
@@ -155,19 +156,23 @@ const exportUnavailable = (
   if (failure instanceof AnalysisCancelledError || failure.cleanupIncomplete)
     return failure;
   const reason = failure.userMessage ?? failure.message;
-  const change =
+  const restart =
+    "REA reads Kuna settings when it starts, so restart REA, then reopen the target.";
+  const next =
     failure instanceof AnalysisTimeoutError
-      ? `raise REA_KUNA_PROJECT_TIMEOUT_MS above ${String(failure.timeoutMs)} ms or REA_KUNA_JOBS`
+      ? `To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above ${String(failure.timeoutMs)} ms or raise REA_KUNA_JOBS in the environment that starts REA. ${restart}`
       : failure instanceof AnalysisResourceConstraintError &&
           failure.remediationAction !== undefined
-        ? failure.remediationAction.replace(/\.$/u, "")
-        : "resolve the reported failure";
+        ? `${failure.remediationAction.replace(/\.?$/u, ".")} ${restart}`
+        : "To retry, resolve the reported failure, then reopen the target.";
   return new AnalysisCapabilityUnavailableError(
     KUNA_PROVIDER_ID,
     operation,
     reason,
     {
       cause: failure,
+      capturedOutput: failure.capturedOutput,
+      partialObservation: failure.partialObservation,
       diagnostics: {
         ...failure.diagnostics,
         export_error: failure._tag,
@@ -175,7 +180,7 @@ const exportUnavailable = (
           ? { timeout_ms: failure.timeoutMs }
           : {}),
       },
-      userMessage: `Kuna's project export failed, so ${operation} is unavailable in this session: ${reason.replace(/\.?$/u, ".")} To retry, ${change}, then reopen the target.`,
+      userMessage: `Kuna's project export failed, so ${operation} is unavailable in this session: ${reason.replace(/\.?$/u, ".")} ${next}`,
     },
   );
 };

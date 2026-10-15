@@ -236,6 +236,7 @@ export const immutableSemanticScopes = (
   state.scopes.map((scope) => ({
     scopeId: scope.scopeId,
     parentScopeId: scope.parentScopeId,
+    ...(scope.namespaceExportScopeId === undefined ? {} : { namespaceExportScopeId: scope.namespaceExportScopeId }),
     kind: scope.kind,
     location: scope.location,
     bindingsComplete: scope.bindingsComplete,
@@ -724,6 +725,7 @@ const isDeclarationIdentifier = (
 };
 
 const isNonReferenceKey = (node: t.Identifier, parent: t.Node): boolean =>
+  (t.isTSQualifiedName(parent) && parent.right === node) ||
   ((t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) &&
     parent.property === node &&
     !parent.computed) ||

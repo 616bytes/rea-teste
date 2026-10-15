@@ -196,3 +196,112 @@ conditionalAlias.handle("conditional-alias:ping", () => "local");
     [text.indexOf('require("electron")["ipcMain.handle"]'), []],
   ]);
 });
+
+it("classifies Electron calls through internal TypeScript import aliases", () => {
+  const source =
+    'import electron = require("electron"); import ipc = electron.ipcMain; ipc.handle("ping", () => "pong");';
+  const parsed = parseJavaScriptSource(source, "aliases.ts");
+  if (parsed === null) throw new Error("Expected parsed TypeScript source");
+  expect([...classifyParsedJavaScriptElectronBindings(parsed)]).toContainEqual([
+    source.indexOf('ipc.handle("ping"'),
+    ["ipcMain"],
+  ]);
+});
+
+it("shares exported namespace bindings while preserving block-local names", () => {
+  const source = `import electron = require("electron");
+namespace A { export const ipc = electron.ipcMain; const privateName = 1; }
+namespace A { ipc.handle("ping", () => "pong"); void privateName; }`;
+  const parsed = parseJavaScriptSource(source, "merged-namespaces.ts");
+  if (parsed === null) throw new Error("Expected parsed TypeScript source");
+  const ir = analyzeParsedJavaScriptSemantics(parsed);
+  expect([...classifyParsedJavaScriptElectronBindings(parsed)]).toContainEqual([
+    source.indexOf('ipc.handle("ping"'),
+    ["ipcMain"],
+  ]);
+  expect(
+    ir.references.find(({ name }) => name === "privateName")?.resolution,
+  ).toBe("unbound");
+});
+
+it("shares export-import aliases across reopened namespace blocks", () => {
+  const source = `namespace N { export import electron = require("electron"); }
+namespace N { electron.ipcMain.handle("ping", () => "pong"); }`;
+  const parsed = parseJavaScriptSource(source, "export-import.ts");
+  if (parsed === null) throw new Error("Expected parsed TypeScript source");
+  // The call root is the shared Electron module alias itself, so the proven
+  // root path is empty, matching require("electron").ipcMain.handle.
+  expect([...classifyParsedJavaScriptElectronBindings(parsed)]).toContainEqual([
+    source.indexOf('electron.ipcMain.handle("ping"'),
+    [],
+  ]);
+});
+
+it("keeps dotted namespace owners distinct and joins equivalent declarations", () => {
+  const source = `import electron = require("electron");
+namespace A.B { export const ipc = electron.ipcMain; }
+namespace B { ipc.handle("unrelated", () => "pong"); }
+namespace A.B { ipc.handle("dotted", () => "pong"); }
+namespace A { export namespace B { ipc.handle("nested", () => "pong"); } }`;
+  const parsed = parseJavaScriptSource(source, "dotted-namespaces.ts");
+  if (parsed === null) throw new Error("Expected parsed TypeScript source");
+  const calls = [...classifyParsedJavaScriptElectronBindings(parsed)];
+  expect(calls).not.toContainEqual([
+    source.indexOf('ipc.handle("unrelated"'),
+    ["ipcMain"],
+  ]);
+  for (const channel of ["dotted", "nested"])
+    expect(calls).toContainEqual([
+      source.indexOf(`ipc.handle("${channel}"`),
+      ["ipcMain"],
+    ]);
+});
+
+it("resolves outer exported names from dotted namespace bodies", () => {
+  const source = `import electron = require("electron");
+namespace A { export const ipc = electron.ipcMain; const privateIpc = electron.ipcMain; }
+namespace A.B { ipc.handle("outer", () => "pong"); privateIpc.handle("hidden", () => "pong"); }
+namespace A.A { export const renderer = electron.ipcRenderer; }
+namespace A.A { renderer.send("repeated"); }`;
+  const parsed = parseJavaScriptSource(source, "outer-namespace.ts");
+  if (parsed === null) throw new Error("Expected parsed TypeScript source");
+  const calls = [...classifyParsedJavaScriptElectronBindings(parsed)];
+  expect(calls).toContainEqual([
+    source.indexOf('ipc.handle("outer"'),
+    ["ipcMain"],
+  ]);
+  expect(calls).not.toContainEqual([
+    source.indexOf('privateIpc.handle("hidden"'),
+    ["ipcMain"],
+  ]);
+  expect(calls).toContainEqual([
+    source.indexOf('renderer.send("repeated"'),
+    ["ipcRenderer"],
+  ]);
+});
+
+it("resolves nested namespace references through enclosing private bindings first", () => {
+  const source = `import electron = require("electron");
+namespace A { export const ipc = electron.ipcMain; }
+namespace A { const ipc = electron.ipcRenderer; export namespace B { ipc.send("ping", () => undefined); } }`;
+  const parsed = parseJavaScriptSource(source, "nested-private.ts");
+  if (parsed === null) throw new Error("Expected parsed TypeScript source");
+  const calls = [...classifyParsedJavaScriptElectronBindings(parsed)];
+  expect(calls).toContainEqual([
+    source.indexOf('ipc.send("ping"'),
+    ["ipcRenderer"],
+  ]);
+});
+
+it("keeps enclosing namespace privates ahead of program names", () => {
+  const source = `import electron = require("electron");
+const ipc = electron.ipcRenderer;
+namespace A { const ipc = electron.ipcMain; export namespace B { ipc.handle("ping", () => "pong"); } }`;
+  const parsed = parseJavaScriptSource(source, "nested-program.ts");
+  if (parsed === null) throw new Error("Expected parsed TypeScript source");
+  const calls = [...classifyParsedJavaScriptElectronBindings(parsed)];
+  expect(calls).toContainEqual([
+    source.indexOf('ipc.handle("ping"'),
+    ["ipcMain"],
+  ]);
+});

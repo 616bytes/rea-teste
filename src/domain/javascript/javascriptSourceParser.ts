@@ -134,11 +134,15 @@ export const parseJavaScriptSource = (
     });
     // Unambiguous mode retains module-only diagnostics after choosing a script.
     // The .cjs extension establishes wrapper mode, so obtain its own diagnostics.
-    return commonjs &&
-      file.program.sourceType === "script" &&
-      file.errors.length > 0
-      ? parse(source, { ...options, sourceType: "commonjs" })
-      : file;
+    const result =
+      commonjs && file.program.sourceType === "script" && file.errors.length > 0
+        ? parse(source, { ...options, sourceType: "commonjs" })
+        : file;
+    if (/\.d\.(?:ts|mts|cts)$/iu.test(sourcePath ?? "") && result !== null)
+      (
+        result.program as { ambientDeclarationFile?: boolean }
+      ).ambientDeclarationFile = true;
+    return result;
   } catch (cause: unknown) {
     // Unparseable source is represented by the null return.
     void cause;

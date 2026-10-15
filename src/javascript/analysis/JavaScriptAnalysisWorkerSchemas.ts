@@ -575,21 +575,28 @@ const definitionKind = z.enum([
   "catch",
   "assignment",
 ]);
-const scope = z.strictObject({
-  scopeId: z.string(),
-  parentScopeId: z.string().nullable(),
-  kind: z.enum([
-    "program",
-    "function",
-    "block",
-    "static-block",
-    "class",
-    "catch",
-  ]),
-  location: range,
-  bindingsComplete: z.boolean(),
-  bindingIds: strings,
-});
+const scope = z
+  .strictObject({
+    scopeId: z.string(),
+    parentScopeId: z.string().nullable(),
+    namespaceExportScopeId: z.string().optional(),
+    kind: z.enum([
+      "program",
+      "function",
+      "block",
+      "static-block",
+      "class",
+      "catch",
+      "namespace",
+    ]),
+    location: range,
+    bindingsComplete: z.boolean(),
+    bindingIds: strings,
+  })
+  .transform(({ namespaceExportScopeId, ...rest }) => ({
+    ...rest,
+    ...(namespaceExportScopeId === undefined ? {} : { namespaceExportScopeId }),
+  }));
 const binding = z.strictObject({
   bindingId: z.string(),
   scopeId: z.string(),

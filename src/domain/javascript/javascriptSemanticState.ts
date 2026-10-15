@@ -62,7 +62,9 @@ export interface JavaScriptSemanticBindingState {
 /** Mutable lexical-scope state used only during AST recovery. */
 export interface JavaScriptSemanticScopeState {
   readonly scopeId: string;
-  readonly parentScopeId: string | null;
+  /** Reparented once when a global augmentation introduces an outer scope. */
+  parentScopeId: string | null;
+  readonly namespaceExportScopeId?: string;
   readonly kind: JavaScriptSemanticScope["kind"];
   readonly location: JavaScriptSemanticScope["location"];
   bindingsComplete: boolean;
@@ -74,9 +76,12 @@ export interface JavaScriptSemanticAnalysisState {
   readonly program: t.Program;
   /** Effective loader for static imports in this source artifact. */
   readonly staticImportResolutionMode: JavaScriptModuleResolutionMode;
+  /** True when a declaration file's top-level declarations are ambient. */
+  readonly ambientDeclarationFile: boolean;
   readonly parentsByNode: WeakMap<t.Node, t.Node>;
   readonly scopes: JavaScriptSemanticScopeState[];
   readonly scopesById: Map<string, JavaScriptSemanticScopeState>;
+  readonly namespaceExportScopes: Map<string, JavaScriptSemanticScopeState>;
   /** Scope boundaries and descendant scopes resolved on demand. */
   readonly scopeByNode: WeakMap<t.Node, JavaScriptSemanticScopeState>;
   readonly bindingsById: Map<string, JavaScriptSemanticBindingState>;
@@ -125,7 +130,9 @@ export const semanticStableInitializer = (
     ((definition?.kind === "variable" &&
       binding.definitions.every(({ kind }) => kind === "variable")) ||
       (binding.definitions.length === 1 &&
-        (definition?.kind === "function" || definition?.kind === "class"))) &&
+        (definition?.kind === "function" ||
+          definition?.kind === "class" ||
+          (definition?.kind === "import" && !binding.runtimeImport)))) &&
     binding.initializers.length === 1 &&
     initializer !== undefined &&
     !state.conditionallySkippedExpressions.has(initializer.node)
@@ -159,17 +166,10 @@ export const resolveSemanticBindingState = (
   node: t.Node,
   name: string,
 ): JavaScriptSemanticBindingState | undefined => {
-  let scope = semanticScopeForNode(state, node);
-  while (scope !== undefined) {
-    const binding = scope.bindings.get(name);
-    if (binding !== undefined) return binding;
-    if (!scope.bindingsComplete) return undefined;
-    scope =
-      scope.parentScopeId === null
-        ? undefined
-        : state.scopesById.get(scope.parentScopeId);
-  }
-  return undefined;
+  const scope = semanticScopeForNode(state, node);
+  return scope === undefined
+    ? undefined
+    : resolveSemanticBindingFromScope(scope, name, state);
 };
 
 /** Report whether an omitted binding scope blocks a trustworthy miss. */
@@ -180,7 +180,7 @@ export const semanticResolutionBlocked = (
 ): boolean => {
   let scope = semanticScopeForNode(state, node);
   while (scope !== undefined) {
-    if (scope.bindings.has(name)) return false;
+    if (semanticScopedBinding(scope, name, state) !== undefined) return false;
     if (!scope.bindingsComplete) return true;
     scope =
       scope.parentScopeId === null
@@ -220,7 +220,7 @@ export const resolveSemanticBindingFromScope = (
 ): JavaScriptSemanticBindingState | undefined => {
   let candidate: JavaScriptSemanticScopeState | undefined = scope;
   while (candidate !== undefined) {
-    const binding = candidate.bindings.get(name);
+    const binding = semanticScopedBinding(candidate, name, state);
     if (binding !== undefined) return binding;
     if (!candidate.bindingsComplete) return undefined;
     candidate =
@@ -229,6 +229,56 @@ export const resolveSemanticBindingFromScope = (
         : state.scopesById.get(candidate.parentScopeId);
   }
   return undefined;
+};
+
+/** Resolve private names before the shared exported names of a namespace. */
+const semanticScopedBinding = (
+  scope: JavaScriptSemanticScopeState,
+  name: string,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticBindingState | undefined => {
+  const privateBinding = scope.bindings.get(name);
+  if (privateBinding !== undefined) return privateBinding;
+  let owner =
+    scope.namespaceExportScopeId === undefined
+      ? undefined
+      : state.scopesById.get(scope.namespaceExportScopeId);
+  // A dotted body's lexical parent skips its outer segments, so only the
+  // shared owner chain retains namespaces such as A in A.B. An owner that an
+  // enclosing lexical scope already claims is deferred to that scope's own
+  // lookup, keeping block-private names ahead of outer shared exports.
+  while (owner !== undefined && !deferredNamespaceOwner(owner, scope, state)) {
+    const exported = owner.bindings.get(name);
+    if (exported !== undefined) return exported;
+    if (!owner.bindingsComplete || owner.parentScopeId === null)
+      return undefined;
+    owner = state.scopesById.get(owner.parentScopeId);
+  }
+  return undefined;
+};
+
+/** Report a shared owner that an enclosing lexical scope resolves itself. */
+const deferredNamespaceOwner = (
+  owner: JavaScriptSemanticScopeState,
+  scope: JavaScriptSemanticScopeState,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let lexical =
+    scope.parentScopeId === null
+      ? undefined
+      : state.scopesById.get(scope.parentScopeId);
+  while (lexical !== undefined) {
+    if (
+      lexical.scopeId === owner.scopeId ||
+      lexical.namespaceExportScopeId === owner.scopeId
+    )
+      return true;
+    lexical =
+      lexical.parentScopeId === null
+        ? undefined
+        : state.scopesById.get(lexical.parentScopeId);
+  }
+  return false;
 };
 
 /** Select the function/program owner for a var declaration. */

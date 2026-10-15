@@ -5,6 +5,8 @@ import { recordSessionEvidenceSources } from "./sessionEvidence.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
+import type { WasmComponentService } from "../application/wasm/WasmComponentService.js";
+import { toolContract } from "../contracts/toolContracts.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import { summarizeRetainedAnalysis } from "../application/analysisView/AnalysisViewService.js";
@@ -80,6 +82,29 @@ export const registerWasmTools = (
           })
         : inspected;
     },
+    logger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  server.registerTool(
+    contract.name,
+    toolRegistrationOptions(contract),
+    handler(contract),
+  );
+};
+
+/** Bind the component contract to its shared workflow and session Evidence ledger. */
+export const registerWasmComponentTool = (
+  server: EvidenceMcpServer,
+  service: Pick<WasmComponentService, "inspect">,
+  logger: Logger,
+  recordEvidence?: EvidenceWriter["recordEvidence"],
+  withAdmittedAnalysis?: WithAdmittedAnalysis,
+): void => {
+  const contract = toolContract("inspect_wasm_component");
+  const handler = createEvidenceToolHandler(
+    server,
+    (input, options) => service.inspect(input, options),
     logger,
     recordEvidence,
     withAdmittedAnalysis,

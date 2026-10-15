@@ -63,6 +63,7 @@ const SOURCE_PATHS = {
   signalProvider: "dist/signals/SigrokRecordingProvider.js",
   wasmContracts: "dist/contracts/wasm/wasmToolContracts.js",
   wasmProvider: "dist/wasm/WabtRelease.js",
+  wasmComponentProvider: "dist/wasm/WasmComponentProvider.js",
   evmContracts: "dist/contracts/evm/evmToolContracts.js",
   sqliteContracts: "dist/contracts/sqlite/sqliteToolContracts.js",
   sqliteDomain: "dist/domain/sqlite/sqliteDatabase.js",

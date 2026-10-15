@@ -5,8 +5,15 @@ import type { SignalRecordingService } from "../application/signals/SignalRecord
 import { createSignalRecordingService } from "../composition/signals.js";
 import { registerSignalTools } from "./registerSignalTools.js";
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
-import { wasmArtifactModule } from "../composition/wasm.js";
-import { registerWasmTools } from "./registerWasmTools.js";
+import type { WasmComponentService } from "../application/wasm/WasmComponentService.js";
+import {
+  createWasmComponentService,
+  wasmArtifactModule,
+} from "../composition/wasm.js";
+import {
+  registerWasmComponentTool,
+  registerWasmTools,
+} from "./registerWasmTools.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createPeResourcesService } from "../composition/binaryDiagnostics.js";
@@ -152,6 +159,7 @@ export interface CreateServerOptions {
   readonly packetCapture?: PacketCaptureService;
   readonly signalRecording?: SignalRecordingService;
   readonly wasmArtifact?: WasmArtifactService;
+  readonly wasmComponent?: WasmComponentService;
   readonly providerEnvironment?: Readonly<NodeJS.ProcessEnv>;
   readonly evmInterface?: EvmInterfaceService;
   readonly sqliteDatabase?: SqliteDatabaseService;
@@ -308,6 +316,7 @@ export const createServer = (
   const webModuleTrace =
     options.webModuleTrace ?? createWebModuleTraceService(environment);
   const goBinary = options.goBinary ?? createGoBinaryService();
+  const wasmComponent = options.wasmComponent ?? createWasmComponentService();
   const peResources = createPeResourcesService();
   const webNetworkCapture =
     options.webNetworkCapture ?? createWebNetworkCaptureService(environment);
@@ -384,6 +393,7 @@ export const createServer = (
       webSourceLocation.close(),
       webModuleTrace.close(),
       goBinary.close(),
+      wasmComponent.close(),
       peResources.close(),
       webNetworkCapture.close(),
       javascriptRecovery.close?.() ?? Promise.resolve(),
@@ -433,6 +443,7 @@ export const createServer = (
     withAdmittedAnalysis: analysisAdmission,
     artifactResources,
     goBinary,
+    wasmComponent,
     peResources,
     webNetworkCapture,
   };
@@ -630,6 +641,7 @@ const registerConfiguredAnalysisTools = (
     recordEvidence,
     withAdmittedAnalysis,
     goBinary,
+    wasmComponent,
     peResources,
     webNetworkCapture,
   }: ServerToolContext,
@@ -697,6 +709,13 @@ const registerConfiguredAnalysisTools = (
     recordEvidence,
     withAdmittedAnalysis,
     evidenceById,
+  );
+  registerWasmComponentTool(
+    server,
+    wasmComponent,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
   );
   registerEvmTools(
     server,
@@ -796,6 +815,7 @@ const createSessionRecorders = (
 
 interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
   readonly goBinary: GoBinaryService;
+  readonly wasmComponent: WasmComponentService;
   readonly peResources: PeResourcesService;
   readonly webNetworkCapture: WebNetworkCaptureService;
   readonly artifactResources: ArtifactResourceScope;

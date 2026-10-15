@@ -18,6 +18,13 @@ const members = [
   "package/bridge/cutter/rea_bridge.py",
   "package/bridge/ghidra/ReaGhidraBridge.java",
   "package/bridge/ghidra/ReaGhidraBundleActivator.java",
+  "package/bridge/ghidra/ReaGhidraExtensions.java",
+  "package/bridge/ghidra/ReaGhidraPrepareCom.java",
+  "package/bridge/ghidra/ReaGhidraPrepareRaw.java",
+  "package/bridge/ghidra/ReaGhidraApplySeeds.java",
+  "package/bridge/ghidra/ReaGhidraAnalysisOptions.java",
+  "package/bridge/ghidra/ReaGhidraNoReturnFix.java",
+  "package/bridge/ghidra/ReaGhidraMipsSoftFloat.java",
 ];
 
 async function verifyListing(listing: string) {

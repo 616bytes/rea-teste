@@ -12,6 +12,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
+import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 if (process.platform !== "linux")
@@ -106,9 +107,28 @@ const expectedAddressSpace = Math.min(
     .map((value) => (value === "unlimited" ? Infinity : Number(value))),
 );
 
+let primaryError;
 try {
   await writeFile(path, source);
   await writeFile(bluetooth, bluetoothSource);
+  const capinfosOutput = (
+    await execute(
+      process.env.REA_CAPINFOS_COMMAND ?? "capinfos",
+      ["-M", "--", path],
+      {
+        env: { ...environment, LC_ALL: "C", LANG: "C" },
+        timeout: 60000,
+        maxBuffer: 64 * 1024,
+      },
+    )
+  ).stdout;
+  const expectedCaptureStart =
+    /^(?:Earliest|First) packet time:\s*(.+)$/mu.exec(capinfosOutput)?.[1] ??
+    null;
+  const expectedCaptureEnd =
+    /^(?:Latest|Last) packet time:\s*(.+)$/mu.exec(capinfosOutput)?.[1] ?? null;
+  assert.ok(expectedCaptureStart, capinfosOutput);
+  assert.ok(expectedCaptureEnd, capinfosOutput);
   await client.connect(transport);
   const tool = (await client.listTools()).tools.find(
     ({ name }) => name === "inspect_packet_capture",
@@ -135,6 +155,10 @@ try {
         .update(await readFile(input.path))
         .digest("hex"),
     );
+    if (input.path === path) {
+      assert.equal(report.capture_start, expectedCaptureStart);
+      assert.equal(report.capture_end, expectedCaptureEnd);
+    }
     assert.equal(report.hardware_acquisition, "not-performed");
     assert.equal(report.limits.address_space_bytes, expectedAddressSpace);
     assert.equal(report.tool.configured_path, process.env.REA_TSHARK_COMMAND);
@@ -463,10 +487,14 @@ try {
     "network with spaces.pcap",
     "paged.pcap",
   ]);
+} catch (cause) {
+  primaryError = cause;
+  throw cause;
 } finally {
-  await client.close();
-  await transport.close();
-  await root.close();
+  await closeVerifierResources(
+    [() => client.close(), () => transport.close(), () => root.close()],
+    primaryError,
+  );
 }
 console.log(
   JSON.stringify(

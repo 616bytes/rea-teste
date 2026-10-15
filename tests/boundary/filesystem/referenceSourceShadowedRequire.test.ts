@@ -65,6 +65,14 @@ it("resolves require calls by lexical binding and source mode", async () => {
       "const o = { [(() => { with ({}) { require = () => 'local'; } })()](require) {} };",
       "console.log(require('./throwing.cjs'));",
     ].join("\n"),
+    "unscopables-skip.cjs": [
+      "with ({ require: null, [Symbol.unscopables]: { require: true } }) { require = () => 'local'; }",
+      "console.log(require('./throwing.cjs'));",
+    ].join("\n"),
+    "switch-discriminant.cjs": [
+      "switch ((() => { with ({}) { require = () => 'local'; } return 0; })()) { case 0: let require; }",
+      "console.log(require('./throwing.cjs'));",
+    ].join("\n"),
     "default-fn-decl.cjs": [
       "function patch(x = (() => { with ({}) { require = () => 'local'; } })()) { function require() { return 'real'; } }",
       "patch();",
@@ -118,6 +126,8 @@ it("resolves require calls by lexical binding and source mode", async () => {
     ["with-write.cjs", "local\n"],
     ["default-param-var.cjs", "local\n"],
     ["computed-key.cjs", "local\n"],
+    ["unscopables-skip.cjs", "local\n"],
+    ["switch-discriminant.cjs", "local\n"],
     ["default-fn-decl.cjs", "local\n"],
     ["initialized-var.cjs", "local\n"],
     ["assigned-var.cjs", "local\n"],
@@ -185,6 +195,10 @@ it("evaluates empty loop heads and polluted prototypes by semantics, not syntax"
       "for (var require in { __proto__: null }) {}",
       "console.log(require('./loaded.cjs'));",
     ].join("\n"),
+    "proto-inherited-key.cjs": [
+      "for (var require in { __proto__: { x: 1 } }) {}",
+      "try { require('./throwing.cjs'); } catch { console.log('shadowed'); }",
+    ].join("\n"),
     "proto-helper-forof.cjs": [
       "Array.prototype.helper = () => 1;",
       "for (var require of []) {}",
@@ -208,6 +222,7 @@ it("evaluates empty loop heads and polluted prototypes by semantics, not syntax"
     ["proto-forof-pollution.cjs", "shadowed\n"],
     ["defineproperty-forin-pollution.cjs", "shadowed\n"],
     ["proto-null-forin.cjs", "loaded\nreal\n"],
+    ["proto-inherited-key.cjs", "shadowed\n"],
     ["proto-helper-forof.cjs", "loaded\nreal\n"],
   ] as const) {
     const executed = await runNode(process.execPath, [join(root, path)], {

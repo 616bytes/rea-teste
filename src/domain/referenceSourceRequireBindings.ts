@@ -309,6 +309,30 @@ const blockBindsLexicalRequire = (body: readonly t.Node[]): boolean =>
         statement.id.name === "require"),
   );
 
+const isRequireKey = (property: t.Node): boolean =>
+  (t.isObjectProperty(property) || t.isObjectMethod(property)) &&
+  !property.computed &&
+  ((t.isIdentifier(property.key) && property.key.name === "require") ||
+    (t.isStringLiteral(property.key) && property.key.value === "require"));
+
+const isUnscopablesKey = (property: t.Node): boolean => {
+  if (!t.isObjectProperty(property) && !t.isObjectMethod(property))
+    return false;
+  const key = property.key;
+  if (!t.isMemberExpression(key)) return false;
+  if (!t.isIdentifier(key.object, { name: "Symbol" })) return false;
+  return (
+    (!key.computed && t.isIdentifier(key.property, { name: "unscopables" })) ||
+    (key.computed && t.isStringLiteral(key.property, { value: "unscopables" }))
+  );
+};
+
+const isFalsyLiteral = (value: t.Node): boolean =>
+  (t.isBooleanLiteral(value) && value.value === false) ||
+  (t.isNumericLiteral(value) && value.value === 0) ||
+  (t.isStringLiteral(value) && value.value === "") ||
+  t.isNullLiteral(value);
+
 const withObjectDeclaresRequire = (ancestors: readonly t.Node[]): boolean => {
   for (let index = ancestors.length - 1; index >= 0; index -= 1) {
     const scope = ancestors[index];
@@ -317,14 +341,23 @@ const withObjectDeclaresRequire = (ancestors: readonly t.Node[]): boolean => {
     if (!t.isWithStatement(scope)) continue;
     const object = scope.object;
     if (!t.isObjectExpression(object)) continue;
-    return object.properties.some(
-      (property) =>
-        (t.isObjectProperty(property) || t.isObjectMethod(property)) &&
-        !property.computed &&
-        ((t.isIdentifier(property.key) && property.key.name === "require") ||
-          (t.isStringLiteral(property.key) &&
-            property.key.value === "require")),
-    );
+    if (!object.properties.some(isRequireKey)) continue;
+    const unscopables = object.properties.find(isUnscopablesKey);
+    if (unscopables === undefined) return true;
+    if (
+      !t.isObjectProperty(unscopables) ||
+      !t.isObjectExpression(unscopables.value) ||
+      unscopables.value.properties.some(
+        (entry) =>
+          t.isObjectProperty(entry) &&
+          !entry.computed &&
+          ((t.isIdentifier(entry.key) && entry.key.name === "require") ||
+            (t.isStringLiteral(entry.key) && entry.key.value === "require")) &&
+          !isFalsyLiteral(entry.value),
+      )
+    )
+      continue;
+    return true;
   }
   return false;
 };
@@ -361,6 +394,8 @@ const writeShieldedByLocalBinding = (
       return true;
     if (
       t.isSwitchStatement(scope) &&
+      child !== scope.discriminant &&
+      !contains(scope.discriminant, child) &&
       scope.cases.some((entry) => blockBindsLexicalRequire(entry.consequent))
     )
       return true;
@@ -503,25 +538,33 @@ const fileIterationPollution = (program: t.Program): IterationPollution => {
   return { forIn, forOf };
 };
 
-const isNonComputedProtoSetter = (property: t.Node): boolean =>
-  t.isObjectProperty(property) &&
-  !property.computed &&
-  ((t.isIdentifier(property.key) && property.key.name === "__proto__") ||
-    (t.isStringLiteral(property.key) && property.key.value === "__proto__"));
+const createsNoEnumerableKeys = (node: t.Node): boolean => {
+  if (t.isNullLiteral(node)) return true;
+  if (!t.isObjectExpression(node)) return false;
+  return node.properties.every(
+    (property) =>
+      t.isObjectProperty(property) &&
+      !property.computed &&
+      ((t.isIdentifier(property.key) && property.key.name === "__proto__") ||
+        (t.isStringLiteral(property.key) &&
+          property.key.value === "__proto__")) &&
+      createsNoEnumerableKeys(property.value),
+  );
+};
 
 const isStaticallyEmptyIterable = (
   node: t.Node | null | undefined,
   isForIn: boolean,
 ): boolean => {
   // `for-in` skips array holes; `for-of` yields them. Emptiness therefore
-  // depends on the loop kind, never just the literal. A non-computed
-  // `__proto__` entry sets the prototype instead of creating a key.
+  // depends on the loop kind, never just the literal. An object whose
+  // entries are all prototype setters over keyless prototypes creates
+  // no enumerable keys.
   if (t.isArrayExpression(node))
     return isForIn
       ? node.elements.every((element) => element === null)
       : node.elements.length === 0;
-  if (t.isObjectExpression(node))
-    return node.properties.every(isNonComputedProtoSetter);
+  if (t.isObjectExpression(node)) return createsNoEnumerableKeys(node);
   if (t.isStringLiteral(node)) return node.value === "";
   return false;
 };

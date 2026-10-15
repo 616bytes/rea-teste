@@ -393,9 +393,10 @@ concrete version, selection source, and complete analysis profile through
 choices return typed selection details. A selected provider is never replaced
 automatically after a runtime failure.
 
-Every successful target transition allocates `binary_session.analysis_run.run_id`
-before any provider startup. `process_lineage` is `not_observed` until a dynamic
-provider starts, then becomes `snapshots` with every started provider's identity
+Each provider client receives `binary_session.analysis_run.run_id` before any
+provider startup, including clients whose startup fails. `process_lineage` is
+`not_observed` until a dynamic provider starts, then becomes `snapshots` with
+every started provider's identity
 and retained ownership observation. Each observation records `observed_at` and
 is `unavailable` with a reason when ownership could not be revalidated, or
 `verified` with launcher PID, parent PID, process group, and descendants observed
@@ -405,9 +406,11 @@ inventories, and do not claim that no short-lived descendant existed.
 `binary_session.cleanup_pending` reports whether the session retains a provider
 client whose cleanup has not succeeded. It can be true with `open: false`;
 target retirement does not establish resource release. Health, activity, and
-lineage remain available from that retained client where the provider supplies
-them. Follow the cleanup error's reported resources and recovery action before
-reopening; a missing health observation does not establish an idle provider.
+lineage remain available under that client's original `analysis_run.run_id`
+where the provider supplies them. Successful cleanup clears the retained run;
+a replacement client receives a fresh run ID. Follow the cleanup error's
+reported resources and recovery action before reopening; a missing health
+observation does not establish an idle provider.
 
 ## Progress and cancellation
 

@@ -27,6 +27,7 @@ const retryFixture = async (
   const targets = await createBinarySessionTargets();
   let allowed = false;
   let created = 0;
+  const runIds: string[] = [];
   const cleanupError = new ProviderCleanupError("fixture", [runtime], {
     reason: "owned runtime removal denied",
     leftover_paths: [runtime],
@@ -47,10 +48,31 @@ const retryFixture = async (
       return resultOk(null);
     },
   };
-  const session = createTestBinarySession(() => {
+  const session = createTestBinarySession((_target, _profile, context) => {
+    if (context === undefined) throw new Error("missing analysis run context");
+    runIds.push(context.runId);
     created += 1;
     return created === 1
-      ? client
+      ? {
+          ...client,
+          runtimeLineageSnapshots: () => [
+            {
+              provider: {
+                id: "fixture",
+                name: "Fixture analysis provider",
+                version: "1",
+              },
+              observation: {
+                status: "unavailable" as const,
+                observedAt: "2026-10-16T00:00:00Z",
+                runId: context.runId,
+                launcherPid: 123,
+                processGroupId: 123,
+                reason: "fixture lineage unavailable",
+              },
+            },
+          ],
+        }
       : {
           execute: () => Promise.resolve(ok(null)),
           close: () => Promise.resolve(resultOk(null)),
@@ -66,6 +88,7 @@ const retryFixture = async (
     runtime,
     document,
     cleanupError,
+    runIds,
     allowCleanup: () => {
       allowed = true;
     },
@@ -93,6 +116,15 @@ it.each(["close", "switch", "open after close"] as const)(
     expect(session.status()).toMatchObject({
       open: false,
       cleanup_pending: true,
+      analysis_run: {
+        run_id: fixture.runIds[0],
+        process_lineage: {
+          status: "snapshots",
+          snapshots: [
+            { observation: { reason: "fixture lineage unavailable" } },
+          ],
+        },
+      },
       provider_operation_health: { state: "unreachable", stage: "connection" },
     });
     expect(await session.execute("address_name", {})).toMatchObject({
@@ -101,6 +133,9 @@ it.each(["close", "switch", "open after close"] as const)(
     await access(runtime);
 
     expect(await attempt()).toEqual(err(cleanupError));
+    expect(session.status()).toMatchObject({
+      analysis_run: { run_id: fixture.runIds[0] },
+    });
     expect(fixture.created()).toBe(1);
     await access(runtime);
 
@@ -109,6 +144,16 @@ it.each(["close", "switch", "open after close"] as const)(
     expect(session.status()).toMatchObject({ cleanup_pending: false });
     await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
     expect(fixture.created()).toBe(transition === "close" ? 1 : 2);
+    expect(session.status()).toMatchObject({
+      analysis_run:
+        transition === "close"
+          ? null
+          : {
+              run_id: fixture.runIds[1],
+              process_lineage: { status: "not_observed" },
+            },
+    });
+    expect(new Set(fixture.runIds).size).toBe(fixture.created());
   },
 );
 
@@ -128,6 +173,14 @@ it("keeps a failed candidate for cleanup and preserves its startup failure", asy
     },
   });
   expect(fixture.session.activeTarget()).toBeUndefined();
+  expect(fixture.session.status()).toMatchObject({
+    open: false,
+    cleanup_pending: true,
+    analysis_run: {
+      run_id: fixture.runIds[0],
+      process_lineage: { status: "snapshots" },
+    },
+  });
   fixture.allowCleanup();
   expect((await fixture.session.close()).ok).toBe(true);
   await expect(access(fixture.runtime)).rejects.toMatchObject({
@@ -151,6 +204,14 @@ it("retains cancelled startup cleanup and the cancellation reason", async () => 
       cleanupIncomplete: true,
       cleanupResources: [fixture.runtime],
       diagnostics: { primary_error: { code: "cancelled" } },
+    },
+  });
+  expect(fixture.session.status()).toMatchObject({
+    open: false,
+    cleanup_pending: true,
+    analysis_run: {
+      run_id: fixture.runIds[0],
+      process_lineage: { status: "snapshots" },
     },
   });
   fixture.allowCleanup();
@@ -200,7 +261,10 @@ it("keeps failed restoration resources available for a close retry", async () =>
   const [first, second] = await createBinarySessionTargets();
   let created = 0;
   let allowed = false;
-  const session = createTestBinarySession(() => {
+  const runIds: string[] = [];
+  const session = createTestBinarySession((_target, _profile, context) => {
+    if (context === undefined) throw new Error("missing analysis run context");
+    runIds.push(context.runId);
     const index = ++created;
     return {
       execute: () =>
@@ -226,6 +290,12 @@ it("keeps failed restoration resources available for a close retry", async () =>
     error: { cleanupIncomplete: true, cleanupResources: [runtime] },
   });
   expect(session.activeTarget()).toBeUndefined();
+  expect(session.status()).toMatchObject({
+    open: false,
+    cleanup_pending: true,
+    analysis_run: { run_id: runIds[2] },
+  });
+  expect(new Set(runIds).size).toBe(3);
   allowed = true;
   expect((await session.close()).ok).toBe(true);
   await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });

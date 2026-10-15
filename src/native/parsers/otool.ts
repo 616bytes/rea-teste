@@ -407,7 +407,8 @@ const collectDependency = (
   fields: Readonly<Record<string, string | number | null>>,
   state: ParsedLoadCommands,
 ): void => {
-  if (!DYLIB_COMMANDS.has(kind)) return;
+  // LC_ID_DYLIB names this image itself; it stays a raw load command only.
+  if (!DYLIB_COMMANDS.has(kind) || kind === "LC_ID_DYLIB") return;
   state.dependencies.push({
     path: stripOffsetSuffix(stringField(fields, "name")),
     kind,
@@ -493,7 +494,7 @@ const parseSegment = (
   block: string,
   fields: Readonly<Record<string, string | number | null>>,
 ): ParsedSegment => ({
-  name: nonEmptyName(stringField(fields, "segname")),
+  name: machoName(fields, "segname"),
   vm_address: hexField(fields, "vmaddr"),
   vm_size: numberField(fields, "vmsize"),
   file_offset: numberField(fields, "fileoff"),
@@ -521,8 +522,8 @@ const parseSections = (block: string): ParsedSection[] =>
       ])
         requireUniqueField(parsed, key);
       return {
-        segment: nonEmptyName(stringField(fields, "segname")),
-        name: nonEmptyName(stringField(fields, "sectname")),
+        segment: machoName(fields, "segname"),
+        name: machoName(fields, "sectname"),
         address: hexField(fields, "addr"),
         size: numberField(fields, "size"),
         file_offset: numberField(fields, "offset"),
@@ -577,9 +578,18 @@ const numeric = (value: string): number | null => {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 };
 
-/** Project an absent or empty Mach-O name as before: the "unknown" label. */
-const nonEmptyName = (name: string | null): string =>
-  name === null || name.length === 0 ? "unknown" : name;
+/**
+ * A Mach-O segment or section name exactly as observed. Object files place
+ * every section in one unnamed segment, so the empty name is a source value.
+ */
+const machoName = (
+  fields: Readonly<Record<string, string | number | null>>,
+  key: "segname" | "sectname",
+): string => {
+  const name = stringField(fields, key);
+  if (name === null) throw new TypeError(`otool field ${key} is missing`);
+  return name;
+};
 
 const stringField = (
   fields: Readonly<Record<string, string | number | null>>,

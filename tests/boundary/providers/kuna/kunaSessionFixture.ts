@@ -1,5 +1,3 @@
-import { cleanupOwnedProcessGroup } from "../../../../src/process/ProcessOwnership.js";
-import { spawnOwnedProviderProcess } from "../../../../src/process/ProviderProcess.js";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -8,6 +6,8 @@ import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../../../src/domain/jsonValue.js";
 import type { KunaProcessLauncher } from "../../../../src/kuna/KunaCommand.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
+import { cleanupOwnedProcessGroup } from "../../../../src/process/ProcessOwnership.js";
+import { spawnOwnedProviderProcess } from "../../../../src/process/ProviderProcess.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import {
   fakeKunaCalls,

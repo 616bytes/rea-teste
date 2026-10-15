@@ -42,11 +42,11 @@ Typed procedure references, basic blocks, raw-memory tools, annotations and type
 
 The first text or assembly request in a session looks for this target's export in the cache. `list_documents` reads the selected path without initializing analysis. Inventory, function lookup, call relationships and xrefs do not start a C export. A data-name lookup starts it only when the address is absent from the function inventory. The export is keyed by the target's SHA-256, the Kuna executable's SHA-256, its version and `--jobs`.
 
-- **Warm cache:** analysis reads reuse the verified export. A fresh server verifies its file digests; that cost scales with export size.
+- **Warm cache:** analysis reads reuse the verified export. A fresh server verifies its file digests once, even for concurrent first requests; that cost scales with export size.
 - **Cold cache:**
   - REA starts `kuna decompile-project` in the background on a private copy of the target.
   - Meanwhile, pseudocode comes from one `kuna decompile --addr` run, and listings from `kuna functions --json`.
-  - Requests for the same function share one run; it stops when its last waiting request is cancelled. Each run analyzes the whole image again in its own process, so one REA process runs at most as many at once as the host has cores beyond `REA_KUNA_JOBS` (at least one). Further requests wait in order, and a waiting request is answered from the export if it finishes first.
+  - Requests for the same function share one run; it stops when its last waiting request is cancelled. Each run analyzes the whole image again in its own process, so one REA process runs at most as many at once as the host has cores beyond `REA_KUNA_JOBS` (at least one). Further requests wait in order, and a waiting request is answered from the export if it finishes first. A run whose stop REA cannot prove keeps its slot until `close_binary` proves it stopped.
   - Assembly and data names wait for the export; progress notifications report the wait every ten seconds.
   - A single-function answer says so in its limitations. It lacks the export's whole-program prototypes, so a later request can return different text for the same function.
 

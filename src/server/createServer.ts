@@ -135,6 +135,7 @@ import { GdbSessionManager } from "../gdb/GdbSessionManager.js";
 import { registerGdbTools } from "./registerGdbTools.js";
 import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import { registerRizinDebugTools } from "./registerRizinDebugTools.js";
+import type { ActivityJournal } from "../application/activity/ActivityJournal.js";
 
 const TARGET_FREE_INSTRUCTIONS =
   "REA provides reverse-engineering tools for local artifacts, native binaries, managed code, browser pages, and runtimes. Use the tool that directly answers the question; discover targets or inspect inventory only when needed. Tool results include inline Evidence and report their coverage and limitations. An opened target persists across turns. When finished, export needed Evidence and call close_binary; its snapshot_path can retain analysis.";
@@ -148,6 +149,7 @@ const UNTRUSTED_CONTENT_INSTRUCTIONS =
 
 export interface CreateServerOptions {
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
+  readonly activity?: ActivityJournal;
   readonly delivery?: ToolResultDelivery;
   readonly packetCapture?: PacketCaptureService;
   readonly signalRecording?: SignalRecordingService;
@@ -255,6 +257,7 @@ const createMcpServer = (
   delivery: ToolResultDelivery,
   compactPresentation: CompactInputSchemaPresentation | undefined,
   omitOutputSchemas: boolean,
+  activity: ActivityJournal | undefined,
 ): EvidenceMcpServer =>
   new EvidenceMcpServer(
     {
@@ -275,6 +278,7 @@ const createMcpServer = (
     delivery,
     compactPresentation,
     omitOutputSchemas,
+    activity,
   );
 
 /**
@@ -338,6 +342,7 @@ export const createServer = (
     delivery,
     selectCompactInputSchemaPresentation(environment),
     omitOutputSchemas,
+    options.activity,
   );
   const gdbSessions = new GdbSessionManager({
     environment: providerEnvironment,

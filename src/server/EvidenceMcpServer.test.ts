@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { z } from "zod";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { InvestigationRecords } from "../application/investigation/InvestigationRecords.js";
 import {
@@ -8,6 +11,7 @@ import {
   forgetPendingMcpRequest,
 } from "./EvidenceMcpServer.js";
 import { ToolResultDelivery } from "./toolResult.js";
+import { ActivityJournal } from "../application/activity/ActivityJournal.js";
 
 const firstText = (result: {
   readonly content: readonly {
@@ -139,6 +143,114 @@ describe("SDK validation error delivery", () => {
         type: "text",
         text: "valid call",
       });
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  });
+});
+
+describe("MCP activity journal", () => {
+  it("records tool completion without caller arguments", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-mcp-activity-"));
+    const journal = new ActivityJournal(join(root, "activity.jsonl"));
+    const server = new EvidenceMcpServer(
+      { name: "activity-test", version: "1" },
+      { capabilities: {} },
+      undefined,
+      new ToolResultDelivery(4096),
+      undefined,
+      false,
+      journal,
+    );
+    server.registerTool(
+      "activity_test_tool",
+      { inputSchema: z.object({ value: z.string() }) },
+      async () => ({ content: [{ type: "text", text: "ok" }] }),
+    );
+    const client = new Client({ name: "activity-client", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const progress: Array<{
+        progress: number;
+        total?: number | undefined;
+      }> = [];
+      await client.callTool(
+        {
+          name: "activity_test_tool",
+          arguments: { value: "private-target-value" },
+        },
+        { onprogress: (update) => progress.push(update) },
+      );
+      await expect(journal.read()).resolves.toMatchObject([
+        { tool: "activity_test_tool", status: "completed" },
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(progress).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ progress: 0, total: 1 }),
+          expect.objectContaining({ progress: 1, total: 1 }),
+        ]),
+      );
+      await expect(journal.read()).resolves.not.toContainEqual(
+        expect.objectContaining({ tool: "private-target-value" }),
+      );
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  });
+
+  it("emits periodic progress updates with estimated duration during execution", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-mcp-activity-periodic-"));
+    const journal = new ActivityJournal(join(root, "activity.jsonl"));
+    const server = new EvidenceMcpServer(
+      { name: "activity-periodic-test", version: "1" },
+      { capabilities: {} },
+      undefined,
+      new ToolResultDelivery(4096),
+      undefined,
+      false,
+      journal,
+    );
+    server.registerTool(
+      "long_running_tool",
+      { inputSchema: z.object({}) },
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        return { content: [{ type: "text", text: "done" }] };
+      },
+    );
+    const client = new Client({ name: "periodic-client", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const updates: Array<{
+        progress: number;
+        total?: number | undefined;
+        message?: string | undefined;
+      }> = [];
+      await client.callTool(
+        {
+          name: "long_running_tool",
+          arguments: {},
+        },
+        { onprogress: (update) => updates.push(update) },
+      );
+      // Started (0), at least one periodic running update (>0 and <1), and Completed (1)
+      expect(updates.length).toBeGreaterThanOrEqual(3);
+      expect(updates[0]).toMatchObject({ progress: 0, total: 1 });
+      expect(updates[updates.length - 1]).toMatchObject({
+        progress: 1,
+        total: 1,
+      });
+      const middle = updates.slice(1, -1);
+      expect(
+        middle.some((u) => u.message?.includes("long_running_tool running")),
+      ).toBe(true);
     } finally {
       await Promise.all([client.close(), server.close()]);
     }

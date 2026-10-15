@@ -2977,7 +2977,7 @@ msgstr "1. Aracınızı REA'ya bağlayın"
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Kodlama aracınız"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Kodlama ajanınız"
 
 #: website/public/first-investigation/index.html:237
 #: website/public/first-investigation/index.html:259
@@ -3028,7 +3028,7 @@ msgid ""
 "Your agent downloads the files and gives the unpacked folder to REA for "
 "inspection."
 msgstr ""
-"Aracınız dosyaları indirir ve paketlenmemiş klasörü inceleme için REA'YA "
+"Ajanınız dosyaları indirir ve paketlenmemiş klasörü inceleme için REA'YA "
 "verir."
 
 #. {ph0}: <a class="button" href="../examples/notes-example.zip"

@@ -332,6 +332,15 @@ const checkSymlinks = (
   const excludedPaths = createReferenceSourcePathLookup(
     graph.exclusions.map(({ path }) => path),
   );
+  // Descendants of a directory that was not fully enumerated cannot be
+  // inventoried, so a symlink into one is a recorded limitation, not an error.
+  const unenumeratedDirectories = createReferenceSourcePathLookup(
+    graph.entries.flatMap((entry) =>
+      entry.kind === "directory" && entry.tree_state !== "enumerated"
+        ? [entry.path]
+        : [],
+    ),
+  );
   const excludedKinds = new Map<
     string,
     Set<"file" | "directory" | "symlink" | "other" | "unknown" | undefined>
@@ -354,11 +363,14 @@ const checkSymlinks = (
       resolved === "." || lookupPath.resolve(resolved) !== undefined;
     const exactExcluded = excludedPaths.resolve(resolved);
     let excluded = exactExcluded !== undefined;
+    let underUnenumeratedDirectory = false;
     for (
       let candidate = posix.dirname(resolved);
       candidate !== "." && candidate !== "/";
       candidate = posix.dirname(candidate)
     ) {
+      if (unenumeratedDirectories.resolve(candidate) !== undefined)
+        underUnenumeratedDirectory = true;
       const excludedAncestor = excludedPaths.resolve(candidate);
       if (excludedAncestor === undefined) continue;
       const kinds = excludedKinds.get(excludedAncestor);
@@ -383,7 +395,10 @@ const checkSymlinks = (
         path: ["entries", index, "target"],
       });
     if (entry.target_state !== "internal") continue;
-    if (escapesRoot || (!inventoried && !excluded))
+    if (
+      escapesRoot ||
+      (!inventoried && !excluded && !underUnenumeratedDirectory)
+    )
       context.addIssue({
         code: "custom",
         message:

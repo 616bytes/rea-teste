@@ -1,4 +1,4 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -58,6 +58,35 @@ describe("reference source native unreadable directories", () => {
         ).toMatchObject({ content_state: "hashed" });
       } finally {
         await chmod(deniedPath, 0o700);
+      }
+    },
+  );
+
+  it.skipIf(permissionChecksUnavailable)(
+    "preserves a partial graph when a symlink targets a file under a directory that cannot be enumerated",
+    async () => {
+      const root = await createTestTempDirectory("rea-source-symlink-hidden-");
+      const hidden = join(root, "hidden");
+      await mkdir(hidden);
+      await writeFile(join(root, "visible.txt"), "visible\n");
+      await writeFile(join(hidden, "target.txt"), "target\n");
+      await symlink("hidden/target.txt", join(root, "alias.txt"));
+      await chmod(hidden, 0o111);
+      try {
+        const imported = await importTree(root);
+        if (!imported.ok) throw new Error(imported.error.message);
+        expect(imported.value.inventory_state).toBe("partial");
+        expect(
+          imported.value.entries.find(({ path }) => path === "visible.txt"),
+        ).toMatchObject({ content_state: "hashed" });
+        expect(
+          imported.value.entries.find(({ path }) => path === "hidden"),
+        ).toMatchObject({ kind: "directory", tree_state: "unreadable" });
+        expect(
+          imported.value.entries.some(({ path }) => path === "alias.txt"),
+        ).toBe(true);
+      } finally {
+        await chmod(hidden, 0o700);
       }
     },
   );

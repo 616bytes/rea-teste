@@ -230,6 +230,30 @@ describe("historical source graph", () => {
     ).toThrow(/target path does not match/u);
   });
 
+  it("accepts a symlink target only under a directory that could not be enumerated", () => {
+    const withLink = (
+      treeState: "enumerated" | "unreadable",
+    ): HistoricalSourceGraphInput => ({
+      ...graphInput(),
+      inventory_state: "partial",
+      entries: [
+        symlinkEntry({ path: "alias.txt", target: "hidden/target.txt" }),
+        { ...directoryEntry(treeState), path: "hidden" },
+      ],
+      languages: [],
+      relationships: [],
+    });
+
+    const graph = createHistoricalSourceGraph(withLink("unreadable"));
+    expect(graph.entries.map(({ path }) => path)).toEqual([
+      "alias.txt",
+      "hidden",
+    ]);
+    expect(() => createHistoricalSourceGraph(withLink("enumerated"))).toThrow(
+      /must resolve to an inventoried entry/u,
+    );
+  });
+
   it("derives language and manifest indexes and enforces code-point order", () => {
     const input = graphInput();
     input.entries[1] = fileEntry({ classifications: ["source", "test"] });

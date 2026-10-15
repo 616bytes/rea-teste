@@ -68,7 +68,7 @@ msgstr "Oleh N0zoM1z0 · 10 Oktober 2026"
 #: website/public/blog/index.html:250
 #: website/public/blog/reverse-engineering-models/index.html:889
 #: website/public/blog/touhou-reconstruction/index.html:1086
-#: website/public/contributors/index.html:1129
+#: website/public/contributors/index.html:1137
 #: website/public/examples/dino-lab/index.html:481
 #: website/public/faq/index.html:579
 #: website/public/first-investigation/index.html:540
@@ -10920,7 +10920,7 @@ msgstr "Panduan"
 #: website/public/blog/index.html:242
 #: website/public/blog/reverse-engineering-models/index.html:881
 #: website/public/blog/touhou-reconstruction/index.html:1078
-#: website/public/contributors/index.html:1121
+#: website/public/contributors/index.html:1129
 #: website/public/examples/dino-lab/index.html:473
 #: website/public/faq/index.html:571
 #: website/public/first-investigation/index.html:532
@@ -10942,7 +10942,7 @@ msgstr "Kode sumber"
 #: website/public/blog/index.html:243
 #: website/public/blog/reverse-engineering-models/index.html:882
 #: website/public/blog/touhou-reconstruction/index.html:1079
-#: website/public/contributors/index.html:1122
+#: website/public/contributors/index.html:1130
 #: website/public/examples/dino-lab/index.html:474
 #: website/public/faq/index.html:572
 #: website/public/first-investigation/index.html:533
@@ -10964,7 +10964,7 @@ msgstr "Lisensi MIT"
 #: website/public/blog/index.html:244
 #: website/public/blog/reverse-engineering-models/index.html:883
 #: website/public/blog/touhou-reconstruction/index.html:1080
-#: website/public/contributors/index.html:1123
+#: website/public/contributors/index.html:1131
 #: website/public/examples/dino-lab/index.html:475
 #: website/public/faq/index.html:573
 #: website/public/first-investigation/index.html:534
@@ -10986,7 +10986,7 @@ msgstr "Gabung komunitas"
 #: website/public/blog/index.html:245
 #: website/public/blog/reverse-engineering-models/index.html:884
 #: website/public/blog/touhou-reconstruction/index.html:1081
-#: website/public/contributors/index.html:1124
+#: website/public/contributors/index.html:1132
 #: website/public/examples/dino-lab/index.html:476
 #: website/public/faq/index.html:574
 #: website/public/first-investigation/index.html:535
@@ -15122,7 +15122,7 @@ msgstr ""
 #: website/public/blog/touhou-reconstruction/index.html:122
 #: website/public/blog/touhou-reconstruction/index.html:1077
 #: website/public/contributors/index.html:123
-#: website/public/contributors/index.html:1120
+#: website/public/contributors/index.html:1128
 #: website/public/examples/dino-lab/index.html:123
 #: website/public/examples/dino-lab/index.html:472
 #: website/public/faq/index.html:122 website/public/faq/index.html:570
@@ -15207,14 +15207,14 @@ msgstr "Cari kontributor"
 
 #. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
 #. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-14" translate="no">2026-10-14</time>
-#: website/public/contributors/index.html:1104
+#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
+#: website/public/contributors/index.html:1112
 #, python-brace-format
 msgctxt "page:contributors/index.html"
 msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
 msgstr "Dari {ph0}daftar kontributor GitHub{ph1} · Diperbarui pada {ph2}."
 
-#: website/public/contributors/index.html:1109
+#: website/public/contributors/index.html:1117
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
 msgstr "Tidak ada kontributor yang cocok. Coba nama pengguna lain."
@@ -15237,7 +15237,7 @@ msgctxt "page:contributors/index.html"
 msgid "GitHub username"
 msgstr "Nama pengguna GitHub"
 
-#: website/public/contributors/index.html:1129
+#: website/public/contributors/index.html:1137
 msgctxt "page:contributors/index.html"
 msgid "Back to top"
 msgstr "Kembali ke atas"

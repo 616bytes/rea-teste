@@ -6,9 +6,13 @@ an approved provider. It uses REA's existing process supervision and tagged
 errors/Result; it does not implement production Evidence or session admission.
 
 The separate [analyst capability prototype](CAPABILITIES.md) exposes CFG,
-database layouts, native type synthesis and value dependencies through an
-explicitly launched experimental CLI/MCP server. It is usable for the documented
+database layouts, native type synthesis, verified byte reads and value dependencies
+through an explicitly launched experimental CLI/MCP server. It is usable for the documented
 experiments; it is not enabled by running REA's normal MCP entrypoint.
+
+Its [SQLite capability comparison](CAPABILITY-BENCHMARK.md) reports completed
+CFG, type and buffer-flow investigations, including partial answers, a denied
+import, corrective runs and all their model tokens and local resources.
 
 The separate [task comparison](BENCHMARK.md) measures actual Codex investigations
 and cold/warm MCP workloads through PR #3521, upstream r2mcp and Ghidra.

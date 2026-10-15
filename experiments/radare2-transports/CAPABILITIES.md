@@ -118,11 +118,17 @@ The follow-up uses the installed ARM64 SQLite 3.54.0 library, unchanged SHA-256
 
 Scouting per-call times are not completed-task measurements. Completed answers,
 whole-task model tokens, elapsed/CPU time and sampled process-family memory are
-reported separately from the [original benchmark](BENCHMARK.md).
+reported in the [capability task comparison](CAPABILITY-BENCHMARK.md), separately
+from the [original cold/warm benchmark](BENCHMARK.md). The original partial and
+failed attempts remain visible alongside the corrected-profile runs.
 
 Verified producer fixes are committed individually in the user's radare2
 checkout; executable and linked-library identity must be recorded for any run,
 because its embedded version banner can lag a local rebuild:
+
+The earlier transport/status corrections were already committed as
+`bf69061a99` (`Fix command status propagation and r2pipe2 JSON replies ##shell`).
+The capability follow-up has eight further commits:
 
 | Commit       | Fix                                                                                                                               |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
@@ -139,3 +145,22 @@ The layout fix does not invent aggregate tail alignment metadata. Full SQLite
 header import still encounters another unsupported parser construct after the
 fixed nested callback; the benchmark's explicit prefix is not a claim that the
 entire header imports successfully.
+
+Native validation used root builds and focused gates: 292 type/status cases,
+15 ESIL/status cases, 32 sandbox/type/status cases, and 31 input/help/status
+cases passed at their respective fixes. These overlapping gates are not a full
+native test-suite result. The final prototype verifier passed 13 transport and
+analyst checks, including real exec/pipe/MCP/HTTP workflows, plus 24 separate
+parser/boundary checks.
+
+The separate [r2mcp JSON2 logging PR #84](https://github.com/radareorg/radare2-mcp/pull/84)
+lets native JSON2 retain structured diagnostics while keeping one stderr copy.
+The benchmark selects its production change at `4019246f4e`; the upstream PR
+also has a test-only compatibility adjustment for older native status behavior.
+
+These measurements use the listed development commits. Stable users need builds
+containing the corresponding fixes to reproduce the corrected native behavior;
+the prototype does not impose a new production compatibility floor. It uses
+neither the TypeScript nor Python r2pipe library. An r2mcp logging correction
+preserves whatever status its native r2 reports and is independent of upgrading
+that status producer.

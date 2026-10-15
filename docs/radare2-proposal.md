@@ -194,6 +194,15 @@ and analysis choices always take precedence.
 | Other analysis providers     | Preserve the selected provider and expose r2's CFG, type and value-flow facts through the same analyst questions.                                                                   | The original three tasks did not compare these capabilities. The [capability follow-up](../experiments/radare2-transports/CAPABILITIES.md) adds executable experiment tools and real SQLite cases; production admission and Evidence remain pending. |
 | Display and metadata         | Owned defaults remain `scr.color=0`, `scr.utf8=0`. Preserve debug information and caller output choices.                                                                            | Clean display is already implemented and checked; token savings were not isolated. The benchmark's `asm.dwarf=false` prevented source-line shortcuts and is not a general recommendation to discard useful source/debug evidence.                    |
 
+The [capability task runs](../experiments/radare2-transports/CAPABILITY-BENCHMARK.md)
+add one concrete requirement: expose focused byte reads beside references.
+All four original limit answers left a requested value unresolved; enabling
+byte reads resolved it in every corrected-profile run. Keep native status and
+structured diagnostics intact when an import is denied. Explicitly provided
+inline types can answer that question without granting file access, with their
+caller-supplied origin preserved. Those profile changes improve answer coverage;
+they do not establish a universal fastest carrier or decompiler default.
+
 Named tools must honour the same analysis policy. Upstream `list_functions` can
 currently run `aaa` on an empty inventory; expose that effect or report that a
 requested inventory-only read is unavailable. Do not silently enable raw access
@@ -314,8 +323,11 @@ The [capability follow-up](../experiments/radare2-transports/CAPABILITIES.md)
 supersedes the earlier experiment's missing CFG/type/flow surface. Its explicit
 CLI and separate MCP entrypoint now expose recovered CFG and instructions,
 database struct layouts, native access-pattern type synthesis, ESIL lifts and
-r2ghidra SSA dependencies. This demonstrates r2 capabilities without registering
-a runtime provider. Ghidra's p-code contract currently requires metadata absent
+r2ghidra SSA dependencies, plus independently verified byte reads. The
+[SQLite capability comparison](../experiments/radare2-transports/CAPABILITY-BENCHMARK.md)
+records exact answers and partial coverage, whole-task tokens and resources
+before and after correcting the byte-read/type-import profile. This demonstrates
+r2 capabilities without registering a runtime provider. Ghidra's p-code contract currently requires metadata absent
 from r2ghidra XML (`is_dead`), so the prototype preserves that unknown rather
 than inventing compatibility. Native ESIL and Ghidra-derived p-code remain
 distinct representations.

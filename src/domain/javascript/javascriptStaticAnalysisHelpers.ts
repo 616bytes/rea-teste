@@ -16,6 +16,7 @@ import {
   runtimeFunctionParameters,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
+  semanticLiteralProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
@@ -687,6 +688,7 @@ export const isWebSocketEndpointCandidate = (
           (definition.location.end.line < location.line ||
             (definition.location.end.line === location.line &&
               definition.location.end.column < location.column)));
+      const path = [...origin.importedPath, ...members, ...selected];
       return (
         binding.scopeId === state.scopes[0]?.scopeId &&
         binding.definitions.length === 1 &&
@@ -694,24 +696,39 @@ export const isWebSocketEndpointCandidate = (
         binding.initializers.length === 0 &&
         origin.resolutionMode === "require" &&
         origin.specifier === "ws" &&
-        origin.importedPath.length === 0 &&
-        members.length === 0 &&
-        selected.length === 0 &&
-        initialized
+        path.every((key): key is string => typeof key === "string") &&
+        (path.length === 0 || (path.length === 1 && path[0] === "WebSocket")) &&
+        initialized &&
+        isUnmodifiedRequiredWebSocketReference(
+          selectedCapture ?? current,
+          state,
+          path,
+        )
       );
     }
     const initializer = semanticStableInitializer(binding, state);
     if (
       initializer === undefined ||
       binding.referenceInitializers.length !== 0 ||
-      !initializer.projection.every(
-        (key): key is string => typeof key === "string",
-      ) ||
       !members.every((key): key is string => typeof key === "string") ||
       !webSocketInitializerDominatesRead(initializer.node, root, state)
     )
       return false;
     visited.add(binding.bindingId);
+    let projected = initializer.node;
+    let projection = initializer.projection;
+    while (projection.length > 0) {
+      const key = projection[0];
+      if (typeof key !== "string" && typeof key !== "number") return false;
+      const value = semanticLiteralProperty(projected, key);
+      if (value === undefined) break;
+      projected = value;
+      projection = projection.slice(1);
+    }
+    // Numeric positions are meaningful only on a fresh literal array/object;
+    // never infer a mutable aliased array or an unknown/rest projection.
+    if (!projection.every((key): key is string => typeof key === "string"))
+      return false;
     // Namespace aliases do not capture a member. Save the point at which the
     // constructor itself is selected, including destructuring at initialization.
     if (selectedCapture === undefined) {
@@ -719,8 +736,8 @@ export const isWebSocketEndpointCandidate = (
       else if (initializer.projection.length > 0)
         selectedCapture = initializer.node;
     }
-    selected = [...initializer.projection, ...members, ...selected];
-    current = initializer.node;
+    selected = [...projection, ...members, ...selected];
+    current = projected;
   }
 };
 

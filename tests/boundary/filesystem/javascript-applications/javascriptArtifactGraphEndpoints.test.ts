@@ -128,73 +128,90 @@ it("retains constructor captures, ws imports and template keys with their graph 
   }
 });
 
+const socketExecutionPhaseSources = {
+  "wrapped.ts":
+    '(function () { new Socket("wss://example.test/eager-wrapper"); } as any)();\nconst Socket = globalThis.WebSocket;',
+  "fields.js":
+    'class Client { socket = new Socket("wss://example.test/field"); }\nconst Socket = globalThis.WebSocket; new Client();',
+  "generator.js":
+    '(function* (x = new Socket("wss://example.test/eager-parameter")) {})();\n(function* () { new Socket("wss://example.test/generator-body"); })();\nconst Socket = globalThis.WebSocket;',
+  "bound.js":
+    '(function () { new Socket("wss://example.test/eager-bind"); }).bind(null)();\nconst connect = (function () { new Socket("wss://example.test/deferred-bind"); }).bind(null);\nconst Socket = globalThis.WebSocket; connect();',
+  "async.js":
+    '(async () => { new Socket("wss://example.test/eager-async"); await ready; })();\n(async () => { await ready; new Socket("wss://example.test/continuation"); })();\nconst Socket = globalThis.WebSocket;',
+  "await-inputs.js": [
+    'let value; (async () => { value = await ready; new Socket("wss://example.test/assignment"); })();',
+    '(async () => { new (class { socket = new Socket("wss://example.test/argument-field"); })(await ready); })();',
+    '(async () => { new (class { constructor() { new Socket("wss://example.test/argument-constructor"); } })(await ready); })();',
+    '(async () => { new (class { socket = new Socket("wss://example.test/computed-key"); [await ready] = 0; })(); })();',
+    "const Socket = globalThis.WebSocket;",
+  ].join("\n"),
+  "immediate-generator.js":
+    '(function* () { new Socket("wss://example.test/tdz-generator"); })().next(); const Socket = globalThis.WebSocket;',
+  "delegated-generator.js":
+    '(function* () { yield* []; new Socket("wss://example.test/tdz-delegation"); })().next(); const Socket = globalThis.WebSocket;',
+  "waiting-caller.js":
+    '(async () => { await (async () => { await ready; new Socket("wss://example.test/tdz-waiting"); })(); const Socket = globalThis.WebSocket; })();',
+  "switch-case.js":
+    'switch (kind) { case 0: const Socket = globalThis.WebSocket; break; case 1: new Socket("wss://example.test/tdz-case"); }',
+  "loop-array.js": [
+    '(async () => { while (await ready) { new Socket("wss://example.test/loop-continuation"); break; } })();',
+    '(async () => { [await ready, new Socket("wss://example.test/array-continuation")]; })();',
+    "const Socket = globalThis.WebSocket;",
+  ].join("\n"),
+  "sequence-capture.js":
+    'const Socket = (0, globalThis.WebSocket); new Socket("wss://example.test/sequence-capture");',
+  "dynamic-import.mjs":
+    'const { WebSocket: Socket } = await import("ws"); new Socket("wss://example.test/dynamic-import");',
+  "object-await.js":
+    '(async () => { ({ first: await ready, second: new Socket("wss://example.test/object-continuation") }); })(); const Socket = globalThis.WebSocket;',
+  "pending-before.mjs":
+    'const pending = (async () => { await ready; new Socket("wss://example.test/tdz-pending"); })(); await pending; const Socket = globalThis.WebSocket;',
+  "pending-after.mjs":
+    'const pending = (async () => { await ready; new Socket("wss://example.test/pending-initialized"); })(); const Socket = globalThis.WebSocket; await pending;',
+  "import-alias.mjs":
+    'const pending = import("ws"); const { WebSocket: Socket } = await pending; new Socket("wss://example.test/import-alias");',
+  "skipped-wait.mjs":
+    'const pending = (async () => { await 0; new Socket("wss://example.test/skipped-wait"); })(); if (false) await pending; const Socket = globalThis.WebSocket;',
+  "member-await.js":
+    '(async () => { const value = (await ready).value; new Socket("wss://example.test/member-await"); })(); const Socket = globalThis.WebSocket;',
+  "optional-capture.js":
+    'const Socket = globalThis?.WebSocket; new Socket("wss://example.test/optional-capture");',
+  "selected-branch.js":
+    '(async () => { if (true) await ready; new Socket("wss://example.test/selected-branch"); })(); const Socket = globalThis.WebSocket;',
+  "compound-continuation.js":
+    '(async () => { let count = 0; count += await ready; new Socket("wss://example.test/compound-continuation"); })(); const Socket = globalThis.WebSocket;',
+  "compound-wait.mjs":
+    'const pending = (async () => { await 0; new Socket("wss://example.test/tdz-compound-wait"); })(); let count = 0; count += await pending; const Socket = globalThis.WebSocket;',
+  "optional-call.js":
+    '(async () => { (await ready)?.(); new Socket("wss://example.test/optional-call"); })(); const Socket = globalThis.WebSocket;',
+  "logical-assignment.js":
+    '(async () => { let count = 0; count &&= await ready; new Socket("wss://example.test/tdz-logical-assignment"); })(); const Socket = globalThis.WebSocket;',
+  "import-equals-member.ts":
+    'import ws = require("ws"); const Socket = ws.WebSocket; new Socket("wss://example.test/import-equals-member");',
+  "import-equals-written.ts":
+    'import ws = require("ws"); ws.WebSocket = class {}; const Socket = ws.WebSocket; new Socket("wss://example.test/tdz-import-equals-write");',
+  "array-projection.js":
+    'const [[Socket]] = [[globalThis.WebSocket]]; new Socket("wss://example.test/array-projection");',
+  "assigned-call.js":
+    'let connect; (connect = () => new Socket("wss://example.test/tdz-assignment"))(); const Socket = globalThis.WebSocket;',
+  "await-branch.js":
+    '(async () => { if (await ready) new Socket("wss://example.test/branch-continuation"); })(); const Socket = globalThis.WebSocket;',
+  "immediate-sequence.js":
+    '(0, function () { new Socket("wss://example.test/tdz-sequence"); })(); const Socket = globalThis.WebSocket;',
+  "async-local.js":
+    '(async () => { new Socket("wss://example.test/tdz-before-await"); await ready; const Socket = globalThis.WebSocket; })();',
+  "async-phases.js":
+    '(async () => { await ready; new Socket("wss://example.test/tdz-between-awaits"); await ready; const Socket = globalThis.WebSocket; })();',
+  "immediate-class.js":
+    'new (class { socket = new Socket("wss://example.test/tdz-field"); })(); const Socket = globalThis.WebSocket;',
+  "immediate-constructor.js":
+    'new (class { constructor() { new Socket("wss://example.test/tdz-constructor"); } })(); const Socket = globalThis.WebSocket;',
+};
+
 it("preserves eager and deferred socket phases through filesystem graph projection", async () => {
   const root = await createTestTempDirectory("rea-js-socket-phases-");
-  const fixtures = {
-    "wrapped.ts":
-      '(function () { new Socket("wss://example.test/eager-wrapper"); } as any)();\nconst Socket = globalThis.WebSocket;',
-    "fields.js":
-      'class Client { socket = new Socket("wss://example.test/field"); }\nconst Socket = globalThis.WebSocket; new Client();',
-    "generator.js":
-      '(function* (x = new Socket("wss://example.test/eager-parameter")) {})();\n(function* () { new Socket("wss://example.test/generator-body"); })();\nconst Socket = globalThis.WebSocket;',
-    "bound.js":
-      '(function () { new Socket("wss://example.test/eager-bind"); }).bind(null)();\nconst connect = (function () { new Socket("wss://example.test/deferred-bind"); }).bind(null);\nconst Socket = globalThis.WebSocket; connect();',
-    "async.js":
-      '(async () => { new Socket("wss://example.test/eager-async"); await ready; })();\n(async () => { await ready; new Socket("wss://example.test/continuation"); })();\nconst Socket = globalThis.WebSocket;',
-    "await-inputs.js": [
-      'let value; (async () => { value = await ready; new Socket("wss://example.test/assignment"); })();',
-      '(async () => { new (class { socket = new Socket("wss://example.test/argument-field"); })(await ready); })();',
-      '(async () => { new (class { constructor() { new Socket("wss://example.test/argument-constructor"); } })(await ready); })();',
-      '(async () => { new (class { socket = new Socket("wss://example.test/computed-key"); [await ready] = 0; })(); })();',
-      "const Socket = globalThis.WebSocket;",
-    ].join("\n"),
-    "immediate-generator.js":
-      '(function* () { new Socket("wss://example.test/tdz-generator"); })().next(); const Socket = globalThis.WebSocket;',
-    "delegated-generator.js":
-      '(function* () { yield* []; new Socket("wss://example.test/tdz-delegation"); })().next(); const Socket = globalThis.WebSocket;',
-    "waiting-caller.js":
-      '(async () => { await (async () => { await ready; new Socket("wss://example.test/tdz-waiting"); })(); const Socket = globalThis.WebSocket; })();',
-    "switch-case.js":
-      'switch (kind) { case 0: const Socket = globalThis.WebSocket; break; case 1: new Socket("wss://example.test/tdz-case"); }',
-    "loop-array.js": [
-      '(async () => { while (await ready) { new Socket("wss://example.test/loop-continuation"); break; } })();',
-      '(async () => { [await ready, new Socket("wss://example.test/array-continuation")]; })();',
-      "const Socket = globalThis.WebSocket;",
-    ].join("\n"),
-    "sequence-capture.js":
-      'const Socket = (0, globalThis.WebSocket); new Socket("wss://example.test/sequence-capture");',
-    "dynamic-import.mjs":
-      'const { WebSocket: Socket } = await import("ws"); new Socket("wss://example.test/dynamic-import");',
-    "object-await.js":
-      '(async () => { ({ first: await ready, second: new Socket("wss://example.test/object-continuation") }); })(); const Socket = globalThis.WebSocket;',
-    "pending-before.mjs":
-      'const pending = (async () => { await ready; new Socket("wss://example.test/tdz-pending"); })(); await pending; const Socket = globalThis.WebSocket;',
-    "pending-after.mjs":
-      'const pending = (async () => { await ready; new Socket("wss://example.test/pending-initialized"); })(); const Socket = globalThis.WebSocket; await pending;',
-    "import-alias.mjs":
-      'const pending = import("ws"); const { WebSocket: Socket } = await pending; new Socket("wss://example.test/import-alias");',
-    "skipped-wait.mjs":
-      'const pending = (async () => { await 0; new Socket("wss://example.test/skipped-wait"); })(); if (false) await pending; const Socket = globalThis.WebSocket;',
-    "member-await.js":
-      '(async () => { const value = (await ready).value; new Socket("wss://example.test/member-await"); })(); const Socket = globalThis.WebSocket;',
-    "optional-capture.js":
-      'const Socket = globalThis?.WebSocket; new Socket("wss://example.test/optional-capture");',
-    "assigned-call.js":
-      'let connect; (connect = () => new Socket("wss://example.test/tdz-assignment"))(); const Socket = globalThis.WebSocket;',
-    "await-branch.js":
-      '(async () => { if (await ready) new Socket("wss://example.test/branch-continuation"); })(); const Socket = globalThis.WebSocket;',
-    "immediate-sequence.js":
-      '(0, function () { new Socket("wss://example.test/tdz-sequence"); })(); const Socket = globalThis.WebSocket;',
-    "async-local.js":
-      '(async () => { new Socket("wss://example.test/tdz-before-await"); await ready; const Socket = globalThis.WebSocket; })();',
-    "async-phases.js":
-      '(async () => { await ready; new Socket("wss://example.test/tdz-between-awaits"); await ready; const Socket = globalThis.WebSocket; })();',
-    "immediate-class.js":
-      'new (class { socket = new Socket("wss://example.test/tdz-field"); })(); const Socket = globalThis.WebSocket;',
-    "immediate-constructor.js":
-      'new (class { constructor() { new Socket("wss://example.test/tdz-constructor"); } })(); const Socket = globalThis.WebSocket;',
-  };
-  for (const [path, source] of Object.entries(fixtures))
+  for (const [path, source] of Object.entries(socketExecutionPhaseSources))
     await writeFile(join(root, path), source);
   const snapshot = await scanCanonicalArtifactInventory(root, {});
   const reader = createJavaScriptArtifactReader(root, "directory");
@@ -211,8 +228,10 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/argument-constructor",
       "wss://example.test/argument-field",
       "wss://example.test/array-continuation",
+      "wss://example.test/array-projection",
       "wss://example.test/assignment",
       "wss://example.test/branch-continuation",
+      "wss://example.test/compound-continuation",
       "wss://example.test/computed-key",
       "wss://example.test/continuation",
       "wss://example.test/deferred-bind",
@@ -220,11 +239,14 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/field",
       "wss://example.test/generator-body",
       "wss://example.test/import-alias",
+      "wss://example.test/import-equals-member",
       "wss://example.test/loop-continuation",
       "wss://example.test/member-await",
       "wss://example.test/object-continuation",
+      "wss://example.test/optional-call",
       "wss://example.test/optional-capture",
       "wss://example.test/pending-initialized",
+      "wss://example.test/selected-branch",
       "wss://example.test/sequence-capture",
       "wss://example.test/skipped-wait",
     ]);
@@ -248,6 +270,11 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       ["skipped-wait", "skipped-wait.mjs", 1],
       ["member-await", "member-await.js", 1],
       ["optional-capture", "optional-capture.js", 1],
+      ["selected-branch", "selected-branch.js", 1],
+      ["compound-continuation", "compound-continuation.js", 1],
+      ["optional-call", "optional-call.js", 1],
+      ["import-equals-member", "import-equals-member.ts", 1],
+      ["array-projection", "array-projection.js", 1],
     ] as const) {
       const observation = observations.find(
         ({ properties }) => properties.value === `wss://example.test/${path}`,

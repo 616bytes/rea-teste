@@ -939,6 +939,119 @@ describe("web bundle promise aliases and object evaluation", () => {
   );
 });
 
+describe("web bundle mandatory operands and literal projections", () => {
+  it.each(["+=", "**=", "<<="])(
+    "retains mandatory waits in %s assignments",
+    (operator) => {
+      expect(
+        socketEndpoints(
+          `const pending = (async () => { await 0; new Socket("wss://example.test/invalid"); })(); let count = 0; count ${operator} await pending; const Socket = globalThis.WebSocket;`,
+        ),
+      ).toEqual([[], []]);
+    },
+  );
+
+  it.each([
+    "let count = 0; count += await ready;",
+    "let count = 1; count **= await ready;",
+    "let count = 0; count <<= await ready;",
+    "if (true) await ready;",
+    "if (false) {} else await ready;",
+    "true ? await ready : 0;",
+    "false ? 0 : await ready;",
+    "true && (await ready);",
+    "false || (await ready);",
+    "null ?? (await ready);",
+    "(await ready)?.();",
+    "(await ready)?.(await other);",
+  ])(
+    "carries mandatory selected operands into the continuation: %s",
+    (prefix) => {
+      const expected = [
+        { value: "wss://example.test/selected", mechanism: "call:Socket" },
+      ];
+      expect(
+        socketEndpoints(
+          `(async () => { ${prefix} new Socket("wss://example.test/selected"); })(); const Socket = globalThis.WebSocket;`,
+        ),
+      ).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    "if (false) await ready;",
+    "unknown ? await ready : 0;",
+    "unknown && (await ready);",
+    "let value = false; value &&= await ready;",
+    "let value = true; value ||= await ready;",
+    "let value = 0; value ??= await ready;",
+    "null?.(await ready);",
+  ])(
+    "does not promote unproven branch/assignment/call operands: %s",
+    (prefix) => {
+      expect(
+        socketEndpoints(
+          `(async () => { ${prefix} new Socket("wss://example.test/invalid"); })(); const Socket = globalThis.WebSocket;`,
+        ),
+      ).toEqual([[], []]);
+    },
+  );
+
+  it.each([
+    'import ws = require("ws"); const Socket = ws.WebSocket;',
+    'import ws = require("ws"); const { WebSocket: Socket } = ws;',
+    'import ws = require("ws"); const alias = ws; const Socket = alias[`WebSocket`];',
+    "const [Socket] = [globalThis.WebSocket];",
+    "const [, Socket] = [0, globalThis.WebSocket];",
+    "const [[Socket]] = [[globalThis.WebSocket]];",
+    "const { nested: [Socket] } = { nested: [globalThis.WebSocket] };",
+    'const [Socket] = [require("ws").WebSocket];',
+  ])(
+    "retains exact import-equals members and literal projections: %s",
+    (capture) => {
+      const expected = [
+        { value: "wss://example.test/projected", mechanism: "call:Socket" },
+      ];
+      expect(
+        socketEndpoints(
+          `${capture} new Socket("wss://example.test/projected");`,
+        ),
+      ).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    'import ws = require("other"); const Socket = ws.WebSocket;',
+    'import type ws = require("ws"); const Socket = ws.WebSocket;',
+    'const Socket = ws.WebSocket; import ws = require("ws");',
+    'import ws = require("ws"); ws.WebSocket = class {}; const Socket = ws.WebSocket;',
+    'import ws = require("ws"); const alias = ws; alias.WebSocket = class {}; const Socket = ws.WebSocket;',
+    'import ws = require("ws"); require("ws").WebSocket = class {}; const Socket = ws.WebSocket;',
+    "const [Socket] = [...items, globalThis.WebSocket];",
+    "const [Socket = globalThis.WebSocket] = [];",
+    "const [Socket] = [class {}];",
+    "const box = [globalThis.WebSocket]; box[0] = class {}; const [Socket] = box;",
+  ])(
+    "leaves overwritten and non-exact constructor projections unresolved: %s",
+    (capture) => {
+      expect(
+        socketEndpoints(`${capture} new Socket("wss://example.test/invalid");`),
+      ).toEqual([[], []]);
+    },
+  );
+
+  it("keeps a constructor captured before an import-equals export write", () => {
+    const expected = [
+      { value: "wss://example.test/prior", mechanism: "call:Socket" },
+    ];
+    expect(
+      socketEndpoints(
+        'import ws = require("ws"); const Socket = ws.WebSocket; ws.WebSocket = class {}; new Socket("wss://example.test/prior");',
+      ),
+    ).toEqual([expected, expected]);
+  });
+});
+
 describe("web bundle reached waits and exact expression results", () => {
   it.each([
     "if (false) await pending;",

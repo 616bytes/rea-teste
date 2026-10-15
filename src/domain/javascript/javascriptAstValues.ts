@@ -1,5 +1,6 @@
 import * as t from "@babel/types";
 import type { JavaScriptSemanticPrimitive } from "./javascriptSemanticValueTypes.js";
+import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 
 /** TypeScript receiver annotations occupy no positional runtime parameter slot. */
 export const runtimeFunctionParameters = (
@@ -142,6 +143,23 @@ export const semanticFinalObjectProperty = (
       return t.isObjectProperty(property) ? property.value : undefined;
   }
   return undefined;
+};
+
+/** Project only fresh literal containers; aliases require a separate write proof. */
+export const semanticLiteralProperty = (
+  rawNode: t.Node,
+  key: string | number,
+): t.Node | undefined => {
+  const node = unwrapJavaScriptExpression(rawNode).node;
+  if (t.isObjectExpression(node))
+    return semanticFinalObjectProperty(node, String(key));
+  if (!t.isArrayExpression(node)) return undefined;
+  const index = semanticArrayIndex(key);
+  if (index === null || index >= node.elements.length) return undefined;
+  // Earlier spreads make the selected position uncertain; later spreads do not.
+  if (node.elements.slice(0, index + 1).some((item) => t.isSpreadElement(item)))
+    return undefined;
+  return node.elements[index] ?? undefined;
 };
 
 export const semanticFinalObjectStringProperty = (

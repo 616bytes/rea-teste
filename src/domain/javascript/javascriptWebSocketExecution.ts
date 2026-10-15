@@ -7,6 +7,7 @@ import {
 } from "./javascriptAstValues.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { semanticAwaitedResultSites } from "./javascriptSemanticPromiseIdentity.js";
+import { syntaxUnconditionalOperands } from "./javascriptSymbolicControlFlow.js";
 
 interface WebSocketExecutionFrame {
   readonly owner: t.Node;
@@ -106,6 +107,8 @@ const webSocketStaticInitializers = (member: t.Node): readonly t.Node[] =>
 
 /** Children completed in order if this straight-line node completes normally. */
 const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
+  const operands = syntaxUnconditionalOperands(node);
+  if (operands !== undefined) return operands;
   if (t.isBlockStatement(node)) return node.body;
   if (t.isExpressionStatement(node)) return [node.expression];
   if (t.isVariableDeclaration(node)) return node.declarations;
@@ -118,8 +121,6 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
     return node.computed && !javaScriptOptionalOperandsMayBeSkipped(node)
       ? [node.object, node.property]
       : [node.object];
-  if (t.isAssignmentExpression(node) && node.operator === "=")
-    return [node.left, node.right];
   if (t.isClass(node))
     return [
       ...webSocketClassKeys(node),
@@ -134,11 +135,6 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   if (t.isObjectMethod(node)) return node.computed ? [node.key] : [];
   if (t.isSpreadElement(node)) return [node.argument];
   if (t.isBinaryExpression(node)) return [node.left, node.right];
-  // Tests/left operands always complete before either a selected branch or a
-  // later sibling; conditional branch bodies do not establish suspension.
-  if (t.isIfStatement(node) || t.isConditionalExpression(node))
-    return [node.test];
-  if (t.isLogicalExpression(node)) return [node.left];
   // Every normally completed loop evaluates its initial test, but its body
   // and updates may never execute. A do/while body precedes its first test.
   if (t.isWhileStatement(node)) return [node.test];
@@ -146,8 +142,11 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
     return [node.init, node.test].filter((element) => element != null);
   if (t.isYieldExpression(node) && node.argument != null)
     return [node.argument];
-  if (t.isCallExpression(node) || t.isNewExpression(node))
-    return [node.callee, ...node.arguments];
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
+    return javaScriptOptionalOperandsMayBeSkipped(node)
+      ? [node.callee]
+      : [node.callee, ...node.arguments];
+  if (t.isNewExpression(node)) return [node.callee, ...node.arguments];
   // Conditional/short-circuit branches, nested functions and try/catch do not
   // establish a suspension on every path to the following expression.
   return [];

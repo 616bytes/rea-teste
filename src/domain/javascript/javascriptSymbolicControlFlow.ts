@@ -40,6 +40,39 @@ export const symbolicLogicalRight = (
   return truth === undefined ? undefined : operator === "&&" ? truth : !truth;
 };
 
+/** Syntax-proven branch operands, shared by reachability and continuation proofs. */
+export const syntaxUnconditionalOperands = (
+  node: t.Node,
+): readonly t.Node[] | undefined => {
+  if (t.isIfStatement(node) || t.isConditionalExpression(node)) {
+    const test = readExactJavaScriptLiteral(node.test);
+    const branch = test.found
+      ? test.value
+        ? node.consequent
+        : node.alternate
+      : undefined;
+    return branch == null ? [node.test] : [node.test, branch];
+  }
+  if (t.isLogicalExpression(node)) {
+    const left = readExactJavaScriptLiteral(node.left);
+    return left.found &&
+      symbolicLogicalRight(node.operator, {
+        kind: "literal",
+        value: left.value,
+      }) === true
+      ? [node.left, node.right]
+      : [node.left];
+  }
+  if (t.isAssignmentExpression(node)) {
+    // Only logical assignments can short-circuit the RHS. Non-logical
+    // compound operators read the left value, then always evaluate the RHS.
+    return ["&&=", "||=", "??="].includes(node.operator)
+      ? [node.left]
+      : [node.left, node.right];
+  }
+  return undefined;
+};
+
 /** Only definite synchronous exits; unsupported control flow stays unknown. */
 export const symbolicDefiniteExit = (
   node: t.Node | null | undefined,
@@ -73,26 +106,9 @@ export const createUnconditionalEvaluationProof = (
     for (;;) {
       const parent = parents.get(child);
       if (parent === undefined) return true;
-      if (t.isIfStatement(parent) || t.isConditionalExpression(parent)) {
-        if (child !== parent.test) {
-          const selected = truth(parent.test);
-          if (
-            selected === undefined ||
-            (child === parent.consequent) !== selected
-          )
-            return false;
-        }
-      } else if (t.isLogicalExpression(parent) && child === parent.right) {
-        const literal = readExactJavaScriptLiteral(parent.left);
-        if (
-          !literal.found ||
-          symbolicLogicalRight(parent.operator, {
-            kind: "literal",
-            value: literal.value,
-          }) !== true
-        )
-          return false;
-      } else if (t.isWhileStatement(parent) && child === parent.body) {
+      const operands = syntaxUnconditionalOperands(parent);
+      if (operands !== undefined && !operands.includes(child)) return false;
+      if (t.isWhileStatement(parent) && child === parent.body) {
         if (truth(parent.test) !== true) return false;
       } else if (t.isForStatement(parent)) {
         if (child === parent.update) return false;
@@ -111,12 +127,6 @@ export const createUnconditionalEvaluationProof = (
         return false;
       else if (t.isSwitchCase(parent) || t.isCatchClause(parent)) return false;
       else if (t.isAssignmentPattern(parent) && child === parent.right)
-        return false;
-      else if (
-        t.isAssignmentExpression(parent) &&
-        parent.operator !== "=" &&
-        child === parent.right
-      )
         return false;
       else if (
         t.isOptionalMemberExpression(parent) &&

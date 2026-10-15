@@ -151,6 +151,9 @@ const createAmbientPathResolver = (
         }
         const binding = resolveSemanticBindingState(state, root, root.name);
         if (binding === undefined) continue;
+        for (const origin of binding.directOrigins)
+          if (origin.resolutionMode === "require" && origin.specifier === "ws")
+            retain(["commonjs-ws", ...origin.importedPath, ...(suffix ?? [])]);
         const stable = semanticStableInitializer(binding, state);
         const readAt = current.readsAtSelf ? root : capture;
         const initializers = possibleWrites

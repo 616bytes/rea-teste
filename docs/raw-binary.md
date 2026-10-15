@@ -131,6 +131,13 @@ cartridge or console memory maps, or bank switching. REA does not read the
 initial stack pointer and reset vector from the first eight bytes; select the
 entry explicitly. Windows Ghidra P0 does not admit m68k.
 
+`npm run verify:ghidra:m68k` uses a source-owned 22-byte fixture written as
+annotated hex in the verifier, so it needs no assembler. The lane checks real
+CLI/MCP load-image parity, mapped bytes, a decoded call, decompilation by address
+and file offset, misaligned and out-of-range mappings, unchanged source bytes and
+runtime cleanup. It has been run with Ghidra 12.1.4 on macOS; Linux has not been
+exercised.
+
 ## Limitations
 
 - Headers are not discovered from file bytes. This increment does not guess

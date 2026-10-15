@@ -1,3 +1,5 @@
+import { cleanupOwnedProcessGroup } from "../../../../src/process/ProcessOwnership.js";
+import { spawnOwnedProviderProcess } from "../../../../src/process/ProviderProcess.js";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -78,3 +80,25 @@ export const exportsOf = async (kuna: string) =>
   (await fakeKunaCalls(kuna)).filter(
     ({ argv }) => argv[0] === "decompile-project",
   );
+
+/**
+ * Launch for real, but have cleanup of the selected subcommand report an
+ * unproven stop until `release` is called, as a lost ownership proof would.
+ */
+export const unprovenCleanupLauncher = (subcommand: string) => {
+  let proven = false;
+  const launcher: KunaProcessLauncher = async (options) => {
+    const spawned = await spawnOwnedProviderProcess(options);
+    if (options.arguments[0] !== subcommand) return spawned;
+    return {
+      ...spawned,
+      cleanup: async () => {
+        const cleaned = await cleanupOwnedProcessGroup(spawned.ownership);
+        return proven
+          ? cleaned
+          : { cleaned: false, reason: `${subcommand} stop unproven` };
+      },
+    };
+  };
+  return { launcher, release: () => (proven = true) };
+};

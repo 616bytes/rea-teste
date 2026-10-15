@@ -6,9 +6,9 @@ export type KunaRunRelease = () => void;
 /**
  * Provider-wide admission for foreground decompile and reference walks.
  *
- * Each run analyzes the whole image again in its own process tree, which held
- * about 360 MiB resident and close to one core on a 200 KiB Mach-O. These runs only
- * share the cores reserved beyond a project export's `--jobs` workers.
+ * A single-function decompile analyzes the whole image again; one measured
+ * run held about 360 MiB resident and close to one core on a 200 KiB Mach-O.
+ * Foreground walks share the cores reserved beyond an export's `--jobs` workers.
  * Requests beyond that budget wait in FIFO order. A native cleanup owner
  * keeps its slot while it cannot prove that the process stopped.
  */

@@ -21,7 +21,9 @@ export async function verifyPackagePack({ root, workspace }) {
       )
     ).stdout.trim(),
   );
-  const packedFiles = (await exec("tar", ["-tf", tarball])).stdout.split("\n");
+  const packedFiles = (await exec("tar", ["-tf", tarball])).stdout.split(
+    /\r?\n/,
+  );
   const packedManifest = JSON.parse(
     (await exec("tar", ["-xOf", tarball, "package/package.json"])).stdout,
   );

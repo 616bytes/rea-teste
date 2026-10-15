@@ -25,6 +25,7 @@ import type { EvidenceLocation } from "../domain/evidence.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
 import { functionDossierSchema } from "../domain/hopperValues.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -156,6 +157,7 @@ const exportUnavailable = (
   if (failure instanceof AnalysisCancelledError || failure.cleanupIncomplete)
     return failure;
   const reason = failure.userMessage ?? failure.message;
+  const exported = projectAnalysisError(failure);
   const restart =
     "REA reads Kuna settings when it starts, so restart REA, then reopen the target.";
   const next =
@@ -171,21 +173,15 @@ const exportUnavailable = (
     reason,
     {
       cause: failure,
-      capturedOutput: failure.capturedOutput,
-      partialObservation: failure.partialObservation,
+      // Callers see only the top-level projection, so the export failure's
+      // own projected code and details (its limits, target path, captured
+      // output and diagnostics) travel whole rather than field by field.
       diagnostics: {
-        ...failure.diagnostics,
         export_error: failure._tag,
-        ...(failure instanceof AnalysisTimeoutError
-          ? { timeout_ms: failure.timeoutMs }
-          : {}),
-        // The limits a resource remediation refers to, as its own projection names them.
-        ...(failure instanceof AnalysisResourceConstraintError
-          ? {
-              resource: failure.resource,
-              reported_limits: failure.reportedLimits,
-            }
-          : {}),
+        export_code: exported.code,
+        ...(exported.details === undefined
+          ? {}
+          : { export_details: exported.details }),
       },
       userMessage: `Kuna's project export failed, so ${operation} is unavailable in this session: ${reason.replace(/\.?$/u, ".")} ${next}`,
     },

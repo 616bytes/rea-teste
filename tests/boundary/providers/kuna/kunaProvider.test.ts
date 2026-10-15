@@ -795,29 +795,40 @@ it.each([
         expect(result.error).toMatchObject({
           _tag: "AnalysisCapabilityUnavailableError",
           retryable: false,
-          diagnostics: { export_error: cause },
         });
         expect(result.error.userMessage?.endsWith(next)).toBe(true);
-        // The export's own output and limits stay on the error callers receive.
         const failure = result.error.cause as AnalysisError;
-        expect(result.error.capturedOutput).toEqual(failure.capturedOutput);
-        if (failure instanceof AnalysisResourceConstraintError)
-          expect(result.error.diagnostics).toMatchObject({
-            resource: "capacity",
-            reported_limits: {
-              cache_max_bytes: 1024 ** 2,
-              export_bytes: expect.any(Number),
-            },
-          });
-        else expect(result.error.capturedOutput).toBeDefined();
-        expect((result.error.cause as { _tag?: string })._tag).toBe(cause);
-        expect(projectAnalysisError(result.error)).toMatchObject({
+        expect(failure._tag).toBe(cause);
+        // Callers see only the top-level projection; the export failure's own
+        // projected code and details travel whole inside it.
+        const exported = projectAnalysisError(failure);
+        const projected = projectAnalysisError(result.error);
+        expect(projected).toMatchObject({
           code: "capability_unavailable",
           retryable: false,
-          ...(failure.capturedOutput === undefined
-            ? {}
-            : { details: { captured_output: expect.any(Object) } }),
+          details: {
+            diagnostics: {
+              export_error: cause,
+              export_code: exported.code,
+              export_details: exported.details,
+            },
+          },
         });
+        expect(
+          failure instanceof AnalysisResourceConstraintError
+            ? exported.details
+            : exported.details?.["captured_output"],
+        ).toMatchObject(
+          failure instanceof AnalysisResourceConstraintError
+            ? {
+                resource: "capacity",
+                reported_limits: {
+                  cache_max_bytes: 1024 ** 2,
+                  export_bytes: expect.any(Number),
+                },
+              }
+            : { truncated: expect.any(Boolean) },
+        );
       }
     } finally {
       expect(await client.close()).toEqual({ ok: true, value: null });

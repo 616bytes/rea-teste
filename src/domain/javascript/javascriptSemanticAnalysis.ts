@@ -346,7 +346,9 @@ function* classifyDefinitionReceiversSteps(
       return;
     }
     if (binding.mutable || binding.initializers.length !== 1) return;
-    const initializer = binding.initializers[0]?.node;
+    const initializerSource = binding.initializers[0]?.node;
+    if (initializerSource === undefined) return;
+    const initializer = unwrapJavaScriptExpression(initializerSource).node;
     if (!t.isIdentifier(initializer)) return;
     const initializerBinding = resolveSemanticBindingState(
       state,
@@ -365,7 +367,9 @@ function* classifyDefinitionReceiversSteps(
           initializerBinding.initializers.length !== 1
         )
           return;
-        const nested = initializerBinding.initializers[0]?.node;
+        const nestedSource = initializerBinding.initializers[0]?.node;
+        if (nestedSource === undefined) return;
+        const nested = unwrapJavaScriptExpression(nestedSource).node;
         if (t.isIdentifier(nested)) {
           const nestedFact = resolveGlobalAliasFact(
             state,

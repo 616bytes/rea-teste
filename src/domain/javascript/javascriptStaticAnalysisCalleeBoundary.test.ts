@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
+const expressionWrappers = [
+  ["plain", (value: string) => value],
+  ["asserted", (value: string) => `(${value} as any)`],
+  ["non-null", (value: string) => `(${value}!)`],
+  ["satisfies", (value: string) => `(${value} satisfies any)`],
+] as const;
+
 it("shares erased call-target names with endpoint consumers without inventing dynamic keys", () => {
   const analysis = analyzeJavaScriptStaticSource(`
     (client.get as typeof client.get)("/api/items");
@@ -18,12 +25,7 @@ it("shares erased call-target names with endpoint consumers without inventing dy
   ]);
 });
 
-it.each([
-  ["plain", (value: string) => value],
-  ["asserted", (value: string) => `(${value} as any)`],
-  ["non-null", (value: string) => `(${value}!)`],
-  ["satisfies", (value: string) => `(${value} satisfies any)`],
-])(
+it.each(expressionWrappers)(
   "excludes %s collection and configuration reads while retaining request candidates",
   (_label, wrap) => {
     const call = (receiver: string, method: string, value: string) =>
@@ -108,6 +110,64 @@ it("retains lexical browser-open facts through erased call and receiver wrappers
     ]),
   ).toEqual([["local-request", "candidate"]]);
 });
+
+it.each(expressionWrappers)(
+  "retains global and local identity through %s alias initializers",
+  (_label, wrap) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+    const browser = ${wrap("window")};
+    (browser.open as any)(method, "browser-context");
+    const database = ${wrap("indexedDB")};
+    (database.open as any)("fixture-db", "2");
+    const cache = ${wrap("caches")};
+    (cache.open as any)("fixture-cache");
+    {
+      const indexedDB = ${wrap("caches")};
+      const nested = ${wrap("indexedDB")};
+      (nested.open as any)("nested-cache");
+    }
+    {
+      const caches = ${wrap("indexedDB")};
+      const nested = ${wrap("caches")};
+      (nested.open as any)("nested-db", "2");
+    }
+    function local(window, indexedDB, caches) {
+      const browser = ${wrap("window")};
+      (browser.open as any)(method, "local-window");
+      const database = ${wrap("indexedDB")};
+      (database.open as any)("GET", "/local-db");
+      const cache = ${wrap("caches")};
+      (cache.open as any)("GET", "/local-cache");
+    }
+    let replaced = ${wrap("window")};
+    replaced = client;
+    (replaced.open as any)(method, "changed-window");
+    const uncertain = ${wrap("flag ? window : client")};
+    (uncertain.open as any)(method, "uncertain-window");
+  `);
+    expect(analysis.parse_error_count).toBe(0);
+    expect
+      .soft(
+        analysis.endpoints.map(({ value, interpretation }) => [
+          value,
+          interpretation ?? null,
+        ]),
+      )
+      .toEqual([
+        ["local-window", "candidate"],
+        ["/local-db", null],
+        ["/local-cache", null],
+        ["changed-window", "candidate"],
+        ["uncertain-window", "candidate"],
+      ]);
+    expect(analysis.storage.map(({ kind, name }) => [kind, name])).toEqual([
+      ["indexed-db", "fixture-db"],
+      ["cache-storage", "fixture-cache"],
+      ["cache-storage", "nested-cache"],
+      ["indexed-db", "nested-db"],
+    ]);
+  },
+);
 
 it("retains endpoint observations for exact template and TypeScript member keys", () => {
   for (const [get, beacon] of [

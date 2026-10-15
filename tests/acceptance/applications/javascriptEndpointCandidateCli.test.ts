@@ -24,6 +24,12 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
     (new URLSearchParams() as any).delete("q");
     ((vscode.workspace.getConfiguration("editor") as any).get as any)("tabSize");
     (context.globalState.get as any)("lastSession");
+    const browser = window as Window;
+    (browser.open as any)(method, "browser-context");
+    const database = indexedDB as IDBFactory;
+    (database.open as any)("fixture-db", "2");
+    const cache = caches as CacheStorage;
+    (cache.open as any)("fixture-cache");
   `,
   );
   const { stdout } = await execute(
@@ -34,13 +40,27 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
   const result = javascriptApplicationAnalysisResultSchema.parse(
     parseEvidence(JSON.parse(stdout)).normalized_result,
   );
+  expect
+    .soft(
+      result.graph.nodes
+        .filter(({ kind }) => kind === "endpoint")
+        .flatMap(({ observations }) =>
+          observations.map(({ properties }) => properties.value),
+        )
+        .sort(),
+    )
+    .toEqual(["/api/items", "session"]);
   expect(
     result.graph.nodes
-      .filter(({ kind }) => kind === "endpoint")
+      .filter(({ kind }) => kind === "storage")
       .flatMap(({ observations }) =>
-        observations.map(({ properties }) => properties.value),
-      ),
-  ).toEqual(["/api/items", "session"]);
+        observations.map(
+          ({ properties }) =>
+            `${String(properties.storage_kind)}:${String(properties.name)}`,
+        ),
+      )
+      .sort(),
+  ).toEqual(["cache-storage:fixture-cache", "indexed-db:fixture-db"]);
   const endpoint = result.graph.nodes.find(
     ({ kind, observations }) =>
       kind === "endpoint" &&

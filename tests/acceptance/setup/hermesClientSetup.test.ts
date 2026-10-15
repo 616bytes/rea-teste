@@ -1,5 +1,5 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { parse } from "yaml";
 import { expect } from "vitest";
 
@@ -310,7 +310,12 @@ for (const selection of ["default", "custom", "suffix", "explicit"] as const) {
     },
   );
 }
-for (const selection of ["missing", "selected", "default"] as const) {
+for (const selection of [
+  "missing",
+  "selected",
+  "default",
+  "symlink",
+] as const) {
   cliTest(
     `Hermes nested homes preserve upstream sticky selection: ${selection}`,
     async ({ cli }) => {
@@ -319,6 +324,16 @@ for (const selection of ["missing", "selected", "default"] as const) {
         process.platform === "win32"
           ? join(home, "AppData", "Local", "hermes")
           : join(home, ".hermes");
+      if (selection === "symlink") {
+        const physicalRoot = join(home, "hermes-data");
+        await mkdir(physicalRoot);
+        await mkdir(dirname(native), { recursive: true });
+        await symlink(
+          physicalRoot,
+          native,
+          process.platform === "win32" ? "junction" : "dir",
+        );
+      }
       const root = join(native, "sub");
       const otherConfig = join(root, "profiles", "other", "config.yaml");
       await mkdir(join(root, "profiles", "other"), { recursive: true });
@@ -327,7 +342,7 @@ for (const selection of ["missing", "selected", "default"] as const) {
       await writeFile(join(root, "config.yaml"), "model: nested-root\n");
       if (selection !== "default")
         await writeFile(join(native, "active_profile"), "coder");
-      if (selection === "selected") {
+      if (selection === "selected" || selection === "symlink") {
         await mkdir(join(root, "profiles", "coder"));
         await writeFile(
           join(root, "profiles", "coder", "config.yaml"),
@@ -354,7 +369,7 @@ for (const selection of ["missing", "selected", "default"] as const) {
         });
       } else {
         const selected =
-          selection === "selected" ? join(root, "profiles", "coder") : root;
+          selection === "default" ? root : join(root, "profiles", "coder");
         expect(plan.exitCode).toBe(0);
         expect(plan.json).toMatchObject({
           status: "planned",

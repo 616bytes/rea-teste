@@ -11,6 +11,10 @@ import {
   classifyReferenceSourcePath,
   detectReferenceSourceLanguage,
 } from "../domain/referenceSourceClassification.js";
+import {
+  nodeModuleFileCandidates,
+  nodeModuleIndexCandidates,
+} from "../domain/javascript/nodeModulePathCandidates.js";
 import type { HistoricalSourceGraphInput } from "../domain/referenceSourceGraph.js";
 import {
   parseReferenceSourceImports,
@@ -137,7 +141,15 @@ const readPackageMains = (
   return mains;
 };
 
-const RESOLUTION_SUFFIXES = ["", ".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx"];
+const SOURCE_RESOLUTION_SUFFIXES = [
+  "",
+  ".ts",
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".tsx",
+  ".jsx",
+];
 
 /** Inventory facts an internal specifier resolves against. */
 interface SpecifierContext {
@@ -171,10 +183,8 @@ const selectPackageMain = (
   if (logicalPathEscapesRoot(target))
     return { to: target, resolution: "unresolved" };
   const selected = context.lookupPath.resolveCandidates([
-    ...RESOLUTION_SUFFIXES.map((suffix) => `${target}${suffix}`),
-    ...RESOLUTION_SUFFIXES.filter((suffix) => suffix !== "").map((suffix) =>
-      posix.join(target, `index${suffix}`),
-    ),
+    ...nodeModuleFileCandidates(target),
+    ...nodeModuleIndexCandidates(target),
   ]);
   return { to: selected ?? index, resolution: "internal" };
 };
@@ -182,6 +192,7 @@ const selectPackageMain = (
 const resolveInternalSpecifier = (
   fromPath: string,
   specifier: string,
+  isRequire: boolean,
   context: SpecifierContext,
 ): { to: string; resolution: "internal" | "unresolved" } => {
   if (posix.isAbsolute(specifier))
@@ -195,14 +206,19 @@ const resolveInternalSpecifier = (
   const directoryReference =
     specifier.endsWith("/") || [".", ".."].includes(posix.basename(specifier));
   // A directory resolves only to an index with an extension; neither Node nor
-  // TypeScript selects an extensionless `index` file.
-  // Keep all sibling-file candidates ahead of competing directory indexes.
+  // TypeScript selects an extensionless `index` file. CommonJS `require` only
+  // probes Node's runtime file extensions; source-only suffixes must not outrank
+  // a directory index or make a sibling .cjs file an implicit require target.
   const fileCandidates = directoryReference
     ? []
-    : RESOLUTION_SUFFIXES.map((suffix) => `${normalized}${suffix}`);
-  const indexCandidates = RESOLUTION_SUFFIXES.filter(
-    (suffix) => suffix !== "",
-  ).map((suffix) => posix.join(normalized, `index${suffix}`));
+    : isRequire
+      ? nodeModuleFileCandidates(normalized)
+      : SOURCE_RESOLUTION_SUFFIXES.map((suffix) => `${normalized}${suffix}`);
+  const indexCandidates = isRequire
+    ? nodeModuleIndexCandidates(normalized)
+    : SOURCE_RESOLUTION_SUFFIXES.filter((suffix) => suffix !== "").map(
+        (suffix) => posix.join(normalized, `index${suffix}`),
+      );
   const candidates = [...fileCandidates, ...indexCandidates];
   // Retain present runtime files first; substitute only a missing counterpart.
   // Counterparts cover explicit filenames, not directory/index resolution.
@@ -253,6 +269,7 @@ const appendFile = (
     const resolved = resolveInternalSpecifier(
       relationship.from_path,
       relationship.to,
+      relationship.kind === "requires",
       context,
     );
     output.relationships.push({

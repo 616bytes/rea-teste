@@ -17,6 +17,13 @@ remain pending. It complements PR #3521 and does not block that PR.
 | What feeds one register in a short instruction sequence? | `trace_native_values` with `ir:"esil"`       | `aoj` plus native `aegf`: decompiler-free ESIL DFG reduction over explicitly selected straight-line instructions. Conditional arms, backward traversal and warnings remain partial/unknown.                                    |
 | How can an agent inspect a smaller result?               | `view_radare2_observation`                   | Retained CFG/instruction/ESIL/p-code pages, original status/logs and raw JSON text pages. No producer rerun. Observations have their own IDs and are not represented as REA Evidence.                                          |
 
+`read_bytes` additionally resolves constants behind native references. It uses
+`iSj`/`p8j` and independent selected-file verification. Native padding does not
+prove initialized coverage; overlays, ambiguous mappings and external-core
+identity remain explicit unknowns. The hexadecimal payload can be paged through
+the retained `byte_hex` facet. Its 1 MiB request bound accounts for expansion
+under the existing 16 MiB capture budget.
+
 These are named tools with validated inputs. Their experimental output envelope
 does not advertise a complete typed output schema. Function queries accept an
 exact hexadecimal entry address; struct queries accept an exact identifier.
@@ -55,8 +62,12 @@ the exact existing loopback `endpoint` and preserves external ownership. No
 external file is reopened or server terminated. Requests are serialized within
 the experiment, dispatched once and never automatically replayed.
 
-Optional `prelude` is an explicit array of caller-selected commands, for example
-`["to /absolute/provided-types.h"]`. Its effects and failures are retained.
+Optional `prelude` is an explicit array of caller-selected commands. Its effects
+and failures are retained. File imports such as `to /absolute/provided-types.h`
+require the selected core's file-access authority; r2mcp can refuse them under
+its sandbox. An explicitly supplied declaration can instead use a quoted `td`
+command without changing those permissions. Neither form establishes that a
+type was recovered from the binary.
 Load-time settings are applied before opening; use `settings` for relocation
 application rather than changing that setting after loading. r2ghidra is the
 recommended decompiler and SSA provider; `pdc` and decompiler-free/ESIL-only
@@ -121,6 +132,8 @@ because its embedded version banner can lag a local rebuild:
 | `a89649caed` | Nested function-pointer member signatures and overlapping union callbacks.                                                        |
 | `a52a9e45d7` | Type-import and lookup failures propagate nonzero status; parse-result ownership is shared and failed edits preserve prior types. |
 | `231253046d` | Named ESIL function/block access scans use byte extents and release owned block-list references.                                  |
+| `28603ffce3` | Sandbox-denied type-file imports report failure without changing sandbox permissions.                                             |
+| `575f104005` | Noninteractive input requests report failure in command status and JSON2.                                                         |
 
 The layout fix does not invent aggregate tail alignment metadata. Full SQLite
 header import still encounters another unsupported parser construct after the

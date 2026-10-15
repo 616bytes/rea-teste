@@ -213,6 +213,27 @@ for (const transport of ["exec", "r2pipe", "r2mcp"]) {
       { signal: AbortSignal.abort() },
     );
     assert.equal(aborted.ok, false);
+    if (transport === "r2pipe") {
+      const limited = createAnalysisExperiment(
+        { transport, path: artifact },
+        { maxRetainedBytes: 0 },
+      );
+      const rejected = await limited.readBytes({
+        address: typedAddress,
+        length: 4,
+      });
+      assert.equal(rejected.ok, false);
+      assert.equal(rejected.error._tag, "AnalysisResourceConstraintError");
+      assert.equal(
+        rejected.error.partialObservation.result.bytes_hex.length,
+        8,
+      );
+      assert.equal(
+        rejected.error.partialObservation.target.sha256_before.length,
+        64,
+      );
+      assert.ok(rejected.error.partialObservation.raw.transcript.length);
+    }
   });
 }
 
@@ -284,6 +305,7 @@ test("analyst MCP advertises valid schemas and pages retained producer facts", a
     });
     assert.ok(analyzed.result.high_pcode.summary.operations > 0);
     assert.equal(analyzed.result.high_pcode.operations, undefined);
+    await verifyBytePages(call);
     const page = await call("view_radare2_observation", {
       observation_id: analyzed.observation_id,
       facet: "flow_operations",
@@ -324,6 +346,34 @@ test("analyst MCP advertises valid schemas and pages retained producer facts", a
     await client.close();
   }
 });
+
+async function verifyBytePages(call) {
+  const bytes = await call("read_bytes", {
+    address: typedAddress,
+    length: 4,
+  });
+  assert.equal(bytes.result.bytes_hex.length, 8);
+  assert.equal(bytes.result.returned_bytes, 4);
+  assert.equal(bytes.result.complete, true);
+  const bytePage = await call("view_radare2_observation", {
+    observation_id: bytes.observation_id,
+    facet: "byte_hex",
+    limit: 2,
+  });
+  assert.equal(bytePage.result.length, 2);
+  assert.equal(bytePage.coverage.complete, true);
+  const rawBytePage = await call("view_radare2_observation", {
+    observation_id: bytes.observation_id,
+    facet: "raw",
+    limit: 2,
+  });
+  assert.equal(rawBytePage.result.length, 2);
+  assert.equal(rawBytePage.coverage.complete, true);
+  assert.equal(
+    rawBytePage.coverage.coverage.file_verification.native_bytes_match,
+    true,
+  );
+}
 
 async function verifyStringNumbers(selected) {
   const result = await probe({

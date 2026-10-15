@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import { connectionSchema } from "./probe.mjs";
 import { viewObservation } from "./analysis-view.mjs";
+import { byteInputSchema } from "./native-bytes.mjs";
 import { projectAnalysisError } from "../../dist/domain/analysisErrorProjection.js";
 import {
   createAnalysisExperiment,
@@ -115,6 +116,19 @@ server.registerTool(
 );
 
 server.registerTool(
+  "read_bytes",
+  {
+    description:
+      "Read a bounded virtual byte range through r2. Complete coverage is true only when native bytes match an independent initialized file-backed range of the unchanged owned target. Padding, overlays, unmapped ranges and external-core identity remain explicit unknowns. Full native responses remain retained.",
+    inputSchema: byteInputSchema,
+    outputSchema,
+    annotations,
+  },
+  async (input, context) =>
+    reply(await experiment.readBytes(input, { signal: context.mcpReq.signal })),
+);
+
+server.registerTool(
   "trace_native_values",
   {
     description:
@@ -139,6 +153,7 @@ server.registerTool(
         "instructions",
         "signature",
         "pseudocode",
+        "byte_hex",
         "flow_operations",
         "flow_edges",
         "flow_parameters",

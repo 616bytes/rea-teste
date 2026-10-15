@@ -7,6 +7,7 @@ function select(result, facet) {
     instructions: result.instructions,
     signature: result.signature,
     pseudocode: result.pseudocode,
+    byte_hex: result.bytes_hex,
     flow_operations: flow.operations,
     flow_edges: flow.def_use,
     flow_parameters: flow.parameters,
@@ -16,7 +17,13 @@ function select(result, facet) {
 
 function coverage(result) {
   const flow = result.high_pcode ?? (result.ir ? result : null);
-  if (!flow) return { limitations: result.limitations ?? [] };
+  if (!flow)
+    return {
+      complete: result.complete ?? null,
+      coverage: result.coverage ?? null,
+      unknowns: result.unknowns ?? [],
+      limitations: result.limitations ?? [],
+    };
   return {
     producer: flow.producer,
     ir: flow.ir,
@@ -44,6 +51,9 @@ export function viewObservation(
   const pageSize = typeof selected === "string" ? limit : Math.min(limit, 200);
   const total = paged ? selected.length : null;
   const target = experiment.view(observation_id, "target");
+  const normalized =
+    facet === "raw" ? experiment.view(observation_id, "result") : retained;
+  if (!normalized.ok) return normalized;
   return {
     ok: true,
     value: {
@@ -58,7 +68,7 @@ export function viewObservation(
         paged && offset + pageSize < total ? offset + pageSize : null,
       unit: typeof selected === "string" ? "utf16-code-units" : "records",
       target: target.ok ? target.value : null,
-      coverage: coverage(retained.value),
+      coverage: coverage(normalized.value),
     },
   };
 }

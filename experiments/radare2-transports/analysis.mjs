@@ -24,6 +24,7 @@ import {
 } from "./analysis-values.mjs";
 import { decodeEsil, decodeHighPcode, traceFlow } from "./analysis-flow.mjs";
 import { sliceNativeEsil } from "./native-esil.mjs";
+import { readNativeBytes } from "./native-bytes.mjs";
 
 export {
   addressSchema,
@@ -373,9 +374,28 @@ export function createAnalysisExperiment(inputConnection, options = {}) {
     }
   }
 
+  async function readBytes(input, request) {
+    const observed = await readNativeBytes(
+      input,
+      (commands) => observe(commands, request),
+      connection.path,
+      request,
+    );
+    if (!observed.ok) return observed;
+    try {
+      return ok({
+        ...retained.add("read_bytes", observed.value),
+        result: observed.value.result,
+      });
+    } catch (cause) {
+      return failure(cause, "Byte retention failed", observed.value);
+    }
+  }
+
   return {
     analyze: serial(analyze),
     inspectType: serial(inspectType),
+    readBytes: serial(readBytes),
     trace: serial(createTrace(analyze, observe, retained)),
     view: retained.view,
     release: retained.release,
@@ -390,6 +410,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const operation = {
     analyze_function: experiment.analyze,
     inspect_native_data_type: experiment.inspectType,
+    read_bytes: experiment.readBytes,
     trace_native_values: experiment.trace,
   }[input.operation];
   const result = operation

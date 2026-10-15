@@ -89,8 +89,7 @@ def agent_command(config, lane, directory):
     custom = config.get("servers", {}).get(lane)
     tools = custom["tools"] if custom else {
         "ghidra": ["open_binary", "procedure_pseudo_code", "procedure_assembly", "close_binary",
-                   "search_strings", "xrefs", "resolve_containing_procedure", "procedure_callees", "analyze_function",
-                   "inspect_native_data_type", "trace_native_values", "view_evidence"],
+                   "search_strings", "xrefs", "resolve_containing_procedure", "procedure_callees", "analyze_function"],
         "r2-exec": ["execute_radare2_command"],
         "r2pipe2": ["start_radare2_session", "radare2_command", "close_radare2_session"],
         "r2mcp-raw": ["open_file", "run_command", "close_file"],

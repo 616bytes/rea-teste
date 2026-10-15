@@ -53,6 +53,7 @@ export const unshadowedReferenceSourceRequireCalls = (
       reference.name === "require" &&
       reference.role === "write" &&
       (reference.resolution === "unbound" ||
+        reference.resolution === "unknown" ||
         reference.bindingId === programRequireBinding),
   );
   const isLoaderReference = (identifier: t.Identifier): boolean => {
@@ -179,7 +180,7 @@ const hasUninitializedTopLevelVarRequire = (program: t.Program): boolean => {
   let found = false;
   let initialized = false;
   traverseJavaScriptAst(program, {
-    enter: (node, _parent, readAncestors) => {
+    enter: (node, parent, readAncestors) => {
       if (!t.isVariableDeclaration(node, { kind: "var" })) return;
       if (
         readAncestors().some(
@@ -191,7 +192,14 @@ const hasUninitializedTopLevelVarRequire = (program: t.Program): boolean => {
         if (!Object.hasOwn(t.getBindingIdentifiers(declaration.id), "require"))
           continue;
         found = true;
-        initialized ||= declaration.init !== null;
+        // A for-in/of head has no initializer yet assigns the binding on
+        // every iteration, so it initializes the loader just as an
+        // assignment does. A bare `for (var require;;)` head stays
+        // uninitialized.
+        initialized ||=
+          declaration.init !== null ||
+          ((t.isForInStatement(parent) || t.isForOfStatement(parent)) &&
+            parent.left === node);
       }
     },
   });

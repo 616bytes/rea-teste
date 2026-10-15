@@ -44,6 +44,18 @@ it("resolves require calls by lexical binding and source mode", async () => {
       "var require;",
       "console.log(require('./loaded.cjs'));",
     ].join("\n"),
+    "for-of-var.cjs": [
+      "for (var require of [() => 'local']) {}",
+      "console.log(require('./throwing.cjs'));",
+    ].join("\n"),
+    "for-in-var.cjs": [
+      "for (var require in ['local']) {}",
+      "try { require('./throwing.cjs'); } catch { console.log('shadowed'); }",
+    ].join("\n"),
+    "with-write.cjs": [
+      "with ({}) { require = () => 'local'; }",
+      "console.log(require('./throwing.cjs'));",
+    ].join("\n"),
     "initialized-var.cjs": [
       "var require = () => 'local';",
       "console.log(require('./throwing.cjs'));",
@@ -87,6 +99,9 @@ it("resolves require calls by lexical binding and source mode", async () => {
     ["nested.cjs", "loaded\nreal\nlocal\n"],
     ["dynamic-with.cjs", "local\n"],
     ["top-level-var.cjs", "loaded\nreal\n"],
+    ["for-of-var.cjs", "local\n"],
+    ["for-in-var.cjs", "shadowed\n"],
+    ["with-write.cjs", "local\n"],
     ["initialized-var.cjs", "local\n"],
     ["assigned-var.cjs", "local\n"],
     ["unbound-esm.mjs", "no-global-require\n"],

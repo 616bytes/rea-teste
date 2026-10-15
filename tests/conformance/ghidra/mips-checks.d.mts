@@ -1,8 +1,22 @@
-import type { MipsElfMetadata } from "../../../src/domain/binaryTargetTypes.js";
+import type {
+  MipsAbiFlags,
+  MipsElfMetadata,
+  MipsGnuAttributes,
+} from "../../../src/domain/binaryTargetTypes.js";
+
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
+
+export type MipsReadelfMetadata = MipsElfMetadata & {
+  readonly abiFlags: MipsAbiFlags;
+  readonly gnuAttributes: MipsGnuAttributes | null;
+};
+export function expectedMipsElfProfile(
+  mips: MipsReadelfMetadata,
+): Readonly<Record<string, JsonValue>>;
 
 export type MipsFloatAbi = "hard" | "soft";
 export interface MipsReadelfFacts {
-  mips: MipsElfMetadata & { readonly gnuAttributes: null };
+  mips: MipsReadelfMetadata & { readonly gnuAttributes: null };
   symbols: Record<string, string>;
 }
 export function parseMipsReadelfSectionTypes(text: string): readonly string[];

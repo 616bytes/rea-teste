@@ -1,8 +1,3 @@
-import type {
-  MipsElfMetadata,
-  MipsGnuAttributes,
-} from "../../../src/domain/binaryTargetTypes.js";
+import type { MipsReadelfMetadata } from "./mips-checks.mjs";
 
-export declare function parsePspReadelfMips(
-  text: string,
-): MipsElfMetadata & { readonly gnuAttributes: MipsGnuAttributes | null };
+export declare function parsePspReadelfMips(text: string): MipsReadelfMetadata;

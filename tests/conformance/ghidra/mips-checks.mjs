@@ -48,6 +48,40 @@ export function parseMipsReadelfSectionTypes(text) {
   });
 }
 
+/** Independent wire-format expectation shared by generic and PSP snapshots. */
+export function expectedMipsElfProfile(mips) {
+  const abi = mips.abiFlags;
+  assert.ok(abi != null, "Fixture ABI declarations must be inspected");
+  assert.notEqual(
+    mips.gnuAttributes,
+    undefined,
+    "Fixture GNU attributes must be inspected",
+  );
+  return {
+    elf_class: mips.elfClass,
+    byte_order: mips.byteOrder,
+    type: mips.type,
+    flags: mips.flags,
+    gnu_attributes:
+      mips.gnuAttributes === null
+        ? null
+        : { fp_abi: mips.gnuAttributes.fpAbi, msa: mips.gnuAttributes.msa },
+    abi_flags: {
+      version: abi.version,
+      isa_level: abi.isaLevel,
+      isa_revision: abi.isaRevision,
+      gpr_size: abi.gprSize,
+      cpr1_size: abi.cpr1Size,
+      cpr2_size: abi.cpr2Size,
+      fp_abi: abi.fpAbi,
+      isa_extension: abi.isaExtension,
+      ases: abi.ases,
+      flags1: abi.flags1,
+      flags2: abi.flags2,
+    },
+  };
+}
+
 /**
  * Parse only the documented GNU readelf fields needed by our tiny fixtures.
  * `rel` objects carry their own symbol checks in mips-relocatable-checks.mjs.

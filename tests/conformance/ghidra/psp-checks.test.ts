@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { it } from "vitest";
+import { expectedMipsElfProfile } from "./mips-checks.mjs";
+import { ghidraMipsProfileParameters } from "../../../src/ghidra/GhidraMipsProfile.js";
+import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
 import { parsePspReadelfMips } from "./psp-fixture.mjs";
 
 // GNU readelf 2.44 output from the maintained PSPDEV v20261001 fixture.
@@ -151,3 +154,26 @@ it("refuses undeclared GNU attributes rather than reporting absence", () => {
     /GNU attributes/u,
   );
 });
+
+it.each([
+  ["absent", metadata],
+  ["declared", `${gnuMetadata}\n${gnuDeclaration}`],
+])(
+  "matches production snapshot serialization for %s GNU facts",
+  (_name, text) => {
+    const mips = parsePspReadelfMips(text);
+    const target = {
+      path: "/fixture/psp.elf",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "elf",
+      architecture: "mips",
+      availableArchitectures: ["mips"],
+      mips,
+    } satisfies BinaryTarget;
+    assert.deepEqual(
+      expectedMipsElfProfile(mips),
+      ghidraMipsProfileParameters(target).mips_elf,
+    );
+  },
+);

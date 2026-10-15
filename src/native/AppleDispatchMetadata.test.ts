@@ -874,4 +874,27 @@ describe("Apple dispatch list scan budget", () => {
         );
     },
   );
+
+  it("keeps a protocol adopted only by an empty-named protocol", () => {
+    const bytes = unmappedProtocolImage("neither");
+    const at = (offset: bigint) => unmappedProtocolSectionBase + offset;
+    bytes.writeBigUInt64LE(at(0x700n), 0x300);
+    bytes.writeBigUInt64LE(at(0x800n), 0x708); // empty parent name
+    bytes.writeBigUInt64LE(at(0x900n), 0x710); // adopted protocol list
+    bytes.writeUInt32LE(72, 0x740);
+    bytes.writeBigUInt64LE(1n, 0x900);
+    bytes.writeBigUInt64LE(at(0xa00n), 0x908);
+    bytes.writeBigUInt64LE(at(0xb00n), 0xa08);
+    bytes.writeUInt32LE(72, 0xa40);
+    bytes.write("ChildProtocol\0", 0xb00);
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.objc_classes).toMatchObject([{ name: "RetainedClass" }]);
+    expect(result.objc_protocols.map(({ name }) => name)).toEqual([
+      "ChildProtocol",
+    ]);
+    expect(unmappedProtocolClassCoverage(result)).toMatchObject({
+      status: "partial",
+      reason: "Protocol 0x100000700: Objective-C protocol has an empty name",
+    });
+  });
 });

@@ -1,5 +1,6 @@
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { fileURLToPath } from "node:url";
+import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 
 import {
   createAnalysisExecution,
@@ -74,7 +75,7 @@ import {
 } from "./GhidraMipsProfile.js";
 import { ghidraRiscvLimitations } from "./GhidraRiscvProfile.js";
 import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
-import { unverifiedGhidraBuildLimitation } from "./GhidraInstallationPolicy.js";
+import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import {
@@ -584,7 +585,10 @@ export const createGhidraProviderClient = (input: {
         ? {}
         : { javaVmName: installation.javaVmName }),
       bridgeScriptPath: fileURLToPath(
-        new URL("../../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
+        new URL(
+          `../../bridge/ghidra/${GHIDRA_BRIDGE_SOURCES.bridge}`,
+          import.meta.url,
+        ),
       ),
       ...(pspExtension?.success === true
         ? { pspExtension: pspExtension.data }
@@ -858,8 +862,16 @@ export const createGhidraProviderClient = (input: {
         if (!result.ok) return result;
         normalized = result.value;
       }
-      if (operation === "inspect_native_data_type") {
-        const address = input.value.address;
+      if (
+        operation === "inspect_native_data_type" &&
+        normalized !== null &&
+        typeof normalized === "object" &&
+        !Array.isArray(normalized) &&
+        normalized.metadata_recovery === undefined
+      ) {
+        // The bridge owns address-space resolution. Enrich its parsed identity;
+        // request parameters retain the caller's spelling.
+        const address = normalized.address;
         if (typeof address === "string") {
           if (target.format === "pe" && nativeAotOwner !== undefined) {
             const started = await client.start(
@@ -883,23 +895,12 @@ export const createGhidraProviderClient = (input: {
             );
             if (!derived.ok) return derived;
           }
-          let metadata:
-            | ReturnType<NativeAotPeResult["readTypeDetail"]>
-            | undefined;
-          metadata = nativeAotOwner?.readTypeDetail(address);
-          if (
-            metadata !== undefined &&
-            normalized !== null &&
-            typeof normalized === "object" &&
-            !Array.isArray(normalized)
-          ) {
-            const nativeResult = normalized as Record<string, JsonValue>;
-            if (nativeResult.metadata_recovery === undefined)
-              normalized = jsonValueSchema.parse({
-                ...nativeResult,
-                metadata_recovery: metadata,
-              });
-          }
+          const metadata = nativeAotOwner?.readTypeDetail(address);
+          if (metadata !== undefined)
+            normalized = jsonValueSchema.parse({
+              ...normalized,
+              metadata_recovery: metadata,
+            });
         }
       }
       if (operation === "inspect_native_load_image") {

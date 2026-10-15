@@ -6,6 +6,9 @@ the maintainer scope decision described in [Contributing](../CONTRIBUTING.md#fai
 Related work: [feature request #2711](https://github.com/morluto/rea/issues/2711)
 and [provider PR #3521](https://github.com/morluto/rea/pull/3521). Coordinate the
 owned command/session work with that PR instead of shipping two implementations.
+This is complementary follow-up work: #3521 does not depend on this proposal,
+HTTP attachment, typed r2mcp mapping, or the separate upstream fixes. The review
+feedback on #3521 is informational and does not request waiting for this PR.
 
 ## Analyst question and proposed boundary
 
@@ -115,6 +118,22 @@ original response. Parse once at the adapter boundary. Explicit `json:true`
 requests native JSON; text commands use `json:false`. Never rerun a command to
 change its output mode after a parse failure.
 
+`cfg.json.num=string` is supported. Native JSON addresses and the r2pipe2 `value`
+can arrive as exact decimal strings; retain those strings and never convert
+64-bit values through JavaScript `Number`. For a provider-selected JSON read,
+`{"cmd":"aflj @e:cfg.json.num=string","json":true}` scopes the encoding to the
+command instead of changing a caller-owned session's global setting. Preserve
+caller-selected output choices on the unrestricted-command surface.
+
+The setting does not rewrite arbitrary printed JSON: `?e 9007199254740993`
+still emits an unquoted number. The experiment therefore also uses the existing
+`lossless-json` dependency at native and MCP decoding boundaries. Unsafe numeric
+literals become exact strings with JSON Pointer, original spelling and
+`producer_type: "json-number"` in separate `numeric_literals` metadata. Native
+strings remain strings without that annotation; safe numbers remain numbers.
+Raw replies remain available. This addresses numeric correctness without making
+an encoding mode a prerequisite for caller-selected commands.
+
 Keep process stderr separate from per-command r2pipe2 logs. A session-wide stderr
 observation cannot prove which command caused every byte. Retain byte counts,
 truncation, decoding loss, partial frames, startup diagnostics and cleanup
@@ -180,7 +199,7 @@ schema validation remain integration work after approval.
 
 Local verification on macOS arm64 used Node 24.18.0/npm 11.16.0, r2mcp 1.8.8,
 and radare2 6.2.5 development commit `679075d13e` with local r2pipe2 producer
-fixes applied. The eight explicit transport checks passed with installed
+fixes applied. The original eight explicit transport checks passed with installed
 r2ghidra. REA's `build:cached`, `check`, `docs:check` and `verify:test-discovery`
 also passed. The TypeScript client's separate URL-encoding regression and fix
 are tracked in [upstream PR #187](https://github.com/radareorg/radare2-r2pipe/pull/187).
@@ -226,16 +245,19 @@ adapters in this checkout, and the separate command/session PR #3521 at
 | IDA                     | Shared inventories, pseudocode, assembly, xrefs and partial dossiers through upstream MCP; attached and headless profiles                                 | Read-only; no complete body ranges, typed references, referenced data or basic blocks; direct callers unavailable in modern/native profiles; live results are not snapshot-replayed |
 | Hopper                  | Shared analysis/dossiers, byte reads, file mappings, GUI position/navigation and names/comments/bookmarks through its bridge                              | Depends on completed GUI analysis; masked byte search is explicitly unavailable; string inventory and reference metadata have documented limits                                     |
 
-Two prototype defects were reproduced during review and remain to be fixed:
+Two prototype defects were reproduced during review:
 
 1. **High priority: unsafe JSON integers silently change.** Sending
    `{"cmd":"?e 9007199254740993","json":true}` through the real owned r2pipe
    transport retained native `res:9007199254740993` but emitted parsed
    `res:9007199254740992`. `JSON.parse` at the common reply boundary loses
-   precision before finite-number validation. Use lossless decoding and an
-   explicit representation policy; never emit a rounded address or numeric fact
-   as authoritative. This is a JavaScript consumer defect, not a radare2 error.
-2. **Medium priority: expected failures lose their category.** An already-aborted
+   precision before finite-number validation. The follow-up fixes the decoder
+   using lossless numeric literals and accepts `cfg.json.num=string` envelopes.
+   Nine real transport checks now pass, including exact numeric decoding over
+   exec/pipe/MCP and native string mode over pipe/MCP/HTTP. The installed r2 was
+   6.2.5 development with the producer corrections now committed as `bf69061a99`;
+   these checks still used the installed r2mcp 1.8.8.
+2. **Medium priority, unresolved: expected failures lose their category.** An already-aborted
    HTTP request, before any dispatch, projected as `unreadable_output` with
    completion `unknown`. The outer catch wraps cancellation and other expected
    failures in `AnalysisOutputError`. Preserve tagged cancellation, deadline,
@@ -256,6 +278,17 @@ arguments as strings and was rejected; the successful run used default analysis
 and inventory options. iaito attachment was confirmed from its webserver source,
 not by operating a running GUI. Ghidra, IDA and Hopper comparison claims are
 source-derived; their engines and comparative performance were not rerun.
+
+The separate upstream r2mcp review reproduced signed JSON integers becoming
+unsigned during pagination (`-1` became `18446744073709551615`).
+[Upstream PR #83](https://github.com/radareorg/radare2-mcp/pull/83) preserves the
+parsed sign without converting the integer through a double. Its real MCP
+regression passes across four content modes; the HTTP response test also passes.
+The full upstream suite stops at a macOS `sym.*` versus `dbg.*` fixture-name
+assertion that also reproduces with the unchanged installed r2mcp.
+That correction is independent of this decoder and #3521, which does
+not use r2mcp. Structured output expansion, typed-tool mapping and other r2mcp
+enhancements remain follow-up work, rather than prerequisites for #3521.
 
 The next implementation should reuse r2mcp for named analysis calls, retain direct
 r2pipe2/raw HTTP access, and attach to iaito through its existing server. Add

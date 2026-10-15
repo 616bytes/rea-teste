@@ -4,6 +4,11 @@ import { randomUUID } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  isSafeNumber,
+  LosslessNumber,
+  parse as parseLossless,
+} from "lossless-json";
 import { z } from "zod";
 import {
   AnalysisInputError,
@@ -13,7 +18,10 @@ import {
 } from "../../dist/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../dist/domain/analysisErrorProjection.js";
 import { err, ok } from "../../dist/domain/result.js";
-import { jsonValueValidationIssue } from "../../dist/domain/jsonValue.js";
+import {
+  jsonValueValidationIssue,
+  MAX_JSON_DEPTH,
+} from "../../dist/domain/jsonValue.js";
 import { runOwnedCommand } from "../../dist/process/OwnedCommand.js";
 import {
   ProviderProcessSupervisor,
@@ -89,7 +97,12 @@ const replySchema = z
   .object({
     error: z.boolean(),
     code: z.number().finite(),
-    value: z.number().finite().optional(),
+    value: z
+      .union([
+        z.number().finite(),
+        z.string().regex(/^(?:-?\d+|0x[\da-f]+)$/iu),
+      ])
+      .optional(),
     res: z.unknown().optional(),
     logs: z
       .array(
@@ -104,10 +117,48 @@ const replySchema = z
       .optional(),
   })
   .passthrough();
+
+// Preserve native strings. Unsafe JSON numbers become exact strings with their
+// original type and spelling identified by JSON Pointer, outside the envelope.
+function losslessJson(text) {
+  const root = { value: parseLossless(text) };
+  const numeric_literals = [];
+  const pending = [{ owner: root, key: "value", pointer: "", depth: 0 }];
+  while (pending.length) {
+    const { owner, key, pointer, depth } = pending.pop();
+    if (depth > MAX_JSON_DEPTH)
+      throw new Error(`JSON exceeds ${MAX_JSON_DEPTH} levels`);
+    const value = owner[key];
+    if (value instanceof LosslessNumber) {
+      if (isSafeNumber(value.value)) owner[key] = Number(value.value);
+      else {
+        owner[key] = value.value;
+        numeric_literals.push({
+          pointer,
+          producer_type: "json-number",
+          literal: value.value,
+        });
+      }
+    } else if (value !== null && typeof value === "object") {
+      for (const child of Object.keys(value)) {
+        const escaped = child.replaceAll("~", "~0").replaceAll("/", "~1");
+        pending.push({
+          owner: value,
+          key: child,
+          pointer: `${pointer}/${escaped}`,
+          depth: depth + 1,
+        });
+      }
+    }
+  }
+  return { value: root.value, numeric_literals };
+}
+
 function r2pipe2Reply(text) {
   let reply;
+  let numeric_literals;
   try {
-    reply = JSON.parse(text);
+    ({ value: reply, numeric_literals } = losslessJson(text));
   } catch (cause) {
     throw new AnalysisProtocolError(
       "Malformed r2pipe2 JSON; command was not retried",
@@ -122,7 +173,7 @@ function r2pipe2Reply(text) {
     throw new AnalysisProtocolError("Invalid r2pipe2 envelope", {
       partialObservation: { raw_reply: text },
     });
-  return {
+  const r2pipe2 = {
     ...reply,
     command_outcome:
       reply.error ||
@@ -130,6 +181,10 @@ function r2pipe2Reply(text) {
       reply.logs?.some((log) => ["ERROR", "FATAL"].includes(log.type))
         ? "reported_error"
         : "no_error_reported",
+  };
+  return {
+    r2pipe2,
+    ...(numeric_literals.length ? { numeric_literals } : {}),
   };
 }
 
@@ -410,7 +465,7 @@ export async function probe(input, options = {}) {
           throw new AnalysisProtocolError(
             "HTTP command returned an unsuccessful status",
           );
-        record({ command, r2pipe2: r2pipe2Reply(reply.output.text) });
+        record({ command, ...r2pipe2Reply(reply.output.text) });
       }
     } else {
       const path = resolve(selected.path);
@@ -441,7 +496,7 @@ export async function probe(input, options = {}) {
             },
           );
           record({ command, output });
-          record({ command, r2pipe2: r2pipe2Reply(output.stdout.text) });
+          record({ command, ...r2pipe2Reply(output.stdout.text) });
         }
       } else {
         const args =
@@ -473,7 +528,7 @@ export async function probe(input, options = {}) {
                 await send(encode(command));
                 const output = decoded(await nextFrame(iterator, signal));
                 record({ command, output });
-                record({ command, r2pipe2: r2pipe2Reply(output.text) });
+                record({ command, ...r2pipe2Reply(output.text) });
               }
             } else {
               let id = 0;
@@ -491,7 +546,13 @@ export async function probe(input, options = {}) {
                   const raw = await nextFrame(iterator, signal);
                   let reply;
                   try {
-                    reply = JSON.parse(raw.toString("utf8"));
+                    const decoded = losslessJson(raw.toString("utf8"));
+                    reply = decoded.value;
+                    if (decoded.numeric_literals.length)
+                      record({
+                        request_id: requestId,
+                        mcp_numeric_literals: decoded.numeric_literals,
+                      });
                   } catch (cause) {
                     throw new AnalysisProtocolError("Malformed MCP JSON", {
                       cause,
@@ -564,7 +625,7 @@ export async function probe(input, options = {}) {
                   throw new AnalysisProtocolError(
                     "r2mcp did not return one text block; raw result retained",
                   );
-                record({ command, r2pipe2: r2pipe2Reply(text[0].text) });
+                record({ command, ...r2pipe2Reply(text[0].text) });
               }
             }
           },

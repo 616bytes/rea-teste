@@ -35,6 +35,13 @@ frames, parsed envelopes and process diagnostics separately. The 16 MiB frame
 and transcript budgets follow REA's current reverse-command capture budget;
 they do not establish production memory bounds or token savings.
 
+`e cfg.json.num=string` is supported, including the r2pipe2 `value` field.
+For individual JSON reads, `aflj @e:cfg.json.num=string` scopes the setting to
+that command. Native strings retain their type; unsafe unquoted JSON numbers
+are decoded as exact strings with separate `numeric_literals` metadata recording
+their JSON Pointer, source type and literal. Safe numbers remain numbers.
+The verifier also exercises this behavior without changing production REA.
+
 The default deadline is 120 seconds for the whole batch. The programmatic `probe`
 accepts a caller `signal`, `timeoutMs`, captured `environment`, and optional HTTP
 `authorization`; authorization and ambient environment are not persisted. HTTP

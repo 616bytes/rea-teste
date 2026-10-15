@@ -132,6 +132,48 @@ for (const transport of ["exec", "r2pipe", "r2mcp"]) {
   });
 }
 
+test("numeric decoding preserves native strings and unsafe JSON literals", async () => {
+  for (const transport of ["exec", "r2pipe", "r2mcp"]) {
+    const result = await probe({
+      transport,
+      path: artifact,
+      commands: [{ cmd: "?e 9007199254740993", json: true }],
+    });
+    assert.equal(replies(result)[0].res, "9007199254740993");
+    assert.deepEqual(
+      result.value.transcript.find((entry) => entry.r2pipe2)?.numeric_literals,
+      [
+        {
+          pointer: "/res",
+          producer_type: "json-number",
+          literal: "9007199254740993",
+        },
+      ],
+    );
+    if (transport === "exec") continue;
+    await verifyStringNumbers({ transport, path: artifact });
+  }
+});
+
+async function verifyStringNumbers(selected) {
+  const result = await probe({
+    ...selected,
+    commands: [
+      "e cfg.json.num=string",
+      { cmd: "?vi 18446744073709551615", json: false },
+      { cmd: "aa;aflj", json: true },
+    ],
+  });
+  const output = replies(result);
+  assert.equal(output[1].value, "18446744073709551615");
+  assert.equal(output[1].res, "-1\n");
+  assert.equal(output[1].code, 0);
+  const main = output[2].res.find((fn) => fn.name.includes("main"));
+  assert.equal(typeof main.addr, "string");
+  assert.ok(BigInt(main.addr) > 0n);
+  assert.ok(result.value.transcript.every((entry) => !entry.numeric_literals));
+}
+
 test("r2pipe2 retains native error status and logs", async () => {
   const result = await probe({
     transport: "r2pipe",
@@ -243,6 +285,7 @@ test("real HTTP: POST r2pipe2 to an existing session without taking ownership", 
     replies(state)[0].res.length > 0,
     "External analysis must remain available",
   );
+  await verifyStringNumbers({ transport: "http", endpoint });
 });
 
 test("HTTP preserves command bytes, status and URL; rejects redirects and remote hosts", async () => {

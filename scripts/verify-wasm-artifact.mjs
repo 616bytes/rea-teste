@@ -44,6 +44,7 @@ const entrypoint =
   process.argv.slice(2).find((arg) => !arg.startsWith("--")) ??
   fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const execute = promisify(execFile);
+const OPERATION_TIMEOUT_MS = 240_000;
 const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
 );
@@ -76,6 +77,8 @@ try {
   throw cause;
 }
 const client = new Client({ name: "wabt-artifact-verifier", version: "1" });
+const callTool = (request) =>
+  client.callTool(request, { timeout: OPERATION_TIMEOUT_MS });
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -128,7 +131,7 @@ try {
                 TMP: childTempRoot,
                 TEMP: childTempRoot,
               },
-              timeout: 120_000,
+              timeout: OPERATION_TIMEOUT_MS,
               maxBuffer: 64 * 1024 * 1024,
             },
           )
@@ -238,7 +241,7 @@ try {
     const cliValue = await inspectCli(input);
     assert.equal(cliValue.category, undefined, JSON.stringify(cliValue));
     const cli = parseEvidence(cliValue);
-    const reply = await client.callTool({
+    const reply = await callTool({
       name: "inspect_wasm_artifact",
       arguments: input,
     });
@@ -332,7 +335,7 @@ try {
         },
       );
     }
-    const bundleReply = await client.callTool({
+    const bundleReply = await callTool({
       name: "get_evidence_bundle",
       arguments: {},
     });
@@ -362,7 +365,7 @@ try {
         JSON.stringify(cliError),
       );
       const error = requireMcpToolError(
-        await client.callTool({
+        await callTool({
           name: "inspect_wasm_artifact",
           arguments: invalidInput,
         }),
@@ -370,7 +373,7 @@ try {
       assert.equal(error.category, "invalid_input");
       const partial = error.details.partial_observation;
       assert.equal(partial.kind, "retained-evidence");
-      const failedBundleReply = await client.callTool({
+      const failedBundleReply = await callTool({
         name: "get_evidence_bundle",
         arguments: {},
       });

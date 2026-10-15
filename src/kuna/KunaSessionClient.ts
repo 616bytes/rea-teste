@@ -12,6 +12,8 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisResourceConstraintError,
+  AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import {
@@ -23,6 +25,7 @@ import type { EvidenceLocation } from "../domain/evidence.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
 import { functionDossierSchema } from "../domain/hopperValues.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -140,6 +143,51 @@ const failure = (operation: string, cause: unknown): AnalysisError =>
         userMessage: `Kuna ${operation} failed: ${message(cause)}`,
       });
 
+/**
+ * How a request that needs the export reports the export's failure. A session
+ * never rebuilds a failed export, so repeating the request cannot succeed; the
+ * error says what to change before reopening the target. Kuna settings are read
+ * when REA starts, so changing one also needs a restart. Cancellation and
+ * unproven cleanup keep their own errors, which callers must still observe.
+ */
+const exportUnavailable = (
+  operation: string,
+  failure: AnalysisError,
+): AnalysisError => {
+  if (failure instanceof AnalysisCancelledError || failure.cleanupIncomplete)
+    return failure;
+  const reason = failure.userMessage ?? failure.message;
+  const exported = projectAnalysisError(failure);
+  const restart =
+    "REA reads Kuna settings when it starts, so restart REA, then reopen the target.";
+  const next =
+    failure instanceof AnalysisTimeoutError
+      ? `To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above ${String(failure.timeoutMs)} ms or raise REA_KUNA_JOBS in the environment that starts REA. ${restart}`
+      : failure instanceof AnalysisResourceConstraintError &&
+          failure.remediationAction !== undefined
+        ? `${failure.remediationAction.replace(/\.?$/u, ".")} ${restart}`
+        : "To retry, resolve the reported failure, then reopen the target.";
+  return new AnalysisCapabilityUnavailableError(
+    KUNA_PROVIDER_ID,
+    operation,
+    reason,
+    {
+      cause: failure,
+      // Callers see only the top-level projection, so the export failure's
+      // own projected code and details (its limits, target path, captured
+      // output and diagnostics) travel whole rather than field by field.
+      diagnostics: {
+        export_error: failure._tag,
+        export_code: exported.code,
+        ...(exported.details === undefined
+          ? {}
+          : { export_details: exported.details }),
+      },
+      userMessage: `Kuna's project export failed, so ${operation} is unavailable in this session: ${reason.replace(/\.?$/u, ".")} ${next}`,
+    },
+  );
+};
+
 /** Kuna names a procedure by its inventory entry or by an exact entry address. */
 const procedureSelectorSchema = z.string().min(1);
 
@@ -147,7 +195,7 @@ const procedureSelectorSchema = z.string().min(1);
  * One Kuna analysis session for one target.
  *
  * Reads come from the verified project export in REA's cache. Until that
- * export exists, listings use a quick `kuna functions` inventory and
+ * export exists, listings use the inventory the export takes first and
  * pseudocode a single-function `kuna decompile`, while the export builds in
  * the background; assembly waits for it. Kuna always runs on a private copy
  * whose digest matches the selected target.
@@ -173,6 +221,10 @@ export class KunaSessionClient implements AnalysisClient {
   #project: Promise<Result<KunaProject, AnalysisError>> | undefined;
   /** The cache lookup that decides #project, shared by concurrent first requests. */
   #starting: Promise<void> | undefined;
+  /** The building export's inventory; undefined when it settles without one. */
+  #exportInventory:
+    | Promise<readonly KunaInventoryFunction[] | undefined>
+    | undefined;
   #reader: KunaProjectReader | undefined;
   #inventoryIndex: InventoryIndex | undefined;
   #status: KunaExportStatus | undefined;
@@ -451,7 +503,7 @@ export class KunaSessionClient implements AnalysisClient {
     return {
       state: "building",
       phase: this.#status?.phase ?? null,
-      inventory_functions: this.#status?.inventoryFunctions ?? null,
+      inventory_functions: this.#status?.inventory?.length ?? null,
     };
   }
 
@@ -1172,6 +1224,12 @@ export class KunaSessionClient implements AnalysisClient {
       this.#project = Promise.resolve(ok(cached));
       return;
     }
+    let listed!: (
+      inventory: readonly KunaInventoryFunction[] | undefined,
+    ) => void;
+    this.#exportInventory = new Promise((resolve) => {
+      listed = resolve;
+    });
     this.#project = this.#cache
       .build({
         installation,
@@ -1180,9 +1238,11 @@ export class KunaSessionClient implements AnalysisClient {
         signal: this.#session.signal,
         onStatus: (status) => {
           this.#status = status;
+          if (status.inventory !== null) listed(status.inventory);
         },
       })
       .then((result) => {
+        listed(result.ok ? result.value.inventory : undefined);
         if (result.ok && !this.#closing) this.#adopt(result.value);
         else if (!result.ok && !this.#closing)
           this.#exportFailure =
@@ -1274,34 +1334,47 @@ export class KunaSessionClient implements AnalysisClient {
     }, WAIT_PROGRESS_INTERVAL_MS);
     try {
       const built = await waitFor(project, options.signal, operation);
-      if (!built.ok) return built;
+      if (!built.ok) return err(exportUnavailable(operation, built.error));
       return ok(this.#readerFor(built.value));
     } finally {
       clearInterval(timer);
     }
   }
 
-  /** The export's inventory when ready, otherwise one quick `kuna functions` run. */
+  /** The published or building export's inventory, otherwise one `kuna functions` run. */
   async #ensureInventory(
     installation: KunaInstallation,
     options: ExecutionOptions,
   ): Promise<Result<readonly KunaInventoryFunction[], AnalysisError>> {
     if (this.#reader !== undefined) return ok(this.#reader.project.inventory);
+    const exported = this.#status?.inventory;
+    if (exported !== undefined && exported !== null) return ok(exported);
     if (this.#inventory === undefined) {
       // The session owns the shared run; each caller only stops waiting.
       const run = this.#listInventory(installation);
       this.#inventory = run;
       void run.then((listed) => {
-        // A failed quick listing is retried by the next request.
+        // A failed listing is retried by the next request.
         if (!listed.ok && this.#inventory === run) this.#inventory = undefined;
       });
     }
     return waitFor(this.#inventory, options.signal, "list_procedures");
   }
 
+  /**
+   * The export lists every callable entry before it decompiles, so listings
+   * wait for that inventory. Only an export that ends without one, or none at
+   * all, leads to a separate `kuna functions` run.
+   */
   async #listInventory(
     installation: KunaInstallation,
   ): Promise<Result<readonly KunaInventoryFunction[], AnalysisError>> {
+    // A concurrent text request may still be choosing between the cache and a
+    // build; its outcome decides whether an inventory already exists.
+    await this.#starting?.catch(() => undefined);
+    if (this.#reader !== undefined) return ok(this.#reader.project.inventory);
+    const exported = await this.#exportInventory;
+    if (exported !== undefined) return ok(exported);
     const run = await this.#commands.run({
       installation,
       arguments: (input) => ["functions", input, "--json"],

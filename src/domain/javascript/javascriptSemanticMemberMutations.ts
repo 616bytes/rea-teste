@@ -54,30 +54,70 @@ type ValueEffect = "write" | "escape";
 
 /** Preserve uncertainty from property writes and references exposed to calls, yielding during traversal and fixpoint iteration. */
 
-/** Whether writing this one-key path assigns through a setter of an own object literal. */
-const writesLocalSetter = (
+/** Setter keys of one object literal; a computed setter key may match any key. */
+interface SetterKeys {
+  readonly names: ReadonlySet<string>;
+  readonly computed: boolean;
+}
+
+// Writes to one literal repeat; scan its properties once, including the
+// common result that it defines no setter.
+const setterKeysByObject = new WeakMap<t.ObjectExpression, SetterKeys | null>();
+
+const setterKeys = (object: t.ObjectExpression): SetterKeys | null => {
+  const cached = setterKeysByObject.get(object);
+  if (cached !== undefined) return cached;
+  const names = new Set<string>();
+  let computed = false;
+  for (const property of object.properties) {
+    if (!t.isObjectMethod(property) || property.kind !== "set") continue;
+    const name = semanticStaticPropertyKey(property.key, property.computed);
+    if (name === null) computed = true;
+    else names.add(name);
+  }
+  const keys = names.size === 0 && !computed ? null : { names, computed };
+  setterKeysByObject.set(object, keys);
+  return keys;
+};
+
+/**
+ * The receiver path whose own object-literal setter an assignment to `path`
+ * runs, following nested literal members from the binding's initializer.
+ */
+const localSetterReceiver = (
   initializers: readonly {
     readonly node: t.Node;
     readonly projection: readonly unknown[];
   }[],
   path: readonly unknown[],
-): boolean => {
-  const [key] = path;
-  if (path.length !== 1 || typeof key !== "string") return false;
-  return initializers.some(({ node, projection }) => {
-    if (projection.length !== 0) return false;
-    const object = unwrapJavaScriptExpression(node).node;
-    return (
-      t.isObjectExpression(object) &&
-      object.properties.some((property) => {
-        if (!t.isObjectMethod(property) || property.kind !== "set")
-          return false;
-        const name = semanticStaticPropertyKey(property.key, property.computed);
-        // A computed setter key may name the written key.
-        return name === null || name === key;
-      })
-    );
-  });
+): readonly string[] | undefined => {
+  const key = path.at(-1);
+  if (typeof key !== "string") return undefined;
+  const receiver = path.slice(0, -1);
+  if (!receiver.every((segment) => typeof segment === "string"))
+    return undefined;
+  for (const { node, projection } of initializers) {
+    if (projection.length !== 0) continue;
+    let object: t.Node | undefined = unwrapJavaScriptExpression(node).node;
+    for (const segment of receiver) {
+      if (!t.isObjectExpression(object)) break;
+      const member: t.ObjectExpression["properties"][number] | undefined =
+        object.properties.findLast(
+          (property) =>
+            t.isObjectProperty(property) &&
+            semanticStaticPropertyKey(property.key, property.computed) ===
+              segment,
+        );
+      object = t.isObjectProperty(member)
+        ? unwrapJavaScriptExpression(member.value).node
+        : undefined;
+    }
+    if (!t.isObjectExpression(object)) continue;
+    const keys = setterKeys(object);
+    if (keys !== null && (keys.computed || keys.names.has(key)))
+      return receiver as readonly string[];
+  }
+  return undefined;
 };
 
 export function* collectSemanticMemberMutationsSteps(
@@ -406,8 +446,14 @@ export function* collectSemanticMemberMutationsSteps(
                 );
         // A setter on the binding's own literal runs on assignment and may
         // replace any member of its receiver, so the written key is unknown.
-        if (effect === "write" && writesLocalSetter(origins.initializers, path))
-          path = [null];
+        // Deleting the accessor never calls it.
+        if (
+          effect === "write" &&
+          !t.isUnaryExpression(mutation, { operator: "delete" })
+        ) {
+          const receiver = localSetterReceiver(origins.initializers, path);
+          if (receiver !== undefined) path = [...receiver, null];
+        }
         // Keep an antichain of exact paths. Widening distinct member keys would
         // also invalidate unrelated siblings that never reach this effect.
         // This map is local to the file scan. Escaping the binding id keeps a

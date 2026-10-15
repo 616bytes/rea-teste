@@ -12,8 +12,10 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectEvmInterfaceInputSchema,
   evmInterfaceSchema,
+  matchesEvmInterfaceInput,
 } from "../../domain/evm/evmInterface.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 const OPERATION = "inspect_evm_interface";
@@ -65,8 +67,7 @@ export class EvmInterfaceService {
     const report = evmInterfaceSchema.safeParse(execution.result);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
-      report.data.artifact.encoding !== input.data.encoding ||
+      !matchesEvmInterfaceInput(report.data, input.data) ||
       execution.subject?.format !== "file" ||
       execution.subject?.path !== input.data.path ||
       execution.subject.sha256 !== report.data.artifact.sha256
@@ -82,7 +83,7 @@ export class EvmInterfaceService {
       createEvidence(execution.subject, execution.provider, {
         operation: OPERATION,
         parameters: input.data,
-        result: report.data,
+        result: jsonValueSchema.parse(report.data),
         ...(execution.rawResult === null
           ? {}
           : { rawResult: execution.rawResult }),

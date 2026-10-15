@@ -16,7 +16,11 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY . .
+COPY --chown=node:node . .
+
+RUN chown node:node /app
+
+USER node
 
 RUN npm ci \
     && npm run build:cached

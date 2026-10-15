@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { access } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import type { HopperStartupDiagnostic } from "../../../../src/domain/hopperStartupFailure.js";
@@ -402,5 +402,89 @@ describe("HopperClient startup failures", () => {
         },
       },
     });
+  });
+});
+
+describe("HopperClient readiness telemetry", () => {
+  it("reports a readiness wait as starting instead of idle", async () => {
+    const client = new HopperClient({
+      launcher: new SilentLauncher(),
+      startupTimeoutMs: 30_000,
+    });
+    clients.push(client);
+    // The silent launcher never creates the bridge socket, so startup stays in
+    // the readiness wait until the deadline. While that wait is outstanding the
+    // session must be able to tell a starting provider from an idle one.
+    const starting = client.start();
+    void starting.catch(() => undefined);
+    await vi.waitFor(() =>
+      expect(client.operationHealth()).toMatchObject({
+        state: "starting",
+        retryAction: "wait",
+        exitCode: null,
+        requests: [],
+      }),
+    );
+    expect(client.isReady()).toBe(false);
+    expect(client.requestActivity()).toBeNull();
+  });
+
+  it("does not report starting while a closing client finishes cleanup", async () => {
+    let releaseCleanup: (() => void) | undefined;
+    let child: ChildProcess | undefined;
+    let launched = false;
+    let released = false;
+    const launcher: BridgeLauncher = {
+      launch() {
+        child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+          stdio: "ignore",
+        });
+        launched = true;
+        return Promise.resolve(
+          ok({
+            process: child,
+            ownsProcessLifetime: true as const,
+            providerLifetime: "launcher-process" as const,
+            shutdownMode: "process-cleanup" as const,
+            cleanup: () =>
+              new Promise((resolve) => {
+                const settle = () => {
+                  released = true;
+                  child?.kill("SIGKILL");
+                  resolve({ cleaned: true as const, signaled: true });
+                };
+                releaseCleanup = settle;
+                // A failure path may release before cleanup is installed; a
+                // pending promise must not outlive the shared afterEach.
+                if (released) settle();
+              }),
+          }),
+        );
+      },
+    };
+    const client = new HopperClient({ launcher, startupTimeoutMs: 30_000 });
+    clients.push(client);
+    let closing: Promise<unknown> | undefined;
+    try {
+      const starting = client.start();
+      void starting.catch(() => undefined);
+      // `starting` is reported as soon as `start()` marks a pending attempt,
+      // which can precede the launcher running. Wait for the launch so `close()`
+      // cannot abort startup before the paused cleanup is installed.
+      await vi.waitFor(() => expect(launched).toBe(true));
+      expect(client.operationHealth()).toMatchObject({ state: "starting" });
+      // close() records the closing state synchronously, before cleanup starts.
+      closing = client.close();
+      expect(client.operationHealth().state).not.toBe("starting");
+      await vi.waitFor(() => expect(releaseCleanup).toBeDefined());
+      expect(client.operationHealth().state).not.toBe("starting");
+    } finally {
+      // Release the paused cleanup and the child on every path so the shared
+      // afterEach never waits on an unfinished close.
+      released = true;
+      releaseCleanup?.();
+      child?.kill("SIGKILL");
+      await closing?.catch(() => undefined);
+    }
   });
 });

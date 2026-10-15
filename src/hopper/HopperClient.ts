@@ -127,6 +127,8 @@ export class HopperClient {
   #operationFailure: OperationFailureRecord | undefined;
   #startupController: AbortController | undefined;
   #ready = false;
+  /** The start attempt still settling; undefined once it has resolved. */
+  #pendingStart: Promise<Result<HopperServerInfo, AnalysisError>> | undefined;
   #startupFailureResult: AnalysisError | undefined;
   #runId: string | undefined;
   #startPromise: Promise<Result<HopperServerInfo, AnalysisError>> | undefined;
@@ -254,6 +256,22 @@ export class HopperClient {
         ],
       };
     }
+    // An outstanding readiness wait is not idle work: the bridge has not
+    // completed its authenticated handshake, so surface it as starting rather
+    // than reporting an idle provider with no activity. Only a still-settling
+    // start counts; a cached start result or a closing client is not starting.
+    if (
+      this.#pendingStart !== undefined &&
+      this.#closePromise === undefined &&
+      !this.isReady()
+    )
+      return {
+        state: "starting",
+        stage: "launch",
+        retryAction: "wait",
+        exitCode: null,
+        requests: [],
+      };
     return {
       state: "idle",
       stage: null,
@@ -291,8 +309,14 @@ export class HopperClient {
     const started = this.#start(controller.signal);
     this.#startupController = controller;
     this.#startPromise = started;
+    this.#pendingStart = started;
     const release = (): void => {
       signal?.removeEventListener("abort", onAbort);
+    };
+    const settle = (): void => {
+      // The cached start result outlives the attempt; only this token marks a
+      // lifecycle transition that is still settling.
+      if (this.#pendingStart === started) this.#pendingStart = undefined;
     };
     const reset = (): void => {
       if (this.#startPromise === started) {
@@ -302,23 +326,25 @@ export class HopperClient {
         }
       }
     };
-    void started.then(
-      (result) => {
-        release();
-        if (!result.ok) {
-          this.#rememberStartupFailure(result.error);
+    void started
+      .then(
+        (result) => {
+          release();
+          if (!result.ok) {
+            this.#rememberStartupFailure(result.error);
+            reset();
+          } else this.#ready = true;
+        },
+        (cause: unknown) => {
+          this.#logger.debug(
+            { error: cause instanceof Error ? cause.message : String(cause) },
+            "Hopper startup promise rejected during bookkeeping",
+          );
+          release();
           reset();
-        } else this.#ready = true;
-      },
-      (cause: unknown) => {
-        this.#logger.debug(
-          { error: cause instanceof Error ? cause.message : String(cause) },
-          "Hopper startup promise rejected during bookkeeping",
-        );
-        release();
-        reset();
-      },
-    );
+        },
+      )
+      .finally(settle);
     return started;
   }
 

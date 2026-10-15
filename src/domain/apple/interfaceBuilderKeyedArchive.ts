@@ -327,7 +327,10 @@ const parseKeyedArchive = (
     if (index === 0) continue;
     const resolved = record(resolve(raw));
     const className = firstString(resolved.className);
-    if (className === null) continue;
+    // An archived object names its class with its own `$class` reference;
+    // when that reference cannot be resolved the object is still observed,
+    // with an unknown class. Scalars and class descriptors are not objects.
+    if (className === null && !Object.hasOwn(record(raw), "$class")) continue;
     objectCount += 1;
     const fields = Object.fromEntries(
       Object.entries(resolved).filter(([key]) => key !== "className"),
@@ -357,6 +360,7 @@ const parseKeyedArchive = (
         }),
       );
     if (
+      className !== null &&
       /(?:Outlet|Connection|Segue|ActionConnection|ControlConnector)/iu.test(
         className,
       )

@@ -156,6 +156,35 @@ describe("compiled Interface Builder graph projection", () => {
   });
 });
 
+describe("keyed archive objects with unresolved classes", () => {
+  it("keeps an archived object whose class reference cannot be resolved", () => {
+    const parsed = parseInterfaceBuilderRecords({
+      $archiver: "NSKeyedArchiver",
+      $version: 100000,
+      $objects: [
+        "$null",
+        { $class: { UID: 99 }, label: "Unresolved object" },
+        { $classname: "UIView", $classes: ["UIView", "NSObject"] },
+        { $class: { UID: 2 }, "NS.string": "ok" },
+        "plain scalar",
+      ],
+      $top: { root: { UID: 3 } },
+    });
+    // The class descriptor and the scalar are not archived objects.
+    expect(parsed.objects).toMatchObject([
+      {
+        id: "1",
+        kind: "other",
+        class_name: null,
+        name: "Unresolved object",
+        attributes: { label: "Unresolved object" },
+      },
+      { id: "3", kind: "view", class_name: "UIView" },
+    ]);
+    expect(parsed.objectCount).toBe(2);
+  });
+});
+
 describe("Interface Builder parser bounds", () => {
   it("reports connections discarded by the parser's hard ceiling", () => {
     const connections = Array.from({ length: 40_001 }, (_, index) => ({

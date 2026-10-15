@@ -34,14 +34,15 @@ export class SemanticObjectReferenceSet {
     const owner = reference.ownerInitializer;
     if (owner !== undefined && !this.#owners.has(owner))
       this.#owners.set(owner, ++this.#ownerCount);
+    // Escaping a primitive cannot cover a write to its slot; retain both effects.
     const key = JSON.stringify([
       reference.path,
       owner === undefined ? null : this.#owners.get(owner),
+      reference.escapes === true,
     ]);
     const paths =
       this.#nodes.get(reference.node) ?? new Map<string, Reference>();
-    const previous = paths.get(key);
-    if (previous === undefined || reference.escapes) paths.set(key, reference);
+    paths.set(key, reference);
     this.#nodes.set(reference.node, paths);
   }
 
@@ -63,9 +64,8 @@ export class SemanticGetterQuery {
   constructor(readonly state: JavaScriptSemanticAnalysisState) {}
 
   retain(reference: Reference, escapes = false): void {
-    this.#references.add(
-      this.#fallback || escapes ? { ...reference, escapes: true } : reference,
-    );
+    // Direct fields keep their write suffix; only getter jobs widen omitted paths.
+    this.#references.add(escapes ? { ...reference, escapes: true } : reference);
   }
 
   #known(

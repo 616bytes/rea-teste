@@ -26,6 +26,62 @@ const expectUnrelatedFacts = (
   );
 };
 
+it.each([
+  [
+    "instance field",
+    "class C { slot = shared; get loop() { return this.loop.more; } }",
+    "new C()",
+  ],
+  [
+    "static field",
+    "class C { static slot = shared; static get loop() { return this.loop.more; } }",
+    "C",
+  ],
+  [
+    "inherited field",
+    "class Base { slot = shared; get loop() { return this.loop.more; } } class C extends Base {}",
+    "new C()",
+  ],
+  [
+    "field also reached by an escaped getter result",
+    "class C { slot = shared; get leaf() { return this.slot.x; } get loop() { return this.loop.more; } }",
+    "new C()",
+  ],
+])(
+  "preserves direct writes through %s during getter retry",
+  (_name, setup, receiver) => {
+    const ir = analyzeJavaScriptSemantics(`
+    import imported from "dep";
+    const shared = { x: 1 };
+    ${setup}
+    ${receiver}[key].x = 2;
+    const result = shared.x;
+    const unrelated = 42;
+  `);
+    expect(onlyBinding(ir, "result").value.status).toBe("unknown");
+    expect(ir.coverage.resourceLimits).toEqual(["getter-expansion"]);
+    expectUnrelatedFacts(ir);
+  },
+);
+
+it("preserves direct field writes with 600 acyclic getters during retry", () => {
+  const getters = Array.from(
+    { length: 600 },
+    (_, index) => `get field${index}() { return this._field${index}; }`,
+  ).join("\n");
+  const ir = analyzeJavaScriptSemantics(`
+    import imported from "dep";
+    const shared = { x: 1 };
+    class C { slot = shared; ${getters} }
+    new C()[key].x = 2;
+    const result = shared.x;
+    const unrelated = 42;
+  `);
+  expect(onlyBinding(ir, "result").value.status).toBe("unknown");
+  expect(ir.coverage.resourceLimits).toEqual(["getter-expansion"]);
+  expectUnrelatedFacts(ir);
+});
+
 it("does not memoize ancestry-pruned results reached through an independent branch", () => {
   const ir = analyzeJavaScriptSemantics(`
     import imported from "dep";

@@ -9,6 +9,7 @@ import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AdbOperation } from "../domain/adb/adbDeviceAnalysis.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -23,10 +24,25 @@ export const registerAdbCommands = (
   ),
 ): void => {
   const service = new AdbDeviceAnalysisService(provider);
-  const execute = (name: string, operation: AdbOperation, input: unknown) =>
+  /**
+   * Resolve caller input inside the same logging, exit-code and cancellation
+   * boundary as execution, so an unreadable input fails the command.
+   */
+  const executeResolved = (
+    name: string,
+    operation: AdbOperation,
+    resolveInput: () => Promise<
+      | { readonly ok: true; readonly value: unknown }
+      | { readonly ok: false; readonly error: JsonValue }
+    >,
+  ) =>
     withCommandCancellation((signal) =>
       logCliCommand(logger, name, async () => {
-        const result = await service.execute(operation, input, { signal });
+        const input = await resolveInput();
+        if (!input.ok) return input.error;
+        const result = await service.execute(operation, input.value, {
+          signal,
+        });
         try {
           await provider.close();
         } catch (cause) {
@@ -36,6 +52,10 @@ export const registerAdbCommands = (
         }
         return result.ok ? result.value : projectAnalysisError(result.error);
       }),
+    );
+  const execute = (name: string, operation: AdbOperation, input: unknown) =>
+    executeResolved(name, operation, () =>
+      Promise.resolve({ ok: true as const, value: input }),
     );
 
   const serial = z
@@ -505,19 +525,24 @@ export const registerAdbCommands = (
         .optional()
         .describe("Delay after each action in milliseconds (default 300)"),
     }),
-    run: async ({ args, options }) => {
-      const actions = await parseCliJsonInput(
-        options.actions,
-        "send_adb_input",
-      );
-      if (!actions.ok) return actions.error;
-      return execute(CLI_COMMANDS.sendAdbInput, "send_adb_input", {
-        serial: args.serial,
-        actions: actions.value,
-        ...(options["settle-ms"] === undefined
-          ? {}
-          : { settle_ms: options["settle-ms"] }),
-      });
-    },
+    run: ({ args, options }) =>
+      executeResolved(CLI_COMMANDS.sendAdbInput, "send_adb_input", async () => {
+        const actions = await parseCliJsonInput(
+          options.actions,
+          "send_adb_input",
+        );
+        return actions.ok
+          ? {
+              ok: true,
+              value: {
+                serial: args.serial,
+                actions: actions.value,
+                ...(options["settle-ms"] === undefined
+                  ? {}
+                  : { settle_ms: options["settle-ms"] }),
+              },
+            }
+          : actions;
+      }),
   });
 };

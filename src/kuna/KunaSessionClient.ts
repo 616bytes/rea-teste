@@ -12,6 +12,8 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisResourceConstraintError,
+  AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import {
@@ -139,6 +141,44 @@ const failure = (operation: string, cause: unknown): AnalysisError =>
         cause,
         userMessage: `Kuna ${operation} failed: ${message(cause)}`,
       });
+
+/**
+ * How a request that needs the export reports the export's failure. A session
+ * never rebuilds a failed export, so repeating the request cannot succeed; the
+ * error says what to change before reopening the target. Cancellation and
+ * unproven cleanup keep their own errors, which callers must still observe.
+ */
+const exportUnavailable = (
+  operation: string,
+  failure: AnalysisError,
+): AnalysisError => {
+  if (failure instanceof AnalysisCancelledError || failure.cleanupIncomplete)
+    return failure;
+  const reason = failure.userMessage ?? failure.message;
+  const change =
+    failure instanceof AnalysisTimeoutError
+      ? `raise REA_KUNA_PROJECT_TIMEOUT_MS above ${String(failure.timeoutMs)} ms or REA_KUNA_JOBS`
+      : failure instanceof AnalysisResourceConstraintError &&
+          failure.remediationAction !== undefined
+        ? failure.remediationAction.replace(/\.$/u, "")
+        : "resolve the reported failure";
+  return new AnalysisCapabilityUnavailableError(
+    KUNA_PROVIDER_ID,
+    operation,
+    reason,
+    {
+      cause: failure,
+      diagnostics: {
+        ...failure.diagnostics,
+        export_error: failure._tag,
+        ...(failure instanceof AnalysisTimeoutError
+          ? { timeout_ms: failure.timeoutMs }
+          : {}),
+      },
+      userMessage: `Kuna's project export failed, so ${operation} is unavailable in this session: ${reason.replace(/\.?$/u, ".")} To retry, ${change}, then reopen the target.`,
+    },
+  );
+};
 
 /** Kuna names a procedure by its inventory entry or by an exact entry address. */
 const procedureSelectorSchema = z.string().min(1);
@@ -1274,7 +1314,7 @@ export class KunaSessionClient implements AnalysisClient {
     }, WAIT_PROGRESS_INTERVAL_MS);
     try {
       const built = await waitFor(project, options.signal, operation);
-      if (!built.ok) return built;
+      if (!built.ok) return err(exportUnavailable(operation, built.error));
       return ok(this.#readerFor(built.value));
     } finally {
       clearInterval(timer);

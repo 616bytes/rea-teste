@@ -15,6 +15,7 @@ import { expect, it as test, vi } from "vitest";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../../../src/domain/jsonValue.js";
 import type { KunaProcessLauncher } from "../../../../src/kuna/KunaCommand.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "../../../../src/kuna/KunaLimits.js";
 import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
@@ -753,6 +754,55 @@ it("reports a failed export as failed rather than building", async () => {
   });
   await client.close();
 });
+
+it.each([
+  {
+    behavior: { project: "hang" } as const,
+    environment: { REA_KUNA_PROJECT_TIMEOUT_MS: "300" },
+    cause: "AnalysisTimeoutError",
+    change: "raise REA_KUNA_PROJECT_TIMEOUT_MS above 300 ms or REA_KUNA_JOBS",
+  },
+  {
+    behavior: { project: "exit-failure" } as const,
+    environment: {},
+    cause: "ProviderAdapterError",
+    change: "resolve the reported failure",
+  },
+])(
+  "reports a failed export as not retryable in its session ($cause)",
+  async ({ behavior, environment, cause, change }) => {
+    const { open } = await session(
+      "rea-kuna-export-unavailable-",
+      behavior,
+      environment,
+    );
+    const client = open();
+    try {
+      for (const operation of [
+        "procedure_assembly",
+        "analyze_function",
+      ] as const) {
+        const result = await client.execute(operation, { procedure: "main" });
+        if (result.ok) throw new Error(`${operation} unexpectedly succeeded`);
+        expect(result.error).toMatchObject({
+          _tag: "AnalysisCapabilityUnavailableError",
+          retryable: false,
+          diagnostics: { export_error: cause },
+          userMessage: expect.stringContaining(
+            `To retry, ${change}, then reopen the target.`,
+          ),
+        });
+        expect((result.error.cause as { _tag?: string })._tag).toBe(cause);
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          code: "capability_unavailable",
+          retryable: false,
+        });
+      }
+    } finally {
+      expect(await client.close()).toEqual({ ok: true, value: null });
+    }
+  },
+);
 
 it("lets one caller stop waiting for the shared inventory without failing another", async () => {
   const { open } = await session("rea-kuna-shared-inventory-", {

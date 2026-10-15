@@ -310,6 +310,77 @@ for (const selection of ["default", "custom", "suffix", "explicit"] as const) {
     },
   );
 }
+for (const selection of ["missing", "selected", "default"] as const) {
+  cliTest(
+    `Hermes nested homes preserve upstream sticky selection: ${selection}`,
+    async ({ cli }) => {
+      const home = await createTestTempDirectory("rea-hermes-nested-");
+      const native =
+        process.platform === "win32"
+          ? join(home, "AppData", "Local", "hermes")
+          : join(home, ".hermes");
+      const root = join(native, "sub");
+      const otherConfig = join(root, "profiles", "other", "config.yaml");
+      await mkdir(join(root, "profiles", "other"), { recursive: true });
+      await writeFile(otherConfig, "model: other\n");
+      await writeFile(join(root, "active_profile"), "other");
+      await writeFile(join(root, "config.yaml"), "model: nested-root\n");
+      if (selection !== "default")
+        await writeFile(join(native, "active_profile"), "coder");
+      if (selection === "selected") {
+        await mkdir(join(root, "profiles", "coder"));
+        await writeFile(
+          join(root, "profiles", "coder", "config.yaml"),
+          "model: nested-coder\n",
+        );
+      }
+      const plan = await cli.run({
+        arguments: ["setup", "--client", "hermes", "--dry-run", "--json"],
+        cwd: home,
+        environment: {
+          USERPROFILE: home,
+          LOCALAPPDATA: join(home, "AppData", "Local"),
+          HERMES_HOME: root,
+        },
+        timeoutMs: 20_000,
+      });
+      if (selection === "missing") {
+        expect(plan.exitCode).toBe(1);
+        expect(plan.json).toMatchObject({
+          status: "needs_human",
+          plannedActions: [],
+          appliedActions: [],
+          remediation: expect.stringContaining('Hermes profile "coder"'),
+        });
+      } else {
+        const selected =
+          selection === "selected" ? join(root, "profiles", "coder") : root;
+        expect(plan.exitCode).toBe(0);
+        expect(plan.json).toMatchObject({
+          status: "planned",
+          plannedActions: expect.arrayContaining([
+            expect.objectContaining({ target: join(selected, "config.yaml") }),
+            expect.objectContaining({
+              target: join(selected, "skills", "reverse-engineer-anything"),
+            }),
+          ]),
+          appliedActions: [],
+        });
+      }
+      expect(await readFile(otherConfig, "utf8")).toBe("model: other\n");
+      expect(await readFile(join(root, "config.yaml"), "utf8")).toBe(
+        "model: nested-root\n",
+      );
+      await expect(access(`${otherConfig}.rea.backup`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(access(join(root, "skills"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+}
+
 for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
   cliTest(
     `Hermes rejects unusable sticky profile ${name} without writing a fallback home`,

@@ -5,10 +5,11 @@ description: Prepare or rewrite REA release changelogs and GitHub release notes 
 
 # REA changelog update
 
-Use this for release-note preparation and contributor attribution. Read
-[docs/releasing.md](../../../docs/releasing.md) from the repository root for
-publication authority and the existing checkpoint checks. This skill prepares
-notes; it does not authorize merging, tagging, or publishing.
+Use this for release-note preparation and contributor attribution. In an active
+REA checkout, read `docs/releasing.md` from the repository root for publication
+authority and existing checkpoint checks. If the skill is installed without a
+checkout, use the [upstream release guide](https://github.com/morluto/rea/blob/main/docs/releasing.md).
+This skill prepares notes; it does not authorize merging, tagging, or publishing.
 
 ## Inventory before prose
 

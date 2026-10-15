@@ -276,12 +276,13 @@ export class EvidenceLedger {
     } catch (cause: unknown) {
       return err(new UnknownRegistryError("invalid-transition", { cause }));
     }
-    const existingUnknown = this.#unknownHeads.get(unknown.unknown_id);
+    // Replay identity belongs to the immutable creation revision. The current
+    // head may contain analyst edits or a resolution that replay must preserve.
+    const existingUnknown = this.#unknownRevisions.get(
+      unknownRevisionKey(unknown),
+    );
     if (existingUnknown !== undefined) {
-      if (
-        existingUnknown.revision !== 1 ||
-        existingUnknown.revision_digest !== unknown.revision_digest
-      )
+      if (existingUnknown.revision_digest !== unknown.revision_digest)
         return err(new UnknownRegistryError("already-exists"));
       const checked = this.#appendIncremental([evidence]);
       if (!checked.ok) return checked;

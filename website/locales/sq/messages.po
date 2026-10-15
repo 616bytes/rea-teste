@@ -183,12 +183,12 @@ msgstr "Nga N0zoM1z0 · 10 tetor 2026"
 #: website/public/examples/dino-lab/index.html:473
 #: website/public/faq/index.html:571
 #: website/public/first-investigation/index.html:532
-#: website/public/get-started/index.html:1815
+#: website/public/get-started/index.html:1823
 #: website/public/guides/browser/index.html:505
 #: website/public/guides/index.html:280
 #: website/public/guides/javascript/index.html:501
 #: website/public/guides/native/index.html:507 website/public/index.html:1220
-#: website/public/showcase/aegis/index.html:806
+#: website/public/showcase/aegis/index.html:809
 #: website/public/showcase/ctf/index.html:775
 #: website/public/showcase/dx-ball/index.html:783
 #: website/public/showcase/index.html:315
@@ -205,12 +205,12 @@ msgstr "Burimi"
 #: website/public/examples/dino-lab/index.html:474
 #: website/public/faq/index.html:572
 #: website/public/first-investigation/index.html:533
-#: website/public/get-started/index.html:1816
+#: website/public/get-started/index.html:1824
 #: website/public/guides/browser/index.html:506
 #: website/public/guides/index.html:281
 #: website/public/guides/javascript/index.html:502
 #: website/public/guides/native/index.html:508 website/public/index.html:1221
-#: website/public/showcase/aegis/index.html:807
+#: website/public/showcase/aegis/index.html:810
 #: website/public/showcase/ctf/index.html:776
 #: website/public/showcase/dx-ball/index.html:784
 #: website/public/showcase/index.html:316
@@ -227,12 +227,12 @@ msgstr "licencë MIT"
 #: website/public/examples/dino-lab/index.html:475
 #: website/public/faq/index.html:573
 #: website/public/first-investigation/index.html:534
-#: website/public/get-started/index.html:1817
+#: website/public/get-started/index.html:1825
 #: website/public/guides/browser/index.html:507
 #: website/public/guides/index.html:282
 #: website/public/guides/javascript/index.html:503
 #: website/public/guides/native/index.html:509 website/public/index.html:1222
-#: website/public/showcase/aegis/index.html:808
+#: website/public/showcase/aegis/index.html:811
 #: website/public/showcase/ctf/index.html:777
 #: website/public/showcase/dx-ball/index.html:785
 #: website/public/showcase/index.html:317
@@ -249,12 +249,12 @@ msgstr "Bashkohuni me komunitetin"
 #: website/public/examples/dino-lab/index.html:476
 #: website/public/faq/index.html:574
 #: website/public/first-investigation/index.html:535
-#: website/public/get-started/index.html:1818
+#: website/public/get-started/index.html:1826
 #: website/public/guides/browser/index.html:508
 #: website/public/guides/index.html:283
 #: website/public/guides/javascript/index.html:504
 #: website/public/guides/native/index.html:510 website/public/index.html:1223
-#: website/public/showcase/aegis/index.html:809
+#: website/public/showcase/aegis/index.html:812
 #: website/public/showcase/ctf/index.html:778
 #: website/public/showcase/dx-ball/index.html:786
 #: website/public/showcase/index.html:318
@@ -273,12 +273,12 @@ msgstr "Na ndiqni në X"
 #: website/public/examples/dino-lab/index.html:481
 #: website/public/faq/index.html:579
 #: website/public/first-investigation/index.html:540
-#: website/public/get-started/index.html:1823
+#: website/public/get-started/index.html:1831
 #: website/public/guides/browser/index.html:513
 #: website/public/guides/index.html:288
 #: website/public/guides/javascript/index.html:509
 #: website/public/guides/native/index.html:515 website/public/index.html:1228
-#: website/public/showcase/aegis/index.html:814
+#: website/public/showcase/aegis/index.html:817
 #: website/public/showcase/ctf/index.html:783
 #: website/public/showcase/dx-ball/index.html:791
 #: website/public/showcase/index.html:323
@@ -4698,8 +4698,9 @@ msgid ""
 "If your agent can’t download files, unzip this archive yourself. Give it the"
 " path to the {ph0} folder and the same export question."
 msgstr ""
-"Nëse agjenti juaj nuk mund të shkarkojë skedarë, hiqni vetë këtë arkiv. "
-"Jepini shtegun për në dosjen {ph0} dhe të njëjtën pyetje për eksport."
+"Nëse agjenti juaj nuk mund të shkarkojë skedarë, shpaketojeni vetë këtë "
+"arkiv. Jepini shtegun e dosjes {ph0} dhe bëjini të njëjtën pyetje për "
+"eksportin."
 
 #: website/public/first-investigation/index.html:331
 msgctxt "page:first-investigation/index.html"
@@ -4941,7 +4942,7 @@ msgid ""
 "{ph0}How DX-Ball calculates sound panning{ph1}{ph2}Read the original "
 "instructions and the reconstruction’s checks.{ph3}"
 msgstr ""
-"{ph0}Si DX-Ball llogarit panazhimin e zërit{ph1}{ph2}Lexo udhëzimet "
+"{ph0}Si DX-Ball llogarit panoramimin e zërit{ph1}{ph2}Lexo udhëzimet "
 "origjinale dhe kontrollet e rindërtimit.{ph3}"
 
 #. {ph0}: <a href="../faq/#troubleshooting" >
@@ -5063,37 +5064,37 @@ msgstr "Terminali"
 #: website/public/get-started/index.html:292
 #: website/public/get-started/index.html:322
 #: website/public/get-started/index.html:347
-#: website/public/get-started/index.html:370
-#: website/public/get-started/index.html:385
-#: website/public/get-started/index.html:419
-#: website/public/get-started/index.html:450
-#: website/public/get-started/index.html:464
-#: website/public/get-started/index.html:482
-#: website/public/get-started/index.html:534
-#: website/public/get-started/index.html:548
-#: website/public/get-started/index.html:580
-#: website/public/get-started/index.html:609
-#: website/public/get-started/index.html:744
-#: website/public/get-started/index.html:774
-#: website/public/get-started/index.html:799
-#: website/public/get-started/index.html:814
-#: website/public/get-started/index.html:862
-#: website/public/get-started/index.html:895
-#: website/public/get-started/index.html:1047
-#: website/public/get-started/index.html:1109
-#: website/public/get-started/index.html:1132
-#: website/public/get-started/index.html:1156
-#: website/public/get-started/index.html:1204
-#: website/public/get-started/index.html:1279
-#: website/public/get-started/index.html:1305
-#: website/public/get-started/index.html:1322
-#: website/public/get-started/index.html:1565
-#: website/public/get-started/index.html:1624
-#: website/public/get-started/index.html:1643
-#: website/public/get-started/index.html:1665
-#: website/public/get-started/index.html:1708
-#: website/public/get-started/index.html:1738
-#: website/public/get-started/index.html:1759
+#: website/public/get-started/index.html:372
+#: website/public/get-started/index.html:387
+#: website/public/get-started/index.html:421
+#: website/public/get-started/index.html:452
+#: website/public/get-started/index.html:466
+#: website/public/get-started/index.html:484
+#: website/public/get-started/index.html:536
+#: website/public/get-started/index.html:550
+#: website/public/get-started/index.html:582
+#: website/public/get-started/index.html:611
+#: website/public/get-started/index.html:746
+#: website/public/get-started/index.html:776
+#: website/public/get-started/index.html:801
+#: website/public/get-started/index.html:816
+#: website/public/get-started/index.html:864
+#: website/public/get-started/index.html:897
+#: website/public/get-started/index.html:1049
+#: website/public/get-started/index.html:1111
+#: website/public/get-started/index.html:1134
+#: website/public/get-started/index.html:1158
+#: website/public/get-started/index.html:1208
+#: website/public/get-started/index.html:1283
+#: website/public/get-started/index.html:1309
+#: website/public/get-started/index.html:1326
+#: website/public/get-started/index.html:1572
+#: website/public/get-started/index.html:1631
+#: website/public/get-started/index.html:1650
+#: website/public/get-started/index.html:1673
+#: website/public/get-started/index.html:1716
+#: website/public/get-started/index.html:1746
+#: website/public/get-started/index.html:1767
 msgctxt "page:get-started/index.html"
 msgid "Copy"
 msgstr "Kopjo"
@@ -5125,7 +5126,7 @@ msgstr ""
 
 #. {ph0}: <code>nodejs</code>
 #. {ph1}: <code>node -v</code>
-#: website/public/get-started/index.html:398
+#: website/public/get-started/index.html:400
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5137,7 +5138,7 @@ msgstr ""
 
 #. {ph0}: <a href="https://nodejs.org/en/download">
 #. {ph1}: </a>
-#: website/public/get-started/index.html:404
+#: website/public/get-started/index.html:406
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5171,7 +5172,7 @@ msgstr "{ph0}Marrja e ndihmës{ph1}"
 #. {ph5}: <i>
 #. {ph6}: </i>
 #. {ph7}: </span >
-#: website/public/get-started/index.html:769
+#: website/public/get-started/index.html:771
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
@@ -5184,7 +5185,7 @@ msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Agjenti juaj kodues"
 #. {ph4}: </span >
 #. {ph5}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph6}: </span>
-#: website/public/get-started/index.html:783
+#: website/public/get-started/index.html:785
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5196,7 +5197,7 @@ msgstr ""
 "përdorur {ph3}. Më trego planin e konfigurimit për miratim, më pas verifiko "
 "instalimin.{ph4}{ph5}{ph6}"
 
-#: website/public/get-started/index.html:795
+#: website/public/get-started/index.html:797
 msgctxt "page:get-started/index.html"
 msgid "Or run setup yourself"
 msgstr "Ose ekzekutoni vetë konfigurimin"
@@ -5263,7 +5264,7 @@ msgstr ""
 "Ngjitni një komandë me {ph0} {ph1} (macOS: {ph2} {ph3}; Linux terminalet: "
 "{ph4} {ph5} {ph6}), më pas shtypni Enter."
 
-#: website/public/get-started/index.html:831
+#: website/public/get-started/index.html:833
 msgctxt "page:get-started/index.html"
 msgid ""
 "Choose your client and review the setup plan. REA adds its MCP connection "
@@ -5275,7 +5276,7 @@ msgstr ""
 "kopje rezervë të konfigurimit ekzistues. Ai pyet përpara se të aplikojë "
 "ndryshimet."
 
-#: website/public/get-started/index.html:845
+#: website/public/get-started/index.html:847
 msgctxt "page:get-started/index.html"
 msgid "How do I restart my client?"
 msgstr "Si mund ta rifilloj klientin tim?"
@@ -5284,7 +5285,7 @@ msgstr "Si mund ta rifilloj klientin tim?"
 #. {ph1}: </strong>
 #. {ph2}: <kbd>⌘</kbd>
 #. {ph3}: <kbd>Q</kbd>
-#: website/public/get-started/index.html:846
+#: website/public/get-started/index.html:848
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5300,7 +5301,7 @@ msgstr ""
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/get-started/index.html:853
+#: website/public/get-started/index.html:855
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5310,7 +5311,7 @@ msgstr ""
 "{ph0}Agjentët terminal{ph1} (Claude Code, Codex, Gemini CLI): dil nga "
 "sesioni dhe fillo përsëri."
 
-#: website/public/get-started/index.html:957
+#: website/public/get-started/index.html:959
 msgctxt "page:get-started/index.html"
 msgid "How do I get a folder's full path?"
 msgstr "Si mund të marr shtegun e plotë të një dosje?"
@@ -5319,7 +5320,7 @@ msgstr "Si mund të marr shtegun e plotë të një dosje?"
 #. {ph1}: </strong>
 #. {ph2}: <em>
 #. {ph3}: </em>
-#: website/public/get-started/index.html:959
+#: website/public/get-started/index.html:961
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5334,7 +5335,7 @@ msgstr ""
 #. {ph1}: </strong>
 #. {ph2}: <em>
 #. {ph3}: </em>
-#: website/public/get-started/index.html:964
+#: website/public/get-started/index.html:966
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5346,7 +5347,7 @@ msgstr ""
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/get-started/index.html:968
+#: website/public/get-started/index.html:970
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5356,14 +5357,14 @@ msgstr ""
 "{ph0}Çdo sistem:{ph1} tërhiqeni dosjen në një dritare terminali dhe shtegu i"
 " tij shfaqet."
 
-#: website/public/get-started/index.html:973
-#: website/public/get-started/index.html:1731
+#: website/public/get-started/index.html:975
+#: website/public/get-started/index.html:1739
 msgctxt "page:get-started/index.html"
 msgid "In a terminal, put quotes around a path that contains spaces."
 msgstr ""
 "Në një terminal, vendosni thonjëza rreth një shteg që përmban hapësira."
 
-#: website/public/get-started/index.html:1558
+#: website/public/get-started/index.html:1565
 msgctxt "page:get-started/index.html"
 msgid ""
 "Analyze a JavaScript or Electron application folder or ASAR archive without "
@@ -5372,14 +5373,14 @@ msgstr ""
 "Analizoni një dosje aplikacioni JavaScript ose Electron ose arkiv ASAR pa "
 "ekzekutuar aplikacionin:"
 
-#: website/public/get-started/index.html:1564
+#: website/public/get-started/index.html:1571
 msgctxt "page:get-started/index.html"
 msgid "Static application analysis"
 msgstr "Analiza statike e aplikimit"
 
 #. {ph0}: <code>.asar</code>
 #. {ph1}: <code>"D:/apps/example"</code>
-#: website/public/get-started/index.html:1576
+#: website/public/get-started/index.html:1583
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5389,13 +5390,13 @@ msgstr ""
 "Zëvendësoni shtegun me direktorinë tuaj të aplikacionit ose skedarin {ph0} "
 "të nxjerrë. Në Windows, një shteg i tillë si {ph1} funksionon këtu."
 
-#: website/public/get-started/index.html:1582
+#: website/public/get-started/index.html:1589
 msgctxt "page:get-started/index.html"
 msgid "Where do I find an app's .asar file?"
 msgstr "Ku mund ta gjej skedarin .asar të një aplikacioni?"
 
 #. {ph0}: <code>resources</code>
-#: website/public/get-started/index.html:1583
+#: website/public/get-started/index.html:1590
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "Electron apps usually keep it in a {ph0} folder:"
@@ -5406,7 +5407,7 @@ msgstr "Aplikacionet e Electron zakonisht e mbajnë atë në një dosje {ph0}:"
 #. {ph2}: <code
 #. >C:\Users\&lt;you&gt;\AppData\Local\Programs\&lt;App&gt;\resources\app.asar</code
 #. >
-#: website/public/get-started/index.html:1588
+#: website/public/get-started/index.html:1595
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Windows:{ph1} {ph2}"
@@ -5418,7 +5419,7 @@ msgstr "{ph0}Windows:{ph1} {ph2}"
 #. >/Applications/&lt;App&gt;.app/Contents/Resources/app.asar</code >
 #. {ph3}: <em>
 #. {ph4}: </em>
-#: website/public/get-started/index.html:1594
+#: website/public/get-started/index.html:1601
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5431,14 +5432,14 @@ msgstr ""
 #. {ph0}: <strong>
 #. {ph1}: </strong>
 #. {ph2}: <code>/opt/&lt;App&gt;/resources/app.asar</code>
-#: website/public/get-started/index.html:1602
+#: website/public/get-started/index.html:1609
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Linux:{ph1} often {ph2}"
 msgstr "{ph0}Linux:{ph1} shpesh {ph2}"
 
 #. {ph0}: <code>app.asar</code>
-#: website/public/get-started/index.html:1607
+#: website/public/get-started/index.html:1614
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "Some apps install elsewhere. Search the app's folder for {ph0}."
@@ -5446,7 +5447,7 @@ msgstr ""
 "Disa aplikacione instalohen diku tjetër. Kërkoni në dosjen e aplikacionit "
 "për {ph0}."
 
-#: website/public/get-started/index.html:1612
+#: website/public/get-started/index.html:1619
 msgctxt "page:get-started/index.html"
 msgid ""
 "The result identifies the app, shows connections between modules and gives "
@@ -5458,36 +5459,36 @@ msgstr ""
 "në rezultat."
 
 #. {ph0}: <code>rea</code>
-#: website/public/get-started/index.html:1617
+#: website/public/get-started/index.html:1624
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "If you'd like a permanent {ph0} command in your shell:"
 msgstr "Nëse dëshironi një komandë të përhershme {ph0} në guaskën tuaj:"
 
-#: website/public/get-started/index.html:1623
+#: website/public/get-started/index.html:1630
 msgctxt "page:get-started/index.html"
 msgid "Install the CLI"
 msgstr "Instaloni CLI"
 
 #. {ph0}: <a href="../guides/javascript/" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1635
+#: website/public/get-started/index.html:1642
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Continue with the JavaScript application guide{ph1}"
 msgstr "{ph0}Vazhdo me udhëzuesin e aplikacionit JavaScript{ph1}"
 
-#: website/public/get-started/index.html:1152
+#: website/public/get-started/index.html:1154
 msgctxt "page:get-started/index.html"
 msgid "Connect your Ghidra installation"
 msgstr "Lidhni instalimin tuaj të Ghidra"
 
-#: website/public/get-started/index.html:1122
+#: website/public/get-started/index.html:1124
 msgctxt "page:get-started/index.html"
 msgid "Connect Ghidra on Windows"
 msgstr "Lidhe Ghidra në Windows"
 
-#: website/public/get-started/index.html:1123
+#: website/public/get-started/index.html:1125
 msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE "
@@ -5498,7 +5499,7 @@ msgstr ""
 "native x86 dhe x64 PE dhe skedarët DLL në disqet lokale NTFS fikse. Përdorni"
 " një instalim ekzistues Ghidra 12.1.x dhe një JDK 21 64-bit ose më të ri:"
 
-#: website/public/get-started/index.html:1146
+#: website/public/get-started/index.html:1148
 msgctxt "page:get-started/index.html"
 msgid ""
 "Replace the two paths with your installations, then review setup's plan."
@@ -5506,7 +5507,7 @@ msgstr ""
 "Zëvendësoni dy shtigjet me instalimet tuaja, më pas rishikoni planin e "
 "konfigurimit."
 
-#: website/public/get-started/index.html:1028
+#: website/public/get-started/index.html:1030
 msgctxt "page:get-started/index.html"
 msgid ""
 "Connect Hopper on macOS or Linux. Run the setup command above; it detects an"
@@ -5516,18 +5517,18 @@ msgstr ""
 "mësipërm; zbulon një instalim ekzistues ose ofron një plan instalimi për "
 "miratimin tuaj."
 
-#: website/public/get-started/index.html:1689
+#: website/public/get-started/index.html:1697
 msgctxt "page:get-started/index.html"
 msgid "Getting help"
 msgstr "Marrja e ndihmës"
 
-#: website/public/get-started/index.html:1691
+#: website/public/get-started/index.html:1699
 msgctxt "page:get-started/index.html"
 msgid "If your agent doesn't see REA"
 msgstr "Nëse agjenti juaj nuk e sheh REA"
 
 #. {ph0}: <code>doctor</code>
-#: website/public/get-started/index.html:1692
+#: website/public/get-started/index.html:1700
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5537,22 +5538,22 @@ msgstr ""
 "Rinisni ose rilidhni klientin pas konfigurimit. Kontrollo lidhjen e tij REA "
 "me {ph0}; për Codex:"
 
-#: website/public/get-started/index.html:1703
+#: website/public/get-started/index.html:1711
 msgctxt "page:get-started/index.html"
 msgid "If a provider needs attention"
 msgstr "Nëse një ofrues ka nevojë për vëmendje"
 
-#: website/public/get-started/index.html:1704
+#: website/public/get-started/index.html:1712
 msgctxt "page:get-started/index.html"
 msgid "Check the provider you're using. For Ghidra:"
 msgstr "Kontrolloni ofruesin që po përdorni. Për Ghidra:"
 
-#: website/public/get-started/index.html:1707
+#: website/public/get-started/index.html:1715
 msgctxt "page:get-started/index.html"
 msgid "Check one provider"
 msgstr "Kontrolloni një ofrues"
 
-#: website/public/get-started/index.html:1719
+#: website/public/get-started/index.html:1727
 msgctxt "page:get-started/index.html"
 msgid "The report gives the failed check and a suggested next step."
 msgstr "Raporti jep kontrollin e dështuar dhe një hap tjetër të sugjeruar."
@@ -5561,7 +5562,7 @@ msgstr "Raporti jep kontrollin e dështuar dhe një hap tjetër të sugjeruar."
 #. {ph1}: </a >
 #. {ph2}: <span>
 #. {ph3}: </span>
-#: website/public/get-started/index.html:1784
+#: website/public/get-started/index.html:1792
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5574,7 +5575,7 @@ msgstr ""
 #. {ph1}: </a >
 #. {ph2}: <span >
 #. {ph3}: </span >
-#: website/public/get-started/index.html:1788
+#: website/public/get-started/index.html:1796
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5588,7 +5589,7 @@ msgstr ""
 #. {ph1}: </a >
 #. {ph2}: <span>
 #. {ph3}: </span>
-#: website/public/get-started/index.html:1795
+#: website/public/get-started/index.html:1803
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5602,7 +5603,7 @@ msgstr ""
 #. {ph1}: </a >
 #. {ph2}: <span>
 #. {ph3}: </span>
-#: website/public/get-started/index.html:1799
+#: website/public/get-started/index.html:1807
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5640,12 +5641,12 @@ msgctxt "page:get-started/index.html"
 msgid "Copy Homebrew Node.js installation command"
 msgstr "Kopjo komandën e instalimit Homebrew Node.js"
 
-#: website/public/get-started/index.html:370
+#: website/public/get-started/index.html:372
 msgctxt "page:get-started/index.html"
 msgid "Copy fnm installation command for Linux"
 msgstr "Kopjo komandën e instalimit fnm për Linux"
 
-#: website/public/get-started/index.html:385
+#: website/public/get-started/index.html:387
 msgctxt "page:get-started/index.html"
 msgid "Copy Node.js 24 commands for Linux"
 msgstr "Kopjo Node.js 24 komanda për Linux"
@@ -5661,27 +5662,27 @@ msgctxt "page:get-started/index.html"
 msgid "REA getting started guide"
 msgstr "udhëzues për fillimin e REA"
 
-#: website/public/get-started/index.html:774
+#: website/public/get-started/index.html:776
 msgctxt "page:get-started/index.html"
 msgid "Copy REA installation prompt"
 msgstr "Kopjo kërkesën e instalimit të REA"
 
-#: website/public/get-started/index.html:1565
+#: website/public/get-started/index.html:1572
 msgctxt "page:get-started/index.html"
 msgid "Copy JavaScript analysis command"
 msgstr "Kopjo komandën e analizës JavaScript"
 
-#: website/public/get-started/index.html:1624
+#: website/public/get-started/index.html:1631
 msgctxt "page:get-started/index.html"
 msgid "Copy CLI installation command"
 msgstr "Kopjo komandën e instalimit CLI"
 
-#: website/public/get-started/index.html:1708
+#: website/public/get-started/index.html:1716
 msgctxt "page:get-started/index.html"
 msgid "Copy provider diagnosis command"
 msgstr "Kopjo komandën e diagnostikimit të ofruesit"
 
-#: website/public/get-started/index.html:1823
+#: website/public/get-started/index.html:1831
 msgctxt "page:get-started/index.html"
 msgid "Back to top"
 msgstr "Kthehu në krye"
@@ -6264,7 +6265,7 @@ msgstr "Binarët nativë"
 #: website/public/guides/index.html:218
 msgctxt "page:guides/index.html"
 msgid "Recover a sound-pan calculation"
-msgstr "Rikuperoni një llogaritje të panës zanore"
+msgstr "Rikuperoni një llogaritje të panoramimit të zërit"
 
 #: website/public/guides/index.html:219
 msgctxt "page:guides/index.html"
@@ -6742,8 +6743,8 @@ msgid ""
 "folder. Analyze it with {ph1} and npm; Electron is not needed for this "
 "example."
 msgstr ""
-"Shkarkoni shembullin dhe shpalosni atë. Arkivi përmban dosjen e plotë {ph0}."
-" Analizoni atë me {ph1} dhe npm; Electron nuk nevojitet për këtë shembull."
+"Shkarkoni shembullin dhe shpaketojeni. Arkivi përmban dosjen e plotë {ph0}. "
+"Analizojeni me {ph1} dhe npm; Electron nuk nevojitet për këtë shembull."
 
 #. {ph0}: <a class="button" href="../../examples/notes-example.zip"
 #. download="notes-example.zip" >
@@ -6919,7 +6920,7 @@ msgstr "{ph0}Shtëpia{ph1} / {ph2}Udhëzuesit{ph3} / Analiza origjinale"
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "Recover DX-Ball's{ph0}sound-pan calculation."
-msgstr "Rikuperoni llogaritjen e{ph0}sound-pan të DX-Ball."
+msgstr "Rikuperoni llogaritjen e{ph0}panoramimit të zërit në DX-Ball."
 
 #: website/public/guides/native/index.html:203
 msgctxt "page:guides/native/index.html"
@@ -6978,7 +6979,7 @@ msgstr "{ph0}Përdor binarin tuaj{ph1}"
 #: website/public/guides/native/index.html:221
 msgctxt "page:guides/native/index.html"
 msgid "Calculate left/right sound panning"
-msgstr "Llogaritni lëvizjen e tingullit majtas/djathtas"
+msgstr "Llogaritni panoramimin e zërit majtas/djathtas"
 
 #: website/public/guides/native/index.html:222
 msgctxt "page:guides/native/index.html"
@@ -7245,8 +7246,8 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to find how DX-Ball calculates sound panning. "
 "Explain the calculation and show the code.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Përdorni REA për të gjetur se si DX-Ball llogarit panazhimin"
-" e zërit. Shpjegoni llogaritjen dhe tregoni kodin.{ph3}{ph4}{ph5}"
+"{ph0}›{ph1}{ph2}Përdorni REA për të gjetur se si DX-Ball llogarit "
+"panoramimin e zërit. Shpjegoni llogaritjen dhe tregoni kodin.{ph3}{ph4}{ph5}"
 
 #: website/public/guides/native/index.html:359
 msgctxt "page:guides/native/index.html"
@@ -8707,7 +8708,7 @@ msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
 msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Agjenti juaj kodues"
 
 #: website/public/showcase/aegis/index.html:274
-#: website/public/showcase/aegis/index.html:737
+#: website/public/showcase/aegis/index.html:740
 msgctxt "page:showcase/aegis/index.html"
 msgid "Copy"
 msgstr "Kopjo"
@@ -8788,7 +8789,7 @@ msgid "30-second block"
 msgstr "Blloku 30 sekonda"
 
 #: website/public/showcase/aegis/index.html:321
-#: website/public/showcase/aegis/index.html:648
+#: website/public/showcase/aegis/index.html:651
 msgctxt "page:showcase/aegis/index.html"
 msgid "Block"
 msgstr "Blloko"
@@ -8819,13 +8820,13 @@ msgid "Example time, in seconds"
 msgstr "Shembull kohë, në sekonda"
 
 #: website/public/showcase/aegis/index.html:359
-#: website/public/showcase/aegis/index.html:659
+#: website/public/showcase/aegis/index.html:662
 msgctxt "page:showcase/aegis/index.html"
 msgid "59 seconds"
 msgstr "59 sekonda"
 
 #: website/public/showcase/aegis/index.html:366
-#: website/public/showcase/aegis/index.html:664
+#: website/public/showcase/aegis/index.html:667
 msgctxt "page:showcase/aegis/index.html"
 msgid "60 seconds"
 msgstr "60 sekonda"
@@ -9056,12 +9057,14 @@ msgstr ""
 "APK-ja e lëshuar vendos {ph0} në {ph1}. REA ndjek thirrjen nga {ph2} dhe e "
 "kthen këtë trup; burimi origjinal e quan ndihmësin {ph3}."
 
+#. {ph0}: <span translate="no">generateOTP</span>
 #: website/public/showcase/aegis/index.html:605
+#, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
-msgid "REA · generateOTP, complete body"
-msgstr "REA · gjenerojOTP, trup i plotë"
+msgid "REA · {ph0}, complete body"
+msgstr "REA · {ph0}, trupi i plotë i funksionit"
 
-#: website/public/showcase/aegis/index.html:619
+#: website/public/showcase/aegis/index.html:622
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
 "The last hash byte selects a position. Four bytes at that position provide a"
@@ -9078,20 +9081,20 @@ msgstr ""
 #. href="https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/app/src/main/java/com/beemdevelopment/aegis/crypto/otp/HOTP.java"
 #. >
 #. {ph1}: </a >
-#: website/public/showcase/aegis/index.html:626
+#: website/public/showcase/aegis/index.html:629
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid "{ph0}Compare with the matching release source{ph1}."
 msgstr "{ph0}Krahaso me burimin e lëshimit që përputhet{ph1}."
 
-#: website/public/showcase/aegis/index.html:636
+#: website/public/showcase/aegis/index.html:639
 msgctxt "page:showcase/aegis/index.html"
 msgid "Check the reconstruction"
 msgstr "Kontrolloni rindërtimin"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/showcase/aegis/index.html:637
+#: website/public/showcase/aegis/index.html:640
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -9104,29 +9107,29 @@ msgstr ""
 "{ph0}133 raste testimi{ph1}, duke përfshirë kufijtë e bllokut kohor dhe "
 "kodet që fillojnë me zero."
 
-#: website/public/showcase/aegis/index.html:647
+#: website/public/showcase/aegis/index.html:650
 msgctxt "page:showcase/aegis/index.html"
 msgid "Example time"
 msgstr "Shembull kohë"
 
-#: website/public/showcase/aegis/index.html:649
+#: website/public/showcase/aegis/index.html:652
 msgctxt "page:showcase/aegis/index.html"
 msgid "Six-digit code"
 msgstr "Kodi me gjashtë shifra"
 
-#: website/public/showcase/aegis/index.html:654
+#: website/public/showcase/aegis/index.html:657
 msgctxt "page:showcase/aegis/index.html"
 msgid "30 seconds"
 msgstr "30 sekonda"
 
-#: website/public/showcase/aegis/index.html:669
+#: website/public/showcase/aegis/index.html:672
 msgctxt "page:showcase/aegis/index.html"
 msgid "1,111,111,109 seconds"
 msgstr "1,111,111,109 sekonda"
 
 #. {ph0}: <a href="https://www.rfc-editor.org/rfc/rfc6238.html#appendix-B" >
 #. {ph1}: </a >
-#: website/public/showcase/aegis/index.html:676
+#: website/public/showcase/aegis/index.html:679
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -9137,17 +9140,17 @@ msgstr ""
 "publikuara në {ph0}RFC 6238{ph1}. Kontrolloni zbatimin e shfletuesit "
 "kundrejt tyre:"
 
-#: website/public/showcase/aegis/index.html:684
+#: website/public/showcase/aegis/index.html:687
 msgctxt "page:showcase/aegis/index.html"
 msgid "Run reference checks"
 msgstr "Kryeni kontrollet e referencës"
 
-#: website/public/showcase/aegis/index.html:691
+#: website/public/showcase/aegis/index.html:694
 msgctxt "page:showcase/aegis/index.html"
 msgid "Read the demo's calculation"
 msgstr "Lexoni llogaritjen e demonstrimit"
 
-#: website/public/showcase/aegis/index.html:695
+#: website/public/showcase/aegis/index.html:698
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
 "The reference cases use eight digits. The check also verifies their six-"
@@ -9156,7 +9159,7 @@ msgstr ""
 "Rastet e referencës përdorin tetë shifra. Kontrolli gjithashtu verifikon "
 "rezultatet e tyre gjashtëshifrore."
 
-#: website/public/showcase/aegis/index.html:704
+#: website/public/showcase/aegis/index.html:707
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
 "Verification runs extracted Java methods and the new demo. The Android APK "
@@ -9165,14 +9168,14 @@ msgstr ""
 "Verifikimi ekzekuton metodat e nxjerra Java dhe demonstrimin e ri. APK-ja "
 "Android u inspektua në mënyrë statike."
 
-#: website/public/showcase/aegis/index.html:711
+#: website/public/showcase/aegis/index.html:714
 msgctxt "page:showcase/aegis/index.html"
 msgid "Inspect the APK yourself"
 msgstr "Inspektoni vetë APK-në"
 
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a>
-#: website/public/showcase/aegis/index.html:712
+#: website/public/showcase/aegis/index.html:715
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -9184,7 +9187,7 @@ msgstr ""
 
 #. {ph0}: <code>JAVA_HOME</code>
 #. {ph1}: <code>PATH</code>
-#: website/public/showcase/aegis/index.html:717
+#: website/public/showcase/aegis/index.html:720
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -9194,28 +9197,28 @@ msgstr ""
 "Analiza Android ka nevojë për një JDK të plotë 17 ose më vonë. Zgjidhni atë "
 "me {ph0} ose {ph1}. Ky rast përdori JDK 21."
 
-#: website/public/showcase/aegis/index.html:723
+#: website/public/showcase/aegis/index.html:726
 msgctxt "page:showcase/aegis/index.html"
 msgid "Download Aegis APK"
 msgstr "Shkarkoni Aegis APK"
 
-#: website/public/showcase/aegis/index.html:727
+#: website/public/showcase/aegis/index.html:730
 msgctxt "page:showcase/aegis/index.html"
 msgid "Download Android analysis provider"
 msgstr "Shkarko ofruesin e analizës Android"
 
-#: website/public/showcase/aegis/index.html:733
+#: website/public/showcase/aegis/index.html:736
 msgctxt "page:showcase/aegis/index.html"
 msgid "Point REA at the provider file and inspect the APK:"
 msgstr "Drejtoni REA te skedari i ofruesit dhe inspektoni APK-në:"
 
-#: website/public/showcase/aegis/index.html:736
+#: website/public/showcase/aegis/index.html:739
 msgctxt "page:showcase/aegis/index.html"
 msgid "macOS / Linux"
 msgstr "macOS / Linux"
 
 #. {ph0}: <code>REA_JADX_MCP_JAR</code>
-#: website/public/showcase/aegis/index.html:750
+#: website/public/showcase/aegis/index.html:753
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -9228,7 +9231,7 @@ msgstr ""
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
-#: website/public/showcase/aegis/index.html:755
+#: website/public/showcase/aegis/index.html:758
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -9238,7 +9241,7 @@ msgstr ""
 "Një pyetje tjetër: {ph0}çfarë ndodh kur një llogari përdor tetë shifra ose "
 "një interval kohor të ndryshëm?{ph1}"
 
-#: website/public/showcase/aegis/index.html:765
+#: website/public/showcase/aegis/index.html:768
 msgctxt "page:showcase/aegis/index.html"
 msgid "Sources"
 msgstr "Burimet"
@@ -9254,7 +9257,7 @@ msgstr "Burimet"
 #. href="https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/LICENSE"
 #. >
 #. {ph5}: </a >
-#: website/public/showcase/aegis/index.html:767
+#: website/public/showcase/aegis/index.html:770
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -9268,14 +9271,14 @@ msgstr ""
 #. {ph1}: </a >
 #. {ph2}: <a href="test-vectors.json">
 #. {ph3}: </a>
-#: website/public/showcase/aegis/index.html:783
+#: website/public/showcase/aegis/index.html:786
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid "{ph0}RFC 6238 reference cases{ph1} · {ph2}Demo test data{ph3}"
 msgstr ""
 "{ph0}Rasë referimi RFC 6238{ph1} · {ph2}Të dhënat e testit demonstrues{ph3}"
 
-#: website/public/showcase/aegis/index.html:790
+#: website/public/showcase/aegis/index.html:793
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
 "Inspected with REA 6.1.0 on 9 October 2026. Decompiled excerpts are credited"
@@ -9321,12 +9324,12 @@ msgctxt "page:showcase/aegis/index.html"
 msgid "Follow the login-code calculation"
 msgstr "Ndiqni llogaritjen e kodit të hyrjes"
 
-#: website/public/showcase/aegis/index.html:737
+#: website/public/showcase/aegis/index.html:740
 msgctxt "page:showcase/aegis/index.html"
 msgid "Copy APK inspection command"
 msgstr "Kopjo komandën e inspektimit APK"
 
-#: website/public/showcase/aegis/index.html:814
+#: website/public/showcase/aegis/index.html:817
 msgctxt "page:showcase/aegis/index.html"
 msgid "Back to top"
 msgstr "Kthehu në krye"
@@ -10254,7 +10257,7 @@ msgstr ""
 #: website/public/showcase/dx-ball/index.html:283
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Finding the sound-pan calculation"
-msgstr "Gjetja e llogaritjes së panës së zërit"
+msgstr "Gjetja e llogaritjes së panoramimit të zërit"
 
 #: website/public/showcase/dx-ball/index.html:284
 msgctxt "page:showcase/dx-ball/index.html"
@@ -10303,8 +10306,8 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to find how DX-Ball calculates sound panning. "
 "Explain the calculation and show the code.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Përdorni REA për të gjetur se si DX-Ball llogarit panazhimin"
-" e zërit. Shpjegoni llogaritjen dhe tregoni kodin.{ph3}{ph4}{ph5}"
+"{ph0}›{ph1}{ph2}Përdorni REA për të gjetur se si DX-Ball llogarit "
+"panoramimin e zërit. Shpjegoni llogaritjen dhe tregoni kodin.{ph3}{ph4}{ph5}"
 
 #: website/public/showcase/dx-ball/index.html:312
 msgctxt "page:showcase/dx-ball/index.html"
@@ -10446,8 +10449,9 @@ msgid ""
 "The returned bytes establish the two arithmetic constants and initial pan "
 "scale. The agent now has the values needed for the C expression."
 msgstr ""
-"Bajtet e kthyera vendosin dy konstante aritmetike dhe shkallën fillestare të"
-" panit. Agjenti tani ka vlerat e nevojshme për shprehjen C."
+"Bajtet e kthyera përcaktojnë dy konstantet aritmetike dhe faktorin fillestar"
+" të panoramimit të zërit. Agjenti tani ka vlerat e nevojshme për shprehjen "
+"C."
 
 #: website/public/showcase/dx-ball/index.html:430
 msgctxt "page:showcase/dx-ball/index.html"
@@ -10493,7 +10497,7 @@ msgstr "{ph0}03{ph1} Zbris"
 #, python-brace-format
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "{ph0}04{ph1} Scale"
-msgstr "Shkalla {ph0}04{ph1}"
+msgstr "{ph0}04{ph1} Faktori i shkallëzimit"
 
 #. {ph0}: <span>
 #. {ph1}: </span>
@@ -10580,9 +10584,10 @@ msgid ""
 "global is named {ph4} in the maintained source. REA's second byte read "
 "establishes its initial value of {ph5}."
 msgstr ""
-"{ph0}04 · Aplikoni shkallën e ruajtur.{ph1} {ph2} e dytë lexon {ph3}. Ai "
-"global quhet {ph4} në burimin e ruajtur. Leximi i dytë i bajtit të REA "
-"vendos vlerën fillestare të {ph5}."
+"{ph0}04 · Zbatoni faktorin e ruajtur të shkallëzimit.{ph1} Instruksioni i "
+"dytë {ph2} lexon {ph3}. Kjo ndryshore globale quhet {ph4} në kodin burimor "
+"të mirëmbajtur. Leximi i dytë i bajteve nga REA përcakton vlerën e saj "
+"fillestare prej {ph5}."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -10608,9 +10613,9 @@ msgid ""
 "The full listing below also includes the intervening stores and function "
 "setup and cleanup."
 msgstr ""
-"Fragmenti i kodit assembly zgjedh udhëzimet e hyrjes, aritmetikës dhe "
-"kthimit. Lista e plotë më poshtë përfshin gjithashtu dyqanet dhe funksionet "
-"ndërhyrëse konfigurimin dhe pastrimin."
+"Fragmenti i kodit assembly paraqet instruksionet e hyrjes, aritmetikës dhe "
+"kthimit. Listimi i plotë më poshtë përfshin edhe shkrimet ndërmjetëse në "
+"memorie, si dhe përgatitjen dhe pastrimin e funksionit."
 
 #: website/public/showcase/dx-ball/index.html:574
 msgctxt "page:showcase/dx-ball/index.html"
@@ -10635,8 +10640,8 @@ msgid ""
 "The brick-hit function at {ph0} scales its tile coordinate by 30, adds 20, "
 "then pushes it before the call:"
 msgstr ""
-"Funksioni goditës me tullë në {ph0} e zvogëlon koordinatat e tij të pllakës "
-"me 30, shton 20 dhe më pas e shtyn atë përpara thirrjes:"
+"Funksioni i goditjes së tullës në {ph0} shumëzon koordinatën e tullës me 30,"
+" shton 20 dhe më pas e vendos rezultatin në stivë përpara thirrjes:"
 
 #: website/public/showcase/dx-ball/index.html:626
 msgctxt "page:showcase/dx-ball/index.html"
@@ -10683,7 +10688,7 @@ msgstr "{ph0} fillimisht"
 #: website/public/showcase/dx-ball/index.html:653
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Stored pan scale"
-msgstr "Peshorja e ruajtur në tigan"
+msgstr "Faktori i ruajtur i panoramimit të zërit"
 
 #: website/public/showcase/dx-ball/index.html:658
 msgctxt "page:showcase/dx-ball/index.html"
@@ -10800,9 +10805,9 @@ msgid ""
 "To inspect the sound-pan function yourself, follow the DX-Ball project's "
 "setup instructions and supply its matching original target. Then run:"
 msgstr ""
-"Për të inspektuar vetë funksionin e panelit të zërit, ndiqni udhëzimet e "
-"konfigurimit të projektit DX-Ball dhe jepni objektivin origjinal që "
-"përputhet. Pastaj vraponi:"
+"Për të inspektuar vetë funksionin e panoramimit të zërit, ndiqni udhëzimet e"
+" konfigurimit të projektit DX-Ball dhe siguroni objektivin origjinal "
+"përkatës. Pastaj ekzekutoni:"
 
 #: website/public/showcase/dx-ball/index.html:731
 msgctxt "page:showcase/dx-ball/index.html"
@@ -10861,7 +10866,7 @@ msgstr "Filloni me objektivin tuaj"
 #: website/public/showcase/dx-ball/index.html:6
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "DX-Ball Reverse Engineering: Sound Panning — REA"
-msgstr "DX-Ball Inxhinieri e kundërt: Pamja e zërit — REA"
+msgstr "Inxhinieria e kundërt e DX-Ball: Panoramimi i zërit — REA"
 
 #: website/public/showcase/dx-ball/index.html:7
 msgctxt "page:showcase/dx-ball/index.html"
@@ -10878,7 +10883,8 @@ msgctxt "page:showcase/dx-ball/index.html"
 msgid ""
 "DX-Ball sound-pan investigation; scroll horizontally on smaller screens"
 msgstr ""
-"DX-Ball hetim i panës zanore; lëvizni horizontalisht në ekranet më të vogla"
+"Hetimi i panoramimit të zërit në DX-Ball; lëvizni horizontalisht në ekranet "
+"më të vogla"
 
 #: website/public/showcase/dx-ball/index.html:217
 msgctxt "page:showcase/dx-ball/index.html"
@@ -10889,11 +10895,12 @@ msgid ""
 "checked independently against the original x86 in 3,205 cases and by VC4.0 "
 "compiler replay matching 63 bytes."
 msgstr ""
-"Funksioni DXBALL.EXE 0x00406400 inspektohet me REA. Një thirrës i goditur "
-"nga tulla furnizon 20 plus 30 herë tile_x. Udhëzimet ngarkojnë x, shumëzojnë"
-" me 1,5625, zbresin 500,0, aplikojnë shkallën pan_dhe kthejnë një numër të "
-"plotë. C-ja e mirëmbajtur kontrollohet në mënyrë të pavarur kundrejt x86 "
-"origjinale në 3205 raste dhe nga riprodhuesi VC4.0 që përputhet me 63 bajt."
+"Funksioni 0x00406400 i DXBALL.EXE inspektohet me REA. Një funksion thirrës "
+"gjatë goditjes së tullës jep 20 plus 30 herë tile_x. Instruksionet ngarkojnë"
+" x, e shumëzojnë me 1.5625, zbresin 500.0, zbatojnë pan_scale dhe kthejnë "
+"një numër të plotë. Kodi C i mirëmbajtur kontrollohet në mënyrë të pavarur "
+"kundrejt kodit origjinal x86 në 3,205 raste dhe përmes ripërpilimit me VC4.0"
+" që përputhet me 63 bajte."
 
 #: website/public/showcase/dx-ball/index.html:235
 msgctxt "page:showcase/dx-ball/index.html"
@@ -10913,7 +10920,7 @@ msgstr "Kopjoni kërkesën e shembullit"
 #: website/public/showcase/dx-ball/index.html:436
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Follow the sound-pan calculation"
-msgstr "Ndiqni llogaritjen e panës së zërit"
+msgstr "Ndiqni llogaritjen e panoramimit të zërit"
 
 #: website/public/showcase/dx-ball/index.html:486
 msgctxt "page:showcase/dx-ball/index.html"
@@ -10923,12 +10930,12 @@ msgstr "Kopjoni fragmentin origjinal të kodit assembly"
 #: website/public/showcase/dx-ball/index.html:507
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Copy sound-pan function"
-msgstr "Funksioni i kopjimit të tingullit"
+msgstr "Kopjoni funksionin e panoramimit të zërit"
 
 #: website/public/showcase/dx-ball/index.html:578
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Copy complete sound-pan assembly"
-msgstr "Kopjoni njësinë e plotë të panës së zërit"
+msgstr "Kopjoni të gjithë kodin assembly të panoramimit të zërit"
 
 #: website/public/showcase/dx-ball/index.html:732
 msgctxt "page:showcase/dx-ball/index.html"
@@ -11067,7 +11074,7 @@ msgstr "Vendas · Rindërtim"
 #: website/public/showcase/index.html:246
 msgctxt "page:showcase/index.html"
 msgid "DX-Ball's sound-pan calculation"
-msgstr "Llogaritja e tingullit të DX-Ball"
+msgstr "Llogaritja e panoramimit të zërit në DX-Ball"
 
 #: website/public/showcase/index.html:247
 msgctxt "page:showcase/index.html"
@@ -11591,12 +11598,12 @@ msgctxt "page:showcase/notion/index.html"
 msgid "Check how the receiver is registered"
 msgstr "Kontrolloni se si është regjistruar marrësi"
 
-#. {ph0}: <span translate="no">index.js</span>
+#. {ph0}: <span translate="no">main/index.js</span>
 #: website/public/showcase/notion/index.html:407
 #, python-brace-format
 msgctxt "page:showcase/notion/index.html"
-msgid "main/{ph0} · handler helper"
-msgstr "kryesore/{ph0} · ndihmës përpunues"
+msgid "{ph0} · handler helper"
+msgstr "{ph0} · ndihmës përpunues"
 
 #. {ph0}: <code>addListener</code>
 #. {ph1}: <code>ipcMain.handle</code>
@@ -11615,12 +11622,12 @@ msgctxt "page:showcase/notion/index.html"
 msgid "Find the write and its sender check"
 msgstr "Gjeni shkrimin dhe kontrollin e dërguesit të tij"
 
-#. {ph0}: <span translate="no">index.js</span>
+#. {ph0}: <span translate="no">main/index.js</span>
 #: website/public/showcase/notion/index.html:435
 #, python-brace-format
 msgctxt "page:showcase/notion/index.html"
-msgid "main/{ph0} · clipboard receiver"
-msgstr "kryesore/{ph0} · marrës i kujtesës"
+msgid "{ph0} · clipboard receiver"
+msgstr "{ph0} · marrës i kujtesës"
 
 #: website/public/showcase/notion/index.html:455
 msgctxt "page:showcase/notion/index.html"
@@ -12191,9 +12198,9 @@ msgid ""
 "index adds 16 units: {ph0}. Adding the player's direction rotates those "
 "positions together."
 msgstr ""
-"TH04 ruan një kthesë të plotë në drejtim të akrepave të orës në 256 njësi "
-"këndi. Për 16 pika, çdo indeks shton 16 njësi: {ph0}. Shtimi i drejtimit të "
-"lojtarit i rrotullon ato pozicione së bashku."
+"TH04 e përfaqëson një rrotullim të plotë në drejtim të akrepave të orës me "
+"256 njësi këndi. Për 16 predha, çdo indeks shton 16 njësi: {ph0}. Shtimi i "
+"drejtimit të lojtarit i rrotullon të gjitha këto pozicione së bashku."
 
 #. {ph0}: <a href="../../assets/figures/th04-bullet-ring.svg" >
 #. {ph1}: </a >
@@ -12388,7 +12395,7 @@ msgstr "{ph0}04{ph1} Rrotulloje"
 #, python-brace-format
 msgctxt "page:showcase/th04/index.html"
 msgid "{ph0}05{ph1} Store"
-msgstr "{ph0}05{ph1} Dyqani"
+msgstr "{ph0}05{ph1} Ruajtja"
 
 #: website/public/showcase/th04/index.html:513
 msgctxt "page:showcase/th04/index.html"
@@ -12471,10 +12478,11 @@ msgid ""
 " does. The surrounding source also converts this angle and speed into "
 "velocity."
 msgstr ""
-"{ph0}05 · Mbajeni këndin përfundimtar në një bajt.{ph1} Dyqani shkruan {ph2}"
-" në fushën e këndit të vezëve. Vlerat mbështillen pas 255, njësoj siç bën "
-"cast-i me bajt të panënshkruar. Burimi rrethues gjithashtu e konverton këtë "
-"kënd dhe shpejtësi në shpejtësi."
+"{ph0}05 · Ruajeni këndin përfundimtar në një bajt.{ph1} Instruksioni i "
+"ruajtjes shkruan {ph2} në fushën e këndit të krijimit të predhës. Vlerat "
+"kthehen në fillim pas 255, njësoj si gjatë shndërrimit në bajt pa shenjë. "
+"Kodi përreth e shndërron këtë kënd dhe shpejtësinë në vektorin e "
+"shpejtësisë."
 
 #: website/public/showcase/th04/index.html:609
 msgctxt "page:showcase/th04/index.html"
@@ -13102,7 +13110,7 @@ msgstr "Zgjidhini ato së bashku për të gjetur flamurin."
 #: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:20
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "DX-Ball sound-pan investigation"
-msgstr "DX-Ball investigim i tingullit"
+msgstr "Hetimi i panoramimit të zërit në DX-Ball"
 
 #: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:3
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
@@ -13152,11 +13160,6 @@ msgstr "E mirëmbajtur C"
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "Brick-hit caller"
 msgstr "Thirrësi gjatë goditjes së tullës"
-
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:49
-msgctxt "figure:dx-ball-sound-pan-investigation.svg"
-msgid "20 + 30 × tile_x"
-msgstr "20 + 30 × pllakë_x"
 
 #: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:50
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
@@ -13339,7 +13342,7 @@ msgstr "Hapësira e njëjtë: 256 ÷ 16 = 16 njësi këndi = 22,5°"
 #: website/public/first-investigation/index.html:122
 #: website/public/first-investigation/index.html:531
 #: website/public/get-started/index.html:122
-#: website/public/get-started/index.html:1814
+#: website/public/get-started/index.html:1822
 #: website/public/guides/browser/index.html:122
 #: website/public/guides/browser/index.html:504
 #: website/public/guides/index.html:122 website/public/guides/index.html:279
@@ -13348,7 +13351,7 @@ msgstr "Hapësira e njëjtë: 256 ÷ 16 = 16 njësi këndi = 22,5°"
 #: website/public/guides/native/index.html:122
 #: website/public/guides/native/index.html:506 website/public/index.html:124
 #: website/public/index.html:1219 website/public/showcase/aegis/index.html:123
-#: website/public/showcase/aegis/index.html:805
+#: website/public/showcase/aegis/index.html:808
 #: website/public/showcase/ctf/index.html:122
 #: website/public/showcase/ctf/index.html:774
 #: website/public/showcase/dx-ball/index.html:122
@@ -13579,35 +13582,37 @@ msgctxt "page:get-started/index.html"
 msgid "Already use Homebrew?"
 msgstr "E përdorni tashmë Homebrew?"
 
-#. {ph0}: <code>sudo apt install curl unzip</code>
+#. {ph0}: <span translate="no">curl</span>
+#. {ph1}: <span translate="no">unzip</span>
+#. {ph2}: <code>sudo apt install curl unzip</code>
 #: website/public/get-started/index.html:362
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"Install curl and unzip first if they are missing. On Debian or Ubuntu, run "
-"{ph0}; on other distributions, use your package manager."
+"Install {ph0} and {ph1} first if they are missing. On Debian or Ubuntu, run "
+"{ph2}; on other distributions, use your package manager."
 msgstr ""
-"Instalo curl dhe unzip fillimisht nëse mungojnë. Në Debian ose Ubuntu, "
-"ekzekutoni {ph0}; në shpërndarjet e tjera, përdorni menaxherin tuaj të "
+"Instalo {ph0} dhe {ph1} fillimisht nëse mungojnë. Në Debian ose Ubuntu, "
+"ekzekutoni {ph2}; në shpërndarjet e tjera, përdorni menaxherin tuaj të "
 "paketave."
 
-#: website/public/get-started/index.html:381
+#: website/public/get-started/index.html:383
 msgctxt "page:get-started/index.html"
 msgid "Close the terminal, open it again, then:"
 msgstr "Mbyllni terminalin, hapeni përsëri dhe më pas:"
 
-#: website/public/get-started/index.html:411
+#: website/public/get-started/index.html:413
 msgctxt "page:get-started/index.html"
 msgid "Make a working folder for your agent"
 msgstr "Bëni një dosje pune për agjentin tuaj"
 
-#: website/public/get-started/index.html:412
+#: website/public/get-started/index.html:414
 msgctxt "page:get-started/index.html"
 msgid "In your terminal, make a folder for the exercise, then move into it:"
 msgstr ""
 "Në terminalin tuaj, krijoni një dosje për ushtrimin dhe më pas kaloni në të:"
 
-#: website/public/get-started/index.html:431
+#: website/public/get-started/index.html:433
 msgctxt "page:get-started/index.html"
 msgid ""
 "Keep this terminal open for the next step. If you already have a working "
@@ -13616,12 +13621,12 @@ msgstr ""
 "Mbajeni këtë terminal të hapur për hapin tjetër. Nëse tashmë keni një dosje "
 "pune, hapeni në vend të saj."
 
-#: website/public/get-started/index.html:438
+#: website/public/get-started/index.html:440
 msgctxt "page:get-started/index.html"
 msgid "2. Choose a coding agent"
 msgstr "2. Zgjidhni një agjent kodues"
 
-#: website/public/get-started/index.html:439
+#: website/public/get-started/index.html:441
 msgctxt "page:get-started/index.html"
 msgid ""
 "Your agent is the AI you talk to. REA supplies the inspection tools it uses."
@@ -13631,17 +13636,17 @@ msgstr ""
 "që përdor. Zgjidhni një klient më poshtë; hapni udhëzimet e tij nëse nuk e "
 "keni përdorur më parë."
 
-#: website/public/get-started/index.html:445
+#: website/public/get-started/index.html:447
 msgctxt "page:get-started/index.html"
 msgid "Codex · use your ChatGPT account"
 msgstr "Codex · përdorni llogarinë tuaj ChatGPT"
 
-#: website/public/get-started/index.html:446
+#: website/public/get-started/index.html:448
 msgctxt "page:get-started/index.html"
 msgid "Install Codex using the command for your operating system:"
 msgstr "Instaloni Codex duke përdorur komandën për sistemin tuaj operativ:"
 
-#: website/public/get-started/index.html:475
+#: website/public/get-started/index.html:477
 msgctxt "page:get-started/index.html"
 msgid ""
 "After installation, reopen your terminal and return to the working folder. "
@@ -13650,7 +13655,7 @@ msgstr ""
 "Pas instalimit, rihapni terminalin tuaj dhe kthehuni në dosjen e punës. "
 "Pastaj filloni Codex:"
 
-#: website/public/get-started/index.html:493
+#: website/public/get-started/index.html:495
 msgctxt "page:get-started/index.html"
 msgid ""
 "Choose “Sign in with ChatGPT”, complete the browser sign-in, then return to "
@@ -13662,28 +13667,28 @@ msgstr ""
 
 #. {ph0}: <a href="https://learn.chatgpt.com/docs/codex/cli" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:498
+#: website/public/get-started/index.html:500
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Codex installation and sign-in{ph1}"
 msgstr "instalimi dhe identifikimi i {ph0}Codex{ph1}"
 
-#: website/public/get-started/index.html:505
+#: website/public/get-started/index.html:507
 msgctxt "page:get-started/index.html"
 msgid "Cursor, Windsurf or VS Code · use an editor"
 msgstr "Cursor, Windsurf ose VS Code · përdorni një redaktues"
 
-#: website/public/get-started/index.html:507
+#: website/public/get-started/index.html:509
 msgctxt "page:get-started/index.html"
 msgid "Install the editor for your operating system and sign in."
 msgstr "Instaloni redaktorin për sistemin tuaj operativ dhe regjistrohuni."
 
-#: website/public/get-started/index.html:510
+#: website/public/get-started/index.html:512
 msgctxt "page:get-started/index.html"
 msgid "Open the rea-work folder you made in step 1."
 msgstr "Hapni dosjen e rea-work që keni krijuar në hapin 1."
 
-#: website/public/get-started/index.html:511
+#: website/public/get-started/index.html:513
 msgctxt "page:get-started/index.html"
 msgid ""
 "Open its AI chat and choose Agent mode. In Windsurf or Devin Desktop, open "
@@ -13699,7 +13704,7 @@ msgstr ""
 #. {ph3}: </a >
 #. {ph4}: <a href="https://code.visualstudio.com/docs/setup/copilot" >
 #. {ph5}: </a >
-#: website/public/get-started/index.html:517
+#: website/public/get-started/index.html:519
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13709,18 +13714,18 @@ msgstr ""
 "Konfigurimi i {ph0}Cursor{ph1} · {ph2}Konfigurimi i desktopit Windsurf / "
 "Devin{ph3} · {ph4}Konfigurimi i kodit VS dhe Copilot{ph5}"
 
-#: website/public/get-started/index.html:529
+#: website/public/get-started/index.html:531
 msgctxt "page:get-started/index.html"
 msgid "Claude Code · use your Claude account"
 msgstr "Claude Code · përdorni llogarinë tuaj Claude"
 
-#: website/public/get-started/index.html:530
+#: website/public/get-started/index.html:532
 msgctxt "page:get-started/index.html"
 msgid "Install using the command for your operating system:"
 msgstr "Instaloni duke përdorur komandën për sistemin tuaj operativ:"
 
 #. {ph0}: <code>claude</code>
-#: website/public/get-started/index.html:559
+#: website/public/get-started/index.html:561
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13734,18 +13739,18 @@ msgstr ""
 
 #. {ph0}: <a href="https://code.claude.com/docs/en/setup" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:564
+#: website/public/get-started/index.html:566
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Claude Code installation and account options{ph1}"
 msgstr "Opsionet e instalimit dhe llogarisë së {ph0}Claude Code{ph1}"
 
-#: website/public/get-started/index.html:571
+#: website/public/get-started/index.html:573
 msgctxt "page:get-started/index.html"
 msgid "Claude Desktop · use a desktop chat"
 msgstr "Claude Desktop · përdorni një bisedë në desktop"
 
-#: website/public/get-started/index.html:572
+#: website/public/get-started/index.html:574
 msgctxt "page:get-started/index.html"
 msgid ""
 "Install Claude Desktop on Windows or macOS and sign in. Quit it completely, "
@@ -13757,7 +13762,7 @@ msgstr ""
 
 #. {ph0}: <a href="#check-connection">
 #. {ph1}: </a>
-#: website/public/get-started/index.html:591
+#: website/public/get-started/index.html:593
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13772,7 +13777,7 @@ msgstr ""
 #. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
 #. configuration.md#claude-desktop" >
 #. {ph3}: </a >
-#: website/public/get-started/index.html:595
+#: website/public/get-started/index.html:597
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13782,14 +13787,14 @@ msgstr ""
 "{ph0}Shkarko Claude Desktop{ph1} · {ph2}Detajet e lidhjes Claude "
 "Desktop{ph3}"
 
-#: website/public/get-started/index.html:605
+#: website/public/get-started/index.html:607
 msgctxt "page:get-started/index.html"
 msgid "OpenCode · choose an AI model"
 msgstr "OpenCode · zgjidhni një model AI"
 
 #. {ph0}: <code>opencode</code>
 #. {ph1}: <code>/connect</code>
-#: website/public/get-started/index.html:620
+#: website/public/get-started/index.html:622
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13801,19 +13806,19 @@ msgstr ""
 
 #. {ph0}: <a href="https://opencode.ai/docs/" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:625
+#: website/public/get-started/index.html:627
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}OpenCode installation and model setup{ph1}"
 msgstr "{ph0}Instalimi i OpenCode dhe konfigurimi i modelit{ph1}"
 
-#: website/public/get-started/index.html:632
+#: website/public/get-started/index.html:634
 msgctxt "page:get-started/index.html"
 msgid "All supported clients and setup IDs"
 msgstr "Të gjithë klientët e mbështetur dhe ID-të e konfigurimit"
 
 #. {ph0}: <code>--client</code>
-#: website/public/get-started/index.html:633
+#: website/public/get-started/index.html:635
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13823,12 +13828,12 @@ msgstr ""
 "Lëshimi i npm 6.4.0 mbështet klientët më poshtë. Përdorni ID-në me {ph0} kur"
 " zgjidhni një klient në mënyrë eksplicite."
 
-#: website/public/get-started/index.html:641
+#: website/public/get-started/index.html:643
 msgctxt "page:get-started/index.html"
 msgid "Client"
 msgstr "Klienti"
 
-#: website/public/get-started/index.html:642
+#: website/public/get-started/index.html:644
 msgctxt "page:get-started/index.html"
 msgid "Setup ID"
 msgstr "ID-ja e konfigurimit"
@@ -13838,7 +13843,7 @@ msgstr "ID-ja e konfigurimit"
 #. {ph2}: <code>trae</code>
 #. {ph3}: <code>zcode</code>
 #. {ph4}: <code>dsh</code>
-#: website/public/get-started/index.html:717
+#: website/public/get-started/index.html:719
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13857,7 +13862,7 @@ msgstr ""
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#released-
 #. package-and-main" >
 #. {ph3}: </a >
-#: website/public/get-started/index.html:724
+#: website/public/get-started/index.html:726
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13867,13 +13872,13 @@ msgstr ""
 "{ph0}Konfigurimi i klientit dhe zgjidhja e problemeve{ph1} · {ph2}Lësho "
 "disponueshmërinë{ph3}"
 
-#: website/public/get-started/index.html:736
+#: website/public/get-started/index.html:738
 msgctxt "page:get-started/index.html"
 msgid "Grok Bot · connect on its hosted computer"
 msgstr "Grok Bot · lidheni në kompjuterin e tij pritës"
 
 #. {ph0}: <code>rea</code>
-#: website/public/get-started/index.html:737
+#: website/public/get-started/index.html:739
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13886,29 +13891,29 @@ msgstr ""
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
 #. configuration.md#other-client-settings" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:755
+#: website/public/get-started/index.html:757
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Grok Bot connector instructions{ph1}"
 msgstr "{ph0}Udhëzimet e lidhjes së Grok Bot{ph1}"
 
-#: website/public/get-started/index.html:765
+#: website/public/get-started/index.html:767
 msgctxt "page:get-started/index.html"
 msgid "3. Connect REA"
 msgstr "3. Lidheni REA"
 
-#: website/public/get-started/index.html:766
+#: website/public/get-started/index.html:768
 msgctxt "page:get-started/index.html"
 msgid "Copy this into your coding agent:"
 msgstr "Kopjojeni këtë në agjentin tuaj të kodimit:"
 
-#: website/public/get-started/index.html:810
+#: website/public/get-started/index.html:812
 msgctxt "page:get-started/index.html"
 msgid "For one specific client, add its setup ID:"
 msgstr "Për një klient specifik, shtoni ID-në e tij të konfigurimit:"
 
 #. {ph0}: <code>y</code>
-#: website/public/get-started/index.html:825
+#: website/public/get-started/index.html:827
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13920,7 +13925,7 @@ msgstr ""
 "listën e klientëve të REA, përdorni tastet e shigjetave për të lëvizur, "
 "Space për të zgjedhur klientin tuaj dhe Enter për të vazhduar."
 
-#: website/public/get-started/index.html:836
+#: website/public/get-started/index.html:838
 msgctxt "page:get-started/index.html"
 msgid ""
 "MCP is the connection that lets your agent call REA. The skill gives it a "
@@ -13929,7 +13934,7 @@ msgstr ""
 "MCP është lidhja që lejon agjentin tuaj të telefonojë REA. Aftësia i jep "
 "asaj një rrjedhë pune për hetimin e softuerit."
 
-#: website/public/get-started/index.html:840
+#: website/public/get-started/index.html:842
 msgctxt "page:get-started/index.html"
 msgid ""
 "For the first exercise, you can skip the optional Hopper installation. "
@@ -13940,7 +13945,7 @@ msgstr ""
 
 #. {ph0}: <code>codex</code>
 #. {ph1}: <code>"healthy": true</code>
-#: website/public/get-started/index.html:873
+#: website/public/get-started/index.html:875
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13950,21 +13955,21 @@ msgstr ""
 "Zëvendësoni {ph0} me ID-në e konfigurimit të klientit tuaj. Një kontroll i "
 "suksesshëm raporton {ph1}. Pastaj pyesni agjentin tuaj:"
 
-#: website/public/get-started/index.html:879
+#: website/public/get-started/index.html:881
 msgctxt "page:get-started/index.html"
 msgid "Check that REA is connected and show me which REA tools you can use."
 msgstr ""
 "Kontrollo që REA të jetë i lidhur dhe më trego cilat mjete të REA mund të "
 "përdorësh."
 
-#: website/public/get-started/index.html:886
+#: website/public/get-started/index.html:888
 msgctxt "page:get-started/index.html"
 msgid "4. Try your first investigation"
 msgstr "4. Provoni hetimin tuaj të parë"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/get-started/index.html:887
+#: website/public/get-started/index.html:889
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13976,7 +13981,7 @@ msgstr ""
 "{ph0}Eksporto shënime{ph1}. Agjenti juaj mund të inspektojë kodin e tij pa "
 "instaluar ose lëshuar Electron."
 
-#: website/public/get-started/index.html:894
+#: website/public/get-started/index.html:896
 msgctxt "page:get-started/index.html"
 msgid "Your coding agent"
 msgstr "Agjenti juaj kodues"
@@ -13990,7 +13995,7 @@ msgstr "Agjenti juaj kodues"
 #. {ph5}: </span >
 #. {ph6}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph7}: </span>
-#: website/public/get-started/index.html:904
+#: website/public/get-started/index.html:906
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14004,7 +14009,7 @@ msgstr ""
 "Trego ku është shkruar {ph4}, cilat fusha përmban dhe skedarët dhe rreshtat "
 "përkatës.{ph5}{ph6}{ph7}"
 
-#: website/public/get-started/index.html:918
+#: website/public/get-started/index.html:920
 msgctxt "page:get-started/index.html"
 msgid "Look for a short explanation with file and line references:"
 msgstr ""
@@ -14014,7 +14019,7 @@ msgstr ""
 #. {ph1}: <code>notes.csv</code>
 #. {ph2}: <code>id</code>
 #. {ph3}: <code>title</code>
-#: website/public/get-started/index.html:920
+#: website/public/get-started/index.html:922
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14028,13 +14033,13 @@ msgstr ""
 
 #. {ph0}: <a href="../first-investigation/#check" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:927
+#: website/public/get-started/index.html:929
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Check a prediction in the guided exercise →{ph1}"
 msgstr "{ph0}Kontrollo një parashikim në ushtrimin e drejtuar →{ph1}"
 
-#: website/public/get-started/index.html:933
+#: website/public/get-started/index.html:935
 msgctxt "page:get-started/index.html"
 msgid "Download the example yourself, or use your own app"
 msgstr "Shkarkoni vetë shembullin ose përdorni aplikacionin tuaj"
@@ -14042,25 +14047,26 @@ msgstr "Shkarkoni vetë shembullin ose përdorni aplikacionin tuaj"
 #. {ph0}: <a class="button" href="../examples/notes-example.zip"
 #. download="notes-example.zip" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:936
+#: website/public/get-started/index.html:938
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Download example ZIP{ph1}"
 msgstr "{ph0}Shkarko shembull ZIP{ph1}"
 
 #. {ph0}: <code>notes-example</code>
-#: website/public/get-started/index.html:944
+#: website/public/get-started/index.html:946
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
 "If your agent can’t download files, unzip this archive yourself. Give it the"
 " path to the {ph0} folder and the same export question."
 msgstr ""
-"Nëse agjenti juaj nuk mund të shkarkojë skedarë, hiqni vetë këtë arkiv. "
-"Jepini shtegun për në dosjen {ph0} dhe të njëjtën pyetje për eksport."
+"Nëse agjenti juaj nuk mund të shkarkojë skedarë, shpaketojeni vetë këtë "
+"arkiv. Jepini shtegun e dosjes {ph0} dhe bëjini të njëjtën pyetje për "
+"eksportin."
 
 #. {ph0}: <code>/absolute/path/to/app</code>
-#: website/public/get-started/index.html:950
+#: website/public/get-started/index.html:952
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14070,12 +14076,12 @@ msgstr ""
 "Përdorni REA për të inspektuar aplikacionin në {ph0}. Gjeni se si eksporton "
 "të dhënat dhe tregoni skedarët dhe linjat përkatëse."
 
-#: website/public/get-started/index.html:980
+#: website/public/get-started/index.html:982
 msgctxt "page:get-started/index.html"
 msgid "Analyze another kind of software"
 msgstr "Analizoni një lloj tjetër softueri"
 
-#: website/public/get-started/index.html:981
+#: website/public/get-started/index.html:983
 msgctxt "page:get-started/index.html"
 msgid ""
 "Choose the section for your target. A provider is the local analysis tool "
@@ -14084,12 +14090,12 @@ msgstr ""
 "Zgjidhni seksionin për objektivin tuaj. Një ofrues është mjeti lokal i "
 "analizës që përdor REA për atë lloj softueri."
 
-#: website/public/get-started/index.html:986
+#: website/public/get-started/index.html:988
 msgctxt "page:get-started/index.html"
 msgid "Native executables and libraries · Hopper, Ghidra or IDA"
 msgstr "Ekzekutuesit dhe bibliotekat vendase · Hopper, Ghidra ose IDA"
 
-#: website/public/get-started/index.html:989
+#: website/public/get-started/index.html:991
 msgctxt "page:get-started/index.html"
 msgid ""
 "Install one analysis tool on the computer running REA. The host is your "
@@ -14098,47 +14104,47 @@ msgstr ""
 "Instaloni një mjet analize në kompjuterin që funksionon REA. Pritësi është "
 "sistemi juaj operativ; objektivi është programi që dëshironi të inspektoni."
 
-#: website/public/get-started/index.html:998
+#: website/public/get-started/index.html:1000
 msgctxt "page:get-started/index.html"
 msgid "Provider"
 msgstr "Ofruesi"
 
-#: website/public/get-started/index.html:1007
+#: website/public/get-started/index.html:1009
 msgctxt "page:get-started/index.html"
 msgid "Unavailable"
 msgstr "E padisponueshme"
 
-#: website/public/get-started/index.html:1009
+#: website/public/get-started/index.html:1011
 msgctxt "page:get-started/index.html"
 msgid "Supported distributions"
 msgstr "Shpërndarjet e mbështetura"
 
-#: website/public/get-started/index.html:1013
+#: website/public/get-started/index.html:1015
 msgctxt "page:get-started/index.html"
 msgid "x64 · experimental"
 msgstr "x64 · eksperimentale"
 
-#: website/public/get-started/index.html:1019
+#: website/public/get-started/index.html:1021
 msgctxt "page:get-started/index.html"
 msgid "Verified profiles"
 msgstr "Profilet e verifikuara"
 
-#: website/public/get-started/index.html:1020
+#: website/public/get-started/index.html:1022
 msgctxt "page:get-started/index.html"
 msgid "Verified headless profile"
 msgstr "Profili i verifikuar pa kokë"
 
-#: website/public/get-started/index.html:1021
+#: website/public/get-started/index.html:1023
 msgctxt "page:get-started/index.html"
 msgid "See provider guide"
 msgstr "Shikoni udhëzuesin e ofruesit"
 
-#: website/public/get-started/index.html:1027
+#: website/public/get-started/index.html:1029
 msgctxt "page:get-started/index.html"
 msgid "Hopper · let setup install or connect it"
 msgstr "Hopper · lejo që konfigurimi ta instalojë ose ta lidhë atë"
 
-#: website/public/get-started/index.html:1033
+#: website/public/get-started/index.html:1035
 msgctxt "page:get-started/index.html"
 msgid ""
 "Choose Hopper in setup and review its separate installation plan. On macOS, "
@@ -14150,7 +14156,7 @@ msgstr ""
 "kur të hapet fillimisht Hopper. Në Linux, konfigurimi përgatit demonstrimin "
 "e mbështetur dhe ekranin e tij privat."
 
-#: website/public/get-started/index.html:1039
+#: website/public/get-started/index.html:1041
 msgctxt "page:get-started/index.html"
 msgid ""
 "Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
@@ -14160,7 +14166,7 @@ msgstr ""
 "Omarchy. Hopper është softuer komercial; demonstrimi i tij ka kufij të "
 "përcaktuar nga shitësi."
 
-#: website/public/get-started/index.html:1058
+#: website/public/get-started/index.html:1060
 msgctxt "page:get-started/index.html"
 msgid ""
 "If macOS asks for Automation permission, allow the app that starts REA in "
@@ -14174,18 +14180,18 @@ msgstr ""
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#hopper"
 #. >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1063
+#: website/public/get-started/index.html:1065
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Hopper setup and troubleshooting{ph1}"
 msgstr "Konfigurimi dhe zgjidhja e problemeve të {ph0}Hopper{ph1}"
 
-#: website/public/get-started/index.html:1071
+#: website/public/get-started/index.html:1073
 msgctxt "page:get-started/index.html"
 msgid "Ghidra · install the free analysis tool and Java"
 msgstr "Ghidra · instaloni mjetin falas të analizës dhe Java"
 
-#: website/public/get-started/index.html:1075
+#: website/public/get-started/index.html:1077
 msgctxt "page:get-started/index.html"
 msgid ""
 "Install a 64-bit JDK 21 or newer, including the Java compiler. Choose the "
@@ -14195,7 +14201,7 @@ msgstr ""
 "Zgjidhni paketën që përputhet me arkitekturën e kompjuterit tuaj."
 
 #. {ph0}: <code>ghidra_…_PUBLIC_….zip</code>
-#: website/public/get-started/index.html:1080
+#: website/public/get-started/index.html:1082
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14208,7 +14214,7 @@ msgstr ""
 #. {ph0}: <code>ghidraRun</code>
 #. {ph1}: <code>ghidraRun.bat</code>
 #. {ph2}: <code>GHIDRA_INSTALL_DIR</code>
-#: website/public/get-started/index.html:1085
+#: website/public/get-started/index.html:1087
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14224,7 +14230,7 @@ msgstr ""
 #. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build"
 #. >
 #. {ph3}: </a >
-#: website/public/get-started/index.html:1091
+#: website/public/get-started/index.html:1093
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.1.4{ph3}"
@@ -14232,7 +14238,7 @@ msgstr "{ph0}Shkarko një JDK{ph1} · {ph2}Shkarko Ghidra 12.1.4{ph3}"
 
 #. {ph0}: <code>java.home</code>
 #. {ph1}: <code>JAVA_HOME</code>
-#: website/public/get-started/index.html:1101
+#: website/public/get-started/index.html:1103
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14242,7 +14248,7 @@ msgstr ""
 "Kontrolloni Java. Komanda e parë printon {ph0}; përdorni atë dosje për "
 "{ph1}. E dyta konfirmon instalimin e përpiluesit:"
 
-#: website/public/get-started/index.html:1168
+#: website/public/get-started/index.html:1170
 msgctxt "page:get-started/index.html"
 msgid ""
 "Replace both paths with your existing installations. For a fresh macOS or "
@@ -14253,25 +14259,28 @@ msgstr ""
 "instalim të ri macOS ose Linux arm64, ndërtoni dekompiluesin vendas për "
 "kompjuterin tuaj përpara se të vazhdoni."
 
-#: website/public/get-started/index.html:1174
+#: website/public/get-started/index.html:1176
 msgctxt "page:get-started/index.html"
 msgid "Build Ghidra's native decompiler"
 msgstr "Ndërtoni dekompiluesin vendas të Ghidra"
 
-#: website/public/get-started/index.html:1175
+#. {ph0}: <span translate="no">make</span>
+#. {ph1}: <span translate="no">bison</span>
+#: website/public/get-started/index.html:1177
+#, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"On macOS, the build needs Xcode Command Line Tools, make and bison. Use the "
-"guide for your computer:"
+"On macOS, the build needs Xcode Command Line Tools, {ph0} and {ph1}. Use the"
+" guide for your computer:"
 msgstr ""
-"Në macOS, ndërtimi ka nevojë për mjetet e linjës së komandës Xcode, markën "
-"dhe bizonin. Përdorni udhëzuesin për kompjuterin tuaj:"
+"Në macOS, ndërtimi kërkon Xcode Command Line Tools, {ph0} dhe {ph1}. "
+"Përdorni udhëzuesin për kompjuterin tuaj:"
 
 #. {ph0}: <a
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#missing-
 #. macos-native-decompiler" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1180
+#: website/public/get-started/index.html:1184
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}macOS · Intel{ph1}"
@@ -14281,7 +14290,7 @@ msgstr "{ph0}macOS · Intel{ph1}"
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#macos-
 #. arm64-native-decompiler" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1186
+#: website/public/get-started/index.html:1190
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}macOS · Apple Silicon{ph1}"
@@ -14291,18 +14300,18 @@ msgstr "{ph0}macOS · Apple silic{ph1}"
 #. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-
 #. native-components" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1192
+#: website/public/get-started/index.html:1196
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Linux arm64 · native build instructions{ph1}"
 msgstr "{ph0}Linux arm64 · udhëzime ndërtimi origjinal{ph1}"
 
-#: website/public/get-started/index.html:1200
+#: website/public/get-started/index.html:1204
 msgctxt "page:get-started/index.html"
 msgid "Then check Ghidra and save its paths for your client:"
 msgstr "Pastaj kontrolloni Ghidra dhe ruani shtigjet e tij për klientin tuaj:"
 
-#: website/public/get-started/index.html:1217
+#: website/public/get-started/index.html:1221
 msgctxt "page:get-started/index.html"
 msgid ""
 "Keep these commands in the same terminal session. Rerun setup after setting "
@@ -14320,7 +14329,7 @@ msgstr ""
 #. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/windows-
 #. ghidra-p0.md" >
 #. {ph3}: </a >
-#: website/public/get-started/index.html:1222
+#: website/public/get-started/index.html:1226
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14330,12 +14339,12 @@ msgstr ""
 "Kërkesat për konfigurimin dhe arkitekturën e {ph0}Ghidra{ph1} · {ph2}Windows"
 " Ghidra udhëzues{ph3}"
 
-#: website/public/get-started/index.html:1235
+#: website/public/get-started/index.html:1239
 msgctxt "page:get-started/index.html"
 msgid "IDA · connect an existing installation"
 msgstr "IDA · lidh një instalim ekzistues"
 
-#: website/public/get-started/index.html:1236
+#: website/public/get-started/index.html:1240
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use the IDA provider guide to prepare an upstream MCP registration. Choose "
@@ -14347,7 +14356,7 @@ msgstr ""
 "origjinal të hapur, ose një mbikëqyrës pa kokë që hap një bazë të dhënash "
 "private."
 
-#: website/public/get-started/index.html:1241
+#: website/public/get-started/index.html:1245
 msgctxt "page:get-started/index.html"
 msgid ""
 "Verified profiles include the Windows legacy GUI and headless supervisor, "
@@ -14364,7 +14373,7 @@ msgstr ""
 #. setup" >
 #. {ph1}: </a >
 #. {ph2}: <code>6.4.0</code>
-#: website/public/get-started/index.html:1247
+#: website/public/get-started/index.html:1251
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14379,7 +14388,7 @@ msgstr ""
 #. {ph0}: <code>node scripts/rea.mjs doctor --provider ida --json</code>
 #. {ph1}: <code>node scripts/rea.mjs setup</code>
 #. {ph2}: <code>npx</code>
-#: website/public/get-started/index.html:1256
+#: website/public/get-started/index.html:1260
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14389,14 +14398,14 @@ msgstr ""
 "Nga arka e ndërtuar, ekzekutoni {ph0} dhe {ph1} në vend të komandave {ph2} "
 "më poshtë."
 
-#: website/public/get-started/index.html:1263
+#: website/public/get-started/index.html:1267
 msgctxt "page:get-started/index.html"
 msgid "Prepare the IDA registration file"
 msgstr "Përgatitni skedarin e regjistrimit IDA"
 
 #. {ph0}: <code>ida-mcp.json</code>
 #. {ph1}: <code>.txt</code>
-#: website/public/get-started/index.html:1264
+#: website/public/get-started/index.html:1268
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14412,7 +14421,7 @@ msgstr ""
 #. {ph0}: <code>idb_open</code>
 #. {ph1}: <code>idb_list</code>
 #. {ph2}: <code>idb_close</code>
-#: website/public/get-started/index.html:1271
+#: website/public/get-started/index.html:1275
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14425,7 +14434,7 @@ msgstr ""
 #. {ph0}: <code>command</code>
 #. {ph1}: <code>args</code>
 #. {ph2}: <code>env</code>
-#: website/public/get-started/index.html:1294
+#: website/public/get-started/index.html:1298
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14437,7 +14446,7 @@ msgstr ""
 " {ph2} të tij në skedar. Hapni binarin origjinal në IDA dhe nisni shtesën e "
 "tij në rrjedhën e sipërme përpara se t'i kërkoni REA ta inspektojë atë."
 
-#: website/public/get-started/index.html:1336
+#: website/public/get-started/index.html:1340
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use the JSON registration file you prepared with the provider guide, then "
@@ -14449,7 +14458,7 @@ msgstr ""
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/ida-
 #. provider.md" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1340
+#: website/public/get-started/index.html:1344
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}IDA profiles, registration examples and verified platforms{ph1}"
@@ -14457,7 +14466,7 @@ msgstr ""
 "profilet e {ph0}IDA, shembujt e regjistrimit dhe platformat e "
 "verifikuara{ph1}"
 
-#: website/public/get-started/index.html:1348
+#: website/public/get-started/index.html:1352
 msgctxt "page:get-started/index.html"
 msgid ""
 "Once connected, give your agent the original executable's full path and name"
@@ -14467,7 +14476,7 @@ msgstr ""
 "origjinal dhe emërtoni ofruesin tuaj:"
 
 #. {ph0}: <code>/absolute/path/to/program</code>
-#: website/public/get-started/index.html:1353
+#: website/public/get-started/index.html:1357
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14481,18 +14490,18 @@ msgstr ""
 
 #. {ph0}: <a href="../guides/native/">
 #. {ph1}: </a>
-#: website/public/get-started/index.html:1360
+#: website/public/get-started/index.html:1364
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Follow a native analysis example{ph1}"
 msgstr "{ph0}Ndiq një shembull të analizës vendase{ph1}"
 
-#: website/public/get-started/index.html:1365
+#: website/public/get-started/index.html:1369
 msgctxt "page:get-started/index.html"
 msgid "Websites, Android, .NET, firmware and other targets"
 msgstr "Faqet e internetit, Android, .NET, firmware dhe objektiva të tjerë"
 
-#: website/public/get-started/index.html:1368
+#: website/public/get-started/index.html:1372
 msgctxt "page:get-started/index.html"
 msgid ""
 "Open the guide for the target you have. Each guide gives the additional "
@@ -14501,120 +14510,120 @@ msgstr ""
 "Hapni udhëzuesin për objektivin që keni. Çdo udhëzues jep mjetet shtesë, "
 "hostet e mbështetur dhe komandën e parë."
 
-#: website/public/get-started/index.html:1376
+#: website/public/get-started/index.html:1380
 msgctxt "page:get-started/index.html"
 msgid "Target"
 msgstr "Synimi"
 
-#: website/public/get-started/index.html:1377
+#: website/public/get-started/index.html:1381
 msgctxt "page:get-started/index.html"
 msgid "Tools to prepare"
 msgstr "Mjetet për të përgatitur"
 
-#: website/public/get-started/index.html:1378
+#: website/public/get-started/index.html:1382
 msgctxt "page:get-started/index.html"
 msgid "Guide"
 msgstr "Udhëzues"
 
-#: website/public/get-started/index.html:1383
+#: website/public/get-started/index.html:1387
 msgctxt "page:get-started/index.html"
 msgid "JavaScript / Electron"
 msgstr "JavaScript / Electron"
 
 #. {ph0}: <a href="../guides/javascript/">
 #. {ph1}: </a>
-#: website/public/get-started/index.html:1385
-#: website/public/get-started/index.html:1390
-#: website/public/get-started/index.html:1395
-#: website/public/get-started/index.html:1405
-#: website/public/get-started/index.html:1415
-#: website/public/get-started/index.html:1425
-#: website/public/get-started/index.html:1435
-#: website/public/get-started/index.html:1445
-#: website/public/get-started/index.html:1455
-#: website/public/get-started/index.html:1465
-#: website/public/get-started/index.html:1475
-#: website/public/get-started/index.html:1485
-#: website/public/get-started/index.html:1495
-#: website/public/get-started/index.html:1505
-#: website/public/get-started/index.html:1515
-#: website/public/get-started/index.html:1525
+#: website/public/get-started/index.html:1389
+#: website/public/get-started/index.html:1394
+#: website/public/get-started/index.html:1399
+#: website/public/get-started/index.html:1409
+#: website/public/get-started/index.html:1419
+#: website/public/get-started/index.html:1429
+#: website/public/get-started/index.html:1439
+#: website/public/get-started/index.html:1449
+#: website/public/get-started/index.html:1459
+#: website/public/get-started/index.html:1469
+#: website/public/get-started/index.html:1479
+#: website/public/get-started/index.html:1489
+#: website/public/get-started/index.html:1499
+#: website/public/get-started/index.html:1509
+#: website/public/get-started/index.html:1519
+#: website/public/get-started/index.html:1529
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Open guide{ph1}"
 msgstr "{ph0}Hap udhëzues{ph1}"
 
-#: website/public/get-started/index.html:1388
+#: website/public/get-started/index.html:1392
 msgctxt "page:get-started/index.html"
 msgid "Website"
 msgstr "Faqja e internetit"
 
-#: website/public/get-started/index.html:1393
+#: website/public/get-started/index.html:1397
 msgctxt "page:get-started/index.html"
 msgid ".NET / Flutter / packages"
 msgstr ".NET / Flutter / paketa"
 
-#: website/public/get-started/index.html:1403
+#: website/public/get-started/index.html:1407
 msgctxt "page:get-started/index.html"
 msgid "Android APK"
 msgstr "Android APK"
 
-#: website/public/get-started/index.html:1413
+#: website/public/get-started/index.html:1417
 msgctxt "page:get-started/index.html"
 msgid "Android device"
 msgstr "Android pajisje"
 
-#: website/public/get-started/index.html:1423
+#: website/public/get-started/index.html:1427
 msgctxt "page:get-started/index.html"
 msgid "Android resources"
 msgstr "Android burime"
 
-#: website/public/get-started/index.html:1433
+#: website/public/get-started/index.html:1437
 msgctxt "page:get-started/index.html"
 msgid "JEB project"
 msgstr "projekti JEB"
 
-#: website/public/get-started/index.html:1443
+#: website/public/get-started/index.html:1447
 msgctxt "page:get-started/index.html"
 msgid "Firmware"
 msgstr "Firmware"
 
-#: website/public/get-started/index.html:1453
+#: website/public/get-started/index.html:1457
 msgctxt "page:get-started/index.html"
 msgid "WASM"
 msgstr "WASM"
 
-#: website/public/get-started/index.html:1463
+#: website/public/get-started/index.html:1467
 msgctxt "page:get-started/index.html"
 msgid "SQLite database"
 msgstr "Baza e të dhënave SQLite"
 
-#: website/public/get-started/index.html:1473
+#: website/public/get-started/index.html:1477
 msgctxt "page:get-started/index.html"
 msgid "EVM bytecode"
 msgstr "EVM bytekod"
 
-#: website/public/get-started/index.html:1483
+#: website/public/get-started/index.html:1487
 msgctxt "page:get-started/index.html"
 msgid "ELF / Linux crash"
 msgstr "ELF / Linux përplasje"
 
-#: website/public/get-started/index.html:1493
+#: website/public/get-started/index.html:1497
 msgctxt "page:get-started/index.html"
 msgid "HAR / SAZ / mitmproxy"
 msgstr "HAR / SAZ / mitmproxy"
 
-#: website/public/get-started/index.html:1503
+#: website/public/get-started/index.html:1507
 msgctxt "page:get-started/index.html"
 msgid "PCAP / PCAPNG"
 msgstr "PCAP / PCAPNG"
 
-#: website/public/get-started/index.html:1513
+#: website/public/get-started/index.html:1517
 msgctxt "page:get-started/index.html"
 msgid "Logic signals"
 msgstr "Sinjalet logjike"
 
-#: website/public/get-started/index.html:1523
+#: website/public/get-started/index.html:1527
 msgctxt "page:get-started/index.html"
 msgid "Process behavior"
 msgstr "Sjellja e procesit"
@@ -14630,7 +14639,7 @@ msgstr "Sjellja e procesit"
 #. {ph5}: </a >
 #. {ph6}: <a href="../guides/">
 #. {ph7}: </a>
-#: website/public/get-started/index.html:1535
+#: website/public/get-started/index.html:1539
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14640,18 +14649,20 @@ msgstr ""
 "{ph0}Udhëzues Flutter{ph1} · {ph2}Paketat dhe burimet{ph3} · {ph4}EVM "
 "bytecode{ph5} · {ph6}Të gjithë udhëzuesit e hetimit{ph7}"
 
-#: website/public/get-started/index.html:1555
+#: website/public/get-started/index.html:1559
 msgctxt "page:get-started/index.html"
 msgid "Use REA from a terminal"
 msgstr "Përdorni REA nga një terminal"
 
-#: website/public/get-started/index.html:1557
+#. {ph0}: <span translate="no">curl</span>
+#: website/public/get-started/index.html:1561
+#, python-brace-format
 msgctxt "page:get-started/index.html"
-msgid "CLI commands, global installation and curl"
-msgstr "Komandat CLI, instalimi global dhe kaçurrela"
+msgid "CLI commands, global installation and {ph0}"
+msgstr "Komandat CLI, instalimi global dhe {ph0}"
 
 #. {ph0}: <code>main</code>
-#: website/public/get-started/index.html:1654
+#: website/public/get-started/index.html:1661
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14661,17 +14672,19 @@ msgstr ""
 "Zëvendësoni {ph0} me një emër funksioni ose adresë nga lista e funksioneve "
 "të objektivit. Ghidra duhet të konfigurohet fillimisht."
 
-#: website/public/get-started/index.html:1658
+#. {ph0}: <span translate="no">curl</span>
+#: website/public/get-started/index.html:1665
+#, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"On macOS or Linux, you can also use the curl installer after preparing "
+"On macOS or Linux, you can also use the {ph0} installer after preparing "
 "Node.js:"
 msgstr ""
-"Në macOS ose Linux, mund të përdorni gjithashtu instaluesin e curl-it pas "
+"Në macOS ose Linux, mund të përdorni gjithashtu instaluesin e {ph0}-it pas "
 "përgatitjes së Node.js:"
 
 #. {ph0}: <code>rea setup</code>
-#: website/public/get-started/index.html:1676
+#: website/public/get-started/index.html:1684
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14683,7 +14696,7 @@ msgstr ""
 
 #. {ph0}: <code>rea</code>
 #. {ph1}: <code>"$HOME/.local/bin/rea" setup</code>
-#: website/public/get-started/index.html:1680
+#: website/public/get-started/index.html:1688
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14694,7 +14707,7 @@ msgstr ""
 "të printuar nga instaluesi. Në Linux, komanda e paracaktuar e konfigurimit "
 "është {ph1}."
 
-#: website/public/get-started/index.html:1696
+#: website/public/get-started/index.html:1704
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use the client check in step 3 with your setup ID. In editor clients, enable"
@@ -14704,12 +14717,12 @@ msgstr ""
 "klientët e redaktorit, aktivizoni REA në cilësimet e MCP dhe lejoni veglat e"
 " tij në bisedën e agjentit."
 
-#: website/public/get-started/index.html:1724
+#: website/public/get-started/index.html:1732
 msgctxt "page:get-started/index.html"
 msgid "Windows, WSL and paths with spaces"
 msgstr "Windows, WSL dhe shtigjet me hapësira"
 
-#: website/public/get-started/index.html:1725
+#: website/public/get-started/index.html:1733
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use Windows PowerShell for Windows clients and analysis tools. If your agent"
@@ -14721,17 +14734,17 @@ msgstr ""
 "mjedisi Linux dhe përdorni shtigjet Linux atje. Ofruesit pa kokë "
 "funksionojnë në të njëjtin host si REA."
 
-#: website/public/get-started/index.html:1734
+#: website/public/get-started/index.html:1742
 msgctxt "page:get-started/index.html"
 msgid "Windows setup command:"
 msgstr "Komanda e konfigurimit të Windows:"
 
-#: website/public/get-started/index.html:1751
+#: website/public/get-started/index.html:1759
 msgctxt "page:get-started/index.html"
 msgid "Update or remove REA"
 msgstr "Përditëso ose hiq REA"
 
-#: website/public/get-started/index.html:1752
+#: website/public/get-started/index.html:1760
 msgctxt "page:get-started/index.html"
 msgid ""
 "To refresh your agent connection, run the latest setup command again, review"
@@ -14742,7 +14755,7 @@ msgstr ""
 
 #. {ph0}: <code>rea update</code>
 #. {ph1}: <code>npx rea-agents@latest uninstall</code>
-#: website/public/get-started/index.html:1770
+#: website/public/get-started/index.html:1778
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14756,7 +14769,7 @@ msgstr ""
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#diagnose-
 #. update-and-remove" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1776
+#: website/public/get-started/index.html:1784
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Update and uninstall details{ph1}"
@@ -14767,35 +14780,35 @@ msgctxt "page:get-started/index.html"
 msgid "Copy Windows REA setup command"
 msgstr "Kopjo komandën e konfigurimit Windows REA"
 
-#: website/public/get-started/index.html:419
-#: website/public/get-started/index.html:450
-#: website/public/get-started/index.html:464
-#: website/public/get-started/index.html:482
-#: website/public/get-started/index.html:534
-#: website/public/get-started/index.html:548
-#: website/public/get-started/index.html:580
-#: website/public/get-started/index.html:609
-#: website/public/get-started/index.html:744
-#: website/public/get-started/index.html:799
-#: website/public/get-started/index.html:814
-#: website/public/get-started/index.html:862
-#: website/public/get-started/index.html:1047
-#: website/public/get-started/index.html:1109
-#: website/public/get-started/index.html:1132
-#: website/public/get-started/index.html:1156
-#: website/public/get-started/index.html:1204
-#: website/public/get-started/index.html:1279
-#: website/public/get-started/index.html:1305
-#: website/public/get-started/index.html:1322
-#: website/public/get-started/index.html:1643
-#: website/public/get-started/index.html:1665
-#: website/public/get-started/index.html:1738
-#: website/public/get-started/index.html:1759
+#: website/public/get-started/index.html:421
+#: website/public/get-started/index.html:452
+#: website/public/get-started/index.html:466
+#: website/public/get-started/index.html:484
+#: website/public/get-started/index.html:536
+#: website/public/get-started/index.html:550
+#: website/public/get-started/index.html:582
+#: website/public/get-started/index.html:611
+#: website/public/get-started/index.html:746
+#: website/public/get-started/index.html:801
+#: website/public/get-started/index.html:816
+#: website/public/get-started/index.html:864
+#: website/public/get-started/index.html:1049
+#: website/public/get-started/index.html:1111
+#: website/public/get-started/index.html:1134
+#: website/public/get-started/index.html:1158
+#: website/public/get-started/index.html:1208
+#: website/public/get-started/index.html:1283
+#: website/public/get-started/index.html:1309
+#: website/public/get-started/index.html:1326
+#: website/public/get-started/index.html:1650
+#: website/public/get-started/index.html:1673
+#: website/public/get-started/index.html:1746
+#: website/public/get-started/index.html:1767
 msgctxt "page:get-started/index.html"
 msgid "Copy command"
 msgstr "Komandën e kopjimit"
 
-#: website/public/get-started/index.html:895
+#: website/public/get-started/index.html:897
 msgctxt "page:get-started/index.html"
 msgid "Copy Notes investigation prompt"
 msgstr "Kërkesa e hetimit të Kopjimit të Shënimeve"
@@ -15144,7 +15157,7 @@ msgstr "Vendas · Rindërtim"
 #: website/public/index.html:1061
 msgctxt "page:index.html"
 msgid "DX-Ball's sound-pan calculation"
-msgstr "Llogaritja e tingullit të DX-Ball"
+msgstr "Llogaritja e panoramimit të zërit në DX-Ball"
 
 #: website/public/index.html:1062
 msgctxt "page:index.html"
@@ -15215,6 +15228,10 @@ msgstr "Opsionet e konfigurimit"
 msgctxt "runtime"
 msgid "Contributors: {count}"
 msgstr "Kontribuesit: {count}"
+
+#~ msgctxt "figure:dx-ball-sound-pan-investigation.svg"
+#~ msgid "20 + 30 × tile_x"
+#~ msgstr "20 + 30 × pllakë_x"
 
 #, python-brace-format
 #~ msgctxt "page:first-investigation/index.html"

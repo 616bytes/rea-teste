@@ -218,7 +218,7 @@ Ndiqni një thirrje zanore deri te funksioni ndihmës që shndërron pozicionin 
 
 Gjeni API-në e clipboard-it të procesit të paraqitjes, ndiqeni përmes preload dhe IPC deri te procesi kryesor dhe inspektoni formatin e pasur të clipboard-it.
 
-[Lexo studimin e rastit](https://rea.tools/showcase/notion/)
+[Lexo studimin e rastit](https://rea.tools/sq/showcase/notion/)
 
 ### TH04: rikuperoni llogaritjen e një unaze predhash në DOS
 

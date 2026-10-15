@@ -101,4 +101,13 @@ describe("onboarding documentation product facts", () => {
       );
     }
   });
+
+  it("keeps Albanian case-study links in the Albanian edition", async () => {
+    const content = await readFile(resolve("docs/readme/README_sq.md"), "utf8");
+    for (const showcase of ["dx-ball", "notion", "th04"])
+      expect(content).toContain(
+        `](https://rea.tools/sq/showcase/${showcase}/)`,
+      );
+    expect(content).not.toContain("](https://rea.tools/showcase/");
+  });
 });

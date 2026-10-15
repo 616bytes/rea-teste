@@ -69,12 +69,12 @@ msgstr "透過N0zoM1z0*10十月2026"
 #: website/public/examples/dino-lab/index.html:481
 #: website/public/faq/index.html:579
 #: website/public/first-investigation/index.html:540
-#: website/public/get-started/index.html:1823
+#: website/public/get-started/index.html:1831
 #: website/public/guides/browser/index.html:513
 #: website/public/guides/index.html:288
 #: website/public/guides/javascript/index.html:509
 #: website/public/guides/native/index.html:515 website/public/index.html:1228
-#: website/public/showcase/aegis/index.html:814
+#: website/public/showcase/aegis/index.html:817
 #: website/public/showcase/ctf/index.html:783
 #: website/public/showcase/dx-ball/index.html:791
 #: website/public/showcase/index.html:323
@@ -2907,37 +2907,37 @@ msgstr "終端機"
 #: website/public/get-started/index.html:292
 #: website/public/get-started/index.html:322
 #: website/public/get-started/index.html:347
-#: website/public/get-started/index.html:370
-#: website/public/get-started/index.html:385
-#: website/public/get-started/index.html:419
-#: website/public/get-started/index.html:450
-#: website/public/get-started/index.html:464
-#: website/public/get-started/index.html:482
-#: website/public/get-started/index.html:534
-#: website/public/get-started/index.html:548
-#: website/public/get-started/index.html:580
-#: website/public/get-started/index.html:609
-#: website/public/get-started/index.html:744
-#: website/public/get-started/index.html:774
-#: website/public/get-started/index.html:799
-#: website/public/get-started/index.html:814
-#: website/public/get-started/index.html:862
-#: website/public/get-started/index.html:895
-#: website/public/get-started/index.html:1047
-#: website/public/get-started/index.html:1109
-#: website/public/get-started/index.html:1132
-#: website/public/get-started/index.html:1156
-#: website/public/get-started/index.html:1204
-#: website/public/get-started/index.html:1279
-#: website/public/get-started/index.html:1305
-#: website/public/get-started/index.html:1322
-#: website/public/get-started/index.html:1565
-#: website/public/get-started/index.html:1624
-#: website/public/get-started/index.html:1643
-#: website/public/get-started/index.html:1665
-#: website/public/get-started/index.html:1708
-#: website/public/get-started/index.html:1738
-#: website/public/get-started/index.html:1759
+#: website/public/get-started/index.html:372
+#: website/public/get-started/index.html:387
+#: website/public/get-started/index.html:421
+#: website/public/get-started/index.html:452
+#: website/public/get-started/index.html:466
+#: website/public/get-started/index.html:484
+#: website/public/get-started/index.html:536
+#: website/public/get-started/index.html:550
+#: website/public/get-started/index.html:582
+#: website/public/get-started/index.html:611
+#: website/public/get-started/index.html:746
+#: website/public/get-started/index.html:776
+#: website/public/get-started/index.html:801
+#: website/public/get-started/index.html:816
+#: website/public/get-started/index.html:864
+#: website/public/get-started/index.html:897
+#: website/public/get-started/index.html:1049
+#: website/public/get-started/index.html:1111
+#: website/public/get-started/index.html:1134
+#: website/public/get-started/index.html:1158
+#: website/public/get-started/index.html:1208
+#: website/public/get-started/index.html:1283
+#: website/public/get-started/index.html:1309
+#: website/public/get-started/index.html:1326
+#: website/public/get-started/index.html:1572
+#: website/public/get-started/index.html:1631
+#: website/public/get-started/index.html:1650
+#: website/public/get-started/index.html:1673
+#: website/public/get-started/index.html:1716
+#: website/public/get-started/index.html:1746
+#: website/public/get-started/index.html:1767
 msgctxt "page:get-started/index.html"
 msgid "Copy"
 msgstr "複製"
@@ -2955,7 +2955,7 @@ msgstr "如果要求你接受條款，請輸入 Y。關閉 PowerShell 後重新�
 # Adapted from Kaoru0822's Traditional Chinese draft in PR #1737.
 #. {ph0}: <code>nodejs</code>
 #. {ph1}: <code>node -v</code>
-#: website/public/get-started/index.html:398
+#: website/public/get-started/index.html:400
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -2966,7 +2966,7 @@ msgstr "發行版提供的 {ph0} 套件通常早於 22.19。如果使用它，�
 # Adapted from Kaoru0822's Traditional Chinese draft in PR #1737.
 #. {ph0}: <a href="https://nodejs.org/en/download">
 #. {ph1}: </a>
-#: website/public/get-started/index.html:404
+#: website/public/get-started/index.html:406
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -2998,13 +2998,13 @@ msgstr "{ph0}尋求幫助{ph1}"
 #. {ph5}: <i>
 #. {ph6}: </i>
 #. {ph7}: </span >
-#: website/public/get-started/index.html:769
+#: website/public/get-started/index.html:771
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
 msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}你的程式設計助手"
 
-#: website/public/get-started/index.html:795
+#: website/public/get-started/index.html:797
 msgctxt "page:get-started/index.html"
 msgid "Or run setup yourself"
 msgstr "也可以自己執行 setup"
@@ -3068,7 +3068,7 @@ msgstr ""
 "用 {ph0} {ph1} 貼上命令（macOS：{ph2} {ph3}；Linux 終端：{ph4} {ph5} {ph6}），再按 Enter。"
 
 # Adapted from Kaoru0822's Traditional Chinese draft in PR #1737.
-#: website/public/get-started/index.html:831
+#: website/public/get-started/index.html:833
 msgctxt "page:get-started/index.html"
 msgid ""
 "Choose your client and review the setup plan. REA adds its MCP connection "
@@ -3076,7 +3076,7 @@ msgid ""
 "configuration. It asks before applying the changes."
 msgstr "選擇你的用戶端並檢查設定計畫。REA 會加入它的 MCP 連線和對應的調查 skill，並備份現有的設定。套用變更前，它會先詢問你。"
 
-#: website/public/get-started/index.html:845
+#: website/public/get-started/index.html:847
 msgctxt "page:get-started/index.html"
 msgid "How do I restart my client?"
 msgstr "如何重啟客戶端？"
@@ -3085,7 +3085,7 @@ msgstr "如何重啟客戶端？"
 #. {ph1}: </strong>
 #. {ph2}: <kbd>⌘</kbd>
 #. {ph3}: <kbd>Q</kbd>
-#: website/public/get-started/index.html:846
+#: website/public/get-started/index.html:848
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3099,7 +3099,7 @@ msgstr ""
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/get-started/index.html:853
+#: website/public/get-started/index.html:855
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3107,7 +3107,7 @@ msgid ""
 " and start it again."
 msgstr "{ph0}終端助手{ph1}（Claude Code、Codex、Gemini CLI）：退出當前會話，再啟動一次。"
 
-#: website/public/get-started/index.html:957
+#: website/public/get-started/index.html:959
 msgctxt "page:get-started/index.html"
 msgid "How do I get a folder's full path?"
 msgstr "怎麼取得資料夾的完整路徑？"
@@ -3116,7 +3116,7 @@ msgstr "怎麼取得資料夾的完整路徑？"
 #. {ph1}: </strong>
 #. {ph2}: <em>
 #. {ph3}: </em>
-#: website/public/get-started/index.html:959
+#: website/public/get-started/index.html:961
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3130,7 +3130,7 @@ msgstr ""
 #. {ph1}: </strong>
 #. {ph2}: <em>
 #. {ph3}: </em>
-#: website/public/get-started/index.html:964
+#: website/public/get-started/index.html:966
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3140,7 +3140,7 @@ msgstr "{ph0}macOS：{ph1}在 Finder 中右鍵資料夾，按住 Option，選擇
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/get-started/index.html:968
+#: website/public/get-started/index.html:970
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3148,27 +3148,27 @@ msgid ""
 "appears."
 msgstr "{ph0}所有系統：{ph1}把資料夾拖進終端視窗，也能顯示路徑。"
 
-#: website/public/get-started/index.html:973
-#: website/public/get-started/index.html:1731
+#: website/public/get-started/index.html:975
+#: website/public/get-started/index.html:1739
 msgctxt "page:get-started/index.html"
 msgid "In a terminal, put quotes around a path that contains spaces."
 msgstr "在終端裡，包含空格的路徑需要加引號。"
 
-#: website/public/get-started/index.html:1558
+#: website/public/get-started/index.html:1565
 msgctxt "page:get-started/index.html"
 msgid ""
 "Analyze a JavaScript or Electron application folder or ASAR archive without "
 "running the app:"
 msgstr "靜態分析 JavaScript 或 Electron 應用目錄、ASAR 檔案，無需啟動應用："
 
-#: website/public/get-started/index.html:1564
+#: website/public/get-started/index.html:1571
 msgctxt "page:get-started/index.html"
 msgid "Static application analysis"
 msgstr "靜態應用分析"
 
 #. {ph0}: <code>.asar</code>
 #. {ph1}: <code>"D:/apps/example"</code>
-#: website/public/get-started/index.html:1576
+#: website/public/get-started/index.html:1583
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3176,13 +3176,13 @@ msgid ""
 "Windows, a path such as {ph1} works here."
 msgstr "把路徑換成解包後的應用目錄或 {ph0} 檔案。Windows 上也可以使用 {ph1} 這樣的路徑。"
 
-#: website/public/get-started/index.html:1582
+#: website/public/get-started/index.html:1589
 msgctxt "page:get-started/index.html"
 msgid "Where do I find an app's .asar file?"
 msgstr "在哪裡找到應用的 .asar 檔案？"
 
 #. {ph0}: <code>resources</code>
-#: website/public/get-started/index.html:1583
+#: website/public/get-started/index.html:1590
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "Electron apps usually keep it in a {ph0} folder:"
@@ -3193,7 +3193,7 @@ msgstr "Electron 應用通常把它放在 {ph0} 資料夾中："
 #. {ph2}: <code
 #. >C:\Users\&lt;you&gt;\AppData\Local\Programs\&lt;App&gt;\resources\app.asar</code
 #. >
-#: website/public/get-started/index.html:1588
+#: website/public/get-started/index.html:1595
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Windows:{ph1} {ph2}"
@@ -3205,7 +3205,7 @@ msgstr "{ph0} Windows :{ph1} {ph2}"
 #. >/Applications/&lt;App&gt;.app/Contents/Resources/app.asar</code >
 #. {ph3}: <em>
 #. {ph4}: </em>
-#: website/public/get-started/index.html:1594
+#: website/public/get-started/index.html:1601
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3216,20 +3216,20 @@ msgstr "{ph0}macOS：{ph1}{ph2}（右鍵應用，選擇{ph3}“顯示包內容�
 #. {ph0}: <strong>
 #. {ph1}: </strong>
 #. {ph2}: <code>/opt/&lt;App&gt;/resources/app.asar</code>
-#: website/public/get-started/index.html:1602
+#: website/public/get-started/index.html:1609
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Linux:{ph1} often {ph2}"
 msgstr "{ph0}Linux：{ph1}通常位於 {ph2}"
 
 #. {ph0}: <code>app.asar</code>
-#: website/public/get-started/index.html:1607
+#: website/public/get-started/index.html:1614
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "Some apps install elsewhere. Search the app's folder for {ph0}."
 msgstr "有些應用安裝在其他位置。在應用目錄裡搜尋 {ph0}。"
 
-#: website/public/get-started/index.html:1612
+#: website/public/get-started/index.html:1619
 msgctxt "page:get-started/index.html"
 msgid ""
 "The result identifies the app, shows connections between modules and gives "
@@ -3238,36 +3238,36 @@ msgid ""
 msgstr "結果會識別應用，展示模組之間的關係，並給出原始碼位置。REA 無法解析的關係會在結果中註明。"
 
 #. {ph0}: <code>rea</code>
-#: website/public/get-started/index.html:1617
+#: website/public/get-started/index.html:1624
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "If you'd like a permanent {ph0} command in your shell:"
 msgstr "如果希望在 shell 中直接使用 {ph0} 命令："
 
-#: website/public/get-started/index.html:1623
+#: website/public/get-started/index.html:1630
 msgctxt "page:get-started/index.html"
 msgid "Install the CLI"
 msgstr "安裝CLI"
 
 #. {ph0}: <a href="../guides/javascript/" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1635
+#: website/public/get-started/index.html:1642
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Continue with the JavaScript application guide{ph1}"
 msgstr "{ph0}繼續看 JavaScript 應用指南{ph1}"
 
-#: website/public/get-started/index.html:1152
+#: website/public/get-started/index.html:1154
 msgctxt "page:get-started/index.html"
 msgid "Connect your Ghidra installation"
 msgstr "連線已有的 Ghidra"
 
-#: website/public/get-started/index.html:1122
+#: website/public/get-started/index.html:1124
 msgctxt "page:get-started/index.html"
 msgid "Connect Ghidra on Windows"
 msgstr "在 Windows 上連線 Ghidra"
 
-#: website/public/get-started/index.html:1123
+#: website/public/get-started/index.html:1125
 msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE "
@@ -3277,31 +3277,31 @@ msgstr ""
 "Windows x64 提供實驗性的只讀支援：分析固定本地 NTFS 驅動器上的原生 x86、x64 PE 應用和 DLL。使用已有的 Ghidra "
 "12.1.x 和 64 位 JDK 21 或更新版本："
 
-#: website/public/get-started/index.html:1146
+#: website/public/get-started/index.html:1148
 msgctxt "page:get-started/index.html"
 msgid ""
 "Replace the two paths with your installations, then review setup's plan."
 msgstr "把兩個路徑換成安裝位置，再檢視 setup 計劃。"
 
-#: website/public/get-started/index.html:1028
+#: website/public/get-started/index.html:1030
 msgctxt "page:get-started/index.html"
 msgid ""
 "Connect Hopper on macOS or Linux. Run the setup command above; it detects an"
 " existing installation or offers an installation plan for your approval."
 msgstr "在 macOS 或 Linux 上連線 Hopper。執行上面的 setup 命令，它會檢測已有安裝，或提出安裝計劃供你確認。"
 
-#: website/public/get-started/index.html:1689
+#: website/public/get-started/index.html:1697
 msgctxt "page:get-started/index.html"
 msgid "Getting help"
 msgstr "尋求幫助"
 
-#: website/public/get-started/index.html:1691
+#: website/public/get-started/index.html:1699
 msgctxt "page:get-started/index.html"
 msgid "If your agent doesn't see REA"
 msgstr "助手看不到 REA 工具時"
 
 #. {ph0}: <code>doctor</code>
-#: website/public/get-started/index.html:1692
+#: website/public/get-started/index.html:1700
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3309,22 +3309,22 @@ msgid ""
 "{ph0}; for Codex:"
 msgstr "配置後重啟或重新連線客戶端。用 {ph0} 檢查 REA 連線。以 Codex 為例："
 
-#: website/public/get-started/index.html:1703
+#: website/public/get-started/index.html:1711
 msgctxt "page:get-started/index.html"
 msgid "If a provider needs attention"
 msgstr "分析後端出現問題時"
 
-#: website/public/get-started/index.html:1704
+#: website/public/get-started/index.html:1712
 msgctxt "page:get-started/index.html"
 msgid "Check the provider you're using. For Ghidra:"
 msgstr "檢查正在使用的分析後端。以 Ghidra 為例："
 
-#: website/public/get-started/index.html:1707
+#: website/public/get-started/index.html:1715
 msgctxt "page:get-started/index.html"
 msgid "Check one provider"
 msgstr "檢查一個分析後端"
 
-#: website/public/get-started/index.html:1719
+#: website/public/get-started/index.html:1727
 msgctxt "page:get-started/index.html"
 msgid "The report gives the failed check and a suggested next step."
 msgstr "報告會列出失敗的檢查和建議的下一步。"
@@ -3333,7 +3333,7 @@ msgstr "報告會列出失敗的檢查和建議的下一步。"
 #. {ph1}: </a >
 #. {ph2}: <span>
 #. {ph3}: </span>
-#: website/public/get-started/index.html:1784
+#: website/public/get-started/index.html:1792
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3344,7 +3344,7 @@ msgstr "{ph0}REA FAQ{ph1}{ph2}關於更新、助手和分析的常見解答。{p
 #. {ph1}: </a >
 #. {ph2}: <span >
 #. {ph3}: </span >
-#: website/public/get-started/index.html:1788
+#: website/public/get-started/index.html:1796
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3356,7 +3356,7 @@ msgstr "{ph0}選擇調查指南{ph1}{ph2}二進位制、Electron 應用和瀏覽
 #. {ph1}: </a >
 #. {ph2}: <span>
 #. {ph3}: </span>
-#: website/public/get-started/index.html:1795
+#: website/public/get-started/index.html:1803
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3368,7 +3368,7 @@ msgstr "{ph0}GitHub issues{ph1}{ph2}附上命令與診斷結果，反饋問題�
 #. {ph1}: </a >
 #. {ph2}: <span>
 #. {ph3}: </span>
-#: website/public/get-started/index.html:1799
+#: website/public/get-started/index.html:1807
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3405,12 +3405,12 @@ msgctxt "page:get-started/index.html"
 msgid "Copy Homebrew Node.js installation command"
 msgstr "複製 Homebrew Node.js 安裝命令"
 
-#: website/public/get-started/index.html:370
+#: website/public/get-started/index.html:372
 msgctxt "page:get-started/index.html"
 msgid "Copy fnm installation command for Linux"
 msgstr "複製Linux的fnm安裝命令"
 
-#: website/public/get-started/index.html:385
+#: website/public/get-started/index.html:387
 msgctxt "page:get-started/index.html"
 msgid "Copy Node.js 24 commands for Linux"
 msgstr "複製 Node.js 24命令 Linux"
@@ -3426,27 +3426,27 @@ msgctxt "page:get-started/index.html"
 msgid "REA getting started guide"
 msgstr "REA入門指南"
 
-#: website/public/get-started/index.html:774
+#: website/public/get-started/index.html:776
 msgctxt "page:get-started/index.html"
 msgid "Copy REA installation prompt"
 msgstr "複製REA安裝提示"
 
-#: website/public/get-started/index.html:1565
+#: website/public/get-started/index.html:1572
 msgctxt "page:get-started/index.html"
 msgid "Copy JavaScript analysis command"
 msgstr "複製JavaScript分析命令"
 
-#: website/public/get-started/index.html:1624
+#: website/public/get-started/index.html:1631
 msgctxt "page:get-started/index.html"
 msgid "Copy CLI installation command"
 msgstr "複製CLI安裝命令"
 
-#: website/public/get-started/index.html:1708
+#: website/public/get-started/index.html:1716
 msgctxt "page:get-started/index.html"
 msgid "Copy provider diagnosis command"
 msgstr "複製提供者診斷命令"
 
-#: website/public/get-started/index.html:1823
+#: website/public/get-started/index.html:1831
 msgctxt "page:get-started/index.html"
 msgid "Back to top"
 msgstr "回到頂部"
@@ -5901,7 +5901,7 @@ msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
 msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}你的程式設計助手"
 
 #: website/public/showcase/aegis/index.html:274
-#: website/public/showcase/aegis/index.html:737
+#: website/public/showcase/aegis/index.html:740
 msgctxt "page:showcase/aegis/index.html"
 msgid "Copy"
 msgstr "複製"
@@ -5961,7 +5961,7 @@ msgid "30-second block"
 msgstr "30秒區塊"
 
 #: website/public/showcase/aegis/index.html:321
-#: website/public/showcase/aegis/index.html:648
+#: website/public/showcase/aegis/index.html:651
 msgctxt "page:showcase/aegis/index.html"
 msgid "Block"
 msgstr "時間塊"
@@ -5992,13 +5992,13 @@ msgid "Example time, in seconds"
 msgstr "示例時間，以秒為單位"
 
 #: website/public/showcase/aegis/index.html:359
-#: website/public/showcase/aegis/index.html:659
+#: website/public/showcase/aegis/index.html:662
 msgctxt "page:showcase/aegis/index.html"
 msgid "59 seconds"
 msgstr "59秒"
 
 #: website/public/showcase/aegis/index.html:366
-#: website/public/showcase/aegis/index.html:664
+#: website/public/showcase/aegis/index.html:667
 msgctxt "page:showcase/aegis/index.html"
 msgid "60 seconds"
 msgstr "60秒"
@@ -6185,7 +6185,7 @@ msgstr ""
 "釋出的 APK 將 {ph0} 放在 {ph1} 中。REA 從 {ph2} 追蹤呼叫，並返回這個函式體；原始原始碼把輔助函式命名為 {ph3}。"
 
 # Reviewed for clear case-study reasoning and evidence.
-#: website/public/showcase/aegis/index.html:619
+#: website/public/showcase/aegis/index.html:622
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
 "The last hash byte selects a position. Four bytes at that position provide a"
@@ -6200,13 +6200,13 @@ msgstr ""
 #. href="https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/app/src/main/java/com/beemdevelopment/aegis/crypto/otp/HOTP.java"
 #. >
 #. {ph1}: </a >
-#: website/public/showcase/aegis/index.html:626
+#: website/public/showcase/aegis/index.html:629
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid "{ph0}Compare with the matching release source{ph1}."
 msgstr "{ph0}與匹配的釋出源進行比較{ph1}."
 
-#: website/public/showcase/aegis/index.html:636
+#: website/public/showcase/aegis/index.html:639
 msgctxt "page:showcase/aegis/index.html"
 msgid "Check the reconstruction"
 msgstr "檢查重建"
@@ -6214,7 +6214,7 @@ msgstr "檢查重建"
 # Reviewed for clear case-study reasoning and evidence.
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/showcase/aegis/index.html:637
+#: website/public/showcase/aegis/index.html:640
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -6225,22 +6225,22 @@ msgstr ""
 "我們將選定的 REA 返回的 Java 方法放進小型測試程式。它們的輸出與獨立重建的實現一致，共驗證 {ph0}133 "
 "個測試用例{ph1}，包括時間塊邊界和以零開頭的驗證碼。"
 
-#: website/public/showcase/aegis/index.html:647
+#: website/public/showcase/aegis/index.html:650
 msgctxt "page:showcase/aegis/index.html"
 msgid "Example time"
 msgstr "示例時間"
 
-#: website/public/showcase/aegis/index.html:649
+#: website/public/showcase/aegis/index.html:652
 msgctxt "page:showcase/aegis/index.html"
 msgid "Six-digit code"
 msgstr "六位驗證碼"
 
-#: website/public/showcase/aegis/index.html:654
+#: website/public/showcase/aegis/index.html:657
 msgctxt "page:showcase/aegis/index.html"
 msgid "30 seconds"
 msgstr "30秒"
 
-#: website/public/showcase/aegis/index.html:669
+#: website/public/showcase/aegis/index.html:672
 msgctxt "page:showcase/aegis/index.html"
 msgid "1,111,111,109 seconds"
 msgstr "1,111,111,109秒"
@@ -6248,7 +6248,7 @@ msgstr "1,111,111,109秒"
 # Reviewed for clear case-study reasoning and evidence.
 #. {ph0}: <a href="https://www.rfc-editor.org/rfc/rfc6238.html#appendix-B" >
 #. {ph1}: </a >
-#: website/public/showcase/aegis/index.html:676
+#: website/public/showcase/aegis/index.html:679
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -6256,31 +6256,31 @@ msgid ""
 "{ph0}RFC 6238{ph1}. Check the browser implementation against them:"
 msgstr "生成函式還符合 {ph0}RFC 6238{ph1} 中釋出的六個 SHA-1 對照用例。可以用這些用例檢查瀏覽器實現："
 
-#: website/public/showcase/aegis/index.html:684
+#: website/public/showcase/aegis/index.html:687
 msgctxt "page:showcase/aegis/index.html"
 msgid "Run reference checks"
 msgstr "執行對照檢查"
 
-#: website/public/showcase/aegis/index.html:691
+#: website/public/showcase/aegis/index.html:694
 msgctxt "page:showcase/aegis/index.html"
 msgid "Read the demo's calculation"
 msgstr "閱讀演示的計算"
 
-#: website/public/showcase/aegis/index.html:695
+#: website/public/showcase/aegis/index.html:698
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
 "The reference cases use eight digits. The check also verifies their six-"
 "digit results."
 msgstr "參考案例使用八位數字。 檢查也驗證他們的六位數的結果。"
 
-#: website/public/showcase/aegis/index.html:704
+#: website/public/showcase/aegis/index.html:707
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
 "Verification runs extracted Java methods and the new demo. The Android APK "
 "was inspected statically."
 msgstr "驗證執行提取的Java方法和新的演示。 對Android APK進行了靜態檢查。"
 
-#: website/public/showcase/aegis/index.html:711
+#: website/public/showcase/aegis/index.html:714
 msgctxt "page:showcase/aegis/index.html"
 msgid "Inspect the APK yourself"
 msgstr "親自檢查APK"
@@ -6288,7 +6288,7 @@ msgstr "親自檢查APK"
 # Reviewed for clear case-study reasoning and evidence.
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a>
-#: website/public/showcase/aegis/index.html:712
+#: website/public/showcase/aegis/index.html:715
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -6300,7 +6300,7 @@ msgstr ""
 
 #. {ph0}: <code>JAVA_HOME</code>
 #. {ph1}: <code>PATH</code>
-#: website/public/showcase/aegis/index.html:717
+#: website/public/showcase/aegis/index.html:720
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -6308,19 +6308,19 @@ msgid ""
 "{ph1}. This case used JDK 21."
 msgstr "Android分析需要完整的JDK17或更高版本。 選擇它與 {ph0} 或 {ph1}. 本案例使用了JDK21。"
 
-#: website/public/showcase/aegis/index.html:733
+#: website/public/showcase/aegis/index.html:736
 msgctxt "page:showcase/aegis/index.html"
 msgid "Point REA at the provider file and inspect the APK:"
 msgstr "讓 REA 使用分析後端配置檔案，再檢查 APK："
 
-#: website/public/showcase/aegis/index.html:736
+#: website/public/showcase/aegis/index.html:739
 msgctxt "page:showcase/aegis/index.html"
 msgid "macOS / Linux"
 msgstr "macOS/Linux"
 
 # Reviewed for clear case-study reasoning and evidence.
 #. {ph0}: <code>REA_JADX_MCP_JAR</code>
-#: website/public/showcase/aegis/index.html:750
+#: website/public/showcase/aegis/index.html:753
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -6330,7 +6330,7 @@ msgstr "助手可以透過 REA CLI 繼續使用上方的 prompt。如果使用 M
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
-#: website/public/showcase/aegis/index.html:755
+#: website/public/showcase/aegis/index.html:758
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -6338,7 +6338,7 @@ msgid ""
 "different time interval?{ph1}"
 msgstr "下一個問題: {ph0}當帳戶使用八位數字或不同的時間間隔時會發生什麼？{ph1}"
 
-#: website/public/showcase/aegis/index.html:765
+#: website/public/showcase/aegis/index.html:768
 msgctxt "page:showcase/aegis/index.html"
 msgid "Sources"
 msgstr "資料來源"
@@ -6354,7 +6354,7 @@ msgstr "資料來源"
 #. href="https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/LICENSE"
 #. >
 #. {ph5}: </a >
-#: website/public/showcase/aegis/index.html:767
+#: website/public/showcase/aegis/index.html:770
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -6366,14 +6366,14 @@ msgstr "{ph0}官方Aegis3.4.3釋出{ph1} · {ph2}匹配源提交{ph3} · {ph4}GP
 #. {ph1}: </a >
 #. {ph2}: <a href="test-vectors.json">
 #. {ph3}: </a>
-#: website/public/showcase/aegis/index.html:783
+#: website/public/showcase/aegis/index.html:786
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid "{ph0}RFC 6238 reference cases{ph1} · {ph2}Demo test data{ph3}"
 msgstr "{ph0}RFC6238參考案例{ph1} · {ph2}演示測試資料{ph3}"
 
 # Reviewed for clear case-study reasoning and evidence.
-#: website/public/showcase/aegis/index.html:790
+#: website/public/showcase/aegis/index.html:793
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
 "Inspected with REA 6.1.0 on 9 October 2026. Decompiled excerpts are credited"
@@ -6414,12 +6414,12 @@ msgctxt "page:showcase/aegis/index.html"
 msgid "Follow the login-code calculation"
 msgstr "按照登入程式碼計算"
 
-#: website/public/showcase/aegis/index.html:737
+#: website/public/showcase/aegis/index.html:740
 msgctxt "page:showcase/aegis/index.html"
 msgid "Copy APK inspection command"
 msgstr "複製APK檢查命令"
 
-#: website/public/showcase/aegis/index.html:814
+#: website/public/showcase/aegis/index.html:817
 msgctxt "page:showcase/aegis/index.html"
 msgid "Back to top"
 msgstr "回到頂部"
@@ -9697,11 +9697,6 @@ msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "Brick-hit caller"
 msgstr "磚塊碰撞呼叫方"
 
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:49
-msgctxt "figure:dx-ball-sound-pan-investigation.svg"
-msgid "20 + 30 × tile_x"
-msgstr "20 + 30 × tile_x"
-
 # Reviewed for technical meaning and concise diagram labels.
 #: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:50
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
@@ -9978,12 +9973,12 @@ msgstr "指南"
 #: website/public/examples/dino-lab/index.html:473
 #: website/public/faq/index.html:571
 #: website/public/first-investigation/index.html:532
-#: website/public/get-started/index.html:1815
+#: website/public/get-started/index.html:1823
 #: website/public/guides/browser/index.html:505
 #: website/public/guides/index.html:280
 #: website/public/guides/javascript/index.html:501
 #: website/public/guides/native/index.html:507 website/public/index.html:1220
-#: website/public/showcase/aegis/index.html:806
+#: website/public/showcase/aegis/index.html:809
 #: website/public/showcase/ctf/index.html:775
 #: website/public/showcase/dx-ball/index.html:783
 #: website/public/showcase/index.html:315
@@ -10000,12 +9995,12 @@ msgstr "原始碼"
 #: website/public/examples/dino-lab/index.html:474
 #: website/public/faq/index.html:572
 #: website/public/first-investigation/index.html:533
-#: website/public/get-started/index.html:1816
+#: website/public/get-started/index.html:1824
 #: website/public/guides/browser/index.html:506
 #: website/public/guides/index.html:281
 #: website/public/guides/javascript/index.html:502
 #: website/public/guides/native/index.html:508 website/public/index.html:1221
-#: website/public/showcase/aegis/index.html:807
+#: website/public/showcase/aegis/index.html:810
 #: website/public/showcase/ctf/index.html:776
 #: website/public/showcase/dx-ball/index.html:784
 #: website/public/showcase/index.html:316
@@ -10022,12 +10017,12 @@ msgstr "MIT 許可證"
 #: website/public/examples/dino-lab/index.html:475
 #: website/public/faq/index.html:573
 #: website/public/first-investigation/index.html:534
-#: website/public/get-started/index.html:1817
+#: website/public/get-started/index.html:1825
 #: website/public/guides/browser/index.html:507
 #: website/public/guides/index.html:282
 #: website/public/guides/javascript/index.html:503
 #: website/public/guides/native/index.html:509 website/public/index.html:1222
-#: website/public/showcase/aegis/index.html:808
+#: website/public/showcase/aegis/index.html:811
 #: website/public/showcase/ctf/index.html:777
 #: website/public/showcase/dx-ball/index.html:785
 #: website/public/showcase/index.html:317
@@ -10044,12 +10039,12 @@ msgstr "加入社群"
 #: website/public/examples/dino-lab/index.html:476
 #: website/public/faq/index.html:574
 #: website/public/first-investigation/index.html:535
-#: website/public/get-started/index.html:1818
+#: website/public/get-started/index.html:1826
 #: website/public/guides/browser/index.html:508
 #: website/public/guides/index.html:283
 #: website/public/guides/javascript/index.html:504
 #: website/public/guides/native/index.html:510 website/public/index.html:1223
-#: website/public/showcase/aegis/index.html:809
+#: website/public/showcase/aegis/index.html:812
 #: website/public/showcase/ctf/index.html:778
 #: website/public/showcase/dx-ball/index.html:786
 #: website/public/showcase/index.html:318
@@ -10205,17 +10200,19 @@ msgctxt "page:showcase/aegis/index.html"
 msgid "Readable summary · agent's interpretation"
 msgstr "可讀摘要 · 程式設計助手解釋"
 
+#. {ph0}: <span translate="no">generateOTP</span>
 #: website/public/showcase/aegis/index.html:605
+#, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
-msgid "REA · generateOTP, complete body"
-msgstr "REA · generateOTP 完整函式體"
+msgid "REA · {ph0}, complete body"
+msgstr "REA · {ph0} 完整函式體"
 
-#: website/public/showcase/aegis/index.html:723
+#: website/public/showcase/aegis/index.html:726
 msgctxt "page:showcase/aegis/index.html"
 msgid "Download Aegis APK"
 msgstr "下載Aegis APK"
 
-#: website/public/showcase/aegis/index.html:727
+#: website/public/showcase/aegis/index.html:730
 msgctxt "page:showcase/aegis/index.html"
 msgid "Download Android analysis provider"
 msgstr "下載 Android 分析後端"
@@ -10561,7 +10558,7 @@ msgstr ""
 #. {ph4}: </span >
 #. {ph5}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph6}: </span>
-#: website/public/get-started/index.html:783
+#: website/public/get-started/index.html:785
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -10866,19 +10863,19 @@ msgctxt "page:showcase/notion/index.html"
 msgid "tab_browser_view/{ph0} · IPC helper"
 msgstr "tab_browser_view/{ph0}  · IPC 輔助函式"
 
-#. {ph0}: <span translate="no">index.js</span>
+#. {ph0}: <span translate="no">main/index.js</span>
 #: website/public/showcase/notion/index.html:407
 #, python-brace-format
 msgctxt "page:showcase/notion/index.html"
-msgid "main/{ph0} · handler helper"
-msgstr "主要/{ph0}  · 處理程式助手"
+msgid "{ph0} · handler helper"
+msgstr "{ph0}  · 處理程式助手"
 
-#. {ph0}: <span translate="no">index.js</span>
+#. {ph0}: <span translate="no">main/index.js</span>
 #: website/public/showcase/notion/index.html:435
 #, python-brace-format
 msgctxt "page:showcase/notion/index.html"
-msgid "main/{ph0} · clipboard receiver"
-msgstr "主要/{ph0}  · 剪貼簿接收器"
+msgid "{ph0} · clipboard receiver"
+msgstr "{ph0}  · 剪貼簿接收器"
 
 #: website/public/assets/theme.js:52
 msgctxt "runtime"
@@ -12202,41 +12199,41 @@ msgid ""
 msgstr ""
 "如果執行 {ph2} 時 PowerShell 提示{ph0}「此系統上禁止執行指令碼」{ph1}，改用 {ph3}。npm 則改用 {ph4}："
 
-#: website/public/get-started/index.html:411
+#: website/public/get-started/index.html:413
 msgctxt "page:get-started/index.html"
 msgid "Make a working folder for your agent"
 msgstr "為程式開發助手建一個工作資料夾"
 
-#: website/public/get-started/index.html:412
+#: website/public/get-started/index.html:414
 msgctxt "page:get-started/index.html"
 msgid "In your terminal, make a folder for the exercise, then move into it:"
 msgstr "在終端機中為練習建一個資料夾，然後進入它："
 
-#: website/public/get-started/index.html:431
+#: website/public/get-started/index.html:433
 msgctxt "page:get-started/index.html"
 msgid ""
 "Keep this terminal open for the next step. If you already have a working "
 "folder, open it instead."
 msgstr "下一步繼續使用這個終端機。如果已經有工作資料夾，進入那個資料夾即可。"
 
-#: website/public/get-started/index.html:438
+#: website/public/get-started/index.html:440
 msgctxt "page:get-started/index.html"
 msgid "2. Choose a coding agent"
 msgstr "2. 選擇程式開發助手"
 
-#: website/public/get-started/index.html:439
+#: website/public/get-started/index.html:441
 msgctxt "page:get-started/index.html"
 msgid ""
 "Your agent is the AI you talk to. REA supplies the inspection tools it uses."
 " Pick one client below; open its instructions if you haven't used it before."
 msgstr "你和程式開發助手對話，它呼叫 REA 來分析軟體。從下面選一個用戶端；第一次使用就展開它的安裝步驟。"
 
-#: website/public/get-started/index.html:445
+#: website/public/get-started/index.html:447
 msgctxt "page:get-started/index.html"
 msgid "Codex · use your ChatGPT account"
 msgstr "Codex · 使用 ChatGPT 帳號"
 
-#: website/public/get-started/index.html:493
+#: website/public/get-started/index.html:495
 msgctxt "page:get-started/index.html"
 msgid ""
 "Choose “Sign in with ChatGPT”, complete the browser sign-in, then return to "
@@ -12245,39 +12242,39 @@ msgstr "選擇「Sign in with ChatGPT」，在瀏覽器中登入後回到終端�
 
 #. {ph0}: <a href="https://learn.chatgpt.com/docs/codex/cli" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:498
+#: website/public/get-started/index.html:500
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Codex installation and sign-in{ph1}"
 msgstr "{ph0}Codex 安裝與登入{ph1}"
 
-#: website/public/get-started/index.html:505
+#: website/public/get-started/index.html:507
 msgctxt "page:get-started/index.html"
 msgid "Cursor, Windsurf or VS Code · use an editor"
 msgstr "Cursor、Windsurf 或 VS Code · 使用編輯器"
 
-#: website/public/get-started/index.html:507
+#: website/public/get-started/index.html:509
 msgctxt "page:get-started/index.html"
 msgid "Install the editor for your operating system and sign in."
 msgstr "安裝適合你作業系統的編輯器，然後登入。"
 
-#: website/public/get-started/index.html:510
+#: website/public/get-started/index.html:512
 msgctxt "page:get-started/index.html"
 msgid "Open the rea-work folder you made in step 1."
 msgstr "打開第 1 步建立的 rea-work 資料夾。"
 
-#: website/public/get-started/index.html:529
+#: website/public/get-started/index.html:531
 msgctxt "page:get-started/index.html"
 msgid "Claude Code · use your Claude account"
 msgstr "Claude Code · 使用 Claude 帳號"
 
-#: website/public/get-started/index.html:530
+#: website/public/get-started/index.html:532
 msgctxt "page:get-started/index.html"
 msgid "Install using the command for your operating system:"
 msgstr "使用適合你作業系統的安裝指令："
 
 #. {ph0}: <code>claude</code>
-#: website/public/get-started/index.html:559
+#: website/public/get-started/index.html:561
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12288,13 +12285,13 @@ msgstr "重新打開終端機，回到工作資料夾並執行 {ph0}，按提示
 
 #. {ph0}: <a href="https://code.claude.com/docs/en/setup" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:564
+#: website/public/get-started/index.html:566
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Claude Code installation and account options{ph1}"
 msgstr "{ph0}Claude Code 安裝與帳號選項{ph1}"
 
-#: website/public/get-started/index.html:571
+#: website/public/get-started/index.html:573
 msgctxt "page:get-started/index.html"
 msgid "Claude Desktop · use a desktop chat"
 msgstr "Claude Desktop · 使用桌面聊天應用程式"
@@ -12304,7 +12301,7 @@ msgstr "Claude Desktop · 使用桌面聊天應用程式"
 #. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
 #. configuration.md#claude-desktop" >
 #. {ph3}: </a >
-#: website/public/get-started/index.html:595
+#: website/public/get-started/index.html:597
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12314,7 +12311,7 @@ msgstr "{ph0}下載 Claude Desktop{ph1} · {ph2}Claude Desktop 連接詳情{ph3}
 
 #. {ph0}: <code>opencode</code>
 #. {ph1}: <code>/connect</code>
-#: website/public/get-started/index.html:620
+#: website/public/get-started/index.html:622
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12324,19 +12321,19 @@ msgstr "在工作資料夾裡執行 {ph0}。在聊天框中使用 {ph1} 連接�
 
 #. {ph0}: <a href="https://opencode.ai/docs/" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:625
+#: website/public/get-started/index.html:627
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}OpenCode installation and model setup{ph1}"
 msgstr "{ph0}OpenCode 安裝與模型設定{ph1}"
 
-#: website/public/get-started/index.html:632
+#: website/public/get-started/index.html:634
 msgctxt "page:get-started/index.html"
 msgid "All supported clients and setup IDs"
 msgstr "全部支援的用戶端與 setup ID"
 
 #. {ph0}: <code>--client</code>
-#: website/public/get-started/index.html:633
+#: website/public/get-started/index.html:635
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12344,12 +12341,12 @@ msgid ""
 " choosing a client explicitly."
 msgstr "npm 6.4.0 支援下面這些用戶端。指定用戶端時，在 {ph0} 後填寫對應的 ID。"
 
-#: website/public/get-started/index.html:641
+#: website/public/get-started/index.html:643
 msgctxt "page:get-started/index.html"
 msgid "Client"
 msgstr "用戶端"
 
-#: website/public/get-started/index.html:642
+#: website/public/get-started/index.html:644
 msgctxt "page:get-started/index.html"
 msgid "Setup ID"
 msgstr "Setup ID"
@@ -12359,7 +12356,7 @@ msgstr "Setup ID"
 #. {ph2}: <code>trae</code>
 #. {ph3}: <code>zcode</code>
 #. {ph4}: <code>dsh</code>
-#: website/public/get-started/index.html:717
+#: website/public/get-started/index.html:719
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12377,7 +12374,7 @@ msgstr ""
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#released-
 #. package-and-main" >
 #. {ph3}: </a >
-#: website/public/get-started/index.html:724
+#: website/public/get-started/index.html:726
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12385,13 +12382,13 @@ msgid ""
 "availability{ph3}"
 msgstr "{ph0}用戶端設定與疑難排解{ph1} · {ph2}版本支援情況{ph3}"
 
-#: website/public/get-started/index.html:736
+#: website/public/get-started/index.html:738
 msgctxt "page:get-started/index.html"
 msgid "Grok Bot · connect on its hosted computer"
 msgstr "Grok Bot · 在它的託管電腦上連接"
 
 #. {ph0}: <code>rea</code>
-#: website/public/get-started/index.html:737
+#: website/public/get-started/index.html:739
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12402,29 +12399,29 @@ msgstr "在 Grok Bot 聊天中，請它新增名為 {ph0} 的自訂 MCP 服務�
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
 #. configuration.md#other-client-settings" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:755
+#: website/public/get-started/index.html:757
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Grok Bot connector instructions{ph1}"
 msgstr "{ph0}Grok Bot 連接器說明{ph1}"
 
-#: website/public/get-started/index.html:765
+#: website/public/get-started/index.html:767
 msgctxt "page:get-started/index.html"
 msgid "3. Connect REA"
 msgstr "3. 連接 REA"
 
-#: website/public/get-started/index.html:766
+#: website/public/get-started/index.html:768
 msgctxt "page:get-started/index.html"
 msgid "Copy this into your coding agent:"
 msgstr "把這段話複製給程式設計助手："
 
-#: website/public/get-started/index.html:810
+#: website/public/get-started/index.html:812
 msgctxt "page:get-started/index.html"
 msgid "For one specific client, add its setup ID:"
 msgstr "如果只設定一個指定用戶端，附上它的 setup ID："
 
 #. {ph0}: <code>y</code>
-#: website/public/get-started/index.html:825
+#: website/public/get-started/index.html:827
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12434,14 +12431,14 @@ msgid ""
 msgstr ""
 "如果 npm 詢問是否下載，輸入 {ph0} 後按 Enter。在 REA 的用戶端清單中，用方向鍵移動、空白鍵選擇，然後按 Enter 繼續。"
 
-#: website/public/get-started/index.html:836
+#: website/public/get-started/index.html:838
 msgctxt "page:get-started/index.html"
 msgid ""
 "MCP is the connection that lets your agent call REA. The skill gives it a "
 "workflow for investigating software."
 msgstr "MCP 讓程式開發助手能夠呼叫 REA；skill 則告訴它分析軟體時該怎樣使用這些工具。"
 
-#: website/public/get-started/index.html:840
+#: website/public/get-started/index.html:842
 msgctxt "page:get-started/index.html"
 msgid ""
 "For the first exercise, you can skip the optional Hopper installation. "
@@ -12450,7 +12447,7 @@ msgstr "第一次練習可以跳過可選的 Hopper 安裝。setup 完成後，�
 
 #. {ph0}: <code>codex</code>
 #. {ph1}: <code>"healthy": true</code>
-#: website/public/get-started/index.html:873
+#: website/public/get-started/index.html:875
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12458,19 +12455,19 @@ msgid ""
 " Then ask your agent:"
 msgstr "把 {ph0} 換成你用戶端的 setup ID。檢查通過時會顯示 {ph1}。然後問程式開發助手："
 
-#: website/public/get-started/index.html:879
+#: website/public/get-started/index.html:881
 msgctxt "page:get-started/index.html"
 msgid "Check that REA is connected and show me which REA tools you can use."
 msgstr "檢查 REA 是否已連接，並告訴我你能使用哪些 REA 工具。"
 
-#: website/public/get-started/index.html:886
+#: website/public/get-started/index.html:888
 msgctxt "page:get-started/index.html"
 msgid "4. Try your first investigation"
 msgstr "4. 開始第一次分析"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/get-started/index.html:887
+#: website/public/get-started/index.html:889
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12481,7 +12478,7 @@ msgstr ""
 "示例是一個包含六個檔案的 Electron 應用，帶有{ph0}Export notes（匯出筆記）{ph1}按鈕。助手無需安裝或啟動 Electron"
 " 就能檢查程式碼。"
 
-#: website/public/get-started/index.html:894
+#: website/public/get-started/index.html:896
 msgctxt "page:get-started/index.html"
 msgid "Your coding agent"
 msgstr "你的程式開發助手"
@@ -12495,7 +12492,7 @@ msgstr "你的程式開發助手"
 #. {ph5}: </span >
 #. {ph6}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph7}: </span>
-#: website/public/get-started/index.html:904
+#: website/public/get-started/index.html:906
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12507,7 +12504,7 @@ msgstr ""
 "{ph0}›{ph1}{ph2}下載 {ph3}，放進一個新的示例資料夾並解壓。用 REA 找出點選 Export notes 後發生了什麼。展示 "
 "{ph4} 寫到哪裡、有哪些欄位，以及相關檔案和行號。{ph5}{ph6}{ph7}"
 
-#: website/public/get-started/index.html:918
+#: website/public/get-started/index.html:920
 msgctxt "page:get-started/index.html"
 msgid "Look for a short explanation with file and line references:"
 msgstr "尋找帶檔案和行號的簡短解釋："
@@ -12516,7 +12513,7 @@ msgstr "尋找帶檔案和行號的簡短解釋："
 #. {ph1}: <code>notes.csv</code>
 #. {ph2}: <code>id</code>
 #. {ph3}: <code>title</code>
-#: website/public/get-started/index.html:920
+#: website/public/get-started/index.html:922
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12527,13 +12524,13 @@ msgstr "按鈕傳送 {ph0} 訊息。主程序把筆記轉換為 CSV，並將 {ph
 
 #. {ph0}: <a href="../first-investigation/#check" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:927
+#: website/public/get-started/index.html:929
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Check a prediction in the guided exercise →{ph1}"
 msgstr "{ph0}跟著練習檢查一個預測 →{ph1}"
 
-#: website/public/get-started/index.html:933
+#: website/public/get-started/index.html:935
 msgctxt "page:get-started/index.html"
 msgid "Download the example yourself, or use your own app"
 msgstr "自行下載範例，或使用自己的應用程式"
@@ -12541,14 +12538,14 @@ msgstr "自行下載範例，或使用自己的應用程式"
 #. {ph0}: <a class="button" href="../examples/notes-example.zip"
 #. download="notes-example.zip" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:936
+#: website/public/get-started/index.html:938
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Download example ZIP{ph1}"
 msgstr "{ph0}下載示例ZIP{ph1}"
 
 #. {ph0}: <code>notes-example</code>
-#: website/public/get-started/index.html:944
+#: website/public/get-started/index.html:946
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12557,7 +12554,7 @@ msgid ""
 msgstr "如果助手不能下載檔案，你也可以手動解壓。把 {ph0} 資料夾的路徑交給它，再問同一個匯出問題。"
 
 #. {ph0}: <code>/absolute/path/to/app</code>
-#: website/public/get-started/index.html:950
+#: website/public/get-started/index.html:952
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12565,71 +12562,71 @@ msgid ""
 "relevant files and lines."
 msgstr "用 REA 檢查 {ph0} 中的應用程式。找出它怎樣匯出資料，並給出相關檔案和行號。"
 
-#: website/public/get-started/index.html:980
+#: website/public/get-started/index.html:982
 msgctxt "page:get-started/index.html"
 msgid "Analyze another kind of software"
 msgstr "分析其他類型的軟體"
 
-#: website/public/get-started/index.html:981
+#: website/public/get-started/index.html:983
 msgctxt "page:get-started/index.html"
 msgid ""
 "Choose the section for your target. A provider is the local analysis tool "
 "REA uses for that kind of software."
 msgstr "按目標類型展開下面的步驟。Provider 指 REA 分析這類軟體時使用的本機工具。"
 
-#: website/public/get-started/index.html:986
+#: website/public/get-started/index.html:988
 msgctxt "page:get-started/index.html"
 msgid "Native executables and libraries · Hopper, Ghidra or IDA"
 msgstr "原生執行檔和函式庫 · Hopper、Ghidra 或 IDA"
 
-#: website/public/get-started/index.html:989
+#: website/public/get-started/index.html:991
 msgctxt "page:get-started/index.html"
 msgid ""
 "Install one analysis tool on the computer running REA. The host is your "
 "operating system; the target is the program you want to inspect."
 msgstr "在執行 REA 的電腦上安裝一個分析工具。Host 指你使用的作業系統，target 指要分析的程式。"
 
-#: website/public/get-started/index.html:998
+#: website/public/get-started/index.html:1000
 msgctxt "page:get-started/index.html"
 msgid "Provider"
 msgstr "分析工具"
 
-#: website/public/get-started/index.html:1007
+#: website/public/get-started/index.html:1009
 msgctxt "page:get-started/index.html"
 msgid "Unavailable"
 msgstr "不支援"
 
-#: website/public/get-started/index.html:1009
+#: website/public/get-started/index.html:1011
 msgctxt "page:get-started/index.html"
 msgid "Supported distributions"
 msgstr "支援的發行版"
 
-#: website/public/get-started/index.html:1013
+#: website/public/get-started/index.html:1015
 msgctxt "page:get-started/index.html"
 msgid "x64 · experimental"
 msgstr "x64 · 實驗性支援"
 
-#: website/public/get-started/index.html:1019
+#: website/public/get-started/index.html:1021
 msgctxt "page:get-started/index.html"
 msgid "Verified profiles"
 msgstr "已驗證的設定"
 
-#: website/public/get-started/index.html:1020
+#: website/public/get-started/index.html:1022
 msgctxt "page:get-started/index.html"
 msgid "Verified headless profile"
 msgstr "已驗證的無介面設定"
 
-#: website/public/get-started/index.html:1021
+#: website/public/get-started/index.html:1023
 msgctxt "page:get-started/index.html"
 msgid "See provider guide"
 msgstr "參閱 provider 指南"
 
-#: website/public/get-started/index.html:1027
+#: website/public/get-started/index.html:1029
 msgctxt "page:get-started/index.html"
 msgid "Hopper · let setup install or connect it"
 msgstr "Hopper · 透過 setup 安裝或連接"
 
-#: website/public/get-started/index.html:1033
+#: website/public/get-started/index.html:1035
 msgctxt "page:get-started/index.html"
 msgid ""
 "Choose Hopper in setup and review its separate installation plan. On macOS, "
@@ -12639,7 +12636,7 @@ msgstr ""
 "在 setup 中選擇 Hopper，查看它的獨立安裝計畫。macOS 首次打開 Hopper 時選擇試用模式或啟用授權；Linux 的 setup "
 "會準備支援的試用版及其專用顯示環境。"
 
-#: website/public/get-started/index.html:1039
+#: website/public/get-started/index.html:1041
 msgctxt "page:get-started/index.html"
 msgid ""
 "Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
@@ -12648,7 +12645,7 @@ msgstr ""
 "Linux 支援 Ubuntu 24.04+、Fedora 41+、Nobara 44+、Arch Linux、CachyOS 和 "
 "Omarchy。Hopper 是商業軟體，試用版有廠商規定的限制。"
 
-#: website/public/get-started/index.html:1058
+#: website/public/get-started/index.html:1060
 msgctxt "page:get-started/index.html"
 msgid ""
 "If macOS asks for Automation permission, allow the app that starts REA in "
@@ -12659,18 +12656,18 @@ msgstr "如果 macOS 請求自動化權限，在「系統設定 → 隱私權與
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#hopper"
 #. >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1063
+#: website/public/get-started/index.html:1065
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Hopper setup and troubleshooting{ph1}"
 msgstr "{ph0}Hopper 安裝與疑難排解{ph1}"
 
-#: website/public/get-started/index.html:1071
+#: website/public/get-started/index.html:1073
 msgctxt "page:get-started/index.html"
 msgid "Ghidra · install the free analysis tool and Java"
 msgstr "Ghidra · 安裝免費的分析工具和 Java"
 
-#: website/public/get-started/index.html:1075
+#: website/public/get-started/index.html:1077
 msgctxt "page:get-started/index.html"
 msgid ""
 "Install a 64-bit JDK 21 or newer, including the Java compiler. Choose the "
@@ -12678,7 +12675,7 @@ msgid ""
 msgstr "安裝包含 Java 編譯器的 64 位元 JDK 21 或更新版本。下載時選擇符合電腦架構的安裝套件。"
 
 #. {ph0}: <code>ghidra_…_PUBLIC_….zip</code>
-#: website/public/get-started/index.html:1080
+#: website/public/get-started/index.html:1082
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12689,7 +12686,7 @@ msgstr "從 Ghidra 12.1.4 發布頁的 Assets 清單下載並解壓縮 {ph0}。�
 #. {ph0}: <code>ghidraRun</code>
 #. {ph1}: <code>ghidraRun.bat</code>
 #. {ph2}: <code>GHIDRA_INSTALL_DIR</code>
-#: website/public/get-started/index.html:1085
+#: website/public/get-started/index.html:1087
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12703,7 +12700,7 @@ msgstr "找到解壓縮後包含 {ph0} 或 {ph1} 的資料夾，把該資料夾�
 #. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build"
 #. >
 #. {ph3}: </a >
-#: website/public/get-started/index.html:1091
+#: website/public/get-started/index.html:1093
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.1.4{ph3}"
@@ -12711,7 +12708,7 @@ msgstr "{ph0}下載 JDK{ph1} · {ph2}下載 Ghidra 12.1.4{ph3}"
 
 #. {ph0}: <code>java.home</code>
 #. {ph1}: <code>JAVA_HOME</code>
-#: website/public/get-started/index.html:1101
+#: website/public/get-started/index.html:1103
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12719,7 +12716,7 @@ msgid ""
 "second confirms the compiler is installed:"
 msgstr "檢查 Java。第一條指令會顯示 {ph0}，將該資料夾用於 {ph1}；第二條確認編譯器已安裝："
 
-#: website/public/get-started/index.html:1217
+#: website/public/get-started/index.html:1221
 msgctxt "page:get-started/index.html"
 msgid ""
 "Keep these commands in the same terminal session. Rerun setup after setting "
@@ -12734,7 +12731,7 @@ msgstr "在同一個終端機工作階段中執行這些指令。設定路徑後
 #. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/windows-
 #. ghidra-p0.md" >
 #. {ph3}: </a >
-#: website/public/get-started/index.html:1222
+#: website/public/get-started/index.html:1226
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12742,12 +12739,12 @@ msgid ""
 "guide{ph3}"
 msgstr "{ph0}Ghidra 設定與架構要求{ph1} · {ph2}Windows Ghidra 指南{ph3}"
 
-#: website/public/get-started/index.html:1235
+#: website/public/get-started/index.html:1239
 msgctxt "page:get-started/index.html"
 msgid "IDA · connect an existing installation"
 msgstr "IDA · 連接既有安裝"
 
-#: website/public/get-started/index.html:1236
+#: website/public/get-started/index.html:1240
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use the IDA provider guide to prepare an upstream MCP registration. Choose "
@@ -12756,7 +12753,7 @@ msgid ""
 msgstr ""
 "按 IDA provider 指南準備上游 MCP 設定。可以連接已打開原始程式的 IDA 介面，或使用建立獨立資料庫的無介面 supervisor。"
 
-#: website/public/get-started/index.html:1241
+#: website/public/get-started/index.html:1245
 msgctxt "page:get-started/index.html"
 msgid ""
 "Verified profiles include the Windows legacy GUI and headless supervisor, "
@@ -12766,7 +12763,7 @@ msgstr ""
 "已驗證的設定包括 Windows 舊版 GUI 與無介面 supervisor，以及 macOS arm64 上的 IDA Professional "
 "9.1 無介面 supervisor。可選的原生 GUI 橋接另有版本和平台要求。"
 
-#: website/public/get-started/index.html:1336
+#: website/public/get-started/index.html:1340
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use the JSON registration file you prepared with the provider guide, then "
@@ -12776,13 +12773,13 @@ msgstr "使用按 provider 指南準備好的 JSON 設定檔，再執行 setup �
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/ida-
 #. provider.md" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1340
+#: website/public/get-started/index.html:1344
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}IDA profiles, registration examples and verified platforms{ph1}"
 msgstr "{ph0}IDA 設定、註冊範例與已驗證平台{ph1}"
 
-#: website/public/get-started/index.html:1348
+#: website/public/get-started/index.html:1352
 msgctxt "page:get-started/index.html"
 msgid ""
 "Once connected, give your agent the original executable's full path and name"
@@ -12791,128 +12788,128 @@ msgstr "連接後，把原始執行檔的完整路徑和分析工具名稱告訴
 
 #. {ph0}: <a href="../guides/native/">
 #. {ph1}: </a>
-#: website/public/get-started/index.html:1360
+#: website/public/get-started/index.html:1364
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Follow a native analysis example{ph1}"
 msgstr "{ph0}跟著範例分析原生程式{ph1}"
 
-#: website/public/get-started/index.html:1365
+#: website/public/get-started/index.html:1369
 msgctxt "page:get-started/index.html"
 msgid "Websites, Android, .NET, firmware and other targets"
 msgstr "網站、Android、.NET、韌體及其他目標"
 
-#: website/public/get-started/index.html:1368
+#: website/public/get-started/index.html:1372
 msgctxt "page:get-started/index.html"
 msgid ""
 "Open the guide for the target you have. Each guide gives the additional "
 "tools, supported hosts and first command."
 msgstr "打開對應目標的指南，其中會列出額外工具、支援的平台和第一條分析指令。"
 
-#: website/public/get-started/index.html:1376
+#: website/public/get-started/index.html:1380
 msgctxt "page:get-started/index.html"
 msgid "Target"
 msgstr "目標"
 
-#: website/public/get-started/index.html:1377
+#: website/public/get-started/index.html:1381
 msgctxt "page:get-started/index.html"
 msgid "Tools to prepare"
 msgstr "需要準備的工具"
 
-#: website/public/get-started/index.html:1378
+#: website/public/get-started/index.html:1382
 msgctxt "page:get-started/index.html"
 msgid "Guide"
 msgstr "指南"
 
-#: website/public/get-started/index.html:1383
+#: website/public/get-started/index.html:1387
 msgctxt "page:get-started/index.html"
 msgid "JavaScript / Electron"
 msgstr "JavaScript / Electron"
 
 #. {ph0}: <a href="../guides/javascript/">
 #. {ph1}: </a>
-#: website/public/get-started/index.html:1385
-#: website/public/get-started/index.html:1390
-#: website/public/get-started/index.html:1395
-#: website/public/get-started/index.html:1405
-#: website/public/get-started/index.html:1415
-#: website/public/get-started/index.html:1425
-#: website/public/get-started/index.html:1435
-#: website/public/get-started/index.html:1445
-#: website/public/get-started/index.html:1455
-#: website/public/get-started/index.html:1465
-#: website/public/get-started/index.html:1475
-#: website/public/get-started/index.html:1485
-#: website/public/get-started/index.html:1495
-#: website/public/get-started/index.html:1505
-#: website/public/get-started/index.html:1515
-#: website/public/get-started/index.html:1525
+#: website/public/get-started/index.html:1389
+#: website/public/get-started/index.html:1394
+#: website/public/get-started/index.html:1399
+#: website/public/get-started/index.html:1409
+#: website/public/get-started/index.html:1419
+#: website/public/get-started/index.html:1429
+#: website/public/get-started/index.html:1439
+#: website/public/get-started/index.html:1449
+#: website/public/get-started/index.html:1459
+#: website/public/get-started/index.html:1469
+#: website/public/get-started/index.html:1479
+#: website/public/get-started/index.html:1489
+#: website/public/get-started/index.html:1499
+#: website/public/get-started/index.html:1509
+#: website/public/get-started/index.html:1519
+#: website/public/get-started/index.html:1529
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Open guide{ph1}"
 msgstr "{ph0}查看指南{ph1}"
 
-#: website/public/get-started/index.html:1388
+#: website/public/get-started/index.html:1392
 msgctxt "page:get-started/index.html"
 msgid "Website"
 msgstr "網站"
 
-#: website/public/get-started/index.html:1393
+#: website/public/get-started/index.html:1397
 msgctxt "page:get-started/index.html"
 msgid ".NET / Flutter / packages"
 msgstr ".NET / Flutter / 軟體套件"
 
-#: website/public/get-started/index.html:1403
+#: website/public/get-started/index.html:1407
 msgctxt "page:get-started/index.html"
 msgid "Android APK"
 msgstr "Android APK"
 
-#: website/public/get-started/index.html:1413
+#: website/public/get-started/index.html:1417
 msgctxt "page:get-started/index.html"
 msgid "Android device"
 msgstr "Android 裝置"
 
-#: website/public/get-started/index.html:1423
+#: website/public/get-started/index.html:1427
 msgctxt "page:get-started/index.html"
 msgid "Android resources"
 msgstr "Android 資源"
 
-#: website/public/get-started/index.html:1433
+#: website/public/get-started/index.html:1437
 msgctxt "page:get-started/index.html"
 msgid "JEB project"
 msgstr "JEB 專案"
 
-#: website/public/get-started/index.html:1443
+#: website/public/get-started/index.html:1447
 msgctxt "page:get-started/index.html"
 msgid "Firmware"
 msgstr "韌體"
 
-#: website/public/get-started/index.html:1453
+#: website/public/get-started/index.html:1457
 msgctxt "page:get-started/index.html"
 msgid "WASM"
 msgstr "WASM"
 
-#: website/public/get-started/index.html:1483
+#: website/public/get-started/index.html:1487
 msgctxt "page:get-started/index.html"
 msgid "ELF / Linux crash"
 msgstr "ELF / Linux 當機記錄"
 
-#: website/public/get-started/index.html:1493
+#: website/public/get-started/index.html:1497
 msgctxt "page:get-started/index.html"
 msgid "HAR / SAZ / mitmproxy"
 msgstr "HAR / SAZ / mitmproxy"
 
-#: website/public/get-started/index.html:1503
+#: website/public/get-started/index.html:1507
 msgctxt "page:get-started/index.html"
 msgid "PCAP / PCAPNG"
 msgstr "PCAP / PCAPNG"
 
-#: website/public/get-started/index.html:1513
+#: website/public/get-started/index.html:1517
 msgctxt "page:get-started/index.html"
 msgid "Logic signals"
 msgstr "邏輯訊號"
 
-#: website/public/get-started/index.html:1523
+#: website/public/get-started/index.html:1527
 msgctxt "page:get-started/index.html"
 msgid "Process behavior"
 msgstr "程序行為"
@@ -12928,7 +12925,7 @@ msgstr "程序行為"
 #. {ph5}: </a >
 #. {ph6}: <a href="../guides/">
 #. {ph7}: </a>
-#: website/public/get-started/index.html:1535
+#: website/public/get-started/index.html:1539
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12938,18 +12935,20 @@ msgstr ""
 "{ph0}Flutter 指南{ph1} · {ph2}軟體套件與資源{ph3} · {ph4}EVM 位元碼{ph5} · "
 "{ph6}全部分析指南{ph7}"
 
-#: website/public/get-started/index.html:1555
+#: website/public/get-started/index.html:1559
 msgctxt "page:get-started/index.html"
 msgid "Use REA from a terminal"
 msgstr "在終端機中使用 REA"
 
-#: website/public/get-started/index.html:1557
+#. {ph0}: <span translate="no">curl</span>
+#: website/public/get-started/index.html:1561
+#, python-brace-format
 msgctxt "page:get-started/index.html"
-msgid "CLI commands, global installation and curl"
-msgstr "CLI 指令、全域安裝與 curl"
+msgid "CLI commands, global installation and {ph0}"
+msgstr "CLI 指令、全域安裝與 {ph0}"
 
 #. {ph0}: <code>main</code>
-#: website/public/get-started/index.html:1654
+#: website/public/get-started/index.html:1661
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12957,26 +12956,28 @@ msgid ""
 "list. Ghidra must be configured first."
 msgstr "把 {ph0} 換成目標函式清單中的名稱或位址。先完成 Ghidra 設定再執行。"
 
-#: website/public/get-started/index.html:1658
+#. {ph0}: <span translate="no">curl</span>
+#: website/public/get-started/index.html:1665
+#, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"On macOS or Linux, you can also use the curl installer after preparing "
+"On macOS or Linux, you can also use the {ph0} installer after preparing "
 "Node.js:"
-msgstr "macOS 或 Linux 準備好 Node.js 後，也可以使用 curl 安裝："
+msgstr "macOS 或 Linux 準備好 Node.js 後，也可以使用 {ph0} 安裝："
 
-#: website/public/get-started/index.html:1696
+#: website/public/get-started/index.html:1704
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use the client check in step 3 with your setup ID. In editor clients, enable"
 " REA in MCP settings and allow its tools in the agent chat."
 msgstr "在第 3 步的檢查指令中填寫你的 setup ID。使用編輯器時，在 MCP 設定中啟用 REA，並在助手聊天中允許使用它的工具。"
 
-#: website/public/get-started/index.html:1724
+#: website/public/get-started/index.html:1732
 msgctxt "page:get-started/index.html"
 msgid "Windows, WSL and paths with spaces"
 msgstr "Windows、WSL 與含空白的路徑"
 
-#: website/public/get-started/index.html:1725
+#: website/public/get-started/index.html:1733
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use Windows PowerShell for Windows clients and analysis tools. If your agent"
@@ -12986,17 +12987,17 @@ msgstr ""
 "Windows 用戶端和分析工具使用 Windows PowerShell。如果程式開發助手在 WSL 內執行，就在那個 Linux 環境中安裝 "
 "Node.js 和 REA，並使用 Linux 路徑。無介面 provider 與 REA 在同一個系統環境中執行。"
 
-#: website/public/get-started/index.html:1734
+#: website/public/get-started/index.html:1742
 msgctxt "page:get-started/index.html"
 msgid "Windows setup command:"
 msgstr "Windows setup 指令："
 
-#: website/public/get-started/index.html:1751
+#: website/public/get-started/index.html:1759
 msgctxt "page:get-started/index.html"
 msgid "Update or remove REA"
 msgstr "更新或移除 REA"
 
-#: website/public/get-started/index.html:1752
+#: website/public/get-started/index.html:1760
 msgctxt "page:get-started/index.html"
 msgid ""
 "To refresh your agent connection, run the latest setup command again, review"
@@ -13005,7 +13006,7 @@ msgstr "要更新程式開發助手的連接，重新執行最新版 setup，查
 
 #. {ph0}: <code>rea update</code>
 #. {ph1}: <code>npx rea-agents@latest uninstall</code>
-#: website/public/get-started/index.html:1770
+#: website/public/get-started/index.html:1778
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13017,7 +13018,7 @@ msgstr "全域安裝的 CLI 用 {ph0} 更新。使用 {ph1} 移除 REA 的用戶
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#diagnose-
 #. update-and-remove" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1776
+#: website/public/get-started/index.html:1784
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Update and uninstall details{ph1}"
@@ -13028,54 +13029,56 @@ msgctxt "page:get-started/index.html"
 msgid "Copy Windows REA setup command"
 msgstr "複製 Windows REA setup 指令"
 
-#: website/public/get-started/index.html:419
-#: website/public/get-started/index.html:450
-#: website/public/get-started/index.html:464
-#: website/public/get-started/index.html:482
-#: website/public/get-started/index.html:534
-#: website/public/get-started/index.html:548
-#: website/public/get-started/index.html:580
-#: website/public/get-started/index.html:609
-#: website/public/get-started/index.html:744
-#: website/public/get-started/index.html:799
-#: website/public/get-started/index.html:814
-#: website/public/get-started/index.html:862
-#: website/public/get-started/index.html:1047
-#: website/public/get-started/index.html:1109
-#: website/public/get-started/index.html:1132
-#: website/public/get-started/index.html:1156
-#: website/public/get-started/index.html:1204
-#: website/public/get-started/index.html:1279
-#: website/public/get-started/index.html:1305
-#: website/public/get-started/index.html:1322
-#: website/public/get-started/index.html:1643
-#: website/public/get-started/index.html:1665
-#: website/public/get-started/index.html:1738
-#: website/public/get-started/index.html:1759
+#: website/public/get-started/index.html:421
+#: website/public/get-started/index.html:452
+#: website/public/get-started/index.html:466
+#: website/public/get-started/index.html:484
+#: website/public/get-started/index.html:536
+#: website/public/get-started/index.html:550
+#: website/public/get-started/index.html:582
+#: website/public/get-started/index.html:611
+#: website/public/get-started/index.html:746
+#: website/public/get-started/index.html:801
+#: website/public/get-started/index.html:816
+#: website/public/get-started/index.html:864
+#: website/public/get-started/index.html:1049
+#: website/public/get-started/index.html:1111
+#: website/public/get-started/index.html:1134
+#: website/public/get-started/index.html:1158
+#: website/public/get-started/index.html:1208
+#: website/public/get-started/index.html:1283
+#: website/public/get-started/index.html:1309
+#: website/public/get-started/index.html:1326
+#: website/public/get-started/index.html:1650
+#: website/public/get-started/index.html:1673
+#: website/public/get-started/index.html:1746
+#: website/public/get-started/index.html:1767
 msgctxt "page:get-started/index.html"
 msgid "Copy command"
 msgstr "複製指令"
 
-#: website/public/get-started/index.html:895
+#: website/public/get-started/index.html:897
 msgctxt "page:get-started/index.html"
 msgid "Copy Notes investigation prompt"
 msgstr "複製筆記調查提示"
 
-#. {ph0}: <code>sudo apt install curl unzip</code>
+#. {ph0}: <span translate="no">curl</span>
+#. {ph1}: <span translate="no">unzip</span>
+#. {ph2}: <code>sudo apt install curl unzip</code>
 #: website/public/get-started/index.html:362
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"Install curl and unzip first if they are missing. On Debian or Ubuntu, run "
-"{ph0}; on other distributions, use your package manager."
-msgstr "如果沒有 curl 和 unzip，先安裝它們。Debian 或 Ubuntu 使用 {ph0}；其他發行版使用對應的套件管理工具。"
+"Install {ph0} and {ph1} first if they are missing. On Debian or Ubuntu, run "
+"{ph2}; on other distributions, use your package manager."
+msgstr "如果沒有 {ph0} 和 {ph1}，先安裝它們。Debian 或 Ubuntu 使用 {ph2}；其他發行版使用對應的套件管理工具。"
 
-#: website/public/get-started/index.html:381
+#: website/public/get-started/index.html:383
 msgctxt "page:get-started/index.html"
 msgid "Close the terminal, open it again, then:"
 msgstr "關閉終端機，重新打開，再執行："
 
-#: website/public/get-started/index.html:511
+#: website/public/get-started/index.html:513
 msgctxt "page:get-started/index.html"
 msgid ""
 "Open its AI chat and choose Agent mode. In Windsurf or Devin Desktop, open "
@@ -13090,7 +13093,7 @@ msgstr ""
 #. {ph3}: </a >
 #. {ph4}: <a href="https://code.visualstudio.com/docs/setup/copilot" >
 #. {ph5}: </a >
-#: website/public/get-started/index.html:517
+#: website/public/get-started/index.html:519
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13100,19 +13103,19 @@ msgstr ""
 "{ph0}Cursor 安裝{ph1} · {ph2}Windsurf / Devin Desktop 安裝{ph3} · {ph4}VS Code 與"
 " Copilot 設定{ph5}"
 
-#: website/public/get-started/index.html:605
+#: website/public/get-started/index.html:607
 msgctxt "page:get-started/index.html"
 msgid "OpenCode · choose an AI model"
 msgstr "OpenCode · 選擇 AI 模型"
 
-#: website/public/get-started/index.html:1263
+#: website/public/get-started/index.html:1267
 msgctxt "page:get-started/index.html"
 msgid "Prepare the IDA registration file"
 msgstr "準備 IDA 設定檔"
 
 #. {ph0}: <code>ida-mcp.json</code>
 #. {ph1}: <code>.txt</code>
-#: website/public/get-started/index.html:1264
+#: website/public/get-started/index.html:1268
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13126,7 +13129,7 @@ msgstr ""
 #. {ph0}: <code>idb_open</code>
 #. {ph1}: <code>idb_list</code>
 #. {ph2}: <code>idb_close</code>
-#: website/public/get-started/index.html:1271
+#: website/public/get-started/index.html:1275
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13137,7 +13140,7 @@ msgstr "如果使用提供 {ph0}、{ph1} 和 {ph2} 的無介面 supervisor，檔
 #. {ph0}: <code>command</code>
 #. {ph1}: <code>args</code>
 #. {ph2}: <code>env</code>
-#: website/public/get-started/index.html:1294
+#: website/public/get-started/index.html:1298
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13148,22 +13151,22 @@ msgstr ""
 "如果連接舊版 1.4.0 GUI 服務，把可用的 {ph0}、{ph1} 和可選的 {ph2} 複製到檔案中。先在 IDA "
 "中打開原始程式並啟動上游外掛，再讓 REA 分析。"
 
-#: website/public/get-started/index.html:1463
+#: website/public/get-started/index.html:1467
 msgctxt "page:get-started/index.html"
 msgid "SQLite database"
 msgstr "SQLite 資料庫"
 
-#: website/public/get-started/index.html:1473
+#: website/public/get-started/index.html:1477
 msgctxt "page:get-started/index.html"
 msgid "EVM bytecode"
 msgstr "EVM 位元碼"
 
-#: website/public/get-started/index.html:446
+#: website/public/get-started/index.html:448
 msgctxt "page:get-started/index.html"
 msgid "Install Codex using the command for your operating system:"
 msgstr "使用適合你作業系統的指令安裝 Codex："
 
-#: website/public/get-started/index.html:475
+#: website/public/get-started/index.html:477
 msgctxt "page:get-started/index.html"
 msgid ""
 "After installation, reopen your terminal and return to the working folder. "
@@ -13186,7 +13189,7 @@ msgctxt "page:get-started/index.html"
 msgid "Already use Homebrew?"
 msgstr "已經在使用 Homebrew？"
 
-#: website/public/get-started/index.html:572
+#: website/public/get-started/index.html:574
 msgctxt "page:get-started/index.html"
 msgid ""
 "Install Claude Desktop on Windows or macOS and sign in. Quit it completely, "
@@ -13196,7 +13199,7 @@ msgstr ""
 
 #. {ph0}: <a href="#check-connection">
 #. {ph1}: </a>
-#: website/public/get-started/index.html:591
+#: website/public/get-started/index.html:593
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13204,7 +13207,7 @@ msgid ""
 "in step 3{ph1}."
 msgstr "查看並確認計畫，重新打開 Claude，再{ph0}按第 3 步檢查連接{ph1}。"
 
-#: website/public/get-started/index.html:1168
+#: website/public/get-started/index.html:1170
 msgctxt "page:get-started/index.html"
 msgid ""
 "Replace both paths with your existing installations. For a fresh macOS or "
@@ -13214,23 +13217,26 @@ msgstr ""
 "把兩個路徑換成你已有的安裝位置。如果剛在 macOS 或 Linux arm64 上解壓縮 "
 "Ghidra，先為這台電腦編譯原生反編譯器，再繼續下面的步驟。"
 
-#: website/public/get-started/index.html:1174
+#: website/public/get-started/index.html:1176
 msgctxt "page:get-started/index.html"
 msgid "Build Ghidra's native decompiler"
 msgstr "編譯 Ghidra 的原生反編譯器"
 
-#: website/public/get-started/index.html:1175
+#. {ph0}: <span translate="no">make</span>
+#. {ph1}: <span translate="no">bison</span>
+#: website/public/get-started/index.html:1177
+#, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"On macOS, the build needs Xcode Command Line Tools, make and bison. Use the "
-"guide for your computer:"
-msgstr "macOS 編譯需要 Xcode Command Line Tools、make 和 bison。選擇符合電腦架構的指南："
+"On macOS, the build needs Xcode Command Line Tools, {ph0} and {ph1}. Use the"
+" guide for your computer:"
+msgstr "macOS 編譯需要 Xcode Command Line Tools、{ph0} 和 {ph1}。選擇符合電腦架構的指南："
 
 #. {ph0}: <a
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#missing-
 #. macos-native-decompiler" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1180
+#: website/public/get-started/index.html:1184
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}macOS · Intel{ph1}"
@@ -13240,7 +13246,7 @@ msgstr "{ph0}macOS · Intel{ph1}"
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#macos-
 #. arm64-native-decompiler" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1186
+#: website/public/get-started/index.html:1190
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}macOS · Apple Silicon{ph1}"
@@ -13250,13 +13256,13 @@ msgstr "{ph0}macOS · Apple Silicon{ph1}"
 #. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-
 #. native-components" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1192
+#: website/public/get-started/index.html:1196
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Linux arm64 · native build instructions{ph1}"
 msgstr "{ph0}Linux arm64 · 原生元件編譯說明{ph1}"
 
-#: website/public/get-started/index.html:1200
+#: website/public/get-started/index.html:1204
 msgctxt "page:get-started/index.html"
 msgid "Then check Ghidra and save its paths for your client:"
 msgstr "然後檢查 Ghidra，並為用戶端儲存這些路徑："
@@ -13663,7 +13669,7 @@ msgid "Other install options: {ph0}{ph1} →{ph2}"
 msgstr "其他安裝方式：{ph0}{ph1} →{ph2}"
 
 #. {ph0}: <code>rea setup</code>
-#: website/public/get-started/index.html:1676
+#: website/public/get-started/index.html:1684
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13676,7 +13682,7 @@ msgstr "依設定提示連接你的助手。如果沒有出現提示，執行 {p
 #. setup" >
 #. {ph1}: </a >
 #. {ph2}: <code>6.4.0</code>
-#: website/public/get-started/index.html:1247
+#: website/public/get-started/index.html:1251
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13689,7 +13695,7 @@ msgstr ""
 #. {ph0}: <code>node scripts/rea.mjs doctor --provider ida --json</code>
 #. {ph1}: <code>node scripts/rea.mjs setup</code>
 #. {ph2}: <code>npx</code>
-#: website/public/get-started/index.html:1256
+#: website/public/get-started/index.html:1260
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13699,7 +13705,7 @@ msgstr "在已建置的原始碼目錄中，執行 {ph0} 和 {ph1}，不要使�
 
 #. {ph0}: <code>rea</code>
 #. {ph1}: <code>"$HOME/.local/bin/rea" setup</code>
-#: website/public/get-started/index.html:1680
+#: website/public/get-started/index.html:1688
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13708,7 +13714,7 @@ msgid ""
 msgstr "如果終端找不到 {ph0}，請使用安裝器印出的執行檔路徑。在 Linux 上，預設的設定命令是 {ph1}。"
 
 #. {ph0}: <code>/absolute/path/to/program</code>
-#: website/public/get-started/index.html:1353
+#: website/public/get-started/index.html:1357
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13730,7 +13736,7 @@ msgstr "使用 REA 和我已設定的分析工具檢查 {ph0}。列出其中的�
 #: website/public/first-investigation/index.html:122
 #: website/public/first-investigation/index.html:531
 #: website/public/get-started/index.html:122
-#: website/public/get-started/index.html:1814
+#: website/public/get-started/index.html:1822
 #: website/public/guides/browser/index.html:122
 #: website/public/guides/browser/index.html:504
 #: website/public/guides/index.html:122 website/public/guides/index.html:279
@@ -13739,7 +13745,7 @@ msgstr "使用 REA 和我已設定的分析工具檢查 {ph0}。列出其中的�
 #: website/public/guides/native/index.html:122
 #: website/public/guides/native/index.html:506 website/public/index.html:124
 #: website/public/index.html:1219 website/public/showcase/aegis/index.html:123
-#: website/public/showcase/aegis/index.html:805
+#: website/public/showcase/aegis/index.html:808
 #: website/public/showcase/ctf/index.html:122
 #: website/public/showcase/ctf/index.html:774
 #: website/public/showcase/dx-ball/index.html:122
@@ -13844,6 +13850,10 @@ msgstr "回到頂部"
 msgctxt "runtime"
 msgid "Contributors: {count}"
 msgstr "貢獻者: {count}"
+
+#~ msgctxt "figure:dx-ball-sound-pan-investigation.svg"
+#~ msgid "20 + 30 × tile_x"
+#~ msgstr "20 + 30 × tile_x"
 
 #, python-brace-format
 #~ msgctxt "runtime"

@@ -106,8 +106,11 @@ Cloudflare publish this same artifact. No translation API runs during a build
 or in a reader's browser.
 
 Figure labels and accessibility descriptions are included in the catalogs under
-`figure:<filename>`. Keep labels short enough for the diagram. Interaction text
-is extracted directly from `t("message")` calls in `public/assets/*.js`, with
+`figure:<filename>`. Keep labels short enough for the diagram.
+In SVG figures, mark literal formulas and identifiers with `translate="no"` on
+the text element or its containing group. Extraction and rendering both preserve
+those elements, even when another label has the same text and a translation.
+Interaction text is extracted directly from `t("message")` calls in `public/assets/*.js`, with
 source locations in the catalog. Keep named values instead of concatenating
 translated fragments.
 

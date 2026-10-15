@@ -191,11 +191,24 @@ describe("compact advertised input schema", () => {
     const properties = schema.properties as Record<string, unknown>;
     expect(properties.normalized_result).toEqual({
       type: ["null", "boolean", "object", "array", "number", "string"],
+      items: {
+        type: ["null", "boolean", "object", "array", "number", "string"],
+      },
     });
     expect(properties.literal).toEqual({ const: {} });
     const validate = new Ajv2020({ strict: false }).compile(schema);
     for (const normalized_result of [null, true, {}, [], 42, "result"])
       expect(validate({ normalized_result })).toBe(true);
+  });
+
+  it("gives unconstrained array types an items schema for strict clients", () => {
+    const { schema } = compactAdvertisedInputSchema({ type: "object", properties: { data: {} } }, 13312);
+    const data = (schema.properties as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.type).toEqual(["null", "boolean", "object", "array", "number", "string"]);
+    expect(data.items).toEqual({ type: ["null", "boolean", "object", "array", "number", "string"] });
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    expect(validate({ data: [1, "two", { three: 3 }] })).toBe(true);
+    expect(validate({ data: null })).toBe(true);
   });
 
   it("preserves independent validation constraints on reference siblings", () => {

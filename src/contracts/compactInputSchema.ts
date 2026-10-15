@@ -157,7 +157,10 @@ const inlineWithinBudget = (
       yield "]";
     } else if (isSchemaObject(value)) {
       if (position === "schema" && Object.keys(value).length === 0) {
-        yield JSON.stringify({ type: jsonValueTypes });
+        yield JSON.stringify({
+          type: jsonValueTypes,
+          items: { type: jsonValueTypes },
+        });
         return;
       }
       if (position === "schema" && typeof value.$ref === "string") {

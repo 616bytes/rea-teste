@@ -439,11 +439,9 @@ std::wstring windowTitle(HWND window) {
   std::vector<wchar_t> buffer(static_cast<size_t>(MAX_WINDOW_TITLE_CHARS) + 1);
   const int copied = GetWindowTextW(window, buffer.data(), static_cast<int>(buffer.size()));
   require(copied >= 0 && copied <= MAX_WINDOW_TITLE_CHARS, "Read selected window title failed");
-  const int observedLength = GetWindowTextLengthW(window);
-  require(observedLength >= 0 && observedLength <= MAX_WINDOW_TITLE_CHARS &&
-              observedLength == copied,
-          "Selected window title changed during capture", L"", ERROR_INVALID_DATA,
-          FailureKind::WindowState);
+  // GetWindowTextLengthW is only an estimate for windows created through ANSI
+  // APIs. The copied UTF-16 text is the bounded observation we actually use;
+  // rejecting a mismatching estimate can refuse a valid selected HWND.
   return std::wstring(buffer.data(), static_cast<size_t>(copied));
 }
 

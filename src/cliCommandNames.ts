@@ -105,6 +105,7 @@ export const CLI_COMMANDS = Object.freeze({
   inspectAndroidClass: "inspect-android-class",
   inspectAndroidMethod: "inspect-android-method",
   traceAndroidReferences: "trace-android-references",
+  traceAndroidResourceReferences: "trace-android-resource-references",
   inspectJebClient: "inspect-jeb-client",
   openJebProject: "open-jeb-project",
   listJebUnits: "list-jeb-units",

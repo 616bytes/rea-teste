@@ -498,6 +498,11 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     launchesProcess: true,
     writesFilesystem: true,
   }),
+  trace_android_resource_references: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+  }),
   annotate_native_function: effects({
     mutatesTarget: true,
     mutatesSession: true,

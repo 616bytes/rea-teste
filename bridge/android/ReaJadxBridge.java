@@ -7,6 +7,9 @@ import jadx.api.plugins.input.data.ICodeReader;
 import jadx.api.plugins.input.data.IMethodRef;
 import jadx.api.plugins.input.insns.InsnIndexType;
 import jadx.api.plugins.input.insns.Opcode;
+import jadx.api.plugins.input.insns.custom.ISwitchPayload;
+import jadx.api.plugins.input.data.IFieldRef;
+import jadx.core.utils.android.AndroidResourcesMap;
 import jadx.core.dex.info.MethodInfo;
 import jadx.core.dex.nodes.*;
 import java.io.PrintStream;
@@ -203,6 +206,164 @@ class ReaJadxBridge {
     return new DirectInvokes(sites, exhaustive[0]);
   }
 
+  private record ResourceRequest(String requested, String pkg, String type, String name,
+      boolean framework, List<Integer> ids) {}
+
+  private static Map<String, List<Integer>> byName(Map<Integer, String> names) {
+    Map<String, List<Integer>> result = new HashMap<>();
+    for (Map.Entry<Integer, String> entry : names.entrySet())
+      result.computeIfAbsent(entry.getValue(), ignored -> new ArrayList<>()).add(entry.getKey());
+    result.values().forEach(Collections::sort);
+    return result;
+  }
+
+  private static Map<String, Object> resourceSite(String kind, ClassNode cls, MethodNode method,
+      int offset, Opcode opcode) {
+    Map<String, Object> site = new LinkedHashMap<>();
+    site.put("kind", kind);
+    site.put("class_name", cls.getRawName());
+    site.put("top_class", cls.getTopParentClass().getFullName());
+    site.put("method_name", method.getAlias());
+    site.put("raw_method_id", method.getMethodInfo().getRawFullId());
+    site.put("dex_entry", method.getInputFileName());
+    site.put("dex_code_unit_offset", offset);
+    site.put("opcode", opcode.name());
+    return site;
+  }
+
+  /**
+   * Resolve resource names to integer IDs through the APK resource table, or JADX's bundled
+   * framework map for the android package, then scan every method's raw DEX instructions once
+   * for constant loads, switch keys, and R-field reads of those resources.
+   */
+  private CallToolResult resourceReferences(JsonObject args) {
+    JadxSession current = session();
+    com.google.gson.JsonObject parsed = JsonParser.parseString(args.toString()).getAsJsonObject();
+    JsonElement listed = parsed.get("resources");
+    if (listed == null || !listed.isJsonArray() || listed.getAsJsonArray().isEmpty())
+      throw new IllegalArgumentException("resources must be a non-empty array of strings");
+    int maxSites = integer(args, "max_sites", 100);
+    RootNode root = current.getClasses().isEmpty() ? null
+        : current.getClasses().get(0).getClassNode().root();
+    Map<String, List<Integer>> app = root == null ? Map.of()
+        : byName(root.getConstValues().getResourcesNames());
+    Map<String, List<Integer>> framework = byName(AndroidResourcesMap.getMap());
+    List<ResourceRequest> requests = new ArrayList<>();
+    for (JsonElement element : listed.getAsJsonArray()) {
+      if (!element.isJsonPrimitive() || !element.getAsJsonPrimitive().isString())
+        throw new IllegalArgumentException("resources must contain strings");
+      String requested = element.getAsString();
+      int colon = requested.indexOf(':');
+      String pkg = colon < 0 ? null : requested.substring(0, colon);
+      String rest = colon < 0 ? requested : requested.substring(colon + 1);
+      int slash = rest.indexOf('/');
+      if (slash <= 0 || slash == rest.length() - 1)
+        throw new IllegalArgumentException("Resource must be [package:]type/name: " + requested);
+      String type = rest.substring(0, slash);
+      String name = rest.substring(slash + 1);
+      boolean isFramework = "android".equals(pkg);
+      List<Integer> ids = (isFramework ? framework : app).getOrDefault(type + "/" + name, List.of());
+      requests.add(new ResourceRequest(requested, pkg, type, name, isFramework, ids));
+    }
+    Map<Long, List<Integer>> literals = new HashMap<>();
+    Map<String, List<Integer>> fieldReads = new HashMap<>();
+    List<List<Map<String, Object>>> sites = new ArrayList<>();
+    List<List<Map<String, Object>>> declarations = new ArrayList<>();
+    int[] totals = new int[requests.size()];
+    for (int index = 0; index < requests.size(); index++) {
+      ResourceRequest request = requests.get(index);
+      for (int id : request.ids())
+        literals.computeIfAbsent((long) id, ignored -> new ArrayList<>()).add(index);
+      fieldReads.computeIfAbsent(request.type() + "/" + request.name(), ignored -> new ArrayList<>())
+          .add(index);
+      sites.add(new ArrayList<>());
+      declarations.add(new ArrayList<>());
+    }
+    int[] scanned = {0};
+    List<ClassNode> classNodes = root == null ? List.of() : root.getClasses();
+    for (ClassNode cls : classNodes) {
+      String rawName = cls.getRawName();
+      int marker = rawName.lastIndexOf(".R$");
+      if (marker >= 0) {
+        String type = rawName.substring(marker + 3);
+        boolean frameworkClass = rawName.equals("android.R$" + type);
+        for (FieldNode field : cls.getFields()) {
+          String fieldName = field.getFieldInfo().getName();
+          List<Integer> matches = fieldReads.get(type + "/" + fieldName);
+          if (matches == null) continue;
+          for (int index : matches)
+            if (requests.get(index).framework() == frameworkClass)
+              declarations.get(index).add(Map.of("class_name", rawName, "field_name", fieldName,
+                  // JADX synthesizes an app R class from the resource table when the APK lacks one.
+                  "origin", cls.getClsData() == null ? "jadx_generated" : "dex"));
+        }
+      }
+      for (MethodNode method : cls.getMethods()) {
+        ICodeReader code = method.getCodeReader();
+        if (code == null) continue;
+        scanned[0]++;
+        code.visitInstructions(insn -> {
+          insn.decode();
+          Opcode opcode = insn.getOpcode();
+          Set<Integer> matched = new LinkedHashSet<>();
+          String kind = null;
+          if (opcode == Opcode.CONST || opcode == Opcode.CONST_WIDE) {
+            List<Integer> hit = literals.get(insn.getLiteral());
+            if (hit != null) matched.addAll(hit);
+            kind = "const_literal";
+          } else if (opcode == Opcode.PACKED_SWITCH_PAYLOAD || opcode == Opcode.SPARSE_SWITCH_PAYLOAD) {
+            if (insn.getPayload() instanceof ISwitchPayload payload)
+              for (int key : payload.getKeys()) {
+                List<Integer> hit = literals.get((long) key);
+                if (hit != null) matched.addAll(hit);
+              }
+            kind = "switch_case";
+          } else if (insn.getIndexType() == InsnIndexType.FIELD_REF && opcode.name().startsWith("SGET")) {
+            IFieldRef field = insn.getIndexAsField();
+            String parent = field.getParentClassType();
+            int rMarker = parent.lastIndexOf("/R$");
+            if (rMarker >= 0 && parent.endsWith(";")) {
+              String type = parent.substring(rMarker + 3, parent.length() - 1);
+              boolean frameworkParent = parent.equals("Landroid/R$" + type + ";");
+              List<Integer> hit = fieldReads.get(type + "/" + field.getName());
+              if (hit != null)
+                for (int index : hit)
+                  if (requests.get(index).framework() == frameworkParent) matched.add(index);
+              kind = "r_field_read";
+            }
+          }
+          for (int index : matched) {
+            totals[index]++;
+            if (sites.get(index).size() < maxSites)
+              sites.get(index).add(resourceSite(kind, cls, method, insn.getOffset(), opcode));
+          }
+        });
+      }
+    }
+    List<Map<String, Object>> results = new ArrayList<>();
+    for (int index = 0; index < requests.size(); index++) {
+      ResourceRequest request = requests.get(index);
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("requested", request.requested());
+      result.put("package", request.pkg() == null ? "" : request.pkg());
+      result.put("type", request.type());
+      result.put("name", request.name());
+      result.put("table", request.framework() ? "framework" : "app");
+      result.put("ids", request.ids());
+      result.put("r_fields", declarations.get(index));
+      result.put("total_sites", totals[index]);
+      result.put("sites", sites.get(index));
+      results.add(result);
+    }
+    Map<String, Object> response = new LinkedHashMap<>();
+    response.put("classes_scanned", classNodes.size());
+    response.put("methods_scanned", scanned[0]);
+    response.put("app_resource_names", app.size());
+    response.put("max_sites", maxSites);
+    response.put("resources", results);
+    return json(response);
+  }
+
   private CallToolResult handle(String name, JsonObject args) {
     if (name.equals("rea_jvm_status")) return json(Map.of(
         "engine_reported_version", BuildInfo.VERSION,
@@ -210,6 +371,7 @@ class ReaJadxBridge {
         "available_processors", Runtime.getRuntime().availableProcessors(),
         "java_version", System.getProperty("java.version"),
         "metadata_scope", "parsed_members"));
+    if (name.equals("rea_resource_references")) return resourceReferences(args);
     JadxSession current = session();
     if (name.equals("list_classes")) {
       List<String> names = current.getClassFqns();
@@ -308,6 +470,14 @@ class ReaJadxBridge {
         new ToolSchema(null, new JsonObject(Map.of()), List.of(), null),
         "Observed worker JVM and metadata scope", null, null, null, null, null, null);
     server.addTool(diagnostics, (connection, request, continuation) -> bridge.handle("rea_jvm_status", request.getArguments()));
+    Tool resources = new Tool("rea_resource_references",
+        new ToolSchema(null, new JsonObject(Map.of()), List.of(), null),
+        "Resolve [package:]type/name resources to IDs and list raw DEX constant, switch, and R-field uses",
+        null, null, null, null, null, null);
+    server.addTool(resources, (connection, request, continuation) -> {
+      try { return bridge.handle("rea_resource_references", request.getArguments()); }
+      catch (IllegalArgumentException error) { return text(error.getMessage(), true); }
+    });
     for (String name : List.of("list_classes", "get_class_summary",
         "get_method_body", "get_xrefs_to_class", "get_xrefs_to_method")) {
       Tool tool = server.getTools().get(name).getTool();

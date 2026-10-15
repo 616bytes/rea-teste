@@ -137,6 +137,83 @@ cliTest(
 );
 
 cliTest(
+  "preserves rest-array property identity in inferred IPC channels through the public CLI",
+  async ({ cli }) => {
+    for (const fixture of [
+      {
+        expression: 'items["01"] ?? "FALLBACK"',
+        parameters: "",
+        channel: null,
+      },
+      {
+        expression: 'items["1"] ?? "FALLBACK"',
+        parameters: "",
+        channel: "SECOND",
+      },
+      { expression: '"FALLBACK"', parameters: "", channel: "FALLBACK" },
+      {
+        expression: 'items[key] ?? "FALLBACK"',
+        parameters: "key",
+        channel: null,
+      },
+    ]) {
+      const root = await createTestTempDirectory("rea-electron-rest-key-");
+      await writeFixtureFiles(root, {
+        "main.cjs": `const e = require("electron");
+          function make(...items) {
+            return (${fixture.parameters}) => e.ipcRenderer.send(${fixture.expression});
+          }
+          e.contextBridge.exposeInMainWorld("desktop", { read: make("FIRST", "SECOND") });`,
+      });
+      const application = await analyzeJavaScriptDirectory("CLI", cli, root);
+      expect(application.statistics).toMatchObject({
+        parsed_javascript_files: 1,
+        parse_failures: 0,
+      });
+      const terminals = application.graph.nodes
+        .flatMap((node) => node.observations)
+        .filter(
+          (observation) =>
+            observation.properties.entry === "desktop.read" &&
+            observation.properties.step_kind === "terminal",
+        );
+      const channels = application.graph.nodes
+        .filter((node) => node.kind === "ipc-channel")
+        .flatMap((node) => node.observations);
+      expect(
+        terminals.map((observation) => observation.properties.channel),
+      ).toEqual(fixture.channel === null ? [] : [fixture.channel]);
+      expect(
+        channels
+          .filter(
+            (observation) => observation.properties.resolution === "literal",
+          )
+          .map((observation) => observation.properties.channel),
+      ).toEqual(fixture.channel === null ? [] : [fixture.channel]);
+      for (const terminal of terminals)
+        expect(terminal).toMatchObject({
+          properties: { resolution: "candidate" },
+          evidence: {
+            state: "inferred",
+            authority: "static-relationship-inference",
+          },
+        });
+      if (fixture.expression !== '"FALLBACK"')
+        expect(channels).toContainEqual(
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              channel: null,
+              resolution: "dynamic",
+              channel_expression: fixture.expression,
+            }),
+            evidence: expect.objectContaining({ state: "observed" }),
+          }),
+        );
+    }
+  },
+);
+
+cliTest(
   "preserves early-return predicates on recovered bridge paths through CLI and stdio MCP",
   async ({ cli }) => {
     const cases = [

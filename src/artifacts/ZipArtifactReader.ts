@@ -38,6 +38,7 @@ import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
 import {
   ZIP_MAX_ENTRIES_PER_TRAVERSAL,
   ZIP_METADATA_READ_MAX_BYTES,
+  type ZipArtifactEntryLimit,
 } from "../domain/zipArtifactBudget.js";
 import {
   ARTIFACT_DECOMPRESSION_RATIO,
@@ -164,14 +165,17 @@ export class ZipArtifactReader implements ArtifactReader {
     string,
     { readonly source: Entry; readonly metadata: ArtifactEntry }
   >();
+  readonly #maximumEntries: ZipArtifactEntryLimit;
   /** Bound each metadata read and retained entry identity before allocation. */
   constructor(
     path: string,
     format: ZipPackageFormat,
     maximumMetadataReadBytes = ZIP_METADATA_READ_MAX_BYTES,
     admitted?: StableRegularFileDescriptor,
+    maximumEntries: ZipArtifactEntryLimit = ZIP_MAX_ENTRIES_PER_TRAVERSAL,
   ) {
     this.format = format;
+    this.#maximumEntries = maximumEntries;
     this.#source = new NodeFileReader(
       path,
       Math.min(maximumMetadataReadBytes, ZIP_METADATA_READ_MAX_BYTES),
@@ -195,10 +199,10 @@ export class ZipArtifactReader implements ArtifactReader {
       this.#reader.getEntriesGenerator({ decodeText: decodeZipEntryText }),
     )) {
       abortIfNeeded(signal);
-      if (sourceEntries.length >= ZIP_MAX_ENTRIES_PER_TRAVERSAL)
+      if (sourceEntries.length >= this.#maximumEntries)
         throw new ArtifactReaderFailure(
           "limit",
-          `ZIP traversal exceeds its ${String(ZIP_MAX_ENTRIES_PER_TRAVERSAL)}-entry limit; refusing to produce incomplete output`,
+          `ZIP traversal exceeds its ${String(this.#maximumEntries)}-entry limit; refusing to produce incomplete output`,
         );
       sourceEntries.push(entry);
     }

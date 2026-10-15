@@ -6,9 +6,11 @@ import { expect, it } from "vitest";
 
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
+import { PINNED_JADX_ARCHIVE_DIRECTORY } from "../../fixtures/android/jadxArchiveMetadata.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
 import {
+  ZIP_MAX_ENTRIES_PER_ENGINE_ARCHIVE,
   ZIP_MAX_ENTRIES_PER_TRAVERSAL,
   ZIP_METADATA_READ_MAX_BYTES,
 } from "../../../src/domain/zipArtifactBudget.js";
@@ -32,12 +34,12 @@ it("rejects ZIP inventories beyond the bounded entry count", async () => {
   });
 });
 
-it("bounds direct ZIP readers as well as inventory graph construction", async () => {
+it("keeps the default ZIP bound while admitting the pinned JADX entry count", async () => {
   const root = await createTestTempDirectory("rea-zip-reader-entry-limit-");
   const archive = join(root, "many-directories.zip");
   const entries = Array.from(
-    { length: ZIP_MAX_ENTRIES_PER_TRAVERSAL + 1 },
-    (_unused, index) => `d${index.toString(36)}/`,
+    { length: PINNED_JADX_ARCHIVE_DIRECTORY.entryCount },
+    (_unused, index) => `META-INF/padding-entry-${index.toString(36)}/`,
   );
   await writeOrderedZip(archive, entries);
 
@@ -61,6 +63,24 @@ it("bounds direct ZIP readers as well as inventory graph construction", async ()
     expect(entriesRead).toBe(0);
   } finally {
     await reader.close();
+  }
+
+  const engineReader = new ZipArtifactReader(
+    archive,
+    "zip",
+    ZIP_METADATA_READ_MAX_BYTES,
+    undefined,
+    ZIP_MAX_ENTRIES_PER_ENGINE_ARCHIVE,
+  );
+  let engineEntriesRead = 0;
+  try {
+    for await (const entry of engineReader.entries()) {
+      expect(entry.path).not.toBe("");
+      engineEntriesRead += 1;
+    }
+    expect(engineEntriesRead).toBe(entries.length);
+  } finally {
+    await engineReader.close();
   }
 });
 

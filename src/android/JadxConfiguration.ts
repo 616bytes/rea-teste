@@ -4,7 +4,10 @@ import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import { systemWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import { ZIP_METADATA_READ_MAX_BYTES } from "../domain/zipArtifactBudget.js";
+import {
+  ZIP_MAX_ENTRIES_PER_ENGINE_ARCHIVE,
+  ZIP_METADATA_READ_MAX_BYTES,
+} from "../domain/zipArtifactBudget.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
@@ -274,7 +277,13 @@ const requireEngineArchive = async (
     "com/google/gson/Gson.class",
     "io/modelcontextprotocol/kotlin/sdk/server/Server.class",
   ]);
-  const reader = new ZipArtifactReader(jar, "zip", ZIP_METADATA_READ_MAX_BYTES);
+  const reader = new ZipArtifactReader(
+    jar,
+    "zip",
+    ZIP_METADATA_READ_MAX_BYTES,
+    undefined,
+    ZIP_MAX_ENTRIES_PER_ENGINE_ARCHIVE,
+  );
   try {
     for await (const entry of reader.entries(signal)) {
       if (entry.kind === "file" && !entry.encrypted) missing.delete(entry.path);

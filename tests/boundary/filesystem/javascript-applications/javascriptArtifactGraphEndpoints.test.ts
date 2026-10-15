@@ -211,6 +211,63 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
   }
 });
 
+it("keeps CommonJS socket member writes separate from earlier constructor captures", async () => {
+  const root = await createTestTempDirectory("rea-js-socket-member-writes-");
+  const fixtures = {
+    "replaced.js":
+      'const ws = require("ws"); ws.WebSocket = class {}; new ws.WebSocket("wss://example.test/replaced");',
+    "aliased.js":
+      'const ws = require("ws"); const alias = ws; alias.WebSocket = class {}; new ws.WebSocket("wss://example.test/aliased");',
+    "repeated.js":
+      'require("ws").WebSocket = class {}; const ws = require("ws"); new ws.WebSocket("wss://example.test/repeated");',
+    "captured.js":
+      'const ws = require("ws"); const Socket = ws.WebSocket; ws.WebSocket = class {};\nnew Socket("wss://example.test/captured-before-write");',
+    "sibling.js":
+      'const ws = require("ws"); ws.Server = class {};\nnew ws.WebSocket("wss://example.test/unchanged-sibling");',
+  };
+  for (const [path, source] of Object.entries(fixtures))
+    await writeFile(join(root, path), source);
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const graph = buildJavaScriptArtifactGraph(
+      snapshot,
+      files,
+      analyzeJavaScriptArtifactFiles(files),
+    );
+    const observations = graph.nodes
+      .filter(({ kind }) => kind === "endpoint")
+      .flatMap(({ observations }) => observations);
+    expect(
+      observations.map(({ properties }) => properties.value).sort(),
+    ).toEqual([
+      "wss://example.test/captured-before-write",
+      "wss://example.test/unchanged-sibling",
+    ]);
+    for (const [value, source] of [
+      ["captured-before-write", "captured.js"],
+      ["unchanged-sibling", "sibling.js"],
+    ]) {
+      const observation = observations.find(
+        ({ properties }) => properties.value === `wss://example.test/${value}`,
+      );
+      expect(observation?.evidence).toMatchObject({
+        authority: "ast-static-analysis",
+        state: "observed",
+        confidence: "exact",
+        location: {
+          available: true,
+          value: { kind: "source-range", source, start: { line: 2 } },
+        },
+      });
+    }
+  } finally {
+    await reader.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("keeps ambiguous endpoint candidates inferred through artifact graph projection", async () => {
   const root = await createTestTempDirectory("rea-js-endpoint-certainty-");
   await writeFile(join(root, "app.js"), 'form.get("shared"); fetch("shared");');

@@ -24,7 +24,10 @@ import {
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import {
+  isUnmodifiedGlobalReference,
+  isUnmodifiedRequiredWebSocketReference,
+} from "./javascriptSemanticAmbientWrites.js";
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { webSocketExecutionContexts } from "./javascriptWebSocketExecution.js";
@@ -611,6 +614,7 @@ export const isWebSocketEndpointCandidate = (
   const visited = new Set<string>();
   let current = callee;
   let selected: readonly string[] = [];
+  let selectedCapture: t.Node | undefined;
   for (;;) {
     current = unwrapJavaScriptExpression(current).node;
     if (isUnmodifiedGlobalReference(current, state, "WebSocket", selected))
@@ -620,7 +624,12 @@ export const isWebSocketEndpointCandidate = (
       const path = [...required.importedPath, ...selected];
       return (
         required.specifier === "ws" &&
-        (path.length === 0 || (path.length === 1 && path[0] === "WebSocket"))
+        (path.length === 0 || (path.length === 1 && path[0] === "WebSocket")) &&
+        isUnmodifiedRequiredWebSocketReference(
+          selectedCapture ?? current,
+          state,
+          path,
+        )
       );
     }
     const { root, members } = electronMemberPath(current);
@@ -679,6 +688,13 @@ export const isWebSocketEndpointCandidate = (
     )
       return false;
     visited.add(binding.bindingId);
+    // Namespace aliases do not capture a member. Save the point at which the
+    // constructor itself is selected, including destructuring at initialization.
+    if (selectedCapture === undefined) {
+      if (members.length > 0) selectedCapture = current;
+      else if (initializer.projection.length > 0)
+        selectedCapture = initializer.node;
+    }
     selected = [...initializer.projection, ...members, ...selected];
     current = initializer.node;
   }

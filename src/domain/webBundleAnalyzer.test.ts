@@ -646,6 +646,48 @@ describe("web bundle constructor suspension order", () => {
   );
 });
 
+describe("web bundle CommonJS socket member mutation", () => {
+  it.each([
+    'const ws = require("ws"); ws.WebSocket = class {}; new ws.WebSocket("wss://example.test/local");',
+    'const ws = require("ws"); const alias = ws; alias.WebSocket = class {}; new ws.WebSocket("wss://example.test/local");',
+    'const ws = require("ws"); const alias = ws; ws.WebSocket = class {}; new alias.WebSocket("wss://example.test/local");',
+    'const ws = require("ws"); const box = { ws }; box.ws.WebSocket = class {}; new ws.WebSocket("wss://example.test/local");',
+    'require("ws").WebSocket = class {}; const ws = require("ws"); new ws.WebSocket("wss://example.test/local");',
+    'const ws = require("ws"); ws.WebSocket = class {}; const Socket = ws.WebSocket; new Socket("wss://example.test/local");',
+    'const ws = require("ws"); ws.WebSocket = class {}; const { WebSocket: Socket } = ws; new Socket("wss://example.test/local");',
+    'const ws = require("ws"); Object.defineProperty(ws, "WebSocket", { value: class {} }); new ws.WebSocket("wss://example.test/local");',
+    'const ws = require("ws"); const set = Reflect.set; set(ws, "WebSocket", class {}); new ws.WebSocket("wss://example.test/local");',
+    'const ws = require("ws"); ws[key] = class {}; new ws.WebSocket("wss://example.test/local");',
+    'const ws = require("ws"); const alias = ws[key]; alias.WebSocket = class {}; new ws.WebSocket("wss://example.test/local");',
+    'const ws = require("ws"); const { WebSocket: alias } = ws; alias.WebSocket = class {}; new ws.WebSocket("wss://example.test/local");',
+    'const ws = require("ws"); delete ws.WebSocket; new ws.WebSocket("wss://example.test/local");',
+  ])("excludes a visibly replaced selected export: %s", (source) => {
+    expect(socketEndpoints(source)).toEqual([[], []]);
+  });
+
+  it.each([
+    'const ws = require("ws"); const Socket = ws.WebSocket; ws.WebSocket = class {}; new Socket("wss://example.test/intact");',
+    'const ws = require("ws"); new ws.WebSocket("wss://example.test/intact"); ws.WebSocket = class {};',
+    'const ws = require("ws"); ws.Server = class {}; new ws.WebSocket("wss://example.test/intact");',
+    'const ws = require("ws"); ws.WebSocket = class {}; new ws("wss://example.test/intact");',
+    'const ws = require("ws"); const Socket = ws.WebSocket; Socket.WebSocket = class {}; new Socket("wss://example.test/intact");',
+    'const ws = require("ws"); let alias = ws; alias = {}; alias.WebSocket = class {}; new ws.WebSocket("wss://example.test/intact");',
+    'const ws = require("ws"); const copy = { ...ws }; copy.WebSocket = class {}; new ws.WebSocket("wss://example.test/intact");',
+    'const ws = require("ws"); const { WebSocket: Socket } = ws; ws.WebSocket = class {}; new Socket("wss://example.test/intact");',
+  ])(
+    "retains a constructor captured before replacement or an untouched slot: %s",
+    (source) => {
+      const result = socketEndpoints(source);
+      expect(result[0]?.map(({ value }) => value)).toEqual([
+        "wss://example.test/intact",
+      ]);
+      expect(result[1]?.map(({ value }) => value)).toEqual([
+        "wss://example.test/intact",
+      ]);
+    },
+  );
+});
+
 describe("web bundle API classification parity", () => {
   it("reads storage open versions as storage rather than endpoints in both analyzers", () => {
     const source = `

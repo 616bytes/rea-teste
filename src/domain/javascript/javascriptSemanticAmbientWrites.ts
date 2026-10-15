@@ -16,7 +16,12 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
-import { semanticMutationInitializers } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticMutationInitializers,
+  semanticTopLevelEffectFollowsCapture,
+} from "./javascriptSemanticMutationInitializers.js";
+import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 
 const GLOBAL_OBJECT_NAMES = ["globalThis", "global", "window", "self"];
 
@@ -30,6 +35,13 @@ const globalObjectName = (
 const canonicalAmbientPath = (
   path: readonly (string | null)[],
 ): readonly (string | null)[] => {
+  // The CommonJS ws constructor is its own WebSocket member. Resolve the
+  // written receiver first; the collector then appends the actual replaced key.
+  if (path[0] === "commonjs-ws") {
+    let member = 1;
+    while (path[member] === "WebSocket") member += 1;
+    return ["commonjs-ws", ...path.slice(member)];
+  }
   if (path[0] !== "global") return path;
   let firstProperty = 1;
   while (GLOBAL_OBJECT_NAMES.includes(path[firstProperty] ?? ""))
@@ -71,15 +83,15 @@ const createAmbientPathResolver = (
       let canonical = canonicalAmbientPath(path);
       for (;;) {
         result.set(JSON.stringify(canonical), canonical);
-        // An unknown key may select a global self reference as well as a
+        // An unknown key may select a known self reference as well as a
         // distinct property. Retain both possible object identities for writes.
         if (
           !possibleWrites ||
-          canonical[0] !== "global" ||
+          (canonical[0] !== "global" && canonical[0] !== "commonjs-ws") ||
           canonical[1] !== null
         )
           break;
-        canonical = canonicalAmbientPath(["global", ...canonical.slice(2)]);
+        canonical = canonicalAmbientPath([canonical[0], ...canonical.slice(2)]);
       }
     };
     while (pending.length > 0) {
@@ -173,6 +185,11 @@ const createAmbientPathResolver = (
       if (possibleWrites && t.isLogicalExpression(root)) {
         continueWith(root.left);
         continueWith(root.right);
+        continue;
+      }
+      const required = semanticRequireOrigin(root, state)?.origin;
+      if (required?.specifier === "ws") {
+        retain(["commonjs-ws", ...required.importedPath, ...(suffix ?? [])]);
         continue;
       }
       const key = suffix?.[0];
@@ -320,6 +337,24 @@ export const isUnmodifiedGlobalReference = (
   return (
     namespace !== undefined &&
     !state.ambientWrites.covers(["global", namespace])
+  );
+};
+
+/** Keep selected CommonJS exports separate from earlier captured constructors. */
+export const isUnmodifiedRequiredWebSocketReference = (
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  projection: readonly string[],
+): boolean => {
+  const selected = ["commonjs-ws", ...projection];
+  if (!state.ambientWrites.covers(selected)) return true;
+  return !state.ambientWriteEffects.some(
+    ({ path, node }) =>
+      path.length <= selected.length &&
+      path.every((key, index) =>
+        semanticPropertyPathKeyMatches(key, selected[index] ?? ""),
+      ) &&
+      !semanticTopLevelEffectFollowsCapture(capture, node, state.parentsByNode),
   );
 };
 

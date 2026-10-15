@@ -219,39 +219,56 @@ const resolveLayoutExecutable = async (
     );
   const programs = join(bundle, ...layout.programs);
   const executable = join(programs, name);
+  let canonicalBundle: string;
+  let canonicalPrograms: string;
   try {
-    const [canonicalBundle, canonicalPrograms, canonicalExecutable] =
-      await Promise.all([
-        fileSystem.realpath(bundle),
-        fileSystem.realpath(programs),
-        fileSystem.realpath(executable),
-      ]);
-    if (
-      !isPathWithinRoot(canonicalBundle, canonicalPrograms) ||
-      !isPathWithinRoot(canonicalBundle, canonicalExecutable) ||
-      !isPathWithinRoot(canonicalPrograms, canonicalExecutable)
-    )
-      return err(
-        new BinaryTargetError(
-          bundle,
-          `app program file leaves ${layout.programsLabel}`,
-        ),
-      );
-    return ok({ executable: canonicalExecutable, infoPlist: plistPath });
+    [canonicalBundle, canonicalPrograms] = await Promise.all([
+      fileSystem.realpath(bundle),
+      fileSystem.realpath(programs),
+    ]);
   } catch (cause: unknown) {
+    return err(executableResolutionError(executable, cause));
+  }
+  if (!isPathWithinRoot(canonicalBundle, canonicalPrograms))
     return err(
       new BinaryTargetError(
-        executable,
-        isPermissionDenied(cause)
-          ? `permission denied resolving app program file ${executable}`
-          : isAbsence(cause)
-            ? `app program file is missing: ${executable}`
-            : `could not resolve app program file ${executable}`,
-        { cause },
+        bundle,
+        `app program file leaves ${layout.programsLabel}`,
       ),
     );
+
+  let canonicalExecutable: string;
+  try {
+    canonicalExecutable = await fileSystem.realpath(executable);
+  } catch (cause: unknown) {
+    return err(executableResolutionError(executable, cause));
   }
+  if (
+    !isPathWithinRoot(canonicalBundle, canonicalExecutable) ||
+    !isPathWithinRoot(canonicalPrograms, canonicalExecutable)
+  )
+    return err(
+      new BinaryTargetError(
+        bundle,
+        `app program file leaves ${layout.programsLabel}`,
+      ),
+    );
+  return ok({ executable: canonicalExecutable, infoPlist: plistPath });
 };
+
+const executableResolutionError = (
+  executable: string,
+  cause: unknown,
+): BinaryTargetError =>
+  new BinaryTargetError(
+    executable,
+    isPermissionDenied(cause)
+      ? `permission denied resolving app program file ${executable}`
+      : isAbsence(cause)
+        ? `app program file is missing: ${executable}`
+        : `could not resolve app program file ${executable}`,
+    { cause },
+  );
 
 /** Decode the top-level executable name with an XML parser, not a pattern. */
 const parseXmlPlistExecutable = (plist: string): string => {

@@ -31,7 +31,9 @@ describe("app bundle Info.plist magic", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+});
 
+describe("app bundle program containment", () => {
   it("rejects an app bundle whose Contents/MacOS resolves outside the bundle", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-bundle-outside-"));
     try {
@@ -125,6 +127,42 @@ describe("app bundle Info.plist magic", () => {
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error("Expected resolution to succeed");
       expect(result.value.executable).toBe(realExecutable);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an app bundle whose Contents/MacOS leaves the bundle even when the executable does not exist", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-bundle-outside-missing-"));
+    try {
+      const bundle = join(root, "Evil.app");
+      const contents = join(bundle, "Contents");
+      const plistPath = join(contents, "Info.plist");
+      const programs = join(contents, "MacOS");
+      const outsideDir = join(root, "outside-bin");
+      await mkdir(contents, { recursive: true });
+      const plistContent =
+        "<plist><dict><key>CFBundleExecutable</key><string>nonexistent</string></dict></plist>";
+      await writeFile(plistPath, plistContent);
+      const result = await resolveAppBundleExecutable(bundle, {
+        readFile: async (p) =>
+          p === plistPath ? Buffer.from(plistContent) : Buffer.alloc(0),
+        realpath: async (p) => {
+          if (p === bundle) return bundle;
+          if (p === programs) return outsideDir;
+          if (p === join(programs, "nonexistent")) {
+            const error = new Error("file missing");
+            Reflect.set(error, "code", "ENOENT");
+            throw error;
+          }
+          return p;
+        },
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected resolution to fail");
+      expect(result.error.message).toContain(
+        "app program file leaves Contents/MacOS",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

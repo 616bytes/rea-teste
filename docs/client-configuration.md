@@ -344,7 +344,9 @@ skill copy there.
 When that session routes through a WorkBuddy/CodeBuddy-backed gateway that
 rejects the full catalog with HTTP 400 `code 11133`, add
 `"REA_MCP_INPUT_SCHEMA_PROFILE": "compact"` to the `env` object of the
-`mcp.servers.rea` entry, then start a new ZCode session
+effective REA entry—`mcp.servers.rea.env` in the native
+`~/.zcode/cli/config.json`, or `mcpServers.rea.env` in `~/.agents/mcp.json`
+when that fallback is the active registration—then start a new ZCode session
 ([#2999](https://github.com/morluto/rea/issues/2999)).
 
 ZCode reads the user-scope `~/.agents/mcp.json` fallback only while the native

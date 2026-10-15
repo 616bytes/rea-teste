@@ -49,6 +49,14 @@ export class InterfaceBuilderDecodeBudget {
     this.#remainingBytes -= bytes;
   }
 
+  /** Return a reservation whose representation was rejected and not retained. */
+  release(bytes: number): void {
+    this.#remainingBytes = Math.min(
+      this.#initialBytes,
+      this.#remainingBytes + bytes,
+    );
+  }
+
   /** Reserve an upper bound for one JSON-serialized string occurrence. */
   reserveJsonStringOccurrence(value: string): void {
     // JSON escaping uses at most six ASCII bytes per UTF-16 code unit, plus

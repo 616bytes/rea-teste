@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { buildBinary } from "plist";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { analyzeInterfaceBuilderBundle } from "../../../src/artifacts/apple/InterfaceBuilderAnalysis.js";
+import { InterfaceBuilderDecodeBudget } from "../../../src/artifacts/apple/InterfaceBuilderDecodeBudget.js";
 import { encodeNibArchiveFixture } from "../../../src/artifacts/apple/NibArchive.fixture.js";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { xcodeIbtoolAvailable } from "../../fixtures/ibtool.js";
@@ -920,11 +921,17 @@ describe("Interface Builder XML plist depth", () => {
     await writeFile(join(resources, "AtLimit.nib"), document(127));
     await writeFile(join(resources, "BeyondLimit.nib"), document(128));
 
+    const release = vi.spyOn(InterfaceBuilderDecodeBudget.prototype, "release");
     const result = await analyzeInterfaceBuilderBundle({
       bundlePath: bundle,
       targetSha256: "e".repeat(64),
     });
+    const released = release.mock.calls.map(([bytes]) => bytes);
+    release.mockRestore();
 
+    // The rejected archive returns its reservation to later documents.
+    expect(released).toHaveLength(1);
+    expect(released[0]).toBeGreaterThan(0);
     expect(result.documents.map(({ relative_path }) => relative_path)).toEqual([
       "Contents/Resources/AtLimit.nib",
     ]);
@@ -940,6 +947,15 @@ describe("Interface Builder XML plist depth", () => {
     expect(result.limitations).toContain(
       "Contents/Resources/BeyondLimit.nib: omitted because aggregate decode budget exhausted.",
     );
+  });
+
+  it("restores released representation bytes up to the initial budget", () => {
+    const budget = new InterfaceBuilderDecodeBudget(100);
+    budget.reserve(60, "reserve");
+    budget.release(60);
+    expect(budget.remainingBytes).toBe(100);
+    budget.release(10);
+    expect(budget.remainingBytes).toBe(100);
   });
 });
 

@@ -567,14 +567,17 @@ const KEYED_COLLECTION_CONSTRUCTORS = new Set([
  * binding, so callers keep URL and path literals as requests.
  */
 const isKeyedCollectionReceiver = (callee: t.Node): boolean => {
+  callee = unwrapJavaScriptExpression(callee).node;
   if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
     return false;
-  const receiver = callee.object;
-  if (t.isNewExpression(receiver))
+  const receiver = unwrapJavaScriptExpression(callee.object).node;
+  if (t.isNewExpression(receiver)) {
+    const constructor = unwrapJavaScriptExpression(receiver.callee).node;
     return (
-      t.isIdentifier(receiver.callee) &&
-      KEYED_COLLECTION_CONSTRUCTORS.has(receiver.callee.name)
+      t.isIdentifier(constructor) &&
+      KEYED_COLLECTION_CONSTRUCTORS.has(constructor.name)
     );
+  }
   if (
     !t.isMemberExpression(receiver) &&
     !t.isOptionalMemberExpression(receiver)

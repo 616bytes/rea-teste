@@ -16,6 +16,9 @@ import {
 } from "../../../src/process/ownedDebuggerSession.js";
 import { ProviderProcessSupervisor } from "../../../src/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
+import { systemProcessOwnershipHost } from "../../../src/process/ProcessOwnershipObservation.js";
+import { liveProcesses } from "../../../src/process/ProcessOwnershipProcessTree.js";
+import { readProcessRunTokens } from "../../../src/process/ProcessRunTokenObservations.js";
 
 const triggerDescendantOutput = (port: number): void => {
   const socket = connect(port, "127.0.0.1");
@@ -94,28 +97,106 @@ const waitForProbeLine = (
     });
   });
 
+/** Fixture family coordinates reported by the inferior's ready line. */
+interface InferiorCoordinates {
+  readonly port: number;
+  readonly pid: number;
+}
+
+const FIXTURE_SETTLE_TIMEOUT_MS = 5_000;
+const FIXTURE_SETTLE_POLL_MS = 50;
+
+/** Whether the real process table still lists this PID as live. */
+const isLiveProcess = async (pid: number): Promise<boolean> =>
+  liveProcesses(await systemProcessOwnershipHost.listProcesses()).some(
+    (entry) => entry.pid === pid,
+  );
+
+/** Poll the real process table until this fixture PID is no longer live. */
+const waitForFixtureProcessExit = async (pid: number): Promise<void> => {
+  const deadline = Date.now() + FIXTURE_SETTLE_TIMEOUT_MS;
+  while (await isLiveProcess(pid)) {
+    if (Date.now() >= deadline)
+      throw new Error(`Fixture inferior PID ${String(pid)} survived teardown`);
+    await new Promise<void>((resolve) =>
+      setTimeout(resolve, FIXTURE_SETTLE_POLL_MS),
+    );
+  }
+};
+
+/**
+ * Every live PID still exposing this fixture's run token.
+ *
+ * The token is generated per launch and inherited by the inferior, so a
+ * readable match establishes membership; a PID alone cannot.
+ */
+const tokenOwnedFixturePids = async (
+  runId: string,
+): Promise<readonly number[]> => {
+  const owned: number[] = [];
+  for await (const { process: candidate, observation } of readProcessRunTokens(
+    systemProcessOwnershipHost,
+    await systemProcessOwnershipHost.listProcesses(),
+  ))
+    if (observation.state === "readable" && observation.runId === runId)
+      owned.push(candidate.pid);
+  return owned;
+};
+
+/**
+ * Spawn a debugger with the inferior it hands its output streams to.
+ *
+ * The debugger leads a detached process group and carries a unique run token
+ * that the inferior inherits. Teardown can therefore terminate exactly this
+ * family even after the leader exits, and prove the inferior ended instead of
+ * treating the leader's exit as the fixture's end.
+ */
 const startDebuggerWithInferior = (inferiorSource: string) => {
+  const runId = randomUUID();
   const debuggerSource = [
     'const { spawn } = require("node:child_process");',
     `spawn(process.execPath, ["-e", ${JSON.stringify(inferiorSource)}], { stdio: "inherit" });`,
     "process.exit(0);",
   ].join("\n");
   const child = spawn(process.execPath, ["-e", debuggerSource], {
+    detached: process.platform !== "win32",
+    env: { ...process.env, REA_PROCESS_RUN_ID: runId },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  const leaderPid = child.pid;
+  if (leaderPid === undefined)
+    throw new Error("Fixture debugger did not spawn");
   const supervisor = new ProviderProcessSupervisor({
     process: child,
     ownsProcessLifetime: true,
   });
   let readyOutput = "";
-  const inferiorPort = new Promise<number>((resolvePort) => {
+  let inferiorPid: number | undefined;
+  const inferior = new Promise<InferiorCoordinates>((resolveInferior) => {
     child.stdout?.on("data", (chunk: Buffer | string) => {
       readyOutput += chunk.toString();
-      const match = /^ready:(\d+)$/mu.exec(readyOutput);
-      if (match !== null) resolvePort(Number(match[1]));
+      const match = /^ready:(\d+):(\d+)$/mu.exec(readyOutput);
+      if (match === null) return;
+      inferiorPid = Number(match[2]);
+      resolveInferior({ port: Number(match[1]), pid: inferiorPid });
     });
   });
-  return { child, supervisor, inferiorPort };
+  onTestFinished(async () => {
+    // The leader has usually exited by now. The inferior kept the debugger's
+    // process group, so one token-verified group signal reaches it too.
+    const cleanup = await cleanupOwnedProcessGroup({
+      runId,
+      leaderPid,
+      processGroupId: leaderPid,
+    });
+    expect(cleanup.cleaned, JSON.stringify(cleanup)).toBe(true);
+    if (inferiorPid !== undefined) await waitForFixtureProcessExit(inferiorPid);
+    expect(
+      await tokenOwnedFixturePids(runId),
+      "fixture process family survived teardown",
+    ).toEqual([]);
+  });
+  return { child, supervisor, inferior };
 };
 
 it("preserves the session receiver when invoking the provider detach callback", async () => {
@@ -959,15 +1040,17 @@ it.skipIf(process.platform === "win32")(
       "  socket.end();",
       "  setImmediate(() => process.exit(0));",
       "});",
-      'server.listen(0, "127.0.0.1", () => process.stdout.write(`ready:${server.address().port}\\n`));',
+      'server.listen(0, "127.0.0.1", () => process.stdout.write(`ready:${server.address().port}:${process.pid}\\n`));',
+      // Bound the fixture even if the trigger below never arrives.
+      "setTimeout(() => process.exit(0), 5000);",
     ].join("\n");
-    const { child, supervisor, inferiorPort } =
+    const { child, supervisor, inferior } =
       startDebuggerWithInferior(inferiorSource);
     let port: number | undefined;
 
     try {
       await once(child, "exit");
-      const readyPort = await inferiorPort;
+      const readyPort = (await inferior).port;
       port = readyPort;
       const limitAdditionalOutputBytes =
         supervisor.limitAdditionalOutputBytes.bind(supervisor);
@@ -1018,9 +1101,11 @@ it.skipIf(process.platform === "win32")(
       "  socket.end();",
       "  if (outputCount === 2) void output.then(() => process.exit(0));",
       "});",
-      'server.listen(0, "127.0.0.1", () => process.stdout.write(`ready:${server.address().port}\\n`));',
+      'server.listen(0, "127.0.0.1", () => process.stdout.write(`ready:${server.address().port}:${process.pid}\\n`));',
+      // Bound the fixture even if the retries below never arrive.
+      "setTimeout(() => process.exit(0), 5000);",
     ].join("\n");
-    const { child, supervisor, inferiorPort } =
+    const { child, supervisor, inferior } =
       startDebuggerWithInferior(inferiorSource);
     let port: number | undefined;
     const session = {
@@ -1032,7 +1117,7 @@ it.skipIf(process.platform === "win32")(
 
     try {
       await once(child, "exit");
-      const readyPort = await inferiorPort;
+      const readyPort = (await inferior).port;
       port = readyPort;
       const initialStdoutBytes = supervisor.snapshot().stdout.observedBytes;
       const limitAdditionalOutputBytes =

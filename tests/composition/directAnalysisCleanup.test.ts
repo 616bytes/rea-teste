@@ -151,6 +151,42 @@ describe("one-shot analysis cleanup outcomes", () => {
     });
   });
 
+  it.each([false, true])(
+    "retains original cleanup diagnostics when final close fails: %s",
+    async (closeFails) => {
+      const [path] = await createBinarySessionTargets();
+      const executionError = new AnalysisTimeoutError("read_bytes", 100, {
+        cleanup: {
+          reason: "snapshot removal failed during execution",
+          resources: ["primary-snapshot"],
+        },
+        capturedOutput: primaryError.capturedOutput,
+      });
+      const primary = projectAnalysisError(executionError);
+      const { dependencies } = factories({
+        executionError,
+        ...(closeFails ? { cleanupError } : {}),
+      });
+      const result = analysisCliErrorEnvelopeSchema.parse(
+        await runDirectAnalysis(dependencies, path, "read_bytes", {}),
+      );
+      expect(result).toMatchObject({
+        code: "cleanup_incomplete",
+        details: {
+          ...primary.details,
+          ...(closeFails
+            ? { cleanup_error: projectAnalysisError(cleanupError) }
+            : {}),
+        },
+      });
+      expect(
+        JSON.stringify(result).match(/retained observation/g),
+      ).toHaveLength(1);
+      if (!closeFails)
+        expect(result.details).not.toHaveProperty("cleanup_error");
+    },
+  );
+
   it("retains both unexpected execution failure and cleanup failure", async () => {
     const [path] = await createBinarySessionTargets();
     const thrownExecution = new Error("unexpected execution rejection");

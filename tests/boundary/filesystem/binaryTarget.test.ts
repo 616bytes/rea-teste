@@ -429,7 +429,9 @@ describe("binary target I/O: filesystem and app bundle target resolution", () =>
       ).ok,
     ).toBe(false);
   });
+});
 
+describe("app bundle canonical containment", () => {
   it.skipIf(process.platform === "win32")(
     "rejects an app program symlink that leaves the bundle",
     async () => {

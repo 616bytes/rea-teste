@@ -1,4 +1,4 @@
-import { mkdtemp, open, realpath, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Readable } from "node:stream";
@@ -11,6 +11,10 @@ import {
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
+import {
+  NonRegularFileReadError,
+  openRegularFile,
+} from "../filesystem/RegularFile.js";
 import {
   execFileOutput,
   execFileOutputFailure,
@@ -47,7 +51,10 @@ export interface NativeDmgHost {
 interface NativeDmgFailureClassification {
   readonly reason: ArtifactReaderFailure["reason"];
   readonly verifyDiagnostic?: string;
-  /** hdiutil could not recognize the target, for a reason it reported only in localized text. */
+  /**
+   * hdiutil could not recognize the target, for a reason it reported only in
+   * localized text; the cause stays unknown unless the target cannot be opened.
+   */
   readonly unrecognizedImage?: boolean;
 }
 
@@ -477,7 +484,10 @@ export class NativeDmgArtifactReader implements ArtifactReader {
       } catch (cause: unknown) {
         if (!(cause instanceof NativeDmgCommandFailure)) throw cause;
         this.#provenance.push(command(arguments_, ["read"], cause.exitCode));
-        if (cause.unrecognizedImage && !(await canOpenForReading(this.path)))
+        if (
+          cause.unrecognizedImage &&
+          (await isUnreadableTarget(this.path, signal))
+        )
           throw new NativeDmgCommandFailure(
             { reason: "io" },
             cause.message,
@@ -488,9 +498,11 @@ export class NativeDmgArtifactReader implements ArtifactReader {
             },
           );
         const delayMs = VERIFY_SETTLE_DELAYS_MS[attempt];
-        // Retry only the producer's explicit transient diagnostic, before any mount.
+        // Retry only the producer's explicit transient diagnostic, or a localized
+        // refusal of a readable target that may be the same, before any mount.
         if (
-          cause.verifyDiagnostic !== "Resource temporarily unavailable" ||
+          (cause.verifyDiagnostic !== "Resource temporarily unavailable" &&
+            !cause.unrecognizedImage) ||
           delayMs === undefined ||
           deadline - performance.now() <= delayMs
         )
@@ -707,9 +719,9 @@ const classifyVerifyFailure = (
       ? untranslatedVerifyFailure(stdout, stderr)
       : undefined;
   return {
+    ...untranslated,
     reason: reason ?? untranslated?.reason ?? "unavailable",
     ...(diagnostic === undefined ? {} : { verifyDiagnostic: diagnostic }),
-    ...(untranslated?.reason === "format" ? { unrecognizedImage: true } : {}),
   };
 };
 
@@ -753,26 +765,41 @@ const UNRECOGNIZED_IMAGE_LINE =
 const untranslatedVerifyFailure = (
   stdout: string,
   stderr: string,
-): { readonly reason: "format" | "integrity" } | undefined => {
+): NativeDmgFailureClassification | undefined => {
   const lines = outputLines(stdout, stderr);
   if (lines.some((line) => INVALID_CHECKSUM_LINE.test(line)))
     return { reason: "integrity" };
+  // Malformed, unreadable and transiently busy targets all produce this line;
+  // only the localized reason distinguishes them, so the cause stays unknown.
   if (lines.some((line) => UNRECOGNIZED_IMAGE_LINE.test(line)))
-    return { reason: "format" };
+    return { reason: "unavailable", unrecognizedImage: true };
   return undefined;
 };
 
 const outputLines = (stdout: string, stderr: string): string[] =>
   `${stdout}\n${stderr}`.split(/\r?\n/u).map((line) => line.trim());
 
-/** Distinguish unreadable targets from malformed images without hdiutil's localized reason. */
-const canOpenForReading = async (path: string): Promise<boolean> => {
+/**
+ * Establish an I/O cause for an unrecognized target that cannot be opened.
+ * A successful open does not establish that the image is malformed.
+ */
+const isUnreadableTarget = async (
+  path: string,
+  signal?: AbortSignal,
+): Promise<boolean> => {
+  let handle: FileHandle;
   try {
-    await (await open(path, "r")).close();
-    return true;
-  } catch {
-    return false;
+    handle = await openRegularFile(path, {
+      symlinks: "follow",
+      ...(signal === undefined ? {} : { signal }),
+    });
+  } catch (cause: unknown) {
+    // A directory or special file may still be an image format hdiutil reads.
+    if (cause instanceof NonRegularFileReadError) return false;
+    return classifyCommandFailure(cause, undefined).reason === "io";
   }
+  await handle.close();
+  return false;
 };
 
 const command = (

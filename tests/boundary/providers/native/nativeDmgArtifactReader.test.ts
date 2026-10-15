@@ -1368,20 +1368,58 @@ describe("native DMG localized verification diagnostics", () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
-  it("classifies a localized refusal of a readable target as a format failure", async () => {
-    const root = await createTestTempDirectory("rea-localized-dmg-format-");
-    const path = join(root, "invalid.dmg");
-    await writeFile(path, "This is not a disk image.\n");
-    const run = vi.fn(async () => unrecognized(path, "imagen no reconocida"));
-    const delay = vi.fn(async () => {});
-    await expect(
-      createAttachedReader(path, process.env, undefined, { run, delay }),
-    ).rejects.toMatchObject({
-      reason: "format",
-      message: expect.stringContaining("imagen no reconocida"),
+  it.each([
+    ["a malformed image", "imagen no reconocida"],
+    ["a transiently busy image", "Recurso no disponible temporalmente"],
+  ])(
+    "keeps a localized refusal of a readable target unknown and retries it like %s could be",
+    async (_target, reason) => {
+      const root = await createTestTempDirectory("rea-localized-dmg-readable-");
+      const path = join(root, "image.dmg");
+      await writeFile(path, "This may or may not be a disk image.\n");
+      const run = vi.fn(async () => unrecognized(path, reason));
+      const delay = vi.fn(async () => {});
+      const reader = new NativeDmgArtifactReader(path, process.env, {
+        run,
+        delay,
+      });
+      await expect(entryPaths(reader)).rejects.toMatchObject({
+        reason: "unavailable",
+        message: expect.stringContaining(reason),
+      });
+      await reader.close();
+      expect(run.mock.calls).toHaveLength(3);
+      expect(delay.mock.calls).toEqual([[250], [500]]);
+      expect(reader.provenance().map(({ exit_code }) => exit_code)).toEqual([
+        1, 1, 1,
+      ]);
+    },
+  );
+
+  it("attaches after a localized transient refusal clears", async () => {
+    const { host, state } = createOmittedInventoryHost();
+    state.inventoryMode = "listed";
+    state.detachAttempts = 4;
+    const root = await createTestTempDirectory("rea-localized-dmg-transient-");
+    const path = join(root, "image.dmg");
+    await writeFile(path, "A disk image that is briefly busy.\n");
+    let attempts = 0;
+    const reader = await createAttachedReader(path, process.env, undefined, {
+      ...host,
+      delay: async () => {},
+      async run(arguments_, signal, options) {
+        if (arguments_[0] === "verify") {
+          attempts += 1;
+          if (attempts === 1)
+            return unrecognized(path, "Recurso no disponible temporalmente");
+        }
+        return host.run(arguments_, signal, options);
+      },
     });
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(delay).not.toHaveBeenCalled();
+    onTestFinished(() => reader.close());
+    expect(attempts).toBe(2);
+    await reader.close();
+    expect(state.attached).toBe(false);
   });
 
   it("classifies a localized refusal of a missing target as an I/O failure", async () => {
@@ -1390,14 +1428,34 @@ describe("native DMG localized verification diagnostics", () => {
     const run = vi.fn(async () =>
       unrecognized(path, "No existe este archivo o directorio"),
     );
+    const delay = vi.fn(async () => {});
     await expect(
-      createAttachedReader(path, process.env, undefined, { run }),
+      createAttachedReader(path, process.env, undefined, { run, delay }),
     ).rejects.toMatchObject({
       reason: "io",
       message: expect.stringContaining("No existe este archivo o directorio"),
     });
     expect(run).toHaveBeenCalledTimes(1);
+    expect(delay).not.toHaveBeenCalled();
   });
+
+  it.skipIf(process.platform === "win32")(
+    "does not block on a target replaced by a named pipe",
+    async () => {
+      const root = await createTestTempDirectory("rea-localized-dmg-fifo-");
+      const path = join(root, "image.dmg");
+      await execFileOutput("mkfifo", [path]);
+      const run = vi.fn(async () => unrecognized(path, "imagen no reconocida"));
+      await expect(
+        createAttachedReader(path, process.env, undefined, {
+          run,
+          delay: async () => {},
+        }),
+      ).rejects.toMatchObject({ reason: "unavailable" });
+      expect(run).toHaveBeenCalledTimes(3);
+    },
+    10_000,
+  );
 
   it("keeps a localized failure without an untranslated status line unavailable", async () => {
     const run = vi.fn(async () => ({
@@ -1423,7 +1481,13 @@ describe("native DMG real verification diagnostics", () => {
       );
       expect(failure).toBeInstanceOf(ArtifactReaderFailure);
       if (!(failure instanceof ArtifactReaderFailure)) return;
-      expect(failure.reason).toBe("format");
+      // Only English output establishes the cause; a localized reason for a
+      // readable target stays unknown (see the localized diagnostics suite).
+      expect(failure.reason).toBe(
+        /verify failed - image not recogni[sz]ed/u.test(failure.message)
+          ? "format"
+          : "unavailable",
+      );
       expect(failure.message).toContain('"command":"/usr/bin/hdiutil"');
       expect(failure.message).toContain('"arguments":["verify"');
       expect(failure.message).toContain('"exitCode":1');

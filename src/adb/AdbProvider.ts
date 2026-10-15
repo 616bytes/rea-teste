@@ -594,11 +594,10 @@ export class AdbProvider {
                 cause.cause instanceof Error
                   ? cause.cause.message
                   : String(cause.cause),
-              diagnostics:
-                cause instanceof StableFileHashCleanupFailure &&
+              diagnostics: (cause instanceof StableFileHashCleanupFailure &&
                 cause.completedHash !== undefined
                   ? { completed_hash: cause.completedHash }
-                  : {},
+                  : {}),
             });
         const cleanup = new ProviderCleanupError(
           ADB_PROVIDER_IDENTITY.id,

@@ -11945,7 +11945,7 @@ msgid ""
 "spawn closure{ph7}."
 msgstr ""
 "{ph0}编译器知识：{ph1}{ph2}TH095 标识符分桶规律的复用{ph3}、{ph4}TH04 "
-"玩家源码与链接顺序{ph5}、{ph6}Luna 的 TH09 敌人生成闭包函数{ph7}。"
+"玩家源码与链接顺序{ph5}、{ph6}Luna 完成的 TH09 敌人生成函数匹配{ph7}。"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>

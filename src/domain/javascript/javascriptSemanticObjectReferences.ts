@@ -250,7 +250,7 @@ export const semanticClassPropertyReferences = (
       state,
       lookup.initializedBefore,
     );
-    possibleResults.push(...fields.references);
+    for (const reference of fields.references) possibleResults.push(reference);
     instanceFields = fields.definiteNames;
     if (propertyName !== null && instanceFields.has(propertyName))
       return possibleResults;
@@ -271,14 +271,13 @@ export const semanticClassPropertyReferences = (
     for (const getter of lookup.fieldsOnly ? [] : descriptors.getters) {
       const key = semanticStaticPropertyKey(getter.key, getter.computed);
       if (key !== null && instanceFields.has(key)) continue;
-      possibleResults.push(
-        ...getterResultReferences(
-          { getter, owner: klass, receiver },
-          path,
-          state,
-          activeGetters,
-        ),
-      );
+      for (const reference of getterResultReferences(
+        { getter, owner: klass, receiver },
+        path,
+        state,
+        activeGetters,
+      ))
+        possibleResults.push(reference);
     }
     // An exact own descriptor suppresses inherited lookup. Dynamic computed
     // descriptors may or may not match, so retain possible superclass results.
@@ -287,7 +286,8 @@ export const semanticClassPropertyReferences = (
       klass.superClass !== null &&
       klass.superClass !== undefined
     )
-      pending.push(...semanticClassCandidates(klass.superClass, state));
+      for (const base of semanticClassCandidates(klass.superClass, state))
+        pending.push(base);
   }
   return possibleResults;
 };
@@ -893,13 +893,12 @@ export const semanticObjectPropertyReferences = (
       continue;
     if (name === null || semanticPropertyPathKeyMatches(key ?? null, name)) {
       if (t.isObjectMethod(property) && property.kind === "get") {
-        references.push(
-          ...getterResultReferences(
-            { getter: property, owner: node },
-            remaining,
-            state,
-          ),
-        );
+        for (const reference of getterResultReferences(
+          { getter: property, owner: node },
+          remaining,
+          state,
+        ))
+          references.push(reference);
       } else if (t.isObjectMethod(property) && property.kind === "set") {
         // A setter contributes no readable reference. A paired getter is
         // handled independently when it appears earlier in this object.

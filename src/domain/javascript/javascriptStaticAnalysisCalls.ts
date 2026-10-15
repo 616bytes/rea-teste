@@ -40,6 +40,11 @@ import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticAmbientWrites.js";
+import {
+  semanticFactoryLoaderMemberAt,
+  semanticFactoryRequireLoaderAt,
+  semanticRequireLoaderAt,
+} from "./javascriptSemanticRequireOrigin.js";
 
 type JavaScriptCallLike =
   | t.CallExpression
@@ -56,16 +61,14 @@ export const inspectCall = (
   const { accumulator } = context;
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
-  const module = context.accumulator.moduleRangeIndex.find(node.start);
-  const moduleRequireName = module?.requireName ?? null;
-  const requireCall = requireCallSpecifier(node, name, moduleRequireName);
+  const requireCall = requireCallSpecifier(node, bindings, context);
   if (requireCall !== null)
     addReference(context, {
       node,
       kind: "require",
       specifier: requireCall.specifier,
     });
-  const chunkLoad = chunkLoadSpecifier(node, name, moduleRequireName);
+  const chunkLoad = chunkLoadSpecifier(node, bindings, context);
   if (chunkLoad !== null)
     addReference(context, {
       node,
@@ -92,19 +95,25 @@ export const inspectCall = (
     addReference(context, {
       node,
       kind: "worker",
-      // Node string paths use the process cwd or filesystem root, neither of
-      // which is established by the analyzed source's artifact location.
+      // A string path is relative to the document base URL in a browser and
+      // to the process cwd in Node; the analyzed source's artifact location
+      // establishes neither. Only `new URL(path, import.meta.url)` names a
+      // location relative to this module.
       specifier:
-        (workerConstructor === "node" ? undefined : first) ??
-        (workerConstructor === undefined || worker === undefined
+        workerConstructor === undefined || worker === undefined
           ? undefined
-          : workerUrlSpecifier(worker, bindings)),
+          : workerUrlSpecifier(worker, bindings),
     });
+  // Service worker script URLs are also relative to the document base URL.
   if (
     name === "serviceWorker.register" ||
     name.endsWith(".serviceWorker.register")
   )
-    addReference(context, { node, kind: "service-worker", specifier: first });
+    addReference(context, {
+      node,
+      kind: "service-worker",
+      specifier: undefined,
+    });
   inspectEndpointCall(node, name, first, context);
   inspectStorageCall(node, name, first, context);
   if (first === "audio" || first === "video")
@@ -224,31 +233,61 @@ const noteMediaElementPreloads = (
 
 const requireCallSpecifier = (
   node: JavaScriptCallLike,
-  name: string,
-  moduleRequireName: string | null,
+  bindings: JavaScriptSemanticAnalysisState,
+  context: FindingContext,
 ): { readonly specifier: string | undefined } | null => {
-  if (name === "require" || name.endsWith(".require"))
-    return { specifier: argumentValue(node.arguments[0]) };
-  if (name === "__webpack_require__" || name === moduleRequireName)
-    return { specifier: argumentValue(node.arguments[0]) };
-  if (
-    name === "__webpack_require__.bind" ||
-    (moduleRequireName !== null && name === `${moduleRequireName}.bind`)
-  )
-    return { specifier: argumentValue(node.arguments[1]) };
+  const bareRequire = t.isIdentifier(node.callee, { name: "require" });
+  if (bareRequire) {
+    const loader = semanticRequireLoaderAt(
+      node,
+      bindings,
+      context.accumulator.factoryRequireBindingIds,
+    );
+    if (loader === "local") return null;
+    if (loader === "unknown") context.accumulator.unknownFindings += 1;
+    return {
+      specifier:
+        loader === "unknown" ? undefined : argumentValue(node.arguments[0]),
+    };
+  }
+  const factoryLoader = semanticFactoryRequireLoaderAt(
+    node,
+    bindings,
+    context.accumulator.factoryRequireBindingIds,
+  );
+  if (factoryLoader === "factory-loader")
+    return {
+      specifier: argumentValue(
+        node.arguments[
+          t.isMemberExpression(unwrapJavaScriptExpression(node.callee).node) ||
+          t.isOptionalMemberExpression(
+            unwrapJavaScriptExpression(node.callee).node,
+          )
+            ? 1
+            : 0
+        ],
+      ),
+    };
+  if (factoryLoader === "unknown") {
+    context.accumulator.unknownFindings += 1;
+    return { specifier: undefined };
+  }
   return null;
 };
 
 const chunkLoadSpecifier = (
   node: JavaScriptCallLike,
-  name: string,
-  moduleRequireName: string | null,
+  bindings: JavaScriptSemanticAnalysisState,
+  context: FindingContext,
 ): { readonly specifier: string | undefined } | null => {
-  if (
-    name !== "__webpack_require__.e" &&
-    (moduleRequireName === null || name !== `${moduleRequireName}.e`)
-  )
-    return null;
+  const loader = semanticFactoryLoaderMemberAt(
+    node,
+    bindings,
+    context.accumulator.factoryRequireBindingIds,
+    "e",
+  );
+  if (loader === undefined) return null;
+  if (loader === "unknown") return { specifier: undefined };
   return { specifier: prefixedArgument("chunk:", node.arguments[0]) };
 };
 

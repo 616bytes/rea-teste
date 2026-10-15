@@ -12,7 +12,11 @@ import {
   runProductionMcpDoctor,
   runProductionMcpDoctorCli,
 } from "../../../src/mcpDoctor.js";
-import { CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
+import {
+  CATALOG_IDENTITY,
+  createCatalogIdentity,
+} from "../../../src/catalogIdentity.js";
+import { compactPresentationForMcpInputSchemaProfile } from "../../../src/config/mcpInputSchemaProfile.js";
 import { MCP_STARTUP_POLICY } from "../../../src/mcpStartupPolicy.js";
 
 afterEach(() => vi.useRealTimers());
@@ -40,34 +44,82 @@ describe("production MCP doctor", () => {
     });
   });
 
-  it("connects to the production stdio child and verifies the canonical catalog", async () => {
-    const result = await runProductionMcpDoctor({
-      command: process.execPath,
-      args: [resolve("scripts/rea.mjs"), "mcp"],
-      cwd: process.cwd(),
-      environment: process.env,
-    });
-
-    expect(result).toMatchObject({
-      healthy: true,
-      adapter: "production-stdio",
-      inventory: {
-        tools: {
-          expected: expect.any(Number),
-          observed: expect.any(Number),
-          missing: [],
-          unexpected: [],
-        },
+  it.each([
+    {
+      name: "full",
+      environment: {
+        REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
       },
-      request_flow: { tool: "binary_session", ok: true },
-    });
-    expect(result.inventory?.tools.expected).toBe(
-      result.inventory?.tools.observed,
-    );
-    expect(result.inventory?.tools.expected).toBe(
-      CATALOG_IDENTITY.counts.mcp_tools,
-    );
-  }, 30_000);
+      identity: CATALOG_IDENTITY,
+    },
+    {
+      name: "compact",
+      environment: {
+        REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+      },
+      identity: createCatalogIdentity(
+        compactPresentationForMcpInputSchemaProfile("compact"),
+      ),
+    },
+    {
+      name: "output schemas off",
+      environment: {
+        REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
+      },
+      identity: createCatalogIdentity(undefined, "off"),
+    },
+    {
+      name: "compact input and output schemas off",
+      environment: {
+        REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
+      },
+      identity: createCatalogIdentity(
+        compactPresentationForMcpInputSchemaProfile("compact"),
+        "off",
+      ),
+    },
+  ])(
+    "connects to the production stdio child and verifies the $name catalog",
+    async ({ environment, identity }) => {
+      const result = await runProductionMcpDoctor({
+        command: process.execPath,
+        args: [resolve("scripts/rea.mjs"), "mcp"],
+        cwd: process.cwd(),
+        environment: { ...process.env, ...environment },
+      });
+
+      expect(result).toMatchObject({
+        healthy: true,
+        adapter: "production-stdio",
+        inventory: {
+          tools: {
+            expected: expect.any(Number),
+            observed: expect.any(Number),
+            missing: [],
+            unexpected: [],
+          },
+        },
+        request_flow: { tool: "binary_session", ok: true },
+      });
+      expect(result.inventory?.tools.expected).toBe(
+        result.inventory?.tools.observed,
+      );
+      expect(result.inventory?.tools.expected).toBe(
+        CATALOG_IDENTITY.counts.mcp_tools,
+      );
+      expect(result.identity?.expected_catalog_digest).toBe(
+        identity.digests.combined_sha256,
+      );
+      expect(result.identity?.observed_catalog_digest).toBe(
+        identity.digests.combined_sha256,
+      );
+    },
+    30_000,
+  );
 });
 
 describe("production MCP doctor probe validation", () => {

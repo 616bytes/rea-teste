@@ -19,6 +19,7 @@ describe.skipIf(process.platform === "win32")(
           "rea-reference-directory-imports-",
         );
         const root = join(workspace, "source");
+        const outside = join(workspace, "outside", "index.js");
         const imports = [
           ["slash.cjs", "./lib/", "lib/index.js"],
           ["dot.cjs", "./lib/.", "lib/index.js"],
@@ -32,6 +33,7 @@ describe.skipIf(process.platform === "win32")(
           ["bare-index.cjs", "./bare", "bare.js"],
           ["package-main.cjs", "./pkg", "pkg/actual.js"],
           ["package-main-fallback.cjs", "./stale", "stale/index.js"],
+          ["package-main-slash.cjs", "./slashed", "slashed/lib.js"],
         ] as const;
         const unresolved = [
           ["missing.cjs", "./missing/", "missing/"],
@@ -39,6 +41,7 @@ describe.skipIf(process.platform === "win32")(
           ["main.ts", "./folder.js/.", "folder.js"],
           ["only-bare.cjs", "./only/", "only/"],
           ["invalid-manifest.cjs", "./broken", "broken"],
+          ["absolute-main.cjs", "./absolute", outside],
         ] as const;
         const files = new Map<string, string>([
           ["index.js", 'module.exports = "root index";\n'],
@@ -64,6 +67,14 @@ describe.skipIf(process.platform === "win32")(
           ["stale/index.js", 'module.exports = "legacy fallback";\n'],
           ["broken/package.json", '{"main":\n'],
           ["broken/index.js", 'module.exports = "unknown selection";\n'],
+          // Node resolves main with path.resolve: no trailing-slash directory
+          // intent, and an absolute main leaves the imported root.
+          ["slashed/package.json", '{"main":"lib/"}\n'],
+          ["slashed/lib.js", 'module.exports = "file main";\n'],
+          ["slashed/lib/index.js", 'module.exports = "not selected";\n'],
+          ["slashed/index.js", 'module.exports = "not selected";\n'],
+          ["absolute/package.json", `${JSON.stringify({ main: outside })}\n`],
+          ["absolute/index.js", 'module.exports = "not selected";\n'],
           ...[...imports, ...unresolved].map(
             ([path, specifier]) =>
               [path, `require(${JSON.stringify(specifier)});\n`] as const,
@@ -76,7 +87,6 @@ describe.skipIf(process.platform === "win32")(
             await writeFile(target, contents);
           }),
         );
-        const outside = join(workspace, "outside", "index.js");
         await mkdir(dirname(outside), { recursive: true });
         await writeFile(outside, 'module.exports = "outside import root";\n');
 
@@ -99,6 +109,9 @@ describe.skipIf(process.platform === "win32")(
         ).toThrow();
         expect(
           createRequire(join(root, "escape.cjs")).resolve("../outside/"),
+        ).toBe(outside);
+        expect(
+          createRequire(join(root, "absolute-main.cjs")).resolve("./absolute"),
         ).toBe(outside);
 
         const result = await cli.run({

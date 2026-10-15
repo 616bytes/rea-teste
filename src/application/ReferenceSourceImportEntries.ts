@@ -160,7 +160,13 @@ const selectPackageMain = (
     return { to: index, resolution: "internal" };
   if (manifest.state === "unknown")
     return { to: directory, resolution: "unresolved" };
-  const target = posix.normalize(posix.join(directory, manifest.main));
+  // Node resolves `main` with path.resolve: an absolute main leaves the
+  // package, and a trailing separator does not make the entry a directory.
+  if (posix.isAbsolute(manifest.main))
+    return { to: posix.normalize(manifest.main), resolution: "unresolved" };
+  const target = posix
+    .normalize(posix.join(directory, manifest.main))
+    .replace(/(?<=.)\/+$/u, "");
   // Node would load a declared entry outside the imported root.
   if (logicalPathEscapesRoot(target))
     return { to: target, resolution: "unresolved" };

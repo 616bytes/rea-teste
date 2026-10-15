@@ -188,7 +188,6 @@ const captureElectronContent = async (
     ...(context.signal === undefined ? {} : { signal: context.signal }),
     request: context.input,
     scripts: state.scripts,
-    executionContextFrames: state.executionContextFrames,
     frameIds,
     completeness: state.completeness,
   });

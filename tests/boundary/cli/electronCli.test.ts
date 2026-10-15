@@ -35,6 +35,82 @@ afterEach(async () => {
   );
 });
 
+it(
+  "preserves script identity through context teardown over simulated CDP",
+  async () => {
+    const root = await createTestTempDirectory("rea-electron-attribution-cli-");
+    temporary.push(root);
+    await writeFile(join(root, "index.html"), "<html></html>");
+    await writeFile(join(root, "app.js"), "export const app = true;");
+    let teardown: string | undefined;
+    const browser = await startFakeCdpBrowser({
+      electronFileUrl: pathToFileURL(join(root, "index.html")).href,
+      eventsBeforeReply: ["Runtime.enable", "Debugger.enable"],
+      commandEvents: ({ method, sessionId }) =>
+        method === "Debugger.enable"
+          ? [
+              {
+                method: "Debugger.scriptParsed",
+                ...(sessionId === undefined ? {} : { sessionId }),
+                params: {
+                  scriptId: "retained",
+                  executionContextId: 1,
+                  url: pathToFileURL(join(root, "app.js")).href,
+                },
+              },
+              ...(teardown === undefined
+                ? []
+                : [
+                    {
+                      method: teardown,
+                      ...(sessionId === undefined ? {} : { sessionId }),
+                      params:
+                        teardown === "Runtime.executionContextDestroyed"
+                          ? { executionContextId: 1 }
+                          : {},
+                    },
+                  ]),
+            ]
+          : undefined,
+    });
+    browsers.push(browser);
+    const capture = () =>
+      runCli(
+        [
+          "inspect-electron-page",
+          browser.endpoint,
+          "electron-page",
+          "--observation-ms",
+          "0",
+          "--json",
+        ],
+        { ...process.env },
+      );
+    const control = await capture();
+    expect(control).toMatchObject({
+      normalized_result: {
+        scripts: { total: 1, items: [{ frame_id: "frame-main" }] },
+      },
+    });
+    if (!isRecord(control) || !isRecord(control.normalized_result))
+      throw new Error("Expected Electron inspection Evidence");
+    for (teardown of [
+      "Runtime.executionContextDestroyed",
+      "Runtime.executionContextsCleared",
+    ]) {
+      expect(await capture()).toMatchObject({
+        normalized_result: {
+          scripts: control.normalized_result.scripts,
+        },
+      });
+    }
+    expect(browser.commands.map(({ method }) => method)).not.toContain(
+      "Debugger.getScriptSource",
+    );
+  },
+  INTEGRATION_TEST_TIMEOUT_MS,
+);
+
 describe("Electron CLI parity", () => {
   it(
     "returns the same endpoint-scoped Electron Evidence contracts",

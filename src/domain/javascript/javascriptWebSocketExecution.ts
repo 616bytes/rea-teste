@@ -12,11 +12,20 @@ const webSocketOuterExpression = (
   state: JavaScriptSemanticAnalysisState,
 ): t.Node => {
   let current = node;
+  let identity = node;
   for (;;) {
     const parent = state.parentsByNode.get(current);
     if (
+      t.isSequenceExpression(parent) &&
+      parent.expressions.at(-1) === current
+    ) {
+      current = parent;
+      identity = parent;
+      continue;
+    }
+    if (
       parent === undefined ||
-      unwrapJavaScriptExpression(parent).node !== node
+      unwrapJavaScriptExpression(parent).node !== identity
     )
       return current;
     current = parent;
@@ -101,6 +110,11 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
     ];
   if (t.isSequenceExpression(node)) return node.expressions;
   if (t.isBinaryExpression(node)) return [node.left, node.right];
+  // Tests/left operands always complete before either a selected branch or a
+  // later sibling; conditional branch bodies do not establish suspension.
+  if (t.isIfStatement(node) || t.isConditionalExpression(node))
+    return [node.test];
+  if (t.isLogicalExpression(node)) return [node.left];
   if (t.isCallExpression(node) || t.isNewExpression(node))
     return [node.callee, ...node.arguments];
   // Conditional/short-circuit branches, nested functions and try/catch do not
@@ -152,6 +166,13 @@ const webSocketPrecedingSuspension = (
   child: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): WebSocketSuspension | undefined => {
+  if (
+    (t.isIfStatement(parent) || t.isConditionalExpression(parent)) &&
+    (child === parent.consequent || child === parent.alternate)
+  )
+    return webSocketCompletedSuspension(parent.test, state);
+  if (t.isLogicalExpression(parent) && child === parent.right)
+    return webSocketCompletedSuspension(parent.left, state);
   let byParent = webSocketSuspensionPrefixes.get(state);
   if (byParent === undefined) {
     byParent = new WeakMap();

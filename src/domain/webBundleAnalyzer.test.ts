@@ -688,6 +688,55 @@ describe("web bundle CommonJS socket member mutation", () => {
   );
 });
 
+describe("web bundle conditional suspension and sequence invocations", () => {
+  it.each([
+    '(async () => { if (await ready) new Socket("wss://example.test/branch"); })();',
+    '(async () => { if (await ready) {} else new Socket("wss://example.test/branch"); })();',
+    '(async () => { if (await ready) {} new Socket("wss://example.test/branch"); })();',
+    '(async () => { (await ready) ? new Socket("wss://example.test/branch") : 0; })();',
+    '(async () => { (await ready) && new Socket("wss://example.test/branch"); })();',
+  ])(
+    "retains branch reads after an evaluated test suspension: %s",
+    (expression) => {
+      const expected = [
+        { value: "wss://example.test/branch", mechanism: "call:Socket" },
+      ];
+      expect(
+        socketEndpoints(`${expression} const Socket = globalThis.WebSocket;`),
+      ).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    '(0, function () { new Socket("wss://example.test/tdz"); })();',
+    '((0, function () { new Socket("wss://example.test/tdz"); }) as any)();',
+    '(0, () => { new Socket("wss://example.test/tdz"); })();',
+    '(0, function () { new Socket("wss://example.test/tdz"); }).call(null);',
+    'new (0, class { socket = new Socket("wss://example.test/tdz"); })();',
+    '(0, function* () { new Socket("wss://example.test/tdz"); })().next();',
+    '(async () => { if (condition) await ready; new Socket("wss://example.test/tdz"); })();',
+    '(async () => { condition && (await ready); new Socket("wss://example.test/tdz"); })();',
+  ])(
+    "keeps immediate final operands eager without assuming skipped branch suspension: %s",
+    (expression) => {
+      expect(
+        socketEndpoints(`${expression} const Socket = globalThis.WebSocket;`),
+      ).toEqual([[], []]);
+    },
+  );
+
+  it("retains a stored final-operand constructor capture", () => {
+    const expected = [
+      { value: "wss://example.test/stored-sequence", mechanism: "call:Socket" },
+    ];
+    expect(
+      socketEndpoints(
+        'const connect = (0, function () { new Socket("wss://example.test/stored-sequence"); }); const Socket = globalThis.WebSocket; connect();',
+      ),
+    ).toEqual([expected, expected]);
+  });
+});
+
 describe("web bundle API classification parity", () => {
   it("reads storage open versions as storage rather than endpoints in both analyzers", () => {
     const source = `

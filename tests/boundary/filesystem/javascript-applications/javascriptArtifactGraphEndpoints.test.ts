@@ -150,6 +150,10 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
     ].join("\n"),
     "immediate-generator.js":
       '(function* () { new Socket("wss://example.test/tdz-generator"); })().next(); const Socket = globalThis.WebSocket;',
+    "await-branch.js":
+      '(async () => { if (await ready) new Socket("wss://example.test/branch-continuation"); })(); const Socket = globalThis.WebSocket;',
+    "immediate-sequence.js":
+      '(0, function () { new Socket("wss://example.test/tdz-sequence"); })(); const Socket = globalThis.WebSocket;',
     "async-local.js":
       '(async () => { new Socket("wss://example.test/tdz-before-await"); await ready; const Socket = globalThis.WebSocket; })();',
     "async-phases.js":
@@ -176,6 +180,7 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/argument-constructor",
       "wss://example.test/argument-field",
       "wss://example.test/assignment",
+      "wss://example.test/branch-continuation",
       "wss://example.test/computed-key",
       "wss://example.test/continuation",
       "wss://example.test/deferred-bind",
@@ -187,6 +192,7 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       ["argument-field", "await-inputs.js", 2],
       ["argument-constructor", "await-inputs.js", 3],
       ["computed-key", "await-inputs.js", 4],
+      ["branch-continuation", "await-branch.js", 1],
       ["continuation", "async.js", 2],
       ["deferred-bind", "bound.js", 2],
       ["field", "fields.js", 1],

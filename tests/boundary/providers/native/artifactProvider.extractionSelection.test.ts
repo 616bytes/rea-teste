@@ -178,7 +178,20 @@ describe("selected artifact extraction", () => {
     const occurrences = [...data.inventory.occurrences, container, nested];
     expect(() =>
       selectArtifactExtractionOccurrences(occurrences, [nested.occurrence_id]),
-    ).toThrow("not a regular file or slice exposed by the active reader");
+    ).toThrowError(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        issues: [
+          expect.objectContaining({
+            path: ["occurrence_ids"],
+            reason: "invalid_value",
+            message: expect.stringContaining(
+              "not a regular file or slice exposed by the active reader",
+            ),
+          }),
+        ],
+      }),
+    );
     expect(
       selectArtifactExtractionOccurrences(occurrences, [
         container.occurrence_id,

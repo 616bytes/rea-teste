@@ -35,7 +35,7 @@ export const artifactExtractionInputSchema = z.strictObject({
   integrity_policy: artifactIntegrityPolicySchema,
   output_root: localPathStringSchema
     .refine(isAbsolute, "Extraction output root must be absolute")
-    .optional()
+    .exactOptional()
     .describe(
       "Absolute destination path on the REA host. It must not exist and its parent must exist. Omit to use a fresh temporary directory. Successful output persists after the call.",
     ),
@@ -46,7 +46,7 @@ export const artifactExtractionInputSchema = z.strictObject({
       (ids) => new Set(ids).size === ids.length,
       "Occurrence IDs must be unique",
     )
-    .optional()
+    .exactOptional()
     .describe(
       "Exact regular-file or slice occurrence IDs from the current inventory. Omit to extract all regular entries exposed by the active reader. Directories, links, the root and members inside nested archives cannot be selected.",
     ),

@@ -15,6 +15,10 @@ import {
   ghidraPinnedLanguage,
   ghidraProfileLanguageOverride,
 } from "./GhidraAnalysisProfile.js";
+import {
+  ghidraPowerPcLanguage,
+  ghidraPowerPcProfileParameters,
+} from "./GhidraPowerPcProfile.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
 
@@ -155,5 +159,25 @@ describe("bounded Ghidra PowerPC admission", () => {
     expect(hopperLoaderArgsForTarget(target()).ok).toBe(false);
     const ida = new IdaProvider(config, {});
     expect(ida.inspectTargetSupport(target()).status).toBe("unsupported");
+  });
+
+  it("keeps an admitted Xbox 360 PE basefile out of the ELF-only lane", () => {
+    const basefile: BinaryTarget = {
+      path: "/fixture/basefile.exe",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "pe",
+      architecture: "powerpc",
+      availableArchitectures: ["powerpc"],
+      executableRole: "application",
+      managed: false,
+    };
+    const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+    expect(ghidra.inspectTargetSupport(basefile)).toMatchObject({
+      status: "unsupported",
+      reason: expect.stringContaining("separately verified loader lane"),
+    });
+    expect(ghidraPowerPcLanguage(basefile)).toBeUndefined();
+    expect(ghidraPowerPcProfileParameters(basefile)).toEqual({});
   });
 });

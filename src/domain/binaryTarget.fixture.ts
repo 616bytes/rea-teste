@@ -73,8 +73,8 @@ export const pe = (
   managed = false,
   codeView?: PeCodeViewFixture,
 ): Buffer => {
-  const optionalHeaderSize =
-    machine === 0x014c || machine === 0x01c0 ? 224 : 240;
+  const pe32 = machine === 0x014c || machine === 0x01c0 || machine === 0x01f2;
+  const optionalHeaderSize = pe32 ? 224 : 240;
   const sectionTableOffset = offset + 24 + optionalHeaderSize;
   const sectionCount = codeView !== undefined ? 1 : 0;
   const rawDataOffset = 512;
@@ -122,7 +122,6 @@ export const pe = (
   bytes.writeUInt16LE(optionalHeaderSize, offset + 20);
   bytes.writeUInt16LE(characteristics, offset + 22);
   const optionalHeader = offset + 24;
-  const pe32 = machine === 0x014c || machine === 0x01c0;
   bytes.writeUInt16LE(pe32 ? 0x10b : 0x20b, optionalHeader);
   const directoryOffset = pe32 ? 96 : 112;
   bytes.writeUInt32LE(16, optionalHeader + directoryOffset - 4);

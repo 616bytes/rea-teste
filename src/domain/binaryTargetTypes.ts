@@ -193,8 +193,18 @@ export type BinaryTarget =
       readonly executableRole?: never;
       readonly managed?: never;
     })
-  | (ExecutableTarget & {
+  | (BinaryTargetIdentity & {
+      readonly kind: "executable";
       readonly format: "pe";
+      /**
+       * PowerPC appears only for a decrypted Xbox 360 big-endian basefile
+       * (COFF machine 0x01f2) supplied by the caller.
+       */
+      readonly architecture: HeaderArchitecture | "powerpc";
+      readonly availableArchitectures: readonly (
+        | HeaderArchitecture
+        | "powerpc"
+      )[];
       /** Provider-neutral PE image role observed from COFF characteristics. */
       readonly executableRole:
         | "application"

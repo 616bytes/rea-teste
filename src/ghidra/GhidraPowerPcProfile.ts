@@ -18,9 +18,9 @@ export const ghidraPowerPcUnsupportedReason = (
 ): string | null => {
   if (target.kind !== "executable" || target.architecture !== "powerpc")
     return null;
+  if (target.format !== "elf")
+    return "PowerPC analysis requires ELF header metadata; a PE basefile (Xbox 360) needs a separately verified loader lane before analysis, and a family name alone does not select a processor variant.";
   const metadata = target.powerpc;
-  if (target.format !== "elf" || metadata === undefined)
-    return "PowerPC analysis requires ELF header metadata; a family name alone does not select a processor variant.";
   if (metadata.elfClass !== 32)
     return "This Ghidra PowerPC lane supports ELF32 only; PPC64 remains unsupported.";
   if (metadata.byteOrder !== "big")
@@ -41,7 +41,9 @@ export const ghidraPowerPcUnsupportedReason = (
 export const ghidraPowerPcLanguage = (
   target: BinaryTarget,
 ): GhidraLanguageOverride | undefined =>
-  target.kind === "executable" && target.architecture === "powerpc"
+  target.kind === "executable" &&
+  target.architecture === "powerpc" &&
+  target.format === "elf"
     ? GHIDRA_POWERPC_LANGUAGE
     : undefined;
 
@@ -52,7 +54,7 @@ export const ghidraPowerPcProfileParameters = (
   if (
     target.kind !== "executable" ||
     target.architecture !== "powerpc" ||
-    target.powerpc === undefined
+    target.format !== "elf"
   )
     return {};
   return {

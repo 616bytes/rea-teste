@@ -1,6 +1,11 @@
 import type { HeaderArchitecture } from "./binaryTargetTypes.js";
 
-export type PeArchitecture = HeaderArchitecture;
+/**
+ * A decoded COFF machine family. PowerPC joins the header families through
+ * the Xbox 360 big-endian basefile machine (0x01f2): headers stay
+ * little-endian while code is big-endian.
+ */
+export type PeArchitecture = HeaderArchitecture | "powerpc";
 
 /** A decoded COFF machine and whether it carried a ReadyToRun OS override. */
 export interface PeMachine {
@@ -22,6 +27,10 @@ const architectureForMachine = (
       return "arm";
     case 0xaa64:
       return "arm64";
+    case 0x01f2:
+      // IMAGE_FILE_MACHINE_POWERPCBE: a decrypted Xbox 360 PE basefile
+      // supplied by the caller; REA never decrypts XEX containers itself.
+      return "powerpc";
   }
   return undefined;
 };

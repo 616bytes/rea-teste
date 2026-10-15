@@ -20,7 +20,10 @@ import {
 import { jsonValueSchema } from "../domain/jsonValue.js";
 
 import { parseConfig } from "../config/parseConfig.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import type {
+  BinaryTarget,
+  HeaderArchitecture,
+} from "../domain/binaryTargetTypes.js";
 import { parseExecutableHeader } from "../domain/binaryTarget.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import type { GhidraTargetSnapshot } from "./GhidraClient.js";
@@ -1927,21 +1930,23 @@ describe("Ghidra PDB coverage", () => {
 
 const executableTarget = (
   format: "mach-o" | "elf" | "pe",
-  architecture: Extract<BinaryTarget, { format: "pe" }>["architecture"],
-): BinaryTarget =>
-  format === "pe"
-    ? peTarget(architecture)
-    : {
-        path: "/tmp/fixture",
-        sha256: "a".repeat(64),
-        kind: "executable",
-        format,
-        architecture,
-        availableArchitectures: [architecture],
-      };
+  architecture: HeaderArchitecture | "powerpc",
+): BinaryTarget => {
+  if (format === "pe") return peTarget(architecture);
+  if (architecture === "powerpc")
+    throw new Error("PowerPC targets are not header-family executables");
+  return {
+    path: "/tmp/fixture",
+    sha256: "a".repeat(64),
+    kind: "executable",
+    format,
+    architecture,
+    availableArchitectures: [architecture],
+  };
+};
 
 const peTarget = (
-  architecture: Extract<BinaryTarget, { format: "pe" }>["architecture"],
+  architecture: HeaderArchitecture | "powerpc",
 ): Extract<BinaryTarget, { format: "pe" }> => ({
   path: "/tmp/fixture",
   sha256: "a".repeat(64),

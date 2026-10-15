@@ -51,8 +51,11 @@ export type ExecutableMetadata =
     }
   | {
       readonly format: "pe";
-      readonly architecture: HeaderArchitecture;
-      readonly availableArchitectures: readonly HeaderArchitecture[];
+      readonly architecture: HeaderArchitecture | "powerpc";
+      readonly availableArchitectures: readonly (
+        | HeaderArchitecture
+        | "powerpc"
+      )[];
       readonly executableRole:
         | "application"
         | "shared-library"
@@ -85,6 +88,10 @@ export const parseExecutableHeader = (
   const fatHeader = readFatContainerHeader(bytes, fileSize);
   if (fatHeader.state !== "not-fat")
     return parseFatMachO(bytes, hostArchitecture, fatHeader);
+  if (bytes.subarray(0, 4).toString("binary") === "XEX2")
+    return err(
+      "Xbox 360 XEX2 container; extract the decrypted PE basefile externally (for example XexTool -b) and open that file instead; REA neither decrypts XEX containers nor accepts keys for them",
+    );
   return err("unsupported binary format");
 };
 

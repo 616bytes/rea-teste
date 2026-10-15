@@ -132,7 +132,13 @@ const architectureFor = (
   managed: boolean,
 ): ManagedPeLayout["architecture"] => {
   const decoded = decodePeMachine(machine);
-  if (decoded === undefined || (decoded.nativeOsOverride && !managed))
+  // The Xbox 360 big-endian machine never carries a CLI header, so a managed
+  // layout refuses it rather than widening its architecture family.
+  if (
+    decoded === undefined ||
+    decoded.architecture === "powerpc" ||
+    (decoded.nativeOsOverride && !managed)
+  )
     throw managedFailure(
       "invalid-directory",
       "pe.machine",

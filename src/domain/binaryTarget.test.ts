@@ -148,6 +148,35 @@ describe("executable header parsing", () => {
   });
 });
 
+describe("Xbox 360 basefile admission", () => {
+  it("accepts a decrypted PowerPC big-endian PE basefile", () => {
+    const result = parseExecutableHeader(pe(0x01f2), "x64");
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        format: "pe",
+        architecture: "powerpc",
+        availableArchitectures: ["powerpc"],
+        executableRole: "application",
+        managed: false,
+      },
+    });
+  });
+
+  it("rejects an XEX2 container with the external extraction step", () => {
+    const xex = Buffer.alloc(64);
+    xex.write("XEX2", 0, "binary");
+    const result = parseExecutableHeader(xex, "x64");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain("XEX2");
+    expect(result.error).toContain(
+      "extract the decrypted PE basefile externally",
+    );
+    expect(result.error).toContain("open that file instead");
+  });
+});
+
 describe("executable header completeness", () => {
   const reason = (bytes: Buffer, fileSize = bytes.length) => {
     const result = parseExecutableHeader(bytes, "arm64", fileSize);

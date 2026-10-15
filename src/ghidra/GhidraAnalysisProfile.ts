@@ -141,6 +141,7 @@ export const resolveGhidraAnalysisProfile = async (
           instruction_flow_evidence: "decoded-return-pcode-v1",
           instruction_references: instructionReferenceCoverage,
           function_boundary_observations: functionBoundaryObservations,
+          decompiler_completeness: "ghidra-warning-observations-v6",
           no_return_repair:
             installation.platform === "win32"
               ? "disabled-windows-p0"
@@ -240,6 +241,7 @@ export const resolveGhidraAnalysisProfile = async (
         instruction_flow_evidence: "decoded-return-pcode-v1",
         instruction_references: instructionReferenceCoverage,
         function_boundary_observations: functionBoundaryObservations,
+        decompiler_completeness: "ghidra-warning-observations-v6",
         no_return_repair:
           installation.platform === "win32"
             ? "disabled-windows-p0"

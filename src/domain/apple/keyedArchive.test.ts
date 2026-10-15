@@ -63,4 +63,14 @@ describe("projectKeyedArchive root selection", () => {
       },
     ]);
   });
+
+  it("keeps one value budget across the selected roots", () => {
+    const values = Array.from({ length: 150_000 }, () => 0);
+    expect(() =>
+      projectKeyedArchive(
+        { ...archive, $top: { first: values, second: values } },
+        { offset: 0, limit: 10 },
+      ),
+    ).toThrow(RangeError);
+  });
 });

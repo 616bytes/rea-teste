@@ -82,24 +82,25 @@ export const renderSetupProgress = (event: SetupProgressEvent): void => {
   writeLine(`${symbol}  ${event.label}${suffix}`);
 };
 
+/** Show the resolved dry-run plan to a human at an interactive terminal. */
+export const renderSetupDryRun = (actions: readonly SetupAction[]): void => {
+  intro("REA setup plan", promptStreams);
+  renderPreflight(actions);
+  outro("Dry run complete. No changes were made.", promptStreams);
+};
+
 /**
- * Summarize a non-interactive setup for a terminal. The `setup` command's
- * agent-only output policy hides the structured result there, so `--dry-run`
- * and `--yes` would otherwise finish without any human-visible outcome.
+ * Summarize a non-interactive apply for a terminal. The `setup` command's
+ * agent-only output policy hides the structured result there, so `--yes`
+ * would otherwise finish without any human-visible outcome.
  */
 export const renderTerminalSetupSummary = (
   result: SetupResult,
-  scopeSelected: boolean,
-  mode: "dry-run" | "apply",
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): void => {
-  if (mode === "dry-run") {
-    renderPlannedTerminalSummary(result, scopeSelected);
-    return;
-  }
   switch (result.status) {
     case "planned":
-      renderPlannedTerminalSummary(result, scopeSelected);
+      renderSetupDryRun(result.plannedActions);
       return;
     case "needs_confirmation":
       // Redirected stdin skips the interactive journey, so show the plan here.
@@ -145,28 +146,6 @@ const renderPendingSetupActions = (result: SetupResult): void => {
     writeLine(`│  ${action.operation.toUpperCase()}  ${action.label}`);
     writeLine(`│          ${action.target}`);
   }
-};
-
-const renderPlannedTerminalSummary = (
-  result: SetupResult,
-  scopeSelected: boolean,
-): void => {
-  if (result.plannedActions.length === 0) {
-    writeLine("◆  No changes planned for the selected scope.");
-    if (!scopeSelected)
-      writeLine(
-        "│  Choose agents with --client <name> (repeatable) or --all-detected.",
-      );
-  } else {
-    renderPreflight(result.plannedActions, "Planned changes (dry run)");
-  }
-  if (result.remediation !== undefined) writeLine(`!  ${result.remediation}`);
-  outro(
-    result.status === "planned" && result.plannedActions.length > 0
-      ? "Dry run: no changes were made. Run the same command without --dry-run to apply."
-      : "Dry run: no changes were made.",
-    promptStreams,
-  );
 };
 
 /** Show mutations kept after a later setup step failed. */
@@ -425,12 +404,9 @@ const humanList = (values: readonly string[]): string => {
   return `${values.slice(0, -1).join(", ")}, and ${values.at(-1)}`;
 };
 
-const renderPreflight = (
-  actions: readonly SetupAction[],
-  heading = "Ready to review",
-): void => {
+const renderPreflight = (actions: readonly SetupAction[]): void => {
   writeLine("│");
-  writeLine(`◆  ${heading}`);
+  writeLine("◆  Ready to review");
   for (const action of actions) {
     writeLine("│");
     writeLine(`│  ${action.operation.toUpperCase()}  ${action.label}`);

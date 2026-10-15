@@ -1,6 +1,15 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  access,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import { spawn } from "@lydell/node-pty";
@@ -76,56 +85,94 @@ const clientStates = [
 
 const agentActions = actions.filter(({ kind }) => kind !== "install_hopper");
 
+const runSetupDryRunInTty = async (
+  home: string,
+  arguments_: readonly string[],
+): Promise<{ readonly exitCode: number; readonly output: string }> => {
+  const terminal = spawn(
+    process.execPath,
+    ["scripts/rea.mjs", "setup", "--dry-run", ...arguments_],
+    {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: join(home, ".config"),
+        REA_LOG_LEVEL: "silent",
+        NO_COLOR: "1",
+      },
+      name: "xterm-256color",
+      cols: 120,
+      rows: 40,
+    },
+  );
+  let output = "";
+  terminal.onData((data) => {
+    output += data;
+  });
+  const exitCode = await new Promise<number>((resolvePromise, reject) => {
+    const timeout = setTimeout(() => {
+      terminal.kill();
+      reject(new Error(`TTY dry run timed out after output:\n${output}`));
+    }, 15_000);
+    terminal.onExit(({ exitCode: code }) => {
+      clearTimeout(timeout);
+      resolvePromise(code);
+    });
+  });
+  return { exitCode, output };
+};
+
 describe("TTY setup dry run", () => {
   it("prints the plan and no-mutation notice for a TTY dry run", async () => {
     const home = await createTestTempDirectory("rea-cli-setup-dry-run-");
-    const terminal = spawn(
-      process.execPath,
-      [
-        "scripts/rea.mjs",
-        "setup",
-        "--dry-run",
-        "--client",
-        "codex",
-        "--skill=false",
-      ],
-      {
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          HOME: home,
-          USERPROFILE: home,
-          XDG_CONFIG_HOME: join(home, ".config"),
-          REA_LOG_LEVEL: "silent",
-          NO_COLOR: "1",
-        },
-        name: "xterm-256color",
-        cols: 120,
-        rows: 40,
-      },
-    );
-    let output = "";
-    terminal.onData((data) => {
-      output += data;
-    });
-    const exitCode = await new Promise<number>((resolvePromise, reject) => {
-      const timeout = setTimeout(() => {
-        terminal.kill();
-        reject(new Error(`TTY dry run timed out after output:\n${output}`));
-      }, 15_000);
-      terminal.onExit(({ exitCode: code }) => {
-        clearTimeout(timeout);
-        resolvePromise(code);
-      });
-    });
+    const { exitCode, output } = await runSetupDryRunInTty(home, [
+      "--client",
+      "codex",
+      "--skill=false",
+    ]);
 
     expect(exitCode, output).toBe(0);
     expect(output).toContain("CREATE  Codex");
     expect(output).toContain(join(home, ".codex/config.toml"));
-    expect(output).toContain("Dry run: no changes were made.");
+    expect(output).toContain("Dry run complete. No changes were made.");
     await expect(
       access(join(home, ".codex/config.toml")),
     ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("shows the refusal instead of a blocked skill plan for a TTY dry run", async () => {
+    const home = await createTestTempDirectory("rea-cli-setup-linked-dry-run-");
+    const managed = join(home, "managed-skill");
+    const linked = join(home, ".claude/skills/reverse-engineer-anything");
+    const original = "user-managed skill bytes\n";
+    await mkdir(managed);
+    await writeFile(join(managed, "SKILL.md"), original);
+    await mkdir(dirname(linked), { recursive: true });
+    await symlink(
+      managed,
+      linked,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const { exitCode, output } = await runSetupDryRunInTty(home, [
+      "--client",
+      "claude_code",
+    ]);
+
+    expect(exitCode, output).toBe(1);
+    expect(output).toContain("Skill directory is a symbolic link.");
+    expect(output).toContain(linked);
+    expect(output).toContain("--skill=false");
+    expect(output).not.toContain("REA setup plan");
+    expect(output).not.toContain("Install or update the REA skill");
+    expect((await lstat(linked)).isSymbolicLink()).toBe(true);
+    expect(await readFile(join(managed, "SKILL.md"), "utf8")).toBe(original);
+    expect(await readdir(managed)).toEqual(["SKILL.md"]);
+    await expect(access(join(home, ".claude.json"))).rejects.toMatchObject({
       code: "ENOENT",
     });
   });
@@ -134,7 +181,10 @@ describe("TTY setup dry run", () => {
 describe("interactive setup journey", () => {
   it("shows detected and absent clients without preselecting detected clients", async () => {
     const result = await runJourney(
-      [step("Which agents should use REA?", "\u001b[B\r")],
+      [
+        step("Which agents should use REA?", "\u001b[B"),
+        step("Not detected · configuration is still available", "\r"),
+      ],
       false,
       [actions[0]],
     );
@@ -314,7 +364,14 @@ describe("interactive setup completion", () => {
         {
           cwd: process.cwd(),
           env: {
-            ...process.env,
+            ...Object.fromEntries(
+              Object.entries(process.env).filter(
+                ([key]) =>
+                  !["npm_command", "npm_config_user_agent"].includes(
+                    key.toLowerCase(),
+                  ),
+              ),
+            ),
             npm_command: npmCommand,
             npm_config_user_agent: userAgent,
             NO_COLOR: "1",
@@ -337,38 +394,6 @@ describe("interactive setup completion", () => {
 });
 
 describe("non-interactive setup output", () => {
-  it("renders a blocked dry-run plan before remediation and the no-mutation notice", async () => {
-    const result = {
-      status: "needs_human",
-      plannedActions: [actions[2]],
-      appliedActions: [],
-      clients: {},
-      doctor: {},
-      clientStates: [],
-      remediation: "Unsupported Hopper host",
-    };
-    const { stderr } = await execute(
-      process.execPath,
-      [
-        "--input-type=module",
-        "--eval",
-        [
-          'import { renderTerminalSetupSummary } from "./dist/cli/interactiveSetup.js";',
-          `renderTerminalSetupSummary(${JSON.stringify(result)}, true, "dry-run");`,
-        ].join("\n"),
-      ],
-      { cwd: process.cwd(), env: { ...process.env, NO_COLOR: "1" } },
-    );
-    expect(stderr).toContain("Planned changes (dry run)");
-    expect(stderr).toContain("Hopper deep-analysis provider");
-    expect(stderr).toContain("Unsupported Hopper host");
-    expect(stderr.indexOf("Planned changes")).toBeLessThan(
-      stderr.indexOf("Unsupported Hopper host"),
-    );
-    expect(stderr).toContain("Dry run: no changes were made.");
-    expect(stderr).not.toContain("Run the same command without --dry-run");
-  });
-
   it.each([["--format", "json"], ["--json"]])(
     "keeps explicitly structured terminal output free of human summaries: %s",
     async (...format) => {
@@ -423,41 +448,6 @@ describe("non-interactive setup output", () => {
 });
 
 describe("non-interactive setup in a terminal", () => {
-  it("shows the dry-run plan without applying it", async () => {
-    await withTerminalSetup(
-      ["--dry-run", "--client", "codex", "--skill=false"],
-      async ({ output, exitCode, home }) => {
-        const config = join(home, ".codex", "config.toml");
-        expect(exitCode).toBe(0);
-        expect(output).toContain("Planned changes (dry run)");
-        expect(output).toContain(config);
-        expect(output).toContain("Dry run: no changes were made.");
-        await expect(access(config)).rejects.toThrow();
-      },
-    );
-  }, 60_000);
-
-  it("explains how to choose agents when a dry run has no scope", async () => {
-    await withTerminalSetup(["--dry-run"], ({ output, exitCode }) => {
-      expect(exitCode).toBe(0);
-      expect(output).toContain("No changes planned for the selected scope.");
-      expect(output).toContain("--client <name>");
-      expect(output).toContain("Dry run: no changes were made.");
-    });
-  }, 60_000);
-
-  it("shows manual setup instructions for a dry run without file changes", async () => {
-    await withTerminalSetup(
-      ["--dry-run", "--client", "grok_bot", "--skill=false"],
-      ({ output, exitCode }) => {
-        expect(exitCode).toBe(0);
-        expect(output).toContain("No changes planned for the selected scope.");
-        expect(output).toContain("Grok Bot keeps connectors");
-        expect(output).not.toContain("--client <name>");
-      },
-    );
-  }, 60_000);
-
   it("summarizes an approved setup", async () => {
     await withTerminalSetup(
       ["--yes", "--client", "codex", "--skill=false"],
@@ -488,28 +478,39 @@ describe("non-interactive setup in a terminal", () => {
     );
   }, 60_000);
 
-  it("names changes already applied when a later step fails", async () => {
-    await withTerminalSetup(
-      ["--yes", "--client", "codex"],
-      async ({ output, exitCode, home }) => {
-        const config = join(home, ".codex", "config.toml");
-        expect(exitCode).toBe(1);
-        expect(output).toContain("Already applied");
-        expect(output).toContain("Codex");
-        expect(output).toContain(config);
-        expect(output.indexOf("REA skill")).toBeGreaterThan(
-          output.indexOf("Already applied"),
-        );
-        await expect(access(config)).resolves.toBeUndefined();
-      },
-      {
-        prepare: async (home) => {
-          await mkdir(join(home, ".agents"), { recursive: true });
-          await writeFile(join(home, ".agents", "skills"), "");
+  // A later client's write fails after an earlier client was configured.
+  // /proc rejects file creation even for root, so this needs Linux.
+  it.runIf(process.platform === "linux")(
+    "names changes already applied and the client that failed",
+    async () => {
+      await withTerminalSetup(
+        ["--yes", "--client", "codex", "--client", "opencode", "--skill=false"],
+        async ({ output, exitCode, home }) => {
+          const config = join(home, ".codex", "config.toml");
+          expect(exitCode).toBe(1);
+          expect(output).toContain("Already applied");
+          expect(output).toContain(config);
+          expect(output).toContain("Failed configuration");
+          expect(output).toContain("FAILED  OpenCode");
+          expect(output.indexOf("Already applied")).toBeLessThan(
+            output.indexOf("Failed configuration"),
+          );
+          expect(output).not.toContain("Planned changes not completed");
+          await expect(access(config)).resolves.toBeUndefined();
         },
-      },
-    );
-  }, 60_000);
+        {
+          prepare: async (home) => {
+            await mkdir(join(home, ".config"), { recursive: true });
+            await symlink(
+              "/proc/self/fdinfo",
+              join(home, ".config", "opencode"),
+            );
+          },
+        },
+      );
+    },
+    60_000,
+  );
 });
 
 interface TerminalSetupRun {
@@ -670,6 +671,7 @@ const runJourney = async (
         env: {
           ...process.env,
           HOME: isolatedHome,
+          USERPROFILE: isolatedHome,
           NO_COLOR: "1",
           TERM: "xterm-256color",
         },
@@ -707,9 +709,13 @@ const runJourney = async (
         finish(new Error(`Setup journey returned no decision:\n${output}`));
         return;
       }
-      const serialized = output
-        .slice(markerIndex + decisionMarker.length)
-        .split(/\r?\n/u, 1)[0];
+      const raw = output.slice(markerIndex + decisionMarker.length);
+      const jsonStart = raw.indexOf("{");
+      const jsonEnd = raw.lastIndexOf("}");
+      const serialized =
+        jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart
+          ? raw.slice(jsonStart, jsonEnd + 1)
+          : raw.split(/\r?\n/u, 1)[0];
       if (serialized === undefined) {
         finish(
           new Error(`Setup journey returned an empty decision:\n${output}`),
@@ -756,7 +762,7 @@ it("identifies a failed planned client and its target in terminal remediation", 
       "--eval",
       [
         'import {renderTerminalSetupSummary} from "./dist/cli/interactiveSetup.js";',
-        `renderTerminalSetupSummary(${JSON.stringify(result)}, true, "apply");`,
+        `renderTerminalSetupSummary(${JSON.stringify(result)});`,
       ].join("\n"),
     ],
     { cwd: process.cwd(), env: { ...process.env, NO_COLOR: "1" } },
@@ -783,7 +789,7 @@ it("shows planned actions when setup stops before reporting any outcomes", async
       "--eval",
       [
         'import {renderTerminalSetupSummary} from "./dist/cli/interactiveSetup.js";',
-        `renderTerminalSetupSummary(${JSON.stringify(result)}, true, "apply");`,
+        `renderTerminalSetupSummary(${JSON.stringify(result)});`,
       ].join("\n"),
     ],
     { cwd: process.cwd(), env: { ...process.env, NO_COLOR: "1" } },

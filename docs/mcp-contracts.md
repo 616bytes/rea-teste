@@ -700,7 +700,11 @@ one boolean field, keeping every branch's examples. Nested object alternatives
 keep their structure with the discriminating field typed as `boolean`; a
 `oneOf` whose branches were told apart by such a literal is advertised as
 `anyOf`, because the branches can overlap once the literal is gone and an
-exclusive union would reject inputs the canonical contract accepts. String literals stay `const` because
+exclusive union would reject inputs the canonical contract accepts. A branch
+or its discriminating property may sit behind a chain of local references;
+the check follows the chain. Literals under `not` and `if` stay exact, because
+widening a subschema there narrows or redirects the outer schema instead of
+widening it. String literals stay `const` because
 every supported dialect accepts them. The canonical Zod schema still enforces
 the exact literal and the branch it selects; the advertised projection alone
 does not express that choice. Tests check every advertised input schema in

@@ -305,6 +305,91 @@ describe("advertised boolean literal unions", () => {
   });
 });
 
+describe("advertised boolean literals behind references and predicates", () => {
+  it("follows a chain of local references to a boolean discriminant", () => {
+    const presented = presentInputJsonSchema(
+      {
+        $defs: {
+          off: { type: "boolean", const: false },
+          offAlias: { $ref: "#/$defs/off" },
+          without: {
+            type: "object",
+            properties: { included: { $ref: "#/$defs/offAlias" } },
+            required: ["included"],
+          },
+          withAlias: { $ref: "#/$defs/with" },
+          with: {
+            type: "object",
+            properties: {
+              included: { type: "boolean", const: true },
+              text: { type: "string" },
+            },
+            required: ["included", "text"],
+          },
+        },
+        type: "object",
+        properties: {
+          source: {
+            oneOf: [{ $ref: "#/$defs/without" }, { $ref: "#/$defs/withAlias" }],
+          },
+        },
+      },
+      () => undefined,
+    );
+    expect(nonStringLiteralPaths(presented, "root", [])).toEqual([]);
+    const source = (presented.properties as Record<string, unknown>).source;
+    expect(source).not.toHaveProperty("oneOf");
+    expect(source).toHaveProperty("anyOf");
+    const validate = new Ajv2020({ strict: false }).compile(presented);
+    expect(validate({ source: { included: true, text: "x" } })).toBe(true);
+    expect(validate({ source: { included: false } })).toBe(true);
+  });
+
+  it("gives up on a reference cycle instead of following it", () => {
+    // Ajv cannot compile a self-referencing definition either, so this only
+    // checks that the presentation terminates and leaves the union alone.
+    const presented = presentInputJsonSchema(
+      {
+        $defs: { loop: { $ref: "#/$defs/loop" } },
+        type: "object",
+        properties: {
+          cyclic: { oneOf: [{ $ref: "#/$defs/loop" }, { type: "string" }] },
+        },
+      },
+      () => undefined,
+    );
+    expect(presented.properties).toMatchObject({
+      cyclic: { oneOf: [{ $ref: "#/$defs/loop" }, { type: "string" }] },
+    });
+  });
+
+  it("keeps boolean literals exact under not and if", () => {
+    const presented = presentInputJsonSchema(
+      {
+        type: "object",
+        properties: {
+          enabled: { type: "boolean", not: { const: true } },
+          mode: { type: "boolean" },
+          detail: { type: "string" },
+        },
+        if: { properties: { mode: { const: true } }, required: ["mode"] },
+        then: { required: ["detail"] },
+      },
+      () => undefined,
+    );
+    expect(presented).toMatchObject({
+      properties: { enabled: { type: "boolean", not: { const: true } } },
+      if: { properties: { mode: { const: true } } },
+    });
+    const validate = new Ajv2020({ strict: false }).compile(presented);
+    expect(validate({ enabled: false })).toBe(true);
+    expect(validate({ enabled: true })).toBe(false);
+    expect(validate({ mode: true })).toBe(false);
+    expect(validate({ mode: true, detail: "x" })).toBe(true);
+    expect(validate({ mode: false })).toBe(true);
+  });
+});
+
 describe("advertised production selector contracts", () => {
   it.each(["draft-2020-12", "draft-07"] as const)(
     "preserves production native-selector constraints in %s",

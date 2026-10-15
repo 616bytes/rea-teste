@@ -111,13 +111,25 @@ const hasBooleanLiteralProperty = (
   });
 };
 
+// Follows a chain of local references to the schema it ends at; a cycle
+// resolves to nothing rather than looping.
 const resolveLocalReference = (
   root: Readonly<Record<string, unknown>>,
   value: unknown,
-): unknown =>
-  isObject(value) && typeof value.$ref === "string"
-    ? resolveReference(root, value.$ref)
-    : value;
+): unknown => {
+  const active = new Set<string>();
+  while (isObject(value) && typeof value.$ref === "string") {
+    if (active.has(value.$ref)) return undefined;
+    active.add(value.$ref);
+    value = resolveReference(root, value.$ref);
+  }
+  return value;
+};
+
+// Presenting a literal as its type widens what the advertised schema
+// accepts. Under `not` and `if` a wider subschema narrows or redirects the
+// outer one instead, so literals there are left exact.
+const literalWideningKeywords = new Set(["not", "if"]);
 
 // Some clients render `const` as a one-member `enum`, and Google function
 // declarations accept only string enum members, so one advertised boolean
@@ -172,8 +184,16 @@ const describeSchema = (
   schema: unknown,
   root: Readonly<Record<string, unknown>>,
   describeProperty: (property: string) => string | undefined,
+  widenLiterals = true,
 ): unknown => {
   if (!isObject(schema)) return schema;
+  const describeChild = (child: unknown, key: string): unknown =>
+    describeSchema(
+      child,
+      root,
+      describeProperty,
+      widenLiterals && !literalWideningKeywords.has(key),
+    );
   const described = Object.fromEntries(
     Object.entries(schema).map(([key, value]) => {
       if (schemaMaps.has(key) && isObject(value))
@@ -181,7 +201,7 @@ const describeSchema = (
           key,
           Object.fromEntries(
             Object.entries(value).map(([name, child]) => {
-              const described = describeSchema(child, root, describeProperty);
+              const described = describeChild(child, key);
               if (key !== "properties" || !isObject(described))
                 return [name, described];
               const description =
@@ -197,24 +217,21 @@ const describeSchema = (
           ),
         ];
       if (schemaArrays.has(key) && Array.isArray(value))
-        return [
-          key,
-          value.map((child) => describeSchema(child, root, describeProperty)),
-        ];
+        return [key, value.map((child) => describeChild(child, key))];
       if (schemaChildren.has(key))
         return [
           key,
           Array.isArray(value)
-            ? value.map((child) =>
-                describeSchema(child, root, describeProperty),
-              )
-            : describeSchema(value, root, describeProperty),
+            ? value.map((child) => describeChild(child, key))
+            : describeChild(value, key),
         ];
       // Annotation values and literal const/enum data are not schemas.
       return [key, value];
     }),
   );
-  return presentBooleanLiterals(described, schema, root);
+  return widenLiterals
+    ? presentBooleanLiterals(described, schema, root)
+    : described;
 };
 
 const objectBranch = (

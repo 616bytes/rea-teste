@@ -1243,13 +1243,9 @@ describe("application workflow CLI and MCP capture lifetimes", () => {
     );
     // Execute the authored fixtures independently of static analysis.
     for (const [index, value] of ["TOKEN", "UPDATED"].entries()) {
-      const { stdout } = await execute(process.execPath, [
-        "--input-type=module",
-        "--eval",
-        "const module = await import(process.argv[1]); console.log(JSON.stringify(module.default()));",
-        join(root, String(index), "parser.mjs"),
-      ]);
-      expect(JSON.parse(stdout)).toEqual({
+      expect(
+        await runtimeDefaultExport(join(root, String(index), "parser.mjs")),
+      ).toEqual({
         kind: "capture-boundary",
         ...Object.fromEntries(fields.map((field) => [field, value])),
       });
@@ -1314,13 +1310,9 @@ describe("application workflow CLI and MCP constant branches", () => {
       ),
     );
     for (const applicationRoot of roots) {
-      const { stdout } = await execute(process.execPath, [
-        "--input-type=module",
-        "--eval",
-        "const module = await import(process.argv[1]); console.log(JSON.stringify(module.default()));",
-        join(applicationRoot, "parser.mjs"),
-      ]);
-      expect(JSON.parse(stdout)).toEqual({
+      expect(
+        await runtimeDefaultExport(join(applicationRoot, "parser.mjs")),
+      ).toEqual({
         type: "config",
         mode: "production",
         port: 8080,
@@ -1680,6 +1672,16 @@ it("retains bundled isolated-world contextBridge APIs through dedicated and gene
     );
   }
 });
+
+const runtimeDefaultExport = async (path: string): Promise<unknown> => {
+  const { stdout } = await execute(process.execPath, [
+    "--input-type=module",
+    "--eval",
+    'import { pathToFileURL } from "node:url"; const module = await import(pathToFileURL(process.argv[1]).href); console.log(JSON.stringify(module.default()));',
+    path,
+  ]);
+  return JSON.parse(stdout);
+};
 
 const runCli = async (
   arguments_: readonly string[],

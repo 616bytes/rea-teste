@@ -255,19 +255,28 @@ it("does not keep a failed run, so a repeat runs again", async () => {
 });
 
 it("drops the least recently used text beyond the session's 16 MiB budget", async () => {
-  // Two 9 MiB texts exceed the budget together, so keeping one drops the other.
+  // Two 6 MiB texts fit the budget and a third does not. Reading main again
+  // makes parse the least recently used, so keeping broken drops parse.
   const { kuna, open } = await session("rea-kuna-single-kept-budget-", {
     project: "hang",
-    decompilePadding: 9 * 1024 * 1024,
+    decompilePadding: 6 * 1024 * 1024,
   });
   const client = open();
   try {
-    for (const procedure of ["main", "parse", "parse", "main"])
+    for (const procedure of [
+      "main",
+      "parse",
+      "main",
+      "broken",
+      "main",
+      "parse",
+    ])
       await run(client, "procedure_pseudo_code", { procedure });
     expect((await decompilesOf(kuna)).map(({ argv }) => argv[2])).toEqual([
       "0x1000",
       "0x1040",
-      "0x1000",
+      "0x1080",
+      "0x1040",
     ]);
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });

@@ -126,7 +126,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     } catch (cause: unknown) {
       const lateCleanup = () =>
         opening.then(
-          (lateOpened) => lateOpened.cleanup.close(undefined, options.signal),
+          (lateOpened) => lateOpened.cleanup.close(),
           () => undefined,
         );
       options.retainCleanup?.(() =>
@@ -247,6 +247,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         enabled: new Set(scenario.capture.events),
         secrets,
         network: scenario.capture.network,
+        limits: scenario.capture.limits,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
       return new PlaywrightScenarioSession(opened, {

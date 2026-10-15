@@ -73,7 +73,13 @@ import { comparePngScreenshots } from "./PngVisualDiff.js";
 
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-const CLEANUP_DOMAINS = ["Network", "Debugger", "Runtime", "Page"] as const;
+const CLEANUP_DOMAINS = [
+  "Network",
+  "Debugger",
+  "Runtime",
+  "Page",
+  "WebMCP",
+] as const;
 
 /** Passive browser observation through a selected user-owned CDP endpoint. */
 export class CdpBrowserProvider implements BrowserObservationPort {
@@ -167,6 +173,11 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         ),
       );
     } catch (cause: unknown) {
+      // fetchWebSourceMaps rethrows the exact abort reason. Preserve cancellation
+      // even when a caller supplied an AnalysisError as that reason.
+      if (options.signal?.aborted === true && cause === options.signal.reason) {
+        return err(new AnalysisCancelledError("analyze_web_bundle", { cause }));
+      }
       return err(providerError(cause, "analyze_web_bundle", options.signal));
     }
   }
@@ -305,6 +316,7 @@ const withTargetSession = async <
     options.signal,
   );
   let targetSession: CdpTargetSession | undefined;
+  let output: Output;
   try {
     const target = authorizeTarget(endpoint.discovery, input);
     const scopedInput = scopeToTargetOrigin(input, target);
@@ -322,7 +334,7 @@ const withTargetSession = async <
             operation,
             options.signal,
           );
-    return await work({
+    output = await work({
       connection: targetSession.connection,
       sessionId: targetSession.sessionId,
       discovery: endpoint.discovery,
@@ -341,6 +353,14 @@ const withTargetSession = async <
     // An unadopted browser socket is closed here; closing is idempotent.
     await endpoint.connection?.close();
   }
+
+  // Cancellation during teardown must not publish the completed observation.
+  // Errors from work or cleanup still propagate through the try/finally above.
+  if (options.signal?.aborted === true)
+    throw new AnalysisCancelledError(operation, {
+      cause: options.signal.reason,
+    });
+  return output;
 };
 
 const selectTargets = (

@@ -8,6 +8,20 @@ import { createWebTextArtifact } from "./webContentArtifact.js";
 
 const origin = "https://app.example.test";
 
+it("retains standalone GraphQL Source operations in captured scripts", () => {
+  const result = analyzeCapturedWebBundle(
+    inspection(`
+    const source = {
+      body: "query GetUser { user { id } }",
+      locationOffset: { line: 1, column: 1 },
+    };
+  `),
+  );
+  expect(result.observations.endpoints).toEqual([
+    expect.objectContaining({ value: "GetUser", mechanism: "graphql:query" }),
+  ]);
+});
+
 it.each([
   {
     kind: "recovered",
@@ -161,7 +175,9 @@ describe("web bundle analyzer", () => {
       trust: "page-declared-untrusted",
     });
   });
+});
 
+describe("web bundle source-map coverage", () => {
   it("reports unavailable source maps as partial without dropping requested maps", () => {
     const analysis = analyzeCapturedWebBundle(inspection("export {};"), {
       status: "unavailable",
@@ -189,6 +205,18 @@ describe("web bundle analyzer", () => {
         "One or more requested source maps were unavailable or incomplete",
       affected_script_keys: [`scr_${"1".repeat(64)}`],
     });
+  });
+
+  it("keeps map-less captured source complete when no maps were requested", () => {
+    const analysis = analyzeCapturedWebBundle(inspection("export {};"), {
+      status: "not_requested",
+      requested: 0,
+      processed: 0,
+      items: [],
+    });
+
+    expect(analysis.completeness.status).toBe("complete");
+    expect(analysis.unknowns).toEqual([]);
   });
 
   it("rejects inconsistent source-map coverage counts", () => {

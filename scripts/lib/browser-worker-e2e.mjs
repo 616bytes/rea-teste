@@ -9,10 +9,8 @@ import { writeFile, readFile, mkdtemp, rm } from "node:fs/promises";
 import { chromium } from "playwright-core";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import {
-  startRuntimeFixtureBrowser,
-  closeRuntimeFixtureResources,
-} from "./browser-runtime-fixture-lifecycle.mjs";
+import { startRuntimeFixtureBrowser } from "./browser-runtime-fixture-lifecycle.mjs";
+import { closeVerifierResources } from "./verifier-cleanup.mjs";
 import { startWorkerSite } from "../fixtures/browser-worker-site.mjs";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { webPageInspectionSchema } from "../../dist/domain/browserObservationSchemas.js";
@@ -379,7 +377,7 @@ export async function verifyBrowserWorkers(
     primaryError = cause;
     throw cause;
   } finally {
-    await closeRuntimeFixtureResources(
+    await closeVerifierResources(
       [
         () => client?.close(),
         () => transport?.close(),

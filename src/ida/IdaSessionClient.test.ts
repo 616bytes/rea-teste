@@ -9,6 +9,7 @@ import {
 import { IdaSessionClient } from "./IdaSessionClient.js";
 import { functionDossierSchema } from "../domain/hopperValues.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { WindowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
@@ -150,6 +151,40 @@ describe("headless IDA producer pagination", () => {
       native_value_flow: null,
     });
     await client.close();
+  });
+});
+
+describe("headless IDA modern string search failures", () => {
+  it("rejects a completed empty page that carries an embedded producer error", async () => {
+    const { producer, client } = await fixture("headless");
+    producer.overrideCall = (name) =>
+      name === "find_regex"
+        ? {
+            matches: [],
+            cursor: { done: true },
+            error: "Search fixture failed",
+          }
+        : undefined;
+    try {
+      const failed = await client.execute("search_strings", {
+        pattern: "needle",
+      });
+      expect(failed.ok).toBe(false);
+      if (!failed.ok) {
+        expect(failed.error).toBeInstanceOf(AnalysisProtocolError);
+        expect(failed.error.message).toContain("Search fixture failed");
+      }
+      producer.overrideCall = (name) =>
+        name === "find_regex"
+          ? { matches: [], cursor: { done: true } }
+          : undefined;
+      const empty = await client.execute("search_strings", {
+        pattern: "needle",
+      });
+      expect(empty.ok && empty.value.result).toEqual([]);
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
   });
 });
 

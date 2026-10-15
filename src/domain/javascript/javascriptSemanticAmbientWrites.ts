@@ -324,13 +324,13 @@ export const isUnmodifiedGlobalReference = (
   if (
     !selected &&
     (projection.length !== 0 ||
-      !t.isMemberExpression(node) ||
+      (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node)) ||
       semanticStaticPropertyKey(node.property, node.computed) !== name)
   )
     return false;
   const root = selected
     ? node
-    : t.isMemberExpression(node)
+    : t.isMemberExpression(node) || t.isOptionalMemberExpression(node)
       ? unwrapJavaScriptExpression(node.object).node
       : node;
   const namespace = globalObjectName(root, state);

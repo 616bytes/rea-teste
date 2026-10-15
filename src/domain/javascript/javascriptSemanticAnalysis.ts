@@ -22,6 +22,7 @@ import {
   semanticStaticPropertyKey,
   semanticWriteTargets,
   unwrapJavaScriptExpression,
+  javaScriptOptionalOperandsMayBeSkipped,
 } from "./javascriptAstValues.js";
 import type {
   JavaScriptSemanticAnalysisState,
@@ -945,32 +946,15 @@ const isSkippedBranch = (parent: t.Node, child: t.Node): boolean => {
   if (t.isOptionalCallExpression(parent) || t.isCallExpression(parent))
     return (
       parent.arguments.includes(child as t.Expression) &&
-      optionalCallArgumentsMayBeSkipped(parent)
+      javaScriptOptionalOperandsMayBeSkipped(parent)
     );
   if (t.isOptionalMemberExpression(parent))
-    return parent.optional && parent.computed && child === parent.property;
+    return (
+      parent.computed &&
+      child === parent.property &&
+      javaScriptOptionalOperandsMayBeSkipped(parent)
+    );
   return false;
-};
-
-const optionalCallArgumentsMayBeSkipped = (
-  call: t.CallExpression | t.OptionalCallExpression,
-): boolean => {
-  if (t.isOptionalCallExpression(call) && call.optional) return true;
-  let callee: t.Node = call.callee;
-  while (true) {
-    // Parentheses terminate optional-chain short-circuiting. In particular,
-    // `(foo?.bar)(arg)` evaluates arg before attempting the call.
-    if (callee.extra?.parenthesized === true) return false;
-    if (t.isOptionalMemberExpression(callee)) {
-      if (callee.optional) return true;
-      callee = callee.object;
-    } else if (t.isMemberExpression(callee)) callee = callee.object;
-    else if (t.isOptionalCallExpression(callee)) {
-      if (callee.optional) return true;
-      callee = callee.callee;
-    } else if (t.isCallExpression(callee)) callee = callee.callee;
-    else return false;
-  }
 };
 
 const bindOuterDeclaration = (

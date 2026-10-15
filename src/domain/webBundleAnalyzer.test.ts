@@ -939,6 +939,111 @@ describe("web bundle promise aliases and object evaluation", () => {
   );
 });
 
+describe("web bundle reached waits and exact expression results", () => {
+  it.each([
+    "if (false) await pending;",
+    "false && (await pending);",
+    "true || (await pending);",
+    "while (false) await pending;",
+    "for (; false;) await pending;",
+    "if (unknown) await pending;",
+  ])(
+    "does not let a skipped or unproven wait constrain initialization: %s",
+    (wait) => {
+      const expected = [
+        { value: "wss://example.test/reached", mechanism: "call:Socket" },
+      ];
+      expect(
+        socketEndpoints(
+          `const pending = (async () => { await 0; new Socket("wss://example.test/reached"); })(); ${wait} const Socket = globalThis.WebSocket;`,
+        ),
+      ).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    "if (true) await pending;",
+    "if (false) {} else await pending;",
+    "false || (await pending);",
+    "null ?? (await pending);",
+    "if (false) await pending; await pending;",
+  ])("retains a proven wait constraint: %s", (wait) => {
+    expect(
+      socketEndpoints(
+        `const pending = (async () => { await 0; new Socket("wss://example.test/invalid"); })(); ${wait} const Socket = globalThis.WebSocket;`,
+      ),
+    ).toEqual([[], []]);
+  });
+
+  it.each([
+    "const value = (await ready).value;",
+    "const value = object[await ready];",
+    "const value = (await ready)?.value;",
+  ])("carries completed member operands into a later read: %s", (prefix) => {
+    const expected = [
+      { value: "wss://example.test/member", mechanism: "call:Socket" },
+    ];
+    expect(
+      socketEndpoints(
+        `(async () => { ${prefix} new Socket("wss://example.test/member"); })(); const Socket = globalThis.WebSocket;`,
+      ),
+    ).toEqual([expected, expected]);
+  });
+
+  it.each([
+    "null?.[await ready];",
+    "null?.value[await ready];",
+    "null?.method(await ready);",
+  ])("does not promote a skipped optional operand: %s", (prefix) => {
+    expect(
+      socketEndpoints(
+        `(async () => { ${prefix} new Socket("wss://example.test/invalid"); })(); const Socket = globalThis.WebSocket;`,
+      ),
+    ).toEqual([[], []]);
+  });
+
+  it.each(["globalThis?.WebSocket", "globalThis?.[`WebSocket`]"])(
+    "retains a non-null ambient capture: %s",
+    (capture) => {
+      const expected = [
+        { value: "wss://example.test/optional", mechanism: "call:Socket" },
+      ];
+      expect(
+        socketEndpoints(
+          `const Socket = ${capture}; new Socket("wss://example.test/optional");`,
+        ),
+      ).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    'const globalThis = {}; const Socket = globalThis?.WebSocket; new Socket("wss://example.test/invalid");',
+    'globalThis.WebSocket = class {}; const Socket = globalThis?.WebSocket; new Socket("wss://example.test/invalid");',
+    'let connect; (connect = () => new Socket("wss://example.test/invalid"))(); const Socket = globalThis.WebSocket;',
+    'let connect; ((connect = function () { new Socket("wss://example.test/invalid"); }) as any).call(null); const Socket = globalThis.WebSocket;',
+    'let Client; new (Client = class { socket = new Socket("wss://example.test/invalid"); })(); const Socket = globalThis.WebSocket;',
+  ])(
+    "rejects overwritten identities and eager assignment results: %s",
+    (source) => {
+      expect(socketEndpoints(source)).toEqual([[], []]);
+    },
+  );
+
+  it("retains a stored assignment result as deferred", () => {
+    const expected = [
+      {
+        value: "wss://example.test/stored-assignment",
+        mechanism: "call:Socket",
+      },
+    ];
+    expect(
+      socketEndpoints(
+        'let connect; connect = () => new Socket("wss://example.test/stored-assignment"); const Socket = globalThis.WebSocket; connect();',
+      ),
+    ).toEqual([expected, expected]);
+  });
+});
+
 describe("web bundle constructor captures before repeating writes", () => {
   it.each([
     "for (const item of items) { ws.WebSocket = class {}; }",

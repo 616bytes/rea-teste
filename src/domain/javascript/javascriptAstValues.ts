@@ -59,6 +59,36 @@ export const readExactJavaScriptLiteral = (
   return { found: false };
 };
 
+/** Whether a call's arguments or optional member's key can be short-circuited. */
+export const javaScriptOptionalOperandsMayBeSkipped = (
+  node:
+    | t.CallExpression
+    | t.OptionalCallExpression
+    | t.OptionalMemberExpression,
+): boolean => {
+  if (
+    (t.isOptionalCallExpression(node) || t.isOptionalMemberExpression(node)) &&
+    node.optional
+  )
+    return true;
+  let current: t.Node = t.isOptionalMemberExpression(node)
+    ? node.object
+    : node.callee;
+  for (;;) {
+    // Parentheses end an inherited optional chain, not the node's own chain.
+    if (current.extra?.parenthesized === true) return false;
+    if (t.isOptionalMemberExpression(current)) {
+      if (current.optional) return true;
+      current = current.object;
+    } else if (t.isMemberExpression(current)) current = current.object;
+    else if (t.isOptionalCallExpression(current)) {
+      if (current.optional) return true;
+      current = current.callee;
+    } else if (t.isCallExpression(current)) current = current.callee;
+    else return false;
+  }
+};
+
 /** Read an identifier or literal property name without evaluating syntax. */
 export const propertyName = (node: t.Node): string => {
   if (t.isIdentifier(node)) return node.name;

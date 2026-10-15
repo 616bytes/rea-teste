@@ -3,6 +3,7 @@ import * as t from "@babel/types";
 import {
   unwrapJavaScriptExpression,
   semanticStaticPropertyName,
+  javaScriptOptionalOperandsMayBeSkipped,
 } from "./javascriptAstValues.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { semanticAwaitedResultSites } from "./javascriptSemanticPromiseIdentity.js";
@@ -23,8 +24,11 @@ const webSocketOuterExpression = (
   for (;;) {
     const parent = state.parentsByNode.get(current);
     if (
-      t.isSequenceExpression(parent) &&
-      parent.expressions.at(-1) === current
+      (t.isSequenceExpression(parent) &&
+        parent.expressions.at(-1) === current) ||
+      (t.isAssignmentExpression(parent) &&
+        parent.operator === "=" &&
+        parent.right === current)
     ) {
       current = parent;
       identity = parent;
@@ -108,6 +112,12 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   if (t.isVariableDeclarator(node))
     return t.isNode(node.init) ? [node.init] : [];
   if (t.isUnaryExpression(node)) return [node.argument];
+  if (t.isMemberExpression(node))
+    return node.computed ? [node.object, node.property] : [node.object];
+  if (t.isOptionalMemberExpression(node))
+    return node.computed && !javaScriptOptionalOperandsMayBeSkipped(node)
+      ? [node.object, node.property]
+      : [node.object];
   if (t.isAssignmentExpression(node) && node.operator === "=")
     return [node.left, node.right];
   if (t.isClass(node))

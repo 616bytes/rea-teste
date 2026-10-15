@@ -173,6 +173,14 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       'const pending = (async () => { await ready; new Socket("wss://example.test/pending-initialized"); })(); const Socket = globalThis.WebSocket; await pending;',
     "import-alias.mjs":
       'const pending = import("ws"); const { WebSocket: Socket } = await pending; new Socket("wss://example.test/import-alias");',
+    "skipped-wait.mjs":
+      'const pending = (async () => { await 0; new Socket("wss://example.test/skipped-wait"); })(); if (false) await pending; const Socket = globalThis.WebSocket;',
+    "member-await.js":
+      '(async () => { const value = (await ready).value; new Socket("wss://example.test/member-await"); })(); const Socket = globalThis.WebSocket;',
+    "optional-capture.js":
+      'const Socket = globalThis?.WebSocket; new Socket("wss://example.test/optional-capture");',
+    "assigned-call.js":
+      'let connect; (connect = () => new Socket("wss://example.test/tdz-assignment"))(); const Socket = globalThis.WebSocket;',
     "await-branch.js":
       '(async () => { if (await ready) new Socket("wss://example.test/branch-continuation"); })(); const Socket = globalThis.WebSocket;',
     "immediate-sequence.js":
@@ -213,9 +221,12 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/generator-body",
       "wss://example.test/import-alias",
       "wss://example.test/loop-continuation",
+      "wss://example.test/member-await",
       "wss://example.test/object-continuation",
+      "wss://example.test/optional-capture",
       "wss://example.test/pending-initialized",
       "wss://example.test/sequence-capture",
+      "wss://example.test/skipped-wait",
     ]);
     for (const [path, source, line] of [
       ["assignment", "await-inputs.js", 1],
@@ -234,6 +245,9 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       ["object-continuation", "object-await.js", 1],
       ["pending-initialized", "pending-after.mjs", 1],
       ["import-alias", "import-alias.mjs", 1],
+      ["skipped-wait", "skipped-wait.mjs", 1],
+      ["member-await", "member-await.js", 1],
+      ["optional-capture", "optional-capture.js", 1],
     ] as const) {
       const observation = observations.find(
         ({ properties }) => properties.value === `wss://example.test/${path}`,

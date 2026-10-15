@@ -6,6 +6,7 @@ import {
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
+import { createUnconditionalEvaluationProof } from "./javascriptSymbolicControlFlow.js";
 
 /** Exact local promise-result identity; aliases do not prove execution order. */
 export const semanticPromiseResultIdentity = (
@@ -66,7 +67,9 @@ export const semanticAwaitedResultSites = (
   let index = awaitedResults.get(state);
   if (index === undefined) {
     index = new WeakMap();
+    const reached = createUnconditionalEvaluationProof(state.parentsByNode);
     for (const awaited of state.awaitSites) {
+      if (!reached(awaited)) continue;
       const result = semanticPromiseResultIdentity(awaited.argument, state);
       if (result === undefined) continue;
       const sites = index.get(result.node) ?? [];

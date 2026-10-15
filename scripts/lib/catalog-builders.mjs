@@ -19,6 +19,11 @@ export const toolFamilyCatalog = (sources) => {
       contracts: [
         ...sources.nativeContracts.NATIVE_TOOL_CONTRACTS,
         ...sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+        ...sources.cutterContracts.CUTTER_TOOL_CONTRACTS,
+        ...sources.reverseEngineeringContracts
+          .REVERSE_ENGINEERING_TOOL_CONTRACTS,
+        ...sources.gdbContracts.GDB_TOOL_CONTRACTS,
+        ...sources.rizinDebugContracts.RIZIN_DEBUG_TOOL_CONTRACTS,
       ],
     },
     {
@@ -163,8 +168,35 @@ export const providerCatalog = (sources) => {
     reconciliationContracts,
     observationContracts,
     activeContracts,
+    fuseContracts,
   } = electronContractSlices(sources);
   return [
+    {
+      identity: sources.cutterProvider.CUTTER_PROVIDER_IDENTITY,
+      contracts: sources.cutterContracts.CUTTER_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.objdumpProvider.OBJDUMP_PROVIDER_IDENTITY,
+      contracts:
+        sources.reverseEngineeringContracts.REVERSE_ENGINEERING_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_with_objdump",
+        ),
+    },
+    {
+      identity: sources.rizinProvider.RIZIN_PROVIDER_IDENTITY,
+      contracts:
+        sources.reverseEngineeringContracts.REVERSE_ENGINEERING_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "execute_rizin_command",
+        ),
+    },
+    {
+      identity: sources.gdbProvider.GDB_PROVIDER_IDENTITY,
+      contracts: sources.gdbContracts.GDB_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.rizinDebugProvider.RIZIN_DEBUGGER_PROVIDER_IDENTITY,
+      contracts: sources.rizinDebugContracts.RIZIN_DEBUG_TOOL_CONTRACTS,
+    },
     {
       identity: sources.fridaProvider.FRIDA_PROVIDER_IDENTITY,
       contracts: sources.fridaContracts.FRIDA_TOOL_CONTRACTS,
@@ -186,6 +218,13 @@ export const providerCatalog = (sources) => {
     {
       identity: sources.idaProvider.IDA_PROVIDER_IDENTITY,
       contracts: declaredContracts("ida", sources.idaProvider.IDA_OPERATIONS),
+    },
+    {
+      identity: sources.kunaProvider.KUNA_PROVIDER_IDENTITY,
+      contracts: declaredContracts(
+        "kuna",
+        sources.kunaProvider.KUNA_OPERATIONS,
+      ),
     },
     {
       identity: sources.nativeProvider.NATIVE_MACOS_PROVIDER_IDENTITY,
@@ -234,6 +273,10 @@ export const providerCatalog = (sources) => {
     {
       identity: sources.rustProvider.RUST_BINARY_PROVIDER_IDENTITY,
       contracts: sources.rustContracts.RUST_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.electronFuseProvider.ELECTRON_FUSE_PROVIDER_IDENTITY,
+      contracts: fuseContracts,
     },
     {
       identity: sources.sqliteDomain.SQLITE_PROVIDER_IDENTITY,
@@ -399,17 +442,23 @@ const electronContractSlices = (sources) => {
       ({ name }) =>
         name !== "analyze_javascript_application" &&
         name !== "reconcile_javascript_runtime" &&
-        name !== "capture_electron_scenario",
+        name !== "capture_electron_scenario" &&
+        name !== "inspect_electron_fuses",
     );
   const activeContracts =
     sources.electronContracts.ELECTRON_TOOL_CONTRACTS.filter(
       ({ name }) => name === "capture_electron_scenario",
     );
+  const fuseContracts =
+    sources.electronContracts.ELECTRON_TOOL_CONTRACTS.filter(
+      ({ name }) => name === "inspect_electron_fuses",
+    );
   if (
     applicationContracts.length !== 1 ||
     reconciliationContracts.length !== 1 ||
     observationContracts.length !== 2 ||
-    activeContracts.length !== 1
+    activeContracts.length !== 1 ||
+    fuseContracts.length !== 1
   )
     throw new Error("Electron provider capability ownership drifted");
   return {
@@ -417,5 +466,6 @@ const electronContractSlices = (sources) => {
     reconciliationContracts,
     observationContracts,
     activeContracts,
+    fuseContracts,
   };
 };

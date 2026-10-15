@@ -70,6 +70,117 @@ const connect = async (
   return { client, session };
 };
 
+it("advertises typed module references and preserves portable/retained Evidence parity", async () => {
+  const { client, session } = await connect();
+  const parent = analysisViewJavaScriptEvidence(
+    analysisViewJavaScriptAnalysisWithSource(),
+  );
+  const recorded = session.recordEvidence(parent);
+  if (!recorded.ok) throw recorded.error;
+  const { ajv, inputSchema, outputSchema } = await advertisedMcpToolSchemas(
+    client,
+    "inspect_analysis_view",
+  );
+  const view = {
+    kind: "javascript",
+    collection: "modules",
+    projection: "references",
+    where: { path: "renderer.js" },
+    limit: 1,
+  };
+  const outputs = [];
+  for (const source of [
+    { kind: "inline", evidence: parent },
+    { kind: "retained-evidence", evidence_id: parent.evidence_id },
+  ]) {
+    expect(ajv.validate(inputSchema, { source, view })).toBe(true);
+    expect(
+      ajv.validate(inputSchema, {
+        source,
+        view: { ...view, where: { glob: "*" } },
+      }),
+    ).toBe(false);
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: { source, view },
+    });
+    expect(response.isError).not.toBe(true);
+    expect(
+      ajv.validate(outputSchema, response.structuredContent),
+      JSON.stringify(ajv.errors),
+    ).toBe(true);
+    const evidence = parseEvidence(response.structuredContent);
+    expect(evidence).toMatchObject({
+      evidence_links: [parent.evidence_id],
+      normalized_result: {
+        kind: "javascript",
+        rows: [
+          {
+            path: "renderer.js",
+            identity: expect.any(Object),
+            basis: expect.any(Array),
+          },
+        ],
+        coverage: { exhausted: true },
+      },
+    });
+    expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
+    outputs.push(evidence.normalized_result);
+  }
+  expect(outputs[0]).toEqual(outputs[1]);
+});
+
+it("projects opted-in query names identically from retained and portable MCP Evidence", async () => {
+  const { client, session } = await connect();
+  const capture = analysisViewCaptureFixture();
+  capture.records = capture.records.slice(0, 2);
+  capture.total_records = 2;
+  capture.records.forEach((record, index) => {
+    record.reported = {
+      request: {
+        method: "GET",
+        url:
+          index === 0
+            ? "https://api.test/products?a+b=one&a%2Bb=two&=three&a+b=four"
+            : "https://api.test/products?a+b=five&snow=six#ignored",
+      },
+    };
+  });
+  const parent = analysisViewCaptureEvidence(capture);
+  const retained = session.recordEvidence(parent);
+  if (!retained.ok) throw retained.error;
+  const outputs = [];
+  for (const source of [
+    { kind: "inline", evidence: parent },
+    { kind: "retained-evidence", evidence_id: parent.evidence_id },
+  ]) {
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source,
+        view: { kind: "api-surface", include_query_parameter_names: true },
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    const evidence = parseEvidence(response.structuredContent);
+    expect(evidence.normalized_result).toMatchObject({
+      parent_evidence_id: parent.evidence_id,
+      groups: [
+        {
+          query_parameter_names: [
+            { name: "", record_ordinals: [0] },
+            { name: "a b", record_ordinals: [0, 1] },
+            { name: "a+b", record_ordinals: [0] },
+            { name: "snow", record_ordinals: [1] },
+          ],
+        },
+      ],
+    });
+    outputs.push(evidence.normalized_result);
+  }
+  expect(outputs[0]).toEqual(outputs[1]);
+});
+
 it("discovers an oversized native dossier by exact metadata and reads its retained view", async () => {
   const { client, session } = await connect();
   const advertised = (await client.listTools()).tools.find(

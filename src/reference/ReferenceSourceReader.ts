@@ -64,12 +64,17 @@ const readSource = async (
       ? {}
       : { shouldExclude: options.shouldExclude }),
     entries: [],
+    exclusions: [],
     pending: [{ path: canonicalRoot }],
     bytesRead: 0,
   };
   const traversal = await traverse(state);
   if (!isAborted(state.signal))
-    reconcileSymlinksBelowUnreadableDirectories(state.entries, state.signal);
+    reconcileSymlinksBelowUnreadableDirectories(
+      state.entries,
+      state.exclusions,
+      state.signal,
+    );
   state.entries.sort((left, right) =>
     compareUnicodeCodePoints(left.path, right.path),
   );
@@ -90,12 +95,21 @@ const readSource = async (
  */
 export const reconcileSymlinksBelowUnreadableDirectories = (
   entries: ReferenceSourceEntry[],
+  exclusions: TraversalState["exclusions"] = [],
   signal?: AbortSignal,
 ): void => {
   const observedPaths = new Set(entries.map(({ path }) => path));
+  const excludedPaths = new Set(exclusions.map(({ path }) => path));
+  const excludedDirectories = new Set(
+    exclusions.flatMap(({ path, kind }) =>
+      kind === "directory" ? [path] : [],
+    ),
+  );
   const unreadableDirectories = new Set(
     entries.flatMap((entry) =>
-      entry.status === "failed" && entry.kind === "directory"
+      entry.status === "failed" &&
+      entry.kind === "directory" &&
+      entry.code === "io"
         ? [entry.path]
         : [],
     ),
@@ -109,6 +123,8 @@ export const reconcileSymlinksBelowUnreadableDirectories = (
       entry.kind !== "symlink" ||
       entry.targetState !== "internal" ||
       observedPaths.has(entry.target) ||
+      excludedPaths.has(entry.target) ||
+      hasAncestor(entry.target, excludedDirectories, signal) ||
       !hasUnreadableAncestor(entry.target, unreadableDirectories, signal)
     )
       continue;
@@ -128,13 +144,21 @@ const hasUnreadableAncestor = (
   unreadableDirectories: ReadonlySet<string>,
   signal: AbortSignal | undefined,
 ): boolean => {
+  return hasAncestor(target, unreadableDirectories, signal);
+};
+
+const hasAncestor = (
+  target: string,
+  paths: ReadonlySet<string>,
+  signal: AbortSignal | undefined,
+): boolean => {
   for (
     let candidate = posix.dirname(target);
     candidate !== "." && candidate !== "/";
     candidate = posix.dirname(candidate)
   ) {
     if (isAborted(signal)) return false;
-    if (unreadableDirectories.has(candidate)) return true;
+    if (paths.has(candidate)) return true;
   }
   return false;
 };

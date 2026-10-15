@@ -87,7 +87,9 @@ describe("reference source reader reconciliation", () => {
       targetState: "internal",
     });
   });
+});
 
+describe("reference source reader reconciliation boundaries", () => {
   it("does not reconcile after cancellation", () => {
     const entries: ReferenceSourceEntry[] = [
       {
@@ -108,7 +110,61 @@ describe("reference source reader reconciliation", () => {
     const controller = new AbortController();
     controller.abort();
 
-    reconcileSymlinksBelowUnreadableDirectories(entries, controller.signal);
+    reconcileSymlinksBelowUnreadableDirectories(entries, [], controller.signal);
+
+    expect(entries[0]).toMatchObject({
+      status: "read",
+      targetState: "internal",
+    });
+  });
+
+  it("retains targets covered by recorded exclusions", () => {
+    const entries: ReferenceSourceEntry[] = [
+      {
+        status: "read",
+        kind: "symlink",
+        path: "alias.txt",
+        target: "hidden/target.txt",
+        targetState: "internal",
+      },
+      {
+        status: "failed",
+        kind: "directory",
+        path: "hidden",
+        code: "io",
+        message: "EIO",
+      },
+    ];
+
+    reconcileSymlinksBelowUnreadableDirectories(entries, [
+      { path: "hidden/target.txt", kind: "file" },
+    ]);
+
+    expect(entries[0]).toMatchObject({
+      status: "read",
+      targetState: "internal",
+    });
+  });
+
+  it("does not treat a changed directory as unreadable", () => {
+    const entries: ReferenceSourceEntry[] = [
+      {
+        status: "read",
+        kind: "symlink",
+        path: "alias.txt",
+        target: "changed/target.txt",
+        targetState: "internal",
+      },
+      {
+        status: "failed",
+        kind: "directory",
+        path: "changed",
+        code: "changed",
+        message: "Directory changed while it was read",
+      },
+    ];
+
+    reconcileSymlinksBelowUnreadableDirectories(entries);
 
     expect(entries[0]).toMatchObject({
       status: "read",

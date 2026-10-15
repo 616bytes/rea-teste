@@ -8,6 +8,7 @@ import { inspectJadxProvider } from "./android/JadxDoctor.js";
 import { inspectSystemGhidraProvider } from "./ghidra/GhidraDoctor.js";
 import { inspectIdaRegistration } from "./ida/IdaDoctor.js";
 import { inspectAngrRegistration } from "./angr/AngrDoctor.js";
+import { inspectKunaProvider } from "./kuna/KunaDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { parseJebMcpEndpoint } from "./jeb/JebMcpEndpoint.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
@@ -50,6 +51,7 @@ export const createSystemDoctorHost = (
         mcpConfigPath: environment.REA_ANGR_MCP_CONFIG,
         pythonPath: environment.REA_ANGR_PYTHON,
       }),
+      await inspectKunaProvider(environment),
     ],
     linuxDemoRuntimeCheck: () => inspectLinuxPrivateDisplay(environment),
   });

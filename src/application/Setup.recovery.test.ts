@@ -158,6 +158,50 @@ describe("setup workflow", () => {
   });
 });
 
+describe("setup recovery advice", () => {
+  it.each([
+    { platform: "win32", supported: false },
+    { platform: "darwin", supported: true },
+    { platform: "darwin", supported: false },
+    { platform: "linux", supported: true },
+    { platform: "linux", supported: false },
+  ] as const)(
+    "keeps recovery advice within $platform installer support ($supported)",
+    async ({ platform, supported }) => {
+      const host = new FakeSetupHost(platform);
+      host.version = supported ? "14.5" : "11.7";
+      host.distribution = {
+        id: supported ? "ubuntu" : "debian",
+        versionId: supported ? "24.04" : "13",
+        packageFamily: "deb",
+        hopperSetupSupported: supported,
+      };
+      host.clients = [
+        {
+          name: "grok_bot",
+          configPath: "/fixture/grokbot",
+          format: "unsupported",
+        },
+      ];
+
+      const result = await runSetup(
+        { ...options(true), clientIds: ["grok_bot"], installSkill: false },
+        host,
+      );
+
+      expect(result.status).toBe("needs_human");
+      expect(result.doctor.healthy).toBe(false);
+      expect(result.remediation).toContain("hosted computer");
+      expect(result.remediation?.includes("--install-hopper")).toBe(supported);
+      expect(result.plannedActions).toEqual([]);
+      expect(result.appliedActions).toEqual([]);
+      expect(host.hopperInstalls).toBe(0);
+      expect(host.configurations).toBe(0);
+      expect(host.skillInstalls).toBe(0);
+    },
+  );
+});
+
 describe("setup failure cleanup projection", () => {
   it("projects a configuration failure together with failed host cleanup", async () => {
     const configPath = "/fixture/home/vscode/settings.json";

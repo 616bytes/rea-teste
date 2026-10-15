@@ -18,6 +18,46 @@ afterEach(async () => {
 });
 
 describe("setup with configured but unavailable providers", () => {
+  it("keeps Windows manual-client recovery free of unsupported Hopper installation advice", async () => {
+    const root = await createTestTempDirectory("rea-setup-windows-recovery-");
+    roots.push(root);
+    const createHost = () =>
+      systemSetupHost(
+        createDoctorHostFixture({
+          platform: "win32",
+          homeDirectory: root,
+          validTarget: () => Promise.resolve(false),
+          executable: () => Promise.resolve(false),
+          providerInspections: () => Promise.resolve([]),
+          clientRegistrations: () => Promise.resolve([]),
+        }),
+        {},
+      );
+    const selected = {
+      ...options(true),
+      clientIds: ["grok_bot"],
+      installSkill: false,
+    };
+
+    const result = await runSetup(selected, createHost());
+    expect(result.status).toBe("needs_human");
+    expect(result.doctor.healthy).toBe(false);
+    expect(result.remediation).toContain("hosted computer");
+    expect(result.remediation).not.toContain("--install-hopper");
+    expect(result.plannedActions).toEqual([]);
+    expect(result.appliedActions).toEqual([]);
+
+    const explicitlyRequested = await runSetup(
+      { ...selected, installHopper: true },
+      createHost(),
+    );
+    expect(explicitlyRequested.status).toBe("needs_human");
+    expect(explicitlyRequested.appliedActions).toEqual([]);
+    expect(explicitlyRequested.remediation).toBe(
+      "REA supports Hopper on macOS and selected 64-bit Linux distributions.",
+    );
+  });
+
   it("preserves Hopper settings and makes the second setup perform no writes", async () => {
     const root = await createTestTempDirectory("rea-setup-unavailable-");
     roots.push(root);

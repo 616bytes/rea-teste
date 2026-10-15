@@ -26,6 +26,7 @@ import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 /** Read-only setup facts shared by client selection and preflight. */
 export interface SetupDiscovery {
   readonly initialDoctor: Awaited<ReturnType<SetupHost["doctor"]>>;
+  readonly hopperInstallSupported: boolean;
   readonly installHopper: boolean;
   readonly clients: readonly SetupClient[];
   readonly detectedClientIds: readonly string[];
@@ -119,6 +120,7 @@ export const discoverSetupState = async (input: {
     .map(({ client }) => client);
   return {
     initialDoctor,
+    hopperInstallSupported,
     installHopper,
     clients,
     detectedClientIds: [...detectedIds],

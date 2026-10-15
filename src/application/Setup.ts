@@ -357,6 +357,7 @@ const runSetupWorkflow = async (
   const remediation = combineRemediation(
     finalSetupRemediation(
       host.platform,
+      planDiscovery.hopperInstallSupported,
       appliedActions.includes("installed_hopper"),
       doctor.healthy,
       hopperPath,
@@ -518,6 +519,7 @@ const combineRemediation = (
 
 const finalSetupRemediation = (
   platform: NodeJS.Platform,
+  hopperInstallSupported: boolean,
   installedHopper: boolean,
   healthy: boolean,
   hopperPath: string | undefined,
@@ -525,7 +527,7 @@ const finalSetupRemediation = (
   if (platform === "darwin" && installedHopper)
     return "Open Hopper, choose its demo mode or activate a license, then rerun rea doctor --json.";
   if (healthy) return undefined;
-  return hopperPath === undefined
+  return hopperPath === undefined && hopperInstallSupported
     ? "Hopper is optional for non-Hopper providers. Rerun with --yes --install-hopper for deep native analysis."
     : "Run rea doctor and apply each reported remediation.";
 };

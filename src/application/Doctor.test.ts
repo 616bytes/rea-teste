@@ -4,6 +4,8 @@ import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
 import { runDoctor, systemDoctorHost } from "./Doctor.js";
+import { err } from "../domain/result.js";
+import { HopperReleaseError } from "./HopperReleaseFeed.js";
 
 describe("doctor Hopper startup timeout", () => {
   it("keeps a configured invalid Hopper timeout unhealthy in an audit with an available peer", async () => {
@@ -702,12 +704,20 @@ describe("doctor Linux and Hopper discovery", () => {
             hopperSetupSupported: true,
           }),
         executable: (candidate) => Promise.resolve(candidate === path),
-        supportedLinuxHopper: () => Promise.resolve(false),
+        inspectLinuxHopper: () =>
+          Promise.resolve(
+            err(
+              new HopperReleaseError(
+                "unsupported_hopper_build",
+                "Unverified fixture build",
+              ),
+            ),
+          ),
       }),
     );
     expect(
       result.checks.find(({ name }) => name === "hopper-version")?.remediation,
-    ).toContain("Unset or update HOPPER_LAUNCHER_PATH");
+    ).toContain("Check HOPPER_LAUNCHER_PATH");
   });
 });
 

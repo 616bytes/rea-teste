@@ -1,11 +1,21 @@
 import { createHash } from "node:crypto";
-import { mkdir, realpath, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  realpath,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
+import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
 import { snapshotFirmware } from "../../../src/firmware/FirmwareFiles.js";
+import { associateWasmGlue } from "../../../src/wasm/WasmGlueAdapter.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 // POSIX follows `link` before `..`, so `link/../x` names target/x, not ./x.
@@ -36,6 +46,33 @@ describe.skipIf(process.platform === "win32")(
         path,
         sha256: createHash("sha256").update(selected).digest("hex"),
       });
+    });
+
+    it("rejects a trailing separator after a regular file", async () => {
+      const root = await layout("rea-trailing-separator-");
+      // A real executable, so only the trailing separator can reject it.
+      await copyFile(process.execPath, join(root, "sample"));
+      expect((await parseBinaryTarget(`${root}/sample`)).ok).toBe(true);
+      for (const path of [`${root}/sample/`, `${root}/sample/.`]) {
+        const target = await parseBinaryTarget(path);
+        expect(target.ok, path).toBe(false);
+      }
+    });
+
+    it("matches WASM glue to a module selected through link/..", () => {
+      const root = "/app";
+      const selected = absoluteCallerPath("link/../module.wasm", {
+        cwd: root,
+      });
+      expect(
+        associateWasmGlue(
+          'fetch("./module.wasm");',
+          absoluteCallerPath("link/../glue.js", { cwd: root }),
+          [selected, "/app/module.wasm"],
+        ).references,
+      ).toMatchObject([
+        { association: "local-path-candidate", candidate_paths: [selected] },
+      ]);
     });
 
     it("creates the output directory the filesystem selects", async () => {

@@ -4,9 +4,11 @@ import { posix, win32 } from "node:path";
  * Make a caller-selected local path absolute without changing which file it
  * names. POSIX resolves `..` after following the preceding symlink, so lexical
  * normalization of `link/../file` can select a different file. On POSIX, only
- * `.` segments and repeated or trailing separators are removed, which never
- * change the named file; every `..` is kept for the filesystem to resolve.
- * Win32 resolves `..` lexically, so normalizing there is exact.
+ * interior `.` segments and repeated separators are removed, which never
+ * change the named file; every `..` is kept for the filesystem to resolve, and
+ * a trailing `/` or `/.` keeps its directory requirement as one trailing `/`.
+ * A relative `cwd` is made absolute the same way. Win32 resolves `..`
+ * lexically, so normalizing there is exact.
  */
 export const absoluteCallerPath = (
   path: string,
@@ -16,9 +18,15 @@ export const absoluteCallerPath = (
   }: { readonly cwd?: string; readonly platform?: NodeJS.Platform } = {},
 ): string => {
   if (platform === "win32") return win32.resolve(cwd, path);
-  const absolute = posix.isAbsolute(path) ? path : `${cwd}/${path}`;
-  const segments = absolute
+  if (!posix.isAbsolute(path)) {
+    const base = posix.isAbsolute(cwd)
+      ? cwd
+      : absoluteCallerPath(cwd, { platform });
+    return absoluteCallerPath(`${base}/${path}`, { platform });
+  }
+  const segments = path
     .split("/")
     .filter((segment) => segment !== "" && segment !== ".");
-  return `/${segments.join("/")}`;
+  const directory = /\/\.?$/u.test(path) && segments.length > 0;
+  return `/${segments.join("/")}${directory ? "/" : ""}`;
 };

@@ -66,7 +66,7 @@ const fixture = (
   return { host, manifest, bytes, loads: () => loads };
 };
 
-describe("packaged Windows native admission", () => {
+describe("packaged Windows native compatibility", () => {
   it.each([true, false])(
     "preserves protocol stdin capability %s alongside existing job controls",
     (protocolStdin) => {
@@ -127,6 +127,30 @@ describe("packaged Windows native admission", () => {
     },
   );
 
+  it("names the absent packaged manifest and matching-version recovery", () => {
+    const value = fixture();
+    const missing = Object.assign(new Error("file absent"), {
+      code: "ENOENT",
+    });
+    expect(
+      loadWindowsNativeAuthority({
+        ...value.host,
+        readManifest: () => {
+          throw missing;
+        },
+      }),
+    ).toMatchObject({
+      available: false,
+      failureStage: "artifact",
+      reason: expect.stringMatching(
+        /Missing packaged Windows native file native\/windows\/build\/manifest\.json \(ENOENT\).*native\/windows\/build\/rea-windows-x64\.node.*native\/windows\/README\.md/u,
+      ),
+    });
+    expect(value.loads()).toBe(0);
+  });
+});
+
+describe("packaged Windows native artifact validation", () => {
   it("rejects tampering even when the original file was a valid PE image", () => {
     const value = fixture();
     value.bytes[127] = 1;
@@ -221,29 +245,6 @@ describe("packaged Windows native admission", () => {
 });
 
 describe("source checkout artifact diagnostics", () => {
-  it("names the missing artifact and its recovery path on a source checkout (ENOENT), instead of a raw filesystem error", () => {
-    const value = fixture();
-    const missing = Object.assign(
-      new Error(
-        "ENOENT: no such file or directory, open '...\\rea\\native\\windows\\build\\manifest.json'",
-      ),
-      { code: "ENOENT" },
-    );
-    const loaded = loadWindowsNativeAuthority({
-      ...value.host,
-      readManifest: () => {
-        throw missing;
-      },
-    });
-    expect(loaded.available).toBe(false);
-    expect(loaded).toMatchObject({ failureStage: "artifact" });
-    if (loaded.available) throw new Error("unreachable");
-    expect(loaded.reason).toContain("native/windows/build");
-    expect(loaded.reason).toContain("build:windows-native");
-    expect(loaded.reason).toContain("npm tarball");
-    expect(loaded.reason).not.toContain("ENOENT");
-  });
-
   it("keeps the original failure text for non-missing artifact errors", () => {
     const value = fixture();
     const corrupted = Object.assign(new Error("boom"), { code: "EIO" });

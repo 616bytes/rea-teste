@@ -123,10 +123,10 @@ Evidence IDs, artifact/provider identities, analysis-profile digests and native
 procedure metadata. Optional `filters` match exact `evidence_id`, `operation`,
 `target_sha256`, `analysis_profile_digest` or `procedure_address`. A `query`
 filter selects records whose `normalized_result` or `limitations` strings contain
-every whitespace-separated term (at most 1024 characters and 16 distinct
-terms), literally and case-insensitively: text is uppercased then lowercased, so
-symbol variants such as micro sign, long s, final sigma and `ß`/`SS` match their
-capitals. Terms may match different strings. Object members are searched in canonical key order. Each record then reports `query_match` (otherwise null): the
+every whitespace-separated term (at most 1024 Unicode code points and 16
+distinct terms), literally under Unicode simple case folding: `σ`/`ς`/`Σ`,
+`µ`/`Μ`, `ſ`/`s` and `ß`/`ẞ` match, dotless `ı` stays distinct, and `ß` does not
+expand to `SS`. Terms may match different strings. Object members are searched in canonical key order. Each record then reports `query_match` (otherwise null): the
 JSON Pointer `path` of the first string containing the first term, a `snippet` of
 about 30 characters on each side, and `match_start`/`match_length` into that
 snippet in UTF-16 code units (`offset_units`). Use a discovered

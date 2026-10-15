@@ -6,8 +6,20 @@ import type { EvidenceBundle } from "./evidenceBundle.js";
 
 /** Each distinct term rescans every retained string, so terms bound search CPU. */
 export const MAX_QUERY_TERMS = 16;
-/** Bounds token allocation before a query is split into terms. */
+/** Bounds token allocation before a query is split into terms, in code points. */
 export const MAX_QUERY_LENGTH = 1024;
+
+/** Count code points up to the bound without allocating. */
+const withinCodePoints = (text: string, limit: number): boolean => {
+  let count = 0;
+  for (
+    let i = 0;
+    i < text.length;
+    i += isHighSurrogate(text, i) && isLowSurrogate(text, i + 1) ? 2 : 1
+  )
+    if (++count > limit) return false;
+  return true;
+};
 
 /** Exact retained-record selectors; selection never resolves a provider address. */
 export const evidenceRecordFiltersSchema = z.strictObject({
@@ -20,14 +32,17 @@ export const evidenceRecordFiltersSchema = z.strictObject({
     .string()
     .trim()
     .min(1)
-    .max(MAX_QUERY_LENGTH, { abort: true })
+    .refine((query) => withinCodePoints(query, MAX_QUERY_LENGTH), {
+      message: `query accepts at most ${MAX_QUERY_LENGTH} Unicode code points`,
+      abort: true,
+    })
     .refine(
       (query) => new Set(query.split(/\s+/)).size <= MAX_QUERY_TERMS,
       `query accepts at most ${MAX_QUERY_TERMS} distinct terms; each term rescans retained text`,
     )
     .optional()
     .describe(
-      "Case-insensitive literal text search; every whitespace-separated term must occur in some string of the record's normalized result or limitations (terms may match different strings)",
+      "Literal text search under Unicode simple case folding; every whitespace-separated term must occur in some string of the record's normalized result or limitations (terms may match different strings). At most 1024 Unicode code points and 16 distinct terms.",
     ),
 });
 export type EvidenceRecordFilters = z.infer<typeof evidenceRecordFiltersSchema>;
@@ -150,31 +165,18 @@ const SNIPPET_CONTEXT = 30;
 const pointerSegment = (key: string | number): string =>
   String(key).replaceAll("~", "~0").replaceAll("/", "~1");
 
-/** Code units folded at once; bounds the expanded intermediate per slice. */
-const FOLD_CHUNK = 65_536;
-
-const foldSlice = (text: string): string =>
-  text.toUpperCase().toLowerCase().replaceAll("ς", "σ").replaceAll("ß", "ss");
+/** Escape regular-expression syntax characters valid to escape in `u` mode. */
+const escapeLiteral = (term: string): string =>
+  term.replace(/[\\^$.*+?()[\]{}|/]/g, "\\$&");
 
 /**
- * Caseless form for literal matching: uppercasing first merges symbol variants
- * such as micro sign, long s and Greek letterforms with their capitals; final
- * sigma folds to sigma and sharp s (either case) to "ss". Each code point folds
- * to the same length alone as inside a string, which snippet offsets rely on.
- * Long strings fold in bounded slices, so only the folded result grows with
- * input size.
+ * Case-insensitive literal matcher using ECMAScript's `iu` canonicalization,
+ * which is Unicode simple case folding (σ/ς/Σ, µ/μ, ſ/s, ẞ/ß match; dotless ı
+ * stays distinct; ß does not expand to "ss"). Matching runs on the original
+ * string, so no folded copy is allocated and offsets are source offsets.
  */
-export const foldCase = (text: string): string => {
-  if (text.length <= FOLD_CHUNK) return foldSlice(text);
-  let folded = "";
-  for (let start = 0; start < text.length;) {
-    let end = Math.min(text.length, start + FOLD_CHUNK);
-    if (splitsPair(text, end)) end++;
-    folded += foldSlice(text.slice(start, end));
-    start = end;
-  }
-  return folded;
-};
+export const literalMatcher = (term: string): RegExp =>
+  new RegExp(escapeLiteral(term), "iu");
 
 const isHighSurrogate = (text: string, index: number): boolean => {
   const unit = text.charCodeAt(index);
@@ -193,39 +195,21 @@ const splitsPair = (text: string, index: number): boolean =>
   isLowSurrogate(text, index) &&
   isHighSurrogate(text, index - 1);
 
-/**
- * Excerpt the original text around a folded match. Source offsets are derived
- * by folding code points only up to the end of the match.
- */
+/** Excerpt the original text around a match without splitting a code point. */
 const snippetAt = (
   text: string,
-  foldedStart: number,
-  foldedLength: number,
+  matchStart: number,
+  matchLength: number,
 ): Omit<QueryMatch, "path"> => {
-  const foldedEnd = foldedStart + foldedLength;
-  let folded = 0;
-  let matchStart = -1;
-  let matchEnd = text.length;
-  for (let i = 0; i < text.length;) {
-    const char = String.fromCodePoint(text.codePointAt(i)!);
-    const next = folded + foldCase(char).length;
-    if (matchStart === -1 && next > foldedStart) matchStart = i;
-    i += char.length;
-    folded = next;
-    if (folded >= foldedEnd) {
-      matchEnd = i;
-      break;
-    }
-  }
   let start = Math.max(0, matchStart - SNIPPET_CONTEXT);
   if (splitsPair(text, start)) start--;
-  let end = Math.min(text.length, matchEnd + SNIPPET_CONTEXT);
+  let end = Math.min(text.length, matchStart + matchLength + SNIPPET_CONTEXT);
   if (splitsPair(text, end)) end++;
   const prefix = start > 0 ? "…" : "";
   return {
     snippet: prefix + text.slice(start, end) + (end < text.length ? "…" : ""),
     match_start: prefix.length + matchStart - start,
-    match_length: matchEnd - matchStart,
+    match_length: matchLength,
     offset_units: "utf16-code-units",
   };
 };
@@ -238,7 +222,7 @@ type Frame = {
 };
 
 /**
- * Match every folded term against string leaves of the record's result and
+ * Match every term against string leaves of the record's result and
  * limitations, reporting the first leaf containing the first term. Containers
  * are walked by index so wide arrays are never copied onto the stack.
  * ponytail: one `includes` per pending term per leaf; cost is terms × text,
@@ -246,18 +230,18 @@ type Frame = {
  */
 const matchQuery = (
   evidence: Evidence,
-  terms: readonly string[],
+  terms: readonly RegExp[],
 ): QueryMatch | undefined => {
   const pending = new Set(terms);
   let first: QueryMatch | undefined;
   const visit = (value: unknown, path: string): Frame | undefined => {
     if (typeof value === "string") {
-      const folded = foldCase(value);
-      for (const term of pending)
-        if (folded.includes(term)) pending.delete(term);
-      const at = first === undefined ? folded.indexOf(terms[0]!) : -1;
-      if (at !== -1)
-        first = { path, ...snippetAt(value, at, terms[0]!.length) };
+      for (const term of pending) if (term.test(value)) pending.delete(term);
+      if (first === undefined) {
+        const hit = terms[0]!.exec(value);
+        if (hit !== null)
+          first = { path, ...snippetAt(value, hit.index, hit[0].length) };
+      }
       return undefined;
     }
     if (Array.isArray(value))
@@ -313,7 +297,9 @@ export const summarizeEvidenceBundle = (
   const terms =
     filters.query === undefined
       ? undefined
-      : [...new Set(filters.query.split(/\s+/).filter(Boolean).map(foldCase))];
+      : [...new Set(filters.query.split(/\s+/).filter(Boolean))].map(
+          literalMatcher,
+        );
   const records: EvidenceBundleSummary["records"] = [];
   for (const evidence of bundle.records) {
     if (

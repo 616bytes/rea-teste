@@ -186,7 +186,7 @@ it("rejects queries with more distinct terms than the search budget", () => {
   ).toBe(true);
 });
 
-it("folds symbol variants with their capitals and bounds query length", () => {
+it("uses Unicode simple case folding and bounds query code points", () => {
   const summarize = (text: string, query: string) =>
     summarizeEvidenceBundle(
       createEvidenceBundle([
@@ -203,42 +203,18 @@ it("folds symbol variants with their capitals and bounds query length", () => {
       { query },
     ).records[0]?.query_match;
   expect(summarize("µservice", "ΜSERVICE")?.snippet).toBe("µservice");
-  const strasse = summarize("in Straße 1", "STRASSE")!;
-  expect(
-    strasse.snippet.slice(
-      strasse.match_start,
-      strasse.match_start + strasse.match_length,
-    ),
-  ).toBe("Straße");
-  expect(
-    evidenceRecordFiltersSchema.safeParse({
-      query: "x ".repeat(MAX_QUERY_LENGTH),
-    }).success,
-  ).toBe(false);
-});
-
-it("folds both sharp s cases and slices long strings consistently", () => {
-  const summarize = (text: string, query: string) =>
-    summarizeEvidenceBundle(
-      createEvidenceBundle([
-        createEvidence(
-          {
-            path: "/fixtures/app.asar",
-            format: "asar",
-            sha256: "1".repeat(64),
-          },
-          { id: "provider", name: "Provider", version: "1" },
-          { operation: "list_strings", parameters: {}, result: [text] },
-        ),
-      ]),
-      { query },
-    ).records[0]?.query_match;
   expect(summarize("STRAẞE", "straße")?.snippet).toBe("STRAẞE");
   expect(summarize("straße", "STRAẞE")?.snippet).toBe("straße");
-  expect(summarize("ẞ", "SS")?.snippet).toBe("ẞ");
-  // A surrogate pair straddling the slice boundary stays whole.
-  const long = summarize("x".repeat(65_535) + "😀MATCH", "😀match")!;
+  // Dotless i stays distinct; sharp s does not expand (full folding).
+  expect(summarize("fıle", "file")).toBeUndefined();
+  expect(summarize("Straße", "STRASSE")).toBeUndefined();
+  // Regular-expression syntax in a term is literal.
+  expect(summarize("call a.b(c)[0]", "A.B(C)[0]")?.match_length).toBe(9);
+  const astral = "😀".repeat(MAX_QUERY_LENGTH);
+  expect(evidenceRecordFiltersSchema.safeParse({ query: astral }).success).toBe(
+    true,
+  );
   expect(
-    long.snippet.slice(long.match_start, long.match_start + long.match_length),
-  ).toBe("😀MATCH");
+    evidenceRecordFiltersSchema.safeParse({ query: astral + "😀" }).success,
+  ).toBe(false);
 });

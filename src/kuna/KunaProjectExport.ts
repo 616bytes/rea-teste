@@ -287,7 +287,10 @@ export const readKunaExport = async (
   >
 > => {
   const functions = await scanKunaProjectSource(
-    createReadStream(join(directory, files.c.path), (signal === undefined ? {} : { signal })),
+    createReadStream(
+      join(directory, files.c.path),
+      signal === undefined ? {} : { signal },
+    ),
     summary,
   );
   if (!functions.ok) return functions;

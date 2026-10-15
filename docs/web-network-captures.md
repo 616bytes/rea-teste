@@ -77,6 +77,23 @@ only from its validation copy, only for this declared producer and a valid IPv6
 literal. Invalid addresses, bracketed IPv4, ports and zone identifiers remain
 validation failures. Producer declarations do not authenticate origin.
 
+Native mitmproxy decoding requires a caller-supplied **mitmdump 12.2.3 on
+Linux**. Set its absolute executable path:
+
+```sh
+REA_MITMDUMP_COMMAND=/absolute/mitmdump rea inspect-web-network-capture /absolute/session.mitm mitmproxy --json
+```
+
+REA does not install mitmproxy. Its owned process uses a private configuration
+directory, `--no-server`, and the unchanged upstream `mitmproxy.io.tnetstring`
+decoder. It does not run `FlowReader` migrations or convert native states to
+HAR. Raw IDs, state versions, flow types, backup states and unknown extensions
+are preserved without synthesizing connections, timestamps or content. The
+tested upstream source is tag `v12.2.3`, commit
+`6c09d56e4c29a92f5ad01b03199977584b8ea14f`; other native tool versions return
+an explicit unsupported-profile diagnostic. Non-Linux native decoding is not
+supported by this adapter.
+
 ## Android interception as a manual composition
 
 REA can inspect an HTTP Toolkit HAR after the caller exports it, but it does
@@ -103,23 +120,6 @@ extensions as historical container evidence, while HTTP records remain those
 in `log.entries`; it does not infer that a TLS failure was bypassed or that a
 request reached the target. The extension is producer evidence, not a runtime
 attribution or an authorization record.
-
-Native mitmproxy decoding requires a caller-supplied **mitmdump 12.2.3 on
-Linux**. Set its absolute executable path:
-
-```sh
-REA_MITMDUMP_COMMAND=/absolute/mitmdump rea inspect-web-network-capture /absolute/session.mitm mitmproxy --json
-```
-
-REA does not install mitmproxy. Its owned process uses a private configuration
-directory, `--no-server`, and the unchanged upstream `mitmproxy.io.tnetstring`
-decoder. It does not run `FlowReader` migrations or convert native states to
-HAR. Raw IDs, state versions, flow types, backup states and unknown extensions
-are preserved without synthesizing connections, timestamps or content. The
-tested upstream source is tag `v12.2.3`, commit
-`6c09d56e4c29a92f5ad01b03199977584b8ea14f`; other native tool versions return
-an explicit unsupported-profile diagnostic. Non-Linux native decoding is not
-supported by this adapter.
 
 ## Reading Fiddler captures (`.saz`)
 

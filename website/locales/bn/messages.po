@@ -14912,12 +14912,12 @@ msgstr "সেটআপের বিকল্প"
 #: website/public/showcase/th04/index.html:797
 msgctxt "shared"
 msgid "Contributors"
-msgstr ""
+msgstr "অবদানকারী"
 
 #: website/public/contributors/index.html:108
 msgctxt "page:contributors/index.html"
 msgid "Skip to content"
-msgstr ""
+msgstr "মূল কনটেন্টে যান"
 
 #. {ph0}: <a href="../">
 #. {ph1}: </a>
@@ -14925,17 +14925,17 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:contributors/index.html"
 msgid "{ph0}Home{ph1} / Contributors"
-msgstr ""
+msgstr "{ph0}হোম{ph1} / অবদানকারী"
 
 #: website/public/contributors/index.html:201
 msgctxt "page:contributors/index.html"
 msgid "Built together."
-msgstr ""
+msgstr "একসঙ্গে গড়া।"
 
 #: website/public/contributors/index.html:202
 msgctxt "page:contributors/index.html"
 msgid "Thank you to everyone who helps make REA better."
-msgstr ""
+msgstr "REA-কে আরও ভালো করে তুলতে যাঁরা সাহায্য করেন, তাঁদের সবাইকে ধন্যবাদ।"
 
 #: website/public/contributors/index.html:203
 msgctxt "page:contributors/index.html"
@@ -14943,26 +14943,27 @@ msgid ""
 "Code, documentation, tests, translations and ideas — there are many ways to "
 "contribute."
 msgstr ""
+"কোড, ডকুমেন্টেশন, test, অনুবাদ ও নতুন ধারণা — অবদান রাখার অনেক উপায় আছে।"
 
 #: website/public/contributors/index.html:208
 msgctxt "page:contributors/index.html"
 msgid "How to contribute"
-msgstr ""
+msgstr "কীভাবে অবদান রাখবেন"
 
 #: website/public/contributors/index.html:213
 msgctxt "page:contributors/index.html"
 msgid "Join the conversation →"
-msgstr ""
+msgstr "আলোচনায় যোগ দিন →"
 
 #: website/public/contributors/index.html:223
 msgctxt "page:contributors/index.html"
 msgid "Contributors"
-msgstr ""
+msgstr "অবদানকারী"
 
 #: website/public/contributors/index.html:225
 msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
-msgstr ""
+msgstr "অবদানকারী খুঁজুন"
 
 #. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
 #. {ph1}: </a>
@@ -14971,39 +14972,43 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:contributors/index.html"
 msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr ""
+msgstr "{ph0}GitHub-এর অবদানকারী তালিকা{ph1} থেকে · হালনাগাদ: {ph2}।"
 
 #: website/public/contributors/index.html:1109
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
 msgstr ""
+"মিলে যায় এমন কোনো অবদানকারী পাওয়া যায়নি। অন্য কোনো username দিয়ে চেষ্টা "
+"করুন।"
 
 #: website/public/contributors/index.html:6
 msgctxt "page:contributors/index.html"
 msgid "Contributors · REA"
-msgstr ""
+msgstr "অবদানকারী · REA"
 
 #: website/public/contributors/index.html:7
 msgctxt "page:contributors/index.html"
 msgid ""
 "Meet the people who contribute code, documentation, tests and ideas to REA."
 msgstr ""
+"যাঁরা কোড, ডকুমেন্টেশন, test ও নতুন ধারণা দিয়ে REA-তে অবদান রাখেন, তাঁদের "
+"সঙ্গে পরিচিত হোন।"
 
 #: website/public/contributors/index.html:226
 msgctxt "page:contributors/index.html"
 msgid "GitHub username"
-msgstr ""
+msgstr "GitHub username"
 
 #: website/public/contributors/index.html:1129
 msgctxt "page:contributors/index.html"
 msgid "Back to top"
-msgstr ""
+msgstr "উপরে ফিরে যান"
 
 #: website/public/assets/contributors.js:21
 #, python-brace-format
 msgctxt "runtime"
 msgid "Contributors: {count}"
-msgstr ""
+msgstr "অবদানকারী: {count}"
 
 #, python-brace-format
 #~ msgctxt "page:first-investigation/index.html"

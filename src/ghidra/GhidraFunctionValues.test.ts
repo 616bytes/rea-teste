@@ -79,24 +79,36 @@ describe("Ghidra decompiler removed blocks", () => {
       },
       limitations: [],
     });
+  const completeness = (
+    removedBlocks: JsonValue[],
+    unmappedWarnings: string[] = [],
+  ) => ({ removed_blocks: removedBlocks, unmapped_warnings: unmappedWarnings });
 
   it("keeps each removed block's range and instructions apart from the pseudocode", () => {
-    const completeness = {
-      removed_blocks: [
+    const observed = completeness(
+      [
         removedBlock,
         { start: "0x401020", end: null, reason: "unreachable", assembly: [] },
       ],
-    };
-    expect(parseRemoved(completeness)).toMatchObject({
+      ["overlay,0x10"],
+    );
+    expect(parseRemoved(observed)).toMatchObject({
       ok: true,
-      value: { value: { decompiler_completeness: completeness } },
+      value: { value: { decompiler_completeness: observed } },
     });
   });
 
   it("distinguishes an inspected decompilation with no removals from an absent record", () => {
-    expect(parseRemoved({ removed_blocks: [] })).toMatchObject({
+    expect(parseRemoved(completeness([]))).toMatchObject({
       ok: true,
-      value: { value: { decompiler_completeness: { removed_blocks: [] } } },
+      value: {
+        value: {
+          decompiler_completeness: {
+            removed_blocks: [],
+            unmapped_warnings: [],
+          },
+        },
+      },
     });
     const parsed = parseFunctionValueFixture(
       "analyze_function",
@@ -113,16 +125,20 @@ describe("Ghidra decompiler removed blocks", () => {
     ["assembly without a mapped range", { ...removedBlock, end: null }],
     ["an unexpected field", { ...removedBlock, warning: "raw text" }],
   ])("rejects %s", (_label, block) => {
-    expect(parseRemoved({ removed_blocks: [block] })).toMatchObject({
+    expect(parseRemoved(completeness([block]))).toMatchObject({
       ok: false,
       error: { _tag: "AnalysisOutputError" },
     });
   });
 
-  it("rejects duplicate removed-block starts", () => {
+  it("rejects duplicate starts and a record without unmapped warnings", () => {
     expect(
-      parseRemoved({ removed_blocks: [removedBlock, removedBlock] }),
+      parseRemoved(completeness([removedBlock, removedBlock])),
     ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+    expect(parseRemoved({ removed_blocks: [] })).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError" },
+    });
   });
 });
 

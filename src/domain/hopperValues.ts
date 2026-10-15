@@ -442,11 +442,16 @@ export const functionDossierSchema = z
             })
             .strict(),
         ),
+        unmapped_warnings: z
+          .array(z.string())
+          .describe(
+            'Removal warnings ("<space>,<offset>") whose address could not be mapped into this function; their code is also missing from the pseudocode.',
+          ),
       })
       .strict()
       .exactOptional()
       .describe(
-        "Blocks the decompiler removed from the pseudocode. Absent when the provider produced no pseudocode or does not report removals; an empty removed_blocks means none were reported.",
+        "Blocks the decompiler removed from the pseudocode. Absent when the provider produced no pseudocode or does not report removals; empty removed_blocks and unmapped_warnings mean none were reported.",
       ),
     facet_availability: z
       .object({

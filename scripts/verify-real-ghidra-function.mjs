@@ -686,6 +686,7 @@ export async function verifyDecompilerRemovedBlock(client) {
   });
   const removedProcedure = requireProcedure(names, "rea_removed_block");
   const reachableProcedure = requireProcedure(names, "rea_reachable_block");
+  const decoyProcedure = requireProcedure(names, "rea_warning_text");
   const removed = await functionCall(client, "analyze_function", {
     procedure: removedProcedure.address,
   });
@@ -699,6 +700,7 @@ export async function verifyDecompilerRemovedBlock(client) {
   const end = offset(removed.procedure.address, 0x18);
   const blocks = removed.decompiler_completeness?.removed_blocks;
   if (
+    removed.decompiler_completeness?.unmapped_warnings.length !== 0 ||
     blocks?.length !== 1 ||
     blocks[0].start !== start ||
     blocks[0].end !== end ||
@@ -729,11 +731,29 @@ export async function verifyDecompilerRemovedBlock(client) {
   const reachable = await functionCall(client, "analyze_function", {
     procedure: reachableProcedure.address,
   });
-  if (reachable.decompiler_completeness?.removed_blocks.length !== 0)
+  const noRemovals = (dossier) =>
+    dossier.decompiler_completeness?.removed_blocks.length === 0 &&
+    dossier.decompiler_completeness.unmapped_warnings.length === 0;
+  if (!noRemovals(reachable))
     throw new Error(
       `Reachable control reported removed blocks: ${JSON.stringify(reachable.decompiler_completeness)}`,
     );
-  return { removed_block: blocks[0], control_removed_blocks: 0 };
+  // Pseudocode text that spells a removal warning is not a decompiler warning.
+  const decoy = await functionCall(client, "analyze_function", {
+    procedure: decoyProcedure.address,
+  });
+  if (!noRemovals(decoy))
+    throw new Error(
+      `Warning text in a string was reported as a removed block: ${JSON.stringify(decoy.decompiler_completeness)}`,
+    );
+  return {
+    removed_block: blocks[0],
+    control_removed_blocks: 0,
+    decoy_removed_blocks: 0,
+    decoy_rendered_in_pseudocode: decoy.pseudocode.includes(
+      "Removing unreachable block",
+    ),
+  };
 }
 
 /**

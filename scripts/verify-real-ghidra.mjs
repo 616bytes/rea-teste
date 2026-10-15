@@ -148,14 +148,20 @@ try {
   await exec(compiler, [...jumpTableFlags, sourcePath, "-o", jumpTablePath]);
   const crossTargets = [];
   if (aarch64JumpTableOnly) {
+    // The host compiler's default target produces Mach-O only on an arm64
+    // macOS host; Linux arm64 hosts would otherwise emit ELF labeled Mach-O.
+    const aarch64ObjectFormats = [
+      "elf",
+      ...(expectedNativeTarget.format === "mach-o" &&
+      expectedNativeTarget.architecture === "arm64"
+        ? ["mach-o"]
+        : []),
+    ];
     const relativeSource = fileURLToPath(
       new URL("../tests/conformance/ghidra/relative-switch.S", import.meta.url),
     );
     for (const entrySize of [1, 2]) {
-      for (const format of [
-        "elf",
-        ...(expectedNativeTarget.architecture === "arm64" ? ["mach-o"] : []),
-      ]) {
+      for (const format of aarch64ObjectFormats) {
         const targetPath = join(
           fixtureRoot,
           `relative-${entrySize}-${format}.o`,
@@ -182,10 +188,7 @@ try {
       ),
     );
     for (const selectorBias of [0, 2, 10]) {
-      for (const format of [
-        "elf",
-        ...(expectedNativeTarget.architecture === "arm64" ? ["mach-o"] : []),
-      ]) {
+      for (const format of aarch64ObjectFormats) {
         const targetPath = join(
           fixtureRoot,
           `relative-signed-${selectorBias}-${format}.o`,
@@ -211,10 +214,7 @@ try {
         import.meta.url,
       ),
     );
-    for (const format of [
-      "elf",
-      ...(expectedNativeTarget.architecture === "arm64" ? ["mach-o"] : []),
-    ]) {
+    for (const format of aarch64ObjectFormats) {
       const targetPath = join(fixtureRoot, `removed-block-${format}.o`);
       await exec(clang, [
         ...(format === "elf" ? ["--target=aarch64-linux-gnu"] : []),

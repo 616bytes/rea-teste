@@ -56,11 +56,15 @@ block the decompiler removed as unreachable, so its code is missing from the
 pseudocode even though the listing still disassembles it. Entries give the
 `start` from Ghidra's `Removing unreachable block` warning, the exclusive `end`
 of the listing basic block that contains it (or `null` when the listing has no
-block there), `reason: "unreachable"`, and the block's `assembly`. An empty
-array means the decompiler reported no removals; an absent field means the
+block there), `reason: "unreachable"`, and the block's `assembly`. Only
+whole-line header warnings before the function body count, and a warning whose
+address cannot be mapped into the analyzed function is kept as
+`"<space>,<offset>"` in `unmapped_warnings` instead of being dropped. Empty
+arrays mean the decompiler reported no removals; an absent field means the
 provider produced no pseudocode or does not report removals. Ghidra also adds a
-limitation when blocks were removed, and native `pseudocode` views list it in
-`unknowns`. The `decompiler_removed_blocks` native view pages the entries.
+limitation when blocks were removed, and native `pseudocode` views list both
+kinds in `unknowns`. The `decompiler_removed_blocks` native view pages the
+mapped entries.
 
 `compare_functions` keeps a dimension `unknown` with null counts when either
 side declares a required facet unavailable. An empty legacy facet without a

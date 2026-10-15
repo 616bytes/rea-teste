@@ -1548,7 +1548,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 : function.getBody().isEmpty() ? "Ghidra has no function body to decompile."
                 : "Ghidra completed decompilation without returning pseudocode."
         ));
-        RemovedBlocks removedBlocks = pseudocode == null ? null : decompilerRemovedBlocks(pseudocode);
+        RemovedBlocks removedBlocks = pseudocode == null ? null : decompilerRemovedBlocks(function, pseudocode);
         if (pseudocode == null) {
             pseudocode = "";
         }
@@ -1600,6 +1600,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (removedBlocks != null) {
             JsonObject completeness = new JsonObject();
             completeness.add("removed_blocks", removedBlocks.blocks());
+            JsonArray unmappedWarnings = new JsonArray();
+            for (String warning : removedBlocks.unmapped()) {
+                unmappedWarnings.add(warning);
+            }
+            completeness.add("unmapped_warnings", unmappedWarnings);
             result.add("decompiler_completeness", completeness);
         }
         // Successful full queries distinguish collected empty sets from missing facts.
@@ -1657,8 +1662,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         if (removedBlocks != null && !removedBlocks.unmapped().isEmpty()) {
             limitations.add(
-                "Ghidra reported removed blocks at addresses REA could not map to the program: " +
-                String.join("; ", removedBlocks.unmapped())
+                "Ghidra reported " + removedBlocks.unmapped().size() +
+                " removed block(s) at addresses REA could not map into this function, so the pseudocode " +
+                "omits code that decompiler_completeness.removed_blocks cannot locate; " +
+                "decompiler_completeness.unmapped_warnings lists them."
             );
         }
         result.add("limitations", limitations);
@@ -3345,23 +3352,33 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     // Funcdata::removeUnreachableBlocks emits one header warning per removed block,
     // naming the block's first address as "<space>,<AddrSpace::printRaw offset>".
+    // PrintC renders header warnings as whole comment lines before the body's "{".
     private static final Pattern DECOMPILER_REMOVED_BLOCK = Pattern.compile(
-        "WARNING: Removing unreachable block \\(([^,()\\s]+),0x([0-9A-Fa-f]+)(?:\\+([0-9]+))?\\)"
+        "^[ \\t]*/\\* WARNING: Removing unreachable block \\(([^,()\\s]+),0x([0-9A-Fa-f]+)(?:\\+([0-9]+))?\\) \\*/[ \\t]*\\r?$",
+        Pattern.MULTILINE
     );
+    private static final Pattern DECOMPILED_BODY_OPEN = Pattern.compile("^\\{[ \\t]*\\r?$", Pattern.MULTILINE);
 
     private record RemovedBlocks(JsonArray blocks, List<String> unmapped) {}
 
-    private RemovedBlocks decompilerRemovedBlocks(String pseudocode) throws Exception {
+    /** Header text before the function body, where string literals cannot appear. */
+    private static String decompiledHeader(String pseudocode) {
+        Matcher body = DECOMPILED_BODY_OPEN.matcher(pseudocode);
+        return body.find() ? pseudocode.substring(0, body.start()) : pseudocode;
+    }
+
+    private RemovedBlocks decompilerRemovedBlocks(Function function, String pseudocode) throws Exception {
         BasicBlockModel model = new BasicBlockModel(currentProgram, false);
         TreeMap<Address, JsonObject> removed = new TreeMap<>();
         List<String> unmapped = new ArrayList<>();
-        Matcher matcher = DECOMPILER_REMOVED_BLOCK.matcher(pseudocode);
+        Matcher matcher = DECOMPILER_REMOVED_BLOCK.matcher(decompiledHeader(pseudocode));
         while (matcher.find()) {
             monitor.checkCancelled();
             Address start = decompilerWarningAddress(
                 matcher.group(1), matcher.group(2), matcher.group(3));
-            if (start == null) {
-                unmapped.add(matcher.group(1) + "," + "0x" + matcher.group(2));
+            if (start == null || !function.getBody().contains(start)) {
+                String warning = matcher.group(1) + ",0x" + matcher.group(2);
+                if (!unmapped.contains(warning)) unmapped.add(warning);
                 continue;
             }
             if (removed.containsKey(start)) {

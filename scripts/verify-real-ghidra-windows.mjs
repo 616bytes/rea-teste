@@ -143,8 +143,8 @@ try {
     target.value.sha256,
     profile.value.profile.digest,
   );
-  const languagePrefix = fixture.languagePrefix;
-  if (!started.value.target.language_id.startsWith(languagePrefix))
+  const languageId = fixture.languageId;
+  if (started.value.target.language_id !== languageId)
     throw new Error("Windows fixture imported with the wrong Ghidra language");
   coordinates = client.diagnostics();
   assertRuntimeCoordinates(coordinates, target.value.sha256);

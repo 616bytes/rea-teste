@@ -38,12 +38,12 @@ export const windowsGhidraFixtureOptions = (arguments_) => {
       architecture
     ],
     filename: `rea-ghidra-windows${architecture === "x86_64" ? "" : `-${architecture}`}.${dll ? "dll" : "exe"}`,
-    languagePrefix:
+    languageId:
       architecture === "arm"
-        ? "ARM:LE:32:"
+        ? "ARM:LE:32:v8"
         : architecture === "arm64"
-          ? "AARCH64:LE:64:"
-          : `x86:LE:${pe32 ? 32 : 64}:`,
+          ? "AARCH64:LE:64:v8A"
+          : `x86:LE:${pe32 ? 32 : 64}:default`,
     callerAddress: `0x${(imageBase + 0x1000n).toString(16)}`,
     calleeAddress: `0x${(imageBase + BigInt(calleeRva)).toString(16)}`,
   };

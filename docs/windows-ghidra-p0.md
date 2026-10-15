@@ -141,10 +141,13 @@ source coordinate is preserved for native admission. The original COFF machine i
 retained separately from the normalized CPU family. ARM admission requires the
 observed ARMNT machine 0x01C4; ARM64 requires 0xAA64. Legacy ARM (0x01C0), Thumb
 (0x01C2), and unavailable machine facts do not select this Windows lane.
-Ghidra's own PE loader
+Without a caller-selected processor override, Ghidra's PE loader
 selects the language from the PE machine field: ARM (`IMAGE_FILE_MACHINE_ARMNT`)
 imports as `ARM:LE:32:v8` (Thumb), ARM64 (`IMAGE_FILE_MACHINE_ARM64`) as
-`AARCH64:LE:64:v8A`. ARM/ARM64 admission is a bounded extension of the x86/x64
+`AARCH64:LE:64:v8A`. Explicit language/compiler selections remain caller choices
+in the analysis profile and are recorded as explicit imports. The source
+fixture verifier compares the complete observed language ID, not just its CPU
+family prefix. ARM/ARM64 admission is a bounded extension of the x86/x64
 lane. `npm run verify:ghidra:windows -- --arm` or `-- --arm64`, optionally
 combined with `--dll`, selects encoded Thumb or ARM64 PE fixtures on a Windows
 x64 host. The packaged verifier accepts the same flags. These fixtures are not
@@ -173,7 +176,14 @@ DLL verification also completed against Microsoft Visual C++ 2013 ARM
 `msvcr120.dll`, including decompilation of its exported `abs`, repeated readback,
 source-mapped bytes, unchanged-input and cleanup checks. Its first function
 query took about 601 seconds; the same-session repeat took about 11 ms and
-returned about 4.8 KiB of Evidence.
+returned about 4.8 KiB of Evidence. After preserving original COFF machines in the
+admission/profile, a further real Windows check rejected legacy ARM/Thumb and
+retained ARMNT/ARM64 admission. A rebuilt-candidate MSVCR120 query completed
+in about 407 seconds with a 15 ms repeat (4,830 bytes of Evidence), unchanged
+input and complete cleanup. That retry selected an 1,800-second startup budget
+after an additional 900-second attempt timed out. The resource bounds were
+unchanged; these observations do not establish a speedup. Configured processor
+selection is covered by profile tests, not these real-provider runs.
 
 Admission opens and checks every path component without following a reparse
 point. It retains handles, verifies local NTFS semantics, and observes volume

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 // Fake-backed provider coverage; real Ghidra verification lives in
 // `npm run verify:ghidra` and its focused variants.
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -376,6 +376,50 @@ describe("Ghidra Mach-O slice support", () => {
 });
 
 describe("Ghidra platform support", () => {
+  it.each([
+    { architecture: "arm", languageId: "ARM:LE:32:v7" },
+    { architecture: "arm64", languageId: "AARCH64:LE:64:v8A" },
+  ] as const)(
+    "records explicit Windows $architecture processor selection without claiming loader selection",
+    async ({ architecture, languageId }) => {
+      const directory = await mkdtemp(
+        join(tmpdir(), "rea-arm-profile-language-"),
+      );
+      onTestFinished(() => rm(directory, { recursive: true, force: true }));
+      const languages = join(
+        directory,
+        "Ghidra/Processors/fixture/data/languages",
+      );
+      await mkdir(languages, { recursive: true });
+      await writeFile(
+        join(languages, "fixture.ldefs"),
+        `<language_definitions><language processor="${architecture === "arm" ? "ARM" : "AARCH64"}" endian="little" size="${architecture === "arm" ? 32 : 64}" variant="fixture" id="${languageId}"><compiler name="Visual Studio" spec="fixture.cspec" id="windows"/></language></language_definitions>`,
+      );
+      const config = parseConfig({
+        GHIDRA_INSTALL_DIR: directory,
+        REA_GHIDRA_LANGUAGE_ID: languageId,
+        REA_GHIDRA_COMPILER_SPEC_ID: "windows",
+      });
+      if (!config.ok) throw config.error;
+      const ghidra = new GhidraProvider(
+        config.value,
+        silentLogger,
+        {},
+        installationHost("win32"),
+      );
+      const resolved = await ghidra.resolveAnalysisProfile(
+        peTarget(architecture),
+      );
+      if (!resolved.ok) throw resolved.error;
+      expect(resolved.value.profile?.parameters).toMatchObject({
+        windows_arm_pe_import: "explicit-language-v1",
+        windows_arm_pe_machine: peTarget(architecture).peMachine,
+        language_id: languageId,
+        compiler_spec_id: "windows",
+      });
+    },
+  );
+
   it("versions the Windows ARM PE import without changing other profile lanes", async () => {
     for (const platform of ["win32", "linux"] as const) {
       const ghidra = provider(installationHost(platform));

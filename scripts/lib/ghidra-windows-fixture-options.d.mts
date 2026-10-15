@@ -15,7 +15,7 @@ export function windowsGhidraFixtureOptions(arguments_: readonly string[]): {
   calleeRva: number;
   machine: number;
   filename: string;
-  languagePrefix: string;
+  languageId: string;
   callerAddress: string;
   calleeAddress: string;
 };

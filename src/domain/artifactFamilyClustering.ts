@@ -323,7 +323,9 @@ const buildFamilies = (
     .map(([digest]) => digest)
     .sort(compareUnicodeCodePoints)
     .map((digest) => ({
-      family_id: `root-${digest.slice(0, 16)}`,
+      // The id is advertised identity, so it carries the complete digest:
+      // two distinct roots may share a 16-hex prefix and must stay apart.
+      family_id: `root-${digest}`,
       tier: "root-sha256" as const,
       basis:
         "Identical root content digest; these members are byte-identical at the inspected root.",

@@ -8,9 +8,10 @@ import {
 } from "../domain/artifactFamilyClustering.js";
 import {
   createEvidence,
-  parseEvidence,
+  immutableEvidence,
   type Evidence,
 } from "../domain/evidence.js";
+import type { MemberObservation } from "../domain/artifactFamilyClusteringIndex.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { resolveArtifactFamilyClusteringEvidence } from "../application/artifacts/ArtifactFamilyClusteringEvidence.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
@@ -37,14 +38,17 @@ const INDEX_RESULT_HEADROOM_BYTES = 64 * 1024;
 const buildClusteringEvidence = (
   result: ArtifactFamilyClusteringResult,
   contract: ReturnType<typeof toolContract<"cluster_artifacts">>,
-  memberEvidenceIds: string[],
+  memberRoster: MemberObservation[],
   extraLimitations: readonly string[] = [],
 ): Evidence =>
   createEvidence(undefined, ARTIFACT_COMPARISON_PROVIDER, {
     predicateType: "rea.artifact-family-clustering",
     operation: contract.name,
     parameters: {
-      member_evidence_ids: memberEvidenceIds,
+      // The roster travels in caller order independent of family paging or a
+      // withheld index, so reopening this record always recovers which label
+      // named which member Evidence.
+      members: memberRoster,
       shared_member_minimum: result.coverage.shared_member_minimum,
       // The retained record states its own page, so reopening this Evidence
       // never implies a wider family list than it holds.
@@ -55,7 +59,7 @@ const buildClusteringEvidence = (
     confidence: "derived",
     authority: "analyst-inference",
     limitations: [...result.limitations, ...extraLimitations],
-    evidenceLinks: memberEvidenceIds,
+    evidenceLinks: memberRoster.map((member) => member.evidence_id),
   });
 
 /** Register Evidence-backed deterministic artifact family clustering. */
@@ -101,7 +105,10 @@ export const registerArtifactFamilyClusteringTool = (
             contract.name,
             () => {
               const members = input.members.map((member) => {
-                const supplied = parseEvidence(member.evidence);
+                // Seal the admitted record so the domain's authentication pass
+                // hits the immutable snapshot instead of re-hashing the whole
+                // nested inventory a second time.
+                const supplied = immutableEvidence(member.evidence);
                 const resolved = resolveArtifactFamilyClusteringEvidence(
                   supplied,
                   evidenceById,
@@ -113,13 +120,14 @@ export const registerArtifactFamilyClusteringTool = (
                 members,
                 clusteringOptions,
               );
-              const memberEvidenceIds = members.map(
-                (member) => member.evidence.evidence_id,
-              );
+              const memberRoster = members.map((member) => ({
+                label: member.label,
+                evidence_id: member.evidence.evidence_id,
+              }));
               let evidence = buildClusteringEvidence(
                 clustering,
                 contract,
-                memberEvidenceIds,
+                memberRoster,
               );
               // Measure the complete repeated wire form before anything is
               // recorded: when it cannot ship, retry once with the member
@@ -139,7 +147,7 @@ export const registerArtifactFamilyClusteringTool = (
                     indexBudgetBytes: 0,
                   }),
                   contract,
-                  memberEvidenceIds,
+                  memberRoster,
                   [
                     "The complete response, including its repeated escaped text copy, measured over this transport's response budget before delivery, so this call withholds the member index instead of failing the call; the families and coverage above still ship and the complete inventory Evidence stays retained.",
                   ],

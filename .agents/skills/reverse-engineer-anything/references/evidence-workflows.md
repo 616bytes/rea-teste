@@ -43,8 +43,8 @@ or absence:
   its reason, never called different. Byte-identical members form a family; a
   re-packed container with identical members appears only in the member index.
   A family asserts byte identity at the inspected root, so it needs a producer
-  digest of that root's own bytes; a directory root is indexed and counted but
-  never placed in one.
+  digest of that root's own bytes; a directory root is compared and counted but
+  excluded from the member index and never placed in one.
 - `compare_functions` compares explicit function Evidence, not fuzzy
   whole-binary matches.
 - `compare_bundles` compares canonical bundle membership and unknown history.

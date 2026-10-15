@@ -2,7 +2,7 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { parseEvidence } from "../../domain/evidence.js";
+import { immutableEvidence } from "../../domain/evidence.js";
 import { clusterArtifactFamilies } from "../../domain/artifactFamilyClustering.js";
 import { readJsonFile } from "../JsonFiles.js";
 
@@ -28,7 +28,9 @@ export const clusterArtifactEvidenceCommand = async (input: {
     const members = documents.map((document, index) => ({
       // The path is the caller's own label; it is never parsed as identity.
       label: input.memberPaths[index]!,
-      evidence: parseEvidence(document),
+      // Sealing on admission makes the domain's own authentication pass a
+      // snapshot hit instead of a second full re-hash of the inventory.
+      evidence: immutableEvidence(document),
     }));
     return ok(
       jsonValueSchema.parse(

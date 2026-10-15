@@ -329,6 +329,16 @@ it("clusters three inspected archives through MCP by family and shared members",
     // Identity commits to the digest, and every member classified one.txt the
     // same way, so the row reports that single classification.
     expect(result.shared_members[0]?.formats).toEqual(["file"]);
+    // The retained record carries the full roster itself — caller label paired
+    // with member Evidence id in input order — so reopening it recovers the
+    // mapping even if family rows are paged or the index is withheld.
+    expect(retainedEvidence(clustered, session).parameters).toMatchObject({
+      members: [
+        { label: "alpha", evidence_id: members[0]!.evidence.evidence_id },
+        { label: "beta", evidence_id: members[1]!.evidence.evidence_id },
+        { label: "gamma", evidence_id: members[2]!.evidence.evidence_id },
+      ],
+    });
     // Archives are read as bytes, so these members keep byte-root identity and
     // no directory node is indexed.
     expect(result.coverage.members_without_byte_root_digest).toBe(0);

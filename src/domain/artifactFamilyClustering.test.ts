@@ -231,6 +231,23 @@ describe("clusterArtifactFamilies", () => {
     expect(result.summary.members_with_unknown_inventory).toBe(0);
   });
 
+  it("keeps family ids distinct when two full digests share a 16-hex prefix", () => {
+    const close = "a".repeat(16) + "b".repeat(48);
+    const result = cluster([
+      member("alpha", { rootSha: sha("a") }),
+      member("beta", { rootSha: sha("a") }),
+      member("gamma", { rootSha: close }),
+      member("delta", { rootSha: close }),
+    ]);
+
+    // The id is advertised identity: two different byte families whose full
+    // digests share a truncated prefix must stay distinguishable by it.
+    expect(result.families.map(({ family_id }) => family_id)).toEqual([
+      `root-${sha("a")}`,
+      `root-${close}`,
+    ]);
+  });
+
   it("reports a shared member for identical content and a unique member otherwise", () => {
     const shared = cluster(
       [
@@ -242,7 +259,7 @@ describe("clusterArtifactFamilies", () => {
     );
 
     expect(shared.families.map(({ family_id }) => family_id)).toEqual([
-      `root-${sha("a").slice(0, 16)}`,
+      `root-${sha("a")}`,
     ]);
     expect(shared.shared_members).toHaveLength(1);
     expect(shared.shared_members[0]?.member_count).toBe(2);
@@ -431,6 +448,10 @@ describe("clusterArtifactFamilies member index and root identity", () => {
     expect(result.families).toHaveLength(0);
     expect(result.status).toBe("partitioned");
     expect(result.summary.members_without_byte_root_digest).toBe(2);
+    // The member index keeps the same verdict as the family path: no row may
+    // carry the graph-derived digest, and both observations stay counted.
+    expect(result.shared_members).toHaveLength(0);
+    expect(result.coverage.nodes_without_byte_identity).toBe(2);
   });
 
   it("keeps every producer format reported for one artifact id", () => {

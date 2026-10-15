@@ -57,6 +57,20 @@ export interface MemberIndex {
 }
 
 /**
+ * Whether one node's identity commits to its own bytes. A directory node has
+ * no content of its own, and a manifest-declared directory root is
+ * graph-derived even when its node reports a byte format, so neither can
+ * support a shared-content claim.
+ */
+const supportsByteIdentity = (
+  node: ArtifactNode,
+  inventory: InventorySet,
+): boolean =>
+  node.format !== "directory" &&
+  (node.artifact_id !== inventory.manifest.root_artifact_id ||
+    inventory.manifest.root_format !== "directory");
+
+/**
  * Partition every examined member exactly once: shared, partially shared, or
  * unique. Nothing is dropped for falling under the shared threshold, and the
  * rows are reported complete or withheld together.
@@ -80,17 +94,22 @@ export const buildMemberIndex = (input: {
       readonly observations: MemberObservation[];
     }
   >();
+  // Omissions are counted whether or not the index is built: an unmeasured
+  // count must never publish as an exact zero when the node cap fires or no
+  // scope is settled.
   let nodesWithoutByteIdentity = 0;
+  for (const entry of input.complete)
+    for (const node of entry.inventory.nodes)
+      if (!supportsByteIdentity(node, entry.inventory))
+        nodesWithoutByteIdentity += 1;
   if (!nodeBudgetExhausted && input.scope !== null)
     for (const entry of input.complete)
       for (const node of entry.inventory.nodes) {
         // A directory node's identity covers member names and child identities
         // rather than bytes, and unread entries are not committed, so it cannot
-        // support a content-sharing claim. Count it instead of dropping it.
-        if (node.format === "directory") {
-          nodesWithoutByteIdentity += 1;
-          continue;
-        }
+        // support a content-sharing claim. It is counted above instead of here
+        // so the omission stays visible even when this loop never runs.
+        if (!supportsByteIdentity(node, entry.inventory)) continue;
         const observation = {
           label: entry.label,
           evidence_id: entry.evidenceId,

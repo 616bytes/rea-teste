@@ -62,14 +62,18 @@ difference. `status` is `partitioned` when every examined member was compared,
 `coverage.member_index_withheld` is set when the examined node budget or the
 serialized-size budget of the index array was exhausted; the index is reported
 complete or withheld, never partial because a budget ran out. On MCP that size
-budget is derived from the response budget (half of it, less the envelope and
-the rest of the result), so an oversized index is withheld with its flag instead
-of becoming a delivery error with no clustering result.
+budget is a third of the response budget less the envelope headroom, because
+delivery repeats the result as structured content and as an escaped text copy
+that escaping can push past the structured copy; after the Evidence is built
+the complete repeated form is measured against the response budget, and an
+index whose call cannot ship is re-clustered behind `coverage.member_index_withheld`
+instead of becoming a delivery error with no clustering result.
 A family asserts byte identity at the inspected root, so it needs a producer
 digest of that root's own bytes. A root whose digest is derived from its
 inventory graph instead (a directory root, whose digest covers member names and
 child identities, with unread entries such as symlink targets uncommitted) is
-compared, indexed and counted, but never placed in a family;
+compared and counted but excluded from the member index, and never placed in a
+family;
 `coverage.members_without_byte_root_digest` reports how many, and the reason
 appears in `limitations`. Both producer facts are required: a `manifest.root_format`
 that disagrees with the root node's own format stays unresolved rather than

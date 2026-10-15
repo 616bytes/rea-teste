@@ -226,6 +226,30 @@ it("assigns attached navigation stopping to the storage owner once", async () =>
   expect(cleanup.close).toHaveBeenCalledTimes(1);
 });
 
+it("transfers attached navigation stopping after storage cleanup fails", async () => {
+  const { cleanup, storage } = fixture();
+  storage?.close.mockRejectedValueOnce(new Error("storage stop unconfirmed"));
+  const attached = browserScenarioSchema.parse({
+    ...scenario,
+    browser: {
+      mode: "connect",
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "target",
+    },
+    environment: { service_workers: "block" },
+  });
+  const session = await PlaywrightScenarioSession.open(attached, {}, {});
+
+  await expect(session.close(true)).resolves.toBe("disconnected-external");
+  expect(storage?.close).toHaveBeenCalledWith(true);
+  expect(
+    mocks.policySend.mock.calls.filter(
+      ([method]) => method === "Page.stopLoading",
+    ),
+  ).toHaveLength(1);
+  expect(cleanup.close).toHaveBeenCalledTimes(1);
+});
+
 it("allows the bounded policy cleanup chain to cross one second", async () => {
   const { cleanup } = fixture();
   mocks.storage = undefined;

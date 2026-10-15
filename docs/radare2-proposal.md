@@ -261,6 +261,11 @@ remains unmeasured.
 
 ## Authority, Evidence and integration decision
 
+The [concrete IDA-parity scope](../experiments/radare2-transports/IDA-PARITY.md)
+maps all 14 existing shared operations, defines reuse of #3521's session owner,
+and lists the required production verification. Its small session/contract
+compatibility check remains isolated; no runtime provider is registered.
+
 The proposed raw-command surface is unrestricted. It can execute scripts and
 shell commands, launch/attach targets, mutate files/memory/configuration and
 contact services, including through plugins. The maintainer decision must cover

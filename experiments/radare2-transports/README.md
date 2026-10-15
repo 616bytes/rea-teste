@@ -5,6 +5,12 @@ It is not imported by REA, registered in REA's agent catalog, included in the np
 an approved provider. It uses REA's existing process supervision and tagged
 errors/Result; it does not implement production Evidence or session admission.
 
+The [shared-provider scope and IDA-parity mapping](IDA-PARITY.md) identifies the
+14 existing operations, ownership reuse from #3521 and remaining production
+verification. Its small, explicitly launched compatibility check constructs
+experimental Evidence with REA's existing contracts; it does not exercise
+production admission or the Evidence ledger.
+
 The separate [analyst capability prototype](CAPABILITIES.md) exposes CFG,
 database layouts, native type synthesis, verified byte reads and value dependencies
 through an explicitly launched experimental CLI/MCP server. It is usable for the documented

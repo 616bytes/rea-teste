@@ -270,7 +270,9 @@ Mach-O image. Architecture
 `file_offset` values are container-relative. Entrypoint, segment and section
 `file_offset` values retain their source meaning and are relative to the
 selected Mach-O slice. Raw load-command fields retain their original values.
-Evidence locations map the LC_MAIN entrypoint and nonempty file-backed segment
+A field otool prints more than once, such as each `LC_BUILD_VERSION` tool, is
+keyed `name #n` in print order. Each `LC_LINKER_OPTION` string is keyed
+`string #n` and checked against the declared `count`. Evidence locations map the LC_MAIN entrypoint and nonempty file-backed segment
 ranges to container offsets by adding the observed slice offset. Zero-fill
 segments do not produce file ranges. When the selected slice's container offset
 is unknown, those mapped locations are omitted with an explicit limitation;
@@ -378,7 +380,12 @@ complete observation.
   property: `N` means `nonatomic`; a complete typed attribute string without
   `N` means the Objective-C default `atomic`;
   missing or incomplete attribute metadata leaves `atomicity` and any
-  unestablished read-only value null. `is_meta_class`, `is_root_class`, and
+  unestablished read-only value null. A type attribute whose quoted class name
+  never closes is incomplete and marks `objc_properties_categories` partial
+  with `property_attributes_incomplete`. A property record that cannot be
+  decoded, such as one with an empty or unmapped name, is reported as
+  `property_decode_failed` at its entry address while sibling properties are
+  retained. `is_meta_class`, `is_root_class`, and
   `ivar_count` are also nullable when the selected provider exposes only symbol
   names. Class implementation methods have null `is_required` and `is_optional`
   fields because those facts apply to protocol declarations; decoded protocol
@@ -481,15 +488,16 @@ user's permissions and may change files, show UI or use the network.
 
 Debugging must be allowed for the user (Developer Tools access). A
 hardened-runtime target without `com.apple.security.get-task-allow` cannot be
-debugged; `inspect_signature` reports this as the debugger-attach facet, and
-the tool fails with a `debugger-attach-denied` reason.
+debugged; `inspect_signature` reports the signature's `hardened_runtime` value
+and its `entitlements`, including `com.apple.security.get-task-allow` when it
+is present. A denied trace reports the `debugger-attach-denied` reason.
 
 ## Provider and verification boundaries
 
 Install a Ghidra 12.1.x release and the 64-bit full JDK it declares, then configure REA to
 use them. Ghidra analysis supports Linux x64/arm64 and macOS x64/arm64; each installation requires
 the matching native decompiler. Experimental Windows x64 P0 admits native
-x86 and x86-64 PE applications and DLLs, plus explicitly selected
+x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, plus explicitly selected
 [raw NMOS 6502 images](raw-binary.md#nmos-6502) with a caller-supplied load address,
 on fixed local NTFS volumes. Other raw CPU families remain unsupported on Windows.
 The boundary uses bundled Job Object ownership, protected runtime DACLs, and
@@ -568,6 +576,12 @@ Value projection preserves serialized node kinds, IDs, references and pagination
 Exact and ambiguous value counts describe emitted root/object value instances;
 a root and an object may contain the same value. Archive digests identify the
 original bytes.
+
+Dates are reported as `{ "$plist_type": "date", "iso8601": "<timestamp>" }`. A
+date the decoder cannot represent, such as an XML date with a year beyond 9999
+or a negative year, is reported as `{ "$plist_type": "date", "iso8601": null }`
+with a counted limitation; the rest of the plist or archive is still decoded.
+`inspect_plist` and Interface Builder decoding use the same projection.
 
 ## Locate a byte signature
 

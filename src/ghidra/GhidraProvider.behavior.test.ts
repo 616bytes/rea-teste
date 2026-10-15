@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 // Fake-backed provider coverage; real Ghidra verification lives in
 // `npm run verify:ghidra` and its focused variants.
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +35,11 @@ import { silentLogger } from "../logger.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
+import { createAnalysisProfile } from "../domain/analysisProfile.js";
+import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+import { AnalysisSnapshotCache } from "../application/binary/AnalysisSnapshotCache.js";
+import { createEvidence } from "../domain/evidence.js";
+import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 
 const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
 afterEach(() => vi.restoreAllMocks());
@@ -80,6 +85,69 @@ const createElfClient = async (ghidra: GhidraProvider) => {
     throw new Error("Expected a bound Ghidra profile");
   return ghidra.createClient(target, resolved.value.profile);
 };
+
+it.each([
+  "program-info-v1",
+  "program-info-v2",
+  "program-info-v3",
+  "program-info-v4",
+])(
+  "retains historical PE PDB Evidence for %s without replaying its old projection",
+  async (pdbObservations) => {
+    const target = peTarget("x86_64");
+    const resolved = await provider().resolveAnalysisProfile(target);
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("Expected admitted PE profile");
+    const current = resolved.value.profile;
+    const prior = createAnalysisProfile(current.provider, {
+      ...current.parameters,
+      pdb_observations: pdbObservations,
+    });
+    const operation = "search_procedures";
+    const parameters = { pattern: "wmain" };
+    const limitations = [
+      pdbObservations === "program-info-v4"
+        ? "Legacy projection discarded NB10 declaration when the reported GUID was omitted."
+        : "Legacy projection collapsed unknown PDB load state.",
+    ];
+    const cache = new AnalysisSnapshotCache();
+    cache.record({
+      target,
+      profile: prior,
+      operation,
+      parameters,
+      execution: createAnalysisExecution([], prior.provider, {
+        subject: target,
+        analysisProfile: prior,
+        limitations,
+      }),
+    });
+    const evidence = createEvidence(target, prior.provider, {
+      operation,
+      parameters,
+      result: [],
+      analysisProfile: prior,
+      limitations,
+    });
+    const exported = cache.export(
+      target,
+      prior,
+      createEvidenceBundle([evidence]),
+    );
+    if (!exported.ok) throw exported.error;
+    const imported = new AnalysisSnapshotCache();
+    expect(imported.import(exported.value, undefined, () => ok(0)).ok).toBe(
+      true,
+    );
+    expect(
+      imported.lookup(target, current, operation, parameters),
+    ).toBeUndefined();
+    expect(
+      imported.lookup(target, prior, operation, parameters)?.limitations,
+    ).toEqual(expect.arrayContaining(limitations));
+    expect(exported.value.evidence_bundle.records).toContainEqual(evidence);
+  },
+);
 
 describe("Ghidra provider", () => {
   it("commits DOS loader and real-mode language while retaining the CPU family", async () => {
@@ -308,6 +376,82 @@ describe("Ghidra Mach-O slice support", () => {
 });
 
 describe("Ghidra platform support", () => {
+  it.each([
+    { architecture: "arm", languageId: "ARM:LE:32:v7" },
+    { architecture: "arm64", languageId: "AARCH64:LE:64:v8A" },
+  ] as const)(
+    "records explicit Windows $architecture processor selection without claiming loader selection",
+    async ({ architecture, languageId }) => {
+      const directory = await mkdtemp(
+        join(tmpdir(), "rea-arm-profile-language-"),
+      );
+      onTestFinished(() => rm(directory, { recursive: true, force: true }));
+      const languages = join(
+        directory,
+        "Ghidra/Processors/fixture/data/languages",
+      );
+      await mkdir(languages, { recursive: true });
+      await writeFile(
+        join(languages, "fixture.ldefs"),
+        `<language_definitions><language processor="${architecture === "arm" ? "ARM" : "AARCH64"}" endian="little" size="${architecture === "arm" ? 32 : 64}" variant="fixture" id="${languageId}"><compiler name="Visual Studio" spec="fixture.cspec" id="windows"/></language></language_definitions>`,
+      );
+      const config = parseConfig({
+        GHIDRA_INSTALL_DIR: directory,
+        REA_GHIDRA_LANGUAGE_ID: languageId,
+        REA_GHIDRA_COMPILER_SPEC_ID: "windows",
+      });
+      if (!config.ok) throw config.error;
+      const ghidra = new GhidraProvider(
+        config.value,
+        silentLogger,
+        {},
+        installationHost("win32"),
+      );
+      const resolved = await ghidra.resolveAnalysisProfile(
+        peTarget(architecture),
+      );
+      if (!resolved.ok) throw resolved.error;
+      expect(resolved.value.profile?.parameters).toMatchObject({
+        windows_arm_pe_import: "explicit-language-v1",
+        windows_arm_pe_machine: peTarget(architecture).peMachine,
+        language_id: languageId,
+        compiler_spec_id: "windows",
+      });
+    },
+  );
+
+  it("versions the Windows ARM PE import without changing other profile lanes", async () => {
+    for (const platform of ["win32", "linux"] as const) {
+      const ghidra = provider(installationHost(platform));
+      for (const architecture of ["x86", "x86_64", "arm", "arm64"] as const) {
+        const resolved = await ghidra.resolveAnalysisProfile(
+          peTarget(architecture),
+        );
+        if (!resolved.ok) throw resolved.error;
+        if (resolved.value.profile === null)
+          throw new Error("Expected a PE analysis profile");
+        const parameters = resolved.value.profile.parameters;
+        if (
+          platform === "win32" &&
+          (architecture === "arm" || architecture === "arm64")
+        )
+          expect(parameters).toHaveProperty(
+            "windows_arm_pe_import",
+            "loader-selected-language-v1",
+          );
+        else expect(parameters).not.toHaveProperty("windows_arm_pe_import");
+        if (
+          platform === "win32" &&
+          (architecture === "arm" || architecture === "arm64")
+        )
+          expect(parameters.windows_arm_pe_machine).toBe(
+            peTarget(architecture).peMachine,
+          );
+        else expect(parameters).not.toHaveProperty("windows_arm_pe_machine");
+      }
+    }
+  });
+
   it("commits the PE role and managed classification to profile identity", async () => {
     const ghidra = provider(installationHost("win32"));
     const application = peTarget("x86_64");
@@ -452,12 +596,13 @@ describe("Ghidra Windows platform support", () => {
       status: "unsupported",
       code: "target_format_unsupported",
     });
+    // ARM64 PE is admitted on Windows P0 (bounded; see docs/windows-ghidra-p0.md).
     expect(
-      ghidra.inspectTargetSupport(executableTarget("pe", "arm64")),
-    ).toMatchObject({
-      status: "unsupported",
-      code: "architecture_unsupported",
-    });
+      ghidra.inspectTargetSupport(executableTarget("pe", "arm64")).status,
+    ).toBe("supported");
+    expect(
+      ghidra.inspectTargetSupport(executableTarget("pe", "arm")).status,
+    ).toBe("supported");
   });
 });
 
@@ -557,12 +702,6 @@ describe("Windows Ghidra native failure diagnostics", () => {
         status: "unsupported",
         code: "target_format_unsupported",
       });
-      expect(
-        ghidra.inspectTargetSupport(executableTarget("pe", "arm64")),
-      ).toMatchObject({
-        status: "unsupported",
-        code: "architecture_unsupported",
-      });
       const client = ghidra.createClient(nativeApplication);
       const health = await client.execute("health", {});
       if (health.ok)
@@ -581,18 +720,34 @@ describe("Windows Ghidra native failure diagnostics", () => {
 });
 
 describe("Ghidra Windows PE fixture admission", () => {
+  it.each(["arm", "arm64"] as const)(
+    "does not infer a COFF machine from an unobserved %s family",
+    (architecture) => {
+      const { peMachine, ...unobserved } = peTarget(architecture);
+      expect(peMachine).toBeDefined();
+      expect(
+        provider(installationHost("win32")).inspectTargetSupport(unobserved),
+      ).toMatchObject({
+        status: "unsupported",
+        code: "architecture_unsupported",
+        diagnostics: { pe_machine: null },
+      });
+    },
+  );
+
   it("admits generated PE32 and PE32+ DLLs and applications while preserving native-only Windows admission", async () => {
     const root = fileURLToPath(new URL("../../", import.meta.url));
     await promisify(execFile)(process.execPath, [
       join(root, "scripts/create-ghidra-windows-fixture.mjs"),
     ]);
     const ghidra = provider(installationHost("win32"));
-    for (const architecture of ["x86", "x86_64"] as const) {
+    for (const architecture of ["x86", "x86_64", "arm", "arm64"] as const) {
       for (const dll of [false, true]) {
+        const suffix = architecture === "x86_64" ? "" : `-${architecture}`;
         const path = join(
           root,
           "build/fixtures",
-          `rea-ghidra-windows${architecture === "x86" ? "-x86" : ""}.${dll ? "dll" : "exe"}`,
+          `rea-ghidra-windows${suffix}.${dll ? "dll" : "exe"}`,
         );
         const bytes = await readFile(path);
         const metadata = parseExecutableHeader(bytes, "x64");
@@ -616,13 +771,34 @@ describe("Ghidra Windows PE fixture admission", () => {
           ...metadata.value,
         };
         expect(ghidra.inspectTargetSupport(target).status).toBe("supported");
+        if (architecture === "arm") {
+          for (const peMachine of [0x01c0, 0x01c2]) {
+            const legacy = Buffer.from(bytes);
+            legacy.writeUInt16LE(peMachine, legacy.readUInt32LE(0x3c) + 4);
+            const parsed = parseExecutableHeader(legacy, "x64");
+            if (!parsed.ok) throw new Error(parsed.error);
+            if (parsed.value.format !== "pe")
+              throw new Error("Expected a PE fixture");
+            expect(parsed.value).toMatchObject({ architecture, peMachine });
+            expect(
+              ghidra.inspectTargetSupport({
+                ...target,
+                ...parsed.value,
+                sha256: createHash("sha256").update(legacy).digest("hex"),
+              }),
+            ).toMatchObject({
+              status: "unsupported",
+              code: "architecture_unsupported",
+              diagnostics: { pe_machine: peMachine },
+            });
+          }
+        }
         for (const [candidate, code] of [
           [
             { ...target, executableRole: "non-executable" },
             "target_role_unsupported",
           ],
           [{ ...target, managed: true }, "managed_target_unsupported"],
-          [{ ...target, architecture: "arm64" }, "architecture_unsupported"],
         ] as const) {
           expect(ghidra.inspectTargetSupport(candidate)).toMatchObject({
             status: "unsupported",
@@ -957,43 +1133,31 @@ describe("Ghidra result projection", () => {
 
 describe("Ghidra PE CodeView debug symbol limitations", () => {
   it.each([
-    {
-      name: "omitted PDB facts",
-      loaded: undefined,
-      expectedLimitation:
-        "Ghidra did not report PDB attributes; debug-symbol coverage is unknown.",
-      forbiddenLimitation: "that were not applied",
-    },
-    {
-      name: "an explicit not-loaded report",
-      loaded: false,
-      expectedLimitation:
-        'The target references debug symbols "test.pdb" (GUID 01234567-89ab-cdef-0123-456789abcdef, age 1) that were not applied; procedure names are analysis-generated.',
-      forbiddenLimitation: "coverage is unknown",
-    },
-    {
-      name: "an explicit loaded report",
-      loaded: true,
-      expectedLimitation: "Ghidra reports a loaded PDB",
-      forbiddenLimitation: "that were not applied",
-    },
-  ])(
-    "preserves CodeView coverage state for $name in session Evidence",
-    async ({ loaded, expectedLimitation, forbiddenLimitation }) => {
-      const pdb = {
-        file: "C:\\projects\\app\\build\\test.pdb",
-        guid: "01234567-89ab-cdef-0123-456789abcdef",
-        age: "1",
-        signature: null,
-        version: "RSDS",
-        loaded: loaded ?? null,
-      };
+    ["absent report", undefined, "load state unknown"],
+    ["unknown load", null, "load state unknown"],
+    ["not loaded", false, "reports not loaded"],
+    ["loaded", true, "reports a loaded PDB"],
+  ] as const)(
+    "preserves %s in operation and health Evidence without duplicate caveats",
+    async (_, loaded, expected) => {
       const ghidra = provider(installationHost(), () => ({
         start: () =>
           Promise.resolve(
-            ok(
-              loaded === undefined ? sessionInfo() : { ...sessionInfo(), pdb },
-            ),
+            ok({
+              ...sessionInfo(),
+              ...(loaded === undefined
+                ? {}
+                : {
+                    pdb: {
+                      file: "test.pdb",
+                      guid: "01234567-89ab-cdef-0123-456789abcdef",
+                      age: "1",
+                      signature: null,
+                      version: "RSDS",
+                      loaded,
+                    },
+                  }),
+            }),
           ),
         callTool: () => Promise.resolve(ok([])),
         close: () => Promise.resolve(ok(null)),
@@ -1001,7 +1165,7 @@ describe("Ghidra PE CodeView debug symbol limitations", () => {
       const target = {
         ...peTarget("x86_64"),
         codeView: {
-          pdbPath: "C:\\projects\\app\\build\\test.pdb",
+          pdbPath: "test.pdb",
           pdbFileName: "test.pdb",
           guid: "01234567-89ab-cdef-0123-456789abcdef",
           age: 1,
@@ -1019,9 +1183,13 @@ describe("Ghidra PE CodeView debug symbol limitations", () => {
         const health = await client.execute("health", {});
         if (!health.ok) throw health.error;
         for (const observation of [search.value, health.value]) {
-          const limitations = observation.limitations.join("\n");
-          expect(limitations).toContain(expectedLimitation);
-          expect(limitations).not.toContain(forbiddenLimitation);
+          const caveats = observation.limitations.filter((limit) =>
+            limit.includes("PDB"),
+          );
+          expect(caveats).toHaveLength(1);
+          expect(caveats[0]).toContain(expected);
+          expect(caveats[0]).not.toContain("names are analysis-generated");
+          expect(caveats[0]).not.toContain("that were not applied");
         }
       } finally {
         await client.close();
@@ -1887,6 +2055,9 @@ const peTarget = (
   sha256: "a".repeat(64),
   kind: "executable",
   format: "pe",
+  peMachine: { x86: 0x014c, x86_64: 0x8664, arm: 0x01c4, arm64: 0xaa64 }[
+    architecture
+  ],
   architecture,
   availableArchitectures: [architecture],
   executableRole: "application",

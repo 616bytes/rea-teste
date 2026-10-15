@@ -95,19 +95,25 @@ export const inspectCall = (
     addReference(context, {
       node,
       kind: "worker",
-      // Node string paths use the process cwd or filesystem root, neither of
-      // which is established by the analyzed source's artifact location.
+      // A string path is relative to the document base URL in a browser and
+      // to the process cwd in Node; the analyzed source's artifact location
+      // establishes neither. Only `new URL(path, import.meta.url)` names a
+      // location relative to this module.
       specifier:
-        (workerConstructor === "node" ? undefined : first) ??
-        (workerConstructor === undefined || worker === undefined
+        workerConstructor === undefined || worker === undefined
           ? undefined
-          : workerUrlSpecifier(worker, bindings)),
+          : workerUrlSpecifier(worker, bindings),
     });
+  // Service worker script URLs are also relative to the document base URL.
   if (
     name === "serviceWorker.register" ||
     name.endsWith(".serviceWorker.register")
   )
-    addReference(context, { node, kind: "service-worker", specifier: first });
+    addReference(context, {
+      node,
+      kind: "service-worker",
+      specifier: undefined,
+    });
   inspectEndpointCall(node, name, first, context);
   inspectStorageCall(node, name, first, context);
   if (first === "audio" || first === "video")
@@ -447,6 +453,16 @@ export const inspectRpcNode = (node: t.Node, context: FindingContext): void => {
   if (rpc !== undefined)
     addEndpoint(context, { node, kind: "network", ...rpc });
 };
+
+/** Resolve deferred Source bodies after their document owners have been seen. */
+export function* finishRpcScanSteps(
+  context: FindingContext,
+): Generator<void, void> {
+  for (const rpc of context.rpcScan.finish()) {
+    if (rpc !== undefined) addEndpoint(context, { kind: "network", ...rpc });
+    yield;
+  }
+}
 
 export const inspectRouteProperty = (
   node: t.ObjectProperty,

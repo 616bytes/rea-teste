@@ -163,14 +163,13 @@ for (const group of groups) {
           environment,
           timeoutMs: 20_000,
         });
+      const planned = await run([
+        "setup",
+        ...clientArguments,
+        "--dry-run",
+        "--json",
+      ]);
       for (const { client, config, skillDirectory } of profiles) {
-        const planned = await run([
-          "setup",
-          "--client",
-          client,
-          "--dry-run",
-          "--json",
-        ]);
         expect(planned.exitCode, client).toBe(0);
         expect(planned.json, client).toMatchObject({
           status: "planned",
@@ -200,18 +199,21 @@ for (const group of groups) {
       await expect(access(join(home, "config.toml"))).rejects.toMatchObject({
         code: "ENOENT",
       });
+      const doctor = await run([
+        "doctor",
+        ...clientArguments,
+        "--skill",
+        "--json",
+      ]);
       for (const { client, config } of profiles) {
-        const doctor = await run([
-          "doctor",
-          "--client",
-          client,
-          "--skill",
-          "--json",
-        ]);
         expect(doctor.exitCode, client).toBe(0);
         expect(doctor.json, client).toMatchObject({
           healthy: true,
-          scope: { mode: "explicit", clients: [client], skill: true },
+          scope: {
+            mode: "explicit",
+            clients: profiles.map(({ client }) => client).sort(),
+            skill: true,
+          },
           identity: {
             skill: { state: "aligned" },
             registrations: expect.arrayContaining([

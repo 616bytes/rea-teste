@@ -19,11 +19,14 @@ import {
   macHopperRenamedLauncherCandidates,
 } from "./MacHopperPaths.js";
 import {
-  linuxHopperBinarySupported,
+  inspectLinuxHopperLauncher,
   linuxSharedLibrariesAvailable,
   readLinuxDistribution,
   type LinuxDistribution,
 } from "./LinuxHopper.js";
+import type { Result } from "../domain/result.js";
+import type { HopperReleaseError } from "./HopperReleaseFeed.js";
+import type { VerifiedLinuxHopperLauncher } from "./LinuxHopperPublisher.js";
 import {
   readInstalledSkillIdentity,
   type InstalledSkillIdentity,
@@ -36,6 +39,7 @@ import {
   type ClientRegistrationStatus,
   type UnhealthyClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
+import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
 import {
   collectDoctorDiagnostics,
   doctorHealthy,
@@ -100,11 +104,15 @@ export interface DoctorHost {
   /** Route-specific target admission details, when supplied by the host. */
   inspectTarget?(path: string): Promise<DoctorCheck>;
   executable(path: string): Promise<boolean>;
-  supportedLinuxHopper(path: string): Promise<boolean>;
+  inspectLinuxHopper(
+    path: string,
+  ): Promise<Result<VerifiedLinuxHopperLauncher, HopperReleaseError>>;
   linuxDemoRuntimeCheck(): Promise<DoctorCheck>;
   brewHopperPath(): Promise<string | undefined>;
   manualHopperPaths(): Promise<readonly string[]>;
   providerInspections?(): Promise<readonly DoctorProviderInspection[]>;
+  /** Resolve a parsed upstream request budget from the effective client environment. */
+  resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
   /** Validated provider settings preserved by setup, independent of readiness. */
   providerRegistrationEnvironment?(): Readonly<Record<string, string>>;
   installationPaths?(): Promise<readonly string[]>;
@@ -220,7 +228,11 @@ const inspectDoctor = async (
     providerInspections,
   } = await collectDoctorDiagnostics(target, host);
   const identity = await collectDoctorIdentity(host, scope);
-  const checks = [...diagnosticChecks, ...identity.checks];
+  const checks = [
+    ...diagnosticChecks,
+    ...identity.checks,
+    ...registrationAdvisoryChecks(identity.value.registrations),
+  ];
   const providers = {
     hopperAvailable:
       hopperPath !== undefined &&
@@ -251,6 +263,22 @@ const inspectDoctor = async (
     identity: identity.value,
   };
 };
+
+const registrationAdvisoryChecks = (
+  registrations: readonly ClientRegistrationStatus[],
+): readonly DoctorCheck[] =>
+  registrations.flatMap(({ client, advisory }) =>
+    advisory === undefined
+      ? []
+      : [
+          {
+            name: `registration_timeout:${client}`,
+            ok: true,
+            classification: "healthy" as const,
+            detail: advisory,
+          },
+        ],
+  );
 
 const closeDoctorHost = async (
   host: DoctorHost,
@@ -411,6 +439,7 @@ export interface SystemDoctorHostOptions {
   readonly providerRegistrationEnvironment?: () => Readonly<
     Record<string, string>
   >;
+  readonly resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
   readonly linuxDemoRuntimeCheck?: () => Promise<DoctorCheck>;
 }
 
@@ -488,7 +517,7 @@ export const systemDoctorHost = (
       ),
     linuxDemoRuntimeCheck:
       options.linuxDemoRuntimeCheck ?? uncomposedLinuxDemoRuntimeCheck,
-    supportedLinuxHopper: linuxHopperBinarySupported,
+    inspectLinuxHopper: (path) => inspectLinuxHopperLauncher(path, environment),
     async brewHopperPath() {
       return probeHomebrew(async (command) => {
         let caskroom: string;
@@ -527,6 +556,9 @@ export const systemDoctorHost = (
           providerRegistrationEnvironment:
             options.providerRegistrationEnvironment,
         }),
+    ...(options.resolveProviderRequestBudget === undefined
+      ? {}
+      : { resolveProviderRequestBudget: options.resolveProviderRequestBudget }),
     async ilspyCmdVersion(path) {
       try {
         await access(path, constants.X_OK);
@@ -579,6 +611,12 @@ export const systemDoctorHost = (
         platform,
         environment,
         resources,
+        ...(options.resolveProviderRequestBudget === undefined
+          ? {}
+          : {
+              resolveProviderRequestBudget:
+                options.resolveProviderRequestBudget,
+            }),
       }),
   };
 };

@@ -14,7 +14,8 @@ describe("deriveApkPosture", () => {
     v31Present: false,
     sourceStampPresent: false,
     rotationPresent: false,
-    distinctSignerFingerprints: 0,
+    signerFingerprints: [] as string[],
+    lineageFingerprints: [] as string[],
     selfConsistent: null,
   };
 
@@ -31,7 +32,7 @@ describe("deriveApkPosture", () => {
       v1Present: true,
       v2Present: true,
       v3Present: true,
-      distinctSignerFingerprints: 1,
+      signerFingerprints: ["aa", "aa", "aa"],
     });
     expect(p.v1_only).toBe(false);
     expect(p.strongest_scheme).toBe("v3");
@@ -43,9 +44,22 @@ describe("deriveApkPosture", () => {
       ...base,
       v2Present: true,
       v3Present: true,
-      distinctSignerFingerprints: 2,
+      signerFingerprints: ["aa", "bb"],
     });
     expect(p.schemes_agree_on_signer).toBe(false);
+  });
+
+  it("treats a signer change declared by the rotation lineage as agreement", () => {
+    const p = deriveApkPosture({
+      ...base,
+      v2Present: true,
+      v3Present: true,
+      rotationPresent: true,
+      signerFingerprints: ["old", "new"],
+      lineageFingerprints: ["old", "new"],
+    });
+    expect(p.schemes_agree_on_signer).toBe(true);
+    expect(p.signer_change_explained_by_rotation).toBe(true);
   });
 
   it("surfaces rotation, source stamp and self-consistency", () => {
@@ -54,7 +68,7 @@ describe("deriveApkPosture", () => {
       v3Present: true,
       rotationPresent: true,
       sourceStampPresent: true,
-      distinctSignerFingerprints: 1,
+      signerFingerprints: ["aa"],
       selfConsistent: true,
     });
     expect(p.rotation_present).toBe(true);

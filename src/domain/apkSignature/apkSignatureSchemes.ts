@@ -182,6 +182,66 @@ export const decodeSigners = (
   return ok(signers);
 };
 
+/** One node of a v3 proof-of-rotation lineage (oldest first). */
+export interface ApkLineageNode {
+  /** X.509 certificate DER of the signer at this level. */
+  readonly certificate: Uint8Array;
+  /** Capability flags granted by this signer to the next (installed data, shared UID, …). */
+  readonly flags: number;
+}
+
+/**
+ * Decode the v3 proof-of-rotation attribute value (apksig
+ * V3SigningCertificateLineage): `u32 version` then length-prefixed nodes, each
+ * `lp(signedData{ lp(certificate), u32 sigAlgorithm }) | u32 flags |
+ * u32 sigAlgorithm | lp(signature)`. Node signatures are not verified here.
+ */
+export const decodeRotationLineage = (
+  value: Uint8Array,
+): Result<ApkLineageNode[], ApkSchemeError> => {
+  const reader = new LeReader(value);
+  if (reader.u32() === null)
+    return err({
+      kind: "malformed-signer",
+      offset: 0,
+      detail: "lineage version missing",
+    });
+  const nodes: ApkLineageNode[] = [];
+  while (reader.remaining > 0) {
+    if (nodes.length >= MAX_ELEMENTS)
+      return err({
+        kind: "budget-exceeded",
+        resource: "lineage-nodes",
+        declared: nodes.length + 1,
+      });
+    const node = reader.lenChunk();
+    if (node === null)
+      return err({
+        kind: "malformed-signer",
+        offset: reader.offset,
+        detail: "lineage node truncated",
+      });
+    const nodeReader = new LeReader(node);
+    const signedData = nodeReader.lenChunk();
+    const flags = nodeReader.u32();
+    if (signedData === null || flags === null)
+      return err({
+        kind: "malformed-signer",
+        offset: reader.offset,
+        detail: "lineage node malformed",
+      });
+    const certificate = new LeReader(signedData).lenChunk();
+    if (certificate === null)
+      return err({
+        kind: "malformed-signer",
+        offset: reader.offset,
+        detail: "lineage certificate missing",
+      });
+    nodes.push({ certificate, flags });
+  }
+  return ok(nodes);
+};
+
 /** Map a signature-algorithm id to the content-digest algorithm it uses. */
 export const contentDigestAlgorithm = (
   algorithmId: number,

@@ -46,11 +46,25 @@ const signer = z.strictObject({
   max_sdk: z.number().int().nullable(),
 });
 
+const lineageNode = z.strictObject({
+  certificate,
+  /** Raw capability flags this signer grants the next in the lineage. */
+  flags: z.number().int().nonnegative(),
+  capabilities: z.strictObject({
+    installed_data: z.boolean(),
+    shared_uid: z.boolean(),
+    permission: z.boolean(),
+    rollback: z.boolean(),
+    auth: z.boolean(),
+  }),
+});
+
 const signerV3 = signer.extend({
-  // Presence of the proof-of-rotation attribute. Full lineage-node decode
-  // (each previous signer certificate + its trust flags) is a layered follow-up
-  // validated against apksigner's lineage output.
-  rotation: z.strictObject({ present: z.boolean() }),
+  // The v3 proof-of-rotation lineage, oldest signer first (empty when absent).
+  rotation: z.strictObject({
+    present: z.boolean(),
+    lineage: z.array(lineageNode),
+  }),
 });
 
 const SCHEME = z.enum(["none", "v1", "v2", "v3", "v3.1"]);
@@ -79,6 +93,8 @@ export const apkSignatureResultSchema = z.strictObject({
   posture: z.strictObject({
     v1_only: z.boolean(),
     schemes_agree_on_signer: z.boolean().nullable(),
+    /** More than one signer, but every one appears in the declared rotation lineage. */
+    signer_change_explained_by_rotation: z.boolean(),
     rotation_present: z.boolean(),
     source_stamp_present: z.boolean(),
     strongest_scheme: SCHEME,
@@ -104,8 +120,10 @@ export interface ApkPostureInput {
   readonly v31Present: boolean;
   readonly sourceStampPresent: boolean;
   readonly rotationPresent: boolean;
-  /** Distinct signing-certificate fingerprints observed across v2/v3 (and v1 when known). */
-  readonly distinctSignerFingerprints: number;
+  /** Signing-certificate fingerprints of each present scheme's signer (v2/v3/v3.1). */
+  readonly signerFingerprints: readonly string[];
+  /** Fingerprints of every certificate in the declared v3 rotation lineage(s). */
+  readonly lineageFingerprints: readonly string[];
   readonly selfConsistent: boolean | null;
 }
 
@@ -123,12 +141,17 @@ export const deriveApkPosture = (
         : input.v1Present
           ? "v1"
           : "none";
+  const distinct = new Set(input.signerFingerprints);
+  const lineage = new Set(input.lineageFingerprints);
+  const explained =
+    distinct.size > 1 && [...distinct].every((fp) => lineage.has(fp));
   return {
     v1_only: input.v1Present && !blockPresent,
+    // A signer change that the APK itself declares via rotation is agreement,
+    // not a tamper signal.
     schemes_agree_on_signer:
-      input.distinctSignerFingerprints === 0
-        ? null
-        : input.distinctSignerFingerprints === 1,
+      distinct.size === 0 ? null : distinct.size === 1 || explained,
+    signer_change_explained_by_rotation: explained,
     rotation_present: input.rotationPresent,
     source_stamp_present: input.sourceStampPresent,
     strongest_scheme: strongest,

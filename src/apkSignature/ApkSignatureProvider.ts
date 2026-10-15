@@ -18,6 +18,7 @@ import {
 } from "../domain/apkSignature/apkSigningBlock.js";
 import {
   contentDigestAlgorithm,
+  decodeRotationLineage,
   decodeSigners,
   PROOF_OF_ROTATION_ATTR_ID,
   type ApkSchemeVersion,
@@ -136,11 +137,38 @@ const baseSigner = (signer: ApkSigner, match: DigestMatcher): Signer => ({
   max_sdk: signer.maxSdk,
 });
 
+/** Proof-of-rotation capability bits (apksig SigningCertificateLineage). */
+const capabilities = (
+  flags: number,
+): SignerV3["rotation"]["lineage"][number]["capabilities"] => ({
+  installed_data: (flags & 0x1) !== 0,
+  shared_uid: (flags & 0x2) !== 0,
+  permission: (flags & 0x4) !== 0,
+  rollback: (flags & 0x8) !== 0,
+  auth: (flags & 0x10) !== 0,
+});
+
+const rotationOf = (signer: ApkSigner): SignerV3["rotation"] => {
+  const attribute = signer.attributes.find(
+    (a) => a.id === PROOF_OF_ROTATION_ATTR_ID,
+  );
+  if (attribute === undefined) return { present: false, lineage: [] };
+  const nodes = decodeRotationLineage(attribute.value);
+  return {
+    present: true,
+    lineage: nodes.ok
+      ? nodes.value.map((node) => ({
+          certificate: certificateFacts(node.certificate),
+          flags: node.flags,
+          capabilities: capabilities(node.flags),
+        }))
+      : [],
+  };
+};
+
 const v3Signer = (signer: ApkSigner, match: DigestMatcher): SignerV3 => ({
   ...baseSigner(signer, match),
-  rotation: {
-    present: signer.attributes.some((a) => a.id === PROOF_OF_ROTATION_ATTR_ID),
-  },
+  rotation: rotationOf(signer),
 });
 
 /** All recomputed digests agree → true; any mismatch → false; none computed → null. */
@@ -231,11 +259,16 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     const rotationPresent = [...v3signers, ...v31signers].some(
       (s) => s.rotation.present,
     );
-    const fingerprints = new Set(
-      [v2signers, v3signers, v31signers]
-        .map((signers) => signers[0]?.certificate?.sha256_fingerprint)
-        .filter((fp): fp is string => typeof fp === "string"),
-    );
+    const isString = (fp: string | undefined): fp is string =>
+      typeof fp === "string";
+    const signerFingerprints = [v2signers, v3signers, v31signers]
+      .map((signers) => signers[0]?.certificate?.sha256_fingerprint)
+      .filter(isString);
+    const lineageFingerprints = [...v3signers, ...v31signers]
+      .flatMap((signer) =>
+        signer.rotation.lineage.map((n) => n.certificate?.sha256_fingerprint),
+      )
+      .filter(isString);
 
     const result: ApkSignatureResult = {
       artifact,
@@ -258,7 +291,8 @@ export class ApkSignatureProvider implements ApkSignaturePort {
         v31Present: v31.value.present,
         sourceStampPresent,
         rotationPresent,
-        distinctSignerFingerprints: fingerprints.size,
+        signerFingerprints,
+        lineageFingerprints,
         selfConsistent: selfConsistency([
           ...v2signers,
           ...v3signers,

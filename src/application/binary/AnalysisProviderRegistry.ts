@@ -254,14 +254,22 @@ export class AnalysisProviderRegistry {
     const evaluated = evaluation.value;
     const statuses = replaceCandidate(baseline, evaluated.status);
     const refusal = evaluated.profileError;
-    // A selected provider refusing the target is a selection outcome, with its own reason and recovery.
-    if (refusal instanceof AnalysisUnsupportedTargetError)
+    // A selected provider refusing the target is a selection outcome that keeps the
+    // refusal's reason, recovery and evidence; unconfirmed cleanup stays with the refusal.
+    if (
+      refusal instanceof AnalysisUnsupportedTargetError &&
+      !refusal.cleanupIncomplete
+    )
       return err(
         selectionError("target_unsupported", providerId, statuses, undefined, {
           userMessage: refusal.message,
           ...(refusal.remediationAction === undefined
             ? {}
             : { remediationAction: refusal.remediationAction }),
+          capturedOutput: refusal.capturedOutput,
+          diagnostics: refusal.diagnostics,
+          partialObservation: refusal.partialObservation,
+          cause: refusal,
         }),
       );
     if (refusal !== undefined) return err(refusal);
@@ -424,13 +432,18 @@ const selectionError = (
   requestedProviderId: string,
   candidates: readonly AnalysisProviderCandidateStatus[],
   operation = "open_binary",
-  presentation: Pick<
+  refusal: Pick<
     ProviderSelectionErrorOptions,
-    "userMessage" | "remediationAction"
+    | "userMessage"
+    | "remediationAction"
+    | "capturedOutput"
+    | "diagnostics"
+    | "partialObservation"
+    | "cause"
   > = {},
 ): ProviderSelectionError =>
   new ProviderSelectionError({
-    ...presentation,
+    ...refusal,
     operation,
     reason,
     requestedProviderId,

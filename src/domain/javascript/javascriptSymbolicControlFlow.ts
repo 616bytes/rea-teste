@@ -1,8 +1,6 @@
 import * as t from "@babel/types";
-import {
-  readExactJavaScriptLiteral,
-  javaScriptOptionalOperandsMayBeSkipped,
-} from "./javascriptAstValues.js";
+import { readExactJavaScriptLiteral } from "./javascriptAstValues.js";
+import { javaScriptOptionalOperandsMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
 import {
   symbolicTruth,
   type SymbolicValue,

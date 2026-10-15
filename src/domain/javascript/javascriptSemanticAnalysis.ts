@@ -1,5 +1,7 @@
 import * as t from "@babel/types";
 
+import { semanticBranchMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
+
 import {
   failedJavaScriptSemanticIr,
   type JavaScriptModuleOrigin,
@@ -10,7 +12,6 @@ import {
 import {
   collectSemanticModuleLink,
   collectSemanticCallable,
-  semanticImportEqualsSpecifier,
   collectSemanticReferences,
   collectSemanticReferencesSteps,
   immutableSemanticBindings,
@@ -22,7 +23,6 @@ import {
   semanticStaticPropertyKey,
   semanticWriteTargets,
   unwrapJavaScriptExpression,
-  javaScriptOptionalOperandsMayBeSkipped,
 } from "./javascriptAstValues.js";
 import type {
   JavaScriptSemanticAnalysisState,
@@ -48,7 +48,10 @@ import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { semanticBundledRequireOrigin } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import { indexJavaScriptAmbientWritesSteps } from "./javascriptSemanticAmbientWrites.js";
-import { hasUncertainTypeOnlyModuleSideEffect } from "./javascriptModuleDeclaration.js";
+import {
+  hasUncertainTypeOnlyModuleSideEffect,
+  semanticImportEqualsSpecifier,
+} from "./javascriptModuleDeclaration.js";
 import {
   collectSemanticReturns,
   resolveSemanticModuleCallables,
@@ -66,7 +69,6 @@ import {
   range,
 } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticCoverage } from "./javascriptSemanticCoverage.js";
-import { semanticResourceLimitsIn } from "./javascriptSemanticResourceLimits.js";
 import {
   parseJavaScriptSource,
   type ParsedJavaScriptSource,
@@ -201,12 +203,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
     ...derived,
     coverage: semanticCoverage(
       parserPartial,
-      semanticResourceLimitsIn([
-        ...bindings.map(({ value }) => value),
-        ...callables.flatMap((callable) =>
-          callable.returnSites.map(({ value }) => value),
-        ),
-      ]),
+      [...state.valueResourceLimits].sort(),
     ),
     limitations: [
       ...(parserPartial
@@ -311,25 +308,21 @@ function* classifyDefinitionReceiversSteps(
     if (client) roots.add(root);
   };
   const classifyOpenReceiver = (node: t.Node): void => {
-    if (
-      (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) ||
-      (!t.isMemberExpression(node.callee) &&
-        !t.isOptionalMemberExpression(node.callee))
-    )
+    if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
+    const callee = unwrapJavaScriptExpression(node.callee).node;
+    if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
       return;
-    const method = semanticStaticPropertyKey(
-      node.callee.property,
-      node.callee.computed,
-    );
+    const object = unwrapJavaScriptExpression(callee.object).node;
+    const method = semanticStaticPropertyKey(callee.property, callee.computed);
     if (method === "get") {
-      if (isConfigurationReceiver(state, node.callee.object))
+      if (isConfigurationReceiver(state, object))
         facts.set(node.start ?? -1, "configuration");
-      else if (isExtensionStateMember(node.callee.object))
+      else if (isExtensionStateMember(object))
         extensionStateReads.push(node.start ?? -1);
       return;
     }
-    if (method !== "open" || !t.isIdentifier(node.callee.object)) return;
-    const receiver = node.callee.object.name;
+    if (method !== "open" || !t.isIdentifier(object)) return;
+    const receiver = object.name;
     const binding = resolveSemanticBindingState(state, node, receiver);
     if (binding === undefined) {
       if (semanticResolutionBlocked(state, node, receiver)) return;
@@ -349,7 +342,9 @@ function* classifyDefinitionReceiversSteps(
       return;
     }
     if (binding.mutable || binding.initializers.length !== 1) return;
-    const initializer = binding.initializers[0]?.node;
+    const initializerSource = binding.initializers[0]?.node;
+    if (initializerSource === undefined) return;
+    const initializer = unwrapJavaScriptExpression(initializerSource).node;
     if (!t.isIdentifier(initializer)) return;
     const initializerBinding = resolveSemanticBindingState(
       state,
@@ -368,7 +363,9 @@ function* classifyDefinitionReceiversSteps(
           initializerBinding.initializers.length !== 1
         )
           return;
-        const nested = initializerBinding.initializers[0]?.node;
+        const nestedSource = initializerBinding.initializers[0]?.node;
+        if (nestedSource === undefined) return;
+        const nested = unwrapJavaScriptExpression(nestedSource).node;
         if (t.isIdentifier(nested)) {
           const nestedFact = resolveGlobalAliasFact(
             state,
@@ -442,16 +439,17 @@ const isConfigurationAccessorCall = (
   state: JavaScriptSemanticAnalysisState,
   node: t.Node,
 ): boolean => {
+  node = unwrapJavaScriptExpression(node).node;
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return false;
-  const callee = node.callee;
+  const callee = unwrapJavaScriptExpression(node.callee).node;
   if (
     (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee)) ||
     semanticStaticPropertyKey(callee.property, callee.computed) !==
       "getConfiguration"
   )
     return false;
-  const host = callee.object;
+  const host = unwrapJavaScriptExpression(callee.object).node;
   const matchesSpelling = t.isIdentifier(host)
     ? host.name === "workspace"
     : (t.isMemberExpression(host) || t.isOptionalMemberExpression(host)) &&
@@ -460,7 +458,7 @@ const isConfigurationAccessorCall = (
   const root = t.isIdentifier(host)
     ? host
     : t.isMemberExpression(host) || t.isOptionalMemberExpression(host)
-      ? host.object
+      ? unwrapJavaScriptExpression(host.object).node
       : undefined;
   if (!t.isIdentifier(root)) return false;
   const binding = resolveSemanticBindingState(state, root, root.name);
@@ -716,6 +714,7 @@ const createState = (
   return {
     program,
     staticImportResolutionMode,
+    valueResourceLimits: new Set(),
     parentsByNode: new WeakMap(),
     awaitSites: [],
     scopes: [root],
@@ -922,38 +921,9 @@ const writeMayBeSkipped = (
       t.isStaticBlock(parent)
     )
       return false;
-    if (isSkippedBranch(parent, child)) return true;
+    if (semanticBranchMayBeSkipped(parent, child)) return true;
     child = parent;
   }
-  return false;
-};
-
-const isSkippedBranch = (parent: t.Node, child: t.Node): boolean => {
-  if (t.isIfStatement(parent))
-    return child === parent.consequent || child === parent.alternate;
-  if (t.isSwitchCase(parent)) return true;
-  if (t.isTryStatement(parent))
-    return child === parent.block || child === parent.handler;
-  if (t.isForStatement(parent))
-    return child === parent.body || child === parent.update;
-  if (t.isWhileStatement(parent)) return child === parent.body;
-  if (t.isDoWhileStatement(parent)) return false;
-  if (t.isForInStatement(parent) || t.isForOfStatement(parent))
-    return child === parent.left || child === parent.body;
-  if (t.isLogicalExpression(parent)) return child === parent.right;
-  if (t.isConditionalExpression(parent))
-    return child === parent.consequent || child === parent.alternate;
-  if (t.isOptionalCallExpression(parent) || t.isCallExpression(parent))
-    return (
-      parent.arguments.includes(child as t.Expression) &&
-      javaScriptOptionalOperandsMayBeSkipped(parent)
-    );
-  if (t.isOptionalMemberExpression(parent))
-    return (
-      parent.computed &&
-      child === parent.property &&
-      javaScriptOptionalOperandsMayBeSkipped(parent)
-    );
   return false;
 };
 

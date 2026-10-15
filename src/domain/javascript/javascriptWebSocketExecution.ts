@@ -3,8 +3,8 @@ import * as t from "@babel/types";
 import {
   unwrapJavaScriptExpression,
   semanticStaticPropertyName,
-  javaScriptOptionalOperandsMayBeSkipped,
 } from "./javascriptAstValues.js";
+import { javaScriptOptionalOperandsMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { semanticAwaitedResultSites } from "./javascriptSemanticPromiseIdentity.js";
 import { syntaxUnconditionalOperands } from "./javascriptSymbolicControlFlow.js";

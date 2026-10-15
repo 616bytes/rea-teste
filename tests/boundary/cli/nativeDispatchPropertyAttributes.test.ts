@@ -6,8 +6,14 @@ import { describe, expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-/** arm64 Mach-O whose two class properties share one attribute string. */
-const machoWithPropertyAttributes = (attributes: string): Buffer => {
+/**
+ * arm64 Mach-O whose two class properties share one attribute string. The
+ * second name pointer may target an unmapped offset.
+ */
+const machoWithPropertyAttributes = (
+  attributes: string,
+  { firstName = "first", secondNameOffset = 0x640 } = {},
+): Buffer => {
   const bytes = Buffer.alloc(4096);
   const base = 0x100000000n;
   const u32 = (at: number, value: number) => bytes.writeUInt32LE(value, at);
@@ -43,9 +49,9 @@ const machoWithPropertyAttributes = (attributes: string): Buffer => {
   u32(0x504, 2);
   pointer(0x508, 0x600);
   pointer(0x510, 0x620);
-  pointer(0x518, 0x640);
+  pointer(0x518, secondNameOffset);
   pointer(0x520, 0x620);
-  bytes.write("first\0", 0x600);
+  bytes.write(`${firstName}\0`, 0x600);
   bytes.write(`${attributes}\0`, 0x620);
   bytes.write("second\0", 0x640);
   return bytes;
@@ -99,6 +105,54 @@ describe.skipIf(process.platform !== "darwin")(
                           "property_attributes_incomplete",
                         )
                       : null,
+                }),
+              ]),
+            },
+          },
+        });
+      },
+    );
+  },
+);
+
+describe.skipIf(process.platform !== "darwin")(
+  "native dispatch property record isolation",
+  () => {
+    cliTest.for([
+      [
+        "an unmapped name pointer",
+        { secondNameOffset: 0x2000 },
+        "first",
+        "0x100000518",
+      ],
+      ["an empty name", { firstName: "" }, "second", "0x100000508"],
+    ] as const)(
+      "retains the valid sibling of a property with $0",
+      async ([, layout, kept, location], { cli }) => {
+        const directory = await createTestTempDirectory("rea-objc-property-");
+        const path = join(directory, "fixture.bin");
+        await writeFile(path, machoWithPropertyAttributes("Tq,N", layout));
+        const output = await cli.run({
+          arguments: ["inspect-native-dispatch-metadata", path, "--json"],
+          environment: { REA_LOG_LEVEL: "silent" },
+        });
+        expect(output.exitCode).toBe(0);
+        expect(output.json).toMatchObject({
+          normalized_result: {
+            result: {
+              objc_classes: [
+                {
+                  name: "Fixture",
+                  properties: [{ name: kept, atomicity: "nonatomic" }],
+                },
+              ],
+              coverage: expect.arrayContaining([
+                expect.objectContaining({
+                  facet: "objc_properties_categories",
+                  status: "partial",
+                  reason: expect.stringContaining(
+                    `property_decode_failed at ${location}: Fixture: property`,
+                  ),
                 }),
               ]),
             },

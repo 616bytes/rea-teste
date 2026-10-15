@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { TOOL_CONTRACTS } from "./toolContracts.js";
-import { TOOL_EFFECTS, annotationsFromEffects } from "./toolEffects.js";
+import {
+  TOOL_EFFECTS,
+  annotationsFromEffects,
+  type ToolEffects,
+} from "./toolEffects.js";
 
 /**
  * Descriptions that name running, launching, executing, starting, installing,
@@ -13,12 +17,18 @@ const EXECUTION_WORDING =
   /\b(?:run|runs|running|launch|launches|launching|execute|executes|executing|execution|start|starts|install|installs|uninstall|uninstalls)\b/iu;
 
 const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
+  inspect_with_objdump:
+    "runs a caller-selected inspection tool, not target code",
+  start_gdb_session:
+    "starts a debugger session; execution is attributed to gdb_console",
   start_frida_session:
     "spawned targets remain suspended until resume_frida_session",
   inspect_native_load_image: "states that it does not execute the target",
   resolve_native_call_targets: "states that it does not execute code",
   inspect_pe_resources: "states that it does not execute the image",
   inspect_go_binary: "reads embedded metadata without executing the target",
+  inspect_rust_binary:
+    "reads an embedded dependency list without executing the target",
   inspect_sqlite_database:
     "uses a trusted inspector worker without executing application code or caller SQL",
   inspect_binary_layout:
@@ -131,18 +141,25 @@ describe("tool effects", () => {
       "capture_electron_scenario",
       "capture_native_ui_scenario",
       "capture_process_scenario",
+      "close_gdb_session",
+      "close_rizin_debug_session",
+      "cutter_command",
       "dump_ios_process_memory",
+      "execute_rizin_command",
+      "gdb_console",
       "install_adb_package",
       "instrument_with_frida",
       "load_frida_script",
       "observe_native_calls",
       "push_adb_file",
       "resume_frida_session",
+      "rizin_debug_command",
       "run_ios_command",
       "run_ios_frida_script",
       "run_ios_lldb_command",
       "start_adb_activity",
       "start_adb_app",
+      "start_rizin_debug_session",
       "stop_adb_app",
       "uninstall_adb_package",
     ]);
@@ -154,8 +171,19 @@ describe("tool effects", () => {
   });
 
   it("derives destructiveHint from each destructive effect alone", () => {
-    const base = TOOL_EFFECTS["binary_session"];
-    if (base === undefined) throw new Error("binary_session is unaudited");
+    // Keep annotation algebra independent of any operation's audited effects.
+    const base: ToolEffects = {
+      mutatesTarget: false,
+      mutatesSession: false,
+      writesFilesystem: false,
+      launchesProcess: false,
+      accessesNetwork: false,
+      changesUiState: false,
+      mayDiscardData: false,
+      executesForeignCode: false,
+      mutatesDevice: false,
+      idempotent: true,
+    };
     expect(annotationsFromEffects(base)).toEqual({
       readOnlyHint: true,
       destructiveHint: false,
@@ -173,6 +201,17 @@ describe("tool effects", () => {
         idempotentHint: true,
         openWorldHint: false,
       });
+  });
+
+  it("marks automatic GDB detach as destructive target execution", () => {
+    const effects = TOOL_EFFECTS["close_gdb_session"];
+    if (effects === undefined)
+      throw new Error("close_gdb_session is unaudited");
+    expect(effects).toMatchObject({
+      mutatesTarget: true,
+      executesForeignCode: true,
+    });
+    expect(annotationsFromEffects(effects).destructiveHint).toBe(true);
   });
 
   it("publishes the advertised annotations derived from canonical effects", () => {

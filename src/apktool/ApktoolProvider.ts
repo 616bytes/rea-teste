@@ -56,6 +56,7 @@ import { WindowsBatchCommandError } from "../process/WindowsBatchCommand.js";
 import {
   APKTOOL_COMMAND_ENV,
   ApktoolConfigurationFailure,
+  type ApktoolProbeCleanup,
   apktoolConfigurationAvailability,
   apktoolInvocation,
   apktoolVersionLimitations,
@@ -149,6 +150,19 @@ interface DecodeLimits {
   readonly maxOutputBytes: number;
 }
 
+/** A probe whose launched processes could not be confirmed stopped. */
+const probeCleanupFailure = (
+  operation: string,
+  failure: ApktoolConfigurationFailure,
+  cleanup: ApktoolProbeCleanup,
+): ProviderCleanupError =>
+  new ProviderCleanupError(
+    APKTOOL_PROVIDER_IDENTITY.id,
+    cleanup.resources,
+    { reason: cleanup.reason, probe_failure: failure.message },
+    { operation, cause: failure },
+  );
+
 const runApktool = async (
   operation: string,
   selection: ApktoolCommandSelection,
@@ -181,6 +195,9 @@ const runApktool = async (
         command: invocation.command,
         arguments: invocation.arguments,
         windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+        // Apktool launchers are commonly interpreter scripts, so ownership is
+        // proved by the run token rather than the launcher's argv prefix.
+        expectedCommand: null,
         runId: randomUUID(),
         hostEnvironment: environment,
       },
@@ -329,6 +346,10 @@ export class ApktoolProvider {
   private readonly workspaces = new Set<string>();
   private readonly removeWorkspace: (path: string) => Promise<void>;
   readonly #pendingCommandOwners = new Map<ProviderProcessSupervisor, string>();
+  /** A version probe whose cleanup is unresolved is retried on close. */
+  readonly #retainProbeOwner = (owner: ProviderProcessSupervisor): void => {
+    this.#pendingCommandOwners.set(owner, "apktool version probe");
+  };
   readonly #shutdown = new AbortController();
   readonly #active = new Set<Promise<void>>();
   #closing = false;
@@ -379,7 +400,13 @@ export class ApktoolProvider {
         process.platform,
         signal,
       );
-      await inspectApktoolClient(selection, signal, environment);
+      await inspectApktoolClient(
+        selection,
+        signal,
+        environment,
+        process.platform,
+        this.#retainProbeOwner,
+      );
       throwIfCancelled("inspect_apktool_client", signal);
       return {
         status: "available",
@@ -391,8 +418,15 @@ export class ApktoolProvider {
         },
       };
     } catch (cause) {
-      if (cause instanceof ApktoolConfigurationFailure)
+      if (cause instanceof ApktoolConfigurationFailure) {
+        if (cause.cleanup !== undefined)
+          throw probeCleanupFailure(
+            "inspect_apktool_client",
+            cause,
+            cause.cleanup,
+          );
         return apktoolConfigurationAvailability(cause);
+      }
       throw cause;
     }
   }
@@ -438,7 +472,13 @@ export class ApktoolProvider {
         process.platform,
         signal,
       );
-      identity = await inspectApktoolClient(selection, signal, environment);
+      identity = await inspectApktoolClient(
+        selection,
+        signal,
+        environment,
+        process.platform,
+        this.#retainProbeOwner,
+      );
     } catch (cause) {
       if (
         cause instanceof AnalysisCancelledError ||
@@ -446,6 +486,10 @@ export class ApktoolProvider {
       )
         return err(cause);
       if (cause instanceof ApktoolConfigurationFailure) {
+        if (cause.cleanup !== undefined)
+          return err(
+            probeCleanupFailure(request.operation, cause, cause.cleanup),
+          );
         return err(
           providerConfigurationRefusal(
             APKTOOL_PROVIDER_IDENTITY.id,
@@ -502,12 +546,14 @@ export class ApktoolProvider {
   async #drainAndClean(): Promise<void> {
     await Promise.all(this.#active);
     const failures: unknown[] = [];
+    const retained: string[] = [];
     for (const [owner, root] of this.#pendingCommandOwners) {
       try {
         const stopped = await owner.stop();
         if (stopped.status === "incomplete") throw new Error(stopped.reason);
         this.#pendingCommandOwners.delete(owner);
       } catch (cause) {
+        retained.push(root);
         failures.push(
           new Error(
             `apktool process cleanup remains incomplete for ${root}: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -516,8 +562,23 @@ export class ApktoolProvider {
         );
       }
     }
+    // Ownership stays retained for a later close; report it as typed cleanup.
     if (failures.length > 0)
-      throw new AggregateError(failures, "Apktool process cleanup failed");
+      throw new ProviderCleanupError(
+        APKTOOL_PROVIDER_IDENTITY.id,
+        retained,
+        {
+          reason: failures
+            .map((failure) =>
+              failure instanceof Error ? failure.message : String(failure),
+            )
+            .join("; "),
+        },
+        {
+          operation: "close",
+          cause: new AggregateError(failures, "Apktool process cleanup failed"),
+        },
+      );
     for (const path of this.workspaces) {
       try {
         await this.removeWorkspace(path);

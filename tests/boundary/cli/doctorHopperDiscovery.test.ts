@@ -45,6 +45,7 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
           ? {
               PATH: [join(home, "bin"), process.env.PATH ?? ""].join(delimiter),
               REA_HOPPER_LDD_TEST_MARKER: loaderMarker,
+              NODE_OPTIONS: `--import=${new URL("../../fixtures/hopperRejectionFeed.mjs", import.meta.url).href}`,
             }
           : {}),
         HOME: home,
@@ -56,26 +57,33 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
       timeoutMs: 20_000,
     });
 
-    const executableOnHost = process.platform === "darwin";
+    const hopperReady = process.platform === "darwin";
     expect(result.signal).toBeNull();
-    expect(result.exitCode).toBe(executableOnHost ? 0 : 1);
+    expect(result.exitCode).toBe(hopperReady ? 0 : 1);
     expect(result.json).toMatchObject({
-      healthy: executableOnHost,
+      healthy: hopperReady,
       environment_healthy: false,
-      ...(executableOnHost ? { hopperPath: launcher } : {}),
+      hopperPath: launcher,
       checks: expect.arrayContaining([
         expect.objectContaining({
           name: "hopper",
-          ok: executableOnHost,
+          ok: true,
           detail: launcher,
-          classification: executableOnHost ? "healthy" : "config_drift",
-          ...(executableOnHost
-            ? {}
-            : { remediation: expect.stringContaining("HOPPER_LAUNCHER_PATH") }),
+          classification: "healthy",
         }),
+        ...(process.platform === "linux"
+          ? [
+              expect.objectContaining({
+                name: "hopper-version",
+                ok: false,
+                detail: launcher,
+                classification: "config_drift",
+                remediation: expect.stringContaining("HOPPER_LAUNCHER_PATH"),
+              }),
+            ]
+          : []),
       ]),
     });
-    if (!executableOnHost) expect(result.json).not.toHaveProperty("hopperPath");
     await expect(access(launchMarker)).rejects.toMatchObject({
       code: "ENOENT",
     });

@@ -47,9 +47,21 @@ export const downloadHopperPackage = async (
   options: {
     readonly signal?: AbortSignal;
     readonly fetch?: typeof fetch;
+    readonly maxBytes?: number;
+    readonly timeoutMs?: number;
   } = {},
 ): Promise<{ readonly ok: boolean; readonly bytes: Uint8Array }> => {
-  const deadline = AbortSignal.timeout(120_000);
+  const timeoutMs = options.timeoutMs ?? 120_000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000)
+    throw new RangeError("Invalid Hopper response time budget");
+  const deadline = AbortSignal.timeout(timeoutMs);
+  const maxBytes = options.maxBytes ?? HOPPER_DOWNLOAD_BYTES;
+  if (
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes < 1 ||
+    maxBytes > HOPPER_DOWNLOAD_BYTES
+  )
+    throw new RangeError("Invalid Hopper response byte budget");
   const response = await fetchOverHttpsOnly(
     url,
     {
@@ -65,7 +77,7 @@ export const downloadHopperPackage = async (
   if (response === undefined) return refused;
   if (
     !response.ok ||
-    Number(response.headers.get("content-length")) > HOPPER_DOWNLOAD_BYTES
+    Number(response.headers.get("content-length")) > maxBytes
   ) {
     await response.body?.cancel();
     return refused;
@@ -78,7 +90,7 @@ export const downloadHopperPackage = async (
     while (true) {
       const chunk = await reader.read();
       if (chunk.done) return { ok: true, bytes: Buffer.concat(chunks, bytes) };
-      if (chunk.value.byteLength > HOPPER_DOWNLOAD_BYTES - bytes) {
+      if (chunk.value.byteLength > maxBytes - bytes) {
         await reader.cancel();
         return refused;
       }

@@ -406,3 +406,26 @@ cliTest(
     });
   },
 );
+
+cliTest(
+  "does not call a nested field unseen in a partial XML export",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-procmon-nested-seen-");
+    const path = join(root, "cut.xml");
+    await writeFile(
+      path,
+      "<procmon><eventlist><event><Operation>Read</Operation><Detail><frame>1</frame></Detail></event><event><Path>C:",
+    );
+    const result = await cli.run({
+      arguments: ["inspect-procmon-export", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = parse(result.json);
+    expect(report.coverage.status).toBe("partial");
+    const unseen = report.limitations.find((note) =>
+      note.includes("did not appear before reading stopped"),
+    );
+    expect(unseen).toBeDefined();
+    expect(unseen).not.toContain("Detail");
+  },
+);

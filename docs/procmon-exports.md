@@ -69,7 +69,8 @@ remaining events. `output_window` reports how many events were examined and
 whether more remain.
 
 The export may be at most 128 MiB. The returned page, column names and other
-report metadata must fit the 8 MiB inline output budget. Sizes are counted
+report metadata must fit the 8 MiB report budget; the Evidence envelope around
+the report adds its own metadata, as for other REA tools. Sizes are counted
 before anything is built, and a larger report fails with a resource error that
 asks for a smaller `event_limit`. A CSV row stops being read once it has more
 fields than the header (at most 1024 columns). Parsing yields between slices,

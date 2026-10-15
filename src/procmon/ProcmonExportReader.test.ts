@@ -238,3 +238,17 @@ describe("readProcmonExport review of e3aaded", () => {
     ).rejects.toThrow("Event 1 alone exceeds");
   });
 });
+
+describe("readProcmonExport review of 46cba65", () => {
+  it("bounds a long declared XML encoding in the error", async () => {
+    const declared = "x".repeat(1_000_000);
+    const error = await readProcmonExport(
+      Buffer.from(
+        `<?xml version="1.0" encoding="${declared}"?><procmon><eventlist/></procmon>`,
+      ),
+      { ...selection, event_limit: null },
+    ).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message.length).toBeLessThan(200);
+  });
+});

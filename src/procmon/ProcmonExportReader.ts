@@ -252,7 +252,7 @@ const decodeXml = (bytes: Uint8Array, encoding: Encoding): DecodedExport => {
     if (cause.reason === "unsupported-encoding")
       throw new ProcmonExportFormatFailure(
         "unsupported",
-        `XML export declares unsupported encoding ${cause.declaredEncoding}.`,
+        `XML export declares unsupported encoding ${JSON.stringify((cause.declaredEncoding ?? "").slice(0, 40))}${(cause.declaredEncoding?.length ?? 0) > 40 ? " (truncated)" : ""}.`,
         { cause },
       );
     if (cause.reason === "encoding-mismatch")

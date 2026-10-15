@@ -120,8 +120,11 @@ const limitationsFor = (reading: ProcmonExportReading): string[] => [
 const unseenColumnLimitation = (reading: ProcmonExportReading): string[] => {
   if (reading.source.format !== "xml" || reading.coverage.status !== "partial")
     return [];
+  // A projected field with child elements was seen, though not projected.
   const seen = new Set(
-    reading.source.columns.map((column) => procmonCoreColumn(column, "xml")),
+    [...reading.source.columns, ...reading.omitted_nested_fields].map(
+      (column) => procmonCoreColumn(column, "xml"),
+    ),
   );
   const unseen = PROCMON_CORE_COLUMNS.filter((column) => !seen.has(column));
   return unseen.length === 0

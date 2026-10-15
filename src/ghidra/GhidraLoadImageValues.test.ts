@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { attestGhidraDosLoadImage } from "./GhidraLoadImageValues.js";
-import { fixtureDosLoadImage } from "./GhidraLoadImage.fixture.js";
+import {
+  fixtureDosLoadImage,
+  fixtureOverlappingDosLoadImage,
+} from "./GhidraLoadImage.fixture.js";
 import { nativeLoadImageObservationSchema } from "../domain/native/nativeLoadImage.js";
 import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
 
@@ -351,5 +354,48 @@ describe("independent DOS MZ import verification", () => {
         mappings: [{ ...mapping, file_offset: Number.MAX_SAFE_INTEGER + 1 }],
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("overlapping DOS MZ relocations", () => {
+  it("compares each relocation window with the final loaded memory", () => {
+    const fixture = fixtureOverlappingDosLoadImage();
+    const result = attestGhidraDosLoadImage(
+      fixture.bytes,
+      fixture.sha256,
+      fixture.observation,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: "verified",
+        observations: {
+          relocations: [
+            { address: "0x10009", memory_bytes_hex: "1010" },
+            { address: "0x10008", memory_bytes_hex: "0010" },
+          ],
+        },
+      },
+    });
+  });
+
+  it("rejects a window that a later overlapping fixup has already changed", () => {
+    const fixture = fixtureOverlappingDosLoadImage();
+    const first = fixture.observation.relocations[0];
+    if (first === undefined) throw new Error("Missing first relocation");
+    first.memory_bytes_hex = "0010";
+    const result = attestGhidraDosLoadImage(
+      fixture.bytes,
+      fixture.sha256,
+      fixture.observation,
+    );
+    if (!result.ok || result.value.status === "unsupported")
+      throw new Error("Expected MZ verification checks");
+    expect(result.value.status).toBe("mismatch");
+    expect(
+      result.value.checks
+        .filter((check) => !check.matched)
+        .map((check) => check.name),
+    ).toEqual(["relocation_records"]);
   });
 });

@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { open, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
+import { BYTE_ENTROPY_PROVIDER } from "../InvestigationProviders.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,
@@ -166,7 +167,7 @@ export class ByteEntropyService {
       return ok(
         createEvidence(
           { path: input.path, format: "file", sha256: report.artifact.sha256 },
-          { id: "byte-entropy", name: "REA byte entropy", version: "1" },
+          BYTE_ENTROPY_PROVIDER,
           {
             operation: OPERATION,
             parameters: {

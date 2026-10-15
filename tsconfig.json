@@ -25,5 +25,5 @@
     "vitest.config.ts",
     "docs/.vitepress/config.ts"
   ],
-  "exclude": ["dist", "node_modules"]
+  "exclude": ["**/*_20??????-??????.*", "dist", "node_modules"]
 }

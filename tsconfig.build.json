@@ -6,6 +6,7 @@
   },
   "include": ["src/**/*.ts"],
   "exclude": [
+    "**/*_20??????-??????.*",
     "src/**/*.fixture.ts",
     "src/**/*.test.ts",
     "tests",

@@ -76,10 +76,26 @@ export const sqliteDatabaseFailure = (
       });
     if (cause.reason === "cancelled")
       return new AnalysisCancelledError(operation, { cause });
+    // A snapshot budget refusal is a measured resource constraint, not a
+    // caller-correctable input error. Surface it through the same
+    // `AnalysisResourceConstraintError` channel Flutter, Apple dispatch,
+    // JavaScript workflow, and the WASM interface already use, with the
+    // budget value carried in `reported_limits` for client-side adaptation.
+    // Fixes https://github.com/morluto/rea/issues/4127.
+    if (cause.reason === "limit")
+      return new AnalysisResourceConstraintError(
+        operation,
+        "file-size",
+        cause.message,
+        {
+          sqlite_snapshot_input_bytes: SQLITE_DATABASE_LIMITS.inputBytes,
+        },
+        { cause },
+      );
     return new AnalysisInputError(operation, { cause }, [
       {
         path: ["path"],
-        reason: cause.reason === "limit" ? "out_of_range" : "invalid_format",
+        reason: "invalid_format",
         message: cause.message,
       },
     ]);

@@ -29,6 +29,7 @@ import {
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
 import { providerRetryAction } from "./providerOperationHealth.js";
+import { JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION } from "./javascript/javascriptAnalysisResourceControls.js";
 import type { AnalysisError, AnalysisErrorTag } from "./analysisErrorBase.js";
 import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 
@@ -48,12 +49,16 @@ export const analysisErrorRemediationAction = (
     );
   if (error instanceof AnalysisResourceConstraintError) {
     if (error.remediationAction !== undefined) return error.remediationAction;
-    // An exhausted parent result budget is a parent-side retention limit, not a
-    // worker heap limit: raising the worker heap never raises it. Fall back to
-    // the parent budget remediation so no producer regresses to the generic
-    // memory advice for reporting parent_result_budget_exhausted.
-    if (error.reportedLimits?.parent_result_budget_exhausted === true)
-      return "Use the retained facts or analyze fewer source files. This limit belongs to the parent result budget; increasing the worker heap alone does not increase it.";
+    // An exhausted parent result budget is the parent's retention limit, not the
+    // worker's: a larger worker heap does not raise it. The shared clause states
+    // that about the worker heap, so it answers a memory constraint reporting
+    // the flag; a constraint of another kind keeps the advice for its own
+    // resource instead of being told about a limit the clause does not describe.
+    if (
+      error.resource === "memory" &&
+      error.reportedLimits?.parent_result_budget_exhausted === true
+    )
+      return `Use the retained facts or analyze fewer source files. ${JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION}`;
     return error.resource === "capacity"
       ? "Wait for an active analysis to complete, then retry within the reported admission limits."
       : error.resource === "transport"

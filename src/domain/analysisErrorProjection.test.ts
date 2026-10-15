@@ -317,6 +317,22 @@ it("keeps the worker memory advice without parent exhaustion", () => {
   expect(projected.remediation.action).toContain("sufficient memory");
 });
 
+it("keeps a constraint's own advice when another resource reports the flag", () => {
+  const projected = projectAnalysisError(
+    new AnalysisResourceConstraintError(
+      "analyze_javascript_application",
+      "cpu",
+      "Owned JavaScript worker exhausted its CPU budget",
+      { parent_result_budget_exhausted: true },
+    ),
+  );
+  // The parent budget clause names the worker heap, so it answers a memory
+  // constraint; a constraint of another kind keeps the advice for its own
+  // resource rather than being told about a limit that clause does not describe.
+  expect(projected.remediation.action).toContain("worker CPU limits");
+  expect(projected.remediation.action).not.toContain("parent result budget");
+});
+
 it.each([
   new AnalysisInputError("inspect", { capturedOutput: retainedOutput }),
   new AnalysisOutputError("inspect", "invalid reply", {

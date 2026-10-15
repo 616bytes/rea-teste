@@ -892,6 +892,17 @@ specifications, independent mappings, unchanged bytes, and decompilation of a
 known return value. AArch64 remains covered by deterministic tests rather than
 this real-provider lane. See [raw binary analysis](raw-binary.md).
 
+`npm run verify:ghidra:loader-relocation` runs
+`tests/conformance/ghidra/ReaLoaderRelocationProbe.java` inside a real Ghidra
+import. The probe adds a deterministic relocation record only to the ephemeral
+analysis database, requires the production bridge to protect its loaded,
+initialized, file-backed, non-writable destination before decompiler setup, and checks the
+loader-value limitation, unchanged source `FileBytes`, and unchanged read/write/
+execute permissions. It is an explicit bridge-level producer regression rather
+than a claim about a naturally emitted relocation from one host linker. The
+installed native decompiler check is conditional and reports its absence;
+Ghidra/JDK and a C compiler remain required.
+
 `npm run verify:ghidra:address-context` runs on Linux with a caller-installed
 Ghidra, full JDK, and an x86-64 ELF GCC toolchain (`CC` selects another compatible
 compiler). It builds

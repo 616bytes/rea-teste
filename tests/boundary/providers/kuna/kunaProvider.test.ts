@@ -16,6 +16,7 @@ import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../../../src/domain/jsonValue.js";
 import type { KunaProcessLauncher } from "../../../../src/kuna/KunaCommand.js";
 import type { AnalysisError } from "../../../../src/domain/analysisErrorBase.js";
+import { AnalysisResourceConstraintError } from "../../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "../../../../src/kuna/KunaLimits.js";
@@ -769,6 +770,12 @@ it.each([
     cause: "ProviderAdapterError",
     next: "To retry, resolve the reported failure, then reopen the target.",
   },
+  {
+    behavior: { asmPadding: 2 * 1024 ** 2 },
+    environment: { REA_KUNA_CACHE_MAX_BYTES: String(1024 ** 2) },
+    cause: "AnalysisResourceConstraintError",
+    next: "Raise REA_KUNA_CACHE_MAX_BYTES above the export size, or analyze this target with another provider. REA reads Kuna settings when it starts, so restart REA, then reopen the target.",
+  },
 ])(
   "reports a failed export as not retryable in its session ($cause)",
   async ({ behavior, environment, cause, next }) => {
@@ -791,16 +798,25 @@ it.each([
           diagnostics: { export_error: cause },
         });
         expect(result.error.userMessage?.endsWith(next)).toBe(true);
-        // The export's own output stays on the error callers receive.
-        expect(result.error.capturedOutput).toEqual(
-          (result.error.cause as AnalysisError).capturedOutput,
-        );
-        expect(result.error.capturedOutput).toBeDefined();
+        // The export's own output and limits stay on the error callers receive.
+        const failure = result.error.cause as AnalysisError;
+        expect(result.error.capturedOutput).toEqual(failure.capturedOutput);
+        if (failure instanceof AnalysisResourceConstraintError)
+          expect(result.error.diagnostics).toMatchObject({
+            resource: "capacity",
+            reported_limits: {
+              cache_max_bytes: 1024 ** 2,
+              export_bytes: expect.any(Number),
+            },
+          });
+        else expect(result.error.capturedOutput).toBeDefined();
         expect((result.error.cause as { _tag?: string })._tag).toBe(cause);
         expect(projectAnalysisError(result.error)).toMatchObject({
           code: "capability_unavailable",
           retryable: false,
-          details: { captured_output: expect.any(Object) },
+          ...(failure.capturedOutput === undefined
+            ? {}
+            : { details: { captured_output: expect.any(Object) } }),
         });
       }
     } finally {

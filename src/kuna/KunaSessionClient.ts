@@ -179,6 +179,13 @@ const exportUnavailable = (
         ...(failure instanceof AnalysisTimeoutError
           ? { timeout_ms: failure.timeoutMs }
           : {}),
+        // The limits a resource remediation refers to, as its own projection names them.
+        ...(failure instanceof AnalysisResourceConstraintError
+          ? {
+              resource: failure.resource,
+              reported_limits: failure.reportedLimits,
+            }
+          : {}),
       },
       userMessage: `Kuna's project export failed, so ${operation} is unavailable in this session: ${reason.replace(/\.?$/u, ".")} ${next}`,
     },

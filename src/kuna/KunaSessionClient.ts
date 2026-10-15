@@ -1276,6 +1276,4 @@ export class KunaSessionClient implements AnalysisClient {
           }),
         );
   }
-
-  /** A private, digest-verified copy of the target for single-function runs. */
 }

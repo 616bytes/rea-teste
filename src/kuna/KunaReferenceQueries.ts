@@ -182,6 +182,8 @@ export class KunaReferenceQueries {
           address: node.address,
           has_indirect_calls: node.hasIndirectCalls,
           forwards_to: node.forwardsTo,
+          forwarding_target_in_graph:
+            node.forwardsTo === null ? null : graph.nodes.has(node.forwardsTo),
         },
       },
     });

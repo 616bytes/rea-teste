@@ -62,6 +62,28 @@ it("preserves u64 numeric tokens and excludes non-call edges", () => {
   expect(result.value.callers.has("0x1")).toBe(false);
 });
 
+it("keeps a forwarding instruction address separate from function identity", () => {
+  const value = graph();
+  const result = parseKunaCallGraph(
+    wire({
+      ...value,
+      functions: value.functions.map((fn, index) =>
+        index === 0 ? { ...fn, forwardsTo: "@9007199254741000" } : fn,
+      ),
+    }),
+    input,
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.nodes.get("0x20000000000001")?.forwardsTo).toBe(
+    "0x20000000000008",
+  );
+  expect(result.value.nodes.has("0x20000000000008")).toBe(false);
+  expect(result.value.callees.get("0x20000000000001")).toEqual([
+    "0xffffffffffffffff",
+  ]);
+});
+
 it.each([
   [
     "version",

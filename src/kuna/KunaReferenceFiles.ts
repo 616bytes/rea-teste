@@ -113,9 +113,6 @@ export const parseKunaCallGraph = (
       nodes.set(node.address, node);
       hasIndirectCalls ||= node.hasIndirectCalls;
     }
-    for (const node of nodes.values())
-      if (node.forwardsTo !== null && !nodes.has(node.forwardsTo))
-        throw new Error("graph forwarding target has no node");
     const callers = new Map<string, string[]>();
     const callees = new Map<string, string[]>();
     const pairs = new Set<string>();

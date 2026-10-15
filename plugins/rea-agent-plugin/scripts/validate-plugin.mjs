@@ -2,6 +2,7 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse as parseYaml } from "yaml";
 
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const errors = [];
@@ -13,7 +14,10 @@ function check(condition, message) {
 }
 function readJson(relativePath) {
   try {
-    return JSON.parse(readFileSync(resolve(pluginRoot, relativePath), "utf8"));
+    const value = JSON.parse(readFileSync(resolve(pluginRoot, relativePath), "utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new TypeError("expected a JSON object at the root");
+    return value;
   } catch (error) {
     errors.push(
       relativePath + ": invalid or unreadable JSON (" + error.message + ")",
@@ -24,23 +28,21 @@ function readJson(relativePath) {
 function exists(relativePath) {
   return existsSync(resolve(pluginRoot, relativePath));
 }
-function getFrontmatter(content) {
-  if (!content.startsWith("---\n")) return null;
-  const end = content.indexOf("\n---", 4);
+function getFrontmatter(content, label) {
+  if (!content.startsWith("---\\n")) return null;
+  const end = content.indexOf("\\n---", 4);
   if (end < 0) return null;
-  return content.slice(4, end).split(/\r?\n/);
-}
-function hasField(lines, key) {
-  return (
-    lines?.some(
-      (line) =>
-        line.startsWith(key + ":") &&
-        line.slice(key.length + 1).trim().length > 0,
-    ) ?? false
-  );
-}
-function fieldEquals(lines, key, value) {
-  return lines?.some((line) => line.trim() === key + ": " + value) ?? false;
+  try {
+    const value = parseYaml(content.slice(4, end));
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      errors.push(label + ": YAML frontmatter must be a mapping");
+      return null;
+    }
+    return value;
+  } catch (error) {
+    errors.push(label + ": invalid YAML frontmatter (" + error.message + ")");
+    return null;
+  }
 }
 
 const portable = readJson("plugin.json");
@@ -164,15 +166,16 @@ for (const entry of skillDirectories) {
   if (!existsSync(path)) continue;
 
   const content = readFileSync(path, "utf8");
-  const frontmatter = getFrontmatter(content);
+  const frontmatter = getFrontmatter(content, "skill " + name);
   check(Boolean(frontmatter), "skill " + name + " has YAML frontmatter");
   if (frontmatter) {
     check(
-      fieldEquals(frontmatter, "name", name),
+      frontmatter.name === name,
       "skill " + name + " frontmatter name matches directory",
     );
     check(
-      hasField(frontmatter, "description"),
+      typeof frontmatter.description === "string" &&
+        frontmatter.description.trim().length > 0,
       "skill " + name + " has a description",
     );
     check(
@@ -220,18 +223,23 @@ const agentNames = new Set();
 for (const entry of agentFiles) {
   const name = entry.name.slice(0, -3);
   const content = readFileSync(resolve(agentsRoot, entry.name), "utf8");
-  const frontmatter = getFrontmatter(content);
+  const frontmatter = getFrontmatter(content, "agent " + name);
   check(Boolean(frontmatter), "agent " + name + " has YAML frontmatter");
   if (frontmatter) {
     check(
-      fieldEquals(frontmatter, "name", name),
+      frontmatter.name === name,
       "agent " + name + " name matches filename",
     );
     check(
-      hasField(frontmatter, "description"),
+      typeof frontmatter.description === "string" &&
+        frontmatter.description.trim().length > 0,
       "agent " + name + " has a description",
     );
-    check(hasField(frontmatter, "tools"), "agent " + name + " declares tools");
+    check(frontmatter.tools !== undefined &&
+        frontmatter.tools !== null &&
+        (typeof frontmatter.tools === "string"
+          ? frontmatter.tools.trim().length > 0
+          : Array.isArray(frontmatter.tools) && frontmatter.tools.length > 0), "agent " + name + " declares tools");
   }
   check(
     content.length >= 700,

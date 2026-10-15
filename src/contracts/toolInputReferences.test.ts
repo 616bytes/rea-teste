@@ -15,6 +15,7 @@ import {
   transformAdvertisedInputJsonSchema,
 } from "./toolSchemaMetadata.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "./javascript/javascriptRuntimeReconciliationExample.js";
+import { nonStringConstOrEnumSchemaError } from "../../tests/fixtures/mcpClientSchemaConstraints.js";
 
 it.each(["draft-2020-12", "draft-07"] as const)(
   "honors projection options independently of cached wire transformations in %s",
@@ -481,5 +482,81 @@ describe("root input presentation", () => {
       examples: [literal],
       enum: [literal],
     });
+  });
+});
+
+describe("advertised literal normalization for model dialect compatibility", () => {
+  it("normalizes boolean const properties to plain boolean types preserving default", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        flag_false: { type: "boolean", const: false, default: false },
+        flag_true: { type: "boolean", const: true },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(nonStringConstOrEnumSchemaError(advertised, "$")).toBeUndefined();
+    const properties = advertised.properties as Record<string, unknown>;
+    expect(properties.flag_false).toEqual({
+      type: "boolean",
+      default: false,
+    });
+    expect(properties.flag_true).toEqual({ type: "boolean" });
+  });
+
+  it("preserves string const values untouched", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        kind: { type: "string", const: "exact" },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(nonStringConstOrEnumSchemaError(advertised, "$")).toBeUndefined();
+    const properties = advertised.properties as Record<string, unknown>;
+    expect(properties.kind).toEqual({ type: "string", const: "exact" });
+  });
+
+  it("normalizes boolean const values in nested definitions", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        flag: { $ref: "#/$defs/Flag" },
+      },
+      $defs: {
+        Flag: { type: "boolean", const: false },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(nonStringConstOrEnumSchemaError(advertised, "$")).toBeUndefined();
+    const defs = advertised.$defs as Record<string, Record<string, unknown>>;
+    expect(defs.Flag).toEqual({ type: "boolean" });
+    expect(defs.Flag).not.toHaveProperty("const");
+  });
+
+  it("normalizes boolean discriminated union properties into a single boolean property", () => {
+    const schema = z.union([
+      z.strictObject({
+        include_script_sources: z.literal(false).default(false),
+      }),
+      z.strictObject({
+        include_script_sources: z.literal(true),
+      }),
+    ]);
+    const canonical = z.toJSONSchema(schema, {
+      io: "input",
+      target: "draft-2020-12",
+    });
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(nonStringConstOrEnumSchemaError(advertised, "$")).toBeUndefined();
+    const properties = advertised.properties as Record<string, unknown>;
+    const property = properties.include_script_sources as Record<
+      string,
+      unknown
+    >;
+    expect(property.type).toBe("boolean");
+    expect(property.default).toBe(false);
+    expect(property).not.toHaveProperty("anyOf");
+    expect(property).not.toHaveProperty("const");
   });
 });

@@ -451,3 +451,24 @@ describe("root input presentation", () => {
     });
   });
 });
+
+it("advertises the evidence query code-point bound that the server enforces", () => {
+  const schema = toolInputSchemaWithMetadata(
+    toolContract("get_evidence_bundle"),
+  )["~standard"].jsonSchema.input({ target: "draft-2020-12" });
+  const validate = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(schema);
+  const input = (query: string) => ({ detail: "summary", filters: { query } });
+  const parse = (query: string) =>
+    toolContract("get_evidence_bundle").inputSchema.safeParse(input(query))
+      .success;
+  const atLimit = "😀".repeat(1024);
+  expect(validate(input(atLimit))).toBe(true);
+  expect(parse(atLimit)).toBe(true);
+  expect(validate(input(atLimit + "😀"))).toBe(false);
+  expect(parse(atLimit + "😀")).toBe(false);
+  // Raw length counts before trimming, as the advertised maxLength does.
+  expect(parse(" ".repeat(1024) + "x")).toBe(false);
+});

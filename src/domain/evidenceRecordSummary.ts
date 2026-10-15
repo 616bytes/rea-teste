@@ -30,20 +30,24 @@ export const evidenceRecordFiltersSchema = z.strictObject({
   procedure_address: z.string().min(1).optional(),
   query: z
     .string()
-    .trim()
-    .min(1)
+    // Checked on the raw value, before trimming, to match the advertised
+    // JSON Schema maxLength, which also counts code points.
     .refine((query) => withinCodePoints(query, MAX_QUERY_LENGTH), {
       message: `query accepts at most ${MAX_QUERY_LENGTH} Unicode code points`,
       abort: true,
     })
+    .trim()
+    .min(1)
     .refine(
       (query) => new Set(query.split(/\s+/)).size <= MAX_QUERY_TERMS,
       `query accepts at most ${MAX_QUERY_TERMS} distinct terms; each term rescans retained text`,
     )
-    .optional()
-    .describe(
-      "Literal text search under Unicode simple case folding; every whitespace-separated term must occur in some string of the record's normalized result or limitations (terms may match different strings). At most 1024 Unicode code points and 16 distinct terms.",
-    ),
+    .meta({
+      maxLength: MAX_QUERY_LENGTH,
+      description:
+        "Literal text search under Unicode simple case folding; every whitespace-separated term must occur in some string of the record's normalized result or limitations (terms may match different strings). At most 1024 Unicode code points and 16 distinct terms.",
+    })
+    .optional(),
 });
 export type EvidenceRecordFilters = z.infer<typeof evidenceRecordFiltersSchema>;
 

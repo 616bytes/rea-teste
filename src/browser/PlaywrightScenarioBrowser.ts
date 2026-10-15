@@ -327,6 +327,7 @@ class AttachedScenarioEnvironmentOwner {
   #localeOverride = false;
   #timezoneOverride = false;
   #detached = false;
+  #application: Promise<void> | undefined;
 
   private constructor(
     private readonly page: Page,
@@ -352,7 +353,21 @@ class AttachedScenarioEnvironmentOwner {
     );
   }
 
-  async apply(
+  get targetClosed(): boolean {
+    return this.page.isClosed();
+  }
+
+  apply(
+    environment: BrowserScenario["environment"],
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    const application =
+      this.#application ?? this.#applyEnvironment(environment, signal);
+    this.#application = application;
+    return application;
+  }
+
+  async #applyEnvironment(
     environment: BrowserScenario["environment"],
     signal: AbortSignal | undefined,
   ): Promise<void> {
@@ -390,6 +405,15 @@ class AttachedScenarioEnvironmentOwner {
 
   async close(): Promise<void> {
     if (this.#detached) return;
+    // The execution boundary can report cancellation before a pending CDP
+    // command settles. Wait for that producer so every successful mutation is
+    // recorded before deciding which state this owner must restore.
+    try {
+      await this.#application;
+    } catch {
+      // The operation path reports application failures. Cleanup still owns
+      // and restores every mutation that completed before the failure.
+    }
     const failures: unknown[] = [];
     if (this.#timezoneOverride) {
       try {
@@ -480,7 +504,7 @@ type ScenarioBrowserLauncher = Pick<
 > & {
   readonly connectOverCDP: (
     endpoint: string,
-  ) => Promise<Pick<Browser, "contexts" | "close" | "version">>;
+  ) => Promise<Pick<Browser, "contexts" | "close" | "isConnected" | "version">>;
 };
 
 type AttachedBrowserRequest = Extract<
@@ -515,9 +539,18 @@ const openAttachedScenarioBrowser = async (
               environmentOwner = undefined;
             } catch (cause: unknown) {
               environmentFailure = cause;
-              // Keep the transport and target session for a cleanup retry when
-              // any target override remains. A disconnect cannot restore it.
-              if (!ownedEnvironment.restored) throw cause;
+              const browserConnected = browser.isConnected();
+              if (ownedEnvironment.targetClosed || !browserConnected) {
+                // A destroyed target has no remaining emulation state. A lost
+                // transport cannot be retained or retried; release its local
+                // owner so later discovery can establish current target state.
+                environmentOwner = undefined;
+                if (!browserConnected) return;
+              } else if (!ownedEnvironment.restored) {
+                // Keep the live transport and target session for a cleanup
+                // retry while any target override remains.
+                throw cause;
+              }
             }
           }
           try {

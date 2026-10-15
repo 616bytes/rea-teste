@@ -1197,6 +1197,15 @@ describe("application workflow CLI and MCP capture lifetimes", () => {
       "unusedFallback",
       "nestedSnapshot",
       "declaratorSnapshot",
+      "conditionalSnapshot",
+      "alternateSnapshot",
+      "orSnapshot",
+      "andSnapshot",
+      "nullishSnapshot",
+      "leftOrSnapshot",
+      "leftAndSnapshot",
+      "leftNullishSnapshot",
+      "conditionalAlias",
     ];
     const sources = [
       `export default function make() {
@@ -1214,7 +1223,16 @@ describe("application workflow CLI and MCP capture lifetimes", () => {
         const {value: destructured} = source;
         const objectSnapshot = {value: source.value};
         const arraySnapshot = [source.value];
+        const conditionalSnapshot = true ? source.value : "unused";
+        const alternateSnapshot = false ? "unused" : source.value;
+        const orSnapshot = false || source.value;
+        const andSnapshot = true && source.value;
+        const nullishSnapshot = null ?? source.value;
+        const leftOrSnapshot = source.value || "unused";
+        const leftAndSnapshot = source.value && source.value;
+        const leftNullishSnapshot = source.value ?? "unused";
         mutate(source);
+        const conditionalAlias = true ? conditionalSnapshot : "unused";
         const fallback = {value: "TOKEN"};
         const container = {child: {}};
         const {child: selected = fallback} = container;
@@ -1231,6 +1249,8 @@ describe("application workflow CLI and MCP capture lifetimes", () => {
           snapshot, destructured,
           objectSnapshot: objectSnapshot.value, arraySnapshot: arraySnapshot[0],
           unusedFallback: fallback.value, nestedSnapshot, declaratorSnapshot,
+          conditionalSnapshot, alternateSnapshot, orSnapshot, andSnapshot, nullishSnapshot,
+          leftOrSnapshot, leftAndSnapshot, leftNullishSnapshot, conditionalAlias,
         };
       }`,
       `export default function make() { return ${JSON.stringify({

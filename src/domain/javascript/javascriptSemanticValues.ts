@@ -63,7 +63,12 @@ interface MemoizedEvaluation<T> {
   readonly dependencies: SemanticDependencyProof;
 }
 
-/** Provenance lives for one query; live values belong to the effects-aware state. */
+interface SourceReadMemo {
+  readonly primitives: Map<string, JavaScriptSemanticValue>;
+  readonly bindings: Map<string, CallerIndependentBindingValue>;
+}
+
+/** Query-local provenance and source reads; shared values belong to the state. */
 interface EvaluationMemo {
   readonly provenance: Map<
     string,
@@ -71,6 +76,8 @@ interface EvaluationMemo {
   >;
   readonly dependencyFrames: { proof: SemanticDependencyProof }[];
   readonly dependencies: SemanticDependencyProofs;
+  /** Each source-read capture and live state have separate query-local values. */
+  readonly sourceReads: Map<t.Node | undefined, SourceReadMemo>;
 }
 
 // Indexing owns stable binding identities; effects invalidate values, not this
@@ -88,7 +95,12 @@ const createEvaluationMemo = (
     dependencies = new SemanticDependencyProofs(state.bindingsById.keys());
     dependencyProofsByState.set(state, dependencies);
   }
-  return { provenance: new Map(), dependencyFrames: [], dependencies };
+  return {
+    provenance: new Map(),
+    dependencyFrames: [],
+    dependencies,
+    sourceReads: new Map(),
+  };
 };
 
 interface EvaluationContext {
@@ -312,10 +324,15 @@ const evaluateBinding = (
     )
   ) {
     const { capturePoint: _capturePoint, ...liveContext } = context;
-    return evaluateBinding(binding, {
-      ...liveContext,
-      primitiveBindingValues: primitiveBindingValuesFor(context.state),
-    });
+    return evaluateBinding(
+      binding,
+      context.sourceReadValues === undefined
+        ? {
+            ...liveContext,
+            primitiveBindingValues: primitiveBindingValuesFor(context.state),
+          }
+        : sourceReadContextAt(liveContext, undefined),
+    );
   }
   const cached = context.primitiveBindingValues.get(binding.bindingId);
   if (cached !== undefined) return cached;
@@ -531,14 +548,22 @@ const evaluateIdentifier = (
     : evaluateBinding(binding, nestedContext(context));
 };
 
-/** One branch expression owns source-read evaluation for all of its operands. */
-const sourceReadContext = (context: EvaluationContext): EvaluationContext => {
-  if (context.sourceReadValues !== undefined) return context;
+/** Source-read ordering and capture timing are independent facts. */
+const sourceReadContextAt = (
+  context: EvaluationContext,
+  capturePoint: t.Node | undefined,
+): EvaluationContext => {
+  let values = context.memo.sourceReads.get(capturePoint);
+  if (values === undefined) {
+    values = { primitives: new Map(), bindings: new Map() };
+    context.memo.sourceReads.set(capturePoint, values);
+  }
   const { capturePoint: _capturePoint, ...readContext } = context;
   return {
     ...readContext,
-    primitiveBindingValues: new Map(),
-    sourceReadValues: new Map(),
+    ...(capturePoint === undefined ? {} : { capturePoint }),
+    primitiveBindingValues: values.primitives,
+    sourceReadValues: values.bindings,
   };
 };
 
@@ -546,7 +571,7 @@ const evaluateBranches = (
   node: t.ConditionalExpression | t.LogicalExpression,
   context: EvaluationContext,
 ): JavaScriptSemanticValue => {
-  const readContext = sourceReadContext(context);
+  const readContext = sourceReadContextAt(context, context.capturePoint);
   if (t.isLogicalExpression(node)) return evaluateLogical(node, readContext);
   const test = primitiveCandidates(
     evaluateExpression(node.test, nestedContext(readContext)),
@@ -1190,11 +1215,14 @@ const captureContextAt = (
   context: EvaluationContext,
 ): EvaluationContext | undefined => {
   if (
-    context.sourceReadValues !== undefined ||
-    context.capturePoint !== undefined ||
+    context.capturePoint === node ||
+    (context.sourceReadValues === undefined &&
+      context.capturePoint !== undefined) ||
     semanticCapturePosition(node, context.state.parentsByNode) === null
   )
     return undefined;
+  if (context.sourceReadValues !== undefined)
+    return sourceReadContextAt(context, node);
   let captures = capturedBindingValuesByState.get(context.state);
   if (captures === undefined) {
     captures = new WeakMap();

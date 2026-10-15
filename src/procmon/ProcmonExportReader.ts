@@ -9,9 +9,11 @@ import {
 } from "../domain/procmon/procmonExport.js";
 import { readProcmonCsv } from "./ProcmonCsvExport.js";
 import {
-  procmonColumnName,
+  partialCoverage,
+  procmonCoreColumn,
   ProcmonEventWindow,
   ProcmonExportFormatFailure,
+  type ParsedProcmonExport,
 } from "./ProcmonExportEvents.js";
 import { readProcmonXml } from "./ProcmonXmlExport.js";
 
@@ -28,27 +30,34 @@ export type ProcmonExportReading = Pick<
 type Encoding = ProcmonExport["source"]["encoding"];
 
 /** Parse one export in source order, retaining only the caller-selected window. */
-export const readProcmonExport = (
+export const readProcmonExport = async (
   bytes: Uint8Array,
   selection: Pick<
     InspectProcmonExportInput,
     "format" | "event_offset" | "event_limit"
   >,
-): ProcmonExportReading => {
+  signal?: AbortSignal,
+): Promise<ProcmonExportReading> => {
   const { encoding, byteOrderMark } = detectEncoding(bytes);
   const format =
     selection.format === "auto"
       ? detectFormat(bytes, encoding)
       : selection.format;
   const window = new ProcmonEventWindow(
+    format,
     selection.event_offset,
     selection.event_limit,
   );
+  const decoded =
+    format === "xml" ? decodeXml(bytes) : decodeText(bytes, encoding);
+  signal?.throwIfAborted();
   const parsed =
     format === "xml"
-      ? readProcmonXml(decodeXml(bytes), window)
-      : readProcmonCsv(decodeText(bytes, encoding), window);
-  const present = new Set(parsed.columns.map(procmonColumnName));
+      ? await readProcmonXml(decoded.text, window, signal)
+      : await readProcmonCsv(decoded.text, window, signal);
+  const present = new Set(
+    parsed.columns.map((column) => procmonCoreColumn(column, format)),
+  );
   return {
     source: {
       format,
@@ -66,9 +75,22 @@ export const readProcmonExport = (
       returned_events: window.events.length,
       has_more: window.examined > selection.event_offset + window.events.length,
     },
-    coverage: parsed.coverage,
+    coverage: withCutCharacter(parsed, decoded.cutBytes),
   };
 };
+
+/** A character cut off at the end is truncation, unless parsing stopped earlier. */
+const withCutCharacter = (
+  parsed: ParsedProcmonExport,
+  cutBytes: number,
+): ProcmonExport["coverage"] =>
+  cutBytes === 0 || parsed.coverage.status === "partial"
+    ? parsed.coverage
+    : partialCoverage(
+        "truncated",
+        `The export ends with an incomplete or invalid character; its last ${cutBytes} bytes were not read.`,
+        null,
+      );
 
 const detectEncoding = (
   bytes: Uint8Array,
@@ -88,9 +110,43 @@ const detectFormat = (bytes: Uint8Array, encoding: Encoding): "xml" | "csv" => {
   return /^\s*</u.test(prefix) ? "xml" : "csv";
 };
 
-const decodeText = (bytes: Uint8Array, encoding: Encoding): string => {
+interface DecodedExport {
+  readonly text: string;
+  /** Trailing bytes of an incomplete final character that were not decoded. */
+  readonly cutBytes: number;
+}
+
+/**
+ * Decode strictly. When only the final character is incomplete, as in an
+ * export cut off mid-write, decode the bytes before it and report the cut.
+ * Invalid bytes anywhere else still reject the export.
+ */
+const decodeWithCutTail = (
+  bytes: Uint8Array,
+  decode: (bytes: Uint8Array) => string,
+  isInvalidBytes: (cause: unknown) => boolean,
+): DecodedExport => {
+  let first: unknown;
+  for (let cut = 0; cut <= 3 && cut < bytes.length; cut += 1)
+    try {
+      return {
+        text: decode(bytes.subarray(0, bytes.length - cut)),
+        cutBytes: cut,
+      };
+    } catch (cause: unknown) {
+      if (!isInvalidBytes(cause)) throw cause;
+      first ??= cause;
+    }
+  throw first;
+};
+
+const decodeText = (bytes: Uint8Array, encoding: Encoding): DecodedExport => {
   try {
-    return new TextDecoder(encoding, { fatal: true }).decode(bytes);
+    return decodeWithCutTail(
+      bytes,
+      (prefix) => new TextDecoder(encoding, { fatal: true }).decode(prefix),
+      (cause) => cause instanceof TypeError,
+    );
   } catch (cause: unknown) {
     throw new ProcmonExportFormatFailure(
       "unsupported",
@@ -100,9 +156,15 @@ const decodeText = (bytes: Uint8Array, encoding: Encoding): string => {
   }
 };
 
-const decodeXml = (bytes: Uint8Array): string => {
+const decodeXml = (bytes: Uint8Array): DecodedExport => {
   try {
-    return decodeXmlPlistText(bytes);
+    return decodeWithCutTail(
+      bytes,
+      decodeXmlPlistText,
+      (cause) =>
+        cause instanceof XmlPlistTextDecodeError &&
+        cause.reason === "invalid-bytes",
+    );
   } catch (cause: unknown) {
     if (!(cause instanceof XmlPlistTextDecodeError)) throw cause;
     if (cause.reason === "unsupported-encoding")

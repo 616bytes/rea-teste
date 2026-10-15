@@ -52,7 +52,11 @@ export class ProcmonExportProvider implements ProcmonExportPort {
         options?.signal,
       );
       options?.signal?.throwIfAborted();
-      const reading = readProcmonExport(snapshot.bytes, input);
+      const reading = await readProcmonExport(
+        snapshot.bytes,
+        input,
+        options?.signal,
+      );
       options?.signal?.throwIfAborted();
       const parsed = procmonExportSchema.safeParse({
         artifact: {
@@ -65,6 +69,12 @@ export class ProcmonExportProvider implements ProcmonExportPort {
         limitations: limitationsFor(reading),
         live_capture: "not-performed",
       });
+      if (
+        parsed.success &&
+        Buffer.byteLength(JSON.stringify(parsed.data), "utf8") >
+          PROCMON_EXPORT_LIMITS.output_bytes
+      )
+        throw new ProcmonExportOutputFailure(parsed.data.events.length);
       if (!parsed.success)
         throw new AnalysisOutputError(
           OPERATION,

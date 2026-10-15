@@ -251,3 +251,132 @@ cliTest(
     expect(notXml.json).toMatchObject({ code: "invalid_request" });
   },
 );
+
+cliTest(
+  "selects the export format with --export_format, leaving --format for output",
+  async ({ cli }) => {
+    const xml = await cli.run({
+      arguments: [
+        "inspect-procmon-export",
+        fixture("events.xml"),
+        "--export_format",
+        "xml",
+        "--format",
+        "json",
+      ],
+    });
+    expect(xml.exitCode, xml.stderr).toBe(0);
+    expect(parse(xml.json).source.format).toBe("xml");
+    const forcedCsv = await cli.run({
+      arguments: [
+        "inspect-procmon-export",
+        fixture("events.xml"),
+        "--export_format",
+        "csv",
+        "--json",
+      ],
+    });
+    expect(forcedCsv.exitCode).toBe(1);
+    expect(forcedCsv.json).toMatchObject({ code: "invalid_request" });
+  },
+);
+
+cliTest(
+  "maps underscore names only in XML, not in CSV headers",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-procmon-underscore-");
+    const path = join(root, "underscore.csv");
+    await writeFile(path, '"Process_Name","Operation"\n"a.exe","Load Image"\n');
+    const result = await cli.run({
+      arguments: ["inspect-procmon-export", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = parse(result.json);
+    expect(report.missing_columns).toContain("Process Name");
+    expect(report.events[0]).toMatchObject({
+      process_name: null,
+      operation: "Load Image",
+      additional: { Process_Name: "a.exe" },
+    });
+  },
+);
+
+cliTest(
+  "keeps earlier events when the export ends inside a character",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-procmon-cut-char-");
+    const path = join(root, "cut.csv");
+    await writeFile(
+      path,
+      Buffer.concat([
+        Buffer.from(`${header}\r\n${row(1)}\r\n"9:41:02 AM","caf`),
+        Buffer.from([0xc3]),
+      ]),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-procmon-export", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = parse(result.json);
+    expect(report.events.map((event) => event.ordinal)).toEqual([1]);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      reason: "truncated",
+    });
+  },
+);
+
+cliTest("stops a comma-filled row at the header width", async ({ cli }) => {
+  const root = await createTestTempDirectory("rea-procmon-commas-");
+  const path = join(root, "commas.csv");
+  await writeFile(
+    path,
+    `${header}\n${row(1)}\n${",".repeat(5_000_000)}\n${row(3)}\n`,
+  );
+  const result = await cli.run({
+    arguments: ["inspect-procmon-export", path, "--json"],
+  });
+  expect(result.exitCode, result.stderr).toBe(0);
+  const report = parse(result.json);
+  expect(report.output_window.examined_events).toBe(1);
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    reason: "malformed",
+    line: 3,
+    message: "Row has more than 7 fields.",
+  });
+});
+
+cliTest(
+  "charges column names and escaped text to the output budget",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-procmon-budget-");
+    const wideHeader = join(root, "header.csv");
+    await writeFile(
+      wideHeader,
+      `"Process Name","${"x".repeat(9 * 1024 * 1024)}"\n`,
+    );
+    const header = await cli.run({
+      arguments: ["inspect-procmon-export", wideHeader, "--json"],
+    });
+    expect(header.exitCode).toBe(1);
+    expect(header.json).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        operation: "inspect_procmon_export",
+        reported_limits: { maximum_output_bytes: 8 * 1024 * 1024 },
+      },
+    });
+    // Two MiB of control characters serialize to twelve MiB of JSON escapes.
+    const escaped = join(root, "escaped.csv");
+    await writeFile(
+      escaped,
+      `"Process Name","Detail"\n"a.exe","${"\u0001".repeat(2 * 1024 * 1024)}"\n`,
+    );
+    const event = await cli.run({
+      arguments: ["inspect-procmon-export", escaped, "--json"],
+    });
+    expect(event.exitCode).toBe(1);
+    expect(event.json).toMatchObject({ code: "resource_constraint" });
+  },
+);

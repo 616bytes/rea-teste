@@ -17,17 +17,18 @@ export class ProcmonExportFormatFailure extends Error {
   }
 }
 
-/** The selected event window does not fit the inline output budget. */
+/** The selected events and export metadata do not fit the inline output budget. */
 export class ProcmonExportOutputFailure extends Error {
   constructor(readonly retainedEvents: number) {
     super(
-      `Selected events exceed the ${PROCMON_EXPORT_LIMITS.output_bytes}-byte inline output budget after ${retainedEvents} events; choose a smaller event_limit.`,
+      `The report exceeds the ${PROCMON_EXPORT_LIMITS.output_bytes}-byte inline output budget after ${retainedEvents} events; choose a smaller event_limit.`,
     );
     this.name = "ProcmonExportOutputFailure";
   }
 }
 
 export type ProcmonCoverage = ProcmonExport["coverage"];
+export type ProcmonFormat = ProcmonExport["source"]["format"];
 
 /** Format-independent facts one parser reports about the whole export. */
 export interface ParsedProcmonExport {
@@ -41,10 +42,6 @@ export const partialCoverage = (
   message: string,
   line: number | null,
 ): ProcmonCoverage => ({ status: "partial", reason, message, line });
-
-/** XML field names spell spaces as underscores. */
-export const procmonColumnName = (column: string): string =>
-  column.replaceAll("_", " ");
 
 const CORE_FIELDS: Readonly<
   Record<
@@ -61,23 +58,67 @@ const CORE_FIELDS: Readonly<
   Detail: "detail",
 };
 
-/** The named event field for a projected column, or undefined for others. */
-export const procmonCoreField = (column: string) => {
-  const name = procmonColumnName(column);
+/**
+ * The projected column a source name denotes. CSV headers use the names as
+ * written; only XML field names spell spaces as underscores.
+ */
+export const procmonCoreColumn = (
+  column: string,
+  format: ProcmonFormat,
+): ProcmonCoreColumn | undefined => {
+  const name = format === "xml" ? column.replaceAll("_", " ") : column;
   return Object.hasOwn(CORE_FIELDS, name)
-    ? CORE_FIELDS[name as ProcmonCoreColumn]
+    ? (name as ProcmonCoreColumn)
     : undefined;
 };
 
-/** Count every event in source order; build and admit only the selected window. */
+/**
+ * Exact UTF-8 length of `value` serialized as a JSON string, computed without
+ * building the serialized string.
+ */
+export const jsonStringBytes = (value: string): number => {
+  let bytes = 2;
+  for (let at = 0; at < value.length; at += 1) {
+    const code = value.charCodeAt(at);
+    if (code === 0x22 || code === 0x5c) bytes += 2;
+    else if (code < 0x20)
+      bytes += [0x08, 0x09, 0x0a, 0x0c, 0x0d].includes(code) ? 2 : 6;
+    else if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(at + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        at += 1;
+      } else bytes += 6;
+    } else if (code >= 0xdc00 && code <= 0xdfff) bytes += 6;
+    else bytes += 3;
+  }
+  return bytes;
+};
+
+/**
+ * Count every event in source order; build and admit only the selected
+ * window. Column names, nested field names and retained events are charged to
+ * one output budget before allocation so no source text reaches the report
+ * unbounded.
+ */
 export class ProcmonEventWindow {
   examined = 0;
   readonly events: ProcmonEvent[] = [];
   #bytes = 0;
   constructor(
+    readonly format: ProcmonFormat,
     readonly offset: number,
     readonly limit: number | null,
   ) {}
+
+  /** Charge source text that the report repeats, such as column names. */
+  charge(text: string, copies = 1): void {
+    if (text.length > PROCMON_EXPORT_LIMITS.output_bytes)
+      throw new ProcmonExportOutputFailure(this.events.length);
+    this.#admit(copies * (jsonStringBytes(text) + 1));
+  }
 
   add(fields: ReadonlyMap<string, string>): void {
     this.examined += 1;
@@ -86,6 +127,14 @@ export class ProcmonEventWindow {
       (this.limit !== null && this.events.length >= this.limit)
     )
       return;
+    // Ordinal, seven null core fields and the fixed keys.
+    let bytes = 160;
+    for (const [column, value] of fields) {
+      if (value.length > PROCMON_EXPORT_LIMITS.output_bytes)
+        throw new ProcmonExportOutputFailure(this.events.length);
+      bytes += jsonStringBytes(column) + jsonStringBytes(value) + 2;
+    }
+    this.#admit(bytes);
     const event: ProcmonEvent = {
       ordinal: this.examined,
       time_of_day: null,
@@ -98,13 +147,24 @@ export class ProcmonEventWindow {
       additional: {},
     };
     for (const [column, value] of fields) {
-      const field = procmonCoreField(column);
-      if (field === undefined) event.additional[column] = value;
-      else event[field] = value;
+      const core = procmonCoreColumn(column, this.format);
+      if (core === undefined) event.additional[column] = value;
+      else event[CORE_FIELDS[core]] = value;
     }
-    this.#bytes += Buffer.byteLength(JSON.stringify(event), "utf8") + 1;
-    if (this.#bytes > PROCMON_EXPORT_LIMITS.output_bytes)
-      throw new ProcmonExportOutputFailure(this.events.length);
     this.events.push(event);
   }
+
+  #admit(bytes: number): void {
+    this.#bytes += bytes;
+    if (this.#bytes > PROCMON_EXPORT_LIMITS.output_bytes)
+      throw new ProcmonExportOutputFailure(this.events.length);
+  }
 }
+
+/** Let cancellation and other work run between bounded parsing slices. */
+export const yieldToEventLoop = async (
+  signal: AbortSignal | undefined,
+): Promise<void> => {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  signal?.throwIfAborted();
+};

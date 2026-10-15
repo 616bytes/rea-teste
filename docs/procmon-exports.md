@@ -29,14 +29,16 @@ The corresponding MCP call is:
 ## Formats
 
 `format` defaults to `auto`, which selects XML when the first non-whitespace
-character is `<` and CSV otherwise. Pass `xml` or `csv` to require one.
+character is `<` and CSV otherwise. Pass `xml` or `csv` to require one; on
+the CLI this is `--export_format`, because `--format` selects the output format.
 
 - **CSV**: a header row followed by one row per event, as written by
   Process Monitor's _Save > CSV_. Quoted fields, doubled quotes, embedded line
   breaks and CRLF or LF row endings are supported.
 - **XML**: a `procmon` root with an `eventlist` of `event` elements, as written
   by _Save > XML_. Each simple child of an `event` is one field; XML field names
-  spell spaces as underscores (`Process_Name`). Fields with child elements, such
+  spell spaces as underscores (`Process_Name`); CSV headers must use the
+  names with spaces. Fields with child elements, such
   as `stack`, are listed in `omitted_nested_fields` and not projected. The
   `processlist` section is not read. Documents with a DTD are rejected.
 
@@ -65,9 +67,12 @@ reports the path, SHA-256 and byte length of the export.
 remaining events. `output_window` reports how many events were examined and
 whether more remain.
 
-The export may be at most 128 MiB. The returned page must fit the 8 MiB inline
-output budget; a larger page fails with a resource error that asks for a
-smaller `event_limit`.
+The export may be at most 128 MiB. The returned page, column names and other
+report metadata must fit the 8 MiB inline output budget. Sizes are counted
+before anything is built, and a larger report fails with a resource error that
+asks for a smaller `event_limit`. A CSV row stops being read once it has more
+fields than the header (at most 1024 columns). Parsing yields between slices,
+so a call can be cancelled while a large export is read.
 
 ## Partial exports
 
@@ -76,6 +81,8 @@ problem are returned, and `coverage` is `partial` with the `reason`
 (`truncated` or `malformed`), a message and the source line where reading
 stopped. A CSV row with the wrong number of fields, a quote in an unquoted
 field, an unclosed quote, or XML that stops being well-formed all end reading.
+An export whose last character is cut off is decoded up to that character
+and reported as `truncated`.
 Events after that point are not examined, so their absence is not established.
 
 A file that is not a Process Monitor export — an empty file, a CSV header that

@@ -4,6 +4,7 @@ import {
   partialCoverage,
   ProcmonExportFormatFailure,
   ProcmonExportOutputFailure,
+  yieldToEventLoop,
   type ParsedProcmonExport,
   type ProcmonCoverage,
   type ProcmonEventWindow,
@@ -71,6 +72,8 @@ class ProcmonXmlEvents {
     this.#field = undefined;
     if (field === undefined || event === undefined) return;
     if (field.nested) {
+      // Reported in omitted_nested_fields and repeated in a limitation.
+      if (!this.nested.has(field.name)) this.window.charge(field.name, 2);
       this.nested.add(field.name);
       return;
     }
@@ -84,16 +87,21 @@ class ProcmonXmlEvents {
       throw new XmlStop(
         `Events name more than ${PROCMON_EXPORT_LIMITS.columns} distinct fields.`,
       );
+    this.window.charge(field.name);
     this.#known.add(field.name);
     this.columns.push(field.name);
   }
 }
 
+/** UTF-16 code units written to the parser between event-loop yields. */
+const CHARACTERS_PER_SLICE = 1024 * 1024;
+
 /** Stream one XML export; well-formedness failures after the root keep earlier events. */
-export const readProcmonXml = (
+export const readProcmonXml = async (
   xml: string,
   window: ProcmonEventWindow,
-): ParsedProcmonExport => {
+  signal?: AbortSignal,
+): Promise<ParsedProcmonExport> => {
   const parser = new SaxesParser({
     defaultXMLVersion: "1.0",
     forceXMLVersion: true,
@@ -116,10 +124,15 @@ export const readProcmonXml = (
   });
   let stage: "write" | "close" = "write";
   try {
-    parser.write(xml);
+    for (let at = 0; at < xml.length; at += CHARACTERS_PER_SLICE) {
+      parser.write(xml.slice(at, at + CHARACTERS_PER_SLICE));
+      if (at + CHARACTERS_PER_SLICE < xml.length)
+        await yieldToEventLoop(signal);
+    }
     stage = "close";
     parser.close();
   } catch (cause: unknown) {
+    if (signal?.aborted === true) throw cause;
     return parsed(stoppedCoverage(cause, events, stage, parser.line));
   }
   if (events.eventLists === 0)

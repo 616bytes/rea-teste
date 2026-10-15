@@ -23,7 +23,8 @@ export const registerProcmonCommands = (
     }),
     options: z
       .object({
-        format: inspectProcmonExportInputSchema.shape.format,
+        // --format is the CLI-wide output format, so the export format has its own name.
+        export_format: inspectProcmonExportInputSchema.shape.format,
         event_offset: inspectProcmonExportInputSchema.shape.event_offset,
         event_limit: z
           .number()
@@ -45,12 +46,13 @@ export const registerProcmonCommands = (
             message: "all_events and event_limit are mutually exclusive",
           });
       }),
-    run: ({ args, options: { all_events, ...options } }) =>
+    run: ({ args, options: { all_events, export_format, ...options } }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectProcmonExport, async () => {
           const result = await service.inspect(
             {
               ...options,
+              format: export_format,
               ...(all_events ? { event_limit: null } : {}),
               path: resolve(args.path),
             },

@@ -4,11 +4,15 @@ import {
 } from "../domain/procmon/procmonExport.js";
 import {
   partialCoverage,
-  procmonCoreField,
+  procmonCoreColumn,
   ProcmonExportFormatFailure,
+  yieldToEventLoop,
   type ParsedProcmonExport,
   type ProcmonEventWindow,
 } from "./ProcmonExportEvents.js";
+
+/** Rows parsed between event-loop yields. */
+const ROWS_PER_SLICE = 4096;
 
 /** A syntax problem that ends reading; earlier rows remain valid. */
 class CsvSyntaxStop {
@@ -113,15 +117,29 @@ class CsvCursor {
   }
 }
 
-/** Records in source order; blank lines are skipped. */
-function* csvRecords(text: string): Generator<CsvRecord> {
+/**
+ * Records in source order; blank lines are skipped. A row stops before it
+ * holds more than `width.maximum` fields, so a comma-filled line cannot
+ * allocate one field per comma.
+ */
+function* csvRecords(
+  text: string,
+  width: { maximum: number },
+): Generator<CsvRecord> {
   const cursor = new CsvCursor(text);
   while (!cursor.done) {
     if (cursor.lineEnding()) continue;
     const line = cursor.line;
     const fields: string[] = [];
-    do fields.push(cursor.field(line));
-    while (cursor.comma());
+    do {
+      if (fields.length === width.maximum)
+        throw new CsvSyntaxStop(
+          "malformed",
+          `Row has more than ${width.maximum} fields.`,
+          line,
+        );
+      fields.push(cursor.field(line));
+    } while (cursor.comma());
     yield { fields, line, terminated: cursor.lineEnding() };
   }
 }
@@ -147,11 +165,6 @@ const readHeader = (records: Generator<CsvRecord>): string[] => {
 };
 
 const validateHeader = (header: readonly string[]): void => {
-  if (header.length > PROCMON_EXPORT_LIMITS.columns)
-    throw new ProcmonExportFormatFailure(
-      "format",
-      `CSV header has ${header.length} columns; at most ${PROCMON_EXPORT_LIMITS.columns} are supported.`,
-    );
   const seen = new Set<string>();
   for (const column of header) {
     if (column === "")
@@ -162,11 +175,11 @@ const validateHeader = (header: readonly string[]): void => {
     if (seen.has(column))
       throw new ProcmonExportFormatFailure(
         "format",
-        `CSV header repeats column ${JSON.stringify(column)}.`,
+        `CSV header repeats column ${JSON.stringify(column.slice(0, 200))}.`,
       );
     seen.add(column);
   }
-  if (!header.some((column) => procmonCoreField(column) !== undefined))
+  if (!header.some((column) => procmonCoreColumn(column, "csv") !== undefined))
     throw new ProcmonExportFormatFailure(
       "format",
       `CSV header names none of the Process Monitor columns ${PROCMON_CORE_COLUMNS.join(", ")}.`,
@@ -188,31 +201,37 @@ const mismatchCoverage = (record: CsvRecord, width: number) =>
       );
 
 /** Read a header row, then one event per row until the end or the first bad row. */
-export const readProcmonCsv = (
+export const readProcmonCsv = async (
   text: string,
   window: ProcmonEventWindow,
-): ParsedProcmonExport => {
-  const records = csvRecords(text);
+  signal?: AbortSignal,
+): Promise<ParsedProcmonExport> => {
+  const width: { maximum: number } = {
+    maximum: PROCMON_EXPORT_LIMITS.columns,
+  };
+  const records = csvRecords(text, width);
   const columns = readHeader(records);
+  for (const column of columns) window.charge(column);
+  width.maximum = columns.length;
+  const stop = (coverage: ParsedProcmonExport["coverage"]) => ({
+    columns,
+    nested: [],
+    coverage,
+  });
   try {
+    let rows = 0;
     for (const record of records) {
       if (record.fields.length !== columns.length)
-        return {
-          columns,
-          nested: [],
-          coverage: mismatchCoverage(record, columns.length),
-        };
+        return stop(mismatchCoverage(record, columns.length));
       window.add(
         new Map(columns.map((column, at) => [column, record.fields[at] ?? ""])),
       );
+      rows += 1;
+      if (rows % ROWS_PER_SLICE === 0) await yieldToEventLoop(signal);
     }
   } catch (cause: unknown) {
     if (!(cause instanceof CsvSyntaxStop)) throw cause;
-    return {
-      columns,
-      nested: [],
-      coverage: partialCoverage(cause.reason, cause.message, cause.line),
-    };
+    return stop(partialCoverage(cause.reason, cause.message, cause.line));
   }
-  return { columns, nested: [], coverage: { status: "complete" } };
+  return stop({ status: "complete" });
 };

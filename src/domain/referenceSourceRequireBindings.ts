@@ -1,5 +1,11 @@
 import * as t from "@babel/types";
 
+import {
+  semanticStaticPropertyKey,
+  semanticWriteSiteTarget,
+  semanticWriteTargets,
+  unwrapJavaScriptExpression,
+} from "./javascript/javascriptAstValues.js";
 import { analyzeParsedJavaScriptReferences } from "./javascript/javascriptSemanticAnalysis.js";
 import {
   semanticBindingId,
@@ -49,6 +55,22 @@ export const unshadowedReferenceSourceRequireCalls = (
       (reference.resolution === "unbound" ||
         reference.bindingId === programRequireBinding),
   );
+  const isLoaderReference = (identifier: t.Identifier): boolean => {
+    const start = identifier.loc?.start;
+    const reference =
+      start === undefined
+        ? undefined
+        : references.get(`${start.line}:${start.column}`);
+    return (
+      (allowsUnboundRequire && reference?.resolution === "unbound") ||
+      (reference?.resolution === "resolved" &&
+        reference.bindingId === programRequireBinding)
+    );
+  };
+  const loaderMembersIntact = requireLoaderMembersIntact(
+    file.program,
+    isLoaderReference,
+  );
   const calls = new Set<t.CallExpression>();
 
   traverseJavaScriptAst(file.program, {
@@ -64,6 +86,9 @@ export const unshadowedReferenceSourceRequireCalls = (
         )
       )
         return;
+      // `require.resolve` and `require.main` denote Node's members only
+      // while no visible write or escape can have replaced them.
+      if (!t.isIdentifier(node.callee) && !loaderMembersIntact) return;
       const reference = references.get(`${start.line}:${start.column}`);
       if (
         (allowsUnboundRequire &&
@@ -78,6 +103,53 @@ export const unshadowedReferenceSourceRequireCalls = (
     },
   });
   return calls;
+};
+
+/**
+ * Whether the loader's `resolve` and `main` members keep Node's identity. A
+ * write to either member or to a computed member, or `require` used as a
+ * value other than a call or member read (where a mutator or alias can
+ * replace members), leaves that identity unknown.
+ */
+const requireLoaderMembersIntact = (
+  program: t.Program,
+  isLoaderReference: (identifier: t.Identifier) => boolean,
+): boolean => {
+  let intact = true;
+  const isLoaderMemberTarget = (target: t.Node): boolean => {
+    if (!t.isMemberExpression(target) && !t.isOptionalMemberExpression(target))
+      return false;
+    const object = unwrapJavaScriptExpression(target.object).node;
+    if (!t.isIdentifier(object, { name: "require" })) return false;
+    if (!isLoaderReference(object)) return false;
+    const key = semanticStaticPropertyKey(target.property, target.computed);
+    return key === null || key === "resolve" || key === "main";
+  };
+  traverseJavaScriptAst(program, {
+    enter: (node, parent) => {
+      if (!intact) return;
+      const site = semanticWriteSiteTarget(node);
+      if (site !== null) {
+        for (const target of semanticWriteTargets(site))
+          if (isLoaderMemberTarget(target)) intact = false;
+        return;
+      }
+      if (
+        !t.isIdentifier(node, { name: "require" }) ||
+        parent === null ||
+        !isLoaderReference(node)
+      )
+        return;
+      const usedAsLoader =
+        (t.isCallExpression(parent) && parent.callee === node) ||
+        ((t.isMemberExpression(parent) ||
+          t.isOptionalMemberExpression(parent)) &&
+          parent.object === node) ||
+        t.isUnaryExpression(parent, { operator: "typeof" });
+      if (!usedAsLoader) intact = false;
+    },
+  });
+  return intact;
 };
 
 const contains = (container: t.Node, node: t.Node): boolean =>

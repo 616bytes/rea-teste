@@ -135,8 +135,9 @@ runtime Evidence; its `next_probe` names how to obtain it.
 ## Outputs
 
 `render --out DIR` creates `DIR` without creating parents, so an existing path
-fails and no caller file is overwritten. Files are written exclusively. If a
-write fails, `render` removes the directory it created.
+fails and no caller file is overwritten. `DIR` is owner-only (`0700`) because
+the report and advisories can hold private findings. Files are written
+exclusively. If a write fails, `render` removes the directory it created.
 
 - `report.md`: title, target, the bundle file's SHA-256, record and residual
   unknown counts, verdict counts, then Defects, Suspects, Unknowns and
@@ -243,7 +244,7 @@ Commands run on Linux x64 with Node 24.21.0:
 | Command                                                                     | Result                                                                                    |
 | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | `node experiments/findings-triage/fixture/generate.mjs`                     | Exit 0; 5 records and 4 unknown revisions; no temporary directory or server process left. |
-| `node --test experiments/findings-triage/*.test.mjs`                        | 35 pass, 0 fail.                                                                          |
+| `node --test experiments/findings-triage/*.test.mjs`                        | 36 pass, 0 fail.                                                                          |
 | `npx oxlint experiments/findings-triage`                                    | 0 warnings, 0 errors.                                                                     |
 | `npx oxfmt --check experiments/findings-triage`                             | All files formatted.                                                                      |
 | `npx jscpd experiments/findings-triage`                                     | 0 clones.                                                                                 |

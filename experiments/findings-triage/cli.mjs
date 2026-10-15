@@ -59,10 +59,11 @@ const readBundle = async (path) => {
 const formatIssue = ({ code, path, message }) =>
   `${code} at ${path || "(root)"}: ${message}`;
 
-const writeOutput = async (out, files) => {
+export const writeOutput = async (out, files) => {
   // Non-recursive: an existing directory or missing parent fails, so
-  // nothing the caller owns is ever overwritten.
-  await mkdir(out);
+  // nothing the caller owns is ever overwritten. Owner-only, because the
+  // report and advisories can hold private findings.
+  await mkdir(out, { mode: 0o700 });
   try {
     for (const [path, content] of files) {
       const target = join(out, path);
@@ -92,11 +93,14 @@ const main = async (argv) => {
   return 0;
 };
 
-try {
-  process.exitCode = await main(process.argv.slice(2));
-} catch (cause) {
-  console.error(
-    cause instanceof UsageError ? `${cause.message}\n${USAGE}` : cause.message,
-  );
-  process.exitCode = 2;
-}
+if (import.meta.main)
+  try {
+    process.exitCode = await main(process.argv.slice(2));
+  } catch (cause) {
+    console.error(
+      cause instanceof UsageError
+        ? `${cause.message}\n${USAGE}`
+        : cause.message,
+    );
+    process.exitCode = 2;
+  }

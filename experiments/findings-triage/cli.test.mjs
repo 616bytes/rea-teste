@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { writeOutput } from "./cli.mjs";
 
 const here = (path) => fileURLToPath(new URL(path, import.meta.url));
 const triagePath = here("fixture/triage.json");
@@ -50,6 +51,8 @@ test("render matches the golden output byte for byte", async () => {
   const out = join(scratch, "render");
   const result = run("render", ...inputs(), "--out", out);
   assert.equal(result.status, 0, result.stderr);
+  if (process.platform !== "win32")
+    assert.equal((await stat(out)).mode & 0o777, 0o700);
   const expected = here("fixture/expected");
   const files = await listFiles(expected);
   assert.deepEqual(await listFiles(out), files);
@@ -89,6 +92,17 @@ test("render refuses an existing output directory", async () => {
   const existing = await mkdtemp(join(scratch, "existing-"));
   assert.equal(run("render", ...inputs(), "--out", existing).status, 2);
   assert.deepEqual(await readdir(existing), []);
+});
+
+test("a failed write removes the partial output directory", async () => {
+  const out = join(scratch, "partial");
+  // The second path needs report.md to be a directory, after it was written.
+  const files = new Map([
+    ["report.md", "written\n"],
+    ["report.md/nested.md", "never written\n"],
+  ]);
+  await assert.rejects(writeOutput(out, files));
+  await assert.rejects(stat(out), { code: "ENOENT" });
 });
 
 test("usage, IO and unparseable inputs exit 2", async () => {

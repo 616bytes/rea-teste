@@ -291,25 +291,51 @@ describe("function comparison normalized identity", () => {
       ).toMatchObject({ status: "unknown" });
     },
   );
+});
+
+describe("function comparison address-derived call names", () => {
   it.each([
-    { name: "sub_deallocate", status: "unchanged" },
-    { name: "sub_deadbeef", status: "unknown" },
-    { name: "FUN_00401000", status: "unknown" },
-    { name: "FUN_initialize", status: "unchanged" },
-  ])("preserves the calls dimension for callee $name", ({ name, status }) => {
-    const calling = (base: "0x1000" | "0x2000") =>
-      functionDossierSchema.parse({
-        ...dossier("return helper();", base),
-        callees: [procedure(base === "0x1000" ? "0x1010" : "0x2010", name)],
-      });
-    const result = compareFunctions(
-      observe("6", calling("0x1000")),
-      observe("7", calling("0x2000")),
-    );
-    expect(
-      result.dimensions.find(({ dimension }) => dimension === "calls"),
-    ).toMatchObject({ status });
-  });
+    { name: "sub_deallocate", status: "unchanged", diagnostic: undefined },
+    {
+      name: "sub_deadbeef",
+      status: "unknown",
+      diagnostic: "Provider retained an unresolved call target.",
+    },
+    { name: "FUN_00401000", status: "unknown", diagnostic: undefined },
+    { name: "FUN_initialize", status: "unchanged", diagnostic: undefined },
+  ])(
+    "preserves the calls dimension for callee $name",
+    ({ name, status, diagnostic }) => {
+      const calling = (base: "0x1000" | "0x2000") =>
+        functionDossierSchema.parse({
+          ...dossier("return helper();", base),
+          callees: [procedure(base === "0x1000" ? "0x1010" : "0x2010", name)],
+        });
+      const result = compareFunctions(
+        observe("6", calling("0x1000")),
+        observe(
+          "7",
+          calling("0x2000"),
+          "rea-workflow",
+          diagnostic === undefined
+            ? { status: "complete" }
+            : { status: "complete", diagnostics: [diagnostic] },
+        ),
+      );
+      const calls = result.dimensions.find(
+        ({ dimension }) => dimension === "calls",
+      );
+      expect(calls).toMatchObject({ status });
+      if (diagnostic !== undefined)
+        expect(calls).toMatchObject({
+          status: "unknown",
+          limitations: expect.arrayContaining([
+            "Address-derived callee or caller names cannot be matched safely.",
+            `Right: ${diagnostic}`,
+          ]),
+        });
+    },
+  );
 });
 
 describe("function call relationship coverage", () => {
@@ -625,6 +651,40 @@ describe("function comparison CFG address normalization", () => {
 });
 
 describe("function comparison unresolved text", () => {
+  it("qualifies exact text changes caused by relocated provider labels", () => {
+    const left = observe(
+      "2",
+      functionDossierSchema.parse({
+        ...dossier("return FUN_00001010(DAT_00001020) % 3;", "0x1000"),
+        assembly: ["0x1000 call FUN_00001010", "0x1004 ret"],
+      }),
+    );
+    const right = observe(
+      "3",
+      functionDossierSchema.parse({
+        ...dossier("return FUN_00002010(DAT_00002020) % 3;", "0x2000"),
+        assembly: ["0x2000 call FUN_00002010", "0x2004 ret"],
+      }),
+    );
+    const comparison = compareFunctions(left, right);
+    for (const name of ["pseudocode", "assembly"]) {
+      const dimension = comparison.dimensions.find(
+        ({ dimension }) => dimension === name,
+      );
+      expect(dimension).toMatchObject({
+        status: "changed",
+        limitations: expect.arrayContaining([
+          expect.stringContaining(
+            "layout-only differences do not establish a behavior change",
+          ),
+        ]),
+      });
+    }
+    expect(
+      comparison.dimensions.find(({ dimension }) => dimension === "cfg"),
+    ).toMatchObject({ status: "unchanged" });
+  });
+
   it("counts Unicode text consistently for unresolved provider comparisons", () => {
     const left = observe("b", dossier("return '😀';", "0x1000"), "provider-a");
     const right = observe("c", dossier("return '😀';", "0x2000"), "provider-b");
@@ -647,6 +707,52 @@ describe("function comparison unresolved text", () => {
 });
 
 describe("function comparison", () => {
+  it("retains complete call coverage diagnostics without blocking observed-set equality", () => {
+    const diagnostic = "Indirect calls remain unresolved.";
+    const left = observe("a", dossier("return 0;", "0x1000"), "rea-workflow", {
+      status: "complete",
+      diagnostics: [diagnostic],
+    });
+    const right = observe("b", dossier("return 0;", "0x2000"), "rea-workflow", {
+      status: "complete",
+      diagnostics: [diagnostic],
+    });
+    const comparison = compareFunctions(left, right);
+    expect(
+      comparison.dimensions.find(({ dimension }) => dimension === "calls"),
+    ).toMatchObject({
+      status: "unchanged",
+      limitations: [`Left: ${diagnostic}`, `Right: ${diagnostic}`],
+    });
+  });
+
+  it("retains diagnostics alongside incomplete call coverage blockers", () => {
+    const diagnostic = "Indirect calls remain unresolved.";
+    const left = observe("c", dossier("return 0;", "0x1000"), "rea-workflow", {
+      status: "partial",
+      limitations: ["Provider read limit reached."],
+      diagnostics: [diagnostic],
+    });
+    const right = observe("d", dossier("return 0;", "0x2000"), "rea-workflow", {
+      status: "partial",
+      limitations: ["Provider read limit reached."],
+      diagnostics: [diagnostic],
+    });
+    expect(
+      compareFunctions(left, right).dimensions.find(
+        ({ dimension }) => dimension === "calls",
+      ),
+    ).toMatchObject({
+      status: "unknown",
+      limitations: expect.arrayContaining([
+        "Left: Provider read limit reached.",
+        `Left: ${diagnostic}`,
+        "Right: Provider read limit reached.",
+        `Right: ${diagnostic}`,
+      ]),
+    });
+  });
+
   it("preserves text changes alongside complete inline dossier facets", () => {
     const result = compareFunctions(
       FUNCTION_COMPARISON_EXAMPLE.left,
@@ -886,6 +992,31 @@ describe("function comparison Swift string literals", () => {
 });
 
 describe("function comparison partial Swift literal coverage", () => {
+  it("keeps literal comparisons unknown at unresolved jump candidates", () => {
+    const unresolved = functionDossierSchema.parse({
+      ...withLiterals("0x2000", []),
+      swift_string_literal_omissions: [
+        {
+          source_address: "0x2004",
+          representation: "small",
+          address: null,
+          byte_length: 4,
+          reason: "unresolved_jump",
+          registers: ["x0", "x1"],
+          words: ["0x732f4220", "0xe400000000000000"],
+        },
+      ],
+    });
+    expect(
+      stringsDimension(
+        "8",
+        withLiterals("0x1000", ["SleepDisabled"]),
+        "9",
+        unresolved,
+      ),
+    ).toMatchObject({ status: "unknown" });
+  });
+
   it("does not equate a partial literal record with a complete one", () => {
     const partial = functionDossierSchema.parse({
       ...withLiterals("0x2000", ["SleepDisabled"]),
@@ -930,7 +1061,9 @@ describe("function comparison partial Swift literal coverage", () => {
       stringsDimension("d", withLiterals("0x1000", []), "e", partial),
     ).toMatchObject({ status: "changed" });
   });
+});
 
+describe("function comparison partial Swift literal omission interpretation", () => {
   it("does not interpret an unexamined path as a missing literal at a retained site", () => {
     const partial = functionDossierSchema.parse({
       ...withLiterals("0x2000", ["A"]),

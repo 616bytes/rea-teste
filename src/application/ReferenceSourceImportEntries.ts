@@ -45,6 +45,8 @@ const entryRecoveryGuidance = (
     return "This directory could not be read. Check its permissions, then try again.";
   if (entry.kind === "symlink")
     return "This symbolic link could not be read safely. Check the link and its permissions, then try again.";
+  if (entry.kind === "unknown")
+    return "This entry's type could not be determined. Check the parent directory and try again.";
   return "This file could not be read. Check its permissions, then try again.";
 };
 
@@ -71,6 +73,13 @@ const failedEntry = (
       target: null,
       target_state: "unreadable",
       classifications,
+      limitations: [limitation],
+    };
+  if (entry.kind === "unknown" || entry.kind === "other")
+    return {
+      path: entry.path,
+      kind: "unknown",
+      classifications: ["unknown"],
       limitations: [limitation],
     };
   return {
@@ -101,9 +110,11 @@ const resolveInternalSpecifier = (
   const directoryReference =
     specifier.endsWith("/") || [".", ".."].includes(posix.basename(specifier));
   const suffixes = ["", ".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx"];
+  // A directory resolves only to an index with an extension; neither Node nor
+  // TypeScript selects an extensionless `index` file.
   const candidates = suffixes.flatMap((suffix) => [
     ...(directoryReference ? [] : [`${normalized}${suffix}`]),
-    posix.join(normalized, `index${suffix}`),
+    ...(suffix === "" ? [] : [posix.join(normalized, `index${suffix}`)]),
   ]);
   // Retain present runtime files first; substitute only a missing counterpart.
   // Counterparts cover explicit filenames, not directory/index resolution.

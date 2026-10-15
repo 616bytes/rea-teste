@@ -1,6 +1,6 @@
 <div align="center">
 
-[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · **Hinglish**
+[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · [Ελληνικά](README_el.md) · **Hinglish**
 
 # REA: Reverse Engineer Anything
 
@@ -22,6 +22,14 @@
 [Quick start](#quick-start) · [REA kaise kaam karta hai](#rea-kaise-kaam-karta-hai) · [Aap kya analyze kar sakte hain](#aap-kya-analyze-kar-sakte-hain) · [Showcases](#showcases) · [FAQ](#faq) · [Documentation](#documentation)
 
 <code>npx rea-agents setup</code>
+
+</div>
+
+> [!IMPORTANT]
+> REA sirf [morluto/rea](https://github.com/morluto/rea), [rea.tools](https://rea.tools/) ya [rea-agents npm package](https://www.npmjs.com/package/rea-agents) se lijiye.
+> Installation aur release links inhi official sources se follow kijiye. Milta-julta repository naam ya copy kiya hua README is baat ka saboot nahi hai ki download official hai.
+
+<div align="center">
 
 <br />
 
@@ -56,6 +64,8 @@ Setup REA ko aapke agent ke saath register karta hai aur matching workflow instr
 > **[REA website dekhiye](https://rea.tools/)**, jahan setup instructions, illustrated guides aur real case studies milenge.
 
 ## Quick start
+
+Linux par Ghidra, JADX, firmware tool launches aur static JavaScript/Electron analysis ke liye process ownership checks ke waaste REA ke `PATH` par procps-compatible `ps` hona zaroori hai. Recovery steps `docs/installation.md` mein "Linux owned-process prerequisite" ke neeche diye gaye hain.
 
 ### Apna agent set up karein
 
@@ -135,15 +145,16 @@ REA ko Node.js 22.x (>=22.19), 24.x (>=24.11) ya 26+ aur npm chahiye. Baaki tool
 
 | Target                 | REA kya return karta hai                                                             | Requirements aur guide                                                                                                            |
 | ---------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| Native binaries        | Pseudocode, assembly, strings, symbols, calls aur references                         | Hopper, Ghidra ya IDA; [native analysis](https://rea.tools/guides/native/)                                                        |
+| Native binaries        | Pseudocode, assembly, strings, symbols, calls aur references                         | Hopper, Ghidra ya IDA; [native analysis](../native-investigation.md)                                                              |
+| Rust binaries          | Embedded cargo-auditable crate names, versions, sources aur dependency edges         | Built-in static ELF/PE/thin Mach-O inspection; [Rust binaries](../rust-binaries.md)                                               |
 | Offline ELF layout     | Sections, segments, original symbols/relocations aur static mitigation candidates    | Linux x64 par caller ka diya hua pwntools; [binary diagnostics](../binary-diagnostics.md)                                         |
 | Go binaries            | Embedded compiler version, modules, replacements aur build settings                  | Built-in static ELF/PE/thin Mach-O inspection; Go install karne ki zaroorat nahi                                                  |
 | WASM artifact          | Validation, sections, exact import/export WAT forms aur decoded WAT                  | Caller ka diya hua WABT 1.0.42; `inspect_wasm_artifact`                                                                           |
 | EVM bytecode           | Dispatch selectors, byte offsets, inferred arguments aur mutability                  | Linux x64 par local raw/hex carrier; [offline EVM guide](../evm-bytecode.md)                                                      |
 | SQLite databases       | Tables, columns, indexes, views, triggers aur chuni hui ordinary-table rows          | Local database/WAL snapshot; Node.js 24.x >=24.15 ya 26+, native SQLite limits ke saath                                           |
 | Recorded Linux crashes | Raw notes, har recorded thread ke registers/signals aur optional mapping candidates  | Linux x64 par caller ka diya hua pwntools; optional GDB/pwndbg; [recorded crashes](../recorded-crashes.md)                        |
-| JavaScript / Electron  | Modules, imports, source maps, routes, IPC aur native add-on relationships           | Node.js aur npm; [application analysis](https://rea.tools/guides/javascript/)                                                     |
-| Websites               | Page structure, scripts, network observations aur maange gaye screenshots            | Chrome-family browser; [browser analysis](https://rea.tools/guides/browser/)                                                      |
+| JavaScript / Electron  | Modules, imports, source maps, routes, IPC aur native add-on relationships           | Node.js aur npm; Linux: procps-compatible `ps`; [application analysis](../javascript-application-workflows.md)                    |
+| Websites               | Page structure, scripts, network observations aur maange gaye screenshots            | Chrome-family browser; [browser analysis](../browser-observation.md)                                                              |
 | Saved network captures | Requests, responses, exposed payloads aur source locations                           | HAR ya Fiddler Everywhere SAZ; native mitmproxy ke liye Linux par mitmdump; [capture guide](../web-network-captures.md)           |
 | .NET assemblies        | Metadata, CIL instructions, declared native dependencies aur build comparisons       | Kuch nahi (sirf static); [managed-code guide](../managed-code-analysis.md)                                                        |
 | Android APKs           | Manifest declarations, classes, decompiled methods aur references                    | Linux/macOS/Windows x64 par headless JADX aur full JDK; [Android guide](../android-analysis.md)                                   |
@@ -159,6 +170,8 @@ REA ko Node.js 22.x (>=22.19), 24.x (>=24.11) ya 26+ aur npm chahiye. Baaki tool
 | Process behavior       | Terminal output, interactions, exit aur filesystem observations, aur run comparisons | Native PTY wala Linux/macOS; [process capture](../process-capture.md)                                                             |
 
 Static JavaScript aur .NET inspection di gayi files ko padhte hain, application ko chalate nahi. Runtime capture chune gaye target ko aapki user permissions ke saath chalata hai ya usse interact karta hai; har runtime guide apne effects batati hai.
+
+Offline native-binary inspection ke liye REA caller ke diye hue GNU objdump aur Rizin ko bhi support karta hai. Provider setup, CLI commands aur Evidence limitations ke liye [reverse-engineering tools guide](../reverse-engineering-tools.md) dekhiye. REA in dono providers ko install ya update nahi karta.
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
@@ -270,7 +283,7 @@ Vulnerabilities [SECURITY.md](../../SECURITY.md) ke zariye report kijiye.
 
 ## Star history
 
-🎉 **170,000 GitHub stars — bahut bahut shukriya!**
+🎉 **200,000 GitHub stars — bahut bahut shukriya!**
 
 REA use karne, bugs report karne, features request karne, builds test karne aur fixes contribute karne wale sabhi logon ka shukriya.
 

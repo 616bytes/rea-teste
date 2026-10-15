@@ -359,15 +359,26 @@ export const semanticMutationInitializers = (
   };
 };
 
-/** Select a local alias at its read, before any later straight-line reassignment. */
+type ReadInitializers = Pick<
+  JavaScriptSemanticBindingState,
+  "initializers" | "referenceInitializers"
+> & { readonly ordering: "known" | "unknown" };
+
+const readInitializerSelection = (
+  binding: JavaScriptSemanticBindingState,
+  ordering: ReadInitializers["ordering"],
+): ReadInitializers => ({
+  initializers: binding.initializers,
+  referenceInitializers: binding.referenceInitializers,
+  ordering,
+});
+
+/** Select a local alias at its read, retaining whether ordering was established. */
 export const semanticReadInitializers = (
   binding: JavaScriptSemanticBindingState,
   read: t.Node,
   parents: WeakMap<t.Node, t.Node>,
-): Pick<
-  JavaScriptSemanticBindingState,
-  "initializers" | "referenceInitializers"
-> => {
+): ReadInitializers => {
   let position: StatementPosition | null = null;
   let current = read;
   for (
@@ -375,7 +386,7 @@ export const semanticReadInitializers = (
     parent;
     parent = parents.get(current)
   ) {
-    if (t.isLoop(parent)) return binding;
+    if (t.isLoop(parent)) return readInitializerSelection(binding, "unknown");
     if (t.isFunction(parent)) break;
     if (position === null) {
       if (t.isVariableDeclarator(parent)) {
@@ -387,19 +398,15 @@ export const semanticReadInitializers = (
     }
     current = parent;
   }
-  return selectInitializers(binding, position, parents, true);
+  return selectInitializers(binding, position, parents);
 };
 
 const selectInitializers = (
   binding: JavaScriptSemanticBindingState,
   position: StatementPosition | null,
   parents: WeakMap<t.Node, t.Node>,
-  atRead = false,
-): Pick<
-  JavaScriptSemanticBindingState,
-  "initializers" | "referenceInitializers"
-> => {
-  if (position === null) return binding;
+): ReadInitializers => {
+  if (position === null) return readInitializerSelection(binding, "unknown");
   const origins = [
     ...binding.initializers.map((initializer) => ({
       initializer,
@@ -420,18 +427,14 @@ const selectInitializers = (
   if (
     origins.some(
       ({ position: origin }) =>
-        origin === null ||
-        origin.body !== position.body ||
-        (!atRead && !positionPrecedes(origin, position)),
+        origin === null || origin.body !== position.body,
     )
   )
-    return binding;
-  const preceding = atRead
-    ? origins.filter(
-        ({ position: origin }) =>
-          origin !== null && positionPrecedes(origin, position),
-      )
-    : origins;
+    return readInitializerSelection(binding, "unknown");
+  const preceding = origins.filter(
+    ({ position: origin }) =>
+      origin !== null && positionPrecedes(origin, position),
+  );
   const latest = preceding.reduce<StatementPosition | null>(
     (latest, { position }) =>
       position !== null &&
@@ -449,7 +452,7 @@ const selectInitializers = (
       )
       .map(({ initializer }) => initializer),
   );
-  // Preserve the owner's identity when selection removes no facts. Consumers
+  // Preserve initializer-array identity when selection removes no facts. Consumers
   // can then reuse the binding's dependency-aware provenance memo rather than
   // treating every equivalent read as a new temporal snapshot.
   if (
@@ -458,8 +461,9 @@ const selectInitializers = (
       retained.has(initializer),
     )
   )
-    return binding;
+    return readInitializerSelection(binding, "known");
   return {
+    ordering: "known",
     initializers: binding.initializers.filter((initializer) =>
       retained.has(initializer),
     ),

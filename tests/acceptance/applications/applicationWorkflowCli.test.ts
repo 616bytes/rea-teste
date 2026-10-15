@@ -1347,6 +1347,74 @@ describe("application workflow CLI and MCP constant branches", () => {
     ).toMatchObject(expected);
     expect(await compareThroughStdioMcp(input)).toMatchObject(expected);
   }, 20_000);
+
+  it("preserves uncertainty for selectors read before var initialization through CLI and MCP", async () => {
+    const root = await createTestTempDirectory("rea-selector-read-cli-");
+    const roots = await writeComparisonSources(root, [
+      `export default function config() {
+        const alias = enabled;
+        const mode = alias ? "on" : "off";
+        const port = preferred || 3000;
+        const fallback = enabled ?? "default";
+        var enabled = true;
+        var preferred = 8080;
+        return { type: "config", mode, port, fallback };
+      }`,
+      `export default () => ({ type: "config", mode: "on", port: 8080, fallback: true });`,
+    ]);
+    expect(await runtimeDefaultExport(join(roots[0]!, "parser.mjs"))).toEqual({
+      type: "config",
+      mode: "off",
+      port: 3000,
+      fallback: "default",
+    });
+    expect(await runtimeDefaultExport(join(roots[1]!, "parser.mjs"))).toEqual({
+      type: "config",
+      mode: "on",
+      port: 8080,
+      fallback: true,
+    });
+    const [left, right] = await Promise.all(
+      roots.map((path) =>
+        runCli(["analyze-javascript-application", path, "--json"]),
+      ),
+    );
+    const input = {
+      left,
+      right,
+      left_module_path: "parser.mjs",
+      left_export_name: "default",
+      right_module_path: "parser.mjs",
+      right_export_name: "default",
+    };
+    const expected = {
+      normalized_result: {
+        summary: { added: 0, removed: 0, changed: 1, unknown: 2 },
+        changes: expect.arrayContaining([
+          expect.objectContaining({
+            path: "/mode",
+            status: "changed",
+            left: { availability: "union", values: ["off", "on"] },
+          }),
+          ...["/port", "/fallback"].map((path) =>
+            expect.objectContaining({
+              path,
+              status: "unknown",
+              left: expect.objectContaining({ availability: "unknown" }),
+            }),
+          ),
+        ]),
+      },
+    };
+    expect(
+      await runCliWithRequestFile(
+        root,
+        "compare-javascript-export-shapes",
+        input,
+      ),
+    ).toMatchObject(expected);
+    expect(await compareThroughStdioMcp(input)).toMatchObject(expected);
+  }, 20_000);
 });
 
 describe("application workflow CLI export Evidence", () => {

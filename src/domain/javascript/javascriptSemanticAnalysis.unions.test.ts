@@ -327,6 +327,56 @@ describe("logical primitive unions", () => {
   });
 });
 
+describe("branch selector source reads", () => {
+  it("does not select a later initializer through direct, nested, or cached aliases", () => {
+    for (const source of [
+      'const answer = enabled ? "on" : "off"; var enabled = true;',
+      'const answer = !enabled ? "off" : "on"; var enabled = true;',
+      'const alias = enabled; var enabled = true; const answer = alias ? "on" : "off";',
+      'const alias = enabled; const cached = alias; var enabled = true; const answer = cached ? "on" : "off";',
+      'const answer = settings.enabled ? "on" : "off"; var settings = { enabled: true };',
+      'const answer = enabled ? "on" : "off", enabled = true;',
+      'const answer = enabled ? "on" : "off"; { var enabled = true; }',
+      'const settings = { enabled }; var enabled = true; const answer = settings.enabled ? "on" : "off";',
+    ])
+      expect(
+        topLevelBinding(analyzeJavaScriptSemantics(source), "answer").value,
+      ).toEqual({
+        status: "union",
+        values: ["off", "on"],
+      });
+  });
+
+  it("keeps all logical selectors uncertain before their initializer executes", () => {
+    for (const operator of ["||", "&&", "??"])
+      for (const source of [
+        `const answer = enabled ${operator} "fallback"; var enabled = true;`,
+        `const alias = enabled; var enabled = true; const answer = alias ${operator} "fallback";`,
+      ])
+        expect(
+          topLevelBinding(analyzeJavaScriptSemantics(source), "answer").value
+            .status,
+        ).toBe("ambiguous");
+  });
+
+  it("still folds initialized aliases in selectors and function captures", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const enabled = true;
+      const alias = enabled;
+      const answer = alias ? "on" : "off";
+      export function captured() { return alias ? "on" : "off"; }
+    `);
+    expect(topLevelBinding(ir, "answer").value).toEqual({
+      status: "literal",
+      value: "on",
+    });
+    expect(
+      ir.callables.find(({ name }) => name === "captured")?.returnSites[0]
+        ?.value,
+    ).toEqual({ status: "literal", value: "on" });
+  });
+});
+
 describe("semantic primitive resource observations", () => {
   it.each([
     {

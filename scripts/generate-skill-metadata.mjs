@@ -70,7 +70,7 @@ if (
     "Generated skill file inventory drifted; run npm run docs:generate",
   );
 
- // Keep the standalone skills pack synchronized with the same authored source.
+// Keep the standalone skills pack synchronized with the same authored source.
 if (!check) await rm(packOutputRoot, { recursive: true, force: true });
 for (const relativePath of paths) {
   const path = join(packOutputRoot, relativePath);

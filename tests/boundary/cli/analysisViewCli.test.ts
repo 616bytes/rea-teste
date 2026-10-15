@@ -1,4 +1,9 @@
 import { apiSurfaceHar } from "../../fixtures/historicalHar.js";
+import {
+  analysisViewJavaScriptEvidence,
+  analysisViewJavaScriptAnalysisWithSource,
+} from "../../fixtures/analysisView.js";
+import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import { createHash } from "node:crypto";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -16,6 +21,40 @@ import {
   analysisViewObjectDenseCapture,
 } from "../../fixtures/analysisView.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+
+cliTest(
+  "reads typed module references through the public CLI with canonical Evidence",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-module-reference-cli-");
+    const request = join(root, "request.json");
+    const parent = analysisViewJavaScriptEvidence(
+      analysisViewJavaScriptAnalysisWithSource(),
+    );
+    const input = {
+      source: { kind: "inline", evidence: parent },
+      view: {
+        kind: "javascript",
+        collection: "modules",
+        projection: "references",
+        where: { path: "renderer.js" },
+        limit: 1,
+      },
+    };
+    const expected = inspectAnalysisView(input);
+    if (!expected.ok) throw expected.error;
+    await writeFile(request, JSON.stringify(input));
+    const response = await cli.run({
+      arguments: ["inspect-analysis-view", request, "--json"],
+    });
+    expect(response.exitCode).toBe(0);
+    const evidence = parseEvidence(response.json);
+    expect(evidence.normalized_result).toEqual(
+      expected.value.normalized_result,
+    );
+    expect(evidence.evidence_id).toBe(expected.value.evidence_id);
+    expect(evidence.evidence_links).toEqual([parent.evidence_id]);
+  },
+);
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { inspectEvidenceBundle } from "../../../src/application/investigation/InspectEvidenceBundle.js";

@@ -958,6 +958,18 @@ that the analyzer was disabled. For Windows PE resource analysis, the exact name
 is `WindowsResourceReference`. Disabling an analyzer skips the facts it would
 have produced.
 
+To open one Program of an already analyzed Ghidra project read-only instead of
+importing the target, set both of:
+
+```bash
+export REA_GHIDRA_PROJECT=/absolute/path/to/Project.gpr
+export REA_GHIDRA_PROGRAM=/Game.exe
+```
+
+The Program's recorded executable SHA-256 must match the selected target. See
+[persistent projects](ghidra-provider.md#persistent-projects) for the identity
+check, evidence limitations and the settings it cannot be combined with.
+
 ### Ghidra heap and CPU controls
 
 Set resource controls in the environment that launches the CLI or MCP server,

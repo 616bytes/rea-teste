@@ -1,6 +1,7 @@
 # Ghidra provider semantics
 
-REA imports one target into an ephemeral Ghidra database. Linux/macOS support
+By default, REA imports one target into an ephemeral Ghidra database; a
+[persistent project](#persistent-projects) is opened read-only instead. Linux/macOS support
 read-only analysis and atomic function-name/entry-comment edits; Windows P0 is
 read-only. GUI controls and persistent database mutation are unavailable.
 Executable bytes remain unchanged.
@@ -15,7 +16,9 @@ snapshot parser and a separate optional annotation extension. Check the
 [release boundary](installation.md#released-package-and-main) when using npm.
 
 See [import language and analysis seeds](installation.md#ghidra-import-language-and-analysis-seeds)
-to override the header-detected language or seed analysis.
+to override the header-detected language or seed analysis. To serve an
+already analyzed project instead of importing, see
+[persistent projects](#persistent-projects).
 
 Provider selection and profile identity follow
 [MCP contracts](mcp-contracts.md#identity-and-discovery). One deep
@@ -62,6 +65,49 @@ An empty name search does not establish that a function is absent; use
 REA imports a private executable copy and does not admit a caller-selected
 PDB companion. This reporting does not search symbol servers, copy a sibling
 PDB, or change analyzer settings.
+
+## Persistent projects
+
+Large targets can take longer to auto-analyze than a session can wait, and
+names that analysts, scripts or symbol tools added to a Ghidra project are
+lost on an ephemeral import. To open one Program of an existing, already
+analyzed project instead:
+
+```bash
+export REA_GHIDRA_PROJECT=/absolute/path/to/Project.gpr
+export REA_GHIDRA_PROGRAM=/Game.exe          # path inside the project
+```
+
+Both settings are required together. REA then runs
+`analyzeHeadless <dir> <name>[/<folder>] -process <program> -noanalysis -readOnly`:
+there is no `-import`, no `-deleteProject` and no auto-analysis, and the
+session's `analysis_profile.parameters.import_mode` is
+`persistent-project-read-only` (instead of `ephemeral-source-immutable`). The
+profile commits the resolved project file and Program path in
+`persistent_project`; `analyzer_preset`, `loader`, `language_id` and
+`compiler_spec_id` read `caller-project-recorded`, because the project, not
+this session, determined them.
+
+| Concern          | Persistent-project contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity         | The Program's recorded executable SHA-256 (Ghidra's `Executable SHA256`) must equal the selected target's SHA-256. Otherwise the bridge serves only its handshake, refuses every analysis request, and REA returns `unsupported_target` naming the Program, the project, the recorded digest and the target digest. A Program without a recorded digest is refused the same way. REA still copies the selected target into its private runtime to verify its digest and to serve byte-level evidence such as load-image attestation; Ghidra never imports that copy. |
+| Evidence         | Functions, names, comments and types in the project were produced before the session, by Ghidra analysis, scripts, or people. Evidence carries the limitation that they are caller assertions, not Ghidra discoveries of this session.                                                                                                                                                                                                                                                                                                                               |
+| Writes           | The Program is opened read-only and never saved. `annotate_native_function`, `set_address_name` and `set_addresses_names` are unavailable. Ghidra holds the project lock while the session is open and rewrites its own index backup files (`~index.bak`, `~journal.bak`) when it opens the project; the Program database is not changed.                                                                                                                                                                                                                            |
+| Caching          | Every operation is `live`: project edits between sessions do not change the artifact or profile identity, so results are re-observed rather than replayed from analysis snapshots.                                                                                                                                                                                                                                                                                                                                                                                   |
+| Admitted targets | Targets whose ephemeral profile needs REA's own import preparation are refused: raw binaries, DOS MZ/COM, PSP, MIPS soft-float, and provider-pinned MIPS/RISC-V/PowerPC languages. `REA_GHIDRA_LANGUAGE_ID`, `REA_GHIDRA_COMPILER_SPEC_ID`, `REA_GHIDRA_SEED_FILE`, `REA_GHIDRA_DISABLED_ANALYZERS` and `REA_GHIDRA_NATIVEAOT_JAR` cannot be combined with a persistent project.                                                                                                                                                                                     |
+
+A missing project, a Program path that does not exist in the project, or a
+project another Ghidra instance has open makes `analyzeHeadless` exit before
+the bridge starts; the session failure retains its output. The Program path uses
+`/` separators and cannot contain `*`, `?` or `\`, which `analyzeHeadless`
+would treat as a pattern or rewrite.
+
+Recorded verification: `npm run verify:ghidra:persistent` on Linux x64 with
+Ghidra 12.1.4 and Temurin 21 builds a saved project from the source-owned PE
+fixture, names its entry inside the project, opens it through REA, and checks
+the pseudocode, the profile, the annotation refusal, a mismatched-target
+refusal, and that no project database file changed. Windows P0 and macOS runs
+are unverified.
 
 ## Loaded addresses and file offsets
 

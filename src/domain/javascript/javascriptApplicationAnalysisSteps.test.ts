@@ -326,17 +326,21 @@ describe("graphs transferred to their sealing steps", () => {
 });
 
 describe("skipped_javascript_files backward compatibility", () => {
-  it("reads saved evidence that predates the skipped counter as zero", () => {
+  it("preserves omission for saved evidence that predates the skipped counter", () => {
     const legacy = structuredClone(
       JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.normalized_result,
     ) as Record<string, unknown>;
     const statistics = legacy.statistics as Record<string, unknown>;
     delete statistics.skipped_javascript_files;
     const result = javascriptApplicationAnalysisResultSchema.parse(legacy);
-    expect(result.statistics.skipped_javascript_files).toBe(0);
+    // A pre-change result can contain the very resource-skipped files this
+    // field reports, but it has no counter: unknown must not become a
+    // measured zero that comparisons would treat as "nothing skipped".
+    expect("skipped_javascript_files" in result.statistics).toBe(false);
+    expect(result.statistics.skipped_javascript_files).toBeUndefined();
   });
 
-  it("preserves an explicit skipped count in new evidence", () => {
+  it("keeps the producer-written skipped count in current evidence", () => {
     const current = structuredClone(
       JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.normalized_result,
     ) as Record<string, unknown>;

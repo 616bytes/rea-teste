@@ -32,6 +32,7 @@ const fixture = (
         ? "rea-windows-arm64.node"
         : "rea-windows-x64.node",
     artifactSha256: createHash("sha256").update(bytes).digest("hex"),
+    sourceSha256: "a".repeat(64),
   };
   const identity = {
     requestedPath: "D:\\fixture\\runtime",
@@ -176,19 +177,22 @@ describe("packaged Windows native artifact validation", () => {
     expect(value.loads()).toBe(0);
   });
 
-  it.each(["abiVersion", "nodeApiVersion", "architecture", "artifact"])(
-    "rejects invalid manifest %s",
-    (key) => {
-      const value = fixture();
-      expect(
-        loadWindowsNativeAuthority({
-          ...value.host,
-          readManifest: () => ({ ...value.manifest, [key]: "invalid" }),
-        }).available,
-      ).toBe(false);
-      expect(value.loads()).toBe(0);
-    },
-  );
+  it.each([
+    "abiVersion",
+    "nodeApiVersion",
+    "architecture",
+    "artifact",
+    "sourceSha256",
+  ])("rejects invalid manifest %s", (key) => {
+    const value = fixture();
+    expect(
+      loadWindowsNativeAuthority({
+        ...value.host,
+        readManifest: () => ({ ...value.manifest, [key]: "invalid" }),
+      }).available,
+    ).toBe(false);
+    expect(value.loads()).toBe(0);
+  });
 
   it.each([
     { signature: "MZ", offset: 0 },

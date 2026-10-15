@@ -46,6 +46,10 @@ export const windowsNativeManifestSchema = z.strictObject({
   nodeApiVersion: z.literal(8),
   artifact: z.enum(["rea-windows-x64.node", "rea-windows-arm64.node"]),
   artifactSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  sourceSha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .optional(),
   artifacts: z
     .strictObject({
       x64: windowsNativeArtifactEntrySchema.optional(),

@@ -46,8 +46,9 @@ for (const architecture of WINDOWS_GHIDRA_FIXTURE_ARCHITECTURES) {
     if (!dll) bytes.writeUInt32LE(0x200, optionalHeader + 8);
     bytes.writeUInt32LE(dll ? 0 : arm ? 0x1001 : 0x1000, optionalHeader + 16);
     bytes.writeUInt32LE(0x1000, optionalHeader + 20);
-    if (pe32) bytes.writeUInt32LE(0x400000, optionalHeader + 28);
-    else bytes.writeBigUInt64LE(0x1_4000_0000n, optionalHeader + 24);
+    if (pe32)
+      bytes.writeUInt32LE(Number(fixture.imageBase), optionalHeader + 28);
+    else bytes.writeBigUInt64LE(fixture.imageBase, optionalHeader + 24);
     bytes.writeUInt32LE(0x1000, optionalHeader + 32);
     bytes.writeUInt32LE(0x200, optionalHeader + 36);
     bytes.writeUInt16LE(6, optionalHeader + 40);

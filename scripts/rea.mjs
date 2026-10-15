@@ -14,6 +14,8 @@ process.env.REA_PACKAGE_VERSION = packageJson.version;
 const isMcpMode =
   args.length === 1 && (args[0] === "--mcp" || args[0] === "mcp");
 const isMcpDoctorMode = args[0] === "mcp" && args[1] === "doctor";
+/** Exit status of a writer terminated by SIGPIPE (128 + 13). */
+const SIGPIPE_EXIT_STATUS = 141;
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // Windows home lookup throws for an empty USERPROFILE. Dependencies resolve
@@ -73,13 +75,29 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     renderEmptyFilteredCliOutput,
     validateCliOutputArguments,
   } = await import("../dist/cli-runtime/cliOutput.js");
+  // A reader that closes the pipe early, as `rea ... | head` does, has
+  // declined the rest of the output. Stop writing without reporting a
+  // failure, and exit with the status a SIGPIPE-terminated writer reports.
+  let stdoutClosed = false;
+  process.stdout.on("error", (cause) => {
+    if (cause?.code === "EPIPE") {
+      stdoutClosed = true;
+      process.exitCode = SIGPIPE_EXIT_STATUS;
+      return;
+    }
+    // Other failures stay unhandled unless a pending JSON write reports them.
+    if (process.stdout.listenerCount("error") === 1) throw cause;
+  });
+  const writeStdout = (output) => {
+    if (!stdoutClosed) process.stdout.write(output);
+  };
   const outputArguments = validateCliOutputArguments(args);
   const configurationError = cliConfigurationError(process.env);
   if (configurationError !== undefined) {
     process.stderr.write(`${configurationError}\n`);
     process.exitCode = 1;
   } else if (!outputArguments.ok) {
-    process.stdout.write(renderCliOutputArgumentError(outputArguments));
+    writeStdout(renderCliOutputArgumentError(outputArguments));
     process.exitCode = 1;
   } else {
     let wroteOutput = false;
@@ -87,15 +105,18 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     await createCli(process.env, resultOutput).serve(args, {
       stdout: (output) => {
         if (resultOutput?.handled) {
-          if (resultOutput.failed) process.stderr.write(output);
+          if (resultOutput.failed && !stdoutClosed)
+            process.stderr.write(output);
           return;
         }
         if (output.length > 0) wroteOutput = true;
-        process.stdout.write(output);
+        writeStdout(output);
       },
+      // A command failure caused by the closed pipe keeps the pipe's status.
+      exit: (code) => process.exit(stdoutClosed ? SIGPIPE_EXIT_STATUS : code),
     });
     if (!wroteOutput && !resultOutput?.handled)
-      process.stdout.write(renderEmptyFilteredCliOutput(args) ?? "");
+      writeStdout(renderEmptyFilteredCliOutput(args) ?? "");
   }
 }
 

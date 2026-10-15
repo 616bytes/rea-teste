@@ -220,11 +220,17 @@ const resolveLayoutExecutable = async (
   const programs = join(bundle, ...layout.programs);
   const executable = join(programs, name);
   try {
-    const [canonicalPrograms, canonicalExecutable] = await Promise.all([
-      fileSystem.realpath(programs),
-      fileSystem.realpath(executable),
-    ]);
-    if (!isPathWithinRoot(canonicalPrograms, canonicalExecutable))
+    const [canonicalBundle, canonicalPrograms, canonicalExecutable] =
+      await Promise.all([
+        fileSystem.realpath(bundle),
+        fileSystem.realpath(programs),
+        fileSystem.realpath(executable),
+      ]);
+    if (
+      !isPathWithinRoot(canonicalBundle, canonicalPrograms) ||
+      !isPathWithinRoot(canonicalBundle, canonicalExecutable) ||
+      !isPathWithinRoot(canonicalPrograms, canonicalExecutable)
+    )
       return err(
         new BinaryTargetError(
           bundle,

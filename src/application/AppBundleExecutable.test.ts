@@ -31,4 +31,102 @@ describe("app bundle Info.plist magic", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("rejects an app bundle whose Contents/MacOS resolves outside the bundle", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-bundle-outside-"));
+    try {
+      const bundle = join(root, "Evil.app");
+      const contents = join(bundle, "Contents");
+      const plistPath = join(contents, "Info.plist");
+      const programs = join(contents, "MacOS");
+      const outsideDir = join(root, "outside-bin");
+      const outsideExecutable = join(outsideDir, "true");
+      await mkdir(contents, { recursive: true });
+      const plistContent =
+        "<plist><dict><key>CFBundleExecutable</key><string>true</string></dict></plist>";
+      await writeFile(plistPath, plistContent);
+      const result = await resolveAppBundleExecutable(bundle, {
+        readFile: async (p) =>
+          p === plistPath ? Buffer.from(plistContent) : Buffer.alloc(0),
+        realpath: async (p) => {
+          if (p === bundle) return bundle;
+          if (p === programs) return outsideDir;
+          if (p === join(programs, "true")) return outsideExecutable;
+          return p;
+        },
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected resolution to fail");
+      expect(result.error.message).toContain(
+        "app program file leaves Contents/MacOS",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a flat app bundle whose program file resolves outside the bundle root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-flat-outside-"));
+    try {
+      const bundle = join(root, "FlatEvil.app");
+      const plistPath = join(bundle, "Info.plist");
+      const outsideExecutable = join(root, "outside-true");
+      await mkdir(bundle, { recursive: true });
+      const plistContent =
+        "<plist><dict><key>CFBundleExecutable</key><string>true</string></dict></plist>";
+      await writeFile(plistPath, plistContent);
+      const result = await resolveAppBundleExecutable(bundle, {
+        readFile: async (p) =>
+          p === plistPath ? Buffer.from(plistContent) : Buffer.alloc(0),
+        realpath: async (p) => {
+          if (p === bundle) return bundle;
+          if (p === join(bundle, "true")) return outsideExecutable;
+          return p;
+        },
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected resolution to fail");
+      expect(result.error.message).toContain(
+        "app program file leaves the bundle root",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a symlinked app bundle whose executable stays within the canonical bundle", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-bundle-symlink-"));
+    try {
+      const canonicalBundle = join(root, "Real.app");
+      const symlinkBundle = join(root, "Alias.app");
+      const contents = join(canonicalBundle, "Contents");
+      const plistPath = join(contents, "Info.plist");
+      const programs = join(contents, "MacOS");
+      const realExecutable = join(programs, "RealApp");
+      await mkdir(programs, { recursive: true });
+      await mkdir(join(symlinkBundle, "Contents"), { recursive: true });
+      const plistContent =
+        "<plist><dict><key>CFBundleExecutable</key><string>RealApp</string></dict></plist>";
+      await writeFile(plistPath, plistContent);
+      await writeFile(
+        join(symlinkBundle, "Contents", "Info.plist"),
+        plistContent,
+      );
+      const result = await resolveAppBundleExecutable(symlinkBundle, {
+        readFile: async () => Buffer.from(plistContent),
+        realpath: async (p) => {
+          if (p === symlinkBundle) return canonicalBundle;
+          if (p === join(symlinkBundle, "Contents", "MacOS")) return programs;
+          if (p === join(symlinkBundle, "Contents", "MacOS", "RealApp"))
+            return realExecutable;
+          return p;
+        },
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("Expected resolution to succeed");
+      expect(result.value.executable).toBe(realExecutable);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

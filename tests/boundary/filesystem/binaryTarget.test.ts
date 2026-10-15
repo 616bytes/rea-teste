@@ -455,6 +455,35 @@ describe("binary target I/O: filesystem and app bundle target resolution", () =>
       ).toBe(false);
     },
   );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects an app bundle whose Contents/MacOS symlink leaves the bundle",
+    async () => {
+      const directory = await createTestTempDirectory("rea-target-");
+      const app = join(directory, "EscapingPrograms.app");
+      const contents = join(app, "Contents");
+      const outside = join(directory, "outside-bin");
+      await mkdir(contents, { recursive: true });
+      await mkdir(outside, { recursive: true });
+      await writeFile(
+        join(outside, "Escaping"),
+        thinMach(0xfeedfacf, 0x0100000c),
+      );
+      await writeFile(
+        join(contents, "Info.plist"),
+        "<plist><dict><key>CFBundleExecutable</key><string>Escaping</string></dict></plist>",
+      );
+      await symlink(outside, join(contents, "MacOS"));
+      const result = await parseBinaryTarget(app, {
+        cwd: directory,
+        hostArchitecture: "arm64",
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok)
+        throw new Error("Expected escaping programs directory to fail");
+      expect(result.error.message).toContain("leaves Contents/MacOS");
+    },
+  );
 });
 
 describe("binary target I/O: explicit kinds and executable headers", () => {

@@ -85,8 +85,7 @@ npx rea-agents setup
 ### اطلب من وكيلك
 
 ```text
-Understand how search works in the Notes app, show me the evidence, and build a
-similar feature for my project.
+افهم كيف يعمل البحث في تطبيق Notes، وأظهر لي الأدلة، وقم ببناء ميزة مماثلة لمشروعي.
 ```
 
 استبدل Notes بالتطبيق المستهدف وحدّد الميزة التي تريد فهمها.
@@ -130,7 +129,7 @@ rea update
 npx rea-agents@latest setup
 ```
 
-راجع تغييرات الإعداد وأعد تشغيل وكيلك. لأوامر CLI التي تنفّذها لمرة واحدة، استخدم `npx rea-agents@latest` متبوعًا بالأمر المطلوب. وعند استخدام Bun، استبدل `bunx rea-agents@latest` بـ `npx rea-agents@latest`.
+راجع تغييرات الإعداد وأعد تشغيل وكيلك. لأوامر CLI التي تنفّذها لمرة واحدة، استخدم `npx rea-agents@latest` متبوعًا بالأمر المطلوب. وعند استخدام Bun، استخدم `bunx rea-agents@latest` بدلاً من `npx rea-agents@latest`.
 
 ## كيف يعمل REA
 

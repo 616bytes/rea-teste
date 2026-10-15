@@ -6,6 +6,8 @@ import type { EvidenceBundle } from "./evidenceBundle.js";
 
 /** Each distinct term rescans every retained string, so terms bound search CPU. */
 export const MAX_QUERY_TERMS = 16;
+/** Bounds token allocation before a query is split into terms. */
+export const MAX_QUERY_LENGTH = 1024;
 
 /** Exact retained-record selectors; selection never resolves a provider address. */
 export const evidenceRecordFiltersSchema = z.strictObject({
@@ -18,6 +20,7 @@ export const evidenceRecordFiltersSchema = z.strictObject({
     .string()
     .trim()
     .min(1)
+    .max(MAX_QUERY_LENGTH, { abort: true })
     .refine(
       (query) => new Set(query.split(/\s+/)).size <= MAX_QUERY_TERMS,
       `query accepts at most ${MAX_QUERY_TERMS} distinct terms; each term rescans retained text`,
@@ -148,13 +151,13 @@ const pointerSegment = (key: string | number): string =>
   String(key).replaceAll("~", "~0").replaceAll("/", "~1");
 
 /**
- * Caseless form for literal matching. Context-dependent final sigma and long s
- * fold to the forms their capitals share, so the result does not depend on
- * where a character sits; folding one code point yields the same length as it
- * contributes to a folded string.
+ * Caseless form for literal matching: uppercasing first merges symbol variants
+ * such as micro sign, long s and Greek letterforms with their capitals, and
+ * final sigma folds to sigma so position never matters. Each code point folds
+ * to the same length alone as inside a string, which snippet offsets rely on.
  */
 export const foldCase = (text: string): string =>
-  text.toLowerCase().replaceAll("ς", "σ").replaceAll("ſ", "s");
+  text.toUpperCase().toLowerCase().replaceAll("ς", "σ");
 
 const isHighSurrogate = (text: string, index: number): boolean => {
   const unit = text.charCodeAt(index);

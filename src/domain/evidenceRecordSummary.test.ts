@@ -4,6 +4,7 @@ import { createEvidence } from "./evidence.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
 import {
   evidenceRecordFiltersSchema,
+  MAX_QUERY_LENGTH,
   MAX_QUERY_TERMS,
   summarizeEvidenceBundle,
 } from "./evidenceRecordSummary.js";
@@ -183,4 +184,35 @@ it("rejects queries with more distinct terms than the search budget", () => {
       query: terms.slice(1).join(" "),
     }).success,
   ).toBe(true);
+});
+
+it("folds symbol variants with their capitals and bounds query length", () => {
+  const summarize = (text: string, query: string) =>
+    summarizeEvidenceBundle(
+      createEvidenceBundle([
+        createEvidence(
+          {
+            path: "/fixtures/app.asar",
+            format: "asar",
+            sha256: "f".repeat(64),
+          },
+          { id: "provider", name: "Provider", version: "1" },
+          { operation: "list_strings", parameters: {}, result: [text] },
+        ),
+      ]),
+      { query },
+    ).records[0]?.query_match;
+  expect(summarize("µservice", "ΜSERVICE")?.snippet).toBe("µservice");
+  const strasse = summarize("in Straße 1", "STRASSE")!;
+  expect(
+    strasse.snippet.slice(
+      strasse.match_start,
+      strasse.match_start + strasse.match_length,
+    ),
+  ).toBe("Straße");
+  expect(
+    evidenceRecordFiltersSchema.safeParse({
+      query: "x ".repeat(MAX_QUERY_LENGTH),
+    }).success,
+  ).toBe(false);
 });

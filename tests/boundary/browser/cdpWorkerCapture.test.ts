@@ -8,7 +8,7 @@ import {
   analyzeFixture,
 } from "../../fixtures/javascriptRuntimeReconciliation.js";
 import { execFile } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { createBrowserEvidence } from "../../../src/application/BrowserEvidence.js";
@@ -16,6 +16,8 @@ import { parseRuntimeCaptures } from "../../../src/domain/javascript/javascriptR
 import { projectRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationRuntime.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import type { CdpEvent } from "../../../src/browser/CdpConnection.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
@@ -1107,6 +1109,7 @@ it("observes workers reached through an allowed iframe session and releases it",
 it.each([
   "before",
   "before-unknown",
+  "before-revoked",
   "after",
   "foreign",
   "detached",
@@ -1166,7 +1169,11 @@ it.each([
           },
         };
         const versions: CdpEvent[] = [version];
-        if (order.includes("unknown") || order.includes("malformed"))
+        if (
+          order.includes("unknown") ||
+          order.includes("malformed") ||
+          order === "before-revoked"
+        )
           versions.push({
             ...version,
             params: {
@@ -1174,9 +1181,11 @@ it.each([
                 {
                   targetId: "service",
                   status: "activated",
-                  ...(order.includes("malformed")
-                    ? { controlledClients: [42] }
-                    : {}),
+                  ...(order === "before-revoked"
+                    ? { controlledClients: [] }
+                    : order.includes("malformed")
+                      ? { controlledClients: [42] }
+                      : {}),
                 },
               ],
             },
@@ -1210,7 +1219,15 @@ it.each([
           .filter((event) => event.event === "version")
           .map((event) => event.controls_page),
       ).toEqual([true, null]);
-    if (order === "foreign" || order.startsWith("detached")) {
+    if (order === "before-revoked") {
+      expect(observation?.ownership).toBe("service_worker_client");
+      expect(
+        observation?.lifecycle
+          .filter((event) => event.event === "version")
+          .map((event) => event.controls_page),
+      ).toEqual([true, false]);
+      expect(observation?.scripts).toEqual([]);
+    } else if (order === "foreign" || order.startsWith("detached")) {
       if (order === "foreign") expect(enabled).toBe(false);
       expect(observation?.scripts).toEqual([]);
       if (order.startsWith("detached"))
@@ -1280,6 +1297,9 @@ it("authenticates explicit worker selections in retained Evidence", async () => 
     provider.identity(),
   );
   expect(() => parseRuntimeCaptures([evidence])).not.toThrow();
+  expect(selectScriptCapture(evidence).sourceEvidenceId).toBe(
+    evidence.evidence_id,
+  );
   for (const worker_target_ids of [undefined, [], ["other"]]) {
     const inconsistent = createBrowserEvidence(
       "inspect_web_page",
@@ -1288,6 +1308,7 @@ it("authenticates explicit worker selections in retained Evidence", async () => 
       provider.identity(),
     );
     expect(() => parseRuntimeCaptures([inconsistent])).toThrow();
+    expect(() => selectScriptCapture(inconsistent)).toThrow();
   }
   const unknown = captured.value.workers.find(
     (w) => w.target_id === "shared",
@@ -1300,7 +1321,246 @@ it("authenticates explicit worker selections in retained Evidence", async () => 
     provider.identity(),
   );
   expect(() => parseRuntimeCaptures([unselected])).toThrow();
+  expect(() => selectScriptCapture(unselected)).toThrow();
 });
+
+it.each(["explicit", "worker", "iframe"] as const)(
+  "rejects child %s sessions aliasing the selected page",
+  async (kind) => {
+    const { provider, input, browser } = await fixture({
+      commandResult: (c) =>
+        kind === "explicit" &&
+        c.method === "Target.attachToTarget" &&
+        c.params.targetId === "shared"
+          ? { sessionId: "session-1" }
+          : undefined,
+      commandEvents: (c, origin) =>
+        kind !== "explicit" &&
+        c.method === "Target.setAutoAttach" &&
+        c.params.autoAttach === true &&
+        c.sessionId === "session-1"
+          ? [
+              {
+                method: "Target.attachedToTarget",
+                sessionId: "session-1",
+                params: {
+                  sessionId: "session-1",
+                  targetInfo: {
+                    targetId: "child",
+                    type: kind,
+                    url: origin + "/child",
+                    attached: true,
+                  },
+                },
+              },
+            ]
+          : undefined,
+    });
+    expect(
+      await provider.inspectPage({
+        ...input,
+        worker_target_ids: kind === "explicit" ? ["shared"] : [],
+      }),
+    ).toMatchObject({ ok: false, error: { reason: "protocol_error" } });
+    // Only the outer owner may detach its page; child cleanup must not detach it twice.
+    expect(
+      browser.commands.filter(
+        (c) =>
+          c.method === "Target.detachFromTarget" &&
+          c.params.sessionId === "session-1",
+      ),
+    ).toHaveLength(1);
+    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  },
+);
+
+it.each(["attached", "url", "type"] as const)(
+  "refreshes worker inventory while checking stable identity (%s)",
+  async (change) => {
+    let inventories = 0;
+    const { provider, input } = await fixture({
+      commandResult: (c, origin) => {
+        if (c.method !== "Target.getTargets") return undefined;
+        inventories += 1;
+        return {
+          targetInfos: [
+            {
+              targetId: "shared",
+              type:
+                inventories > 1 && change === "type"
+                  ? "worker"
+                  : "shared_worker",
+              url:
+                origin +
+                (inventories > 1 && change === "url"
+                  ? "/changed.js"
+                  : "/shared.js"),
+              attached: inventories > 1,
+            },
+          ],
+        };
+      },
+    });
+    const result = await provider.inspectPage({
+      ...input,
+      worker_target_ids: ["shared"],
+    });
+    if (change !== "attached") {
+      expect(result).toMatchObject({
+        ok: false,
+        error: { reason: "target_changed" },
+      });
+      return;
+    }
+    if (!result.ok) throw result.error;
+    expect(
+      result.value.workers.find((w) => w.target_id === "shared"),
+    ).toMatchObject({
+      attached: true,
+      observation: { scripts: [{ source: { included: true } }] },
+    });
+  },
+);
+
+it.each(["target", "script", "origin"] as const)(
+  "rejects out-of-scope worker %s in Evidence consumers",
+  async (changed) => {
+    const { provider, input } = await fixture();
+    const selected = { ...input, worker_target_ids: ["shared"] };
+    const captured = await provider.inspectPage(selected);
+    if (!captured.ok) throw captured.error;
+    const worker = captured.value.workers.find(
+      (w) => w.target_id === "shared",
+    )!;
+    if (changed === "target") {
+      worker.url = "https://foreign.example/worker.js";
+      worker.origin = "https://foreign.example";
+    } else if (changed === "origin") worker.origin = "https://foreign.example";
+    else
+      worker.observation!.scripts[0]!.url = "https://foreign.example/child.js";
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      selected,
+      captured.value,
+      provider.identity(),
+    );
+    // A canonical digest authenticates these bytes, not their selection consistency.
+    expect(() => parseEvidence(evidence)).not.toThrow();
+    expect(() => parseRuntimeCaptures([evidence])).toThrow(/origin scope/u);
+    expect(() => selectScriptCapture(evidence)).toThrow(/origin scope/u);
+  },
+);
+
+it.each(["page", "worker", "inventory", "none"] as const)(
+  "keeps script absence unknown after failed %s discovery",
+  async (failed) => {
+    const { provider, input } = await fixture({
+      commandError: (c) =>
+        (
+          failed === "inventory"
+            ? c.method === "Target.getTargets"
+            : failed !== "none" &&
+              c.method === "Target.setAutoAttach" &&
+              c.params.autoAttach === true &&
+              c.sessionId === (failed === "page" ? "session-1" : "worker-own")
+        )
+          ? { code: -32601, message: "Unavailable" }
+          : undefined,
+    });
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      input,
+      captured.value,
+      provider.identity(),
+    );
+    expect(
+      parseRuntimeCaptures([evidence])[0]?.scriptsCompleteWithinScope,
+    ).toBe(failed === "none");
+    const root = await applicationFixture();
+    const reconciled = reconcileJavaScriptRuntimeEvidence({
+      static_layers: [
+        {
+          role: "application",
+          analysis: await analyzeFixture(root),
+          runtime_mappings: [
+            {
+              kind: "url-prefix",
+              prefix: captured.value.target.origin + "/",
+              artifact_prefix: "",
+            },
+          ],
+        },
+      ],
+      runtime_observations: [evidence],
+    });
+    if (!reconciled.ok) throw reconciled.error;
+    const result = javascriptRuntimeReconciliationResultSchema.parse(
+      reconciled.value.normalized_result,
+    );
+    expect(
+      result.static_load_states.some(
+        (state) => state.status === "not-observed-in-capture",
+      ),
+    ).toBe(failed === "none");
+    if (failed !== "none")
+      expect(result.static_load_states).toContainEqual(
+        expect.objectContaining({
+          status: "unknown",
+          reason: "static-or-runtime-coverage-incomplete",
+        }),
+      );
+  },
+);
+
+it("rejects inconsistent worker Evidence through CLI and MCP without publishing", async () => {
+  const { provider, input } = await fixture();
+  const selected = { ...input, worker_target_ids: ["shared"] };
+  const captured = await provider.inspectPage(selected);
+  if (!captured.ok) throw captured.error;
+  const root = await createTestTempDirectory("rea-worker-selection-boundary-");
+  const { call, client } = await connectLocalToolsMcp();
+  for (const mismatch of ["selection", "origin"] as const) {
+    const inspection = structuredClone(captured.value);
+    if (mismatch === "origin")
+      inspection.workers.find(
+        (w) => w.target_id === "shared",
+      )!.observation!.scripts[0]!.url = "https://foreign.example/worker.js";
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      mismatch === "selection" ? input : selected,
+      inspection,
+      provider.identity(),
+    );
+    const capture = join(root, mismatch + ".json");
+    const bytes = JSON.stringify(evidence);
+    await writeFile(capture, bytes);
+    const cliOutput = join(root, mismatch + "-cli");
+    const mcpOutput = join(root, mismatch + "-mcp");
+    await expect(
+      promisify(execFile)(
+        process.execPath,
+        ["scripts/rea.mjs", "export-web-scripts", capture, cliOutput, "--json"],
+        { maxBuffer: 8 * 1024 * 1024 },
+      ),
+    ).rejects.toMatchObject({
+      code: 1,
+      stdout: expect.stringContaining("invalid_request"),
+    });
+    const response = await call("export_web_scripts", {
+      capture_path: capture,
+      output_directory: mcpOutput,
+    });
+    expect(parseMcpToolError(response)).toMatchObject({
+      error: { code: "invalid_request" },
+    });
+    for (const output of [cliOutput, mcpOutput])
+      await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(capture, "utf8")).toBe(bytes);
+  }
+  await client.ping();
+}, 30000);
 
 it("retains attach-limited worker node and containment coverage", async () => {
   const { provider, input } = await fixture();

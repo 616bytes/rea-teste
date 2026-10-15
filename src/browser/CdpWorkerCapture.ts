@@ -53,13 +53,12 @@ export class CdpWorkerCapture {
     { targetId: string; detached: boolean; autoAttach: boolean }
   >();
   readonly #controlled = new Set<string>();
-  readonly #versionsByTarget = new Map<string, Observation["lifecycle"]>();
-  readonly #serviceClients = new Map<
+  readonly #versionsByTarget = new Map<
     string,
     {
-      clients: readonly string[];
+      clients: readonly string[] | null;
       lifecycle: Observation["lifecycle"][number];
-    }
+    }[]
   >();
   readonly #pending = new Set<Promise<void>>();
   readonly #invalidTargets = new Set<string>();
@@ -102,12 +101,15 @@ export class CdpWorkerCapture {
       }
     });
     await this.#command("ServiceWorker.enable", {}, this.context.sessionId);
-    if (this.context.sessionId !== undefined)
-      await this.#command(
+    if (this.context.sessionId !== undefined) {
+      const attached = await this.#command(
         "Target.setAutoAttach",
         workerAutoAttachParameters,
         this.context.sessionId,
       );
+      if (attached === undefined)
+        this.pageEvents.completeness.unavailable("workers");
+    }
     await this.#inventory();
     for (const id of this.context.input.worker_target_ids ?? []) {
       const worker = this.#workers.get(id);
@@ -242,6 +244,7 @@ export class CdpWorkerCapture {
     )
       return;
     const id = cdpStringValue(target.targetId);
+    const existing = id === undefined ? undefined : this.#workers.get(id);
     if (typeof target.attached !== "boolean") {
       const key = id ?? JSON.stringify(target);
       if (!this.#invalidTargets.has(key)) {
@@ -254,6 +257,14 @@ export class CdpWorkerCapture {
       return;
     }
     const url = allowedSanitizedUrl(target.url, this.allowedOrigins);
+    if (
+      existing !== undefined &&
+      (existing.item.type !== type || existing.item.url !== url?.url)
+    )
+      throw new BrowserObservationError(
+        this.context.operation,
+        "target_changed",
+      );
     if (id === undefined || id === "" || url === undefined) {
       const key = id ?? JSON.stringify(target);
       if (!this.#invalidTargets.has(key)) {
@@ -267,8 +278,10 @@ export class CdpWorkerCapture {
       }
       return;
     }
-    const existing = this.#workers.get(id);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      existing.item.attached = target.attached;
+      return existing;
+    }
     const worker: WorkerState = {
       item: {
         target_id: id,
@@ -281,17 +294,19 @@ export class CdpWorkerCapture {
         observation: {
           ownership: this.#versionsByTarget
             .get(id)
-            ?.some((event) => event.controls_page === true)
+            ?.some(({ lifecycle }) => lifecycle.controls_page === true)
             ? "service_worker_client"
             : "unknown",
           selected_explicitly:
             this.context.input.worker_target_ids?.includes(id) ?? false,
           page_target_id: this.#versionsByTarget
             .get(id)
-            ?.some((event) => event.controls_page === true)
+            ?.some(({ lifecycle }) => lifecycle.controls_page === true)
             ? this.context.target.id
             : null,
-          lifecycle: this.#versionsByTarget.get(id) ?? [],
+          lifecycle:
+            this.#versionsByTarget.get(id)?.map(({ lifecycle }) => lifecycle) ??
+            [],
           execution_contexts: [],
           scripts: [],
           network_requests: [],
@@ -313,7 +328,6 @@ export class CdpWorkerCapture {
       sources: new Map(),
     };
     this.#workers.set(id, worker);
-    this.#versionsByTarget.delete(id);
     return worker;
   }
 
@@ -394,6 +408,7 @@ export class CdpWorkerCapture {
         }
         const existing = this.#frames.get(sessionId);
         if (
+          sessionId === this.context.sessionId ||
           this.#sessions.has(sessionId) ||
           (existing !== undefined && existing.targetId !== targetId)
         )
@@ -616,19 +631,14 @@ export class CdpWorkerCapture {
         version_status: cdpStringValue(version.status) ?? null,
         controls_page: this.#controlsPage(clients),
       };
-      // An incomplete event remains unknown, but must not erase the last
-      // observed client IDs needed to revoke ownership when a frame detaches.
-      if (clients !== null)
-        this.#serviceClients.set(id, { clients, lifecycle });
+      // Retain every client snapshot with its transition. A later frame
+      // attachment can resolve historical control even after another version.
+      const versions = this.#versionsByTarget.get(id) ?? [];
+      versions.push({ clients, lifecycle });
+      this.#versionsByTarget.set(id, versions);
       this.#updateControl(id, lifecycle.controls_page);
       const worker = this.#workers.get(id);
-      if (worker === undefined) {
-        const pending = this.#versionsByTarget.get(id) ?? [];
-        pending.push(lifecycle);
-        this.#versionsByTarget.set(id, pending);
-        continue;
-      }
-      worker.item.observation.lifecycle.push(lifecycle);
+      worker?.item.observation.lifecycle.push(lifecycle);
     }
   }
 
@@ -643,14 +653,18 @@ export class CdpWorkerCapture {
   }
 
   #refreshServiceClients(): void {
-    for (const [id, version] of this.#serviceClients) {
-      const controls = this.#controlsPage(version.clients);
+    for (const [id, versions] of this.#versionsByTarget) {
+      let current: boolean | null = null;
       // Client IDs can arrive before their iframe attachment. Resolve that
       // recorded relationship when the owned frame becomes known, without
       // inventing another protocol version event. Detachment preserves the
       // historical observation while stopping later out-of-scope ingestion.
-      if (controls === true) version.lifecycle.controls_page = true;
-      this.#updateControl(id, controls);
+      for (const version of versions) {
+        const controls = this.#controlsPage(version.clients);
+        if (controls === true) version.lifecycle.controls_page = true;
+        if (controls !== null) current = controls;
+      }
+      this.#updateControl(id, current);
     }
   }
 
@@ -682,7 +696,11 @@ export class CdpWorkerCapture {
         "Service-worker control was revoked during capture; later runtime events outside the selected page scope were excluded.",
       );
     }
-    if (controls) {
+    if (
+      this.#versionsByTarget
+        .get(id)
+        ?.some(({ lifecycle }) => lifecycle.controls_page === true)
+    ) {
       worker.item.observation.ownership = "service_worker_client";
       worker.item.observation.page_target_id = this.context.target.id;
     }
@@ -690,7 +708,7 @@ export class CdpWorkerCapture {
   }
 
   #attach(worker: WorkerState, sessionId: string): void {
-    if (sessionId.length === 0)
+    if (sessionId.length === 0 || sessionId === this.context.sessionId)
       throw new BrowserObservationError(
         this.context.operation,
         "protocol_error",

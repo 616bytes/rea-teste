@@ -4,8 +4,8 @@ import {
   browserAllowedOriginsSchema,
   browserEndpointSchema,
   recordedBrowserObservationEndpointSchema,
-  browserWorkerTargetIdsSchema,
 } from "../browserObservation.js";
+import { browserWorkerEvidenceScopeSchema } from "../browserWorkerEvidenceScope.js";
 import {
   webPageInspectionSchema,
   type WebPageInspection,
@@ -206,12 +206,14 @@ const parseBrowserCapture = (
     captureSha256: digestCanonicalValue(inspection, "Runtime reconciliation"),
     scriptsCompleteWithinScope:
       scriptsComplete(inspection.completeness) &&
+      workerDiscoveryComplete(inspection.completeness) &&
       inspection.workers.every(
         (worker) =>
           worker.observation === undefined ||
           (worker.observation.ownership === "unknown" &&
             !worker.observation.selected_explicitly) ||
-          scriptsComplete(worker.observation.completeness),
+          (scriptsComplete(worker.observation.completeness) &&
+            workerDiscoveryComplete(worker.observation.completeness)),
       ),
   };
 };
@@ -448,7 +450,6 @@ const assertRuntimeParameters = (
             ...common,
             cdp_endpoint: recordedBrowserObservationEndpointSchema,
             allowed_origins: browserAllowedOriginsSchema,
-            worker_target_ids: browserWorkerTargetIdsSchema,
           })
           .passthrough()
           .parse(value),
@@ -470,22 +471,14 @@ const assertRuntimeParameters = (
         [...path, "parameters", "include_script_sources"],
         "Runtime Evidence contains source without source-capture selection",
       );
-    for (const [index, worker] of expected.workers.entries()) {
-      const observation = worker.observation;
-      if (observation === undefined) continue;
-      const selected =
-        parameters.worker_target_ids?.includes(worker.target_id) ?? false;
-      if (
-        observation.selected_explicitly !== selected ||
-        (observation.ownership === "unknown" &&
-          !selected &&
-          observation.scripts.some(({ source }) => source.included))
-      )
-        throw invalidInput(
-          [...path, "normalized_result", "workers", index, "observation"],
-          "Worker runtime Evidence disagrees with its recorded target selection",
-        );
-    }
+    parseAtPath(
+      (value) => browserWorkerEvidenceScopeSchema.parse(value),
+      {
+        parameters: evidence.parameters,
+        normalized_result: { workers: expected.workers },
+      },
+      path,
+    );
     return;
   }
   const parameters = parseAtPath(
@@ -517,3 +510,7 @@ export const scriptsComplete = (completeness: {
   !completeness.truncated_sections.includes("scripts") &&
   !completeness.unavailable_sections.includes("scripts") &&
   completeness.dropped_events.scripts === 0;
+
+const workerDiscoveryComplete = (completeness: BrowserCompleteness): boolean =>
+  !completeness.unavailable_sections.includes("workers") &&
+  !completeness.truncated_sections.includes("workers");

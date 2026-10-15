@@ -1,6 +1,7 @@
 import { webPageInspectionSchema } from "../../domain/browserObservationSchemas.js";
 import { browserScenarioCaptureSchema } from "../../domain/browserScenarioCapture.js";
 import { parseEvidence } from "../../domain/evidence.js";
+import { browserWorkerEvidenceScopeSchema } from "../../domain/browserWorkerEvidenceScope.js";
 import type {
   CapturedWebScript,
   WebScriptExportResult,
@@ -95,6 +96,8 @@ export const selectScriptCapture = (
     ("normalized_result" in raw || "evidence_id" in raw)
   ) {
     const evidence = parseEvidence(raw);
+    if (evidence.operation === "inspect_web_page")
+      browserWorkerEvidenceScopeSchema.parse(evidence);
     const selected = adapters
       .find(({ operation }) => operation === evidence.operation)
       ?.parse(evidence.normalized_result);

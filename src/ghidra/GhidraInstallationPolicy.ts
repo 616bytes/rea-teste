@@ -10,6 +10,7 @@ interface GhidraReleaseVersion {
   readonly major: number;
   readonly minor: number;
   readonly patch: number;
+  readonly suffix: string;
 }
 
 /** How an observed Ghidra release relates to this adapter's bridge. */
@@ -49,6 +50,8 @@ export type GhidraJavaRequirement =
 /** Version and Java bounds read from one `application.properties` file. */
 export interface GhidraApplicationProperties {
   readonly providerVersion: string | null;
+  /** Release-owned private settings directory; null when its identity is unresolved. */
+  readonly configurationDirectoryName: string | null;
   readonly javaMinimum: GhidraJavaBound;
   readonly javaMaximum: GhidraJavaBound;
   /** A malformed Java properties escape invalidates the entire file. */
@@ -65,15 +68,42 @@ export const ghidraApplicationProperties = (
   if (!parsed.ok)
     return {
       providerVersion: null,
+      configurationDirectoryName: null,
       javaMinimum: { status: "unresolved", raw: parsed.error },
       javaMaximum: { status: "unresolved", raw: parsed.error },
       parseError: parsed.error,
     };
   const providerVersion = parsed.value.get("application.version");
+  const version =
+    providerVersion === undefined
+      ? undefined
+      : parseGhidraRelease(providerVersion);
+  // ApplicationIdentifier removes Java's ASCII whitespace and uppercases the
+  // release name. Derive only a single safe component for official Ghidra builds.
+  const releaseName = parsed.value
+    .get("application.release.name")
+    ?.replaceAll(/[ \t\n\r\f\v]/gu, "")
+    .toUpperCase();
+  // ApplicationVersion.toString normalizes numeric components and omits a zero
+  // patch or an empty tag; providerVersion above remains the original evidence.
+  const configurationVersion =
+    version === undefined
+      ? null
+      : `${String(version.major)}.${String(version.minor)}${version.patch === 0 ? "" : `.${String(version.patch)}`}${version.suffix === "-" ? "" : version.suffix}`;
+  const configurationDirectoryName =
+    providerVersion !== undefined &&
+    version !== undefined &&
+    !version.suffix.startsWith("+") &&
+    releaseName !== undefined &&
+    /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u.test(providerVersion) &&
+    /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(releaseName)
+      ? `ghidra_${configurationVersion}_${releaseName}`
+      : null;
   const minimum = parsed.value.get("application.java.min");
   const maximum = parsed.value.get("application.java.max");
   return {
     providerVersion: providerVersion ?? null,
+    configurationDirectoryName,
     javaMinimum:
       minimum === undefined ? { status: "absent" } : parseJavaBound(minimum),
     // Ghidra uses an explicitly empty maximum to mean no upper bound.
@@ -208,7 +238,9 @@ const parseGhidraRelease = (raw: string): GhidraReleaseVersion | undefined => {
   if (match === null || major === undefined || minor === undefined)
     return undefined;
   const patch = match[3] === undefined ? 0 : integerGroup(match[3]);
-  return patch === undefined ? undefined : { major, minor, patch };
+  return patch === undefined
+    ? undefined
+    : { major, minor, patch, suffix: match[4] ?? "" };
 };
 
 const parseJavaBound = (raw: string): GhidraJavaBound => {

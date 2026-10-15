@@ -579,6 +579,8 @@ export const createGhidraProviderClient = (input: {
     launcher: new GhidraHeadlessLauncher({
       environment: input.environment,
       analyzeHeadlessPath: prerequisites.value.analyzeHeadlessPath,
+      configurationDirectoryName:
+        prerequisites.value.configurationDirectoryName,
       javaHome: prerequisites.value.javaHome,
       ...(installation.javaVmName === undefined
         ? {}
@@ -985,6 +987,7 @@ export const createGhidraProviderClient = (input: {
 
 interface GhidraClientCoordinates {
   readonly analyzeHeadlessPath: string;
+  readonly configurationDirectoryName: string | null;
   readonly javaHome: string;
   readonly providerVersion: string;
   readonly profile: AnalysisProfileCommitment;
@@ -1025,6 +1028,7 @@ const ghidraClientPrerequisites = (
     return err(new ProviderAdapterError("ghidra", "health"));
   return ok({
     analyzeHeadlessPath: installation.analyzeHeadlessPath,
+    configurationDirectoryName: installation.configurationDirectoryName,
     javaHome: installation.javaHome,
     providerVersion: installation.providerVersion,
     profile,

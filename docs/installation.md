@@ -852,6 +852,19 @@ MCP clients do not depend on an incidental shell path. Setup shows every exact
 environment entry in its plan, writes only after approval, and never downloads,
 installs, upgrades, or modifies Ghidra or Java.
 
+Installation inspection derives the private configuration directory identity from
+`application.version` and `application.release.name` in
+`Ghidra/application.properties`. The directory's version spelling follows Ghidra
+(for example, `12.1.0` becomes
+`12.1`), while the reported provider version preserves the original value.
+The launcher uses that inspected coordinate; it does not reread the properties
+or guess from the extracted folder's name.
+If the identity is missing, malformed, or unsafe as a single path component,
+startup fails before creating runtime subdirectories or starting Java. Restore
+the selected release's properties instead of renaming its installation folder.
+This coordinate selects only REA's session-private configuration directory, not
+the installation or an existing user configuration directory.
+
 Each verified session uses an ephemeral temporary project and isolated
 home/cache/config/temp paths. REA passes `-readOnly`, `-deleteProject`, uses
 Ghidra's default analysis settings, and loads its packaged Java

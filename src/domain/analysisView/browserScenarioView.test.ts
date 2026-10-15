@@ -576,6 +576,33 @@ it("rejects inverted windows and events indexed to another step", () => {
       },
     ],
   });
+  // An empty window still has to start after the previous step's window ends.
+  const backwardEmpty = reparsed((capture) => ({
+    ...capture,
+    steps: capture.steps.map((step) =>
+      step.step_index === 1
+        ? { ...step, event_sequence_start: 2, event_sequence_end: 1 }
+        : step,
+    ),
+  }));
+  expect(
+    failure(
+      { kind: "browser-scenario", collection: "steps" },
+      parent(backwardEmpty),
+    ),
+  ).toMatchObject({
+    issues: [
+      {
+        path: [
+          "source",
+          "normalized_result",
+          "steps",
+          1,
+          "event_sequence_start",
+        ],
+      },
+    ],
+  });
   const misindexed = reparsed((capture) => ({
     ...capture,
     events: {

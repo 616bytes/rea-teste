@@ -120,11 +120,15 @@ const windowIssue = (
 ): Result<never, AnalysisInputIssue> =>
   err({ path, reason: "invalid_value", message });
 
-/** Steps whose recorded windows received events, after checking window order. */
+/**
+ * Steps whose recorded windows received events, after checking that every
+ * window, empty ones included, starts after the previous step's window ends.
+ */
 const nonEmptyWindows = (
   capture: BrowserScenarioCapture,
 ): Result<readonly BrowserScenarioStep[], AnalysisInputIssue> => {
   const windows: BrowserScenarioStep[] = [];
+  let previous: BrowserScenarioStep | undefined;
   for (const step of capture.steps) {
     const { event_sequence_start: start, event_sequence_end: end } = step;
     if (end < start - 1)
@@ -132,14 +136,13 @@ const nonEmptyWindows = (
         ["steps", step.step_index, "event_sequence_end"],
         `Step ${String(step.step_index)} event window ends before it starts.`,
       );
-    if (end < start) continue;
-    const previous = windows.at(-1);
     if (previous !== undefined && start <= previous.event_sequence_end)
       return windowIssue(
         ["steps", step.step_index, "event_sequence_start"],
-        `Step ${String(step.step_index)} event window overlaps or precedes step ${String(previous.step_index)}; recorded windows rise with step_index.`,
+        `Step ${String(step.step_index)} event window starts at or before the end of step ${String(previous.step_index)}'s window; recorded windows rise with step_index.`,
       );
-    windows.push(step);
+    previous = step;
+    if (end >= start) windows.push(step);
   }
   return ok(windows);
 };

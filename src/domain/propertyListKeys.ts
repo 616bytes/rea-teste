@@ -123,6 +123,8 @@ export const parseXmlPropertyList = (
 interface OpenStepContainer {
   end: string;
   next: "key" | "equals" | "value" | "separator" | "after-value";
+  /** Source offset of a container that is itself a dictionary key. */
+  keyStart?: number;
 }
 
 /** Consume only the punctuation expected between the pinned decoder's values. */
@@ -185,7 +187,12 @@ const scanOpenStep = (text: string): number => {
     // diagnostics. A later deep suffix cannot change that failure into a limit.
     if (character === "}" || character === ")") {
       if (!admitsOpenStepCloser(parent, character)) return prototypeKeys;
-      containers.pop();
+      const closed = containers.pop();
+      if (
+        closed?.keyStart !== undefined &&
+        isOpenStepPrototypeKey(text.slice(closed.keyStart, cursor + 1))
+      )
+        prototypeKeys += 1;
       // parseOpenStep returns the first root value without reading trailing text.
       if (containers.length === 0) return prototypeKeys;
       completeValue();
@@ -203,6 +210,8 @@ const scanOpenStep = (text: string): number => {
       containers.push({
         end: character === "{" ? "}" : ")",
         next: character === "{" ? "key" : "value",
+        // A compound key is coerced to a string, e.g. `(__proto__)`.
+        ...(parent?.next === "key" ? { keyStart: cursor } : {}),
       });
       cursor += 1;
       continue;
@@ -219,14 +228,17 @@ const scanOpenStep = (text: string): number => {
 };
 
 /**
- * Whether one OpenStep key token decodes to `__proto__`. A quoted token with
- * escapes is decoded by the pinned decoder itself, so both read it alike.
+ * Whether one OpenStep key, scalar or compound, becomes the property name
+ * `__proto__` when the decoder assigns `obj[key]`. Plain strings compare
+ * directly; any other key is decoded by the pinned decoder itself and
+ * coerced to a property name the same way that assignment does.
  */
 const isOpenStepPrototypeKey = (token: string): boolean => {
-  if (!token.startsWith('"')) return token === PROTOTYPE_KEY;
-  if (!token.includes("\\")) return token === `"${PROTOTYPE_KEY}"`;
+  if (!/^["({<]/u.test(token)) return token === PROTOTYPE_KEY;
+  if (token.startsWith('"') && !token.includes("\\"))
+    return token === `"${PROTOTYPE_KEY}"`;
   try {
-    return parseOpenStep(token) === PROTOTYPE_KEY;
+    return String(parseOpenStep(token)) === PROTOTYPE_KEY;
   } catch {
     // An unterminated token is the decoder's syntax error to report.
     return false;

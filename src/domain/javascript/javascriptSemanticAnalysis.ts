@@ -60,7 +60,6 @@ import {
   ELECTRON_MODULE,
 } from "./javascriptElectronMemberWrites.js";
 import {
-  calleeName,
   isWebSocketEndpointCandidate,
   range,
 } from "./javascriptStaticAnalysisHelpers.js";
@@ -390,7 +389,7 @@ function* classifyDefinitionReceiversSteps(
         (t.isCallExpression(node) ||
           t.isOptionalCallExpression(node) ||
           t.isNewExpression(node)) &&
-        isWebSocketEndpointCandidate(calleeName(node.callee))
+        isWebSocketEndpointCandidate(node.callee, state)
       )
         hasWebSocketEndpointCandidate = true;
       classifyRpcRoot(node);

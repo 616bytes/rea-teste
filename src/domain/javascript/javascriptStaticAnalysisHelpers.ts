@@ -19,8 +19,13 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
-import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
+import {
+  resolveSemanticBindingState,
+  semanticStableInitializer,
+  type JavaScriptSemanticAnalysisState,
+} from "./javascriptSemanticState.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import {
   compareUnicodeCodePoints,
   compositeKey,
@@ -592,9 +597,49 @@ export interface JavaScriptEndpointArgument {
   readonly value: string;
 }
 
-/** Name gate only; lexical and ambient-write facts still establish identity. */
-export const isWebSocketEndpointCandidate = (name: string): boolean =>
-  name === "WebSocket" || name.endsWith(".WebSocket");
+/**
+ * Resolve only stable constructor captures and exact runtime ws imports.
+ * The definitions phase uses this to select ambient indexing; endpoint reads
+ * repeat the same proof after that index has collected all visible writes.
+ */
+export const isWebSocketEndpointCandidate = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const visited = new Set<string>();
+  let current = callee;
+  for (;;) {
+    current = unwrapJavaScriptExpression(current).node;
+    if (isUnmodifiedGlobalReference(current, state, "WebSocket")) return true;
+    const { root, members } = electronMemberPath(current);
+    if (!t.isIdentifier(root)) return false;
+    const binding = resolveSemanticBindingState(state, root, root.name);
+    if (binding === undefined || visited.has(binding.bindingId)) return false;
+    const [origin] = binding.directOrigins;
+    if (binding.runtimeImport) {
+      const path = [...(origin?.importedPath ?? []), ...members];
+      return (
+        binding.definitions.length === 1 &&
+        binding.directOrigins.length === 1 &&
+        origin?.specifier === "ws" &&
+        path.length === 1 &&
+        (path[0] === "default" || path[0] === "WebSocket")
+      );
+    }
+    // A captured constructor retains the value; an arbitrary object's member
+    // would need a separate mutation/projection proof and stays unresolved.
+    if (members.length !== 0) return false;
+    const initializer = semanticStableInitializer(binding, state);
+    if (
+      initializer === undefined ||
+      initializer.projection.length !== 0 ||
+      (initializer.node.end ?? Infinity) >= (root.start ?? -1)
+    )
+      return false;
+    visited.add(binding.bindingId);
+    current = initializer.node;
+  }
+};
 
 /** Classify one literal without treating a generic method name as network identity. */
 export const endpointArgument = (
@@ -614,10 +659,8 @@ export const endpointArgument = (
   ): JavaScriptEndpointArgument | undefined =>
     value === undefined ? undefined : { kind: "endpoint", value };
   if (receiverFact === "window") return undefined;
-  if (isWebSocketEndpointCandidate(name))
-    return isUnmodifiedGlobalReference(callee, bindings, "WebSocket")
-      ? literal(stringValue(args[0]))
-      : undefined;
+  if (isWebSocketEndpointCandidate(callee, bindings))
+    return literal(stringValue(args[0]));
   if (
     name === "fetch" ||
     name.endsWith(".fetch") ||
@@ -703,11 +746,8 @@ export const calleeName = (node: t.Node): string => {
 const memberPropertyName = (
   node: t.MemberExpression | t.OptionalMemberExpression,
 ): string =>
-  node.computed &&
-  !t.isStringLiteral(node.property) &&
-  !t.isNumericLiteral(node.property)
-    ? `[computed@${String(node.property.start ?? -1)}]`
-    : semanticStaticPropertyName(node.property, node.computed);
+  semanticStaticPropertyKey(node.property, node.computed) ??
+  (node.computed ? `[computed@${String(node.property.start ?? -1)}]` : "");
 
 /**
  * Return a string literal value without evaluating an expression. A template

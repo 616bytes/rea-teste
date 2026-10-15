@@ -51,6 +51,60 @@ it("projects a qualified global socket with its source evidence and excludes a l
   }
 });
 
+it("retains constructor captures, ws imports and template keys with their graph source ranges", async () => {
+  const root = await createTestTempDirectory("rea-js-bound-socket-");
+  await writeFile(
+    join(root, "app.js"),
+    [
+      'import Socket from "ws";',
+      "const Captured = globalThis.WebSocket;",
+      'new Socket("wss://example.test/imported");',
+      'new Captured("wss://example.test/captured");',
+      'new globalThis[`WebSocket`]("wss://example.test/template");',
+    ].join("\n"),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const analysis = analyzeJavaScriptArtifactFiles(files);
+    const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
+    const endpoints = graph.nodes.filter(({ kind }) => kind === "endpoint");
+    expect(endpoints).toHaveLength(3);
+    for (const [path, constructor, line] of [
+      ["imported", "Socket", 3],
+      ["captured", "Captured", 4],
+      ["template", "globalThis.WebSocket", 5],
+    ] as const) {
+      const observation = endpoints.find(({ observations }) =>
+        observations.some(
+          ({ properties }) => properties.value === `wss://example.test/${path}`,
+        ),
+      )?.observations[0];
+      expect(observation?.properties).toMatchObject({
+        value: `wss://example.test/${path}`,
+        mechanism: `call:${constructor}`,
+      });
+      expect(observation?.evidence).toMatchObject({
+        authority: "ast-static-analysis",
+        state: "observed",
+        confidence: "exact",
+        location: {
+          available: true,
+          value: {
+            kind: "source-range",
+            source: "app.js",
+            start: { line, column: 0 },
+          },
+        },
+      });
+    }
+  } finally {
+    await reader.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("keeps ambiguous endpoint candidates inferred through artifact graph projection", async () => {
   const root = await createTestTempDirectory("rea-js-endpoint-certainty-");
   await writeFile(join(root, "app.js"), 'form.get("shared"); fetch("shared");');

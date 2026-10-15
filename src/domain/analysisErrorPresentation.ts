@@ -27,6 +27,7 @@ import {
   HopperTimeoutError,
 } from "./hopperErrors.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
+import { ProviderAdapterError } from "./providerAdapterError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
 import { providerRetryAction } from "./providerOperationHealth.js";
 import type { AnalysisError, AnalysisErrorTag } from "./analysisErrorBase.js";
@@ -35,6 +36,11 @@ import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 export const analysisErrorRemediationAction = (
   error: AnalysisError,
 ): string => {
+  if (
+    error instanceof ProviderAdapterError &&
+    error.remediationAction !== undefined
+  )
+    return error.remediationAction;
   if (
     error instanceof BrowserObservationError &&
     error.reason === "service_worker_blocked"

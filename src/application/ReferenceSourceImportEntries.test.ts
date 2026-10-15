@@ -222,16 +222,20 @@ it("resolves extensionless TypeScript import-equals references to source files",
   ]);
 });
 
-it("does not implicitly resolve CJS or ESM siblings for TypeScript imports", () => {
+it("does not implicitly resolve non-probed siblings for TypeScript imports", () => {
   const files = [
     [
       "src/main.cts",
-      'import cjs = require("./cjsSibling");\nimport esm = require("./mjsSibling");\n',
+      'import cjs = require("./cjsSibling");\nimport esm = require("./mjsSibling");\nimport cts = require("./ctsSibling");\nimport mts = require("./mtsSibling");\n',
     ],
     ["src/cjsSibling.cjs", 'module.exports = "cjs";\n'],
     ["src/cjsSibling/index.js", 'module.exports = "index";\n'],
     ["src/mjsSibling.mjs", 'export default "esm";\n'],
     ["src/mjsSibling/index.js", 'module.exports = "index";\n'],
+    ["src/ctsSibling.cts", 'export const value = "cts";\n'],
+    ["src/ctsSibling/index.js", 'module.exports = "index";\n'],
+    ["src/mtsSibling.mts", 'export const value = "mts";\n'],
+    ["src/mtsSibling/index.js", 'module.exports = "index";\n'],
   ] as const;
   const read: ReferenceSourceRead = {
     root: "/selected/source",
@@ -265,6 +269,69 @@ it("does not implicitly resolve CJS or ESM siblings for TypeScript imports", () 
       from_path: "src/main.cts",
       to: "src/mjsSibling/index.js",
       kind: "requires",
+      resolution: "internal",
+      parse_state: "parsed",
+    },
+    {
+      from_path: "src/main.cts",
+      to: "src/ctsSibling/index.js",
+      kind: "requires",
+      resolution: "internal",
+      parse_state: "parsed",
+    },
+    {
+      from_path: "src/main.cts",
+      to: "src/mtsSibling/index.js",
+      kind: "requires",
+      resolution: "internal",
+      parse_state: "parsed",
+    },
+  ]);
+});
+
+it("uses TypeScript candidate ordering for static imports", () => {
+  const files = [
+    ["src/main.ts", 'import "./dep";\nimport "./pkg";\n'],
+    ["src/dep.cjs", 'module.exports = "cjs";\n'],
+    ["src/dep.mjs", 'export default "esm";\n'],
+    ["src/dep/index.ts", 'export const value = "source index";\n'],
+    ["src/pkg/package.json", '{"main":"entry"}\n'],
+    ["src/pkg/entry.ts", 'export const value = "source main";\n'],
+    ["src/pkg/entry.js", 'module.exports = "emitted";\n'],
+    ["src/pkg/index.ts", 'export const value = "fallback";\n'],
+  ] as const;
+  const read: ReferenceSourceRead = {
+    root: "/selected/source",
+    entries: files.map(([path, content]) => ({
+      status: "read",
+      kind: "file",
+      path,
+      bytes: Buffer.from(content),
+      size: Buffer.byteLength(content),
+    })),
+    bytesRead: files.reduce(
+      (sum, [, content]) => sum + Buffer.byteLength(content),
+      0,
+    ),
+    limitations: [],
+  };
+  const parsed = parseReferenceSourceEntries(
+    read,
+    new Set(files.map(([path]) => path)),
+  );
+
+  expect(parsed.relationships).toEqual([
+    {
+      from_path: "src/main.ts",
+      to: "src/dep/index.ts",
+      kind: "imports",
+      resolution: "internal",
+      parse_state: "parsed",
+    },
+    {
+      from_path: "src/main.ts",
+      to: "src/pkg/entry.ts",
+      kind: "imports",
       resolution: "internal",
       parse_state: "parsed",
     },

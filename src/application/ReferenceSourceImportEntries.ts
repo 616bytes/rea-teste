@@ -156,8 +156,6 @@ const TYPESCRIPT_SOURCE_RESOLUTION_SUFFIXES = [
   "",
   ".ts",
   ".tsx",
-  ".mts",
-  ".cts",
   ".d.ts",
   ".js",
   ".jsx",
@@ -333,11 +331,11 @@ const appendFile = (
       continue;
     }
     const resolutionMode =
-      graphRelationship.kind !== "requires"
-        ? "source"
-        : resolutionStrategy === "typescript-source"
-          ? "typescript-source"
-          : "node-require";
+      resolutionStrategy === "typescript-source"
+        ? "typescript-source"
+        : graphRelationship.kind === "requires"
+          ? "node-require"
+          : "source";
     const resolved = resolveInternalSpecifier(
       graphRelationship.from_path,
       graphRelationship.to,

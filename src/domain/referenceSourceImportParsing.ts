@@ -135,7 +135,11 @@ const extractImportDeclarations = (
   body: readonly Node[],
   from_path: string,
   relationships: ReferenceSourceImportRelationship[],
+  typescriptSource: boolean,
 ): void => {
+  const strategyOptions = typescriptSource
+    ? { resolutionStrategy: "typescript-source" as const }
+    : {};
   for (const statement of body) {
     if (isImportDeclaration(statement)) {
       appendRelationship(relationships, {
@@ -143,6 +147,7 @@ const extractImportDeclarations = (
         to: safeModuleName(statement.source),
         kind: "imports",
         parseState: "parsed",
+        ...strategyOptions,
       });
       continue;
     }
@@ -154,6 +159,7 @@ const extractImportDeclarations = (
           to: safeModuleName(statement.source),
           kind: "imports",
           parseState: "parsed",
+          ...strategyOptions,
         });
       }
       continue;
@@ -165,6 +171,7 @@ const extractImportDeclarations = (
         to: safeModuleName(statement.source),
         kind: "imports",
         parseState: "parsed",
+        ...strategyOptions,
       });
       continue;
     }
@@ -221,7 +228,11 @@ const extractRequireAndDynamicImports = (
   from_path: string,
   relationships: ReferenceSourceImportRelationship[],
   unshadowedRequireCalls: ReadonlySet<CallExpression>,
+  typescriptSource: boolean,
 ): void => {
+  const strategyOptions = typescriptSource
+    ? { resolutionStrategy: "typescript-source" as const }
+    : {};
   // Single traversal owner: iterative, VISITOR_KEYS-gated, no recursion over
   // loc/comment objects. Survives deeply nested generated member chains that
   // overflowed the previous hand-rolled Object.values walker.
@@ -242,6 +253,7 @@ const extractRequireAndDynamicImports = (
         to: specifier ?? "<dynamic-import>",
         kind: "imports",
         parseState: specifier === undefined ? "partial" : "parsed",
+        ...strategyOptions,
         ...(specifier === undefined ? { resolution: "unknown" } : {}),
       });
       continue;
@@ -272,6 +284,7 @@ const extractRequireAndDynamicImports = (
           to: result.specifier,
           kind: "imports",
           parseState: result.parseState,
+          ...strategyOptions,
         });
       }
     }
@@ -370,12 +383,19 @@ export const parseReferenceSourceImports = (
   }
 
   const relationships: ReferenceSourceImportRelationship[] = [];
-  extractImportDeclarations(ast.program.body, path, relationships);
+  const typescriptSource = language === "TypeScript" || language === "TSX";
+  extractImportDeclarations(
+    ast.program.body,
+    path,
+    relationships,
+    typescriptSource,
+  );
   extractRequireAndDynamicImports(
     ast.program.body,
     path,
     relationships,
     unshadowedReferenceSourceRequireCalls(ast, path),
+    typescriptSource,
   );
 
   return {

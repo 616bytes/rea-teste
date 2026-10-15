@@ -284,6 +284,38 @@ it("keeps exact local, ambiguous URL, computed and unparseable glue distinct", (
   });
 });
 
+it("retains a .wasm string literal written as a JavaScript directive", () => {
+  const candidates = ["/app/module.wasm"];
+  const directive = associateWasmGlue(
+    '"module.wasm";\n',
+    "/app/glue.js",
+    candidates,
+  );
+  expect(directive.parse_status).toBe("complete");
+  expect(directive.references).toMatchObject([
+    {
+      value: "module.wasm",
+      line: 1,
+      column: 0,
+      candidate_paths: ["/app/module.wasm"],
+      association: "local-path-candidate",
+      evidence_kind: "static-literal",
+    },
+  ]);
+  expect(
+    associateWasmGlue(';"module.wasm";\n', "/app/glue.js", candidates)
+      .references,
+  ).toMatchObject([
+    {
+      value: "module.wasm",
+      line: 1,
+      column: 1,
+      association: "local-path-candidate",
+      evidence_kind: "static-literal",
+    },
+  ]);
+});
+
 it("matches a CLI-selected ./ module exactly against its glue reference", () => {
   // The CLI makes `./module.wasm` absolute from /app with absoluteCallerPath.
   const selected = absoluteCallerPath("./module.wasm", {

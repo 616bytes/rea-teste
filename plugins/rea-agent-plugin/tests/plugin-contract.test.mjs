@@ -37,7 +37,7 @@ async function runValidatorWithMutation(mutate) {
         },
       );
     } catch (error) {
-      return String(error.stdout ?? "") + "\\n" + String(error.stderr ?? "");
+      return String(error.stdout ?? "") + "\n" + String(error.stderr ?? "");
     }
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
@@ -169,9 +169,9 @@ test("35: handoff template captures evidence or test results", async () => {
 
 test("36: plugin validator rejects a JSON null root manifest", async () => {
   const output = await runValidatorWithMutation(async (root) => {
-    await writeFile(path.join(root, "plugin.json"), "null\\n");
+    await writeFile(path.join(root, "plugin.json"), "null\n");
   });
-  assert.match(output, /plugin\\.json: invalid or unreadable JSON \\(expected a JSON object at the root\\)/);
+  assert.match(output, /plugin\.json: invalid or unreadable JSON \(expected a JSON object at the root\)/);
 });
 
 test("37: plugin validator rejects malformed YAML frontmatter", async () => {

@@ -130,3 +130,20 @@ it.each([
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });
+
+it("maps the local ppc alias to the canonical powerpc subject", async () => {
+  for (const [architecture, subject] of [
+    ["ppc", "powerpc"],
+    ["ppc64", null],
+  ] as const) {
+    const result = await new RustBinaryService({
+      identity,
+      inspect: () => Promise.resolve(ok({ ...report, architecture })),
+    }).inspect({ path: report.artifact.path });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      subject: { architecture: subject },
+      normalized_result: { architecture },
+    });
+  }
+});

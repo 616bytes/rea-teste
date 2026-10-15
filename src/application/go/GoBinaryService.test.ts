@@ -176,3 +176,20 @@ it("honors cancellation before reading and after a completed observation", async
   if (!before.ok) expect(before.error).toBeInstanceOf(AnalysisCancelledError);
   expect(calls).toBe(1);
 });
+
+it("maps the local ppc alias to the canonical powerpc subject", async () => {
+  for (const [architecture, subject] of [
+    ["ppc", "powerpc"],
+    ["ppc64", null],
+  ] as const) {
+    const result = await new GoBinaryService({
+      identity,
+      inspect: () => Promise.resolve(ok({ ...report, architecture, bits: 32 })),
+    }).inspect({ path: report.artifact.path });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      subject: { architecture: subject },
+      normalized_result: { architecture },
+    });
+  }
+});

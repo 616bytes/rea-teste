@@ -1,6 +1,7 @@
 import { posix } from "node:path";
 
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { createReferenceSourcePathLookup } from "../domain/referenceSourcePathIdentity.js";
 import { err, ok } from "../domain/result.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -98,23 +99,25 @@ export const reconcileSymlinksBelowUnreadableDirectories = (
   exclusions: TraversalState["exclusions"] = [],
   signal?: AbortSignal,
 ): void => {
-  const observedPaths = new Set(entries.map(({ path }) => path));
-  const excludedPaths = new Set(exclusions.map(({ path }) => path));
-  const excludedDirectories = new Set(
+  const failedDirectories = new Map(
+    entries.flatMap((entry) =>
+      entry.status === "failed" && entry.kind === "directory"
+        ? [[entry.path, entry] as const]
+        : [],
+    ),
+  );
+  if (failedDirectories.size === 0 || isAborted(signal)) return;
+  const observedPaths = createReferenceSourcePathLookup(
+    entries.map(({ path }) => path),
+  );
+  const excludedPaths = createReferenceSourcePathLookup(
+    exclusions.map(({ path }) => path),
+  );
+  const excludedDirectories = createReferenceSourcePathLookup(
     exclusions.flatMap(({ path, kind }) =>
       kind === "directory" ? [path] : [],
     ),
   );
-  const unreadableDirectories = new Set(
-    entries.flatMap((entry) =>
-      entry.status === "failed" &&
-      entry.kind === "directory" &&
-      entry.code === "io"
-        ? [entry.path]
-        : [],
-    ),
-  );
-  if (unreadableDirectories.size === 0 || isAborted(signal)) return;
 
   for (const [index, entry] of entries.entries()) {
     if (isAborted(signal)) return;
@@ -122,34 +125,50 @@ export const reconcileSymlinksBelowUnreadableDirectories = (
       entry.status !== "read" ||
       entry.kind !== "symlink" ||
       entry.targetState !== "internal" ||
-      observedPaths.has(entry.target) ||
-      excludedPaths.has(entry.target) ||
-      hasAncestor(entry.target, excludedDirectories, signal) ||
-      !hasUnreadableAncestor(entry.target, unreadableDirectories, signal)
+      observedPaths.resolve(entry.target) !== undefined ||
+      excludedPaths.resolve(entry.target) !== undefined ||
+      hasAncestor(entry.target, excludedDirectories, signal)
     )
       continue;
+    const ancestor = findFailedAncestor(
+      entry.target,
+      failedDirectories,
+      signal,
+    );
+    if (ancestor === undefined) continue;
     entries[index] = {
       status: "failed",
       kind: "symlink",
       path: entry.path,
-      code: "io",
-      message:
-        "Symbolic link target is inside a directory that could not be enumerated",
+      code: ancestor.code,
+      message: `Symbolic link target is inside a directory that could not be enumerated: ${ancestor.message}`,
     };
   }
 };
 
-const hasUnreadableAncestor = (
+const findFailedAncestor = (
   target: string,
-  unreadableDirectories: ReadonlySet<string>,
+  directories: ReadonlyMap<
+    string,
+    Extract<ReferenceSourceEntry, { status: "failed" }>
+  >,
   signal: AbortSignal | undefined,
-): boolean => {
-  return hasAncestor(target, unreadableDirectories, signal);
+): Extract<ReferenceSourceEntry, { status: "failed" }> | undefined => {
+  for (
+    let candidate = posix.dirname(target);
+    candidate !== "." && candidate !== "/";
+    candidate = posix.dirname(candidate)
+  ) {
+    if (isAborted(signal)) return undefined;
+    const failure = directories.get(candidate);
+    if (failure !== undefined) return failure;
+  }
+  return undefined;
 };
 
 const hasAncestor = (
   target: string,
-  paths: ReadonlySet<string>,
+  paths: ReturnType<typeof createReferenceSourcePathLookup>,
   signal: AbortSignal | undefined,
 ): boolean => {
   for (
@@ -158,7 +177,7 @@ const hasAncestor = (
     candidate = posix.dirname(candidate)
   ) {
     if (isAborted(signal)) return false;
-    if (paths.has(candidate)) return true;
+    if (paths.resolve(candidate) !== undefined) return true;
   }
   return false;
 };

@@ -37,7 +37,7 @@ describe("reference source reader reconciliation", () => {
       path: "alias.txt",
       code: "io",
       message:
-        "Symbolic link target is inside a directory that could not be enumerated",
+        "Symbolic link target is inside a directory that could not be enumerated: EACCES",
     });
     expect(entries).toContainEqual(
       expect.objectContaining({ path: "visible.txt", status: "read" }),
@@ -83,6 +83,39 @@ describe("reference source reader reconciliation", () => {
       targetState: "internal",
     });
     expect(entries[2]).toMatchObject({
+      status: "read",
+      targetState: "internal",
+    });
+  });
+
+  it("retains an inventoried target with canonically equivalent spelling", () => {
+    const entries: ReferenceSourceEntry[] = [
+      {
+        status: "read",
+        kind: "symlink",
+        path: "alias.txt",
+        target: "hidden/cafe\u0301.txt",
+        targetState: "internal",
+      },
+      {
+        status: "read",
+        kind: "file",
+        path: "hidden/caf\u00e9.txt",
+        bytes: new Uint8Array([1]),
+        size: 1,
+      },
+      {
+        status: "failed",
+        kind: "directory",
+        path: "hidden",
+        code: "io",
+        message: "EACCES",
+      },
+    ];
+
+    reconcileSymlinksBelowUnreadableDirectories(entries);
+
+    expect(entries[0]).toMatchObject({
       status: "read",
       targetState: "internal",
     });
@@ -146,29 +179,34 @@ describe("reference source reader reconciliation boundaries", () => {
     });
   });
 
-  it("does not treat a changed directory as unreadable", () => {
-    const entries: ReferenceSourceEntry[] = [
-      {
-        status: "read",
-        kind: "symlink",
-        path: "alias.txt",
-        target: "changed/target.txt",
-        targetState: "internal",
-      },
-      {
+  it.each(["changed", "symlink"] as const)(
+    "preserves the %s ancestor failure while making its target uncertain",
+    (code) => {
+      const entries: ReferenceSourceEntry[] = [
+        {
+          status: "read",
+          kind: "symlink",
+          path: "alias.txt",
+          target: "changed/target.txt",
+          targetState: "internal",
+        },
+        {
+          status: "failed",
+          kind: "directory",
+          path: "changed",
+          code,
+          message: "Directory changed while it was read",
+        },
+      ];
+
+      reconcileSymlinksBelowUnreadableDirectories(entries);
+
+      expect(entries[0]).toMatchObject({
         status: "failed",
-        kind: "directory",
-        path: "changed",
-        code: "changed",
-        message: "Directory changed while it was read",
-      },
-    ];
-
-    reconcileSymlinksBelowUnreadableDirectories(entries);
-
-    expect(entries[0]).toMatchObject({
-      status: "read",
-      targetState: "internal",
-    });
-  });
+        kind: "symlink",
+        code,
+        message: expect.stringContaining("Directory changed while it was read"),
+      });
+    },
+  );
 });

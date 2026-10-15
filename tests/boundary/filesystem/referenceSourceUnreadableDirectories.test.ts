@@ -96,8 +96,7 @@ describe("reference source native unreadable directories", () => {
           kind: "symlink",
           path: "alias.txt",
           code: "io",
-          message:
-            "Symbolic link target is inside a directory that could not be enumerated",
+          message: expect.stringContaining("EACCES"),
         });
 
         const imported = await importTree(root);

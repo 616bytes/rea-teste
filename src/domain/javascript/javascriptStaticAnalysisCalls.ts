@@ -37,6 +37,7 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import {
+  isUnmodifiedGlobalMemberReference,
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticAmbientWrites.js";
@@ -102,17 +103,22 @@ export const inspectCall = (
       specifier:
         workerConstructor === undefined || worker === undefined
           ? undefined
-          : workerUrlSpecifier(worker, bindings),
+          : moduleRelativeUrlSpecifier(
+              argumentNode(worker.arguments[0]),
+              bindings,
+            ),
     });
-  // Service worker script URLs are also relative to the document base URL.
-  if (
-    name === "serviceWorker.register" ||
-    name.endsWith(".serviceWorker.register")
-  )
+  if (isServiceWorkerRegistration(node, bindings))
     addReference(context, {
       node,
       kind: "service-worker",
-      specifier: undefined,
+      // A string script URL is relative to the registering document base URL,
+      // which the analyzed source's artifact location does not establish.
+      // Only `new URL(path, import.meta.url)` names a location in this module.
+      specifier: moduleRelativeUrlSpecifier(
+        argumentNode(node.arguments[0]),
+        bindings,
+      ),
     });
   inspectEndpointCall(node, name, first, context);
   inspectStorageCall(node, name, first, context);
@@ -151,13 +157,37 @@ export const inspectCall = (
     });
 };
 
-const workerUrlSpecifier = (
-  worker: t.NewExpression,
+/**
+ * Recognize a registration against the unmodified browser
+ * `navigator.serviceWorker` API. The same member name on unrelated local or
+ * imported code registers no service worker.
+ */
+const isServiceWorkerRegistration = (
+  node: JavaScriptCallLike,
+  bindings: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
+    return false;
+  return (
+    semanticStaticPropertyName(callee.property, callee.computed) ===
+      "register" &&
+    isUnmodifiedGlobalMemberReference(
+      callee.object,
+      bindings,
+      "navigator",
+      "serviceWorker",
+    )
+  );
+};
+
+/** Read a `new URL(path, import.meta.url)` location relative to this module. */
+const moduleRelativeUrlSpecifier = (
+  argument: t.Node | undefined,
   bindings: JavaScriptSemanticAnalysisState,
 ): string | undefined => {
-  const argumentExpression = argumentNode(worker.arguments[0]);
-  if (argumentExpression === undefined) return undefined;
-  const node = unwrapJavaScriptExpression(argumentExpression).node;
+  if (argument === undefined) return undefined;
+  const node = unwrapJavaScriptExpression(argument).node;
   if (!t.isNewExpression(node)) return undefined;
   const callee = unwrapJavaScriptExpression(node.callee).node;
   if (
@@ -172,7 +202,7 @@ const workerUrlSpecifier = (
   // relative pathnames can establish a location within the artifact; retain
   // rooted paths and paths requiring URL text normalization as expressions.
   // Malformed percent escapes survive HTTP URL parsing but cannot be converted
-  // from a file URL to a Node Worker path. Without the base scheme, keep that
+  // from a file URL to a filesystem path. Without the base scheme, keep that
   // ambiguity unknown; query and fragment bytes do not affect pathname lookup.
   return pathname.length > 0 &&
     !pathname.startsWith("/") &&

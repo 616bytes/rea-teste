@@ -301,8 +301,9 @@ export const isUnmodifiedGlobalReference = (
   const node = unwrapJavaScriptExpression(callee).node;
   if (state.ambientWrites.covers(["global", name])) return false;
   if (isUnshadowedGlobal(node, state, name)) return true;
+  // An optional member access reads the same global property as a plain one.
   if (
-    !t.isMemberExpression(node) ||
+    (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node)) ||
     semanticStaticPropertyKey(node.property, node.computed) !== name
   )
     return false;
@@ -311,6 +312,29 @@ export const isUnmodifiedGlobalReference = (
   return (
     namespace !== undefined &&
     !state.ambientWrites.covers(["global", namespace])
+  );
+};
+
+/**
+ * Recognize a property of an ambient global namespace, such as
+ * `navigator.serviceWorker`, without a visible source-local overwrite of
+ * either the namespace or the property. A same-named member of unrelated
+ * local or imported code is not that platform API.
+ */
+export const isUnmodifiedGlobalMemberReference = (
+  node: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+  namespace: string,
+  property: string,
+): boolean => {
+  if (node === undefined) return false;
+  const member = unwrapJavaScriptExpression(node).node;
+  if (!t.isMemberExpression(member) && !t.isOptionalMemberExpression(member))
+    return false;
+  return (
+    semanticStaticPropertyKey(member.property, member.computed) === property &&
+    isUnmodifiedGlobalReference(member.object, state, namespace) &&
+    !state.ambientWrites.covers(["global", namespace, property])
   );
 };
 

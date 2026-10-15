@@ -63,6 +63,8 @@ export const readProcmonExport = async (
   const present = new Set(
     parsed.columns.map((column) => procmonCoreColumn(column, format)),
   );
+  // One final coverage decision drives both the columns claim and its note.
+  const coverage = withCutCharacter(parsed, decoded.cutBytes);
   return {
     source: {
       format,
@@ -73,7 +75,7 @@ export const readProcmonExport = async (
     // A column unseen before a partial XML parse stopped may appear later;
     // CSV headers name every column up front.
     missing_columns:
-      format === "xml" && parsed.coverage.status === "partial"
+      format === "xml" && coverage.status === "partial"
         ? []
         : PROCMON_CORE_COLUMNS.filter((column) => !present.has(column)),
     omitted_nested_fields: parsed.nested,
@@ -83,7 +85,7 @@ export const readProcmonExport = async (
       returned_events: window.events.length,
       has_more: window.examined > selection.event_offset + window.events.length,
     },
-    coverage: withCutCharacter(parsed, decoded.cutBytes),
+    coverage,
   };
 };
 

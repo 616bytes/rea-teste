@@ -156,3 +156,23 @@ describe("readProcmonExport review of e014743", () => {
     );
   });
 });
+
+describe("readProcmonExport review of 6e44894", () => {
+  it("uses the final coverage for missing columns after a cut character", async () => {
+    const bytes = Buffer.concat([
+      Buffer.from(
+        "<procmon><eventlist><event><Operation>Read</Operation></event></eventlist></procmon>\n",
+      ),
+      Buffer.from([0xc3]),
+    ]);
+    const reading = await readProcmonExport(bytes, {
+      ...selection,
+      event_limit: null,
+    });
+    expect(reading.coverage).toMatchObject({
+      status: "partial",
+      reason: "truncated",
+    });
+    expect(reading.missing_columns).toEqual([]);
+  });
+});

@@ -23,6 +23,7 @@ const { values } = parseArgs({
     mode: { type: "string", default: "parity" },
     "cli-parity": { type: "boolean", default: false },
     "tokenizer-python": { type: "string" },
+    "tokenizer-timeout-ms": { type: "string", default: "60000" },
   },
   strict: true,
 });
@@ -30,6 +31,11 @@ assert.ok(values.artifact?.startsWith("/"), "--artifact must be absolute");
 assert.ok(["parity", "legacy", "references"].includes(values.mode));
 const rounds = Number(values.rounds);
 assert.ok(Number.isSafeInteger(rounds) && rounds > 0);
+const tokenizerTimeoutMs = Number(values["tokenizer-timeout-ms"]);
+assert.ok(
+  Number.isSafeInteger(tokenizerTimeoutMs) && tokenizerTimeoutMs > 0,
+  "--tokenizer-timeout-ms must be a positive safe integer",
+);
 const where = {
   ...(values.path === undefined ? {} : { path: values.path }),
   ...(values.kind === undefined ? {} : { kind: values.kind }),
@@ -325,8 +331,15 @@ print(json.dumps(dict(tokenizer='cl100k_base',tiktoken_version=tiktoken.__versio
         input: serialize(costInputs),
         encoding: "utf8",
         maxBuffer: 1024 * 1024,
+        timeout: tokenizerTimeoutMs,
+        killSignal: "SIGKILL",
       },
     );
+    if (result.error)
+      throw new Error(
+        "Token accounting subprocess failed; the verifier will close MCP and remove temporary Evidence.",
+        { cause: result.error },
+      );
     assert.equal(result.status, 0, result.stderr);
     tokenCosts = JSON.parse(result.stdout);
   }

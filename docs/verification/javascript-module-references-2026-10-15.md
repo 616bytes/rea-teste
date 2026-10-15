@@ -29,8 +29,8 @@ correctness or proof of runtime loading.
 | ------------------------------------------------------------- | --------------------: | -------------------: |
 | Calls per query task                                          |                    24 |                    1 |
 | Structured reply bytes                                        |               325,201 |               22,158 |
-| First query in its arm, after preparation                     |           1,114.08 ms |             46.57 ms |
-| Subsequent same-session query times                           |    675.71 / 777.27 ms |     37.09 / 36.31 ms |
+| First query in its arm, after preparation                     |             330.73 ms |             13.62 ms |
+| Subsequent same-session query times                           |    187.19 / 293.49 ms |      12.48 / 8.15 ms |
 | Request + structured-reply BPE tokens                         |                74,597 |                5,843 |
 | With selected tool catalog + shared bootstrap request/summary |                85,302 |               16,548 |
 | With complete tool catalog + shared bootstrap request/summary |               272,771 |              204,017 |
@@ -38,7 +38,7 @@ correctness or proof of runtime loading.
 Order alternates: existing/reference, reference/existing, existing/reference.
 Times include verifier-side fact normalization and equality checks; byte/token
 accounting follows the timed reads. The initial artifact analysis and summary
-took 66.697 seconds and is shared preparation, not a query-speed improvement.
+took 19.051 seconds and is shared preparation, not a query-speed improvement.
 The retained source remains partial; unknown counts and source selection are
 preserved independently of exhausted pages. No query cache was introduced.
 
@@ -51,18 +51,29 @@ data-retrieval comparison; it does not establish a whole-agent speedup or a
 before/after catalog-size improvement. Selected discovery includes both the
 analysis and view tool schemas. Builds/filesystem are warm or uncontrolled,
 so the first query is not an OS-cold analysis measurement. Shared-host scheduling
-was uncontrolled: an earlier successful probe had substantially lower wall/CPU
+was uncontrolled: an earlier successful probe had substantially higher wall/CPU
 times. Its samples are retained separately; neither run establishes a portable
 latency guarantee.
 
-The complete final verifier scope used 108.372 seconds elapsed, 81.552 seconds
-CPU and 1,884,962,816 bytes peak cgroup memory. This includes shared analysis,
+The complete final verifier scope used 30.742 seconds elapsed, 30.425 seconds
+CPU and 1,592,938,496 bytes peak cgroup memory. This includes shared analysis,
 both query arms, temporary export, CLI parity and tokenization; CPU/memory were
 not isolated by arm. Cgroup memory includes charged file cache and is not summed
 process RSS. The whole scope had one CPU, an 8 GiB hard memory cap, 6 GiB early
 stop and no swap. Payload cleanup was verified; no OOM/capacity event occurred.
 An earlier full-response transport failure and interim probes are recorded
 separately in the JSON and earn no performance credit.
+
+A review follow-up exercised a stalled tokenizer after real Obsidian reference
+reads and CLI parity. With a caller-selected 20 ms deadline, an injected tokenizer
+executing `sleep 30` was killed with `ETIMEDOUT`; the verifier failed as expected,
+closed its MCP process family, and left its selected temporary root empty.
+The separate robustness run used 31.258 s wall / 31.000 s CPU /
+1,644,077,056 B peak cgroup memory, with cleanup verified and no OOM. It earns no
+efficiency credit. A deterministic CI regression also asserts two retained
+observations at the same source range, excludes an unavailable location, and
+checks agreement with the full item view; the count deliberately measures
+observations rather than unique source sites.
 
 ## Reproduce
 
@@ -79,7 +90,10 @@ node scripts/verify/javascript/module-references.mjs \
 ```
 
 The optional Python interpreter needs tiktoken 0.12.0; omit that flag to skip
-token accounting. `--mode legacy` or `--mode references` runs one arm. Fresh runs
+token accounting. It has a 60-second wall-time deadline, configurable with the
+positive integer `--tokenizer-timeout-ms`. Timeout kills the owned child, reports
+the process error and runs the verifier's MCP/file cleanup. `--mode legacy` or
+`--mode references` runs one arm. Fresh runs
 reanalyze the artifact and can produce different parent identities/resource
 coverage; the verifier requires equal facts within its paired run. The measured
 run additionally used the preserved [8 GiB cgroup observer](https://github.com/morluto/rea/blob/b3bdabab694af1f9801eff7caf75001b92314a58/experiments/analysis-efficiency/resource-run.py)

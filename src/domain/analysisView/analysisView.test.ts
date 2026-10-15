@@ -543,6 +543,79 @@ it("projects typed module facts without source bodies and keeps source coverage 
   });
 });
 
+it("counts retained range observations including repeats and skips unavailable locations", () => {
+  const analysis = analysisViewJavaScriptAnalysis();
+  const original = analysis.graph.nodes[0];
+  const observed = original?.observations[0];
+  if (!original || !observed) throw new Error("missing module observation");
+  const range = {
+    kind: "source-range",
+    source: "renderer.js",
+    start: { line: 1, column: 0 },
+    end: { line: 1, column: 8 },
+  };
+  const node = createJavaScriptApplicationNode({
+    kind: original.kind,
+    identity: original.identity,
+    observations: [
+      ...["first retained observation", "second retained observation"].map(
+        (label) => ({
+          label,
+          properties: {},
+          evidence: {
+            ...observed.evidence,
+            location: { available: true, value: range },
+          },
+        }),
+      ),
+      {
+        label: "unavailable location",
+        properties: {},
+        evidence: {
+          ...observed.evidence,
+          authority: "unknown",
+          state: "unavailable",
+          confidence: "unknown",
+          location: {
+            available: false,
+            reason: "not-observed",
+            detail: "Location was not recorded.",
+          },
+          limitations: ["Location was not recorded."],
+        },
+      },
+    ],
+  });
+  const { graph_id: _graphId, ...application } = analysis.graph;
+  const graph = createJavaScriptApplicationGraph({
+    ...application,
+    nodes: [node],
+    root_node_ids: [node.node_id],
+  });
+  const parent = javascriptParent(
+    analysisViewBindJavaScriptGraphs(analysis, graph),
+  );
+  const references = projectAnalysisView(parent, {
+    kind: "javascript",
+    collection: "modules",
+    projection: "references",
+    where: {},
+    offset: 0,
+    limit: 1,
+  });
+  const item = projectAnalysisView(parent, {
+    kind: "item",
+    collection: "modules",
+    selector: { node_id: node.node_id },
+  });
+  if (!references.ok) throw references.error;
+  if (!item.ok) throw item.error;
+  expect(references.value).toMatchObject({
+    rows: [{ node_id: node.node_id, retained_source_range_count: 2 }],
+  });
+  expect(item.value).toMatchObject({ item: { source_ranges: [range, range] } });
+});
+
 it("validates typed module selectors without coercing null or empty paths", () => {
   const source = {
     kind: "retained-evidence",

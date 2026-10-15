@@ -1,10 +1,13 @@
 # Docker
 
 [`docker/Dockerfile`](https://github.com/morluto/rea/blob/main/docker/Dockerfile)
-builds a Linux x64 image containing REA, a 64-bit full JDK 21, Ghidra 12.1.4,
-the pinned [JADX engine](android-analysis.md) and a Chromium-family browser.
-Use it to keep untrusted targets away from your host, or to use the Linux
-providers from a Windows or macOS host through Docker Desktop.
+builds a Linux x64 image containing only REA (`rea-agents`) on the official
+Node.js image. Use it to keep untrusted targets away from your host, or to use
+the Linux providers from a Windows or macOS host through Docker Desktop.
+
+The image does not include Ghidra, a JDK, the JADX engine or a browser. As
+with a host installation, you supply those yourself and point REA at them with
+the usual environment variables; see [Supply the tools](#supply-the-tools).
 
 The container is an isolation boundary for the target files you mount, not a
 sandbox for anything those targets contact. Browser pages still reach the
@@ -22,27 +25,42 @@ docker build --platform linux/amd64 -t rea docker/
 Apple silicon, where Docker runs it under emulation. That combination has not
 been verified.
 
-The build downloads Ghidra, the JADX JAR (checked against its pinned SHA-256),
-the `rea-agents` npm package and Playwright's Chrome for Testing build. The
-image runs as an unprivileged `rea` user, with `/targets` as its working
-directory.
+The build downloads the official `node` base image and the `rea-agents` npm
+package. The image runs as an unprivileged `rea` user, with `/targets` as its
+working directory.
 
-Check the native provider:
+## Supply the tools
+
+Provide Linux x64 builds of the tools a workflow needs, and mount them
+read-only:
+
+| Tool                                      | Variable             | Guide                                   |
+| ----------------------------------------- | -------------------- | --------------------------------------- |
+| Ghidra 12.1.x                             | `GHIDRA_INSTALL_DIR` | [Installation](installation.md)         |
+| JDK 21 (64-bit, full) for Ghidra and JADX | `JAVA_HOME`          | [Installation](installation.md)         |
+| `jadx-headless-mcp` 0.7.1 JAR             | `REA_JADX_MCP_JAR`   | [Android analysis](android-analysis.md) |
+
+On Windows and macOS hosts, keep these Linux trees in a Docker volume rather
+than a host folder: a JDK contains symbolic links that a Windows bind mount
+cannot reproduce. For example, with a volume named `rea-tools` that holds
+`ghidra/`, `jdk/` and `jadx/`:
 
 ```bash
-docker run --rm rea doctor --provider ghidra
+docker run --rm \
+  -v rea-tools:/opt/tools:ro \
+  -e GHIDRA_INSTALL_DIR=/opt/tools/ghidra \
+  -e JAVA_HOME=/opt/tools/jdk \
+  -e REA_JADX_MCP_JAR=/opt/tools/jadx/jadx-headless-mcp-0.7.1-all.jar \
+  rea doctor --provider ghidra
 ```
 
-Check the JADX installation:
+Check the JADX installation the same way with `doctor --provider jadx`. It
+validates the JADX JAR and the Java runtime REA would launch, not whether the
+JADX heap is large enough for a given APK (see [Memory](#memory)). To test
+Android analysis end to end, run an [Android command](android-analysis.md)
+against an APK.
 
-```bash
-docker run --rm rea doctor --provider jadx
-```
-
-This validates the JADX JAR and the Java runtime REA would launch. It does not
-check whether the JADX heap is large enough for a given APK (see
-[Memory](#memory)). To test Android analysis end to end, run an
-[Android command](android-analysis.md) against an APK.
+The examples below shorten these mounts and variables to `<tools>`.
 
 ## Register with an agent
 
@@ -50,7 +68,7 @@ The image's default command is `rea mcp`. Docker must keep stdin open, so pass
 `-i`. For Claude Code:
 
 ```bash
-claude mcp add --scope local rea -- docker run -i --rm --memory 3g -e GHIDRA_HEADLESS_MAXMEM=2G -v /absolute/host/targets:/targets:ro rea
+claude mcp add --scope local rea -- docker run -i --rm --memory 3g -e GHIDRA_HEADLESS_MAXMEM=2G <tools> -v /absolute/host/targets:/targets:ro rea
 ```
 
 Other clients use the same command and arguments in their
@@ -77,7 +95,7 @@ Ghidra's JVM can take a large share of the Docker VM's memory. Set a container
 limit and a smaller Ghidra heap, as in the registration above:
 
 ```bash
-docker run --rm --memory 3g -e GHIDRA_HEADLESS_MAXMEM=2G -v /absolute/host/targets:/targets:ro rea function /targets/program main --provider ghidra
+docker run --rm --memory 3g -e GHIDRA_HEADLESS_MAXMEM=2G <tools> -v /absolute/host/targets:/targets:ro rea function /targets/program main --provider ghidra
 ```
 
 See [installation](installation.md) for the other Ghidra memory settings.
@@ -89,7 +107,7 @@ That is enough for small APKs. A large APK can then fail during load with
 the container limit and set the JADX heap explicitly:
 
 ```bash
-docker run --rm --memory 6g -e REA_JADX_HEAP_MIB=4096 -v /absolute/host/targets:/targets:ro rea inspect-android-package /targets/app.apk
+docker run --rm --memory 6g -e REA_JADX_HEAP_MIB=4096 <tools> -v /absolute/host/targets:/targets:ro rea inspect-android-package /targets/app.apk
 ```
 
 Keep the heap below the container limit, because the JVM also uses native
@@ -98,43 +116,53 @@ the other JADX settings.
 
 ## Browsers
 
-The image sets `REA_BROWSER_EXECUTABLE` to its Chromium build. It also sets
-`REA_BROWSER_NO_SANDBOX=true`, because Chromium's sandbox needs user
-namespaces, and Docker's default seccomp profile blocks them. Without
-`--no-sandbox`, Chromium exits with `No usable sandbox!`. Inspect only sites
-you are prepared to load in an unsandboxed browser inside this container.
+The image contains no browser and does not change browser sandbox settings.
 
 [CDP observation](browser-observation.md) attaches to a browser that is
-already running with a loopback debugging port. REA does not launch that
-browser. A `docker run -i --rm` container has no such browser, so for CDP work
-start one long-running container and connect the agent with `docker exec`:
+already running with a loopback debugging port; REA does not launch it. Run a
+headless browser of your choice in its own container, and give REA's container
+the same network namespace so that the browser's port is loopback for REA:
 
 ```bash
-docker run -d --name rea-session --memory 3g -e GHIDRA_HEADLESS_MAXMEM=2G -v /absolute/host/targets:/targets:ro --entrypoint sh rea -c 'chromium --headless=new --no-sandbox --password-store=basic --remote-debugging-port=9222 --user-data-dir=/tmp/rea-browser-profile about:blank & exec sleep infinity'
+docker run -d --name rea-browser <your-headless-browser-image>
+docker run -i --rm --network container:rea-browser <tools> -v /absolute/host/targets:/targets:ro rea
 ```
+
+The agent then uses `http://127.0.0.1:9222` (or the port your browser image
+exposes) as the CDP endpoint. Stop the browser with `docker rm -f rea-browser`
+when the investigation is complete. The browser container's own isolation,
+including its sandbox, is that image's configuration.
+
+Workflows where REA launches the browser itself, such as
+[browser scenarios](browser-scenario-contract.md), need a browser executable
+and its system libraries inside REA's container. Build a derived image that
+adds them, and set `REA_BROWSER_EXECUTABLE`. Chromium's sandbox needs user
+namespaces, which Docker's default seccomp profile blocks, so Chromium then
+exits with `No usable sandbox!`. To run it without its sandbox, opt in for that
+run only:
 
 ```bash
-claude mcp add --scope local rea -- docker exec -i rea-session rea mcp
+docker run --rm -e REA_BROWSER_NO_SANDBOX=true -e REA_BROWSER_EXECUTABLE=/path/in/image/chromium … your-derived-image …
 ```
 
-The agent then uses `http://127.0.0.1:9222` as the CDP endpoint. The port stays
-inside the container. Stop it with `docker rm -f rea-session` when the
-investigation is complete.
+Inspect only sites you are prepared to load in an unsandboxed browser inside
+that container.
 
 ## Limits
 
 - The image targets Linux x64. Linux ARM64 also needs Ghidra's native
   decompiler built for that platform; see [installation](installation.md).
 - Hopper, IDA and JEB are not included. Native analysis in the image uses
-  Ghidra.
+  the Ghidra installation you supply.
 - Apple tooling and other host-specific providers
   remain unavailable in a Linux container. Windows and macOS binaries can still
   be analysed statically with Ghidra.
-- Firmware, packet and signal tools (Binwalk, Unblob, TShark, sigrok) are not
-  installed. Add them to a derived image when you need them.
+- Firmware, packet and signal tools (Binwalk, Unblob, TShark, sigrok) and
+  util-linux `prlimit`, which those integrations require, are not installed.
+  Add them to a derived image when you need them.
 
 ## Update
 
 The Dockerfile pins the `rea-agents` release it was published with. Pull the
 repository and rebuild with `docker build --pull --platform linux/amd64 -t rea docker/` to pick up
-a newer release and base images.
+a newer release and base image. Update the tools you supply separately.

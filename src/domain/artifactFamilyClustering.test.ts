@@ -1,0 +1,416 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  artifactFamilyClusteringResultSchema,
+  clusterArtifactFamilies,
+} from "./artifactFamilyClustering.js";
+import {
+  artifactGraphDigest,
+  artifactIdForContent,
+  artifactManifestId,
+  occurrenceIdForLocation,
+} from "./artifactIdentity.js";
+import type {
+  ArtifactEdge,
+  ArtifactNode,
+  ArtifactOccurrence,
+} from "./artifactGraph.js";
+import { createEvidence, type Evidence } from "./evidence.js";
+import { jsonValueSchema } from "./jsonValue.js";
+
+interface FixtureOptions {
+  readonly rootSha: string;
+  readonly children?: readonly {
+    readonly path: string;
+    readonly sha: string;
+  }[];
+  /** Declare more graph members than are present, as a truncated inventory does. */
+  readonly declareExtraNodes?: number;
+  /** Declare child coverage the producer could not observe. */
+  readonly coverageStatus?: "complete" | "unknown";
+  readonly coverageScope?: "root" | "container-entries";
+  readonly limitations?: readonly string[];
+}
+
+const provider = {
+  id: "rea-artifact",
+  name: "REA artifact graph",
+  version: "1",
+} as const;
+
+/** One deterministic inventory page in the producer's own shape. */
+const inventory = (options: FixtureOptions) => {
+  const rootArtifactId = artifactIdForContent(options.rootSha);
+  const nodes: ArtifactNode[] = [
+    {
+      artifact_id: rootArtifactId,
+      format: "file",
+      sha256: options.rootSha,
+      size: 1,
+      media_type: null,
+      architecture: null,
+      content_state: "materialized",
+      limitations: [],
+    },
+  ];
+  const occurrences: ArtifactOccurrence[] = [
+    {
+      occurrence_id: occurrenceIdForLocation({
+        rootArtifactId,
+        logicalPath: ".",
+        entryKind: "file",
+      }),
+      artifact_id: rootArtifactId,
+      parent_occurrence_id: null,
+      logical_path: ".",
+      entry_kind: "file",
+      artifact_kind: "resource",
+      artifact_format: "file",
+      declared_size: 1,
+      compressed_size: null,
+      executable: false,
+      encrypted: false,
+      hash_status: "verified",
+      source_location: null,
+      limitations: [],
+    },
+  ];
+  const edges: ArtifactEdge[] = [];
+  for (const [index, child] of (options.children ?? []).entries()) {
+    const childId = artifactIdForContent(child.sha);
+    nodes.push({
+      artifact_id: childId,
+      format: "file",
+      sha256: child.sha,
+      size: 1,
+      media_type: null,
+      architecture: null,
+      content_state: "materialized",
+      limitations: [],
+    });
+    occurrences.push({
+      occurrence_id: occurrenceIdForLocation({
+        rootArtifactId,
+        logicalPath: child.path,
+        entryKind: "file",
+      }),
+      artifact_id: childId,
+      parent_occurrence_id: occurrenceIdForLocation({
+        rootArtifactId,
+        logicalPath: ".",
+        entryKind: "file",
+      }),
+      logical_path: child.path,
+      entry_kind: "file",
+      artifact_kind: "resource",
+      artifact_format: "file",
+      declared_size: 1,
+      compressed_size: null,
+      executable: false,
+      encrypted: false,
+      hash_status: "verified",
+      source_location: null,
+      limitations: [],
+    });
+    edges.push({
+      edge_id: `edg_${(index + 1).toString(16).padStart(64, "0")}`,
+      ordinal: index,
+      parent_artifact_id: rootArtifactId,
+      relation: "contains",
+      occurrence_id: occurrenceIdForLocation({
+        rootArtifactId,
+        logicalPath: child.path,
+        entryKind: "file",
+      }),
+      producer: null,
+    });
+  }
+  const graphSha256 = artifactGraphDigest({
+    nodes,
+    occurrences,
+    edges,
+    contradictions: [],
+  });
+  return jsonValueSchema.parse({
+    manifest: {
+      manifest_id: artifactManifestId(rootArtifactId, graphSha256),
+      root_artifact_id: rootArtifactId,
+      root_sha256: options.rootSha,
+      root_format: "file",
+      graph_sha256: graphSha256,
+      node_count: nodes.length + (options.declareExtraNodes ?? 0),
+      occurrence_count: occurrences.length,
+      edge_count: edges.length,
+    },
+    nodes,
+    occurrences,
+    edges,
+    provenance: [],
+    integrity_contradictions: [],
+    coverage: {
+      scope: options.coverageScope ?? "root",
+      status: options.coverageStatus ?? "complete",
+    },
+    limitations: [...(options.limitations ?? [])],
+  });
+};
+
+const member = (label: string, options: FixtureOptions) => ({
+  label,
+  evidence: createEvidence(
+    { path: label, sha256: options.rootSha, format: "file" },
+    provider,
+    {
+      operation: "inventory_artifact",
+      parameters: {},
+      result: inventory(options),
+      confidence: "observed",
+      authority: "shipped-artifact",
+    },
+  ),
+});
+
+const sha = (character: string) => character.repeat(64);
+const cluster = (
+  members: readonly { readonly label: string; readonly evidence: Evidence }[],
+  options: {
+    readonly sharedMemberMinimum?: number;
+    readonly offset?: number;
+    readonly limit?: number;
+  } = {},
+) =>
+  clusterArtifactFamilies(members, {
+    ...(options.sharedMemberMinimum === undefined
+      ? {}
+      : { sharedMemberMinimum: options.sharedMemberMinimum }),
+    offset: options.offset ?? 0,
+    limit: options.limit ?? 100,
+  });
+
+describe("clusterArtifactFamilies", () => {
+  it("groups byte-identical roots into one root-sha256 family", () => {
+    const result = cluster([
+      member("alpha", { rootSha: sha("a") }),
+      member("beta", { rootSha: sha("a") }),
+    ]);
+
+    expect(result.status).toBe("partitioned");
+    expect(result.families).toHaveLength(1);
+    expect(result.families[0]?.tier).toBe("root-sha256");
+    expect(result.families[0]?.members.map(({ label }) => label)).toEqual([
+      "alpha",
+      "beta",
+    ]);
+    expect(result.summary.families).toBe(1);
+    expect(result.summary.members_without_family).toBe(0);
+    expect(result.summary.members_with_unknown_inventory).toBe(0);
+  });
+
+  it("reports a shared member for identical content and a unique member otherwise", () => {
+    const shared = cluster(
+      [
+        member("alpha", { rootSha: sha("a") }),
+        member("beta", { rootSha: sha("a") }),
+        member("gamma", { rootSha: sha("b") }),
+      ],
+      { sharedMemberMinimum: 2 },
+    );
+
+    expect(shared.families.map(({ family_id }) => family_id)).toEqual([
+      `root-${sha("a").slice(0, 16)}`,
+    ]);
+    expect(shared.shared_members).toHaveLength(1);
+    expect(shared.shared_members[0]?.member_count).toBe(2);
+    expect(shared.shared_members[0]?.observed_in).toEqual(["alpha", "beta"]);
+    expect(shared.unique_members.map(({ observed_in }) => observed_in)).toEqual(
+      [["gamma"]],
+    );
+    expect(shared.status).toBe("partitioned");
+  });
+
+  it("keeps an overlap below the requested minimum visible as partially shared", () => {
+    const result = cluster([
+      member("alpha", { rootSha: sha("a") }),
+      member("beta", { rootSha: sha("a") }),
+      member("gamma", { rootSha: sha("b") }),
+    ]);
+
+    // Default minimum is every member, so a two-of-three overlap is reported
+    // separately rather than silently dropped or promoted to shared.
+    expect(result.shared_members).toHaveLength(0);
+    expect(result.partially_shared_members).toHaveLength(1);
+    expect(result.partially_shared_members[0]?.observed_in).toEqual([
+      "alpha",
+      "beta",
+    ]);
+    expect(result.unique_members).toHaveLength(1);
+  });
+
+  it("withholds shared status below the requested minimum", () => {
+    const two = cluster(
+      [
+        member("alpha", { rootSha: sha("a") }),
+        member("beta", { rootSha: sha("a") }),
+        member("gamma", { rootSha: sha("b") }),
+      ],
+      { sharedMemberMinimum: 3 },
+    );
+
+    expect(two.shared_members).toHaveLength(0);
+    expect(two.partially_shared_members).toHaveLength(1);
+    expect(two.unique_members).toHaveLength(1);
+    expect(two.coverage.shared_member_minimum).toBe(3);
+  });
+
+  it("keeps a truncated inventory unplaced instead of treating it as absent", () => {
+    const result = cluster([
+      member("alpha", { rootSha: sha("a"), declareExtraNodes: 1 }),
+      member("beta", { rootSha: sha("a"), declareExtraNodes: 1 }),
+      member("gamma", { rootSha: sha("a") }),
+    ]);
+
+    const unplaced = result.families.find(
+      ({ family_id }) => family_id === "unplaced",
+    );
+    expect(
+      unplaced?.unknown_members.map(({ label, reason }) => [label, reason]),
+    ).toEqual([
+      ["alpha", "incomplete-inventory"],
+      ["beta", "incomplete-inventory"],
+    ]);
+    // Only the complete member is indexed; it has no partner, so it is counted
+    // as without a family rather than as a family of one.
+    expect(result.families.flatMap(({ members }) => members)).toHaveLength(0);
+    expect(result.summary.members_without_family).toBe(1);
+    expect(result.unique_members.map(({ observed_in }) => observed_in)).toEqual(
+      [["gamma"]],
+    );
+    expect(result.status).toBe("partial");
+    expect(result.summary.members_with_unknown_inventory).toBe(2);
+    expect(result.summary.partially_shared_member_groups).toBe(0);
+  });
+
+  it("keeps a member whose declared child coverage is unknown unplaced", () => {
+    const result = cluster([
+      member("alpha", { rootSha: sha("a") }),
+      // Every observed node is listed and the counts match, but the producer
+      // declares the children incomplete: a universal Mach-O on a host with no
+      // slice adapter. Identical root digests still do not make a family.
+      member("beta", { rootSha: sha("a"), coverageStatus: "unknown" }),
+    ]);
+
+    const unplaced = result.families.find(
+      ({ family_id }) => family_id === "unplaced",
+    );
+    expect(
+      unplaced?.unknown_members.map(({ label, reason }) => [label, reason]),
+    ).toEqual([["beta", "incomplete-inventory"]]);
+    expect(result.families.flatMap(({ members }) => members)).toHaveLength(0);
+    expect(result.status).toBe("partial");
+    expect(result.summary.members_with_unknown_inventory).toBe(1);
+    expect(result.summary.members_without_family).toBe(1);
+    expect(result.coverage.member_scope).toBe("root");
+  });
+});
+
+describe("clusterArtifactFamilies coverage and paging", () => {
+  it("clusters nothing when declared coverage scopes are tied", () => {
+    const result = cluster([
+      member("alpha", { rootSha: sha("a") }),
+      member("beta", { rootSha: sha("a"), coverageScope: "container-entries" }),
+    ]);
+
+    // A 1-1 tie has no majority, so code-point order must not pick a winner.
+    expect(result.coverage.member_scope).toBeNull();
+    expect(result.status).toBe("unknown");
+    expect(result.families.flatMap(({ members }) => members)).toHaveLength(0);
+    const unplaced = result.families.find(
+      ({ family_id }) => family_id === "unplaced",
+    );
+    expect(
+      unplaced?.unknown_members.map(({ label, reason }) => [label, reason]),
+    ).toEqual([
+      ["alpha", "incomparable-coverage-scope"],
+      ["beta", "incomparable-coverage-scope"],
+    ]);
+    expect(
+      result.limitations.some((item) =>
+        item.includes("with no strict majority"),
+      ),
+    ).toBe(true);
+  });
+
+  it("clusters the strict majority scope and leaves the minority unplaced", () => {
+    const result = cluster([
+      member("alpha", { rootSha: sha("a") }),
+      member("beta", { rootSha: sha("a") }),
+      member("gamma", {
+        rootSha: sha("b"),
+        coverageScope: "container-entries",
+      }),
+    ]);
+
+    expect(result.coverage.member_scope).toBe("root");
+    expect(result.families[0]?.members.map(({ label }) => label)).toEqual([
+      "alpha",
+      "beta",
+    ]);
+    const unplaced = result.families.find(
+      ({ family_id }) => family_id === "unplaced",
+    );
+    expect(unplaced?.unknown_members[0]?.label).toBe("gamma");
+    expect(result.status).toBe("partial");
+  });
+
+  it("pages families while the counts and the member index stay complete", () => {
+    const result = cluster(
+      [
+        member("alpha", { rootSha: sha("a") }),
+        member("beta", { rootSha: sha("a") }),
+        member("gamma", { rootSha: sha("b") }),
+        member("delta", { rootSha: sha("b") }),
+      ],
+      { offset: 1, limit: 1 },
+    );
+
+    expect(result.families).toHaveLength(1);
+    expect(result.summary.families).toBe(2);
+    expect(result.summary.families_returned).toBe(1);
+    // Default minimum is all four members, so both pairs are partially shared.
+    expect(result.partially_shared_members).toHaveLength(2);
+    expect(result.shared_members).toHaveLength(0);
+  });
+
+  it("is deterministic and orders every collection by code point", () => {
+    const members = [
+      member("zulu", { rootSha: sha("c") }),
+      member("alpha", { rootSha: sha("a") }),
+      member("mike", { rootSha: sha("a") }),
+    ];
+    const first = cluster(members);
+    const second = cluster([...members].reverse());
+
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second));
+    expect(
+      first.families.flatMap(({ members: rows }) =>
+        rows.map(({ label }) => label),
+      ),
+    ).toEqual(["alpha", "mike"]);
+  });
+
+  it("validates its own result shape", () => {
+    const result = cluster([
+      member("alpha", { rootSha: sha("a") }),
+      member("beta", { rootSha: sha("b") }),
+    ]);
+
+    expect(artifactFamilyClusteringResultSchema.parse(result)).toEqual(result);
+    expect(result.status).toBe("partitioned");
+    expect(result.summary.families).toBe(0);
+    expect(result.summary.members_without_family).toBe(2);
+    expect(result.summary.unique_members).toBe(2);
+    expect(result.unique_members.map(({ observed_in }) => observed_in)).toEqual(
+      [["alpha"], ["beta"]],
+    );
+  });
+});

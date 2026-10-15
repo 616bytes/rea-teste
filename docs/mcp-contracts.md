@@ -42,6 +42,25 @@ Current inventory Evidence requires scoped `coverage` with a `complete` or
 `unknown` status. Consumers use this producer-owned fact and reject records
 without it; limitations are explanatory and do not supply or infer coverage.
 Pages from one inventory must carry the same coverage declaration.
+`cluster_artifacts` extends this to many artifacts at once. Pass two or more
+`inspect_artifact` inventories inline as `{ "label": ..., "evidence": ... }`
+and it partitions them by exact root content digest (`root-sha256` is the only
+family tier) and indexes every graph member as shared, partially shared or
+unique. Labels are caller text and are never parsed as identity. A member whose
+inventory is incomplete, carries integrity contradictions, or declares a
+different `coverage.scope` than the strict majority is reported in
+`unknown_members` with its reason, never as different from the others. A
+re-packed container with identical members has no family and appears only in
+the member index; a member whose root digest no other member shares is counted
+in `summary.members_without_family` and is likewise not evidence of
+difference. `status` is `partitioned` when every examined member was compared,
+`partial` when some could not be, and `unknown` when none could.
+`offset`/`limit` page family rows only: `shared_members`,
+`partially_shared_members` and `unique_members` are never paged away.
+`shared_member_minimum` defaults to every member;
+`coverage.shared_member_minimum` reports the value used, and
+`coverage.member_index_withheld` is set when the examined node budget was
+exhausted.
 
 Function dossiers can declare per-facet coverage in the optional
 `normalized_result.facet_availability` map. Each supplied facet is either

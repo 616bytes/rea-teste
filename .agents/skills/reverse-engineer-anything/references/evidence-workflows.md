@@ -36,6 +36,12 @@ or absence:
 
 - `compare_artifacts` compares inventory pages by occurrence path, content,
   metadata, and graph relations.
+- `cluster_artifacts` partitions two or more complete `inspect_artifact`
+  inventories into families by exact root digest and indexes graph members as
+  shared, partially shared or unique. A member whose inventory is incomplete or
+  contradicted, or which declares a different coverage scope, is unplaced with
+  its reason, never called different. Byte-identical members form a family; a
+  re-packed container with identical members appears only in the member index.
 - `compare_functions` compares explicit function Evidence, not fuzzy
   whole-binary matches.
 - `compare_bundles` compares canonical bundle membership and unknown history.

@@ -20,7 +20,7 @@ import type {
 } from "./javascriptSemanticValueTypes.js";
 
 /** Internal initializer plus a destructuring/member projection. */
-interface JavaScriptSemanticInitializer {
+export interface JavaScriptSemanticInitializer {
   readonly node: t.Node;
   readonly projection: readonly (string | number | null)[];
   readonly entryBody?: t.BlockStatement;

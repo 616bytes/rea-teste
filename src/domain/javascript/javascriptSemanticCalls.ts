@@ -130,7 +130,7 @@ const collectCallSite = (
     node: node.callee,
     state,
     callableById,
-    seenBindings: new Set(),
+    seenInitializers: new Set(),
     bindingCache: context.bindingResolutionCache,
   });
   const callSiteId = semanticCallSiteId(node);

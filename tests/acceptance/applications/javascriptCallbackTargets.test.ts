@@ -30,6 +30,10 @@ export function caught(cb,flag) { try { throw cb; } catch (cb) { if(flag)cb=fall
 export function defaulted(cb=original,flag) { if(flag)cb=fallback; return cb(); }
 export function local(flag) { let cb=original; if(flag)cb=fallback; return cb(); }
 export function replaced() { let cb=original; cb=fallback; return cb(); }
+export function guarded(cb,flag) { if(flag){cb=fallback;return cb();}return "skipped"; }
+export function guardedVar(flag) { if(flag){var cb=fallback;return cb();}return "skipped"; }
+export function logicalAssign(cb) { cb ||= fallback;return cb(); }
+export function restored() { let cb=fallback;const saved=cb;cb=saved;return cb(); }
 `,
   );
   const oracle = await promisify(execFile)(process.execPath, [
@@ -42,7 +46,8 @@ const cb=()=>"incoming";
 console.log(JSON.stringify([
 m.choose(cb,false),m.choose(cb,true),m.logical(cb,false),m.definite(cb),
 m.beforeAfter(cb),m.captured(cb),m.delayed(cb),m.caught(cb,false),
-m.defaulted(cb,false),m.defaulted(undefined,false),m.local(false),m.local(true),m.replaced()
+m.defaulted(cb,false),m.defaulted(undefined,false),m.local(false),m.local(true),m.replaced(),
+m.guarded(cb,false),m.guarded(cb,true),m.guardedVar(false),m.guardedVar(true),m.logicalAssign(cb),m.restored()
 ]));`,
     file,
   ]);
@@ -59,6 +64,12 @@ m.defaulted(cb,false),m.defaulted(undefined,false),m.local(false),m.local(true),
     "original",
     "original",
     "local",
+    "local",
+    "skipped",
+    "local",
+    "skipped",
+    "local",
+    "incoming",
     "local",
   ]);
   return root;
@@ -128,13 +139,20 @@ cliTest(
         name,
       ).toBe(true);
     }
-    for (const name of ["definite", "replaced"]) {
+    for (const name of [
+      "definite",
+      "replaced",
+      "guarded",
+      "guardedVar",
+      "restored",
+    ]) {
       const call = calls(name)[0];
       if (call === undefined) throw new Error(`Missing ${name} call`);
       expect(targets(call.node_id), name).toEqual([
         { target: "fallback", resolution: "resolved" },
       ]);
     }
+    expect(targets(calls("logicalAssign")[0]!.node_id)).toEqual([]);
     expect(calls("beforeAfter")).toHaveLength(2);
     expect(targets(calls("beforeAfter")[0]!.node_id)).toEqual([]);
     expect(targets(calls("beforeAfter")[1]!.node_id)).toEqual([
@@ -220,17 +238,26 @@ const original={value:1},replacement={value:2};
 function first(){return original;}
 function second(){return replacement;}
 export function inspect(){let cb=first;const result=cb();cb=second;result.value=3;return {original:original.value,replacement:replacement.value};}
+const restoredObject={value:1};
+function create(){return restoredObject;}
+export function restored(){let cb=create;const saved=cb;cb=saved;cb().value=3;return {value:restoredObject.value};}
 `;
     const oracle = await promisify(execFile)(process.execPath, [
       "--input-type=module",
       "-e",
-      source + "console.log(JSON.stringify(inspect()));",
+      source + "console.log(JSON.stringify([inspect(),restored()]));",
     ]);
-    expect(JSON.parse(oracle.stdout)).toEqual({ original: 3, replacement: 2 });
+    expect(JSON.parse(oracle.stdout)).toEqual([
+      { original: 3, replacement: 2 },
+      { value: 3 },
+    ]);
     await verifyJavaScriptReturnShapes(
       cli,
       source,
       (fields) => {
+        expect(fields("restored")).toContainEqual(
+          expect.objectContaining({ path: "/value", state: "unknown" }),
+        );
         expect(fields("inspect")).toEqual(
           expect.arrayContaining([
             expect.objectContaining({

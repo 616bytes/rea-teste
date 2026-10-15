@@ -510,6 +510,8 @@ const bindingReadPosition = (
 /** Select a local alias at its read, before any later straight-line reassignment. */
 type SemanticBindingRead = {
   readonly status: "ordered" | "unresolved";
+  /** A retained initializer executes on paths reaching this particular read. */
+  readonly hasDefiniteInitializer: boolean;
   /** Unresolved reads retain all possible origins for conservative alias effects. */
   readonly binding: JavaScriptSemanticBindingState;
 };
@@ -523,9 +525,10 @@ export const semanticBindingAtRead = (
     binding.initializers.length === 0 &&
     binding.referenceInitializers.length === 0
   )
-    return { status: "ordered", binding };
+    return { status: "ordered", binding, hasDefiniteInitializer: false };
   const initializer = binding.initializers[0];
   const reference = binding.referenceInitializers[0];
+  const origin = initializer ?? reference;
   const sourcePosition =
     initializer === undefined
       ? reference === undefined
@@ -535,26 +538,39 @@ export const semanticBindingAtRead = (
   const { position, repeating } = bindingReadPosition(read, parents);
   if (
     !repeating &&
+    origin !== undefined &&
     binding.initializers.length + binding.referenceInitializers.length === 1 &&
     sourcePosition !== null &&
     position !== null &&
     positionPrecedes(sourcePosition, position)
   )
-    return { status: "ordered", binding };
+    return {
+      status: "ordered",
+      binding,
+      hasDefiniteInitializer: !logicalInitializer(origin.node, parents),
+    };
   const uncertainOrder =
     repeating ||
     sourcePosition === null ||
     position === null ||
     sourcePosition.body !== position.body;
-  if (uncertainOrder) return { status: "unresolved", binding };
+  if (uncertainOrder)
+    return { status: "unresolved", binding, hasDefiniteInitializer: false };
   const selected = selectInitializers(binding, position, read, parents);
-  if (selected === undefined) return { status: "unresolved", binding };
-  if (selected === binding) return { status: "ordered", binding };
+  if (selected === undefined)
+    return { status: "unresolved", binding, hasDefiniteInitializer: false };
+  if (selected.binding === binding)
+    return {
+      status: "ordered",
+      binding,
+      hasDefiniteInitializer: selected.hasDefiniteInitializer,
+    };
   return {
     status: "ordered",
+    hasDefiniteInitializer: selected.hasDefiniteInitializer,
     binding: {
       ...binding,
-      ...selected,
+      ...selected.binding,
       // Later assignment definitions do not describe the value captured here.
       definitions: binding.definitions.filter(
         ({ kind }) => kind !== "assignment",
@@ -569,10 +585,13 @@ const selectInitializers = (
   read: t.Node,
   parents: WeakMap<t.Node, t.Node>,
 ):
-  | Pick<
-      JavaScriptSemanticBindingState,
-      "initializers" | "referenceInitializers"
-    >
+  | {
+      readonly binding: Pick<
+        JavaScriptSemanticBindingState,
+        "initializers" | "referenceInitializers"
+      >;
+      readonly hasDefiniteInitializer: boolean;
+    }
   | undefined => {
   if (position === null) return undefined;
   const origins = [
@@ -606,7 +625,10 @@ const selectInitializers = (
       if (order === "before") preceding.push(origin);
     }
   }
-  const { retained } = retainedInitializerOrigins(preceding, parents);
+  const { retained, replacesEntry } = retainedInitializerOrigins(
+    preceding,
+    parents,
+  );
   // Preserve the owner's identity when selection removes no facts. Consumers
   // can then reuse the binding's dependency-aware provenance memo rather than
   // treating every equivalent read as a new temporal snapshot.
@@ -616,14 +638,17 @@ const selectInitializers = (
       retained.has(initializer),
     )
   )
-    return binding;
+    return { binding, hasDefiniteInitializer: replacesEntry };
   return {
-    initializers: binding.initializers.filter((initializer) =>
-      retained.has(initializer),
-    ),
-    referenceInitializers: binding.referenceInitializers.filter((initializer) =>
-      retained.has(initializer),
-    ),
+    hasDefiniteInitializer: replacesEntry,
+    binding: {
+      initializers: binding.initializers.filter((initializer) =>
+        retained.has(initializer),
+      ),
+      referenceInitializers: binding.referenceInitializers.filter(
+        (initializer) => retained.has(initializer),
+      ),
+    },
   };
 };
 

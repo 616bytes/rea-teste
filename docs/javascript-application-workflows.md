@@ -130,7 +130,8 @@ conditional write may leave a parameter, catch binding, or uninitialized
 variable unchanged. These calls retain candidate edges and dynamic uncertainty;
 default traces remain ambiguous with partial coverage. Opt into
 `include_ambiguous_dynamic_edges` to traverse the candidates. Proven preceding
-unconditional assignments can resolve a target; later writes do not replace an
+unconditional assignments, including writes dominating a read in the same
+conditional block, can resolve a target; later writes do not replace an
 earlier read or captured alias. Unproved ordering across branches or function
 activations remains conservative. Returned-reference effects use the same
 read-position facts as call resolution.

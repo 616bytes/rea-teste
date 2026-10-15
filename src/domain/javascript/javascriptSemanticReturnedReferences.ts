@@ -17,6 +17,7 @@ import {
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
 
 /** A reference potentially handed to a caller or generator consumer. */
@@ -28,7 +29,7 @@ export interface SemanticReturnedReference {
 interface Candidate {
   readonly node: t.Node;
   readonly path: readonly (string | number | null)[];
-  readonly bindings: ReadonlySet<string>;
+  readonly initializers: ReadonlySet<JavaScriptSemanticInitializer>;
 }
 
 interface ObjectTargetIndex {
@@ -66,21 +67,21 @@ export const createSemanticReturnedReferences = (
       state,
       callableById,
       bindingCache,
-      seenBindings: new Set(),
+      seenInitializers: new Set(),
     });
     for (const id of resolution.callableIds) {
       const node = state.callableNodesById.get(id);
       if (node !== undefined) functions.add(node);
     }
     const pending: Candidate[] = [
-      { node: callee, path: [], bindings: new Set() },
+      { node: callee, path: [], initializers: new Set() },
     ];
     // A shared initializer can be reached through both arms of every alias
     // diamond. Expand an expression/path again only when its cycle context
-    // permits a binding that an earlier traversal blocked.
+    // permits an initializer that an earlier traversal blocked.
     const expanded = new WeakMap<
       t.Node,
-      Map<string, readonly ReadonlySet<string>[]>
+      Map<string, readonly ReadonlySet<JavaScriptSemanticInitializer>[]>
     >();
     for (let cursor = 0; cursor < pending.length; cursor++) {
       const item = pending[cursor];
@@ -88,41 +89,49 @@ export const createSemanticReturnedReferences = (
       const node = unwrapJavaScriptExpression(item.node).node;
       const pathKey = JSON.stringify(item.path);
       const paths =
-        expanded.get(node) ?? new Map<string, readonly ReadonlySet<string>[]>();
+        expanded.get(node) ??
+        new Map<
+          string,
+          readonly ReadonlySet<JavaScriptSemanticInitializer>[]
+        >();
       const contexts = paths.get(pathKey) ?? [];
       if (
         contexts.some((context) =>
-          [...context].every((binding) => item.bindings.has(binding)),
+          [...context].every((initializer) =>
+            item.initializers.has(initializer),
+          ),
         )
       )
         continue;
       paths.set(pathKey, [
         ...contexts.filter(
           (context) =>
-            ![...item.bindings].every((binding) => context.has(binding)),
+            ![...item.initializers].every((initializer) =>
+              context.has(initializer),
+            ),
         ),
-        item.bindings,
+        item.initializers,
       ]);
       expanded.set(node, paths);
       if (t.isIdentifier(node)) {
         const binding = resolveSemanticBindingState(state, node, node.name);
-        if (binding === undefined || item.bindings.has(binding.bindingId))
-          continue;
-        const bindings = new Set([...item.bindings, binding.bindingId]);
-        const selected = binding.definitions.some(
-          ({ kind }) => kind === "assignment",
-        )
-          ? semanticBindingAtRead(binding, node, state.parentsByNode).binding
-          : binding;
+        if (binding === undefined) continue;
+        const selected = semanticBindingAtRead(
+          binding,
+          node,
+          state.parentsByNode,
+        ).binding;
         for (const initializer of [
           ...selected.initializers,
           ...selected.referenceInitializers,
-        ])
+        ]) {
+          if (item.initializers.has(initializer)) continue;
           pending.push({
             node: initializer.node,
             path: [...initializer.projection, ...item.path],
-            bindings,
+            initializers: new Set([...item.initializers, initializer]),
           });
+        }
       } else if (
         t.isMemberExpression(node) ||
         t.isOptionalMemberExpression(node)

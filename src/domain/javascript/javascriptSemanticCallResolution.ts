@@ -13,8 +13,10 @@ import {
 } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
+  semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 
@@ -30,7 +32,7 @@ export interface LocalCallableResolution {
 interface CallResolutionContext {
   readonly state: JavaScriptSemanticAnalysisState;
   readonly callableById: ReadonlyMap<string, JavaScriptSemanticCallable>;
-  readonly seenBindings: ReadonlySet<string>;
+  readonly seenInitializers: ReadonlySet<JavaScriptSemanticInitializer>;
   readonly bindingCache: WeakMap<t.Identifier, LocalCallableResolution>;
 }
 
@@ -39,7 +41,7 @@ export interface ResolveLocalCallablesInput {
   readonly node: t.Node;
   readonly state: JavaScriptSemanticAnalysisState;
   readonly callableById: ReadonlyMap<string, JavaScriptSemanticCallable>;
-  readonly seenBindings: ReadonlySet<string>;
+  readonly seenInitializers: ReadonlySet<JavaScriptSemanticInitializer>;
   readonly bindingCache: WeakMap<t.Identifier, LocalCallableResolution>;
 }
 
@@ -50,7 +52,7 @@ export const resolveLocalCallables = (
   resolveCallables(input.node, {
     state: input.state,
     callableById: input.callableById,
-    seenBindings: input.seenBindings,
+    seenInitializers: input.seenInitializers,
     bindingCache: input.bindingCache,
   });
 
@@ -96,17 +98,17 @@ const resolveIdentifier = (
       complete: false,
       reason: `Unresolved call target ${node.name}.`,
     };
-  const read = binding.definitions.some(({ kind }) => kind === "assignment")
-    ? semanticBindingAtRead(binding, node, context.state.parentsByNode)
-    : { status: "ordered" as const, binding };
+  const read = semanticBindingAtRead(
+    binding,
+    node,
+    context.state.parentsByNode,
+  );
   const candidates = resolveBindingCallables(read.binding, context);
   // Knowing every local candidate does not prove that any write replaced the
   // incoming value, or that a write in another activation precedes this read.
   const covered =
-    read.status === "ordered" &&
-    read.binding.initializers.some(
-      ({ node }) => !context.state.conditionallySkippedExpressions.has(node),
-    );
+    read.hasDefiniteInitializer ||
+    semanticStableInitializer(binding, context.state) !== undefined;
   const resolution =
     candidates.complete && !covered
       ? {
@@ -146,27 +148,31 @@ const resolveBindingCallables = (
   binding: JavaScriptSemanticBindingState,
   context: CallResolutionContext,
 ): LocalCallableResolution => {
-  if (context.seenBindings.has(binding.bindingId))
-    return {
-      callableIds: [],
-      complete: false,
-      reason: `Call target alias cycle at ${binding.name}.`,
-      cycleDependent: true,
-    };
   if (binding.initializers.length === 0)
     return missingBindingInitializer(binding);
-  const candidateContext = {
-    ...context,
-    seenBindings: new Set([...context.seenBindings, binding.bindingId]),
-  };
-  const candidates = binding.initializers.map(({ node, projection }) =>
-    projection.length === 0
-      ? resolveCallables(node, candidateContext)
-      : {
+  const candidates = binding.initializers.map(
+    (initializer): LocalCallableResolution => {
+      if (context.seenInitializers.has(initializer))
+        return {
           callableIds: [],
           complete: false,
-          reason: `Projected call target ${binding.name} is unresolved.`,
-        },
+          cycleDependent: true,
+          reason: `Call target initializer cycle at ${binding.name}.`,
+        };
+      return initializer.projection.length === 0
+        ? resolveCallables(initializer.node, {
+            ...context,
+            seenInitializers: new Set([
+              ...context.seenInitializers,
+              initializer,
+            ]),
+          })
+        : {
+            callableIds: [],
+            complete: false,
+            reason: `Projected call target ${binding.name} is unresolved.`,
+          };
+    },
   );
   const callableIds = uniqueCallableIds(
     candidates.flatMap((candidate) => candidate.callableIds),

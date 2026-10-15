@@ -7,6 +7,9 @@ import {
   type LocalCallableResolution,
 } from "./javascriptSemanticCallResolution.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
 const indexed = (source: string) => {
   const parsed = parseJavaScriptSource(source, "callback.js");
@@ -29,14 +32,15 @@ const indexed = (source: string) => {
         state,
         callableById,
         bindingCache,
-        seenBindings: new Set(),
+        seenInitializers: new Set(),
       }),
   };
 };
 
 it("bounds shared partial callback alias expansion by AST size", () => {
   const measure = (depth: number) => {
-    const context = indexed(`function fallback(){} function choose(cb,flag){
+    const context =
+      indexed(`function fallback(){return {member:1};} function choose(cb,flag){
       if(flag)cb=fallback;
       const a0=cb;
       ${Array.from({ length: depth }, (_, i) => `const a${i + 1}=flag?a${i}:a${i};`).join("")}
@@ -51,13 +55,63 @@ it("bounds shared partial callback alias expansion by AST size", () => {
     const result = context.resolve(last.argument.callee);
     expect(result).toMatchObject({ complete: false });
     expect(result.callableIds).toHaveLength(1);
-    return reads.mock.calls.length;
+    const callReads = reads.mock.calls.length;
+    const lookups = context.state.scopes.map((scope) =>
+      vi.spyOn(scope.bindings, "get"),
+    );
+    try {
+      expect(
+        createSemanticReturnedReferences(context.state)(last.argument.callee),
+      ).toHaveLength(1);
+      return {
+        callReads,
+        referenceReads: lookups.reduce(
+          (total, lookup) => total + lookup.mock.calls.length,
+          0,
+        ),
+      };
+    } finally {
+      for (const lookup of lookups) lookup.mockRestore();
+    }
   };
   const small = measure(8);
   const large = measure(12);
-  expect(small).toBeGreaterThan(0);
-  expect(large).toBeLessThan(3 * small);
+  expect(small.callReads).toBeGreaterThan(0);
+  expect(large.callReads).toBeLessThan(3 * small.callReads);
+  expect(small.referenceReads).toBeGreaterThan(0);
+  expect(large.referenceReads).toBeLessThan(3 * small.referenceReads);
 });
+
+it.each([
+  ["if(flag){cb=fallback;cb();}", true],
+  ["if(flag)cb=fallback;cb();", false],
+  ["cb ||= fallback;cb();", false],
+] as const)(
+  "reports initializer coverage at the read: %s",
+  (body, expected) => {
+    const { state } = indexed(`function choose(cb,flag){${body}}`);
+    const binding = [...state.bindingsById.values()].find(
+      (binding) => binding.name === "cb",
+    );
+    if (binding === undefined) throw new Error("Missing cb binding");
+    let reads = 0;
+    traverseJavaScriptAst(state.program, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "cb" })
+        ) {
+          reads++;
+          expect(
+            semanticBindingAtRead(binding, node.callee, state.parentsByNode)
+              .hasDefiniteInitializer,
+          ).toBe(expected);
+        }
+      },
+    });
+    expect(reads).toBe(1);
+  },
+);
 
 it("does not reuse a later resolved callback at an earlier read", () => {
   const context = indexed(
@@ -84,7 +138,7 @@ it("does not reuse a later resolved callback at an earlier read", () => {
 
 it("does not memoize alias cycle cuts across entry paths", () => {
   const context = indexed(
-    `function fallback(){} const a=flag?b:fallback; const b=a; a(); b();`,
+    `function fallback(){} let a,b; function setA(){a=flag?b:fallback;} function setB(){b=a;} a(); b();`,
   );
   const callees = context.state.program.body.flatMap((statement) =>
     t.isExpressionStatement(statement) &&
@@ -103,7 +157,7 @@ it("does not memoize alias cycle cuts across entry paths", () => {
       state: context.state,
       callableById: context.callableById,
       bindingCache: new WeakMap(),
-      seenBindings: new Set(),
+      seenInitializers: new Set(),
     });
     expect(warm).toEqual(cold);
     expect(warm).toMatchObject({

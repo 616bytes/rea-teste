@@ -207,7 +207,10 @@ const processEntry = async (
         ok: false,
         error: failure("io", "Reference source exclusion check failed"),
       };
-    if (excluded.value) return { ok: true, value: undefined };
+    if (excluded.value) {
+      state.exclusions.push({ path, kind: "unknown" });
+      return { ok: true, value: undefined };
+    }
     state.entries.push(entryFailure(path, "unknown", "io", metadata.message));
     return { ok: true, value: undefined };
   }
@@ -228,7 +231,10 @@ const processEntry = async (
         message: "Reference source exclusion check failed",
       },
     };
-  if (excluded.value) return { ok: true, value: undefined };
+  if (excluded.value) {
+    state.exclusions.push({ path, kind });
+    return { ok: true, value: undefined };
+  }
   if (isAborted(state.signal)) return { ok: false, error: cancelled() };
   if (kind === "symlink")
     state.entries.push(

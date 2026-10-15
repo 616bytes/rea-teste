@@ -53,8 +53,23 @@ it.each([
     1,
   ],
   [
-    "nested groups field",
+    "quoted extra groups=[ marker",
     '1^done,groups=[{id="i1",extra="groups=["}]',
+    0,
+  ],
+  [
+    "quoted executable path containing groups=[",
+    '1^done,groups=[{id="i1",executable="fixture/groups=[.out"}]',
+    0,
+  ],
+  [
+    "quoted executable path with a live pid",
+    '1^done,groups=[{id="i1",pid="123",executable="fixture/groups=[.out"}]',
+    1,
+  ],
+  [
+    "unquoted nested groups field",
+    '1^done,groups=[{id="i1",groups=[{id="i2"}]}]',
     undefined,
   ],
   ["negative object depth", "1^done,groups=[}]", undefined],

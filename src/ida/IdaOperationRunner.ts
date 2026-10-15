@@ -333,6 +333,12 @@ export class IdaOperationRunner {
             limit: 100,
           }),
         );
+        if (page.error !== undefined)
+          throw new AnalysisProtocolError(
+            this.protocol === "native"
+              ? `Native IDA string search failed: ${page.error}`
+              : `IDA string search failed: ${page.error}`,
+          );
         result.push(
           ...page.matches.map((s) => ({ address: s.addr, value: s.string })),
         );

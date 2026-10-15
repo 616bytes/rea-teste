@@ -138,6 +138,7 @@ export const legacyStringSchema = z.object({
 export const modernStringsSchema = z.object({
   matches: z.array(z.object({ addr: idaAddressSchema, string: z.string() })),
   cursor: cursorSchema,
+  error: z.string().optional(),
 });
 export const legacyXrefsSchema = z.array(
   z.object({

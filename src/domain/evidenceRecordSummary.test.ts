@@ -218,3 +218,21 @@ it("uses Unicode simple case folding and bounds query code points", () => {
     evidenceRecordFiltersSchema.safeParse({ query: astral + "😀" }).success,
   ).toBe(false);
 });
+
+it("builds an escaped JSON Pointer only for the reported leaf", () => {
+  const bundle = createEvidenceBundle([
+    createEvidence(
+      { path: "/fixtures/app.asar", format: "asar", sha256: "2".repeat(64) },
+      { id: "provider", name: "Provider", version: "1" },
+      {
+        operation: "list_strings",
+        parameters: {},
+        result: { "a/b": [{ "c~d": "needle" }], other: "x" },
+      },
+    ),
+  ]);
+  expect(
+    summarizeEvidenceBundle(bundle, { query: "needle" }).records[0]!
+      .query_match!.path,
+  ).toBe("/normalized_result/a~1b/0/c~0d");
+});

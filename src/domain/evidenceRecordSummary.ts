@@ -215,7 +215,8 @@ const snippetAt = (
 };
 
 type Frame = {
-  readonly path: string;
+  /** Member key of this container within its parent (root field name). */
+  readonly key: string | number;
   readonly container: readonly unknown[] | Readonly<Record<string, unknown>>;
   readonly keys: readonly string[] | undefined;
   index: number;
@@ -224,8 +225,9 @@ type Frame = {
 /**
  * Match every term against string leaves of the record's result and
  * limitations, reporting the first leaf containing the first term. Containers
- * are walked by index so wide arrays are never copied onto the stack.
- * ponytail: one `includes` per pending term per leaf; cost is terms × text,
+ * are walked by index so wide arrays are never copied onto the stack, and a
+ * JSON Pointer is built only for the reported leaf, from the frames above it.
+ * ponytail: one regex scan per pending term per leaf; cost is terms × text,
  * bounded by MAX_QUERY_TERMS. Use a multi-pattern automaton if that falls short.
  */
 const matchQuery = (
@@ -234,21 +236,27 @@ const matchQuery = (
 ): QueryMatch | undefined => {
   const pending = new Set(terms);
   let first: QueryMatch | undefined;
-  const visit = (value: unknown, path: string): Frame | undefined => {
+  const stack: Frame[] = [];
+  const visit = (value: unknown, key: string | number): Frame | undefined => {
     if (typeof value === "string") {
       for (const term of pending) if (term.test(value)) pending.delete(term);
       if (first === undefined) {
         const hit = terms[0]!.exec(value);
         if (hit !== null)
-          first = { path, ...snippetAt(value, hit.index, hit[0].length) };
+          first = {
+            path: [...stack.map((frame) => frame.key), key]
+              .map((segment) => `/${pointerSegment(segment)}`)
+              .join(""),
+            ...snippetAt(value, hit.index, hit[0].length),
+          };
       }
       return undefined;
     }
     if (Array.isArray(value))
-      return { path, container: value, keys: undefined, index: 0 };
+      return { key, container: value, keys: undefined, index: 0 };
     if (value !== null && typeof value === "object")
       return {
-        path,
+        key,
         container: value as Record<string, unknown>,
         // Canonical export order, so paths survive bundle round trips.
         keys: Object.keys(value).sort(),
@@ -257,12 +265,11 @@ const matchQuery = (
     return undefined;
   };
   const roots: readonly [unknown, string][] = [
-    [evidence.normalized_result, "/normalized_result"],
-    [evidence.limitations, "/limitations"],
+    [evidence.normalized_result, "normalized_result"],
+    [evidence.limitations, "limitations"],
   ];
-  for (const [root, rootPath] of roots) {
-    const stack: Frame[] = [];
-    const rootFrame = visit(root, rootPath);
+  for (const [root, rootKey] of roots) {
+    const rootFrame = visit(root, rootKey);
     if (rootFrame !== undefined) stack.push(rootFrame);
     while (stack.length > 0 && (pending.size > 0 || first === undefined)) {
       const frame = stack.at(-1)!;
@@ -275,10 +282,11 @@ const matchQuery = (
       frame.index++;
       const child = visit(
         (frame.container as Record<string | number, unknown>)[key],
-        `${frame.path}/${pointerSegment(key)}`,
+        key,
       );
       if (child !== undefined) stack.push(child);
     }
+    stack.length = 0;
   }
   return pending.size === 0 ? first : undefined;
 };

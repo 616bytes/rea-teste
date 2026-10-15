@@ -51,6 +51,9 @@ const unknownExpressions = [
   "path.join(__dirname as string, runtimeFile as string) as string",
   'path[method](__dirname, "preload.js")',
   'path[`join${suffix}`](__dirname, "preload.js")',
+  '(path[method] as typeof path.join)(__dirname, "preload.js")',
+  '((useJoin ? path.join : path.resolve) as typeof path.join)(__dirname, "preload.js")',
+  'fileURLToPath(new (runtimeURL as typeof URL)("./preload.js", import.meta.url))',
   "path.resolve()",
   "path.posix.resolve()",
   'path.resolve("sub", "../preload.js")',
@@ -119,7 +122,47 @@ const pathValueExpressions = [
   ["`./preload.js`", "./preload.js", "module-specifier"],
 ] as const;
 
+const pathCallTargetExpressions = [
+  ['(path.join as typeof path.join)(__dirname, "preload.js")', "preload.js"],
+  ['path.join!(__dirname, "preload.js")', "preload.js"],
+  [
+    '(path.resolve satisfies typeof path.resolve)(__dirname, "preload.js")',
+    "preload.js",
+  ],
+  [
+    '((path as typeof path).posix as typeof path.posix).resolve("/app", "preload.js")',
+    "/app/preload.js",
+  ],
+  [
+    '(fileURLToPath as typeof fileURLToPath)(new URL("./preload.js", import.meta.url))',
+    "./preload.js",
+  ],
+  [
+    'fileURLToPath(new (URL as typeof URL)("./preload.js", import.meta.url))',
+    "./preload.js",
+  ],
+  [
+    'fileURLToPath(new (url.URL as typeof URL)("./preload.js", import.meta.url))',
+    "./preload.js",
+  ],
+  [
+    'path.join((path.dirname as typeof path.dirname)(__filename), "preload.js")',
+    "preload.js",
+  ],
+  [
+    'path.join(dirname((fileURLToPath as typeof fileURLToPath)(import.meta.url)), "preload.js")',
+    "preload.js",
+  ],
+] as const;
+
 describe("inert JavaScript path resolution", () => {
+  it.each(pathCallTargetExpressions)(
+    "preserves exact path values and context through call target %s",
+    (expression, path) => {
+      assertPathProjection(expression, path, "filesystem-expression");
+    },
+  );
+
   it.each(pathValueExpressions)(
     "preserves exact path values and context through %s",
     (expression, path, context) => {

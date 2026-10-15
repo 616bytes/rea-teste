@@ -676,14 +676,15 @@ export const storageKind = (
   return undefined;
 };
 
-/** Produce a dotted callee name from member syntax. */
+/** Produce a dotted callee name through type-erased expression wrappers. */
 export const calleeName = (node: t.Node): string => {
+  node = unwrapJavaScriptExpression(node).node;
   const segments: string[] = [];
   while (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
     // Dynamic keys retain their syntax identity instead of inventing a name.
     segments.push(memberPropertyName(node));
     if (!t.isNode(node.object)) break;
-    node = node.object;
+    node = unwrapJavaScriptExpression(node.object).node;
   }
   const base = t.isIdentifier(node)
     ? node.name

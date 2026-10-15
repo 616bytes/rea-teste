@@ -46,6 +46,19 @@ describe("APK v1 (JAR) signature detection", () => {
     });
   });
 
+  it("refuses a directory that ends before its declared record count", () => {
+    const bytes = centralDirectory(names);
+    const result = centralDirectoryNames(
+      bytes,
+      0,
+      bytes.length - 3,
+      names.length,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe("malformed-central-directory");
+  });
+
   it("reports absent v1 signing when no META-INF signature files exist", () => {
     const v1 = detectV1Signature(["classes.dex", "res/layout/main.xml"]);
     expect(v1.present).toBe(false);

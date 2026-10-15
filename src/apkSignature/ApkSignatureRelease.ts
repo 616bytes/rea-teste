@@ -6,8 +6,11 @@ export const APK_SIGNATURE_PROVIDER_IDENTITY = {
 } as const;
 
 export const APK_SIGNATURE_LIMITS = {
-  /** Whole-APK bounded read; the content digest needs the whole file. */
+  /**
+   * Whole-APK bounded read; the content digest needs the whole file. Above
+   * Play's 200 MB APK ceiling with headroom for sideloaded/system APKs.
+   */
   inputBytes: 512 * 1024 * 1024,
-  /** Inline result ceiling; a decoded result past this is refused, not truncated. */
+  /** Inline result ceiling, projected before materialising and re-checked exactly; refused, not truncated. */
   outputBytes: 8 * 1024 * 1024,
 } as const;

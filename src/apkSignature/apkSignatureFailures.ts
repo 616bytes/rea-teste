@@ -8,7 +8,9 @@ import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
+import type { ApkSchemeError } from "../domain/apkSignature/apkSignatureSchemes.js";
 import type { ApkSigningBlockError } from "../domain/apkSignature/apkSigningBlock.js";
+import type { ApkCentralDirectoryError } from "../domain/apkSignature/apkV1Signature.js";
 import { APK_SIGNATURE_LIMITS } from "./ApkSignatureRelease.js";
 
 const OPERATION = "inspect_apk_signature";
@@ -37,9 +39,9 @@ export const mapApkBlockError = (
         path,
         `This archive uses a Zip64 structure this reader does not decode (${error.detail}).`,
       );
-    case "truncated":
+    case "malformed-zip":
       return inputError(
-        `Archive ended before a structure completed at byte ${String(error.offset)}.`,
+        `Damaged ZIP/APK at byte ${String(error.offset)}: ${error.detail}.`,
       );
     case "malformed-block":
       return inputError(
@@ -49,11 +51,44 @@ export const mapApkBlockError = (
       return new AnalysisResourceConstraintError(
         OPERATION,
         "capacity",
-        `APK Signing Block declares more ${error.resource} than the ${String(error.declared)} limit.`,
-        { maximum_pairs: error.declared },
+        `APK Signing Block holds more ${error.resource} than the ${String(error.limit)} limit.`,
+        { maximum_pairs: error.limit },
       );
   }
 };
+
+/** Map a tagged signer/lineage decoding failure, naming the scheme it came from. */
+export const mapApkSchemeError = (
+  error: ApkSchemeError,
+  scheme: string,
+): AnalysisError =>
+  error.kind === "malformed-signer"
+    ? inputError(
+        `Malformed APK Signature Scheme ${scheme} block: ${error.detail}.`,
+      )
+    : new AnalysisResourceConstraintError(
+        OPERATION,
+        "capacity",
+        `APK Signature Scheme ${scheme} holds more ${error.resource} than the ${String(error.limit)} limit.`,
+        { [`maximum_${error.resource.replace(/-/g, "_")}`]: error.limit },
+      );
+
+/** A central directory that cannot be walked leaves v1 presence unknown: refuse. */
+export const mapCentralDirectoryError = (
+  error: ApkCentralDirectoryError,
+): AnalysisError =>
+  inputError(
+    `Malformed ZIP central directory at byte ${String(error.offset)}: ${error.detail}.`,
+  );
+
+/** The decoded result would exceed the inline output budget. */
+export const apkOutputBudgetError = (projectedBytes: number): AnalysisError =>
+  new AnalysisResourceConstraintError(
+    OPERATION,
+    "capacity",
+    `The decoded signing report (${String(projectedBytes)} bytes) exceeds the ${String(APK_SIGNATURE_LIMITS.outputBytes)}-byte output budget.`,
+    { max_output_bytes: APK_SIGNATURE_LIMITS.outputBytes },
+  );
 
 /** Preserve lifecycle failures and distinguish cancellation, access, integrity and limits. */
 export const apkSignatureFailure = (

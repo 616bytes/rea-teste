@@ -6,8 +6,8 @@
  * certificate extraction from the block is a layered follow-up.
  *
  * Dependency-free and bounded: central-directory records are walked within the
- * declared directory extent and entry count; a record running past the buffer
- * stops the walk with the names recovered so far.
+ * declared directory extent and entry count; a record running past it is a
+ * tagged error rather than a silently shorter list.
  */
 import { type Result, err, ok } from "../result.js";
 
@@ -29,7 +29,13 @@ export interface ApkV1Signature {
   readonly blockFiles: readonly string[];
 }
 
-/** Read every central-directory file name, bounded by the declared extent and count. */
+const NAME_DECODER = new TextDecoder("utf-8", { fatal: false });
+
+/**
+ * Read every central-directory file name, bounded by the declared extent and
+ * count. A record that runs past the declared extent is an error, not a
+ * silently shorter list: a partial walk would turn "unknown" into "absent".
+ */
 export const centralDirectoryNames = (
   bytes: Uint8Array,
   centralDirectoryOffset: number,
@@ -44,7 +50,12 @@ export const centralDirectoryNames = (
   const names: string[] = [];
   let at = centralDirectoryOffset;
   for (let i = 0; i < totalEntries; i += 1) {
-    if (at + CD_FIXED_SIZE > end) break;
+    if (at + CD_FIXED_SIZE > end)
+      return err({
+        kind: "malformed-central-directory",
+        offset: at,
+        detail: `central directory ends after ${String(i)} of ${String(totalEntries)} records`,
+      });
     if (dv.getUint32(at, true) !== CD_SIGNATURE)
       return err({
         kind: "malformed-central-directory",
@@ -55,11 +66,14 @@ export const centralDirectoryNames = (
     const extraLength = dv.getUint16(at + 30, true);
     const commentLength = dv.getUint16(at + 32, true);
     const nameStart = at + CD_FIXED_SIZE;
-    if (nameStart + nameLength > end) break;
+    if (nameStart + nameLength > end)
+      return err({
+        kind: "malformed-central-directory",
+        offset: nameStart,
+        detail: "central-directory file name runs past the directory",
+      });
     names.push(
-      new TextDecoder("utf-8", { fatal: false }).decode(
-        bytes.subarray(nameStart, nameStart + nameLength),
-      ),
+      NAME_DECODER.decode(bytes.subarray(nameStart, nameStart + nameLength)),
     );
     at = nameStart + nameLength + extraLength + commentLength;
   }

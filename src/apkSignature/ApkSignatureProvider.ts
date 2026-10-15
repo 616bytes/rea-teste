@@ -21,12 +21,13 @@ import {
   decodeRotationLineage,
   decodeSigners,
   PROOF_OF_ROTATION_ATTR_ID,
+  type ApkLineageNode,
+  type ApkSchemeError,
   type ApkSchemeVersion,
   type ApkSigner,
 } from "../domain/apkSignature/apkSignatureSchemes.js";
 import {
   APK_SIGNATURE_LIMITATIONS,
-  apkSignatureResultSchema,
   deriveApkPosture,
   type ApkSignatureResult,
 } from "../domain/apkSignature/apkSignatureReport.js";
@@ -41,8 +42,11 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import { zipPackageFormatForPath } from "../domain/zipPackageFormat.js";
 import {
+  apkOutputBudgetError,
   apkSignatureFailure,
   mapApkBlockError,
+  mapApkSchemeError,
+  mapCentralDirectoryError,
 } from "./apkSignatureFailures.js";
 import {
   APK_SIGNATURE_LIMITS,
@@ -56,29 +60,41 @@ type Certificate =
 type Signer = ApkSignatureResult["schemes"]["v2"]["signers"][number];
 type SignerV3 = ApkSignatureResult["schemes"]["v3"]["signers"][number];
 
-/** Extract plain certificate facts from DER via the platform X.509 parser. */
-const certificateFacts = (der: Uint8Array): Certificate => {
+/** SHA-256 over the raw embedded DER — exactly what apksig/apksigner hash. */
+const derFingerprint = (der: Uint8Array): string =>
+  createHash("sha256").update(der).digest("hex");
+
+/** Each fact is read independently so one unsupported field does not hide the rest. */
+const attempt = <T>(read: () => T): T | null => {
   try {
-    const cert = new X509Certificate(Buffer.from(der));
-    return {
-      subject: cert.subject,
-      issuer: cert.issuer,
-      serial_number: cert.serialNumber,
-      not_before: cert.validFrom,
-      not_after: cert.validTo,
-      public_key_algorithm: cert.publicKey.asymmetricKeyType ?? null,
-      sha256_fingerprint: cert.fingerprint256.replace(/:/g, "").toLowerCase(),
-    };
+    return read();
   } catch {
     return null;
   }
 };
 
+/** Identity is the raw-DER fingerprint; parsed X.509 facts are null when unreadable. */
+const certificateFacts = (der: Uint8Array): Certificate => {
+  const cert = attempt(() => new X509Certificate(Buffer.from(der)));
+  return {
+    sha256_fingerprint: derFingerprint(der),
+    subject: cert?.subject ?? null,
+    issuer: cert?.issuer ?? null,
+    serial_number: cert?.serialNumber ?? null,
+    not_before: cert ? attempt(() => cert.validFromDate.toISOString()) : null,
+    not_after: cert ? attempt(() => cert.validToDate.toISOString()) : null,
+    public_key_algorithm: cert
+      ? attempt(() => cert.publicKey.asymmetricKeyType ?? null)
+      : null,
+  };
+};
+
 /** Compares a signed digest with the recomputed content digest; null when not computable. */
-type DigestMatcher = (
-  algorithmId: number,
-  signed: Uint8Array,
-) => boolean | null;
+interface DigestMatcher {
+  readonly match: (algorithmId: number, signed: Uint8Array) => boolean | null;
+  /** True once a SHA-256/512 digest was requested but the layout prevented recomputing it. */
+  readonly layoutPreventedRecompute: () => boolean;
+}
 
 const nodeHash: HashFactory = (algorithm) => {
   const hash = createHash(algorithm);
@@ -97,45 +113,31 @@ const digestMatcher = (
   blockStart: number | null,
 ): DigestMatcher => {
   const cache = new Map<"sha256" | "sha512", Uint8Array | null>();
-  return (algorithmId, signed) => {
-    const algorithm = contentDigestAlgorithm(algorithmId);
-    // verity (fs-verity Merkle) digests and unknown algorithms are not recomputed.
-    if (
-      blockStart === null ||
-      (algorithm !== "sha256" && algorithm !== "sha512")
-    )
-      return null;
-    if (!cache.has(algorithm))
-      cache.set(
-        algorithm,
-        computeApkContentDigest(
-          bytes,
-          { tail, blockStart, algorithm },
-          nodeHash,
-        ),
-      );
-    const computed = cache.get(algorithm) ?? null;
-    return computed === null ? null : Buffer.from(computed).equals(signed);
+  return {
+    match: (algorithmId, signed) => {
+      const algorithm = contentDigestAlgorithm(algorithmId);
+      // verity (fs-verity Merkle) digests and unknown algorithms are not recomputed.
+      if (
+        blockStart === null ||
+        (algorithm !== "sha256" && algorithm !== "sha512")
+      )
+        return null;
+      if (!cache.has(algorithm))
+        cache.set(
+          algorithm,
+          computeApkContentDigest(
+            bytes,
+            { tail, blockStart, algorithm },
+            nodeHash,
+          ),
+        );
+      const computed = cache.get(algorithm) ?? null;
+      return computed === null ? null : Buffer.from(computed).equals(signed);
+    },
+    layoutPreventedRecompute: () =>
+      [...cache.values()].some((value) => value === null),
   };
 };
-
-const digestsOf = (
-  signer: ApkSigner,
-  match: DigestMatcher,
-): Signer["digests"] =>
-  signer.digests.map((d) => ({
-    algorithm: contentDigestAlgorithm(d.algorithmId) ?? "unknown",
-    matches_apk: match(d.algorithmId, d.digest),
-  }));
-
-const baseSigner = (signer: ApkSigner, match: DigestMatcher): Signer => ({
-  certificate: signer.certificates[0]
-    ? certificateFacts(signer.certificates[0])
-    : null,
-  digests: digestsOf(signer, match),
-  min_sdk: signer.minSdk,
-  max_sdk: signer.maxSdk,
-});
 
 /** Proof-of-rotation capability bits (apksig SigningCertificateLineage). */
 const capabilities = (
@@ -148,27 +150,95 @@ const capabilities = (
   auth: (flags & 0x10) !== 0,
 });
 
-const rotationOf = (signer: ApkSigner): SignerV3["rotation"] => {
+/** A decoded signer plus its decoded (or failed) declared lineage. */
+interface DecodedSigner {
+  readonly signer: ApkSigner;
+  readonly rotation:
+    | { readonly present: false }
+    | { readonly present: true; readonly nodes: readonly ApkLineageNode[] }
+    | { readonly present: true; readonly decodeError: string };
+}
+
+interface DecodedScheme {
+  readonly present: boolean;
+  readonly signers: readonly DecodedSigner[];
+}
+
+const lineageOf = (
+  signer: ApkSigner,
+): Result<DecodedSigner["rotation"], ApkSchemeError> => {
   const attribute = signer.attributes.find(
     (a) => a.id === PROOF_OF_ROTATION_ATTR_ID,
   );
-  if (attribute === undefined) return { present: false, lineage: [] };
+  if (attribute === undefined) return ok({ present: false });
   const nodes = decodeRotationLineage(attribute.value);
+  if (nodes.ok) return ok({ present: true, nodes: nodes.value });
+  // A malformed lineage is reported, not dropped; an over-cap lineage is refused.
+  return nodes.error.kind === "malformed-signer"
+    ? ok({ present: true, decodeError: nodes.error.detail })
+    : nodes;
+};
+
+/** Conservative serialized-size bound for one certificate's facts. */
+const certificateBytes = (der: Uint8Array | undefined): number =>
+  256 + 2 * (der?.length ?? 0);
+
+/** Project the result size from decoded counts before materialising any of it. */
+const projectedOutputBytes = (schemes: readonly DecodedScheme[]): number => {
+  let total = 4096;
+  for (const scheme of schemes)
+    for (const { signer, rotation } of scheme.signers) {
+      total += 128 + certificateBytes(signer.certificates[0]);
+      total += 64 * signer.digests.length;
+      if (rotation.present && "nodes" in rotation)
+        for (const node of rotation.nodes)
+          total += 192 + certificateBytes(node.certificate);
+    }
+  return total;
+};
+
+const digestsOf = (
+  signer: ApkSigner,
+  matcher: DigestMatcher,
+): Signer["digests"] =>
+  signer.digests.map((d) => ({
+    algorithm: contentDigestAlgorithm(d.algorithmId) ?? "unknown",
+    matches_apk: matcher.match(d.algorithmId, d.digest),
+  }));
+
+const baseSigner = (signer: ApkSigner, matcher: DigestMatcher): Signer => ({
+  certificate: signer.certificates[0]
+    ? certificateFacts(signer.certificates[0])
+    : null,
+  digests: digestsOf(signer, matcher),
+  min_sdk: signer.minSdk,
+  max_sdk: signer.maxSdk,
+});
+
+const rotationFacts = (
+  rotation: DecodedSigner["rotation"],
+): SignerV3["rotation"] => {
+  if (!rotation.present)
+    return { present: false, lineage: [], decode_error: null };
+  if ("decodeError" in rotation)
+    return { present: true, lineage: [], decode_error: rotation.decodeError };
   return {
     present: true,
-    lineage: nodes.ok
-      ? nodes.value.map((node) => ({
-          certificate: certificateFacts(node.certificate),
-          flags: node.flags,
-          capabilities: capabilities(node.flags),
-        }))
-      : [],
+    lineage: rotation.nodes.map((node) => ({
+      certificate: certificateFacts(node.certificate),
+      flags: node.flags,
+      capabilities: capabilities(node.flags),
+    })),
+    decode_error: null,
   };
 };
 
-const v3Signer = (signer: ApkSigner, match: DigestMatcher): SignerV3 => ({
-  ...baseSigner(signer, match),
-  rotation: rotationOf(signer),
+const v3Signer = (
+  decoded: DecodedSigner,
+  matcher: DigestMatcher,
+): SignerV3 => ({
+  ...baseSigner(decoded.signer, matcher),
+  rotation: rotationFacts(decoded.rotation),
 });
 
 /** All recomputed digests agree → true; any mismatch → false; none computed → null. */
@@ -181,6 +251,16 @@ const selfConsistency = (
   if (results.length === 0) return null;
   return results.every(Boolean);
 };
+
+const fingerprintsOf = (
+  signers: readonly { readonly certificate: Certificate }[],
+): string[] =>
+  signers.flatMap((s) =>
+    s.certificate === null ? [] : [s.certificate.sha256_fingerprint],
+  );
+
+const LAYOUT_LIMITATION =
+  "The content digest was not recomputed because the central directory does not directly follow the APK Signing Block (or the EOCD does not directly follow the central directory); matches_apk is null for those digests.";
 
 /** Read exactly the selected APK bytes and report its signature schemes. */
 export class ApkSignatureProvider implements ApkSignaturePort {
@@ -227,27 +307,31 @@ export class ApkSignatureProvider implements ApkSignaturePort {
       tail.value.centralDirectorySize,
       tail.value.totalEntries,
     );
-    const v1 = detectV1Signature(names.ok ? names.value : []);
+    if (!names.ok) return err(mapCentralDirectoryError(names.error));
+    const v1 = detectV1Signature(names.value);
 
-    const v2 = this.#decodeScheme(block.value, APK_BLOCK_ID.signatureV2, "v2");
+    const v2 = decodeScheme(block.value, APK_BLOCK_ID.signatureV2, "v2");
     if (!v2.ok) return err(v2.error);
-    const v3 = this.#decodeScheme(block.value, APK_BLOCK_ID.signatureV3, "v3");
+    const v3 = decodeScheme(block.value, APK_BLOCK_ID.signatureV3, "v3");
     if (!v3.ok) return err(v3.error);
-    const v31 = this.#decodeScheme(
-      block.value,
-      APK_BLOCK_ID.signatureV31,
-      "v3",
-    );
+    const v31 = decodeScheme(block.value, APK_BLOCK_ID.signatureV31, "v3.1");
     if (!v31.ok) return err(v31.error);
 
-    const match = digestMatcher(
+    // Account for representation expansion before allocating the report.
+    const projected = projectedOutputBytes([v2.value, v3.value, v31.value]);
+    if (projected > APK_SIGNATURE_LIMITS.outputBytes)
+      return err(apkOutputBudgetError(projected));
+
+    const matcher = digestMatcher(
       bytes,
       tail.value,
       block.value?.blockStart ?? null,
     );
-    const v2signers = v2.value.signers.map((s) => baseSigner(s, match));
-    const v3signers = v3.value.signers.map((s) => v3Signer(s, match));
-    const v31signers = v31.value.signers.map((s) => v3Signer(s, match));
+    const v2signers = v2.value.signers.map((s) =>
+      baseSigner(s.signer, matcher),
+    );
+    const v3signers = v3.value.signers.map((s) => v3Signer(s, matcher));
+    const v31signers = v31.value.signers.map((s) => v3Signer(s, matcher));
 
     const sourceStampPresent =
       block.value !== null &&
@@ -259,16 +343,9 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     const rotationPresent = [...v3signers, ...v31signers].some(
       (s) => s.rotation.present,
     );
-    const isString = (fp: string | undefined): fp is string =>
-      typeof fp === "string";
-    const signerFingerprints = [v2signers, v3signers, v31signers]
-      .map((signers) => signers[0]?.certificate?.sha256_fingerprint)
-      .filter(isString);
-    const lineageFingerprints = [...v3signers, ...v31signers]
-      .flatMap((signer) =>
-        signer.rotation.lineage.map((n) => n.certificate?.sha256_fingerprint),
-      )
-      .filter(isString);
+    const lineageFingerprints = [...v3signers, ...v31signers].flatMap(
+      (signer) => fingerprintsOf(signer.rotation.lineage),
+    );
 
     const result: ApkSignatureResult = {
       artifact,
@@ -291,7 +368,9 @@ export class ApkSignatureProvider implements ApkSignaturePort {
         v31Present: v31.value.present,
         sourceStampPresent,
         rotationPresent,
-        signerFingerprints,
+        schemeSignerFingerprints: [v2signers, v3signers, v31signers].map(
+          fingerprintsOf,
+        ),
         lineageFingerprints,
         selfConsistent: selfConsistency([
           ...v2signers,
@@ -300,43 +379,44 @@ export class ApkSignatureProvider implements ApkSignaturePort {
         ]),
       }),
       runtime_execution: "not-performed",
-      limitations: [...APK_SIGNATURE_LIMITATIONS],
     };
 
-    const parsed = apkSignatureResultSchema.safeParse(result);
-    if (!parsed.success)
-      return err(apkSignatureFailure(parsed.error, artifact.path));
+    const serialized = Buffer.byteLength(JSON.stringify(result));
+    if (serialized > APK_SIGNATURE_LIMITS.outputBytes)
+      return err(apkOutputBudgetError(serialized));
+
     const format =
       (zipPackageFormatForPath(artifact.path) ?? "zip") === "apk"
         ? "apk"
         : "zip";
     return ok(
-      createAnalysisExecution(parsed.data, APK_SIGNATURE_PROVIDER_IDENTITY, {
+      createAnalysisExecution(result, APK_SIGNATURE_PROVIDER_IDENTITY, {
         subject: { path: artifact.path, format, sha256: artifact.sha256 },
         locations: [{ kind: "artifact-path", path: artifact.path }],
-        limitations: parsed.data.limitations,
+        limitations: matcher.layoutPreventedRecompute()
+          ? [...APK_SIGNATURE_LIMITATIONS, LAYOUT_LIMITATION]
+          : [...APK_SIGNATURE_LIMITATIONS],
       }) as ApkSignatureExecution,
     );
   }
-
-  #decodeScheme(
-    block: ApkSigningBlock | null,
-    id: number,
-    version: ApkSchemeVersion,
-  ): Result<
-    { present: boolean; signers: readonly ApkSigner[] },
-    AnalysisError
-  > {
-    const pair = block?.pairs.find((p) => p.id === id);
-    if (pair === undefined) return ok({ present: false, signers: [] });
-    const signers = decodeSigners(pair.value, version);
-    if (!signers.ok)
-      return err(
-        apkSignatureFailure(
-          new Error(`malformed ${version} signer: ${signers.error.kind}`),
-          "",
-        ),
-      );
-    return ok({ present: true, signers: signers.value });
-  }
 }
+
+/** Decode one scheme's signers and their declared lineages, mapping failures by scheme. */
+const decodeScheme = (
+  block: ApkSigningBlock | null,
+  id: number,
+  version: ApkSchemeVersion,
+): Result<DecodedScheme, AnalysisError> => {
+  const pair = block?.pairs.find((p) => p.id === id);
+  if (pair === undefined) return ok({ present: false, signers: [] });
+  const signers = decodeSigners(pair.value, version);
+  if (!signers.ok) return err(mapApkSchemeError(signers.error, version));
+  const decoded: DecodedSigner[] = [];
+  for (const signer of signers.value) {
+    const rotation =
+      version === "v2" ? ok({ present: false } as const) : lineageOf(signer);
+    if (!rotation.ok) return err(mapApkSchemeError(rotation.error, version));
+    decoded.push({ signer, rotation: rotation.value });
+  }
+  return ok({ present: true, signers: decoded });
+};

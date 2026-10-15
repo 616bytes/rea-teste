@@ -38,10 +38,10 @@ export type ApkSigningBlockError =
   | { readonly kind: "not-a-zip"; readonly detail: string }
   | { readonly kind: "zip64-unsupported"; readonly detail: string }
   | {
-      readonly kind: "truncated";
+      /** A ZIP whose end-of-central-directory is damaged or inconsistent. */
+      readonly kind: "malformed-zip";
       readonly offset: number;
-      readonly need: number;
-      readonly have: number;
+      readonly detail: string;
     }
   | {
       readonly kind: "malformed-block";
@@ -51,7 +51,7 @@ export type ApkSigningBlockError =
   | {
       readonly kind: "budget-exceeded";
       readonly resource: "signing-block-pairs";
-      readonly declared: number;
+      readonly limit: number;
     };
 
 export interface ZipTail {
@@ -142,15 +142,27 @@ export const parseZipTail = (
     return err({ kind: "not-a-zip", detail: "shorter than a ZIP EOCD record" });
   const eocdOffset = findEocd(bytes);
   if (eocdOffset === null)
-    return err({
-      kind: "not-a-zip",
-      detail: "no end-of-central-directory record",
-    });
+    // A local-file header without an EOCD is a damaged/truncated archive, not
+    // a different file type.
+    return bytes[0] === 0x50 &&
+      bytes[1] === 0x4b &&
+      bytes[2] === 0x03 &&
+      bytes[3] === 0x04
+      ? err({
+          kind: "malformed-zip",
+          offset: bytes.length,
+          detail:
+            "ZIP local headers present but no end-of-central-directory (truncated or damaged archive)",
+        })
+      : err({
+          kind: "not-a-zip",
+          detail: "no end-of-central-directory record",
+        });
   const cd = centralDirectoryOffset(bytes, eocdOffset);
   if (!cd.ok) return cd;
   if (cd.value.offset > eocdOffset || cd.value.offset > bytes.length)
     return err({
-      kind: "malformed-block",
+      kind: "malformed-zip",
       offset: eocdOffset,
       detail: "central-directory offset is past the end-of-central-directory",
     });
@@ -183,7 +195,9 @@ export const locateApkSigningBlock = (
   if (!hasBlockMagic(bytes, cdOffset)) return ok(null);
   const dv = view(bytes);
   const trailingSize = u64(dv, cdOffset - 24);
-  if (trailingSize === null)
+  // The footer alone (trailing size + magic) is 24 bytes; a smaller declared
+  // size would alias the leading and trailing fields (apksig rejects it too).
+  if (trailingSize === null || trailingSize < 24)
     return err({
       kind: "malformed-block",
       offset: cdOffset - 24,
@@ -219,7 +233,7 @@ export const locateApkSigningBlock = (
       return err({
         kind: "budget-exceeded",
         resource: "signing-block-pairs",
-        declared: pairs.length + 1,
+        limit: MAX_PAIRS,
       });
     const id = dv.getUint32(cursor + 8, true);
     const valueStart = cursor + 12;

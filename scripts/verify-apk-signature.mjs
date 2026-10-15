@@ -270,10 +270,13 @@ try {
   const fullReport = await inspectBoth(full);
   assert.equal(fullReport.schemes.v2.present, fullOracle.v2);
   assert.equal(fullReport.schemes.v3.present, fullOracle.v3);
-  assert.equal(
-    fullReport.schemes.v3.signers[0].certificate.sha256_fingerprint,
-    fullOracle.signerSha256,
-  );
+  for (const scheme of ["v2", "v3"])
+    assert.equal(
+      fullReport.schemes[scheme].signers[0].certificate.sha256_fingerprint,
+      fullOracle.signerSha256,
+      `${scheme} signer fingerprint must equal apksigner's`,
+    );
+  assert.equal(fullReport.posture.schemes_agree_on_signer, true);
   assert.equal(
     fullReport.posture.self_consistent,
     true,
@@ -282,7 +285,9 @@ try {
   assert.equal(fullReport.posture.v1_only, false);
 
   // 2) v1-only signing: the strippable downgrade surface. Android requires v2+
-  //    for targetSdk >= 30, so this case uses a legacy-target base APK.
+  //    for targetSdk >= 30, so this case uses a legacy-target base APK. REA's
+  //    v1.present is structural; apksigner's "verified using v1" is platform
+  //    applicability and is false for minSdk >= 24 even when CERT.SF exists.
   await writeFile(
     join(workspace, "LegacyManifest.xml"),
     `<?xml version="1.0" encoding="utf-8"?>
@@ -324,7 +329,7 @@ try {
   assert.equal(v1Report.posture.v1_only, true);
   assert.equal(v1Report.posture.strongest_scheme, "v1");
 
-  // 3) Key rotation: lineage certificates and a signer change explained by rotation.
+  // 3) Key rotation: lineage certificates and a signer change the APK declares.
   const lineage = join(workspace, "lineage.bin");
   await run(apksigner, [
     "rotate",
@@ -359,8 +364,65 @@ try {
     lineageOracle,
     "REA lineage must equal apksigner lineage (order + digests)",
   );
-  assert.equal(rotatedReport.posture.signer_change_explained_by_rotation, true);
-  assert.equal(rotatedReport.posture.schemes_agree_on_signer, true);
+  // Observed: v2 (old key) and v3 (new key) differ. Declared: the lineage
+  // covers both. The two facts stay separate.
+  assert.equal(rotatedReport.posture.schemes_agree_on_signer, false);
+  assert.equal(rotatedReport.posture.signer_change_declared_by_rotation, true);
+  assert.deepEqual(
+    rotatedReport.schemes.v3.signers[0].rotation.lineage.map(
+      (n) => n.capabilities.installed_data,
+    ),
+    [true, true],
+  );
+
+  // 3b) Rotation targeting SDK 33 is carried by v3.1; v3 keeps the original signer.
+  const rotated31 = join(workspace, "rotated31.apk");
+  await run(apksigner, [
+    "sign",
+    ...ks("k1"),
+    "--next-signer",
+    ...ks("k2"),
+    "--lineage",
+    lineage,
+    "--rotation-min-sdk-version",
+    "33",
+    "--out",
+    rotated31,
+    base,
+  ]);
+  assert.equal((await oracleVerify(rotated31)).verifies, true);
+  const rotated31Report = await inspectBoth(rotated31);
+  assert.equal(rotated31Report.schemes["v3.1"].present, true);
+  assert.equal(rotated31Report.posture.strongest_scheme, "v3.1");
+  const v31Signer = rotated31Report.schemes["v3.1"].signers[0];
+  assert.equal(v31Signer.min_sdk, 33);
+  assert.deepEqual(
+    v31Signer.rotation.lineage.map((n) => n.certificate.sha256_fingerprint),
+    lineageOracle,
+    "v3.1 lineage must equal the apksigner lineage",
+  );
+  assert.equal(
+    rotated31Report.schemes.v3.signers[0].certificate.sha256_fingerprint,
+    fullOracle.signerSha256,
+    "v3 keeps the original signer below the v3.1 SDK range",
+  );
+  assert.equal(rotated31Report.posture.self_consistent, true);
+
+  // 3c) Source stamp (apksigner requires an RSA stamp key).
+  const stamped = join(workspace, "stamped.apk");
+  await run(apksigner, [
+    "sign",
+    ...ks("k1"),
+    "--stamp-signer",
+    ...ks("k1"),
+    "--out",
+    stamped,
+    base,
+  ]);
+  const stampedReport = await inspectBoth(stamped);
+  assert.equal(stampedReport.source_stamp.present, true);
+  assert.equal(stampedReport.posture.source_stamp_present, true);
+  assert.equal(stampedReport.posture.self_consistent, true);
 
   // 4) Tampering: one flipped entry byte breaks both apksigner and self-consistency.
   const tampered = join(workspace, "tampered.apk");

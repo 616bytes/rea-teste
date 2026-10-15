@@ -1,15 +1,15 @@
 /**
  * Decode the signer structures inside an APK Signature Scheme v2/v3/v3.1 block
- * value (APK Signature Scheme v2+). Each scheme value is a little-endian,
- * uint32-length-prefixed sequence of signers; a signer carries length-prefixed
- * signed-data (digests, X.509 certificate DER, and — for v3 — min/max SDK and
- * additional attributes including the proof-of-rotation lineage).
+ * value. Each scheme value is a little-endian, uint32-length-prefixed sequence
+ * of signers; a signer carries length-prefixed signed-data (digests, X.509
+ * certificate DER, and — for v3/v3.1 — min/max SDK and additional attributes
+ * including the proof-of-rotation lineage).
  *
  * This frames the structure and exposes digests (by signature-algorithm id),
- * certificate DER extents, SDK bounds, and additional attributes. Certificate
- * fact extraction and digest recomputation are layered on top. Dependency-free,
- * bounded, Result-based: a short or inconsistent length yields a tagged error,
- * never a throw.
+ * certificate DER, SDK bounds, and additional attributes. Certificate facts and
+ * digest recomputation are layered on top. Dependency-free and bounded: a short
+ * or inconsistent length is a `malformed-signer` error, and a count past a
+ * format-justified cap is a distinct `budget-exceeded` error, never conflated.
  */
 import { type Result, err, ok } from "../result.js";
 
@@ -18,13 +18,12 @@ export type ApkSchemeVersion = "v2" | "v3" | "v3.1";
 export type ApkSchemeError =
   | {
       readonly kind: "malformed-signer";
-      readonly offset: number;
       readonly detail: string;
     }
   | {
       readonly kind: "budget-exceeded";
       readonly resource: string;
-      readonly declared: number;
+      readonly limit: number;
     };
 
 export interface ApkSignerDigest {
@@ -49,25 +48,31 @@ export interface ApkSigner {
 
 /** Additional-attribute id carrying the v3 proof-of-rotation lineage. */
 export const PROOF_OF_ROTATION_ATTR_ID = 0x3ba06f8c;
-/** Additional-attribute id asserting v1/v2 stripping protection. */
-export const STRIPPING_PROTECTION_ATTR_ID = 0xbeeff00d;
 
+/** Generic cap on digests/certificates/attributes in one signer. */
 const MAX_ELEMENTS = 4096;
+/**
+ * Signers per scheme. Android signs with one or a handful; v3 adds at most one
+ * per SDK range. A larger count only multiplies output, so it is refused.
+ */
+export const MAX_SIGNERS = 32;
+/**
+ * Lineage nodes. Each key rotation appends one node, so a real lineage is a
+ * short chain; a larger declared chain is refused rather than materialised.
+ */
+export const MAX_LINEAGE_NODES = 32;
+/** The only proof-of-rotation lineage encoding version apksig accepts. */
+const LINEAGE_VERSION = 1;
 
 /** Sequential little-endian reader over a byte range; every read is bounds-checked. */
 class LeReader {
-  offset: number;
+  offset = 0;
   private readonly dv: DataView;
-  constructor(
-    private readonly bytes: Uint8Array,
-    start = 0,
-    private readonly end = bytes.length,
-  ) {
-    this.offset = start;
+  constructor(private readonly bytes: Uint8Array) {
     this.dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   }
   get remaining(): number {
-    return this.end - this.offset;
+    return this.bytes.length - this.offset;
   }
   u32(): number | null {
     if (this.remaining < 4) return null;
@@ -85,68 +90,86 @@ class LeReader {
   }
 }
 
+const malformed = (detail: string): Result<never, ApkSchemeError> =>
+  err({ kind: "malformed-signer", detail });
+
 /** Split a length-prefixed sequence into its length-prefixed elements. */
-const elements = (seq: Uint8Array | null): Uint8Array[] | null => {
-  if (seq === null) return null;
+const elements = (
+  seq: Uint8Array | null,
+  what: string,
+  limit = MAX_ELEMENTS,
+): Result<Uint8Array[], ApkSchemeError> => {
+  if (seq === null) return malformed(`${what} sequence missing or truncated`);
   const reader = new LeReader(seq);
   const out: Uint8Array[] = [];
   while (reader.remaining > 0) {
-    if (out.length >= MAX_ELEMENTS) return null;
+    if (out.length >= limit)
+      return err({ kind: "budget-exceeded", resource: what, limit });
     const el = reader.lenChunk();
-    if (el === null) return null;
+    if (el === null) return malformed(`${what} element truncated`);
     out.push(el);
   }
-  return out;
+  return ok(out);
 };
 
-const decodeDigests = (seq: Uint8Array | null): ApkSignerDigest[] | null => {
-  const items = elements(seq);
-  if (items === null) return null;
+const decodeDigests = (
+  seq: Uint8Array | null,
+): Result<ApkSignerDigest[], ApkSchemeError> => {
+  const items = elements(seq, "digests");
+  if (!items.ok) return items;
   const digests: ApkSignerDigest[] = [];
-  for (const item of items) {
+  for (const item of items.value) {
     const reader = new LeReader(item);
     const algorithmId = reader.u32();
     const digest = reader.lenChunk();
-    if (algorithmId === null || digest === null) return null;
+    if (algorithmId === null || digest === null)
+      return malformed("digest entry truncated");
     digests.push({ algorithmId, digest });
   }
-  return digests;
+  return ok(digests);
 };
 
 const decodeAttributes = (
   seq: Uint8Array | null,
-): ApkSignerAttribute[] | null => {
-  const items = elements(seq);
-  if (items === null) return null;
+): Result<ApkSignerAttribute[], ApkSchemeError> => {
+  const items = elements(seq, "attributes");
+  if (!items.ok) return items;
   const attributes: ApkSignerAttribute[] = [];
-  for (const item of items) {
-    const reader = new LeReader(item);
-    const id = reader.u32();
-    if (id === null) return null;
+  for (const item of items.value) {
+    const id = new LeReader(item).u32();
+    if (id === null) return malformed("attribute id truncated");
     attributes.push({ id, value: item.subarray(4) });
   }
-  return attributes;
+  return ok(attributes);
 };
 
-/** Decode one signer's signed-data chunk (v3 carries min/max SDK before attributes). */
+/** Decode one signer's signed-data chunk (v3/v3.1 carry min/max SDK before attributes). */
 const decodeSignedData = (
   signedData: Uint8Array,
   version: ApkSchemeVersion,
-): ApkSigner | null => {
+): Result<ApkSigner, ApkSchemeError> => {
   const reader = new LeReader(signedData);
   const digests = decodeDigests(reader.lenChunk());
-  const certificates = elements(reader.lenChunk());
-  if (digests === null || certificates === null) return null;
+  if (!digests.ok) return digests;
+  const certificates = elements(reader.lenChunk(), "certificates");
+  if (!certificates.ok) return certificates;
   let minSdk: number | null = null;
   let maxSdk: number | null = null;
   if (version !== "v2") {
     minSdk = reader.u32();
     maxSdk = reader.u32();
-    if (minSdk === null || maxSdk === null) return null;
+    if (minSdk === null || maxSdk === null)
+      return malformed("min/max SDK truncated");
   }
   const attributes = decodeAttributes(reader.lenChunk());
-  if (attributes === null) return null;
-  return { certificates, digests, minSdk, maxSdk, attributes };
+  if (!attributes.ok) return attributes;
+  return ok({
+    certificates: certificates.value,
+    digests: digests.value,
+    minSdk,
+    maxSdk,
+    attributes: attributes.value,
+  });
 };
 
 /** Decode every signer in a v2/v3/v3.1 scheme block value. */
@@ -154,30 +177,23 @@ export const decodeSigners = (
   value: Uint8Array,
   version: ApkSchemeVersion,
 ): Result<ApkSigner[], ApkSchemeError> => {
-  const signerChunks = elements(new LeReader(value).lenChunk());
-  if (signerChunks === null)
-    return err({
-      kind: "malformed-signer",
-      offset: 0,
-      detail: "bad signer sequence",
-    });
+  const chunks = elements(
+    new LeReader(value).lenChunk(),
+    "signers",
+    MAX_SIGNERS,
+  );
+  if (!chunks.ok) return chunks;
   const signers: ApkSigner[] = [];
-  for (const chunk of signerChunks) {
+  for (const [index, chunk] of chunks.value.entries()) {
     const signedData = new LeReader(chunk).lenChunk();
     if (signedData === null)
-      return err({
-        kind: "malformed-signer",
-        offset: 0,
-        detail: "missing signed data",
-      });
+      return malformed(`signer ${String(index)} has no signed data`);
     const signer = decodeSignedData(signedData, version);
-    if (signer === null)
-      return err({
-        kind: "malformed-signer",
-        offset: 0,
-        detail: "malformed signed data",
-      });
-    signers.push(signer);
+    if (!signer.ok)
+      return signer.error.kind === "malformed-signer"
+        ? malformed(`signer ${String(index)}: ${signer.error.detail}`)
+        : signer;
+    signers.push(signer.value);
   }
   return ok(signers);
 };
@@ -186,57 +202,46 @@ export const decodeSigners = (
 export interface ApkLineageNode {
   /** X.509 certificate DER of the signer at this level. */
   readonly certificate: Uint8Array;
-  /** Capability flags granted by this signer to the next (installed data, shared UID, …). */
+  /**
+   * Capability flags RETAINED by this node's own certificate after the
+   * rotation (installed data, shared UID, permission, rollback, auth) — the
+   * per-certificate flags Android keeps in SigningDetails.pastSigningCertificates.
+   */
   readonly flags: number;
 }
 
 /**
  * Decode the v3 proof-of-rotation attribute value (apksig
- * V3SigningCertificateLineage): `u32 version` then length-prefixed nodes, each
- * `lp(signedData{ lp(certificate), u32 sigAlgorithm }) | u32 flags |
- * u32 sigAlgorithm | lp(signature)`. Node signatures are not verified here.
+ * V3SigningCertificateLineage): `u32 version` (must be 1) then length-prefixed
+ * nodes, each `lp(signedData{ lp(certificate), u32 sigAlgorithm }) | u32 flags |
+ * u32 sigAlgorithm | lp(signature)`. Node signatures are NOT verified: this is
+ * the lineage the APK declares.
  */
 export const decodeRotationLineage = (
   value: Uint8Array,
 ): Result<ApkLineageNode[], ApkSchemeError> => {
   const reader = new LeReader(value);
-  if (reader.u32() === null)
-    return err({
-      kind: "malformed-signer",
-      offset: 0,
-      detail: "lineage version missing",
-    });
+  const version = reader.u32();
+  if (version === null) return malformed("lineage version missing");
+  if (version !== LINEAGE_VERSION)
+    return malformed(`unsupported lineage version ${String(version)}`);
   const nodes: ApkLineageNode[] = [];
   while (reader.remaining > 0) {
-    if (nodes.length >= MAX_ELEMENTS)
+    if (nodes.length >= MAX_LINEAGE_NODES)
       return err({
         kind: "budget-exceeded",
         resource: "lineage-nodes",
-        declared: nodes.length + 1,
+        limit: MAX_LINEAGE_NODES,
       });
     const node = reader.lenChunk();
-    if (node === null)
-      return err({
-        kind: "malformed-signer",
-        offset: reader.offset,
-        detail: "lineage node truncated",
-      });
+    if (node === null) return malformed("lineage node truncated");
     const nodeReader = new LeReader(node);
     const signedData = nodeReader.lenChunk();
     const flags = nodeReader.u32();
     if (signedData === null || flags === null)
-      return err({
-        kind: "malformed-signer",
-        offset: reader.offset,
-        detail: "lineage node malformed",
-      });
+      return malformed("lineage node malformed");
     const certificate = new LeReader(signedData).lenChunk();
-    if (certificate === null)
-      return err({
-        kind: "malformed-signer",
-        offset: reader.offset,
-        detail: "lineage certificate missing",
-      });
+    if (certificate === null) return malformed("lineage certificate missing");
     nodes.push({ certificate, flags });
   }
   return ok(nodes);
@@ -258,6 +263,7 @@ export const contentDigestAlgorithm = (
       return "sha512";
     case 0x0421: // RSASSA-PKCS1-v1_5 SHA2-256 over the verity tree
     case 0x0423: // ECDSA SHA2-256 over the verity tree
+    case 0x0425: // DSA SHA2-256 over the verity tree
       return "verity-sha256";
     default:
       return null;

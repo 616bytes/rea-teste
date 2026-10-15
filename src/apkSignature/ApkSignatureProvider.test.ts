@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,49 +40,74 @@ const lp = (b: readonly number[]): number[] => [...u32(b.length), ...b];
 const seq = (els: readonly (readonly number[])[]): number[] =>
   lp(els.flatMap((e) => lp(e)));
 
-/** [entries][signing block with one v2 pair][central directory][EOCD]. */
+/** [entries][signing block with the given pairs][central directory][EOCD]. */
 const syntheticSigned = (
-  v2Value: readonly number[],
-  corruptLeadingSize = false,
+  pairs: readonly { readonly id: number; readonly value: Uint8Array }[],
+  options: { corruptLeadingSize?: boolean; cdEntries?: number } = {},
 ): Uint8Array => {
-  const entries = Array.from({ length: 64 }, (_, i) => i & 0xff);
-  const pair = [...u64(4 + v2Value.length), ...u32(0x7109871a), ...v2Value];
-  const size = pair.length + 8 + 16;
-  const block = [
-    ...u64(size),
-    ...pair,
-    ...u64(size),
-    ...[..."APK Sig Block 42"].map((c) => c.charCodeAt(0)),
-  ];
-  if (corruptLeadingSize) block[0] = 0xff;
-  const cd = [0x50, 0x4b, 0x01, 0x02, 0, 0, 0, 0];
+  const entries = Buffer.from(Array.from({ length: 64 }, (_, i) => i & 0xff));
+  const framed = Buffer.concat(
+    pairs.flatMap((p) => [
+      Buffer.from([...u64(4 + p.value.length), ...u32(p.id)]),
+      p.value,
+    ]),
+  );
+  const size = framed.length + 8 + 16;
+  const block = Buffer.concat([
+    Buffer.from(u64(size)),
+    framed,
+    Buffer.from(u64(size)),
+    Buffer.from("APK Sig Block 42", "latin1"),
+  ]);
+  if (options.corruptLeadingSize) block[0] = 0xff;
+  const cd = Buffer.from([0x50, 0x4b, 0x01, 0x02, 0, 0, 0, 0]);
   const cdOffset = entries.length + block.length;
-  const eocd = [
+  const records = options.cdEntries ?? 0;
+  const eocd = Buffer.from([
     ...u32(0x06054b50),
     ...u16(0),
     ...u16(0),
-    ...u16(0),
-    ...u16(0),
+    ...u16(records),
+    ...u16(records),
     ...u32(cd.length),
     ...u32(cdOffset),
     ...u16(0),
-  ];
-  return Uint8Array.from([...entries, ...block, ...cd, ...eocd]);
+  ]);
+  return Uint8Array.from(Buffer.concat([entries, block, cd, eocd]));
 };
 
+const V2 = 0x7109871a;
+const V31 = 0x1b93ad61;
+
+const BOGUS_DIGEST = [
+  ...u32(0x0103),
+  ...lp(Array.from({ length: 32 }, () => 0xab)),
+];
+const BOGUS_CERT = [0x30, 0x03, 1, 2, 3];
+
 /** A v2 value with one signer: bogus certificate bytes and a bogus SHA-256 digest. */
-const bogusV2Value = (): number[] => {
-  const digest = [
-    ...u32(0x0103),
-    ...lp(Array.from({ length: 32 }, () => 0xab)),
-  ];
-  const signedData = [
-    ...seq([digest]),
-    ...seq([[0x30, 0x03, 1, 2, 3]]),
-    ...seq([]),
-  ];
-  return seq([lp(signedData)]);
-};
+const bogusV2Value = (): Uint8Array =>
+  Uint8Array.from(
+    seq([lp([...seq([BOGUS_DIGEST]), ...seq([BOGUS_CERT]), ...seq([])])]),
+  );
+
+/** A v3-layout value whose one signer carries the given attributes. */
+const v3Value = (attributes: readonly (readonly number[])[]): Uint8Array =>
+  Uint8Array.from(
+    seq([
+      lp([
+        ...seq([BOGUS_DIGEST]),
+        ...seq([BOGUS_CERT]),
+        ...u32(28),
+        ...u32(0x7fffffff),
+        ...seq(attributes),
+      ]),
+    ]),
+  );
+
+/** Length-prefix a large buffer without spreading it into a number array. */
+const lpBuf = (bytes: Uint8Array): Buffer =>
+  Buffer.concat([Buffer.from(u32(bytes.length)), bytes]);
 
 let dir: string;
 const provider = new ApkSignatureProvider();
@@ -139,11 +165,25 @@ describe("ApkSignatureProvider without the Android SDK", () => {
 
   it("decodes a v2 signer, keeps an unparseable certificate null, and flags a digest mismatch", async () => {
     const r = await reportOf(
-      await write("v2.apk", syntheticSigned(bogusV2Value())),
+      await write(
+        "v2.apk",
+        syntheticSigned([{ id: V2, value: bogusV2Value() }]),
+      ),
     );
     expect(r.schemes.v2!.present).toBe(true);
     const signer = r.schemes.v2!.signers![0]!;
-    expect(signer.certificate).toBeNull();
+    // Identity is the raw-DER fingerprint even when X.509 parsing fails.
+    expect(signer.certificate).toEqual({
+      sha256_fingerprint: createHash("sha256")
+        .update(Uint8Array.from(BOGUS_CERT))
+        .digest("hex"),
+      subject: null,
+      issuer: null,
+      serial_number: null,
+      not_before: null,
+      not_after: null,
+      public_key_algorithm: null,
+    });
     expect(signer.digests).toEqual([
       { algorithm: "sha256", matches_apk: false },
     ]);
@@ -161,10 +201,78 @@ describe("ApkSignatureProvider without the Android SDK", () => {
 
   it("reports a malformed signing block as an input error", async () => {
     const result = await provider.inspect({
-      path: await write("bad.apk", syntheticSigned(bogusV2Value(), true)),
+      path: await write(
+        "bad.apk",
+        syntheticSigned([{ id: V2, value: bogusV2Value() }], {
+          corruptLeadingSize: true,
+        }),
+      ),
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error._tag).toBe("AnalysisInputError");
+  });
+
+  it("reports a malformed declared lineage instead of dropping it", async () => {
+    const lineage = [...u32(0x3ba06f8c), ...u32(1), ...u32(999)];
+    const r = (await reportOf(
+      await write(
+        "lineage.apk",
+        syntheticSigned([{ id: V31, value: v3Value([lineage]) }]),
+      ),
+    )) as unknown as {
+      schemes: { "v3.1": { signers: { rotation: unknown }[] } };
+      posture: { strongest_scheme: string };
+    };
+    expect(r.posture.strongest_scheme).toBe("v3.1");
+    expect(r.schemes["v3.1"].signers[0]!.rotation).toEqual({
+      present: true,
+      lineage: [],
+      decode_error: "lineage node truncated",
+    });
+  });
+
+  it("names v3.1 when its block is malformed", async () => {
+    const result = await provider.inspect({
+      path: await write(
+        "bad31.apk",
+        syntheticSigned([{ id: V31, value: Uint8Array.from(u32(77)) }]),
+      ),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(JSON.stringify(result.error)).toContain("Scheme v3.1 block");
+  });
+
+  it("refuses a central directory that cannot be walked", async () => {
+    const result = await provider.inspect({
+      path: await write(
+        "badcd.apk",
+        syntheticSigned([{ id: V2, value: bogusV2Value() }], { cdEntries: 3 }),
+      ),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisInputError");
+    expect(JSON.stringify(result.error)).toContain(
+      "Malformed ZIP central directory",
+    );
+  });
+
+  it("refuses a report that would exceed the output budget before building it", async () => {
+    const hugeCert = new Uint8Array(4.5 * 1024 * 1024);
+    const signedData = Buffer.concat([
+      Buffer.from(seq([BOGUS_DIGEST])),
+      lpBuf(lpBuf(hugeCert)),
+      Buffer.from(seq([])),
+    ]);
+    const value = lpBuf(lpBuf(lpBuf(signedData)));
+    const result = await provider.inspect({
+      path: await write("huge.apk", syntheticSigned([{ id: V2, value }])),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(result.error.message).toContain("output budget");
   });
 });

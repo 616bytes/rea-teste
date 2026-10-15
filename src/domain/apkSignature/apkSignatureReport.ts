@@ -21,15 +21,23 @@ export type InspectApkSignatureInput = z.infer<
   typeof inspectApkSignatureInputSchema
 >;
 
+/**
+ * A signer certificate. `sha256_fingerprint` is always SHA-256 over the raw
+ * embedded DER (exactly what apksig/apksigner hash); the parsed X.509 facts are
+ * individually null when the platform parser cannot read the DER. The whole
+ * object is null only when the signer carries no certificate at all.
+ */
 const certificate = z
   .strictObject({
-    subject: z.string(),
-    issuer: z.string(),
-    serial_number: z.string(),
-    not_before: z.string(),
-    not_after: z.string(),
-    public_key_algorithm: z.string().nullable(),
     sha256_fingerprint: digest,
+    subject: z.string().nullable(),
+    issuer: z.string().nullable(),
+    serial_number: z.string().nullable(),
+    /** ISO 8601. */
+    not_before: z.string().nullable(),
+    /** ISO 8601. */
+    not_after: z.string().nullable(),
+    public_key_algorithm: z.string().nullable(),
   })
   .nullable();
 
@@ -48,7 +56,10 @@ const signer = z.strictObject({
 
 const lineageNode = z.strictObject({
   certificate,
-  /** Raw capability flags this signer grants the next in the lineage. */
+  /**
+   * Raw capability flags RETAINED by this node's own certificate after the
+   * rotation (kept raw so unknown future bits are preserved).
+   */
   flags: z.number().int().nonnegative(),
   capabilities: z.strictObject({
     installed_data: z.boolean(),
@@ -60,10 +71,15 @@ const lineageNode = z.strictObject({
 });
 
 const signerV3 = signer.extend({
-  // The v3 proof-of-rotation lineage, oldest signer first (empty when absent).
+  /**
+   * The proof-of-rotation lineage the APK DECLARES, oldest signer first. Node
+   * signatures are not verified. `decode_error` is set (and `lineage` empty)
+   * when the attribute is present but could not be decoded.
+   */
   rotation: z.strictObject({
     present: z.boolean(),
     lineage: z.array(lineageNode),
+    decode_error: z.string().nullable(),
   }),
 });
 
@@ -77,6 +93,7 @@ export const apkSignatureResultSchema = z.strictObject({
   }),
   schemes: z.strictObject({
     v1: z.strictObject({
+      /** Structural: META-INF signature files exist (not platform applicability). */
       present: z.boolean(),
       has_manifest: z.boolean(),
       signature_files: z.array(z.string()),
@@ -90,26 +107,33 @@ export const apkSignatureResultSchema = z.strictObject({
     }),
   }),
   source_stamp: z.strictObject({ present: z.boolean(), certificate }),
+  /** Derived from the observed and declared facts above; not separately observed. */
   posture: z.strictObject({
     v1_only: z.boolean(),
+    /**
+     * Observed: every present block scheme (v2/v3/v3.1) presents the same set
+     * of signer certificates. Null when no block scheme carries a certificate.
+     */
     schemes_agree_on_signer: z.boolean().nullable(),
-    /** More than one signer, but every one appears in the declared rotation lineage. */
-    signer_change_explained_by_rotation: z.boolean(),
+    /**
+     * Declared: the signers differ, but every one appears in a rotation
+     * lineage the APK declares. Unverified — an APK can declare any lineage.
+     */
+    signer_change_declared_by_rotation: z.boolean(),
     rotation_present: z.boolean(),
     source_stamp_present: z.boolean(),
     strongest_scheme: SCHEME,
     self_consistent: z.boolean().nullable(),
   }),
   runtime_execution: z.literal("not-performed"),
-  limitations: z.array(z.string()),
 });
 export type ApkSignatureResult = z.infer<typeof apkSignatureResultSchema>;
 
 export const APK_SIGNATURE_LIMITATIONS: readonly string[] = [
   "Static structural inspection only. No Android code executes, no device or adb is involved, and odex/vdex/oat/cdex are not read.",
-  "Identity and self-consistency, not trust: certificate facts and digest matches are reported, but signatures are NOT cryptographically verified and certificate chains, revocation and 'is this the real app' are NOT evaluated.",
-  "self_consistent means the signed content digest matches the current bytes (the signature covers these bytes); it is not an authenticity verdict. SHA-256 identifies the exact bytes, not the producer.",
-  "v1 signer certificates (PKCS#7), v4 .apk.idsig, and the X-Android-APK-Signed stripping marker (which would distinguish a stripped-v2 downgrade from a genuinely v1-only APK) are follow-ups and not parsed here.",
+  "Identity and self-consistency, not trust: signer signatures and rotation-lineage signatures are NOT cryptographically verified, and certificate chains, revocation and authenticity are NOT evaluated. A lineage is what the APK declares.",
+  "self_consistent means the signed content digest matches the current bytes; it is not an authenticity verdict. SHA-256 identifies the exact bytes, not the producer.",
+  "Not read: v1 signer certificates (PKCS#7), v4 .apk.idsig, verity digests (matches_apk null), the X-Android-APK-Signed stripping marker, and the source-stamp certificate.",
 ];
 
 /** Inputs to the pure posture derivation (scheme presence + agreement facts). */
@@ -120,12 +144,15 @@ export interface ApkPostureInput {
   readonly v31Present: boolean;
   readonly sourceStampPresent: boolean;
   readonly rotationPresent: boolean;
-  /** Signing-certificate fingerprints of each present scheme's signer (v2/v3/v3.1). */
-  readonly signerFingerprints: readonly string[];
-  /** Fingerprints of every certificate in the declared v3 rotation lineage(s). */
+  /** Per present block scheme, the fingerprints of ALL its signers' certificates. */
+  readonly schemeSignerFingerprints: readonly (readonly string[])[];
+  /** Fingerprints of every certificate in the declared v3/v3.1 rotation lineage(s). */
   readonly lineageFingerprints: readonly string[];
   readonly selfConsistent: boolean | null;
 }
+
+const setKey = (fingerprints: readonly string[]): string =>
+  [...new Set(fingerprints)].sort().join(",");
 
 /** Derive the conservative tamper-surface posture from observed scheme facts. */
 export const deriveApkPosture = (
@@ -141,17 +168,15 @@ export const deriveApkPosture = (
         : input.v1Present
           ? "v1"
           : "none";
-  const distinct = new Set(input.signerFingerprints);
+  const sets = input.schemeSignerFingerprints.filter((fps) => fps.length > 0);
+  const union = new Set(sets.flat());
   const lineage = new Set(input.lineageFingerprints);
-  const explained =
-    distinct.size > 1 && [...distinct].every((fp) => lineage.has(fp));
   return {
     v1_only: input.v1Present && !blockPresent,
-    // A signer change that the APK itself declares via rotation is agreement,
-    // not a tamper signal.
     schemes_agree_on_signer:
-      distinct.size === 0 ? null : distinct.size === 1 || explained,
-    signer_change_explained_by_rotation: explained,
+      sets.length === 0 ? null : new Set(sets.map(setKey)).size === 1,
+    signer_change_declared_by_rotation:
+      union.size > 1 && [...union].every((fp) => lineage.has(fp)),
     rotation_present: input.rotationPresent,
     source_stamp_present: input.sourceStampPresent,
     strongest_scheme: strongest,

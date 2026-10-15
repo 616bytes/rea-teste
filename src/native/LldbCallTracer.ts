@@ -41,6 +41,7 @@ import {
 } from "../process/ProviderDeadline.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { resolveXcrunTool, type ResolvedTool } from "./CommandRunner.js";
+import { projectNativeCalls } from "./NativeCallObservation.js";
 import {
   readLldbObservationJournal,
   readBoundedPrefix,
@@ -709,27 +710,22 @@ const partialObservationFromTrace = (
   request: Parameters<NativeCallTracer["trace"]>[0],
   trace: NativeCallTrace,
   reason: NativeCallPartialObservation["coverage"]["reason"] = "cleanup-failure",
-): NativeCallPartialObservation =>
-  projectLldbPartialObservation({
-    target: {
+): NativeCallPartialObservation => {
+  const observation = projectNativeCalls(
+    {
       path: request.executable,
       sha256: request.expectedSha256,
       architecture: request.architecture,
-      arguments: request.input.arguments,
-      environment: request.input.environment,
-      working_directory: request.input.working_directory ?? null,
     },
-    pid: trace.run.pid,
-    stdout: trace.stdout,
-    stderr: trace.stderr,
-    version: trace.run.version,
-    journal: {
-      events: trace.run.events,
-      otherStops: trace.run.other_stops,
-      limitations: [],
-    },
-    reason,
-  });
+    request.input,
+    trace,
+  );
+  return {
+    kind: "native-call-observation",
+    ...observation,
+    coverage: { ...observation.coverage, status: "partial", reason },
+  };
+};
 
 const lldbRuntimePaths = (directory: string) => ({
   config: join(directory, "config.json"),

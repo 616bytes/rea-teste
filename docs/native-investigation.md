@@ -486,6 +486,11 @@ with partial coverage. Available output prefixes remain inline; their byte
 counts are observed lower bounds when final drain counters are unavailable.
 The original failure classification and cleanup uncertainty remain separate.
 An interrupted journal row is ignored with an explicit limitation.
+If the trace completed before cancellation or runtime-directory cleanup failed,
+the retained observation also keeps its exit status, termination proof, launch
+identity, breakpoint results and final stream counters. Those fields remain
+absent when the interrupted producer did not report them; partial coverage alone
+does not mean that every retained fact is incomplete.
 
 Only entries are observed: return values, floating-point and stack arguments,
 and inlined or `objc_direct` calls are not. The target runs with the current

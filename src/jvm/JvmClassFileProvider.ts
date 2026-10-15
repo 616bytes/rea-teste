@@ -10,6 +10,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
 } from "../artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import {
   peekArtifactMagic,
@@ -23,7 +24,7 @@ import {
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { parseJavaClassFile } from "../domain/jvm/javaClassFile.js";
-import { countDebugEntries } from "../domain/jvm/javaDebugMetadata.js";
+import { projectDebugOutput } from "../domain/jvm/javaDebugMetadata.js";
 import {
   buildJavaDebugMetadataResult,
   type InspectJvmDebugMetadataInput,
@@ -31,7 +32,11 @@ import {
 } from "../domain/jvm/javaDebugMetadataReport.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { hashStableRootArtifactHandle } from "../artifacts/inventory/hashStableRootArtifact.js";
-import { openRegularFile } from "../filesystem/RegularFile.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
+  openRegularFile,
+  RegularFileAdmissionFailure,
+} from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   classifyJarEntry,
@@ -115,9 +120,27 @@ const execution = (
 
 /** Read exactly the selected class-file bytes and decode compiler-emitted debug metadata. */
 export class JvmClassFileProvider implements JvmDebugMetadataPort {
-  /** The reader owns no retained resources; each bounded read closes its own handle. */
-  close(): Promise<void> {
-    return Promise.resolve();
+  /** Handles whose close failed stay owned here and are retried by `close()`. */
+  readonly #resources = new ArtifactResourceScope();
+
+  /** Retry retained cleanup without discarding handles that still cannot close. */
+  async close(): Promise<void> {
+    try {
+      await this.#resources.close();
+    } catch (cause: unknown) {
+      const cleanup =
+        cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
+      throw new ProviderCleanupError(
+        JVM_PROVIDER_IDENTITY.id,
+        cleanup?.resources ?? ["artifact-resources"],
+        {
+          reason:
+            cleanup?.reason ??
+            (cause instanceof Error ? cause.message : String(cause)),
+        },
+        { operation: OPERATION, cause },
+      );
+    }
   }
 
   async inspect(
@@ -127,16 +150,16 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     try {
       if (options?.signal?.aborted)
         return err(new AnalysisCancelledError(OPERATION));
-      const result =
+      return await this.#resources.run(() =>
         input.entry === undefined
-          ? await this.#inspectClassFile(input, options)
-          : await this.#inspectJarEntry(
+          ? this.#inspectClassFile(input, options)
+          : this.#inspectJarEntry(
               input.path,
               normalizeJarEntryPath(input.entry),
               input,
               options,
-            );
-      return result;
+            ),
+      );
     } catch (cause: unknown) {
       return err(jvmClassFileFailure(cause, input.path));
     }
@@ -182,7 +205,9 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     );
     if (options?.signal?.aborted)
       return err(new AnalysisCancelledError(OPERATION));
-    const parsed = parseJavaClassFile(selected.bytes);
+    const parsed = parseJavaClassFile(selected.bytes, {
+      retainedAttributeBudget: JVM_LIMITS.maxDebugEntries,
+    });
     if (!parsed.ok) return err(mapParseError(parsed.error, input.path));
     const tooMany = this.#rejectIfTooManyEntries(parsed.value, input.path);
     if (tooMany) return err(tooMany);
@@ -206,10 +231,23 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     // members and its digest through that same descriptor, so the Evidence
     // sha256 identifies exactly the bytes a member was read from (closing the
     // former hash/read TOCTOU) and the symlink policy is consistent.
-    const handle = await openRegularFile(jar, {
-      symlinks: "reject",
-      signal: options?.signal,
-    });
+    let handle;
+    try {
+      handle = await openRegularFile(jar, {
+        symlinks: "reject",
+        signal: options?.signal,
+      });
+    } catch (cause: unknown) {
+      // Admission failed and its descriptor close failed too: keep that owner
+      // so a later close() retries it instead of leaking the descriptor.
+      if (cause instanceof RegularFileAdmissionFailure)
+        await this.#resources.release({
+          kind: "file-handle",
+          resource: jar,
+          handle: cause.owner,
+        });
+      throw cause;
+    }
     const owner = new OwnedFileHandle(handle);
     try {
       const initial = await handle.stat();
@@ -244,7 +282,9 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
           selected.value.member,
           options?.signal,
         );
-        const parsed = parseJavaClassFile(classBytes);
+        const parsed = parseJavaClassFile(classBytes, {
+          retainedAttributeBudget: JVM_LIMITS.maxDebugEntries,
+        });
         if (!parsed.ok) return err(mapParseError(parsed.error, jar));
         const tooMany = this.#rejectIfTooManyEntries(parsed.value, jar);
         if (tooMany) return err(tooMany);
@@ -273,11 +313,27 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
         if (tooLarge) return err(tooLarge);
         return ok(execution(result, jar, jarDigest.sha256, "zip"));
       } finally {
-        await reader.close();
+        await this.#releaseOrRetain({
+          kind: "reader",
+          resource: jar,
+          reader,
+        });
       }
     } finally {
-      await owner.close();
+      await this.#releaseOrRetain({
+        kind: "file-handle",
+        resource: jar,
+        handle: owner,
+      });
     }
+  }
+
+  /** Close now; on failure the scope retains the owner for `close()` and the call fails. */
+  async #releaseOrRetain(
+    owner: Parameters<ArtifactResourceScope["release"]>[0],
+  ): Promise<void> {
+    const attempt = await this.#resources.release(owner);
+    if (attempt.kind === "failed") throw attempt.cause;
   }
 
   /**
@@ -313,7 +369,12 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       members.push(member);
       byRelease.set(candidate.release, members);
     }
+    // Without a requested release, a present base entry is selected whatever
+    // the manifest says, so an unreadable manifest must not block it.
+    const needsManifest =
+      requestedRelease !== undefined || !byRelease.has(null);
     const multiRelease =
+      needsManifest &&
       manifestEntry !== undefined &&
       isMultiReleaseManifest(
         await this.#readEntryBytes(reader, manifestEntry, signal),
@@ -403,18 +464,41 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
    * class near the input budget can declare millions of fixed-stride table
    * entries. The pre-count reads only table headers and allocates nothing.
    */
+  /**
+   * Refuse before building the report: too many projected objects, too many
+   * debug-relevant attributes, or a projected serialization (counting every
+   * repeated constant-pool string) past the inline output budget.
+   */
   #rejectIfTooManyEntries(
-    classFile: Parameters<typeof countDebugEntries>[0],
+    classFile: Parameters<typeof projectDebugOutput>[0],
     path: string,
   ): AnalysisResourceConstraintError | undefined {
-    const entries = countDebugEntries(classFile);
-    if (entries <= JVM_LIMITS.maxDebugEntries) return undefined;
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "memory",
-      `${path} declares ${String(entries)} debug-table entries, over the ${String(JVM_LIMITS.maxDebugEntries)} limit; refused before allocation.`,
-      { maximum_debug_entries: JVM_LIMITS.maxDebugEntries },
+    const projection = projectDebugOutput(
+      classFile,
+      JVM_LIMITS.maxDebugEntries,
     );
+    if (projection.attributeBudgetExceeded)
+      return new AnalysisResourceConstraintError(
+        OPERATION,
+        "capacity",
+        `${path} declares more than ${String(JVM_LIMITS.maxDebugEntries)} debug-relevant attributes; refused before materialising them.`,
+        { max_retained_attributes: JVM_LIMITS.maxDebugEntries },
+      );
+    if (projection.entries > JVM_LIMITS.maxDebugEntries)
+      return new AnalysisResourceConstraintError(
+        OPERATION,
+        "memory",
+        `${path} declares ${String(projection.entries)} debug-table entries, over the ${String(JVM_LIMITS.maxDebugEntries)} limit; refused before allocation.`,
+        { maximum_debug_entries: JVM_LIMITS.maxDebugEntries },
+      );
+    if (projection.encodedBytes > JVM_LIMITS.outputBytes)
+      return new AnalysisResourceConstraintError(
+        OPERATION,
+        "capacity",
+        `${path} would project to about ${String(projection.encodedBytes)} bytes of debug metadata, over the ${String(JVM_LIMITS.outputBytes)}-byte output budget; refused before building it.`,
+        { maximum_output_bytes: JVM_LIMITS.outputBytes },
+      );
+    return undefined;
   }
 
   #rejectIfOversized(

@@ -61,6 +61,13 @@ export const mapParseError = (
           message: `Declared ${error.resource} count (${String(error.declared)}) exceeds the remaining ${String(error.remaining)} bytes at byte ${String(error.offset)}.`,
         },
       ]);
+    case "retained-attribute-budget":
+      return new AnalysisResourceConstraintError(
+        OPERATION,
+        "capacity",
+        `The class declares more than ${String(error.limit)} debug-relevant attributes (at byte ${String(error.offset)}); refused before materialising them.`,
+        { max_retained_attributes: error.limit },
+      );
   }
 };
 

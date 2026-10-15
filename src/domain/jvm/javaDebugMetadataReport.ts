@@ -13,6 +13,8 @@ import { buildJavaDebugMetadataEvidence } from "./javaDebugMetadataEvidence.js";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const presence = z.enum(["absent", "present", "malformed"]);
+/** A debug table may also be `unread`: a malformed sibling stopped framing before it. */
+const tablePresence = z.enum(["absent", "present", "malformed", "unread"]);
 
 /** All artifacts are explicitly selected local files; references never trigger acquisition. */
 export const inspectJvmDebugMetadataInputSchema = z
@@ -72,7 +74,7 @@ const localVariableTypeEntry = z.strictObject({
 });
 const table = <Entry extends z.ZodTypeAny>(entry: Entry) =>
   z.strictObject({
-    presence,
+    presence: tablePresence,
     declared_count: z.number().int().nonnegative(),
     entries: z.array(entry),
   });

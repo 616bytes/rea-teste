@@ -16,12 +16,19 @@ import {
   type ConstantPoolEntry,
   type JavaClassFile,
   type JavaMember,
-  parseAttributes,
+  attributeBudget,
+  frameAttributes,
+  RETAINED_ATTRIBUTES,
   resolveConstantUtf8,
 } from "./javaClassFile.js";
 
 /** Whether a named attribute was found and whether it decoded cleanly. */
-export type AttributePresence = "absent" | "present" | "malformed";
+/**
+ * `unread` means the table could not be looked for: an earlier sibling
+ * attribute in the same `Code` attribute was malformed, so framing stopped
+ * before reaching it. It is unknown, never `absent`.
+ */
+export type AttributePresence = "absent" | "present" | "malformed" | "unread";
 
 /** A decoded debug table with the entries recovered and how fully it was read. */
 export interface DebugTable<T> {
@@ -87,11 +94,11 @@ export interface MethodDebugMetadata {
 
 export interface ClassDebugMetadata {
   readonly sourceFile: {
-    readonly presence: AttributePresence;
+    readonly presence: Exclude<AttributePresence, "unread">;
     readonly name: string | null;
   };
   readonly sourceDebugExtension: {
-    readonly presence: AttributePresence;
+    readonly presence: Exclude<AttributePresence, "unread">;
     /** Byte length of the opaque extension; the bytes themselves are never interpreted here. */
     readonly byteLength: number;
   };
@@ -306,23 +313,35 @@ export const decodeMethodDebugMetadata = (
   }
 
   const seeked = seekCodeSubAttributes(code);
-  const subAttrs = seeked ? parseAttributes(seeked.cursor, pool) : null;
-  const attributes = subAttrs && subAttrs.ok ? subAttrs.value : [];
-  const codeMalformed = seeked === null || (subAttrs !== null && !subAttrs.ok);
+  // Keep every table framed before a malformed sibling; tables framing never
+  // reached are `unread`, not `absent`.
+  const framed = seeked
+    ? frameAttributes(seeked.cursor, pool, RETAINED_ATTRIBUTES.code)
+    : null;
+  const attributes = framed?.attributes ?? [];
+  const codeMalformed = seeked === null || (framed?.error ?? null) !== null;
   const codeLength = seeked?.codeLength ?? 0;
+  const orUnread = <T>(table: DebugTable<T>): DebugTable<T> =>
+    codeMalformed && table.presence === "absent"
+      ? { ...table, presence: "unread" }
+      : table;
 
-  const lineNumbers = decodeLineNumberTable(
-    collectAttributes(attributes, "LineNumberTable"),
+  const lineNumbers = orUnread(
+    decodeLineNumberTable(collectAttributes(attributes, "LineNumberTable")),
   );
-  const localVariables = decodeLocalVariableTable(
-    collectAttributes(attributes, "LocalVariableTable"),
-    pool,
-    codeLength,
+  const localVariables = orUnread(
+    decodeLocalVariableTable(
+      collectAttributes(attributes, "LocalVariableTable"),
+      pool,
+      codeLength,
+    ),
   );
-  const localVariableTypes = decodeLocalVariableTypeTable(
-    collectAttributes(attributes, "LocalVariableTypeTable"),
-    pool,
-    codeLength,
+  const localVariableTypes = orUnread(
+    decodeLocalVariableTypeTable(
+      collectAttributes(attributes, "LocalVariableTypeTable"),
+      pool,
+      codeLength,
+    ),
   );
 
   const state = codeMalformed
@@ -348,31 +367,88 @@ const DEBUG_TABLE_STRIDES: ReadonlyArray<readonly [string, number]> = [
   ["LocalVariableTypeTable", 10],
 ];
 
+/** Serialized overhead per projected object (keys, numbers, punctuation). */
+const METHOD_OVERHEAD = 320;
+const LINE_ENTRY_OVERHEAD = 48;
+const LOCAL_ENTRY_OVERHEAD = 160;
+
+/** What {@link decodeClassDebugMetadata} would materialise, projected without materialising it. */
+export interface DebugOutputProjection {
+  /** Projected objects: one per method plus every debug-table entry. */
+  readonly entries: number;
+  /** Estimated serialized bytes, counting every repeated constant-pool string. */
+  readonly encodedBytes: number;
+  /** Set when framing the debug tables exceeded the retained-attribute budget. */
+  readonly attributeBudgetExceeded: boolean;
+}
+
 /**
- * Upper bound on the debug-table entries {@link decodeClassDebugMetadata} would
- * materialize, counted without allocating a single entry object: it reads only
- * each table's `count` prefix, clamped by the bytes actually present. A caller
- * enforcing a resource budget uses this to refuse a crafted class before the
- * (potentially ~50x) expansion into entry objects, not after.
+ * Project the size of the debug-metadata report before building it. Reads each
+ * table's `count` prefix and its constant-pool indices in place — no entry
+ * objects — and charges every reference with the JSON-encoded length of the
+ * string it names, so a name shared by thousands of entries is counted
+ * thousands of times (`JSON.stringify` would expand it that many times).
+ * Code sub-attributes are framed against `attributeLimit`.
  */
-export const countDebugEntries = (cls: JavaClassFile): number => {
-  let total = cls.methods.length; // each method projects to one object
+export const projectDebugOutput = (
+  cls: JavaClassFile,
+  attributeLimit: number,
+): DebugOutputProjection => {
+  const encoder = new TextEncoder();
+  const lengths = new Map<number, number>();
+  const stringBytes = (index: number): number => {
+    let length = lengths.get(index);
+    if (length === undefined) {
+      const value = resolveConstantUtf8(cls.constantPool, index) ?? "";
+      length = encoder.encode(JSON.stringify(value)).length;
+      lengths.set(index, length);
+    }
+    return length;
+  };
+  const budget = attributeBudget(attributeLimit);
+  let entries = cls.methods.length;
+  let encodedBytes = 4096;
   for (const method of cls.methods) {
+    encodedBytes +=
+      METHOD_OVERHEAD +
+      stringBytes(method.nameIndex) +
+      stringBytes(method.descriptorIndex);
     const code = findAttribute(method.attributes, "Code");
     if (code === null) continue;
     const seeked = seekCodeSubAttributes(code);
     if (seeked === null) continue;
-    const sub = parseAttributes(seeked.cursor, cls.constantPool);
-    if (!sub.ok) continue;
+    const framed = frameAttributes(
+      seeked.cursor,
+      cls.constantPool,
+      RETAINED_ATTRIBUTES.code,
+      budget,
+    );
+    if (framed.error?.kind === "retained-attribute-budget")
+      return { entries, encodedBytes, attributeBudgetExceeded: true };
     for (const [name, stride] of DEBUG_TABLE_STRIDES)
-      for (const info of collectAttributes(sub.value, name)) {
+      for (const info of collectAttributes(framed.attributes, name)) {
         if (info.length < 2) continue;
         const declared = (info[0]! << 8) | info[1]!;
-        const capacity = Math.floor((info.length - 2) / stride);
-        total += Math.min(declared, capacity);
+        const count = Math.min(
+          declared,
+          Math.floor((info.length - 2) / stride),
+        );
+        entries += count;
+        if (stride === 4) {
+          encodedBytes += count * LINE_ENTRY_OVERHEAD;
+          continue;
+        }
+        // name_index and descriptor/signature_index sit at +4 and +6.
+        for (let i = 0; i < count; i += 1) {
+          const at = 2 + i * stride;
+          encodedBytes +=
+            LOCAL_ENTRY_OVERHEAD +
+            stringBytes((info[at + 4]! << 8) | info[at + 5]!) +
+            stringBytes((info[at + 6]! << 8) | info[at + 7]!);
+        }
       }
   }
-  return total;
+  return { entries, encodedBytes, attributeBudgetExceeded: false };
 };
 
 /** Decode class-level debug attributes and every method's debug tables. */

@@ -105,7 +105,27 @@ export type JavaClassFileParseError =
       readonly resource: "interfaces" | "fields" | "methods" | "attributes";
       readonly declared: number;
       readonly remaining: number;
+    }
+  | {
+      /** More retained attributes than the caller's budget allows. */
+      readonly kind: "retained-attribute-budget";
+      readonly offset: number;
+      readonly limit: number;
     };
+
+/**
+ * A count of attribute objects a caller is willing to materialise, shared and
+ * decremented across every attribute list framed with it.
+ */
+export interface AttributeBudget {
+  remaining: number;
+  readonly limit: number;
+}
+
+export const attributeBudget = (limit: number): AttributeBudget => ({
+  remaining: limit,
+  limit,
+});
 
 const CLASS_FILE_MAGIC = 0xcafebabe;
 
@@ -157,6 +177,14 @@ export class ByteCursor {
         this.bytes[this.offset + 3]!);
     this.offset += 4;
     return ok(value);
+  }
+
+  /** Advance past `n` already-bounds-checked bytes without creating a view. */
+  skip(n: number): Result<void, JavaClassFileParseError> {
+    const short = this.ensure(n);
+    if (short) return err(short);
+    this.offset += n;
+    return ok(undefined);
   }
 
   /** Return a view over `n` bytes and advance; no copy. */
@@ -298,44 +326,96 @@ const parseConstantPool = (
   return ok(pool);
 };
 
-/** Read an `attributes_count`-prefixed attribute list from the cursor's current position. */
-export const parseAttributes = (
+/** Attributes framed before a failure, and the failure (if any) that stopped framing. */
+export interface FramedAttributes {
+  readonly attributes: readonly JavaAttribute[];
+  readonly error: JavaClassFileParseError | null;
+}
+
+/**
+ * Frame an `attributes_count`-prefixed attribute list from the cursor's
+ * current position, keeping the successfully framed prefix when a later
+ * attribute is malformed. Every attribute is framed and bounds-checked, but
+ * only those named in `keep` are materialised (a crafted class can declare up
+ * to 65,535 attributes per owner), and each retained one is charged to
+ * `budget` so repeated wanted attributes cannot grow without bound either.
+ */
+export const frameAttributes = (
   cursor: ByteCursor,
   pool: readonly ConstantPoolEntry[],
-): Result<JavaAttribute[], JavaClassFileParseError> => {
-  const countResult = cursor.u2();
-  if (!countResult.ok) return countResult;
-  const count = countResult.value;
+  keep: ReadonlySet<string>,
+  budget?: AttributeBudget,
+): FramedAttributes => {
   const attributes: JavaAttribute[] = [];
-  for (let i = 0; i < count; i += 1) {
+  const stop = (error: JavaClassFileParseError): FramedAttributes => ({
+    attributes,
+    error,
+  });
+  const countResult = cursor.u2();
+  if (!countResult.ok) return stop(countResult.error);
+  for (let i = 0; i < countResult.value; i += 1) {
     const nameIndex = cursor.u2();
-    if (!nameIndex.ok) return nameIndex;
+    if (!nameIndex.ok) return stop(nameIndex.error);
     const lengthResult = cursor.u4();
-    if (!lengthResult.ok) return lengthResult;
-    if (lengthResult.value > cursor.remaining) {
-      return err({
+    if (!lengthResult.ok) return stop(lengthResult.error);
+    if (lengthResult.value > cursor.remaining)
+      return stop({
         kind: "budget-exceeded",
         offset: cursor.offset,
         resource: "attributes",
         declared: lengthResult.value,
         remaining: cursor.remaining,
       });
+    const name = resolveConstantUtf8(pool, nameIndex.value);
+    if (name === null || !keep.has(name)) {
+      const skipped = cursor.skip(lengthResult.value);
+      if (!skipped.ok) return stop(skipped.error);
+      continue;
+    }
+    if (budget !== undefined) {
+      if (budget.remaining <= 0)
+        return stop({
+          kind: "retained-attribute-budget",
+          offset: cursor.offset,
+          limit: budget.limit,
+        });
+      budget.remaining -= 1;
     }
     const info = cursor.slice(lengthResult.value);
-    if (!info.ok) return info;
-    attributes.push({
-      nameIndex: nameIndex.value,
-      name: resolveConstantUtf8(pool, nameIndex.value),
-      info: info.value,
-    });
+    if (!info.ok) return stop(info.error);
+    attributes.push({ nameIndex: nameIndex.value, name, info: info.value });
   }
-  return ok(attributes);
+  return { attributes, error: null };
 };
+
+/** {@link frameAttributes}, failing the whole list on any framing error. */
+export const parseAttributes = (
+  cursor: ByteCursor,
+  pool: readonly ConstantPoolEntry[],
+  keep: ReadonlySet<string>,
+  budget?: AttributeBudget,
+): Result<JavaAttribute[], JavaClassFileParseError> => {
+  const framed = frameAttributes(cursor, pool, keep, budget);
+  return framed.error === null ? ok([...framed.attributes]) : err(framed.error);
+};
+
+/** Attributes the debug-metadata reader consumes, per owner (JVMS §4.7). */
+export const RETAINED_ATTRIBUTES = {
+  field: new Set<string>(),
+  method: new Set(["Code"]),
+  class: new Set(["SourceFile", "SourceDebugExtension"]),
+  code: new Set([
+    "LineNumberTable",
+    "LocalVariableTable",
+    "LocalVariableTypeTable",
+  ]),
+} as const;
 
 const parseMembers = (
   cursor: ByteCursor,
   pool: readonly ConstantPoolEntry[],
   resource: "fields" | "methods",
+  budget: AttributeBudget | undefined,
 ): Result<JavaMember[], JavaClassFileParseError> => {
   const countResult = cursor.u2();
   if (!countResult.ok) return countResult;
@@ -358,7 +438,14 @@ const parseMembers = (
     if (!nameIndex.ok) return nameIndex;
     const descriptorIndex = cursor.u2();
     if (!descriptorIndex.ok) return descriptorIndex;
-    const attributes = parseAttributes(cursor, pool);
+    const attributes = parseAttributes(
+      cursor,
+      pool,
+      resource === "fields"
+        ? RETAINED_ATTRIBUTES.field
+        : RETAINED_ATTRIBUTES.method,
+      budget,
+    );
     if (!attributes.ok) return attributes;
     members.push({
       accessFlags: accessFlags.value,
@@ -375,7 +462,12 @@ const parseMembers = (
 /** Frame a `.class` file. The returned attribute `info` views share the input buffer. */
 export const parseJavaClassFile = (
   bytes: Uint8Array,
+  options: { readonly retainedAttributeBudget?: number } = {},
 ): Result<JavaClassFile, JavaClassFileParseError> => {
+  const budget =
+    options.retainedAttributeBudget === undefined
+      ? undefined
+      : attributeBudget(options.retainedAttributeBudget);
   const cursor = new ByteCursor(bytes);
 
   const magic = cursor.u4();
@@ -417,11 +509,16 @@ export const parseJavaClassFile = (
     interfaceIndices.push(ref.value);
   }
 
-  const fields = parseMembers(cursor, pool.value, "fields");
+  const fields = parseMembers(cursor, pool.value, "fields", budget);
   if (!fields.ok) return fields;
-  const methods = parseMembers(cursor, pool.value, "methods");
+  const methods = parseMembers(cursor, pool.value, "methods", budget);
   if (!methods.ok) return methods;
-  const attributes = parseAttributes(cursor, pool.value);
+  const attributes = parseAttributes(
+    cursor,
+    pool.value,
+    RETAINED_ATTRIBUTES.class,
+    budget,
+  );
   if (!attributes.ok) return attributes;
 
   return ok({

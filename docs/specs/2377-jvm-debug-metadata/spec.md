@@ -27,8 +27,9 @@ unknown extensions remain opaque rather than guessed.
 
 In a multi-release JAR the requested effective class version is selected
 explicitly or its alternatives are reported; metadata from different entries is
-never silently combined. Ordering is deterministic: methods in class order, and
-each table's entries in their declared (occurrence) order, not re-sorted. The
+never silently combined. Ordering is deterministic: methods sorted by name then
+descriptor (stable across recompilation that reorders members), and each
+table's entries in their declared (occurrence) order, not re-sorted. The
 result returns artifact path/digest/length, class identity, the bound debug
 facts, examined-vs-reported `coverage`, and `limitations`. Unresolved values are
 explicit — a name whose constant-pool index does not resolve is `null`, and a
@@ -47,11 +48,14 @@ JVM runtime/JDWP proposal (#2376). Parent Java domain: #1558.
 
 Every length-prefixed structure is bounded against the buffer before allocation;
 a declared interface/field/method/attribute count exceeding the remaining bytes
-is refused as invalid input (`AnalysisInputError`). The decoded debug-table
-entries are additionally capped by a cheap pre-count (`countDebugEntries`, reads
-table headers only) that reports an `AnalysisResourceConstraintError` before any
-entry object is allocated — input bounds alone do not bound the ~50x object
-expansion — and the projected result is bounded by an inline output budget. JAR
+is refused as invalid input (`AnalysisInputError`). Only attributes the reader
+consumes are materialised, charged to a shared retained-attribute budget; others
+are framed and skipped. A projection (`projectDebugOutput`, reads table headers
+and constant-pool indices only) counts entries and the encoded size of every
+referenced string, refusing with an `AnalysisResourceConstraintError` before any
+entry object is allocated — input bounds alone bound neither the ~50x object
+expansion nor a shared long name repeated across entries — and the exact
+serialized result is re-checked against the inline output budget. JAR
 entry reads are bounded per entry; the archive is admitted once and its digest is
 read through that same descriptor. Parsing is linear in examined bytes. A 30 MiB
 crafted class with ~8M declared entries is refused in ~1 ms; token usage remains

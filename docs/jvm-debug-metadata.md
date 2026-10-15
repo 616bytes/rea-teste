@@ -78,7 +78,9 @@ The normalized result binds every fact to exact identity:
 | `not-applicable` | no `Code` attribute (native/abstract, or no body)                  |
 
 A table whose declared entry count exceeds its bytes is reported `malformed` with
-the entries recovered before the short read; absent, malformed, partial, and
+the entries recovered before the short read. When a later sibling inside the
+same `Code` attribute is malformed, tables framed before it are kept and tables
+that were never reached are `unread` (unknown), not `absent`; absent, malformed, partial, and
 ambiguous (reused-slot) cases stay distinct and are never collapsed into
 "absent".
 
@@ -90,10 +92,13 @@ metadata identity stays separate from any decompiler output. Standalone `.class`
 inspection is independent of the Android/JADX lane and of the JVM runtime
 (JDWP) proposal. A malformed or truncated class file is reported through the
 tagged error algebra rather than throwing. A single class file far over the
-input budget is refused before allocation; a class declaring more debug-table
-entries than the budget is refused by a pre-count before any entry is allocated;
-and a decoded result that would still exceed the inline output budget is refused
-rather than returned oversized. A local-variable scope whose `[start_pc, start_pc+length)`
+input budget is refused before allocation. Only the attributes this reader
+consumes are materialised (others are framed and skipped), under a shared
+budget. Before any entry is built, a projection counts debug-table entries and
+the encoded size of every constant-pool string each entry references, so a class
+with too many entries, or whose shared long names would expand past the inline
+output budget, is refused without building the report; the exact serialized
+size is checked again afterwards. A local-variable scope whose `[start_pc, start_pc+length)`
 lies outside the method's code length is surfaced as declared and flagged
 `out_of_range: true`, never silently corrected.
 

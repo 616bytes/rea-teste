@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { CONSTANT_TAG, parseJavaClassFile } from "./javaClassFile.js";
 import {
-  countDebugEntries,
+  projectDebugOutput,
   decodeClassDebugMetadata,
 } from "./javaDebugMetadata.js";
 
@@ -315,7 +315,7 @@ describe("decodeClassDebugMetadata — states and edge cases", () => {
   });
 });
 
-describe("countDebugEntries", () => {
+describe("projectDebugOutput", () => {
   it("sums declared table entries plus one per method, without decoding them", () => {
     const code = codeAttrInfo(
       subAttrs(
@@ -338,7 +338,7 @@ describe("countDebugEntries", () => {
     expect(cls.ok).toBe(true);
     if (!cls.ok) return;
     // 1 method + 3 line entries + 1 local entry
-    expect(countDebugEntries(cls.value)).toBe(5);
+    expect(projectDebugOutput(cls.value, 1000).entries).toBe(5);
   });
 
   it("clamps a lying declared count to the bytes actually present", () => {
@@ -352,6 +352,78 @@ describe("countDebugEntries", () => {
     );
     expect(cls.ok).toBe(true);
     if (!cls.ok) return;
-    expect(countDebugEntries(cls.value)).toBe(1 + 2); // method + clamped entries
+    expect(projectDebugOutput(cls.value, 1000).entries).toBe(1 + 2); // method + clamped entries
+  });
+
+  it("charges every reference to a shared name, as serialization would expand it", () => {
+    const projected = (locals: number) => {
+      const code = codeAttrInfo(
+        subAttrs(
+          1,
+          new Blob().attr(
+            5,
+            localVariableTable(
+              Array.from({ length: locals }, (_, slot) => ({
+                startPc: 0,
+                length: 1,
+                slot,
+              })),
+            ),
+          ),
+        ).parts,
+      );
+      const cls = parseJavaClassFile(
+        classWith(new Blob().u2(1).attr(3, code), new Blob().u2(0)),
+      );
+      if (!cls.ok) throw new Error("fixture must parse");
+      return projectDebugOutput(cls.value, 1000).encodedBytes;
+    };
+    // Each extra entry re-references "x" and "I": overhead + "\"x\"" + "\"I\"".
+    expect(projected(3) - projected(1)).toBe(2 * (160 + 3 + 3));
+  });
+
+  it("stops framing at the retained-attribute budget", () => {
+    const code = codeAttrInfo(
+      subAttrs(
+        3,
+        new Blob()
+          .attr(4, lineNumberTable([]))
+          .attr(4, lineNumberTable([]))
+          .attr(4, lineNumberTable([])),
+      ).parts,
+    );
+    const cls = parseJavaClassFile(
+      classWith(new Blob().u2(1).attr(3, code), new Blob().u2(0)),
+    );
+    expect(cls.ok).toBe(true);
+    if (!cls.ok) return;
+    expect(projectDebugOutput(cls.value, 2).attributeBudgetExceeded).toBe(true);
+    expect(projectDebugOutput(cls.value, 3).attributeBudgetExceeded).toBe(
+      false,
+    );
+  });
+});
+
+describe("Code sub-attribute recovery", () => {
+  it("keeps a table framed before a malformed sibling and marks unreached tables unread", () => {
+    const code = codeAttrInfo(
+      new Blob()
+        .u2(2)
+        .attr(4, lineNumberTable([[0, 5]]))
+        // A sibling whose declared length runs past the Code attribute.
+        .u2(5)
+        .u4(9999).parts,
+    );
+    const cls = parseJavaClassFile(
+      classWith(new Blob().u2(1).attr(3, code), new Blob().u2(0)),
+    );
+    expect(cls.ok).toBe(true);
+    if (!cls.ok) return;
+    const method = decodeClassDebugMetadata(cls.value).methods[0]!;
+    expect(method.state).toBe("malformed");
+    expect(method.lineNumbers.presence).toBe("present");
+    expect(method.lineNumbers.entries).toEqual([{ startPc: 0, lineNumber: 5 }]);
+    expect(method.localVariables.presence).toBe("unread");
+    expect(method.localVariableTypes.presence).toBe("unread");
   });
 });

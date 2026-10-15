@@ -262,6 +262,7 @@ export function* indexJavaScriptBindingsWithReceiversSteps(
   let ambientIndexed = false;
   let references: readonly JavaScriptSemanticReference[] | undefined;
   return {
+    sourceType: program.sourceType,
     bindings: state,
     receivers,
     *indexAmbientWritesSteps() {

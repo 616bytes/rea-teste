@@ -157,7 +157,7 @@ const graphqlOperationFromDocumentNode = (
 interface GraphqlSourceDependency {
   readonly bindingId: string;
   readonly name: string;
-  readonly location: JavaScriptSemanticReference["location"];
+  readonly location?: JavaScriptSemanticReference["location"];
 }
 
 interface GraphqlSourceCopy {
@@ -165,6 +165,25 @@ interface GraphqlSourceCopy {
   readonly dependencies: readonly GraphqlSourceDependency[];
   readonly operations: readonly JavaScriptRpcEndpoint[];
 }
+
+/** One private constant owns its initializer; exported or projected values do not. */
+const graphqlPrivateBinding = (
+  node: t.Identifier,
+  state: JavaScriptSemanticAnalysisState,
+) => {
+  const binding = resolveSemanticBindingState(state, node, node.name);
+  if (binding === undefined || binding.mutable) return undefined;
+  const initializer = semanticStableInitializer(binding, state);
+  if (initializer?.projection.length !== 0) return undefined;
+  const declaration = state.parentsByNode.get(initializer.node);
+  const statement = t.isVariableDeclarator(declaration)
+    ? state.parentsByNode.get(declaration)
+    : undefined;
+  return t.isVariableDeclaration(statement) &&
+    !t.isExportNamedDeclaration(state.parentsByNode.get(statement))
+    ? { binding, initializer }
+    : undefined;
+};
 
 /** Resolve potential metadata ownership; references must still prove exclusivity. */
 const graphqlSourceObjectValue = (
@@ -179,24 +198,14 @@ const graphqlSourceObjectValue = (
     node = unwrapJavaScriptExpression(node).node;
     if (t.isObjectExpression(node)) return node;
     if (!t.isIdentifier(node)) return undefined;
-    const binding = resolveSemanticBindingState(state, node, node.name);
-    if (binding === undefined || binding.mutable) return undefined;
-    const initializer = semanticStableInitializer(binding, state);
+    const owner = graphqlPrivateBinding(node, state);
+    if (owner === undefined) return undefined;
+    const { binding, initializer } = owner;
     if (
-      initializer?.projection.length !== 0 ||
       initializer.node.end == null ||
       node.start == null ||
       node.loc == null ||
       initializer.node.end > node.start
-    )
-      return undefined;
-    const declaration = state.parentsByNode.get(initializer.node);
-    const statement = t.isVariableDeclarator(declaration)
-      ? state.parentsByNode.get(declaration)
-      : undefined;
-    if (
-      t.isVariableDeclaration(statement) &&
-      t.isExportNamedDeclaration(state.parentsByNode.get(statement))
     )
       return undefined;
     dependencies.push({
@@ -214,6 +223,7 @@ const graphqlDocumentSource = (
   state: JavaScriptSemanticAnalysisState,
 ): Omit<GraphqlSourceCopy, "operations"> | undefined => {
   const dependencies: GraphqlSourceDependency[] = [];
+  if (!graphqlContainerOwnership(node, state, dependencies)) return undefined;
   const loc = graphqlSourceObjectValue(
     semanticFinalObjectProperty(node, "loc"),
     state,
@@ -228,6 +238,37 @@ const graphqlDocumentSource = (
           dependencies,
         );
   return source === undefined ? undefined : { source, dependencies };
+};
+
+/** Follow containment to the binding that can expose or mutate this document. */
+const graphqlContainerOwnership = (
+  document: t.ObjectExpression,
+  state: JavaScriptSemanticAnalysisState,
+  dependencies: GraphqlSourceDependency[],
+): boolean => {
+  let node: t.Node = document;
+  for (;;) {
+    const parent = state.parentsByNode.get(node);
+    if (parent === undefined) return false;
+    if (t.isObjectProperty(parent) && parent.value === node) {
+      const object = state.parentsByNode.get(parent);
+      if (!t.isObjectExpression(object)) return false;
+      node = object;
+    } else if (
+      t.isArrayExpression(parent) ||
+      unwrapJavaScriptExpression(parent).node === node
+    )
+      node = parent;
+    else if (t.isExpressionStatement(parent)) return true;
+    else if (t.isVariableDeclarator(parent) && parent.init === node) {
+      if (!t.isIdentifier(parent.id)) return false;
+      const owner = graphqlPrivateBinding(parent.id, state);
+      if (owner?.initializer.node !== node) return false;
+      const { binding } = owner;
+      dependencies.push({ bindingId: binding.bindingId, name: binding.name });
+      return true;
+    } else return false;
+  }
 };
 
 const graphqlDocumentOperations = (
@@ -269,7 +310,7 @@ function* graphqlSourceReferenceIndexSteps(
     for (const { bindingId, name, location } of dependencies) {
       if (++examined % 1024 === 0) yield;
       const sites = allowed.get(bindingId) ?? new Set<string>();
-      sites.add(JSON.stringify(location));
+      if (location !== undefined) sites.add(JSON.stringify(location));
       allowed.set(bindingId, sites);
       const names = byName.get(name) ?? new Set<string>();
       names.add(bindingId);
@@ -289,15 +330,21 @@ function* graphqlSourceReferenceIndexSteps(
 function* uncertainGraphqlSourceBindingsSteps(
   index: GraphqlSourceReferenceIndex,
   references: readonly JavaScriptSemanticReference[],
+  sourceType: t.Program["sourceType"],
 ): Generator<void, ReadonlySet<string>> {
   const { allowed, neighbors, byName } = index;
   const uncertain = new Set<string>();
   let examined = 0;
   for (const reference of references) {
     if (++examined % 1024 === 0) yield;
-    // Dynamic evaluation can reach lexical objects without identifier reads in
-    // this tree. Those sources cannot be proven exclusive metadata aliases.
-    if (reference.name === "eval" && reference.bindingId === null)
+    // Direct eval may reach any lexical scope. Classic scripts additionally
+    // expose top-level lexical objects to external code, including indirect
+    // eval through a global object or alias. Unresolved uses cannot prove that
+    // those objects remain exclusive metadata.
+    if (
+      reference.name === "eval" ||
+      (sourceType === "script" && reference.resolution !== "resolved")
+    )
       return new Set(allowed.keys());
     if (reference.bindingId !== null) {
       const sites = allowed.get(reference.bindingId);
@@ -333,11 +380,13 @@ function* uncertainGraphqlSourceBindingsSteps(
 function* provenGraphqlSourceCopiesSteps(
   copies: readonly GraphqlSourceCopy[],
   references: readonly JavaScriptSemanticReference[],
+  sourceType: t.Program["sourceType"],
 ): Generator<GraphqlSourceCopy | void, void> {
   const index = yield* graphqlSourceReferenceIndexSteps(copies);
   const uncertain = yield* uncertainGraphqlSourceBindingsSteps(
     index,
     references,
+    sourceType,
   );
   for (const copy of copies)
     yield copy.dependencies.every(({ bindingId }) => !uncertain.has(bindingId))
@@ -366,7 +415,7 @@ export const createJavaScriptGraphqlScan = (
 ): JavaScriptRpcScan => {
   const bodies = new WeakSet<t.Node>();
   const copied = new WeakMap<t.ObjectExpression, Set<string>>();
-  const aliases: GraphqlSourceCopy[] = [];
+  const copies: GraphqlSourceCopy[] = [];
   const sources: {
     readonly source: t.ObjectExpression;
     readonly node: t.StringLiteral;
@@ -394,9 +443,7 @@ export const createJavaScriptGraphqlScan = (
             ? undefined
             : graphqlDocumentSource(node, index.bindings);
         if (source !== undefined) {
-          const copy = { ...source, operations };
-          if (source.dependencies.length === 0) retainCopy(copy);
-          else aliases.push(copy);
+          copies.push({ ...source, operations });
         }
       }
       const owned = graphqlSourceBodyLiterals(node);
@@ -412,11 +459,12 @@ export const createJavaScriptGraphqlScan = (
       return operation;
     },
     *finish() {
-      if (sources.length > 0 && aliases.length > 0) {
+      if (sources.length > 0 && copies.length > 0) {
         const references = yield* index.referencesSteps();
         for (const copy of provenGraphqlSourceCopiesSteps(
-          aliases,
+          copies,
           references,
+          index.sourceType,
         )) {
           if (copy !== undefined) retainCopy(copy);
           yield;
@@ -427,7 +475,7 @@ export const createJavaScriptGraphqlScan = (
           ? undefined
           : { node, ...operation };
       sources.length = 0;
-      aliases.length = 0;
+      copies.length = 0;
     },
   };
 };

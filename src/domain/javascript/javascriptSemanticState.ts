@@ -112,6 +112,7 @@ export interface JavaScriptSemanticAnalysisState {
 
 /** One parsed source owns its optional indexes and their per-source lifetime. */
 export interface JavaScriptBindingIndex {
+  readonly sourceType: t.Program["sourceType"];
   readonly bindings: JavaScriptSemanticAnalysisState;
   indexAmbientWritesSteps(): Generator<void, void>;
   referencesSteps(): Generator<void, readonly JavaScriptSemanticReference[]>;

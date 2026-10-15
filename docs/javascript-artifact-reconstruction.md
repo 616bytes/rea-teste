@@ -279,8 +279,10 @@ RPC client syntax also contributes network endpoint candidates, in both
   `OperationDefinition` document object. A standalone Source object's `body`
   remains an operation candidate even when it has `locationOffset` metadata.
   A graphql-tag `loc.source.body` copy is suppressed only when that source
-  belongs to a recovered document with the same operation. Anonymous operations
-  are not reported.
+  belongs to a recovered document with the same operation and its containing
+  document, location and source have proven metadata ownership. Writes, escapes
+  and unresolved classic-script global uses retain the source observation.
+  Anonymous operations are not reported.
 
 Literal link options and precompiled document fields follow object property
 order: the final definition owns the key. A later spread, dynamic computed key,

@@ -501,6 +501,80 @@ describe("GraphQL document ownership", () => {
   });
 });
 
+describe("GraphQL document container ownership", () => {
+  it("does not prove a copy when a caller supplies direct eval", () => {
+    expect(
+      rpcEndpoints(`
+        function inspect(eval) {
+          const source={body:"query GetUser { user { id } }",locationOffset:{line:1,column:1}};
+          const doc={kind:"OperationDefinition",operation:"query",name:{kind:"Name",value:"GetUser"},loc:{source}};
+          eval("doc.loc.source={}");
+        }
+      `),
+    ).toHaveLength(2);
+  });
+
+  it.each([
+    ["", "", 1],
+    ["", "holder.docs[0].loc.source = {};", 2],
+    ["export ", "", 2],
+  ] as const)(
+    "checks containing object and array ownership: %s %s",
+    (prefix, effect, count) => {
+      expect(
+        rpcEndpoints(`
+          ${prefix}const holder = {docs:[{kind:"OperationDefinition",operation:"query",name:{kind:"Name",value:"GetUser"},loc:{source:{body:"query GetUser { user { id } }",locationOffset:{line:1,column:1}}}}]};
+          ${effect}
+        `),
+      ).toHaveLength(count);
+    },
+  );
+
+  it.each([
+    ["", 'const indirect=globalThis; indirect.eval("loc.source={}");', 2],
+    ["export {};", 'globalThis.eval("loc.source={}");', 1],
+    ["export {};", 'eval("loc.source={}");', 2],
+  ] as const)(
+    "respects lexical exposure for indirect evaluation: %s %s",
+    (prefix, effect, count) => {
+      expect(
+        rpcEndpoints(`
+          ${prefix}
+          const source={body:"query GetUser { user { id } }",locationOffset:{line:1,column:1}};
+          const loc={source};
+          const doc={kind:"OperationDefinition",operation:"query",name:{kind:"Name",value:"GetUser"},loc};
+          ${effect}
+        `),
+      ).toHaveLength(count);
+    },
+  );
+
+  it.each([
+    "doc.loc.source = {};",
+    "mutate(doc);",
+    "export { doc };",
+    'globalThis.eval("source.body = replacement");',
+  ])("retains sources exposed through their document: %s", (effect) => {
+    const actual = rpcEndpoints(`
+      const source = {body:"query GetUser { user { id } }",locationOffset:{line:1,column:1}};
+      const doc = {kind:"OperationDefinition",operation:"query",name:{kind:"Name",value:"GetUser"},loc:{source}};
+      ${effect}
+    `);
+    expect(actual).toHaveLength(2);
+  });
+
+  it.each(["doc.loc.source = {};", "mutate(doc);", "export { doc };"])(
+    "retains inline sources when the document escapes: %s",
+    (effect) => {
+      const actual = rpcEndpoints(`
+      const doc = {kind:"OperationDefinition",operation:"query",name:{kind:"Name",value:"GetUser"},loc:{source:{body:"query GetUser { user { id } }",locationOffset:{line:1,column:1}}}};
+      ${effect}
+    `);
+      expect(actual).toHaveLength(2);
+    },
+  );
+});
+
 describe("GraphQL source alias effects", () => {
   it.each([
     'source.body = "query Changed { user { id } }";',

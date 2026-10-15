@@ -44,6 +44,16 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
           kind: "OperationDefinition", operation: "query",
           name: { kind: "Name", value: "ChangedSource" }, loc: location,
         };
+        const exposedSource = {
+          body: "query ExposedSource { viewer { id } }",
+          locationOffset: { line: 1, column: 1 },
+        };
+        const exposedDocument = {
+          kind: "OperationDefinition", operation: "query",
+          name: { kind: "Name", value: "ExposedSource" },
+          loc: { source: exposedSource },
+        };
+        exposedDocument.loc.source = {};
       `,
     });
     const result = await analyzeJavaScriptDirectory(surface, cli, root);
@@ -56,6 +66,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         "ChangedSource",
         "ChangedSource",
         "Compiled",
+        "ExposedSource",
+        "ExposedSource",
         "Independent",
         "Independent",
         "Standalone",

@@ -1,17 +1,17 @@
 {
   "base_revision": "c9f9b83c6f5878f1d5b102ab206a2ce214749258",
   "source_sha256": {
-    "scripts/verify/javascript/module-references.mjs": "201fb1c6aa475be82120de81a81c32528df1138ba15147346bebdd7d5907ae11",
+    "scripts/verify/javascript/module-references.mjs": "9d5f0b8b35ed2ebb4591f9dc3baea0fc116a0c3fd7d8e5ce30ec476c84671ed1",
     "src/contracts/analysisViewToolContracts.ts": "f7c64b3472e7ec1090f9d47ede864b8c9630d506d896454a800747f2c90a8960",
     "src/domain/analysisView/analysisView.ts": "854b03988791c19642b01d17813b379b51d8edc10d2190a3c236c9a1b2feb365",
     "src/domain/analysisView/javascriptApplicationView.ts": "f2c41ad15fdc9f891412c9161a832b60baf3dae55e3c4d60159098d07f7d1ef1",
-    "src/domain/analysisView/javascriptModuleReferences.ts": "34c7a7ff466e9c49d43f1b11b72f878041de61a1bc09086ec190a5833b454806"
+    "src/domain/analysisView/javascriptModuleReferences.ts": "34c7a7ff466e9c49d43f1b11b72f878041de61a1bc09086ec190a5833b454806",
+    "scripts/fixtures/tokenizer-family-wrapper.py": "2e9b7092ee539ae1c6a477492f05bb6007d4612dadfff9b90051d621de43049b"
   },
   "verification": {
     "scope": "Completed module-fact reads from identical retained Evidence; no hosted-model performance claim",
     "artifact": {
       "path": "/tmp/rea-codemode-experiment-20261015/artifacts/obsidian-1.14.4.asar",
-      "bytes": 27477966,
       "sha256": "146ef8470d8cbb4a6db209bdc19bf2bad13350444186c0fd93c31087b142b92f"
     },
     "parent_evidence_id": "ev_73ef06e3b9b944f54c5257f7960279127d8518d2a73cd8618bd045dbe44e6b5a",
@@ -126,12 +126,12 @@
       "path": "main.js",
       "kind": "javascript-module"
     },
-    "preparation_ms": 19051.368892000002,
+    "preparation_ms": 20978.249922,
     "samples": [
       {
         "round": 0,
         "mode": "legacy",
-        "elapsed_ms": 330.7313439999998,
+        "elapsed_ms": 363.02500200000213,
         "calls": 24,
         "structured_reply_bytes": 325201,
         "facts_sha256": "d3be5e91d2ec3fd9a95851cfbbdef9c168bb4c7153f78810b8b235e005401299",
@@ -147,7 +147,7 @@
       {
         "round": 0,
         "mode": "references",
-        "elapsed_ms": 13.62184999999954,
+        "elapsed_ms": 14.895039999999426,
         "calls": 1,
         "structured_reply_bytes": 22158,
         "facts_sha256": "d3be5e91d2ec3fd9a95851cfbbdef9c168bb4c7153f78810b8b235e005401299",
@@ -163,7 +163,7 @@
       {
         "round": 1,
         "mode": "references",
-        "elapsed_ms": 12.475999999998749,
+        "elapsed_ms": 12.951290000000881,
         "calls": 1,
         "structured_reply_bytes": 22158,
         "facts_sha256": "d3be5e91d2ec3fd9a95851cfbbdef9c168bb4c7153f78810b8b235e005401299",
@@ -179,7 +179,7 @@
       {
         "round": 1,
         "mode": "legacy",
-        "elapsed_ms": 187.18667300000016,
+        "elapsed_ms": 232.7533779999976,
         "calls": 24,
         "structured_reply_bytes": 325201,
         "facts_sha256": "d3be5e91d2ec3fd9a95851cfbbdef9c168bb4c7153f78810b8b235e005401299",
@@ -195,7 +195,7 @@
       {
         "round": 2,
         "mode": "legacy",
-        "elapsed_ms": 293.4882039999975,
+        "elapsed_ms": 235.16672899999685,
         "calls": 24,
         "structured_reply_bytes": 325201,
         "facts_sha256": "d3be5e91d2ec3fd9a95851cfbbdef9c168bb4c7153f78810b8b235e005401299",
@@ -211,7 +211,7 @@
       {
         "round": 2,
         "mode": "references",
-        "elapsed_ms": 8.146389999998064,
+        "elapsed_ms": 10.566158999998152,
         "calls": 1,
         "structured_reply_bytes": 22158,
         "facts_sha256": "d3be5e91d2ec3fd9a95851cfbbdef9c168bb4c7153f78810b8b235e005401299",
@@ -256,13 +256,13 @@
       "facts_sha256": "d3be5e91d2ec3fd9a95851cfbbdef9c168bb4c7153f78810b8b235e005401299",
       "exact_cli_mcp_view_parity": true
     },
-    "conditions": "First query is after shared artifact analysis; subsequent queries share one MCP session. Filesystem/build warmness uncontrolled. Token costs count one post-change catalog, preparation request/summary and each request/structured reply once; client rendering, replay, reasoning, final answer and model latency are unmeasured. Preparation and parity/tokenization overhead are outside per-query elapsed times; external family-resource receipts include the complete verifier and children."
+    "conditions": "First query is after shared artifact analysis; subsequent queries share one MCP session. Legacy item reads are serial; a concurrent legacy baseline is unmeasured. Filesystem/build warmness uncontrolled. Token costs count one post-change catalog, preparation request/summary and each request/structured reply once; client rendering, replay, reasoning, final answer and model latency are unmeasured. Preparation and parity/tokenization overhead are outside per-query elapsed times; external family-resource receipts include the complete verifier and children."
   },
   "resources": {
     "scope": "Complete verifier, MCP/analysis descendants, temporary export, CLI parity and tokenizer; cgroup memory includes charged file cache and is not summed RSS",
-    "elapsed_seconds": 30.742,
-    "cpu_seconds": 30.425218,
-    "peak_cgroup_bytes": 1592938496,
+    "elapsed_seconds": 35.797,
+    "cpu_seconds": 35.197074,
+    "peak_cgroup_bytes": 1938313216,
     "memory_max_bytes": 8589934592,
     "memory_early_stop_bytes": 6442450944,
     "cpu_quota_percent": 100,
@@ -512,20 +512,167 @@
       "cpu_seconds": 81.551676,
       "peak_cgroup_bytes": 1884962816,
       "outcome": "All facts/costs and CLI/MCP parity passed. Superseded execution source after adding a tokenizer deadline; retained separately, not pooled."
+    },
+    {
+      "scope": "Successful data comparison with direct-child tokenizer timeout before adopting shared owned-process supervision",
+      "preparation_ms": 19051.368892000002,
+      "samples": [
+        {
+          "round": 0,
+          "mode": "legacy",
+          "elapsed_ms": 330.7313439999998,
+          "calls": 24,
+          "structured_reply_bytes": 325201,
+          "facts_sha256": "d3be5e91d2ec3fd9a95851cfbbdef9c168bb4c7153f78810b8b235e005401299",
+          "matching_modules": 23,
+          "coverage": {
+            "status": "page",
+            "examined": 55,
+            "total": 55,
+            "next_offset": null,
+            "exhausted": true
+          }
+        },
+        {
+          "round": 0,
+          "mode": "references",
+          "elapsed_ms": 13.62184999999954,
+          "calls": 1,
+          "structured_reply_bytes": 22158,
+          "facts_sha256": "d3be5e91d2ec3fd9a95851cfbbdef9c168bb4c7153f78810b8b235e005401299",
+          "matching_modules": 23,
+          "coverage": {
+            "status": "page",
+            "examined": 23,
+            "total": 23,
+            "next_offset": null,
+            "exhausted": true
+          }
+        },
+        {
+          "round": 1,
+          "mode": "references",
+          "elapsed_ms": 12.475999999998749,
+          "calls": 1,
+          "structured_reply_bytes": 22158,
+          "facts_sha256": "d3be5e91d2ec3fd9a95851cfbbdef9c168bb4c7153f78810b8b235e005401299",
+          "matching_modules": 23,
+          "coverage": {
+            "status": "page",
+            "examined": 23,
+            "total": 23,
+            "next_offset": null,
+            "exhausted": true
+          }
+        },
+        {
+          "round": 1,
+          "mode": "legacy",
+          "elapsed_ms": 187.18667300000016,
+          "calls": 24,
+          "structured_reply_bytes": 325201,
+          "facts_sha256": "d3be5e91d2ec3fd9a95851cfbbdef9c168bb4c7153f78810b8b235e005401299",
+          "matching_modules": 23,
+          "coverage": {
+            "status": "page",
+            "examined": 55,
+            "total": 55,
+            "next_offset": null,
+            "exhausted": true
+          }
+        },
+        {
+          "round": 2,
+          "mode": "legacy",
+          "elapsed_ms": 293.4882039999975,
+          "calls": 24,
+          "structured_reply_bytes": 325201,
+          "facts_sha256": "d3be5e91d2ec3fd9a95851cfbbdef9c168bb4c7153f78810b8b235e005401299",
+          "matching_modules": 23,
+          "coverage": {
+            "status": "page",
+            "examined": 55,
+            "total": 55,
+            "next_offset": null,
+            "exhausted": true
+          }
+        },
+        {
+          "round": 2,
+          "mode": "references",
+          "elapsed_ms": 8.146389999998064,
+          "calls": 1,
+          "structured_reply_bytes": 22158,
+          "facts_sha256": "d3be5e91d2ec3fd9a95851cfbbdef9c168bb4c7153f78810b8b235e005401299",
+          "matching_modules": 23,
+          "coverage": {
+            "status": "page",
+            "examined": 23,
+            "total": 23,
+            "next_offset": null,
+            "exhausted": true
+          }
+        }
+      ],
+      "elapsed_seconds": 30.742,
+      "cpu_seconds": 30.425218,
+      "peak_cgroup_bytes": 1592938496,
+      "outcome": "Fact and cost parity passed. That harness only killed its immediate tokenizer child; superseded by process-family supervision and detached-helper verification."
+    }
+  ],
+  "prior_tokenizer_timeout_verifications": [
+    {
+      "artifact_sha256": "146ef8470d8cbb4a6db209bdc19bf2bad13350444186c0fd93c31087b142b92f",
+      "scenario": "Real Obsidian references plus CLI parity, then a deliberately stalled tokenizer",
+      "injected_tokenizer_source": "#!/bin/sh\nexec /bin/sleep 30\n",
+      "timeout_ms": 20,
+      "observed_error_code": "ETIMEDOUT",
+      "expected_payload_exit_code": 1,
+      "payload_cleanup_verified": true,
+      "remaining_owned_temporary_files": 0,
+      "elapsed_seconds": 31.258,
+      "cpu_seconds": 31.00025,
+      "peak_cgroup_bytes": 1644077056,
+      "events_at_payload_exit": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      },
+      "scope": "Robustness check; no efficiency credit",
+      "limitation": "Immediate child only; did not test detached descendants and is superseded by the owned-family check."
     }
   ],
   "tokenizer_timeout_verification": {
     "artifact_sha256": "146ef8470d8cbb4a6db209bdc19bf2bad13350444186c0fd93c31087b142b92f",
-    "scenario": "Real Obsidian references plus CLI parity, then a deliberately stalled tokenizer",
-    "injected_tokenizer_source": "#!/bin/sh\nexec /bin/sleep 30\n",
-    "timeout_ms": 20,
-    "observed_error_code": "ETIMEDOUT",
+    "scenario": "Real Obsidian references and CLI parity, then an owned tokenizer wrapper with a detached SIGTERM-ignoring helper",
+    "fixture": "scripts/fixtures/tokenizer-family-wrapper.py",
+    "fixture_sha256": "2e9b7092ee539ae1c6a477492f05bb6007d4612dadfff9b90051d621de43049b",
+    "timeout_ms": 2000,
+    "observed_failure_type": "OwnedCommandFailure",
+    "observed_reason": "timeout",
+    "cleanup_failure": null,
     "expected_payload_exit_code": 1,
     "payload_cleanup_verified": true,
     "remaining_owned_temporary_files": 0,
-    "elapsed_seconds": 31.258,
-    "cpu_seconds": 31.00025,
-    "peak_cgroup_bytes": 1644077056,
+    "helper_observation": {
+      "pid": 2871108,
+      "group": 2871108,
+      "parent": 2871107,
+      "run_id": "rea-module-token-f139b74a-dd83-498b-b663-e765104159ec",
+      "detached": true,
+      "ignores_sigterm": true
+    },
+    "elapsed_seconds": 55.08,
+    "cpu_seconds": 45.245603,
+    "peak_cgroup_bytes": 1563475968,
     "events_at_payload_exit": {
       "memory.events": {
         "low": 0,
@@ -539,6 +686,6 @@
         "max": 0
       }
     },
-    "scope": "Robustness check; no efficiency credit"
+    "scope": "Robustness check; no efficiency credit. PIDs are observations; signaling authority comes from the shared process owner."
   }
 }

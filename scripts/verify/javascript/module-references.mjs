@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { createHash, randomUUID } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
@@ -12,6 +10,12 @@ import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { artifactCliEvidence } from "../../lib/artifact-e2e.mjs";
+import { closeVerifierResources } from "../../lib/verifier-cleanup.mjs";
+import { PrivateRuntimeRoot } from "../../../dist/process/PrivateRuntimeRoot.js";
+import {
+  OwnedCommandFailure,
+  runOwnedCommand,
+} from "../../../dist/process/OwnedCommand.js";
 
 const { values } = parseArgs({
   options: {
@@ -78,6 +82,8 @@ const normalize = (rows) =>
     ),
   }));
 let temporary;
+let primaryError;
+let retainTemporary = false;
 try {
   await client.connect(transport);
   transport.stderr?.resume();
@@ -261,8 +267,10 @@ try {
   }
   let cliParity = null;
   if (values["cli-parity"]) {
-    temporary = await mkdtemp(join(tmpdir(), "rea-module-reference-verifier-"));
-    const bundlePath = join(temporary, "bundle.json");
+    temporary = await PrivateRuntimeRoot.create({
+      prefix: "rea-module-reference-verifier-",
+    });
+    const bundlePath = join(temporary.path, "bundle.json");
     const exported = await client.callTool({
       name: "export_evidence_bundle",
       arguments: { path: bundlePath },
@@ -273,7 +281,7 @@ try {
       ({ evidence_id }) => evidence_id === source.evidence_id,
     );
     assert.ok(parent, "Export omitted the retained analysis parent");
-    const request = join(temporary, "view.json");
+    const request = join(temporary.path, "view.json");
     await writeFile(
       request,
       serialize({
@@ -305,13 +313,22 @@ try {
   }
   let tokenCosts = null;
   if (values["tokenizer-python"]) {
-    const result = spawnSync(
-      values["tokenizer-python"],
-      [
-        "-c",
-        `
+    temporary ??= await PrivateRuntimeRoot.create({
+      prefix: "rea-module-reference-verifier-",
+    });
+    const input = join(temporary.path, "token-input.json");
+    await writeFile(input, serialize(costInputs));
+    let result;
+    try {
+      result = await runOwnedCommand(
+        {
+          command: values["tokenizer-python"],
+          arguments: [
+            "-c",
+            `
 import json, sys, tiktoken
-data=json.load(sys.stdin)
+with open(sys.argv[1], encoding='utf-8') as source:
+    data=json.load(source)
 enc=tiktoken.get_encoding('cl100k_base')
 def count(value):
     return len(enc.encode(json.dumps(value,ensure_ascii=False,separators=(',',':')),disallowed_special=()))
@@ -326,22 +343,35 @@ for mode, task in data.items():
     out[mode]=dict(selected_catalog=selected,full_catalog=full,common_request=common_request,common_summary=common,requests=requests,structured_replies=replies,selected_catalog_task_total=selected+common_request+common+requests+replies,full_catalog_task_total=full+common_request+common+requests+replies)
 print(json.dumps(dict(tokenizer='cl100k_base',tiktoken_version=tiktoken.__version__,costs=out)))
 `,
-      ],
-      {
-        input: serialize(costInputs),
-        encoding: "utf8",
-        maxBuffer: 1024 * 1024,
-        timeout: tokenizerTimeoutMs,
-        killSignal: "SIGKILL",
-      },
-    );
-    if (result.error)
-      throw new Error(
-        "Token accounting subprocess failed; the verifier will close MCP and remove temporary Evidence.",
-        { cause: result.error },
+            input,
+          ],
+          cwd: temporary.path,
+          runId: `rea-module-token-${randomUUID()}`,
+          // An interpreter wrapper may exec another command. The shared owner
+          // still verifies native identities and the exact inherited run token.
+          expectedCommand: null,
+          sweepTokenOwnedProcesses: true,
+        },
+        { timeoutMs: tokenizerTimeoutMs, diagnosticBytes: 1024 * 1024 },
       );
-    assert.equal(result.status, 0, result.stderr);
-    tokenCosts = JSON.parse(result.stdout);
+    } catch (cause) {
+      // An incomplete cleanup carries its supervisor and identity resources in
+      // the error. Preserve its private files for that owner instead of erasing
+      // recovery data while a command may still be using it.
+      retainTemporary =
+        cause instanceof OwnedCommandFailure &&
+        cause.cleanupOwner !== undefined;
+      throw new Error(
+        "Token accounting failed; inspect the owned-command outcome and cleanup status.",
+        { cause },
+      );
+    }
+    assert.notEqual(
+      result.stdout.invalidUtf8,
+      true,
+      "Tokenizer output must be UTF-8 JSON",
+    );
+    tokenCosts = JSON.parse(result.stdout.text);
   }
   process.stdout.write(
     `${serialize({
@@ -349,7 +379,6 @@ print(json.dumps(dict(tokenizer='cl100k_base',tiktoken_version=tiktoken.__versio
         "Completed module-fact reads from identical retained Evidence; no hosted-model performance claim",
       artifact: {
         path: values.artifact,
-        bytes: (await stat(values.artifact)).size,
         sha256: summary.normalized_result.artifact.sha256,
       },
       parent_evidence_id: source.evidence_id,
@@ -361,17 +390,26 @@ print(json.dumps(dict(tokenizer='cl100k_base',tiktoken_version=tiktoken.__versio
       token_costs: tokenCosts,
       cli_parity: cliParity,
       conditions:
-        "First query is after shared artifact analysis; subsequent queries share one MCP session. Filesystem/build warmness uncontrolled. Token costs count one post-change catalog, preparation request/summary and each request/structured reply once; client rendering, replay, reasoning, final answer and model latency are unmeasured. Preparation and parity/tokenization overhead are outside per-query elapsed times; external family-resource receipts include the complete verifier and children.",
+        "First query is after shared artifact analysis; subsequent queries share one MCP session. Legacy item reads are serial; a concurrent legacy baseline is unmeasured. Filesystem/build warmness uncontrolled. Token costs count one post-change catalog, preparation request/summary and each request/structured reply once; client rendering, replay, reasoning, final answer and model latency are unmeasured. Preparation and parity/tokenization overhead are outside per-query elapsed times; external family-resource receipts include the complete verifier and children.",
     })}\n`,
   );
+} catch (cause) {
+  primaryError = cause;
+  throw cause;
 } finally {
-  try {
-    await client.close();
-  } finally {
-    try {
-      await transport.close();
-    } finally {
-      if (temporary !== undefined) await rm(temporary, { recursive: true });
-    }
-  }
+  await closeVerifierResources(
+    [
+      () => client.close(),
+      () => transport.close(),
+      async () => {
+        if (temporary === undefined) return;
+        if (retainTemporary)
+          throw new Error(
+            `Command cleanup is incomplete; retaining its private input/Evidence files at ${temporary.path}.`,
+          );
+        await temporary.close();
+      },
+    ],
+    primaryError,
+  );
 }

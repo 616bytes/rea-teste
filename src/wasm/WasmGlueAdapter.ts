@@ -25,11 +25,12 @@ export const associateWasmGlue = (
   if (file === null) return { parse_status: "failed" as const, references };
   traverseJavaScriptAst(file, {
     enter(node) {
-      const value = t.isStringLiteral(node)
-        ? node.value
-        : t.isTemplateLiteral(node) && node.expressions.length === 0
-          ? node.quasis[0]?.value.cooked
-          : undefined;
+      const value =
+        t.isStringLiteral(node) || t.isDirectiveLiteral(node)
+          ? node.value
+          : t.isTemplateLiteral(node) && node.expressions.length === 0
+            ? node.quasis[0]?.value.cooked
+            : undefined;
       if (
         value === undefined ||
         value === null ||

@@ -556,12 +556,41 @@ describe("web bundle WebSocket execution phases", () => {
     ).toEqual([expected, expected]);
   });
 
-  it("preserves initializer ordering within an async continuation", () => {
-    expect(
-      socketEndpoints(
-        '(async () => { await ready; new Socket("wss://example.test/tdz"); const Socket = globalThis.WebSocket; })();',
-      ),
-    ).toEqual([[], []]);
+  it.each([
+    '(async () => { await ready; new Socket("wss://example.test/tdz"); const Socket = globalThis.WebSocket; })();',
+    '(async () => { new Socket("wss://example.test/tdz"); await ready; const Socket = globalThis.WebSocket; })();',
+    '(async () => { await ready; new Socket("wss://example.test/tdz"); await ready; const Socket = globalThis.WebSocket; })();',
+    '(async () => { (() => { new Socket("wss://example.test/tdz"); })(); await ready; const Socket = globalThis.WebSocket; })();',
+  ])(
+    "preserves initializer ordering across awaits in a shared frame: %s",
+    (source) => {
+      expect(socketEndpoints(source)).toEqual([[], []]);
+    },
+  );
+
+  it.each([
+    'new (class { socket = new Socket("wss://example.test/tdz"); })();',
+    'new (class { #socket = new Socket("wss://example.test/tdz"); })();',
+    'new ((class { socket = new Socket("wss://example.test/tdz"); } as any).bind(null))();',
+    'new (class { constructor() { new Socket("wss://example.test/tdz"); } })();',
+  ])(
+    "keeps immediately constructed class initialization eager: %s",
+    (expression) => {
+      expect(
+        socketEndpoints(`${expression} const Socket = globalThis.WebSocket;`),
+      ).toEqual([[], []]);
+    },
+  );
+
+  it.each([
+    'const Socket = globalThis.WebSocket; new (class { socket = new Socket("wss://example.test/class"); })();',
+    '(async () => { await ready; new (class { socket = new Socket("wss://example.test/class"); })(); })(); const Socket = globalThis.WebSocket;',
+    'const Client = class { socket = new Socket("wss://example.test/class"); }; const Socket = globalThis.WebSocket; new Client();',
+  ])("retains initialized or deferred class construction: %s", (source) => {
+    const expected = [
+      { value: "wss://example.test/class", mechanism: "call:Socket" },
+    ];
+    expect(socketEndpoints(source)).toEqual([expected, expected]);
   });
 });
 

@@ -135,6 +135,14 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       '(function () { new Socket("wss://example.test/eager-bind"); }).bind(null)();\nconst connect = (function () { new Socket("wss://example.test/deferred-bind"); }).bind(null);\nconst Socket = globalThis.WebSocket; connect();',
     "async.js":
       '(async () => { new Socket("wss://example.test/eager-async"); await ready; })();\n(async () => { await ready; new Socket("wss://example.test/continuation"); })();\nconst Socket = globalThis.WebSocket;',
+    "async-local.js":
+      '(async () => { new Socket("wss://example.test/tdz-before-await"); await ready; const Socket = globalThis.WebSocket; })();',
+    "async-phases.js":
+      '(async () => { await ready; new Socket("wss://example.test/tdz-between-awaits"); await ready; const Socket = globalThis.WebSocket; })();',
+    "immediate-class.js":
+      'new (class { socket = new Socket("wss://example.test/tdz-field"); })(); const Socket = globalThis.WebSocket;',
+    "immediate-constructor.js":
+      'new (class { constructor() { new Socket("wss://example.test/tdz-constructor"); } })(); const Socket = globalThis.WebSocket;',
   };
   for (const [path, source] of Object.entries(fixtures))
     await writeFile(join(root, path), source);

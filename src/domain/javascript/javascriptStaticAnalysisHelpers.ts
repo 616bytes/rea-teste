@@ -27,7 +27,7 @@ import {
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
-import { webSocketExecutionContext } from "./javascriptWebSocketExecution.js";
+import { webSocketExecutionContexts } from "./javascriptWebSocketExecution.js";
 import {
   compareUnicodeCodePoints,
   compositeKey,
@@ -643,7 +643,7 @@ export const isWebSocketEndpointCandidate = (
       const definition = binding.definitions[0];
       const location = root.loc?.start;
       const initialized =
-        webSocketExecutionContext(root, state) !== state.program ||
+        !webSocketExecutionContexts(root, state).includes(state.program) ||
         (definition !== undefined &&
           location !== undefined &&
           (definition.location.end.line < location.line ||
@@ -663,6 +663,7 @@ export const isWebSocketEndpointCandidate = (
       );
     }
     const initializer = semanticStableInitializer(binding, state);
+    const readContexts = webSocketExecutionContexts(root, state);
     if (
       initializer === undefined ||
       binding.referenceInitializers.length !== 0 ||
@@ -670,8 +671,9 @@ export const isWebSocketEndpointCandidate = (
         (key): key is string => typeof key === "string",
       ) ||
       !members.every((key): key is string => typeof key === "string") ||
-      (webSocketExecutionContext(initializer.node, state) ===
-        webSocketExecutionContext(root, state) &&
+      (webSocketExecutionContexts(initializer.node, state).some((context) =>
+        readContexts.includes(context),
+      ) &&
         (initializer.node.end ?? Infinity) >= (root.start ?? -1))
     )
       return false;

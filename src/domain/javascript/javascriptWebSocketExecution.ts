@@ -25,7 +25,7 @@ const webSocketOuterExpression = (
 
 /** Binding a literal defers it only until that bound result is invoked. */
 const webSocketImmediateInvocation = (
-  node: t.Function,
+  node: t.Function | t.ClassExpression,
   state: JavaScriptSemanticAnalysisState,
 ):
   | t.CallExpression
@@ -143,21 +143,40 @@ const webSocketAsyncContinuation = (
   return undefined;
 };
 
-/** Keep class initialization, invocation and suspended bodies in their own phase. */
-export const webSocketExecutionContext = (
+/** Find the literal class whose construction evaluates a field or constructor. */
+const webSocketClassConstruction = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): t.Node => {
+): t.NewExpression | undefined => {
+  const body = state.parentsByNode.get(node);
+  const declaration =
+    body === undefined ? undefined : state.parentsByNode.get(body);
+  if (!t.isClassExpression(declaration)) return undefined;
+  const invocation = webSocketImmediateInvocation(declaration, state);
+  return t.isNewExpression(invocation) ? invocation : undefined;
+};
+
+/**
+ * Retain each eager frame even when its own body later suspends. A shared frame
+ * still orders a local initializer before its reads across continuation phases.
+ * An await cuts off only outer frames, which may initialize before resumption.
+ */
+export const webSocketExecutionContexts = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): readonly t.Node[] => {
+  const contexts: t.Node[] = [];
   let current = node;
   for (;;) {
     const parent = state.parentsByNode.get(current);
-    if (parent === undefined) return current;
+    if (parent === undefined) return [...contexts, current];
     if (
       (t.isClassProperty(parent) || t.isClassPrivateProperty(parent)) &&
       !parent.static &&
-      parent.value === current
+      parent.value === current &&
+      webSocketClassConstruction(parent, state) === undefined
     )
-      return parent;
+      return [...contexts, parent];
     if (t.isFunction(parent)) {
       if (
         (t.isObjectMethod(parent) || t.isClassMethod(parent)) &&
@@ -166,7 +185,11 @@ export const webSocketExecutionContext = (
         current = parent;
         continue;
       }
-      const invocation = webSocketImmediateInvocation(parent, state);
+      const invocation =
+        t.isClassMethod(parent) && parent.kind === "constructor"
+          ? webSocketClassConstruction(parent, state)
+          : webSocketImmediateInvocation(parent, state);
+      contexts.push(parent);
       if (
         invocation === undefined ||
         (current === parent.body &&
@@ -174,14 +197,14 @@ export const webSocketExecutionContext = (
           parent.generator &&
           !t.isNewExpression(invocation))
       )
-        return parent;
+        return contexts;
       if (parent.async && current === parent.body) {
         const continuation = webSocketAsyncContinuation(
           node,
           parent.body,
           state,
         );
-        if (continuation !== undefined) return continuation;
+        if (continuation !== undefined) return [...contexts, continuation];
       }
     }
     current = parent;

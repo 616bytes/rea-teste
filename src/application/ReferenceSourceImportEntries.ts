@@ -143,21 +143,25 @@ const RESOLUTION_SUFFIXES = ["", ".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx"];
 interface SpecifierContext {
   readonly lookupPath: ReferenceSourcePathLookup;
   readonly packageMains: ReadonlyMap<string, PackageMain>;
+  readonly lookupPackageDirectory: ReferenceSourcePathLookup;
 }
 
 /**
- * Apply a package `main` to a directory resolved through its index. Node loads
+ * Apply a package `main` without requiring an index to exist. Node loads
  * the declared entry as a file, then as a directory index, and falls back to
  * the package's own index only when neither exists.
  */
 const selectPackageMain = (
-  index: string,
+  directory: string,
+  index: string | undefined,
   context: SpecifierContext,
 ): { to: string; resolution: "internal" | "unresolved" } => {
-  const directory = posix.dirname(index);
+  const fallback =
+    index === undefined
+      ? { to: directory, resolution: "unresolved" as const }
+      : { to: index, resolution: "internal" as const };
   const manifest = context.packageMains.get(directory);
-  if (manifest === undefined || manifest.state === "none")
-    return { to: index, resolution: "internal" };
+  if (manifest === undefined || manifest.state === "none") return fallback;
   if (manifest.state === "unknown")
     return { to: directory, resolution: "unresolved" };
   // Node resolves `main` with path.resolve: an absolute main leaves the
@@ -176,7 +180,9 @@ const selectPackageMain = (
       posix.join(target, `index${suffix}`),
     ),
   ]);
-  return { to: selected ?? index, resolution: "internal" };
+  return selected === undefined
+    ? fallback
+    : { to: selected, resolution: "internal" };
 };
 
 const resolveInternalSpecifier = (
@@ -209,12 +215,20 @@ const resolveInternalSpecifier = (
       ),
     );
   const match = context.lookupPath.resolveCandidates(candidates);
-  if (match === undefined) return { to: normalized, resolution: "unresolved" };
+  if (match === undefined) {
+    return selectPackageMain(
+      context.lookupPackageDirectory.resolve(
+        posix.dirname(posix.join(normalized, "package.json")),
+      ) ?? normalized,
+      undefined,
+      context,
+    );
+  }
   const resolvedThroughIndex =
     posix.basename(match).startsWith("index.") &&
     posix.dirname(match).normalize("NFC") === normalized.normalize("NFC");
   return resolvedThroughIndex
-    ? selectPackageMain(match, context)
+    ? selectPackageMain(posix.dirname(match), match, context)
     : { to: match, resolution: "internal" };
 };
 
@@ -309,9 +323,15 @@ export const parseReferenceSourceEntries = (
     parseFailures: [],
     limitations: [...read.limitations],
   };
+  const packageMains = readPackageMains(read);
   const context: SpecifierContext = {
     lookupPath: createReferenceSourcePathLookup(filePaths),
-    packageMains: readPackageMains(read),
+    packageMains,
+    // Unknown manifests still own their exact identity and participate in
+    // Unicode ambiguity; only target files require a successful read.
+    lookupPackageDirectory: createReferenceSourcePathLookup(
+      packageMains.keys(),
+    ),
   };
   for (const entry of read.entries) {
     if (signal?.aborted === true) break;

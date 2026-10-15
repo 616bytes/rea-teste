@@ -8,6 +8,94 @@ import { historicalSourceGraphSchema } from "../../../src/domain/referenceSource
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
+const directoryImportFixture = (outside: string) => {
+  const imports = [
+    ["slash.cjs", "./lib/", "lib/index.js"],
+    ["dot.cjs", "./lib/.", "lib/index.js"],
+    ["self.cjs", ".", "index.js"],
+    ["self-slash.cjs", "./", "index.js"],
+    ["nested/parent.cjs", "..", "index.js"],
+    ["nested/parent-slash.cjs", "../", "index.js"],
+    ["direct.cjs", "./lib.js", "lib.js"],
+    ["fallback.cjs", "./fallback", "fallback/index.js"],
+    ["legacy-order.cjs", "./dep", "dep/index.js"],
+    ["bare-index.cjs", "./bare", "bare.js"],
+    ["package-main.cjs", "./pkg", "pkg/actual.js"],
+    ["package-no-index.cjs", "./no-index", "no-index/actual.js"],
+    [
+      "package-main-extension.cjs",
+      "./main-extension/",
+      "main-extension/entry.js",
+    ],
+    [
+      "package-main-directory.cjs",
+      "./main-directory",
+      "main-directory/lib/index.js",
+    ],
+    ["file-before-package.cjs", "./file-package", "file-package.js"],
+    ["package-main-fallback.cjs", "./stale", "stale/index.js"],
+    ["package-main-slash.cjs", "./slashed", "slashed/lib.js"],
+  ] as const;
+  const unresolved = [
+    ["missing.cjs", "./missing/", "missing/"],
+    ["escape.cjs", "../outside/", "../outside/"],
+    ["main.ts", "./folder.js/.", "folder.js"],
+    ["only-bare.cjs", "./only/", "only/"],
+    ["invalid-manifest.cjs", "./broken", "broken"],
+    ["absolute-main.cjs", "./absolute", outside],
+    ["no-index-missing-main.cjs", "./no-index-missing", "no-index-missing"],
+    ["no-index-invalid-main.cjs", "./no-index-invalid", "no-index-invalid"],
+    ["no-index-escape-main.cjs", "./no-index-escape", "../outside/index.js"],
+  ] as const;
+  const files = new Map<string, string>([
+    ["index.js", 'module.exports = "root index";\n'],
+    ["lib/index.js", 'module.exports = "library index";\n'],
+    ["lib.js", 'module.exports = "sibling JavaScript file";\n'],
+    ["lib.ts", 'export const value = "sibling TypeScript file";\n'],
+    ["fallback/index.js", 'module.exports = "fallback index";\n'],
+    ["dep/index.js", 'module.exports = "existing index priority";\n'],
+    ["dep.cjs", 'module.exports = "later CommonJS candidate";\n'],
+    ["folder.ts", 'export const value = "emitted filename counterpart";\n'],
+    ["missing.js", 'module.exports = "not a directory";\n'],
+    ["bare.js", 'module.exports = "file before directory";\n'],
+    ["bare/index", 'module.exports = "extensionless index";\n'],
+    ["only/index", 'module.exports = "extensionless index";\n'],
+    // A package main outranks the index; a missing main falls back to it.
+    ["pkg/package.json", '{"main":"actual.js"}\n'],
+    ["pkg/actual.js", 'module.exports = "declared main";\n'],
+    ["pkg/index.js", 'module.exports = "ignored index";\n'],
+    ["no-index/package.json", '{"main":"actual.js"}\n'],
+    ["no-index/actual.js", 'module.exports = "main without index";\n'],
+    ["main-extension/package.json", '{"main":"entry"}\n'],
+    ["main-extension/entry.js", 'module.exports = "extension main";\n'],
+    ["main-directory/package.json", '{"main":"lib"}\n'],
+    ["main-directory/lib/index.js", 'module.exports = "directory main";\n'],
+    ["file-package.js", 'module.exports = "file before package";\n'],
+    ["file-package/package.json", '{"main":"entry.js"}\n'],
+    ["file-package/entry.js", 'module.exports = "unused package main";\n'],
+    ["no-index-missing/package.json", '{"main":"absent.js"}\n'],
+    ["no-index-invalid/package.json", '{"main":\n'],
+    ["no-index-escape/package.json", '{"main":"../../outside/index.js"}\n'],
+    ["stale/package.json", '{"main":"gone.js"}\n'],
+    ["stale/index.js", 'module.exports = "legacy fallback";\n'],
+    ["broken/package.json", '{"main":\n'],
+    ["broken/index.js", 'module.exports = "unknown selection";\n'],
+    // Node resolves main with path.resolve: no trailing-slash directory
+    // intent, and an absolute main leaves the imported root.
+    ["slashed/package.json", '{"main":"lib/"}\n'],
+    ["slashed/lib.js", 'module.exports = "file main";\n'],
+    ["slashed/lib/index.js", 'module.exports = "not selected";\n'],
+    ["slashed/index.js", 'module.exports = "not selected";\n'],
+    ["absolute/package.json", `${JSON.stringify({ main: outside })}\n`],
+    ["absolute/index.js", 'module.exports = "not selected";\n'],
+    ...[...imports, ...unresolved].map(
+      ([path, specifier]) =>
+        [path, `require(${JSON.stringify(specifier)});\n`] as const,
+    ),
+  ]);
+  return { imports, unresolved, files };
+};
+
 // Reference-source reads require no-follow opens; Windows reports unsupported.
 describe.skipIf(process.platform === "win32")(
   "compiled reference-source directory imports",
@@ -20,66 +108,7 @@ describe.skipIf(process.platform === "win32")(
         );
         const root = join(workspace, "source");
         const outside = join(workspace, "outside", "index.js");
-        const imports = [
-          ["slash.cjs", "./lib/", "lib/index.js"],
-          ["dot.cjs", "./lib/.", "lib/index.js"],
-          ["self.cjs", ".", "index.js"],
-          ["self-slash.cjs", "./", "index.js"],
-          ["nested/parent.cjs", "..", "index.js"],
-          ["nested/parent-slash.cjs", "../", "index.js"],
-          ["direct.cjs", "./lib.js", "lib.js"],
-          ["fallback.cjs", "./fallback", "fallback/index.js"],
-          ["legacy-order.cjs", "./dep", "dep/index.js"],
-          ["bare-index.cjs", "./bare", "bare.js"],
-          ["package-main.cjs", "./pkg", "pkg/actual.js"],
-          ["package-main-fallback.cjs", "./stale", "stale/index.js"],
-          ["package-main-slash.cjs", "./slashed", "slashed/lib.js"],
-        ] as const;
-        const unresolved = [
-          ["missing.cjs", "./missing/", "missing/"],
-          ["escape.cjs", "../outside/", "../outside/"],
-          ["main.ts", "./folder.js/.", "folder.js"],
-          ["only-bare.cjs", "./only/", "only/"],
-          ["invalid-manifest.cjs", "./broken", "broken"],
-          ["absolute-main.cjs", "./absolute", outside],
-        ] as const;
-        const files = new Map<string, string>([
-          ["index.js", 'module.exports = "root index";\n'],
-          ["lib/index.js", 'module.exports = "library index";\n'],
-          ["lib.js", 'module.exports = "sibling JavaScript file";\n'],
-          ["lib.ts", 'export const value = "sibling TypeScript file";\n'],
-          ["fallback/index.js", 'module.exports = "fallback index";\n'],
-          ["dep/index.js", 'module.exports = "existing index priority";\n'],
-          ["dep.cjs", 'module.exports = "later CommonJS candidate";\n'],
-          [
-            "folder.ts",
-            'export const value = "emitted filename counterpart";\n',
-          ],
-          ["missing.js", 'module.exports = "not a directory";\n'],
-          ["bare.js", 'module.exports = "file before directory";\n'],
-          ["bare/index", 'module.exports = "extensionless index";\n'],
-          ["only/index", 'module.exports = "extensionless index";\n'],
-          // A package main outranks the index; a missing main falls back to it.
-          ["pkg/package.json", '{"main":"actual.js"}\n'],
-          ["pkg/actual.js", 'module.exports = "declared main";\n'],
-          ["pkg/index.js", 'module.exports = "ignored index";\n'],
-          ["stale/package.json", '{"main":"gone.js"}\n'],
-          ["stale/index.js", 'module.exports = "legacy fallback";\n'],
-          ["broken/package.json", '{"main":\n'],
-          ["broken/index.js", 'module.exports = "unknown selection";\n'],
-          // Node resolves main with path.resolve: no trailing-slash directory
-          // intent, and an absolute main leaves the imported root.
-          ["slashed/package.json", '{"main":"lib/"}\n'],
-          ["slashed/lib.js", 'module.exports = "file main";\n'],
-          ["slashed/lib/index.js", 'module.exports = "not selected";\n'],
-          ["slashed/index.js", 'module.exports = "not selected";\n'],
-          ["absolute/package.json", `${JSON.stringify({ main: outside })}\n`],
-          ["absolute/index.js", 'module.exports = "not selected";\n'],
-          ...[...imports, ...unresolved].map(
-            ([path, specifier]) =>
-              [path, `require(${JSON.stringify(specifier)});\n`] as const,
-          ),
-        ]);
+        const { imports, unresolved, files } = directoryImportFixture(outside);
         await Promise.all(
           [...files].map(async ([path, contents]) => {
             const target = join(root, path);
@@ -107,6 +136,18 @@ describe.skipIf(process.platform === "win32")(
         expect(() =>
           createRequire(join(root, "invalid-manifest.cjs")).resolve("./broken"),
         ).toThrow();
+        for (const [from, specifier] of [
+          ["no-index-missing-main.cjs", "./no-index-missing"],
+          ["no-index-invalid-main.cjs", "./no-index-invalid"],
+        ] as const)
+          expect(() =>
+            createRequire(join(root, from)).resolve(specifier),
+          ).toThrow();
+        expect(
+          createRequire(join(root, "no-index-escape-main.cjs")).resolve(
+            "./no-index-escape",
+          ),
+        ).toBe(outside);
         expect(
           createRequire(join(root, "escape.cjs")).resolve("../outside/"),
         ).toBe(outside);

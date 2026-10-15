@@ -116,3 +116,102 @@ it("retains Kotlin source identity and language across the inventory projection"
   expect(parsed.parseFailures).toEqual([]);
   expect(parsed.relationships).toEqual([]);
 });
+
+it("uses exact or unambiguous manifest identities when a package has no index", () => {
+  // These canonically equivalent names cannot coexist on every filesystem.
+  const files = new Map([
+    [
+      "main.cjs",
+      'require("./café"); require("./résumé"); require("./réservé");',
+    ],
+    ["cafe\u0301/package.json", '{"main":"entry.js"}'],
+    ["cafe\u0301/entry.js", "module.exports = 1;"],
+    ["résumé/package.json", '{"main":"exact.js"}'],
+    ["résumé/exact.js", "module.exports = 2;"],
+    ["re\u0301sume\u0301/package.json", '{"main":"equivalent.js"}'],
+    ["re\u0301sume\u0301/equivalent.js", "module.exports = 3;"],
+    ["re\u0301servé/package.json", '{"main":"entry.js"}'],
+    ["réserve\u0301/package.json", '{"main":"other.js"}'],
+    ["réserve\u0301/other.js", "module.exports = 5;"],
+    ["re\u0301servé/entry.js", "module.exports = 4;"],
+  ]);
+  const read: ReferenceSourceRead = {
+    root: "/selected/source",
+    entries: [...files].map(([path, content]) => ({
+      status: "read",
+      kind: "file",
+      path,
+      bytes: Buffer.from(content),
+      size: Buffer.byteLength(content),
+    })),
+    bytesRead: [...files.values()].reduce(
+      (sum, content) => sum + Buffer.byteLength(content),
+      0,
+    ),
+    limitations: [],
+  };
+  const parsed = parseReferenceSourceEntries(read, new Set(files.keys()));
+  expect(
+    parsed.relationships.map(({ to, resolution }) => ({ to, resolution })),
+  ).toEqual([
+    { to: "cafe\u0301/entry.js", resolution: "internal" },
+    { to: "résumé/exact.js", resolution: "internal" },
+    { to: "réservé", resolution: "unresolved" },
+  ]);
+  expect(parsed.parseFailures).toEqual([]);
+});
+
+it.each([
+  ["exact unreadable", "résumé", "re\u0301sume\u0301"],
+  ["ambiguous observed", "re\u0301sumé", "résume\u0301"],
+] as const)(
+  "keeps an %s manifest identity unknown",
+  (_name, unreadable, readable) => {
+    const files = new Map([
+      ["main.cjs", 'require("./résumé");'],
+      [`${readable}/package.json`, '{"main":"entry.js"}'],
+      [`${readable}/entry.js`, "module.exports = 1;"],
+    ]);
+    const read: ReferenceSourceRead = {
+      root: "/selected/source",
+      entries: [
+        ...[...files].map(([path, content]) => ({
+          status: "read" as const,
+          kind: "file" as const,
+          path,
+          bytes: Buffer.from(content),
+          size: Buffer.byteLength(content),
+        })),
+        {
+          status: "failed",
+          kind: "file",
+          path: `${unreadable}/package.json`,
+          code: "io",
+          message: "Manifest could not be read",
+        },
+      ],
+      bytesRead: [...files.values()].reduce(
+        (sum, content) => sum + Buffer.byteLength(content),
+        0,
+      ),
+      limitations: [],
+    };
+    const parsed = parseReferenceSourceEntries(read, new Set(files.keys()));
+    expect(parsed.relationships).toEqual([
+      {
+        from_path: "main.cjs",
+        to: "résumé",
+        kind: "requires",
+        resolution: "unresolved",
+        parse_state: "parsed",
+      },
+    ]);
+    expect(parsed.entries).toContainEqual(
+      expect.objectContaining({
+        path: `${unreadable}/package.json`,
+        content_state: "unreadable",
+        sha256: null,
+      }),
+    );
+  },
+);

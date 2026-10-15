@@ -37,6 +37,7 @@ describe("reference import native entry failure details", () => {
             message: expect.stringContaining("EACCES"),
           },
         });
+        if (!read.ok) expect(read.error.message).toContain(root);
 
         const imported = await importTree(root);
         expect(imported).toMatchObject({
@@ -46,6 +47,7 @@ describe("reference import native entry failure details", () => {
             message: expect.stringContaining("EACCES"),
           },
         });
+        if (!imported.ok) expect(imported.error.message).toContain(root);
       } finally {
         await chmod(root, 0o700);
       }

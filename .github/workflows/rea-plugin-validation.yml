@@ -4,6 +4,12 @@ on:
   pull_request:
     paths:
       - "plugins/rea-agent-plugin/**"
+      - ".agents/skills/reverse-engineer-anything/**"
+      - "rea-agent-skills-pack/skills/reverse-engineer-anything/**"
+      - "scripts/generate-skill-metadata.mjs"
+      - "turbo.json"
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/rea-plugin-validation.yml"
   push:
     paths:
@@ -26,5 +32,7 @@ jobs:
           node-version: "22"
       - name: Install project dependencies
         run: npm ci
+      - name: Verify generated skill pack freshness
+        run: npm run docs:check
       - name: Validate REA plugin
         run: node plugins/rea-agent-plugin/scripts/validate-plugin.mjs

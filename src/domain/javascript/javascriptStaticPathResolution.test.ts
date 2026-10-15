@@ -24,6 +24,7 @@ const absoluteParts = [
 
 const anchoredExpressions = [
   ['path.resolve(__dirname, "preload.cjs")', "preload.cjs"],
+  ['path[`resolve`](__dirname, "preload.js")', "preload.js"],
   ['path.posix.resolve("ignored", __dirname, "preload.js")', "preload.js"],
   ['path.resolve("/ignored", __dirname, "preload.js")', "preload.js"],
   [
@@ -48,6 +49,8 @@ const anchoredExpressions = [
 const unknownExpressions = [
   "runtimePath as string",
   "path.join(__dirname as string, runtimeFile as string) as string",
+  'path[method](__dirname, "preload.js")',
+  'path[`join${suffix}`](__dirname, "preload.js")',
   "path.resolve()",
   "path.posix.resolve()",
   'path.resolve("sub", "../preload.js")',
@@ -160,6 +163,11 @@ describe("inert JavaScript path resolution", () => {
     ],
     [
       'path.join(__dirname, "preload.js")',
+      "preload.js",
+      "filesystem-expression",
+    ],
+    [
+      'path[`join`](__dirname, "preload.js")',
       "preload.js",
       "filesystem-expression",
     ],

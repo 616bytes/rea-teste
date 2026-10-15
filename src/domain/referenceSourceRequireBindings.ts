@@ -240,9 +240,25 @@ const bindsRequireIdentifier = (
   );
 };
 
+/**
+ * Whether a function body binds `require` at a position visible to the
+ * body's own scope. Results memoize per body node: large generated files
+ * hold many dynamic writes against one shared function, and each used to
+ * re-traverse the same body in full.
+ */
+const functionBodyBindingCache = new WeakMap<t.BlockStatement, boolean>();
+
 const functionBodyBindsRequire = (body: t.Node | null | undefined): boolean => {
   if (body === null || body === undefined || !t.isBlockStatement(body))
     return false;
+  const cached = functionBodyBindingCache.get(body);
+  if (cached !== undefined) return cached;
+  const result = scanFunctionBodyForRequire(body);
+  functionBodyBindingCache.set(body, result);
+  return result;
+};
+
+const scanFunctionBodyForRequire = (body: t.BlockStatement): boolean => {
   let found = false;
   let depth = 0;
   traverseJavaScriptAst(body, {
@@ -342,14 +358,85 @@ const writeShieldedByLocalBinding = (
   return false;
 };
 
-const isStaticallyEmptyIterable = (node: t.Node | null | undefined): boolean =>
-  (t.isArrayExpression(node) && node.elements.length === 0) ||
-  (t.isObjectExpression(node) && node.properties.length === 0) ||
-  (t.isStringLiteral(node) && node.value === "");
+const ITERATION_PROTOTYPES = new Set(["Object", "Array", "String"]);
+
+/**
+ * Whether a member write can affect iteration over fresh literals. A write
+ * through `X.prototype` (or through `__proto__`) mutates shared iteration
+ * behavior: `for-in` then sees inherited keys on `{}`/`[]`, and a replaced
+ * `Symbol.iterator` makes `for-of []` iterate. Reflective mutation
+ * (`defineProperty`, `Reflect`, `setPrototypeOf`) is not covered — see the
+ * residual note on `fileMayPolluteIteration`.
+ */
+const memberWriteTouchesSharedPrototype = (target: t.Node): boolean => {
+  let current: t.Node | null | undefined = target;
+  while (current !== null && current !== undefined) {
+    if (
+      !t.isMemberExpression(current) &&
+      !t.isOptionalMemberExpression(current)
+    )
+      return false;
+    const key = semanticStaticPropertyKey(current.property, current.computed);
+    if (key === "__proto__") return true;
+    const object: t.Node = unwrapJavaScriptExpression(current.object).node;
+    if (
+      t.isIdentifier(object) &&
+      ITERATION_PROTOTYPES.has(object.name) &&
+      key === "prototype"
+    )
+      return true;
+    current = object;
+  }
+  return false;
+};
+
+/**
+ * Whether this file may have mutated shared iteration behavior before any
+ * loop runs. The scan is whole-file and order-insensitive (a later write
+ * still disables the exemption), which is conservative: a polluted file
+ * loses a static-emptiness shortcut it cannot prove. Deletion is excluded —
+ * removing keys or iterators cannot make an empty literal iterate.
+ */
+const fileMayPolluteIteration = (program: t.Program): boolean => {
+  let polluted = false;
+  traverseJavaScriptAst(program, {
+    enter: (node) => {
+      if (polluted) return;
+      if (t.isUnaryExpression(node, { operator: "delete" })) return;
+      const site = semanticWriteSiteTarget(node);
+      if (site === null) return;
+      for (const target of semanticWriteTargets(site)) {
+        if (memberWriteTouchesSharedPrototype(target)) {
+          polluted = true;
+          return;
+        }
+      }
+    },
+  });
+  return polluted;
+};
+
+const isStaticallyEmptyIterable = (
+  node: t.Node | null | undefined,
+  isForIn: boolean,
+): boolean => {
+  // `for-in` skips array holes; `for-of` yields them. Emptiness therefore
+  // depends on the loop kind, never just the literal.
+  if (t.isArrayExpression(node))
+    return isForIn
+      ? node.elements.every((element) => element === null)
+      : node.elements.length === 0;
+  if (t.isObjectExpression(node)) return node.properties.length === 0;
+  if (t.isStringLiteral(node)) return node.value === "";
+  return false;
+};
 
 const hasUninitializedTopLevelVarRequire = (program: t.Program): boolean => {
   let found = false;
   let initialized = false;
+  // Computed once per file: the exemption below infers non-iteration from
+  // literal contents, which holds only while shared prototypes are intact.
+  const mayPollute = fileMayPolluteIteration(program);
   traverseJavaScriptAst(program, {
     enter: (node, parent, readAncestors) => {
       if (!t.isVariableDeclaration(node, { kind: "var" })) return;
@@ -367,10 +454,16 @@ const hasUninitializedTopLevelVarRequire = (program: t.Program): boolean => {
         // every iteration, so it initializes the loader just as an
         // assignment does. A bare `for (var require;;)` head stays
         // uninitialized, as does a head over a statically empty iterable
-        // that never assigns.
+        // that never assigns — unless the file may have mutated shared
+        // iteration behavior, in which case no literal proves emptiness.
         if (t.isForInStatement(parent) || t.isForOfStatement(parent)) {
           if (parent.left !== node) continue;
-          initialized ||= !isStaticallyEmptyIterable(parent.right);
+          initialized ||=
+            mayPollute ||
+            !isStaticallyEmptyIterable(
+              parent.right,
+              t.isForInStatement(parent),
+            );
           continue;
         }
         initialized ||= declaration.init !== null;

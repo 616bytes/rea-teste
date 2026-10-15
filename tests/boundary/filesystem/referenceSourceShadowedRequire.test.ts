@@ -152,6 +152,69 @@ it("resolves require calls by lexical binding and source mode", async () => {
   ]);
 });
 
+it("evaluates empty loop heads and polluted prototypes by semantics, not syntax", async () => {
+  const root = await createTestTempDirectory("rea-reference-require-empty-");
+  // for-in skips array holes (loader intact); for-of yields them (loader
+  // gone). Prototype writes anywhere in the file disable the emptiness
+  // exemption: polluted iteration replaces the loader either way.
+  const sources: Record<string, string> = {
+    "sparse-forin-holes.cjs": [
+      "for (var require in [,]) {}",
+      "console.log(require('./loaded.cjs'));",
+    ].join("\n"),
+    "forof-hole.cjs": [
+      "for (var require of [,]) {}",
+      "try { require('./throwing.cjs'); } catch { console.log('shadowed'); }",
+    ].join("\n"),
+    "proto-forin-pollution.cjs": [
+      "Object.prototype.loopKey = true;",
+      "for (var require in {}) {}",
+      "try { require('./throwing.cjs'); } catch { console.log('shadowed'); }",
+    ].join("\n"),
+    "proto-forof-pollution.cjs": [
+      "Array.prototype[Symbol.iterator] = function* () { yield 1; };",
+      "for (var require of []) {}",
+      "try { require('./throwing.cjs'); } catch { console.log('shadowed'); }",
+    ].join("\n"),
+    "loaded.cjs": "console.log('loaded');\nmodule.exports = 'real';\n",
+    "throwing.cjs": "throw new Error('A shadowed require must not load me');\n",
+  };
+
+  await Promise.all(
+    Object.entries(sources).map(([path, source]) =>
+      writeFile(join(root, path), source),
+    ),
+  );
+
+  const runNode = promisify(execFile);
+  for (const [path, stdout] of [
+    ["sparse-forin-holes.cjs", "loaded\nreal\n"],
+    ["forof-hole.cjs", "shadowed\n"],
+    ["proto-forin-pollution.cjs", "shadowed\n"],
+    ["proto-forof-pollution.cjs", "shadowed\n"],
+  ] as const) {
+    const executed = await runNode(process.execPath, [join(root, path)], {
+      cwd: root,
+      timeout: 5_000,
+    });
+    expect(executed.stdout).toBe(stdout);
+    expect(executed.stderr).toBe("");
+  }
+
+  const result = await importReferenceSource({
+    root,
+    caller: "reference-empty-iterable-test",
+    policy: { secretPatterns: [] },
+  });
+  if (!result.ok) throw result.error;
+  expect(
+    result.value.relationships
+      .filter(({ kind }) => kind === "requires")
+      .map(({ from_path, to }) => [from_path, to])
+      .sort((left, right) => (left[0] ?? "").localeCompare(right[0] ?? "")),
+  ).toEqual([["sparse-forin-holes.cjs", "loaded.cjs"]]);
+});
+
 it("keeps loader edges when a local binding shields a dynamic write", async () => {
   const root = await createTestTempDirectory("rea-reference-require-shield-");
   const sources: Record<string, string> = {

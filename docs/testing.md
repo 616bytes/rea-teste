@@ -822,23 +822,28 @@ The initial Linux x64 IDA Free 9.4 run used native MCP 1.1.2 with a local naviga
 `npm run verify:kuna` requires a caller-supplied `kuna` in `REA_KUNA_COMMAND`
 and a host C compiler (`REA_CC`, default `cc`) with `strip` and `nm`. It builds a
 source-owned fixture with symbols and stripped, then verifies through MCP that
-the first cold answer comes from a single-function run, assembly waits for and
-serves from the project export, later pseudocode reads the recorded export span,
+the first cold pseudocode answer comes from a single-function run or an export
+that already finished, assembly waits for and serves from that export, and
+pseudocode and both dossier facets match their recorded file spans and digests,
 a fresh server reuses the export without rebuilding it, staging is empty after
 a completed export, and no owned process survives. Pass
 `--targets DIR --functions a,b` to add caller-built binaries laid out as
 `DIR/<flavor>/<name>` beside `<name>.stripped`; addresses come from the
 symbol-bearing build. `--compare-ghidra` with `GHIDRA_INSTALL_DIR` runs those
 caller-built functions through Ghidra (it refuses to run without `--targets` and
-`--functions`) and reports latency, sampled process-tree CPU and peak
-memory, response size, and goto and warning-marker counts. These counts are not
-a correctness judgement. `--report PATH` writes the JSON report.
+`--functions`, an empty matrix, or names missing from every supplied target) and
+reports latency, sampled process-tree CPU and peak memory, UTF-8 response size,
+and goto and warning-marker counts. Those counts are not a correctness judgement,
+and model tokens are not measured. `--report PATH` writes the JSON report.
 
 The first matrix run used Kuna 1.833 and Ghidra 12.1.4 with JDK 21 on macOS
 arm64. It covered zlib 1.3.2 `minigzip`, coreutils 9.9 `sort` and the sqlite
 3.54.0 shell, built at `-O2` for ELF x86-64, ELF AArch64, Mach-O arm64 and
-Mach-O x86-64, each with symbols and stripped. No Linux host run, Windows, PE or
-universal Mach-O coverage is claimed.
+Mach-O x86-64, each with symbols and stripped. A separate Linux x86-64 run verified
+the fixture and system zlib 1.2.13 / SQLite 3.40.1 libraries through MCP, including
+cached byte spans and a Ghidra comparison. See the [Linux report](https://github.com/morluto/rea/pull/3854#issuecomment-6185870391)
+for measured scope and limitations. Windows, PE and universal Mach-O remain
+unverified by this lane.
 
 ## DOS Ghidra analysis
 

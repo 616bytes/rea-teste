@@ -1,5 +1,3 @@
-import { createReadStream } from "node:fs";
-import { open } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import { z } from "zod";
@@ -31,6 +29,7 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import { matchRegexValues } from "../process/RegexMatcher.js";
 import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
@@ -51,10 +50,7 @@ import {
 import type { KunaExportStatus } from "./KunaProjectExport.js";
 import {
   parseKunaInventory,
-  scanKunaAssembly,
-  type KunaAssemblyIndex,
   type KunaInventoryFunction,
-  type KunaProjectFunction,
 } from "./KunaProjectFiles.js";
 import {
   isKunaOperation,
@@ -63,9 +59,11 @@ import {
   type KunaOperation,
 } from "./KunaProviderCapabilities.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
-
-/** One function's pseudocode is far below this; sqlite3VdbeExec is 240 KB. */
-const PSEUDOCODE_OUTPUT_BYTES = 16 * 1024 * 1024;
+import { KUNA_FUNCTION_TEXT_BYTES } from "./KunaLimits.js";
+import {
+  KunaProjectReader,
+  type KunaProjectFileSpan,
+} from "./KunaProjectReader.js";
 
 /** How often a request waiting on the project export reports that it still waits. */
 const WAIT_PROGRESS_INTERVAL_MS = 10_000;
@@ -86,12 +84,7 @@ interface InventoryIndex {
 interface Answer {
   readonly result: JsonValue;
   readonly source: AnswerSource | null;
-  readonly files?: readonly {
-    readonly facet: "pseudocode" | "assembly";
-    readonly path: string;
-    readonly byteOffset: number;
-    readonly byteLength: number;
-  }[];
+  readonly files?: readonly KunaProjectFileSpan[];
   readonly locations: readonly EvidenceLocation[];
   readonly limitations: readonly string[];
 }
@@ -139,28 +132,6 @@ const failure = (operation: string, cause: unknown): AnalysisError =>
         userMessage: `Kuna ${operation} failed: ${message(cause)}`,
       });
 
-/** Read exactly one recorded span of a project file. */
-const readSpan = async (
-  path: string,
-  offset: number,
-  length: number,
-): Promise<string> => {
-  const handle = await open(path, "r");
-  try {
-    const buffer = Buffer.alloc(length);
-    const { bytesRead } = await handle.read(buffer, 0, length, offset);
-    if (bytesRead !== length)
-      throw new Error(`${path} is shorter than its recorded span`);
-    return buffer.toString("utf8");
-  } finally {
-    await handle.close();
-  }
-};
-
-/** A `.c` block without its `// Function:` header and trailing separator. */
-const blockCode = (block: string): string =>
-  block.slice(block.indexOf("\n") + 1).replace(/\n+$/u, "");
-
 /** Kuna names a procedure by its inventory entry or by an exact entry address. */
 const procedureSelectorSchema = z.string().min(1);
 
@@ -205,9 +176,7 @@ export class KunaSessionClient implements AnalysisClient {
     | Promise<Result<readonly KunaInventoryFunction[], AnalysisError>>
     | undefined;
   #project: Promise<Result<KunaProject, AnalysisError>> | undefined;
-  #ready: KunaProject | undefined;
-  #blocks: ReadonlyMap<string, KunaProjectFunction> | undefined;
-  #assembly: Promise<Result<KunaAssemblyIndex, AnalysisError>> | undefined;
+  #reader: KunaProjectReader | undefined;
   #inventoryIndex: InventoryIndex | undefined;
   #status: KunaExportStatus | undefined;
   #key: string | undefined;
@@ -472,8 +441,8 @@ export class KunaSessionClient implements AnalysisClient {
 
   /** Where the background export stands, for callers deciding whether to wait. */
   #exportState(): JsonValue {
-    if (this.#ready !== undefined)
-      return { state: "ready", key: this.#ready.key };
+    if (this.#reader !== undefined)
+      return { state: "ready", key: this.#reader.project.key };
     if (this.#project === undefined) return { state: "not-started" };
     if (this.#exportFailure !== undefined)
       return { state: "failed", reason: this.#exportFailure };
@@ -504,23 +473,38 @@ export class KunaSessionClient implements AnalysisClient {
         address,
         value: name,
       }));
-      const matches =
-        operation === "search_procedures"
-          ? analysisSearchPredicate(analysisSearchQuerySchema.parse(parameters))
-          : undefined;
+      let selected = items;
+      if (operation === "search_procedures") {
+        const query = analysisSearchQuerySchema.parse(parameters);
+        if (query.mode === "regex") {
+          const matches = await matchRegexValues({
+            operation,
+            pattern: query.pattern,
+            caseSensitive: query.case_sensitive,
+            values: items.map(({ value }) => value),
+            signal: options.signal,
+          });
+          if (!matches.ok) return matches;
+          const indices = new Set(matches.value);
+          selected = items.filter((_, index) => indices.has(index));
+        } else {
+          const matches = analysisSearchPredicate(query);
+          selected = items.filter(({ value }) => matches(value));
+        }
+      }
       return ok({
-        result:
-          matches === undefined
-            ? items
-            : items.filter(({ value }) => matches(value)),
+        result: selected,
         source: null,
         locations: [],
         limitations: [],
       });
     }
     if (operation === "address_name")
-      return this.#withExport(installation, () =>
-        this.#addressName(parameters, inventory.value, options),
+      return this.#addressName(
+        parameters,
+        inventory.value,
+        installation,
+        options,
       );
     const entry = this.#resolve(operation, parameters, inventory.value);
     if (!entry.ok) return entry;
@@ -536,22 +520,28 @@ export class KunaSessionClient implements AnalysisClient {
           limitations: [],
         });
       case "procedure_pseudo_code": {
-        const pseudocode = await this.#withExport(installation, () =>
-          this.#pseudocode(operation, entry.value, installation, options),
+        const pseudocode = await this.#pseudocode(
+          operation,
+          entry.value,
+          installation,
+          options,
         );
         if (!pseudocode.ok) return pseudocode;
         return ok({ ...pseudocode.value, locations });
       }
       case "procedure_assembly": {
-        const assembly = await this.#withExport(installation, () =>
-          this.#assemblyText(operation, entry.value, options),
+        const assembly = await this.#assemblyText(
+          operation,
+          entry.value,
+          installation,
+          options,
         );
         if (!assembly.ok) return assembly;
         return ok({ ...assembly.value, locations });
       }
       case "analyze_function":
-        return this.#withExport(installation, () =>
-          this.#dossier(operation, entry.value, installation, options),
+        return this.#withProject(operation, installation, options, (reader) =>
+          this.#dossier(operation, entry.value, reader),
         );
     }
   }
@@ -598,6 +588,7 @@ export class KunaSessionClient implements AnalysisClient {
   async #addressName(
     parameters: Readonly<Record<string, JsonValue>>,
     inventory: readonly KunaInventoryFunction[],
+    installation: KunaInstallation,
     options: ExecutionOptions,
   ): Promise<Result<Answer, AnalysisError>> {
     const raw = parameters.address;
@@ -622,19 +613,23 @@ export class KunaSessionClient implements AnalysisClient {
         locations,
         limitations: [],
       });
-    // Data names live only in the export's `.asm` data tail.
-    const index = await this.#ensureAssembly("address_name", options);
-    if (!index.ok) return index;
-    const project = this.#ready;
-    return ok({
-      result: index.value.data.get(address) ?? null,
-      source:
-        project === undefined ? null : { kind: "project-export", project },
-      locations,
-      limitations: [
-        "Kuna names function entries and the data its export references; null means Kuna assigned no name at this address, not that no symbol exists.",
-      ],
-    });
+    return this.#withProject(
+      "address_name",
+      installation,
+      options,
+      async (reader) => {
+        const name = await reader.dataName(address, "address_name");
+        if (!name.ok) return name;
+        return ok({
+          result: name.value,
+          source: { kind: "project-export", project: reader.project },
+          locations,
+          limitations: [
+            "Kuna names function entries and the data its export references; null means Kuna assigned no name at this address, not that no symbol exists.",
+          ],
+        });
+      },
+    );
   }
 
   async #pseudocode(
@@ -643,51 +638,20 @@ export class KunaSessionClient implements AnalysisClient {
     installation: KunaInstallation,
     options: ExecutionOptions,
   ): Promise<Result<Omit<Answer, "locations">, AnalysisError>> {
-    const project = this.#ready;
-    if (project !== undefined) {
-      const block = this.#blockOf(project, entry.address);
-      if (block === undefined)
+    for (let attempt = 0; this.#reader !== undefined; attempt += 1) {
+      const reader = this.#reader;
+      try {
+        const text = await reader.pseudocode(entry.address, operation);
+        if (!text.ok) return text;
         return ok({
-          result: null,
-          source: { kind: "project-export", project },
-          limitations: [
-            "Kuna's export decompiles code entries only; this inventory entry, such as an import slot, has no body.",
-          ],
+          ...text.value,
+          source: { kind: "project-export", project: reader.project },
         });
-      if (block.error !== null)
-        return ok({
-          result: null,
-          source: { kind: "project-export", project },
-          files: [
-            {
-              facet: "pseudocode",
-              path: project.manifest.files.c.path,
-              byteOffset: block.cOffset,
-              byteLength: block.cLength,
-            },
-          ],
-          limitations: [
-            `Kuna could not decompile this function: ${block.error}`,
-          ],
-        });
-      const text = await readSpan(
-        join(project.directory, project.manifest.files.c.path),
-        block.cOffset,
-        block.cLength,
-      );
-      return ok({
-        result: blockCode(text),
-        source: { kind: "project-export", project },
-        files: [
-          {
-            facet: "pseudocode",
-            path: project.manifest.files.c.path,
-            byteOffset: block.cOffset,
-            byteLength: block.cLength,
-          },
-        ],
-        limitations: [],
-      });
+      } catch (cause: unknown) {
+        if (!isMissing(cause) || attempt !== 0) throw cause;
+        this.#invalidateProject(reader);
+        await this.#startProject(installation);
+      }
     }
     const workspace = await this.#ensureWorkspace();
     if (!workspace.ok) return workspace;
@@ -698,7 +662,7 @@ export class KunaSessionClient implements AnalysisClient {
       operation,
       timeoutMs: installation.configuration.functionTimeoutMs,
       reportedTimeoutMs: installation.configuration.functionTimeoutMs,
-      outputBytes: PSEUDOCODE_OUTPUT_BYTES,
+      outputBytes: KUNA_FUNCTION_TEXT_BYTES,
       signal: options.signal ?? this.#session.signal,
       launcher: this.#launcher,
     });
@@ -725,55 +689,33 @@ export class KunaSessionClient implements AnalysisClient {
   async #assemblyText(
     operation: string,
     entry: KunaInventoryFunction,
+    installation: KunaInstallation,
     options: ExecutionOptions,
   ): Promise<Result<Omit<Answer, "locations">, AnalysisError>> {
-    const index = await this.#ensureAssembly(operation, options);
-    if (!index.ok) return index;
-    const project = this.#ready;
-    const span = index.value.code.get(entry.address);
-    if (project === undefined || span === undefined)
-      return err(
-        new AnalysisCapabilityUnavailableError(
-          KUNA_PROVIDER_ID,
-          operation,
-          `Kuna's export lists no code at ${entry.address}; import slots and data entries have no listing.`,
-        ),
-      );
-    const text = await readSpan(
-      join(project.directory, project.manifest.files.asm.path),
-      span.offset,
-      span.length,
+    return this.#withProject(
+      operation,
+      installation,
+      options,
+      async (reader) => {
+        const text = await reader.assembly(entry.address, operation);
+        return text.ok
+          ? ok({
+              ...text.value,
+              source: { kind: "project-export", project: reader.project },
+            })
+          : text;
+      },
     );
-    return ok({
-      result: text.replace(/\n+$/u, ""),
-      source: { kind: "project-export", project },
-      files: [
-        {
-          facet: "assembly",
-          path: project.manifest.files.asm.path,
-          byteOffset: span.offset,
-          byteLength: span.length,
-        },
-      ],
-      limitations: [],
-    });
   }
 
   async #dossier(
     operation: string,
     entry: KunaInventoryFunction,
-    installation: KunaInstallation,
-    options: ExecutionOptions,
+    reader: KunaProjectReader,
   ): Promise<Result<Answer, AnalysisError>> {
-    // The dossier pairs pseudocode and assembly from one export.
-    const assembly = await this.#assemblyText(operation, entry, options);
+    const assembly = await reader.assembly(entry.address, operation);
     if (!assembly.ok) return assembly;
-    const pseudocode = await this.#pseudocode(
-      operation,
-      entry,
-      installation,
-      options,
-    );
+    const pseudocode = await reader.pseudocode(entry.address, operation);
     if (!pseudocode.ok) return pseudocode;
     const text =
       typeof pseudocode.value.result === "string"
@@ -838,7 +780,7 @@ export class KunaSessionClient implements AnalysisClient {
     });
     return ok({
       result: dossier,
-      source: pseudocode.value.source,
+      source: { kind: "project-export", project: reader.project },
       files: [
         ...(pseudocode.value.files ?? []),
         ...(assembly.value.files ?? []),
@@ -864,16 +806,6 @@ export class KunaSessionClient implements AnalysisClient {
     }
     this.#inventoryIndex = { inventory, byAddress, byName };
     return this.#inventoryIndex;
-  }
-
-  #blockOf(
-    project: KunaProject,
-    address: string,
-  ): KunaProjectFunction | undefined {
-    this.#blocks ??= new Map(
-      project.functions.map((block) => [block.address, block]),
-    );
-    return this.#blocks.get(address);
   }
 
   async #ensureInstallation(): Promise<
@@ -943,39 +875,46 @@ export class KunaSessionClient implements AnalysisClient {
       });
   }
 
-  /**
-   * Run a read against the adopted export. Cache pins hold only within this
-   * process, so another REA server can evict the files; then forget the export,
-   * start it again and run the read once more, which falls back or waits.
-   */
-  async #withExport<T>(
+  /** Retry the complete read when its immutable project disappears, never just one facet. */
+  async #withProject<T>(
+    operation: string,
     installation: KunaInstallation,
-    read: () => Promise<T>,
-  ): Promise<T> {
-    try {
-      return await read();
-    } catch (cause: unknown) {
-      if (!isMissing(cause) || this.#ready === undefined) throw cause;
-      this.#forgetProject();
-      await this.#startProject(installation);
-      return read();
+    options: ExecutionOptions,
+    read: (reader: KunaProjectReader) => Promise<Result<T, AnalysisError>>,
+  ): Promise<Result<T, AnalysisError>> {
+    for (let attempt = 0; ; attempt += 1) {
+      const reader = await this.#awaitProject(operation, options);
+      if (!reader.ok) return reader;
+      try {
+        return await read(reader.value);
+      } catch (cause: unknown) {
+        if (!isMissing(cause) || attempt !== 0) throw cause;
+        this.#invalidateProject(reader.value);
+        await this.#startProject(installation);
+      }
     }
   }
 
-  #forgetProject(): void {
+  #invalidateProject(reader: KunaProjectReader): void {
+    // Another request may already have replaced this reader and its build.
+    if (this.#reader !== reader) return;
     this.#releasePin?.();
     this.#releasePin = undefined;
-    this.#ready = undefined;
-    this.#blocks = undefined;
-    this.#assembly = undefined;
+    this.#reader = undefined;
     this.#project = undefined;
     this.#status = undefined;
     this.#exportFailure = undefined;
   }
 
   #adopt(project: KunaProject): void {
-    this.#ready = project;
+    this.#reader = this.#readerFor(project);
     this.#releasePin ??= this.#cache.pin(project.key);
+  }
+
+  #readerFor(project: KunaProject): KunaProjectReader {
+    return this.#reader?.project === project
+      ? this.#reader
+      : new KunaProjectReader(project);
   }
 
   /** The export's failure once it has settled; undefined while it builds or after success. */
@@ -992,8 +931,8 @@ export class KunaSessionClient implements AnalysisClient {
   async #awaitProject(
     operation: string,
     options: ExecutionOptions,
-  ): Promise<Result<KunaProject, AnalysisError>> {
-    if (this.#ready !== undefined) return ok(this.#ready);
+  ): Promise<Result<KunaProjectReader, AnalysisError>> {
+    if (this.#reader !== undefined) return ok(this.#reader);
     const project = this.#project;
     if (project === undefined)
       return err(
@@ -1015,32 +954,12 @@ export class KunaSessionClient implements AnalysisClient {
         .catch(() => undefined);
     }, WAIT_PROGRESS_INTERVAL_MS);
     try {
-      return await waitFor(project, options.signal, operation);
+      const built = await waitFor(project, options.signal, operation);
+      if (!built.ok) return built;
+      return ok(this.#readerFor(built.value));
     } finally {
       clearInterval(timer);
     }
-  }
-
-  async #ensureAssembly(
-    operation: string,
-    options: ExecutionOptions,
-  ): Promise<Result<KunaAssemblyIndex, AnalysisError>> {
-    const project = await this.#awaitProject(operation, options);
-    if (!project.ok) return project;
-    this.#assembly ??= scanKunaAssembly(
-      createReadStream(
-        join(project.value.directory, project.value.manifest.files.asm.path),
-      ),
-    ).then((index) =>
-      index.ok
-        ? ok(index.value)
-        : err(
-            new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
-              userMessage: `Kuna's .asm cannot be indexed: ${index.error}`,
-            }),
-          ),
-    );
-    return this.#assembly;
   }
 
   /** The export's inventory when ready, otherwise one quick `kuna functions` run. */
@@ -1048,7 +967,7 @@ export class KunaSessionClient implements AnalysisClient {
     installation: KunaInstallation,
     options: ExecutionOptions,
   ): Promise<Result<readonly KunaInventoryFunction[], AnalysisError>> {
-    if (this.#ready !== undefined) return ok(this.#ready.inventory);
+    if (this.#reader !== undefined) return ok(this.#reader.project.inventory);
     if (this.#inventory === undefined) {
       // The session owns the shared run; each caller only stops waiting.
       const run = this.#listInventory(installation);

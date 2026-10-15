@@ -12,11 +12,11 @@ import { join } from "node:path";
 
 import { expect, it as test } from "vitest";
 
-import type { AnalysisClient } from "../../../../src/application/AnalysisProvider.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../../../src/domain/jsonValue.js";
 import type { KunaProcessLauncher } from "../../../../src/kuna/KunaCommand.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
+import { KUNA_FUNCTION_TEXT_BYTES } from "../../../../src/kuna/KunaLimits.js";
 import { cleanupOwnedProcessGroup } from "../../../../src/process/ProcessOwnership.js";
 import { spawnOwnedProviderProcess } from "../../../../src/process/ProviderProcess.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -24,74 +24,11 @@ import {
   fakeKunaCalls,
   setFakeKunaBehavior,
   writeFakeKuna,
-  type FakeKunaBehavior,
 } from "./fakeKuna.js";
 
+import { session, run, exportsOf, FUNCTIONS } from "./kunaSessionFixture.js";
+
 const it = test.skipIf(process.platform === "win32");
-
-const FUNCTIONS = [
-  { name: "main", addr: "0x1000" },
-  { name: "parse", addr: "0x1040" },
-  {
-    name: "broken",
-    addr: "0x1080",
-    error: "Flow exceeded maximum instructions",
-  },
-] as const;
-
-const session = async (
-  prefix: string,
-  behavior: FakeKunaBehavior = {},
-  environment: Readonly<Record<string, string>> = {},
-  launcher?: KunaProcessLauncher,
-) => {
-  const root = await createTestTempDirectory(prefix);
-  const kuna = await writeFakeKuna(root, { functions: FUNCTIONS, ...behavior });
-  const targetPath = join(root, "program");
-  await writeFile(targetPath, "program bytes");
-  const target: BinaryTarget = {
-    path: targetPath,
-    sha256: createHash("sha256").update("program bytes").digest("hex"),
-    kind: "executable",
-    format: "elf",
-    architecture: "x86_64",
-    availableArchitectures: ["x86_64"],
-  };
-  const cacheRoot = join(root, "cache");
-  const provider = new KunaProvider(
-    { REA_KUNA_COMMAND: kuna, REA_KUNA_CACHE_DIR: cacheRoot, ...environment },
-    {
-      platform: process.platform,
-      ...(launcher === undefined ? {} : { launcher }),
-    },
-  );
-  const profile = await provider.resolveAnalysisProfile(target);
-  if (!profile.ok || profile.value.profile === null)
-    throw new Error("profile did not resolve");
-  const resolved = profile.value.profile;
-  const open = () => provider.createClient(target, resolved);
-  return { root, kuna, target, cacheRoot, provider, profile: resolved, open };
-};
-
-const run = async (
-  client: AnalysisClient,
-  operation: Parameters<AnalysisClient["execute"]>[0],
-  parameters: Readonly<Record<string, JsonValue>> = {},
-  signal?: AbortSignal,
-) => {
-  const result = await client.execute(
-    operation,
-    parameters,
-    signal === undefined ? {} : { signal },
-  );
-  if (!result.ok) throw result.error;
-  return result.value;
-};
-
-const exportsOf = async (kuna: string) =>
-  (await fakeKunaCalls(kuna)).filter(
-    ({ argv }) => argv[0] === "decompile-project",
-  );
 
 it("discovers configuration without probing and admits only verified targets", async () => {
   const root = await createTestTempDirectory("rea-kuna-discovery-");
@@ -404,6 +341,37 @@ it("builds a dossier with pseudocode and assembly, and the rest explicitly unava
     },
   });
   await client.close();
+});
+
+it("rejects oversized cached text before buffering while retaining its full export", async () => {
+  const { cacheRoot, open } = await session("rea-kuna-text-capacity-", {
+    functions: [{ name: "main", addr: "0x1000" }],
+    cPadding: KUNA_FUNCTION_TEXT_BYTES,
+  });
+  const client = open();
+  try {
+    await run(client, "procedure_assembly", { procedure: "main" });
+    for (const operation of [
+      "procedure_pseudo_code",
+      "analyze_function",
+    ] as const) {
+      const result = await client.execute(operation, { procedure: "main" });
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.error).toMatchObject({
+          _tag: "AnalysisResourceConstraintError",
+          resource: "capacity",
+          reportedLimits: { limit_bytes: KUNA_FUNCTION_TEXT_BYTES },
+        });
+    }
+    const [key] = await readdir(join(cacheRoot, "projects"));
+    const bytes = await readFile(
+      join(cacheRoot, "projects", key ?? "", "project", "program.c"),
+    );
+    expect(bytes.length).toBeGreaterThan(KUNA_FUNCTION_TEXT_BYTES);
+  } finally {
+    await client.close();
+  }
 });
 
 it("keeps answering pseudocode one function at a time when the export fails", async () => {

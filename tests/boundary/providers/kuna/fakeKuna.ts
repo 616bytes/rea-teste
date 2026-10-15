@@ -26,6 +26,8 @@ export interface FakeKunaBehavior {
   readonly functions?: readonly FakeKunaFunction[];
   /** Extra `.asm` bytes, for capacity tests. */
   readonly asmPadding?: number;
+  /** Extra C comment bytes inside each exported body, for buffered-read capacity. */
+  readonly cPadding?: number;
   readonly decompile?: "ok" | "hang";
   /** Milliseconds `functions --json` takes before printing. */
   readonly inventoryDelayMs?: number;
@@ -72,7 +74,7 @@ if (args[0] === "--version") {
     let c = '#include "' + stem + '.h"\n\n';
     functions.forEach((fn, index) => {
       c += fn.error === undefined
-        ? "// Function: " + fn.name + " @ " + fn.addr + "\nint " + fn.name + "(void)\n{\n  return " + index + ";\n}\n\n"
+        ? "// Function: " + fn.name + " @ " + fn.addr + "\nint " + fn.name + "(void)\n{\n  return " + index + ";\n" + (behavior.cPadding ? "  /*" + "x".repeat(behavior.cPadding) + "*/\n" : "") + "}\n\n"
         : "// Function: " + fn.name + " @ " + fn.addr + "  (error: " + fn.error + ")\n\n";
     });
     fs.writeFileSync(path.join(output, stem + ".c"), c);

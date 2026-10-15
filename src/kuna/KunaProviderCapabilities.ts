@@ -4,6 +4,8 @@ import type {
 } from "../application/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
+import { REGEX_MATCHING_LIMITATION } from "../process/RegexMatcher.js";
+import { KUNA_FUNCTION_TEXT_BYTES } from "./KunaLimits.js";
 
 /** Static identity; the observed Kuna release is reported in each analysis profile. */
 export const KUNA_PROVIDER_IDENTITY = Object.freeze({
@@ -42,6 +44,7 @@ const KUNA_ENTRY_LIMITATION =
 /** Provider text is not comparable across providers. */
 const KUNA_TEXT_LIMITATION =
   "Pseudocode and assembly are exact Kuna text, not comparable as equal or different with another provider's text.";
+const KUNA_TEXT_CAPACITY_LIMITATION = `Each buffered source facet admits at most ${String(KUNA_FUNCTION_TEXT_BYTES)} bytes before allocation; larger text stays accessible in the local project export.`;
 
 /** The limitations that apply to one operation's answer, and only those. */
 export const kunaLimitations = (
@@ -51,14 +54,23 @@ export const kunaLimitations = (
     case "list_documents":
       return [];
     case "list_procedures":
-    case "search_procedures":
     case "procedure_address":
     case "address_name":
       return [KUNA_PROVENANCE, KUNA_ENTRY_LIMITATION];
+    case "search_procedures":
+      return [
+        KUNA_PROVENANCE,
+        KUNA_ENTRY_LIMITATION,
+        REGEX_MATCHING_LIMITATION,
+      ];
     case "procedure_pseudo_code":
     case "procedure_assembly":
     case "analyze_function":
-      return [KUNA_PROVENANCE, KUNA_TEXT_LIMITATION];
+      return [
+        KUNA_PROVENANCE,
+        KUNA_TEXT_LIMITATION,
+        KUNA_TEXT_CAPACITY_LIMITATION,
+      ];
   }
 };
 

@@ -114,7 +114,9 @@ completion derives candidates from the complete inventory, so a name is offered
 only when it identifies one address in that inventory. A completion reply
 carries at most 100 values, the MCP limit. `total` counts every match and
 `hasMore` is `true` when values were omitted. Completion has no paging
-controls; to reach omitted values, type a longer prefix.
+controls. A longer prefix reaches an omitted value only when it excludes other
+matches; matching uses normalized, case-insensitive forms, so a value can stay
+unreachable when more than 100 matches share its normalized prefix.
 
 ## Lifecycle and safety
 

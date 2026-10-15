@@ -200,6 +200,8 @@ export class KunaProjectCache {
   readonly #unfinished = new Set<InflightBuild>();
   readonly #verified = new Map<string, KunaProject>();
   readonly #pins = new Map<string, number>();
+  /** One eviction decision at a time; exports themselves remain concurrent. */
+  #eviction: Promise<void> = Promise.resolve();
   readonly #retainedProcesses: ProviderCleanupError[] = [];
   /** Only resources whose process cleanup is proven may be retried as files. */
   readonly #retainedFiles = new Map<string, ProviderCleanupError>();
@@ -365,12 +367,17 @@ export class KunaProjectCache {
     request: KunaProjectRequest,
   ): Promise<Result<KunaProject, AnalysisError>> {
     entry.waiters += 1;
-    if (request.onStatus !== undefined) entry.listeners.add(request.onStatus);
+    const onStatus = request.onStatus;
+    // Each waiter owns its registration, even when callers reuse a callback.
+    const listener =
+      onStatus === undefined
+        ? undefined
+        : (status: KunaExportStatus) => onStatus(status);
+    if (listener !== undefined) entry.listeners.add(listener);
     return new Promise((resolve) => {
       let settled = false;
       const leave = () => {
-        if (request.onStatus !== undefined)
-          entry.listeners.delete(request.onStatus);
+        if (listener !== undefined) entry.listeners.delete(listener);
         entry.waiters -= 1;
       };
       const onAbort = () => {
@@ -549,7 +556,16 @@ export class KunaProjectCache {
   }
 
   /** Evict least recently used entries above the cap, keeping pinned ones. */
-  async #evict(keep: string): Promise<void> {
+  #evict(keep: string): Promise<void> {
+    const eviction = this.#eviction.then(() => this.#evictUnpinned(keep));
+    this.#eviction = eviction.catch(() => undefined);
+    return eviction;
+  }
+
+  async #evictUnpinned(keep: string): Promise<void> {
+    // A successful build must reach its callers before they can pin its entry.
+    // Protect every unfinished build while reading this eviction snapshot.
+    const building = new Set([...this.#unfinished].map(({ key }) => key));
     const entries: { key: string; bytes: number; mtimeMs: number }[] = [];
     for (const name of await readdir(join(this.#root, "projects"))) {
       if (!KEY_PATTERN.test(name)) continue;
@@ -573,7 +589,12 @@ export class KunaProjectCache {
     let total = entries.reduce((sum, entry) => sum + entry.bytes, 0);
     for (const entry of entries.sort((a, b) => a.mtimeMs - b.mtimeMs)) {
       if (total <= this.#maxBytes && entry.mtimeMs >= 0) break;
-      if (entry.key === keep || this.#pins.has(entry.key)) continue;
+      if (
+        entry.key === keep ||
+        building.has(entry.key) ||
+        this.#pins.has(entry.key)
+      )
+        continue;
       await this.#discard(entry.key);
       total -= entry.bytes;
     }

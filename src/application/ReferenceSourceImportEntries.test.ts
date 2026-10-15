@@ -153,3 +153,60 @@ it("prefers a sibling file over a directory index for extensionless imports", ()
     },
   ]);
 });
+
+it("resolves extensionless TypeScript import-equals references to source files", () => {
+  const files = [
+    [
+      "src/main.ts",
+      'import sibling = require("./dep");\nimport indexed = require("./indexed");\nimport main = require("./pkg-source");\n',
+    ],
+    ["src/dep.ts", 'export const value = "sibling";\n'],
+    ["src/indexed/index.ts", 'export const value = "index";\n'],
+    ["src/pkg-source/package.json", '{"main":"entry"}\n'],
+    ["src/pkg-source/entry.ts", 'export const value = "package main";\n'],
+    ["src/pkg-source/index.ts", 'export const value = "fallback";\n'],
+  ] as const;
+  const read: ReferenceSourceRead = {
+    root: "/selected/source",
+    entries: files.map(([path, content]) => ({
+      status: "read",
+      kind: "file",
+      path,
+      bytes: Buffer.from(content),
+      size: Buffer.byteLength(content),
+    })),
+    bytesRead: files.reduce(
+      (sum, [, content]) => sum + Buffer.byteLength(content),
+      0,
+    ),
+    limitations: [],
+  };
+  const parsed = parseReferenceSourceEntries(
+    read,
+    new Set(files.map(([path]) => path)),
+  );
+
+  expect(parsed.relationships).toEqual([
+    {
+      from_path: "src/main.ts",
+      to: "src/dep.ts",
+      kind: "requires",
+      resolution: "internal",
+      parse_state: "parsed",
+    },
+    {
+      from_path: "src/main.ts",
+      to: "src/indexed/index.ts",
+      kind: "requires",
+      resolution: "internal",
+      parse_state: "parsed",
+    },
+    {
+      from_path: "src/main.ts",
+      to: "src/pkg-source/entry.ts",
+      kind: "requires",
+      resolution: "internal",
+      parse_state: "parsed",
+    },
+  ]);
+});

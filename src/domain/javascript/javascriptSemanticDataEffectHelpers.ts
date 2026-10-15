@@ -24,6 +24,7 @@ import {
   semanticReadInitializers,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
+import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -427,9 +428,11 @@ const computeBuiltinBindingPath = (
     builtinEscapes(binding, state).some(
       ({ path, node }) =>
         affectsBuiltinPath(path, selectedPath) &&
-        // A function or scalar-value escape cannot replace its selected slot.
-        // An escaped containing object can still replace the selected value.
-        (!callableValue || path.length < selectedPath.length) &&
+        // A known function or scalar escape cannot replace its selected slot.
+        // A wildcard may expose an object and must retain that uncertainty.
+        (!callableValue ||
+          path.length < selectedPath.length ||
+          path.includes(null)) &&
         !semanticTopLevelEffectFollowsCapture(
           capture,
           node,
@@ -840,7 +843,10 @@ const requiredModuleChanged = (
           node,
           state.parentsByNode,
         ) &&
-        (kind === "write" || !callableValue || path.length < selection.length),
+        (kind === "write" ||
+          !callableValue ||
+          path.length < selection.length ||
+          path.includes(null)),
     );
   return (
     changed(builtinModuleEffects(identity.specifier, state), identity.path) ||
@@ -969,7 +975,7 @@ export const isSemanticProcessObject = (
   if (binding === undefined)
     return (
       semanticGlobalProcessOrigin(node, state) !== undefined &&
-      !requiredModuleChanged("process", selected, node, state, true)
+      !requiredModuleChanged("process", selected, node, state)
     );
   return (
     builtinBindingPath(
@@ -999,21 +1005,20 @@ export const traverseDataEffects = (
   context: DataEffectTraversalContext,
   visit: (node: t.Node, parent: t.Node | null) => void,
 ): void => {
-  context.callableStack.length = 0;
+  const callableStack = createSemanticCallableIdStack(
+    context.callableIds,
+    context.callableStack,
+  );
   context.ancestors.length = 0;
   traverseJavaScriptAst(program, {
     enter: (node, parent) => {
-      const callableId = semanticCallableIdForNode(node);
-      if (callableId !== null && context.callableIds.has(callableId))
-        context.callableStack.push(callableId);
+      callableStack.enter(node, parent);
       visit(node, parent);
       context.ancestors.push(node);
     },
     exit: (node) => {
       context.ancestors.pop();
-      const callableId = semanticCallableIdForNode(node);
-      if (callableId !== null && context.callableStack.at(-1) === callableId)
-        context.callableStack.pop();
+      callableStack.exit(node);
     },
   });
 };
@@ -1041,7 +1046,11 @@ export const dataEffectPrimitive = (
   return null;
 };
 
-/** Read one static string or expression-free template. */
+/**
+ * Read one static string or expression-free template. A template recovered
+ * with an invalid escape has no cooked value; its raw spelling is not a
+ * JavaScript string, so it stays dynamic.
+ */
 export const dataEffectLiteralString = (
   node:
     | t.Expression
@@ -1052,9 +1061,8 @@ export const dataEffectLiteralString = (
 ): string | null => {
   if (node === undefined) return null;
   const literal = readExactJavaScriptLiteral(node);
-  if (literal.found && typeof literal.value === "string") return literal.value;
-  return t.isTemplateLiteral(node) && node.expressions.length === 0
-    ? (node.quasis[0]?.value.raw ?? null)
+  return literal.found && typeof literal.value === "string"
+    ? literal.value
     : null;
 };
 

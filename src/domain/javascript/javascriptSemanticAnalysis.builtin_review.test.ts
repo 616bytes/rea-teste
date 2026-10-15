@@ -107,6 +107,15 @@ it("tracks process writes through self-reassigned global aliases", () => {
   expect(ir.configurationOperations).toEqual([]);
 });
 
+it.each(["key", "'__proto__'"])(
+  "retains uncertainty when a required argv object escapes through %s",
+  (key) => {
+    const ir = analyzeJavaScriptSemantics(`const proc=require('node:process');
+      function run() { patch(proc.argv[${key}]); return proc.argv[3]; }`);
+    expect(ir.configurationOperations.map(({ key }) => key)).not.toContain("3");
+  },
+);
+
 it("retains a nested builtin read before receiver reassignment", () => {
   const ir = analyzeJavaScriptSemantics(`let fs=require('fs');
     fs.promises.open('kept'); fs={};`);
@@ -120,11 +129,18 @@ it("checks the parent promises slot for fresh require chains", () => {
   expect(ir.resourceOperations).toEqual([]);
 });
 
-it("recognizes only actual TLS acquisition methods", () => {
-  const ir = analyzeJavaScriptSemantics(`const tls=require('tls');
-    tls.connect(443); tls.createConnection(443);`);
+it.each([
+  "const tls=require('tls'); const net=require('net');",
+  "const tls=require('node:tls'); const net=require('node:net');",
+  "import * as tls from 'node:tls'; import * as net from 'node:net';",
+])("distinguishes TLS and net acquisition methods: %s", (imports) => {
+  const ir = analyzeJavaScriptSemantics(`${imports}
+    tls.connect(443); tls.createConnection(443);
+    net.connect(80); net.createConnection(80);`);
   expect(ir.resourceOperations.map(({ method }) => method)).toEqual([
     "connect",
+    "connect",
+    "createConnection",
   ]);
 });
 

@@ -3,6 +3,7 @@
 // every workflow.
 export const SCOPES = {
   reverse_tools: [
+    ".github/workflows/mutation.yml",
     "src/application/reverse/**",
     "src/application/binary/BinarySession.ts",
     "src/cutter/**",
@@ -23,6 +24,7 @@ export const SCOPES = {
     "tests/composition/analysis-sessions/binarySession.test.ts",
     "tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts",
     "tests/boundary/filesystem/reverseToolsMutationConfig.test.ts",
+    "tests/boundary/filesystem/mutationWorkflow.test.ts",
     "src/server/registerRizinDebugTools.ts",
     "tests/boundary/providers/CutterBridge*.test.ts",
     "tests/boundary/providers/cutterBridgeProducer.test.ts",
@@ -88,6 +90,19 @@ export const SCOPES = {
   ],
   // Four-host installed-package matrix and the Windows curated lane.
   package: [
+    ".github/actions/publish-mcp/**",
+    ".github/actions/prepare-release-package/**",
+    ".github/workflows/release-recovery.yml",
+    "scripts/ci/release-recovery.mjs",
+    "scripts/ci/verified-package.mjs",
+    "scripts/ci/npm-release.*",
+    "scripts/verify-release-artifact.mjs",
+    "scripts/lib/release-package-canary.mjs",
+    "scripts/verify-published-package.mjs",
+    "tests/boundary/filesystem/releaseRecovery.test.ts",
+    "tests/boundary/filesystem/mcpRegistryPublication.test.ts",
+    "tests/boundary/filesystem/npmRelease.test.ts",
+    "tests/boundary/process/releaseArtifactCanary.test.ts",
     "src/windows/**",
     "native/windows/**",
     "src/process/capture/FilesystemSnapshot.ts",
@@ -123,6 +138,7 @@ export const SCOPES = {
     "src/domain/javascript/javascriptRuntimeStaticCandidates.ts",
     "tests/boundary/filesystem/webScriptManifestPaths.test.ts",
     "tests/boundary/process/ProcessEvidence.host.test.ts",
+    "tests/boundary/process/windowsOutputCapture.test.ts",
     "tests/acceptance/webModuleCli.test.ts",
     "tests/acceptance/webSourceLocationCli.test.ts",
     "tests/boundary/cli/referenceSourceImportStatus.test.ts",

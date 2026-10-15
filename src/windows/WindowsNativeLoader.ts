@@ -100,6 +100,34 @@ const isWindowsNativeArchitecture = (
 ): architecture is WindowsNativeArchitecture =>
   Object.hasOwn(WINDOWS_NATIVE_TARGETS, architecture);
 
+/** Name the host's own artifact, so arm64 recovery does not point at x64. */
+const missingWindowsNativeFileReason = (
+  file: string,
+  artifact: string,
+): string =>
+  `Missing packaged Windows native file native/windows/build/${file} (ENOENT). Restore both native/windows/build/manifest.json and native/windows/build/${artifact} from the rea-agents@${PACKAGE_METADATA.version} tarball or build them with native/windows/README.md; no native artifact was loaded.`;
+
+const readPackagedWindowsNativeFile = <T>(
+  file: string,
+  artifact: string,
+  read: () => T,
+): T => {
+  try {
+    return read();
+  } catch (cause: unknown) {
+    if (
+      typeof cause === "object" &&
+      cause !== null &&
+      "code" in cause &&
+      cause.code === "ENOENT"
+    )
+      throw new Error(missingWindowsNativeFileReason(file, artifact), {
+        cause,
+      });
+    throw cause;
+  }
+};
+
 /** Validate compatibility and artifact identity before invoking the native addon. */
 export const loadWindowsNativeAuthority = (
   host: WindowsNativeLoadHost,
@@ -121,7 +149,11 @@ export const loadWindowsNativeAuthority = (
       reason: "REA Windows native controls require Node-API 8 or newer.",
     };
   try {
-    const manifest = windowsNativeManifestSchema.parse(host.readManifest());
+    const manifest = windowsNativeManifestSchema.parse(
+      readPackagedWindowsNativeFile("manifest.json", target.artifact, () =>
+        host.readManifest(),
+      ),
+    );
     if (manifest.packageVersion !== host.packageVersion)
       throw new Error("Windows native artifact belongs to another REA version");
     if (
@@ -131,7 +163,11 @@ export const loadWindowsNativeAuthority = (
       throw new Error(
         `Windows native manifest declares ${manifest.architecture} artifact ${manifest.artifact}; this ${architecture} host requires ${target.artifact}`,
       );
-    const artifact = host.readArtifact(target.artifact);
+    const artifact = readPackagedWindowsNativeFile(
+      target.artifact,
+      target.artifact,
+      () => host.readArtifact(target.artifact),
+    );
     if (
       createHash("sha256").update(artifact).digest("hex") !==
       manifest.artifactSha256

@@ -30,6 +30,22 @@ export const healthLimitations = Object.freeze([
   "Cancelling an active Ghidra request terminates its ephemeral database and discards session annotations. The selected target remains open; the next provider query imports the original artifact again.",
 ]);
 
+/** Lifecycle limitations replacing the ephemeral ones for a persistent project. */
+export const persistentProjectHealthLimitations = Object.freeze([
+  "The session serves operations after Ghidra opens the caller-selected project Program read-only; REA runs no auto-analysis, so coverage is whatever the project already contains.",
+  "The project Program is never saved and annotation operations are unavailable; original executable bytes are never written.",
+  "Cancelling an active Ghidra request terminates the session without changing the project. The selected target remains open; the next provider query reopens the project.",
+]);
+
+/** Health limitations for the configured import mode. */
+export const ghidraHealthLimitations = (
+  persistentProject: boolean,
+): readonly string[] =>
+  persistentProject ? persistentProjectHealthLimitations : healthLimitations;
+
+const PERSISTENT_PROJECT_READ_ONLY_REASON =
+  "A persistent Ghidra project is opened read-only; annotations would be discarded, so REA does not offer them.";
+
 /** Additional limitations applied to the experimental Windows x64 P0 boundary. */
 export const windowsP0Limitations = Object.freeze([
   "Windows Ghidra P0 accepts native x86 and x86-64 PE applications and DLLs, and explicitly selected raw 6502 images; managed, hostile, sensitive, and mutable-path targets are unsupported.",
@@ -44,9 +60,12 @@ const searchLimitation =
   "Regex mode uses Java Pattern semantics. Matcher or compiler stack exhaustion returns a resource constraint without closing the session; literal mode avoids regex recursion and returns complete matching values.";
 
 /** Limitation text for one admitted operation, including the common base. */
-export const limitationsFor = (operation: string): readonly string[] => {
+export const limitationsFor = (
+  operation: string,
+  persistentProject = false,
+): readonly string[] => {
   const common = [
-    ...healthLimitations,
+    ...ghidraHealthLimitations(persistentProject),
     "Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.",
   ];
   switch (operation) {
@@ -195,6 +214,39 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
     });
   }),
 );
+
+/**
+ * Capabilities for a caller-selected persistent project: mutating operations
+ * are unavailable and every read is re-observed, because project content can
+ * change between sessions without changing the artifact or profile identity.
+ */
+export const persistentProjectCapabilities = (
+  capabilities: readonly CapabilityDescriptor[],
+): readonly CapabilityDescriptor[] =>
+  Object.freeze(
+    capabilities.map((capability): CapabilityDescriptor => {
+      const ephemeral = new Set(limitationsFor(capability.operation));
+      const limitations = Object.freeze([
+        ...limitationsFor(capability.operation, true),
+        ...capability.limitations.filter(
+          (limitation) => !ephemeral.has(limitation),
+        ),
+      ]);
+      const live = {
+        ...capability,
+        cachePolicy: "live" as const,
+        limitations,
+      };
+      if (!capability.available || !capability.effects.mutatesArtifact)
+        return Object.freeze(live);
+      const { availabilityCode: _available, ...unavailable } = live;
+      return Object.freeze({
+        ...unavailable,
+        available: false,
+        reason: PERSISTENT_PROJECT_READ_ONLY_REASON,
+      });
+    }),
+  );
 
 /** Capabilities advertised for the experimental Windows x64 P0 boundary. */
 export const windowsP0Capabilities = (

@@ -124,6 +124,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private final Map<FileBytes, Boolean> targetSourceIdentity = new IdentityHashMap<>();
     private String admittedTargetSha256;
+    private static final String PERSISTENT_IMPORT_MODE = "persistent-project-read-only";
+    /** Recorded digest of a persistent-project Program that is not the admitted target. */
+    private boolean persistentIdentityRefused;
+    private String persistentProgramSha256;
     private static final Set<String> DESCRIPTOR_KEYS = Set.of(
         "transport",
         "endpoint_path",
@@ -217,11 +221,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new IllegalStateException("Ghidra provider version does not match the session");
         }
         String importedSha256 = currentProgram.getExecutableSHA256();
-        if (importedSha256 == null ||
-            !constantTimeEquals(
+        boolean identityMatches = importedSha256 != null &&
+            constantTimeEquals(
                 importedSha256.toLowerCase(Locale.ROOT),
                 descriptor.targetSha256
-            )) {
+            );
+        if (persistentProject(descriptor)) {
+            // A caller-selected project may hold another artifact. Serve only the
+            // handshake so REA can report both digests, and refuse every analysis.
+            persistentProgramSha256 = importedSha256 != null &&
+                importedSha256.toLowerCase(Locale.ROOT).matches("[0-9a-f]{64}")
+                    ? importedSha256.toLowerCase(Locale.ROOT) : null;
+            persistentIdentityRefused = !identityMatches;
+        }
+        else if (!identityMatches) {
             throw new IllegalStateException(
                 "Ghidra imported-byte digest does not match the admitted target"
             );
@@ -233,8 +246,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         try {
             if (!descriptor.transport.equals("unix-socket") && descriptor.analysisExtensions.size() > 0)
                 throw new IOException("Windows Ghidra P0 does not admit metadata recovery or database mutation.");
-            analysisExtensions.analyze(descriptor.analysisExtensions, currentProgram, monitor);
-            initializeDecompiler();
+            if (!persistentIdentityRefused) {
+                analysisExtensions.analyze(descriptor.analysisExtensions, currentProgram, monitor);
+                initializeDecompiler();
+            }
             serve(descriptor);
         }
         finally {
@@ -244,6 +259,21 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
             analysisExtensions.close();
         }
+    }
+
+    private static boolean persistentProject(SessionDescriptor descriptor) {
+        return PERSISTENT_IMPORT_MODE.equals(descriptor.importMode);
+    }
+
+    /** Windows P0 and persistent projects never edit the session database. */
+    private static boolean readOnly(SessionDescriptor descriptor) {
+        return !descriptor.transport.equals("unix-socket") || persistentProject(descriptor);
+    }
+
+    private static String readOnlyReason(SessionDescriptor descriptor) {
+        return persistentProject(descriptor)
+            ? "A persistent Ghidra project is opened read-only"
+            : "Windows P0 does not admit database mutation";
     }
 
     private void serve(SessionDescriptor descriptor) throws Exception {
@@ -394,7 +424,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     requireKeys(request.params, Set.of());
                     JsonObject result = new JsonObject();
                     result.addProperty("shutdown", true);
-                    result.addProperty("project_ephemeral", true);
+                    result.addProperty("project_ephemeral", !persistentProject(descriptor));
                     writeSuccess(writer, request.id, result);
                     return;
                 }
@@ -419,6 +449,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (request.method.equals("ping")) {
             requireKeys(request.params, Set.of());
             return sessionInfo(descriptor);
+        }
+        if (persistentIdentityRefused) {
+            throw new RequestFailure(
+                "target_identity_mismatch",
+                "The persistent project Program does not record the admitted target digest"
+            );
         }
         if (analysisTimeoutOccurred()) {
             throw new RequestFailure(
@@ -459,14 +495,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 yield result;
             }
             case "set_address_name", "set_addresses_names" -> {
-                if (!descriptor.transport.equals("unix-socket"))
-                    throw new RequestFailure("method_unavailable", "Windows P0 does not admit database mutation");
+                if (readOnly(descriptor))
+                    throw new RequestFailure("method_unavailable", readOnlyReason(descriptor));
                 yield request.method.equals("set_address_name")
                     ? setAddressName(request.params) : setAddressesNames(request.params);
             }
             case "annotate_native_function" -> {
-                if (!descriptor.transport.equals("unix-socket"))
-                    throw new RequestFailure("method_unavailable", "Windows P0 does not admit database mutation");
+                if (readOnly(descriptor))
+                    throw new RequestFailure("method_unavailable", readOnlyReason(descriptor));
                 yield annotateNativeFunction(request.params);
             }
             default -> throw new RequestFailure(
@@ -501,7 +537,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("run_id", descriptor.runId);
         result.addProperty("profile_digest", descriptor.profileDigest);
         result.add("provider", provider);
-        boolean readOnly = !descriptor.transport.equals("unix-socket");
+        boolean readOnly = readOnly(descriptor);
         result.addProperty("read_only", readOnly);
         result.addProperty("analysis_complete", !timedOut);
         result.addProperty("analysis_timed_out", timedOut);
@@ -513,6 +549,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
         ));
         result.add("target", target);
         result.add("pdb", pdbObservation());
+        if (persistentProject(descriptor)) {
+            JsonObject project = new JsonObject();
+            project.addProperty("mode", PERSISTENT_IMPORT_MODE);
+            project.addProperty("program", currentProgram.getDomainFile().getPathname());
+            project.addProperty("executable_sha256", persistentProgramSha256);
+            result.add("project", project);
+        }
         JsonArray extensions = analysisExtensions.reports();
         if (extensions.size() > 0) result.add("analysis_extensions", extensions);
         // Written by ReaGhidraApplySeeds before auto-analysis; REA checks it
@@ -4662,6 +4705,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Set<String> keys = new HashSet<>(DESCRIPTOR_KEYS);
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("analysis_extensions"))
             keys.add("analysis_extensions");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("import_mode"))
+            keys.add("import_mode");
         JsonObject object = requireObject(parsed, keys);
         return new SessionDescriptor(
             requireString(object, "transport"),
@@ -4671,8 +4716,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
             requireSha256(object, "target_sha256"),
             requireString(object, "provider_version"),
             requireString(object, "profile_digest"),
-            object.has("analysis_extensions") ? object.getAsJsonArray("analysis_extensions") : new JsonArray()
+            object.has("analysis_extensions") ? object.getAsJsonArray("analysis_extensions") : new JsonArray(),
+            object.has("import_mode") ? requirePersistentImportMode(object) : null
         );
+    }
+
+    private static String requirePersistentImportMode(JsonObject object) {
+        String mode = requireString(object, "import_mode");
+        if (!PERSISTENT_IMPORT_MODE.equals(mode)) {
+            throw new IllegalArgumentException("REA session import mode is invalid");
+        }
+        return mode;
     }
 
     private static Request parseRequest(String line, String expectedToken) {
@@ -4876,7 +4930,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String targetSha256,
         String providerVersion,
         String profileDigest,
-        JsonArray analysisExtensions
+        JsonArray analysisExtensions,
+        String importMode
     ) {}
     private record Request(int id, String method, JsonObject params) {}
 

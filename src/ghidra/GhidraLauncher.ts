@@ -5,6 +5,12 @@ import {
   type GhidraSeedCommitment,
 } from "./GhidraAnalysisSeeds.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
+import {
+  ghidraPersistentProjectLocation,
+  type GhidraPersistentProject,
+  type GhidraPersistentProjectLocation,
+} from "../config/ghidraPersistentProject.js";
+import { GHIDRA_PERSISTENT_IMPORT_MODE } from "./GhidraPersistentProject.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { mkdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, join, posix, win32 } from "node:path";
@@ -166,6 +172,8 @@ export interface GhidraHeadlessLauncherOptions {
   readonly disabledAnalyzers?: readonly string[];
   /** Caller seeds committed by the analysis profile, applied before analysis. */
   readonly analysisSeeds?: GhidraSeedCommitment;
+  /** Open this analyzed project Program read-only instead of importing the target. */
+  readonly persistentProject?: GhidraPersistentProject;
   readonly analysisExtensions?: readonly GhidraExtension[];
   readonly pspExtension?: GhidraPspExtension;
   /** Remap typed float storage for the soft-float o32 ABI after analysis. */
@@ -248,6 +256,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           target_sha256: session.targetSha256,
           provider_version: session.providerVersion,
           profile_digest: session.profileDigest,
+          ...(this.options.persistentProject === undefined
+            ? {}
+            : { import_mode: GHIDRA_PERSISTENT_IMPORT_MODE }),
           ...(extensions.length === 0
             ? {}
             : { analysis_extensions: extensions }),
@@ -256,7 +267,15 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
       );
       if (isAborted(options.signal))
         return err(new AnalysisCancelledError("open_binary"));
+      const persistentProject =
+        this.options.persistentProject === undefined
+          ? undefined
+          : ghidraPersistentProjectLocation(
+              this.options.persistentProject,
+              platform,
+            );
       const headlessArguments = ghidraHeadlessArguments({
+        ...(persistentProject === undefined ? {} : { persistentProject }),
         platform,
         ...(psp === undefined ? {} : { psp: true as const }),
         ...(this.options.mipsSoftFloat === undefined
@@ -549,6 +568,8 @@ export interface GhidraHeadlessArgumentOptions {
   readonly disabledAnalyzers?: readonly string[];
   /** Canonical seed snapshot passed to the pre-analysis seed script. */
   readonly seedPath?: string;
+  /** Open an analyzed project Program read-only instead of importing. */
+  readonly persistentProject?: GhidraPersistentProjectLocation;
 }
 
 /** Build the complete read-only headless invocation in deterministic order. */
@@ -602,6 +623,12 @@ export const ghidraHeadlessArguments = (
   )
     throw new Error(
       "A raw-binary import cannot be combined with a DOS import.",
+    );
+  if (options.persistentProject !== undefined)
+    return ghidraPersistentProjectArguments(
+      options,
+      options.persistentProject,
+      bridgeDirectory,
     );
   return [
     options.projectRoot,
@@ -713,6 +740,51 @@ export const ghidraHeadlessArguments = (
     "-postScript",
     // Ghidra checks the caller's cwd before scriptPath for a basename. Select
     // the packaged source explicitly so unrelated entries cannot shadow it.
+    options.bridgeScriptPath,
+    options.descriptorPath,
+  ];
+};
+
+/**
+ * Open one Program of an existing project without importing, analyzing, or
+ * saving it. Import-time loader, language, seed, analyzer, and repair scripts
+ * have nothing to act on and are refused rather than silently ignored.
+ */
+const ghidraPersistentProjectArguments = (
+  options: GhidraHeadlessArgumentOptions,
+  project: GhidraPersistentProjectLocation,
+  bridgeDirectory: string,
+): readonly string[] => {
+  if (
+    options.psp === true ||
+    options.mipsSoftFloat === true ||
+    options.dosMz === true ||
+    options.dosCom === true ||
+    options.rawBinary !== undefined ||
+    options.languageOverride !== undefined ||
+    options.seedPath !== undefined ||
+    (options.disabledAnalyzers?.length ?? 0) > 0
+  )
+    throw new Error(
+      "A persistent Ghidra project is opened without import; import-time loader, language, seed, and analyzer options cannot be combined with it.",
+    );
+  return [
+    project.projectLocation,
+    project.folderPath === "/"
+      ? project.projectName
+      : `${project.projectName}${project.folderPath}`,
+    "-process",
+    project.programName,
+    "-noanalysis",
+    "-readOnly",
+    "-log",
+    options.ghidraLogPath,
+    "-scriptlog",
+    options.scriptLogPath,
+    "-scriptPath",
+    bridgeDirectory,
+    "-postScript",
+    // Same explicit packaged path as the import invocation; see below.
     options.bridgeScriptPath,
     options.descriptorPath,
   ];

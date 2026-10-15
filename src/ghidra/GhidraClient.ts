@@ -734,7 +734,9 @@ export class GhidraClient {
     const parsed = parseGhidraSessionInfo(value, {
       runId,
       expectedReadOnly:
-        this.#options.transport === "authenticated-loopback-tcp",
+        this.#options.transport === "authenticated-loopback-tcp" ||
+        this.#options.persistentProject === true,
+      persistentProject: this.#options.persistentProject === true,
       providerVersion: this.#options.providerVersion,
       profileDigest: this.#options.profileDigest,
       targetSha256: this.#options.targetSha256,
@@ -791,7 +793,13 @@ export class GhidraClient {
               this.#failure("process", "Ghidra shutdown request failed", cause),
             ),
           );
-        if (!shutdown.ok || !isGhidraShutdownAcknowledgement(shutdown.value))
+        if (
+          !shutdown.ok ||
+          !isGhidraShutdownAcknowledgement(
+            shutdown.value,
+            this.#options.persistentProject === true,
+          )
+        )
           this.#logger.warn(
             {
               status: shutdown.ok ? "invalid-acknowledgement" : "failed",

@@ -35,7 +35,14 @@ import {
   type GhidraInstallationHost,
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
-import { resolveGhidraAnalysisProfile } from "./GhidraAnalysisProfile.js";
+import {
+  ghidraPinnedLanguage,
+  resolveGhidraAnalysisProfile,
+} from "./GhidraAnalysisProfile.js";
+import {
+  ghidraPersistentProjectParameters,
+  resolveGhidraPersistentProject,
+} from "./GhidraPersistentProject.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { resolveGhidraAnalysisSeeds } from "./GhidraAnalysisSeeds.js";
 import {
@@ -50,6 +57,7 @@ import {
 import { resolveGhidraExtensions } from "./extensions/GhidraExtensions.js";
 import {
   CAPABILITIES,
+  persistentProjectCapabilities,
   windowsP0Capabilities,
   GHIDRA_PROVIDER_IDENTITY,
 } from "./GhidraProviderCapabilities.js";
@@ -98,9 +106,19 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   }
 
   capabilities(): readonly CapabilityDescriptor[] {
-    return (this.installationHost?.platform ?? process.platform) === "win32"
-      ? windowsP0Capabilities()
-      : CAPABILITIES;
+    return this.#forImportMode(
+      (this.installationHost?.platform ?? process.platform) === "win32"
+        ? windowsP0Capabilities()
+        : CAPABILITIES,
+    );
+  }
+
+  #forImportMode(
+    capabilities: readonly CapabilityDescriptor[],
+  ): readonly CapabilityDescriptor[] {
+    return this.config.ghidraPersistentProject === undefined
+      ? capabilities
+      : persistentProjectCapabilities(capabilities);
   }
 
   inspectAvailability(): ProviderAvailability {
@@ -115,10 +133,11 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         : undefined;
     return {
       availability: this.#availability(installation, readiness),
-      capabilities:
+      capabilities: this.#forImportMode(
         readiness === undefined
           ? CAPABILITIES
           : windowsP0Capabilities(readiness),
+      ),
     };
   }
 
@@ -285,19 +304,35 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       return err(new AnalysisCancelledError("open_binary"));
     const seeds = await resolveGhidraAnalysisSeeds(this.config.ghidraSeedFile);
     if (!seeds.ok) return seeds;
-    if (extensions.value.length === 0 && seeds.value === undefined)
+    const project = await resolveGhidraPersistentProject(
+      this.config.ghidraPersistentProject,
+      target,
+      ghidraPinnedLanguage(target) !== undefined,
+    );
+    if (!project.ok) return project;
+    if (
+      extensions.value.length === 0 &&
+      seeds.value === undefined &&
+      project.value === undefined
+    )
       return resolved;
+    const parameters = {
+      ...resolved.value.profile.parameters,
+      ...(extensions.value.length === 0
+        ? {}
+        : { analysis_extensions: jsonValueSchema.parse(extensions.value) }),
+      ...(seeds.value === undefined
+        ? {}
+        : { analysis_seeds: jsonValueSchema.parse(seeds.value) }),
+    };
     return ok({
       ...resolved.value,
-      profile: createAnalysisProfile(resolved.value.profile.provider, {
-        ...resolved.value.profile.parameters,
-        ...(extensions.value.length === 0
-          ? {}
-          : { analysis_extensions: jsonValueSchema.parse(extensions.value) }),
-        ...(seeds.value === undefined
-          ? {}
-          : { analysis_seeds: jsonValueSchema.parse(seeds.value) }),
-      }),
+      profile: createAnalysisProfile(
+        resolved.value.profile.provider,
+        project.value === undefined
+          ? parameters
+          : ghidraPersistentProjectParameters(parameters, project.value),
+      ),
     });
   }
 

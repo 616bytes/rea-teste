@@ -10,7 +10,12 @@ import {
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
-import { inspectApktoolClient } from "./ApktoolConfiguration.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
+  ApktoolConfigurationFailure,
+  inspectApktoolClient,
+} from "./ApktoolConfiguration.js";
+import { ApktoolProvider } from "./ApktoolProvider.js";
 
 vi.mock("../process/OwnedCommand.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../process/OwnedCommand.js")>()),
@@ -95,4 +100,48 @@ it("reports a cancelled version probe as cancelled", async () => {
   await expect(
     inspectApktoolClient(selection, undefined, {}, "linux"),
   ).rejects.toBeInstanceOf(AnalysisCancelledError);
+});
+
+it("keeps unresolved probe cleanup typed when the launcher overflows its output", async () => {
+  const overflow = () =>
+    new OwnedCommandFailure(
+      "output-limit",
+      "Command diagnostic output exceeded its complete-output budget.",
+      null,
+      "process group still running",
+      undefined,
+      ["pid:7", "process-group:7"],
+      owner,
+    );
+  vi.mocked(runOwnedCommand).mockRejectedValueOnce(overflow());
+  const failure = await inspectApktoolClient(
+    selection,
+    undefined,
+    {},
+    "linux",
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ApktoolConfigurationFailure);
+  expect((failure as ApktoolConfigurationFailure).cleanup).toEqual({
+    reason: "process group still running",
+    resources: ["pid:7", "process-group:7"],
+  });
+
+  // Both provider entry points report the unresolved processes as cleanup.
+  const provider = new ApktoolProvider({
+    environment: { REA_APKTOOL_COMMAND: "/opt/apktool/apktool" },
+  });
+  vi.mocked(runOwnedCommand).mockRejectedValueOnce(overflow());
+  await expect(provider.inspectAvailability()).rejects.toBeInstanceOf(
+    ProviderCleanupError,
+  );
+  vi.mocked(runOwnedCommand).mockRejectedValueOnce(overflow());
+  const result = await provider.execute({
+    operation: "decode_android_resources",
+    input: {},
+  } as never);
+  expect(result.ok ? null : result.error).toBeInstanceOf(ProviderCleanupError);
+  expect(result.ok ? null : projectAnalysisError(result.error)).toMatchObject({
+    code: "cleanup_incomplete",
+    details: { resources: ["pid:7", "process-group:7"] },
+  });
 });

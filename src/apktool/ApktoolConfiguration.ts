@@ -154,14 +154,23 @@ export type ApktoolConfigurationFailureCode =
   | "version_unresolved"
   | "unsupported_version";
 
+/** Unresolved cleanup of a launched probe; its owner was retained separately. */
+export interface ApktoolProbeCleanup {
+  readonly reason: string;
+  readonly resources: readonly string[];
+}
+
 export class ApktoolConfigurationFailure extends Error {
+  readonly cleanup: ApktoolProbeCleanup | undefined;
+
   constructor(
     readonly code: ApktoolConfigurationFailureCode,
     message: string,
     readonly diagnostics: Readonly<Record<string, JsonValue>> = {},
-    options?: ErrorOptions,
+    options?: ErrorOptions & { readonly cleanup?: ApktoolProbeCleanup },
   ) {
     super(message, options);
+    this.cleanup = options?.cleanup;
   }
 }
 
@@ -336,7 +345,7 @@ export const inspectApktoolClient = async (
           ? { max_output_bytes: VERSION_MAX_OUTPUT_BYTES }
           : {}),
       },
-      { cause },
+      { cause, ...cleanupDetails },
     );
   }
   const identity = parseApktoolVersionOutput(stdout);

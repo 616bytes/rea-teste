@@ -56,6 +56,7 @@ import { WindowsBatchCommandError } from "../process/WindowsBatchCommand.js";
 import {
   APKTOOL_COMMAND_ENV,
   ApktoolConfigurationFailure,
+  type ApktoolProbeCleanup,
   apktoolConfigurationAvailability,
   apktoolInvocation,
   inspectApktoolClient,
@@ -147,6 +148,19 @@ interface DecodeLimits {
   readonly timeoutMs: number;
   readonly maxOutputBytes: number;
 }
+
+/** A probe whose launched processes could not be confirmed stopped. */
+const probeCleanupFailure = (
+  operation: string,
+  failure: ApktoolConfigurationFailure,
+  cleanup: ApktoolProbeCleanup,
+): ProviderCleanupError =>
+  new ProviderCleanupError(
+    APKTOOL_PROVIDER_IDENTITY.id,
+    cleanup.resources,
+    { reason: cleanup.reason, probe_failure: failure.message },
+    { operation, cause: failure },
+  );
 
 const runApktool = async (
   operation: string,
@@ -403,8 +417,15 @@ export class ApktoolProvider {
         },
       };
     } catch (cause) {
-      if (cause instanceof ApktoolConfigurationFailure)
+      if (cause instanceof ApktoolConfigurationFailure) {
+        if (cause.cleanup !== undefined)
+          throw probeCleanupFailure(
+            "inspect_apktool_client",
+            cause,
+            cause.cleanup,
+          );
         return apktoolConfigurationAvailability(cause);
+      }
       throw cause;
     }
   }
@@ -464,6 +485,10 @@ export class ApktoolProvider {
       )
         return err(cause);
       if (cause instanceof ApktoolConfigurationFailure) {
+        if (cause.cleanup !== undefined)
+          return err(
+            probeCleanupFailure(request.operation, cause, cause.cleanup),
+          );
         return err(
           providerConfigurationRefusal(
             APKTOOL_PROVIDER_IDENTITY.id,

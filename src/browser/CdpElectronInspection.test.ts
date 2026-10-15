@@ -69,6 +69,47 @@ const resourceTree = (
   },
 });
 
+describe("Electron frame capture", () => {
+  it.each([7, undefined])(
+    "classifies a malformed child frame ID as unavailable: %s",
+    async (childId) => {
+      const root = await localRoot();
+      await writeFile(join(root, "index.html"), "main");
+      await writeFile(join(root, "child.html"), "child");
+      const completeness = new CdpCaptureCompleteness();
+
+      const frames = await captureFrames(
+        {
+          frameTree: {
+            frame: { id: "frame-main", url: pageUrl(root) },
+            childFrames: [
+              {
+                frame: {
+                  ...(childId === undefined ? {} : { id: childId }),
+                  url: pageUrl(root, "child.html"),
+                },
+              },
+            ],
+          },
+        },
+        completeness,
+      );
+
+      expect(frames.map((frame) => frame.frame_id)).toEqual(["frame-main"]);
+      expect(completeness.snapshot()).toMatchObject({
+        unavailable_sections: ["frames"],
+        excluded: [
+          { section: "frames", reason: "invalid_protocol_value", count: 1 },
+        ],
+      });
+      expect(completeness.snapshot().policy_filtered_sections).not.toContain(
+        "frames",
+      );
+      expect(completeness.snapshot().conditions).toContain("attach_limited");
+    },
+  );
+});
+
 describe("Electron resource inventory admission", () => {
   it("retains one authorized resource beside an empty sibling inventory", async () => {
     const root = await localRoot();
@@ -190,6 +231,7 @@ describe("Electron resource entry accounting", () => {
             [
               {
                 frame: { id: "frame-child", url: pageUrl(root) },
+                resources: [],
                 childFrames: "not-an-array",
               },
             ],
@@ -201,7 +243,12 @@ describe("Electron resource entry accounting", () => {
     );
 
     expect(resources).toEqual([]);
-    expect(completeness.snapshot().unavailable_sections).toContain("resources");
+    expect(completeness.snapshot()).toMatchObject({
+      unavailable_sections: ["resources"],
+      excluded: [
+        { section: "resources", reason: "invalid_protocol_value", count: null },
+      ],
+    });
   });
 
   it("keeps a child frame's authorized resources after its parent answered", async () => {

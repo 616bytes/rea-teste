@@ -1,7 +1,6 @@
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import {
-  admittedRecords,
   admitRecords,
   allowedSanitizedUrl,
   isHttpUrl,

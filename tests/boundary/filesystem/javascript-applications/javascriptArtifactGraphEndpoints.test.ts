@@ -165,6 +165,14 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       'const Socket = (0, globalThis.WebSocket); new Socket("wss://example.test/sequence-capture");',
     "dynamic-import.mjs":
       'const { WebSocket: Socket } = await import("ws"); new Socket("wss://example.test/dynamic-import");',
+    "object-await.js":
+      '(async () => { ({ first: await ready, second: new Socket("wss://example.test/object-continuation") }); })(); const Socket = globalThis.WebSocket;',
+    "pending-before.mjs":
+      'const pending = (async () => { await ready; new Socket("wss://example.test/tdz-pending"); })(); await pending; const Socket = globalThis.WebSocket;',
+    "pending-after.mjs":
+      'const pending = (async () => { await ready; new Socket("wss://example.test/pending-initialized"); })(); const Socket = globalThis.WebSocket; await pending;',
+    "import-alias.mjs":
+      'const pending = import("ws"); const { WebSocket: Socket } = await pending; new Socket("wss://example.test/import-alias");',
     "await-branch.js":
       '(async () => { if (await ready) new Socket("wss://example.test/branch-continuation"); })(); const Socket = globalThis.WebSocket;',
     "immediate-sequence.js":
@@ -203,7 +211,10 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/dynamic-import",
       "wss://example.test/field",
       "wss://example.test/generator-body",
+      "wss://example.test/import-alias",
       "wss://example.test/loop-continuation",
+      "wss://example.test/object-continuation",
+      "wss://example.test/pending-initialized",
       "wss://example.test/sequence-capture",
     ]);
     for (const [path, source, line] of [
@@ -220,6 +231,9 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       ["loop-continuation", "loop-array.js", 1],
       ["sequence-capture", "sequence-capture.js", 1],
       ["dynamic-import", "dynamic-import.mjs", 1],
+      ["object-continuation", "object-await.js", 1],
+      ["pending-initialized", "pending-after.mjs", 1],
+      ["import-alias", "import-alias.mjs", 1],
     ] as const) {
       const observation = observations.find(
         ({ properties }) => properties.value === `wss://example.test/${path}`,

@@ -716,6 +716,7 @@ const createState = (
     program,
     staticImportResolutionMode,
     parentsByNode: new WeakMap(),
+    awaitSites: [],
     scopes: [root],
     scopesById: new Map([[root.scopeId, root]]),
     scopeByNode: new WeakMap([[program, root]]),
@@ -755,6 +756,7 @@ function* collectDefinitionsSteps(
   yield* traverseJavaScriptAstSteps(program, {
     enter: (node, parent, readAncestors) => {
       if (parent !== null) state.parentsByNode.set(node, parent);
+      if (t.isAwaitExpression(node)) state.awaitSites.push(node);
       let parentScope = currentSemanticScope(stack);
       if (
         parent !== null &&

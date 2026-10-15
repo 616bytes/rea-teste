@@ -636,7 +636,7 @@ export const isWebSocketEndpointCandidate = (
         )
       );
     }
-    const imported = semanticAwaitedImportOrigin(current);
+    const imported = semanticAwaitedImportOrigin(current, state);
     if (imported !== undefined) {
       const path = [...imported.importedPath, ...selected];
       return (
@@ -679,7 +679,9 @@ export const isWebSocketEndpointCandidate = (
       const definition = binding.definitions[0];
       const location = root.loc?.start;
       const initialized =
-        !webSocketExecutionContexts(root, state).includes(state.program) ||
+        !webSocketExecutionContexts(root, state).some(
+          ({ owner }) => owner === state.program,
+        ) ||
         (definition !== undefined &&
           location !== undefined &&
           (definition.location.end.line < location.line ||

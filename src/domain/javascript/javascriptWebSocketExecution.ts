@@ -5,6 +5,13 @@ import {
   semanticStaticPropertyName,
 } from "./javascriptAstValues.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
+import { semanticAwaitedResultSites } from "./javascriptSemanticPromiseIdentity.js";
+
+interface WebSocketExecutionFrame {
+  readonly owner: t.Node;
+  /** Actual evaluation/wait point in this frame, not a nested body's spelling. */
+  readonly point: t.Node;
+}
 
 /** Outward syntax wrappers preserve the expression's runtime identity. */
 const webSocketOuterExpression = (
@@ -111,6 +118,10 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   if (t.isSequenceExpression(node)) return node.expressions;
   if (t.isArrayExpression(node))
     return node.elements.filter((element) => element !== null);
+  if (t.isObjectExpression(node)) return node.properties;
+  if (t.isObjectProperty(node))
+    return node.computed ? [node.key, node.value] : [node.value];
+  if (t.isObjectMethod(node)) return node.computed ? [node.key] : [];
   if (t.isSpreadElement(node)) return [node.argument];
   if (t.isBinaryExpression(node)) return [node.left, node.right];
   // Tests/left operands always complete before either a selected branch or a
@@ -302,18 +313,22 @@ const webSocketSuspensionOwner = (
 const webSocketWaitingContexts = (
   invocation: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): readonly t.Node[] => {
-  const contexts: t.Node[] = [];
-  let current: t.Node | undefined = invocation;
-  while (current !== undefined) {
-    const result = webSocketOuterExpression(current, state);
-    const awaited = state.parentsByNode.get(result);
-    if (!t.isAwaitExpression(awaited) || awaited.argument !== result) break;
-    const owner = webSocketSuspensionOwner(awaited, state);
-    contexts.push(owner);
-    current = t.isFunction(owner)
-      ? webSocketImmediateInvocation(owner, state)
-      : undefined;
+): readonly WebSocketExecutionFrame[] => {
+  const contexts: WebSocketExecutionFrame[] = [];
+  const pending = [invocation];
+  const seen = new Set<t.Node>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined || seen.has(current)) continue;
+    seen.add(current);
+    for (const awaited of semanticAwaitedResultSites(current, state)) {
+      const owner = webSocketSuspensionOwner(awaited, state);
+      contexts.push({ owner, point: awaited });
+      if (t.isFunction(owner)) {
+        const caller = webSocketImmediateInvocation(owner, state);
+        if (caller !== undefined) pending.push(caller);
+      }
+    }
   }
   return contexts;
 };
@@ -339,10 +354,21 @@ export const webSocketInitializerDominatesRead = (
     current = state.parentsByNode.get(current);
   }
   const readContexts = webSocketExecutionContexts(read, state);
-  return !(
-    webSocketExecutionContexts(initializer, state).some((context) =>
-      readContexts.includes(context),
-    ) && (initializer.end ?? Infinity) >= (read.start ?? -1)
+  const initializerContexts = webSocketExecutionContexts(initializer, state);
+  // The nearest shared activation owns local ordering. An outer caller can
+  // await the whole activation, but that wait cannot reorder its own locals.
+  const shared = readContexts.find(({ owner }) =>
+    initializerContexts.some((frame) => frame.owner === owner),
+  );
+  if (shared === undefined) return true;
+  return !initializerContexts.some(
+    (before) =>
+      before.owner === shared.owner &&
+      readContexts.some(
+        (after) =>
+          after.owner === shared.owner &&
+          (before.point.end ?? Infinity) >= (after.point.start ?? -1),
+      ),
   );
 };
 
@@ -407,8 +433,9 @@ const webSocketClassPrefix = (
 export const webSocketExecutionContexts = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): readonly t.Node[] => {
-  const contexts: t.Node[] = [];
+): readonly WebSocketExecutionFrame[] => {
+  const contexts: WebSocketExecutionFrame[] = [];
+  let point = node;
   let suspendedOwner: t.Node | undefined;
   const suspendedAt = (suspension: WebSocketSuspension | undefined): void => {
     if (suspension !== undefined)
@@ -419,7 +446,7 @@ export const webSocketExecutionContexts = (
   let current = node;
   for (;;) {
     const parent = state.parentsByNode.get(current);
-    if (parent === undefined) return [...contexts, current];
+    if (parent === undefined) return [...contexts, { owner: current, point }];
     if (
       (t.isClassProperty(parent) || t.isClassPrivateProperty(parent)) &&
       parent.value === current
@@ -428,7 +455,8 @@ export const webSocketExecutionContexts = (
         suspendedAt(webSocketClassPrefix(parent, false, state));
       else {
         const construction = webSocketClassConstruction(parent, state);
-        if (construction === undefined) return [...contexts, parent];
+        if (construction === undefined)
+          return [...contexts, { owner: parent, point }];
         suspendedAfter(construction);
       }
     }
@@ -452,7 +480,7 @@ export const webSocketExecutionContexts = (
         t.isClassMethod(parent) && parent.kind === "constructor"
           ? webSocketClassConstruction(parent, state)
           : webSocketImmediateInvocation(parent, state);
-      contexts.push(parent);
+      contexts.push({ owner: parent, point });
       const generatorBody =
         current === parent.body &&
         !t.isArrowFunctionExpression(parent) &&
@@ -472,6 +500,7 @@ export const webSocketExecutionContexts = (
       }
       if (suspendedOwner === parent)
         return [...contexts, ...webSocketWaitingContexts(invocation, state)];
+      point = invocation;
     }
     current = parent;
   }

@@ -841,6 +841,104 @@ describe("web bundle literal dynamic socket imports", () => {
   );
 });
 
+describe("web bundle promise aliases and object evaluation", () => {
+  it.each([
+    '({ first: await ready, second: new Socket("wss://example.test/object") });',
+    '({ [await ready]: new Socket("wss://example.test/object") });',
+    '({ [await ready]: 0, second: new Socket("wss://example.test/object") });',
+    '({ ...(await ready), second: new Socket("wss://example.test/object") });',
+    '({ [await ready]() {}, second: new Socket("wss://example.test/object") });',
+    '({ first: { nested: await ready }, second: new Socket("wss://example.test/object") });',
+  ])(
+    "carries completed property evaluation into later values: %s",
+    (expression) => {
+      const expected = [
+        { value: "wss://example.test/object", mechanism: "call:Socket" },
+      ];
+      expect(
+        socketEndpoints(
+          `(async () => { ${expression} })(); const Socket = globalThis.WebSocket;`,
+        ),
+      ).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    '({ first: new Socket("wss://example.test/invalid"), second: await ready });',
+    '({ async method() { await ready; }, second: new Socket("wss://example.test/invalid") });',
+    '({ first: condition && (await ready), second: new Socket("wss://example.test/invalid") });',
+  ])(
+    "does not promote later, deferred or skipped property awaits: %s",
+    (expression) => {
+      expect(
+        socketEndpoints(
+          `(async () => { ${expression} })(); const Socket = globalThis.WebSocket;`,
+        ),
+      ).toEqual([[], []]);
+    },
+  );
+
+  it.each([
+    'const pending = (async () => { await ready; new Socket("wss://example.test/invalid"); })(); await pending; const Socket = globalThis.WebSocket;',
+    'const pending = (async () => { await ready; new Socket("wss://example.test/invalid"); })(); const alias = pending; await alias; const Socket = globalThis.WebSocket;',
+    '(async () => { const pending = (async () => { await ready; new Socket("wss://example.test/invalid"); })(); await pending; const Socket = globalThis.WebSocket; })();',
+    'const pending = (async () => { await ready; new Socket("wss://example.test/invalid"); })(); await pending; await pending; const Socket = globalThis.WebSocket;',
+  ])(
+    "retains the actual wait point of a stable promise result: %s",
+    (source) => {
+      expect(socketEndpoints(source)).toEqual([[], []]);
+    },
+  );
+
+  it.each([
+    'const pending = (async () => { await ready; new Socket("wss://example.test/wait"); })(); const Socket = globalThis.WebSocket; await pending;',
+    'const pending = (async () => { await ready; new Socket("wss://example.test/wait"); })(); const alias = pending; const Socket = globalThis.WebSocket; await alias;',
+    '(async () => { const pending = (async () => { await ready; new Socket("wss://example.test/wait"); })(); const Socket = globalThis.WebSocket; await pending; })();',
+    'const pending = (async () => { await ready; new Socket("wss://example.test/wait"); })(); (async (pending) => { await pending; })(ready); const Socket = globalThis.WebSocket;',
+  ])(
+    "keeps initialization before a wait distinct from promise creation: %s",
+    (source) => {
+      const expected = [
+        { value: "wss://example.test/wait", mechanism: "call:Socket" },
+      ];
+      expect(socketEndpoints(source)).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    'const pending = import("ws"); const { WebSocket: Socket } = await pending;',
+    'const pending = import("ws"); const alias = pending; const { default: Socket } = await alias;',
+    "const pending = import(`ws`); const Socket = (await pending).WebSocket;",
+  ])(
+    "retains a literal module through its stable pending promise: %s",
+    (capture) => {
+      const expected = [
+        { value: "wss://example.test/import-alias", mechanism: "call:Socket" },
+      ];
+      expect(
+        socketEndpoints(
+          `${capture} new Socket("wss://example.test/import-alias");`,
+        ),
+      ).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    'let pending = import("ws"); pending = import("other"); const { WebSocket: Socket } = await pending;',
+    'const pending = import("other"); const { WebSocket: Socket } = await pending;',
+    "const pending = other; const other = pending; const { WebSocket: Socket } = await pending;",
+    'const { WebSocket: Socket } = await pending; const pending = import("ws");',
+    'const box = { pending: import("ws") }; const { WebSocket: Socket } = await box.pending;',
+  ])(
+    "leaves unstable, forward and unproven promise identities unresolved: %s",
+    (capture) => {
+      expect(
+        socketEndpoints(`${capture} new Socket("wss://example.test/invalid");`),
+      ).toEqual([[], []]);
+    },
+  );
+});
+
 describe("web bundle constructor captures before repeating writes", () => {
   it.each([
     "for (const item of items) { ws.WebSocket = class {}; }",

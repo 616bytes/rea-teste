@@ -76,6 +76,8 @@ export interface JavaScriptSemanticAnalysisState {
   /** Effective loader for static imports in this source artifact. */
   readonly staticImportResolutionMode: JavaScriptModuleResolutionMode;
   readonly parentsByNode: WeakMap<t.Node, t.Node>;
+  /** Await sites retained by the definitions pass for lazy promise-result indexing. */
+  readonly awaitSites: t.AwaitExpression[];
   readonly scopes: JavaScriptSemanticScopeState[];
   readonly scopesById: Map<string, JavaScriptSemanticScopeState>;
   /** Scope boundaries and descendant scopes resolved on demand. */

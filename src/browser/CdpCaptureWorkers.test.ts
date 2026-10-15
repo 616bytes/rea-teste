@@ -223,10 +223,12 @@ describe("Electron worker target inventory", () => {
     });
 
     expect(workers).toEqual([]);
+    // Electron worker discovery records a malformed successful reply as an
+    // invalid protocol value, matching its DOM and resource inventories.
     expect(completeness.snapshot()).toMatchObject({
       unavailable_sections: ["workers"],
       excluded: [
-        { section: "workers", reason: "provider_unavailable", count: null },
+        { section: "workers", reason: "invalid_protocol_value", count: null },
       ],
     });
   });

@@ -4,11 +4,7 @@ import type {
 } from "../domain/javascript/electronObservation.js";
 import type { CdpConnection } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
-import {
-  admitRecords,
-  recordValue,
-  cdpStringValue,
-} from "./CdpCaptureValues.js";
+import { recordValue, cdpStringValue } from "./CdpCaptureValues.js";
 import type { CdpEndpointTarget } from "./CdpEndpoint.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import { authorizedElectronFile } from "./ElectronFileScope.js";
@@ -39,14 +35,13 @@ export const captureElectronWorkers = async (input: {
     return [];
   }
   const workers: ElectronPageInspection["workers"] = [];
-  const admittedTargets = admitRecords(recordValue(result)?.targetInfos);
-  // An answer without its target inventory is not an empty one; treating it as
-  // empty reports "no local workers" where the producer never answered.
-  if (admittedTargets === undefined) {
-    input.completeness.unavailable("workers");
+  // A missing target list or a non-record entry is unreadable, not empty.
+  const targetInfos = recordValue(result)?.targetInfos;
+  if (!Array.isArray(targetInfos)) {
+    input.completeness.exclude("workers", "invalid_protocol_value", null);
     return [];
   }
-  for (const entry of admittedTargets) {
+  for (const entry of targetInfos) {
     const target = recordValue(entry);
     if (target === undefined) {
       input.completeness.exclude("workers", "invalid_protocol_value");

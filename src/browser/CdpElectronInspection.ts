@@ -16,7 +16,12 @@ import {
   requiredRecord,
   cdpStringValue,
 } from "./CdpCaptureValues.js";
-import { walkFrameTrees } from "./CdpCaptureDocuments.js";
+import {
+  frameTreeResources,
+  snapshotDocumentNodes,
+  snapshotDocuments,
+  walkFrameTrees,
+} from "./CdpCaptureDocuments.js";
 import {
   ingestElectronScriptEvent,
   type ElectronScriptDraft,
@@ -278,45 +283,32 @@ export const captureResources = async (
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   const resources: ElectronPageInspection["resources"] = [];
   const seen = new Set<string>();
-  for (const tree of walkFrameTrees(root, (omittedCount) =>
-    completeness.exclude("resources", "invalid_protocol_value", omittedCount),
+  for (const resource of frameTreeResources(root, (count) =>
+    completeness.exclude("resources", "invalid_protocol_value", count),
   )) {
-    const admitted = admitRecords(tree.resources);
-    // A frame that answered without its resource inventory is not an empty one.
-    if (admitted === undefined) {
-      completeness.exclude("resources", "invalid_protocol_value", null);
+    const path = await authorizedElectronFile(
+      cdpStringValue(resource.url) ?? "",
+    );
+    if (path === undefined) {
+      completeness.exclude("resources", "out_of_target_scope");
       continue;
     }
-    for (const entry of admitted) {
-      const resource = recordValue(entry);
-      if (resource === undefined) {
-        completeness.exclude("resources", "invalid_protocol_value");
-        continue;
-      }
-      const path = await authorizedElectronFile(
-        cdpStringValue(resource.url) ?? "",
-      );
-      if (path === undefined) {
-        completeness.exclude("resources", "out_of_target_scope");
-        continue;
-      }
-      const item = {
-        file_path: path,
-        type: cdpStringValue(resource.type) ?? "Other",
-        mime_type: cdpStringValue(resource.mimeType) ?? "",
-        content_size:
-          numberValue(resource.contentSize) === undefined
-            ? null
-            : Math.max(0, numberValue(resource.contentSize) ?? 0),
-      };
-      const resourceKey = `electron_resource_${digestCanonicalValue(item, "CDP capture")}`;
-      if (seen.has(resourceKey)) continue;
-      seen.add(resourceKey);
-      resources.push({
-        resource_key: resourceKey,
-        ...item,
-      });
-    }
+    const item = {
+      file_path: path,
+      type: cdpStringValue(resource.type) ?? "Other",
+      mime_type: cdpStringValue(resource.mimeType) ?? "",
+      content_size:
+        numberValue(resource.contentSize) === undefined
+          ? null
+          : Math.max(0, numberValue(resource.contentSize) ?? 0),
+    };
+    const resourceKey = `electron_resource_${digestCanonicalValue(item, "CDP capture")}`;
+    if (seen.has(resourceKey)) continue;
+    seen.add(resourceKey);
+    resources.push({
+      resource_key: resourceKey,
+      ...item,
+    });
   }
   return resources.sort((left, right) =>
     compareUnicodeCodePoints(left.resource_key, right.resource_key),
@@ -335,37 +327,36 @@ export const captureDom = async (
       context.signal,
     ),
   );
-  const strings = admitRecords(result.strings);
-  const documents = admitRecords(result.documents);
+  const invalid = (count: number | null) =>
+    completeness.exclude("dom", "invalid_protocol_value", count);
   // A snapshot without its string table cannot name any node, attribute, or
   // document URL; resolving those indices against an absent table would
   // fabricate empty names and misattribute every document as out of scope.
-  if (strings === undefined || documents === undefined) {
-    completeness.exclude("dom", "invalid_protocol_value", null);
+  if (!Array.isArray(result.strings)) {
+    invalid(null);
     return { total_nodes: 0, nodes: [] };
   }
-  const resolvedStrings = strings.map((value) =>
+  const strings = result.strings.map((value) =>
     typeof value === "string" ? value : "",
   );
   const nodes: ElectronPageInspection["dom"]["nodes"] = [];
   let total = 0;
-  for (const entry of documents) {
-    const document = recordValue(entry);
-    if (document === undefined) {
-      completeness.exclude("dom", "invalid_protocol_value");
-      continue;
-    }
-    const documentUrl = stringAt(resolvedStrings, document.documentURL);
+  for (const document of snapshotDocuments(result.documents, invalid)) {
+    const documentUrl = stringAt(strings, document.documentURL);
     if ((await authorizedElectronFile(documentUrl)) === undefined) {
       completeness.exclude("dom", "out_of_target_scope");
       continue;
     }
-    const nodeData = recordValue(document.nodes);
-    const nodeTypes = arrayValue(nodeData?.nodeType);
-    const nodeNames = arrayValue(nodeData?.nodeName);
-    const nodeValues = arrayValue(nodeData?.nodeValue);
-    const parents = arrayValue(nodeData?.parentIndex);
-    const attributes = arrayValue(nodeData?.attributes);
+    // The shared snapshot owner validates the parallel node arrays.
+    const documentNodes = snapshotDocumentNodes(document.nodes);
+    if (documentNodes === undefined) {
+      invalid(1);
+      continue;
+    }
+    if (documentNodes.excessAttributes > 0)
+      invalid(documentNodes.excessAttributes);
+    const { nodeTypes, nodeNames, nodeValues, parents, attributes } =
+      documentNodes;
     const baseIndex = nodes.length;
     total += nodeTypes.length;
     for (let index = 0; index < nodeTypes.length; index += 1) {
@@ -375,13 +366,13 @@ export const captureDom = async (
         index: nodes.length,
         parent_index: parent < 0 ? -1 : baseIndex + parent,
         node_type: integer(nodeTypes[index], 0),
-        node_name: stringAt(resolvedStrings, nodeNames[index]),
+        node_name: stringAt(strings, nodeNames[index]),
         node_value_length: Buffer.byteLength(
-          stringAt(resolvedStrings, nodeValues[index]),
+          stringAt(strings, nodeValues[index]),
         ),
         attribute_names: attributeIndexes
           .filter((_value, attributeIndex) => attributeIndex % 2 === 0)
-          .map((value) => stringAt(resolvedStrings, value)),
+          .map((value) => stringAt(strings, value)),
       });
     }
   }

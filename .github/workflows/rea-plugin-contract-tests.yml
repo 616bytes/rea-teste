@@ -27,5 +27,7 @@ jobs:
           node-version: 22
       - name: Install project dependencies
         run: npm ci
+      - name: Check installer shell syntax
+        run: bash -n rea-agent-skills-pack/install.sh
       - name: Run plugin contract tests
         run: node --test plugins/rea-agent-plugin/tests/plugin-contract.test.mjs

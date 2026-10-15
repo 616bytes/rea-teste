@@ -1333,11 +1333,11 @@ msgid ""
 " observed failure was in the check itself. But using that check as a reward "
 "would have made the same blind spot part of the learning environment."
 msgstr ""
-"{ph0}Një nxënës i shpërblyer nga çeku i vjetër mund të mësonte të prodhonte "
-"rindërtimin e gabuar.{ph1} Ne nuk kishim trajnuar një model RL kundër këtij "
-"kontrolluesi i referencës; dështimi i vërejtur ishte në vetë kontrollin. Por"
-" përdorimi i atij çeku si shpërblim do ta kishte bërë të njëjtën pikë të "
-"verbër pjesë të mjedisit mësimor."
+"{ph0}Një model që shpërblehet nga kontrolli i vjetër mund të mësojë të "
+"prodhojë rindërtimin e gabuar.{ph1} Ne nuk kishim trajnuar një model RL "
+"kundrejt këtij kontrolluesi të referencës; dështimi i vërejtur ishte në vetë"
+" kontrollin. Por përdorimi i atij kontrolli si shpërblim do ta kishte bërë "
+"të njëjtën mangësi pjesë të mjedisit të të mësuarit."
 
 #. {ph0}: <a href="https://arxiv.org/html/2609.05370v1" >
 #. {ph1}: </a >
@@ -1367,12 +1367,12 @@ msgid ""
 "its reconstruction. Otherwise, something like a byte array copied from the "
 "target could satisfy a naive score without recovering useful source."
 msgstr ""
-"Përpara se të përdorja cilindo lloj çeku si shpërblim, do ta testoja me "
-"dështime të qëllimshme. Unë gjithashtu do ta mbaja pranimin përfundimtar "
-"jashtë burimit të redaktueshëm të kandidatit, kështu që modeli duhet të "
-"plotësojë kontrollin përmes rindërtimit të tij. Përndryshe, diçka si një "
-"grup bajtësh i kopjuar nga objektivi mund të kënaqë një rezultat naiv pa "
-"rikuperuar burimin e dobishëm."
+"Përpara se të përdorja cilindo lloj kontrolli si shpërblim, do ta testoja me"
+" dështime të qëllimshme. Do ta mbaja gjithashtu kontrollin përfundimtar të "
+"pranimit jashtë kodit burimor që kandidati mund të redaktojë, në mënyrë që "
+"modeli ta kalojë kontrollin përmes rindërtimit të vet. Përndryshe, një varg "
+"bajtesh i kopjuar nga objektivi mund të plotësonte një kriter naiv vlerësimi"
+" pa rikuperuar kod burimor të dobishëm."
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
@@ -2477,9 +2477,9 @@ msgid ""
 " accepting a contribution."
 msgstr ""
 "Ky mund të jetë një tranzicion i vështirë. Vitet e punës së kujdesshme mund "
-"të bëhen themeli për një vazhdimësi që ecën shumë më shpejt. Kjo ngre pyetje"
-" reale në lidhje me kredinë. Ndryshon gjithashtu atë që mirëmbajtësit duhet "
-"të dinë përpara se të pranojnë një kontribut."
+"të bëhen themeli për një vazhdim që ecën shumë më shpejt. Kjo ngre pyetje të"
+" vërteta rreth njohjes së meritave. Ndryshon gjithashtu atë që mirëmbajtësit"
+" duhet të dinë përpara se të pranojnë një kontribut."
 
 #: website/public/blog/touhou-reconstruction/index.html:592
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -2617,10 +2617,11 @@ msgid ""
 " correction with the code helps later projects avoid inheriting the old "
 "check's blind spot."
 msgstr ""
-"Defekti i fjalëpërfjalshëm lundrues i përket gjithashtu asaj kujtese. Ai "
-"shpjegon pse kontrollimi i një reference kërkon gjithashtu kontrollimin e të"
-" dhënave pas saj. Mbajtja e këtij korrigjimi me kodin i ndihmon projektet e "
-"mëvonshme të shmangin trashëgiminë e pikës së verbër të çekut të vjetër."
+"Edhe gabimi në literalin me presje lëvizëse duhet të ruhet në atë kujtesë. "
+"Ai shpjegon pse verifikimi i një reference kërkon edhe verifikimin e të "
+"dhënave mbi të cilat ajo mbështetet. Ruajtja e këtij korrigjimi bashkë me "
+"kodin i ndihmon projektet e mëvonshme të mos trashëgojnë mangësinë e "
+"kontrollit të vjetër."
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
@@ -4783,8 +4784,8 @@ msgid ""
 "{ph0}Handler · {ph1}{ph2}{ph3}Write {ph4}{ph5}{ph6}Calls the formatter in "
 "{ph7} and writes the file.{ph8}"
 msgstr ""
-"{ph0}Transuesi · {ph1}{ph2}{ph3}Shkruaj {ph4}{ph5}{ph6}Thirr formatuesin në "
-"{ph7} dhe shkruan skedarin.{ph8}"
+"{ph0}Trajtuesi · {ph1}{ph2}{ph3}Shkruan {ph4}{ph5}{ph6}Thërret formatuesin "
+"në {ph7} dhe shkruan skedarin.{ph8}"
 
 #: website/public/first-investigation/index.html:371
 msgctxt "page:first-investigation/index.html"
@@ -4792,7 +4793,7 @@ msgid ""
 "REA’s static analysis pairs the message with its handler. The destination is"
 " read from code."
 msgstr ""
-"Analiza statike e REA çifton mesazhin me mbajtësin e tij. Destinacioni "
+"Analiza statike e REA e lidh mesazhin me trajtuesin e tij. Destinacioni "
 "lexohet nga kodi."
 
 #. {ph0}: <span translate="no">main.js</span>
@@ -4813,9 +4814,9 @@ msgid ""
 "The file path, formatter and write call are together in this handler. Ask "
 "your agent to show these lines if its answer leaves them out."
 msgstr ""
-"Rruga e skedarit, formatuesi dhe thirrja e shkrimit janë së bashku në këtë "
-"mbajtës. Kërkojini agjentit tuaj të tregojë këto rreshta nëse përgjigja e "
-"tij i lë jashtë."
+"Shtegu i skedarit, formatuesi dhe thirrja e shkrimit gjenden së bashku në "
+"këtë trajtues. Kërkojini agjentit tuaj t’i tregojë këto rreshta nëse i ka "
+"lënë jashtë përgjigjes."
 
 #. {ph0}: <a href="../guides/javascript/#follow" >
 #. {ph1}: </a >
@@ -4997,7 +4998,7 @@ msgstr "Kopjo komandën e konfigurimit"
 #: website/public/first-investigation/index.html:289
 msgctxt "page:first-investigation/index.html"
 msgid "Copy Notes investigation prompt"
-msgstr "Kërkesa e hetimit të Kopjimit të Shënimeve"
+msgstr "Kopjoni kërkesën për hetimin e Notes"
 
 #: website/public/first-investigation/index.html:411
 msgctxt "page:first-investigation/index.html"
@@ -5008,7 +5009,7 @@ msgstr "Kopjo kërkesën e kontrollit CSV"
 #: website/public/first-investigation/index.html:469
 msgctxt "page:first-investigation/index.html"
 msgid "Copy formatter check command"
-msgstr "Komanda e kontrollit të formatuesit të kopjimit"
+msgstr "Kopjoni komandën e kontrollit të formatuesit"
 
 #: website/public/first-investigation/index.html:540
 msgctxt "page:first-investigation/index.html"
@@ -5649,7 +5650,7 @@ msgstr "Kopjo komandën e instalimit fnm për Linux"
 #: website/public/get-started/index.html:387
 msgctxt "page:get-started/index.html"
 msgid "Copy Node.js 24 commands for Linux"
-msgstr "Kopjo Node.js 24 komanda për Linux"
+msgstr "Kopjoni komandat Node.js 24 për Linux"
 
 #: website/public/get-started/index.html:212
 #: website/public/get-started/index.html:211
@@ -6183,7 +6184,7 @@ msgstr "Vëzhgimi i shfletuesit"
 #: website/public/guides/browser/index.html:276
 msgctxt "page:guides/browser/index.html"
 msgid "Copy start the example browser"
-msgstr "Kopjo fillimin e shfletuesit shembull"
+msgstr "Kopjoni komandën për nisjen e shfletuesit shembull"
 
 #: website/public/guides/browser/index.html:308
 msgctxt "page:guides/browser/index.html"
@@ -6193,17 +6194,17 @@ msgstr "Kopjoni kërkesën e shembullit"
 #: website/public/guides/browser/index.html:342
 msgctxt "page:guides/browser/index.html"
 msgid "Copy find the page"
-msgstr "Kopjoni gjeni faqen"
+msgstr "Kopjoni komandën për gjetjen e faqes"
 
 #: website/public/guides/browser/index.html:361
 msgctxt "page:guides/browser/index.html"
 msgid "Copy capture the next ten seconds"
-msgstr "Kopjo kapjen dhjetë sekondat e ardhshme"
+msgstr "Kopjoni komandën për regjistrimin e dhjetë sekondave të ardhshme"
 
 #: website/public/guides/browser/index.html:426
 msgctxt "page:guides/browser/index.html"
 msgid "Copy read the loaded scripts"
-msgstr "Kopjoni leximin e skripteve të ngarkuara"
+msgstr "Kopjoni komandën për leximin e skripteve të ngarkuara"
 
 #: website/public/guides/browser/index.html:513
 msgctxt "page:guides/browser/index.html"
@@ -6564,8 +6565,8 @@ msgid ""
 "{ph0}Main process{ph1}{ph2}An export handler{ph3}{ph4}{ph5} handles that "
 "channel and calls the CSV writer.{ph6}"
 msgstr ""
-"{ph0}Procesi kryesor{ph1}{ph2}Një mbajtës eksporti{ph3}{ph4}{ph5} trajton "
-"atë kanal dhe thërret shkrimtarin CSV.{ph6}"
+"{ph0}Procesi kryesor{ph1}{ph2}Një trajtues eksporti{ph3}{ph4}{ph5} trajton "
+"atë kanal dhe thërret funksionin e shkrimit CSV.{ph6}"
 
 #. {ph0}: <code>csv.js</code>
 #. {ph1}: <code>main.js</code>
@@ -6583,9 +6584,10 @@ msgid ""
 "API. The path is inferred from code; a runtime capture can check what "
 "executes."
 msgstr ""
-"REA përputhet me thirrjen e drejtpërdrejtë të IPC me mbajtësin e tij dhe "
-"identifikon API-në e ekspozuar. Rruga nxirret nga kodi; një kapje "
-"kohëzgjatjeje mund të kontrollojë se çfarë ekzekutohet."
+"REA e lidh thirrjen IPC me trajtuesin e saj duke u mbështetur te vlera "
+"literale e kanalit dhe identifikon API-në e ekspozuar. Shtegu nxirret me "
+"arsyetim nga kodi; një regjistrim gjatë ekzekutimit mund të verifikojë çfarë"
+" ekzekutohet."
 
 #: website/public/guides/javascript/index.html:271
 msgctxt "page:guides/javascript/index.html"
@@ -6699,8 +6701,8 @@ msgid ""
 "REA records {ph0} and the literal channel {ph1}. It pairs that invocation "
 "with the single matching handler in the main process."
 msgstr ""
-"REA regjistron {ph0} dhe kanalin e mirëfilltë {ph1}. Ai e çifton atë thirrje"
-" me mbajtësin e vetëm të përputhjes në procesin kryesor."
+"REA regjistron {ph0} dhe kanalin literal {ph1}. Ai e lidh atë thirrje me të "
+"vetmin trajtues përkatës në procesin kryesor."
 
 #. {ph0}: <code>csv.js</code>
 #. {ph1}: <code>notes.csv</code>
@@ -6711,8 +6713,8 @@ msgid ""
 "Reading the handler answers the original question: {ph0} formats the notes, "
 "and the main process writes {ph1} into the user's Downloads folder."
 msgstr ""
-"Leximi i mbajtësit i përgjigjet pyetjes origjinale: {ph0} formaton shënimet "
-"dhe procesi kryesor shkruan {ph1} në dosjen Shkarkime të përdoruesit."
+"Leximi i trajtuesit i përgjigjet pyetjes fillestare: {ph0} formaton shënimet"
+" dhe procesi kryesor shkruan {ph1} në dosjen Downloads të përdoruesit."
 
 #: website/public/guides/javascript/index.html:362
 msgctxt "page:guides/javascript/index.html"
@@ -6725,8 +6727,9 @@ msgid ""
 "Recorded by REA 4.1.0 on the downloadable example below. Source locations "
 "accompany the API, channel and handler findings."
 msgstr ""
-"Regjistruar nga REA 4.1.0 në shembullin e shkarkueshëm më poshtë. "
-"Vendndodhjet e burimit shoqërojnë gjetjet e API-së, kanalit dhe mbajtësit."
+"Regjistruar me REA 4.1.0 në shembullin e shkarkueshëm më poshtë. "
+"Vendndodhjet në kodin burimor shoqërojnë gjetjet për API-në, kanalin dhe "
+"trajtuesin."
 
 #: website/public/guides/javascript/index.html:378
 msgctxt "page:guides/javascript/index.html"
@@ -6774,9 +6777,9 @@ msgid ""
 "Replace the path with the folder you unzipped. You should find one IPC "
 "channel and one matching handler in {ph0}. Source locations are in {ph1}."
 msgstr ""
-"Zëvendësoni shtegun me dosjen që keni zbërthyer. Duhet të gjesh një kanal "
-"IPC dhe një mbajtës që përputhet në {ph0}. Vendndodhjet e burimit janë në "
-"{ph1}."
+"Zëvendësoni shtegun me dosjen që shpaketuat. Duhet të gjeni një kanal IPC "
+"dhe një trajtues përkatës në {ph0}. Vendndodhjet në kodin burimor gjenden në"
+" {ph1}."
 
 #: website/public/guides/javascript/index.html:449
 msgctxt "page:guides/javascript/index.html"
@@ -6802,8 +6805,8 @@ msgid ""
 "Follow {ph0} to its handler. Which inputs reach the CSV writer, and what "
 "happens if writing the file fails?"
 msgstr ""
-"Ndiqni {ph0} te mbajtësi i tij. Cilat inpute arrijnë te shkrimtari CSV dhe "
-"çfarë ndodh nëse shkrimi i skedarit dështon?"
+"Ndiqni {ph0} deri te trajtuesi i tij. Cilat hyrje arrijnë te funksioni i "
+"shkrimit CSV dhe çfarë ndodh nëse shkrimi i skedarit dështon?"
 
 #: website/public/guides/javascript/index.html:464
 msgctxt "page:guides/javascript/index.html"
@@ -6812,10 +6815,10 @@ msgid ""
 "and ambiguous handlers can remain unresolved; runtime observations give you "
 "another way to investigate them."
 msgstr ""
-"Përdorni vendndodhjet e burimit për të inspektuar ato detaje. Emrat e "
-"llogaritur të kanaleve dhe mbajtësit e paqartë mund të mbeten të "
-"pazgjidhura; Vëzhgimet e kohës së ekzekutimit ju japin një mënyrë tjetër për"
-" t'i hetuar ato."
+"Përdorni vendndodhjet në kodin burimor për të inspektuar këto hollësi. Emrat"
+" e llogaritur të kanaleve dhe trajtuesit e paqartë mund të mbeten të "
+"pazgjidhur; vëzhgimet gjatë ekzekutimit ju japin një mënyrë tjetër për t’i "
+"hetuar."
 
 #. {ph0}: <a href="../../showcase/notion/" >
 #. {ph1}: </a >
@@ -6871,9 +6874,9 @@ msgid ""
 "with REA. Includes downloadable example files and a verified analysis "
 "result."
 msgstr ""
-"Gjurmoni një eksportim CSV të Notes përmes një API të interpretuesit, para-"
-"ngarkesës dhe mbajtësit të IPC me REA. Përfshin skedarë shembuj të "
-"shkarkueshëm dhe një rezultat analize të verifikuar."
+"Gjurmoni eksportin CSV të Notes përmes API-së së procesit të paraqitjes, "
+"preload dhe trajtuesit IPC me REA. Përfshin skedarë shembuj të shkarkueshëm "
+"dhe një rezultat analize të verifikuar."
 
 #: website/public/guides/javascript/index.html:210
 msgctxt "page:guides/javascript/index.html"
@@ -7362,7 +7365,9 @@ msgstr "Lexoni konstantet e referuara"
 #: website/public/guides/native/index.html:417
 msgctxt "page:guides/native/index.html"
 msgid "REA byte results · interpreted as little-endian doubles"
-msgstr "REA rezultate bajte · interpretohen si dyfishime pak-endiane"
+msgstr ""
+"Rezultatet e bajteve nga REA · interpretuar si vlera double në renditjen "
+"little-endian"
 
 #: website/public/guides/native/index.html:425
 msgctxt "page:guides/native/index.html"
@@ -7505,7 +7510,7 @@ msgstr "Kopjoni kërkesën e shembullit"
 #: website/public/guides/native/index.html:473
 msgctxt "page:guides/native/index.html"
 msgid "Copy function analysis"
-msgstr "Analiza e funksionit të kopjimit"
+msgstr "Kopjoni analizën e funksionit"
 
 #: website/public/guides/native/index.html:515
 msgctxt "page:guides/native/index.html"
@@ -7840,7 +7845,7 @@ msgstr "REA furnizime"
 #: website/public/index.html:553
 msgctxt "page:index.html"
 msgid "The handler’s instructions, decompiled code and calls."
-msgstr "Udhëzimet e mbajtësit, kodi i dekompiluar dhe thirrjet."
+msgstr "Instruksionet, kodi i dekompiluar dhe thirrjet e trajtuesit."
 
 #: website/public/index.html:558
 msgctxt "page:index.html"
@@ -8139,7 +8144,7 @@ msgstr ""
 #: website/public/index.html:938
 msgctxt "page:index.html"
 msgid "Readable summary of the % handler"
-msgstr "Përmbledhje e lexueshme e mbajtësit %"
+msgstr "Përmbledhje e lexueshme e trajtuesit të %"
 
 #: website/public/index.html:849
 msgctxt "page:index.html"
@@ -8209,7 +8214,7 @@ msgid ""
 "code{ph3}{ph4}The function checks the operator and uses the constant "
 "{ph5}.{ph6}"
 msgstr ""
-"{ph0}02 · REA lexon bibliotekën{ph1}{ph2}Ktheje kodin e mbajtësit "
+"{ph0}02 · REA lexon bibliotekën{ph1}{ph2}Ktheni kodin e trajtuesit të "
 "%{ph3}{ph4}Funksioni kontrollon operatorin dhe përdor konstanten {ph5}.{ph6}"
 
 #. {ph0}: <span class="flow-label">
@@ -9475,7 +9480,7 @@ msgstr "{ph0}Lexo një maskë{ph1}"
 #, python-brace-format
 msgctxt "page:showcase/ctf/index.html"
 msgid "{ph0}Assembly to readable code{ph1}"
-msgstr "{ph0}Mblidheni në kod të lexueshëm{ph1}"
+msgstr "{ph0}Nga kodi assembly në kod të lexueshëm{ph1}"
 
 #. {ph0}: <a href="#solve">
 #. {ph1}: </a>
@@ -10084,7 +10089,7 @@ msgstr "Ndiqni kontrollin CTF"
 #: website/public/showcase/ctf/index.html:499
 msgctxt "page:showcase/ctf/index.html"
 msgid "Copy CTF assembly"
-msgstr "Kopjoni asamblenë CTF"
+msgstr "Kopjoni kodin assembly të CTF"
 
 #: website/public/showcase/ctf/index.html:523
 msgctxt "page:showcase/ctf/index.html"
@@ -10441,7 +10446,7 @@ msgstr "Agjenti → REA · dy {ph0} kërkesa"
 #: website/public/showcase/dx-ball/index.html:415
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "REA byte results · decoded as doubles"
-msgstr "REA rezultate bajt · deshifrohen si dyshe"
+msgstr "Rezultatet e bajteve nga REA · dekoduar si vlera double"
 
 #: website/public/showcase/dx-ball/index.html:422
 msgctxt "page:showcase/dx-ball/index.html"
@@ -10549,8 +10554,9 @@ msgid ""
 "{ph0}02 · Multiply by 1.5625.{ph1} {ph2} reads the double at {ph3}. The "
 "bytes returned by REA's {ph4} decode to {ph5}; the C uses the same constant."
 msgstr ""
-"{ph0}02 · Shumëzo me 1,5625.{ph1} {ph2} lexon dyfishin në {ph3}. Bajtet e "
-"kthyera nga {ph4} e REA deshifrojnë në {ph5}; C përdor të njëjtën konstante."
+"{ph0}02 · Shumëzoni me 1.5625.{ph1} {ph2} lexon vlerën double në {ph3}. "
+"Bajtet e kthyera nga {ph4} e REA dekodohen në {ph5}; kodi C përdor të "
+"njëjtën konstante."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -10566,9 +10572,9 @@ msgid ""
 "result decodes to {ph4}, shifting the calculation's center to screen "
 "coordinate {ph5}."
 msgstr ""
-"{ph0}03 · Zbrit 500.0.{ph1} {ph2} lexon dyfishin në {ph3}. Rezultati i "
-"bajtit të REA deshifrohet në {ph4}, duke zhvendosur qendrën e llogaritjes në"
-" koordinatën e ekranit {ph5}."
+"{ph0}03 · Zbrisni 500.0.{ph1} {ph2} lexon vlerën double në {ph3}. Rezultati "
+"i bajteve nga REA dekodohet në {ph4}, duke zhvendosur qendrën e llogaritjes "
+"në koordinatën e ekranit {ph5}."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -10651,7 +10657,9 @@ msgstr "Ajo që lexojnë të dhënat vërtetojnë"
 #: website/public/showcase/dx-ball/index.html:629
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "REA byte reads, decoded as little-endian doubles"
-msgstr "Leximet e REA bajt, të deshifruara si dyfishime të pakta endian"
+msgstr ""
+"Leximet e bajteve nga REA, të dekoduara si vlera double në renditjen little-"
+"endian"
 
 #: website/public/showcase/dx-ball/index.html:634
 msgctxt "page:showcase/dx-ball/index.html"
@@ -10812,7 +10820,7 @@ msgstr ""
 #: website/public/showcase/dx-ball/index.html:731
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "In the DX-Ball checkout"
-msgstr "Në arkën e DX-Ball"
+msgstr "Në kopjen e punës së DX-Ball"
 
 #. {ph0}: <a href="https://github.com/N0zoM1z0/dx-ball" >
 #. {ph1}: </a >
@@ -11200,7 +11208,7 @@ msgstr "Llogaritja e këndit"
 #: website/public/showcase/index.html:293
 msgctxt "page:showcase/index.html"
 msgid "Bullet ring"
-msgstr "Unazë plumbi"
+msgstr "Unazë plumbash"
 
 #: website/public/showcase/index.html:295
 msgctxt "page:showcase/index.html"
@@ -11603,7 +11611,7 @@ msgstr "Kontrolloni se si është regjistruar marrësi"
 #, python-brace-format
 msgctxt "page:showcase/notion/index.html"
 msgid "{ph0} · handler helper"
-msgstr "{ph0} · ndihmës përpunues"
+msgstr "{ph0} · funksion ndihmës i trajtuesit"
 
 #. {ph0}: <code>addListener</code>
 #. {ph1}: <code>ipcMain.handle</code>
@@ -11636,9 +11644,9 @@ msgid ""
 "supplied data to Electron's clipboard API. The channel and the two resolved "
 "wrappers connect the exposed method to this call."
 msgstr ""
-"Ky është destinacioni. Pas kontrollit të dërguesit, mbajtësi i kalon të "
-"dhënat e dhëna në API-në e kujtesës së Electron. Kanali dhe dy "
-"mbështjellësit e zgjidhur lidhin metodën e ekspozuar me këtë thirrje."
+"Ky është destinacioni. Pas kontrollit të dërguesit, trajtuesi ia kalon të "
+"dhënat e dhëna API-së së clipboard-it të Electron. Kanali dhe dy funksionet "
+"mbështjellëse të identifikuara e lidhin metodën e ekspozuar me këtë thirrje."
 
 #: website/public/showcase/notion/index.html:466
 msgctxt "page:showcase/notion/index.html"
@@ -11933,7 +11941,7 @@ msgstr "Kopjo fragmentin e mbështjellësit të thirrjes Notion"
 #: website/public/showcase/notion/index.html:410
 msgctxt "page:showcase/notion/index.html"
 msgid "Copy Notion handler wrapper excerpt"
-msgstr "Kopjo fragmentin e mbështjellësit të mbajtësit të Notion"
+msgstr "Kopjoni fragmentin e funksionit mbështjellës të trajtuesit të Notion"
 
 #: website/public/showcase/notion/index.html:438
 msgctxt "page:showcase/notion/index.html"
@@ -11976,7 +11984,7 @@ msgstr "Rast studimor · Touhou 4: Historia e Tokës së Lotusit"
 #, python-brace-format
 msgctxt "page:showcase/th04/index.html"
 msgid "Reconstructing TH04's{ph0}bullet patterns."
-msgstr "Po rindërton modelet e pikave të TH04{ph0}."
+msgstr "Rindërtimi i modeleve të{ph0}plumbave të TH04."
 
 #: website/public/showcase/th04/index.html:204
 msgctxt "page:showcase/th04/index.html"
@@ -12067,9 +12075,9 @@ msgid ""
 "compiler checks cover the bullet-generation code that contains this "
 "helper.{ph5}"
 msgstr ""
-"{ph0}04 · Kontrollo burimin{ph1}{ph2}2,139 bajt që "
+"{ph0}04 · Kontrolloni kodin burimor{ph1}{ph2}2,139 bajte që "
 "përputhen{ph3}{ph4}Kontrollet e regjistruara të përpiluesit mbulojnë kodin e"
-" gjenerimit të pikave që përmban këtë ndihmës.{ph5}"
+" gjenerimit të plumbave që përmban këtë funksion ndihmës.{ph5}"
 
 #: website/public/showcase/th04/index.html:249
 msgctxt "page:showcase/th04/index.html"
@@ -12107,7 +12115,7 @@ msgstr "{ph0}Çfarë kthen REA{ph1}"
 #, python-brace-format
 msgctxt "page:showcase/th04/index.html"
 msgid "{ph0}Assembly to C++{ph1}"
-msgstr "{ph0}Mblidheni në C++{ph1}"
+msgstr "{ph0}Nga kodi assembly në C++{ph1}"
 
 #. {ph0}: <a href="#checking">
 #. {ph1}: </a>
@@ -12186,8 +12194,8 @@ msgid ""
 "An example prompt, with the original executable and reconstruction checkout "
 "available locally."
 msgstr ""
-"Një shembull i shpejtë, me arkën origjinale të ekzekutueshme dhe të "
-"rindërtimit të disponueshme në nivel lokal."
+"Një shembull kërkese, me skedarin origjinal të ekzekutueshëm dhe kopjen e "
+"punës së rindërtimit të disponueshme lokalisht."
 
 #. {ph0}: <code>0, 16, 32, …, 240</code>
 #: website/public/showcase/th04/index.html:303
@@ -12199,7 +12207,7 @@ msgid ""
 "positions together."
 msgstr ""
 "TH04 e përfaqëson një rrotullim të plotë në drejtim të akrepave të orës me "
-"256 njësi këndi. Për 16 predha, çdo indeks shton 16 njësi: {ph0}. Shtimi i "
+"256 njësi këndi. Për 16 plumba, çdo indeks shton 16 njësi: {ph0}. Shtimi i "
 "drejtimit të lojtarit i rrotullon të gjitha këto pozicione së bashku."
 
 #. {ph0}: <a href="../../assets/figures/th04-bullet-ring.svg" >
@@ -12309,9 +12317,9 @@ msgid ""
 "division uses the count read from {ph1}. The maintained source names that "
 "field {ph2}. The complete sequence appears below."
 msgstr ""
-"{ph0} mban indeksin e pikave. Zhvendosja e shumëzon atë me 256, pastaj "
-"pjesëtimi përdor numërimin e lexuar nga {ph1}. Burimi i ruajtur emërton atë "
-"fushë {ph2}. Sekuenca e plotë shfaqet më poshtë."
+"{ph0} mban indeksin e plumbit. Zhvendosja e shumëzon me 256, pastaj "
+"pjesëtimi përdor numrin e lexuar nga {ph1}. Kodi burimor i mirëmbajtur e "
+"emërton atë fushë {ph2}. Sekuenca e plotë shfaqet më poshtë."
 
 #: website/public/showcase/th04/index.html:425
 msgctxt "page:showcase/th04/index.html"
@@ -12417,8 +12425,9 @@ msgid ""
 "{ph0}01 · Read the bullet index.{ph1} The stack argument is loaded into "
 "{ph2}. In a 16-bullet ring, this member index runs from 0 through 15."
 msgstr ""
-"{ph0}01 · Lexoni indeksin e pikave.{ph1} Argumenti i stivës ngarkohet në "
-"{ph2}. Në një unazë me 16 plumba, ky indeks i anëtarëve shkon nga 0 në 15."
+"{ph0}01 · Lexoni indeksin e plumbit.{ph1} Argumenti i stivës ngarkohet në "
+"{ph2}. Në një unazë me 16 plumba, indeksi i plumbit merr vlera nga 0 deri në"
+" 15."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -12432,9 +12441,10 @@ msgid ""
 "256. The count is zero-extended into a word, then {ph3} divides the product "
 "by that count. For count 16, each index advances 16 angle units."
 msgstr ""
-"{ph0}02 · Hapni drejtimet rreth një kthese të plotë.{ph1} {ph2} shumëzohet "
-"me 256. Numërimi zgjatet me zero në një fjalë, më pas {ph3} e ndan produktin"
-" me atë numërim. Për numërimin 16, çdo indeks avancon 16 njësi këndi."
+"{ph0}02 · Shpërndani drejtimet rreth një rrotullimi të plotë.{ph1} {ph2} "
+"shumëzon me 256. Numri zgjerohet me zero në një vlerë 16-bit, pastaj {ph3} "
+"pjesëton produktin me atë numër. Kur numri është 16, çdo indeks e rrit "
+"këndin me 16 njësi."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -12559,8 +12569,8 @@ msgid ""
 "The compiled bullet-generation code matches a 2,139-byte section of the "
 "original executable."
 msgstr ""
-"Kodi i përpiluar i gjenerimit të pikave përputhet me një seksion 2,139 bajt "
-"të ekzekutivit origjinal."
+"Kodi i përpiluar i gjenerimit të plumbave përputhet me një seksion prej "
+"2,139 bajtesh të skedarit origjinal të ekzekutueshëm."
 
 #: website/public/showcase/th04/index.html:679
 msgctxt "page:showcase/th04/index.html"
@@ -12704,9 +12714,10 @@ msgid ""
 "assembly. Beyond bullet generation, the source covers stages, bosses, "
 "rendering, input, menus, endings and score handling."
 msgstr ""
-"Projekti ndërton katër produktet DOS të lojës nga C++ dhe kodi assembly i "
-"mirëmbajtur. Përtej gjenerimit të pikave, burimi mbulon fazat, bosët, "
-"interpretimin, hyrjen, menutë, përfundimet dhe trajtimin e rezultateve."
+"Projekti ndërton katër produktet DOS të lojës nga kodi i mirëmbajtur C++ dhe"
+" assembly. Përveç gjenerimit të plumbave, kodi burimor mbulon fazat, "
+"kundërshtarët kryesorë, paraqitjen grafike, hyrjet, menutë, përfundimet dhe "
+"trajtimin e pikëve."
 
 #. {ph0}: <a class="text-link" href="https://github.com/N0zoM1z0/th04" >
 #. {ph1}: </a >
@@ -12729,8 +12740,8 @@ msgid ""
 "{ph0}Bullet-generation source{ph1}{ph2}The complete helper, other pattern "
 "types and template tuning.{ph3}"
 msgstr ""
-"{ph0}Burimi i gjenerimit të pikave{ph1}{ph2}Ndihmës i plotë, lloje të tjera "
-"modelesh dhe akordim shabllonesh.{ph3}"
+"{ph0}Kodi burimor i gjenerimit të plumbave{ph1}{ph2}Funksioni i plotë "
+"ndihmës, lloje të tjera modelesh dhe rregullimi i shabllonit.{ph3}"
 
 #. {ph0}: <a
 #. href="https://github.com/N0zoM1z0/th04/blob/0d72e9801a5c14c10384efcbb6734ceccb74ee63/docs/DOS_BUILD.md"
@@ -12768,7 +12779,7 @@ msgstr ""
 #: website/public/showcase/th04/index.html:6
 msgctxt "page:showcase/th04/index.html"
 msgid "TH04 Reverse Engineering: DOS Bullet Patterns — REA"
-msgstr "TH04 Inxhinieri e kundërt: Modelet e pikave të DOS - REA"
+msgstr "Inxhinieria e kundërt e TH04: Modelet e plumbave në DOS — REA"
 
 #: website/public/showcase/th04/index.html:7
 msgctxt "page:showcase/th04/index.html"
@@ -12789,7 +12800,7 @@ msgstr "Në këtë faqe"
 #: website/public/showcase/th04/index.html:266
 msgctxt "page:showcase/th04/index.html"
 msgid "TH04 bullet-pattern case study"
-msgstr "TH04 rast studimi i modelit bullet"
+msgstr "Studimi i modeleve të plumbave në TH04"
 
 #: website/public/showcase/th04/index.html:281
 msgctxt "page:showcase/th04/index.html"
@@ -12812,10 +12823,10 @@ msgid ""
 "the highlighted first bullet points toward the player. Both keep a spacing "
 "of 16 angle units, or 22.5 degrees."
 msgstr ""
-"Dy diagrame të një unaze me 16 plumba. Unaza e fiksuar fillon në këndin "
-"zero. Shtimi i një drejtimi lojtari prej 40 rrotullon çdo drejtim me të "
-"njëjtën sasi; pika e parë e theksuar drejton lojtarin. Të dyja mbajnë një "
-"hapësirë prej 16 njësive këndore, ose 22,5 gradë."
+"Dy diagrame të një unaze me 16 plumba. Unaza fikse fillon në këndin zero. "
+"Shtimi i drejtimit të lojtarit prej 40 i rrotullon të gjitha drejtimet me të"
+" njëjtën madhësi; plumbi i parë i theksuar tregon drejt lojtarit. Të dyja "
+"ruajnë një largësi prej 16 njësish këndi, ose 22.5 gradë."
 
 #: website/public/showcase/th04/index.html:337
 msgctxt "page:showcase/th04/index.html"
@@ -13301,7 +13312,7 @@ msgstr "Unazë e fiksuar"
 #: website/public/assets/figures/th04-bullet-ring.svg:25
 msgctxt "figure:th04-bullet-ring.svg"
 msgid "First bullet: angle 0"
-msgstr "Pika e parë: këndi 0"
+msgstr "Plumbi i parë: këndi 0"
 
 #: website/public/assets/figures/th04-bullet-ring.svg:26
 msgctxt "figure:th04-bullet-ring.svg"
@@ -13311,7 +13322,7 @@ msgstr "Unazë e synuar"
 #: website/public/assets/figures/th04-bullet-ring.svg:27
 msgctxt "figure:th04-bullet-ring.svg"
 msgid "First bullet: player direction"
-msgstr "Pika e parë: drejtimi i lojtarit"
+msgstr "Plumbi i parë: drejtimi i lojtarit"
 
 #: website/public/assets/figures/th04-bullet-ring.svg:64
 #: website/public/assets/figures/th04-bullet-ring.svg:102
@@ -14395,8 +14406,8 @@ msgid ""
 "From the built checkout, run {ph0} and {ph1} instead of the {ph2} commands "
 "below."
 msgstr ""
-"Nga arka e ndërtuar, ekzekutoni {ph0} dhe {ph1} në vend të komandave {ph2} "
-"më poshtë."
+"Nga kopja e ndërtuar e kodit burimor (checkout), ekzekutoni {ph0} dhe {ph1} "
+"në vend të komandave {ph2} më poshtë."
 
 #: website/public/get-started/index.html:1267
 msgctxt "page:get-started/index.html"
@@ -14806,12 +14817,12 @@ msgstr "Kopjo komandën e konfigurimit Windows REA"
 #: website/public/get-started/index.html:1767
 msgctxt "page:get-started/index.html"
 msgid "Copy command"
-msgstr "Komandën e kopjimit"
+msgstr "Kopjoni komandën"
 
 #: website/public/get-started/index.html:897
 msgctxt "page:get-started/index.html"
 msgid "Copy Notes investigation prompt"
-msgstr "Kërkesa e hetimit të Kopjimit të Shënimeve"
+msgstr "Kopjoni kërkesën për hetimin e Notes"
 
 #. {ph0}: <a href="#what-is-re">
 #. {ph1}: </a>

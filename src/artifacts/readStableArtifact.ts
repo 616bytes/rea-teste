@@ -52,6 +52,28 @@ const assertReadActive = (signal: AbortSignal | undefined): void => {
  * class-file byte budget. Uses the same no-symlink, no-follow open as
  * {@link readStableArtifact}; returns fewer bytes when the file is shorter.
  */
+/**
+ * The descriptor must be the regular file the path named when it was
+ * validated: a replacement between `lstat` and `open` is refused.
+ */
+const openedIdentity = async (
+  file: FileHandle,
+  before: BigIntStats,
+  path: string,
+): Promise<BigIntStats> => {
+  const initial = await file.stat({ bigint: true });
+  if (
+    !initial.isFile() ||
+    initial.dev !== before.dev ||
+    initial.ino !== before.ino
+  )
+    throw new ArtifactReaderFailure(
+      "integrity",
+      `Artifact changed before open: ${path}`,
+    );
+  return initial;
+};
+
 export const peekArtifactMagic = async (
   path: string,
   byteCount: number,
@@ -72,6 +94,7 @@ export const peekArtifactMagic = async (
     ),
   );
   try {
+    await openedIdentity(file, before, path);
     const buffer = Buffer.alloc(byteCount);
     const { bytesRead } = await file.read(buffer, 0, byteCount, 0);
     return buffer.subarray(0, bytesRead);
@@ -110,16 +133,7 @@ export const readStableArtifact = async (
     resourceScope === undefined ? undefined : new OwnedFileHandle(file);
   let failure: unknown;
   try {
-    const initial = await file.stat({ bigint: true });
-    if (
-      !initial.isFile() ||
-      initial.dev !== before.dev ||
-      initial.ino !== before.ino
-    )
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Artifact changed before open: ${path}`,
-      );
+    const initial = await openedIdentity(file, before, path);
     const chunks: Buffer[] = [];
     let count = 0;
     for await (const chunk of file.createReadStream({

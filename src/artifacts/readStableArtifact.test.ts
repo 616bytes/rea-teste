@@ -1,4 +1,12 @@
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdtemp,
+  open,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -34,6 +42,23 @@ describe("peekArtifactMagic", () => {
     await writeFile(path, Buffer.from([0xca, 0xfe]));
     const magic = await peekArtifactMagic(path, 4);
     expect([...magic]).toEqual([0xca, 0xfe]);
+  });
+
+  it("refuses a file replaced between validation and open", async () => {
+    const path = join(dir, "swapped.bin");
+    const replacement = join(dir, "replacement.bin");
+    await writeFile(path, Buffer.from([0xca, 0xfe, 0xba, 0xbe]));
+    await writeFile(replacement, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+    const swapping = {
+      lstat: (p: string) => lstat(p, { bigint: true }),
+      open: async (p: string, flags: number) => {
+        await rename(replacement, p);
+        return open(p, flags);
+      },
+    };
+    await expect(
+      peekArtifactMagic(path, 4, undefined, swapping),
+    ).rejects.toMatchObject({ reason: "integrity" });
   });
 
   it("refuses a symlink rather than following it", async () => {

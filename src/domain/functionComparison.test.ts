@@ -599,11 +599,47 @@ describe("function comparison ordering controls", () => {
       makeEvidence("e", rightWithoutNativeApi),
     );
 
-    expect(comparison.status).toBe("unchanged");
-    for (const dimension of ["calls", "references", "strings_names"] as const)
+    for (const dimension of ["calls", "strings_names"] as const)
       expect(
         comparison.dimensions.find((item) => item.dimension === dimension),
       ).toMatchObject({ status: "unchanged" });
+    // Unnamed endpoints in different artifacts have no stable identity.
+    expect(
+      comparison.dimensions.find((item) => item.dimension === "references"),
+    ).toMatchObject({
+      status: "unknown",
+      limitations: expect.arrayContaining([
+        expect.stringContaining("Unnamed reference endpoints"),
+      ]),
+    });
+    expect(comparison.status).toBe("unknown");
+  });
+
+  it("distinguishes unnamed reference targets by address within one artifact", () => {
+    const unnamedTarget = (target: string) =>
+      functionDossierSchema.parse({
+        ...dossierWithReference("0x1000", "call"),
+        outgoing_references: [
+          {
+            ...dossierWithReference("0x1000", "call").outgoing_references[0],
+            target_address: target,
+            target_procedure: null,
+          },
+        ],
+      });
+    const reference = (left: string, right: string, digits = ["a", "a"]) =>
+      compareFunctions(
+        observe(digits[0] ?? "a", unnamedTarget(left)),
+        observe(digits[1] ?? "a", unnamedTarget(right)),
+      ).dimensions.find(({ dimension }) => dimension === "references");
+    expect(reference("0x1010", "0x1020")).toMatchObject({ status: "changed" });
+    expect(reference("0x1010", "0x1010")).toMatchObject({
+      status: "unchanged",
+    });
+    // Across artifacts the same address does not identify the same target.
+    expect(reference("0x1010", "0x1010", ["a", "b"])).toMatchObject({
+      status: "unknown",
+    });
   });
 });
 

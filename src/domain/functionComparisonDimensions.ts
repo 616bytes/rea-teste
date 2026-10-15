@@ -253,13 +253,23 @@ const swiftLiteralCoverage = (
       ? "absent"
       : "complete";
 
+const hasUnnamedEndpoint = (snapshot: FunctionSnapshot): boolean =>
+  [
+    ...snapshot.dossier.incoming_references,
+    ...snapshot.dossier.outgoing_references,
+  ].some(
+    (edge) => edge.source_procedure === null || edge.target_procedure === null,
+  );
+
 const compareReferences = (
   left: FunctionSnapshot,
   right: FunctionSnapshot,
   context: ComparisonContext,
 ): FunctionDimension => {
-  const leftProjection = referenceProjection(left);
-  const rightProjection = referenceProjection(right);
+  const sameArtifact =
+    left.subject.digest.sha256 === right.subject.digest.sha256;
+  const leftProjection = referenceProjection(left, sameArtifact);
+  const rightProjection = referenceProjection(right, sameArtifact);
   if (leftProjection.length === 0 && rightProjection.length === 0)
     return compareValues(
       "references",
@@ -282,6 +292,17 @@ const compareReferences = (
       textDelta: null,
       limitations: [
         "Reference endpoints differ independently of provider reference-kind metadata.",
+      ],
+    });
+  // Equal projections with unknown endpoints do not establish equal targets.
+  if (!sameArtifact && (hasUnnamedEndpoint(left) || hasUnnamedEndpoint(right)))
+    return unresolvedDimension({
+      dimension: "references",
+      links: context.links,
+      leftCount: leftProjection.length,
+      rightCount: rightProjection.length,
+      limitations: [
+        "Unnamed reference endpoints have no stable identity across different artifacts, so equal named endpoints do not establish equal references.",
       ],
     });
   const leftKinds = referenceKindProjection(left);

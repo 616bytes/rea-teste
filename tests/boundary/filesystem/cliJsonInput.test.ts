@@ -26,6 +26,20 @@ const runCli = async (arguments_: readonly string[]): Promise<unknown> => {
 };
 
 describe("CLI JSON file selection", () => {
+  it("leaves a cancelled file read to the command boundary", async () => {
+    const root = await createTestTempDirectory("rea-json-input-cancel-");
+    const path = join(root, "actions.json");
+    await writeFile(path, '[{"type":"key","key":"BACK"}]');
+    // A cancelled read must not be reported as an unreadable caller file.
+    await expect(
+      parseCliJsonInput(path, "send_adb_input", AbortSignal.abort()),
+    ).rejects.toBeDefined();
+    expect(await parseCliJsonInput(path, "send_adb_input")).toEqual({
+      ok: true,
+      value: [{ type: "key", key: "BACK" }],
+    });
+  });
+
   it("accepts a symlink to a regular JSON file", async () => {
     const root = await createTestTempDirectory("rea-json-input-symlink-");
     const path = join(root, "input.json");

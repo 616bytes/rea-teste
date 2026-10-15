@@ -31,14 +31,16 @@ export const registerAdbCommands = (
   const executeResolved = (
     name: string,
     operation: AdbOperation,
-    resolveInput: () => Promise<
+    resolveInput: (
+      signal: AbortSignal,
+    ) => Promise<
       | { readonly ok: true; readonly value: unknown }
       | { readonly ok: false; readonly error: JsonValue }
     >,
   ) =>
     withCommandCancellation((signal) =>
       logCliCommand(logger, name, async () => {
-        const input = await resolveInput();
+        const input = await resolveInput(signal);
         if (!input.ok) return input.error;
         const result = await service.execute(operation, input.value, {
           signal,
@@ -526,23 +528,28 @@ export const registerAdbCommands = (
         .describe("Delay after each action in milliseconds (default 300)"),
     }),
     run: ({ args, options }) =>
-      executeResolved(CLI_COMMANDS.sendAdbInput, "send_adb_input", async () => {
-        const actions = await parseCliJsonInput(
-          options.actions,
-          "send_adb_input",
-        );
-        return actions.ok
-          ? {
-              ok: true,
-              value: {
-                serial: args.serial,
-                actions: actions.value,
-                ...(options["settle-ms"] === undefined
-                  ? {}
-                  : { settle_ms: options["settle-ms"] }),
-              },
-            }
-          : actions;
-      }),
+      executeResolved(
+        CLI_COMMANDS.sendAdbInput,
+        "send_adb_input",
+        async (signal) => {
+          const actions = await parseCliJsonInput(
+            options.actions,
+            "send_adb_input",
+            signal,
+          );
+          return actions.ok
+            ? {
+                ok: true,
+                value: {
+                  serial: args.serial,
+                  actions: actions.value,
+                  ...(options["settle-ms"] === undefined
+                    ? {}
+                    : { settle_ms: options["settle-ms"] }),
+                },
+              }
+            : actions;
+        },
+      ),
   });
 };

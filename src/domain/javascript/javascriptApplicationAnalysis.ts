@@ -63,6 +63,7 @@ const reconstructionStatisticsSchema = z.strictObject({
   text_bytes_read: countSchema,
   invalid_utf8_files: countSchema,
   parsed_javascript_files: countSchema,
+  skipped_javascript_files: countSchema,
   visited_ast_nodes: countSchema,
   findings: countSchema,
   modules: countSchema,

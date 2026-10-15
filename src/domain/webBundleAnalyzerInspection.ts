@@ -205,9 +205,13 @@ const inspectCall = (
       node,
       accumulator,
     });
+  // The receiver must own the exact member name `modelContext`; a suffix
+  // inside a longer identifier (`appmodelContext`) is an unrelated object.
+  const receiverSegments = name.split(".");
   if (
-    name.endsWith("modelContext.registerTool") ||
-    name === "modelContext.registerTool"
+    receiverSegments.length >= 2 &&
+    receiverSegments[receiverSegments.length - 2] === "modelContext" &&
+    receiverSegments[receiverSegments.length - 1] === "registerTool"
   )
     addWebMcpDeclaration(script, node, accumulator);
 };

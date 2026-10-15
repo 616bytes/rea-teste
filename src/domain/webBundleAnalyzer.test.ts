@@ -1120,6 +1120,24 @@ it("retains direct and literal computed call names", () => {
   ]);
 });
 
+it("requires the receiver segment to be exactly modelContext", () => {
+  const result = analyzeCapturedWebBundle(
+    inspection(`
+        appmodelContext.registerTool({ name: "suffix-receiver" });
+        app.analyticsmodelContext.registerTool({ name: "nested-suffix-receiver" });
+        modelContext.registerTool({ name: "bare-receiver" });
+        document.modelContext.registerTool({ name: "nested-receiver" });
+        navigator.modelContext.registerTool({ name: "navigator-receiver" });
+    `),
+  );
+
+  expect(result.observations.webmcp_declarations).toEqual([
+    expect.objectContaining({ name: "bare-receiver" }),
+    expect.objectContaining({ name: "nested-receiver" }),
+    expect.objectContaining({ name: "navigator-receiver" }),
+  ]);
+});
+
 it("recognizes tRPC procedures and named GraphQL operations in captured scripts", () => {
   const result = analyzeCapturedWebBundle(
     inspection(`

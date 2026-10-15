@@ -18,7 +18,7 @@ export async function startBrowserVerifierSite() {
         ? requestedRun
         : "default";
       response.setHeader("content-type", "text/html");
-      response.end(`<!doctype html><html><body data-run="${run}"><pre id="environment"></pre>
+      response.end(`<!doctype html><html><body data-run="${run}"><pre id="environment"></pre><pre id="language"></pre>
         <button id="refresh-environment">Refresh environment</button><script>
         const refresh = () => document.querySelector('#environment').textContent = JSON.stringify({
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -26,6 +26,9 @@ export async function startBrowserVerifierSite() {
           dpr: devicePixelRatio, width: innerWidth, height: innerHeight
         });
         document.querySelector('#refresh-environment').onclick = refresh;
+        document.querySelector('#language').textContent = JSON.stringify({
+          language: navigator.language, languages: [...navigator.languages]
+        });
         window.releaseScenario = () => {
           const release = document.createElement('span');
           release.id = 'release-' + document.body.dataset.run;

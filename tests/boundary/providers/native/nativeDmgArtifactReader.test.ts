@@ -1102,11 +1102,14 @@ describe("native DMG command failure diagnostics", () => {
 });
 
 describe("localized native DMG verification diagnostics", () => {
-  // Result lines and localized diagnostics captured from hdiutil 683.100.3
-  // on macOS 26.5.2 with Chinese preferred languages. Exit status is 1 in all cases.
+  // Results 111, 2, 13 and 117 and their localized diagnostics were captured from
+  // hdiutil 683.100.3 on macOS 26.5.2 with Chinese preferred languages.
+  // Exit status is 1 in all cases.
   it.each([
     [111, "无法识别映像", "format"],
     [2, "无此文件或目录", "io"],
+    // Synthetic Darwin EIO fixture; no real I/O fault was induced.
+    [5, "输入/输出错误", "io"],
     [13, "权限被拒绝", "io"],
     [117, "无效的校验和", "integrity"],
   ])(

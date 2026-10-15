@@ -10,6 +10,10 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+// The pinned Node toolchain strips types from these dependency-free owners;
+// this preflight therefore uses runtime facts without needing npm ci or a build.
+import { GHIDRA_BRIDGE_SOURCES } from "../src/ghidra/GhidraBridgeSources.ts";
+import { parseGhidraJavaProperties } from "../src/ghidra/GhidraJavaProperties.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const bridge = join(root, "bridge/ghidra");
@@ -20,18 +24,30 @@ if (!install)
   );
 const properties = await readFile(
   join(install, "Ghidra/application.properties"),
-  "utf8",
+  "latin1",
 ).catch((cause) =>
   fail(
     `GHIDRA_INSTALL_DIR has no readable Ghidra/application.properties: ${cause.message}`,
   ),
 );
-const version = /^application\.version=(.*)$/mu.exec(properties)?.[1]?.trim();
+const parsedProperties = parseGhidraJavaProperties(properties);
+if (!parsedProperties.ok) fail(parsedProperties.error);
+const version = parsedProperties.value.get("application.version");
 // Same 12.1 line as GhidraInstallationPolicy, including a distro suffix.
 if (!/^12\.1(?:\.\d+)?(?:[-+].*)?$/u.test(version ?? ""))
   fail(
-    `Bridge sources are compiled against Ghidra 12.1.x (verified with 12.1.4). Observed application.version=${version || "missing"}.`,
+    `Bridge sources are compiled against Ghidra 12.1.x (verified with 12.1.4). Observed application.version=${version === undefined ? "missing" : JSON.stringify(version)}.`,
   );
+const sourceNames = (await readdir(bridge, { withFileTypes: true }))
+  .filter((entry) => entry.isFile() && entry.name.endsWith(".java"))
+  .map((entry) => entry.name);
+for (const name of Object.values(GHIDRA_BRIDGE_SOURCES))
+  if (!sourceNames.includes(name))
+    fail(`Required Ghidra bridge source is missing: bridge/ghidra/${name}`);
+const sources = sourceNames
+  .map((name) => relative(root, join(bridge, name)))
+  .sort();
+
 const javac = process.env.JAVA_HOME
   ? join(process.env.JAVA_HOME, "bin", "javac")
   : "javac";
@@ -44,11 +60,6 @@ if (!Number.isInteger(major) || major < 21)
     `Ghidra 12.1 compiles bridge scripts with Java 21 or newer. Observed: ${output(banner) || "no version"}. REA does not install or upgrade Java.`,
   );
 
-const sources = (await readdir(bridge, { withFileTypes: true }))
-  .filter((entry) => entry.isFile() && entry.name.endsWith(".java"))
-  .map((entry) => relative(root, join(bridge, entry.name)))
-  .sort();
-if (sources.length === 0) fail(`No Java sources found in ${bridge}.`);
 const jars = (
   await readdir(join(install, "Ghidra"), {
     recursive: true,

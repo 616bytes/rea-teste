@@ -78,6 +78,15 @@ export const parseConfig = (
     ...(env.REA_GHIDRA_SEED_FILE === undefined
       ? {}
       : { ghidraSeedFile: env.REA_GHIDRA_SEED_FILE }),
+    ...(env.REA_GHIDRA_EXISTING_PROJECT === undefined ||
+    env.REA_GHIDRA_EXISTING_PROGRAM === undefined
+      ? {}
+      : {
+          ghidraExistingProject: {
+            projectPath: env.REA_GHIDRA_EXISTING_PROJECT,
+            programName: env.REA_GHIDRA_EXISTING_PROGRAM,
+          },
+        }),
     ...(env.REA_GHIDRA_DISABLED_ANALYZERS === undefined
       ? {}
       : { ghidraDisabledAnalyzers: env.REA_GHIDRA_DISABLED_ANALYZERS }),

@@ -10,6 +10,10 @@ import {
 } from "./ghidraLanguageOverride.js";
 import { ghidraDisabledAnalyzersSchema } from "./ghidraDisabledAnalyzers.js";
 import {
+  ghidraExistingProgramNameSchema,
+  ghidraExistingProjectPathSchema,
+} from "./ghidraExistingProject.js";
+import {
   DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
   DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
@@ -63,6 +67,8 @@ const environmentSchema = z.object({
     .min(1)
     .refine(isAbsolute, "REA_GHIDRA_SEED_FILE must be absolute")
     .optional(),
+  REA_GHIDRA_EXISTING_PROJECT: ghidraExistingProjectPathSchema.optional(),
+  REA_GHIDRA_EXISTING_PROGRAM: ghidraExistingProgramNameSchema.optional(),
   REA_ILSPY_CMD_PATH: z
     .string()
     .min(1)
@@ -169,5 +175,58 @@ export const parseEnvironment = (
         ],
       }),
     );
-  return parsed;
+  return existingGhidraProjectIssue(env, unresolvedSettings) ?? parsed;
+};
+
+/**
+ * An existing Ghidra project is opened with -process and already carries its
+ * analysis, so it needs both settings and cannot take import-time selections.
+ */
+const existingGhidraProjectIssue = (
+  env: Environment,
+  unresolvedSettings: ReadonlySet<string>,
+): Result<never, ConfigurationError> | undefined => {
+  const project = env.REA_GHIDRA_EXISTING_PROJECT;
+  const program = env.REA_GHIDRA_EXISTING_PROGRAM;
+  const missing =
+    project === undefined
+      ? "REA_GHIDRA_EXISTING_PROJECT"
+      : "REA_GHIDRA_EXISTING_PROGRAM";
+  if ((project === undefined) !== (program === undefined)) {
+    if (unresolvedSettings.has(missing)) return undefined;
+    return err(
+      new ConfigurationError("Invalid REA environment configuration", {
+        settings: [
+          {
+            setting:
+              project === undefined
+                ? "REA_GHIDRA_EXISTING_PROJECT"
+                : "REA_GHIDRA_EXISTING_PROGRAM",
+            constraint:
+              "REA_GHIDRA_EXISTING_PROJECT and REA_GHIDRA_EXISTING_PROGRAM must be set together",
+          },
+        ],
+      }),
+    );
+  }
+  if (project === undefined) return undefined;
+  const importTimeSettings = (
+    [
+      "REA_GHIDRA_LANGUAGE_ID",
+      "REA_GHIDRA_COMPILER_SPEC_ID",
+      "REA_GHIDRA_SEED_FILE",
+      "REA_GHIDRA_DISABLED_ANALYZERS",
+    ] as const
+  ).filter((setting) => env[setting] !== undefined);
+  return importTimeSettings.length === 0
+    ? undefined
+    : err(
+        new ConfigurationError("Invalid REA environment configuration", {
+          settings: importTimeSettings.map((setting) => ({
+            setting,
+            constraint:
+              "cannot be combined with REA_GHIDRA_EXISTING_PROJECT, which opens without import or analysis",
+          })),
+        }),
+      );
 };

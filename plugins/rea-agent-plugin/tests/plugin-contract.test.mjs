@@ -21,7 +21,9 @@ async function json(relativePath) {
 }
 
 async function runValidatorWithMutation(mutate) {
-  const tempRoot = await mkdtemp(path.join(repoRoot, ".plugin-validation-regression-"));
+  const tempRoot = await mkdtemp(
+    path.join(repoRoot, ".plugin-validation-regression-"),
+  );
   const copiedRoot = path.join(tempRoot, "plugin");
   try {
     await cp(pluginRoot, copiedRoot, { recursive: true });
@@ -171,15 +173,25 @@ test("36: plugin validator rejects a JSON null root manifest", async () => {
   const output = await runValidatorWithMutation(async (root) => {
     await writeFile(path.join(root, "plugin.json"), "null\n");
   });
-  assert.match(output, /plugin\.json: invalid or unreadable JSON \(expected a JSON object at the root\)/);
+  assert.match(
+    output,
+    /plugin\.json: invalid or unreadable JSON \(expected a JSON object at the root\)/,
+  );
 });
 
 test("37: plugin validator rejects malformed YAML frontmatter", async () => {
   const output = await runValidatorWithMutation(async (root) => {
     const skillPath = path.join(root, "skills", "acceptance-criteria", "SKILL.md");
     const content = await readFile(skillPath, "utf8");
-    const malformed = content.replace(/^description:.*$/m, "description: [unterminated");
-    assert.notEqual(malformed, content, "fixture must contain a description field");
+    const malformed = content.replace(
+      /^description:.*$/m,
+      "description: [unterminated",
+    );
+    assert.notEqual(
+      malformed,
+      content,
+      "fixture must contain a description field",
+    );
     await writeFile(skillPath, malformed);
   });
   assert.match(output, /skill acceptance-criteria: invalid YAML frontmatter/);

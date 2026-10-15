@@ -938,7 +938,7 @@ const resolveLegacyEsmSubpath = (
   const encodedPath = url.pathname.slice(
     PACKAGE_ARTIFACT_ROOT_URL.pathname.length,
   );
-  const rejected = rejectDeclaration(encodedPath);
+  const rejected = rejectDeclaration(encodedPath, false, true);
   if (rejected !== null) return rejected;
   const decoded = decodeModuleUrlPath(encodedPath);
   if (typeof decoded !== "string") return decoded;

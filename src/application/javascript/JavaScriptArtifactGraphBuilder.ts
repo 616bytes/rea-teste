@@ -177,9 +177,20 @@ export const retainJavaScriptArtifactPaths = (
   snapshot: ArtifactInventorySnapshot,
   fileSet: JavaScriptArtifactFileSet,
 ): ReadonlyMap<string, JavaScriptArtifactPathFacts> => {
-  const containers = [...fileSet.containers].sort(
-    (left, right) => right.path.length - left.path.length,
+  const containerOwners = new Map(
+    fileSet.containers.map(({ path, sha256 }) => [path, sha256]),
   );
+  const ownerOf = (path: string): string => {
+    for (
+      let end = path.lastIndexOf("/");
+      end > 0;
+      end = path.lastIndexOf("/", end - 1)
+    ) {
+      const owner = containerOwners.get(path.slice(0, end));
+      if (owner !== undefined) return owner;
+    }
+    return snapshot.manifest.root_sha256;
+  };
   const paths = new Map<string, JavaScriptArtifactPathFacts>([
     [
       "",
@@ -190,7 +201,7 @@ export const retainJavaScriptArtifactPaths = (
       },
     ],
   ]);
-  for (const container of containers)
+  for (const container of fileSet.containers)
     paths.set(container.path, {
       kind: "directory",
       container_sha256: container.sha256,
@@ -203,12 +214,9 @@ export const retainJavaScriptArtifactPaths = (
     )
       continue;
     const path = occurrence.logical_path === "." ? "" : occurrence.logical_path;
-    const container = containers.find(({ path: prefix }) =>
-      path.startsWith(`${prefix}/`),
-    );
     paths.set(path, {
       kind: occurrence.entry_kind,
-      container_sha256: container?.sha256 ?? snapshot.manifest.root_sha256,
+      container_sha256: ownerOf(path),
       limitations: occurrence.limitations,
     });
   }

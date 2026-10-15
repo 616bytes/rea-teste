@@ -82,7 +82,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         }),
         evidence: expect.objectContaining({
           limitations: expect.arrayContaining([
-            expect.stringContaining("names a directory"),
+            expect.stringContaining("directory imports are unsupported"),
           ]),
         }),
       }),

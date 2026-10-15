@@ -55,6 +55,21 @@ it.each(["const a=1;", "let a; a=1;"])(
   },
 );
 
+it("bounds ancestry reads after a write in the same expression", () => {
+  const reads = (depth: number): number =>
+    ancestryReads(
+      `let a=0; module.exports.value={set:(a=1),value:${"a+(".repeat(depth)}a${")".repeat(depth)}};`,
+      (ir) => {
+        expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
+        expect(onlyBinding(ir, "a").value.status).toBe("ambiguous");
+      },
+    );
+  const smaller = reads(80);
+  const larger = reads(160);
+  expect(smaller).toBeGreaterThan(0);
+  expect(larger).toBeLessThan(3 * smaller);
+});
+
 it.each([
   [
     "object",

@@ -22,6 +22,18 @@ interface BindingReadPosition {
   readonly repeating: boolean;
 }
 
+interface ExpressionSiblings {
+  readonly common: t.Node;
+  readonly earlier: t.Node;
+  readonly later: t.Node;
+}
+
+interface ExpressionAncestry {
+  readonly source: t.Node;
+  readonly ancestors: ReadonlyMap<t.Node, t.Node | undefined>;
+  readonly siblings: WeakMap<t.Node, ExpressionSiblings | null>;
+}
+
 /**
  * Initializer positions depend only on a node and its parent map, which one
  * analysis builds once and never changes. Different mutations and initializers
@@ -33,6 +45,13 @@ interface InitializerPositionCache {
   readonly mutation: WeakMap<t.Node, StatementPosition | null>;
   readonly reference: WeakMap<t.Node, StatementPosition | null>;
   readonly read: WeakMap<t.Node, BindingReadPosition>;
+  readonly evaluationChildren: WeakMap<
+    t.Node,
+    ReadonlyMap<t.Node, number> | null
+  >;
+  // One source context bounds retained ancestry facts to O(AST), even when
+  // an expression contains many distinct writes. Reuse its descendant paths.
+  expressionAncestry: ExpressionAncestry | undefined;
 }
 
 const initializerPositionCaches = new WeakMap<
@@ -50,6 +69,8 @@ const initializerPositionCache = (
     mutation: new WeakMap(),
     reference: new WeakMap(),
     read: new WeakMap(),
+    evaluationChildren: new WeakMap(),
+    expressionAncestry: undefined,
   };
   initializerPositionCaches.set(parents, created);
   return created;
@@ -117,53 +138,120 @@ export const semanticTopLevelEffectFollowsCapture = (
     before.declaratorIndex !== after.declaratorIndex
   )
     return false;
-  return expressionEvaluationPrecedes(capture, effect, parents);
+  return expressionEvaluationOrder(capture, effect, parents) === "before";
 };
 
-/** Prove ordering only where JavaScript evaluates sibling expressions left-to-right. */
-const expressionEvaluationPrecedes = (
+/** Memoize descendant paths toward the currently compared source expression. */
+const expressionSiblings = (
+  earlier: t.Node,
+  later: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): ExpressionSiblings | null => {
+  const cache = initializerPositionCache(parents);
+  let context = cache.expressionAncestry;
+  if (context?.source !== earlier) {
+    const ancestors = new Map<t.Node, t.Node | undefined>();
+    let child: t.Node | undefined;
+    for (
+      let node: t.Node | undefined = earlier;
+      node !== undefined;
+      node = parents.get(node)
+    ) {
+      ancestors.set(node, child);
+      child = node;
+    }
+    context = { source: earlier, ancestors, siblings: new WeakMap() };
+    cache.expressionAncestry = context;
+  }
+  const path: t.Node[] = [];
+  let result: ExpressionSiblings | null = null;
+  for (
+    let node: t.Node | undefined = later;
+    node !== undefined;
+    node = parents.get(node)
+  ) {
+    if (context.ancestors.has(node)) {
+      const sourceChild = context.ancestors.get(node);
+      const readChild = path.at(-1);
+      if (sourceChild !== undefined && readChild !== undefined)
+        result = { common: node, earlier: sourceChild, later: readChild };
+      break;
+    }
+    const cached = context.siblings.get(node);
+    if (cached !== undefined) {
+      result = cached;
+      break;
+    }
+    path.push(node);
+  }
+  for (const node of path) context.siblings.set(node, result);
+  return result;
+};
+
+/** Index existing child arrays once; wide literals/calls need no repeated copies. */
+const expressionChildIndices = (
+  node: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): ReadonlyMap<t.Node, number> | null => {
+  const cache = initializerPositionCache(parents).evaluationChildren;
+  const cached = cache.get(node);
+  if (cached !== undefined) return cached;
+  const children = ((): readonly (t.Node | null)[] | null => {
+    if (t.isSequenceExpression(node)) return node.expressions;
+    if (t.isArrayExpression(node)) return node.elements;
+    if (t.isObjectExpression(node)) return node.properties;
+    if (t.isObjectProperty(node))
+      return node.computed ? [node.key, node.value] : [node.value];
+    if (
+      t.isCallExpression(node) ||
+      t.isOptionalCallExpression(node) ||
+      t.isNewExpression(node)
+    )
+      return node.arguments;
+    if (t.isBinaryExpression(node) || t.isLogicalExpression(node))
+      return [node.left, node.right];
+    if (t.isConditionalExpression(node)) return [node.test];
+    return null;
+  })();
+  if (children === null) {
+    cache.set(node, null);
+    return null;
+  }
+  const indices = new Map<t.Node, number>();
+  let index = 0;
+  if (
+    t.isCallExpression(node) ||
+    t.isOptionalCallExpression(node) ||
+    t.isNewExpression(node)
+  )
+    indices.set(node.callee, index++);
+  for (const child of children) {
+    if (child !== null) indices.set(child, index);
+    index++;
+  }
+  cache.set(node, indices);
+  return indices;
+};
+
+/** Unproved ordering stays distinct from proof that a write follows the read. */
+const expressionEvaluationOrder = (
   earlier: t.Node,
   later: t.Node | undefined,
   parents: WeakMap<t.Node, t.Node>,
-): boolean => {
-  if (later === undefined) return false;
-  const earlierAncestors = new Set<t.Node>();
-  let current: t.Node | undefined = earlier;
-  while (current !== undefined) {
-    earlierAncestors.add(current);
-    current = parents.get(current);
-  }
-  const laterPath: t.Node[] = [];
-  current = later;
-  while (current !== undefined && !earlierAncestors.has(current)) {
-    laterPath.push(current);
-    current = parents.get(current);
-  }
-  const common = current;
-  if (common === undefined || common === earlier || common === later)
-    return false;
-  let earlierChild: t.Node = earlier;
-  while (parents.get(earlierChild) !== common) {
-    const parent = parents.get(earlierChild);
-    if (parent === undefined) return false;
-    earlierChild = parent;
-  }
-  const laterChild = laterPath.at(-1);
-  if (laterChild === undefined) return false;
-  const orderedChildren = ((): readonly t.Node[] | null => {
-    if (t.isSequenceExpression(common)) return common.expressions;
-    if (t.isCallExpression(common) || t.isOptionalCallExpression(common))
-      return [common.callee, ...common.arguments];
-    if (t.isNewExpression(common)) return [common.callee, ...common.arguments];
-    if (t.isBinaryExpression(common) || t.isLogicalExpression(common))
-      return [common.left, common.right];
-    if (t.isConditionalExpression(common)) return [common.test];
-    return null;
-  })();
-  if (orderedChildren === null) return false;
-  const earlierIndex = orderedChildren.indexOf(earlierChild);
-  const laterIndex = orderedChildren.indexOf(laterChild);
-  return earlierIndex >= 0 && laterIndex > earlierIndex;
+): "before" | "after" | "unresolved" => {
+  if (later === undefined) return "unresolved";
+  const siblings = expressionSiblings(earlier, later, parents);
+  if (siblings === null) return "unresolved";
+  const children = expressionChildIndices(siblings.common, parents);
+  const earlierIndex = children?.get(siblings.earlier);
+  const laterIndex = children?.get(siblings.later);
+  if (
+    earlierIndex === undefined ||
+    laterIndex === undefined ||
+    earlierIndex === laterIndex
+  )
+    return "unresolved";
+  return earlierIndex < laterIndex ? "before" : "after";
 };
 
 const computeDirectInitializerPosition = (
@@ -497,21 +585,27 @@ const selectInitializers = (
       position: initializerPosition(initializer, parents, true),
     })),
   ];
-  if (
-    origins.some(
-      ({ position: origin }) =>
-        origin === null || origin.body !== position.body,
-    )
-  )
-    return undefined;
-  const preceding = origins.filter(
-    ({ initializer, position: origin }) =>
-      origin !== null &&
-      (positionPrecedes(origin, position) ||
-        (origin.index === position.index &&
-          origin.declaratorIndex === position.declaratorIndex &&
-          expressionEvaluationPrecedes(initializer.node, read, parents))),
-  );
+  const preceding: typeof origins = [];
+  for (const origin of origins) {
+    const source = origin.position;
+    if (source === null || source.body !== position.body) return undefined;
+    if (positionPrecedes(source, position)) preceding.push(origin);
+    else if (!positionPrecedes(position, source)) {
+      if (
+        source.index !== position.index ||
+        source.declaratorIndex !== position.declaratorIndex
+      )
+        return undefined;
+      const order = expressionEvaluationOrder(
+        origin.initializer.node,
+        read,
+        parents,
+      );
+      // Failure to prove precedence is not proof that the write happens later.
+      if (order === "unresolved") return undefined;
+      if (order === "before") preceding.push(origin);
+    }
+  }
   const { retained } = retainedInitializerOrigins(preceding, parents);
   // Preserve the owner's identity when selection removes no facts. Consumers
   // can then reuse the binding's dependency-aware provenance memo rather than

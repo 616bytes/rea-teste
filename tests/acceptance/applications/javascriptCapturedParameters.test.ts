@@ -202,6 +202,70 @@ console.log(JSON.stringify([optionalCall(null),optionalCall(receiver),optionalCa
 );
 
 cliTest(
+  "orders object and array reads while keeping unsupported expression order unknown",
+  async ({ cli }) => {
+    const orderedSource = `
+export function objectOrder() { let x=0; return {set:(x=1),value:x}; }
+export function bothSides() { let x=0; return {before:x,set:(x=1),after:x}; }
+export function arrayOrder() { let x=0; return [x,(x=1),x]; }
+export function computedOrder() { let x=0; return {[x=1]:0,value:x}; }
+export function templateOrder() { let x=0; return {value:\`\${x=1}\${x}\`}; }
+`;
+    const oracle = await promisify(execFile)(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `${orderedSource}
+console.log(JSON.stringify([objectOrder(),bothSides(),arrayOrder(),computedOrder(),templateOrder()]));`,
+      ],
+      { timeout: 10_000 },
+    );
+    expect(JSON.parse(oracle.stdout)).toEqual([
+      { set: 1, value: 1 },
+      { before: 0, set: 1, after: 1 },
+      [0, 1, 1],
+      { "1": 0, value: 1 },
+      { value: "11" },
+    ]);
+    await verifyJavaScriptReturnShapes(cli, orderedSource, (fields) => {
+      for (const name of ["objectOrder", "computedOrder"])
+        expect(fields(name)).toContainEqual(
+          expect.objectContaining({
+            path: "/value",
+            state: "literal",
+            value: 1,
+          }),
+        );
+      expect(fields("bothSides")).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: "/before",
+            state: "literal",
+            value: 0,
+          }),
+          expect.objectContaining({
+            path: "/after",
+            state: "literal",
+            value: 1,
+          }),
+        ]),
+      );
+      expect(fields("arrayOrder")).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: "/0", state: "literal", value: 0 }),
+          expect.objectContaining({ path: "/2", state: "literal", value: 1 }),
+        ]),
+      );
+      expect(fields("templateOrder")).toContainEqual(
+        expect.objectContaining({ path: "/value", state: "unknown" }),
+      );
+    });
+  },
+  120_000,
+);
+
+cliTest(
   "keeps a captured parameter unknown when comparing export shapes through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-captured-comparison-");

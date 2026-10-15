@@ -83,11 +83,12 @@ export const parseXmlPropertyList = (
   // Preserve character references: serializing the DOM would normalize them again.
   const normalized = normalizeLineEndings(text);
   const document = new DOMParser().parseFromString(normalized, "text/xml");
-  const { numberLiterals, realCdata } = inspectXmlPropertyList(document);
+  const { numberLiterals, realSubstitutions } =
+    inspectXmlPropertyList(document);
   const { substituted, placeholder } = normalizeXmlDecoderInput(
     normalized,
     document,
-    realCdata,
+    realSubstitutions,
   );
   return { ...withoutKey(parse(substituted), placeholder), numberLiterals };
 };
@@ -222,6 +223,12 @@ const skipOpenStepScalar = (text: string, start: number): number => {
 /** Elements whose children the pinned plist value decoder visits recursively. */
 const PLIST_CONTAINER_ELEMENTS = new Set(["plist", "dict", "array"]);
 
+interface XmlValueSubstitution {
+  readonly node: Node;
+  readonly replacement: string;
+  readonly kind: "insert" | "text" | "cdata";
+}
+
 /**
  * Reject XML plists nested deeper than the projection supports before any
  * recursive value pass runs. `plist` and the prototype-key traversal recurse once
@@ -237,7 +244,7 @@ const PLIST_CONTAINER_ELEMENTS = new Set(["plist", "dict", "array"]);
  */
 const inspectXmlPropertyList = (document: Document) => {
   const numbers = createPlistNumberCollector();
-  const realCdata: Node[] = [];
+  const realSubstitutions: XmlValueSubstitution[] = [];
   const root = document.documentElement;
   const pending: Array<{ node: Node; depth: number }> =
     root === null ? [] : [{ node: root, depth: -1 }];
@@ -262,7 +269,7 @@ const inspectXmlPropertyList = (document: Document) => {
     } else if (node.nodeName === "real") {
       let text = "";
       let complete = true;
-      const cdata: Node[] = [];
+      let hasCdata = false;
       for (
         let child = node.firstChild;
         child !== null;
@@ -273,25 +280,48 @@ const inspectXmlPropertyList = (document: Document) => {
           child.nodeType === node.CDATA_SECTION_NODE
         ) {
           text += child.nodeValue ?? "";
-          if (child.nodeType === node.CDATA_SECTION_NODE) cdata.push(child);
+          if (child.nodeType === node.CDATA_SECTION_NODE) hasCdata = true;
         } else if (child.nodeType !== node.COMMENT_NODE) complete = false;
       }
       if (complete) {
-        numbers.real(Number.parseFloat(text));
-        for (const child of cdata) realCdata.push(child);
+        const value = Number.parseFloat(text);
+        numbers.real(value);
+        // A double's exponential spelling is at most 24 ASCII characters and
+        // round-trips without XML escaping. Discard the original character data.
+        if (hasCdata) {
+          let replacement = Object.is(value, -0) ? "-0" : value.toExponential();
+          for (
+            let child = node.firstChild;
+            child !== null;
+            child = child.nextSibling
+          ) {
+            if (
+              child.nodeType !== node.TEXT_NODE &&
+              child.nodeType !== node.CDATA_SECTION_NODE
+            )
+              continue;
+            realSubstitutions.push({
+              node: child,
+              replacement,
+              kind:
+                child.nodeType === node.CDATA_SECTION_NODE ? "cdata" : "text",
+            });
+            replacement = "";
+          }
+        }
       } else numbers.markIncomplete();
     }
     if (PLIST_CONTAINER_ELEMENTS.has(node.nodeName) && node.firstChild !== null)
       pending.push({ node: node.firstChild, depth: depth + 1 });
   }
-  return { numberLiterals: numbers.result(), realCdata };
+  return { numberLiterals: numbers.result(), realSubstitutions };
 };
 
 /** Normalize decoder divergences at their XML-owned source locations. */
 const normalizeXmlDecoderInput = (
   text: string,
   document: Document,
-  realCdata: readonly Node[],
+  realSubstitutions: readonly XmlValueSubstitution[],
 ) => {
   const keys = Array.from(document.getElementsByTagName("key"));
   const decodedKeys = new Set(keys.map((key) => key.firstChild?.nodeValue));
@@ -305,19 +335,12 @@ const normalizeXmlDecoderInput = (
             {
               node: key.firstChild,
               replacement: `<![CDATA[${placeholder}]]>`,
-              replaceCdata: false,
+              kind: "insert" as const,
             },
           ]
         : [],
     ),
-    ...realCdata.map((node) => ({
-      node,
-      replacement: (node.nodeValue ?? "").replace(
-        /[&<>\r]/gu,
-        (character) => `&#${String(character.charCodeAt(0))};`,
-      ),
-      replaceCdata: true,
-    })),
+    ...realSubstitutions,
   ].sort(
     (a, b) =>
       (a.node.lineNumber ?? 0) - (b.node.lineNumber ?? 0) ||
@@ -331,7 +354,7 @@ const normalizeXmlDecoderInput = (
   let lineStart = 0;
   const parts: string[] = [];
   let cursor = 0;
-  for (const { node, replacement, replaceCdata } of substitutions) {
+  for (const { node, replacement, kind } of substitutions) {
     const nodeLine = node.lineNumber;
     const column = node.columnNumber;
     if (nodeLine === undefined || column === undefined)
@@ -346,11 +369,17 @@ const normalizeXmlDecoderInput = (
     const offset = lineStart + column - 1;
     parts.push(text.slice(cursor, offset), replacement);
     cursor = offset;
-    if (replaceCdata) {
+    if (kind === "cdata") {
       const end = text.indexOf("]]>", offset + 9);
       if (!text.startsWith("<![CDATA[", offset) || end < 0)
         throw new TypeError("XML plist CDATA has an invalid source location");
       cursor = end + 3;
+    } else if (kind === "text") {
+      // This DOM-owned text ends at the next XML token. Character references
+      // contain no literal '<', and comments remain outside the replaced span.
+      cursor = text.indexOf("<", offset);
+      if (cursor < 0)
+        throw new TypeError("XML plist text has an invalid source location");
     }
   }
   parts.push(text.slice(cursor));

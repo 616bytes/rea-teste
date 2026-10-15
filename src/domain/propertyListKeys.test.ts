@@ -14,13 +14,29 @@ it.each([
   ["\r\n<![CDATA[\r\n1.25]]><!-- ignored -->", 1.25],
   ["1<!-- ignored --><![CDATA[.25]]>", 1.25],
   ["<![CDATA[-0]]>", -0],
+  ["<![CDATA[5e-324]]>", Number.MIN_VALUE],
+  ["<![CDATA[1.7976931348623157e308]]>", Number.MAX_VALUE],
   ["<![CDATA[Infinity]]>", Infinity],
+  ["<![CDATA[-Infinity]]>", -Infinity],
+  ["<![CDATA[NaN]]>", NaN],
+  ["<![CDATA[]]>1.25", 1.25],
+  ["<![CDATA[1]]>&#46;25", 1.25],
   ["<![CDATA[1&#46;25]]>", 1],
 ] as const)("decodes real character data once: %s", (body, expected) => {
   const result = parseXmlPropertyList(plist(`<real>${body}</real>`));
   expect(result.value).toBe(expected);
   expect(result.numberLiterals.incomplete).toBe(false);
   expect(result.numberLiterals.reals.has(expected)).toBe(true);
+});
+
+it("keeps neighboring source text and prototype omissions when compacting reals", () => {
+  const parsed = parseXmlPropertyList(
+    plist(
+      '<dict><key>😀</key><string>a&#13;b</string><key>real</key><real note=">"> <![CDATA[1]]><!-- ignored -->&#46;25</real><key>__proto__</key><true/></dict>',
+    ),
+  );
+  expect(parsed.value).toEqual({ "😀": "a\rb", real: 1.25 });
+  expect(parsed.omittedPrototypeKeys).toBe(1);
 });
 
 it("retains ambiguity when a CDATA real collides with a rounded integer", () => {

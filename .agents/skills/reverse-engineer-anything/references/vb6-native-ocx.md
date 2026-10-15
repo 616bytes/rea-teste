@@ -38,13 +38,13 @@ bytes; distinguish loaded-image fixups from unchanged file bytes.
 
 Use compiler/runtime patterns to prioritize hypotheses, not as proof by name:
 
-| Candidate family | Evidence needed before reconstruction |
-| --- | --- |
-| Scalar/String field accessors | Own receiver adjustment, field width/offset, thunk/helper binding and supported signature. |
-| Object accessors | Get/Set distinction, interface evidence and reference semantics; do not merge PutMemObj or NewObj variants. |
-| Variant/String conversions | Latest tag/payload writes, pointer depth, captured values, copyback and ownership of each temporary. |
-| Array/bounds operations | Descriptor evidence, lower bound/count/stride, signed or unsigned guard, and actual failure successors. |
-| Cleanup/error handling | Normal, callback and exceptional entry paths, continuation mechanism, resource lifetimes and return channels. |
+| Candidate family              | Evidence needed before reconstruction                                                                         |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Scalar/String field accessors | Own receiver adjustment, field width/offset, thunk/helper binding and supported signature.                    |
+| Object accessors              | Get/Set distinction, interface evidence and reference semantics; do not merge PutMemObj or NewObj variants.   |
+| Variant/String conversions    | Latest tag/payload writes, pointer depth, captured values, copyback and ownership of each temporary.          |
+| Array/bounds operations       | Descriptor evidence, lower bound/count/stride, signed or unsigned guard, and actual failure successors.       |
+| Cleanup/error handling        | Normal, callback and exceptional entry paths, continuation mechanism, resource lifetimes and return channels. |
 
 Helper names or ordinal annotations are hypotheses until their identities and
 applicable runtime contracts are corroborated. Reuse compatible retained proof

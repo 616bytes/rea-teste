@@ -365,6 +365,63 @@ it("inspects native SAZ through the public CLI and MCP with equal evidence, byte
   ).toEqual(fromMcp);
 }, 60_000);
 
+it("excludes folded URL credentials from CLI, MCP and exported SAZ Evidence", async () => {
+  const secret = "synthetic-password-2884";
+  const bytes = await archive([
+    [
+      "raw/1_c.txt",
+      Buffer.from("GET https://api.test/items/1 HTTP/1.1\r\n\r\n"),
+    ],
+    [
+      "raw/1_s.txt",
+      Buffer.from(
+        `HTTP/1.1 302 Found\r\nLocation: ht\r\n\ttps://user:${secret}@api.test/\r\nContent-Type:\r\n\tapplication/json\r\n\r\n{}`,
+      ),
+    ],
+  ]);
+  const path = await fixture(bytes);
+  const evidence = await cli(path);
+  const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
+  expect(capture.records[0]?.reported).toMatchObject({
+    response: {
+      headers: [
+        { name: "Location", value: null, value_unfolded: null },
+        {
+          name: "Content-Type",
+          value: "\r\n\tapplication/json",
+          value_unfolded: " application/json",
+        },
+      ],
+    },
+  });
+  expect(capture.records[0]?.redactions).toContainEqual({
+    pointer: "/response/headers/0/value_unfolded",
+    reason: "transport-credential",
+  });
+  expect(JSON.stringify(evidence)).not.toContain(secret);
+  const { client, call } = await connectLocalToolsMcp();
+  const result = await call("inspect_web_network_capture", {
+    capture_path: path,
+    format: "saz",
+  });
+  expect(result.isError).not.toBe(true);
+  expect(parseEvidence(result.structuredContent)).toEqual(evidence);
+  const bundle = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: { detail: "complete" },
+  });
+  expect(bundle.isError).not.toBe(true);
+  expect(JSON.stringify(bundle)).not.toContain(secret);
+  const exported = z
+    .object({ result: z.object({ records: z.array(z.unknown()) }) })
+    .parse(bundle.structuredContent)
+    .result.records.map(parseEvidence);
+  expect(
+    exported.find((record) => record.evidence_id === evidence.evidence_id),
+  ).toEqual(evidence);
+  expect(await readFile(path)).toEqual(bytes);
+}, 60_000);
+
 it("pages retained SAZ Evidence through public MCP and portable CLI after source deletion", async () => {
   const path = await fixture(await archive());
   const { call } = await connectLocalToolsMcp();

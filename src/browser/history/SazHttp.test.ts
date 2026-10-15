@@ -69,3 +69,63 @@ it("redacts both spellings of folded credentials and explicitly sensitive header
   expect(JSON.stringify(projected)).not.toContain("secret");
   expect(JSON.stringify(projected)).not.toContain("application/json");
 });
+
+it.each([
+  ["response", "Location", "\r\n"],
+  ["response", "Location", "\n"],
+  ["request", "Referer", "\r\n"],
+  ["request", "Referer", "\n"],
+  ["request", "Origin", "\r\n"],
+  ["request", "Origin", "\n"],
+])(
+  "inherits URL credential exclusions for folded %s %s with %j framing",
+  (side, name, ending) => {
+    const message = decodeSazHttp(
+      Buffer.from(
+        `${side === "request" ? "GET / HTTP/1.1" : "HTTP/1.1 302 Found"}${ending}${name}: ht${ending}\ttps://user:synthetic-password-2884@api.test/${ending}${ending}`,
+      ),
+      side === "request",
+    );
+    const projected = projectSazRecord({ [side]: message }, []);
+    expect(projected.reported).toMatchObject({
+      [side]: { headers: [{ name, value: null, value_unfolded: null }] },
+    });
+    expect(projected.redactions).toEqual([
+      { pointer: `/${side}/headers/0/value`, reason: "transport-credential" },
+      {
+        pointer: `/${side}/headers/0/value_unfolded`,
+        reason: "transport-credential",
+      },
+    ]);
+    expect(JSON.stringify(projected)).not.toContain("synthetic-password-2884");
+  },
+);
+
+it("retains folded URL headers without credentials and ordinary extension text", () => {
+  const value = " https://api.test/ordinary\r\n\tpath?token=ordinary";
+  const extension = " ht\r\n\ttps://user:password@api.test/";
+  const response = decodeSazHttp(
+    Buffer.from(
+      `HTTP/1.1 200 OK\r\nLocation:${value}\r\nX-Note:${extension}\r\n\r\n`,
+    ),
+    false,
+  );
+  const projected = projectSazRecord({ response }, []);
+  expect(projected.reported).toMatchObject({
+    response: {
+      headers: [
+        {
+          name: "Location",
+          value,
+          value_unfolded: " https://api.test/ordinary path?token=ordinary",
+        },
+        {
+          name: "X-Note",
+          value: extension,
+          value_unfolded: " ht tps://user:password@api.test/",
+        },
+      ],
+    },
+  });
+  expect(projected.redactions).toEqual([]);
+});

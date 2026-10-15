@@ -108,36 +108,37 @@ describe("advertised object dependencies", () => {
   );
 });
 
+const nonStringLiteralPaths = (
+  node: unknown,
+  path: string,
+  found: string[],
+): string[] => {
+  if (Array.isArray(node)) {
+    node.forEach((child, index) =>
+      nonStringLiteralPaths(child, `${path}[${index}]`, found),
+    );
+    return found;
+  }
+  if (typeof node !== "object" || node === null) return found;
+  for (const [key, value] of Object.entries(node)) {
+    const childPath = `${path}.${key}`;
+    if (key === "const" && typeof value !== "string")
+      found.push(`${childPath} = ${JSON.stringify(value)}`);
+    else if (
+      key === "enum" &&
+      Array.isArray(value) &&
+      value.some((member) => typeof member !== "string")
+    )
+      found.push(`${childPath} = ${JSON.stringify(value)}`);
+    else if (!["examples", "default"].includes(key))
+      nonStringLiteralPaths(value, childPath, found);
+  }
+  return found;
+};
+
 describe("advertised literal values", () => {
   // The same budget the compact profile registers (COMPACT_INPUT_SCHEMA_BUDGET_BYTES).
   const compactBudgetBytes = 13 * 1024;
-  const nonStringLiteralPaths = (
-    node: unknown,
-    path: string,
-    found: string[],
-  ): string[] => {
-    if (Array.isArray(node)) {
-      node.forEach((child, index) =>
-        nonStringLiteralPaths(child, `${path}[${index}]`, found),
-      );
-      return found;
-    }
-    if (typeof node !== "object" || node === null) return found;
-    for (const [key, value] of Object.entries(node)) {
-      const childPath = `${path}.${key}`;
-      if (key === "const" && typeof value !== "string")
-        found.push(`${childPath} = ${JSON.stringify(value)}`);
-      else if (
-        key === "enum" &&
-        Array.isArray(value) &&
-        value.some((member) => typeof member !== "string")
-      )
-        found.push(`${childPath} = ${JSON.stringify(value)}`);
-      else if (!["examples", "default"].includes(key))
-        nonStringLiteralPaths(value, childPath, found);
-    }
-    return found;
-  };
 
   // Clients whose declaration renderer turns `const` into a one-member
   // `enum` meet Google function declarations that accept only string enum
@@ -195,7 +196,9 @@ describe("advertised literal values", () => {
       false,
     );
   });
+});
 
+describe("advertised boolean literal unions", () => {
   it("keeps a boolean literal that discriminates nested object alternatives", () => {
     const presented = presentInputJsonSchema(
       {
@@ -243,12 +246,13 @@ describe("advertised literal values", () => {
     expect(validate({ source: { included: "yes" } })).toBe(false);
   });
 
-  it("keeps the examples of folded boolean alternatives", () => {
+  it("keeps the examples of folded boolean alternatives and of the union itself", () => {
     const presented = presentInputJsonSchema(
       {
         type: "object",
         properties: {
           verbose: {
+            examples: [false],
             anyOf: [
               { type: "boolean", const: false, examples: [false] },
               { type: "boolean", const: true, examples: [true], title: "On" },
@@ -261,6 +265,43 @@ describe("advertised literal values", () => {
     expect(presented.properties).toEqual({
       verbose: { type: "boolean", title: "On", examples: [false, true] },
     });
+  });
+
+  it("recognizes a boolean discriminant reached through shared definitions", () => {
+    const presented = presentInputJsonSchema(
+      {
+        $defs: {
+          off: { type: "boolean", const: false },
+          without: {
+            type: "object",
+            properties: { included: { $ref: "#/$defs/off" } },
+            required: ["included"],
+          },
+          with: {
+            type: "object",
+            properties: {
+              included: { type: "boolean", const: true },
+              text: { type: "string" },
+            },
+            required: ["included", "text"],
+          },
+        },
+        type: "object",
+        properties: {
+          source: {
+            oneOf: [{ $ref: "#/$defs/without" }, { $ref: "#/$defs/with" }],
+          },
+        },
+      },
+      () => undefined,
+    );
+    expect(nonStringLiteralPaths(presented, "root", [])).toEqual([]);
+    const source = (presented.properties as Record<string, unknown>).source;
+    expect(source).not.toHaveProperty("oneOf");
+    expect(source).toHaveProperty("anyOf");
+    const validate = new Ajv2020({ strict: false }).compile(presented);
+    expect(validate({ source: { included: true, text: "x" } })).toBe(true);
+    expect(validate({ source: { included: false } })).toBe(true);
   });
 });
 

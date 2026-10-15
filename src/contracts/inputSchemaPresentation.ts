@@ -80,7 +80,8 @@ const firstDefined = (
   return owner === undefined ? {} : { [key]: owner[key] };
 };
 
-// Folding alternatives must not drop the examples each branch advertised.
+// Folding alternatives must not drop the examples the combinator or any of
+// its branches advertised.
 const mergedExamples = (
   schemas: readonly Readonly<Record<string, unknown>>[],
 ): Readonly<Record<string, unknown>> => {
@@ -96,12 +97,27 @@ const mergedExamples = (
 // by that literal. Once the literal is presented as a plain boolean, sibling
 // alternatives can overlap, so an exclusive `oneOf` would reject inputs the
 // canonical union accepts; such unions are advertised as `anyOf`.
-const hasBooleanLiteralProperty = (alternative: unknown): boolean =>
-  isObject(alternative) &&
-  isObject(alternative.properties) &&
-  Object.values(alternative.properties).some(
-    (property) => isObject(property) && typeof property.const === "boolean",
-  );
+const hasBooleanLiteralProperty = (
+  alternative: unknown,
+  root: Readonly<Record<string, unknown>>,
+): boolean => {
+  // The shared projection can place a branch or its discriminant behind a
+  // local reference; the literal is then visible only through that reference.
+  const resolved = resolveLocalReference(root, alternative);
+  if (!isObject(resolved) || !isObject(resolved.properties)) return false;
+  return Object.values(resolved.properties).some((property) => {
+    const value = resolveLocalReference(root, property);
+    return isObject(value) && typeof value.const === "boolean";
+  });
+};
+
+const resolveLocalReference = (
+  root: Readonly<Record<string, unknown>>,
+  value: unknown,
+): unknown =>
+  isObject(value) && typeof value.$ref === "string"
+    ? resolveReference(root, value.$ref)
+    : value;
 
 // Some clients render `const` as a one-member `enum`, and Google function
 // declarations accept only string enum members, so one advertised boolean
@@ -112,6 +128,7 @@ const hasBooleanLiteralProperty = (alternative: unknown): boolean =>
 const presentBooleanLiterals = (
   schema: Readonly<Record<string, unknown>>,
   original: Readonly<Record<string, unknown>>,
+  root: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, unknown>> => {
   const { const: literal, ...withoutLiteral } = schema;
   let presented =
@@ -122,7 +139,9 @@ const presentBooleanLiterals = (
   if (
     Array.isArray(original.oneOf) &&
     Array.isArray(presented.oneOf) &&
-    original.oneOf.some(hasBooleanLiteralProperty)
+    original.oneOf.some((alternative) =>
+      hasBooleanLiteralProperty(alternative, root),
+    )
   ) {
     const { oneOf, ...rest } = presented;
     presented = { ...rest, anyOf: oneOf };
@@ -141,8 +160,8 @@ const presentBooleanLiterals = (
       ...firstDefined(alternatives, "description"),
       ...firstDefined(alternatives, "title"),
       ...firstDefined(alternatives, "default"),
-      ...mergedExamples(alternatives),
       ...rest,
+      ...mergedExamples([rest, ...alternatives]),
       type: "boolean",
     };
   }
@@ -195,7 +214,7 @@ const describeSchema = (
       return [key, value];
     }),
   );
-  return presentBooleanLiterals(described, schema);
+  return presentBooleanLiterals(described, schema, root);
 };
 
 const objectBranch = (

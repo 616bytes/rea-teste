@@ -299,6 +299,61 @@ describe("ELF symbol-table ownership", () => {
   });
 });
 
+describe("allocated ELF symbol tables", () => {
+  /** Mark the dynamic symbol and string sections allocated at their offsets. */
+  const allocatedTables = (): { image: Buffer; tables: number[] } => {
+    const image = imageWithSections();
+    const shoff = Number(image.readBigUInt64LE(0x28));
+    const tables = [shoff + 64, shoff + 128].map((header) => {
+      const offset = image.readBigUInt64LE(header + 0x18);
+      image.writeBigUInt64LE(2n, header + 8);
+      image.writeBigUInt64LE(offset, header + 0x10);
+      return Number(offset);
+    });
+    return { image, tables };
+  };
+
+  it("accepts allocated symbol tables whose mapping matches their sections", async () => {
+    const { image } = allocatedTables();
+    expect(await readElfSymbols(image, ["_kDartVmSnapshotData"])).toEqual({
+      symbols: [{ name: "_kDartVmSnapshotData", offset: 0x400, size: 52 }],
+      failures: [],
+    });
+  });
+
+  it.each([
+    [0, "Dynamic symbol table has conflicting PT_LOAD mappings"],
+    [1, "Dynamic symbol string table has conflicting PT_LOAD mappings"],
+  ])(
+    "refuses allocated table %i under a conflicting PT_LOAD interpretation",
+    async (table, reason) => {
+      const { image, tables } = allocatedTables();
+      const conflict = appendElfRanges(image, "program", [
+        { type: 1, address: tables[table]!, offset: 0x700, size: 4 },
+      ]);
+      expect(await readElfSymbols(conflict, ["_kDartVmSnapshotData"])).toEqual({
+        symbols: [],
+        failures: [{ reason }],
+      });
+    },
+  );
+
+  it("refuses an allocated table whose section offset disagrees with its mapping", async () => {
+    const { image } = allocatedTables();
+    const shoff = Number(image.readBigUInt64LE(0x28));
+    image.writeBigUInt64LE(0x700n, shoff + 64 + 0x10);
+    expect(await readElfSymbols(image, ["_kDartVmSnapshotData"])).toEqual({
+      symbols: [],
+      failures: [
+        {
+          reason:
+            "Dynamic symbol table section offset disagrees with its PT_LOAD mapping",
+        },
+      ],
+    });
+  });
+});
+
 describe("readSnapshotHeader", () => {
   it("reads a synthesized data header", async () => {
     const header = readSnapshotHeader(snapshotSection(GALLERY_HASH), 0);

@@ -218,7 +218,10 @@ export class KunaProjectCache {
   /** Builds whose process tree could not be proven stopped; their staging stays. */
   readonly #retainedProcesses: RetainedProcess[] = [];
   /** Only resources whose process cleanup is proven may be retried as files. */
-  readonly #retainedFiles = new Map<string, ProviderCleanupError>();
+  readonly #retainedFiles = new Map<
+    string,
+    { readonly key: string | null; readonly error: ProviderCleanupError }
+  >();
 
   constructor(
     root: string,
@@ -364,8 +367,9 @@ export class KunaProjectCache {
         .map((entry) => entry.promise),
     );
     await this.#retryProcesses((retained) => retained.key === key);
+    await this.#retryFiles(key);
     return cleanupResult(
-      this.#retainedProcesses
+      [...this.#retainedProcesses, ...this.#retainedFiles.values()]
         .filter((retained) => retained.key === key)
         .map(({ error }) => error),
     );
@@ -378,11 +382,10 @@ export class KunaProjectCache {
     );
     while (this.#maintenance !== undefined) await this.#maintenance;
     await this.#retryProcesses(() => true);
-    for (const path of [...this.#retainedFiles.keys()])
-      await this.#removeRetired(path).catch(() => undefined);
+    await this.#retryFiles();
     return cleanupResult([
       ...this.#retainedProcesses.map(({ error }) => error),
-      ...this.#retainedFiles.values(),
+      ...[...this.#retainedFiles.values()].map(({ error }) => error),
     ]);
   }
 
@@ -397,8 +400,15 @@ export class KunaProjectCache {
         this.#retainedProcesses.indexOf(retained),
         1,
       );
-      await this.#retireStaging(retained.staging);
+      await this.#retireStaging(retained.staging, retained.key);
     }
+  }
+
+  /** Retry only stopped file resources belonging to the closing task, or all. */
+  async #retryFiles(key?: string): Promise<void> {
+    for (const [path, retained] of [...this.#retainedFiles])
+      if (key === undefined || retained.key === key)
+        await this.#removeRetired(path).catch(() => undefined);
   }
 
   /**
@@ -407,17 +417,18 @@ export class KunaProjectCache {
    */
   async #retireStaging(
     staging: string,
+    key: string,
   ): Promise<ProviderCleanupError | undefined> {
     let cleanupPath = staging;
     try {
       const retired = join(this.#root, "trash", `build-${randomUUID()}`);
       await rename(staging, retired);
       cleanupPath = retired;
-      await this.#removeRetired(retired);
+      await this.#removeRetired(retired, key);
       return undefined;
     } catch (cause: unknown) {
       if (cause instanceof ProviderCleanupError) return cause;
-      return this.#retainFileCleanup(cleanupPath, cause);
+      return this.#retainFileCleanup(cleanupPath, cause, key);
     }
   }
 
@@ -490,7 +501,7 @@ export class KunaProjectCache {
     if (built.retainStaging) return built.result;
     // Only a proven-stopped build may enter trash. A failed write, crash or
     // lost cleanup identity therefore never makes live staging reclaimable.
-    const retired = await this.#retireStaging(staging);
+    const retired = await this.#retireStaging(staging, key);
     if (retired !== undefined) return err(retired);
     if (built.result.ok)
       // The entry is published either way; a failed eviction retries on the next publish.
@@ -691,16 +702,16 @@ export class KunaProjectCache {
       if (isMissing(cause)) return;
       throw cause;
     }
-    await this.#removeRetired(trash);
+    await this.#removeRetired(trash, key);
   }
 
   /** Keep each failed removal owned until that path is successfully removed. */
-  async #removeRetired(path: string): Promise<void> {
+  async #removeRetired(path: string, key?: string): Promise<void> {
     try {
       await rm(path, { recursive: true, force: true });
       this.#retainedFiles.delete(path);
     } catch (cause: unknown) {
-      throw this.#retainFileCleanup(path, cause);
+      throw this.#retainFileCleanup(path, cause, key);
     }
   }
 
@@ -725,14 +736,21 @@ export class KunaProjectCache {
     return readFile(path, "utf8");
   }
 
-  #retainFileCleanup(path: string, cause: unknown): ProviderCleanupError {
+  #retainFileCleanup(
+    path: string,
+    cause: unknown,
+    key?: string,
+  ): ProviderCleanupError {
     const error = new ProviderCleanupError(
       KUNA_PROVIDER_ID,
       [path],
       { reason: cause instanceof Error ? cause.message : String(cause) },
       { operation: KUNA_EXPORT_OPERATION, cause },
     );
-    this.#retainedFiles.set(path, error);
+    this.#retainedFiles.set(path, {
+      key: key ?? this.#retainedFiles.get(path)?.key ?? null,
+      error,
+    });
     return error;
   }
 }

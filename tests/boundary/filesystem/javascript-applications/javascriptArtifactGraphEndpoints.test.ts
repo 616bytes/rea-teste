@@ -228,6 +228,8 @@ it("keeps CommonJS socket member writes separate from earlier constructor captur
       'require("ws").WebSocket = class {}; const ws = require("ws"); new ws.WebSocket("wss://example.test/repeated");',
     "captured.js":
       'const ws = require("ws"); const Socket = ws.WebSocket; ws.WebSocket = class {};\nnew Socket("wss://example.test/captured-before-write");',
+    "loop-capture.js":
+      'const ws = require("ws"); const Socket = ws.WebSocket; for (const item of items) { ws.WebSocket = class {}; }\nnew Socket("wss://example.test/loop-captured");',
     "sibling.js":
       'const ws = require("ws"); ws.Server = class {};\nnew ws.WebSocket("wss://example.test/unchanged-sibling");',
   };
@@ -249,10 +251,12 @@ it("keeps CommonJS socket member writes separate from earlier constructor captur
       observations.map(({ properties }) => properties.value).sort(),
     ).toEqual([
       "wss://example.test/captured-before-write",
+      "wss://example.test/loop-captured",
       "wss://example.test/unchanged-sibling",
     ]);
     for (const [value, source] of [
       ["captured-before-write", "captured.js"],
+      ["loop-captured", "loop-capture.js"],
       ["unchanged-sibling", "sibling.js"],
     ]) {
       const observation = observations.find(

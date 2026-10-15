@@ -737,6 +737,39 @@ describe("web bundle conditional suspension and sequence invocations", () => {
   });
 });
 
+describe("web bundle constructor captures before repeating writes", () => {
+  it.each([
+    "for (const item of items) { ws.WebSocket = class {}; }",
+    "for (const item in items) { ws.WebSocket = class {}; }",
+    "while (condition) { ws.WebSocket = class {}; }",
+    "do { ws.WebSocket = class {}; } while (condition);",
+    "for (const item of items) { for (const child of item) { ws.WebSocket = class {}; } }",
+  ])(
+    "retains a constructor already captured before the whole loop: %s",
+    (loop) => {
+      const expected = [
+        { value: "wss://example.test/captured-loop", mechanism: "call:Socket" },
+      ];
+      expect(
+        socketEndpoints(
+          `const ws = require("ws"); const Socket = ws.WebSocket; ${loop} new Socket("wss://example.test/captured-loop");`,
+        ),
+      ).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    'const ws = require("ws"); for (const item of items) { const Socket = ws.WebSocket; ws.WebSocket = class {}; new Socket("wss://example.test/local"); }',
+    'const ws = require("ws"); for (const item of items) { ws.WebSocket = class {}; } const Socket = ws.WebSocket; new Socket("wss://example.test/local");',
+    'const ws = require("ws"); const alias = ws; for (const item of items) { ws.WebSocket = class {}; } new alias.WebSocket("wss://example.test/local");',
+  ])(
+    "keeps repeated captures and later namespace selections unresolved: %s",
+    (source) => {
+      expect(socketEndpoints(source)).toEqual([[], []]);
+    },
+  );
+});
+
 describe("web bundle API classification parity", () => {
   it("reads storage open versions as storage rather than endpoints in both analyzers", () => {
     const source = `

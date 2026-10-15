@@ -9,17 +9,25 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { inspectApktoolClient } from "./ApktoolConfiguration.js";
 
-/** A zombie has already exited; it only waits for its parent to reap it. */
+/**
+ * Only an exited process counts as stopped: it is gone, a zombie waiting to
+ * be reaped, or absent from `ps`. A failed inspection is not proof of exit.
+ */
 const alive = async (pid: number): Promise<boolean> => {
   try {
     process.kill(pid, 0);
-  } catch {
-    return false;
+  } catch (cause: unknown) {
+    if ((cause as NodeJS.ErrnoException).code === "ESRCH") return false;
+    return true;
   }
-  const state = await promisify(execFile)("ps", ["-o", "stat=", "-p", `${pid}`])
-    .then(({ stdout }) => stdout.trim())
-    .catch(() => "");
-  return state !== "" && !state.startsWith("Z");
+  return promisify(execFile)("ps", ["-o", "stat=", "-p", `${pid}`]).then(
+    ({ stdout }) => {
+      const state = stdout.trim();
+      return state !== "" && !state.startsWith("Z");
+    },
+    // `ps` exits 1 when no process matches; any other failure is unknown.
+    (cause: unknown) => (cause as { code?: unknown }).code !== 1,
+  );
 };
 
 const waitFor = async (check: () => Promise<boolean>, ms: number) => {

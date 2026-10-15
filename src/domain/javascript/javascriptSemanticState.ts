@@ -11,6 +11,7 @@ import type {
   JavaScriptSemanticModuleLink,
   JavaScriptSemanticCallable,
   JavaScriptSemanticScope,
+  JavaScriptSemanticReference,
 } from "./javascriptSemanticIr.js";
 import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
 
@@ -103,10 +104,18 @@ export interface JavaScriptSemanticAnalysisState {
   readonly conditionallySkippedExpressions: WeakSet<t.Node>;
   /** Unbound identifier writes retain their source sites for capture ordering. */
   readonly ambientBindingWrites: Map<string, t.Node[]>;
-  /** Source-local writes, tagged by global object or import.meta identity. */
+  /** Source-local writes, tagged by global, import.meta or CJS module identity. */
   readonly ambientWrites: SemanticPropertyPathCoverage;
   /** Source sites distinguish replacement before an ambient identity capture from later writes. */
   readonly ambientWriteEffects: JavaScriptSemanticMemberEffect[];
+}
+
+/** One parsed source owns its optional indexes and their per-source lifetime. */
+export interface JavaScriptBindingIndex {
+  readonly sourceType: t.Program["sourceType"];
+  readonly bindings: JavaScriptSemanticAnalysisState;
+  indexAmbientWritesSteps(): Generator<void, void>;
+  referencesSteps(): Generator<void, readonly JavaScriptSemanticReference[]>;
 }
 
 /**

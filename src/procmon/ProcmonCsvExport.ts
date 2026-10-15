@@ -205,6 +205,7 @@ export const readProcmonCsv = async (
   text: string,
   window: ProcmonEventWindow,
   signal?: AbortSignal,
+  endsInsideCharacter = false,
 ): Promise<ParsedProcmonExport> => {
   const width: { maximum: number } = {
     maximum: PROCMON_EXPORT_LIMITS.columns,
@@ -221,6 +222,15 @@ export const readProcmonCsv = async (
   try {
     let rows = 0;
     for (const record of records) {
+      // The unterminated final row lost the bytes of its cut character.
+      if (endsInsideCharacter && !record.terminated)
+        return stop(
+          partialCoverage(
+            "truncated",
+            "The final row ends inside a character and was not read.",
+            record.line,
+          ),
+        );
       if (record.fields.length !== columns.length)
         return stop(mismatchCoverage(record, columns.length));
       window.add(

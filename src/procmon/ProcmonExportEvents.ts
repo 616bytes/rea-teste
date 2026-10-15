@@ -97,6 +97,22 @@ export const jsonStringBytes = (value: string): number => {
   return bytes;
 };
 
+/** Serialized size of an event with no values, excluding its ordinal digits. */
+const EMPTY_EVENT_BYTES =
+  Buffer.byteLength(
+    JSON.stringify({
+      ordinal: 0,
+      time_of_day: null,
+      process_name: null,
+      pid: null,
+      operation: null,
+      path: null,
+      result: null,
+      detail: null,
+      additional: {},
+    }),
+  ) - 1;
+
 /**
  * Count every event in source order; build and admit only the selected
  * window. Column names, nested field names and retained events are charged to
@@ -127,14 +143,7 @@ export class ProcmonEventWindow {
       (this.limit !== null && this.events.length >= this.limit)
     )
       return;
-    // Ordinal, seven null core fields and the fixed keys.
-    let bytes = 160;
-    for (const [column, value] of fields) {
-      if (value.length > PROCMON_EXPORT_LIMITS.output_bytes)
-        throw new ProcmonExportOutputFailure(this.events.length);
-      bytes += jsonStringBytes(column) + jsonStringBytes(value) + 2;
-    }
-    this.#admit(bytes);
+    this.#admit(this.#serializedBytes(fields));
     const event: ProcmonEvent = {
       ordinal: this.examined,
       time_of_day: null,
@@ -152,6 +161,23 @@ export class ProcmonEventWindow {
       else event[CORE_FIELDS[core]] = value;
     }
     this.events.push(event);
+  }
+
+  /**
+   * The event's serialized size plus its array separator: the empty event,
+   * each core value replacing its `null`, and each additional entry.
+   */
+  #serializedBytes(fields: ReadonlyMap<string, string>): number {
+    let bytes = EMPTY_EVENT_BYTES + String(this.examined).length + 1;
+    for (const [column, value] of fields) {
+      if (value.length > PROCMON_EXPORT_LIMITS.output_bytes)
+        throw new ProcmonExportOutputFailure(this.events.length);
+      bytes +=
+        procmonCoreColumn(column, this.format) === undefined
+          ? jsonStringBytes(column) + jsonStringBytes(value) + 2
+          : jsonStringBytes(value) - "null".length;
+    }
+    return bytes;
   }
 
   #admit(bytes: number): void {

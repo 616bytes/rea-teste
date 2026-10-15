@@ -54,7 +54,12 @@ export const readProcmonExport = async (
   const parsed =
     format === "xml"
       ? await readProcmonXml(decoded.text, window, signal)
-      : await readProcmonCsv(decoded.text, window, signal);
+      : await readProcmonCsv(
+          decoded.text,
+          window,
+          signal,
+          decoded.cutBytes > 0,
+        );
   const present = new Set(
     parsed.columns.map((column) => procmonCoreColumn(column, format)),
   );

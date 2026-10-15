@@ -1035,6 +1035,15 @@ can require more memory. The Java heap limit does not bound JVM RSS, Node's
 heap, or total memory used by the process family. The startup deadline controls
 waiting time independently of these memory settings.
 
+When a Ghidra session fails and Ghidra's retained output shows a JVM
+`java.lang.OutOfMemoryError`, REA reports `resource_constraint` with
+`resource: "memory"` instead of a generic execution failure or timeout.
+`details.reported_limits.jvm_max_heap` holds the selected maximum heap, such as
+`4G`, or `null` when it is unknown. On Windows it is known only when one of the
+settings above is set. The error does not identify the allocation that failed.
+`rea doctor` does not check heap size, so raise the heap or disable heavy
+analyzers with `REA_GHIDRA_DISABLED_ANALYZERS`, then open the target again.
+
 REA clears `_JAVA_OPTIONS`, `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, and
 `GHIDRA_JAVA_OPTIONS` inherited from the caller, and owns
 `GHIDRA_HEADLESS_JAVA_OPTIONS`. Custom flags injected through these variables

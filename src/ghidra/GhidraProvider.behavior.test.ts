@@ -17,7 +17,7 @@ import {
   nativeAotPeDigest,
   nativeAotPeFixture,
 } from "../../tests/fixtures/nativeaotPe.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 
 import { parseConfig } from "../config/parseConfig.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -2741,5 +2741,101 @@ describe("Ghidra queries after the owned provider is lost", () => {
     expect(projectAnalysisError(result.error).message).not.toContain(
       "Call open_binary",
     );
+  });
+});
+
+describe("Ghidra JVM memory exhaustion", () => {
+  const failingSession = async (
+    kind: "process" | "timeout" | "remote",
+    diagnostics: Readonly<Record<string, JsonValue>>,
+  ) => {
+    const ghidra = provider(installationHost(), () => ({
+      start: async () =>
+        err(new GhidraSessionError("start", "startup is not exercised")),
+      callTool: async () =>
+        err(
+          new GhidraSessionError(
+            kind,
+            "Ghidra headless process exited",
+            { failure_kind: kind, ...diagnostics },
+            kind === "remote" ? { remoteCode: "internal" } : {},
+          ),
+        ),
+      close: async () => ok(null),
+    }));
+    const target = executableTarget("elf", "x86_64");
+    const profile = await ghidra.resolveAnalysisProfile(target);
+    if (!profile.ok || profile.value.profile === null)
+      throw new Error("Expected Ghidra analysis profile");
+    const result = await ghidra
+      .createClient(target, profile.value.profile)
+      .execute("list_documents", {});
+    if (result.ok) throw new Error("Expected a Ghidra failure");
+    return projectAnalysisError(result.error);
+  };
+  const headlessOutput = (text: string) => ({
+    text,
+    bytes: Buffer.byteLength(text),
+    retained_bytes: Buffer.byteLength(text),
+  });
+  const heapSpace = headlessOutput(
+    [
+      "INFO  ANALYZING all memory and code: /hugo (HeadlessAnalyzer)",
+      "ERROR Abort due to Headless analyzer error: java.lang.OutOfMemoryError: Java heap space (HeadlessAnalyzer)",
+      "\tat ghidra.app.plugin.core.analysis.GolangSymbolAnalyzer$PropagateRttiBackgroundCommand.applyTo",
+    ].join("\n"),
+  );
+
+  it("reports a heap exhaustion seen in Ghidra output as a memory constraint", async () => {
+    const projected = await failingSession("process", {
+      stdout: heapSpace,
+      stderr: headlessOutput(""),
+      jvm_max_heap: "4G",
+    });
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        resource: "memory",
+        reported_limits: { jvm_max_heap: "4G" },
+      },
+    });
+    expect(projected.message).toContain(
+      "java.lang.OutOfMemoryError: Java heap space",
+    );
+    expect(projected.message).toContain("a maximum heap of 4G");
+    expect(projected.remediation.action).toContain(
+      "GHIDRA_HEADLESS_MAXMEM above 4G",
+    );
+    expect(projected.remediation.action).toContain(
+      "REA_GHIDRA_DISABLED_ANALYZERS",
+    );
+  });
+
+  it("keeps the heap limit explicitly unknown when the launch did not record one", async () => {
+    const projected = await failingSession("timeout", {
+      stderr: headlessOutput(
+        'Exception in thread "main" java.lang.OutOfMemoryError: GC overhead limit exceeded',
+      ),
+    });
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      details: { reported_limits: { jvm_max_heap: null } },
+    });
+    expect(projected.message).toContain("GC overhead limit exceeded");
+    expect(projected.message).toContain("an unknown maximum heap");
+  });
+
+  it("leaves failures without a JVM memory error unchanged", async () => {
+    const plain = await failingSession("process", {
+      stdout: headlessOutput("ERROR Abort due to Headless analyzer error"),
+      jvm_max_heap: "4G",
+    });
+    expect(plain.code).toBe("execution_failure");
+    const remote = await failingSession("remote", {
+      stdout: heapSpace,
+      jvm_max_heap: "4G",
+    });
+    expect(remote.code).not.toBe("resource_constraint");
   });
 });

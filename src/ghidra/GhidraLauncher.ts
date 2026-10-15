@@ -66,6 +66,8 @@ export type GhidraLaunch = ProviderProcessLaunch & {
   readonly ghidraLogPath: string;
   readonly scriptLogPath: string;
   readonly launchSupport?: readonly GhidraLaunchSupportDiagnostic[];
+  /** Maximum JVM heap REA selected, or the Windows script's configured setting. */
+  readonly jvmMaxHeap?: string;
 };
 
 /** Same per-stream projection budget for helper warnings and failed commands. */
@@ -358,12 +360,11 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         hostEnvironment: {},
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
-      const partialLaunch = ownedGhidraLaunch(
-        started,
-        paths,
-        platform,
-        launchSupport,
-      );
+      const jvmMaxHeap = selectedJvmMaxHeap(command, platform);
+      const partialLaunch: GhidraLaunch = {
+        ...ownedGhidraLaunch(started, paths, platform, launchSupport),
+        ...(jvmMaxHeap === undefined ? {} : { jvmMaxHeap }),
+      };
       await writeGhidraRuntimeFile(
         paths.ownershipPath,
         `${JSON.stringify({
@@ -453,6 +454,32 @@ const ownedGhidraLaunch = (
   scriptLogPath: paths.scriptLogPath,
   ...(launchSupport.length === 0 ? {} : { launchSupport: [...launchSupport] }),
 });
+
+/**
+ * POSIX launches pass -Xmx directly and the JVM honors the last one. The
+ * Windows script applies the same settings itself, so only an explicit setting
+ * is known there; its own default stays unknown.
+ */
+export const selectedJvmMaxHeap = (
+  command: {
+    readonly arguments: readonly string[];
+    readonly environment?: Readonly<Record<string, string | undefined>>;
+  },
+  platform: NodeJS.Platform,
+): string | undefined => {
+  if (platform === "win32") {
+    const configured =
+      command.environment?.GHIDRA_HEADLESS_MAXMEM ||
+      command.environment?.GHIDRA_MAXMEM;
+    return configured === undefined || configured === ""
+      ? undefined
+      : configured;
+  }
+  const heap = command.arguments.findLast((argument) =>
+    argument.startsWith("-Xmx"),
+  );
+  return heap === undefined || heap === "-Xmx" ? undefined : heap.slice(4);
+};
 
 const ownedGhidraProcess = (
   spawned: SpawnedOwnedProviderProcess,

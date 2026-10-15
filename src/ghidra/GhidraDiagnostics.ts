@@ -61,6 +61,9 @@ export const createGhidraDiagnostics = (
           ghidra_log_path: options.launch.ghidraLogPath,
           script_log_path: options.launch.scriptLogPath,
           process_id: options.launch.process.pid ?? null,
+          ...(options.launch.jvmMaxHeap === undefined
+            ? {}
+            : { jvm_max_heap: options.launch.jvmMaxHeap }),
           ...(options.launch.launchSupport === undefined
             ? {}
             : {

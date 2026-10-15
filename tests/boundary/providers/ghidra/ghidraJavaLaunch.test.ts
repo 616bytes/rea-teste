@@ -164,6 +164,8 @@ describe.skipIf(process.platform === "win32")(
             stderr_truncated: false,
           })),
         );
+        expect(launched.value.jvmMaxHeap).toBe("1G");
+        expect(diagnostics.jvm_max_heap).toBe("1G");
       },
     );
   },

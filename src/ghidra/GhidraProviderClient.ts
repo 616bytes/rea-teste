@@ -45,6 +45,7 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { Logger } from "pino";
 import { GhidraClient } from "./GhidraClient.js";
+import { ghidraMemoryExhaustionError } from "./GhidraMemoryExhaustion.js";
 import type { GhidraClientOptions } from "./GhidraClientTypes.js";
 import {
   isGhidraFunctionOperation,
@@ -1092,6 +1093,9 @@ const projectPrimarySessionError = (
     (failure.kind === "remote" && failure.remoteCode === "decompile_cancelled")
   )
     return new AnalysisCancelledError(operation, context);
+  // Observed JVM memory exhaustion explains a deadline or exit better than either.
+  const exhausted = ghidraMemoryExhaustionError(operation, failure, context);
+  if (exhausted !== undefined) return exhausted;
   if (failure.kind === "timeout" || failure.kind === "analysis_timeout")
     return new AnalysisTimeoutError(
       operation,

@@ -294,6 +294,16 @@ const compareReferences = (
         "Reference endpoints differ independently of provider reference-kind metadata.",
       ],
     });
+  const leftKinds = referenceKindProjection(left, sameArtifact);
+  const rightKinds = referenceKindProjection(right, sameArtifact);
+  const kindsKnown = leftKinds !== null && rightKinds !== null;
+  // Differing known edge kinds are a change whatever the endpoint identity.
+  if (
+    kindsKnown &&
+    canonicalJson(leftKinds, "Function comparison") !==
+      canonicalJson(rightKinds, "Function comparison")
+  )
+    return compareValues("references", leftKinds, rightKinds, context);
   // Equal projections with unknown endpoints do not establish equal targets.
   if (!sameArtifact && (hasUnnamedEndpoint(left) || hasUnnamedEndpoint(right)))
     return unresolvedDimension({
@@ -305,9 +315,7 @@ const compareReferences = (
         "Unnamed reference endpoints have no stable identity across different artifacts, so equal named endpoints do not establish equal references.",
       ],
     });
-  const leftKinds = referenceKindProjection(left);
-  const rightKinds = referenceKindProjection(right);
-  if (leftKinds !== null && rightKinds !== null)
+  if (kindsKnown)
     return compareValues("references", leftKinds, rightKinds, context);
   return unresolvedDimension({
     dimension: "references",

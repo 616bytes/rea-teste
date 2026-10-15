@@ -117,6 +117,7 @@ export const referenceProjection = (
 
 export const referenceKindProjection = (
   snapshot: FunctionSnapshot,
+  sameArtifact: boolean,
 ): readonly unknown[] | null => {
   const edges = [
     ...snapshot.dossier.incoming_references.map((edge) => ({
@@ -137,8 +138,16 @@ export const referenceKindProjection = (
         );
       return {
         direction,
-        source: edge.source_procedure?.name ?? null,
-        target: edge.target_procedure?.name ?? null,
+        source: referenceEndpoint(
+          edge.source_procedure,
+          edge.source_address,
+          sameArtifact,
+        ),
+        target: referenceEndpoint(
+          edge.target_procedure,
+          edge.target_address,
+          sameArtifact,
+        ),
         type: edge.kind.type,
         flow: edge.kind.flow,
         call: edge.kind.call,

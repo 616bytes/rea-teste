@@ -167,12 +167,14 @@ interface LiteralKinds {
 const typed = <K extends keyof LiteralKinds>(
   draft: Draft,
   element: string,
+  /** The recognized attribute name, not the possibly renamed raw name. */
+  name: string,
   attribute: Attribute,
   kind: K,
 ): LiteralKinds[K] | null => {
   const value = literalOf(attribute);
   if (typeof value === kind) return value as LiteralKinds[K];
-  draft.unresolved_attributes.push(`${element}@${attribute.name}`);
+  draft.unresolved_attributes.push(`${element}@${name}`);
   return null;
 };
 
@@ -193,34 +195,55 @@ const collectManifest = (
     if (attribute.namespace === null) {
       const field = UNNAMESPACED_MANIFEST_FIELDS.get(attribute.name);
       if (field !== undefined)
-        draft[field] = typed(draft, "manifest", attribute, "string");
+        draft[field] = typed(
+          draft,
+          "manifest",
+          attribute.name,
+          attribute,
+          "string",
+        );
       continue;
     }
-    switch (androidKey(attribute)) {
+    const key = androidKey(attribute);
+    switch (key) {
       case "versionCode":
-        draft.version_code = typed(draft, "manifest", attribute, "number");
+        draft.version_code = typed(draft, "manifest", key, attribute, "number");
         break;
       case "versionCodeMajor":
         draft.version_code_major = typed(
           draft,
           "manifest",
+          key,
           attribute,
           "number",
         );
         break;
       case "versionName":
-        draft.version_name = typed(draft, "manifest", attribute, "string");
+        draft.version_name = typed(draft, "manifest", key, attribute, "string");
         break;
       case "isFeatureSplit":
-        draft.is_feature_split = typed(draft, "manifest", attribute, "boolean");
+        draft.is_feature_split = typed(
+          draft,
+          "manifest",
+          key,
+          attribute,
+          "boolean",
+        );
         break;
       case "isolatedSplits":
-        draft.isolated_splits = typed(draft, "manifest", attribute, "boolean");
+        draft.isolated_splits = typed(
+          draft,
+          "manifest",
+          key,
+          attribute,
+          "boolean",
+        );
         break;
       case "targetSandboxVersion":
         draft.target_sandbox_version = typed(
           draft,
           "manifest",
+          key,
           attribute,
           "number",
         );
@@ -238,9 +261,21 @@ const collectUsesSdk = (
   for (const attribute of attributes) {
     const key = androidKey(attribute);
     if (key === "minSdkVersion")
-      draft.min_sdk_version = typed(draft, "uses-sdk", attribute, "number");
+      draft.min_sdk_version = typed(
+        draft,
+        "uses-sdk",
+        key,
+        attribute,
+        "number",
+      );
     else if (key === "targetSdkVersion")
-      draft.target_sdk_version = typed(draft, "uses-sdk", attribute, "number");
+      draft.target_sdk_version = typed(
+        draft,
+        "uses-sdk",
+        key,
+        attribute,
+        "number",
+      );
   }
 };
 
@@ -253,6 +288,7 @@ const collectApplication = (
       draft.is_split_required = typed(
         draft,
         "application",
+        "isSplitRequired",
         attribute,
         "boolean",
       );
@@ -336,9 +372,12 @@ const handleChunk = (
   chunk: Chunk,
   state: WalkState,
 ): void => {
-  if (type === RES_STRING_POOL_TYPE)
+  if (type === RES_STRING_POOL_TYPE) {
+    // One pool carries one decode budget; a second would reset it.
+    if (state.pool !== undefined)
+      throw malformed("document has more than one string pool");
     state.pool = StringPool.read(doc, chunk.start);
-  else if (type === RES_XML_RESOURCE_MAP_TYPE)
+  } else if (type === RES_XML_RESOURCE_MAP_TYPE)
     state.resourceIds = readResourceMap(doc, chunk);
   else if (type === RES_XML_START_ELEMENT_TYPE)
     handleStartElement(doc, chunk, state);

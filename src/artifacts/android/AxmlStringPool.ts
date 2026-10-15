@@ -130,8 +130,14 @@ export class StringPool {
     this.#decodedBytes += byteLength;
     if (this.#decodedBytes > MAX_DECODED_BYTES)
       throw limit(`decoded strings exceed ${MAX_DECODED_BYTES} bytes`);
-    return new TextDecoder(this.utf8 ? "utf-8" : "utf-16le").decode(
-      this.doc.bytes.subarray(start, start + byteLength),
-    );
+    const encoding = this.utf8 ? "utf-8" : "utf-16le";
+    try {
+      // Fatal decoding: invalid bytes are refused, not replaced by U+FFFD.
+      return new TextDecoder(encoding, { fatal: true }).decode(
+        this.doc.bytes.subarray(start, start + byteLength),
+      );
+    } catch {
+      throw malformed(`string ${index} is not valid ${encoding} text`);
+    }
   }
 }

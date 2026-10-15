@@ -5,6 +5,7 @@ import {
   readAndroidManifest,
 } from "./AndroidManifestReader.js";
 import {
+  chunk,
   document,
   endElement,
   foreignChunkCarryingAttribute,
@@ -316,5 +317,60 @@ describe("readAndroidManifest (declared but unusable values)", () => {
         "version_name",
       ].sort(),
     );
+  });
+});
+
+describe("readAndroidManifest (review follow-ups)", () => {
+  const ANDROID_NS = "http://schemas.android.com/apk/res/android";
+
+  it("reports a renamed attribute under its recognized name", () => {
+    const ids = Buffer.alloc(8);
+    ids.writeUInt32LE(0x0101055b, 4); // isFeatureSplit, for name index 1
+    const result = readAndroidManifest(
+      document(
+        stringPool(["manifest", "a", ANDROID_NS]),
+        chunk(0x0180, Buffer.alloc(0), ids),
+        startElement(0, [
+          { namespace: 2, name: 1, value: 0x7f010001, type: "reference" },
+        ]),
+        endElement(0),
+      ),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        is_feature_split: null,
+        unresolved_attributes: ["manifest@isFeatureSplit"],
+      },
+    });
+  });
+
+  it("refuses a second string pool instead of resetting the decode budget", () => {
+    const result = readAndroidManifest(
+      document(
+        stringPool(STRINGS),
+        stringPool(STRINGS),
+        startElement(0, [{ name: 1, value: 4 }]),
+        endElement(0),
+      ),
+    );
+    expect(result).toMatchObject({ ok: false, error: { kind: "malformed" } });
+  });
+
+  it("refuses invalid UTF-8 instead of replacing it", () => {
+    const bytes = Buffer.from(
+      document(
+        stringPool(STRINGS, [], "utf8"),
+        startElement(0, [{ name: 1, value: 4 }]),
+        endElement(0),
+      ),
+    );
+    const at = bytes.indexOf("dev.rea");
+    expect(at).toBeGreaterThan(0);
+    bytes[at] = 0xff;
+    expect(readAndroidManifest(bytes)).toMatchObject({
+      ok: false,
+      error: { kind: "malformed" },
+    });
   });
 });

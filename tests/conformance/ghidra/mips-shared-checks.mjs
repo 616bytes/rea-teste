@@ -108,7 +108,7 @@ export async function inspectMipsSharedReadelf(path, byteOrder, floatAbi) {
   );
   const result = await execute(
     command,
-    ["-h", "-A", "-l", "-d", "-r", "--dyn-syms", "-W", path],
+    ["-h", "-A", "-S", "-l", "-d", "-r", "--dyn-syms", "-W", path],
     options,
   );
   assert.equal(

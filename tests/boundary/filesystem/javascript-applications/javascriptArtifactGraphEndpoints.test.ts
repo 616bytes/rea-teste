@@ -150,6 +150,21 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
     ].join("\n"),
     "immediate-generator.js":
       '(function* () { new Socket("wss://example.test/tdz-generator"); })().next(); const Socket = globalThis.WebSocket;',
+    "delegated-generator.js":
+      '(function* () { yield* []; new Socket("wss://example.test/tdz-delegation"); })().next(); const Socket = globalThis.WebSocket;',
+    "waiting-caller.js":
+      '(async () => { await (async () => { await ready; new Socket("wss://example.test/tdz-waiting"); })(); const Socket = globalThis.WebSocket; })();',
+    "switch-case.js":
+      'switch (kind) { case 0: const Socket = globalThis.WebSocket; break; case 1: new Socket("wss://example.test/tdz-case"); }',
+    "loop-array.js": [
+      '(async () => { while (await ready) { new Socket("wss://example.test/loop-continuation"); break; } })();',
+      '(async () => { [await ready, new Socket("wss://example.test/array-continuation")]; })();',
+      "const Socket = globalThis.WebSocket;",
+    ].join("\n"),
+    "sequence-capture.js":
+      'const Socket = (0, globalThis.WebSocket); new Socket("wss://example.test/sequence-capture");',
+    "dynamic-import.mjs":
+      'const { WebSocket: Socket } = await import("ws"); new Socket("wss://example.test/dynamic-import");',
     "await-branch.js":
       '(async () => { if (await ready) new Socket("wss://example.test/branch-continuation"); })(); const Socket = globalThis.WebSocket;',
     "immediate-sequence.js":
@@ -179,13 +194,17 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
     ).toEqual([
       "wss://example.test/argument-constructor",
       "wss://example.test/argument-field",
+      "wss://example.test/array-continuation",
       "wss://example.test/assignment",
       "wss://example.test/branch-continuation",
       "wss://example.test/computed-key",
       "wss://example.test/continuation",
       "wss://example.test/deferred-bind",
+      "wss://example.test/dynamic-import",
       "wss://example.test/field",
       "wss://example.test/generator-body",
+      "wss://example.test/loop-continuation",
+      "wss://example.test/sequence-capture",
     ]);
     for (const [path, source, line] of [
       ["assignment", "await-inputs.js", 1],
@@ -197,6 +216,10 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       ["deferred-bind", "bound.js", 2],
       ["field", "fields.js", 1],
       ["generator-body", "generator.js", 2],
+      ["array-continuation", "loop-array.js", 2],
+      ["loop-continuation", "loop-array.js", 1],
+      ["sequence-capture", "sequence-capture.js", 1],
+      ["dynamic-import", "dynamic-import.mjs", 1],
     ] as const) {
       const observation = observations.find(
         ({ properties }) => properties.value === `wss://example.test/${path}`,

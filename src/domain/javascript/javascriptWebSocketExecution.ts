@@ -109,12 +109,22 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
       ...node.body.body.flatMap(webSocketStaticInitializers),
     ];
   if (t.isSequenceExpression(node)) return node.expressions;
+  if (t.isArrayExpression(node))
+    return node.elements.filter((element) => element !== null);
+  if (t.isSpreadElement(node)) return [node.argument];
   if (t.isBinaryExpression(node)) return [node.left, node.right];
   // Tests/left operands always complete before either a selected branch or a
   // later sibling; conditional branch bodies do not establish suspension.
   if (t.isIfStatement(node) || t.isConditionalExpression(node))
     return [node.test];
   if (t.isLogicalExpression(node)) return [node.left];
+  // Every normally completed loop evaluates its initial test, but its body
+  // and updates may never execute. A do/while body precedes its first test.
+  if (t.isWhileStatement(node)) return [node.test];
+  if (t.isForStatement(node))
+    return [node.init, node.test].filter((element) => element != null);
+  if (t.isYieldExpression(node) && node.argument != null)
+    return [node.argument];
   if (t.isCallExpression(node) || t.isNewExpression(node))
     return [node.callee, ...node.arguments];
   // Conditional/short-circuit branches, nested functions and try/catch do not
@@ -144,7 +154,18 @@ const webSocketCompletedSuspension = (
     const next = pending.pop();
     if (next === undefined) continue;
     const current = unwrapJavaScriptExpression(next).node;
-    if (t.isAwaitExpression(current) || t.isYieldExpression(current)) {
+    const delegateOwner =
+      t.isYieldExpression(current) && current.delegate
+        ? webSocketSuspensionOwner(current, state)
+        : undefined;
+    if (
+      t.isAwaitExpression(current) ||
+      (t.isYieldExpression(current) &&
+        (!current.delegate ||
+          // Async delegation awaits the iterator result even when it is done;
+          // synchronous delegation can finish without yielding at all.
+          (t.isFunction(delegateOwner) && delegateOwner.async)))
+    ) {
       cached.set(node, current);
       return current;
     }
@@ -173,6 +194,19 @@ const webSocketPrecedingSuspension = (
     return webSocketCompletedSuspension(parent.test, state);
   if (t.isLogicalExpression(parent) && child === parent.right)
     return webSocketCompletedSuspension(parent.left, state);
+  if (
+    (t.isWhileStatement(parent) || t.isForStatement(parent)) &&
+    (child === parent.body ||
+      (t.isForStatement(parent) && child === parent.update))
+  )
+    return (
+      (parent.test == null
+        ? undefined
+        : webSocketCompletedSuspension(parent.test, state)) ??
+      (t.isForStatement(parent) && parent.init != null
+        ? webSocketCompletedSuspension(parent.init, state)
+        : undefined)
+    );
   let byParent = webSocketSuspensionPrefixes.get(state);
   if (byParent === undefined) {
     byParent = new WeakMap();
@@ -262,6 +296,54 @@ const webSocketSuspensionOwner = (
       return parent;
     current = parent;
   }
+};
+
+/** A caller directly awaiting this result cannot initialize later locals yet. */
+const webSocketWaitingContexts = (
+  invocation: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): readonly t.Node[] => {
+  const contexts: t.Node[] = [];
+  let current: t.Node | undefined = invocation;
+  while (current !== undefined) {
+    const result = webSocketOuterExpression(current, state);
+    const awaited = state.parentsByNode.get(result);
+    if (!t.isAwaitExpression(awaited) || awaited.argument !== result) break;
+    const owner = webSocketSuspensionOwner(awaited, state);
+    contexts.push(owner);
+    current = t.isFunction(owner)
+      ? webSocketImmediateInvocation(owner, state)
+      : undefined;
+  }
+  return contexts;
+};
+
+/** A lexical switch initializer is not reached by entering another case. */
+export const webSocketInitializerDominatesRead = (
+  initializer: t.Node,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let current: t.Node | undefined = initializer;
+  while (
+    current !== undefined &&
+    !t.isFunction(current) &&
+    !t.isProgram(current)
+  ) {
+    if (t.isSwitchCase(current)) {
+      let ancestor: t.Node | undefined = read;
+      while (ancestor !== undefined && ancestor !== current)
+        ancestor = state.parentsByNode.get(ancestor);
+      if (ancestor === undefined) return false;
+    }
+    current = state.parentsByNode.get(current);
+  }
+  const readContexts = webSocketExecutionContexts(read, state);
+  return !(
+    webSocketExecutionContexts(initializer, state).some((context) =>
+      readContexts.includes(context),
+    ) && (initializer.end ?? Infinity) >= (read.start ?? -1)
+  );
 };
 
 const webSocketClassPrefixes = new WeakMap<
@@ -388,7 +470,8 @@ export const webSocketExecutionContexts = (
         if (continuation !== undefined)
           suspendedOwner = webSocketSuspensionOwner(continuation, state);
       }
-      if (suspendedOwner === parent) return contexts;
+      if (suspendedOwner === parent)
+        return [...contexts, ...webSocketWaitingContexts(invocation, state)];
     }
     current = parent;
   }

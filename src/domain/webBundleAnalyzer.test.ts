@@ -737,6 +737,110 @@ describe("web bundle conditional suspension and sequence invocations", () => {
   });
 });
 
+describe("web bundle evaluated socket continuations", () => {
+  it.each([
+    '(async () => { while (await ready) { new Socket("wss://example.test/resumed"); break; } })();',
+    '(async () => { for (; await ready;) { new Socket("wss://example.test/resumed"); break; } })();',
+    '(async () => { [await ready, new Socket("wss://example.test/resumed")]; })();',
+    '(async () => { [,[...(await ready)], new Socket("wss://example.test/resumed")]; })();',
+    '(async () => { while (await ready) {} new Socket("wss://example.test/resumed"); })();',
+    '(async function* () { yield* []; new Socket("wss://example.test/resumed"); })().next();',
+    '(function* () { yield; new Socket("wss://example.test/resumed"); })().next();',
+    '(async () => { await (async () => { await ready; new Socket("wss://example.test/resumed"); })(); })();',
+  ])(
+    "retains a read after its mandatory evaluation prefix: %s",
+    (expression) => {
+      const expected = [
+        { value: "wss://example.test/resumed", mechanism: "call:Socket" },
+      ];
+      expect(
+        socketEndpoints(`${expression} const Socket = globalThis.WebSocket;`),
+      ).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    '(function* () { yield* []; new Socket("wss://example.test/tdz"); })().next(); const Socket = globalThis.WebSocket;',
+    '(function* () { yield* values; new Socket("wss://example.test/tdz"); })().next(); const Socket = globalThis.WebSocket;',
+    '(async () => { do { new Socket("wss://example.test/tdz"); } while (await ready); })(); const Socket = globalThis.WebSocket;',
+    '(async () => { while (condition) await ready; new Socket("wss://example.test/tdz"); })(); const Socket = globalThis.WebSocket;',
+    '(async () => { [new Socket("wss://example.test/tdz"), await ready]; })(); const Socket = globalThis.WebSocket;',
+    '(async () => { await (async () => { await ready; new Socket("wss://example.test/tdz"); })(); const Socket = globalThis.WebSocket; })();',
+    '(async () => { await (async () => { await (async () => { await ready; new Socket("wss://example.test/tdz"); })(); })(); const Socket = globalThis.WebSocket; })();',
+    '(async () => { while (await ready) { new Socket("wss://example.test/tdz"); const Socket = globalThis.WebSocket; } })();',
+  ])(
+    "does not turn conditional suspension or a waiting initializer into identity: %s",
+    (source) => {
+      expect(socketEndpoints(source)).toEqual([[], []]);
+    },
+  );
+});
+
+describe("web bundle exact constructor result values", () => {
+  it.each([
+    "const Socket = (0, globalThis.WebSocket);",
+    "const Socket = (0, (1, globalThis.WebSocket));",
+    "const Socket = (0, globalThis).WebSocket;",
+  ])("follows only a sequence's resulting value: %s", (capture) => {
+    const expected = [
+      { value: "wss://example.test/result", mechanism: "call:Socket" },
+    ];
+    expect(
+      socketEndpoints(`${capture} new Socket("wss://example.test/result");`),
+    ).toEqual([expected, expected]);
+  });
+
+  it.each([
+    'const Socket = (globalThis.WebSocket, class {}); new Socket("wss://example.test/invalid");',
+    'switch (kind) { case 0: const Socket = globalThis.WebSocket; break; case 1: new Socket("wss://example.test/invalid"); }',
+  ])("rejects skipped or discarded constructor values: %s", (source) => {
+    expect(socketEndpoints(source)).toEqual([[], []]);
+  });
+});
+
+it("retains a constructor initialized in the same selected switch case", () => {
+  const expected = [
+    { value: "wss://example.test/result", mechanism: "call:Socket" },
+  ];
+  expect(
+    socketEndpoints(
+      'switch (kind) { case 0: const Socket = globalThis.WebSocket; new Socket("wss://example.test/result"); break; }',
+    ),
+  ).toEqual([expected, expected]);
+});
+
+describe("web bundle literal dynamic socket imports", () => {
+  it.each([
+    'const { WebSocket: Socket } = await import("ws");',
+    'const { default: Socket } = await import("ws");',
+    'const ws = await import("ws"); const Socket = ws.WebSocket;',
+    'const Socket = (await import("ws")).WebSocket;',
+  ])("retains an exact awaited module export: %s", (capture) => {
+    const expected = [
+      { value: "wss://example.test/imported", mechanism: "call:Socket" },
+    ];
+    expect(
+      socketEndpoints(`${capture} new Socket("wss://example.test/imported");`),
+    ).toEqual([expected, expected]);
+  });
+
+  it.each([
+    'const { WebSocket: Socket } = import("ws");',
+    "const { WebSocket: Socket } = await import(name);",
+    'const { WebSocket: Socket } = await import("other");',
+    'const { Server: Socket } = await import("ws");',
+    'const Socket = (await import("ws")).default.WebSocket;',
+    'let { WebSocket: Socket } = await import("ws"); Socket = class {};',
+  ])(
+    "does not infer promise values or unresolved module exports: %s",
+    (capture) => {
+      expect(
+        socketEndpoints(`${capture} new Socket("wss://example.test/invalid");`),
+      ).toEqual([[], []]);
+    },
+  );
+});
+
 describe("web bundle constructor captures before repeating writes", () => {
   it.each([
     "for (const item of items) { ws.WebSocket = class {}; }",

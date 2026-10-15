@@ -30,7 +30,11 @@ import {
 } from "./javascriptSemanticAmbientWrites.js";
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
-import { webSocketExecutionContexts } from "./javascriptWebSocketExecution.js";
+import { semanticAwaitedImportOrigin } from "./javascriptSemanticImportOrigin.js";
+import {
+  webSocketExecutionContexts,
+  webSocketInitializerDominatesRead,
+} from "./javascriptWebSocketExecution.js";
 import {
   compareUnicodeCodePoints,
   compositeKey,
@@ -632,7 +636,29 @@ export const isWebSocketEndpointCandidate = (
         )
       );
     }
+    const imported = semanticAwaitedImportOrigin(current);
+    if (imported !== undefined) {
+      const path = [...imported.importedPath, ...selected];
+      return (
+        imported.specifier === "ws" &&
+        path.length === 1 &&
+        (path[0] === "default" || path[0] === "WebSocket")
+      );
+    }
     const { root, members } = electronMemberPath(current);
+    if (t.isSequenceExpression(root)) {
+      const result = root.expressions.at(-1);
+      if (
+        result === undefined ||
+        !members.every((key): key is string => typeof key === "string")
+      )
+        return false;
+      if (selectedCapture === undefined && members.length > 0)
+        selectedCapture = current;
+      selected = [...members, ...selected];
+      current = result;
+      continue;
+    }
     if (!t.isIdentifier(root)) return false;
     const binding = resolveSemanticBindingState(state, root, root.name);
     if (binding === undefined || visited.has(binding.bindingId)) return false;
@@ -673,7 +699,6 @@ export const isWebSocketEndpointCandidate = (
       );
     }
     const initializer = semanticStableInitializer(binding, state);
-    const readContexts = webSocketExecutionContexts(root, state);
     if (
       initializer === undefined ||
       binding.referenceInitializers.length !== 0 ||
@@ -681,10 +706,7 @@ export const isWebSocketEndpointCandidate = (
         (key): key is string => typeof key === "string",
       ) ||
       !members.every((key): key is string => typeof key === "string") ||
-      (webSocketExecutionContexts(initializer.node, state).some((context) =>
-        readContexts.includes(context),
-      ) &&
-        (initializer.node.end ?? Infinity) >= (root.start ?? -1))
+      !webSocketInitializerDominatesRead(initializer.node, root, state)
     )
       return false;
     visited.add(binding.bindingId);

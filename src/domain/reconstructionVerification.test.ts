@@ -317,6 +317,43 @@ describe("reconstruction verification", () => {
   });
 });
 
+describe("reconstruction overall behavioral claims", () => {
+  const overallSpec = (comparison: Evidence) => ({
+    name: "Overall replay",
+    claims: [
+      {
+        kind: "behavioral" as const,
+        claim_id: "overall",
+        title: "Overall observed behavior agrees",
+        comparison_evidence_id: comparison.evidence_id,
+        dimension: "overall" as const,
+      },
+    ],
+  });
+
+  it("keeps an overall claim unknown when residual capture unknowns prevent proving no divergence", () => {
+    const left = source("1", "controlled-replay");
+    const right = source("2", "controlled-replay");
+    const reason =
+      "Residual unknowns prevent proving that no divergence occurred.";
+    const comparison = processComparison(left, right, {
+      ...(processResult() as Record<string, JsonValue>),
+      first_divergence: { status: "unknown", reason },
+    });
+    const bundle = createEvidenceBundle([comparison, right, left]);
+    const result = verifyReconstruction(overallSpec(comparison), bundle);
+    expect(result.status).toBe("unknown");
+    expect(result.claims.items[0]).toMatchObject({
+      status: "unknown",
+      observed_status: "unknown",
+    });
+    expect(result.claims.items[0]?.limitations).toContain(reason);
+    // Dimension claims that are independently complete keep their comparison.
+    const terminal = verifyReconstruction(behavioralSpec(comparison), bundle);
+    expect(terminal.status).toBe("pass");
+  });
+});
+
 describe("reconstruction process capture input", () => {
   it("rejects saved captures without explicit executable identity", () => {
     const left = source("1", "controlled-replay", "observed", {

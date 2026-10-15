@@ -262,11 +262,14 @@ const comparisonObservation = (
       evidence.normalized_result,
     );
     validateProcessStatus(result);
-    return {
-      status:
-        claim.dimension === "overall" ? result.status : result[claim.dimension],
-      limitations: [],
-    };
+    if (claim.dimension !== "overall")
+      return { status: result[claim.dimension], limitations: [] };
+    // An unchanged overall status with an unknown first divergence means
+    // residual capture unknowns prevent proving that no divergence occurred.
+    return result.status === "unchanged" &&
+      result.first_divergence.status === "unknown"
+      ? { status: "unknown", limitations: [result.first_divergence.reason] }
+      : { status: result.status, limitations: [] };
   }
   if (claim.kind === "structural-function") {
     const result = functionComparisonResultSchema.parse(

@@ -79,6 +79,8 @@ export class CdpConnection {
         `CDP maxPayloadBytes must be a positive safe integer no greater than ${String(MAX_WEBSOCKET_PAYLOAD_BYTES)}.`,
       );
     const socket = new WebSocket(url, {
+      // waitForOpen owns the deadline, cancellation, cleanup, and typed errors;
+      // keep ws's timer disabled so handshake failures have one owner.
       handshakeTimeout: 0,
       maxPayload: maxPayloadBytes,
       perMessageDeflate: false,

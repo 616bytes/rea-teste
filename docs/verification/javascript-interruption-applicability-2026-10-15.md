@@ -45,8 +45,9 @@ The 6,324-file inventory includes 46 unpacked entries. Both cohorts stage all
 three native companions; the other 43 unpacked entries remain unavailable.
 
 Build with pinned Node 24.18.0/npm 11.16.0 and locked dependencies. The extended
-existing verifier also runs against the baseline runtime; copy the verifier from
-the fixed revision into a built baseline checkout when reproducing the failure.
+existing verifier also runs against the baseline runtime; copy the verifier and
+`scripts/lib/javascript-file-scope-oracle.mjs` from the fixed revision into a
+built baseline checkout when reproducing the failure.
 
 ```bash
 artifact_path="/absolute/path/to/cases/available/app.asar"
@@ -62,6 +63,7 @@ common=(
   --structured-path ElectronAppWrapper.js.map
   --structured-path index.html
   --structured-path package.json
+  --structured-expectations '{"ElectronAppWrapper.js.map":{"operation":"parse-local-source-map","analysis_status":"not-started"},"index.html":{"operation":"parse-html-script-references","analysis_status":"not-started"},"package.json":{"operation":"parse-package-json","analysis_status":"not-started"}}'
   --rounds 3 --cli-parity
   --tokenizer-python /absolute/path/to/python-with-tiktoken-0.12.0
 )
@@ -74,7 +76,10 @@ node scripts/verify/javascript/native-handoffs.mjs "${common[@]}" \
 Omit `--require-safe` on the baseline timeout run to record its incorrect
 applicability. Its diagnostic exit 0 is not a passing analyst task. A supported
 1 ms deadline includes worker startup; the verifier requires a typed timeout
-and retained partial reference for that cohort.
+and retained partial reference for that cohort. Each structured path supplies an
+independent expected operation and phase-entry status; the safety oracle matches
+all gaps exactly, including unavailable state and unknown confidence. Missing or
+conflicting expectations do not pass.
 
 The native path is explicitly selected. An earlier structured-only run excluded
 it and therefore did not reproduce the native interruption. Input selections
@@ -146,6 +151,13 @@ unchanged-runtime repeat took 62.651 s / 62.240964 s with identical non-timing
 results. The slow final row remains reported. Attribution remains unresolved;
 these runs establish no speedup or performance-equivalence bound.
 
+The stricter post-review verifier reruns also passed without changing production
+code: timeout 162.645 s wall / 125.876114 s CPU / 2,809,643,008 B peak; default
+control 61.367 s / 60.970077 s / 2,526,949,376 B. Both preserve the original final
+analytical fields, identities, coverage and BPE exactly; only timings and the new
+explicit oracle-input field differ. These additional receipts do not replace the
+slower rows above.
+
 Static `cl100k_base`/tiktoken 0.12.0 projections include the selected or complete
 name/description/inputSchema catalog, requests and structured Evidence or parsed
 text errors. Complete-tool-reply alternatives include MCP text/structured
@@ -158,7 +170,7 @@ from the incorrect timeout baseline earns no efficiency credit.
 
 ## Verification and limitations
 
-The final source has 49 distinct passing cases across eight files. The initial
+The production source has 49 distinct passing cases across eight files. The initial
 pre-progress-cleanup seven-file selection passed 44/44. After progress cleanup,
 the same selection passed 43 and hit the existing 30-second test deadline in one
 native identity case; an unchanged two-file rerun passed both native cases and
@@ -168,6 +180,15 @@ cover native caller exclusion and malformed structured data. Source selection,
 malformed structures, actual worker resource constraints,
 retained large partial observations, cancellation/publication/cleanup, native
 identity and both public adapters remain covered.
+
+Review found that the real verifier previously accepted any non-JavaScript
+operation with artifact-byte authority and ignored phase-entry status. The
+scenario now supplies exact operation/status expectations independently of the
+production phase map. Six additional oracle cases use the actual retained
+Joplin snapshots and reject wrong metadata operations, entered or missing
+statuses, and absent or conflicting gaps. They passed, bringing the distinct
+coverage to 55 cases across nine files. The production implementation did not
+change during this review correction.
 
 Recorded attempts also include the verifier's initial non-null-subject assumption
 and an invalid top-level semantic-module-path absence check. Both were corrected
@@ -182,6 +203,14 @@ tests: 165.553 s wall / 150.247257 s CPU /
 The first full check stopped on a 172-line test callback exceeding the 150-line
 rule. A named assertion helper now shares scope lookup across all four public
 results; the strengthened six-case file passed again before the final gates.
+After the review correction, the full static/docs gate passed again, including
+the five consistency tests: 111.395 s wall / 110.979710 s CPU /
+4,347,125,760 B peak, with clean owned exit and no OOM.
+
+At the initial PR revision, 36 CI checks passed; macOS `hdiutil create` failed
+while creating its DMG fixture before REA verification, also failing the aggregate
+check. No Apple fixture/workflow code changed. That attempt provides no passing
+Apple runtime evidence.
 
 Live Electron/application execution, real native-provider behavior, other-platform
 runtime coverage and hosted-agent costs are **NOT_ENOUGH_INFO**. The verification

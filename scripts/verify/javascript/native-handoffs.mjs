@@ -17,6 +17,10 @@ import {
   runOwnedCommand,
 } from "../../../dist/process/OwnedCommand.js";
 import { closeVerifierResources } from "../../lib/verifier-cleanup.mjs";
+import {
+  matchesStructuredScopeExpectation,
+  structuredScopeExpectationsSchema,
+} from "../../lib/javascript-file-scope-oracle.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -25,6 +29,7 @@ const { values } = parseArgs({
     "native-sha256": { type: "string" },
     "source-path": { type: "string", multiple: true },
     "structured-path": { type: "string", multiple: true },
+    "structured-expectations": { type: "string" },
     "validate-structured-from-export": { type: "boolean", default: false },
     "analysis-timeout-ms": { type: "string" },
     "expect-timeout": { type: "boolean", default: false },
@@ -64,6 +69,20 @@ assert.ok(
 );
 assert.ok(!values["expect-timeout"] || analysisTimeoutMs !== undefined);
 assert.ok(!values["validate-structured-from-export"] || values["cli-parity"]);
+const structuredExpectations = structuredScopeExpectationsSchema.parse(
+  JSON.parse(values["structured-expectations"] ?? "{}"),
+);
+for (const path of Object.keys(structuredExpectations))
+  assert.ok(
+    values["structured-path"]?.includes(path),
+    `Expected structured path was not selected for verification: ${path}`,
+  );
+if (values["expect-timeout"])
+  for (const path of values["structured-path"] ?? [])
+    assert.ok(
+      Object.hasOwn(structuredExpectations, path),
+      `--structured-expectations must name the expected operation/status for ${path}`,
+    );
 const environment = {
   PATH: process.env.PATH ?? "/usr/bin:/bin",
   REA_LOG_LEVEL: "silent",
@@ -351,13 +370,11 @@ try {
   }
   const safeApplicability =
     nativeScopes.length === 0 &&
-    structuredScopes.every(({ scopes }) =>
+    structuredScopes.every(({ path, scopes }) =>
       timedOut
-        ? scopes.length > 0 &&
-          scopes.every(
-            ({ evidence, properties }) =>
-              evidence.authority === "artifact-bytes" &&
-              properties.operation !== "analyze-javascript-source",
+        ? matchesStructuredScopeExpectation(
+            scopes,
+            structuredExpectations[path],
           )
         : scopes.length === 0,
     );
@@ -410,6 +427,7 @@ print(json.dumps(dict(tokenizer='cl100k_base',tiktoken_version=tiktoken.__versio
     safe_applicability: safeApplicability,
     native_analysis_scopes: nativeScopes,
     structured_scopes: structuredScopes,
+    structured_expectations: structuredExpectations,
     modeled_structured_trace_count: structuredQueries.length,
     node: {
       node_id: addon.node_id,

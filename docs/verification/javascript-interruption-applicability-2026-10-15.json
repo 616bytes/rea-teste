@@ -68,7 +68,7 @@
   },
   "final_source_sha256": {
     "docs/javascript-artifact-reconstruction.md": "58c472f61537f7aeca477440712a44a12dc020554f966cfdf7d5c1ea71166895",
-    "scripts/verify/javascript/native-handoffs.mjs": "10335e8f8a87d01302a314af2ebd23505cb53af892984f89e376f158199e6f13",
+    "scripts/verify/javascript/native-handoffs.mjs": "1795c183370ed8289eb961da470073530ccbdbb46599d4a8966881639b219155",
     "src/application/javascript/JavaScriptArtifactAnalysis.ts": "dc0cc638ac7e8163efbe779f97bd9e945ef43688f71dc2c365de6439cc1823e6",
     "src/application/javascript/JavaScriptArtifactAnalysisTypes.ts": "4569780dcaff8e783b3169770473373d202e3a8d558e5ea03df88cd3f6853bf7",
     "src/application/javascript/JavaScriptArtifactGraphContext.ts": "b1e486b5b29f15466b033464780fc57d5619506aad94f4c5053e1882c4bd30d2",
@@ -77,7 +77,10 @@
     "src/application/javascript/JavaScriptArtifactReconstruction.ts": "583e14e34c5f4d2d6118f2dc750862b86f656bf2d98cca5b28fad2620168308c",
     "tests/acceptance/applications/javascriptAnalysisLimits.test.ts": "25ea7addf365c3ab992d1f24d65d57b02655033e28b2b100406c9c90712064c7",
     "tests/boundary/filesystem/javascriptArtifactReconstruction.test.ts": "bdb6dc9fd8a9921e956d01017ac9d32a499b3815f0611929185add7e42c5ba37",
-    "tests/boundary/javascript/javascriptApplicationCancellation.test.ts": "c604554072e6f848c24926b8630a738b9247ccd04b337374e8060cfb6a0a069f"
+    "tests/boundary/javascript/javascriptApplicationCancellation.test.ts": "c604554072e6f848c24926b8630a738b9247ccd04b337374e8060cfb6a0a069f",
+    "scripts/lib/javascript-file-scope-oracle.mjs": "e36f0aa114c7c2d2a2e9657f5ef7119f179d7bd6ba4ef899d0fc9ee67b4b7b07",
+    "scripts/lib/javascript-file-scope-oracle.d.mts": "f3ac21ce936613d650fa6d610b9905406ae02a0afa97afd677b5b11377369134",
+    "tests/boundary/process/javascriptVerifierScopeOracle.test.ts": "e94c3659b660482aaf75652a60440916f58921c97c4b9bc3182e647a505a2b6b"
   },
   "preprogress_source_sha256": {
     "docs/javascript-artifact-reconstruction.md": "e826a5d17f43a70915326c35cadcd236cb7155c596baefb230b9bc033bd81c74",
@@ -1646,7 +1649,9 @@
   "validation": {
     "base_public": "Final public timeout case and cancellation case failed on native AST scopes;21 other cases passed. Corrected cancellation oracle then independently reproduced false native AST scope and phantom semantic module,16 controls passed.",
     "final_focused": "49 distinct passing cases across8files through documented invocations; first preprogress7file selection44/44; final7file selection43pass/1testdeadline, unchangednative+CLIcancellation rerun7/7 withone already-passed overlap. No test deadline raised.",
-    "static_docs": "Passed including5 consistency tests"
+    "static_docs": "Passed including5 consistency tests",
+    "review_oracle": "Six new passing cases use the actual retained Joplin baseline/final source-map snapshots and counterexamples: wrong metadata operation, entered instead of unvisited status, missing status, missing/empty/mixed scopes, and malformed explicit expectations. No production phase map is imported. 55 distinct passing cases across9files including original49; production source unchanged since pre_review_revision.",
+    "post_review_static_docs": "Passed on the strict verifier/helper/test changes, including5 consistency tests."
   },
   "validation_resources": {
     "preprogress_focused_44": {
@@ -1853,6 +1858,46 @@
       "elapsed_seconds": 165.553,
       "cpu_seconds": 150.247257,
       "peak_cgroup_bytes": 4232491008,
+      "payload_exit_code": 0,
+      "payload_cleanup_verified": true,
+      "events_at_payload_exit": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    },
+    "review_oracle_six": {
+      "elapsed_seconds": 1.732,
+      "cpu_seconds": 1.541615,
+      "peak_cgroup_bytes": 209133568,
+      "payload_exit_code": 0,
+      "payload_cleanup_verified": true,
+      "events_at_payload_exit": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    },
+    "post_review_static_docs": {
+      "elapsed_seconds": 111.395,
+      "cpu_seconds": 110.97971,
+      "peak_cgroup_bytes": 4347125760,
       "payload_exit_code": 0,
       "payload_cleanup_verified": true,
       "events_at_payload_exit": {
@@ -2139,6 +2184,156 @@
     "tests/acceptance/applications/javascriptSourceSelectionCli.test.ts",
     "tests/boundary/mcp/javascriptNativeHandoffIdentity.test.ts",
     "tests/boundary/mcp/javascriptAnalysisResources.test.ts",
-    "tests/acceptance/applications/javascriptCancellationCli.test.ts"
-  ]
+    "tests/acceptance/applications/javascriptCancellationCli.test.ts",
+    "tests/boundary/process/javascriptVerifierScopeOracle.test.ts"
+  ],
+  "pre_review_revision": "04ca36ad86831e2d3639141bf41cd6994d8575d7",
+  "pre_review_source_sha256": {
+    "docs/javascript-artifact-reconstruction.md": "58c472f61537f7aeca477440712a44a12dc020554f966cfdf7d5c1ea71166895",
+    "scripts/verify/javascript/native-handoffs.mjs": "10335e8f8a87d01302a314af2ebd23505cb53af892984f89e376f158199e6f13",
+    "src/application/javascript/JavaScriptArtifactAnalysis.ts": "dc0cc638ac7e8163efbe779f97bd9e945ef43688f71dc2c365de6439cc1823e6",
+    "src/application/javascript/JavaScriptArtifactAnalysisTypes.ts": "4569780dcaff8e783b3169770473373d202e3a8d558e5ea03df88cd3f6853bf7",
+    "src/application/javascript/JavaScriptArtifactGraphContext.ts": "b1e486b5b29f15466b033464780fc57d5619506aad94f4c5053e1882c4bd30d2",
+    "src/application/javascript/JavaScriptArtifactGraphEvidence.ts": "4ac2d6c95011ee6a86ef79b3477557fd296df1ebb84e57ebb3d359848ca92cc3",
+    "src/application/javascript/JavaScriptArtifactGraphStructure.ts": "167be12f869088aeab0e521d6e85ee11348b40f15d5a24dff3030d8dec39b8a3",
+    "src/application/javascript/JavaScriptArtifactReconstruction.ts": "583e14e34c5f4d2d6118f2dc750862b86f656bf2d98cca5b28fad2620168308c",
+    "tests/acceptance/applications/javascriptAnalysisLimits.test.ts": "25ea7addf365c3ab992d1f24d65d57b02655033e28b2b100406c9c90712064c7",
+    "tests/boundary/filesystem/javascriptArtifactReconstruction.test.ts": "bdb6dc9fd8a9921e956d01017ac9d32a499b3815f0611929185add7e42c5ba37",
+    "tests/boundary/javascript/javascriptApplicationCancellation.test.ts": "c604554072e6f848c24926b8630a738b9247ccd04b337374e8060cfb6a0a069f"
+  },
+  "post_review_strict_controls": {
+    "timeout": {
+      "result_equivalent_to": "cohorts.final.timeout.result except timing and the newly recorded independent structured_expectations input",
+      "structured_expectations": {
+        "ElectronAppWrapper.js.map": {
+          "operation": "parse-local-source-map",
+          "analysis_status": "not-started"
+        },
+        "index.html": {
+          "operation": "parse-html-script-references",
+          "analysis_status": "not-started"
+        },
+        "package.json": {
+          "operation": "parse-package-json",
+          "analysis_status": "not-started"
+        }
+      },
+      "parent_evidence_id": "ev_ba7919ad7d538a41c183dfb5e27bb9dff6058a01b83fb583beebf4205c7c9939",
+      "trace_evidence_id": "ev_c95f2477bbc503d71094288ca11354fbb5bb0d8c86d26c7ea2b373a98458587f",
+      "facts_sha256": "70adc49dd7b9e13136c9ba3616a9a7210e86c2bacba734c329274f911e38458d",
+      "safe_identity": true,
+      "safe_applicability": true,
+      "preparation_ms": 126809.012247,
+      "samples": [
+        {
+          "round": 0,
+          "elapsed_ms": 140.7263250000251,
+          "structured_reply_bytes": 9654,
+          "full_tool_reply_bytes": 20161
+        },
+        {
+          "round": 1,
+          "elapsed_ms": 89.8889719999861,
+          "structured_reply_bytes": 9654,
+          "full_tool_reply_bytes": 20161
+        },
+        {
+          "round": 2,
+          "elapsed_ms": 87.59898199999589,
+          "structured_reply_bytes": 9654,
+          "full_tool_reply_bytes": 20161
+        }
+      ],
+      "resources": {
+        "elapsed_seconds": 162.645,
+        "cpu_seconds": 125.876114,
+        "peak_cgroup_bytes": 2809643008,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true,
+        "events_at_payload_exit": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        }
+      }
+    },
+    "control": {
+      "result_equivalent_to": "cohorts.final.control.result except timing and the newly recorded independent structured_expectations input",
+      "structured_expectations": {
+        "ElectronAppWrapper.js.map": {
+          "operation": "parse-local-source-map",
+          "analysis_status": "not-started"
+        },
+        "index.html": {
+          "operation": "parse-html-script-references",
+          "analysis_status": "not-started"
+        },
+        "package.json": {
+          "operation": "parse-package-json",
+          "analysis_status": "not-started"
+        }
+      },
+      "parent_evidence_id": "ev_11a21c98651e2f165e0a2a223734ceafb44ca8dcc0dd691647053237661b732a",
+      "trace_evidence_id": "ev_c70e3df14722c16822221309a873d064cb5772f644f0c537d6b3ec3dcee7e3ce",
+      "facts_sha256": "1ddcb621546636066ceea7f24b493ea1e2d2578f941ad96ba01bd11e98a673b4",
+      "safe_identity": true,
+      "safe_applicability": true,
+      "preparation_ms": 38557.169505,
+      "samples": [
+        {
+          "round": 0,
+          "elapsed_ms": 145.8823429999975,
+          "structured_reply_bytes": 9835,
+          "full_tool_reply_bytes": 20513
+        },
+        {
+          "round": 1,
+          "elapsed_ms": 96.55243199999677,
+          "structured_reply_bytes": 9835,
+          "full_tool_reply_bytes": 20513
+        },
+        {
+          "round": 2,
+          "elapsed_ms": 96.86316200000147,
+          "structured_reply_bytes": 9835,
+          "full_tool_reply_bytes": 20513
+        }
+      ],
+      "resources": {
+        "elapsed_seconds": 61.367,
+        "cpu_seconds": 60.970077,
+        "peak_cgroup_bytes": 2526949376,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true,
+        "events_at_payload_exit": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        }
+      }
+    }
+  },
+  "review_oracle": {
+    "thread": "https://github.com/morluto/rea/pull/4207#discussion_r4287026723",
+    "root_cause": "The real verifier previously rejected JavaScript operation names but accepted any other metadata operation and ignored analysis_status. That could falsely accept the wrong metadata phase.",
+    "correction": "Scenario supplies independent per-path exact operation/status expectations. Every retained gap must also have artifact-bytes authority, unavailable state and unknown confidence. Missing expectations, empty gap sets and any conflicting observation fail.",
+    "runtime_change": "None in this review correction. Original analytical observations, identities, coverage, token projections and CLI/MCP parity match exactly in both strict reruns; timing receipts are additional runs and do not replace the slower original rows.",
+    "initial_ci_failure": "At pre_review_revision,36 checks succeeded; Apple fixture hdiutil create failed before REA verification, causing aggregate CI required failure. Apple fixture/workflow code is unchanged; no Apple coverage pass claimed for that attempt."
+  }
 }

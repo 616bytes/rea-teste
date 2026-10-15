@@ -67,6 +67,8 @@ export const createObjcProtocolReader = (input: {
       if (read.u32(address + 64n) < 72)
         throw new RangeError("Truncated Objective-C protocol declaration");
       const protocolName = name(address);
+      if (protocolName.length === 0)
+        throw new TypeError("Objective-C protocol has an empty name");
       const adopted = list(read.pointer(address + 16n));
       const required = [
         ...methods(read.pointer(address + 24n), true, true),

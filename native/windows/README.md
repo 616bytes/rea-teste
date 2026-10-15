@@ -1,8 +1,8 @@
 # Windows native controls
 
-REA ships one Windows Node-API 8 addon for the host architecture, x64 or
-ARM64. Users do not compile it or install another runtime. Ghidra and a full
-JDK remain bring-your-own prerequisites.
+REA uses a Windows Node-API 8 addon for the host architecture, x64 or
+ARM64. Users do not compile it at runtime or install another runtime. Ghidra
+and a full JDK remain bring-your-own prerequisites.
 The addon uses Windows 10+ APIs and admits fixed local NTFS volumes only.
 
 The package owns the artifact path. The loader checks the package version,
@@ -14,8 +14,9 @@ There is no environment override for loading an arbitrary native module.
 The artifact lane requires Linux, a matching MinGW-w64 compiler
 (`x86_64-w64-mingw32-g++` or `aarch64-w64-mingw32-g++`), the matching
 `dlltool`, and `tar`. It never installs these commands. The default target is
-x64. Pass `--arch=arm64` to build `rea-windows-arm64.node`. One manifest
-describes the artifact just built.
+x64. Pass `--arch=arm64` to build `rea-windows-arm64.node`. `manifest.json`
+records the latest built target and preserves same-version entries under
+`artifacts` so `x64` and `arm64` builds can coexist in one package directory.
 Node-API headers are reused from the build cache or downloaded from the
 pinned official Node release with its published SHA-256 checked.
 
@@ -25,10 +26,13 @@ npm run verify:windows-native:artifact
 npm pack
 ```
 
-`build/` is ignored by Git. The npm file inventory includes only the addon and
-its manifest. Release CI builds both, and `prepublishOnly` rejects a missing,
-stale, mismatched, or wrong-architecture artifact. A development tarball built
-without this lane reports Windows native controls as unavailable.
+`build/` is ignored by Git. The npm file inventory lists the addon binaries and
+`manifest.json`. Release CI currently builds `rea-windows-x64.node` and its
+manifest (`--arch=arm64` builds `rea-windows-arm64.node` when an ARM64
+cross-compiler is present), and `prepublishOnly` rejects a missing, stale,
+mismatched, or wrong-architecture artifact. A tarball built without the
+matching host architecture artifact reports Windows native controls as
+unavailable.
 
 ## Restore the artifact in a source checkout
 

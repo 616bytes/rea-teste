@@ -160,19 +160,56 @@ const packageJson = JSON.parse(
   await readFile(join(root, "package.json"), "utf8"),
 );
 const bytes = await readFile(join(output, artifact));
+const artifactSha256 = createHash("sha256").update(bytes).digest("hex");
+const manifestPath = join(output, "manifest.json");
+const existingArtifacts = {};
+if (await exists(manifestPath)) {
+  try {
+    const previous = JSON.parse(await readFile(manifestPath, "utf8"));
+    if (previous?.packageVersion === packageJson.version) {
+      const candidates = previous.artifacts ?? {
+        [previous.architecture]: {
+          artifact: previous.artifact,
+          artifactSha256: previous.artifactSha256,
+        },
+      };
+      for (const [arch, entry] of Object.entries(candidates)) {
+        if (
+          (arch === "x64" || arch === "arm64") &&
+          typeof entry?.artifact === "string" &&
+          typeof entry?.artifactSha256 === "string" &&
+          (await exists(join(output, entry.artifact)))
+        )
+          existingArtifacts[arch] = {
+            artifact: entry.artifact,
+            artifactSha256: entry.artifactSha256,
+          };
+      }
+    }
+  } catch {
+    // Replace unreadable or stale manifest state with the newly built target.
+  }
+}
+const artifacts = {
+  ...existingArtifacts,
+  [architecture]: { artifact, artifactSha256 },
+};
+const primaryArchitecture =
+  artifacts.x64 !== undefined && architecture !== "arm64"
+    ? "x64"
+    : architecture;
+const primaryEntry = artifacts[primaryArchitecture];
 const metadata = {
   packageVersion: packageJson.version,
   platform: "win32",
-  architecture,
+  architecture: primaryArchitecture,
   abiVersion: 1,
   nodeApiVersion: 8,
-  artifact,
-  artifactSha256: createHash("sha256").update(bytes).digest("hex"),
+  artifact: primaryEntry.artifact,
+  artifactSha256: primaryEntry.artifactSha256,
+  artifacts,
 };
-await writeFile(
-  join(output, "manifest.json"),
-  `${JSON.stringify(metadata, null, 2)}\n`,
-);
+await writeFile(manifestPath, `${JSON.stringify(metadata, null, 2)}\n`);
 process.stdout.write(
   `${JSON.stringify({ ...metadata, artifactBytes: bytes.length })}\n`,
 );

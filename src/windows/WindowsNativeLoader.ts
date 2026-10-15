@@ -32,7 +32,12 @@ export const windowsNativeArtifactName = (
 ): "rea-windows-x64.node" | "rea-windows-arm64.node" =>
   architecture === "arm64" ? "rea-windows-arm64.node" : "rea-windows-x64.node";
 
-/** Metadata bound to one packaged Windows Node-API artifact. */
+const windowsNativeArtifactEntrySchema = z.strictObject({
+  artifact: z.enum(["rea-windows-x64.node", "rea-windows-arm64.node"]),
+  artifactSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+});
+
+/** Metadata bound to packaged Windows Node-API artifacts. */
 export const windowsNativeManifestSchema = z.strictObject({
   packageVersion: z.string(),
   platform: z.literal("win32"),
@@ -41,6 +46,12 @@ export const windowsNativeManifestSchema = z.strictObject({
   nodeApiVersion: z.literal(8),
   artifact: z.enum(["rea-windows-x64.node", "rea-windows-arm64.node"]),
   artifactSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  artifacts: z
+    .strictObject({
+      x64: windowsNativeArtifactEntrySchema.optional(),
+      arm64: windowsNativeArtifactEntrySchema.optional(),
+    })
+    .optional(),
 });
 
 const inspectionSchema = z.strictObject({
@@ -151,26 +162,44 @@ export const loadWindowsNativeAuthority = (
     );
     if (manifest.packageVersion !== host.packageVersion)
       throw new Error("Windows native artifact belongs to another REA version");
-    if (
-      manifest.architecture !== host.architecture ||
-      manifest.artifact !== windowsNativeArtifactName(manifest.architecture)
-    )
+    if (manifest.artifacts !== undefined) {
+      const primary = manifest.artifacts[manifest.architecture];
+      if (
+        primary === undefined ||
+        primary.artifact !== manifest.artifact ||
+        primary.artifactSha256 !== manifest.artifactSha256
+      )
+        throw new Error(
+          "Windows native manifest artifacts table does not match top-level metadata",
+        );
+    }
+    const expectedArtifact = windowsNativeArtifactName(host.architecture);
+    const targetEntry =
+      manifest.artifacts !== undefined
+        ? manifest.artifacts[host.architecture]
+        : manifest.architecture === host.architecture
+          ? {
+              artifact: manifest.artifact,
+              artifactSha256: manifest.artifactSha256,
+            }
+          : undefined;
+    if (targetEntry === undefined || targetEntry.artifact !== expectedArtifact)
       throw new Error(
         "Windows native artifact does not match the host architecture",
       );
     const artifact = readPackagedWindowsNativeFile(
-      manifest.artifact,
-      manifest.architecture,
+      targetEntry.artifact,
+      host.architecture,
       () => host.readArtifact(),
     );
     if (
       createHash("sha256").update(artifact).digest("hex") !==
-      manifest.artifactSha256
+      targetEntry.artifactSha256
     )
       throw new Error(
         "Windows native artifact SHA-256 does not match package metadata",
       );
-    assertWindowsNativeArtifact(artifact, manifest.architecture);
+    assertWindowsNativeArtifact(artifact, host.architecture);
     const binding = bindingSchema.parse(host.loadArtifact());
     let observed: unknown;
     try {

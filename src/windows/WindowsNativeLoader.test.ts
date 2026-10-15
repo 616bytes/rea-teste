@@ -42,6 +42,7 @@ const fixture = (
     size: 0,
     directory: true,
   };
+  let reads = 0;
   let loads = 0;
   const host: WindowsNativeLoadHost = {
     platform: "win32",
@@ -49,7 +50,10 @@ const fixture = (
     nodeApiVersion: "8",
     packageVersion: "1.0.0",
     readManifest: () => manifest,
-    readArtifact: () => bytes,
+    readArtifact: () => {
+      reads++;
+      return bytes;
+    },
     loadArtifact: () => {
       loads++;
       return {
@@ -67,7 +71,13 @@ const fixture = (
       };
     },
   };
-  return { host, manifest, bytes, loads: () => loads };
+  return {
+    host,
+    manifest,
+    bytes,
+    reads: () => reads,
+    loads: () => loads,
+  };
 };
 
 describe("packaged Windows native compatibility", () => {
@@ -255,4 +265,124 @@ describe("packaged Windows native artifact validation", () => {
       reason: expect.stringContaining("privateBridgeDescriptorAccess"),
     });
   });
+});
+
+describe("packaged Windows native architecture boundaries", () => {
+  it.each([
+    ["x64", "arm64", 0xaa64],
+    ["arm64", "x64", 0x8664],
+  ] as const)(
+    "rejects cross-architecture manifest, artifact, PE image, and inspection mismatches on %s hosts",
+    (hostArch, otherArch, otherMachine) => {
+      const value = fixture({}, hostArch);
+      const other = fixture({}, otherArch);
+
+      expect(
+        loadWindowsNativeAuthority({
+          ...value.host,
+          readManifest: () => other.manifest,
+        }),
+      ).toMatchObject({
+        available: false,
+        failureStage: "artifact",
+        reason: expect.stringContaining("architecture"),
+      });
+      expect(value.reads()).toBe(0);
+      expect(value.loads()).toBe(0);
+
+      expect(
+        loadWindowsNativeAuthority({
+          ...value.host,
+          readManifest: () => ({
+            ...value.manifest,
+            artifact: other.manifest.artifact,
+          }),
+        }),
+      ).toMatchObject({
+        available: false,
+        failureStage: "artifact",
+        reason: expect.stringContaining("artifact"),
+      });
+      expect(value.reads()).toBe(0);
+      expect(value.loads()).toBe(0);
+
+      const wrongMachine = fixture({}, hostArch);
+      wrongMachine.bytes.writeUInt16LE(otherMachine, 68);
+      wrongMachine.manifest.artifactSha256 = createHash("sha256")
+        .update(wrongMachine.bytes)
+        .digest("hex");
+      expect(loadWindowsNativeAuthority(wrongMachine.host)).toMatchObject({
+        available: false,
+        failureStage: "artifact",
+        reason: expect.stringContaining("PE32+"),
+      });
+      expect(wrongMachine.reads()).toBe(1);
+      expect(wrongMachine.loads()).toBe(0);
+
+      const wrongInspection = fixture(
+        { architecture: otherArch } as Record<string, unknown>,
+        hostArch,
+      );
+      expect(loadWindowsNativeAuthority(wrongInspection.host)).toMatchObject({
+        available: false,
+        failureStage: "inspection",
+        reason: expect.stringContaining("architecture"),
+      });
+      expect(wrongInspection.loads()).toBe(1);
+    },
+  );
+
+  it.each([
+    ["x64", "arm64"],
+    ["arm64", "x64"],
+  ] as const)(
+    "admits %s hosts from a multi-architecture manifest when top-level metadata records %s",
+    (hostArch, topLevelArch) => {
+      const current = fixture({}, hostArch);
+      const topLevel = fixture({}, topLevelArch);
+      const multiManifest = {
+        ...topLevel.manifest,
+        artifacts: {
+          [topLevelArch]: {
+            artifact: topLevel.manifest.artifact,
+            artifactSha256: topLevel.manifest.artifactSha256,
+          },
+          [hostArch]: {
+            artifact: current.manifest.artifact,
+            artifactSha256: current.manifest.artifactSha256,
+          },
+        },
+      };
+      expect(
+        loadWindowsNativeAuthority({
+          ...current.host,
+          readManifest: () => multiManifest,
+        }),
+      ).toMatchObject({
+        available: true,
+        authority: { inspection: { architecture: hostArch } },
+      });
+      expect(current.loads()).toBe(1);
+
+      expect(
+        loadWindowsNativeAuthority({
+          ...current.host,
+          readManifest: () => ({
+            ...multiManifest,
+            artifacts: {
+              ...multiManifest.artifacts,
+              [topLevelArch]: {
+                artifact: current.manifest.artifact,
+                artifactSha256: topLevel.manifest.artifactSha256,
+              },
+            },
+          }),
+        }),
+      ).toMatchObject({
+        available: false,
+        failureStage: "artifact",
+        reason: expect.stringContaining("artifacts table"),
+      });
+    },
+  );
 });

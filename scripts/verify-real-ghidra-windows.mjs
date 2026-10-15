@@ -305,7 +305,7 @@ try {
     },
     limitations: [
       "approved-non-sensitive-fixtures-only",
-      "windows-x64-local-ntfs-only",
+      "windows-x64-or-arm64-local-ntfs-only",
       "native-x86-and-x86-64-pe-applications-and-dlls-only",
       "no-gui-or-mutation-authority",
     ],

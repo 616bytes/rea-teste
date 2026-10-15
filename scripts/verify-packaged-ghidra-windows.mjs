@@ -214,7 +214,7 @@ const entry = join(packageRoot, "scripts/rea.mjs");
 const report = {
   ok: false,
   platform: "win32",
-  architecture: "x64",
+  architecture: process.arch,
   nonAdmin: true,
   targetSha256: sha256,
   targetArchitecture: parsedTarget.value.architecture,

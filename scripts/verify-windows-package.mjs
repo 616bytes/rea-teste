@@ -53,10 +53,18 @@ try {
   );
   if (typeof nativeManifest.artifact !== "string")
     throw new Error("Windows native manifest omitted its artifact name");
+  const declaredArtifacts = new Set([
+    `native/windows/build/${nativeManifest.artifact}`,
+    ...Object.values(nativeManifest.artifacts ?? {}).flatMap((entry) =>
+      typeof entry?.artifact === "string"
+        ? [`native/windows/build/${entry.artifact}`]
+        : [],
+    ),
+  ]);
   for (const required of [
     "bridge/ghidra/ReaGhidraBridge.java",
     "native/windows/build/manifest.json",
-    `native/windows/build/${nativeManifest.artifact}`,
+    ...declaredArtifacts,
     "dist/android/JadxWorkspaceRoot.js",
     "dist/main.js",
     "dist/cli.js",

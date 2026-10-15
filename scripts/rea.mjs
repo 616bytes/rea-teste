@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import { access } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Route production MCP before importing Incur. Incur owns registration helpers
 // such as `mcp add`, while the MCP runtime serves the stdio tool catalog.
@@ -40,15 +40,38 @@ if (
   process.env.PLAYWRIGHT_BROWSERS_PATH = join(cacheRoot, "ms-playwright");
 }
 
-const runtimeFiles = isMcpMode
-  ? ["dist/mcp/main.js"]
-  : isMcpDoctorMode
-    ? ["dist/mcp/main.js", "dist/cli-runtime/mcpDoctor.js"]
-    : [
-        "dist/cli-runtime/cli.js",
-        "dist/cli-runtime/cliOutput.js",
-        "dist/cli-runtime/cliResultOutput.js",
-      ];
+// Prefer bundles, but fall back to plain TypeScript output if an
+// Android/ARM64 bundler leaves an empty entry point.
+const runtimeLayouts = {
+  bundled: {
+    mcp: "dist/mcp/main.js",
+    mcpDoctor: "dist/cli-runtime/mcpDoctor.js",
+    cli: "dist/cli-runtime/cli.js",
+    cliOutput: "dist/cli-runtime/cliOutput.js",
+    cliResultOutput: "dist/cli-runtime/cliResultOutput.js",
+  },
+  compiled: {
+    mcp: "dist/main.js",
+    mcpDoctor: "dist/mcpDoctor.js",
+    cli: "dist/cli.js",
+    cliOutput: "dist/cliOutput.js",
+    cliResultOutput: "dist/cli/cliResultOutput.js",
+  },
+};
+
+const filesForLayout = (layout) =>
+  isMcpMode
+    ? [layout.mcp]
+    : isMcpDoctorMode
+      ? [layout.mcp, layout.mcpDoctor]
+      : [layout.cli, layout.cliOutput, layout.cliResultOutput];
+
+const runtimeLayout = (await compiledRuntimeExists(
+  filesForLayout(runtimeLayouts.bundled),
+))
+  ? runtimeLayouts.bundled
+  : runtimeLayouts.compiled;
+const runtimeFiles = filesForLayout(runtimeLayout);
 
 if (!(await compiledRuntimeExists(runtimeFiles))) {
   process.stderr.write(
@@ -56,12 +79,15 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   );
   process.exitCode = 1;
 } else if (isMcpMode) {
-  const { runEntrypoint } = await import("../dist/mcp/main.js");
+  const { runEntrypoint } = await import(
+    pathToFileURL(resolve(packageRoot, runtimeLayout.mcp)).href
+  );
   await runEntrypoint();
 } else if (isMcpDoctorMode) {
   guardClosedStdout();
-  const { runProductionMcpDoctorCli } =
-    await import("../dist/cli-runtime/mcpDoctor.js");
+  const { runProductionMcpDoctorCli } = await import(
+    pathToFileURL(resolve(packageRoot, runtimeLayout.mcpDoctor)).href
+  );
   const result = await runProductionMcpDoctorCli(args.slice(2), {
     dispatcherPath: fileURLToPath(import.meta.url),
     packageRoot,
@@ -69,16 +95,20 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   writeStdout(result.output);
   process.exitCode = result.exitCode;
 } else {
-  const { cliConfigurationError, createCli } =
-    await import("../dist/cli-runtime/cli.js");
-  const { createCliResultOutput } =
-    await import("../dist/cli-runtime/cliResultOutput.js");
+  const { cliConfigurationError, createCli } = await import(
+    pathToFileURL(resolve(packageRoot, runtimeLayout.cli)).href
+  );
+  const { createCliResultOutput } = await import(
+    pathToFileURL(resolve(packageRoot, runtimeLayout.cliResultOutput)).href
+  );
   const {
     normalizeCliOutputArguments,
     renderCliOutputArgumentError,
     renderEmptyFilteredCliOutput,
     validateCliOutputArguments,
-  } = await import("../dist/cli-runtime/cliOutput.js");
+  } = await import(
+    pathToFileURL(resolve(packageRoot, runtimeLayout.cliOutput)).href
+  );
   guardClosedStdout();
   const cliArgs = normalizeCliOutputArguments(args);
   const outputArguments = validateCliOutputArguments(cliArgs);
@@ -135,7 +165,8 @@ function writeStdout(output) {
 async function compiledRuntimeExists(paths) {
   for (const path of paths) {
     try {
-      await access(resolve(packageRoot, path));
+      const info = await stat(resolve(packageRoot, path));
+      if (!info.isFile() || info.size === 0) return false;
     } catch (cause) {
       if (isMissing(cause)) return false;
       throw cause;

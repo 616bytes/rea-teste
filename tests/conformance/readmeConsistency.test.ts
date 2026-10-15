@@ -52,6 +52,7 @@ describe("onboarding documentation product facts", () => {
       .map((language) => language.readme);
     expect(translatedReadmes).toContain("docs/readme/README_it.md");
     expect(translatedReadmes).toContain("docs/readme/README_el.md");
+    expect(translatedReadmes).toContain("docs/readme/README_sq.md");
     const editions = (await readdir(resolve("docs/readme")))
       .filter((name) => /^README_[A-Za-z0-9-]+\.md$/u.test(name))
       .map((name) => `docs/readme/${name}`);
@@ -77,6 +78,26 @@ describe("onboarding documentation product facts", () => {
       expect(persian).toContain(`## ${heading}`);
       expect(persian).toContain(
         `](#${heading.toLowerCase().replaceAll(" ", "-")})`,
+      );
+    }
+  });
+
+  it("lists Albanian immediately after Greek in every README", async () => {
+    const inventory = JSON.parse(
+      await readFile(resolve("website/locales/languages.json"), "utf8"),
+    ) as { code: string; readme: string }[];
+    for (const { code, readme } of inventory) {
+      const content = await readFile(resolve(readme), "utf8");
+      const link =
+        code === "en"
+          ? "[Shqip](docs/readme/README_sq.md)"
+          : code === "sq"
+            ? "**Shqip**"
+            : "[Shqip](README_sq.md)";
+      expect(content, readme).toContain(link);
+      const navigation = content.split(/\r?\n\r?\n/u)[1];
+      expect(navigation, readme).toMatch(
+        /(?:\[Ελληνικά\]\([^)]+\)|\*\*Ελληνικά\*\*)\s*·\s*(?:\[Shqip\]\([^)]+\)|\*\*Shqip\*\*)/u,
       );
     }
   });

@@ -65,6 +65,11 @@ it("resolves require calls by lexical binding and source mode", async () => {
       "const o = { [(() => { with ({}) { require = () => 'local'; } })()](require) {} };",
       "console.log(require('./throwing.cjs'));",
     ].join("\n"),
+    "default-fn-decl.cjs": [
+      "function patch(x = (() => { with ({}) { require = () => 'local'; } })()) { function require() { return 'real'; } }",
+      "patch();",
+      "console.log(require('./throwing.cjs'));",
+    ].join("\n"),
     "initialized-var.cjs": [
       "var require = () => 'local';",
       "console.log(require('./throwing.cjs'));",
@@ -113,6 +118,7 @@ it("resolves require calls by lexical binding and source mode", async () => {
     ["with-write.cjs", "local\n"],
     ["default-param-var.cjs", "local\n"],
     ["computed-key.cjs", "local\n"],
+    ["default-fn-decl.cjs", "local\n"],
     ["initialized-var.cjs", "local\n"],
     ["assigned-var.cjs", "local\n"],
     ["unbound-esm.mjs", "no-global-require\n"],
@@ -186,6 +192,14 @@ it("keeps loader edges when a local binding shields a dynamic write", async () =
       "patch();",
       "console.log(require('./loaded.cjs'));",
     ].join("\n"),
+    "switch-let.cjs": [
+      "function patch() {",
+      "  switch (0) { case 0: let require;",
+      "    with ({}) { require = () => 'local'; } }",
+      "}",
+      "patch();",
+      "console.log(require('./loaded.cjs'));",
+    ].join("\n"),
     "empty-loop-var.cjs": [
       "for (var require of []) {}",
       "console.log(require('./loaded.cjs'));",
@@ -228,6 +242,7 @@ it("keeps loader edges when a local binding shields a dynamic write", async () =
     ["local-fn-var.cjs", "loaded.cjs"],
     ["local-param.cjs", "loaded.cjs"],
     ["nested-fn-var.cjs", "loaded.cjs"],
+    ["switch-let.cjs", "loaded.cjs"],
   ]);
 });
 

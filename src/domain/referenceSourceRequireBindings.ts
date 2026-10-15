@@ -274,17 +274,6 @@ const functionBodyBindsRequire = (body: t.Node | null | undefined): boolean => {
   return found;
 };
 
-const functionDeclarationsBindRequire = (
-  body: t.Node | null | undefined,
-): boolean => {
-  if (body === null || body === undefined || !t.isBlockStatement(body))
-    return false;
-  return body.body.some(
-    (statement) =>
-      t.isFunctionDeclaration(statement) && statement.id?.name === "require",
-  );
-};
-
 const isComputedKeyOf = (scope: t.Node, child: t.Node): boolean =>
   (t.isObjectMethod(scope) || t.isClassMethod(scope)) &&
   scope.computed &&
@@ -315,13 +304,14 @@ const writeShieldedByLocalBinding = (
         continue;
       }
       if (bindsRequireIdentifier(scope.params)) return true;
-      if (child === scope.body) {
-        if (functionBodyBindsRequire(scope.body)) return true;
-      } else if (functionDeclarationsBindRequire(scope.body)) return true;
+      if (child === scope.body && functionBodyBindsRequire(scope.body))
+        return true;
       child = scope;
       continue;
     }
     if (t.isCatchClause(scope) && bindsRequireIdentifier([scope.param]))
+      return true;
+    if (t.isSwitchCase(scope) && blockBindsLexicalRequire(scope.consequent))
       return true;
     if (
       t.isForStatement(scope) ||

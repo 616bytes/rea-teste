@@ -36,6 +36,7 @@ export interface GoZeroFillMapping {
 
 /** One named file section. Invalid declared ranges stay visible with `file_backed: false`. */
 export interface GoImageSection {
+  readonly address: bigint;
   readonly name: string;
   readonly offset: number;
   readonly size: number;
@@ -46,6 +47,7 @@ export interface GoImageSection {
 
 /** Native container facts and its ordered producer-defined build-info search ranges. */
 export interface GoBinaryContainer {
+  readonly elf_type: number | null;
   readonly format: "elf" | "pe" | "macho";
   readonly architecture: string;
   readonly bits: 32 | 64;

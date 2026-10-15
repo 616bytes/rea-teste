@@ -87,12 +87,29 @@ export class GoBinaryService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: {
+            path: input.data.path,
+            ...(input.data.functions === undefined
+              ? {}
+              : { functions: input.data.functions }),
+          },
           result: value,
           confidence: "observed",
           limitations: value.limitations,
           locations: [
             { kind: "artifact-path", path: value.artifact.path },
+            ...(value.functions.state === "not-requested" ||
+            value.functions.table === null
+              ? []
+              : [
+                  {
+                    kind: "file-offset-range" as const,
+                    start: value.functions.table.offset,
+                    end:
+                      value.functions.table.offset +
+                      value.functions.table.bytes,
+                  },
+                ]),
             ...(value.build_info === null
               ? []
               : [

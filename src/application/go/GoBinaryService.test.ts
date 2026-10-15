@@ -20,6 +20,13 @@ const report: GoBinary = {
   bits: 64,
   byte_order: "little",
   build_info: null,
+  functions: {
+    state: "unavailable",
+    table: null,
+    reason: "unsupported",
+    limitation: "Unsupported architecture.",
+    entries: [],
+  },
   limitations: ["Build information unavailable."],
 };
 
@@ -36,6 +43,7 @@ it("rejects invalid paths and extra caller arguments before invoking the reader"
     { path: "relative" },
     { path: "/artifacts/\0program" },
     { path: report.artifact.path, execute: true },
+    { path: report.artifact.path, functions: "true" },
   ]) {
     const result = await service.inspect(input);
     expect(result.ok).toBe(false);

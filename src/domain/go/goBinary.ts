@@ -2,6 +2,7 @@ import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import { localPathStringSchema } from "../localPath.js";
 import { CANONICAL_BASE64_PATTERN } from "../stringPatterns.js";
+import { goFunctionTableSchema } from "./goFunctionTable.js";
 
 const sourceRangeSchema = z.strictObject({
   offset: z.number().int().nonnegative(),
@@ -33,6 +34,12 @@ export const goModuleMetadataSchema = z.strictObject({
 
 /** One exact local artifact, independent of any active disassembler target. */
 export const inspectGoBinaryInputSchema = z.strictObject({
+  functions: z
+    .boolean()
+    .optional()
+    .describe(
+      "Read supported compiler-declared function entries; omitted/false avoids function-table work and output",
+    ),
   path: localPathStringSchema.describe(
     "Absolute filesystem path to the selected executable or library",
   ),
@@ -64,9 +71,75 @@ export const goBinarySchema = z
     bits: z.union([z.literal(32), z.literal(64)]),
     byte_order: z.enum(["little", "big"]),
     build_info: goBuildInfoSchema.nullable(),
+    functions: goFunctionTableSchema,
     limitations: z.array(z.string()),
   })
   .superRefine((report, context) => {
+    const functions = report.functions;
+    const table = functions.state === "not-requested" ? null : functions.table;
+    const inside = (
+      offset: number,
+      bytes: number,
+      start: number,
+      size: number,
+    ) => offset >= start && bytes <= size && offset - start <= size - bytes;
+    if (
+      table !== null &&
+      !inside(table.offset, table.bytes, 0, report.artifact.bytes)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["functions", "table"],
+        message: "Function table leaves the selected artifact.",
+      });
+    if (functions.state === "complete") {
+      if (
+        report.format !== "elf" ||
+        report.architecture !== "amd64" ||
+        report.bits !== 64 ||
+        report.byte_order !== "little"
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["functions"],
+          message:
+            "Complete function coverage requires ELF64 little-endian amd64.",
+        });
+      let previous = -1n;
+      for (const [index, entry] of functions.entries.entries()) {
+        const address = BigInt(entry.entry_address);
+        if (
+          address < BigInt(functions.text_start) ||
+          address <= previous ||
+          !inside(entry.file_offset, 1, 0, report.artifact.bytes) ||
+          !inside(
+            entry.table_row_offset,
+            8,
+            functions.table.offset,
+            functions.table.bytes,
+          ) ||
+          !inside(
+            entry.function_data_offset,
+            8,
+            functions.table.offset,
+            functions.table.bytes,
+          ) ||
+          !inside(
+            entry.name_location.offset,
+            entry.name_location.bytes + 1,
+            functions.table.offset,
+            functions.table.bytes,
+          )
+        )
+          context.addIssue({
+            code: "custom",
+            path: ["functions", "entries", index],
+            message:
+              "Function coordinates contradict the artifact, table or entry order.",
+          });
+        previous = address;
+      }
+    }
     const info = report.build_info;
     if (info === null) return;
     if (info.header_offset > report.artifact.bytes - 32)

@@ -1,12 +1,16 @@
-# Go binary build metadata
+# Go binary metadata and function entries
 
 `inspect_go_binary` / `inspect-go-binary` answers which Go compiler version,
 modules, replacements and build settings are embedded in one selected local
 executable or library. It reads the file without running it and requires no
 Go installation, active binary target, Hopper, Ghidra or IDA.
 
+With `--functions` (MCP: `functions: true`), ELF64 little-endian amd64 inspection also reads compiler-declared
+function names and entry coordinates from a named Go 1.20-layout `.gopclntab`.
+
 ```bash
 rea inspect-go-binary /absolute/path/to/application --json
+rea inspect-go-binary /absolute/path/to/application --functions --json
 ```
 
 The CLI resolves relative paths against the caller's working directory. MCP
@@ -51,6 +55,43 @@ not insert replacement characters or reject the entire artifact for those
 strings.
 
 ## Supported boundary
+
+### Function entries
+
+`functions.state` defaults to `not-requested`, with an empty entry list. Function
+table work and output occur only with `--functions` / MCP `functions: true`.
+When requested, the state is `complete` when every declared function-table row was
+decoded, or `unavailable` with an explicit `reason` and `limitation`. Complete
+coverage describes that table only, not all code or inline functions in the image.
+Unavailable coverage has no entries and never asserts that no functions exist.
+A malformed function table preserves independently readable build information;
+resource exhaustion fails the operation without partial success.
+
+Each entry contains `name`, `entry_address` (a hexadecimal string), a verified
+`file_offset`, the original `table_row_offset` and `function_data_offset`, and
+`name_location` (UTF-8 bytes excluding the terminating NUL). The table range and
+all coordinates belong to the reported artifact SHA-256. No function size is
+inferred from adjacent entries.
+
+The initial boundary is ELF `ET_EXEC`, 64-bit little-endian amd64, quantum 1,
+pointer width 8, and pclntab magic `0xfffffff1` (Go 1.20 layout). A unique
+file-backed, read-only, uncompressed `.gopclntab` and a unique file-backed `.text`
+with consistent load mappings are required. `text_start` comes from the `.text`
+section address, identified by `text_start_source: ".text-section"`, as in Go's
+standard `debug/gosym` reader. `declared_text_start` preserves the table header's
+separate value, which can be zero. PIE, relocatable images, PE/Mach-O functions,
+other architectures/layouts and sectionless discovery remain unavailable.
+
+Local producer verification used Go 1.27.0 normal and `-s -w` stripped Linux
+amd64 executables, comparing every name/address/file offset against Go's standard
+`debug/elf` and `debug/gosym` readers. This verifies those samples, not every Go
+release sharing the layout. Inspection itself requires no compiler.
+
+Function-name scanning has a cumulative 1 MiB budget; table decoding is limited
+to 16 MiB, entry representation to 8 MiB, and address checks to 4,194,304 mapping
+comparisons. These admission limits apply before materializing oversized results.
+
+### Build information
 
 The built-in TypeScript reader supports ELF, PE and thin Mach-O images with Go's
 inline or historical pointer build-info encoding. Source ranges refer to the
@@ -98,7 +139,7 @@ isolation.
 
 Embedded metadata is evidence of file content. It does not authenticate a
 compiler, dependency, commit or supply chain, and it does not establish runtime
-behavior. Function names, source mappings, types and decompiled code are outside
+behavior. Source mappings, types and decompiled code remain outside
 this tool's coverage. Use the [native workflow](native-investigation.md) when
 those questions require a disassembler.
 
@@ -107,3 +148,7 @@ those questions require a disassembler.
 `npm run verify:go:binary` exercises compiler-built fixtures through the public
 CLI and MCP, comparing their metadata with Go's standard `debug/buildinfo`
 reader. The verification lane requires Go; normal inspection does not.
+For supported Linux amd64 executables, it additionally compares every function
+name, entry address and mapped file offset with `debug/elf` and `debug/gosym`,
+including a Unicode name. Other producer targets verify explicit unavailable
+function coverage.

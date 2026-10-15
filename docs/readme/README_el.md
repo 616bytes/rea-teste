@@ -177,6 +177,8 @@ npx rea-agents@latest setup
 
 Η στατική εξέταση JavaScript και .NET διαβάζει τα αρχεία που παρέχονται χωρίς να εκτελεί την εφαρμογή. Η καταγραφή κατά την εκτέλεση εκτελεί τον επιλεγμένο στόχο ή αλληλεπιδρά μαζί του με τα δικαιώματα του χρήστη σου. Κάθε σχετικός οδηγός περιγράφει τις επιπτώσεις της.
 
+For jailbroken iOS runtime analysis, see [the iOS device guide](../ios-device-analysis.md).
+
 <a id="choosing-a-deep-analysis-provider"></a>
 
 Οι μορφές κώδικα μηχανής και τα υποστηριζόμενα συστήματα διαφέρουν ανά πάροχο ανάλυσης. Δες τη [ρύθμιση Hopper και Ghidra](../installation.md#hopper), τον [οδηγό IDA](../ida-provider.md) (που περιλαμβάνει προαιρετική γέφυρα MCP για κώδικα μηχανής), [Kuna](../kuna-provider.md) και την [πειραματική υποστήριξη Ghidra στα Windows](../windows-ghidra-p0.md). Το Ghidra υποστηρίζει επίσης [ανάλυση DOS 16 bit](../ghidra-dos.md). Για μεγάλα δυαδικά αρχεία, αύξησε το χρονικό όριο εκκίνησης του παρόχου με `REA_GHIDRA_STARTUP_TIMEOUT_MS` ή `REA_HOPPER_STARTUP_TIMEOUT_MS`. Για την επιλογή παρόχου, δες τον [οδηγό CLI](../cli.md#choose-a-provider). Έλεγξε τη [διαθεσιμότητα ανά έκδοση](../installation.md#released-package-and-main) για λειτουργίες που προστέθηκαν μετά την τελευταία έκδοση στο npm.

@@ -114,6 +114,7 @@ it("clusters three inspected archives through MCP by family and shared members",
       }[];
       readonly shared_members: readonly {
         readonly member_count: number;
+        readonly formats: readonly string[];
         readonly observations: readonly {
           readonly label: string;
           readonly evidence_id: string;
@@ -157,6 +158,9 @@ it("clusters three inspected archives through MCP by family and shared members",
       ["beta", false],
       ["gamma", false],
     ]);
+    // Identity commits to the digest, and every member classified one.txt the
+    // same way, so the row reports that single classification.
+    expect(result.shared_members[0]?.formats).toEqual(["file"]);
     // Archives are read as bytes, so these members keep byte-root identity and
     // no directory node is indexed.
     expect(result.coverage.members_without_byte_root_digest).toBe(0);

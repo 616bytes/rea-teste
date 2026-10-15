@@ -13,6 +13,13 @@ import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
 
+/**
+ * Room for the result envelope, families, summary and limitations inside one
+ * successful response: the wire repeats the JSON as structured content and as
+ * escaped text, so a payload of B bytes costs about 2B.
+ */
+const INDEX_RESULT_HEADROOM_BYTES = 64 * 1024;
+
 /** Register Evidence-backed deterministic artifact family clustering. */
 export const registerArtifactFamilyClusteringTool = (
   server: EvidenceMcpServer,
@@ -50,6 +57,17 @@ export const registerArtifactFamilyClusteringTool = (
                 ...(input.shared_member_minimum === undefined
                   ? {}
                   : { sharedMemberMinimum: input.shared_member_minimum }),
+                // Bound what the transport can actually carry: an index that
+                // would overshoot it is withheld with an explicit flag instead
+                // of becoming a delivery error with no clustering result.
+                indexBudgetBytes: Math.max(
+                  0,
+                  Math.floor(
+                    (server.delivery.resultBudgetBytes -
+                      INDEX_RESULT_HEADROOM_BYTES) /
+                      2,
+                  ),
+                ),
                 offset: input.offset,
                 limit: input.limit,
               });

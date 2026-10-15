@@ -5,6 +5,7 @@ import {
   clusterArtifactFamilies,
 } from "./artifactFamilyClustering.js";
 import {
+  artifactEdgeId,
   artifactGraphDigest,
   artifactIdForContent,
   artifactManifestId,
@@ -30,6 +31,15 @@ interface FixtureOptions {
   readonly coverageStatus?: "complete" | "unknown";
   /** A directory root has no bytes of its own, so its digest is graph-derived. */
   readonly rootFormat?: "file" | "directory";
+  /** The manifest's own root-format declaration, independent of the node. */
+  /**
+   * The manifest's root format, which the parser also requires from the
+   * Evidence subject and the root occurrence. The root node stays `file`, so the
+   * two producer facts disagree the way a hand-built record could.
+   */
+  readonly manifestRootFormat?: "file" | "directory";
+  /** Producer classification for child nodes; identity commits to the digest. */
+  readonly childFormat?: "file" | "zip";
   readonly coverageScope?: "root" | "container-entries";
   readonly limitations?: readonly string[];
 }
@@ -67,7 +77,7 @@ const inventory = (options: FixtureOptions) => {
       logical_path: ".",
       entry_kind: "file",
       artifact_kind: "resource",
-      artifact_format: "file",
+      artifact_format: options.manifestRootFormat ?? "file",
       declared_size: 1,
       compressed_size: null,
       executable: false,
@@ -82,7 +92,7 @@ const inventory = (options: FixtureOptions) => {
     const childId = artifactIdForContent(child.sha);
     nodes.push({
       artifact_id: childId,
-      format: "file",
+      format: options.childFormat ?? "file",
       sha256: child.sha,
       size: 1,
       media_type: null,
@@ -90,12 +100,13 @@ const inventory = (options: FixtureOptions) => {
       content_state: "materialized",
       limitations: [],
     });
+    const childOccurrenceId = occurrenceIdForLocation({
+      rootArtifactId,
+      logicalPath: child.path,
+      entryKind: "file",
+    });
     occurrences.push({
-      occurrence_id: occurrenceIdForLocation({
-        rootArtifactId,
-        logicalPath: child.path,
-        entryKind: "file",
-      }),
+      occurrence_id: childOccurrenceId,
       artifact_id: childId,
       parent_occurrence_id: occurrenceIdForLocation({
         rootArtifactId,
@@ -105,7 +116,7 @@ const inventory = (options: FixtureOptions) => {
       logical_path: child.path,
       entry_kind: "file",
       artifact_kind: "resource",
-      artifact_format: "file",
+      artifact_format: options.childFormat ?? "file",
       declared_size: 1,
       compressed_size: null,
       executable: false,
@@ -115,15 +126,19 @@ const inventory = (options: FixtureOptions) => {
       limitations: [],
     });
     edges.push({
-      edge_id: `edg_${(index + 1).toString(16).padStart(64, "0")}`,
+      // The parser recomputes this id from the edge and its occurrence.
+      edge_id: artifactEdgeId(
+        {
+          parent_artifact_id: rootArtifactId,
+          relation: "contains",
+          occurrence_id: childOccurrenceId,
+        },
+        { artifact_id: childId, logical_path: child.path },
+      ),
       ordinal: index,
       parent_artifact_id: rootArtifactId,
       relation: "contains",
-      occurrence_id: occurrenceIdForLocation({
-        rootArtifactId,
-        logicalPath: child.path,
-        entryKind: "file",
-      }),
+      occurrence_id: childOccurrenceId,
       producer: null,
     });
   }
@@ -138,7 +153,7 @@ const inventory = (options: FixtureOptions) => {
       manifest_id: artifactManifestId(rootArtifactId, graphSha256),
       root_artifact_id: rootArtifactId,
       root_sha256: options.rootSha,
-      root_format: "file",
+      root_format: options.manifestRootFormat ?? "file",
       graph_sha256: graphSha256,
       node_count: nodes.length + (options.declareExtraNodes ?? 0),
       occurrence_count: occurrences.length,
@@ -160,7 +175,11 @@ const inventory = (options: FixtureOptions) => {
 const member = (label: string, options: FixtureOptions) => ({
   label,
   evidence: createEvidence(
-    { path: label, sha256: options.rootSha, format: "file" },
+    {
+      path: label,
+      sha256: options.rootSha,
+      format: options.manifestRootFormat ?? "file",
+    },
     provider,
     {
       operation: "inventory_artifact",
@@ -177,6 +196,7 @@ const cluster = (
   members: readonly { readonly label: string; readonly evidence: Evidence }[],
   options: {
     readonly sharedMemberMinimum?: number;
+    readonly indexBudgetBytes?: number;
     readonly offset?: number;
     readonly limit?: number;
   } = {},
@@ -185,6 +205,9 @@ const cluster = (
     ...(options.sharedMemberMinimum === undefined
       ? {}
       : { sharedMemberMinimum: options.sharedMemberMinimum }),
+    ...(options.indexBudgetBytes === undefined
+      ? {}
+      : { indexBudgetBytes: options.indexBudgetBytes }),
     offset: options.offset ?? 0,
     limit: options.limit ?? 100,
   });
@@ -384,6 +407,115 @@ describe("clusterArtifactFamilies member index and root identity", () => {
       result.limitations.some((item) =>
         item.includes("excluded from the member index"),
       ),
+    ).toBe(true);
+  });
+
+  it("refuses byte identity when the manifest declares a directory root", () => {
+    // Subject and manifest agree (the parser enforces that pair), while the root
+    // node reports a byte format: the two root-format facts disagree, so the
+    // identity stays unresolved rather than aligned.
+    const result = cluster([
+      member("alpha", {
+        rootSha: sha("a"),
+        manifestRootFormat: "directory",
+      }),
+      member("beta", {
+        rootSha: sha("a"),
+        manifestRootFormat: "directory",
+      }),
+    ]);
+
+    // The manifest and the root node are independent producer facts. When the
+    // manifest says the root is a directory, its digest is graph-derived even if
+    // the node carries another format, so nothing is claimed byte-identical.
+    expect(result.families).toHaveLength(0);
+    expect(result.status).toBe("partitioned");
+    expect(result.summary.members_without_byte_root_digest).toBe(2);
+  });
+
+  it("keeps every producer format reported for one artifact id", () => {
+    const members = [
+      member("alpha", {
+        rootSha: sha("a"),
+        children: [{ path: "one.txt", sha: sha("c") }],
+      }),
+      member("beta", {
+        rootSha: sha("a"),
+        children: [{ path: "one.txt", sha: sha("c") }],
+        childFormat: "zip",
+      }),
+    ];
+    const forward = cluster(members);
+    const reversed = cluster([...members].reverse());
+
+    const child = forward.shared_members.find((row) => row.sha256 === sha("c"));
+    // Identity commits only to the digest, so both classifications survive
+    // instead of the first member's classification winning by input order.
+    expect(child?.formats).toEqual(["file", "zip"]);
+    expect(
+      forward.shared_members.find((row) => row.sha256 === sha("a"))?.formats,
+    ).toEqual(["file"]);
+    expect(JSON.stringify(forward)).toBe(JSON.stringify(reversed));
+  });
+
+  it("orders family rows by member identity when labels repeat", () => {
+    const members = [
+      member("dup", { rootSha: sha("a") }),
+      member("dup", {
+        rootSha: sha("a"),
+        children: [{ path: "one.txt", sha: sha("c") }],
+      }),
+    ];
+    const forward = cluster(members);
+    const reversed = cluster([...members].reverse());
+
+    expect(JSON.stringify(forward)).toBe(JSON.stringify(reversed));
+    expect(forward.families[0]?.members.map(({ label }) => label)).toEqual([
+      "dup",
+      "dup",
+    ]);
+    expect(
+      new Set(
+        forward.families[0]?.members.map(({ evidence_id }) => evidence_id),
+      ).size,
+    ).toBe(2);
+  });
+
+  it("orders unplaced rows by member identity when labels repeat", () => {
+    const members = [
+      member("dup", { rootSha: sha("a"), declareExtraNodes: 1 }),
+      member("dup", { rootSha: sha("b"), declareExtraNodes: 2 }),
+    ];
+    const forward = cluster(members);
+    const reversed = cluster([...members].reverse());
+
+    expect(JSON.stringify(forward)).toBe(JSON.stringify(reversed));
+    expect(
+      forward.families
+        .flatMap(({ unknown_members }) => unknown_members)
+        .map(({ label }) => label),
+    ).toEqual(["dup", "dup"]);
+  });
+
+  it("withholds a member index that would exceed its byte budget", () => {
+    const result = cluster(
+      [
+        member("alpha", { rootSha: sha("a") }),
+        member("beta", { rootSha: sha("a") }),
+      ],
+      { indexBudgetBytes: 8 },
+    );
+
+    // The index is complete or absent, never partial because a budget ran out,
+    // and the families this call can hold are unaffected by the index budget.
+    expect(result.coverage.member_index_withheld).toBe(true);
+    expect(result.shared_members).toHaveLength(0);
+    expect(result.partially_shared_members).toHaveLength(0);
+    expect(result.unique_members).toHaveLength(0);
+    expect(result.summary.shared_member_groups).toBe(0);
+    expect(result.families).toHaveLength(1);
+    expect(
+      result.limitations.some((item) => item.includes("byte budget")),
     ).toBe(true);
   });
 });

@@ -110,7 +110,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "cluster_artifacts",
-    "Partition two or more authenticated inspect_artifact inventories into families by exact root content digest, and index every graph member as shared, partially shared or unique. Family rows cite the member Evidence that established them; a member whose inventory is incomplete, contradictory or declared under a different coverage scope is reported as unplaced with its reason instead of being described as different. A re-packed container with identical members has no family and appears only in the member index. Labels are caller text and never parsed as identity. Returns every family inline; the member index is never paged away.",
+    "Partition two or more authenticated inspect_artifact inventories into families by exact root content digest, and index every graph member as shared, partially shared or unique. Family rows cite the member Evidence that established them; a member whose inventory is incomplete, contradictory or declared under a different coverage scope is reported as unplaced with its reason instead of being described as different. A re-packed container with identical members has no family and appears only in the member index. Labels are caller text and never parsed as identity. Returns every family inline; the member index is never paged away, and it is reported complete or withheld with coverage.member_index_withheld when its node or serialized-size budget is exhausted.",
     artifactFamilyClusteringInputSchema,
   ),
   session(

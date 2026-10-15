@@ -12,13 +12,17 @@ import {
   parseArtifactInventoryEvidence,
   type InventorySet,
 } from "./artifactInventoryEvidence.js";
+import {
+  DEFAULT_MEMBER_INDEX_JSON_BYTES,
+  MAX_EXAMINED_NODES,
+  buildMemberIndex,
+  memberIndexRowSchema,
+} from "./artifactFamilyClusteringIndex.js";
 
 /** Caller-selected maximum members; a real allocation bound for retained inventories. */
 export const ARTIFACT_FAMILY_MEMBER_LIMIT = 64;
 /** A member counts as shared only from two members upward. */
 const MINIMUM_SHARED_MEMBERS = 2;
-/** Total retained graph nodes examined before the member index is withheld. */
-const MAX_EXAMINED_NODES = 250_000;
 
 /**
  * The only family tier that can exist: the inventory graph digest commits to
@@ -106,25 +110,6 @@ const familySchema = z.strictObject({
   unknown_members: z.array(unknownMemberRowSchema),
 });
 
-/**
- * One member's observation of an indexed graph member. A label is caller text
- * and repeated labels are permitted, so the member's own Evidence id travels
- * with every observation: it keeps the count per member and keeps source
- * identity available in a result that no longer carries family rows.
- */
-const memberObservationSchema = z.strictObject({
-  label: z.string(),
-  evidence_id: z.string(),
-});
-
-const memberIndexRowSchema = z.strictObject({
-  artifact_id: z.string(),
-  sha256: z.string(),
-  format: z.string(),
-  observations: z.array(memberObservationSchema),
-  member_count: z.number().int().positive(),
-});
-
 /** Deterministic Evidence-backed partition of two or more artifact inventories. */
 export const artifactFamilyClusteringResultSchema = z.strictObject({
   status: clusterStatusSchema,
@@ -177,9 +162,6 @@ export type ArtifactFamilyClusteringResult = z.infer<
 
 type UnknownReason = z.infer<typeof unknownReasonSchema>;
 type MemberRow = z.infer<typeof memberRowSchema>;
-type MemberObservation = z.infer<typeof memberObservationSchema>;
-type MemberIndexRow = z.infer<typeof memberIndexRowSchema>;
-
 interface MemberInventory {
   /** Position in the caller's array: repeated labels still count as members. */
   readonly index: number;
@@ -194,15 +176,6 @@ interface ComparableScope {
   })[];
   readonly scopes: readonly ArtifactInventoryCoverage["scope"][];
   readonly majorityScope: ArtifactInventoryCoverage["scope"] | null;
-}
-
-interface MemberIndex {
-  readonly shared: MemberIndexRow[];
-  readonly partiallyShared: MemberIndexRow[];
-  readonly unique: MemberIndexRow[];
-  readonly nodesExamined: number;
-  readonly nodesWithoutByteIdentity: number;
-  readonly withheld: boolean;
 }
 
 const orderedUnique = (values: readonly string[]): string[] =>
@@ -254,11 +227,17 @@ const rootNodeOf = (inventory: InventorySet): ArtifactNode | undefined =>
  * has no content of its own, so its digest is derived from member names and
  * child identities instead; entries whose content was not read, such as symlink
  * targets, are not committed, so such a digest cannot support a byte-identity
- * claim even between identically named trees.
+ * claim even between identically named trees. Both producer facts are checked:
+ * the manifest's declared root format and the root node's own format, so a
+ * disagreement between them stays unresolved rather than aligned.
  */
 const hasByteRootDigest = (member: MemberInventory): boolean => {
   const root = rootNodeOf(member.inventory);
-  return root !== undefined && root.format !== "directory";
+  return (
+    root !== undefined &&
+    root.format !== "directory" &&
+    member.inventory.manifest.root_format !== "directory"
+  );
 };
 
 /** Count repeated values, retaining only the values that repeat. */
@@ -351,8 +330,10 @@ const buildFamilies = (
       members: complete
         .filter((entry) => entry.inventory.manifest.root_sha256 === digest)
         .map(memberRow)
-        .sort((left, right) =>
-          compareUnicodeCodePoints(left.label, right.label),
+        .sort(
+          (left, right) =>
+            compareUnicodeCodePoints(left.label, right.label) ||
+            compareUnicodeCodePoints(left.evidence_id, right.evidence_id),
         ),
       unknown_members: [] as z.infer<typeof unknownMemberRowSchema>[],
     }));
@@ -363,81 +344,13 @@ const buildFamilies = (
       basis:
         "Members with no comparable placement; each row carries its own reason and no family claim.",
       members: [],
-      unknown_members: [...unplaced].sort((left, right) =>
-        compareUnicodeCodePoints(left.label, right.label),
-      ),
-    });
-  return families;
-};
-
-/**
- * Partition every examined member exactly once: shared, partially shared, or
- * unique. Nothing is dropped for falling under the shared threshold.
- */
-const buildMemberIndex = (input: {
-  readonly complete: readonly MemberInventory[];
-  readonly minimum: number;
-  readonly scope: ArtifactInventoryCoverage["scope"] | null;
-}): MemberIndex => {
-  const nodesExamined = input.complete.reduce(
-    (total, entry) => total + entry.inventory.nodes.length,
-    0,
-  );
-  const withheld = nodesExamined > MAX_EXAMINED_NODES;
-  const index = new Map<
-    string,
-    { readonly node: ArtifactNode; readonly observations: MemberObservation[] }
-  >();
-  let nodesWithoutByteIdentity = 0;
-  if (!withheld && input.scope !== null)
-    for (const entry of input.complete)
-      for (const node of entry.inventory.nodes) {
-        // A directory node's identity covers member names and child identities
-        // rather than bytes, and unread entries are not committed, so it cannot
-        // support a content-sharing claim. Count it instead of dropping it.
-        if (node.format === "directory") {
-          nodesWithoutByteIdentity += 1;
-          continue;
-        }
-        const observation = {
-          label: entry.label,
-          evidence_id: entry.evidenceId,
-        };
-        const existing = index.get(node.artifact_id);
-        if (existing === undefined)
-          index.set(node.artifact_id, { node, observations: [observation] });
-        else existing.observations.push(observation);
-      }
-  const rows: MemberIndexRow[] = [...index.values()]
-    .map((entry) => ({
-      artifact_id: entry.node.artifact_id,
-      sha256: entry.node.sha256,
-      format: entry.node.format,
-      // One observation per member, so repeated labels keep distinct members.
-      observations: [...entry.observations].sort(
+      unknown_members: [...unplaced].sort(
         (left, right) =>
           compareUnicodeCodePoints(left.label, right.label) ||
           compareUnicodeCodePoints(left.evidence_id, right.evidence_id),
       ),
-      member_count: entry.observations.length,
-    }))
-    .sort(
-      (left, right) =>
-        right.member_count - left.member_count ||
-        compareUnicodeCodePoints(left.artifact_id, right.artifact_id),
-    );
-  return {
-    nodesExamined,
-    nodesWithoutByteIdentity,
-    withheld,
-    shared: rows.filter(
-      (row) => row.member_count > 1 && row.member_count >= input.minimum,
-    ),
-    partiallyShared: rows.filter(
-      (row) => row.member_count > 1 && row.member_count < input.minimum,
-    ),
-    unique: rows.filter((row) => row.member_count === 1),
-  };
+    });
+  return families;
 };
 
 const statusFor = (input: {
@@ -450,16 +363,73 @@ const statusFor = (input: {
       ? "partitioned"
       : "partial";
 
+/** Every limitation this result must state: fixed rules plus this call's facts. */
+const clusteringLimitations = (input: {
+  readonly parsed: readonly (MemberInventory & {
+    readonly reason: UnknownReason | null;
+  })[];
+  readonly scopes: readonly ArtifactInventoryCoverage["scope"][];
+  readonly majorityScope: ArtifactInventoryCoverage["scope"] | null;
+  readonly memberCount: number;
+  readonly sharedMemberMinimum: number;
+  readonly withoutByteRootDigest: number;
+  readonly nodesWithoutByteIdentity: number;
+  readonly withheldBy: "node-count" | "serialized-size" | null;
+  readonly indexBudgetBytes: number;
+}): string[] =>
+  orderedUnique([
+    ...fixedLimitations,
+    ...input.parsed.flatMap((entry) =>
+      entry.inventory.limitations.map((item) => `${entry.label}: ${item}`),
+    ),
+    ...(input.scopes.length > 1
+      ? [
+          input.majorityScope === null
+            ? `Members declare different inventory coverage scopes (${input.scopes.join(", ")}) with no strict majority; nothing was clustered and no member is described as different.`
+            : `Members declare different inventory coverage scopes (${input.scopes.join(", ")}); only ${input.majorityScope} members were clustered.`,
+        ]
+      : []),
+    ...(input.withoutByteRootDigest === 0
+      ? []
+      : [
+          `${input.withoutByteRootDigest} of ${input.memberCount} members have a root digest derived from their inventory graph rather than the root's own bytes; they are indexed but never placed in a root-sha256 family.`,
+        ]),
+    ...(input.nodesWithoutByteIdentity === 0
+      ? []
+      : [
+          `${input.nodesWithoutByteIdentity} directory nodes are excluded from the member index: their identity covers member names and child identities, not bytes, so it cannot support a shared or unique content claim.`,
+        ]),
+    ...(input.withheldBy === "node-count"
+      ? [
+          `Examined graph nodes exceeded the ${MAX_EXAMINED_NODES} node budget; the shared and unique member index is withheld rather than reported partially.`,
+        ]
+      : input.withheldBy === "serialized-size"
+        ? [
+            `The serialized member index would exceed the ${input.indexBudgetBytes} byte budget; the shared and unique member index is withheld rather than reported partially. The complete inventory Evidence stays retained, so it remains readable through the retained-Evidence views and CLI JSON output.`,
+          ]
+        : []),
+    ...(input.sharedMemberMinimum > input.memberCount
+      ? []
+      : [
+          `A member counts as shared only when it appears in at least ${input.sharedMemberMinimum} of ${input.memberCount} members; members below that threshold are reported separately as partially shared, never dropped.`,
+        ]),
+    "Exhausting the returned page is not complete capture; every family remains addressable by paging.",
+  ]);
+
 /** Partition authenticated inventories into families and a shared/unique member index. */
 export const clusterArtifactFamilies = (
   members: readonly { readonly label: string; readonly evidence: Evidence }[],
   options: {
     readonly sharedMemberMinimum?: number;
+    /** Serialized JSON budget for the member index; defaults to the domain bound. */
+    readonly indexBudgetBytes?: number;
     readonly offset: number;
     readonly limit: number;
   },
 ): ArtifactFamilyClusteringResult => {
   const minimum = options.sharedMemberMinimum ?? members.length;
+  const indexBudgetBytes =
+    options.indexBudgetBytes ?? DEFAULT_MEMBER_INDEX_JSON_BYTES;
   const parsed = parseMembers(members);
   const { clustered, scopes, majorityScope } = comparableScope(parsed);
   const placed = clustered.filter((entry) => entry.reason === null);
@@ -485,41 +455,19 @@ export const clusterArtifactFamilies = (
     complete,
     minimum,
     scope: majorityScope,
+    budgetBytes: indexBudgetBytes,
   });
-  const limitations = orderedUnique([
-    ...fixedLimitations,
-    ...parsed.flatMap((entry) =>
-      entry.inventory.limitations.map((item) => `${entry.label}: ${item}`),
-    ),
-    ...(scopes.length > 1
-      ? [
-          majorityScope === null
-            ? `Members declare different inventory coverage scopes (${scopes.join(", ")}) with no strict majority; nothing was clustered and no member is described as different.`
-            : `Members declare different inventory coverage scopes (${scopes.join(", ")}); only ${majorityScope} members were clustered.`,
-        ]
-      : []),
-    ...(withoutByteRootDigest === 0
-      ? []
-      : [
-          `${withoutByteRootDigest} of ${members.length} members have a root digest derived from their inventory graph rather than the root's own bytes; they are indexed but never placed in a root-sha256 family.`,
-        ]),
-    ...(index.nodesWithoutByteIdentity === 0
-      ? []
-      : [
-          `${index.nodesWithoutByteIdentity} directory nodes are excluded from the member index: their identity covers member names and child identities, not bytes, so it cannot support a shared or unique content claim.`,
-        ]),
-    ...(index.withheld
-      ? [
-          `Examined graph nodes exceeded the ${MAX_EXAMINED_NODES} node budget; the shared and unique member index is withheld rather than reported partially.`,
-        ]
-      : []),
-    ...(minimum > members.length
-      ? []
-      : [
-          `A member counts as shared only when it appears in at least ${minimum} of ${members.length} members; members below that threshold are reported separately as partially shared, never dropped.`,
-        ]),
-    "Exhausting the returned page is not complete capture; every family remains addressable by paging.",
-  ]);
+  const limitations = clusteringLimitations({
+    parsed,
+    scopes,
+    majorityScope,
+    memberCount: members.length,
+    sharedMemberMinimum: minimum,
+    withoutByteRootDigest,
+    nodesWithoutByteIdentity: index.nodesWithoutByteIdentity,
+    withheldBy: index.withheldBy,
+    indexBudgetBytes,
+  });
 
   const placedMembers = families.reduce(
     (total, family) => total + family.members.length,

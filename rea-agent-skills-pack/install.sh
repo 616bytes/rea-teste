@@ -11,7 +11,7 @@ install_to() {
     local name target backup staged
     name="$(basename "$skill")"
     target="$dest/$name"
-    staged="$dest/.${name}.staging-$BASHPID-$RANDOM"
+    staged="$dest/.${name}.staging-$-$RANDOM"
     backup=""
 
     # Prepare the complete replacement before touching the active installation.
@@ -22,7 +22,7 @@ install_to() {
     fi
 
     if [[ -e "$target" ]]; then
-      backup="$dest/.${name}.backup-$(date +%Y%m%d-%H%M%S)-$BASHPID-$RANDOM"
+      backup="$dest/.${name}.backup-$(date +%Y%m%d-%H%M%S)-$-$RANDOM"
       if ! mv -- "$target" "$backup"; then
         rm -rf -- "$staged"
         echo "Falha ao criar backup de $target; instalação existente preservada." >&2

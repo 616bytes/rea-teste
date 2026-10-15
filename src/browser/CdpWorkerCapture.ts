@@ -655,6 +655,7 @@ export class CdpWorkerCapture {
   #refreshServiceClients(): void {
     for (const [id, versions] of this.#versionsByTarget) {
       let current: boolean | null = null;
+      let observedControl = false;
       // Client IDs can arrive before their iframe attachment. Resolve that
       // recorded relationship when the owned frame becomes known, without
       // inventing another protocol version event. Detachment preserves the
@@ -662,13 +663,18 @@ export class CdpWorkerCapture {
       for (const version of versions) {
         const controls = this.#controlsPage(version.clients);
         if (controls === true) version.lifecycle.controls_page = true;
+        if (version.lifecycle.controls_page === true) observedControl = true;
         if (controls !== null) current = controls;
       }
-      this.#updateControl(id, current);
+      this.#updateControl(id, current, observedControl);
     }
   }
 
-  #updateControl(id: string, controls: boolean | null): void {
+  #updateControl(
+    id: string,
+    controls: boolean | null,
+    observedControl = false,
+  ): void {
     const previouslyControlled = this.#controlled.has(id);
     if (controls === true) this.#controlled.add(id);
     else if (controls === false) this.#controlled.delete(id);
@@ -696,11 +702,7 @@ export class CdpWorkerCapture {
         "Service-worker control was revoked during capture; later runtime events outside the selected page scope were excluded.",
       );
     }
-    if (
-      this.#versionsByTarget
-        .get(id)
-        ?.some(({ lifecycle }) => lifecycle.controls_page === true)
-    ) {
+    if (controls === true || observedControl) {
       worker.item.observation.ownership = "service_worker_client";
       worker.item.observation.page_target_id = this.context.target.id;
     }

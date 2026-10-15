@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -99,8 +99,11 @@ if (!(await exists(join(headers, "node_api.h")))) {
   run("tar", ["xzf", archive, "-C", cache]);
   headers = join(cache, `node-v${nodeVersion}`, "include", "node");
 }
-const artifact =
-  architecture === "arm64" ? "rea-windows-arm64.node" : "rea-windows-x64.node";
+const artifactNames = {
+  x64: "rea-windows-x64.node",
+  arm64: "rea-windows-arm64.node",
+};
+const artifact = artifactNames[architecture];
 // MSVC short-import libraries do not produce a correct Node import table with
 // GNU ld. Generate a GNU delay-import library for the exact stable Node-API
 // symbols; addon.cc binds it to the host executable, whatever its file name.
@@ -112,6 +115,26 @@ const sourceText = (
     ),
   )
 ).join("\n");
+const buildInputs = [
+  "native/windows/src/addon.cc",
+  "native/windows/src/authority.hpp",
+  inspectionFixture
+    ? "tests/fixtures/windows-native-inspection-failure.cc"
+    : "native/windows/src/filesystem.cc",
+  "native/windows/src/process.cc",
+];
+const buildInputBytes = await Promise.all(
+  buildInputs.map((path) => readFile(join(root, path))),
+);
+const sourceHash = createHash("sha256")
+  .update(`node:${nodeVersion}\n`)
+  .update(`fixture:${String(inspectionFixture)}\n`);
+for (const [index, path] of buildInputs.entries()) {
+  sourceHash.update(`${path}\0`);
+  sourceHash.update(buildInputBytes[index]);
+  sourceHash.update("\0");
+}
+const sourceSha256 = sourceHash.digest("hex");
 const symbols = [
   ...new Set(
     [...sourceText.matchAll(/\b(napi_[a-z0-9_]+)\s*\(/gu)].map(
@@ -166,7 +189,12 @@ const existingArtifacts = {};
 if (await exists(manifestPath)) {
   try {
     const previous = JSON.parse(await readFile(manifestPath, "utf8"));
-    if (previous?.packageVersion === packageJson.version) {
+    if (
+      previous?.packageVersion === packageJson.version &&
+      previous?.abiVersion === 1 &&
+      previous?.nodeApiVersion === 8 &&
+      previous?.sourceSha256 === sourceSha256
+    ) {
       const candidates = previous.artifacts ?? {
         [previous.architecture]: {
           artifact: previous.artifact,
@@ -174,16 +202,23 @@ if (await exists(manifestPath)) {
         },
       };
       for (const [arch, entry] of Object.entries(candidates)) {
+        const expectedName = artifactNames[arch];
         if (
-          (arch === "x64" || arch === "arm64") &&
-          typeof entry?.artifact === "string" &&
+          expectedName !== undefined &&
+          entry?.artifact === expectedName &&
           typeof entry?.artifactSha256 === "string" &&
-          (await exists(join(output, entry.artifact)))
-        )
-          existingArtifacts[arch] = {
-            artifact: entry.artifact,
-            artifactSha256: entry.artifactSha256,
-          };
+          (await exists(join(output, expectedName)))
+        ) {
+          const existingBytes = await readFile(join(output, expectedName));
+          const existingDigest = createHash("sha256")
+            .update(existingBytes)
+            .digest("hex");
+          if (existingDigest === entry.artifactSha256)
+            existingArtifacts[arch] = {
+              artifact: expectedName,
+              artifactSha256: existingDigest,
+            };
+        }
       }
     }
   } catch {
@@ -194,6 +229,10 @@ const artifacts = {
   ...existingArtifacts,
   [architecture]: { artifact, artifactSha256 },
 };
+for (const [arch, fileName] of Object.entries(artifactNames)) {
+  if (artifacts[arch] === undefined)
+    await rm(join(output, fileName), { force: true });
+}
 const primaryArchitecture =
   artifacts.x64 !== undefined && architecture !== "arm64"
     ? "x64"
@@ -207,6 +246,7 @@ const metadata = {
   nodeApiVersion: 8,
   artifact: primaryEntry.artifact,
   artifactSha256: primaryEntry.artifactSha256,
+  sourceSha256,
   artifacts,
 };
 await writeFile(manifestPath, `${JSON.stringify(metadata, null, 2)}\n`);

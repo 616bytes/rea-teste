@@ -17,8 +17,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-if (process.platform !== "win32")
-  throw new Error("Native inspection ownership requires real Windows NTFS");
+if (
+  process.platform !== "win32" ||
+  (process.arch !== "x64" && process.arch !== "arm64")
+)
+  throw new Error(
+    "Native inspection ownership requires real Windows x64 or ARM64 NTFS",
+  );
 const root = resolve(process.argv[2] ?? ".");
 const artifact = resolve(
   process.argv[3] ?? ".cache/windows-native-inspection-fixture",
@@ -42,9 +47,29 @@ try {
   const nativeManifest = JSON.parse(
     await readFile(join(artifact, "manifest.json"), "utf8"),
   );
-  if (typeof nativeManifest.artifact !== "string")
-    throw new Error("Windows native inspection fixture omitted its artifact");
-  for (const name of ["manifest.json", nativeManifest.artifact])
+  const hostEntry =
+    nativeManifest.artifacts?.[process.arch] ??
+    (nativeManifest.architecture === process.arch
+      ? {
+          artifact: nativeManifest.artifact,
+          artifactSha256: nativeManifest.artifactSha256,
+        }
+      : undefined);
+  if (typeof hostEntry?.artifact !== "string")
+    throw new Error(
+      `Windows native inspection fixture omitted its ${process.arch} artifact`,
+    );
+  const fixtureFiles = new Set([
+    "manifest.json",
+    hostEntry.artifact,
+    ...(typeof nativeManifest.artifact === "string"
+      ? [nativeManifest.artifact]
+      : []),
+    ...Object.values(nativeManifest.artifacts ?? {}).flatMap((entry) =>
+      typeof entry?.artifact === "string" ? [entry.artifact] : [],
+    ),
+  ]);
+  for (const name of fixtureFiles)
     await copyFile(
       join(artifact, name),
       join(workspace, "native", "windows", "build", name),
@@ -67,7 +92,7 @@ import {systemWindowsNativeAuthority} from ${JSON.stringify(loader)};
 const temp=process.env.TEMP;
 const mode=process.argv[2];
 const creation=mode.startsWith('create-');
-const native=creation?createRequire(import.meta.url)(${JSON.stringify(join(workspace, "native", "windows", "build", nativeManifest.artifact))}):null;
+const native=creation?createRequire(import.meta.url)(${JSON.stringify(join(workspace, "native", "windows", "build", hostEntry.artifact))}):null;
 if(creation){
  let failure;
  try{native.call('runtime_create',[temp,'rea-native-created-'])}catch(error){failure=error}

@@ -9,6 +9,7 @@ import {
 } from "../domain/procmon/procmonExport.js";
 import { readProcmonCsv } from "./ProcmonCsvExport.js";
 import {
+  detachString,
   partialCoverage,
   procmonCoreColumn,
   ProcmonEventWindow,
@@ -67,13 +68,17 @@ export const readProcmonExport = async (
     ),
   );
   // One final coverage decision drives both the columns claim and its note.
-  const coverage = withCutCharacter(parsed, decoded.cutBytes);
+  const final = withCutCharacter(parsed, decoded.cutBytes);
+  const coverage =
+    final.status === "partial"
+      ? { ...final, message: detachString(final.message) }
+      : final;
   return {
     source: {
       format,
       encoding,
       byte_order_mark: byteOrderMark,
-      columns: parsed.columns,
+      columns: parsed.columns.map(detachString),
     },
     // A column unseen before a partial XML parse stopped may appear later;
     // CSV headers name every column up front.
@@ -81,7 +86,7 @@ export const readProcmonExport = async (
       format === "xml" && coverage.status === "partial"
         ? []
         : PROCMON_CORE_COLUMNS.filter((column) => !present.has(column)),
-    omitted_nested_fields: parsed.nested,
+    omitted_nested_fields: parsed.nested.map(detachString),
     events: window.events,
     output_window: {
       examined_events: window.examined,

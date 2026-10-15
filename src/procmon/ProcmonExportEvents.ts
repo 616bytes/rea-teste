@@ -174,8 +174,12 @@ export class ProcmonEventWindow {
     for (const [column, value] of fields) {
       const core = procmonCoreColumn(column, this.format);
       // Entries, not object keys, so any name (even __proto__) stays data.
-      if (core === undefined) event.additional.push({ column, value });
-      else event[CORE_FIELDS[core]] = value;
+      if (core === undefined)
+        event.additional.push({
+          column: detachString(column),
+          value: detachString(value),
+        });
+      else event[CORE_FIELDS[core]] = detachString(value);
     }
     this.events.push(event);
   }
@@ -219,6 +223,15 @@ export class ProcmonEventWindow {
       : new ProcmonExportOutputFailure(this.events.length);
   }
 }
+
+/**
+ * Copy text that the report keeps. Parsers slice the decoded export, and V8
+ * sliced strings keep their parent alive, so a retained cell would otherwise
+ * hold the whole decoded file (up to 128 MiB) for as long as the Evidence.
+ * Retained text is bounded by the output budget.
+ */
+export const detachString = (value: string): string =>
+  JSON.parse(JSON.stringify(value)) as string;
 
 /** Let cancellation and other work run between bounded parsing slices. */
 export const yieldToEventLoop = async (

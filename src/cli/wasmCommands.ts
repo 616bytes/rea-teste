@@ -9,6 +9,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 /** Resolve all caller-selected artifact paths through the shared workflow. */
 export const registerWasmCommands = (
@@ -64,7 +65,7 @@ export const registerWasmCommands = (
             async () => {
               const result = await service.inspect(
                 {
-                  path: resolve(args.path),
+                  path: absoluteCallerPath(args.path),
                   glue_paths: options.glue_paths?.map((path) => resolve(path)),
                   candidate_paths: options.candidate_paths?.map((path) =>
                     resolve(path),

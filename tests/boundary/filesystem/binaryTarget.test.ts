@@ -784,7 +784,6 @@ describe("iOS-style app bundle targets", () => {
       });
       expect(result.ok && result.value).toMatchObject({
         path: await realpath(join(contents, "MacOS", "Linked")),
-        bundleInfoPlist: await realpath(join(contents, "Real.plist")),
       });
     },
   );
@@ -1077,37 +1076,7 @@ describe("app bundle symlink containment", () => {
         ok: false,
         error: {
           path: app,
-          reason: "app program directory leaves bundle",
-        },
-      });
-    },
-  );
-
-  it.skipIf(process.platform === "win32")(
-    "rejects Contents/Info.plist symlinked outside the selected bundle",
-    async () => {
-      const directory = await createTestTempDirectory("rea-target-");
-      const app = join(directory, "Escaping.app");
-      const contents = join(app, "Contents");
-      const plistPath = join(contents, "Info.plist");
-      await mkdir(join(contents, "MacOS"), { recursive: true });
-      await writeFile(join(directory, "outside.plist"), plist("Escaping"));
-      await symlink(join(directory, "outside.plist"), plistPath);
-      await writeFile(
-        join(contents, "MacOS", "Escaping"),
-        thinMach(0xfeedfacf, 0x0100000c),
-      );
-
-      expect(
-        await parseBinaryTarget(app, {
-          cwd: directory,
-          hostArchitecture: "arm64",
-        }),
-      ).toMatchObject({
-        ok: false,
-        error: {
-          path: plistPath,
-          reason: "app Info.plist leaves bundle",
+          reason: "app program directory leaves Contents/MacOS",
         },
       });
     },

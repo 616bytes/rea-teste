@@ -32,3 +32,77 @@ describe("app bundle Info.plist magic", () => {
     }
   });
 });
+
+describe("app bundle program directory containment", () => {
+  const plist =
+    "<plist><dict><key>CFBundleExecutable</key><string>Fixture</string></dict></plist>";
+
+  it("rejects an escaping programs directory before resolving its executable", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-programs-escape-"));
+    try {
+      const bundle = join(root, "Selected.app");
+      const programs = join(bundle, "Contents", "MacOS");
+      const executable = join(programs, "Fixture");
+      const plistPath = join(bundle, "Contents", "Info.plist");
+      const canonicalBundle = join(root, "Canonical.app");
+      const outsidePrograms = join(root, "outside");
+      await mkdir(join(bundle, "Contents"), { recursive: true });
+      await writeFile(plistPath, plist);
+      let resolvedExecutable = false;
+
+      const result = await resolveAppBundleExecutable(bundle, {
+        readFile: async () => Buffer.from(plist),
+        realpath: async (path) => {
+          if (path === bundle) return canonicalBundle;
+          if (path === programs) return outsidePrograms;
+          if (path === executable) {
+            resolvedExecutable = true;
+            return join(outsidePrograms, "Fixture");
+          }
+          return path;
+        },
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { reason: "app program directory leaves Contents/MacOS" },
+      });
+      expect(resolvedExecutable).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a bundle alias when its canonical programs directory stays inside", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-programs-alias-"));
+    try {
+      const bundle = join(root, "Alias.app");
+      const canonicalBundle = join(root, "Real.app");
+      const contents = join(bundle, "Contents");
+      const programs = join(contents, "MacOS");
+      const executable = join(programs, "Fixture");
+      const canonicalPrograms = join(canonicalBundle, "Contents", "MacOS");
+      const canonicalExecutable = join(canonicalPrograms, "Fixture");
+      const plistPath = join(contents, "Info.plist");
+      await mkdir(contents, { recursive: true });
+      await writeFile(plistPath, plist);
+
+      const result = await resolveAppBundleExecutable(bundle, {
+        readFile: async () => Buffer.from(plist),
+        realpath: async (path) => {
+          if (path === bundle) return canonicalBundle;
+          if (path === programs) return canonicalPrograms;
+          if (path === executable) return canonicalExecutable;
+          return path;
+        },
+      });
+
+      expect(result).toMatchObject({
+        ok: true,
+        value: { executable: canonicalExecutable, infoPlist: plistPath },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

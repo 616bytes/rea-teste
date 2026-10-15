@@ -2,6 +2,7 @@ import { z } from "zod";
 import { byteSearchResultSchema } from "../domain/native/bytePattern.js";
 import {
   artifactInventorySummaryViewResultSchema,
+  interfaceBuilderSummaryViewResultSchema,
   machoSummaryViewResultSchema,
   managedArtifactSummaryViewResultSchema,
   managedMemberSummaryViewResultSchema,
@@ -44,7 +45,7 @@ import {
   listArchitecturesSchema,
 } from "../domain/native/nativeInspection.js";
 import { artifactExtractionResultSchema } from "../domain/artifactGraph.js";
-import { artifactInspectionOutputSchema } from "../domain/artifactInspection.js";
+import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";
 import { interfaceBuilderAnalysisSchema } from "../domain/apple/interfaceBuilderGraph.js";
 import { dylibResolutionResultSchema } from "../domain/apple/dylibResolution.js";
 import { keyedArchiveResultSchema } from "../domain/apple/keyedArchive.js";
@@ -88,6 +89,7 @@ import {
 } from "./toolOutputSchemaPrimitives.js";
 
 import { processCaptureSchema } from "../domain/process/processCapture.js";
+import { electronFuseReportSchema } from "../domain/electron/electronFuses.js";
 const contextFacetSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("available"), value: jsonValueSchema }),
   z.object({
@@ -361,17 +363,19 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
     z.object({
       document: z.string(),
       image_base: z.string().min(1).optional(),
-      segments: z.array(
-        z.object({
-          name: z.string(),
-          start: z.string(),
-          end: z.string(),
-          length: z.number().min(0),
-          image_base: z.string().exactOptional(),
-          address_space: z.string().exactOptional(),
-        }),
-      ),
-      segment_count: z.number().int().min(0),
+      segments: z
+        .array(
+          z.object({
+            name: z.string(),
+            start: z.string(),
+            end: z.string(),
+            length: z.number().min(0).nullable(),
+            image_base: z.string().exactOptional(),
+            address_space: z.string().exactOptional(),
+          }),
+        )
+        .optional(),
+      segment_count: z.number().int().min(0).optional(),
       procedure_count: z.number().int().min(0),
       string_count: z.number().int().min(0),
     }),
@@ -400,12 +404,17 @@ export const nativeOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
 export const artifactOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   inspect_artifact: evidenceResultOf(
     z.union([
-      artifactInspectionOutputSchema,
+      artifactInspectionResultSchema,
       artifactInventorySummaryViewResultSchema,
     ]),
   ),
   extract_artifact: evidenceResultOf(artifactExtractionResultSchema),
-  decode_interface_builder: evidenceResultOf(interfaceBuilderAnalysisSchema),
+  decode_interface_builder: evidenceResultOf(
+    z.union([
+      interfaceBuilderAnalysisSchema,
+      interfaceBuilderSummaryViewResultSchema,
+    ]),
+  ),
   inspect_keyed_archive: evidenceResultOf(keyedArchiveResultSchema),
   inspect_asset_catalog: evidenceResultOf(appleAssetCatalogResultSchema),
   trace_dylib_resolution: evidenceResultOf(dylibResolutionResultSchema),
@@ -582,3 +591,8 @@ export const sessionOutputSchemas = {
     }),
   ),
 } satisfies Readonly<Record<string, z.ZodObject>>;
+
+/** Exact Evidence schema for read-only Electron fuse inspection. */
+export const electronFuseOutputSchemas = {
+  inspect_electron_fuses: evidenceResultOf(electronFuseReportSchema),
+};

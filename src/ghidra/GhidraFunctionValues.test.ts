@@ -27,6 +27,7 @@ const observationOperations: ReadonlySet<GhidraFunctionOperation> = new Set([
   "procedure_callers",
   "procedure_info",
   "procedure_pseudo_code",
+  "procedure_references",
   "read_function_instructions",
 ]);
 
@@ -64,6 +65,38 @@ describe("Ghidra unresolved call locations", () => {
 });
 
 describe("Ghidra function-analysis result values", () => {
+  it("preserves unresolved Swift jump omissions", () => {
+    const dossier = {
+      ...functionDossierSchema.parse(ghidraFunctionDossier()),
+      swift_string_literals: [],
+      swift_string_literal_omissions: [
+        {
+          source_address: "0x401004",
+          representation: "small",
+          address: null,
+          byte_length: 5,
+          reason: "unresolved_jump",
+          registers: ["x0", "x1"],
+          words: ["0x5000000000000005", "0x0000000000000000"],
+        },
+      ],
+    };
+    expect(
+      parseGhidraFunctionResult("analyze_function", {
+        value: dossier,
+        limitations: [],
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        value: {
+          swift_string_literal_omissions:
+            dossier.swift_string_literal_omissions,
+        },
+      },
+    });
+  });
+
   it("retains unavailable pseudocode instead of treating its empty representation as observed source", () => {
     const availability = {
       pseudocode: {
@@ -206,6 +239,43 @@ describe("Ghidra relationship metadata validation", () => {
       ok: true,
       value: { value: "void f() {}", limitations: [limitation] },
     });
+  });
+
+  it("preserves handler-region limitations on procedure references", () => {
+    const limitation =
+      "Ghidra Listing shows a Borland/Delphi-style SEH frame registration at 0x401008 (push 0x4010a0 followed by fs-segment stack chaining); handler 0x4010a0 lies outside this procedure's body, so callees, strings, and cross-references may omit the handler region.";
+    const parsed = parseGhidraFunctionResult("procedure_references", {
+      value: {
+        procedure: ghidraFunctionIdentity(),
+        direction: "outgoing",
+        references: [ghidraReferenceEdge()],
+        reference_kinds_available: true,
+        unresolved_calls: [],
+      },
+      limitations: [limitation],
+    });
+    expect(parsed).toEqual({
+      ok: true,
+      value: {
+        value: {
+          procedure: ghidraFunctionIdentity(),
+          direction: "outgoing",
+          references: [ghidraReferenceEdge()],
+          reference_kinds_available: true,
+          unresolved_calls: [],
+        },
+        limitations: [limitation],
+      },
+    });
+    expect(
+      parseGhidraFunctionResult("procedure_references", {
+        procedure: ghidraFunctionIdentity(),
+        direction: "outgoing",
+        references: [],
+        reference_kinds_available: true,
+        unresolved_calls: [],
+      }),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
   });
 
   it.each(["procedure_callees", "procedure_callers"] as const)(

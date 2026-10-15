@@ -3,9 +3,12 @@ import { javaScriptSourceSelectionSchema } from "../javascript/javascriptSourceS
 
 import {
   AnalysisInputError,
-  type AnalysisInputIssue,
   AnalysisUnsupportedTargetError,
 } from "../analysisErrorCore.js";
+import {
+  INSPECT_ANALYSIS_VIEW_OPERATION,
+  analysisViewInputError,
+} from "./analysisViewErrors.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { evidenceSchema, type Evidence } from "../evidence.js";
@@ -51,10 +54,10 @@ import {
 } from "./managedArtifactView.js";
 import {
   projectManagedMemberView,
-  managedMemberViewRequestSchema,
-  managedMemberViewItemSchema,
+  managedMembersViewRequestSchema,
+  managedMembersViewPageSchema,
   managedMemberSummarySchema,
-  managedMemberViewContextSchema,
+  managedMembersViewContextSchema,
 } from "./managedMemberView.js";
 import {
   projectWasmArtifactView,
@@ -69,6 +72,13 @@ import {
   machoViewRequestSchema,
   projectMachoView,
 } from "./machoView.js";
+import {
+  interfaceBuilderSummarySchema,
+  interfaceBuilderViewContextSchema,
+  interfaceBuilderViewItemsSchema,
+  interfaceBuilderViewRequestSchema,
+  projectInterfaceBuilderView,
+} from "./interfaceBuilderView.js";
 import {
   projectWebNetworkCaptureView,
   captureViewRequestSchema,
@@ -99,9 +109,6 @@ import {
   dartAotViewRequestSchema,
   dartAotViewContextSchema,
 } from "./dartAotView.js";
-
-/** Public name of the selected-view workflow. */
-export const INSPECT_ANALYSIS_VIEW_OPERATION = "inspect_analysis_view" as const;
 
 const summaryViewSchema = z.strictObject({ kind: z.literal("summary") });
 const facetViewSchema = z.strictObject({
@@ -213,9 +220,10 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   inventoryViewSchema,
   wasmViewRequestSchema,
   machoViewRequestSchema,
+  interfaceBuilderViewRequestSchema,
   evmViewRequestSchema,
   managedViewRequestSchema,
-  managedMemberViewRequestSchema,
+  managedMembersViewRequestSchema,
   androidViewRequestSchema,
   apiSurfaceViewSchema,
   captureViewRequestSchema,
@@ -334,6 +342,7 @@ const viewResultBase = {
     "inventory_artifact",
     "inspect_wasm_artifact",
     "inspect_macho",
+    "decode_interface_builder",
     "inspect_evm_interface",
     "inspect_managed_artifact",
     "inspect_managed_members",
@@ -391,6 +400,13 @@ export const machoSummaryViewResultSchema = z.strictObject({
   summary: machoSummarySchema,
 });
 
+/** Decoded documents and graph counts for Interface Builder's selected delivery. */
+export const interfaceBuilderSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("decode_interface_builder"),
+  summary: interfaceBuilderSummarySchema,
+});
+
 /** Exact inferred-interface summary for EVM's caller-selected delivery. */
 export const evmInterfaceSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
@@ -405,7 +421,7 @@ export const managedArtifactSummaryViewResultSchema = z.strictObject({
   summary: managedSummarySchema,
 });
 
-/** Selected member identity and coverage without unrelated row inventories. */
+/** Exact member selection, coverage and counts for the selected delivery. */
 export const managedMemberSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_managed_members"),
@@ -460,6 +476,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
       inventorySummarySchema,
       wasmSummarySchema,
       machoSummarySchema,
+      interfaceBuilderSummarySchema,
       evmSummarySchema,
       managedSummarySchema,
       managedMemberSummarySchema,
@@ -532,6 +549,14 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     parent_operation: z.literal("inspect_macho"),
   }),
   z.strictObject({
+    kind: z.literal("interface-builder"),
+    view: interfaceBuilderViewRequestSchema,
+    items: interfaceBuilderViewItemsSchema,
+    ...viewResultBase,
+    ...interfaceBuilderViewContextSchema.shape,
+    parent_operation: z.literal("decode_interface_builder"),
+  }),
+  z.strictObject({
     kind: z.literal("evm"),
     view: evmViewRequestSchema,
     item: evmViewItemSchema,
@@ -548,10 +573,10 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     kind: z.literal("managed-members"),
-    view: managedMemberViewRequestSchema,
-    item: managedMemberViewItemSchema,
+    view: managedMembersViewRequestSchema,
+    page: managedMembersViewPageSchema,
     ...viewResultBase,
-    ...managedMemberViewContextSchema.shape,
+    ...managedMembersViewContextSchema.shape,
     parent_operation: z.literal("inspect_managed_members"),
   }),
   z.strictObject({
@@ -599,6 +624,8 @@ export interface AnalysisViewParent {
   readonly evidenceId: string;
   readonly operation: string;
   readonly normalizedResult: unknown;
+  /** The owner proved normalizedResult belongs to a sealed, deep-frozen Evidence snapshot. */
+  readonly sealedResult?: boolean;
   /** Preserve the authenticated source identity, including explicit absence. */
   readonly subject?: Evidence["subject"];
   readonly limitations: readonly string[];
@@ -606,12 +633,6 @@ export interface AnalysisViewParent {
   /** Parent Evidence parameters, when the parent operation records them. */
   readonly parameters?: unknown;
 }
-
-/** Construct a typed input failure for one selected-view constraint. */
-export const analysisViewInputError = (
-  issues: readonly AnalysisInputIssue[],
-): AnalysisInputError =>
-  new AnalysisInputError(INSPECT_ANALYSIS_VIEW_OPERATION, undefined, issues);
 
 /** View payload before the content digest is attached. */
 export type UnsignedAnalysisView =
@@ -636,6 +657,10 @@ export type UnsignedAnalysisView =
     >
   | Omit<Extract<AnalysisViewResult, { readonly kind: "wasm" }>, "view_digest">
   | Omit<Extract<AnalysisViewResult, { readonly kind: "macho" }>, "view_digest">
+  | Omit<
+      Extract<AnalysisViewResult, { readonly kind: "interface-builder" }>,
+      "view_digest"
+    >
   | Omit<Extract<AnalysisViewResult, { readonly kind: "evm" }>, "view_digest">
   | Omit<Extract<AnalysisViewResult, { readonly kind: "qlog" }>, "view_digest">
   | Omit<Extract<AnalysisViewResult, { readonly kind: "pcap" }>, "view_digest">
@@ -703,7 +728,7 @@ const unsupportedParent = (
   new AnalysisUnsupportedTargetError(
     INSPECT_ANALYSIS_VIEW_OPERATION,
     parentArtifactPath(parent),
-    `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed binary layout, JavaScript application, native function, artifact inventory/inspection, WASM, Mach-O, EVM, managed artifact/member, Android package, Dart AOT, or web network capture Evidence.`,
+    `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed binary layout, JavaScript application, native function, artifact inventory/inspection, WASM, Mach-O, Interface Builder, EVM, managed artifact or member, Android package, Dart AOT, or web network capture Evidence.`,
   );
 
 const parentArtifactPath = (parent: AnalysisViewParent): string => {
@@ -731,6 +756,7 @@ const parentArtifactPath = (parent: AnalysisViewParent): string => {
 const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
   ["inspect_wasm_artifact", projectWasmArtifactView],
   ["inspect_macho", projectMachoView],
+  ["decode_interface_builder", projectInterfaceBuilderView],
   ["inspect_evm_interface", projectEvmInterfaceView],
   ["inspect_managed_artifact", projectManagedArtifactView],
   ["inspect_managed_members", projectManagedMemberView],

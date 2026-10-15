@@ -1,30 +1,28 @@
+import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
-import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
-import { managedMemberInspectionSchema } from "../managed/managedArtifact.js";
-import { err, ok, type Result } from "../result.js";
 import {
-  analysisViewInputError,
-  type AnalysisViewParent,
-  type AnalysisViewRequest,
-  type UnsignedAnalysisView,
+  managedMemberInspectionSchema,
+  type ManagedMemberInspection,
+} from "../managed/managedArtifact.js";
+import { err, ok, type Result } from "../result.js";
+import type {
+  AnalysisViewParent,
+  AnalysisViewRequest,
+  UnsignedAnalysisView,
 } from "./analysisView.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { managedViewIdentityUnknowns } from "./managedArtifactView.js";
+import { parseAnalysisViewResult } from "./analysisViewParent.js";
 
 const member = managedMemberInspectionSchema.shape;
-const stringCoverageSchema = member.user_strings
-  .unwrap()
-  .unwrap()
-  .omit({ literals: true })
-  .nullable();
-const count = z.number().int().nonnegative();
 
-/** Page original member rows, including the independently covered #US literals. */
-export const managedMemberViewRequestSchema = z.strictObject({
+/** Original member rows; offsets count entries in the returned parent collection. */
+export const managedMembersViewRequestSchema = z.strictObject({
   kind: z.literal("managed-members"),
   collection: z.enum([
     "types",
@@ -40,66 +38,141 @@ export const managedMemberViewRequestSchema = z.strictObject({
   limit: z.number().int().positive().default(64),
 });
 
-export const managedMemberViewItemSchema = z.union([
-  z.array(member.types.element.strict()),
-  z.array(member.exported_types.unwrap().unwrap().element.strict()).nullable(),
-  z.array(member.fields.element.strict()),
-  z.array(member.methods.element.strict()),
-  z.array(member.member_refs.element.strict()),
-  z.array(member.call_edges.element.strict()),
-  z.array(member.field_accesses.element.strict()),
-  z
-    .array(
-      member.user_strings.unwrap().unwrap().shape.literals.element.strict(),
-    )
-    .nullable(),
+const rowsOf = <C extends string, S extends z.ZodArray>(
+  collection: C,
+  rows: S,
+) => z.strictObject({ collection: z.literal(collection), rows });
+
+/**
+ * Rows of one collection, keyed by that collection: several row schemas accept
+ * each other's rows after stripping keys, so no union may pick one by order.
+ */
+export const managedMembersViewPageSchema = z.discriminatedUnion("collection", [
+  rowsOf("types", member.types),
+  rowsOf("exported_types", member.exported_types.unwrap().unwrap()),
+  rowsOf("fields", member.fields),
+  rowsOf("methods", member.methods),
+  rowsOf("member_refs", member.member_refs),
+  rowsOf("call_edges", member.call_edges),
+  rowsOf("field_accesses", member.field_accesses),
+  rowsOf("user_strings", member.user_strings.unwrap().unwrap().shape.literals),
 ]);
 
-/** Keep selection, identity and source coverage without the row inventories. */
-export const managedMemberSummarySchema = managedMemberInspectionSchema
-  .omit({
-    types: true,
-    exported_types: true,
-    fields: true,
-    methods: true,
-    member_refs: true,
-    call_edges: true,
-    field_accesses: true,
-    user_strings: true,
-  })
-  .extend({
-    user_strings: stringCoverageSchema,
-    method_body_counts: z.strictObject({
-      present: count,
-      partial: count,
-      absent: count,
-      malformed: count,
-    }),
-    reported_counts: z.strictObject({
-      types: count,
-      exported_types: count.nullable(),
-      fields: count,
-      methods: count,
-      member_refs: count,
-      call_edges: count,
-      field_accesses: count,
-      user_strings: count.nullable(),
-    }),
-  });
+type ManagedMembersViewPage = z.infer<typeof managedMembersViewPageSchema>;
 
-export const managedMemberViewContextSchema = z.strictObject({
-  identity_scope: member.identity_scope,
+const nullableCount = z.number().int().nonnegative().nullable();
+
+/** Keep identity, selection and coverage; member collections remain retained. */
+export const managedMemberSummarySchema = z.strictObject({
+  signature_resolution: member.signature_resolution,
+  nesting_read: member.nesting_read,
+  artifact: member.artifact,
   module: member.module,
-  selection: member.selection,
-  source_metadata_status: member.metadata.shape.status,
-  source_coverage: member.coverage,
-  source_user_strings: stringCoverageSchema,
-  source_collection_available: z.boolean(),
+  metadata: member.metadata,
+  identity_scope: member.identity_scope,
+  selection: member.selection.unwrap(),
+  coverage: member.coverage,
+  user_strings: z
+    .strictObject({
+      state: member.user_strings.unwrap().unwrap().shape.state,
+      issues: member.user_strings.unwrap().unwrap().shape.issues,
+    })
+    .nullable(),
+  limitations: member.limitations,
+  reported_counts: z.strictObject({
+    types: z.number().int().nonnegative(),
+    exported_types: nullableCount,
+    fields: z.number().int().nonnegative(),
+    methods: z.number().int().nonnegative(),
+    member_refs: z.number().int().nonnegative(),
+    call_edges: z.number().int().nonnegative(),
+    field_accesses: z.number().int().nonnegative(),
+    user_strings: nullableCount,
+  }),
 });
 
-const summarizeManagedMembers = (
-  report: ReturnType<typeof managedMemberInspectionSchema.parse>,
-  user_strings: z.infer<typeof stringCoverageSchema>,
+export const managedMembersViewContextSchema = z.strictObject({
+  signature_resolution: member.signature_resolution,
+  nesting_read: member.nesting_read,
+  identity_scope: member.identity_scope,
+  selection: member.selection.unwrap(),
+  source_metadata_status: member.metadata.shape.status,
+  source_coverage: member.coverage,
+});
+
+type ManagedMembersViewRequest = z.infer<
+  typeof managedMembersViewRequestSchema
+>;
+type MemberCollection = ManagedMembersViewRequest["collection"];
+
+const slice = <C extends MemberCollection, T>(
+  collection: C,
+  rows: readonly T[] | null | undefined,
+  { offset, limit }: { readonly offset: number; readonly limit: number },
+) =>
+  rows == null
+    ? null
+    : {
+        page: { collection, rows: rows.slice(offset, offset + limit) },
+        total: rows.length,
+      };
+
+/** One page of a collection, or null when the parent never examined it. */
+const collectionPage = (
+  report: ManagedMemberInspection,
+  view: ManagedMembersViewRequest,
+): { readonly page: ManagedMembersViewPage; readonly total: number } | null => {
+  const { collection } = view;
+  switch (collection) {
+    case "types":
+      return slice(collection, report.types, view);
+    case "exported_types":
+      return slice(collection, report.exported_types, view);
+    case "fields":
+      return slice(collection, report.fields, view);
+    case "methods":
+      return slice(collection, report.methods, view);
+    case "member_refs":
+      return slice(collection, report.member_refs, view);
+    case "call_edges":
+      return slice(collection, report.call_edges, view);
+    case "field_accesses":
+      return slice(collection, report.field_accesses, view);
+    case "user_strings":
+      return slice(collection, report.user_strings?.literals, view);
+  }
+};
+
+// A sealed parent result cannot change, so its validated report stays exact for
+// every later page. The weak reference lets memory pressure reclaim the copy;
+// unsealed input is validated on each call.
+const validatedReports = new WeakMap<
+  object,
+  WeakRef<ManagedMemberInspection>
+>();
+
+/** Validate the parent once per sealed result instead of once per page. */
+const parseMemberReport = (
+  parent: AnalysisViewParent,
+): Result<ManagedMemberInspection, AnalysisError> => {
+  const { normalizedResult } = parent;
+  const sealed =
+    parent.sealedResult === true &&
+    typeof normalizedResult === "object" &&
+    normalizedResult !== null;
+  const cached = sealed
+    ? validatedReports.get(normalizedResult)?.deref()
+    : undefined;
+  if (cached !== undefined) return ok(cached);
+  const parsed = parseAnalysisViewResult(managedMemberInspectionSchema, parent);
+  if (parsed.ok && sealed)
+    validatedReports.set(normalizedResult, new WeakRef(parsed.value));
+  return parsed;
+};
+
+/** Everything but the member collections, which are replaced by their counts. */
+const summarizeMembers = (
+  report: ManagedMemberInspection,
 ): z.infer<typeof managedMemberSummarySchema> => {
   const {
     types,
@@ -109,30 +182,29 @@ const summarizeManagedMembers = (
     member_refs,
     call_edges,
     field_accesses,
-    user_strings: strings,
-    ...summary
+    user_strings,
+    ...identity
   } = report;
-  const reported_counts = {
-    types: types.length,
-    exported_types: exported_types?.length ?? null,
-    fields: fields.length,
-    methods: methods.length,
-    member_refs: member_refs.length,
-    call_edges: call_edges.length,
-    field_accesses: field_accesses.length,
-    user_strings: strings?.literals.length ?? null,
+  return {
+    ...identity,
+    user_strings:
+      user_strings === null
+        ? null
+        : { state: user_strings.state, issues: user_strings.issues },
+    reported_counts: {
+      types: types.length,
+      exported_types: exported_types?.length ?? null,
+      fields: fields.length,
+      methods: methods.length,
+      member_refs: member_refs.length,
+      call_edges: call_edges.length,
+      field_accesses: field_accesses.length,
+      user_strings: user_strings?.literals.length ?? null,
+    },
   };
-  const method_body_counts = {
-    present: 0,
-    partial: 0,
-    absent: 0,
-    malformed: 0,
-  };
-  for (const method of methods) method_body_counts[method.body.status] += 1;
-  return { ...summary, user_strings, reported_counts, method_body_counts };
 };
 
-/** Pure projection of authenticated, retained member Evidence. */
+/** Project authenticated member Evidence without reading a path or invoking a provider. */
 export const projectManagedMemberView = (
   parent: AnalysisViewParent,
   view: AnalysisViewRequest,
@@ -148,25 +220,9 @@ export const projectManagedMemberView = (
         },
       ]),
     );
-  const parsed = managedMemberInspectionSchema.safeParse(
-    parent.normalizedResult,
-  );
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(
-        "inspect_analysis_view",
-        parsed.error.issues.map((issue) => ({
-          ...issue,
-          path: ["source", "normalized_result", ...issue.path],
-        })),
-        { source: { normalized_result: parent.normalizedResult } },
-        { cause: parsed.error },
-      ),
-    );
-  const report = parsed.data;
-  const strings = report.user_strings;
-  const stringCoverage =
-    strings === null ? null : { state: strings.state, issues: strings.issues };
+  const parsed = parseMemberReport(parent);
+  if (!parsed.ok) return parsed;
+  const report = parsed.value;
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_managed_members" as const,
@@ -174,25 +230,22 @@ export const projectManagedMemberView = (
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
     limitations: uniqueSorted([...parent.limitations, ...report.limitations]),
     unknowns: [
-      "Counts and page exhaustion describe retained rows, not complete source metadata or method bodies. Original member coverage and independent user-string coverage remain authoritative.",
-      "MemberRef rows are assembly-wide; declaring-type selection does not filter that inventory. Metadata tokens are build-local and require the recorded artifact SHA-256 and module MVID.",
-      "A null collection or count means it was not examined, not that it was empty. This view does not load or execute the assembly.",
-      ...(parent.subject == null
-        ? [
-            "The parent has no recorded subject; its normalized artifact identity cannot be cross-checked against a subject digest.",
-          ]
-        : []),
-      ...(report.identity_scope.requires_mvid === null
-        ? [
-            "The module MVID is unknown; tokens cannot establish a cross-observation module match.",
-          ]
-        : []),
+      "Collection counts and pages cover producer-returned rows; member completeness remains the original coverage, not an absence claim about unreturned rows.",
+      ...(report.selection === null
+        ? []
+        : [
+            "Exported types and member references cover the whole assembly; the other collections cover only the selected declaring types.",
+          ]),
+      ...managedViewIdentityUnknowns(
+        parent,
+        report.identity_scope.requires_mvid,
+      ),
     ],
   };
   if (view.kind === "summary") {
-    const summary = summarizeManagedMembers(report, stringCoverage);
+    const summary = summarizeMembers(report);
     const total = Object.values(summary.reported_counts).reduce<number>(
-      (sum, value) => sum + (value ?? 0),
+      (sum, count) => sum + (count ?? 0),
       0,
     );
     return ok({
@@ -203,27 +256,35 @@ export const projectManagedMemberView = (
       coverage: completeWithinViewCoverage(total, total),
     });
   }
-  const collection =
-    view.collection === "user_strings"
-      ? (strings?.literals ?? null)
-      : report[view.collection];
-  const item = collection?.slice(view.offset, view.offset + view.limit) ?? null;
+  const selected = collectionPage(report, view);
+  if (selected === null)
+    return err(
+      analysisViewInputError([
+        {
+          path: ["view", "collection"],
+          reason: "invalid_value",
+          message: `The parent Evidence did not examine ${view.collection}; repeat inspect_managed_members with the current runtime to record it.`,
+        },
+      ]),
+    );
+  const { page, total } = selected;
   return ok({
     kind: "managed-members",
     view,
-    item,
+    page,
     ...shared,
+    signature_resolution: report.signature_resolution,
+    nesting_read: report.nesting_read,
     identity_scope: report.identity_scope,
-    module: report.module,
     selection: report.selection,
     source_metadata_status: report.metadata.status,
-    source_coverage: report.coverage,
-    source_user_strings: stringCoverage,
-    source_collection_available: collection !== null,
-    coverage: pageViewCoverage(
-      view.offset,
-      item?.length ?? 0,
-      collection?.length ?? 0,
-    ),
+    source_coverage:
+      view.collection === "user_strings" && report.user_strings !== null
+        ? {
+            state: report.user_strings.state,
+            issues: report.user_strings.issues,
+          }
+        : report.coverage,
+    coverage: pageViewCoverage(view.offset, page.rows.length, total),
   });
 };

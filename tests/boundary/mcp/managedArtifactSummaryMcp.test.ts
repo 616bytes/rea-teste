@@ -76,7 +76,7 @@ it("returns a first-call overview and pages the unchanged source after its file 
     parent.normalized_result,
   );
   expect(parent.operation).toBe("inspect_managed_artifact");
-  expect(parent.parameters).toEqual({ path, detail: "summary" });
+  expect(parent.parameters).toEqual({ path });
   expect(receipt.evidence_id).not.toBe(parent.evidence_id);
   expect(receipt.evidence_links).toEqual([parent.evidence_id]);
   const { references, resources, attributes, ...identity } = report;
@@ -97,7 +97,7 @@ it("returns a first-call overview and pages the unchanged source after its file 
       ).structuredContent,
     );
     expect(complete.operation).toBe("inspect_managed_artifact");
-    expect(complete.normalized_result).toEqual(parent.normalized_result);
+    expect(complete.evidence_id).toBe(parent.evidence_id);
   }
   const reused = await client.callTool({
     name: "inspect_managed_native_boundaries",
@@ -236,11 +236,15 @@ it("refuses selected delivery before file access when the server cannot retain E
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(b);
   await client.connect(a);
-  const rejected = await client.callTool({
-    name: "inspect_managed_artifact",
-    arguments: { path: join(directory, "absent.dll"), detail: "summary" },
-  });
-  expect(parseMcpToolError(rejected).error.code).toBe("capability_unavailable");
+  for (const name of ["inspect_managed_artifact", "inspect_managed_members"]) {
+    const rejected = await client.callTool({
+      name,
+      arguments: { path: join(directory, "absent.dll"), detail: "summary" },
+    });
+    expect(parseMcpToolError(rejected).error.code).toBe(
+      "capability_unavailable",
+    );
+  }
   const complete = await client.callTool({
     name: "inspect_managed_artifact",
     arguments: { path },

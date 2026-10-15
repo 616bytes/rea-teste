@@ -73,3 +73,26 @@ it("runs its own inventory when the export ends before listing", async () => {
     expect(await client.close()).toEqual({ ok: true, value: null });
   }
 });
+
+it("lets a listing that arrives while the export starts wait for its inventory", async () => {
+  const { kuna, open } = await session("rea-kuna-starting-inventory-", {
+    project: "hang",
+  });
+  const client = open();
+  try {
+    // The pseudocode request is still deciding between the cache and a build
+    // when the search arrives; the search must not start its own inventory.
+    const [text, search] = await Promise.all([
+      run(client, "procedure_pseudo_code", { procedure: "main" }),
+      run(client, "search_procedures", { pattern: "parse" }),
+    ]);
+    expect(text.rawResult).toMatchObject({
+      source: { kind: "single-function" },
+    });
+    expect(search.result).toEqual([{ address: "0x1040", value: "parse" }]);
+    await expect.poll(() => exportsOf(kuna)).toHaveLength(1);
+    expect(await inventoriesOf(kuna)).toHaveLength(1);
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});

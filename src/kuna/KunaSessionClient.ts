@@ -1321,6 +1321,10 @@ export class KunaSessionClient implements AnalysisClient {
   async #listInventory(
     installation: KunaInstallation,
   ): Promise<Result<readonly KunaInventoryFunction[], AnalysisError>> {
+    // A concurrent text request may still be choosing between the cache and a
+    // build; its outcome decides whether an inventory already exists.
+    await this.#starting?.catch(() => undefined);
+    if (this.#reader !== undefined) return ok(this.#reader.project.inventory);
     const exported = await this.#exportInventory;
     if (exported !== undefined) return ok(exported);
     const run = await this.#commands.run({

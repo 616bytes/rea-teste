@@ -8,6 +8,7 @@ import {
 import { topLevelBinding } from "./javascriptSemanticAnalysis.fixture.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { readExactJavaScriptLiteral } from "./javascriptAstValues.js";
+import { primitiveCandidateExpansionExpression } from "../../../tests/fixtures/javascriptPrimitiveExpansion.js";
 
 const conditionalCandidates = [
   '"one"',
@@ -441,8 +442,7 @@ describe("semantic primitive allocation and binding reuse", () => {
   );
 
   it("returns an explicit unknown before expanding a large addition product", () => {
-    const term = '(choice ? "a" : "b")';
-    const expression = Array.from({ length: 20 }, () => term).join(" + ");
+    const expression = primitiveCandidateExpansionExpression();
     const value = valueOf(expression);
     expect(value).toMatchObject({
       status: "unknown",

@@ -1,4 +1,4 @@
-import { X509Certificate } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 
 import { createAnalysisExecution } from "../application/AnalysisProvider.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
@@ -14,6 +14,7 @@ import {
   locateApkSigningBlock,
   parseZipTail,
   type ApkSigningBlock,
+  type ZipTail,
 } from "../domain/apkSignature/apkSigningBlock.js";
 import {
   contentDigestAlgorithm,
@@ -28,6 +29,10 @@ import {
   deriveApkPosture,
   type ApkSignatureResult,
 } from "../domain/apkSignature/apkSignatureReport.js";
+import {
+  computeApkContentDigest,
+  type HashFactory,
+} from "../domain/apkSignature/apkContentDigest.js";
 import {
   centralDirectoryNames,
   detectV1Signature,
@@ -68,27 +73,86 @@ const certificateFacts = (der: Uint8Array): Certificate => {
   }
 };
 
-const digestsOf = (signer: ApkSigner): Signer["digests"] =>
+/** Compares a signed digest with the recomputed content digest; null when not computable. */
+type DigestMatcher = (
+  algorithmId: number,
+  signed: Uint8Array,
+) => boolean | null;
+
+const nodeHash: HashFactory = (algorithm) => {
+  const hash = createHash(algorithm);
+  return {
+    update: (data) => {
+      hash.update(data);
+    },
+    digest: () => new Uint8Array(hash.digest()),
+  };
+};
+
+/** Recompute each content digest at most once per algorithm, lazily. */
+const digestMatcher = (
+  bytes: Uint8Array,
+  tail: ZipTail,
+  blockStart: number | null,
+): DigestMatcher => {
+  const cache = new Map<"sha256" | "sha512", Uint8Array | null>();
+  return (algorithmId, signed) => {
+    const algorithm = contentDigestAlgorithm(algorithmId);
+    // verity (fs-verity Merkle) digests and unknown algorithms are not recomputed.
+    if (
+      blockStart === null ||
+      (algorithm !== "sha256" && algorithm !== "sha512")
+    )
+      return null;
+    if (!cache.has(algorithm))
+      cache.set(
+        algorithm,
+        computeApkContentDigest(
+          bytes,
+          { tail, blockStart, algorithm },
+          nodeHash,
+        ),
+      );
+    const computed = cache.get(algorithm) ?? null;
+    return computed === null ? null : Buffer.from(computed).equals(signed);
+  };
+};
+
+const digestsOf = (
+  signer: ApkSigner,
+  match: DigestMatcher,
+): Signer["digests"] =>
   signer.digests.map((d) => ({
     algorithm: contentDigestAlgorithm(d.algorithmId) ?? "unknown",
-    matches_apk: null, // content-digest self-consistency is a layered follow-up
+    matches_apk: match(d.algorithmId, d.digest),
   }));
 
-const baseSigner = (signer: ApkSigner): Signer => ({
+const baseSigner = (signer: ApkSigner, match: DigestMatcher): Signer => ({
   certificate: signer.certificates[0]
     ? certificateFacts(signer.certificates[0])
     : null,
-  digests: digestsOf(signer),
+  digests: digestsOf(signer, match),
   min_sdk: signer.minSdk,
   max_sdk: signer.maxSdk,
 });
 
-const v3Signer = (signer: ApkSigner): SignerV3 => ({
-  ...baseSigner(signer),
+const v3Signer = (signer: ApkSigner, match: DigestMatcher): SignerV3 => ({
+  ...baseSigner(signer, match),
   rotation: {
     present: signer.attributes.some((a) => a.id === PROOF_OF_ROTATION_ATTR_ID),
   },
 });
+
+/** All recomputed digests agree → true; any mismatch → false; none computed → null. */
+const selfConsistency = (
+  signers: readonly { readonly digests: Signer["digests"] }[],
+): boolean | null => {
+  const results = signers
+    .flatMap((s) => s.digests.map((d) => d.matches_apk))
+    .filter((m): m is boolean => m !== null);
+  if (results.length === 0) return null;
+  return results.every(Boolean);
+};
 
 /** Read exactly the selected APK bytes and report its signature schemes. */
 export class ApkSignatureProvider implements ApkSignaturePort {
@@ -148,9 +212,14 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     );
     if (!v31.ok) return err(v31.error);
 
-    const v2signers = v2.value.signers.map((s) => baseSigner(s));
-    const v3signers = v3.value.signers.map((s) => v3Signer(s));
-    const v31signers = v31.value.signers.map((s) => v3Signer(s));
+    const match = digestMatcher(
+      bytes,
+      tail.value,
+      block.value?.blockStart ?? null,
+    );
+    const v2signers = v2.value.signers.map((s) => baseSigner(s, match));
+    const v3signers = v3.value.signers.map((s) => v3Signer(s, match));
+    const v31signers = v31.value.signers.map((s) => v3Signer(s, match));
 
     const sourceStampPresent =
       block.value !== null &&
@@ -190,7 +259,11 @@ export class ApkSignatureProvider implements ApkSignaturePort {
         sourceStampPresent,
         rotationPresent,
         distinctSignerFingerprints: fingerprints.size,
-        selfConsistent: null,
+        selfConsistent: selfConsistency([
+          ...v2signers,
+          ...v3signers,
+          ...v31signers,
+        ]),
       }),
       runtime_execution: "not-performed",
       limitations: [...APK_SIGNATURE_LIMITATIONS],

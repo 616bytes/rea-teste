@@ -230,7 +230,10 @@ export const resolveGhidraAnalysisProfile = async (
         ...(installation.platform === "win32" &&
         target.format === "pe" &&
         (target.architecture === "arm" || target.architecture === "arm64")
-          ? { windows_arm_pe_import: "loader-selected-language-v1" }
+          ? {
+              windows_arm_pe_import: "loader-selected-language-v1",
+              windows_arm_pe_machine: target.peMachine ?? null,
+            }
           : {}),
         annotation_policy: "atomic-function-entry-metadata-v1",
         load_image_observations: "source-mappings-entry-context-v2",

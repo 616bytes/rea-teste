@@ -396,6 +396,14 @@ describe("Ghidra platform support", () => {
             "loader-selected-language-v1",
           );
         else expect(parameters).not.toHaveProperty("windows_arm_pe_import");
+        if (
+          platform === "win32" &&
+          (architecture === "arm" || architecture === "arm64")
+        )
+          expect(parameters.windows_arm_pe_machine).toBe(
+            peTarget(architecture).peMachine,
+          );
+        else expect(parameters).not.toHaveProperty("windows_arm_pe_machine");
       }
     }
   });
@@ -650,8 +658,6 @@ describe("Windows Ghidra native failure diagnostics", () => {
         status: "unsupported",
         code: "target_format_unsupported",
       });
-      // Every PE header architecture (x86, x86_64, arm, arm64) is now admitted
-      // on Windows P0, so no valid PE target yields architecture_unsupported.
       const client = ghidra.createClient(nativeApplication);
       const health = await client.execute("health", {});
       if (health.ok)
@@ -670,6 +676,21 @@ describe("Windows Ghidra native failure diagnostics", () => {
 });
 
 describe("Ghidra Windows PE fixture admission", () => {
+  it.each(["arm", "arm64"] as const)(
+    "does not infer a COFF machine from an unobserved %s family",
+    (architecture) => {
+      const { peMachine, ...unobserved } = peTarget(architecture);
+      expect(peMachine).toBeDefined();
+      expect(
+        provider(installationHost("win32")).inspectTargetSupport(unobserved),
+      ).toMatchObject({
+        status: "unsupported",
+        code: "architecture_unsupported",
+        diagnostics: { pe_machine: null },
+      });
+    },
+  );
+
   it("admits generated PE32 and PE32+ DLLs and applications while preserving native-only Windows admission", async () => {
     const root = fileURLToPath(new URL("../../", import.meta.url));
     await promisify(execFile)(process.execPath, [
@@ -706,6 +727,28 @@ describe("Ghidra Windows PE fixture admission", () => {
           ...metadata.value,
         };
         expect(ghidra.inspectTargetSupport(target).status).toBe("supported");
+        if (architecture === "arm") {
+          for (const peMachine of [0x01c0, 0x01c2]) {
+            const legacy = Buffer.from(bytes);
+            legacy.writeUInt16LE(peMachine, legacy.readUInt32LE(0x3c) + 4);
+            const parsed = parseExecutableHeader(legacy, "x64");
+            if (!parsed.ok) throw new Error(parsed.error);
+            if (parsed.value.format !== "pe")
+              throw new Error("Expected a PE fixture");
+            expect(parsed.value).toMatchObject({ architecture, peMachine });
+            expect(
+              ghidra.inspectTargetSupport({
+                ...target,
+                ...parsed.value,
+                sha256: createHash("sha256").update(legacy).digest("hex"),
+              }),
+            ).toMatchObject({
+              status: "unsupported",
+              code: "architecture_unsupported",
+              diagnostics: { pe_machine: peMachine },
+            });
+          }
+        }
         for (const [candidate, code] of [
           [
             { ...target, executableRole: "non-executable" },
@@ -1968,6 +2011,9 @@ const peTarget = (
   sha256: "a".repeat(64),
   kind: "executable",
   format: "pe",
+  peMachine: { x86: 0x014c, x86_64: 0x8664, arm: 0x01c4, arm64: 0xaa64 }[
+    architecture
+  ],
   architecture,
   availableArchitectures: [architecture],
   executableRole: "application",

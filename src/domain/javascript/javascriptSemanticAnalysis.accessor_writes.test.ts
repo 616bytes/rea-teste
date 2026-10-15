@@ -86,3 +86,23 @@ it("keeps sibling literals when an accessor is deleted rather than assigned", ()
     ]),
   });
 });
+
+it("keeps sibling literals when a later data property replaces the setter", () => {
+  expect(
+    returned(`
+      export function observe() {
+        const state = { value: 1, set update(next) {}, update: 0 };
+        state.update = 2;
+        return state;
+      }
+    `),
+  ).toMatchObject({
+    status: "object",
+    properties: expect.arrayContaining([
+      expect.objectContaining({
+        name: "value",
+        value: { status: "literal", value: 1 },
+      }),
+    ]),
+  });
+});

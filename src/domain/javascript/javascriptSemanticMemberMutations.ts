@@ -69,11 +69,20 @@ const setterKeys = (object: t.ObjectExpression): SetterKeys | null => {
   if (cached !== undefined) return cached;
   const names = new Set<string>();
   let computed = false;
+  // Follow definition order: a later data property or method with the same
+  // static name replaces the accessor, so its setter no longer runs. Spreads
+  // and unknown computed keys may or may not replace it and keep it.
   for (const property of object.properties) {
-    if (!t.isObjectMethod(property) || property.kind !== "set") continue;
+    if (t.isSpreadElement(property)) continue;
     const name = semanticStaticPropertyKey(property.key, property.computed);
-    if (name === null) computed = true;
-    else names.add(name);
+    if (t.isObjectMethod(property) && property.kind === "set") {
+      if (name === null) computed = true;
+      else names.add(name);
+    } else if (
+      name !== null &&
+      !(t.isObjectMethod(property) && property.kind === "get")
+    )
+      names.delete(name);
   }
   const keys = names.size === 0 && !computed ? null : { names, computed };
   setterKeysByObject.set(object, keys);

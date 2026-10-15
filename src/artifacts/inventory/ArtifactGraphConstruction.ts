@@ -342,9 +342,9 @@ export const createArtifactEdges = (
                 RECONSTRUCTED_PYTHON_HEADER_LIMITATION,
               )
             ? ("derived-from" as const)
-          : isSourceMap && mappedSource === undefined
-            ? ("contains" as const)
-            : relationFor(occurrence.logical_path),
+            : isSourceMap && mappedSource === undefined
+              ? ("contains" as const)
+              : relationFor(occurrence.logical_path),
       occurrence_id: occurrence.occurrence_id,
     };
     edges.push({

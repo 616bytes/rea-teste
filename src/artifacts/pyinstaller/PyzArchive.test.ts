@@ -99,3 +99,48 @@ it("rejects an oversized sparse PYZ table before allocating its bytes", async ()
     await handle.close();
   }
 });
+
+it("rejects a PYZ table whose back-references repeat one long row", () => {
+  // One namespace row with a 16 KiB name, flagged for reference, then 999
+  // back-references to it. The table is about 21 KiB but would expand to
+  // 16 MiB of entry names.
+  const name = Buffer.alloc(16 * 1024, 0x61);
+  const refs = 1_000;
+  const row = Buffer.concat([
+    Buffer.from([0x28 | 0x80]),
+    int32(2),
+    Buffer.from([0x61]),
+    int32(name.length),
+    name,
+    Buffer.from([0x29, 3, 0x69]),
+    int32(3),
+    Buffer.from([0x69]),
+    int32(0),
+    Buffer.from([0x69]),
+    int32(0),
+  ]);
+  const reference = Buffer.concat([Buffer.from([0x72]), int32(0)]);
+  const table = Buffer.concat([
+    Buffer.from([0x5b]),
+    int32(refs),
+    row,
+    ...Array.from({ length: refs - 1 }, () => reference),
+  ]);
+  const header = Buffer.alloc(12);
+  header.write("PYZ\0");
+  PYTHON_39_MAGIC.copy(header, 4);
+  header.writeUInt32BE(12, 8);
+  const image = Buffer.concat([header, table]);
+  expect(image.length).toBeLessThan(32 * 1024);
+
+  const parsed = parsePyzArchive(image);
+  expect(parsed).toMatchObject({ ok: false, error: { reason: "limit" } });
+  if (parsed.ok) return;
+  expect(parsed.error.message).toContain("expand past");
+});
+
+const int32 = (value: number): Buffer => {
+  const bytes = Buffer.alloc(4);
+  bytes.writeInt32LE(value);
+  return bytes;
+};

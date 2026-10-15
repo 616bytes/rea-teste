@@ -144,7 +144,7 @@ const parsePyzParts = (
       sha256,
       limitation: `PYZ table of contents could not be parsed (${marshalled.error.message}); the member was left opaque.`,
     });
-  const entries = pyzEntries(marshalled.value, size);
+  const entries = pyzEntries(marshalled.value, size, table.length);
   if (!entries.ok)
     return entries.error.reason === "format"
       ? ok({
@@ -203,18 +203,33 @@ export const inflateBounded = async (
   }
 };
 
+/**
+ * Marshal back-references let one stored row appear many times, so a small
+ * table can name far more bytes than it holds. Each genuine entry stores its
+ * own name inline, so the expanded names can never exceed the table itself.
+ */
 const pyzEntries = (
   value: MarshalValue,
   archiveBytes: number,
+  tableBytes: number,
 ): Result<readonly PyzEntry[], PyInstallerFailure> => {
   if (!Array.isArray(value))
     return err(
       pyInstallerFailure("format", "PYZ table of contents is not a list"),
     );
   const entries: PyzEntry[] = [];
+  let nameBytes = 0;
   for (const item of value) {
     const entry = onePyzEntry(item, archiveBytes);
     if (!entry.ok) return entry;
+    nameBytes += Buffer.byteLength(entry.value.name, "utf8");
+    if (nameBytes > tableBytes)
+      return err(
+        pyInstallerFailure(
+          "limit",
+          `PYZ table entry names expand past the ${String(tableBytes)}-byte table that stores them`,
+        ),
+      );
     entries.push(entry.value);
   }
   return ok(entries);

@@ -53,6 +53,33 @@ type PropertyPath = JavaScriptSemanticPropertyPath;
 type ValueEffect = "write" | "escape";
 
 /** Preserve uncertainty from property writes and references exposed to calls, yielding during traversal and fixpoint iteration. */
+
+/** Whether writing this one-key path assigns through a setter of an own object literal. */
+const writesLocalSetter = (
+  initializers: readonly {
+    readonly node: t.Node;
+    readonly projection: readonly unknown[];
+  }[],
+  path: readonly unknown[],
+): boolean => {
+  const [key] = path;
+  if (path.length !== 1 || typeof key !== "string") return false;
+  return initializers.some(({ node, projection }) => {
+    if (projection.length !== 0) return false;
+    const object = unwrapJavaScriptExpression(node).node;
+    return (
+      t.isObjectExpression(object) &&
+      object.properties.some((property) => {
+        if (!t.isObjectMethod(property) || property.kind !== "set")
+          return false;
+        const name = semanticStaticPropertyKey(property.key, property.computed);
+        // A computed setter key may name the written key.
+        return name === null || name === key;
+      })
+    );
+  });
+};
+
 export function* collectSemanticMemberMutationsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
@@ -377,6 +404,10 @@ export function* collectSemanticMemberMutationsSteps(
                   current.originAt,
                   parents,
                 );
+        // A setter on the binding's own literal runs on assignment and may
+        // replace any member of its receiver, so the written key is unknown.
+        if (effect === "write" && writesLocalSetter(origins.initializers, path))
+          path = [null];
         // Keep an antichain of exact paths. Widening distinct member keys would
         // also invalidate unrelated siblings that never reach this effect.
         // This map is local to the file scan. Escaping the binding id keeps a

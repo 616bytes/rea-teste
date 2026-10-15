@@ -1,0 +1,42 @@
+import { expect, it } from "vitest";
+
+import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+
+const returned = (source: string) => {
+  const ir = analyzeJavaScriptSemantics(source);
+  const callable = ir.callables.find(({ name }) => name === "observe");
+  return callable?.returnSites[0]?.value;
+};
+
+it("keeps members unknown after a write through a local setter", () => {
+  // The setter runs on assignment and may replace any member of `this`.
+  expect(
+    returned(`
+      export function observe() {
+        const state = { value: 1, set update(next) { this.value = next; } };
+        state.update = 2;
+        return state;
+      }
+    `),
+  ).toMatchObject({ status: "unknown" });
+});
+
+it("keeps sibling literals when the written key is an ordinary property", () => {
+  expect(
+    returned(`
+      export function observe() {
+        const state = { value: 1, update: 0 };
+        state.update = 2;
+        return state;
+      }
+    `),
+  ).toMatchObject({
+    status: "object",
+    properties: expect.arrayContaining([
+      expect.objectContaining({
+        name: "value",
+        value: { status: "literal", value: 1 },
+      }),
+    ]),
+  });
+});

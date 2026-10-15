@@ -28,6 +28,8 @@ interface FixtureOptions {
   readonly declareExtraNodes?: number;
   /** Declare child coverage the producer could not observe. */
   readonly coverageStatus?: "complete" | "unknown";
+  /** A directory root has no bytes of its own, so its digest is graph-derived. */
+  readonly rootFormat?: "file" | "directory";
   readonly coverageScope?: "root" | "container-entries";
   readonly limitations?: readonly string[];
 }
@@ -44,7 +46,7 @@ const inventory = (options: FixtureOptions) => {
   const nodes: ArtifactNode[] = [
     {
       artifact_id: rootArtifactId,
-      format: "file",
+      format: options.rootFormat ?? "file",
       sha256: options.rootSha,
       size: 1,
       media_type: null,
@@ -221,10 +223,14 @@ describe("clusterArtifactFamilies", () => {
     ]);
     expect(shared.shared_members).toHaveLength(1);
     expect(shared.shared_members[0]?.member_count).toBe(2);
-    expect(shared.shared_members[0]?.observed_in).toEqual(["alpha", "beta"]);
-    expect(shared.unique_members.map(({ observed_in }) => observed_in)).toEqual(
-      [["gamma"]],
-    );
+    expect(
+      shared.shared_members[0]?.observations.map(({ label }) => label),
+    ).toEqual(["alpha", "beta"]);
+    expect(
+      shared.unique_members.map(({ observations }) =>
+        observations.map(({ label }) => label),
+      ),
+    ).toEqual([["gamma"]]);
     expect(shared.status).toBe("partitioned");
   });
 
@@ -239,10 +245,11 @@ describe("clusterArtifactFamilies", () => {
     // separately rather than silently dropped or promoted to shared.
     expect(result.shared_members).toHaveLength(0);
     expect(result.partially_shared_members).toHaveLength(1);
-    expect(result.partially_shared_members[0]?.observed_in).toEqual([
-      "alpha",
-      "beta",
-    ]);
+    expect(
+      result.partially_shared_members[0]?.observations.map(
+        ({ label }) => label,
+      ),
+    ).toEqual(["alpha", "beta"]);
     expect(result.unique_members).toHaveLength(1);
   });
 
@@ -282,9 +289,11 @@ describe("clusterArtifactFamilies", () => {
     // as without a family rather than as a family of one.
     expect(result.families.flatMap(({ members }) => members)).toHaveLength(0);
     expect(result.summary.members_without_family).toBe(1);
-    expect(result.unique_members.map(({ observed_in }) => observed_in)).toEqual(
-      [["gamma"]],
-    );
+    expect(
+      result.unique_members.map(({ observations }) =>
+        observations.map(({ label }) => label),
+      ),
+    ).toEqual([["gamma"]]);
     expect(result.status).toBe("partial");
     expect(result.summary.members_with_unknown_inventory).toBe(2);
     expect(result.summary.partially_shared_member_groups).toBe(0);
@@ -310,6 +319,72 @@ describe("clusterArtifactFamilies", () => {
     expect(result.summary.members_with_unknown_inventory).toBe(1);
     expect(result.summary.members_without_family).toBe(1);
     expect(result.coverage.member_scope).toBe("root");
+  });
+});
+
+describe("clusterArtifactFamilies member index and root identity", () => {
+  it("counts repeated labels as distinct members", () => {
+    const result = cluster(
+      [
+        member("build", { rootSha: sha("a") }),
+        member("build", { rootSha: sha("a") }),
+      ],
+      { sharedMemberMinimum: 2 },
+    );
+
+    // A label is caller text and may repeat, so the count follows the members
+    // and never collapses two of them into one shared observation.
+    expect(result.shared_members).toHaveLength(1);
+    expect(result.shared_members[0]?.member_count).toBe(2);
+    expect(result.shared_members[0]?.observations).toHaveLength(2);
+    expect(result.unique_members).toHaveLength(0);
+    expect(result.summary.shared_member_groups).toBe(1);
+  });
+
+  it("keeps each index row's source Evidence id", () => {
+    const alpha = member("alpha", { rootSha: sha("a") });
+    const beta = member("beta", { rootSha: sha("b") });
+    const result = cluster([alpha, beta]);
+
+    // Two unrelated roots have no family row, so the index must carry the
+    // provenance on its own for a caller that also has no bundle.
+    expect(result.families).toHaveLength(0);
+    expect(result.unique_members).toHaveLength(2);
+    expect(result.unique_members[0]?.observations).toEqual([
+      { label: "alpha", evidence_id: alpha.evidence.evidence_id },
+    ]);
+    expect(result.unique_members[1]?.observations).toEqual([
+      { label: "beta", evidence_id: beta.evidence.evidence_id },
+    ]);
+  });
+
+  it("never places a graph-derived root digest in a byte-identity family", () => {
+    const result = cluster([
+      member("alpha", { rootSha: sha("a"), rootFormat: "directory" }),
+      member("beta", { rootSha: sha("a"), rootFormat: "directory" }),
+    ]);
+
+    // A directory root has no bytes: its digest covers member names and child
+    // identities, and unread entries such as symlink targets are not committed.
+    // The members stay compared and counted, but never called byte-identical.
+    expect(result.families).toHaveLength(0);
+    expect(result.status).toBe("partitioned");
+    expect(result.summary.members_without_byte_root_digest).toBe(2);
+    expect(result.coverage.members_without_byte_root_digest).toBe(2);
+    expect(result.coverage.nodes_without_byte_identity).toBe(2);
+    // A directory node is excluded from the index rather than claimed shared.
+    expect(result.shared_members).toHaveLength(0);
+    expect(result.unique_members).toHaveLength(0);
+    expect(
+      result.limitations.some((item) =>
+        item.includes("derived from their inventory graph"),
+      ),
+    ).toBe(true);
+    expect(
+      result.limitations.some((item) =>
+        item.includes("excluded from the member index"),
+      ),
+    ).toBe(true);
   });
 });
 
@@ -360,6 +435,12 @@ describe("clusterArtifactFamilies coverage and paging", () => {
     );
     expect(unplaced?.unknown_members[0]?.label).toBe("gamma");
     expect(result.status).toBe("partial");
+    // Scope and completeness are separate facts: gamma declares a complete
+    // inventory and still sits outside the scope this call clustered over.
+    expect(result.summary.members_with_complete_inventory).toBe(3);
+    expect(result.summary.members_with_unknown_inventory).toBe(0);
+    expect(result.summary.members_outside_member_scope).toBe(1);
+    expect(result.coverage.members_outside_member_scope).toBe(1);
   });
 
   it("pages families while the counts and the member index stay complete", () => {
@@ -376,6 +457,10 @@ describe("clusterArtifactFamilies coverage and paging", () => {
     expect(result.families).toHaveLength(1);
     expect(result.summary.families).toBe(2);
     expect(result.summary.families_returned).toBe(1);
+    // The page states its own slice so a consumer of the result alone can tell
+    // which family rows it saw.
+    expect(result.coverage.families_offset).toBe(1);
+    expect(result.coverage.families_limit).toBe(1);
     // Default minimum is all four members, so both pairs are partially shared.
     expect(result.partially_shared_members).toHaveLength(2);
     expect(result.shared_members).toHaveLength(0);
@@ -409,8 +494,10 @@ describe("clusterArtifactFamilies coverage and paging", () => {
     expect(result.summary.families).toBe(0);
     expect(result.summary.members_without_family).toBe(2);
     expect(result.summary.unique_members).toBe(2);
-    expect(result.unique_members.map(({ observed_in }) => observed_in)).toEqual(
-      [["alpha"], ["beta"]],
-    );
+    expect(
+      result.unique_members.map(({ observations }) =>
+        observations.map(({ label }) => label),
+      ),
+    ).toEqual([["alpha"], ["beta"]]);
   });
 });

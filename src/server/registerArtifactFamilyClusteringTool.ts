@@ -77,6 +77,10 @@ export const registerArtifactFamilyClusteringTool = (
                 member_evidence_ids: memberEvidenceIds,
                 shared_member_minimum:
                   clustering.coverage.shared_member_minimum,
+                // The retained record states its own page, so reopening this
+                // Evidence never implies a wider family list than it holds.
+                offset: clustering.coverage.families_offset,
+                limit: clustering.coverage.families_limit,
               },
               result: jsonValueSchema.parse(clustering),
               confidence: "derived",

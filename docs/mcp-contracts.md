@@ -61,6 +61,24 @@ difference. `status` is `partitioned` when every examined member was compared,
 `coverage.shared_member_minimum` reports the value used, and
 `coverage.member_index_withheld` is set when the examined node budget was
 exhausted.
+A family asserts byte identity at the inspected root, so it needs a producer
+digest of that root's own bytes. A root whose digest is derived from its
+inventory graph instead (a directory root, whose digest covers member names and
+child identities, with unread entries such as symlink targets uncommitted) is
+compared, indexed and counted, but never placed in a family;
+`coverage.members_without_byte_root_digest` reports how many, and the reason
+appears in `limitations`. Directory nodes are likewise left out of the member
+index because their identity is graph-derived;
+`coverage.nodes_without_byte_identity` counts them. Each index row carries
+`observations` of `{ label, evidence_id }` and a `member_count` counted per
+member, so repeated caller labels never merge two members and a row keeps its
+source Evidence even when no family row exists. Inventory completeness and
+coverage scope are separate facts: `members_with_complete_inventory` and
+`members_with_unknown_inventory` describe what each member declared, while
+`members_outside_member_scope` counts complete members that declared a
+minority scope and were therefore not clustered.
+`coverage.families_offset` and `coverage.families_limit` state the page the
+call returned.
 
 Function dossiers can declare per-facet coverage in the optional
 `normalized_result.facet_availability` map. Each supplied facet is either

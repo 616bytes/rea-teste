@@ -9,6 +9,7 @@ import { clusterArtifactEvidenceCommand } from "./application/artifacts/Artifact
 import { logCliCommand } from "./cliLogging.js";
 import type { Logger } from "pino";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
+import { ARTIFACT_FAMILY_MEMBER_LIMIT } from "./domain/artifactFamilyClustering.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { AnalysisError } from "./domain/analysisErrorBase.js";
@@ -55,6 +56,9 @@ export const registerEvidenceCommands = (
       member: z
         .array(z.string())
         .min(2)
+        // The CLI has no schema of its own to fall back on: every document is
+        // read and parsed before clustering, so the bound is enforced here too.
+        .max(ARTIFACT_FAMILY_MEMBER_LIMIT)
         .describe(
           "Evidence JSON path for one artifact inventory; repeat for every member",
         ),
@@ -62,6 +66,7 @@ export const registerEvidenceCommands = (
         .number()
         .int()
         .min(2)
+        .max(ARTIFACT_FAMILY_MEMBER_LIMIT)
         .optional()
         .describe(
           "Members a graph member must appear in to count as shared; omitted means every member",

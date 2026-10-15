@@ -114,12 +114,19 @@ it("clusters three inspected archives through MCP by family and shared members",
       }[];
       readonly shared_members: readonly {
         readonly member_count: number;
-        readonly observed_in: readonly string[];
+        readonly observations: readonly {
+          readonly label: string;
+          readonly evidence_id: string;
+        }[];
       }[];
+      readonly coverage: {
+        readonly member_scope: string;
+        readonly members_without_byte_root_digest: number;
+        readonly nodes_without_byte_identity: number;
+      };
       readonly partially_shared_members: readonly {
         readonly member_count: number;
       }[];
-      readonly coverage: { readonly member_scope: string };
     };
 
     expect(result.status).toBe("partitioned");
@@ -136,6 +143,24 @@ it("clusters three inspected archives through MCP by family and shared members",
     // one.txt is in every member; two.txt only in alpha and gamma.
     expect(result.shared_members).toHaveLength(1);
     expect(result.shared_members[0]?.member_count).toBe(3);
+    // Every index row carries the Evidence id of each member that observed it,
+    // with the caller's label next to it rather than instead of it.
+    expect(
+      result.shared_members[0]?.observations.map(
+        ({ label, evidence_id: evidenceId }) => [
+          label,
+          evidenceId === members[0]!.evidence.evidence_id,
+        ],
+      ),
+    ).toEqual([
+      ["alpha", true],
+      ["beta", false],
+      ["gamma", false],
+    ]);
+    // Archives are read as bytes, so these members keep byte-root identity and
+    // no directory node is indexed.
+    expect(result.coverage.members_without_byte_root_digest).toBe(0);
+    expect(result.coverage.nodes_without_byte_identity).toBe(0);
     // Below the whole-set threshold: two.txt across alpha and gamma, and the
     // alpha/gamma root node itself, which is why the identical pair appears in
     // both the family list and the member index without contradiction.

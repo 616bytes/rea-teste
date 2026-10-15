@@ -193,7 +193,7 @@ describe("compact advertised input schema", () => {
       expect(compact(input)).toBe(canonical(input));
   });
 
-  it("does not reintroduce unsupported dialect keywords in reduced schemas", () => {
+  it("does not reintroduce unsupported dialect keywords in capped schemas", () => {
     let nested: Record<string, unknown> = { type: "string" };
     for (let level = 0; level < 12; level += 1)
       nested = { type: "object", properties: { child: nested } };
@@ -206,7 +206,7 @@ describe("compact advertised input schema", () => {
       },
       1_500,
     );
-    expect(presentation).toBe("reduced");
+    expect(presentation).toBe("capped");
     expect(schema.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
     expect(schema).not.toHaveProperty("dependentRequired");
   });

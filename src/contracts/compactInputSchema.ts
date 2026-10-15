@@ -459,8 +459,16 @@ export const compactAdvertisedInputSchema = (
     if (schemaTreeDepth(inline) <= COMPACT_INPUT_SCHEMA_MAX_DEPTH)
       return { schema: inline, presentation: "inline" };
     const capped = capSchemaDepth(inline, 0, COMPACT_INPUT_SCHEMA_MAX_DEPTH);
-    if (isSchemaObject(capped) && serializedBytes(capped) <= budgetBytes)
-      return { schema: capped, presentation: "capped" };
+    if (isSchemaObject(capped)) {
+      // Like the reduced form, leave out root keywords some clients reject.
+      const {
+        dependencies: _dependencies,
+        dependentRequired: _dependentRequired,
+        ...presented
+      } = capped;
+      if (serializedBytes(presented) <= budgetBytes)
+        return { schema: presented, presentation: "capped" };
+    }
   }
   const reduced = reduceToShallowProperties(schema);
   if (serializedBytes(reduced) <= budgetBytes)

@@ -59,11 +59,14 @@ const captureEvidenceForSensitiveInput = (data: string) => {
   return createProcessCaptureEvidence(scenario, capture);
 };
 
-const captureEvidenceForEnvironmentSecret = async (value: string) => {
+const captureEvidenceForEnvironmentSecret = async (
+  value: string,
+  name = "API_TOKEN",
+) => {
   const scenario = parseProcessScenario({
     executable: "/bin/echo",
     working_directory: "/tmp",
-    environment: { API_TOKEN: value },
+    environment: Object.fromEntries([[name, value]]),
     events: [{ type: "input", at_ms: 0, data: value }],
   });
   const selectedExecutable = await observeSelectedExecutable(
@@ -150,4 +153,17 @@ it("preserves selected local environment and input values", async () => {
     status: "changed",
     terminal: "changed",
   });
+});
+
+it("preserves a literal __proto__ override in process capture Evidence", async () => {
+  const evidence = await captureEvidenceForEnvironmentSecret(
+    "literal",
+    "__proto__",
+  );
+  const capture = parseProcessCapture(evidence.normalized_result);
+
+  expect(capture.manifest.scenario).toMatchObject({
+    environment: { ["__proto__"]: "literal" },
+  });
+  expect(JSON.stringify(evidence)).toContain('"__proto__":"literal"');
 });

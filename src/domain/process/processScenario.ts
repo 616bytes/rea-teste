@@ -51,6 +51,14 @@ const childProcessString = z
     /^[^\x00]*$/u,
     "Values passed to operating-system APIs cannot contain NUL",
   );
+const environmentEntry = z.tuple([environmentName, childProcessString]);
+const environment = z.preprocess(
+  (input) =>
+    typeof input === "object" && input !== null && !Array.isArray(input)
+      ? Object.entries(input)
+      : input,
+  z.array(environmentEntry).transform((entries) => Object.fromEntries(entries)),
+);
 
 const fitsProcessTerminalCellBudget = (
   columns: number,
@@ -153,7 +161,7 @@ export const processScenarioSchema = z
     executable: childProcessString.min(1),
     arguments: z.array(childProcessString).default([]),
     working_directory: childProcessString.default("."),
-    environment: z.record(environmentName, childProcessString).default({}),
+    environment: environment.default({}),
     filesystem_observation_paths: z
       .array(childProcessString.min(1))
       .default([]),

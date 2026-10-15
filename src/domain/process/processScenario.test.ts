@@ -34,6 +34,18 @@ it("accepts an explicit zero finalization interval", () => {
   ).toMatchObject({ finalization_ms: 0 });
 });
 
+it("preserves an own __proto__ environment override", () => {
+  const input = JSON.parse(
+    `{"executable":${JSON.stringify(process.execPath)},"environment":{"__proto__":"literal"}}`,
+  ) as unknown;
+  const scenario = parseProcessScenario(input);
+
+  expect(Object.keys(scenario.environment)).toEqual(["__proto__"]);
+  expect(Object.hasOwn(scenario.environment, "__proto__")).toBe(true);
+  expect(scenario.environment["__proto__"]).toBe("literal");
+  expect(Object.getPrototypeOf(scenario.environment)).toBe(Object.prototype);
+});
+
 it("commits a positive finalization interval in both identity projections", () => {
   const scenario = parseProcessScenario({
     ...baseScenario,

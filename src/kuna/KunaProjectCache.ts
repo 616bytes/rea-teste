@@ -1,0 +1,582 @@
+import { createHash, randomUUID } from "node:crypto";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  utimes,
+} from "node:fs/promises";
+import { join } from "node:path";
+
+import canonicalize from "canonicalize";
+import writeFileAtomic from "write-file-atomic";
+import { z } from "zod";
+
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisCancelledError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { hashStableFile } from "../filesystem/StableFileHash.js";
+import type { KunaInstallation } from "./KunaInstallation.js";
+import {
+  exportKunaProject,
+  KUNA_EXPORT_OPERATION,
+  kunaExportFailure,
+  readKunaExport,
+  type KunaExport,
+  type KunaExportOutcome,
+  type KunaExportStatus,
+  type KunaProcessLauncher,
+} from "./KunaProjectExport.js";
+import type {
+  KunaInventoryFunction,
+  KunaProjectFunction,
+} from "./KunaProjectFiles.js";
+import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
+
+/** Bumped whenever the entry layout or manifest meaning changes. */
+const CACHE_LAYOUT = 1;
+
+/** A manifest names five files and their digests; anything larger is not ours. */
+const MANIFEST_MAX_BYTES = 64 * 1024;
+
+const KEY_PATTERN = /^[0-9a-f]{64}$/u;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
+
+/** Inputs that determine an export's content. Each one is part of the cache key. */
+export interface KunaProjectKeyInputs {
+  readonly targetSha256: string;
+  readonly kunaSha256: string;
+  readonly kunaVersion: string;
+  /**
+   * `--jobs 1` is Kuna's reference answer; more jobs decompile without
+   * callee-first prototypes and change some bodies.
+   */
+  readonly jobs: number;
+}
+
+/** Content address of one export: every input that can change its bytes. */
+export const kunaProjectKey = (inputs: KunaProjectKeyInputs): string =>
+  createHash("sha256")
+    .update(
+      canonicalize({
+        layout: CACHE_LAYOUT,
+        target_sha256: inputs.targetSha256,
+        kuna_sha256: inputs.kunaSha256,
+        kuna_version: inputs.kunaVersion,
+        export: { command: "decompile-project", jobs: inputs.jobs },
+      }) ?? "",
+    )
+    .digest("hex");
+
+const fileSchema = z.strictObject({
+  path: z.string().min(1),
+  bytes: z.number().int().nonnegative(),
+  sha256: z.string().regex(SHA256_PATTERN),
+});
+
+const manifestSchema = z.strictObject({
+  layout: z.literal(CACHE_LAYOUT),
+  key: z.string().regex(KEY_PATTERN),
+  inputs: z.strictObject({
+    target_sha256: z.string().regex(SHA256_PATTERN),
+    kuna_sha256: z.string().regex(SHA256_PATTERN),
+    kuna_version: z.string().min(1),
+    jobs: z.number().int().positive(),
+  }),
+  files: z.strictObject({
+    c: fileSchema,
+    h: fileSchema,
+    asm: fileSchema,
+    readme: fileSchema,
+    inventory: fileSchema,
+  }),
+  summary: z.strictObject({
+    decompiled: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+  }),
+  created_at: z.string().datetime(),
+});
+
+/** Immutable description of one published export, written once at publish. */
+export type KunaProjectManifest = z.infer<typeof manifestSchema>;
+
+/** One verified, published export. */
+export interface KunaProject {
+  readonly key: string;
+  /** Directory holding the export's `.c`, `.h`, `.asm`, README and inventory. */
+  readonly directory: string;
+  readonly manifest: KunaProjectManifest;
+  /** Decompiled function blocks in `.c` order. */
+  readonly functions: readonly KunaProjectFunction[];
+  /** Every callable entry Kuna found, including imports it does not decompile. */
+  readonly inventory: readonly KunaInventoryFunction[];
+}
+
+/** One request to produce or reuse the export for a target. */
+export interface KunaProjectRequest {
+  readonly installation: KunaInstallation;
+  /** Caller-selected target path; REA decompiles a verified copy of it. */
+  readonly targetPath: string;
+  readonly targetSha256: string;
+  readonly signal?: AbortSignal;
+  readonly onStatus?: (status: KunaExportStatus) => void;
+}
+
+interface InflightBuild {
+  readonly promise: Promise<Result<KunaProject, AnalysisError>>;
+  readonly controller: AbortController;
+  readonly listeners: Set<(status: KunaExportStatus) => void>;
+  waiters: number;
+}
+
+const isMissing = (cause: unknown): boolean =>
+  cause instanceof Error &&
+  "code" in cause &&
+  (cause.code === "ENOENT" || cause.code === "ENOTDIR");
+
+/** A file an entry's manifest names is gone, replaced or changed under it. */
+const isDamaged = (cause: unknown): boolean =>
+  cause instanceof Error &&
+  "code" in cause &&
+  ["ENOENT", "ENOTDIR", "EISDIR", "ENOTFILE", "ESTALE"].includes(
+    String(cause.code),
+  );
+
+const isPublishedByAnother = (cause: unknown): boolean =>
+  cause instanceof Error &&
+  "code" in cause &&
+  (cause.code === "EEXIST" || cause.code === "ENOTEMPTY");
+
+const parseManifest = (text: string): KunaProjectManifest | undefined => {
+  try {
+    const parsed = manifestSchema.safeParse(JSON.parse(text));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const manifestBytes = (manifest: KunaProjectManifest): number =>
+  Object.values(manifest.files).reduce((sum, file) => sum + file.bytes, 0);
+
+/**
+ * REA-owned on-disk cache of `kuna decompile-project` exports.
+ *
+ * Layout under the root: `projects/<key>/` holds published entries
+ * (`manifest.json` plus the export and inventory in `project/`), `staging/`
+ * holds builds in progress, `trash/` holds evicted entries awaiting removal,
+ * and `home/` is Kuna's own HOME so its spec cache stays inside REA's
+ * ownership.
+ *
+ * Entries are content-addressed and immutable. A build runs in private
+ * staging and is published by one directory rename, so a reader sees a
+ * complete entry or none, and concurrent publishers of one key keep the first.
+ * File digests are recorded once at publish and checked on every first read.
+ * Recency is the entry directory's mtime; publishing evicts the least recently
+ * used entries above the size cap, never an entry pinned by this process.
+ */
+export class KunaProjectCache {
+  readonly #root: string;
+  readonly #maxBytes: number;
+  readonly #staleStagingMs: number;
+  readonly #launcher: KunaProcessLauncher | undefined;
+  readonly #inflight = new Map<string, InflightBuild>();
+  readonly #verified = new Map<string, KunaProject>();
+  readonly #pins = new Map<string, number>();
+  readonly #retained: ProviderCleanupError[] = [];
+
+  constructor(
+    root: string,
+    options: {
+      readonly maxBytes: number;
+      /** Staging older than this belongs to no live build: every build has a shorter deadline. */
+      readonly staleStagingMs: number;
+      readonly launcher?: KunaProcessLauncher;
+    },
+  ) {
+    this.#root = root;
+    this.#maxBytes = options.maxBytes;
+    this.#staleStagingMs = options.staleStagingMs;
+    this.#launcher = options.launcher;
+  }
+
+  /** Keep an entry from eviction while this process serves it. */
+  pin(key: string): () => void {
+    this.#pins.set(key, (this.#pins.get(key) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const count = (this.#pins.get(key) ?? 1) - 1;
+      if (count === 0) this.#pins.delete(key);
+      else this.#pins.set(key, count);
+    };
+  }
+
+  /**
+   * Return the verified published entry for a key, or undefined when none is
+   * usable. A corrupt or tampered entry is removed and reported as absent.
+   */
+  async lookup(
+    key: string,
+    signal?: AbortSignal,
+  ): Promise<KunaProject | undefined> {
+    const verified = this.#verified.get(key);
+    if (verified !== undefined) {
+      await this.#touch(key);
+      return verified;
+    }
+    const entry = join(this.#root, "projects", key);
+    let text: string;
+    try {
+      text = await this.#readBounded(join(entry, "manifest.json"));
+    } catch (cause: unknown) {
+      if (isMissing(cause)) return undefined;
+      if (!(cause instanceof RangeError)) throw cause;
+      await this.#discard(key);
+      return undefined;
+    }
+    const manifest = parseManifest(text);
+    if (manifest?.key !== key) {
+      await this.#discard(key);
+      return undefined;
+    }
+    const directory = join(entry, "project");
+    for (const file of Object.values(manifest.files)) {
+      let observed: { readonly sha256: string; readonly bytes: number };
+      try {
+        observed = await hashStableFile(join(directory, file.path), signal);
+      } catch (cause: unknown) {
+        signal?.throwIfAborted();
+        if (!isDamaged(cause)) throw cause;
+        await this.#discard(key);
+        return undefined;
+      }
+      if (observed.sha256 !== file.sha256 || observed.bytes !== file.bytes) {
+        await this.#discard(key);
+        return undefined;
+      }
+    }
+    const parsed = await readKunaExport(
+      directory,
+      manifest.files,
+      manifest.summary,
+      signal,
+    );
+    if (!parsed.ok) {
+      await this.#discard(key);
+      return undefined;
+    }
+    const project = { key, directory, manifest, ...parsed.value };
+    this.#verified.set(key, project);
+    await this.#touch(key);
+    return project;
+  }
+
+  /**
+   * Return the entry for a request, building and publishing it when absent.
+   * Concurrent requests for one key share one Kuna run; the run is cancelled
+   * only when every waiting request has been cancelled.
+   */
+  async build(
+    request: KunaProjectRequest,
+  ): Promise<Result<KunaProject, AnalysisError>> {
+    if (request.signal?.aborted === true)
+      return err(new AnalysisCancelledError(KUNA_EXPORT_OPERATION));
+    const key = kunaProjectKey({
+      targetSha256: request.targetSha256,
+      kunaSha256: request.installation.sha256,
+      kunaVersion: request.installation.version,
+      jobs: request.installation.configuration.jobs,
+    });
+    const running = this.#inflight.get(key);
+    // A build whose waiters all left is winding down; a new request starts afresh.
+    if (running !== undefined && !running.controller.signal.aborted)
+      return this.#await(running, request);
+    const controller = new AbortController();
+    const listeners = new Set<(status: KunaExportStatus) => void>();
+    const promise = this.#produce(key, request, controller.signal, (status) => {
+      for (const listener of listeners) listener(status);
+    });
+    const created: InflightBuild = {
+      promise,
+      controller,
+      listeners,
+      waiters: 0,
+    };
+    this.#inflight.set(key, created);
+    void promise.then(() => {
+      if (this.#inflight.get(key) === created) this.#inflight.delete(key);
+    });
+    return this.#await(created, request);
+  }
+
+  /** Wait for every build in flight and report cleanup this cache still owns. */
+  async close(): Promise<Result<null, ProviderCleanupError>> {
+    await Promise.allSettled(
+      [...this.#inflight.values()].map((entry) => entry.promise),
+    );
+    if (this.#retained.length === 0) return ok(null);
+    return err(
+      new ProviderCleanupError(
+        KUNA_PROVIDER_ID,
+        this.#retained.flatMap((retained) => retained.cleanupResources),
+        {
+          reason: this.#retained
+            .map((retained) =>
+              String(retained.diagnostics?.["reason"] ?? retained.message),
+            )
+            .join("; "),
+        },
+        { operation: KUNA_EXPORT_OPERATION },
+      ),
+    );
+  }
+
+  #await(
+    entry: InflightBuild,
+    request: KunaProjectRequest,
+  ): Promise<Result<KunaProject, AnalysisError>> {
+    entry.waiters += 1;
+    if (request.onStatus !== undefined) entry.listeners.add(request.onStatus);
+    return new Promise((resolve) => {
+      let settled = false;
+      const leave = () => {
+        if (request.onStatus !== undefined)
+          entry.listeners.delete(request.onStatus);
+        entry.waiters -= 1;
+      };
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        leave();
+        if (entry.waiters === 0) entry.controller.abort();
+        resolve(err(new AnalysisCancelledError(KUNA_EXPORT_OPERATION)));
+      };
+      request.signal?.addEventListener("abort", onAbort, { once: true });
+      void entry.promise.then((result) => {
+        request.signal?.removeEventListener("abort", onAbort);
+        if (settled) return;
+        settled = true;
+        leave();
+        resolve(result);
+      });
+    });
+  }
+
+  async #produce(
+    key: string,
+    request: KunaProjectRequest,
+    signal: AbortSignal,
+    onStatus: (status: KunaExportStatus) => void,
+  ): Promise<Result<KunaProject, AnalysisError>> {
+    try {
+      const existing = await this.lookup(key, signal);
+      if (existing !== undefined) return ok(existing);
+      await Promise.all(
+        ["projects", "staging", "trash", "home"].map((name) =>
+          mkdir(join(this.#root, name), { recursive: true, mode: 0o700 }),
+        ),
+      );
+      await this.#sweep(signal);
+      const staging = await mkdtemp(join(this.#root, "staging", "build-"));
+      const outcome = await exportKunaProject({
+        installation: request.installation,
+        targetPath: request.targetPath,
+        targetSha256: request.targetSha256,
+        workspace: staging,
+        output: join(staging, "entry", "project"),
+        signal,
+        onStatus,
+        launcher: this.#launcher,
+      }).catch((cause: unknown): KunaExportOutcome => ({
+        kind: "done",
+        result: err(kunaExportFailure(cause, signal)),
+      }));
+      // An unproven process may still write into staging; it stays owned here.
+      if (outcome.kind === "retained") return err(this.#retain(outcome.error));
+      const published = outcome.result.ok
+        ? await this.#publish(
+            key,
+            staging,
+            request,
+            outcome.result.value,
+            signal,
+          )
+        : outcome.result;
+      try {
+        await rm(staging, { recursive: true, force: true });
+      } catch (cause: unknown) {
+        return err(
+          this.#retain(
+            new ProviderCleanupError(
+              KUNA_PROVIDER_ID,
+              [staging],
+              {
+                reason: cause instanceof Error ? cause.message : String(cause),
+              },
+              { operation: KUNA_EXPORT_OPERATION, cause },
+            ),
+          ),
+        );
+      }
+      if (!published.ok) return published;
+      // The entry is published either way; a failed eviction retries on the next publish.
+      await this.#evict(key).catch(() => undefined);
+      return published;
+    } catch (cause: unknown) {
+      return err(kunaExportFailure(cause, signal));
+    }
+  }
+
+  /** Record the manifest and publish the staged export under its key. */
+  async #publish(
+    key: string,
+    staging: string,
+    request: KunaProjectRequest,
+    exported: KunaExport,
+    signal: AbortSignal,
+  ): Promise<Result<KunaProject, AnalysisError>> {
+    const manifest: KunaProjectManifest = {
+      layout: CACHE_LAYOUT,
+      key,
+      inputs: {
+        target_sha256: request.targetSha256,
+        kuna_sha256: request.installation.sha256,
+        kuna_version: request.installation.version,
+        jobs: request.installation.configuration.jobs,
+      },
+      files: exported.files,
+      summary: exported.summary,
+      created_at: new Date().toISOString(),
+    };
+    const total = manifestBytes(manifest);
+    if (total > this.#maxBytes)
+      return err(
+        new AnalysisResourceConstraintError(
+          KUNA_EXPORT_OPERATION,
+          "capacity",
+          `This export occupies ${String(total)} bytes, more than the whole Kuna cache may hold.`,
+          { cache_max_bytes: this.#maxBytes, export_bytes: total },
+          {
+            remediationAction:
+              "Raise REA_KUNA_CACHE_MAX_BYTES above the export size, or analyze this target with another provider.",
+          },
+        ),
+      );
+    await writeFileAtomic(
+      join(staging, "entry", "manifest.json"),
+      `${JSON.stringify(manifest, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+    const destination = join(this.#root, "projects", key);
+    try {
+      await rename(join(staging, "entry"), destination);
+    } catch (cause: unknown) {
+      if (!isPublishedByAnother(cause)) throw cause;
+      const winner = await this.lookup(key, signal);
+      if (winner !== undefined) return ok(winner);
+      throw cause;
+    }
+    const project = {
+      key,
+      directory: join(destination, "project"),
+      manifest,
+      functions: exported.functions,
+      inventory: exported.inventory,
+    };
+    this.#verified.set(key, project);
+    return ok(project);
+  }
+
+  /** Remove abandoned staging and evicted entries; both are REA-owned by layout. */
+  async #sweep(signal: AbortSignal): Promise<void> {
+    const now = Date.now();
+    for (const name of await readdir(join(this.#root, "staging"))) {
+      signal.throwIfAborted();
+      const path = join(this.#root, "staging", name);
+      const status = await lstat(path).catch(() => undefined);
+      if (status !== undefined && now - status.mtimeMs > this.#staleStagingMs)
+        await rm(path, { recursive: true, force: true }).catch(() => undefined);
+    }
+    for (const name of await readdir(join(this.#root, "trash")))
+      await rm(join(this.#root, "trash", name), {
+        recursive: true,
+        force: true,
+      }).catch(() => undefined);
+  }
+
+  /** Evict least recently used entries above the cap, keeping pinned ones. */
+  async #evict(keep: string): Promise<void> {
+    const entries: { key: string; bytes: number; mtimeMs: number }[] = [];
+    for (const name of await readdir(join(this.#root, "projects"))) {
+      if (!KEY_PATTERN.test(name)) continue;
+      const path = join(this.#root, "projects", name);
+      const status = await stat(path).catch(() => undefined);
+      if (status === undefined) continue;
+      const manifest = await this.#readBounded(join(path, "manifest.json"))
+        .then(parseManifest)
+        .catch(() => undefined);
+      // An owned entry without a valid manifest is unusable; evict it first.
+      entries.push(
+        manifest === undefined
+          ? { key: name, bytes: 0, mtimeMs: -1 }
+          : {
+              key: name,
+              bytes: manifestBytes(manifest),
+              mtimeMs: status.mtimeMs,
+            },
+      );
+    }
+    let total = entries.reduce((sum, entry) => sum + entry.bytes, 0);
+    for (const entry of entries.sort((a, b) => a.mtimeMs - b.mtimeMs)) {
+      if (total <= this.#maxBytes && entry.mtimeMs >= 0) break;
+      if (entry.key === keep || this.#pins.has(entry.key)) continue;
+      await this.#discard(entry.key);
+      total -= entry.bytes;
+    }
+  }
+
+  /** Atomically retire one owned entry, then remove it. */
+  async #discard(key: string): Promise<void> {
+    this.#verified.delete(key);
+    const trash = join(this.#root, "trash", `${key}-${randomUUID()}`);
+    try {
+      await mkdir(join(this.#root, "trash"), { recursive: true, mode: 0o700 });
+      await rename(join(this.#root, "projects", key), trash);
+    } catch (cause: unknown) {
+      if (isMissing(cause)) return;
+      throw cause;
+    }
+    await rm(trash, { recursive: true, force: true }).catch(() => undefined);
+  }
+
+  async #touch(key: string): Promise<void> {
+    const now = new Date();
+    await utimes(join(this.#root, "projects", key), now, now).catch(
+      () => undefined,
+    );
+  }
+
+  async #readBounded(path: string): Promise<string> {
+    const status = await stat(path);
+    if (status.size > MANIFEST_MAX_BYTES)
+      throw new RangeError(
+        `${path} exceeds ${String(MANIFEST_MAX_BYTES)} bytes`,
+      );
+    return readFile(path, "utf8");
+  }
+
+  #retain(error: ProviderCleanupError): ProviderCleanupError {
+    this.#retained.push(error);
+    return error;
+  }
+}

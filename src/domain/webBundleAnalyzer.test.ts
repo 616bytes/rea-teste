@@ -456,6 +456,14 @@ describe("web bundle bound WebSocket constructors", () => {
       "Socket",
     ],
     [
+      'const { WebSocket: Socket } = require("ws"); new Socket("wss://example.test/bound");',
+      "Socket",
+    ],
+    [
+      'const Socket = require("ws").WebSocket; new Socket("wss://example.test/bound");',
+      "Socket",
+    ],
+    [
       'const { WebSocket } = globalThis; new WebSocket("wss://example.test/bound");',
       "WebSocket",
     ],
@@ -500,6 +508,9 @@ describe("web bundle bound WebSocket constructors", () => {
     'import Socket from "ws"; Socket.WebSocket = replacement; new Socket.WebSocket("wss://example.test/local");',
     'function local(require) { const WebSocket = require("ws"); new WebSocket("wss://example.test/local"); }',
     'const WebSocket = require("ws"); WebSocket = replacement; new WebSocket("wss://example.test/local");',
+    'const Socket = require("ws").Server; new Socket("wss://example.test/local");',
+    'const { default: Socket } = require("ws"); new Socket("wss://example.test/local");',
+    'const Socket = require("other-library").WebSocket; new Socket("wss://example.test/local");',
     'import type WebSocket = require("ws"); new WebSocket("wss://example.test/local");',
     'const { [key]: WebSocket } = globalThis; new WebSocket("wss://example.test/local");',
     'const { WebSocket = replacement } = globalThis; new WebSocket("wss://example.test/local");',
@@ -592,6 +603,47 @@ describe("web bundle WebSocket execution phases", () => {
     ];
     expect(socketEndpoints(source)).toEqual([expected, expected]);
   });
+});
+
+describe("web bundle constructor suspension order", () => {
+  it.each([
+    'let value; (async () => { value = await ready; new Socket("wss://example.test/resumed"); })();',
+    '(async () => { (() => { new Socket("wss://example.test/resumed"); })(await ready); })();',
+    '(async () => { new (class { socket = new Socket("wss://example.test/resumed"); })(await ready); })();',
+    '(async () => { new (class { constructor() { new Socket("wss://example.test/resumed"); } })(await ready); })();',
+    '(async () => { new (class { [await ready] = 0; socket = new Socket("wss://example.test/resumed"); })(); })();',
+    '(async () => { new (class { socket = new Socket("wss://example.test/resumed"); [await ready] = 0; })(); })();',
+    '(async () => { new (class { static socket = new Socket("wss://example.test/resumed"); [await ready] = 0; })(); })();',
+    '(function* () { yield 0; new Socket("wss://example.test/resumed"); })().next();',
+    '(async () => { (function* () { new Socket("wss://example.test/resumed"); })().next(await ready); })();',
+  ])(
+    "retains a constructor read after its preceding suspension: %s",
+    (expression) => {
+      const expected = [
+        { value: "wss://example.test/resumed", mechanism: "call:Socket" },
+      ];
+      expect(
+        socketEndpoints(`${expression} const Socket = globalThis.WebSocket;`),
+      ).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    '(function* () { new Socket("wss://example.test/tdz"); })().next();',
+    '(async function* () { new Socket("wss://example.test/tdz"); })().next();',
+    '(function* () { new Socket("wss://example.test/tdz"); }).call(null).next();',
+    '(async () => { new (class { static socket = new Socket("wss://example.test/tdz"); })(await ready); })();',
+    '(async () => { new (class { [new Socket("wss://example.test/tdz")] = 0; })(await ready); })();',
+    'let value; (async () => { value &&= await ready; new Socket("wss://example.test/tdz"); })();',
+    '(async () => { new (class { socket = new Socket("wss://example.test/tdz"); })(await ready); const Socket = globalThis.WebSocket; })();',
+  ])(
+    "does not move a callee, key, or local TDZ past a later suspension: %s",
+    (expression) => {
+      expect(
+        socketEndpoints(`${expression} const Socket = globalThis.WebSocket;`),
+      ).toEqual([[], []]);
+    },
+  );
 });
 
 describe("web bundle API classification parity", () => {

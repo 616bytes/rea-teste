@@ -616,12 +616,13 @@ export const isWebSocketEndpointCandidate = (
     if (isUnmodifiedGlobalReference(current, state, "WebSocket", selected))
       return true;
     const required = semanticRequireOrigin(current, state)?.origin;
-    if (required !== undefined)
+    if (required !== undefined) {
+      const path = [...required.importedPath, ...selected];
       return (
         required.specifier === "ws" &&
-        required.importedPath.length === 0 &&
-        selected.length === 0
+        (path.length === 0 || (path.length === 1 && path[0] === "WebSocket"))
       );
+    }
     const { root, members } = electronMemberPath(current);
     if (!t.isIdentifier(root)) return false;
     const binding = resolveSemanticBindingState(state, root, root.name);

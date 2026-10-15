@@ -70,6 +70,10 @@ it("retains constructor captures, ws imports and template keys with their graph 
       "}",
       "const Deferred = globalThis.WebSocket;",
       "connect();",
+      'const { WebSocket: Named } = require("ws");',
+      'new Named("wss://example.test/named-commonjs");',
+      'const Member = require("ws").WebSocket;',
+      'new Member("wss://example.test/member-commonjs");',
     ].join("\n"),
   );
   await writeFile(
@@ -83,7 +87,7 @@ it("retains constructor captures, ws imports and template keys with their graph 
     const analysis = analyzeJavaScriptArtifactFiles(files);
     const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
     const endpoints = graph.nodes.filter(({ kind }) => kind === "endpoint");
-    expect(endpoints).toHaveLength(7);
+    expect(endpoints).toHaveLength(9);
     for (const [path, constructor, line, source] of [
       ["imported", "Socket", 3, "app.js"],
       ["captured", "Captured", 4, "app.js"],
@@ -92,6 +96,8 @@ it("retains constructor captures, ws imports and template keys with their graph 
       ["projected", "Projected", 9, "app.js"],
       ["deferred", "Deferred", 11, "app.js"],
       ["import-equals", "Socket", 2, "import-equals.ts"],
+      ["named-commonjs", "Named", 16, "app.js"],
+      ["member-commonjs", "Member", 18, "app.js"],
     ] as const) {
       const observation = endpoints.find(({ observations }) =>
         observations.some(
@@ -135,6 +141,15 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       '(function () { new Socket("wss://example.test/eager-bind"); }).bind(null)();\nconst connect = (function () { new Socket("wss://example.test/deferred-bind"); }).bind(null);\nconst Socket = globalThis.WebSocket; connect();',
     "async.js":
       '(async () => { new Socket("wss://example.test/eager-async"); await ready; })();\n(async () => { await ready; new Socket("wss://example.test/continuation"); })();\nconst Socket = globalThis.WebSocket;',
+    "await-inputs.js": [
+      'let value; (async () => { value = await ready; new Socket("wss://example.test/assignment"); })();',
+      '(async () => { new (class { socket = new Socket("wss://example.test/argument-field"); })(await ready); })();',
+      '(async () => { new (class { constructor() { new Socket("wss://example.test/argument-constructor"); } })(await ready); })();',
+      '(async () => { new (class { socket = new Socket("wss://example.test/computed-key"); [await ready] = 0; })(); })();',
+      "const Socket = globalThis.WebSocket;",
+    ].join("\n"),
+    "immediate-generator.js":
+      '(function* () { new Socket("wss://example.test/tdz-generator"); })().next(); const Socket = globalThis.WebSocket;',
     "async-local.js":
       '(async () => { new Socket("wss://example.test/tdz-before-await"); await ready; const Socket = globalThis.WebSocket; })();',
     "async-phases.js":
@@ -158,12 +173,20 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
     expect(
       observations.map(({ properties }) => properties.value).sort(),
     ).toEqual([
+      "wss://example.test/argument-constructor",
+      "wss://example.test/argument-field",
+      "wss://example.test/assignment",
+      "wss://example.test/computed-key",
       "wss://example.test/continuation",
       "wss://example.test/deferred-bind",
       "wss://example.test/field",
       "wss://example.test/generator-body",
     ]);
     for (const [path, source, line] of [
+      ["assignment", "await-inputs.js", 1],
+      ["argument-field", "await-inputs.js", 2],
+      ["argument-constructor", "await-inputs.js", 3],
+      ["computed-key", "await-inputs.js", 4],
       ["continuation", "async.js", 2],
       ["deferred-bind", "bound.js", 2],
       ["field", "fields.js", 1],

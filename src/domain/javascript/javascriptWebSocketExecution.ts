@@ -63,6 +63,27 @@ const webSocketImmediateInvocation = (
   }
 };
 
+type WebSocketSuspension = t.AwaitExpression | t.YieldExpression;
+
+/** Class keys complete before any static initializer or instance construction. */
+const webSocketClassKeys = (node: t.Class): readonly t.Node[] => [
+  ...(t.isNode(node.superClass) ? [node.superClass] : []),
+  ...node.body.body.flatMap((member) =>
+    (t.isClassProperty(member) || t.isClassMethod(member)) && member.computed
+      ? [member.key]
+      : [],
+  ),
+];
+
+const webSocketStaticInitializers = (member: t.Node): readonly t.Node[] =>
+  t.isStaticBlock(member)
+    ? member.body
+    : (t.isClassProperty(member) || t.isClassPrivateProperty(member)) &&
+        member.static &&
+        t.isNode(member.value)
+      ? [member.value]
+      : [];
+
 /** Children completed in order if this straight-line node completes normally. */
 const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   if (t.isBlockStatement(node)) return node.body;
@@ -71,6 +92,13 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   if (t.isVariableDeclarator(node))
     return t.isNode(node.init) ? [node.init] : [];
   if (t.isUnaryExpression(node)) return [node.argument];
+  if (t.isAssignmentExpression(node) && node.operator === "=")
+    return [node.left, node.right];
+  if (t.isClass(node))
+    return [
+      ...webSocketClassKeys(node),
+      ...node.body.body.flatMap(webSocketStaticInitializers),
+    ];
   if (t.isSequenceExpression(node)) return node.expressions;
   if (t.isBinaryExpression(node)) return [node.left, node.right];
   if (t.isCallExpression(node) || t.isNewExpression(node))
@@ -80,45 +108,62 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   return [];
 };
 
-/** Successful completion crosses the last await in this straight-line node. */
-const webSocketCompletedAwait = (
+const webSocketCompletedSuspensions = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  WeakMap<t.Node, WebSocketSuspension | null>
+>();
+
+/** Successful completion crosses the last suspension in this straight-line node. */
+const webSocketCompletedSuspension = (
   node: t.Node,
-): t.AwaitExpression | undefined => {
+  state: JavaScriptSemanticAnalysisState,
+): WebSocketSuspension | undefined => {
+  let cached = webSocketCompletedSuspensions.get(state);
+  if (cached === undefined) {
+    cached = new WeakMap();
+    webSocketCompletedSuspensions.set(state, cached);
+  }
+  const existing = cached.get(node);
+  if (existing !== undefined) return existing ?? undefined;
   const pending = [node];
   while (pending.length > 0) {
     const next = pending.pop();
     if (next === undefined) continue;
     const current = unwrapJavaScriptExpression(next).node;
-    if (t.isAwaitExpression(current)) return current;
+    if (t.isAwaitExpression(current) || t.isYieldExpression(current)) {
+      cached.set(node, current);
+      return current;
+    }
     for (const child of webSocketOrderedEvaluation(current))
       pending.push(child);
   }
+  cached.set(node, null);
   return undefined;
 };
 
-const webSocketAwaitPrefixes = new WeakMap<
+const webSocketSuspensionPrefixes = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  WeakMap<t.Node, ReadonlyMap<t.Node, t.AwaitExpression>>
+  WeakMap<t.Node, ReadonlyMap<t.Node, WebSocketSuspension>>
 >();
 
-/** Index sibling phases once rather than rescan a long async body per socket. */
-const webSocketPrecedingAwait = (
+/** Index sibling phases once rather than rescan a suspended body per socket. */
+const webSocketPrecedingSuspension = (
   parent: t.Node,
   child: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): t.AwaitExpression | undefined => {
-  let byParent = webSocketAwaitPrefixes.get(state);
+): WebSocketSuspension | undefined => {
+  let byParent = webSocketSuspensionPrefixes.get(state);
   if (byParent === undefined) {
     byParent = new WeakMap();
-    webSocketAwaitPrefixes.set(state, byParent);
+    webSocketSuspensionPrefixes.set(state, byParent);
   }
   let prefixes = byParent.get(parent);
   if (prefixes === undefined) {
-    const indexed = new Map<t.Node, t.AwaitExpression>();
-    let awaited: t.AwaitExpression | undefined;
+    const indexed = new Map<t.Node, WebSocketSuspension>();
+    let awaited: WebSocketSuspension | undefined;
     for (const node of webSocketOrderedEvaluation(parent)) {
       if (awaited !== undefined) indexed.set(node, awaited);
-      awaited = webSocketCompletedAwait(node) ?? awaited;
+      awaited = webSocketCompletedSuspension(node, state) ?? awaited;
     }
     byParent.set(parent, indexed);
     prefixes = indexed;
@@ -126,17 +171,17 @@ const webSocketPrecedingAwait = (
   return prefixes.get(child);
 };
 
-/** Find a completed await on the containing straight-line evaluation path. */
-const webSocketAsyncContinuation = (
+/** Find a completed suspension on the containing straight-line evaluation path. */
+const webSocketContinuation = (
   node: t.Node,
   body: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): t.AwaitExpression | undefined => {
+): WebSocketSuspension | undefined => {
   let current = node;
   while (current !== body) {
     const parent = state.parentsByNode.get(current);
     if (parent === undefined) return undefined;
-    const awaited = webSocketPrecedingAwait(parent, current, state);
+    const awaited = webSocketPrecedingSuspension(parent, current, state);
     if (awaited !== undefined) return awaited;
     current = parent;
   }
@@ -156,27 +201,142 @@ const webSocketClassConstruction = (
   return t.isNewExpression(invocation) ? invocation : undefined;
 };
 
+/** Resume only a directly produced generator with a literal next call. */
+const webSocketGeneratorResume = (
+  invocation: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.CallExpression | t.OptionalCallExpression | undefined => {
+  const result = webSocketOuterExpression(invocation, state);
+  const member = state.parentsByNode.get(result);
+  if (
+    (!t.isMemberExpression(member) && !t.isOptionalMemberExpression(member)) ||
+    member.object !== result ||
+    semanticStaticPropertyName(member.property, member.computed) !== "next"
+  )
+    return undefined;
+  const callee = webSocketOuterExpression(member, state);
+  const call = state.parentsByNode.get(callee);
+  return (t.isCallExpression(call) || t.isOptionalCallExpression(call)) &&
+    call.callee === callee
+    ? call
+    : undefined;
+};
+
+/** The lexical body that actually suspends owns the continuation boundary. */
+const webSocketSuspensionOwner = (
+  node: WebSocketSuspension,
+  state: JavaScriptSemanticAnalysisState,
+): t.Node => {
+  let current: t.Node = node;
+  for (;;) {
+    const parent = state.parentsByNode.get(current);
+    if (parent === undefined) return current;
+    if (
+      t.isFunction(parent) &&
+      !(
+        (t.isClassMethod(parent) || t.isObjectMethod(parent)) &&
+        parent.key === current
+      )
+    )
+      return parent;
+    current = parent;
+  }
+};
+
+const webSocketClassPrefixes = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  WeakMap<
+    t.Class,
+    {
+      readonly keys: ReadonlyMap<t.Node, WebSocketSuspension | null>;
+      readonly statics: ReadonlyMap<t.Node, WebSocketSuspension | null>;
+    }
+  >
+>();
+
+/** Index class evaluation once; all keys precede every static initializer. */
+const webSocketClassPrefix = (
+  member: t.Node,
+  computedKey: boolean,
+  state: JavaScriptSemanticAnalysisState,
+): WebSocketSuspension | undefined => {
+  const body = state.parentsByNode.get(member);
+  const declaration =
+    body === undefined ? undefined : state.parentsByNode.get(body);
+  if (!t.isClass(declaration)) return undefined;
+  let byClass = webSocketClassPrefixes.get(state);
+  if (byClass === undefined) {
+    byClass = new WeakMap();
+    webSocketClassPrefixes.set(state, byClass);
+  }
+  let prefixes = byClass.get(declaration);
+  if (prefixes === undefined) {
+    const keys = new Map<t.Node, WebSocketSuspension | null>();
+    const statics = new Map<t.Node, WebSocketSuspension | null>();
+    let suspended = t.isNode(declaration.superClass)
+      ? webSocketCompletedSuspension(declaration.superClass, state)
+      : undefined;
+    for (const item of declaration.body.body) {
+      keys.set(item, suspended ?? null);
+      if ((t.isClassProperty(item) || t.isClassMethod(item)) && item.computed)
+        suspended = webSocketCompletedSuspension(item.key, state) ?? suspended;
+    }
+    for (const item of declaration.body.body) {
+      statics.set(item, suspended ?? null);
+      for (const initializer of webSocketStaticInitializers(item))
+        suspended =
+          webSocketCompletedSuspension(initializer, state) ?? suspended;
+    }
+    prefixes = { keys, statics };
+    byClass.set(declaration, prefixes);
+  }
+  return (
+    (computedKey ? prefixes.keys : prefixes.statics).get(member) ?? undefined
+  );
+};
+
 /**
- * Retain each eager frame even when its own body later suspends. A shared frame
- * still orders a local initializer before its reads across continuation phases.
- * An await cuts off only outer frames, which may initialize before resumption.
+ * Keep local initialization ordered across suspension phases. A suspension cuts
+ * off outer execution frames only after retaining the body that owns it. Calls
+ * evaluate callee/arguments before bodies; classes evaluate keys, static values,
+ * and construction arguments before instance fields and constructor bodies.
  */
 export const webSocketExecutionContexts = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): readonly t.Node[] => {
   const contexts: t.Node[] = [];
+  let suspendedOwner: t.Node | undefined;
+  const suspendedAt = (suspension: WebSocketSuspension | undefined): void => {
+    if (suspension !== undefined)
+      suspendedOwner = webSocketSuspensionOwner(suspension, state);
+  };
+  const suspendedAfter = (evaluated: t.Node): void =>
+    suspendedAt(webSocketCompletedSuspension(evaluated, state));
   let current = node;
   for (;;) {
     const parent = state.parentsByNode.get(current);
     if (parent === undefined) return [...contexts, current];
     if (
       (t.isClassProperty(parent) || t.isClassPrivateProperty(parent)) &&
-      !parent.static &&
-      parent.value === current &&
-      webSocketClassConstruction(parent, state) === undefined
+      parent.value === current
+    ) {
+      if (parent.static)
+        suspendedAt(webSocketClassPrefix(parent, false, state));
+      else {
+        const construction = webSocketClassConstruction(parent, state);
+        if (construction === undefined) return [...contexts, parent];
+        suspendedAfter(construction);
+      }
+    }
+    if (
+      (t.isClassProperty(parent) || t.isClassMethod(parent)) &&
+      parent.computed &&
+      parent.key === current
     )
-      return [...contexts, parent];
+      suspendedAt(webSocketClassPrefix(parent, true, state));
+    if (t.isStaticBlock(parent))
+      suspendedAt(webSocketClassPrefix(parent, false, state));
     if (t.isFunction(parent)) {
       if (
         (t.isObjectMethod(parent) || t.isClassMethod(parent)) &&
@@ -185,27 +345,29 @@ export const webSocketExecutionContexts = (
         current = parent;
         continue;
       }
-      const invocation =
+      let invocation =
         t.isClassMethod(parent) && parent.kind === "constructor"
           ? webSocketClassConstruction(parent, state)
           : webSocketImmediateInvocation(parent, state);
       contexts.push(parent);
+      const generatorBody =
+        current === parent.body &&
+        !t.isArrowFunctionExpression(parent) &&
+        parent.generator;
       if (
-        invocation === undefined ||
-        (current === parent.body &&
-          !t.isArrowFunctionExpression(parent) &&
-          parent.generator &&
-          !t.isNewExpression(invocation))
+        generatorBody &&
+        invocation !== undefined &&
+        !t.isNewExpression(invocation)
       )
-        return contexts;
-      if (parent.async && current === parent.body) {
-        const continuation = webSocketAsyncContinuation(
-          node,
-          parent.body,
-          state,
-        );
-        if (continuation !== undefined) return [...contexts, continuation];
+        invocation = webSocketGeneratorResume(invocation, state);
+      if (invocation === undefined) return contexts;
+      suspendedAfter(invocation);
+      if ((parent.async || generatorBody) && current === parent.body) {
+        const continuation = webSocketContinuation(node, parent.body, state);
+        if (continuation !== undefined)
+          suspendedOwner = webSocketSuspensionOwner(continuation, state);
       }
+      if (suspendedOwner === parent) return contexts;
     }
     current = parent;
   }

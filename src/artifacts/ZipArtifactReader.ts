@@ -191,6 +191,7 @@ export class ZipArtifactReader implements ArtifactReader {
       // ZIP member identity is its directory occurrence, not its filename.
       // Logical path uniqueness belongs to the artifact inventory boundary.
       const metadata = projectZipEntry(entry, index++);
+      if (metadata === undefined) continue;
       // zip.js enforces each member's declared output size, so this sum bounds streamed work.
       if (
         metadata.kind === "file" &&
@@ -258,10 +259,23 @@ export class ZipArtifactReader implements ArtifactReader {
   }
 }
 
-const projectZipEntry = (entry: Entry, index: number): ArtifactEntry => {
+const projectZipEntry = (
+  entry: Entry,
+  index: number,
+): ArtifactEntry | undefined => {
+  const sourcePath = zipEntryPath(entry);
+  // bsdtar writes a root directory and root-relative names when archiving `.`.
+  // Interpret only that ZIP spelling here; shared logical-path validation still
+  // owns all remaining components. The inventory already represents the root.
+  const path = sourcePath.replace(/^(?:\.\/)+/u, "");
+  if (
+    entry.directory &&
+    (sourcePath === "." || (path === "" && path !== sourcePath))
+  )
+    return undefined;
   const symlink = isSymlink(entry);
   return {
-    path: zipEntryPath(entry),
+    path,
     kind: entry.directory ? "directory" : symlink ? "symlink" : "file",
     declaredSize: entry.directory ? null : entry.uncompressedSize,
     compressedSize: entry.directory ? null : entry.compressedSize,
@@ -270,7 +284,14 @@ const projectZipEntry = (entry: Entry, index: number): ArtifactEntry => {
     byteOffset: null,
     declaredSha256: null,
     unpacked: false,
-    limitations: symlink ? ["Archive symlink target was not read."] : [],
+    limitations: [
+      ...(symlink ? ["Archive symlink target was not read."] : []),
+      ...(path === sourcePath
+        ? []
+        : [
+            `ZIP member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
+          ]),
+    ],
     adapterKey: `zip-entry:${index}`,
   };
 };

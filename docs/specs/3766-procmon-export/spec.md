@@ -15,7 +15,7 @@ limit returns all remaining events within the output budget).
 
 Each event keeps its 1-based source ordinal and the exact text of Time of Day,
 Process Name, PID, Operation, Path, Result and Detail. Other simple columns are
-kept by source name under `additional`. A projected column absent from the
+kept in source order as `{column, value}` entries under `additional`. A projected column absent from the
 export is listed in `missing_columns` and is null in every event; an empty cell
 stays an empty string. In XML, field names spell spaces as underscores, a field
 missing from one event is null for that event, and fields with child elements

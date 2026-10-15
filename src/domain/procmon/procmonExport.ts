@@ -72,8 +72,10 @@ export const procmonEventSchema = z.strictObject({
   result: cell,
   detail: cell,
   additional: z
-    .record(z.string(), z.string())
-    .describe("Other exported columns or simple XML fields, by source name"),
+    .array(z.strictObject({ column: z.string(), value: z.string() }))
+    .describe(
+      "Other exported columns or simple XML fields, in source order, by source name",
+    ),
 });
 export type ProcmonEvent = z.infer<typeof procmonEventSchema>;
 

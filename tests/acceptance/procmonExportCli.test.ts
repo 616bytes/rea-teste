@@ -57,7 +57,7 @@ cliTest(
       path: 'C:\\Temp\\note "draft".txt',
       result: "SUCCESS",
       detail: "",
-      additional: {},
+      additional: [],
     });
     const bytes = await readFile(fixture("events.csv"));
     expect(report.artifact.bytes).toBe(bytes.length);
@@ -88,7 +88,7 @@ cliTest(
       ordinal: 1,
       process_name: "sample.exe",
       operation: "RegOpenKey",
-      additional: { ProcessIndex: "1" },
+      additional: [{ column: "ProcessIndex", value: "1" }],
     });
     // The third event has no Detail element: unknown, not empty.
     expect(report.events[2]).toMatchObject({
@@ -170,7 +170,7 @@ cliTest(
         path: null,
         result: null,
         detail: null,
-        additional: { TID: "88" },
+        additional: [{ column: "TID", value: "88" }],
       },
     ]);
   },
@@ -296,7 +296,7 @@ cliTest(
     expect(report.events[0]).toMatchObject({
       process_name: null,
       operation: "Load Image",
-      additional: { Process_Name: "a.exe" },
+      additional: [{ column: "Process_Name", value: "a.exe" }],
     });
   },
 );
@@ -378,5 +378,31 @@ cliTest(
     });
     expect(event.exitCode).toBe(1);
     expect(event.json).toMatchObject({ code: "resource_constraint" });
+  },
+);
+
+cliTest(
+  "keeps a __proto__ column and rejects an empty export as invalid input",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-procmon-proto-");
+    const proto = join(root, "proto.csv");
+    await writeFile(proto, '"Process Name","__proto__"\n"a.exe","kept"\n');
+    const kept = await cli.run({
+      arguments: ["inspect-procmon-export", proto, "--json"],
+    });
+    expect(kept.exitCode, kept.stderr).toBe(0);
+    expect(parse(kept.json).events[0]?.additional).toEqual([
+      { column: "__proto__", value: "kept" },
+    ]);
+    const empty = join(root, "empty.csv");
+    await writeFile(empty, "");
+    const rejected = await cli.run({
+      arguments: ["inspect-procmon-export", empty, "--json"],
+    });
+    expect(rejected.exitCode).toBe(1);
+    expect(rejected.json).toMatchObject({
+      code: "invalid_request",
+      details: { operation: "inspect_procmon_export" },
+    });
   },
 );

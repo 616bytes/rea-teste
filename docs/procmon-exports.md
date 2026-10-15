@@ -50,7 +50,8 @@ UTF-16. Re-save other encodings as UTF-8.
 Each event keeps its 1-based `ordinal` in the export and the text of these
 columns exactly as exported: `time_of_day`, `process_name`, `pid`,
 `operation`, `path`, `result` and `detail`. Other columns, such as `TID` or
-`Sequence`, are kept by their source name under `additional`.
+`Sequence`, are kept in source order under `additional` as
+`{ "column", "value" }` entries.
 
 A column that never appears in the export is listed in `missing_columns`, and
 its event field is `null`. An empty cell stays an empty string. In XML, an event

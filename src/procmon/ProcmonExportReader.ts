@@ -49,7 +49,7 @@ export const readProcmonExport = async (
     selection.event_limit,
   );
   const decoded =
-    format === "xml" ? decodeXml(bytes) : decodeText(bytes, encoding);
+    format === "xml" ? decodeXml(bytes, encoding) : decodeText(bytes, encoding);
   signal?.throwIfAborted();
   const parsed =
     format === "xml"
@@ -109,10 +109,21 @@ const detectEncoding = (
   return { encoding: "utf-8", byteOrderMark: false };
 };
 
-/** Only the leading bytes select the format; the full parse validates them. */
+/** The first non-whitespace character selects the format; parsing validates it. */
 const detectFormat = (bytes: Uint8Array, encoding: Encoding): "xml" | "csv" => {
-  const prefix = new TextDecoder(encoding).decode(bytes.subarray(0, 1024));
-  return /^\s*</u.test(prefix) ? "xml" : "csv";
+  const unit = encoding === "utf-8" ? 1 : 2;
+  const bom = encoding === "utf-8" ? (bytes[0] === 0xef ? 3 : 0) : 2;
+  for (let at = bom; at + unit <= bytes.length; at += unit) {
+    const code =
+      encoding === "utf-8"
+        ? (bytes[at] ?? 0)
+        : encoding === "utf-16le"
+          ? (bytes[at] ?? 0) | ((bytes[at + 1] ?? 0) << 8)
+          : ((bytes[at] ?? 0) << 8) | (bytes[at + 1] ?? 0);
+    if (![0x20, 0x09, 0x0a, 0x0d].includes(code))
+      return code === 0x3c ? "xml" : "csv";
+  }
+  return "csv";
 };
 
 interface DecodedExport {
@@ -128,11 +139,17 @@ interface DecodedExport {
  */
 const decodeWithCutTail = (
   bytes: Uint8Array,
+  encoding: Encoding,
   decode: (bytes: Uint8Array) => string,
   isInvalidBytes: (cause: unknown) => boolean,
 ): DecodedExport => {
   let first: unknown;
-  for (let cut = 0; cut <= 3 && cut < bytes.length; cut += 1)
+  for (let cut = 0; cut <= 3 && cut <= bytes.length; cut += 1) {
+    if (
+      cut > 0 &&
+      !isIncompleteCharacter(bytes.subarray(bytes.length - cut), encoding)
+    )
+      continue;
     try {
       return {
         text: decode(bytes.subarray(0, bytes.length - cut)),
@@ -142,13 +159,41 @@ const decodeWithCutTail = (
       if (!isInvalidBytes(cause)) throw cause;
       first ??= cause;
     }
+  }
   throw first;
+};
+
+/** Whether `tail` is the start of one character whose remaining bytes are missing. */
+const isIncompleteCharacter = (
+  tail: Uint8Array,
+  encoding: Encoding,
+): boolean => {
+  if (encoding === "utf-8") {
+    const lead = tail[0] ?? 0;
+    const length =
+      lead >= 0xc2 && lead <= 0xdf
+        ? 2
+        : lead >= 0xe0 && lead <= 0xef
+          ? 3
+          : lead >= 0xf0 && lead <= 0xf4
+            ? 4
+            : 0;
+    return (
+      tail.length < length &&
+      tail.subarray(1).every((byte) => byte >= 0x80 && byte <= 0xbf)
+    );
+  }
+  // UTF-16: an odd final byte, a high surrogate, or a high surrogate and one byte.
+  if (tail.length === 1) return true;
+  const high = encoding === "utf-16le" ? tail[1] : tail[0];
+  return high !== undefined && high >= 0xd8 && high <= 0xdb;
 };
 
 const decodeText = (bytes: Uint8Array, encoding: Encoding): DecodedExport => {
   try {
     return decodeWithCutTail(
       bytes,
+      encoding,
       (prefix) => new TextDecoder(encoding, { fatal: true }).decode(prefix),
       (cause) => cause instanceof TypeError,
     );
@@ -161,10 +206,11 @@ const decodeText = (bytes: Uint8Array, encoding: Encoding): DecodedExport => {
   }
 };
 
-const decodeXml = (bytes: Uint8Array): DecodedExport => {
+const decodeXml = (bytes: Uint8Array, encoding: Encoding): DecodedExport => {
   try {
     return decodeWithCutTail(
       bytes,
+      encoding,
       decodeXmlPlistText,
       (cause) =>
         cause instanceof XmlPlistTextDecodeError &&

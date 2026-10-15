@@ -19,9 +19,15 @@ export class ProcmonExportFormatFailure extends Error {
 
 /** The selected events and export metadata do not fit the inline output budget. */
 export class ProcmonExportOutputFailure extends Error {
-  constructor(readonly retainedEvents: number) {
+  constructor(
+    readonly retainedEvents: number,
+    /** Column or nested-field names, which no page size can shrink. */
+    readonly budget: "events" | "metadata" = "events",
+  ) {
     super(
-      `The report exceeds the ${PROCMON_EXPORT_LIMITS.output_bytes}-byte inline output budget after ${retainedEvents} events; choose a smaller event_limit.`,
+      budget === "metadata"
+        ? `The export's column and field names alone exceed the ${PROCMON_EXPORT_LIMITS.output_bytes}-byte inline output budget; no event page fits. Re-export with fewer or shorter columns.`
+        : `The report exceeds the ${PROCMON_EXPORT_LIMITS.output_bytes}-byte inline output budget after ${retainedEvents} events; choose a smaller event_limit.`,
     );
     this.name = "ProcmonExportOutputFailure";
   }
@@ -97,6 +103,9 @@ export const jsonStringBytes = (value: string): number => {
   return bytes;
 };
 
+/** `{"column":,"value":}` and its separating comma, around the two strings. */
+const ADDITIONAL_ENTRY_BYTES = '{"column":,"value":},'.length;
+
 /** Serialized size of an event with no values, excluding its ordinal digits. */
 const EMPTY_EVENT_BYTES =
   Buffer.byteLength(
@@ -109,7 +118,7 @@ const EMPTY_EVENT_BYTES =
       path: null,
       result: null,
       detail: null,
-      additional: {},
+      additional: [],
     }),
   ) - 1;
 
@@ -132,8 +141,8 @@ export class ProcmonEventWindow {
   /** Charge source text that the report repeats, such as column names. */
   charge(text: string, copies = 1): void {
     if (text.length > PROCMON_EXPORT_LIMITS.output_bytes)
-      throw new ProcmonExportOutputFailure(this.events.length);
-    this.#admit(copies * (jsonStringBytes(text) + 1));
+      throw new ProcmonExportOutputFailure(this.events.length, "metadata");
+    this.#admit(copies * (jsonStringBytes(text) + 1), "metadata");
   }
 
   add(fields: ReadonlyMap<string, string>): void {
@@ -153,11 +162,12 @@ export class ProcmonEventWindow {
       path: null,
       result: null,
       detail: null,
-      additional: {},
+      additional: [],
     };
     for (const [column, value] of fields) {
       const core = procmonCoreColumn(column, this.format);
-      if (core === undefined) event.additional[column] = value;
+      // Entries, not object keys, so any name (even __proto__) stays data.
+      if (core === undefined) event.additional.push({ column, value });
       else event[CORE_FIELDS[core]] = value;
     }
     this.events.push(event);
@@ -174,16 +184,18 @@ export class ProcmonEventWindow {
         throw new ProcmonExportOutputFailure(this.events.length);
       bytes +=
         procmonCoreColumn(column, this.format) === undefined
-          ? jsonStringBytes(column) + jsonStringBytes(value) + 2
+          ? ADDITIONAL_ENTRY_BYTES +
+            jsonStringBytes(column) +
+            jsonStringBytes(value)
           : jsonStringBytes(value) - "null".length;
     }
     return bytes;
   }
 
-  #admit(bytes: number): void {
+  #admit(bytes: number, cause: "events" | "metadata" = "events"): void {
     this.#bytes += bytes;
     if (this.#bytes > PROCMON_EXPORT_LIMITS.output_bytes)
-      throw new ProcmonExportOutputFailure(this.events.length);
+      throw new ProcmonExportOutputFailure(this.events.length, cause);
   }
 }
 

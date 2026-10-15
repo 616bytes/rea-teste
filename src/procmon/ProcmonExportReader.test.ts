@@ -63,3 +63,56 @@ describe("readProcmonExport damaged and large exports", () => {
     expect(serialized).toBeLessThan(8 * 1024 * 1024);
   });
 });
+
+describe("readProcmonExport Codex review cases", () => {
+  const all = { ...selection, event_limit: null };
+
+  it("detects XML after more than 1 KiB of leading whitespace", async () => {
+    const xml = `${" ".repeat(4096)}<procmon><eventlist><event><Operation>Read</Operation></event></eventlist></procmon>`;
+    const reading = await readProcmonExport(Buffer.from(xml), all);
+    expect(reading.source.format).toBe("xml");
+    expect(reading.events).toHaveLength(1);
+  });
+
+  it("rejects a stopped XML document that never reached an eventlist", async () => {
+    await expect(
+      readProcmonExport(Buffer.from("<procmon><catalog"), all),
+    ).rejects.toThrow("before any eventlist");
+  });
+
+  it("rejects an empty export as a format failure", async () => {
+    await expect(readProcmonExport(Buffer.alloc(0), all)).rejects.toThrow(
+      "CSV export is empty",
+    );
+    await expect(
+      readProcmonExport(Buffer.alloc(0), { ...all, format: "xml" }),
+    ).rejects.toThrow("procmon");
+  });
+
+  it("rejects invalid bytes before a valid final character", async () => {
+    const bytes = Buffer.concat([
+      Buffer.from(`${header}"a.exe","Read"\n`),
+      Buffer.from([0xff, 0x0a]),
+    ]);
+    await expect(readProcmonExport(bytes, all)).rejects.toThrow(
+      "not valid utf-8",
+    );
+  });
+
+  it("keeps a column named __proto__ as data", async () => {
+    const bytes = Buffer.from('"Process Name","__proto__"\n"a.exe","kept"\n');
+    const reading = await readProcmonExport(bytes, all);
+    expect(reading.events[0]?.additional).toEqual([
+      { column: "__proto__", value: "kept" },
+    ]);
+  });
+
+  it("explains that oversized column names cannot be paged away", async () => {
+    const bytes = Buffer.from(
+      `"Process Name","${"x".repeat(9 * 1024 * 1024)}"\n`,
+    );
+    await expect(readProcmonExport(bytes, all)).rejects.toThrow(
+      "no event page fits",
+    );
+  });
+});

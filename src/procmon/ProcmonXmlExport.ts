@@ -160,6 +160,12 @@ const stoppedCoverage = (
       "XML export is not well-formed before its procmon root element.",
       { cause },
     );
+  if (events.eventLists === 0)
+    throw new ProcmonExportFormatFailure(
+      "format",
+      "XML export stops before any eventlist element under procmon.",
+      { cause },
+    );
   if (cause instanceof XmlStop)
     return partialCoverage("malformed", cause.message, line);
   const detail = cause instanceof Error ? cause.message : String(cause);

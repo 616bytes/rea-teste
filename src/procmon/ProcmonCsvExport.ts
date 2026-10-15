@@ -11,8 +11,9 @@ import {
   type ProcmonEventWindow,
 } from "./ProcmonExportEvents.js";
 
-/** Rows parsed between event-loop yields. */
+/** Rows, or UTF-16 code units, parsed between event-loop yields. */
 const ROWS_PER_SLICE = 4096;
+const CHARACTERS_PER_SLICE = 1024 * 1024;
 
 /** A syntax problem that ends reading; earlier rows remain valid. */
 class CsvSyntaxStop {
@@ -27,6 +28,8 @@ interface CsvRecord {
   readonly fields: string[];
   readonly line: number;
   readonly terminated: boolean;
+  /** Source offset after the record, for yielding on characters read. */
+  readonly end: number;
 }
 
 const isFieldEnd = (character: string | undefined): boolean =>
@@ -41,6 +44,9 @@ const countLineFeeds = (text: string): number => {
     count += 1;
   return count;
 };
+
+/** The next comma or row ending; a native search keeps long fields fast. */
+const FIELD_END = /[,\r\n]/gu;
 
 /** RFC 4180 fields with CRLF, LF or CR row endings. */
 class CsvCursor {
@@ -103,8 +109,10 @@ class CsvCursor {
   }
 
   #unquoted(): string {
-    let end = this.index;
-    while (!isFieldEnd(this.text[end])) end += 1;
+    FIELD_END.lastIndex = this.index;
+    const end = FIELD_END.test(this.text)
+      ? FIELD_END.lastIndex - 1
+      : this.text.length;
     const value = this.text.slice(this.index, end);
     if (value.includes('"'))
       throw new CsvSyntaxStop(
@@ -140,7 +148,8 @@ function* csvRecords(
         );
       fields.push(cursor.field(line));
     } while (cursor.comma());
-    yield { fields, line, terminated: cursor.lineEnding() };
+    const terminated = cursor.lineEnding();
+    yield { fields, line, terminated, end: cursor.index };
   }
 }
 
@@ -221,6 +230,7 @@ export const readProcmonCsv = async (
   });
   try {
     let rows = 0;
+    let yieldedAt = 0;
     for (const record of records) {
       // The unterminated final row lost the bytes of its cut character.
       if (endsInsideCharacter && !record.terminated)
@@ -237,7 +247,13 @@ export const readProcmonCsv = async (
         new Map(columns.map((column, at) => [column, record.fields[at] ?? ""])),
       );
       rows += 1;
-      if (rows % ROWS_PER_SLICE === 0) await yieldToEventLoop(signal);
+      if (
+        rows % ROWS_PER_SLICE === 0 ||
+        record.end - yieldedAt >= CHARACTERS_PER_SLICE
+      ) {
+        yieldedAt = record.end;
+        await yieldToEventLoop(signal);
+      }
     }
   } catch (cause: unknown) {
     if (!(cause instanceof CsvSyntaxStop)) throw cause;

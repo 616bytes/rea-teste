@@ -29,10 +29,11 @@ export const semanticBranchMayBeSkipped = (
   if (t.isForStatement(parent))
     return child === parent.body || child === parent.update;
   if (t.isWhileStatement(parent)) return child === parent.body;
-  if (t.isDoWhileStatement(parent)) return false;
+  if (t.isDoWhileStatement(parent)) return child === parent.test;
   if (t.isForInStatement(parent) || t.isForOfStatement(parent))
     return child === parent.left || child === parent.body;
   if (t.isLogicalExpression(parent)) return child === parent.right;
+  if (t.isAssignmentPattern(parent)) return child === parent.right;
   if (t.isAssignmentExpression(parent))
     return (
       ["&&=", "||=", "??="].includes(parent.operator) && child === parent.right

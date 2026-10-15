@@ -317,6 +317,76 @@ console.log(JSON.stringify([read(),captured(object=>{object.value=3;})]));`,
 );
 
 cliTest(
+  "keeps defaults and do-while tests conditional while preserving definite evaluation",
+  async ({ cli }) => {
+    const defaultsSource = `
+export function objectPresent(){let x=0;const {a=(x=1)}={a:2};return {value:x,selected:a};}
+export function objectMissing(){let x=0;const {a=(x=1)}={};return {value:x};}
+export function arrayPresent(){let x=0;const [a=(x=1)]=[2];return {value:x};}
+export function arrayMissing(){let x=0;const [a=(x=1)]=[];return {value:x};}
+export function assignmentDefault(){let x=0,a;({a=(x=1)}={a:2});return {value:x};}
+export function nestedDefault(){let x=0;const {a:{b=(x=1)}}={a:{b:2}};return {value:x};}
+export function computedKey(){let x=0;const {[x=1]:a=9}={1:2};return {value:x};}
+export function initializer(){let x=0;const {a}=(x=1,{a:2});return {value:x};}
+export function nestedLeftKey(){let x=0;const {a:{[x=1]:b}={}}={a:{1:2}};return {value:x};}
+export function doBreak(){let x=0;do{break;}while((x=1,false));return {value:x};}
+export function doMaybe(flag){let x=0;do{if(flag)break;}while((x=1,false));return {value:x};}
+export function doBody(){do{var x=1;}while(false);return {value:x};}
+`;
+    const oracle = await promisify(execFile)(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `${defaultsSource}
+console.log(JSON.stringify([objectPresent(),objectMissing(),arrayPresent(),arrayMissing(),assignmentDefault(),nestedDefault(),computedKey(),initializer(),nestedLeftKey(),doBreak(),doMaybe(true),doMaybe(false),doBody()]));`,
+      ],
+      { timeout: 10_000 },
+    );
+    expect(JSON.parse(oracle.stdout)).toEqual([
+      { value: 0, selected: 2 },
+      ...[1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 1, 1].map((value) => ({ value })),
+    ]);
+    await verifyJavaScriptReturnShapes(cli, defaultsSource, (fields) => {
+      for (const name of [
+        "objectPresent",
+        "objectMissing",
+        "arrayPresent",
+        "arrayMissing",
+        "assignmentDefault",
+        "nestedDefault",
+        "doBreak",
+        "doMaybe",
+      ])
+        expect(fields(name)).toContainEqual(
+          expect.objectContaining({ path: "/value", state: "unknown" }),
+        );
+      expect(fields("objectPresent")).toContainEqual(
+        expect.objectContaining({
+          path: "/selected",
+          state: "literal",
+          value: 2,
+        }),
+      );
+      for (const name of [
+        "computedKey",
+        "initializer",
+        "nestedLeftKey",
+        "doBody",
+      ])
+        expect(fields(name)).toContainEqual(
+          expect.objectContaining({
+            path: "/value",
+            state: "literal",
+            value: 1,
+          }),
+        );
+    });
+  },
+  120_000,
+);
+
+cliTest(
   "keeps a captured parameter unknown when comparing export shapes through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-captured-comparison-");

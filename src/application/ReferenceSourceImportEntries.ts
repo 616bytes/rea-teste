@@ -233,9 +233,14 @@ const resolveInternalSpecifier = (
     );
   const match = context.lookupPath.resolveCandidates(candidates);
   if (match === undefined) return { to: normalized, resolution: "unresolved" };
+  // posix.normalize preserves the specifier's trailing slash while
+  // dirname(match) never carries one; compare against the slash-stripped
+  // directory so a trailing-slash reference still reaches package-main
+  // selection the same way the plain spelling does.
+  const directory = normalized.replace(/(?<=.)\/+$/u, "");
   const resolvedThroughIndex =
     posix.basename(match).startsWith("index.") &&
-    posix.dirname(match).normalize("NFC") === normalized.normalize("NFC");
+    posix.dirname(match).normalize("NFC") === directory.normalize("NFC");
   return resolvedThroughIndex
     ? selectPackageMain(match, context, slots)
     : { to: match, resolution: "internal" };

@@ -86,18 +86,29 @@ describe.skipIf(process.platform !== "darwin")(
               ...decodable.map((prefix) => `${prefix}4main3FooV`),
               ...prefixes.map((prefix) => `${prefix}Bogus`),
               "_Tprintf",
+              // Current swift-demangle prints these undecoded names as
+              // _T0Bogus, __stack_chk_fail and $strlen.
+              "__T0Bogus",
+              "___stack_chk_fail",
+              "strlen",
             ],
           },
         });
         expect(called.isError, JSON.stringify(called.content)).not.toBe(true);
-        expect(
-          demangledSchema
-            .parse(called.structuredContent)
-            .normalized_result.symbols.map(({ status }) => status),
-        ).toEqual([
+        const symbols = demangledSchema.parse(called.structuredContent)
+          .normalized_result.symbols;
+        expect(symbols.map(({ status }) => status)).toEqual([
           ...decodable.map(() => "demangled"),
           ...prefixes.map(() => "invalid"),
           "unchanged",
+          "invalid",
+          "unchanged",
+          "unchanged",
+        ]);
+        expect(symbols.slice(-3).map(({ output }) => output)).toEqual([
+          "__T0Bogus",
+          "___stack_chk_fail",
+          "strlen",
         ]);
       },
     );

@@ -530,3 +530,70 @@ it("records partial GDB startup Evidence from an MCP start error", async () => {
     await Promise.allSettled([client.close(), server.close()]);
   }
 });
+
+it.skipIf(process.platform === "win32")(
+  "detaches the inferior of a cancelled command instead of retaining the session",
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-gdb-cancel-detach-"));
+    const provider = join(directory, "fake-gdb.mjs");
+    const commandPath = join(directory, "command-started");
+    const detachPath = join(directory, "detach-started");
+    const tty = join(directory, "inferior-tty");
+    await writeFile(
+      provider,
+      `#!${process.execPath}
+process.stdout.write("(gdb)\\n");
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", async (chunk) => {
+  for (const line of chunk.split("\\n")) {
+    const match = /^(\\d+)/.exec(line);
+    if (!match) continue;
+    if (line.includes("sleep 600"))
+      await import("node:fs/promises").then((fs) => fs.writeFile(${JSON.stringify(commandPath)}, "started"));
+    else if (line.includes("target-detach"))
+      await import("node:fs/promises").then((fs) => fs.writeFile(${JSON.stringify(detachPath)}, "started")).then(() => process.stdout.write(match[1] + "^done\\n"));
+    else if (line.includes("inferior-tty-show"))
+      process.stdout.write(match[1] + "^done,inferior_tty_terminal=" + ${JSON.stringify(JSON.stringify(tty))} + "\\n");
+    else if (line.includes("list-thread-groups"))
+      process.stdout.write(match[1] + '^done,groups=[{id="i1",pid="4242"}]\\n');
+    else process.stdout.write(match[1] + "^done\\n");
+  }
+});
+`,
+    );
+    await chmod(provider, 0o700);
+    const manager = new GdbSessionManager({
+      platform: "linux",
+      environment: { REA_GDB_COMMAND: provider },
+      verifyInferiorOutputSink: async (pid, selectedTty, remember) => {
+        remember({ pid, startTime: selectedTty });
+      },
+    });
+    try {
+      const started = await manager.start(undefined, { inferiorTty: tty });
+      expect(started.ok).toBe(true);
+      if (!started.ok) return;
+      const controller = new AbortController();
+      const execution = manager.execute(
+        started.value.session_id,
+        "shell sleep 600",
+        controller.signal,
+      );
+      await waitForStartedFile(commandPath);
+      controller.abort();
+      const cancelled = await execution;
+
+      expect(cancelled.ok).toBe(false);
+      if (!cancelled.ok) {
+        expect(cancelled.error._tag).toBe("AnalysisCancelledError");
+        // The verified detach proof still runs after the command is abandoned:
+        // retaining the session here would leave the owned debugger unstoppable.
+        expect(cancelled.error.cleanup).toBeUndefined();
+      }
+      await waitForStartedFile(detachPath);
+    } finally {
+      await manager.closeAll().catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);

@@ -15,6 +15,7 @@ import {
   webNetworkCaptureSchema,
 } from "../../../src/domain/webNetworkCapture.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
@@ -342,6 +343,51 @@ it("keeps CRLF separators inside a body after LF-only HTTP headers", async () =>
   expect(await readFile(path)).toEqual(bytes);
 });
 
+it("validates SAZ XML declarations against archive member bytes at the CLI boundary", async () => {
+  const withMetadata = (metadata: Buffer): [string, Buffer][] =>
+    members().map(([name, bytes]) =>
+      name === "raw/0042_m.xml" ? [name, metadata] : [name, bytes],
+    );
+  const utf8 = Buffer.from(
+    '<?xml version="1.0" encoding="UTF-8"?><Session SID="0042"/>',
+  );
+  const utf16le = Buffer.concat([
+    Buffer.from([0xff, 0xfe]),
+    Buffer.from(
+      '<?xml version="1.0" encoding="UTF-16"?><Session SID="0042"/>',
+      "utf16le",
+    ),
+  ]);
+  for (const metadata of [utf8, utf16le]) {
+    const result = await cli(
+      await fixture(await archive(withMetadata(metadata))),
+    );
+    expect(
+      webNetworkCaptureSchema.parse(result.normalized_result).records,
+    ).toHaveLength(2);
+  }
+  const mismatch = Buffer.from(
+    '<?xml version="1.0" encoding="UTF-16"?><Session SID="0042"/>',
+  );
+  const rejected = await cliResponse(
+    await fixture(await archive(withMetadata(mismatch))),
+    ["--record", "1"],
+  );
+  expect(rejected.ok).toBe(false);
+  expect(JSON.parse(rejected.stdout)).toMatchObject({
+    category: "invalid_input",
+    details: {
+      issues: [
+        expect.objectContaining({
+          message: expect.stringContaining(
+            "SAZ metadata encoding declaration disagrees with its bytes",
+          ),
+        }),
+      ],
+    },
+  });
+});
+
 it("excludes explicit literals from XML, HTTP byte views, member coordinates and binary sidecars", async () => {
   const path = await fixture(await archive());
   const result = await cli(path, [
@@ -484,8 +530,10 @@ it.each([
       : "invalid_input",
   );
   // Expanded size is a caller-correctable input bound, not a decoder failure.
-  if (variant === "expanded-limit")
-    expect(JSON.parse(result.stdout).details.issues).toEqual([
+  if (variant === "expanded-limit") {
+    const error = JSON.parse(result.stdout);
+    expect(error.code).toBe("invalid_request");
+    expect(error.details.issues).toEqual([
       expect.objectContaining({
         path: ["capture_path", ""],
         reason: "out_of_range",
@@ -494,6 +542,27 @@ it.each([
         },
       }),
     ]);
+    const { call } = await connectLocalToolsMcp();
+    const response = await call("inspect_web_network_capture", {
+      capture_path: path,
+      format: "saz",
+      record_ordinals: [0],
+    });
+    expect(response.isError).toBe(true);
+    const mcpFailure = parseMcpToolError(response);
+    expect(mcpFailure).toMatchObject({
+      error: {
+        code: error.code,
+        category: error.category,
+        details: error.details,
+      },
+    });
+    expect(error).not.toHaveProperty("normalized_result");
+    expect(error.details).not.toHaveProperty("partial_observation");
+    expect(mcpFailure).not.toHaveProperty("normalized_result");
+    expect(mcpFailure.error.details).not.toHaveProperty("partial_observation");
+    expect(await readFile(path)).toEqual(bytes);
+  }
   expect(JSON.stringify(result)).not.toContain("malformed-private-input");
 });
 

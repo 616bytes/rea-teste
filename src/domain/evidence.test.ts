@@ -79,6 +79,21 @@ it("preserves omitted relationship diagnostics and authenticates reported diagno
   ).toThrow("semantic identifier");
 });
 
+it("requires explicit coverage in serialized Evidence while producers encode omission as unknown", () => {
+  const evidence = createEvidence(TARGET, PROVIDER, {
+    operation: "procedure_callees",
+    parameters: { procedure: "0x1000" },
+    result: ["0x2000"],
+  });
+
+  expect(evidence.relationship_coverage).toBeNull();
+  expect(parseEvidence(JSON.parse(JSON.stringify(evidence)))).toEqual(evidence);
+  const oldEnvelope = { ...evidence } as Record<string, unknown>;
+  delete oldEnvelope.relationship_coverage;
+  expect(evidenceSchema.safeParse(oldEnvelope).success).toBe(false);
+  expect(() => parseEvidence(oldEnvelope)).toThrow();
+});
+
 it("projects known provider fields and preserves open JSON payloads", () => {
   const liveProvider = { ...PROVIDER, transient_status: "starting" };
   const evidence = createEvidence(TARGET, liveProvider, {
@@ -464,6 +479,62 @@ describe("DOS analysis evidence identity", () => {
         .evidence_id,
     );
   });
+});
+
+describe("evidence JSON admission before authentication", () => {
+  it.each(["parameters", "raw_result", "normalized_result"] as const)(
+    "keeps rejected accessors and proxies inert in %s",
+    (field) => {
+      const evidence = createEvidence(TARGET, PROVIDER, {
+        operation: "health",
+        parameters: {},
+        result: true,
+      });
+      for (const kind of ["accessor", "proxy"] as const) {
+        let reads = 0;
+        const value =
+          kind === "accessor"
+            ? {
+                get attack() {
+                  reads += 1;
+                  return "observed";
+                },
+              }
+            : new Proxy(
+                { attack: "observed" },
+                {
+                  ownKeys(target) {
+                    reads += 1;
+                    return Reflect.ownKeys(target);
+                  },
+                  get(target, key, receiver) {
+                    reads += 1;
+                    return Reflect.get(target, key, receiver);
+                  },
+                },
+              );
+        let failure: unknown;
+        try {
+          parseEvidence({ ...evidence, [field]: value });
+        } catch (cause: unknown) {
+          failure = cause;
+        }
+        expect(reads, `${kind} reached Evidence authentication`).toBe(0);
+        expect(failure).toMatchObject({
+          name: "ZodError",
+          issues: [
+            {
+              code: "custom",
+              path: [field],
+              message: expect.stringContaining(
+                kind === "accessor" ? "accessors" : "proxies",
+              ),
+            },
+          ],
+        });
+      }
+    },
+  );
 });
 
 describe("evidence parameter depth bound", () => {

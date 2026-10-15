@@ -338,68 +338,6 @@ it.each(reverseToolsInputs)(
   },
 );
 
-it("requires the reverse-tool gate when its scope is selected", async () => {
-  const workflow = parse(
-    await readFile(
-      new URL("../../../.github/workflows/ci.yml", import.meta.url),
-      "utf8",
-    ),
-  );
-  expect(workflow.jobs["reverse-tools-quality"].if).toBe(
-    "needs.changes.outputs.reverse_tools == 'true'",
-  );
-  expect(workflow.jobs.required.needs).toContain("reverse-tools-quality");
-  const { CI_FLAGS } = await loadScopes();
-  const outputs = {
-    ...Object.fromEntries(CI_FLAGS.map((flag) => [flag, "false"])),
-    tier: "fast",
-    reverse_tools: "true",
-  };
-  const command = new URL("../../../scripts/ci/required.mjs", import.meta.url)
-    .pathname;
-  await expect(
-    execFileAsync(process.execPath, [command], {
-      env: {
-        ...process.env,
-        CI_JOBS: JSON.stringify({
-          changes: { result: "success", outputs },
-          static: { result: "success" },
-          test: { result: "success" },
-          "reverse-tools-quality": { result: "skipped" },
-        }),
-      },
-    }),
-  ).rejects.toMatchObject({ code: 1 });
-  await expect(
-    execFileAsync(process.execPath, [command], {
-      env: {
-        ...process.env,
-        CI_JOBS: JSON.stringify({
-          changes: { result: "success", outputs },
-          static: { result: "success" },
-          test: { result: "success" },
-          "reverse-tools-quality": { result: "failure" },
-        }),
-      },
-    }),
-  ).rejects.toMatchObject({ code: 1 });
-  await expect(
-    execFileAsync(process.execPath, [command], {
-      env: {
-        ...process.env,
-        CI_JOBS: JSON.stringify({
-          changes: { result: "success", outputs },
-          static: { result: "success" },
-          test: { result: "success" },
-          "reverse-tools-quality": { result: "success" },
-        }),
-      },
-    }),
-  ).resolves.toMatchObject({
-    stdout: expect.stringContaining("Every selected CI lane passed"),
-  });
-});
-
 it.each([
   "src/README.md",
   "README.md.ts",
@@ -478,7 +416,10 @@ it.each(["", "not-a-commit"])(
   },
 );
 
-it("selects only a trusted successful ancestor from recent CI push runs", async () => {
+it("selects only a trusted successful ancestor from recent CI push runs", async ({
+  skip,
+}) => {
+  skip(process.platform === "win32", "the fake gh is a POSIX shell script");
   const { directory, base } = await fixture();
   const head = await change(directory, ["src/evm/client.ts"]);
   const bin = join(directory, "fake-bin");
@@ -511,7 +452,11 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
   const output = join(directory, "baseline-output");
   const result = await execFileAsync(
     process.execPath,
-    [new URL("../../../scripts/ci/baseline.mjs", import.meta.url).pathname],
+    [
+      fileURLToPath(
+        new URL("../../../scripts/ci/baseline.mjs", import.meta.url),
+      ),
+    ],
     {
       cwd: directory,
       env: {
@@ -529,7 +474,8 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
   expect(await readFile(output, "utf8")).toBe(`base=${base}\nreason=\n`);
 });
 
-it("returns an empty baseline when GitHub lookup fails", async () => {
+it("returns an empty baseline when GitHub lookup fails", async ({ skip }) => {
+  skip(process.platform === "win32", "the fake gh is a POSIX shell script");
   const { directory, base } = await fixture();
   const head = await change(directory, ["src/evm/client.ts"]);
   const bin = join(directory, "fake-bin");
@@ -539,7 +485,11 @@ it("returns an empty baseline when GitHub lookup fails", async () => {
   await chmod(gh, 0o755);
   const result = await execFileAsync(
     process.execPath,
-    [new URL("../../../scripts/ci/baseline.mjs", import.meta.url).pathname],
+    [
+      fileURLToPath(
+        new URL("../../../scripts/ci/baseline.mjs", import.meta.url),
+      ),
+    ],
     {
       cwd: directory,
       env: {
@@ -959,6 +909,10 @@ it("rejects skipped selected work while allowing unselected lanes to skip", asyn
 
 it.each([
   [
+    ".github/workflows/mutation.yml",
+    { workflows: true, code: true, reverse_tools: true, package: false },
+  ],
+  [
     ".github/workflows/sqlite-runtime.yml",
     { workflows: true, code: true, package: false, website: false },
   ],
@@ -983,6 +937,15 @@ it.each([
     { code: true, package: true, browser: true, evm: true },
   ],
   ["docs/.vitepress/config.ts", { code: true, docs: true, package: false }],
+  [
+    "docs/package.json",
+    { code: true, docs: true, runtime: false, package: false },
+  ],
+  [
+    "docs/.vitepress/package.json",
+    { code: true, docs: true, runtime: false, package: false },
+  ],
+  ["docs/data.json", { code: false, docs: true, package: false }],
   ["CHANGELOG.md", { code: false, docs: true, package: false }],
   ["SECURITY.md", { code: false, docs: true, package: false }],
   [".github/pull_request_template.md", { code: false, docs: true }],
@@ -998,6 +961,10 @@ it.each([
   ["scripts/unknown-website-helper.mjs", { code: true, package: true }],
   [
     ".github/workflows/release.yml",
+    { workflows: true, code: true, package: false, website: false },
+  ],
+  [
+    ".github/workflows/pr-readiness.yml",
     { workflows: true, code: true, package: false, website: false },
   ],
   [

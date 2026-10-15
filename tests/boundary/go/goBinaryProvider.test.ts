@@ -82,3 +82,69 @@ it.skipIf(process.platform === "win32")(
     if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisInputError);
   },
 );
+
+it.each([
+  {
+    shape: "a GOPATH-mode",
+    bytes: () =>
+      createGoBinaryFixture({
+        moduleText:
+          "path\texample.com/tool/cmd/tool\nbuild\t-compiler=gc\nbuild\tGOOS=linux\n",
+      }).bytes,
+  },
+  {
+    shape: "a moduleless legacy",
+    bytes: () => {
+      const fixture = createGoBinaryFixture({
+        encoding: "pointer",
+        goVersion: "go1.17",
+      });
+      // The pointer-encoded module string header at file offset 1536 holds a
+      // nil data pointer and zero length, as moduleless Go 1.12-1.17 builds do.
+      fixture.bytes.writeBigUInt64LE(0n, 1536 + 16);
+      fixture.bytes.writeBigUInt64LE(0n, 1536 + 24);
+      return fixture.bytes;
+    },
+  },
+])(
+  "reports the dependency list of $shape build without a main-module record as unknown",
+  async ({ bytes }) => {
+    const root = await createTestTempDirectory("rea-go-no-main-module-");
+    const path = join(root, "application.elf");
+    await writeFile(path, bytes());
+    const result = await new GoBinaryProvider().inspect({ path });
+    if (!result.ok) throw result.error;
+    expect(result.value.build_info?.module).toMatchObject({
+      main: null,
+      dependencies: [],
+      complete: true,
+    });
+    expect(result.value.limitations).toContainEqual(
+      expect.stringContaining(
+        "main module and dependency list are unknown, not empty",
+      ),
+    );
+  },
+);
+
+it("keeps an empty dependency list of a module-mode build free of the unknown limitation", async () => {
+  const root = await createTestTempDirectory("rea-go-main-module-");
+  const path = join(root, "application.elf");
+  await writeFile(
+    path,
+    createGoBinaryFixture({
+      moduleText:
+        "path\texample.com/tool\nmod\texample.com/tool\t(devel)\t\nbuild\tGOOS=linux\n",
+    }).bytes,
+  );
+  const result = await new GoBinaryProvider().inspect({ path });
+  if (!result.ok) throw result.error;
+  expect(result.value.build_info?.module).toMatchObject({
+    main: { path: "example.com/tool" },
+    dependencies: [],
+    complete: true,
+  });
+  expect(result.value.limitations.join(" ")).not.toContain(
+    "unknown, not empty",
+  );
+});

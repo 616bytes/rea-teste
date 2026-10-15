@@ -45,6 +45,10 @@ container format, architecture, word size and byte order. A recognized
 Missing checksums are `null`; empty fields and development/local replacement
 versions remain unchanged. Build settings such as `GOOS`, `GOARCH` or `vcs.revision`
 are reported when present. Their absence does not establish a build choice.
+A record without a `mod` line, as GOPATH-mode builds embed, reports
+`module.main: null` and an empty `module.dependencies`; a limitation then states
+that the main module and dependency list are unknown, not empty, because such
+builds carry dependencies that the record does not list.
 Go strings may contain arbitrary bytes. Non-UTF-8 records remain available as
 base64 while other decodable module records are still reported; the reader does
 not insert replacement characters or reject the entire artifact for those

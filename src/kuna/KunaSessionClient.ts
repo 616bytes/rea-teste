@@ -60,6 +60,7 @@ import {
 } from "./KunaProviderCapabilities.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "./KunaLimits.js";
+import type { KunaRunRelease, KunaRunSlots } from "./KunaRunSlots.js";
 import {
   KunaProjectReader,
   type KunaProjectFileSpan,
@@ -79,6 +80,21 @@ interface InventoryIndex {
   readonly inventory: readonly KunaInventoryFunction[];
   readonly byAddress: ReadonlyMap<string, KunaInventoryFunction>;
   readonly byName: ReadonlyMap<string, readonly KunaInventoryFunction[]>;
+}
+
+/** A queued single-function request found the export finished first. */
+const EXPORT_READY = Symbol("kuna-export-ready");
+
+type SingleFunctionOutcome =
+  | Result<string, AnalysisError>
+  | typeof EXPORT_READY;
+
+/** One single-function run that every request for its address shares. */
+interface SingleFunctionRun {
+  readonly outcome: Promise<SingleFunctionOutcome>;
+  /** Stops the run once every waiter has left. */
+  readonly controller: AbortController;
+  waiters: number;
 }
 
 interface Answer {
@@ -150,16 +166,21 @@ export class KunaSessionClient implements AnalysisClient {
   readonly #cache: KunaProjectCache;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
   readonly #launcher: KunaProcessLauncher | undefined;
+  readonly #runSlots: KunaRunSlots;
+  /** Single-function runs in flight, by entry address. */
+  readonly #singleFunctionRuns = new Map<string, SingleFunctionRun>();
   /** Owns background work: aborting it cancels this session's export interest. */
   readonly #session = new AbortController();
-  /** Requests keep their workspaces and process cleanup owned until they settle. */
-  readonly #requests = new Set<
-    Promise<Result<AnalysisExecution, AnalysisError>>
-  >();
-  /** Single-function runs that could not be proven stopped, with their retry owners. */
+  /** Requests and shared readers retain their resources until their work settles. */
+  readonly #active = new Set<Promise<unknown>>();
+  /**
+   * Kuna runs that could not be proven stopped, with their retry owners and,
+   * for single-function runs, the run slot their process tree still holds.
+   */
   readonly #retained: {
     readonly error: ProviderCleanupError;
     owner: ProviderProcessSupervisor | undefined;
+    readonly slot?: KunaRunRelease;
   }[] = [];
   /** Private roots whose removal failed during setup or close. */
   readonly #leakedRoots: PrivateRuntimeRoot[] = [];
@@ -176,6 +197,8 @@ export class KunaSessionClient implements AnalysisClient {
     | Promise<Result<readonly KunaInventoryFunction[], AnalysisError>>
     | undefined;
   #project: Promise<Result<KunaProject, AnalysisError>> | undefined;
+  /** The cache lookup that decides #project, shared by concurrent first requests. */
+  #starting: Promise<void> | undefined;
   #reader: KunaProjectReader | undefined;
   #inventoryIndex: InventoryIndex | undefined;
   #status: KunaExportStatus | undefined;
@@ -192,6 +215,7 @@ export class KunaSessionClient implements AnalysisClient {
     profile: AnalysisProfileCommitment | undefined,
     dependencies: {
       readonly cache: KunaProjectCache;
+      readonly runSlots: KunaRunSlots;
       readonly environment: Readonly<NodeJS.ProcessEnv>;
       readonly launcher?: KunaProcessLauncher;
     },
@@ -199,6 +223,7 @@ export class KunaSessionClient implements AnalysisClient {
     this.#target = target;
     this.#profile = profile;
     this.#cache = dependencies.cache;
+    this.#runSlots = dependencies.runSlots;
     this.#environment = dependencies.environment;
     this.#launcher = dependencies.launcher;
   }
@@ -216,19 +241,22 @@ export class KunaSessionClient implements AnalysisClient {
           "This Kuna session is closed.",
         ),
       );
-    const request = this.#execute(operation, parameters, {
-      ...options,
-      signal:
-        options.signal === undefined
-          ? this.#session.signal
-          : AbortSignal.any([this.#session.signal, options.signal]),
-    });
-    this.#requests.add(request);
-    try {
-      return await request;
-    } finally {
-      this.#requests.delete(request);
-    }
+    return this.#own(
+      this.#execute(operation, parameters, {
+        ...options,
+        signal:
+          options.signal === undefined
+            ? this.#session.signal
+            : AbortSignal.any([this.#session.signal, options.signal]),
+      }),
+    );
+  }
+
+  #own<T>(work: Promise<T>): Promise<T> {
+    this.#active.add(work);
+    const release = () => this.#active.delete(work);
+    void work.then(release, release);
+    return work;
   }
 
   async #execute(
@@ -320,7 +348,8 @@ export class KunaSessionClient implements AnalysisClient {
     }
     // Cancellation starts process shutdown; its completion proves whether it
     // is safe to remove private copies and exposes any retained cleanup owner.
-    await Promise.allSettled(this.#requests);
+    // An admitted request may create a shared reader after shutdown begins.
+    while (this.#active.size > 0) await Promise.allSettled(this.#active);
     await this.#project;
     await this.#inventory;
     const failures: ProviderCleanupError[] = [];
@@ -332,8 +361,10 @@ export class KunaSessionClient implements AnalysisClient {
     }
     for (const retained of [...this.#retained]) {
       const stopped = await retained.owner?.stop();
-      if (stopped !== undefined && stopped.status !== "incomplete")
+      if (stopped !== undefined && stopped.status !== "incomplete") {
         this.#retained.splice(this.#retained.indexOf(retained), 1);
+        retained.slot?.();
+      }
     }
     failures.push(...this.#retained.map(({ error }) => error));
     const workspace = await this.#workspace;
@@ -541,7 +572,7 @@ export class KunaSessionClient implements AnalysisClient {
       }
       case "analyze_function":
         return this.#withProject(operation, installation, options, (reader) =>
-          this.#dossier(operation, entry.value, reader),
+          this.#dossier(operation, entry.value, reader, options.signal),
         );
     }
   }
@@ -618,7 +649,11 @@ export class KunaSessionClient implements AnalysisClient {
       installation,
       options,
       async (reader) => {
-        const name = await reader.dataName(address, "address_name");
+        const name = await reader.dataName(
+          address,
+          "address_name",
+          options.signal,
+        );
         if (!name.ok) return name;
         return ok({
           result: name.value,
@@ -638,52 +673,180 @@ export class KunaSessionClient implements AnalysisClient {
     installation: KunaInstallation,
     options: ExecutionOptions,
   ): Promise<Result<Omit<Answer, "locations">, AnalysisError>> {
-    for (let attempt = 0; this.#reader !== undefined; attempt += 1) {
+    for (let recovered = false; ;) {
       const reader = this.#reader;
-      try {
-        const text = await reader.pseudocode(entry.address, operation);
-        if (!text.ok) return text;
-        return ok({
-          ...text.value,
-          source: { kind: "project-export", project: reader.project },
-        });
-      } catch (cause: unknown) {
-        if (!isMissing(cause) || attempt !== 0) throw cause;
-        this.#invalidateProject(reader);
-        await this.#startProject(installation);
+      if (reader !== undefined) {
+        try {
+          const text = await reader.pseudocode(entry.address, operation);
+          if (!text.ok) return text;
+          return ok({
+            ...text.value,
+            source: { kind: "project-export", project: reader.project },
+          });
+        } catch (cause: unknown) {
+          if (!isMissing(cause) || recovered) throw cause;
+          recovered = true;
+          this.#invalidateProject(reader);
+          await this.#startProject(installation);
+          continue;
+        }
       }
+      const outcome = await this.#joinSingleFunction(
+        operation,
+        entry.address,
+        installation,
+        options.signal,
+      );
+      if (outcome === EXPORT_READY) continue;
+      if (!outcome.ok) return outcome;
+      const exportFailure = await this.#settledExportFailure();
+      return ok({
+        result: outcome.value,
+        source: { kind: "single-function" },
+        limitations: [
+          KUNA_SINGLE_FUNCTION_LIMITATION,
+          ...(exportFailure === undefined
+            ? []
+            : [
+                `The project export failed, so later requests also use single-function runs: ${exportFailure}`,
+              ]),
+        ],
+      });
     }
+  }
+
+  /**
+   * Wait for this address's shared single-function run, starting it when none
+   * is in flight. A caller's cancellation stops only its own wait while others
+   * still wait; the last waiter stops the run and receives how it ended,
+   * including cleanup it could not prove.
+   */
+  #joinSingleFunction(
+    operation: string,
+    address: string,
+    installation: KunaInstallation,
+    signal: AbortSignal | undefined,
+  ): Promise<SingleFunctionOutcome> {
+    if (cancelled(signal))
+      return Promise.resolve(err(new AnalysisCancelledError(operation)));
+    let run = this.#singleFunctionRuns.get(address);
+    if (run === undefined) {
+      const controller = new AbortController();
+      const created: SingleFunctionRun = {
+        controller,
+        waiters: 0,
+        outcome: this.#own(
+          this.#singleFunction(
+            operation,
+            address,
+            installation,
+            AbortSignal.any([this.#session.signal, controller.signal]),
+          ).catch((cause: unknown) => err(failure(operation, cause))),
+        ),
+      };
+      this.#singleFunctionRuns.set(address, created);
+      void created.outcome.then(() => {
+        if (this.#singleFunctionRuns.get(address) === created)
+          this.#singleFunctionRuns.delete(address);
+      });
+      run = created;
+    }
+    const shared = run;
+    shared.waiters += 1;
+    return new Promise((resolve) => {
+      let waiting = true;
+      const leave = () => {
+        waiting = false;
+        shared.waiters -= 1;
+      };
+      const onAbort = () => {
+        if (!waiting) return;
+        leave();
+        if (shared.waiters > 0) {
+          resolve(err(new AnalysisCancelledError(operation)));
+          return;
+        }
+        // A run whose waiters all left winds down; a new request starts afresh.
+        if (this.#singleFunctionRuns.get(address) === shared)
+          this.#singleFunctionRuns.delete(address);
+        shared.controller.abort();
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      void shared.outcome.then((outcome) => {
+        signal?.removeEventListener("abort", onAbort);
+        if (waiting) leave();
+        resolve(outcome);
+      });
+    });
+  }
+
+  /** One `kuna decompile --addr` run, admitted by the provider's run slots. */
+  async #singleFunction(
+    operation: string,
+    address: string,
+    installation: KunaInstallation,
+    signal: AbortSignal,
+  ): Promise<SingleFunctionOutcome> {
     const workspace = await this.#ensureWorkspace();
     if (!workspace.ok) return workspace;
-    const run = await runKunaCommand({
-      installation,
-      arguments: ["decompile", workspace.value.input, entry.address, "--addr"],
-      workspace: workspace.value.root.path,
-      operation,
-      timeoutMs: installation.configuration.functionTimeoutMs,
-      reportedTimeoutMs: installation.configuration.functionTimeoutMs,
-      outputBytes: KUNA_FUNCTION_TEXT_BYTES,
-      signal: options.signal ?? this.#session.signal,
-      launcher: this.#launcher,
-    });
-    if (run.kind === "retained") {
-      this.#retained.push({ error: run.error, owner: run.owner });
-      return err(run.error);
+    const admitted = await this.#admitSingleFunction(signal);
+    if (admitted === EXPORT_READY) return admitted;
+    if (admitted === undefined)
+      return err(new AnalysisCancelledError(operation));
+    let slot: KunaRunRelease | undefined = admitted;
+    try {
+      const run = await runKunaCommand({
+        installation,
+        arguments: ["decompile", workspace.value.input, address, "--addr"],
+        workspace: workspace.value.root.path,
+        operation,
+        timeoutMs: installation.configuration.functionTimeoutMs,
+        reportedTimeoutMs: installation.configuration.functionTimeoutMs,
+        outputBytes: KUNA_FUNCTION_TEXT_BYTES,
+        signal,
+        launcher: this.#launcher,
+      });
+      if (run.kind === "retained") {
+        // The tree may still run, so it keeps its slot until close proves it stopped.
+        this.#retained.push({ error: run.error, owner: run.owner, slot });
+        slot = undefined;
+        return err(run.error);
+      }
+      if (run.kind === "failed") return err(run.error);
+      return ok(run.snapshot.stdout.text.replace(/\n+$/u, ""));
+    } finally {
+      slot?.();
     }
-    if (run.kind === "failed") return err(run.error);
-    const exportFailure = await this.#settledExportFailure();
-    return ok({
-      result: run.snapshot.stdout.text.replace(/\n+$/u, ""),
-      source: { kind: "single-function" },
-      limitations: [
-        KUNA_SINGLE_FUNCTION_LIMITATION,
-        ...(exportFailure === undefined
-          ? []
-          : [
-              `The project export failed, so later requests also use single-function runs: ${exportFailure}`,
-            ]),
-      ],
-    });
+  }
+
+  /**
+   * A run slot, or EXPORT_READY when the export this session builds finishes
+   * first; the export then answers without another Kuna process.
+   */
+  async #admitSingleFunction(
+    signal: AbortSignal,
+  ): Promise<KunaRunRelease | undefined | typeof EXPORT_READY> {
+    const yielded = new AbortController();
+    const slot = this.#runSlots.acquire(
+      AbortSignal.any([signal, yielded.signal]),
+    );
+    const project = this.#project;
+    const exported =
+      project === undefined
+        ? undefined
+        : project.then((built) =>
+            built.ok && this.#reader !== undefined
+              ? EXPORT_READY
+              : new Promise<never>(() => undefined),
+          );
+    const admitted = await (exported === undefined
+      ? slot
+      : Promise.race([slot, exported]));
+    if (admitted !== EXPORT_READY) return admitted;
+    yielded.abort();
+    // A slot granted in the same turn is returned rather than leaked.
+    void slot.then((release) => release?.());
+    return EXPORT_READY;
   }
 
   async #assemblyText(
@@ -697,7 +860,11 @@ export class KunaSessionClient implements AnalysisClient {
       installation,
       options,
       async (reader) => {
-        const text = await reader.assembly(entry.address, operation);
+        const text = await reader.assembly(
+          entry.address,
+          operation,
+          options.signal,
+        );
         return text.ok
           ? ok({
               ...text.value,
@@ -712,8 +879,9 @@ export class KunaSessionClient implements AnalysisClient {
     operation: string,
     entry: KunaInventoryFunction,
     reader: KunaProjectReader,
+    signal: AbortSignal | undefined,
   ): Promise<Result<Answer, AnalysisError>> {
-    const assembly = await reader.assembly(entry.address, operation);
+    const assembly = await reader.assembly(entry.address, operation, signal);
     if (!assembly.ok) return assembly;
     const pseudocode = await reader.pseudocode(entry.address, operation);
     if (!pseudocode.ok) return pseudocode;
@@ -841,8 +1009,17 @@ export class KunaSessionClient implements AnalysisClient {
   }
 
   /** Reuse a verified export, or start building one in the background. */
-  async #startProject(installation: KunaInstallation): Promise<void> {
-    if (this.#project !== undefined) return;
+  #startProject(installation: KunaInstallation): Promise<void> {
+    if (this.#project !== undefined) return Promise.resolve();
+    // Concurrent first requests share one lookup, which verifies every
+    // export file's digest on a fresh server.
+    this.#starting ??= this.#lookupOrBuild(installation).finally(() => {
+      this.#starting = undefined;
+    });
+    return this.#starting;
+  }
+
+  async #lookupOrBuild(installation: KunaInstallation): Promise<void> {
     const key = kunaProjectKey({
       targetSha256: this.#target.sha256,
       kunaSha256: installation.sha256,
@@ -914,7 +1091,10 @@ export class KunaSessionClient implements AnalysisClient {
   #readerFor(project: KunaProject): KunaProjectReader {
     return this.#reader?.project === project
       ? this.#reader
-      : new KunaProjectReader(project);
+      : new KunaProjectReader(project, {
+          signal: this.#session.signal,
+          own: (work) => this.#own(work),
+        });
   }
 
   /** The export's failure once it has settled; undefined while it builds or after success. */

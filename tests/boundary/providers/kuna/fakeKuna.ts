@@ -55,7 +55,7 @@ export interface FakeKunaBehavior {
   readonly xrefs?: "ok" | "hang" | "not-json";
   readonly referenceDelayMs?: number;
   readonly referencePadding?: number;
-  readonly strings?: "ok" | "hang" | "not-json" | "miscounted";
+  readonly strings?: "ok" | "hang" | "not-json" | "miscounted" | "exit-failure";
   readonly stringRows?: readonly FakeKunaString[];
   readonly stringDelayMs?: number;
   readonly stringPadding?: number;
@@ -89,7 +89,8 @@ if (args[0] === "--version") {
     setTimeout(() => process.stdout.write(JSON.stringify({ binary: args[1], count: listed.length, total: listed.length, error: null, functions: listed }, null, 2) + "\n"), behavior.inventoryDelayMs ?? 0);
   }
 } else if (args[0] === "strings") {
-  if (behavior.strings === "hang") hang();
+  if (behavior.strings === "exit-failure") { process.stderr.write("fixture string scan failed\n"); process.exit(7); }
+  else if (behavior.strings === "hang") hang();
   else if (behavior.strings === "not-json") process.stdout.write("not string JSON");
   else {
     if (!args.includes("--no-xrefs") || args[args.indexOf("--encoding") + 1] !== "all") throw new Error("strings must skip reference analysis and include all supported encodings");

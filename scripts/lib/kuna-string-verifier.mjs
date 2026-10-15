@@ -41,8 +41,8 @@ export const nativeKunaStrings = async ({
     ],
     workspace,
     operation: "verify:kuna-native-strings",
-    timeoutMs: installed.value.configuration.functionTimeoutMs,
-    reportedTimeoutMs: installed.value.configuration.functionTimeoutMs,
+    timeoutMs: installed.value.configuration.projectTimeoutMs,
+    reportedTimeoutMs: installed.value.configuration.projectTimeoutMs,
     outputBytes: 16 * 1024 * 1024,
     signal: new AbortController().signal,
   });

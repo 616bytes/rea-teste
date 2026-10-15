@@ -1,4 +1,6 @@
 import { expect, it as test, vi } from "vitest";
+import { readKunaConfiguration } from "../../../../src/kuna/KunaConfiguration.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 
 import { fakeKunaCalls, setFakeKunaBehavior } from "./fakeKuna.js";
@@ -103,7 +105,7 @@ it.each(["not-json", "miscounted"] as const)(
     try {
       expect(
         await client.execute("search_strings", { pattern: "fixture" }),
-      ).toMatchObject({ ok: false, error: { _tag: "ProviderAdapterError" } });
+      ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
       await setFakeKunaBehavior(kuna, {});
       expect((await run(client, "list_strings")).result).toHaveLength(2);
       expect(await scans(kuna)).toHaveLength(2);
@@ -146,7 +148,7 @@ it("cancels one waiter without stopping the shared scan, and rebuilds in a fresh
   }
 });
 
-it("drains a cancelled last scan before retrying and refuses oversized output", async () => {
+it("drains a cancelled last scan before retrying", async () => {
   const { open, kuna } = await session("rea-kuna-strings-retry-", {
     strings: "hang",
   });
@@ -163,11 +165,6 @@ it("drains a cancelled last scan before retrying and refuses oversized output", 
     expect(await pending).toMatchObject({
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
-    });
-    await setFakeKunaBehavior(kuna, { stringPadding: 16 * 1024 * 1024 });
-    expect(await client.execute("list_strings", {})).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisResourceConstraintError" },
     });
     await setFakeKunaBehavior(kuna, {});
     expect((await run(client, "list_strings")).result).toHaveLength(2);
@@ -224,3 +221,138 @@ it("retains metadata admission until a string process stop is proven", async () 
     expect(await client.close()).toEqual({ ok: true, value: null });
   }
 });
+
+it("uses the whole-program deadline independently of the single-function budget", async () => {
+  const { open, kuna } = await session(
+    "rea-kuna-strings-deadline-",
+    { stringDelayMs: 200 },
+    {
+      REA_KUNA_TIMEOUT_MS: "20",
+      REA_KUNA_PROJECT_TIMEOUT_MS: "1000",
+    },
+  );
+  expect(
+    readKunaConfiguration(
+      {
+        REA_KUNA_COMMAND: kuna,
+        REA_KUNA_TIMEOUT_MS: "20",
+        REA_KUNA_PROJECT_TIMEOUT_MS: "1000",
+      },
+      process.platform,
+    ),
+  ).toMatchObject({
+    ok: true,
+    value: { functionTimeoutMs: 20, projectTimeoutMs: 1000 },
+  });
+  const client = open();
+  try {
+    expect((await run(client, "list_strings")).result).toHaveLength(2);
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it.each([
+  { starter: "list_strings", mode: "not-json", tag: "AnalysisOutputError" },
+  { starter: "search_strings", mode: "not-json", tag: "AnalysisOutputError" },
+  {
+    starter: "list_strings",
+    mode: "exit-failure",
+    tag: "ProviderAdapterError",
+  },
+  {
+    starter: "search_strings",
+    mode: "exit-failure",
+    tag: "ProviderAdapterError",
+  },
+  { starter: "list_strings", mode: "hang", tag: "AnalysisTimeoutError" },
+  { starter: "search_strings", mode: "hang", tag: "AnalysisTimeoutError" },
+  {
+    starter: "list_strings",
+    mode: "oversize",
+    tag: "AnalysisResourceConstraintError",
+  },
+  {
+    starter: "search_strings",
+    mode: "oversize",
+    tag: "AnalysisResourceConstraintError",
+  },
+] as const)(
+  "keeps per-waiter context for $mode failures started by $starter",
+  async ({ starter, mode, tag }) => {
+    const { open, kuna } = await session(
+      "rea-kuna-shared-string-failure-",
+      mode === "oversize"
+        ? { stringPadding: 16 * 1024 * 1024 }
+        : { strings: mode },
+      { REA_KUNA_PROJECT_TIMEOUT_MS: mode === "hang" ? "500" : "5000" },
+    );
+    const client = open();
+    try {
+      const other =
+        starter === "list_strings" ? "search_strings" : "list_strings";
+      const operations = [starter, other] as const;
+      const results = await Promise.all(
+        operations.map((operation) =>
+          client.execute(
+            operation,
+            operation === "search_strings" ? { pattern: "fixture" } : {},
+          ),
+        ),
+      );
+      for (const [index, result] of results.entries()) {
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            _tag: tag,
+            operation: operations[index],
+            diagnostics: { producer_operation: "kuna:strings" },
+          },
+        });
+        if (result.ok) throw new Error("expected scan failure");
+        if (mode === "exit-failure")
+          expect(result.error.capturedOutput).toMatchObject({
+            exit_code: 7,
+            stderr: expect.stringContaining("fixture string scan failed"),
+          });
+        if (mode === "hang")
+          expect(result.error).toMatchObject({ timeoutMs: 500 });
+        if (mode === "oversize") {
+          expect(projectAnalysisError(result.error)).toMatchObject({
+            code: "resource_constraint",
+            retryable: false,
+          });
+          expect(result.error.capturedOutput).toMatchObject({
+            stdout: "",
+            truncated: true,
+          });
+        }
+      }
+      if (results[0]?.ok === false && results[1]?.ok === false) {
+        expect(results[0].error).not.toBe(results[1].error);
+        expect(results[0].error.cause).toBe(results[1].error.cause);
+      }
+      expect(await scans(kuna)).toHaveLength(1);
+      if (mode === "oversize") {
+        await setFakeKunaBehavior(kuna, {});
+        expect(
+          await client.execute("search_strings", { pattern: "fixture" }),
+        ).toMatchObject({
+          ok: false,
+          error: { operation: "search_strings", _tag: tag },
+        });
+        expect(await scans(kuna)).toHaveLength(1);
+      }
+    } finally {
+      expect(await client.close()).toEqual({ ok: true, value: null });
+    }
+    if (mode === "oversize") {
+      const fresh = open();
+      try {
+        expect((await run(fresh, "list_strings")).result).toHaveLength(2);
+      } finally {
+        expect(await fresh.close()).toEqual({ ok: true, value: null });
+      }
+    }
+  },
+);

@@ -2,6 +2,8 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import {
   analysisSearchPredicate,
@@ -9,16 +11,15 @@ import {
 } from "../domain/analysisSearch.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { normalizeKunaAddress } from "./KunaAddress.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
 import type { KunaPendingQuery, KunaQueryWork } from "./KunaQueryWork.js";
+import { kunaQueryFailureForCaller } from "./KunaQueryErrors.js";
 import {
   KUNA_STRING_MIN_LENGTH,
   KUNA_STRING_OUTPUT_BYTES,
 } from "./KunaLimits.js";
-import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
 import {
   parseKunaStringInventory,
   type KunaStringInventory,
@@ -28,6 +29,7 @@ import {
 /** One validated scan shared by literal, regex and exact-address queries. */
 export class KunaStringQueries {
   #inventory: KunaStringInventory | undefined;
+  #failure: AnalysisError | undefined;
   #pending: KunaPendingQuery<KunaStringInventory> | undefined;
 
   constructor(private readonly work: KunaQueryWork) {}
@@ -68,7 +70,8 @@ export class KunaStringQueries {
         }),
       );
     const inventory = await this.#load(installation, operation, signal);
-    if (!inventory.ok) return inventory;
+    if (!inventory.ok)
+      return err(kunaQueryFailureForCaller(inventory.error, operation));
     if (this.#cancelled(signal))
       return err(new AnalysisCancelledError(operation));
     const available = inventory.value.items;
@@ -115,6 +118,7 @@ export class KunaStringQueries {
     signal: AbortSignal | undefined,
   ): Promise<Result<KunaStringInventory, AnalysisError>> {
     if (this.#inventory !== undefined) return ok(this.#inventory);
+    if (this.#failure !== undefined) return err(this.#failure);
     if (this.#pending?.controller.signal.aborted === true) {
       const stopped = await this.work.wait(this.#pending, signal, operation);
       if (!stopped.ok && !(stopped.error instanceof AnalysisCancelledError))
@@ -128,7 +132,7 @@ export class KunaStringQueries {
         async (producerSignal) => {
           const run = await this.work.run({
             installation,
-            operation,
+            operation: "kuna:strings",
             arguments: (input) => [
               "strings",
               input,
@@ -141,11 +145,18 @@ export class KunaStringQueries {
               "any",
               "--no-xrefs",
             ],
-            timeoutMs: installation.configuration.functionTimeoutMs,
+            timeoutMs: installation.configuration.projectTimeoutMs,
             outputBytes: KUNA_STRING_OUTPUT_BYTES,
             signal: producerSignal,
           });
-          if (!run.ok) return run;
+          if (!run.ok) {
+            if (
+              run.error instanceof AnalysisResourceConstraintError &&
+              run.error.resource === "memory"
+            )
+              this.#failure = run.error;
+            return run;
+          }
           const parsed = parseKunaStringInventory(
             run.value.stdout.text,
             run.value.input,
@@ -153,7 +164,7 @@ export class KunaStringQueries {
           return parsed.ok
             ? parsed
             : err(
-                new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
+                new AnalysisOutputError("kuna:strings", parsed.error, {
                   userMessage: `Kuna's string inventory cannot be used: ${parsed.error}`,
                 }),
               );
@@ -178,6 +189,7 @@ export class KunaStringQueries {
   /** Called only after session-owned work has drained. */
   clear(): void {
     this.#inventory = undefined;
+    this.#failure = undefined;
     this.#pending = undefined;
   }
 }

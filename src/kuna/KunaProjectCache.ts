@@ -200,7 +200,9 @@ export class KunaProjectCache {
   readonly #unfinished = new Set<InflightBuild>();
   readonly #verified = new Map<string, KunaProject>();
   readonly #pins = new Map<string, number>();
-  readonly #retained: ProviderCleanupError[] = [];
+  readonly #retainedProcesses: ProviderCleanupError[] = [];
+  /** Only resources whose process cleanup is proven may be retried as files. */
+  readonly #retainedFiles = new Map<string, ProviderCleanupError>();
 
   constructor(
     root: string,
@@ -330,20 +332,26 @@ export class KunaProjectCache {
     return this.#await(created, request);
   }
 
-  /** Wait for every build in flight and report cleanup this cache still owns. */
+  /** Wait for builds, retry safe file removal, and report unresolved cleanup. */
   async close(): Promise<Result<null, ProviderCleanupError>> {
     await Promise.allSettled(
       [...this.#unfinished].map((entry) => entry.promise),
     );
-    if (this.#retained.length === 0) return ok(null);
+    for (const path of [...this.#retainedFiles.keys()])
+      await this.#removeRetired(path).catch(() => undefined);
+    const retained = [
+      ...this.#retainedProcesses,
+      ...this.#retainedFiles.values(),
+    ];
+    if (retained.length === 0) return ok(null);
     return err(
       new ProviderCleanupError(
         KUNA_PROVIDER_ID,
-        this.#retained.flatMap((retained) => retained.cleanupResources),
+        retained.flatMap((entry) => entry.cleanupResources),
         {
-          reason: this.#retained
-            .map((retained) =>
-              String(retained.diagnostics?.["reason"] ?? retained.message),
+          reason: retained
+            .map((entry) =>
+              String(entry.diagnostics?.["reason"] ?? entry.message),
             )
             .join("; "),
         },
@@ -424,16 +432,7 @@ export class KunaProjectCache {
       await this.#removeRetired(retired);
     } catch (cause: unknown) {
       if (cause instanceof ProviderCleanupError) return err(cause);
-      return err(
-        this.#retain(
-          new ProviderCleanupError(
-            KUNA_PROVIDER_ID,
-            [cleanupPath],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
-            { operation: KUNA_EXPORT_OPERATION, cause },
-          ),
-        ),
-      );
+      return err(this.#retainFileCleanup(cleanupPath, cause));
     }
     if (built.result.ok)
       // The entry is published either way; a failed eviction retries on the next publish.
@@ -459,7 +458,8 @@ export class KunaProjectCache {
       launcher: this.#launcher,
     });
     if (outcome.kind === "retained") {
-      return { result: err(this.#retain(outcome.error)), retainStaging: true };
+      this.#retainedProcesses.push(outcome.error);
+      return { result: err(outcome.error), retainStaging: true };
     }
     return {
       result: outcome.result.ok
@@ -593,19 +593,13 @@ export class KunaProjectCache {
     await this.#removeRetired(trash);
   }
 
-  /** Keep failed removals owned even when an advisory sweep or eviction retries later. */
+  /** Keep each failed removal owned until that path is successfully removed. */
   async #removeRetired(path: string): Promise<void> {
     try {
       await rm(path, { recursive: true, force: true });
+      this.#retainedFiles.delete(path);
     } catch (cause: unknown) {
-      throw this.#retain(
-        new ProviderCleanupError(
-          KUNA_PROVIDER_ID,
-          [path],
-          { reason: cause instanceof Error ? cause.message : String(cause) },
-          { operation: KUNA_EXPORT_OPERATION, cause },
-        ),
-      );
+      throw this.#retainFileCleanup(path, cause);
     }
   }
 
@@ -630,8 +624,14 @@ export class KunaProjectCache {
     return readFile(path, "utf8");
   }
 
-  #retain(error: ProviderCleanupError): ProviderCleanupError {
-    this.#retained.push(error);
+  #retainFileCleanup(path: string, cause: unknown): ProviderCleanupError {
+    const error = new ProviderCleanupError(
+      KUNA_PROVIDER_ID,
+      [path],
+      { reason: cause instanceof Error ? cause.message : String(cause) },
+      { operation: KUNA_EXPORT_OPERATION, cause },
+    );
+    this.#retainedFiles.set(path, error);
     return error;
   }
 }

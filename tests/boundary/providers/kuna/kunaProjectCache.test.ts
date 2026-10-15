@@ -6,6 +6,7 @@ import {
   readdir,
   readFile,
   rename,
+  rm,
   utimes,
   writeFile,
 } from "node:fs/promises";
@@ -491,32 +492,44 @@ it("sweeps retired entries but preserves staging with unresolved process ownersh
   expect(await entries(cacheRoot, "trash")).toEqual([]);
 });
 
-it("keeps ownership of retired files when a sweep cannot remove them", async () => {
-  const { installation, cacheRoot, cache, target } = await fixture(
-    "rea-kuna-trash-cleanup-",
-  );
-  const retired = join(cacheRoot, "trash", "retired");
-  await mkdir(retired, { recursive: true });
-  await writeFile(join(retired, "evidence"), "retained export");
-  await chmod(retired, 0o500);
-  let built;
-  let closed;
-  try {
-    built = await cache.build({ installation, ...(await target("program")) });
-    closed = await cache.close();
-  } finally {
-    await chmod(retired, 0o700);
-  }
+it.each(["sweep", "close"] as const)(
+  "keeps failed file cleanup owned until recovery through %s",
+  async (recovery) => {
+    const { installation, cacheRoot, cache, target } = await fixture(
+      "rea-kuna-trash-cleanup-",
+    );
+    const retired = join(cacheRoot, "trash", "retired");
+    await mkdir(retired, { recursive: true });
+    await writeFile(join(retired, "evidence"), "retained export");
+    await chmod(retired, 0o500);
+    let built;
+    let closed;
+    try {
+      built = await cache.build({ installation, ...(await target("program")) });
+      closed = await cache.close();
+    } finally {
+      await chmod(retired, 0o700);
+    }
 
-  if (!built.ok) throw built.error;
-  expect(closed).toMatchObject({
-    ok: false,
-    error: { cleanupIncomplete: true, cleanupResources: [retired] },
-  });
-  expect(await readFile(join(retired, "evidence"), "utf8")).toBe(
-    "retained export",
-  );
-});
+    if (!built.ok) throw built.error;
+    expect(closed).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true, cleanupResources: [retired] },
+    });
+    expect(await readFile(join(retired, "evidence"), "utf8")).toBe(
+      "retained export",
+    );
+    if (recovery === "sweep") {
+      const next = await cache.build({
+        installation,
+        ...(await target("other")),
+      });
+      if (!next.ok) throw next.error;
+    }
+    expect(await cache.close()).toEqual({ ok: true, value: null });
+    expect(await entries(cacheRoot, "trash")).toEqual([]);
+  },
+);
 
 it("keeps staging owned when a cancelled Kuna process cannot be proven stopped", async () => {
   const { kuna, installation, cacheRoot, target } = await fixture(
@@ -589,6 +602,13 @@ it("keeps staging owned when a cancelled Kuna process cannot be proven stopped",
     "program",
   );
   expect(await other.close()).toEqual({ ok: true, value: null });
+  // The fake process really stopped, so the test can remove its files. File
+  // absence still does not resolve the deliberately unproven process record.
+  await rm(retained, { recursive: true });
+  expect(await cache.close()).toMatchObject({
+    ok: false,
+    error: { diagnostics: { reason: "ownership could not be revalidated" } },
+  });
 });
 
 it("rebuilds an entry another cache instance evicted after this one verified it", async () => {

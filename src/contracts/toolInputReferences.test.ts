@@ -224,11 +224,42 @@ describe("advertised literal values", () => {
     );
     expect(nonStringLiteralPaths(presented, "root", [])).toEqual([]);
     const source = (presented.properties as Record<string, unknown>).source;
+    // Without the literal the second branch covers the first, so the union
+    // is advertised inclusively; an exclusive oneOf would reject valid input.
+    expect(source).not.toHaveProperty("oneOf");
     expect(source).toMatchObject({
-      oneOf: [
+      anyOf: [
         { properties: { included: { type: "boolean" } } },
         { properties: { included: { type: "boolean" }, text: {} } },
       ],
+    });
+    const validate = new Ajv2020({ strict: false }).compile(presented);
+    for (const input of [
+      { source: { included: false } },
+      { source: { included: true, text: "x" } },
+      { source: { included: true, text: "x", reason: "extra" } },
+    ])
+      expect(validate(input), JSON.stringify(input)).toBe(true);
+    expect(validate({ source: { included: "yes" } })).toBe(false);
+  });
+
+  it("keeps the examples of folded boolean alternatives", () => {
+    const presented = presentInputJsonSchema(
+      {
+        type: "object",
+        properties: {
+          verbose: {
+            anyOf: [
+              { type: "boolean", const: false, examples: [false] },
+              { type: "boolean", const: true, examples: [true], title: "On" },
+            ],
+          },
+        },
+      },
+      () => undefined,
+    );
+    expect(presented.properties).toEqual({
+      verbose: { type: "boolean", title: "On", examples: [false, true] },
     });
   });
 });

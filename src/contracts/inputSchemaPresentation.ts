@@ -80,6 +80,29 @@ const firstDefined = (
   return owner === undefined ? {} : { [key]: owner[key] };
 };
 
+// Folding alternatives must not drop the examples each branch advertised.
+const mergedExamples = (
+  schemas: readonly Readonly<Record<string, unknown>>[],
+): Readonly<Record<string, unknown>> => {
+  const examples: unknown[] = [];
+  for (const schema of schemas)
+    for (const example of Array.isArray(schema.examples) ? schema.examples : [])
+      if (!examples.some((seen) => isDeepStrictEqual(seen, example)))
+        examples.push(example);
+  return examples.length === 0 ? {} : { examples };
+};
+
+// An object alternative whose own property is a boolean literal is selected
+// by that literal. Once the literal is presented as a plain boolean, sibling
+// alternatives can overlap, so an exclusive `oneOf` would reject inputs the
+// canonical union accepts; such unions are advertised as `anyOf`.
+const hasBooleanLiteralProperty = (alternative: unknown): boolean =>
+  isObject(alternative) &&
+  isObject(alternative.properties) &&
+  Object.values(alternative.properties).some(
+    (property) => isObject(property) && typeof property.const === "boolean",
+  );
+
 // Some clients render `const` as a one-member `enum`, and Google function
 // declarations accept only string enum members, so one advertised boolean
 // literal fails the whole catalog (morluto/rea#4025). Present a boolean
@@ -88,13 +111,22 @@ const firstDefined = (
 // exact literal and the union branch it selects.
 const presentBooleanLiterals = (
   schema: Readonly<Record<string, unknown>>,
+  original: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, unknown>> => {
   const { const: literal, ...withoutLiteral } = schema;
-  const presented =
+  let presented =
     typeof literal === "boolean" &&
     (withoutLiteral.type === undefined || withoutLiteral.type === "boolean")
       ? { ...withoutLiteral, type: "boolean" }
       : schema;
+  if (
+    Array.isArray(original.oneOf) &&
+    Array.isArray(presented.oneOf) &&
+    original.oneOf.some(hasBooleanLiteralProperty)
+  ) {
+    const { oneOf, ...rest } = presented;
+    presented = { ...rest, anyOf: oneOf };
+  }
   for (const combinator of ["anyOf", "oneOf"]) {
     const alternatives = presented[combinator];
     if (
@@ -109,6 +141,7 @@ const presentBooleanLiterals = (
       ...firstDefined(alternatives, "description"),
       ...firstDefined(alternatives, "title"),
       ...firstDefined(alternatives, "default"),
+      ...mergedExamples(alternatives),
       ...rest,
       type: "boolean",
     };
@@ -162,7 +195,7 @@ const describeSchema = (
       return [key, value];
     }),
   );
-  return presentBooleanLiterals(described);
+  return presentBooleanLiterals(described, schema);
 };
 
 const objectBranch = (

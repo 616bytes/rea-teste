@@ -696,8 +696,11 @@ Gemini function declarations accept only string enum members, so one boolean
 literal rejected every tool ([#4025](https://github.com/morluto/rea/issues/4025)).
 The projection drops the boolean `const`, keeps the declared type, default,
 and description, and folds alternatives that differ only in that literal into
-one boolean field. Nested object alternatives keep their structure with the
-discriminating field typed as `boolean`. String literals stay `const` because
+one boolean field, keeping every branch's examples. Nested object alternatives
+keep their structure with the discriminating field typed as `boolean`; a
+`oneOf` whose branches were told apart by such a literal is advertised as
+`anyOf`, because the branches can overlap once the literal is gone and an
+exclusive union would reject inputs the canonical contract accepts. String literals stay `const` because
 every supported dialect accepts them. The canonical Zod schema still enforces
 the exact literal and the branch it selects; the advertised projection alone
 does not express that choice. Tests check every advertised input schema in

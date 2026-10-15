@@ -235,11 +235,14 @@ for (const entry of agentFiles) {
         frontmatter.description.trim().length > 0,
       "agent " + name + " has a description",
     );
-    check(frontmatter.tools !== undefined &&
+    check(
+      frontmatter.tools !== undefined &&
         frontmatter.tools !== null &&
         (typeof frontmatter.tools === "string"
           ? frontmatter.tools.trim().length > 0
-          : Array.isArray(frontmatter.tools) && frontmatter.tools.length > 0), "agent " + name + " declares tools");
+          : Array.isArray(frontmatter.tools) && frontmatter.tools.length > 0),
+      "agent " + name + " declares tools",
+    );
   }
   check(
     content.length >= 700,

@@ -5,6 +5,9 @@ It is not imported by REA, advertised to agents, included in the npm package or
 an approved provider. It uses REA's existing process supervision and tagged
 errors/Result; it does not implement production Evidence or session admission.
 
+The separate [task comparison](BENCHMARK.md) measures actual Codex investigations
+and cold/warm MCP workloads through PR #3521, upstream r2mcp and Ghidra.
+
 Use the pinned Node/npm toolchain, install locked dependencies and build first:
 
 ```sh
@@ -34,6 +37,12 @@ commands preserve explicit `json` and `trim` choices. Responses preserve raw
 frames, parsed envelopes and process diagnostics separately. The 16 MiB frame
 and transcript budgets follow REA's current reverse-command capture budget;
 they do not establish production memory bounds or token savings.
+
+Owned r2 processes start with `scr.color=0` and `scr.utf8=0`; the owned r2mcp
+core receives the same settings. `R2_COLOR=0 R2_UTF8=0` also works for standalone
+r2 commands. External HTTP cores keep the caller's settings; use an explicit
+command or scoped `@e:scr.color=0,scr.utf8=0` when desired. No display filtering
+is applied to captured results.
 
 `e cfg.json.num=string` is supported, including the r2pipe2 `value` field.
 For individual JSON reads, `aflj @e:cfg.json.num=string` scopes the setting to

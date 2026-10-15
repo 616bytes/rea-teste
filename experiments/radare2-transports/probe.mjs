@@ -474,7 +474,7 @@ export async function probe(input, options = {}) {
         (selected.transport === "r2mcp"
           ? (environment.REA_R2MCP_COMMAND ?? "r2mcp")
           : (environment.REA_R2_COMMAND ?? "r2"));
-      const flags = ["-N", "-q", "-e", "scr.color=0"];
+      const flags = ["-N", "-q", "-e", "scr.color=0", "-e", "scr.utf8=0"];
       if (selected.transport === "exec") {
         for (const command of selected.commands) {
           const output = await runOwnedCommand(
@@ -502,7 +502,7 @@ export async function probe(input, options = {}) {
         const args =
           selected.transport === "r2pipe"
             ? [...flags, "-0", path]
-            : ["-r", "-N"];
+            : ["-r", "-N", "-c", "e scr.color=0;e scr.utf8=0"];
         await withOwned(
           executable,
           args,

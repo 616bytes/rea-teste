@@ -46,8 +46,8 @@ use case. Typed r2mcp calls do not require enabling `run_command`.
 
 | Transport         | Use and effects                                                                                                                 | Ownership and performance                                                                                          |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Command execution | One owned `r2 -N -q -e scr.color=0 -c REQUEST ABSOLUTE_PATH` process; plugins remain available                                  | Independent invocation; useful for a single question, with repeated loading/analysis for independent requests      |
-| r2pipe2           | Owned `r2 -N -q -e scr.color=0 -0 ABSOLUTE_PATH`; JSON requests and NUL-framed JSON replies                                     | Reuse the same analysis state; serialize commands, bound frames and preserve cleanup ownership                     |
+| Command execution | One owned `r2 -N -q -e scr.color=0 -e scr.utf8=0 -c REQUEST ABSOLUTE_PATH` process; plugins remain available                    | Independent invocation; useful for a single question, with repeated loading/analysis for independent requests      |
+| r2pipe2           | Owned `r2 -N -q -e scr.color=0 -e scr.utf8=0 -0 ABSOLUTE_PATH`; JSON requests and NUL-framed JSON replies                       | Reuse the same analysis state; serialize commands, bound frames and preserve cleanup ownership                     |
 | r2pipe over HTTP  | POST an r2pipe2 JSON request as the body to the exact caller-selected loopback `/cmd` or `/cmd/` endpoint                       | Reuse a caller-owned r2/iaito session; never reopen its file, terminate the server or send `q` on disconnect       |
 | r2mcp             | Discover and bind named advertised tools on a caller-selected local connection; raw access needs upstream `run_command` support | Retain the upstream MCP session/catalog; preserve its permission settings, tool errors, paging and server identity |
 
@@ -105,9 +105,11 @@ than duplicating fragile text interpretation across REA consumers.
 Preserve analysis policy as well as tool arguments. The inspected
 `list_functions` implementation runs `aaa` when its initial inventory is empty;
 it is not an observation-only operation in that state. Decompiler choice and
-mutation readback also need explicit semantics. The current experiment only
-uses `open_file` and `run_command`; named-tool mapping, `-u`, core-plugin MCP and
-their REA CLI/MCP parity remain unimplemented and unverified here.
+mutation readback also need explicit semantics. The transport probe only uses
+`open_file` and `run_command`. The separate
+[task benchmark](../experiments/radare2-transports/BENCHMARK.md) exercises direct
+upstream named tools. Mapping them into REA, `-u`, core-plugin MCP and their
+REA CLI/MCP parity remain unimplemented and unverified here.
 
 ## r2pipe2 results and failure ownership
 
@@ -220,16 +222,16 @@ after mutations or unresolved command completion. Do not add a global cache
 keyed only by file path. Scope selection and retained full Evidence should avoid
 returning raw output plus duplicate JSON/summary copies to the agent.
 
-No agent-token, CPU or process-family peak-memory improvement is established by
-the prototype. Test durations include setup and are not equivalent-workflow
-benchmarks. Before selecting production defaults, measure complete one-question
-and multi-question tasks, including catalog/schema discovery, output, errors and
-retries; report actual model tokens (label tokenizer estimates), elapsed time,
-CPU and peak process-family memory, separately for cold starts and retained warm
-sessions. Include server startup costs for cold HTTP/r2mcp runs. Linux, Windows,
-older radare2 versions, r2mcp MCP-over-HTTP, actual agent selection, decompiler
-quality, live-target detach and production failure/limit semantics remain
-unverified.
+The transport verifier's durations do not establish performance improvements.
+The separate [task comparison](../experiments/radare2-transports/BENCHMARK.md)
+measures actual Codex investigations and fixed cold/warm MCP queries through
+PR #3521, direct upstream r2mcp and Ghidra 12.1.4. It records model tokens,
+elapsed time, local CPU and sampled process-family RSS with finite correctness
+oracles and explicit measurement limits. Direct r2mcp bypasses REA's Evidence
+and catalog work; these results do not isolate transport overhead or select a
+production default. HTTP/iaito performance, Linux, Windows, older radare2,
+r2mcp MCP-over-HTTP, broad decompiler quality, live-target detach and production
+failure/limit semantics remain unverified.
 
 ## Implementation review
 
@@ -276,8 +278,9 @@ r2mcp named-tool workflow covering file open, analysis, function inventory,
 r2ghidra decompilation, xrefs and close. An initial DSL invocation passed numeric
 arguments as strings and was rejected; the successful run used default analysis
 and inventory options. iaito attachment was confirmed from its webserver source,
-not by operating a running GUI. Ghidra, IDA and Hopper comparison claims are
-source-derived; their engines and comparative performance were not rerun.
+not by operating a running GUI. IDA and Hopper comparisons remain source-derived.
+The separate benchmark runs real Ghidra and r2 engines on its declared tasks;
+it does not establish the other integration capabilities in the table.
 
 The separate upstream r2mcp review reproduced signed JSON integers becoming
 unsigned during pagination (`-1` became `18446744073709551615`).

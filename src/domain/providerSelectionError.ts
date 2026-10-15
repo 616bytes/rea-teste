@@ -24,6 +24,8 @@ export interface ProviderSelectionRejection {
 export interface ProviderSelectionErrorOptions {
   readonly capturedOutput?: AnalysisCapturedOutput;
   readonly userMessage?: string;
+  /** Recovery known to the provider that refused the target, when it has one. */
+  readonly remediationAction?: string;
   readonly operation?: string;
   readonly reason: ProviderSelectionFailureReason;
   readonly requestedProviderId: string;
@@ -39,6 +41,7 @@ export class ProviderSelectionError extends AnalysisError {
   readonly requestedProviderId: string;
   readonly candidateIds: readonly string[];
   readonly rejections: readonly ProviderSelectionRejection[];
+  readonly remediationAction: string | undefined;
   override readonly userMessage: string;
 
   constructor(options: ProviderSelectionErrorOptions) {
@@ -57,6 +60,7 @@ export class ProviderSelectionError extends AnalysisError {
       ...rejection,
       diagnostics: structuredClone(rejection.diagnostics),
     }));
+    this.remediationAction = options.remediationAction;
     this.userMessage =
       options.userMessage ?? providerSelectionUserMessage(options);
   }

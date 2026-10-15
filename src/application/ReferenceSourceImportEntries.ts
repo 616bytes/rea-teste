@@ -196,10 +196,14 @@ const resolveInternalSpecifier = (
     specifier.endsWith("/") || [".", ".."].includes(posix.basename(specifier));
   // A directory resolves only to an index with an extension; neither Node nor
   // TypeScript selects an extensionless `index` file.
-  const candidates = RESOLUTION_SUFFIXES.flatMap((suffix) => [
-    ...(directoryReference ? [] : [`${normalized}${suffix}`]),
-    ...(suffix === "" ? [] : [posix.join(normalized, `index${suffix}`)]),
-  ]);
+  // Keep all sibling-file candidates ahead of competing directory indexes.
+  const fileCandidates = directoryReference
+    ? []
+    : RESOLUTION_SUFFIXES.map((suffix) => `${normalized}${suffix}`);
+  const indexCandidates = RESOLUTION_SUFFIXES.filter(
+    (suffix) => suffix !== "",
+  ).map((suffix) => posix.join(normalized, `index${suffix}`));
+  const candidates = [...fileCandidates, ...indexCandidates];
   // Retain present runtime files first; substitute only a missing counterpart.
   // Counterparts cover explicit filenames, not directory/index resolution.
   if (!directoryReference)

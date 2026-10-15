@@ -116,3 +116,40 @@ it("retains Kotlin source identity and language across the inventory projection"
   expect(parsed.parseFailures).toEqual([]);
   expect(parsed.relationships).toEqual([]);
 });
+
+it("prefers a sibling file over a directory index for extensionless imports", () => {
+  const files = [
+    ["src/main.cjs", 'require("./dep");\n'],
+    ["src/dep.js", 'module.exports = "file";\n'],
+    ["src/dep/index.ts", 'export const index = "directory";\n'],
+  ] as const;
+  const read: ReferenceSourceRead = {
+    root: "/selected/source",
+    entries: files.map(([path, content]) => ({
+      status: "read",
+      kind: "file",
+      path,
+      bytes: Buffer.from(content),
+      size: Buffer.byteLength(content),
+    })),
+    bytesRead: files.reduce(
+      (sum, [, content]) => sum + Buffer.byteLength(content),
+      0,
+    ),
+    limitations: [],
+  };
+  const parsed = parseReferenceSourceEntries(
+    read,
+    new Set(files.map(([path]) => path)),
+  );
+
+  expect(parsed.relationships).toEqual([
+    {
+      from_path: "src/main.cjs",
+      to: "src/dep.js",
+      kind: "requires",
+      resolution: "internal",
+      parse_state: "parsed",
+    },
+  ]);
+});

@@ -169,24 +169,27 @@ for (const group of groups) {
         "--dry-run",
         "--json",
       ]);
-      for (const { client, config, skillDirectory } of profiles) {
-        expect(planned.exitCode, client).toBe(0);
-        expect(planned.json, client).toMatchObject({
-          status: "planned",
-          plannedActions: expect.arrayContaining([
+      expect(planned.exitCode, planned.stderr).toBe(0);
+      expect(planned.json).toMatchObject({
+        status: "planned",
+        plannedActions: expect.arrayContaining([
+          ...profiles.map(({ client, config }) =>
             expect.objectContaining({
               id: `configure_client:${client}`,
               target: config,
             }),
-            expect.objectContaining({ target: skillDirectory }),
-          ]),
-        });
+          ),
+          ...[
+            ...new Set(profiles.map(({ skillDirectory }) => skillDirectory)),
+          ].map((target) => expect.objectContaining({ target })),
+        ]),
+      });
+      for (const { config, skillDirectory } of profiles) {
+        await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
         await expect(access(skillDirectory)).rejects.toMatchObject({
           code: "ENOENT",
         });
       }
-      for (const { config } of profiles)
-        await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
       const setup = await run(["setup", ...clientArguments, "--yes", "--json"]);
       expect(setup.exitCode).toBe(0);
       expect(setup.json).toMatchObject({ status: "ready" });
@@ -199,21 +202,18 @@ for (const group of groups) {
       await expect(access(join(home, "config.toml"))).rejects.toMatchObject({
         code: "ENOENT",
       });
-      const doctor = await run([
-        "doctor",
-        ...clientArguments,
-        "--skill",
-        "--json",
-      ]);
       for (const { client, config } of profiles) {
+        const doctor = await run([
+          "doctor",
+          "--client",
+          client,
+          "--skill",
+          "--json",
+        ]);
         expect(doctor.exitCode, client).toBe(0);
         expect(doctor.json, client).toMatchObject({
           healthy: true,
-          scope: {
-            mode: "explicit",
-            clients: profiles.map(({ client }) => client).sort(),
-            skill: true,
-          },
+          scope: { mode: "explicit", clients: [client], skill: true },
           identity: {
             skill: { state: "aligned" },
             registrations: expect.arrayContaining([

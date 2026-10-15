@@ -11,6 +11,7 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   AnalysisCapabilityUnavailableError,
+  type AnalysisInputIssue,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
@@ -36,6 +37,7 @@ export const wabtFailure = (
   cause: unknown,
   phase: "configuration" | "artifact" | "producer",
   path: string,
+  issuePath: AnalysisInputIssue["path"] = ["path"],
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   const artifactCleanup =
@@ -162,7 +164,7 @@ export const wabtFailure = (
     return new AnalysisInputError(
       "inspect_wasm_artifact",
       { cause, ...cleanupOptions },
-      [{ path: ["path"], reason: "invalid_value", message: reason }],
+      [{ path: issuePath, reason: "invalid_value", message: reason }],
     );
   return new AnalysisOutputError("inspect_wasm_artifact", reason, {
     cause,

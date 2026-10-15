@@ -21,6 +21,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  type AnalysisInputIssue,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { createEvidence } from "../domain/evidence.js";
@@ -102,6 +103,8 @@ export class WabtArtifactProvider implements WasmArtifactPort {
   ): Promise<Result<WasmArtifactExecution, AnalysisError>> {
     let root: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
     let phase: "configuration" | "artifact" | "producer" = "configuration";
+    let selectedPath = input.path;
+    let issuePath: AnalysisInputIssue["path"] = ["path"];
     let result: Result<WasmArtifactExecution, AnalysisError>;
     let capturedOutput: AnalysisCapturedOutput | undefined;
     try {
@@ -244,6 +247,11 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       };
       const candidates = [];
       for (const path of new Set([input.path, ...input.candidate_paths])) {
+        selectedPath = path;
+        issuePath =
+          path === input.path
+            ? ["path"]
+            : ["candidate_paths", input.candidate_paths.indexOf(path)];
         const bytes =
           path === input.path
             ? selected
@@ -261,7 +269,9 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         });
       }
       const glue = [];
-      for (const path of input.glue_paths) {
+      for (const [index, path] of input.glue_paths.entries()) {
+        selectedPath = path;
+        issuePath = ["glue_paths", index];
         const bytes = await readStableArtifact(
           path,
           WABT_LIMITS.inputBytes,
@@ -283,6 +293,8 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           ),
         });
       }
+      selectedPath = input.path;
+      issuePath = ["path"];
       await writeFile(snapshotPath, selected.bytes, {
         flag: "wx",
         mode: 0o400,
@@ -430,7 +442,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         }),
       );
     } catch (cause: unknown) {
-      const failure = wabtFailure(cause, phase, input.path);
+      const failure = wabtFailure(cause, phase, selectedPath, issuePath);
       result = err(
         failure instanceof AnalysisOutputError &&
           failure.capturedOutput === undefined &&

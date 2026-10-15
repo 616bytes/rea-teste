@@ -44,11 +44,14 @@ export const aotFixtureImage = (hash: string = REFERENCE_HASH): Buffer => {
  */
 export const renamedAotFixtureImage = (
   hash: string = REFERENCE_HASH,
+  options: { readonly dataKind?: number; readonly exportText?: boolean } = {},
 ): Buffer => {
   const elf = buildElf64Image([
     { name: "_kDartSnapshotBuildId", value: 0x1000, size: 32 },
     { name: "_kDartSnapshotData", value: 0x2000, size: 0x600 },
-    { name: "_kDartSnapshotText", value: 0x2600, size: 16 },
+    ...(options.exportText === false
+      ? []
+      : [{ name: "_kDartSnapshotText", value: 0x2600, size: 16 }]),
   ]);
   const pool = Buffer.concat([
     Buffer.from("package:saber/data/prefs.dart\x00"),
@@ -57,7 +60,7 @@ export const renamedAotFixtureImage = (
     Buffer.from("LoginFlow\x00SentryFilter\x00"),
   ]);
   const dataSection = Buffer.concat([
-    snapshotSection(hash, 2),
+    snapshotSection(hash, options.dataKind ?? 2),
     Buffer.from([0]),
     pool,
   ]);

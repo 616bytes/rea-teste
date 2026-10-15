@@ -157,13 +157,21 @@ class IdaCleanupError extends ProviderAdapterError {
  * live session, so the private-input arm must not report it as a blocker. The
  * owning worker is matched by its own session ID separately, and a genuine peer
  * on the same input keeps a session ID, so neither case is weakened.
+ *
+ * Limited to `backend: "worker"`: a gui row belongs to an IDA instance REA does
+ * not control, and the observed teardown shape covers workers only, so a gui
+ * row keeps blocking release whatever its flags say.
  */
 const isReleasedWorkerRow = (entry: {
   readonly session_id: string;
   readonly owned: boolean;
   readonly is_active: boolean;
+  readonly backend: "worker" | "gui";
 }): boolean =>
-  entry.session_id === "" && entry.owned !== true && entry.is_active !== true;
+  entry.backend === "worker" &&
+  entry.session_id === "" &&
+  entry.owned !== true &&
+  entry.is_active !== true;
 
 /** Serial read-only session whose lifecycle authority excludes an attached GUI. */
 export class IdaSessionClient implements AnalysisClient {

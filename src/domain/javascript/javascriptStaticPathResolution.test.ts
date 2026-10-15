@@ -64,6 +64,11 @@ const unknownExpressions = [
   'resolve("/app", "preload.js")',
   '__dirname + "preload.js"',
   'path.dirname(__filename) + "preload.js"',
+  'new URL("./pre%2Fload.js", import.meta.url)',
+  'path.join(new URL("./", import.meta.url), "preload.js")',
+  'path.resolve(new URL("./", import.meta.url), "preload.js")',
+  'path.join(__dirname, new URL("./pre%2Fload.js", import.meta.url))',
+  'path.resolve(new URL("./", import.meta.url), __dirname, "preload.js")',
 ];
 
 describe("inert JavaScript path resolution", () => {
@@ -218,6 +223,36 @@ it.each([
     fileURLToPath(url, { windows: false }),
     "filesystem-expression",
   );
+});
+
+it("decodes a source-relative file URL once before composing a filesystem path", () => {
+  assertPathProjection(
+    'fileURLToPath(new URL("./pre%252Fload.js", import.meta.url))',
+    "./pre%2Fload.js",
+    "filesystem-expression",
+  );
+  assertPathProjection(
+    'path.join(dirname(fileURLToPath(import.meta.url)), "pre%2Fload.js")',
+    "pre%2Fload.js",
+    "filesystem-expression",
+  );
+});
+
+it("retains Worker URL references through their separate URL-aware producer", () => {
+  const specifier = "./worker%252Fentry.js?version=1#worker";
+  const analysis = analyzeJavaScriptStaticSource(`
+    import { Worker } from "node:worker_threads";
+    new Worker(new URL(${JSON.stringify(specifier)}, import.meta.url));
+  `);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.parse_error_count).toBe(0);
+  expect(
+    analysis.references
+      .filter(({ kind }) => kind === "worker")
+      .map(({ specifier, expression }) => ({ specifier, expression })),
+  ).toEqual([{ specifier, expression: null }]);
+  expect(analysis.role_paths).toEqual([]);
 });
 
 it.each([

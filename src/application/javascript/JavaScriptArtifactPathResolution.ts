@@ -386,7 +386,10 @@ const resolveNodeRuntimeEntrypoint = (
 const resolveRuntimeEntrypoint = (
   input: ResolveArtifactPathInput,
 ): CandidateResolution => {
-  const rejected = rejectDeclaration(input.declaredPath);
+  const rejected = rejectDeclaration(
+    input.declaredPath,
+    declaresLiteralPercent(input),
+  );
   if (rejected !== null) return rejected;
   if (hasScheme(input.declaredPath) || looksExternal(input.declaredPath))
     return unresolvedCandidate("external", [
@@ -453,14 +456,19 @@ const rejectDeclaration = (
 };
 
 /**
- * Node's CommonJS loader never percent-decodes a request or a legacy package
- * main, so `%2e` and `%2f` there are literal filename bytes, not encoded dots
- * or separators. Root confinement still applies to the joined candidate.
+ * Filesystem expressions, exact runtime paths, and CommonJS requests retain
+ * literal filename bytes. URL-to-path conversion belongs to the producer;
+ * these consumers must not decode or reject the resulting percent spelling.
+ * Root confinement still applies to the joined candidate.
  */
 const declaresLiteralPercent = (input: ResolveArtifactPathInput): boolean =>
-  input.moduleKind === "require" &&
-  (input.context === "module-specifier" ||
-    input.context === "package-entrypoint");
+  input.context === "filesystem-expression" ||
+  (input.runtimePathKind === "exact-file" &&
+    isRuntimePathDeclaration(input) &&
+    !looksExternal(input.declaredPath)) ||
+  (input.moduleKind === "require" &&
+    (input.context === "module-specifier" ||
+      input.context === "package-entrypoint"));
 
 const contextualCandidate = (
   input: ResolveArtifactPathInput,

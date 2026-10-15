@@ -178,7 +178,7 @@ export const staticPathResolutionContext = (
     ? "filesystem-expression"
     : "module-specifier";
 
-/** Resolve a path composed only from inert literal syntax. */
+/** Resolve a path string composed only from inert literal syntax. */
 export const staticPath = (node: t.Node): string | undefined => {
   if (t.isStringLiteral(node)) return node.value;
   if (t.isTemplateLiteral(node) && node.expressions.length === 0)
@@ -218,10 +218,6 @@ const staticCallPath = (
   node: t.CallExpression | t.NewExpression,
 ): string | undefined => {
   const name = calleeName(node.callee);
-  if (name === "URL" || name.endsWith(".URL"))
-    return isFileIdentity(argumentNode(node.arguments[1]))
-      ? stringValue(node.arguments[0])
-      : undefined;
   if (name === "fileURLToPath" || name.endsWith(".fileURLToPath")) {
     return staticFileUrlPath(node);
   }
@@ -232,7 +228,7 @@ const staticCallPath = (
   if (!name.endsWith(".join") && name !== "join") return undefined;
   const parts: string[] = [];
   for (const argument of node.arguments) {
-    if (isDirectoryIdentity(argumentNode(argument))) {
+    if (isDirectoryPath(argumentNode(argument))) {
       // join never resets at an absolute segment, so `/preload.js` after the
       // source directory stays inside it.
       parts.push(".");
@@ -325,7 +321,7 @@ const staticResolvedPath = (
 ): string | undefined => {
   const parts: (string | null)[] = [];
   for (const argument of node.arguments) {
-    if (isDirectoryIdentity(argumentNode(argument))) {
+    if (isDirectoryPath(argumentNode(argument))) {
       parts.push(null);
       continue;
     }
@@ -348,7 +344,7 @@ const staticResolvedPath = (
 
 const isFilesystemPathExpression = (node: t.Node): boolean => {
   if (t.isStringLiteral(node)) return node.value.startsWith("/");
-  if (isFileIdentity(node) || isDirectoryIdentity(node)) return true;
+  if (isFileIdentity(node) || isDirectoryPath(node)) return true;
   if (t.isBinaryExpression(node, { operator: "+" }))
     return (
       isFilesystemPathExpression(node.left) ||
@@ -358,8 +354,8 @@ const isFilesystemPathExpression = (node: t.Node): boolean => {
     const name = calleeName(node.callee);
     if (name.endsWith(".resolve") && staticCallPath(node) !== undefined)
       return true;
-    if (name === "URL" || name.endsWith(".URL"))
-      return isFileIdentity(argumentNode(node.arguments[1]));
+    // A URL object is not a path string until fileURLToPath converts it.
+    if (name === "URL" || name.endsWith(".URL")) return false;
     if (name === "fileURLToPath" || name.endsWith(".fileURLToPath"))
       return (
         staticFileUrlPath(node) !== undefined ||
@@ -374,16 +370,6 @@ const isFilesystemPathExpression = (node: t.Node): boolean => {
     });
   }
   return false;
-};
-
-const isDirectoryIdentity = (node: t.Node | undefined): boolean => {
-  if (isDirectoryPath(node)) return true;
-  if (!t.isCallExpression(node) && !t.isNewExpression(node)) return false;
-  const name = calleeName(node.callee);
-  return (
-    (name === "URL" || name.endsWith(".URL")) &&
-    isFileIdentity(argumentNode(node.arguments[1]))
-  );
 };
 
 /** `__dirname` or the dirname of the source file, as a string. */

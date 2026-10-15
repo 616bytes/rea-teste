@@ -24,6 +24,7 @@ import {
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { WABT_OPERATION_TIMEOUT_MS } from "./lib/wabt-verifier-timeouts.mjs";
 
 const directory = process.env.REA_WABT_BIN_DIRECTORY;
 if (!isAbsolute(directory ?? "")) {
@@ -44,7 +45,6 @@ const entrypoint =
   process.argv.slice(2).find((arg) => !arg.startsWith("--")) ??
   fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const execute = promisify(execFile);
-const OPERATION_TIMEOUT_MS = 240_000;
 const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
 );
@@ -78,7 +78,7 @@ try {
 }
 const client = new Client({ name: "wabt-artifact-verifier", version: "1" });
 const callTool = (request) =>
-  client.callTool(request, { timeout: OPERATION_TIMEOUT_MS });
+  client.callTool(request, { timeout: WABT_OPERATION_TIMEOUT_MS });
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -131,7 +131,7 @@ try {
                 TMP: childTempRoot,
                 TEMP: childTempRoot,
               },
-              timeout: OPERATION_TIMEOUT_MS,
+              timeout: WABT_OPERATION_TIMEOUT_MS,
               maxBuffer: 64 * 1024 * 1024,
             },
           )

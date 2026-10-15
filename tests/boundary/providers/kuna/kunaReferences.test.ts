@@ -1,9 +1,112 @@
 import { expect, it as test } from "vitest";
 
+import { executeFunctionAnalysisEvidence } from "../../../../src/application/FunctionAnalysisEvidence.js";
+import { EnhancedTools } from "../../../../src/application/EnhancedTools.js";
 import { fakeKunaCalls, setFakeKunaBehavior } from "./fakeKuna.js";
 import { FUNCTIONS, run, session } from "./kunaSessionFixture.js";
 
 const it = test.skipIf(process.platform === "win32");
+
+it("resolves graph-only imports as graph roots and path endpoints without exporting C", async () => {
+  const { open, kuna } = await session("rea-kuna-graph-only-import-", {
+    inventoryImports: false,
+  });
+  const client = open();
+  try {
+    expect((await run(client, "list_procedures")).result).not.toContainEqual(
+      expect.objectContaining({ address: "0x2000" }),
+    );
+    const tools = new EnhancedTools(client);
+    const graph = await tools.execute("get_call_graph", {
+      address: "0x2000",
+      direction: "backward",
+    });
+    if (!graph.ok) throw graph.error;
+    expect(graph.value).toMatchObject({
+      graph: { "0": [{ address: "0x2000", calls: ["0x1040"] }] },
+    });
+    for (const [start, goal, direction] of [
+      ["main", "0x2000", "forward"],
+      ["0x2000", "main", "backward"],
+    ] as const) {
+      const path = await tools.execute("trace_call_path", {
+        start,
+        goal,
+        direction,
+      });
+      if (!path.ok) throw path.error;
+      expect(path.value).toMatchObject({ goal_status: "reached" });
+    }
+    expect(
+      await client.execute("procedure_address", { procedure: "0x9999" }),
+    ).toMatchObject({ ok: false });
+    const calls = await fakeKunaCalls(kuna);
+    expect(
+      calls.filter(({ argv }) => argv[0] === "decompile-graph"),
+    ).toHaveLength(1);
+    expect(calls.some(({ argv }) => argv[0] === "decompile-project")).toBe(
+      false,
+    );
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it.each([
+  {
+    behavior: { graphIndirectCalls: false },
+    procedure: "main",
+    coverage: { status: "complete" },
+    available: true,
+  },
+  {
+    behavior: {},
+    procedure: "main",
+    coverage: {
+      status: "partial",
+      limited_directions: ["callers", "callees"],
+    },
+    available: true,
+  },
+  {
+    behavior: {},
+    procedure: "parse",
+    coverage: { status: "partial", limited_directions: ["callers"] },
+    available: true,
+  },
+  {
+    behavior: { graph: "not-json" as const },
+    procedure: "main",
+    coverage: {
+      status: "unknown",
+      reason: expect.stringContaining("call graph cannot be used"),
+    },
+    available: false,
+  },
+])(
+  "preserves dossier relationship coverage in application Evidence: $procedure $coverage.status",
+  async ({ behavior, procedure, coverage, available }) => {
+    const { open, target } = await session(
+      "rea-kuna-dossier-coverage-",
+      behavior,
+    );
+    const client = open();
+    try {
+      const answer = await executeFunctionAnalysisEvidence(
+        client,
+        { procedure },
+        target,
+      );
+      if (!answer.ok) throw answer.error;
+      expect(answer.value.relationship_coverage).toMatchObject(coverage);
+      expect(answer.value.normalized_result).toMatchObject({
+        facet_availability: { callers: { available }, callees: { available } },
+      });
+    } finally {
+      expect(await client.close()).toEqual({ ok: true, value: null });
+    }
+  },
+);
 
 it("shares one body-free graph across both directions without exporting C", async () => {
   const { open, kuna } = await session("rea-kuna-calls-");

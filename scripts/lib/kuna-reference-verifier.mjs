@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import { combineFunctionRelationshipCoverage } from "../../dist/domain/functionCallCoverage.js";
+
 const entries = async (path) => {
   try {
     return (await readdir(path)).sort();
@@ -18,6 +20,7 @@ export const verifyKunaReferences = async ({
   name,
   address,
   expectedCaller,
+  nativeIncoming,
 }) => {
   const before = await Promise.all([
     entries(join(cacheRoot, "projects")),
@@ -61,6 +64,11 @@ export const verifyKunaReferences = async ({
       incoming.value.length > 0,
       `${name} lost its source-owned call site`,
     );
+    assert.deepEqual(
+      [...incoming.value].sort(),
+      await nativeIncoming(address),
+      `${name} incoming references differ from exact-target native sites`,
+    );
     const graph = await call("get_call_graph", {
       address: expectedCaller,
       direction: "forward",
@@ -92,6 +100,10 @@ export const verifyKunaReferences = async ({
     warm_graph_ms: repeated.ms,
     xrefs_ms: incoming.ms,
     response_bytes: callers.bytes + callees.bytes + incoming.bytes,
+    relationship_coverage: combineFunctionRelationshipCoverage(
+      callers.structured.relationship_coverage,
+      callees.structured.relationship_coverage,
+    ),
     ...composed,
   };
 };

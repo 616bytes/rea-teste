@@ -20,6 +20,7 @@ import {
 } from "../domain/analysisSearch.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
+import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
 import { functionDossierSchema } from "../domain/hopperValues.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
@@ -521,7 +522,28 @@ export class KunaSessionClient implements AnalysisClient {
       parameters.procedure,
       inventory.value,
     );
-    if (!entry.ok) return entry;
+    if (!entry.ok) {
+      const selectedAddress =
+        operation === "procedure_address"
+          ? normalizeKunaAddress(parameters.procedure)
+          : undefined;
+      if (selectedAddress === undefined) return entry;
+      const graph = await this.#references.functionAt(
+        installation,
+        selectedAddress,
+        operation,
+        options.signal,
+      );
+      if (!graph.ok) return graph;
+      if (graph.value === undefined) return entry;
+      return ok({
+        result: graph.value.address,
+        source: null,
+        locations: [{ kind: "address", address: selectedAddress }],
+        limitations: [],
+        referenceSource: graph.value.source,
+      });
+    }
     const locations = [
       { kind: "address", address: entry.value.address } as const,
     ];
@@ -1058,6 +1080,17 @@ export class KunaSessionClient implements AnalysisClient {
             available: false,
             reason:
               relationships.error.userMessage ?? relationships.error.message,
+          },
+      relationshipCoverage: relationships.ok
+        ? combineFunctionRelationshipCoverage(
+            relationships.value.callersCoverage,
+            relationships.value.calleesCoverage,
+          )
+        : {
+            status: "unknown",
+            reason:
+              relationships.error.userMessage ?? relationships.error.message,
+            limited_directions: ["callers", "callees"],
           },
     });
   }

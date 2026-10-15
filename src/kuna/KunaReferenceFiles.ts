@@ -75,7 +75,7 @@ const graphEdge = z.object({
   calleeOrder: count,
 });
 
-type KunaGraphNode = z.infer<typeof graphNode>;
+export type KunaGraphNode = z.infer<typeof graphNode>;
 export interface KunaCallGraph {
   readonly sha256: string;
   readonly bytes: number;

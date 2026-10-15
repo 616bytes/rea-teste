@@ -16,6 +16,7 @@ export interface FakeKunaBehavior {
     | { readonly exit: number }
     | { readonly ignoreTerm: true };
   readonly inventory?: "ok" | "not-json" | "hang";
+  readonly inventoryImports?: boolean;
   readonly project?:
     | "ok"
     | "exit-failure"
@@ -36,6 +37,7 @@ export interface FakeKunaBehavior {
   /** Milliseconds the export takes before writing its files. */
   readonly delayMs?: number;
   readonly graph?: "ok" | "hang" | "not-json" | "miscounted" | "with-bodies";
+  readonly graphIndirectCalls?: boolean;
   readonly xrefs?: "ok" | "hang" | "not-json";
   readonly referenceDelayMs?: number;
   readonly referencePadding?: number;
@@ -65,7 +67,7 @@ if (args[0] === "--version") {
   if (mode === "hang") hang();
   else if (mode === "not-json") process.stdout.write("functions: 2\n");
   else {
-    const listed = [...functions, { name: "puts", addr: "0x2000" }].map((fn) => ({ name: fn.name, address: parseInt(fn.addr, 16), address_hex: fn.addr, aliases: [], object_location: null, size: fn.name === "puts" ? 0 : 16 }));
+    const listed = [...functions, ...(behavior.inventoryImports === false ? [] : [{ name: "puts", addr: "0x2000" }])].map((fn) => ({ name: fn.name, address: parseInt(fn.addr, 16), address_hex: fn.addr, aliases: [], object_location: null, size: fn.name === "puts" ? 0 : 16 }));
     setTimeout(() => process.stdout.write(JSON.stringify({ binary: args[1], count: listed.length, total: listed.length, error: null, functions: listed }, null, 2) + "\n"), behavior.inventoryDelayMs ?? 0);
   }
 } else if (args[0] === "decompile-graph") {
@@ -73,7 +75,7 @@ if (args[0] === "--version") {
   else if (behavior.graph === "not-json") process.stdout.write("not graph JSON");
   else {
     if (args[args.indexOf("--functions") + 1] !== "") throw new Error("graph must request no bodies");
-    const nodes = [...functions, { name: "puts", addr: "0x2000" }].map((fn) => ({ address: parseInt(fn.addr, 16), name: fn.name, kind: "normal", hasIndirectCalls: fn === functions[0], forwardsTo: null, codeC: behavior.graph === "with-bodies" ? "unrequested code" : null, assembly: null, error: null }));
+    const nodes = [...functions, { name: "puts", addr: "0x2000" }].map((fn) => ({ address: parseInt(fn.addr, 16), name: fn.name, kind: "normal", hasIndirectCalls: behavior.graphIndirectCalls !== false && fn === functions[0], forwardsTo: null, codeC: behavior.graph === "with-bodies" ? "unrequested code" : null, assembly: null, error: null }));
     const edges = [];
     if (functions[1]) edges.push({ callerAddress: nodes[0].address, calleeAddress: nodes[1].address, kind: "call", calleeOrder: 0 });
     if (functions[2]) edges.push({ callerAddress: nodes[0].address, calleeAddress: nodes[2].address, kind: functions[2].error ? "jump" : "call", calleeOrder: 1 });

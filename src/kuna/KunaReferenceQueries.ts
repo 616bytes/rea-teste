@@ -17,6 +17,7 @@ import {
   parseKunaCallGraph,
   parseKunaIncomingReferences,
   type KunaCallGraph,
+  type KunaGraphNode,
   type KunaIncomingReferences,
 } from "./KunaReferenceFiles.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
@@ -72,6 +73,42 @@ export class KunaReferenceQueries {
     operation: string,
     signal: AbortSignal | undefined,
   ): Promise<Result<KunaFunctionRelationships, AnalysisError>> {
+    const graph = await this.#loadGraph(installation, operation, signal);
+    return graph.ok
+      ? this.#relationships(graph.value, address, operation)
+      : graph;
+  }
+
+  /** Only a validated graph can establish that an inventory-missing entry exists. */
+  async functionAt(
+    installation: KunaInstallation,
+    address: string,
+    operation: string,
+    signal: AbortSignal | undefined,
+  ): Promise<
+    Result<
+      { readonly address: string; readonly source: JsonValue } | undefined,
+      AnalysisError
+    >
+  > {
+    const graph = await this.#loadGraph(installation, operation, signal);
+    if (!graph.ok) return graph;
+    const node = graph.value.nodes.get(address);
+    return ok(
+      node === undefined
+        ? undefined
+        : {
+            address: node.address,
+            source: this.#source(graph.value, node),
+          },
+    );
+  }
+
+  async #loadGraph(
+    installation: KunaInstallation,
+    operation: string,
+    signal: AbortSignal | undefined,
+  ): Promise<Result<KunaCallGraph, AnalysisError>> {
     if (this.#graph === undefined) {
       if (this.#pendingGraph?.controller.signal.aborted === true) {
         const retired = await this.#wait(this.#pendingGraph, signal, operation);
@@ -79,7 +116,7 @@ export class KunaReferenceQueries {
           return retired;
         if (signal?.aborted === true)
           return err(new AnalysisCancelledError(operation));
-        return this.relationships(installation, address, operation, signal);
+        return this.#loadGraph(installation, operation, signal);
       }
       if (this.#pendingGraph === undefined) {
         const pending = this.#start<KunaCallGraph>(
@@ -113,11 +150,9 @@ export class KunaReferenceQueries {
         };
         void pending.promise.then(release, release);
       }
-      const graph = await this.#wait(this.#pendingGraph, signal, operation);
-      if (!graph.ok) return graph;
-      return this.#relationships(graph.value, address, operation);
+      return this.#wait(this.#pendingGraph, signal, operation);
     }
-    return this.#relationships(this.#graph, address, operation);
+    return ok(this.#graph);
   }
 
   #relationships(
@@ -170,23 +205,27 @@ export class KunaReferenceQueries {
             ],
           }
         : { status: "complete" },
-      source: {
-        kind: "kuna-call-graph",
-        schema_version: 4,
-        sha256: graph.sha256,
-        bytes: graph.bytes,
-        functions: graph.nodes.size,
-        edges: graph.edgeCount,
-        has_indirect_calls: graph.hasIndirectCalls,
-        function: {
-          address: node.address,
-          has_indirect_calls: node.hasIndirectCalls,
-          forwards_to: node.forwardsTo,
-          forwarding_target_in_graph:
-            node.forwardsTo === null ? null : graph.nodes.has(node.forwardsTo),
-        },
-      },
+      source: this.#source(graph, node),
     });
+  }
+
+  #source(graph: KunaCallGraph, node: KunaGraphNode): JsonValue {
+    return {
+      kind: "kuna-call-graph",
+      schema_version: 4,
+      sha256: graph.sha256,
+      bytes: graph.bytes,
+      functions: graph.nodes.size,
+      edges: graph.edgeCount,
+      has_indirect_calls: graph.hasIndirectCalls,
+      function: {
+        address: node.address,
+        has_indirect_calls: node.hasIndirectCalls,
+        forwards_to: node.forwardsTo,
+        forwarding_target_in_graph:
+          node.forwardsTo === null ? null : graph.nodes.has(node.forwardsTo),
+      },
+    };
   }
 
   async incoming(

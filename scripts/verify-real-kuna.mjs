@@ -28,6 +28,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { execFileOutput } from "../dist/process/ExecFileOutput.js";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { verifyKunaReferences } from "./lib/kuna-reference-verifier.mjs";
+import { nativeKunaIncomingSites } from "./lib/kuna-native-reference-verifier.mjs";
 import {
   assertVerifierCleanupComplete,
   completeVerifierRun,
@@ -70,6 +71,8 @@ const cacheRoot = join(workspace, "cache");
 // A server retains its workspace until both provider and transport cleanup
 // have positively completed, even if later lineage observation is empty.
 const pendingServers = new Set();
+// Unproven native-oracle stops retain their supervisors and this workspace.
+const retainedNative = new Set();
 let kunaVersion;
 
 const FIXTURE_SOURCE = String.raw`
@@ -273,6 +276,15 @@ const verifyKuna = async (path, functions, expectedCaller) => {
         name,
         address,
         expectedCaller,
+        nativeIncoming: (targetAddress) =>
+          nativeKunaIncomingSites({
+            executable: kuna,
+            cacheRoot,
+            workspace,
+            binary: path,
+            address: targetAddress,
+            retain: (outcome) => retainedNative.add(outcome),
+          }),
       });
       const pseudocode = await cold.call("procedure_pseudo_code", {
         procedure: address,
@@ -313,6 +325,11 @@ const verifyKuna = async (path, functions, expectedCaller) => {
       const dossier = await cold.call("analyze_function", {
         procedure: address,
       });
+      assert.deepEqual(
+        dossier.structured.relationship_coverage,
+        references.relationship_coverage,
+        "Function dossier lost the directional call coverage",
+      );
       const combined = dossier.structured.raw_result.source;
       assert.equal(combined.kind, "project-export");
       assert.deepEqual(
@@ -494,8 +511,17 @@ try {
   failures.push(cause);
 }
 // Failure paths need the same process evidence as successful verification.
+for (const retained of [...retainedNative]) {
+  try {
+    const stopped = await retained.owner?.stop();
+    if (stopped !== undefined && stopped.status !== "incomplete")
+      retainedNative.delete(retained);
+  } catch (cause) {
+    failures.push(cause);
+  }
+}
 const lifecycle = await completeVerifierRun(run);
-let cleanupComplete = pendingServers.size === 0;
+let cleanupComplete = pendingServers.size === 0 && retainedNative.size === 0;
 try {
   assertVerifierCleanupComplete(lifecycle.process_lineage);
 } catch (cause) {

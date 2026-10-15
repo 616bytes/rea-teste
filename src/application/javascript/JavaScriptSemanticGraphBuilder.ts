@@ -560,9 +560,10 @@ function* projectFileSteps(
 const projectFileResourceLimits = (
   context: Pick<FileContext, "file" | "ir" | "state" | "moduleNode">,
 ): void => {
-  // A query may widen effects without creating a resource-tagged binding value.
-  // Preserve that incompleteness even when all retained values project normally.
+  // Getter limits describe query effects without tagged values; other limits
+  // already project from binding or return-site values and must not be duplicated.
   for (const limit of semanticCoverageResourceLimits(context.ir.coverage)) {
+    if (limit !== "getter-expansion") continue;
     const unknown = createJavaScriptSemanticGraphUnknown(
       {
         node_id: context.moduleNode.node_id,

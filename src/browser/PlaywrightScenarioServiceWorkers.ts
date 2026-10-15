@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
-import type { Page } from "playwright-core";
+import type { Frame, Page } from "playwright-core";
 
 import { browserObservationEndpointSchema } from "../domain/browserObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
@@ -50,6 +50,7 @@ export class PlaywrightScenarioServiceWorkers {
   #closed = false;
   #released = false;
   #detached = false;
+  #loadingStopped = false;
   #removeListener: (() => void) | undefined;
   #setup = new AbortController();
 
@@ -258,6 +259,29 @@ export class PlaywrightScenarioServiceWorkers {
       );
   }
 
+  private async restorePlaywrightFrame(frame: Frame): Promise<void> {
+    try {
+      const failure = await frame.evaluate(this.restorationScript());
+      if (failure === "policy_owned")
+        throw new Error(
+          "service-worker policy restoration could not be confirmed",
+        );
+      if (failure !== null)
+        throw new BrowserObservationError(OPERATION, "protocol_error");
+    } catch (cause: unknown) {
+      if (!this.page.isClosed() && !frame.isDetached()) throw cause;
+    }
+  }
+
+  private async stopMainFrame(frame: Frame): Promise<void> {
+    try {
+      await frame.evaluate("globalThis.stop()");
+      this.#loadingStopped = true;
+    } catch (cause: unknown) {
+      if (!this.page.isClosed() && !frame.isDetached()) throw cause;
+    }
+  }
+
   async assertBlocked(): Promise<void> {
     if (this.#session !== undefined) await this.settle();
     for (const frame of this.page.frames()) {
@@ -312,10 +336,17 @@ export class PlaywrightScenarioServiceWorkers {
     const session = this.#session;
     if (session === undefined) return;
     if (!this.page.isClosed()) {
+      const mainFrame = this.page.mainFrame();
       // This owner exists even with empty storage seeds. Stopped navigation is
       // independent of storage and restoration never waits for a load event.
-      if (stopLoading && !this.#detached && session.sessionId !== undefined)
-        await this.send(session.sessionId, "Page.stopLoading");
+      if (stopLoading && !this.#loadingStopped) {
+        if (!this.#detached && session.sessionId !== undefined) {
+          await this.send(session.sessionId, "Page.stopLoading");
+          this.#loadingStopped = true;
+        } else {
+          await this.stopMainFrame(mainFrame);
+        }
+      }
       await Promise.all(
         [...this.#targets.values()].map((target) =>
           this.settleTargetForRestore(target),
@@ -337,9 +368,11 @@ export class PlaywrightScenarioServiceWorkers {
       }
       // Future documents cannot install our wrapper after the removals above.
       // A realm lost to navigation is not assumed restored: retain and retry.
-      if (!this.#detached && session.sessionId !== undefined)
+      if (!this.#detached && session.sessionId !== undefined) {
         await this.restoreMainFrame(session.sessionId);
-      const mainFrame = this.page.mainFrame();
+      } else {
+        await this.restorePlaywrightFrame(mainFrame);
+      }
       for (const frame of this.page.frames()) {
         // The owned CDP session evaluates the selected main realm directly,
         // without Playwright waiting on an in-flight document transition.
@@ -348,17 +381,7 @@ export class PlaywrightScenarioServiceWorkers {
         // An empty URL has no committed document realm to restore. Future
         // documents cannot install the wrapper after the script removals.
         if (frame.url().length === 0) continue;
-        try {
-          const failure = await frame.evaluate(this.restorationScript());
-          if (failure === "policy_owned")
-            throw new Error(
-              "service-worker policy restoration could not be confirmed",
-            );
-          if (failure !== null)
-            throw new BrowserObservationError(OPERATION, "protocol_error");
-        } catch (cause: unknown) {
-          if (!frame.isDetached()) throw cause;
-        }
+        await this.restorePlaywrightFrame(frame);
       }
     }
     // Detaching the exact owned session also releases its iframe auto-attach.

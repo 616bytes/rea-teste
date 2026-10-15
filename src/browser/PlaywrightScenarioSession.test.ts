@@ -228,7 +228,9 @@ it("assigns attached navigation stopping to the storage owner once", async () =>
 
 it("transfers attached navigation stopping after storage cleanup fails", async () => {
   const { cleanup, storage } = fixture();
-  storage?.close.mockRejectedValueOnce(new Error("storage stop unconfirmed"));
+  const storageFailure = new Error("storage stop unconfirmed");
+  storage?.close.mockRejectedValueOnce(storageFailure);
+  const policyFailure = new Error("policy stop unconfirmed");
   const attached = browserScenarioSchema.parse({
     ...scenario,
     browser: {
@@ -239,14 +241,72 @@ it("transfers attached navigation stopping after storage cleanup fails", async (
     environment: { service_workers: "block" },
   });
   const session = await PlaywrightScenarioSession.open(attached, {}, {});
+  mocks.policySend.mockRejectedValueOnce(policyFailure);
 
-  await expect(session.close(true)).resolves.toBe("disconnected-external");
+  await expect(session.close(true)).rejects.toMatchObject({
+    errors: [policyFailure, storageFailure],
+  });
+  expect(cleanup.close).not.toHaveBeenCalled();
+  await expect(session.close()).resolves.toBe("disconnected-external");
   expect(storage?.close).toHaveBeenCalledWith(true);
   expect(
     mocks.policySend.mock.calls.filter(
       ([method]) => method === "Page.stopLoading",
     ),
-  ).toHaveLength(1);
+  ).toHaveLength(2);
+  expect(cleanup.close).toHaveBeenCalledTimes(1);
+});
+
+it("retains transferred navigation stopping after setup cleanup fails", async () => {
+  const { cleanup, storage } = fixture();
+  const cancellation = new AbortController();
+  const setupFailure = new Error("storage initialization failed");
+  storage?.initialize.mockImplementationOnce(async () => {
+    cancellation.abort();
+    throw setupFailure;
+  });
+  storage?.close.mockRejectedValueOnce(new Error("storage stop unconfirmed"));
+  const policyFailure = new Error("policy stop unconfirmed");
+  let failPolicyStop = true;
+  mocks.policySend.mockImplementation(async (method: string) => {
+    if (method === "Page.stopLoading" && failPolicyStop) {
+      failPolicyStop = false;
+      throw policyFailure;
+    }
+    return policyResponse(method);
+  });
+  let retainedCleanup: (() => Promise<unknown>) | undefined;
+  const attached = browserScenarioSchema.parse({
+    ...scenario,
+    browser: {
+      mode: "connect",
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "target",
+    },
+    environment: { service_workers: "block" },
+  });
+
+  await expect(
+    PlaywrightScenarioSession.open(
+      attached,
+      {},
+      {
+        signal: cancellation.signal,
+        retainCleanup: (close) => {
+          retainedCleanup = close;
+        },
+      },
+    ),
+  ).rejects.toBeInstanceOf(AggregateError);
+  expect(cleanup.close).not.toHaveBeenCalled();
+  if (retainedCleanup === undefined)
+    throw new Error("failed cleanup was not retained");
+  await expect(retainedCleanup()).resolves.toBeUndefined();
+  expect(
+    mocks.policySend.mock.calls.filter(
+      ([method]) => method === "Page.stopLoading",
+    ),
+  ).toHaveLength(2);
   expect(cleanup.close).toHaveBeenCalledTimes(1);
 });
 
@@ -506,6 +566,7 @@ it.each(["closed page", "detached target"])(
   "releases its policy transport after a %s",
   async (terminal) => {
     const { page } = fixture();
+    mocks.storage = undefined;
     const attached = browserScenarioSchema.parse({
       ...scenario,
       browser: {
@@ -514,6 +575,7 @@ it.each(["closed page", "detached target"])(
         target_id: "target",
       },
       environment: { service_workers: "block" },
+      storage: {},
     });
     const session = await PlaywrightScenarioSession.open(attached, {}, {});
     if (terminal === "closed page") page.isClosed = () => true;
@@ -522,15 +584,60 @@ it.each(["closed page", "detached target"])(
         method: "Target.detachedFromTarget",
         params: { sessionId: "policy-session" },
       });
-    await expect(session.close()).resolves.toBe("disconnected-external");
+    await expect(session.close(true)).resolves.toBe("disconnected-external");
     expect(
       mocks.policySend.mock.calls.some(
         ([method]) => method === "Target.detachFromTarget",
       ),
     ).toBe(false);
     expect(mocks.policyTransportClose).toHaveBeenCalledTimes(1);
+    if (terminal === "detached target") {
+      expect(page.evaluate).toHaveBeenCalledWith("globalThis.stop()");
+      expect(page.evaluate).toHaveBeenCalledWith(
+        expect.stringContaining("policy_owned"),
+      );
+    }
   },
 );
+
+it("retains a detached policy connection until the main realm is restored", async () => {
+  const { cleanup, page } = fixture();
+  mocks.storage = undefined;
+  const attached = browserScenarioSchema.parse({
+    ...scenario,
+    browser: {
+      mode: "connect",
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "target",
+    },
+    environment: { service_workers: "block" },
+    storage: {},
+  });
+  const session = await PlaywrightScenarioSession.open(attached, {}, {});
+  mocks.policyEvent?.({
+    method: "Target.detachedFromTarget",
+    params: { sessionId: "policy-session" },
+  });
+  page.evaluate
+    .mockResolvedValueOnce(undefined)
+    .mockResolvedValueOnce("policy_owned")
+    .mockResolvedValueOnce(null);
+
+  await expect(session.close(true)).rejects.toThrow(
+    "service-worker policy restoration could not be confirmed",
+  );
+  expect(cleanup.close).not.toHaveBeenCalled();
+  expect(mocks.policyTransportClose).not.toHaveBeenCalled();
+  await expect(session.close()).resolves.toBe("disconnected-external");
+  expect(page.evaluate).toHaveBeenCalledWith("globalThis.stop()");
+  expect(
+    page.evaluate.mock.calls.filter(
+      ([script]) => script === "globalThis.stop()",
+    ),
+  ).toHaveLength(1);
+  expect(mocks.policyTransportClose).toHaveBeenCalledTimes(1);
+  expect(cleanup.close).toHaveBeenCalledTimes(1);
+});
 
 it("uses browser disconnect as terminal storage release after detach failure", async () => {
   const { cleanup, storage } = fixture();
@@ -603,6 +710,7 @@ it("blocks new attached service-worker registration without removing existing re
 
 it("retains the attached connection when registration restoration fails", async () => {
   const { cleanup } = fixture();
+  mocks.storage = undefined;
   const attached = browserScenarioSchema.parse({
     ...scenario,
     browser: {
@@ -611,6 +719,7 @@ it("retains the attached connection when registration restoration fails", async 
       target_id: "target",
     },
     environment: { service_workers: "block" },
+    storage: {},
   });
   const session = await PlaywrightScenarioSession.open(attached, {}, {});
   const failure = new Error("registration restoration failed");
@@ -622,9 +731,14 @@ it("retains the attached connection when registration restoration fails", async 
     }
     return policyResponse(method);
   });
-  await expect(session.close()).rejects.toBe(failure);
+  await expect(session.close(true)).rejects.toBe(failure);
   expect(cleanup.close).not.toHaveBeenCalled();
   await expect(session.close()).resolves.toBe("disconnected-external");
+  expect(
+    mocks.policySend.mock.calls.filter(
+      ([method]) => method === "Page.stopLoading",
+    ),
+  ).toHaveLength(1);
   expect(cleanup.close).toHaveBeenCalledTimes(1);
   await expect(session.close()).resolves.toBe("disconnected-external");
 });

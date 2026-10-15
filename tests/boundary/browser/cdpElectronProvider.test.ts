@@ -144,6 +144,57 @@ it.each(["late", "initial", "destroyed", "final-malformed", "out-of-scope"])(
     }
   },
 );
+it.each(["reordered", "parent-changed", "path-changed"])(
+  "compares semantic frame inventory independent of sibling order: %s",
+  async (kind) => {
+    const root = await electronFixture();
+    const main = pathToFileURL(join(root, "index.html")).href;
+    const child = pathToFileURL(join(root, "child.html")).href;
+    const app = pathToFileURL(join(root, "app.js")).href;
+    const browser = await startFakeCdpBrowser({
+      electronFileUrl: main,
+      commandResult: ({ method }, _origin, reads) => {
+        if (method !== "Page.getFrameTree") return undefined;
+        const first = {
+          frame: {
+            id: "first",
+            parentId:
+              reads > 2 && kind === "parent-changed" ? "second" : "frame-main",
+            url: reads > 2 && kind === "path-changed" ? app : child,
+          },
+        };
+        const second = {
+          frame: { id: "second", parentId: "frame-main", url: app },
+        };
+        return {
+          frameTree: {
+            frame: { id: "frame-main", url: main },
+            childFrames: reads > 2 ? [second, first] : [first, second],
+          },
+        };
+      },
+    });
+    browsers.push(browser);
+    const result = await new CdpElectronProvider().inspectPage(
+      inspectElectronPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "electron-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.frames.map(({ frame_id }) => frame_id)).toEqual([
+      "frame-main",
+      "first",
+      "second",
+    ]);
+    for (const section of ["frames", "scripts", "workers"] as const)
+      expect(
+        result.value.completeness.attach_limited_sections.includes(section),
+      ).toBe(kind !== "reordered");
+  },
+);
+
 describe("CdpElectronProvider target access", () => {
   it("returns every in-scope resource beyond the former collection ceiling", async () => {
     const root = await electronFixture();

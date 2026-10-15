@@ -28,7 +28,10 @@ import {
 import { captureElectronScripts } from "./CdpElectronScripts.js";
 import { captureElectronWorkers } from "./CdpElectronWorkers.js";
 import { authorizedElectronFile } from "./ElectronFileScope.js";
-import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import {
+  compareUnicodeCodePoints,
+  compositeKey,
+} from "../domain/unicodeCodePointOrder.js";
 
 interface ElectronContext {
   readonly connection: CdpConnection;
@@ -120,7 +123,7 @@ const runElectronInspection = async (
     state,
     main.file_path,
   );
-  if (digestCanonicalValue(frames) !== digestCanonicalValue(finalFrames)) {
+  if (frameInventoryIdentity(frames) !== frameInventoryIdentity(finalFrames)) {
     for (const section of ["frames", "scripts", "workers"] as const)
       state.completeness.attachLimited(section);
     state.limitations.push(
@@ -148,6 +151,18 @@ const runElectronInspection = async (
     limitations: state.limitations,
   };
 };
+
+/** Sibling enumeration order is not a change to frame identity or ownership. */
+const frameInventoryIdentity = (
+  frames: ElectronPageInspection["frames"],
+): string =>
+  digestCanonicalValue(
+    frames
+      .map((frame) =>
+        compositeKey([frame.frame_id, frame.parent_frame_id, frame.file_path]),
+      )
+      .sort(compareUnicodeCodePoints),
+  );
 
 const authorizeInitialFrames = async (
   context: ElectronContext,

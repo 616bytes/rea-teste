@@ -220,6 +220,85 @@ describe("CdpBrowserProvider: approved accessibility and source capture", () => 
   });
 });
 
+it.each(["after-replay", "before-replay", "replacement", "malformed"])(
+  "keeps split-fragment WebMCP frame identity: %s",
+  async (kind) => {
+    const browser = await startFakeCdpBrowser({
+      eventsBeforeReply: ["WebMCP.enable"],
+      commandResult: ({ method }, origin) =>
+        method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-main",
+                  url: `${origin}/app`,
+                  urlFragment: "#details",
+                },
+              },
+            }
+          : undefined,
+      commandEvents: ({ method, sessionId }, origin) => {
+        if (method !== "WebMCP.enable") return undefined;
+        const frame = {
+          method: "Page.frameNavigated",
+          ...(sessionId === undefined ? {} : { sessionId }),
+          params: {
+            frame: {
+              id: "frame-main",
+              loaderId: kind === "replacement" ? "new-loader" : "loader-main",
+              url: `${origin}/app`,
+              urlFragment: kind === "malformed" ? 7 : "#details",
+            },
+          },
+        };
+        const tools = {
+          method: "WebMCP.toolsAdded",
+          ...(sessionId === undefined ? {} : { sessionId }),
+          params: {
+            tools: [
+              {
+                name: "catalog",
+                description: "fixture",
+                frameId: "frame-main",
+              },
+            ],
+          },
+        };
+        return kind === "before-replay"
+          ? [frame, tools]
+          : kind === "malformed"
+            ? [tools, frame, tools]
+            : [tools, frame];
+      },
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    if (kind === "replacement" || kind === "malformed")
+      expect(result.value.tools.items).toEqual([]);
+    else
+      expect(result.value.tools.items).toEqual([
+        expect.objectContaining({
+          name: "catalog",
+          frame_url: `${browser.allowedOrigin}/app#details`,
+        }),
+      ]);
+    if (kind === "malformed")
+      expect(result.value.completeness).toMatchObject({
+        unavailable_sections: expect.arrayContaining(["webmcp_tools"]),
+        policy_filtered_sections: [],
+      });
+  },
+);
+
 describe("CdpBrowserProvider: transient WebMCP frames", () => {
   it("drops stale child tools and reports partial coverage when a blank commit remains", async () => {
     const browser = await startFakeCdpBrowser({

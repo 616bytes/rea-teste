@@ -2,7 +2,10 @@ import { win32 } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { resolveWindowsProviderExecutable } from "../../src/composition/resolveWindowsProviderExecutable.js";
+import {
+  resolveWindowsProviderExecutable,
+  WINDOWS_PATH_ENTRY_LIMIT,
+} from "../../src/composition/resolveWindowsProviderExecutable.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 
 const windowsLookup = (cwd: string, files: readonly string[]) => {
@@ -80,6 +83,67 @@ describe("resolveWindowsProviderExecutable", () => {
         windowsLookup("C:\\work", []),
       ),
     ).toBe("missing-tool");
+  });
+
+  it("preserves an absolute UNC selection verbatim instead of re-rooting it", () => {
+    // win32.resolve appends a separator to a share root and rewrites forward
+    // separators, so a UNC selection must bypass the CWD-relative resolution.
+    const shareRoot = "\\\\server\\share";
+    const forwardSlashed = "//server/share/Program Files/objdump.exe";
+    const lookup = windowsLookup("D:\\work", []);
+    expect(resolveWindowsProviderExecutable(shareRoot, {}, lookup)).toBe(
+      shareRoot,
+    );
+    expect(resolveWindowsProviderExecutable(forwardSlashed, {}, lookup)).toBe(
+      forwardSlashed,
+    );
+  });
+
+  it("resolves a bare name through a UNC PATH entry", () => {
+    const expected = "\\\\server\\share\\bin\\objdump.EXE";
+    expect(
+      resolveWindowsProviderExecutable(
+        "objdump",
+        { PATH: "\\\\server\\share\\bin;D:\\unused", PATHEXT: ".EXE" },
+        windowsLookup("D:\\work", [expected]),
+      ),
+    ).toBe(expected);
+  });
+
+  it("keeps an unresolved bare name unchanged when PATH entries are UNC", () => {
+    expect(
+      resolveWindowsProviderExecutable(
+        "missing-tool",
+        { PATH: "\\\\server\\share\\empty", PATHEXT: ".EXE" },
+        windowsLookup("D:\\work", []),
+      ),
+    ).toBe("missing-tool");
+  });
+
+  it("caps PATH probing at the stated entry limit", () => {
+    // Entry `WINDOWS_PATH_ENTRY_LIMIT` (the 65th) is beyond the cap and is
+    // never probed, while the entry at `WINDOWS_PATH_ENTRY_LIMIT - 1` still is.
+    const withinCap = `D:\\entry${WINDOWS_PATH_ENTRY_LIMIT - 1}\\objdump.EXE`;
+    const beyondCap = `D:\\entry${WINDOWS_PATH_ENTRY_LIMIT}\\objdump.EXE`;
+    const path = Array.from(
+      { length: WINDOWS_PATH_ENTRY_LIMIT + 1 },
+      (_unused, index) => `D:\\entry${index}`,
+    ).join(";");
+    const environment = { PATH: path, PATHEXT: ".EXE" };
+    expect(
+      resolveWindowsProviderExecutable(
+        "objdump",
+        environment,
+        windowsLookup("D:\\work", [beyondCap]),
+      ),
+    ).toBe("objdump");
+    expect(
+      resolveWindowsProviderExecutable(
+        "objdump",
+        environment,
+        windowsLookup("D:\\work", [withinCap]),
+      ),
+    ).toBe(withinCap);
   });
 
   it("passes an absolute selected command through provider composition", () => {

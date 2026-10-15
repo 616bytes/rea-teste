@@ -102,7 +102,17 @@ export const registerReverseEngineeringCommands = (
     new GdbSessionManager({ environment: providerEnvironment }),
   createService: typeof createReverseEngineeringService = createReverseEngineeringService,
 ): void => {
-  const service = createService(environment);
+  // A run's cleanup closes its service permanently, so each command invocation
+  // creates and closes its own service instead of sharing one registration-wide
+  // instance that later runs would find already closed.
+  const runWithService = async (
+    execute: (
+      service: ReverseEngineeringService,
+    ) => Promise<Result<Evidence, AnalysisError>>,
+  ): Promise<Result<Evidence, AnalysisError>> => {
+    const service = createService(environment);
+    return executeWithCleanup(service, () => execute(service));
+  };
   cli.command(CLI_COMMANDS.inspectWithObjdump, {
     description:
       "Inspect a local artifact with GNU objdump and retain its raw output as Evidence",
@@ -134,7 +144,7 @@ export const registerReverseEngineeringCommands = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectWithObjdump, async () => {
-          const result = await executeWithCleanup(service, () =>
+          const result = await runWithService((service) =>
             service.inspectWithObjdump(
               {
                 ...args,
@@ -156,7 +166,7 @@ export const registerReverseEngineeringCommands = (
           logger,
           CLI_COMMANDS.listObjdumpArchitectures,
           async () => {
-            const result = await executeWithCleanup(service, () =>
+            const result = await runWithService((service) =>
               service.inspectWithObjdump(
                 { operation: "architectures" },
                 { signal },
@@ -181,7 +191,7 @@ export const registerReverseEngineeringCommands = (
     run: ({ args }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.executeRizinCommand, async () => {
-          const result = await executeWithCleanup(service, () =>
+          const result = await runWithService((service) =>
             service.executeRizinCommand(args, { signal }),
           );
           return result.ok ? result.value : projectAnalysisError(result.error);

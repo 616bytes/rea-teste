@@ -494,6 +494,38 @@ describe("provider process host injection", () => {
         );
     }
   });
+
+  it("does not attempt the token sweep on a non-win32 host without a baseline", async () => {
+    const host = systemProcessOwnershipHost as {
+      captureBaseline?: (signal?: AbortSignal) => Promise<unknown>;
+    };
+    const baseline = host.captureBaseline;
+    // android (Termux) is POSIX without the prelaunch identity primitive; a
+    // token sweep would otherwise fail before launching the provider.
+    delete host.captureBaseline;
+    const spawned = await spawnOwnedProviderProcess({
+      command: process.execPath,
+      arguments: [processFixturePath, "exit"],
+      runId: "provider-process-android-run",
+      platform: "android",
+      sweepTokenOwnedProcesses: true,
+    }).finally(() => {
+      if (baseline === undefined) delete host.captureBaseline;
+      else host.captureBaseline = baseline;
+    });
+
+    try {
+      expect(spawned.ownership.sweepTokenOwnedProcesses).toBeUndefined();
+      expect(spawned.ownership.captureBaseline).toBeUndefined();
+      const supervisor = new ProviderProcessSupervisor({
+        process: spawned.process,
+        ownsProcessLifetime: true,
+      });
+      expect(await supervisor.waitForExit(2_000)).toBe(true);
+    } finally {
+      await stopProviderProcessFixture(spawned.process);
+    }
+  });
 });
 
 describe("provider process memory limits", () => {

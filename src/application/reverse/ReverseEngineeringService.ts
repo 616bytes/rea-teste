@@ -61,6 +61,8 @@ interface ReverseEngineeringCommandRunner {
     command: string,
     arguments_: readonly string[],
     options?: Parameters<typeof execFileOutput>[2],
+    /** Operation that launches this provider process, recorded with its owner. */
+    operation?: ReverseEngineeringOperation,
   ): Promise<{
     readonly stdout: string;
     readonly stderr: string;
@@ -89,6 +91,8 @@ export class ReverseEngineeringService {
       readonly observation: AnalysisCleanupObservation;
       readonly failures: Set<AnalysisError>;
       readonly retryFailure?: AnalysisError;
+      /** Operation that launched the process this owner still retains. */
+      readonly operation?: ReverseEngineeringOperation;
     }
   >();
   readonly #activeOperations = new Map<
@@ -105,11 +109,17 @@ export class ReverseEngineeringService {
       options.run ??
       runOwnedCommandOutput(
         options.runOwned ?? runOwnedCommand,
-        (owner, cleanup) =>
+        (owner, cleanup, operation) => {
+          const retained = this.#pendingCleanup.get(owner);
+          const retainedOperation = retained?.operation ?? operation;
           this.#pendingCleanup.set(owner, {
             observation: cleanup,
-            failures: this.#pendingCleanup.get(owner)?.failures ?? new Set(),
-          }),
+            failures: retained?.failures ?? new Set(),
+            ...(retainedOperation === undefined
+              ? {}
+              : { operation: retainedOperation }),
+          });
+        },
       );
     this.#digest = options.digest ?? digestFile;
     this.#stat = options.stat ?? statPath;
@@ -137,8 +147,10 @@ export class ReverseEngineeringService {
         };
         let retryFailure = retained.retryFailure;
         if (retryFailure === undefined) {
+          // The refusal names the operation whose process is still retained, not
+          // the operation that happened to observe the outstanding cleanup.
           retryFailure = new AnalysisOutputError(
-            operation,
+            retained.operation ?? operation,
             "A previous provider process still requires cleanup.",
             { cleanup: observation },
           );
@@ -148,6 +160,9 @@ export class ReverseEngineeringService {
           observation,
           failures: retained.failures,
           retryFailure,
+          ...(retained.operation === undefined
+            ? {}
+            : { operation: retained.operation }),
         });
         if (failure === undefined) failure = retryFailure;
       } else {
@@ -337,16 +352,21 @@ export class ReverseEngineeringService {
     let cleanupOwner: ProviderProcessSupervisor | undefined;
     let earlyFailure: AnalysisError | undefined;
     try {
-      const output = await this.#run(command, args, {
-        env: {
-          ...this.#environment,
-          ...profile.environmentOverrides,
+      const output = await this.#run(
+        command,
+        args,
+        {
+          env: {
+            ...this.#environment,
+            ...profile.environmentOverrides,
+          },
+          signal,
+          timeout: DEFAULT_TIMEOUT_MS,
+          stopSignal: "SIGTERM",
+          maxBuffer: MAX_COMBINED_OUTPUT_BYTES,
         },
-        signal,
-        timeout: DEFAULT_TIMEOUT_MS,
-        stopSignal: "SIGTERM",
-        maxBuffer: MAX_COMBINED_OUTPUT_BYTES,
-      });
+        operation,
+      );
       stdout = output.stdout;
       stderr = output.stderr;
       stdoutBytes = output.stdoutBytes ?? Buffer.byteLength(stdout);
@@ -660,7 +680,9 @@ export class ReverseEngineeringService {
           provider_executable: command,
           command_arguments: [...args],
         },
-        rawResult: result,
+        // The captured command observation is the complete provider result, so
+        // it is recorded once as `normalized_result`. `raw_result` stays null
+        // rather than repeating multi-MiB stdout/stderr a second time.
         result,
         limitations,
         ...(absolutePath === undefined
@@ -745,9 +767,10 @@ const runOwnedCommandOutput =
     onCleanupOwner: (
       owner: ProviderProcessSupervisor,
       cleanup: AnalysisCleanupObservation,
+      operation: ReverseEngineeringOperation | undefined,
     ) => void,
   ): ReverseEngineeringCommandRunner =>
-  async (command, args, options = {}) => {
+  async (command, args, options = {}, operation) => {
     const spawnEnv = { ...options.env };
     try {
       const snapshot = await runOwned(
@@ -802,10 +825,14 @@ const runOwnedCommandOutput =
     } catch (cause) {
       if (!(cause instanceof OwnedCommandFailure)) throw cause;
       if (cause.cleanupOwner !== undefined && cause.cleanupFailure !== null)
-        onCleanupOwner(cause.cleanupOwner, {
-          reason: cause.cleanupFailure,
-          resources: cause.resources,
-        });
+        onCleanupOwner(
+          cause.cleanupOwner,
+          {
+            reason: cause.cleanupFailure,
+            resources: cause.resources,
+          },
+          operation,
+        );
       const snapshot = cause.snapshot;
       const launchErrorCode =
         cause.cause instanceof Error

@@ -527,7 +527,14 @@ export class BinarySession
           "close_binary",
         ),
       );
-    return closed.ok ? fileResources : closed;
+    const result = closed.ok ? fileResources : closed;
+    // An explicit close retries the session's owned cleanup. Only a close whose
+    // cleanup actually settled drops the retained external-mutation refusal;
+    // while any cleanup remains outstanding that refusal keeps blocking new
+    // bindings and stays visible to the caller.
+    if (clearRecords && result.ok)
+      this.#externalMutationCleanupFailure = undefined;
+    return result;
   }
 
   async #retireClient(

@@ -153,7 +153,7 @@ describe("CLI output valued-flag parsing", () => {
     async ({ cli }) => {
       for (const arguments_ of [
         ["providers", "--", "--json", "--token-limit", "5"],
-        ["providers", "--json", "--format=toon", "--token-limit", "5"],
+        ["providers", "--format=json", "--token-limit=5"],
       ]) {
         const result = await cli.run({ arguments: arguments_ });
         expect(result.exitCode).toBe(1);
@@ -183,22 +183,45 @@ describe("CLI output valued-flag parsing", () => {
   );
 
   workspaceCliTest(
-    "does not treat empty or equals-style output values as active builtins",
+    "names missing output values and honors equals-style output values",
     async ({ cli }) => {
-      for (const arguments_ of [
-        ["capabilities", "--json", "--format", ""],
-        ["capabilities", "--json", "--filter-output", ""],
-        ["capabilities", "--json", "--token-limit", ""],
-        ["capabilities", "--json", "--token-limit=5"],
-      ]) {
+      for (const [arguments_, flag] of [
+        [["capabilities", "--json", "--format", ""], "--format"],
+        [["capabilities", "--json", "--filter-output", ""], "--filter-output"],
+        [["capabilities", "--json", "--token-limit", ""], "--token-limit"],
+        [["capabilities", "--json", "--token-offset="], "--token-offset"],
+        [["capabilities", "--format"], "--format"],
+      ] as const) {
         const result = await cli.run({ arguments: arguments_ });
         expect(result.exitCode).toBe(1);
-        expect(result.json).toBeDefined();
         expect(result.stdout).not.toContain("[truncated:");
-        expect(JSON.stringify(result.json)).not.toContain(
-          "UNSUPPORTED_OUTPUT_COMBINATION",
-        );
+        expect(result.json).toMatchObject({
+          ok: false,
+          error: {
+            code: "MISSING_OUTPUT_VALUE",
+            message: expect.stringContaining(`${flag} requires a value`),
+          },
+        });
       }
+      const equalsForms = await cli.run({
+        arguments: [
+          "capabilities",
+          "--format=json",
+          "--filter-output=capabilities[0,1]",
+        ],
+      });
+      expect(equalsForms.exitCode).toBe(0);
+      expect(equalsForms.json).toMatchObject({
+        capabilities: [expect.any(Object)],
+      });
+      const equalsTokenWindow = await cli.run({
+        arguments: ["capabilities", "--json", "--token-limit=5"],
+      });
+      expect(equalsTokenWindow.exitCode).toBe(1);
+      expect(equalsTokenWindow.json).toMatchObject({
+        ok: false,
+        error: { code: "UNSUPPORTED_OUTPUT_COMBINATION" },
+      });
       const validTokenWindow = await cli.run({
         arguments: ["capabilities", "--json", "--token-limit", "5"],
       });

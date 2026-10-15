@@ -3,13 +3,40 @@ const UNSUPPORTED_OUTPUT_COMBINATION_MESSAGE =
 
 type StructuredOutputFormat = "json" | "jsonl" | "yaml";
 const INCUR_OUTPUT_FORMATS = new Set(["toon", "json", "yaml", "md", "jsonl"]);
+/** Global output flags that take a value. */
+const VALUED_OUTPUT_FLAGS = new Set([
+  "--format",
+  "--filter-output",
+  "--token-limit",
+  "--token-offset",
+]);
+
+/**
+ * Split `--flag=value` forms of the valued output flags. Incur reads these
+ * flags only in spaced form, so `--format=json` otherwise reaches the command
+ * parser and fails as an unknown flag. Command options accept both forms.
+ */
+export const normalizeCliOutputArguments = (
+  arguments_: readonly string[],
+): string[] =>
+  arguments_.flatMap((argument) => {
+    const separator = argument.indexOf("=");
+    if (separator < 0) return [argument];
+    const flag = argument.slice(0, separator);
+    return VALUED_OUTPUT_FLAGS.has(flag)
+      ? [flag, argument.slice(separator + 1)]
+      : [argument];
+  });
 
 export type CliOutputArgumentValidation =
   | { readonly ok: true }
   | {
       readonly ok: false;
       readonly format: StructuredOutputFormat;
-      readonly code: "UNSUPPORTED_OUTPUT_COMBINATION" | "INVALID_OUTPUT_FILTER";
+      readonly code:
+        | "UNSUPPORTED_OUTPUT_COMBINATION"
+        | "INVALID_OUTPUT_FILTER"
+        | "MISSING_OUTPUT_VALUE";
       readonly message: string;
     };
 
@@ -47,8 +74,8 @@ export const parseCliOutputArguments = (
   });
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
-    // Incur scans builtins across `--` and accepts only spaced value forms.
-    // Mirror those effective values at the executable output boundary.
+    // Incur scans builtins across `--` and reads spaced value forms, which
+    // normalizeCliOutputArguments has produced. Mirror those effective values.
     if (argument === "--json") {
       format = "json";
       continue;
@@ -131,6 +158,19 @@ export const validateCliOutputArguments = (
       format,
       code: "UNSUPPORTED_OUTPUT_COMBINATION",
       message: UNSUPPORTED_OUTPUT_COMBINATION_MESSAGE,
+    };
+  // Incur skips a valued flag without a value and then reports the flag
+  // itself as unknown. Name the missing value instead.
+  const missing = arguments_.find(
+    (argument, index) =>
+      VALUED_OUTPUT_FLAGS.has(argument) && !arguments_[index + 1],
+  );
+  if (missing !== undefined)
+    return {
+      ok: false,
+      format: format === "yaml" || format === "jsonl" ? format : "json",
+      code: "MISSING_OUTPUT_VALUE",
+      message: `${missing} requires a value, as in ${missing} <value> or ${missing}=<value>.`,
     };
   return { ok: true };
 };

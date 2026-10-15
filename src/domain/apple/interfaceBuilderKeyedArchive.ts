@@ -335,6 +335,8 @@ const parseKeyedArchive = (
     const fields = Object.fromEntries(
       Object.entries(resolved).filter(([key]) => key !== "className"),
     );
+    // Keep the unresolvable class reference itself, e.g. a dangling UID.
+    if (className === null) fields.$class = record(raw).$class;
     const authoredId = firstString(fields.objectID, fields["object-id"]);
     const objectId =
       authoredId ??

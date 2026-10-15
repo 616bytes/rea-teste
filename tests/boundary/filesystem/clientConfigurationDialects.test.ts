@@ -223,6 +223,32 @@ describe("OpenCode JSONC registration edits", () => {
     expect((removed.mcp as Record<string, unknown>).other).toBeDefined();
   });
 
+  it("uninstalls a sole Cursor registration that has a trailing comma", async () => {
+    const home = await createTestTempDirectory("rea-cursor-trailing-comma-");
+    const client = supportedClients(home).find(({ name }) => name === "cursor");
+    if (client === undefined) throw new Error("missing Cursor client");
+    await mkdir(client.markerPath ?? home, { recursive: true });
+    expect(
+      await configureClientConfiguration(client, {}, command),
+    ).toMatchObject({ status: "configured" });
+    const registered = await readFile(client.configPath, "utf8");
+    // Add the comma a person editing the JSONC file may leave after REA's entry.
+    const withComma = registered.replace(/\}(\s*\}\s*\}\s*)$/u, "},$1");
+    expect(withComma).not.toBe(registered);
+    await writeFile(client.configPath, withComma);
+
+    expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
+      "removed",
+    );
+    const removedText = await readFile(client.configPath, "utf8");
+    const removedErrors: ParseError[] = [];
+    const removed = parseJsonc(removedText, removedErrors, {
+      allowTrailingComma: true,
+    }) as Record<string, unknown>;
+    expect(removedErrors).toEqual([]);
+    expect(removed.mcpServers).toEqual({});
+  });
+
   it("rejects malformed OpenCode JSONC without creating a backup or changing bytes", async () => {
     const home = await createTestTempDirectory("rea-opencode-invalid-");
     const client = getClients(home).find(({ name }) => name === "opencode");

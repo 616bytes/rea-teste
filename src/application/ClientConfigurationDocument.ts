@@ -1279,6 +1279,45 @@ const commentsBetweenProperties = (gap: string): string | undefined => {
   return pieces.length === 0 ? undefined : pieces.join("");
 };
 
+const JSONC_EDIT_FORMATTING = {
+  formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
+} as const;
+
+/**
+ * Offset of the next JSONC token at or after `from`, skipping whitespace and
+ * comments. Returns `undefined` for an unterminated block comment.
+ */
+const nextJsoncTokenOffset = (
+  text: string,
+  from: number,
+): number | undefined => {
+  let offset = from;
+  while (offset < text.length) {
+    const char = text[offset];
+    if (char === " " || char === "\t" || char === "\r" || char === "\n") {
+      offset += 1;
+      continue;
+    }
+    if (text.startsWith("/*", offset)) {
+      const close = text.indexOf("*/", offset + 2);
+      if (close < 0) return undefined;
+      offset = close + 2;
+      continue;
+    }
+    if (text.startsWith("//", offset)) {
+      while (
+        offset < text.length &&
+        text[offset] !== "\n" &&
+        text[offset] !== "\r"
+      )
+        offset += 1;
+      continue;
+    }
+    break;
+  }
+  return offset;
+};
+
 /**
  * Delete an object property without taking a comment from the gap before it.
  * jsonc-parser's removal span includes that gap, so a trailing comment on the
@@ -1301,6 +1340,18 @@ const deleteJsonPropertyPreservingComments = (
   )
     return undefined;
   const propertyIndex = parent.children.indexOf(property);
+  const hasNext = parent.children[propertyIndex + 1] !== undefined;
+  if (propertyIndex === 0 && !hasNext) {
+    // jsonc-parser removes a sole property but keeps its trailing comma,
+    // leaving `{ , }`. Drop that comma first so the stock edit stays valid.
+    const comma = nextJsoncTokenOffset(text, property.offset + property.length);
+    if (comma === undefined || text[comma] !== ",") return undefined;
+    const withoutComma = `${text.slice(0, comma)}${text.slice(comma + 1)}`;
+    return applyEdits(
+      withoutComma,
+      modify(withoutComma, [...path], undefined, JSONC_EDIT_FORMATTING),
+    );
+  }
   const previous = parent.children[propertyIndex - 1];
   if (propertyIndex <= 0 || previous === undefined) return undefined;
   const comments = commentsBetweenProperties(
@@ -1308,33 +1359,9 @@ const deleteJsonPropertyPreservingComments = (
   );
   if (comments === undefined) return undefined;
   let removeEnd = property.offset + property.length;
-  const hasNext = parent.children[propertyIndex + 1] !== undefined;
   if (hasNext) {
-    let comma = removeEnd;
-    while (comma < text.length) {
-      const char = text[comma];
-      if (char === " " || char === "\t" || char === "\r" || char === "\n") {
-        comma += 1;
-        continue;
-      }
-      if (text.startsWith("/*", comma)) {
-        const close = text.indexOf("*/", comma + 2);
-        if (close < 0) return undefined;
-        comma = close + 2;
-        continue;
-      }
-      if (text.startsWith("//", comma)) {
-        while (
-          comma < text.length &&
-          text[comma] !== "\n" &&
-          text[comma] !== "\r"
-        )
-          comma += 1;
-        continue;
-      }
-      break;
-    }
-    if (text[comma] !== ",") return undefined;
+    const comma = nextJsoncTokenOffset(text, removeEnd);
+    if (comma === undefined || text[comma] !== ",") return undefined;
     removeEnd = comma + 1;
   }
   // A line comment runs to the next break. Keep the following token outside it.
@@ -1382,9 +1409,7 @@ export const serializeClientConfiguration = (
       }
       return applyEdits(
         text,
-        modify(text, [...path], value, {
-          formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
-        }),
+        modify(text, [...path], value, JSONC_EDIT_FORMATTING),
       );
     }, originalText);
   return `${JSON.stringify(document, null, 2)}\n`;

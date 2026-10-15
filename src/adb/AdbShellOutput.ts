@@ -125,6 +125,8 @@ const SIZE_PAIR = /^Physical size:\s+(\d+)x(\d+)$/u;
 const SIZE_OVERRIDE = /^Override size:\s+(\d+)x(\d+)$/u;
 const DENSITY_PHYSICAL = /^Physical density:\s+(\d+)$/u;
 const DENSITY_OVERRIDE = /^Override density:\s+(\d+)$/u;
+// Older builds print the physical density as a bare number with no label.
+const DENSITY_BARE = /^(\d+)$/u;
 
 /** Parse `wm size` output into physical and optional override sizes. */
 export const parseWmSizeOutput = (
@@ -162,14 +164,17 @@ export const parseWmDensityOutput = (
 } => {
   let physical = null;
   let override = null;
+  let bare = null;
   for (const line of stdout.split(/\r?\n/u)) {
     const trimmed = line.trim();
     const physicalMatch = DENSITY_PHYSICAL.exec(trimmed);
     if (physicalMatch !== null) physical = Number(physicalMatch[1]!);
     const overrideMatch = DENSITY_OVERRIDE.exec(trimmed);
     if (overrideMatch !== null) override = Number(overrideMatch[1]!);
+    const bareMatch = DENSITY_BARE.exec(trimmed);
+    if (bareMatch !== null) bare = Number(bareMatch[1]!);
   }
-  return { physical, override };
+  return { physical: physical ?? bare, override };
 };
 
 /** Parse focus declarations from `dumpsys window windows` or `displays`. */

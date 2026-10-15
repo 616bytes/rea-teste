@@ -48,8 +48,6 @@ export const registerAdbTools = (
     toolContract("start_adb_activity"),
     toolContract("stop_adb_app"),
     toolContract("wait_adb_boot"),
-    toolContract("capture_adb_ui_state"),
-    toolContract("send_adb_input"),
   ] as const) {
     server.registerTool(
       contract.name,

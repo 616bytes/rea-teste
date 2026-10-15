@@ -242,27 +242,3 @@ exit 0
     await expect(lstat(output)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
-
-it.each([
-  ["a missing actions file", "/nonexistent/rea-actions.json"],
-  ["malformed inline actions", "[{"],
-])(
-  "fails send-adb-input for %s before contacting adb",
-  async (_label, actions) => {
-    // Command failures set process.exitCode through logCliCommand.
-    const previous = process.exitCode;
-    onTestFinished(() => {
-      process.exitCode = previous;
-    });
-    process.exitCode = undefined;
-    const result = await serve(
-      ["send-adb-input", "emulator-5554", "--actions", actions, "--json"],
-      { REA_ADB_PATH: "/path/that/does/not/exist" },
-    );
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      code: "invalid_request",
-      category: "invalid_input",
-    });
-    expect(process.exitCode).toBe(1);
-  },
-);

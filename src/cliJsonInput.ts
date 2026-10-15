@@ -14,7 +14,6 @@ import { safeParseJson } from "./domain/safeJson.js";
 export const parseCliJsonInput = async (
   value: string,
   operation: string,
-  signal?: AbortSignal,
 ): Promise<
   | { readonly ok: true; readonly value: unknown }
   | { readonly ok: false; readonly error: JsonValue }
@@ -22,7 +21,7 @@ export const parseCliJsonInput = async (
   const inline = safeParseJson(value);
   if (inline.ok) return { ok: true, value: inline.value };
   try {
-    const parsed = await readJsonInputFile(value, operation, signal);
+    const parsed = await readJsonInputFile(value, operation);
     return parsed.ok
       ? { ok: true, value: parsed.value }
       : {
@@ -38,8 +37,6 @@ export const parseCliJsonInput = async (
           },
         };
   } catch (cause: unknown) {
-    // Cancellation belongs to the caller's command boundary, not input reading.
-    if (signal?.aborted === true) throw cause;
     const systemCode = accessDeniedSystemCode(cause);
     if (systemCode !== undefined)
       return jsonAccessDeniedError(value, operation, systemCode, cause);

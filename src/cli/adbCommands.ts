@@ -5,11 +5,9 @@ import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisSe
 import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
 import { createAdbDeviceAnalysisProvider } from "../composition/adb.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AdbOperation } from "../domain/adb/adbDeviceAnalysis.js";
-import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -24,27 +22,10 @@ export const registerAdbCommands = (
   ),
 ): void => {
   const service = new AdbDeviceAnalysisService(provider);
-  /**
-   * Resolve caller input inside the same logging, exit-code and cancellation
-   * boundary as execution, so an unreadable input fails the command.
-   */
-  const executeResolved = (
-    name: string,
-    operation: AdbOperation,
-    resolveInput: (
-      signal: AbortSignal,
-    ) => Promise<
-      | { readonly ok: true; readonly value: unknown }
-      | { readonly ok: false; readonly error: JsonValue }
-    >,
-  ) =>
+  const execute = (name: string, operation: AdbOperation, input: unknown) =>
     withCommandCancellation((signal) =>
       logCliCommand(logger, name, async () => {
-        const input = await resolveInput(signal);
-        if (!input.ok) return input.error;
-        const result = await service.execute(operation, input.value, {
-          signal,
-        });
+        const result = await service.execute(operation, input, { signal });
         try {
           await provider.close();
         } catch (cause) {
@@ -54,10 +35,6 @@ export const registerAdbCommands = (
         }
         return result.ok ? result.value : projectAnalysisError(result.error);
       }),
-    );
-  const execute = (name: string, operation: AdbOperation, input: unknown) =>
-    executeResolved(name, operation, () =>
-      Promise.resolve({ ok: true as const, value: input }),
     );
 
   const serial = z
@@ -459,97 +436,5 @@ export const registerAdbCommands = (
           ? {}
           : { poll_interval_ms: options["poll-interval-ms"] }),
       }),
-  });
-  cli.command(CLI_COMMANDS.captureAdbUiState, {
-    description:
-      "Dump the UI hierarchy and a screenshot under one timestamped state id",
-    args: z.object({ serial }),
-    options: z.object({
-      "output-directory": z
-        .string()
-        .min(1)
-        .optional()
-        .describe("Local directory for <state_id>.xml and <state_id>.png"),
-      "state-label": z
-        .string()
-        .min(1)
-        .optional()
-        .describe("Navigation-state name appended to the state id"),
-      "no-screen": z
-        .boolean()
-        .default(false)
-        .describe("Skip the screenshot; return the hierarchy only"),
-      compressed: z
-        .boolean()
-        .default(false)
-        .describe("Pass --compressed to uiautomator dump"),
-      all: z
-        .boolean()
-        .default(false)
-        .describe("Return every node instead of meaningful nodes only"),
-      "max-nodes": z
-        .number()
-        .int()
-        .optional()
-        .describe("Most inline nodes returned (default 300)"),
-    }),
-    run: ({ args, options }) =>
-      execute(CLI_COMMANDS.captureAdbUiState, "capture_adb_ui_state", {
-        serial: args.serial,
-        ...(options["output-directory"] === undefined
-          ? {}
-          : { output_directory: options["output-directory"] }),
-        ...(options["state-label"] === undefined
-          ? {}
-          : { state_label: options["state-label"] }),
-        include_screen: !options["no-screen"],
-        compressed: options.compressed,
-        node_filter: options.all ? "all" : "meaningful",
-        ...(options["max-nodes"] === undefined
-          ? {}
-          : { max_nodes: options["max-nodes"] }),
-      }),
-  });
-  cli.command(CLI_COMMANDS.sendAdbInput, {
-    description:
-      "Inject tap, tap_element, long_press, swipe, text, or key actions in order",
-    args: z.object({ serial }),
-    options: z.object({
-      actions: z
-        .string()
-        .min(1)
-        .describe(
-          "Inline JSON array of actions, or a JSON file holding one (such as a saved result's actions list)",
-        ),
-      "settle-ms": z
-        .number()
-        .int()
-        .optional()
-        .describe("Delay after each action in milliseconds (default 300)"),
-    }),
-    run: ({ args, options }) =>
-      executeResolved(
-        CLI_COMMANDS.sendAdbInput,
-        "send_adb_input",
-        async (signal) => {
-          const actions = await parseCliJsonInput(
-            options.actions,
-            "send_adb_input",
-            signal,
-          );
-          return actions.ok
-            ? {
-                ok: true,
-                value: {
-                  serial: args.serial,
-                  actions: actions.value,
-                  ...(options["settle-ms"] === undefined
-                    ? {}
-                    : { settle_ms: options["settle-ms"] }),
-                },
-              }
-            : actions;
-        },
-      ),
   });
 };

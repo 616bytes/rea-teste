@@ -103,37 +103,11 @@ existing analysis families directly, for example
 | `start_adb_activity`    | **mutates device** | Starts an intent (`am start -a` with optional URI, component, and up to 16 typed extras); preserves the activity manager's verdict                                                                                                    |
 | `stop_adb_app`          | **mutates device** | Force-stops every process of a package, ending a dynamic-analysis run                                                                                                                                                                 |
 | `wait_adb_boot`         | read               | Polls `sys.boot_completed`, `dev.bootcomplete`, `init.svc.bootanim` until boot completes or a final probe at the deadline; tolerates a device that is still offline                                                                   |
-| `capture_adb_ui_state`  | **mutates device** | `uiautomator dump` through a uniquely named `/data/local/tmp` file removed by the same shell, then one screenshot; writes `<state_id>.xml` and `<state_id>.png` and returns parsed nodes inline                                       |
-| `send_adb_input`        | **mutates device** | Ordered `input` events: tap, tap_element (exact selector over a fresh dump), long_press, swipe, ASCII text, key; stops at the first failure and returns the completed actions as a replayable list                                    |
 
 For `install_adb_package`, `replace_requested` records whether `-r` was sent.
 The `replaced` result is `null`: the successful install response does not say
 whether the package was installed fresh or replaced, and REA does not query the
 device first. The install verdict and host APK digest remain available.
-
-### UI state capture and input replay
-
-`capture_adb_ui_state` pairs a hierarchy dump and a screenshot under one
-`state_id` (UTC timestamp plus an optional caller `state_label`), so each
-node's `bounds` and `center` refer to pixels in the PNG captured right after
-it. The two reads are sequential, not atomic. Inline nodes default to
-`meaningful` ones (an id, text, description, or click/scroll affordance); the
-XML file keeps every node. uiautomator sees accessibility nodes only and cannot
-dump a window that never idles. Nodes with empty bounds have no `center`.
-
-`send_adb_input` returns `actions`, the completed actions in order, and
-`executed`, the argv sent for each and, for `tap_element`, the node it
-resolved. Pass `actions` back unchanged (MCP `actions`, or CLI `--actions` with
-inline JSON or a JSON file) to replay a navigation sequence; `tap_element`
-re-resolves its selector on replay. `tap_element` refuses an ambiguous
-selector without `match_index`, a node without a tappable area, and a
-hierarchy larger than its 20,000-node selector limit.
-
-```sh
-rea wait-adb-boot emulator-5554 --timeout-ms 180000
-rea capture-adb-ui-state emulator-5554 --output-directory ./states --state-label login
-rea send-adb-input emulator-5554 --actions '[{"type":"tap_element","selector":{"resource_id":"com.example:id/login"}},{"type":"key","key":"BACK"}]'
-```
 
 ## Interpret the result
 

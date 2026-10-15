@@ -274,54 +274,6 @@ const results: Readonly<Record<string, unknown>> = {
     init_svc_bootanim: "stopped",
     last_probe_error: null,
   },
-  capture_adb_ui_state: {
-    client: clientIdentity,
-    serial: "emulator-5554",
-    state_id: "20261015T013828123Z-login",
-    hierarchy_captured_at: "2026-10-15T01:38:28.123Z",
-    rotation: 0,
-    node_count: 2,
-    node_filter: "meaningful",
-    nodes: [
-      {
-        ordinal: 1,
-        depth: 1,
-        parent: 0,
-        class_name: "android.widget.Button",
-        resource_id: "com.example.app:id/login",
-        text: "Sign in",
-        content_desc: null,
-        package_name: "com.example.app",
-        bounds: { left: 100, top: 200, right: 300, bottom: 260 },
-        bounds_source: null,
-        center: { x: 200, y: 230 },
-        flags: ["clickable", "enabled"],
-        unreported_flags: [],
-      },
-    ],
-    nodes_returned: 1,
-    coverage: "complete",
-    hierarchy_file: {
-      local_path: "/tmp/rea-ui/20261015T013828123Z-login.xml",
-      bytes: 512,
-      sha256: "a".repeat(64),
-    },
-    screen: null,
-  },
-  send_adb_input: {
-    client: clientIdentity,
-    serial: "emulator-5554",
-    status: "completed",
-    actions: [{ type: "key", key: "BACK" }],
-    executed: [
-      {
-        index: 0,
-        command: ["input", "keyevent", "KEYCODE_BACK"],
-        resolved_node: null,
-      },
-    ],
-    failure: null,
-  },
 };
 
 it("advertises exact valid ADB schemas and records inline evidence through MCP", async () => {
@@ -377,27 +329,10 @@ it("advertises exact valid ADB schemas and records inline evidence through MCP",
     "start_adb_activity",
     "stop_adb_app",
     "wait_adb_boot",
-    "capture_adb_ui_state",
-    "send_adb_input",
   ] as const;
   for (const name of operationNames) expect(names, name).toContain(name);
 
   assertAdvertisedMcpContracts(operationNames, tools);
-
-  const sent = await client.callTool({
-    name: "send_adb_input",
-    arguments: {
-      serial: "emulator-5554",
-      actions: [
-        {
-          type: "tap_element",
-          selector: { resource_id: "com.example.app:id/login" },
-        },
-        { type: "key", key: "BACK" },
-      ],
-    },
-  });
-  expect(sent.isError).not.toBe(true);
 
   const pulled = await client.callTool({
     name: "pull_adb_package",

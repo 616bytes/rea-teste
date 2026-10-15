@@ -49,112 +49,6 @@ export const ADB_DEVICE_STATES = [
 export const adbDeviceStateSchema = z.enum(ADB_DEVICE_STATES);
 export type AdbDeviceState = (typeof ADB_DEVICE_STATES)[number];
 
-const screenCoordinateSchema = z.number().int().min(0).max(32_767);
-const screenPointSchema = z.strictObject({
-  x: screenCoordinateSchema,
-  y: screenCoordinateSchema,
-});
-
-/** Named Android key events accepted by `input keyevent KEYCODE_<name>`. */
-export const ADB_NAMED_KEYS = [
-  "HOME",
-  "BACK",
-  "APP_SWITCH",
-  "MENU",
-  "ENTER",
-  "TAB",
-  "DEL",
-  "FORWARD_DEL",
-  "ESCAPE",
-  "SEARCH",
-  "SPACE",
-  "DPAD_UP",
-  "DPAD_DOWN",
-  "DPAD_LEFT",
-  "DPAD_RIGHT",
-  "DPAD_CENTER",
-  "PAGE_UP",
-  "PAGE_DOWN",
-  "MOVE_HOME",
-  "MOVE_END",
-  "VOLUME_UP",
-  "VOLUME_DOWN",
-  "POWER",
-  "WAKEUP",
-  "SLEEP",
-] as const;
-
-const uiSelectorTextSchema = z
-  .string()
-  .min(1)
-  .max(1024)
-  .regex(/^[^\x00]*$/u, "Selector values cannot contain NUL");
-
-/** Exact-match UI selector; every provided field must equal the node fact. */
-const uiSelectorSchema = z
-  .strictObject({
-    resource_id: uiSelectorTextSchema.optional(),
-    text: uiSelectorTextSchema.optional(),
-    content_desc: uiSelectorTextSchema.optional(),
-    class_name: uiSelectorTextSchema.optional(),
-  })
-  .refine(
-    (selector) => Object.values(selector).some((value) => value !== undefined),
-    "Selector needs at least one of resource_id, text, content_desc, class_name",
-  );
-
-/**
- * One input event. `input text` cannot type non-ASCII text and turns `%s`
- * into a space, so text is limited to printable ASCII without `%s`.
- */
-export const adbInputActionSchema = z.discriminatedUnion("type", [
-  z.strictObject({
-    type: z.literal("tap"),
-    x: screenCoordinateSchema,
-    y: screenCoordinateSchema,
-  }),
-  z.strictObject({
-    type: z.literal("tap_element"),
-    selector: uiSelectorSchema,
-    match_index: z
-      .number()
-      .int()
-      .min(0)
-      .max(4_999)
-      .optional()
-      .describe("Which document-order match to tap when several nodes match"),
-  }),
-  z.strictObject({
-    type: z.literal("long_press"),
-    x: screenCoordinateSchema,
-    y: screenCoordinateSchema,
-    duration_ms: z.number().int().min(100).max(10_000).default(800),
-  }),
-  z.strictObject({
-    type: z.literal("swipe"),
-    from: screenPointSchema,
-    to: screenPointSchema,
-    duration_ms: z.number().int().min(1).max(10_000).default(300),
-  }),
-  z.strictObject({
-    type: z.literal("text"),
-    text: z
-      .string()
-      .min(1)
-      .max(1_000)
-      .regex(/^[\x20-\x7e]+$/u, "input text accepts printable ASCII only")
-      .refine(
-        (value) => !value.includes("%s"),
-        "input text turns %s into a space",
-      ),
-  }),
-  z.strictObject({
-    type: z.literal("key"),
-    key: z.union([z.enum(ADB_NAMED_KEYS), z.number().int().min(0).max(1_000)]),
-  }),
-]);
-export type AdbInputAction = z.infer<typeof adbInputActionSchema>;
-
 const keyStringSchema = z.string().min(1).max(256);
 const keyPattern = /^[A-Za-z0-9._\x2d]+$/u;
 
@@ -435,68 +329,6 @@ export const adbInputSchemas = {
       .default(2_000)
       .describe("Delay between boot-property probes"),
   }),
-  capture_adb_ui_state: z.strictObject({
-    serial: deviceSerialSchema.describe(
-      "Device serial exactly as `adb devices` reports it",
-    ),
-    output_directory: localPathStringSchema
-      .optional()
-      .describe(
-        "Local directory for the raw hierarchy XML and screenshot; required when include_screen is true",
-      ),
-    state_label: z
-      .string()
-      .regex(
-        /^[A-Za-z0-9_-]{1,64}$/u,
-        "State label must be 1-64 letters, digits, '_' or '-'",
-      )
-      .optional()
-      .describe(
-        "Caller navigation-state name appended to the timestamped file stem",
-      ),
-    include_screen: z
-      .boolean()
-      .default(true)
-      .describe(
-        "Capture a PNG frame immediately after the hierarchy dump (needs output_directory)",
-      ),
-    compressed: z
-      .boolean()
-      .default(false)
-      .describe("Pass --compressed to uiautomator, omitting layout-only nodes"),
-    node_filter: z
-      .enum(["meaningful", "all"])
-      .default("meaningful")
-      .describe(
-        "Inline nodes: meaningful keeps nodes with an id, text, description, or click/scroll affordance; all keeps every node",
-      ),
-    max_nodes: z
-      .number()
-      .int()
-      .min(1)
-      .max(5_000)
-      .default(300)
-      .describe("Most inline nodes returned; the XML file keeps every node"),
-  }),
-  send_adb_input: z.strictObject({
-    serial: deviceSerialSchema.describe(
-      "Device serial exactly as `adb devices` reports it",
-    ),
-    actions: z
-      .array(adbInputActionSchema)
-      .min(1)
-      .max(64)
-      .describe(
-        "Input actions executed in order; a result's actions list can be passed back as-is to replay it",
-      ),
-    settle_ms: z
-      .number()
-      .int()
-      .min(0)
-      .max(10_000)
-      .default(300)
-      .describe("Delay after each action before the next one"),
-  }),
 } as const;
 
 /** Supported ADB-backed operations. */
@@ -611,14 +443,6 @@ export const adbRequestSchema = z.discriminatedUnion("operation", [
     operation: z.literal("wait_adb_boot"),
     input: adbInputSchemas.wait_adb_boot,
   }),
-  z.strictObject({
-    operation: z.literal("capture_adb_ui_state"),
-    input: adbInputSchemas.capture_adb_ui_state,
-  }),
-  z.strictObject({
-    operation: z.literal("send_adb_input"),
-    input: adbInputSchemas.send_adb_input,
-  }),
 ]);
 
 const client = z.strictObject({
@@ -626,40 +450,6 @@ const client = z.strictObject({
   path_source: z.enum(["environment", "path"]),
   version: z.string().min(1).nullable(),
   installed_path: z.string().min(1).nullable(),
-});
-
-const savedFile = z.strictObject({
-  local_path: z.string().min(1),
-  bytes: z.number().int().nonnegative(),
-  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-});
-
-const uiBounds = z.strictObject({
-  left: z.number().int(),
-  top: z.number().int(),
-  right: z.number().int(),
-  bottom: z.number().int(),
-});
-
-/** Compact uiautomator node: absent fields were empty or unreported. */
-const uiNodeResult = z.strictObject({
-  ordinal: z.number().int().nonnegative(),
-  depth: z.number().int().nonnegative(),
-  parent: z.number().int().nonnegative().nullable(),
-  class_name: z.string().nullable(),
-  resource_id: z.string().nullable(),
-  text: z.string().nullable(),
-  content_desc: z.string().nullable(),
-  package_name: z.string().nullable(),
-  bounds: uiBounds.nullable(),
-  bounds_source: z.string().nullable(),
-  center: z
-    .strictObject({ x: z.number().int(), y: z.number().int() })
-    .nullable(),
-  /** Boolean attributes reported as true. */
-  flags: z.array(z.string()),
-  /** Boolean attributes the dump omitted or reported with another value. */
-  unreported_flags: z.array(z.string()),
 });
 
 const device = z.strictObject({
@@ -975,48 +765,6 @@ export const adbResultSchemas = {
     init_svc_bootanim: z.string().nullable(),
     /** Last adb failure while the device was unreachable, if any. */
     last_probe_error: z.string().nullable(),
-  }),
-  capture_adb_ui_state: z.strictObject({
-    client,
-    serial: z.string().min(1),
-    state_id: z.string().min(1),
-    hierarchy_captured_at: z.string().min(1),
-    rotation: z.number().int().nullable(),
-    node_count: z.number().int().nonnegative(),
-    node_filter: z.enum(["meaningful", "all"]),
-    nodes: z.array(uiNodeResult),
-    nodes_returned: z.number().int().nonnegative(),
-    coverage: z.enum(["complete", "partial"]),
-    hierarchy_file: savedFile.nullable(),
-    screen: savedFile
-      .extend({
-        captured_at: z.string().min(1),
-        width: z.number().int().positive().nullable(),
-        height: z.number().int().positive().nullable(),
-      })
-      .nullable(),
-  }),
-  send_adb_input: z.strictObject({
-    client,
-    serial: z.string().min(1),
-    status: z.enum(["completed", "stopped"]),
-    /** The completed actions, replayable as send_adb_input actions. */
-    actions: z.array(adbInputActionSchema),
-    /** Per completed action, in the same order: argv sent and resolved node. */
-    executed: z.array(
-      z.strictObject({
-        index: z.number().int().nonnegative(),
-        command: z.array(z.string()),
-        resolved_node: uiNodeResult.nullable(),
-      }),
-    ),
-    failure: z
-      .strictObject({
-        index: z.number().int().nonnegative(),
-        code: z.string().min(1),
-        message: z.string().min(1),
-      })
-      .nullable(),
   }),
 } as const;
 

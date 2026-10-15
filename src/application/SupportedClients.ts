@@ -159,7 +159,7 @@ const claudeDesktopLocation = (
 };
 
 const claudeCodeConfigDirectory = ({ home, env }: ClientPathContext): string =>
-  env.CLAUDE_CONFIG_DIR ?? home;
+  env.CLAUDE_CONFIG_DIR || home;
 
 const claudeCodeMarkerDirectory = ({ home, env }: ClientPathContext): string =>
   env.CLAUDE_CONFIG_DIR ?? join(home, ".claude");

@@ -6,6 +6,87 @@ import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
+cliTest(
+  "Claude Code uses home for registration when CLAUDE_CONFIG_DIR is empty",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-claude-empty-config-dir-");
+    const home = join(root, "home");
+    const cwd = join(root, "work");
+    const config = join(home, ".claude.json");
+    await mkdir(home, { recursive: true });
+    await mkdir(cwd, { recursive: true });
+    await writeFile(
+      config,
+      JSON.stringify({
+        theme: "dark",
+        mcpServers: { other: { command: "other" } },
+      }),
+    );
+    const environment = {
+      HOME: home,
+      USERPROFILE: home,
+      CLAUDE_CONFIG_DIR: "",
+    };
+    const run = (arguments_: readonly string[]) =>
+      cli.run({ arguments: arguments_, cwd, environment, timeoutMs: 20_000 });
+
+    const planned = await run([
+      "setup",
+      "--client",
+      "claude_code",
+      "--skill=false",
+      "--dry-run",
+      "--json",
+    ]);
+    expect(planned.exitCode, planned.stderr).toBe(0);
+    expect(planned.json).toMatchObject({
+      status: "planned",
+      plannedActions: expect.arrayContaining([
+        expect.objectContaining({
+          id: "configure_client:claude_code",
+          target: config,
+        }),
+      ]),
+    });
+    const setup = await run([
+      "setup",
+      "--client",
+      "claude_code",
+      "--skill=false",
+      "--yes",
+      "--json",
+    ]);
+    expect(setup.exitCode, setup.stderr).toBe(0);
+    expect(setup.json).toMatchObject({ status: "ready" });
+    await access(config);
+    await expect(access(join(cwd, ".claude.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    const doctor = await run(["doctor", "--client", "claude_code", "--json"]);
+    expect(doctor.exitCode, doctor.stderr).toBe(0);
+    expect(doctor.json).toMatchObject({
+      healthy: true,
+      identity: {
+        registrations: expect.arrayContaining([
+          expect.objectContaining({ client: "claude_code", state: "aligned" }),
+        ]),
+      },
+    });
+
+    const uninstall = await run(["uninstall", "--json"]);
+    expect(uninstall.exitCode, uninstall.stderr).toBe(0);
+    expect(uninstall.json).toMatchObject({ status: "complete" });
+    const afterUninstall = parse(await readFile(config, "utf8")) as {
+      theme: string;
+      mcpServers: Record<string, unknown>;
+    };
+    expect(afterUninstall.theme).toBe("dark");
+    expect(afterUninstall.mcpServers).not.toHaveProperty("rea");
+    expect(afterUninstall.mcpServers.other).toEqual({ command: "other" });
+  },
+);
+
 for (const policy of [{ excluded: ["rea"] }, { allowed: ["other"] }]) {
   cliTest(
     `Gemini refuses a registration blocked by ${Object.keys(policy)[0]}`,

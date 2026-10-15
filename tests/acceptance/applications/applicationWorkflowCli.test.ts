@@ -1287,6 +1287,73 @@ describe("application workflow CLI and MCP capture lifetimes", () => {
   }, 20_000);
 });
 
+describe("application workflow CLI and MCP constant branches", () => {
+  it("compares known primitive branches with inlined values through CLI and MCP", async () => {
+    const root = await createTestTempDirectory("rea-known-branches-cli-");
+    const sources = [
+      `const isDev = false;
+       const port = 8080;
+       export default function config() {
+         return {
+           type: "config",
+           mode: isDev ? "development" : "production",
+           port: port || 3000,
+           verbose: isDev && "yes",
+           fallback: null ?? "default",
+         };
+       }`,
+      `export default function config() {
+         return { type: "config", mode: "production", port: 8080,
+           verbose: false, fallback: "default" };
+       }`,
+    ];
+    const roots = await writeComparisonSources(root, sources);
+    const [left, right] = await Promise.all(
+      roots.map((applicationRoot) =>
+        runCli(["analyze-javascript-application", applicationRoot, "--json"]),
+      ),
+    );
+    for (const applicationRoot of roots) {
+      const { stdout } = await execute(process.execPath, [
+        "--input-type=module",
+        "--eval",
+        "const module = await import(process.argv[1]); console.log(JSON.stringify(module.default()));",
+        join(applicationRoot, "parser.mjs"),
+      ]);
+      expect(JSON.parse(stdout)).toEqual({
+        type: "config",
+        mode: "production",
+        port: 8080,
+        verbose: false,
+        fallback: "default",
+      });
+    }
+    const input = {
+      left,
+      right,
+      left_module_path: "parser.mjs",
+      left_export_name: "default",
+      right_module_path: "parser.mjs",
+      right_export_name: "default",
+    };
+    const expected = {
+      normalized_result: {
+        summary: { added: 0, removed: 0, changed: 0, unknown: 0 },
+        changes: [],
+        coverage: { status: "complete-within-inputs", paired_variants: 1 },
+      },
+    };
+    expect(
+      await runCliWithRequestFile(
+        root,
+        "compare-javascript-export-shapes",
+        input,
+      ),
+    ).toMatchObject(expected);
+    expect(await compareThroughStdioMcp(input)).toMatchObject(expected);
+  }, 20_000);
+});
+
 describe("application workflow CLI export Evidence", () => {
   it("preserves uncertainty after a helper can mutate an awaited return object", async () => {
     const root = await createTestTempDirectory("rea-awaited-export-shape-cli-");

@@ -489,16 +489,24 @@ const evaluateExpressionValue = (
       : evaluateBinding(binding, nestedContext(context));
   }
   if (t.isTemplateLiteral(node)) return evaluateTemplate(node, context);
-  if (t.isConditionalExpression(node))
+  if (t.isConditionalExpression(node)) {
+    const test = primitiveCandidates(
+      evaluateExpression(node.test, nestedContext(context)),
+    );
+    if (test !== null && test.length > 0) {
+      const truth = Boolean(test[0]);
+      if (test.every((value) => Boolean(value) === truth))
+        return evaluateExpression(
+          truth ? node.consequent : node.alternate,
+          nestedContext(context),
+        );
+    }
     return mergeValues([
       evaluateExpression(node.consequent, nestedContext(context)),
       evaluateExpression(node.alternate, nestedContext(context)),
     ]);
-  if (t.isLogicalExpression(node))
-    return mergeValues([
-      evaluateExpression(node.left, nestedContext(context)),
-      evaluateExpression(node.right, nestedContext(context)),
-    ]);
+  }
+  if (t.isLogicalExpression(node)) return evaluateLogical(node, context);
   if (t.isObjectExpression(node)) return evaluateObject(node, context);
   if (t.isArrayExpression(node)) return evaluateArray(node, context);
   if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
@@ -507,6 +515,33 @@ const evaluateExpressionValue = (
     return evaluateAddition(node, context);
   if (t.isUnaryExpression(node)) return evaluateUnary(node, context);
   return { status: "unknown", reason: `Unsupported ${node.type} value.` };
+};
+
+const evaluateLogical = (
+  node: t.LogicalExpression,
+  context: EvaluationContext,
+): JavaScriptSemanticValue => {
+  const left = evaluateExpression(node.left, nestedContext(context));
+  const candidates = primitiveCandidates(left);
+  if (candidates === null || candidates.length === 0)
+    return mergeValues([
+      left,
+      evaluateExpression(node.right, nestedContext(context)),
+    ]);
+  // Retain only left candidates returned by the operator. The others reach
+  // the right operand, whose value replaces them rather than joining them.
+  const retained = candidates.filter((value) =>
+    node.operator === "??"
+      ? value !== null
+      : node.operator === "||"
+        ? Boolean(value)
+        : !value,
+  );
+  if (retained.length === candidates.length) return left;
+  const right = evaluateExpression(node.right, nestedContext(context));
+  return retained.length === 0
+    ? right
+    : mergeValues([primitiveSet(retained), right]);
 };
 
 const evaluateTemplate = (

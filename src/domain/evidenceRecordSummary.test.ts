@@ -85,3 +85,58 @@ it("selects records containing every query term literally and reports a snippet"
   ).toBe(0);
   expect(summarizeEvidenceBundle(bundle).records[0]!.query_match).toBeNull();
 });
+
+it("matches terms across result leaves and limitations", () => {
+  const evidence = createEvidence(
+    { path: "/fixtures/app.asar", format: "asar", sha256: "c".repeat(64) },
+    { id: "provider", name: "Provider", version: "1" },
+    {
+      operation: "list_strings",
+      parameters: {},
+      result: { strings: ["alpha", "beta"] },
+      limitations: ["gamma was truncated"],
+    },
+  );
+  const bundle = createEvidenceBundle([evidence]);
+  const summary = summarizeEvidenceBundle(bundle, {
+    query: "gamma beta alpha",
+  });
+  expect(summary.records[0]!.query_match!.path).toBe("/limitations/0");
+  expect(
+    summarizeEvidenceBundle(bundle, { query: "beta gamma" }).records[0]!
+      .query_match!.path,
+  ).toBe("/normalized_result/strings/1");
+  expect(
+    summarizeEvidenceBundle(bundle, { query: "alpha delta" }).matching_records,
+  ).toBe(0);
+});
+
+it("folds case per code point and excerpts the original text", () => {
+  const match = (text: string, query: string) =>
+    summarizeEvidenceBundle(
+      createEvidenceBundle([
+        createEvidence(
+          {
+            path: "/fixtures/app.asar",
+            format: "asar",
+            sha256: "d".repeat(64),
+          },
+          { id: "provider", name: "Provider", version: "1" },
+          { operation: "list_strings", parameters: {}, result: [text] },
+        ),
+      ]),
+      { query },
+    ).records[0]?.query_match;
+  expect(match("ΟΣ", "Σ")).toMatchObject({ snippet: "ΟΣ", match_start: 1 });
+  const dotted = match("İ LIKE", "like")!;
+  expect(dotted.snippet).toBe("İ LIKE");
+  expect(
+    dotted.snippet.slice(
+      dotted.match_start,
+      dotted.match_start + dotted.match_length,
+    ),
+  ).toBe("LIKE");
+  const emoji = match("😀" + "x".repeat(29) + "MATCH", "match")!;
+  expect(emoji.snippet.startsWith("😀")).toBe(true);
+  expect(emoji.offset_units).toBe("utf16-code-units");
+});

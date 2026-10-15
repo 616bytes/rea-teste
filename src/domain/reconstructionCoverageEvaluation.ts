@@ -48,7 +48,12 @@ export const evaluateReconstructionSurfaces = (
   context: ReconstructionEvaluationContext,
 ): void => {
   const surfaces = indexUnique(context.coverage.surfaces, "surface_id");
-  for (const surfaceId of context.boundary.required_surface_ids) {
+  const required = new Set(context.boundary.required_surface_ids);
+  const pending = [...required];
+  const scheduled = new Set(required);
+  for (let index = 0; index < pending.length; index += 1) {
+    const surfaceId = pending[index];
+    if (surfaceId === undefined) continue;
     const surface = surfaces.get(surfaceId);
     if (surface === undefined) {
       addReason(
@@ -60,7 +65,7 @@ export const evaluateReconstructionSurfaces = (
       continue;
     }
     addEvidence(context, surface.evidence_ids);
-    for (const dependencyId of surface.dependency_surface_ids)
+    for (const dependencyId of surface.dependency_surface_ids) {
       if (!surfaces.has(dependencyId))
         addReason(
           context,
@@ -68,7 +73,13 @@ export const evaluateReconstructionSurfaces = (
           surfaceId,
           `Declared dependency surface is absent: ${dependencyId}`,
         );
-    evaluateOwner(context, surfaceId);
+      else if (!scheduled.has(dependencyId)) {
+        scheduled.add(dependencyId);
+        pending.push(dependencyId);
+      }
+    }
+    // Owner obligations remain scoped to explicitly required surfaces.
+    if (required.has(surfaceId)) evaluateOwner(context, surfaceId);
   }
 };
 

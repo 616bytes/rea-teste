@@ -32,6 +32,7 @@ describe.skipIf(process.platform === "win32")(
           ["legacy-order.cjs", "./dep", "dep/index.js"],
           ["bare-index.cjs", "./bare", "bare.js"],
           ["package-main.cjs", "./pkg", "pkg/actual.js"],
+          ["package-main-dir.cjs", "./pkg/", "pkg/actual.js"],
           ["package-main-fallback.cjs", "./stale", "stale/index.js"],
           ["package-main-slash.cjs", "./slashed", "slashed/lib.js"],
           ["json.cjs", "./data", "data.json"],

@@ -128,9 +128,13 @@ export const projectKeyedArchive = (
       ? top
       : { [selection.root]: top[selection.root] ?? null };
   const references: z.infer<typeof linkSchema>[] = [];
-  const scan = (source: number | null, initial: JsonValue) => {
+  const scan = (
+    source: number | null,
+    initial: JsonValue,
+    path: (string | number)[] = [],
+  ) => {
     const pending: { value: JsonValue; path: (string | number)[] }[] = [
-      { value: initial, path: [] },
+      { value: initial, path },
     ];
     let visited = 0;
     while (pending.length > 0) {
@@ -177,7 +181,12 @@ export const projectKeyedArchive = (
         throw new RangeError("Archive exceeds 200000 reference edges");
     }
   };
-  scan(null, roots);
+  // Scan each root under its key: a selected root rebuilds a one-key
+  // dictionary, which reads as a UID when that key is `UID`.
+  for (const key of Object.keys(roots).sort()) {
+    const value = roots[key];
+    if (value !== undefined) scan(null, value, [key]);
+  }
   const objects = table.map((value, id) => {
     scan(id, value);
     const fields = record(value);

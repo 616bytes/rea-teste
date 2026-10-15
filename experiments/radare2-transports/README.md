@@ -7,6 +7,10 @@ errors/Result; it does not implement production Evidence or session admission.
 
 The separate [task comparison](BENCHMARK.md) measures actual Codex investigations
 and cold/warm MCP workloads through PR #3521, upstream r2mcp and Ghidra.
+Its [proposed defaults](../../docs/radare2-proposal.md#proposed-defaults-informed-by-the-task-runs)
+distinguish a bounded one-shot read from a continuing session. The probe applies
+no implicit `aa`/`aaa`; choose the analysis needed for the question. Reuse a
+caller-selected HTTP/iaito or MCP session rather than discarding its analysis.
 
 Use the pinned Node/npm toolchain, install locked dependencies and build first:
 
@@ -23,7 +27,14 @@ starts a loopback HTTP fixture and cleans up owned processes. Missing providers
 fail the experiment; they are not silently skipped. These checks are separate
 from the portable test suite.
 
-To inspect a selected binary using r2pipe2:
+For a known-address instruction question, replace the address below with the
+selected target's address. No function inventory or decompilation is required:
+
+```sh
+node experiments/radare2-transports/probe.mjs '{"transport":"exec","path":"./program","commands":["pd 8 @ 0x1000"]}'
+```
+
+For function discovery followed by r2ghidra decompilation in one owned r2pipe2 batch:
 
 ```sh
 node experiments/radare2-transports/probe.mjs '{"transport":"r2pipe","path":"./program","commands":["aa",{"cmd":"aflj","json":true},"pdg @ main"]}'

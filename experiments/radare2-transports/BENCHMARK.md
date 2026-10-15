@@ -123,6 +123,20 @@ warnings remain in the recorded observations. Two identical Ghidra branch
 dossier calls were repeated; their time and tokens remain included. Color-free
 output was checked, but no before/after token-saving percentage was measured.
 
+The proposal turns these observations into [explicit routing and analysis
+recommendations](../../docs/radare2-proposal.md#proposed-defaults-informed-by-the-task-runs):
+focused reads without blanket analysis, one-shot batches for bounded questions,
+retained cores for continuing work, and reuse of existing Evidence and selected
+connections. These are proposed policies; this report does not measure their
+combined improvement or enable a new runtime default.
+
+Token comparisons need both totals and cache breakdowns. For SQLite, retained
+REA used 133,286 total tokens versus one-shot's 81,006, but less uncached input
+(16,741 versus 24,087). Ghidra's uncached input was 23,695 despite its larger
+212,751 total. The recorded counts establish context usage; no billing-cost
+ranking was measured. A future A/B should control task scope and capture
+equivalent Evidence before attributing an improvement to a transport or backend.
+
 ## Workloads and independent answers
 
 The targets are an optimized, stripped ARM64 Mach-O built from

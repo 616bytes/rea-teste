@@ -175,6 +175,81 @@ local model configuration. Never select a cloud endpoint, transmit target
 content, install a model or invoke decai implicitly. A loopback transport does
 not constrain what caller-selected commands or plugins can do.
 
+## Proposed defaults informed by the task runs
+
+These are recommendations for the pending integration, not new runtime defaults.
+The [measured tasks](../experiments/radare2-transports/BENCHMARK.md) support
+reducing unnecessary analysis and agent calls. They do not establish a universal
+engine or transport ranking. Explicit provider, transport, commands, decompiler
+and analysis choices always take precedence.
+
+| Decision                     | Proposed policy                                                                                                                                                                     | Evidence and limits                                                                                                                                                                                                                               |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Selected r2 decompiler       | Recommend installed r2ghidra / `pdg`; use assembly directly when it answers the question. Keep pdc/decai explicit.                                                                  | All r2 task lanes used r2ghidra successfully; pdc/decai were not comparatively benchmarked. The raw SQLite agents needed no decompilation.                                                                                                        |
+| Initial analysis             | Opening an owned core does not imply `aa` or `aaa`. Read known instructions/bytes first; request function-scoped analysis when needed, and basic `aa` for discovery when justified. | The raw SQLite agents answered from short instruction/literal reads; the typed agent chose `aa` and analysed 2,765 functions. `analyze(level:0)` means `aa`, not no analysis. Empty basic-analysis xrefs do not prove references absent.          |
+| Existing connection          | Reuse the caller-selected session and its validated analysis; preserve external ownership and disclose unresolved target identity/freshness.                                        | Reuse avoids discarding useful work. HTTP/iaito performance and live freshness were not benchmarked; do not discover or attach to endpoints automatically.                                                                                        |
+| New bounded command question | Prefer a one-shot batch of the required reads when no selected session exists.                                                                                                      | One-shot used fewer total tokens than the retained REA lane in all three agent tasks and finished those tasks sooner in this cohort. This is workflow guidance, not an automatic rewrite of caller commands.                                      |
+| New continuing investigation | Prefer an owned retained r2pipe2 core, reused across related reads.                                                                                                                 | Fixed SQLite repeats took a median 15.80 ms through retained REA versus 13.45 s with one-shot reload/analysis. Those fixed reads still needed a version-string dereference; agent task completion is a separate measure.                          |
+| r2mcp use                    | Reuse an explicitly selected upstream connection and its named tools for shared analysis; keep raw r2pipe2 access available only when enabled by the caller.                        | Typed discovery solved the task without raw access, with 20 calls / 189,830 tokens versus raw's 8 calls / 217,772 tokens. Neither interface wins every cost metric. Direct upstream results do not measure a future REA adapter.                  |
+| Other analysis providers     | Preserve the selected provider. Keep Ghidra available for its existing shared dossiers, CFG, types and value-flow capabilities.                                                     | Ghidra answered all three tasks correctly. This r2 prototype does not yet implement that shared capability surface, and the experiment did not compare those deeper capabilities. Do not change REA's global provider selection from this sample. |
+| Display and metadata         | Owned defaults remain `scr.color=0`, `scr.utf8=0`. Preserve debug information and caller output choices.                                                                            | Clean display is already implemented and checked; token savings were not isolated. The benchmark's `asm.dwarf=false` prevented source-line shortcuts and is not a general recommendation to discard useful source/debug evidence.                 |
+
+Named tools must honour the same analysis policy. Upstream `list_functions` can
+currently run `aaa` on an empty inventory; expose that effect or report that a
+requested inventory-only read is unavailable. Do not silently enable raw access
+to work around it. When discovery needs references, request the relevant
+analysis coverage and report its limits rather than treating an empty xref list
+as absence or dumping every function body.
+
+The application workflow should minimise agent round trips while preserving
+explicit target admission and cleanup. Reuse `procedure_assembly` and
+`procedure_pseudo_code` for focused reads, or `analyze_function` when several
+facets are actually needed. Its existing input is `{procedure}`; do not invent
+an unsupported `detail` parameter. For already retained function Evidence,
+`inspect_analysis_view` supplies native facets without repeating analysis.
+Close owned resources when the investigation is complete, after pending
+follow-ups; the typed SQLite run closed and reopened before its final lookup.
+
+For the proposed r2 mapping, those existing inputs should return the existing
+Evidence envelope and requested normalised facts: procedure/address identity,
+assembly or pseudocode, addressed string values and the available relationship
+coverage. The radare2 adapter owns protocol/analysis policy, and the application
+owns retention and Evidence views. Unsupported facets remain explicit unknowns.
+Where typed r2mcp returns only text, prefer upstream structured, address-bearing
+results before duplicating parsers in REA. A pointer-returning function needs
+the referenced value to answer a string question; returning only its pseudocode
+does not establish completion. Batch homogeneous reads within the existing
+workflow where useful, preserving item outcomes and serial execution per core.
+
+Use compact inline facts with the necessary provenance and limitations, retaining
+complete source Evidence for requested detail. Reuse successful observations
+instead of repeating identical calls solely for confidence; the Ghidra branch
+trial repeated two complete dossiers. A cache hit saves computation but still
+returns context to the model. Do not prune the advertised catalog, hide missing
+coverage or return only an Evidence ID to achieve a smaller response. The
+benchmark's common instructions did not load REA's packaged skill; evaluate the
+recommended workflow with that skill before attributing agent choices to
+production defaults.
+
+Do not memoise arbitrary raw commands by default. Reusable typed facts need
+target identity, provider/decompiler profile, requested scope and analysis
+generation in their key; unknown completion or mutation retires that generation.
+Externally changed iaito state cannot be reported as fresh without a validated
+change signal. Read retained output pages from REA's Evidence, never by replaying
+an unrestricted upstream command. Keep the existing lossless decoder and scoped
+`cfg.json.num=string` handling; do not change global encoding on an external core.
+
+Evaluate candidate defaults with completed-task A/B runs, equivalent Evidence
+and correctness coverage, counterbalanced order and multiple trials. Include
+known-address reads, stripped discovery, repeated function questions and a
+post-mutation freshness case. Report total and uncached/cached tokens, calls,
+time, CPU and sampled family RSS. For example, SQLite used fewer total tokens
+with one-shot REA than retained REA, but more uncached input (24,087 versus
+16,741). Total tokens alone do not establish billing cost. Profile REA's startup,
+schema and Evidence work before attributing the direct-r2mcp gap to the pipe
+implementation or changing bindings. Improvement from the combined policy
+remains unmeasured.
+
 ## Authority, Evidence and integration decision
 
 The proposed raw-command surface is unrestricted. It can execute scripts and

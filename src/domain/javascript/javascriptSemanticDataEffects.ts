@@ -279,6 +279,9 @@ const collectResponseConsumers = (
       )
         ? linked[0]
         : undefined;
+    // Any other write (assignment, update, loop or destructuring target) can
+    // replace the response before this read, so its endpoint stays unknown.
+    const soleWrite = binding?.initializers.length === 1;
     output.push({
       requestId: `response:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
       kind: "response-consumer",
@@ -296,7 +299,7 @@ const collectResponseConsumers = (
       linkedRequestIds: linked
         .map(({ operation }) => operation.requestId)
         .sort(compareUnicodeCodePoints),
-      endpoint: uniqueRequest?.operation.endpoint ?? null,
+      endpoint: soleWrite ? (uniqueRequest?.operation.endpoint ?? null) : null,
       fields: [],
       resolution: uniqueRequest === undefined ? "partial" : "complete",
     });

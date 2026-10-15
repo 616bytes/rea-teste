@@ -45,3 +45,15 @@ it("leaves an ambiguous response consumer without an endpoint", () => {
     `),
   ).toEqual([{ method: "json", endpoint: null, resolution: "partial" }]);
 });
+
+it("leaves a response replaced by a non-request value without an endpoint", () => {
+  expect(
+    responses(`
+      async function load(cachedResponse) {
+        let response = await fetch("https://example.test/a");
+        response = cachedResponse;
+        return response.json();
+      }
+    `),
+  ).toEqual([expect.objectContaining({ method: "json", endpoint: null })]);
+});

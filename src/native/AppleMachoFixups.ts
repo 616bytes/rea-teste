@@ -527,10 +527,11 @@ const sleb = (bytes: Buffer, cursor: { at: number }, end: number): bigint => {
   let byte = 0;
   do {
     if (cursor.at >= end) throw new RangeError("Truncated bind opcode operand");
+    if (shift > 63n) throw new RangeError("Oversized bind opcode operand");
     byte = bytes[cursor.at++] ?? 0;
     value |= BigInt(byte & 0x7f) << shift;
     shift += 7n;
-  } while ((byte & 0x80) !== 0 && shift <= 63n);
+  } while ((byte & 0x80) !== 0);
   return (byte & 0x40) !== 0 ? value - (1n << shift) : value;
 };
 

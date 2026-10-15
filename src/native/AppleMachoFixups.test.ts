@@ -948,6 +948,55 @@ describe("legacy pointer fixup streams", () => {
       target: 0x99n,
     });
   });
+
+  const addendStream = (addend: readonly number[]) =>
+    Buffer.from([
+      0x11, // SET_DYLIB_ORDINAL_IMM 1
+      0x40,
+      ...Buffer.from("_x\0"),
+      0x71,
+      0x08, // SET_SEGMENT_AND_OFFSET segment 1 + 8
+      0x60,
+      ...addend, // SET_ADDEND_SLEB
+      0x00,
+    ]);
+  const parseBinds = (opcodes: Buffer) =>
+    parsePointerFixups(
+      opcodes,
+      {
+        chained: null,
+        binds: [{ offset: 0, size: opcodes.length, stream: "bind" }],
+        rebases: [],
+        dylibs: ["/usr/lib/libSystem.B.dylib"],
+      },
+      SEGMENTS,
+      BASE,
+    );
+
+  it("applies a SET_ADDEND_SLEB addend to the following bind", () => {
+    const opcodes = addendStream([0x78]); // -8
+    opcodes[opcodes.length - 1] = 0x90; // DO_BIND
+    const fixups = parseBinds(Buffer.concat([opcodes, Buffer.from([0x00])]));
+    expect(fixups.failures).toEqual([]);
+    expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject({
+      kind: "bind",
+      symbol: "_x",
+      addend: -8n,
+    });
+  });
+
+  it("rejects an oversized SET_ADDEND_SLEB instead of running its tail as opcodes", () => {
+    // Ten continuation bytes, then 0x90. dyld keeps reading 0x90 as part of
+    // the operand (bit 7 is set) and binds nothing; it must not become DO_BIND.
+    const opcodes = addendStream([...Array<number>(10).fill(0x80), 0x90, 0x00]);
+    const fixups = parseBinds(opcodes);
+    expect(fixups.failures.join("\n")).toContain(
+      "Oversized bind opcode operand",
+    );
+    expect(fixups.decode(BASE + 0x4008n, 0x99n)).not.toMatchObject({
+      kind: "bind",
+    });
+  });
 });
 
 describe("Objective-C property attributes", () => {

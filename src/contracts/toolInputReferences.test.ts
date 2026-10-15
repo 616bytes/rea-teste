@@ -559,4 +559,52 @@ describe("advertised literal normalization for model dialect compatibility", () 
     expect(property).not.toHaveProperty("anyOf");
     expect(property).not.toHaveProperty("const");
   });
+
+  it("omits negated boolean literals so schemas are not narrowed into contradictions", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        must_be_true: {
+          type: "boolean",
+          not: { const: false },
+        },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(nonStringConstOrEnumSchemaError(advertised, "$")).toBeUndefined();
+    const properties = advertised.properties as Record<string, unknown>;
+    const prop = properties.must_be_true as Record<string, unknown>;
+    expect(prop.type).toBe("boolean");
+    expect(prop).not.toHaveProperty("not");
+    expect(prop).not.toHaveProperty("const");
+    const ajv = new Ajv2020({ strict: false });
+    const validate = ajv.compile(advertised);
+    expect(validate({ must_be_true: true })).toBe(true);
+  });
+
+  it("merges multiple boolean literal branches inside mixed oneOf unions", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        mixed: {
+          oneOf: [
+            { type: "boolean", const: false },
+            { type: "boolean", const: true },
+            { type: "string" },
+          ],
+        },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(nonStringConstOrEnumSchemaError(advertised, "$")).toBeUndefined();
+    const properties = advertised.properties as Record<string, unknown>;
+    const mixed = properties.mixed as Record<string, unknown>;
+    expect(mixed.oneOf).toEqual([{ type: "boolean" }, { type: "string" }]);
+    const ajv = new Ajv2020({ strict: false });
+    const validate = ajv.compile(advertised);
+    expect(validate({ mixed: true })).toBe(true);
+    expect(validate({ mixed: false })).toBe(true);
+    expect(validate({ mixed: "hello" })).toBe(true);
+    expect(validate({ mixed: 123 })).toBe(false);
+  });
 });

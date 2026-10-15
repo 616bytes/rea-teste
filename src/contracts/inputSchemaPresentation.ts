@@ -181,6 +181,34 @@ const collapseBooleanCombinator = (
   return merged;
 };
 
+const mergeCombinatorBranches = (
+  branches: readonly unknown[],
+  combinator: "anyOf" | "oneOf",
+  base: Readonly<Record<string, unknown>>,
+): Record<string, unknown> => {
+  const booleanBranches = branches.filter(isBooleanDescriptor);
+  const otherBranches = branches.filter(
+    (branch) => !isBooleanDescriptor(branch),
+  );
+  if (booleanBranches.length === 0) return { ...base, [combinator]: branches };
+  if (otherBranches.length === 0) {
+    const collapsed = collapseBooleanCombinator(booleanBranches, base);
+    if (collapsed !== undefined) {
+      const { [combinator]: _comb, const: _const, ...rest } = collapsed;
+      return rest;
+    }
+  }
+  if (booleanBranches.length > 1) {
+    const mergedBoolean = collapseBooleanCombinator(booleanBranches, {});
+    const newBranches = [
+      mergedBoolean ?? { type: "boolean" },
+      ...otherBranches,
+    ];
+    return { ...base, [combinator]: newBranches };
+  }
+  return { ...base, [combinator]: branches };
+};
+
 /** Normalize non-string const/enum and collapse boolean combinators for client compatibility. */
 export const normalizeAdvertisedLiterals = (schema: unknown): unknown => {
   if (!isObject(schema)) return schema;
@@ -236,20 +264,17 @@ export const normalizeAdvertisedLiterals = (schema: unknown): unknown => {
     node = !rest.type && allBoolean ? { ...rest, type: "boolean" } : rest;
   }
 
+  if (isObject(node.not) && isBooleanDescriptor(node.not)) {
+    const { not: _not, ...rest } = node;
+    node = rest;
+  }
+
   if (Array.isArray(node.anyOf)) {
-    const collapsed = collapseBooleanCombinator(node.anyOf, node);
-    if (collapsed !== undefined) {
-      const { anyOf: _anyOf, const: _const, ...rest } = collapsed;
-      node = rest;
-    }
+    node = mergeCombinatorBranches(node.anyOf, "anyOf", node);
   }
 
   if (Array.isArray(node.oneOf)) {
-    const collapsed = collapseBooleanCombinator(node.oneOf, node);
-    if (collapsed !== undefined) {
-      const { oneOf: _oneOf, const: _const, ...rest } = collapsed;
-      node = rest;
-    }
+    node = mergeCombinatorBranches(node.oneOf, "oneOf", node);
   }
 
   return node;

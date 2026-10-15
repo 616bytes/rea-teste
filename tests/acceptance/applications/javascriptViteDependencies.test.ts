@@ -530,6 +530,153 @@ const allScenarios = [
       kept: true,
     },
     {
+      file: "copied-explicit-container.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {f: __vite__mapDeps.f}; const copy = {...box}; copy.f[0] = "./last.js";',
+    },
+    {
+      file: "rest-copied-explicit-container.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {f: __vite__mapDeps.f}; const {...copy} = box; copy.f[0] = "./last.js";',
+    },
+    {
+      file: "assigned-explicit-container.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {f: __vite__mapDeps.f}; const copy = Object.assign({}, box); copy.f[0] = "./last.js";',
+    },
+    {
+      file: "copied-named-container.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {cache: __vite__mapDeps.f}; const copy = {...box}; copy.cache[0] = "./last.js";',
+    },
+    {
+      file: "rest-keeps-named-cache.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {f: [], cache: __vite__mapDeps.f}; const {f, ...copy} = box; copy.cache[0] = "./last.js";',
+    },
+    {
+      file: "detached-explicit-container.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {f: __vite__mapDeps.f}; box.f = []; box.f[0] = "./last.js";',
+      kept: true,
+    },
+    {
+      file: "detached-explicit-capture.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {f: __vite__mapDeps.f}; box.f = []; const cache = box.f; cache[0] = "./last.js";',
+      kept: true,
+    },
+    {
+      file: "captured-explicit-before-detach.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {f: __vite__mapDeps.f}; const cache = box.f; box.f = []; cache[0] = "./last.js";',
+    },
+    {
+      file: "restored-explicit-container.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {f: __vite__mapDeps.f}; const alias = box; box.f = []; alias.f = __vite__mapDeps.f; box.f[0] = "./last.js";',
+    },
+    {
+      file: "detached-named-container.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {cache: __vite__mapDeps.f}; box.cache = []; box.cache[0] = "./last.js";',
+      kept: true,
+    },
+    {
+      file: "introduced-through-alias.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; const alias = box; alias.cache = __vite__mapDeps.f; box.cache[0] = "./last.js";',
+    },
+    {
+      file: "introduced-through-sibling-alias.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; const left = box; const right = box; left.cache = __vite__mapDeps.f; right.cache[0] = "./last.js";',
+    },
+    {
+      file: "defined-cache-child.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; Object.defineProperty(box, "cache", {value: __vite__mapDeps.f}); box.cache[0] = "./last.js";',
+    },
+    {
+      file: "defined-cache-children.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; Object.defineProperties(box, {cache: {value: __vite__mapDeps.f}}); box.cache[0] = "./last.js";',
+    },
+    {
+      file: "defined-through-alias.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; const alias = box; Object.defineProperty(alias, "cache", {value: __vite__mapDeps.f}); box.cache[0] = "./last.js";',
+    },
+    {
+      file: "defined-returned-target.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = Object.defineProperty({}, "cache", {value: __vite__mapDeps.f}); box.cache[0] = "./last.js";',
+    },
+    {
+      file: "defined-stable-descriptor.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; const descriptor = {value: __vite__mapDeps.f}; Object.defineProperty(box, "cache", descriptor); box.cache[0] = "./last.js";',
+    },
+    {
+      file: "reflect-defined-cache-child.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; Reflect.defineProperty(box, "cache", {value: __vite__mapDeps.f}); box.cache[0] = "./last.js";',
+    },
+    {
+      file: "created-cache-descriptor.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = Object.create(null, {cache: {value: __vite__mapDeps.f}}); box.cache[0] = "./last.js";',
+    },
+    {
+      file: "defined-readonly-child.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; Object.defineProperty(box, "cache", {value: __vite__mapDeps.f});',
+      kept: true,
+    },
+    {
+      file: "copied-array-independent.js",
+      mutation:
+        '__vite__mapDeps([0]); const cache = __vite__mapDeps.f; const copy = {...cache}; copy[0] = "./last.js";',
+      kept: true,
+    },
+    {
+      file: "copied-explicit-fresh-override.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {f: __vite__mapDeps.f}; const copy = {...box, f: []}; copy.f[0] = "./last.js";',
+      kept: true,
+    },
+    {
+      file: "rest-array-shared-child.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = [__vite__mapDeps.f]; const [...copy] = box; copy[0][0] = "./last.js";',
+    },
+    {
+      file: "rest-array-shifted-child.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = [[], __vite__mapDeps.f]; const [ignored, ...copy] = box; copy[0][0] = "./last.js";',
+    },
+    {
+      file: "rest-array-excluded-child.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = [__vite__mapDeps.f]; const [ignored, ...copy] = box; copy[0] = "./last.js";',
+      kept: true,
+    },
+    {
+      file: "introduced-through-conditional-alias.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; const alias = runtimeCondition ? box : {}; alias.cache = __vite__mapDeps.f; box.cache[0] = "./last.js";',
+    },
+    {
+      file: "introduced-through-rest-alias.js",
+      mutation:
+        '__vite__mapDeps([0]); const {...box} = {}; const alias = box; alias.cache = __vite__mapDeps.f; box.cache[0] = "./last.js";',
+    },
+    {
+      file: "defined-through-conditional-alias.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; const alias = runtimeCondition ? box : {}; Object.defineProperty(alias, "cache", {value: __vite__mapDeps.f}); box.cache[0] = "./last.js";',
+    },
+    {
       file: "helper-alias.js",
       mutation: 'const alias = __vite__mapDeps; alias.f = ["./last.js"];',
     },
@@ -741,6 +888,42 @@ const allScenarios = [
       'let box = {f: leftHelper.f}; box = rightHelper; box.f[0] = "./last.js";',
     resolved: [],
     unknown: true,
+  },
+  {
+    file: "nested-container-multiple-owners.js",
+    source:
+      "let leftHelper, rightHelper;\n{\n" +
+      mapDependencies('["./left.js"]', "[0]") +
+      "\nleftHelper = __vite__mapDeps;\n}\n{\n" +
+      mapDependencies('["./right.js"]', "[0]") +
+      "\nrightHelper = __vite__mapDeps;\n}\n" +
+      'const box = {cache: leftHelper.f}; const alias = box; alias.cache.nested = rightHelper.f; box.cache.nested[0] = "./last.js";',
+    resolved: [],
+    unknown: true,
+  },
+  {
+    file: "replaced-helper-cache-owner.js",
+    source:
+      "let leftHelper, rightHelper;\n{\n" +
+      mapDependencies('["./left.js"]', "[0]") +
+      "\nleftHelper = __vite__mapDeps;\n}\n{\n" +
+      mapDependencies('["./right.js"]', "[0]") +
+      "\nrightHelper = __vite__mapDeps;\n}\n" +
+      "leftHelper.f = rightHelper.f;",
+    resolved: ["right.js"],
+    unknown: true,
+  },
+  {
+    file: "helper-metadata-cache-owner.js",
+    source:
+      "let leftHelper, rightHelper;\n{\n" +
+      mapDependencies('["./left.js"]', "[0]") +
+      "\nleftHelper = __vite__mapDeps;\n}\n{\n" +
+      mapDependencies('["./right.js"]', "[0]") +
+      "\nrightHelper = __vite__mapDeps;\n}\n" +
+      "leftHelper.metadata = rightHelper.f;",
+    resolved: ["left.js", "right.js"],
+    unknown: false,
   },
   {
     file: "ambiguous-helper-alias.js",

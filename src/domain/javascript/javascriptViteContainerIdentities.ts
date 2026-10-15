@@ -1,21 +1,55 @@
 import * as t from "@babel/types";
 
-import {
-  semanticStaticPropertyKey,
-  unwrapJavaScriptExpression,
-} from "./javascriptAstValues.js";
+import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
 
 export interface ViteContainerIdentities {
   readonly roots: ReadonlyMap<string, string>;
   readonly detachable: ReadonlySet<string>;
+  readonly unresolved: ReadonlySet<string>;
 }
+
+/** A single top-level assignment also establishes identity once the value exists. */
+const containerInitializer = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+) => {
+  const stable = semanticStableInitializer(binding, state);
+  if (stable !== undefined) return stable;
+  const [initializer] = binding.initializers;
+  if (
+    initializer === undefined ||
+    binding.initializers.length !== 1 ||
+    !binding.definitions.every(
+      ({ kind }) => kind === "variable" || kind === "assignment",
+    ) ||
+    state.conditionallySkippedExpressions.has(initializer.node)
+  )
+    return undefined;
+  let parent = state.parentsByNode.get(initializer.node);
+  if (
+    !t.isAssignmentExpression(parent, { operator: "=" }) ||
+    parent.right !== initializer.node
+  )
+    return undefined;
+  while (parent !== undefined && !t.isProgram(parent)) {
+    if (
+      !t.isAssignmentExpression(parent) &&
+      !t.isExpressionStatement(parent) &&
+      !t.isBlockStatement(parent)
+    )
+      return undefined;
+    parent = state.parentsByNode.get(parent);
+  }
+  return parent === undefined ? undefined : initializer;
+};
 
 /** Definite container aliases share one replacement journal; escaped identities cannot prove detachment. */
 export function* indexViteContainerIdentitiesSteps(
@@ -38,12 +72,12 @@ export function* indexViteContainerIdentitiesSteps(
   };
   for (const binding of state.bindingsById.values()) {
     yield;
-    if (semanticStableInitializer(binding, state) !== undefined)
+    if (containerInitializer(binding, state) !== undefined)
       roots.set(binding.bindingId, binding.bindingId);
   }
   for (const binding of state.bindingsById.values()) {
     yield;
-    const initializer = semanticStableInitializer(binding, state);
+    const initializer = containerInitializer(binding, state);
     if (initializer === undefined) continue;
     const value = unwrapJavaScriptExpression(initializer.node).node;
     const invocation = t.isCallExpression(value)
@@ -51,7 +85,10 @@ export function* indexViteContainerIdentitiesSteps(
       : undefined;
     const assignment =
       invocation?.kind === "known" &&
-      invocation.path.join(".") === "intrinsic.Object.assign";
+      invocation.path[1] === "Object" &&
+      ["assign", "defineProperty", "defineProperties"].includes(
+        invocation.path.at(-1) ?? "",
+      );
     const identity = assignment ? invocation.arguments?.[0] : value;
     if (initializer.projection.length === 0 && t.isIdentifier(identity)) {
       const source = resolveSemanticBindingState(
@@ -74,6 +111,7 @@ export function* indexViteContainerIdentitiesSteps(
     )
       uncertain.add(binding.bindingId);
   }
+  const unresolved = new Set([...uncertain].map(find));
   yield* traverseJavaScriptAstSteps(state.program, {
     enter: (node, parent) => {
       if (
@@ -88,8 +126,7 @@ export function* indexViteContainerIdentitiesSteps(
       if (
         (t.isMemberExpression(parent) ||
           t.isOptionalMemberExpression(parent)) &&
-        parent.object === node &&
-        semanticStaticPropertyKey(parent.property, parent.computed) === "f"
+        parent.object === node
       )
         return;
       if (
@@ -101,10 +138,13 @@ export function* indexViteContainerIdentitiesSteps(
         const invocation = interop.intrinsicInvocation(parent);
         if (
           invocation?.kind === "known" &&
-          invocation.path.join(".") === "intrinsic.Object.assign"
+          invocation.path[1] === "Object" &&
+          ["assign", "defineProperty", "defineProperties"].includes(
+            invocation.path.at(-1) ?? "",
+          )
         ) {
           const index = invocation.arguments?.indexOf(node) ?? -1;
-          if (index > 0) return;
+          if (index > 0 && invocation.path.at(-1) === "assign") return;
           const container = state.parentsByNode.get(parent);
           if (
             index === 0 &&
@@ -125,6 +165,7 @@ export function* indexViteContainerIdentitiesSteps(
   }
   return {
     roots: identities,
+    unresolved,
     detachable: new Set(
       [...identities.values()].filter((root) => !uncertainRoots.has(root)),
     ),

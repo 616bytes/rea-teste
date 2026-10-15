@@ -481,6 +481,120 @@ it("projects JavaScript summary and preserves selected module observations", () 
   });
 });
 
+it("projects typed module facts without source bodies and keeps source coverage independent of paging", () => {
+  const analysis = analysisViewJavaScriptAnalysisWithSource();
+  const parent = javascriptParent(analysis);
+  const input = inspectAnalysisViewInputSchema.parse({
+    source: { kind: "retained-evidence", evidence_id: parent.evidenceId },
+    view: {
+      kind: "javascript",
+      collection: "modules",
+      projection: "references",
+      where: { path: "renderer.js" },
+      limit: 1,
+    },
+  });
+  const projected = projectAnalysisView(parent, input.view);
+  if (!projected.ok) throw projected.error;
+  if (projected.value.kind !== "javascript")
+    throw new Error("expected JavaScript view");
+  const node = analysis.graph.nodes[0];
+  if (!node) throw new Error("missing module");
+  expect(projected.value.rows).toEqual([
+    {
+      node_id: node.node_id,
+      kind: node.kind,
+      path: "renderer.js",
+      identity: node.identity,
+      retained_source_range_count: node.observations.filter(
+        ({ evidence }) =>
+          evidence.location.available &&
+          evidence.location.value.kind === "source-range",
+      ).length,
+      basis: [
+        ...new Map(
+          node.observations.map(
+            ({ evidence: { authority, state, confidence } }) => [
+              `${authority}:${state}:${confidence}`,
+              { authority, state, confidence },
+            ],
+          ),
+        ).values(),
+      ],
+    },
+  ]);
+  expect(projected.value.coverage).toMatchObject({ total: 1, exhausted: true });
+  expect(projected.value.source_coverage).toMatchObject({
+    application: analysis.graph.coverage,
+    semantic: { status: analysis.semantic_graph.coverage.status },
+  });
+  expect(JSON.stringify(projected.value.rows)).not.toMatch(
+    /secret|should not leak|observations/,
+  );
+  const row = projected.value.rows[0];
+  if (!row) throw new Error("missing reference");
+  const retainedIdentity = structuredClone(node.identity);
+  if (row.identity.strategy !== "content-digest")
+    throw new Error("expected digest identity");
+  row.identity.sha256 = "e".repeat(64);
+  expect(node.identity).toEqual(retainedIdentity);
+  const empty = projectAnalysisView(parent, {
+    ...input.view,
+    kind: "javascript",
+    collection: "modules",
+    projection: "references",
+    where: { kind: "javascript-module" },
+    offset: 0,
+    limit: 1,
+  });
+  if (!empty.ok) throw empty.error;
+  expect(empty.value).toMatchObject({
+    rows: [],
+    coverage: { total: 0, exhausted: true },
+  });
+});
+
+it("validates typed module selectors without coercing null or empty paths", () => {
+  const source = {
+    kind: "retained-evidence",
+    evidence_id: javascriptParent().evidenceId,
+  };
+  const view = {
+    kind: "javascript",
+    collection: "modules",
+    projection: "references",
+  };
+  for (const path of [null, "", "renderer.js"])
+    expect(
+      inspectAnalysisViewInputSchema.safeParse({
+        source,
+        view: { ...view, where: { path } },
+      }).success,
+    ).toBe(true);
+  for (const where of [
+    { path: 1 },
+    { kind: "electron-main" },
+    { glob: "*.js" },
+  ])
+    expect(
+      inspectAnalysisViewInputSchema.safeParse({
+        source,
+        view: { ...view, where },
+      }).success,
+    ).toBe(false);
+  expect(
+    projectAnalysisView(layoutParent(), {
+      ...view,
+      kind: "javascript",
+      collection: "modules",
+      projection: "references",
+      where: {},
+      offset: 0,
+      limit: 1,
+    }).ok,
+  ).toBe(false);
+});
+
 it("rejects ambiguous JavaScript module paths with candidate node ids", () => {
   const analysis = analysisViewJavaScriptAnalysis();
   const first = analysis.graph.nodes[0];
@@ -644,6 +758,24 @@ it("pages actual modules, including unknown and empty paths, without unrelated r
     collection: "modules",
     selector: { path: "" },
   });
+  for (const [path, kind] of [
+    [null, "javascript-module"],
+    ["", "source-module"],
+  ] as const) {
+    const references = projectAnalysisView(parent, {
+      kind: "javascript",
+      collection: "modules",
+      projection: "references",
+      where: { path },
+      offset: 0,
+      limit: 1,
+    });
+    if (!references.ok) throw references.error;
+    expect(references.value).toMatchObject({
+      rows: [{ path, kind }],
+      coverage: { total: 1, exhausted: true },
+    });
+  }
   expect(emptyPath.ok).toBe(true);
   const role = nodes.find((node) => node.kind === "electron-renderer");
   if (role === undefined) throw new Error("missing role");

@@ -7,6 +7,7 @@ import { jsonObjectSchema, type JsonValue } from "../jsonValue.js";
 import type { JavaScriptApplicationAnalysisResult } from "../javascript/javascriptApplicationAnalysis.js";
 import type { ApplicationNode } from "../javascript/javascriptApplicationGraphSchemas.js";
 import { err, ok, type Result } from "../result.js";
+import type { JavaScriptModuleReference } from "./javascriptModuleReferences.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage as completeCoverage,
@@ -127,6 +128,36 @@ const moduleItem = (node: ApplicationNode): JsonValue => ({
     },
   })),
 });
+
+const moduleReference = (
+  node: ApplicationNode,
+  kind: JavaScriptModuleReference["kind"],
+  path: string | null,
+): JavaScriptModuleReference => {
+  let ranges = 0;
+  const support = new Map<string, JavaScriptModuleReference["basis"][number]>();
+  for (const { evidence } of node.observations) {
+    if (
+      evidence.location.available &&
+      evidence.location.value.kind === "source-range"
+    )
+      ranges += 1;
+    const { authority, state, confidence } = evidence;
+    support.set(`${authority}:${state}:${confidence}`, {
+      authority,
+      state,
+      confidence,
+    });
+  }
+  return {
+    node_id: node.node_id,
+    kind,
+    path,
+    identity: node.identity,
+    retained_source_range_count: ranges,
+    basis: [...support.values()],
+  };
+};
 
 const applicationUnknownCount = (
   analysis: JavaScriptApplicationAnalysisResult,
@@ -249,13 +280,57 @@ export const projectJavaScriptApplicationView = (
   analysis: JavaScriptApplicationAnalysisResult,
   view: Exclude<AnalysisViewRequest, { kind: "api-surface" }>,
 ): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "item" && view.kind !== "page")
+  if (
+    view.kind !== "summary" &&
+    view.kind !== "item" &&
+    view.kind !== "page" &&
+    view.kind !== "javascript"
+  )
     return err(
       jsIncompatible(
-        "JavaScript application Evidence supports summary, module item or module page views.",
+        "JavaScript application Evidence supports summary, module item, module page or typed JavaScript reference views.",
       ),
     );
   const shared = parentFields(parent, analysis);
+  if (view.kind === "javascript") {
+    // Scan once and allocate only the requested page, not all matching modules
+    // or source-range arrays. Retained graph order is immutable and canonical.
+    const rows: JavaScriptModuleReference[] = [];
+    let total = 0;
+    for (const node of analysis.graph.nodes) {
+      if (
+        node.kind !== "javascript-asset" &&
+        node.kind !== "javascript-module" &&
+        node.kind !== "source-module"
+      )
+        continue;
+      if (view.where.kind !== undefined && node.kind !== view.where.kind)
+        continue;
+      const path = javascriptModulePath(node);
+      if (view.where.path !== undefined && path !== view.where.path) continue;
+      if (total >= view.offset && rows.length < view.limit)
+        rows.push(moduleReference(node, node.kind, path));
+      total += 1;
+    }
+    const { families: _families, ...semantic } =
+      analysis.semantic_graph.coverage;
+    return ok({
+      ...shared,
+      kind: "javascript",
+      view,
+      rows,
+      source_coverage: {
+        ...(analysis.source_selection === undefined
+          ? {}
+          : { source_selection: analysis.source_selection }),
+        application: analysis.graph.coverage,
+        semantic,
+        application_unknown_count: applicationUnknownCount(analysis),
+        semantic_unknown_count: analysis.semantic_graph.unknowns.length,
+      },
+      coverage: pageCoverage(view.offset, rows.length, total),
+    });
+  }
   const modules = moduleEntries(analysis.graph.nodes);
   if (view.kind === "summary")
     return ok({

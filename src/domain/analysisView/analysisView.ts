@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  javascriptModuleReferencesRequestSchema,
+  javascriptModuleReferenceSchema,
+  javascriptModuleSourceCoverageSchema,
+} from "./javascriptModuleReferences.js";
 import { javaScriptSourceSelectionSchema } from "../javascript/javascriptSourceSelection.js";
 
 import {
@@ -216,6 +221,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   facetViewSchema,
   itemViewSchema,
   pageViewSchema,
+  javascriptModuleReferencesRequestSchema,
   nativeViewSchema,
   inventoryViewSchema,
   wasmViewRequestSchema,
@@ -239,12 +245,15 @@ const inlineEvidenceInputSchema = z.unknown().nonoptional();
 inlineEvidenceInputSchema._zod.processJSONSchema =
   evidenceSchema._zod.processJSONSchema;
 
+/** Exact same-session retained reference, authenticated by the application. */
+export const retainedAnalysisViewSourceSchema = z.strictObject({
+  kind: z.literal("retained-evidence"),
+  evidence_id: prefixedDigestSchema("ev"),
+});
+
 /** Unauthenticated inline input or an exact same-session retained reference. */
 export const analysisViewSourceSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("retained-evidence"),
-    evidence_id: prefixedDigestSchema("ev"),
-  }),
+  retainedAnalysisViewSourceSchema,
   z.strictObject({
     kind: z.literal("inline"),
     evidence: inlineEvidenceInputSchema,
@@ -377,6 +386,16 @@ export const javascriptApplicationSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   summary: javascriptSummarySchema,
   parent_operation: z.literal("analyze_javascript_application"),
+});
+
+/** Typed reference page; full item observations remain available separately. */
+export const javascriptModuleReferencesViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("javascript"),
+  view: javascriptModuleReferencesRequestSchema,
+  parent_operation: z.literal("analyze_javascript_application"),
+  rows: z.array(javascriptModuleReferenceSchema),
+  source_coverage: javascriptModuleSourceCoverageSchema,
 });
 
 /** Exact summary carrier for artifact inspection's optional delivery contract. */
@@ -527,6 +546,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     items: z.array(jsonValueSchema),
     ...viewResultBase,
   }),
+  javascriptModuleReferencesViewResultSchema,
   z.strictObject({
     kind: z.literal("native"),
     view: nativeViewSchema,
@@ -647,6 +667,10 @@ export type UnsignedAnalysisView =
   | Omit<Extract<AnalysisViewResult, { readonly kind: "facet" }>, "view_digest">
   | Omit<Extract<AnalysisViewResult, { readonly kind: "item" }>, "view_digest">
   | Omit<Extract<AnalysisViewResult, { readonly kind: "page" }>, "view_digest">
+  | Omit<
+      Extract<AnalysisViewResult, { readonly kind: "javascript" }>,
+      "view_digest"
+    >
   | Omit<
       Extract<AnalysisViewResult, { readonly kind: "native" }>,
       "view_digest"

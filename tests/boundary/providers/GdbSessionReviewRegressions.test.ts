@@ -7,7 +7,10 @@ import { afterEach, expect, it } from "vitest";
 
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
-import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
+import {
+  cleanupOwnedProcessGroup,
+  type ProcessCleanupResult,
+} from "../../../src/process/ProcessOwnership.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { createProviderSpawnTracker } from "../../support/gdbProviderSpawnTracking.js";
@@ -504,7 +507,7 @@ afterEach(async () => {
       .splice(0)
       .map((manager) => manager.closeAll().catch(() => undefined)),
   );
-  providerSpawns.killSurvivors();
+  expect(await providerSpawns.killSurvivors()).toEqual([]);
   if (directory !== undefined)
     await rm(directory, { recursive: true, force: true });
   directory = undefined;
@@ -1211,3 +1214,24 @@ setTimeout(() => process.exit(0), 250);
     }
   },
 );
+
+it("cleans recorded provider ownership by identity instead of a raw PID", async () => {
+  const cleaned: string[] = [];
+  const tracker = createProviderSpawnTracker(
+    async (ownership): Promise<ProcessCleanupResult> => {
+      cleaned.push(`${ownership.runId}:${ownership.leaderPid}`);
+      return { cleaned: true, signaled: false };
+    },
+  );
+  const spawned = await tracker.spawnProcess({
+    runId: "tracker-identity-run",
+    command: process.execPath,
+    arguments: ["-e", ""],
+  });
+
+  expect(cleaned).toEqual([]);
+  expect(await tracker.killSurvivors()).toEqual([]);
+  expect(cleaned).toEqual([
+    `tracker-identity-run:${String(spawned.ownership.leaderPid)}`,
+  ]);
+});

@@ -291,6 +291,13 @@ interface GdbSession {
   commandTail: Promise<void>;
   pendingCommandCount: number;
   protocolError: string | undefined;
+  /**
+   * Set when the caller abandoned the active command (cancel or timeout). New
+   * commands stay refused, but the MI framing is intact, so the verified detach
+   * proof may still run: abandoning a command must never make the owned session
+   * impossible to stop.
+   */
+  commandAbandoned: string | undefined;
   recentRecordsTruncated: boolean;
 }
 
@@ -572,6 +579,7 @@ export class GdbSessionManager {
       commandTail: Promise.resolve(),
       pendingCommandCount: 0,
       protocolError: undefined,
+      commandAbandoned: undefined,
       recentRecordsTruncated: false,
     };
     launched.process.stdout?.on("data", (chunk: string | Buffer) =>
@@ -893,7 +901,8 @@ export class GdbSessionManager {
       session === undefined ||
       !session.ready ||
       session.exited ||
-      session.protocolError !== undefined
+      session.protocolError !== undefined ||
+      session.commandAbandoned !== undefined
     )
       return err(
         new AnalysisInputError("gdb_console", undefined, [
@@ -909,7 +918,11 @@ export class GdbSessionManager {
       const completed = await this.#serialize(
         session,
         async () => {
-          if (session.exited || session.protocolError !== undefined)
+          if (
+            session.exited ||
+            session.protocolError !== undefined ||
+            session.commandAbandoned !== undefined
+          )
             return err(new AnalysisInputError("gdb_console"));
           session.noInferiorVerified = false;
           session.knownInferiorIdentities.clear();
@@ -1066,7 +1079,10 @@ export class GdbSessionManager {
       session_id: session.id,
       mi_version: session.miVersion,
       state:
-        session.exited || session.protocolError !== undefined || !session.ready
+        session.exited ||
+        session.protocolError !== undefined ||
+        session.commandAbandoned !== undefined ||
+        !session.ready
           ? "closed"
           : "ready",
       recent_mi_records: [...session.lines],
@@ -1551,10 +1567,9 @@ export class GdbSessionManager {
     if (session.noInferiorVerified) return { status: "no-inferior" };
     if (session.exited)
       throw new Error("GDB exited before inferior state could be verified.");
-    // A new MI inspection replaces the old snapshot. If this read is
-    // incomplete, malformed, or reports multiple inferiors, no earlier PID
-    // can stand in for the current unknown inventory.
-    session.knownInferiorIdentities.clear();
+    // A refused or incomplete read leaves the last verified identities in place:
+    // otherwise a retained session could never be settled once the debugger
+    // exits on its own.
     if (
       session.protocolError !== undefined ||
       session.pending.size > 0 ||
@@ -1573,6 +1588,9 @@ export class GdbSessionManager {
       !/^\d+\^done(?:,|$)/u.test(groups.mi)
     )
       throw new Error("GDB could not confirm its inferior state.");
+    // A new MI inspection replaces the old snapshot. If it reports multiple
+    // inferiors, no earlier PID can stand in for the current unknown inventory.
+    session.knownInferiorIdentities.clear();
     const inferiorPids = gdbThreadGroupPids(groups.mi);
     if (inferiorPids?.length === 0) {
       session.knownInferiorIdentities.clear();
@@ -1703,7 +1721,7 @@ export class GdbSessionManager {
       let pending!: PendingCommand;
       const timer = setTimeout(() => {
         session.pending.delete(token);
-        session.protocolError =
+        session.commandAbandoned =
           "A GDB MI command timed out; untagged stream output can no longer be safely correlated with later commands.";
         pending.cleanup();
         const partial: GdbCommandResult = {
@@ -1865,7 +1883,7 @@ export class GdbSessionManager {
           ],
         });
         session.pending.delete(token);
-        session.protocolError =
+        session.commandAbandoned =
           "A GDB MI command was cancelled; owned-session shutdown was requested because output correlation can no longer be guaranteed.";
         void this.#stopDebuggerOnly(session).then(
           (stopped) => {
@@ -1999,6 +2017,27 @@ export const miStringField = (
     : undefined;
 };
 
+/**
+ * @internal Console commands that cannot be audited before one-shot execution.
+ * Each one either runs arbitrary text (`eval`, `pipe`), hands the command to an
+ * interpreter whose language this classifier cannot read (`interpreter`,
+ * `interpreter-exec`, `source`), or defines behaviour used by later commands
+ * (`define`, `alias`). Wrapping a blocked command in one of them would otherwise
+ * bypass the check, so the whole form is refused.
+ */
+const UNAUDITABLE_ONE_SHOT_COMMANDS = [
+  "alias",
+  "define",
+  "eval",
+  "interpreter",
+  "interpreter-exec",
+  "pipe",
+  "python",
+  "python-interactive",
+  "shell",
+  "source",
+];
+
 /** @internal Classify commands that can invalidate the configured output sink. */
 export const gdbOneShotCommandMayInvalidateDetachProof = (
   command: string,
@@ -2007,19 +2046,18 @@ export const gdbOneShotCommandMayInvalidateDetachProof = (
   const firstToken = /^\s*([^\s;]+)/u.exec(command)?.[1]?.toLowerCase();
   if (
     firstToken !== undefined &&
-    (["source", "define", "alias", "shell"].some((name) =>
+    (UNAUDITABLE_ONE_SHOT_COMMANDS.some((name) =>
       name.startsWith(firstToken),
     ) ||
       // `!command` is shell's alias.
-      firstToken.startsWith("!") ||
-      firstToken === "py" ||
-      "python".startsWith(firstToken))
+      firstToken.startsWith("!"))
   )
     return true;
   // One-shot execution cannot establish which shell/GDB context interprets
-  // redirections, nor safely track multiline command definitions.
-  // A trailing `&` can leave a background child that outlives the debugger.
-  return /[<>]{1,2}|&>|[\r\n;]|&\s*$/u.test(command);
+  // redirections or pipes, nor safely track multiline command definitions, nor
+  // audit a command a console interpreter would re-parse. A trailing `&` can
+  // leave a background child that outlives the debugger.
+  return /[<>]{1,2}|&>|\||[\r\n;]|&\s*$/u.test(command);
 };
 
 /** @internal Classify commands that can invalidate the configured output sink. */

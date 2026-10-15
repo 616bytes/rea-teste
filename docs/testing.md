@@ -1350,8 +1350,9 @@ close. Every observation and an explicit unknown list are written to
 established. Its disposable CI runner installs GDB and binutils, and the
 distribution's Rizin when the distribution provides one; otherwise the receipt
 records Rizin as unknown. Windows and macOS are not covered. The objdump
-`architectures` capability probe is reachable through MCP only, because the
-one-shot CLI enum omits it.
+`architectures` capability probe runs through the pathless
+`list-objdump-architectures` CLI command, because the one-shot
+`inspect-with-objdump` enumeration omits `architectures`.
 
 ### Recorded crash evidence
 

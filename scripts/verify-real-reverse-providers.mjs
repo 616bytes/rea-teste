@@ -26,6 +26,10 @@ const requested = process.argv
   .filter((value) => !value.startsWith("-"));
 const providers =
   requested.length === 0 ? ["objdump", "rizin", "gdb"] : requested;
+const skippedProviders = process.argv
+  .slice(2)
+  .filter((value) => value.startsWith("--skipped="))
+  .map((value) => value.slice("--skipped=".length));
 const receiptPath = join(root, "reverse-providers-real.json");
 const receipt = {
   ran_at_utc: new Date().toISOString(),
@@ -153,7 +157,7 @@ const verifyObjdump = async (fixture, expectedDigest) => {
     "disassemble_all",
   ]) {
     const evidence = cli(["inspect-with-objdump", fixture, operation]);
-    const result = evidence.raw_result ?? {};
+    const result = evidence.normalized_result ?? {};
     observed.operations[operation] = {
       exit_code: result.exit_code,
       stdout_bytes:
@@ -182,24 +186,30 @@ const verifyObjdump = async (fixture, expectedDigest) => {
       JSON.stringify(evidence.parameters),
     );
   }
-  if (process.argv.includes("--architectures")) {
-    observed.architectures = cli([
-      "inspect-with-objdump",
-      fixture,
-      "architectures",
-    ]).raw_result;
-  } else {
-    receipt.unknowns.push(
-      "objdump architectures capability probing is exposed through MCP only; the CLI enum omits it",
-    );
-  }
+  const architectures = cli(["list-objdump-architectures"]).normalized_result ?? {};
+  observed.architectures = {
+    exit_code: architectures.exit_code,
+    completion_status: architectures.completion_status,
+    stdout_bytes:
+      typeof architectures.stdout === "string"
+        ? architectures.stdout.length
+        : 0,
+  };
+  check(
+    "objdump reported its architectures through the pathless CLI command",
+    architectures.exit_code === 0 &&
+      architectures.completion_status === "complete" &&
+      typeof architectures.stdout === "string" &&
+      architectures.stdout.length > 0,
+    JSON.stringify(observed.architectures),
+  );
 };
 
 const verifyRizin = async (fixture, expectedDigest) => {
   const observed = { version: firstLine("rizin", ["-v"]) };
   receipt.providers.rizin = observed;
   const evidence = cli(["execute-rizin-command", fixture, "iI"]);
-  const result = evidence.raw_result ?? {};
+  const result = evidence.normalized_result ?? {};
   observed.operation = {
     exit_code: result.exit_code,
     stdout_head: String(result.stdout ?? "")
@@ -246,10 +256,14 @@ const verifyGdb = async (fixture, expectedDigest) => {
     stderr: "pipe",
   });
   const client = new Client({ name: "rea-real-reverse-tools", version: "1" });
-  await client.connect(transport);
-  const { helper, path: inferiorTty } = await openInferiorTty();
-  observed.inferior_tty = inferiorTty;
+  let helper;
+  let inferiorTty;
   try {
+    await client.connect(transport);
+    const terminal = await openInferiorTty();
+    helper = terminal.helper;
+    inferiorTty = terminal.path;
+    observed.inferior_tty = inferiorTty;
     const started = structured(
       await callTool(client, "start_gdb_session", {
         inferior_tty: inferiorTty,
@@ -263,30 +277,65 @@ const verifyGdb = async (fixture, expectedDigest) => {
       JSON.stringify(started),
     );
     const sessionId = started.session_id;
-    if (typeof sessionId !== "string") return;
+    if (typeof sessionId !== "string") {
+      receipt.unknowns.push(
+        "gdb did not return a session identifier; this lane closed no session",
+      );
+      return;
+    }
 
-    for (const command of [
-      `file ${fixture}`,
-      "break main",
-      "run",
-      "info registers rip",
-    ]) {
+    const expectations = [
+      { command: `file ${fixture}`, terminal: /^\d+\^done(?:,|$)/u },
+      { command: "break main", terminal: /^\d+\^done(?:,|$)/u },
+      { command: "run", terminal: /^\d+\^running(?:,|$)/u },
+      { command: "info registers rip", terminal: /^\d+\^done(?:,|$)/u },
+    ];
+    observed.commands = {};
+    for (const { command, terminal } of expectations) {
       const response = await callTool(client, "gdb_console", {
         session_id: sessionId,
         command,
       });
-      const result = structured(response).raw_result ?? {};
+      const result = structured(response).normalized_result ?? {};
+      observed.commands[command] = {
+        mi: result.mi,
+        completion_status: result.completion_status,
+        output_truncated: result.output_truncated,
+      };
       check(
-        `gdb console ran ${JSON.stringify(command)}`,
+        `gdb console resolved ${JSON.stringify(command)} with the expected MI class`,
         response.isError !== true &&
           typeof result.mi === "string" &&
-          result.mi.length > 0,
-        JSON.stringify({
-          mi: result.mi,
-          console: result.console?.slice(0, 60),
-        }),
+          terminal.test(result.mi) &&
+          !/^\d+\^error(?:,|$)/u.test(result.mi) &&
+          result.completion_status === "complete" &&
+          result.output_truncated === false,
+        JSON.stringify(observed.commands[command]),
       );
+      if (command === "run")
+        check(
+          "gdb reported the interrupted inferior after run",
+          Array.isArray(result.records) &&
+            result.records.some((line) => String(line).startsWith("*stopped")),
+          JSON.stringify((result.records ?? []).slice(-4)),
+        );
     }
+
+    const rejected = await callTool(client, "gdb_console", {
+      session_id: sessionId,
+      command: "rea-verification-unknown-command",
+    });
+    const rejectedResult = structured(rejected).normalized_result ?? {};
+    observed.negative_control = {
+      mi: rejectedResult.mi,
+      completion_status: rejectedResult.completion_status,
+    };
+    check(
+      "gdb reported an unknown console command as an MI error record",
+      /^\d+\^error(?:,|$)/u.test(String(rejectedResult.mi ?? "")) &&
+        rejectedResult.completion_status === "complete",
+      JSON.stringify(observed.negative_control),
+    );
 
     const status = structured(
       await callTool(client, "gdb_session_status", { session_id: sessionId }),
@@ -314,10 +363,10 @@ const verifyGdb = async (fixture, expectedDigest) => {
       JSON.stringify(closed),
     );
   } finally {
-    await client.close();
-    await transport.close();
-    helper.stdin?.end();
-    helper.kill("SIGKILL");
+    await client.close().catch(() => undefined);
+    await transport.close().catch(() => undefined);
+    helper?.stdin?.end();
+    helper?.kill("SIGKILL");
   }
 
   await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
@@ -343,7 +392,7 @@ const verifyGdb = async (fixture, expectedDigest) => {
       "--inferior-tty",
       controlTty.path,
     ]);
-    observed.one_shot.accepted = (accepted.raw_result ?? {}).completion_status;
+    observed.one_shot.accepted = (accepted.normalized_result ?? {}).completion_status;
     check(
       "gdb one-shot accepted an ordinary console command",
       typeof accepted.evidence_id === "string",
@@ -413,6 +462,19 @@ try {
       receipt.unknowns.push(`unknown provider argument ${provider}`);
       failures += 1;
     }
+  }
+
+  // A provider the host cannot supply stays visible as an explicit unknown: an
+  // absent entry must never read as verified behaviour.
+  for (const entry of skippedProviders) {
+    const [provider, ...reason] = entry.split(":");
+    const explanation = reason.join(":") || "not installed on this host";
+    receipt.providers[provider] = {
+      status: "skipped",
+      reason: explanation,
+      version: null,
+    };
+    receipt.unknowns.push(`${provider}: ${explanation}`);
   }
 } catch (cause) {
   receipt.unknowns.push(

@@ -1139,7 +1139,7 @@ afterEach(async () => {
       .splice(0)
       .map((manager) => manager.closeAll().catch(() => undefined)),
   );
-  providerSpawns.killSurvivors();
+  expect(await providerSpawns.killSurvivors()).toEqual([]);
   if (directory !== undefined)
     await rm(directory, { recursive: true, force: true });
   directory = undefined;

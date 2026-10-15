@@ -129,6 +129,22 @@ it("retains constructor captures, ws imports and template keys with their graph 
 });
 
 const socketExecutionPhaseSources = {
+  "tag-eager.js":
+    '(function () { new Socket("wss://example.test/tdz-tag"); })``; const Socket = globalThis.WebSocket;',
+  "tag-generator.js":
+    '(function* () { new Socket("wss://example.test/tag-generator"); })``; const Socket = globalThis.WebSocket;',
+  "template.js":
+    '(async () => { `${await ready}`; new Socket("wss://example.test/template-continuation"); })(); const Socket = globalThis.WebSocket;',
+  "iterable.js":
+    '(async () => { for (const item of await ready) {} new Socket("wss://example.test/iterable-continuation"); })(); const Socket = globalThis.WebSocket;',
+  "iterable-body.js":
+    '(async () => { for (const key in await ready) { new Socket("wss://example.test/iterable-body"); } })(); const Socket = globalThis.WebSocket;',
+  "assignment-capture.js":
+    'let holder; const Socket = (holder = globalThis.WebSocket); new Socket("wss://example.test/assignment-capture");',
+  "numeric-object.js":
+    'const [Socket] = { 0: globalThis.WebSocket }; new Socket("wss://example.test/tdz-noniterable");',
+  "object-key.js":
+    'const { 0: Socket } = { 0: globalThis.WebSocket }; new Socket("wss://example.test/object-key");',
   "wrapped.ts":
     '(function () { new Socket("wss://example.test/eager-wrapper"); } as any)();\nconst Socket = globalThis.WebSocket;',
   "fields.js":
@@ -230,6 +246,7 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/array-continuation",
       "wss://example.test/array-projection",
       "wss://example.test/assignment",
+      "wss://example.test/assignment-capture",
       "wss://example.test/branch-continuation",
       "wss://example.test/compound-continuation",
       "wss://example.test/computed-key",
@@ -240,17 +257,28 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/generator-body",
       "wss://example.test/import-alias",
       "wss://example.test/import-equals-member",
+      "wss://example.test/iterable-body",
+      "wss://example.test/iterable-continuation",
       "wss://example.test/loop-continuation",
       "wss://example.test/member-await",
       "wss://example.test/object-continuation",
+      "wss://example.test/object-key",
       "wss://example.test/optional-call",
       "wss://example.test/optional-capture",
       "wss://example.test/pending-initialized",
       "wss://example.test/selected-branch",
       "wss://example.test/sequence-capture",
       "wss://example.test/skipped-wait",
+      "wss://example.test/tag-generator",
+      "wss://example.test/template-continuation",
     ]);
     for (const [path, source, line] of [
+      ["assignment-capture", "assignment-capture.js", 1],
+      ["iterable-body", "iterable-body.js", 1],
+      ["iterable-continuation", "iterable.js", 1],
+      ["object-key", "object-key.js", 1],
+      ["tag-generator", "tag-generator.js", 1],
+      ["template-continuation", "template.js", 1],
       ["assignment", "await-inputs.js", 1],
       ["argument-field", "await-inputs.js", 2],
       ["argument-constructor", "await-inputs.js", 3],

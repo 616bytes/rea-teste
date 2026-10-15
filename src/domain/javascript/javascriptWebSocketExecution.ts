@@ -3,6 +3,7 @@ import * as t from "@babel/types";
 import {
   unwrapJavaScriptExpression,
   semanticStaticPropertyName,
+  javaScriptExactResultOperand,
 } from "./javascriptAstValues.js";
 import { javaScriptOptionalOperandsMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
@@ -25,11 +26,8 @@ const webSocketOuterExpression = (
   for (;;) {
     const parent = state.parentsByNode.get(current);
     if (
-      (t.isSequenceExpression(parent) &&
-        parent.expressions.at(-1) === current) ||
-      (t.isAssignmentExpression(parent) &&
-        parent.operator === "=" &&
-        parent.right === current)
+      parent !== undefined &&
+      javaScriptExactResultOperand(parent) === current
     ) {
       current = parent;
       identity = parent;
@@ -52,6 +50,7 @@ const webSocketImmediateInvocation = (
   | t.CallExpression
   | t.OptionalCallExpression
   | t.NewExpression
+  | t.TaggedTemplateExpression
   | undefined => {
   let callee = webSocketOuterExpression(node, state);
   for (;;) {
@@ -72,7 +71,9 @@ const webSocketImmediateInvocation = (
       callee = webSocketOuterExpression(invocation, state);
       invocation = state.parentsByNode.get(callee);
     }
-    if (
+    if (t.isTaggedTemplateExpression(invocation)) {
+      if (invocation.tag !== callee) return undefined;
+    } else if (
       (!t.isCallExpression(invocation) &&
         !t.isOptionalCallExpression(invocation) &&
         !t.isNewExpression(invocation)) ||
@@ -127,6 +128,8 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
       ...node.body.body.flatMap(webSocketStaticInitializers),
     ];
   if (t.isSequenceExpression(node)) return node.expressions;
+  if (t.isTemplateLiteral(node)) return node.expressions;
+  if (t.isTaggedTemplateExpression(node)) return [node.tag, node.quasi];
   if (t.isArrayExpression(node))
     return node.elements.filter((element) => element !== null);
   if (t.isObjectExpression(node)) return node.properties;
@@ -138,6 +141,7 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   // Every normally completed loop evaluates its initial test, but its body
   // and updates may never execute. A do/while body precedes its first test.
   if (t.isWhileStatement(node)) return [node.test];
+  if (t.isForOfStatement(node) || t.isForInStatement(node)) return [node.right];
   if (t.isForStatement(node))
     return [node.init, node.test].filter((element) => element != null);
   if (t.isYieldExpression(node) && node.argument != null)
@@ -214,6 +218,11 @@ const webSocketPrecedingSuspension = (
     return webSocketCompletedSuspension(parent.test, state);
   if (t.isLogicalExpression(parent) && child === parent.right)
     return webSocketCompletedSuspension(parent.left, state);
+  if (
+    (t.isForOfStatement(parent) || t.isForInStatement(parent)) &&
+    (child === parent.body || child === parent.left)
+  )
+    return webSocketCompletedSuspension(parent.right, state);
   if (
     (t.isWhileStatement(parent) || t.isForStatement(parent)) &&
     (child === parent.body ||

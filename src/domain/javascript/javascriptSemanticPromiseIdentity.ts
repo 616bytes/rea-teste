@@ -1,6 +1,9 @@
 import * as t from "@babel/types";
 
-import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import {
+  unwrapJavaScriptExpression,
+  javaScriptExactResultOperand,
+} from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -26,14 +29,9 @@ export const semanticPromiseResultIdentity = (
   let node = rawNode;
   for (;;) {
     node = unwrapJavaScriptExpression(node).node;
-    if (t.isSequenceExpression(node)) {
-      const result = node.expressions.at(-1);
-      if (result === undefined) return undefined;
+    const result = javaScriptExactResultOperand(node);
+    if (result !== undefined) {
       node = result;
-      continue;
-    }
-    if (t.isAssignmentExpression(node) && node.operator === "=") {
-      node = node.right;
       continue;
     }
     if (!t.isIdentifier(node)) return { node, aliases };

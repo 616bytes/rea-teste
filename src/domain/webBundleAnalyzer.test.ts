@@ -939,6 +939,105 @@ describe("web bundle promise aliases and object evaluation", () => {
   );
 });
 
+describe("web bundle projection kinds, tags and result operands", () => {
+  it.each([
+    "const [Socket] = { 0: globalThis.WebSocket };",
+    "const [[Socket]] = [{ 0: globalThis.WebSocket }];",
+    "const { nested: [Socket] } = { nested: { 0: globalThis.WebSocket } };",
+  ])("does not substitute object properties for iteration: %s", (capture) => {
+    expect(
+      socketEndpoints(`${capture} new Socket("wss://example.test/invalid");`),
+    ).toEqual([[], []]);
+  });
+
+  it.each([
+    "const { 0: Socket } = { 0: globalThis.WebSocket };",
+    'const { "0": Socket } = [globalThis.WebSocket];',
+    "let holder; const Socket = (holder = globalThis.WebSocket);",
+    "let holder; const Socket = ((holder = globalThis.WebSocket) as any);",
+    'let holder; const Socket = (holder = require("ws").WebSocket);',
+    "let holder; const { WebSocket: Socket } = (holder = globalThis);",
+  ])("retains exact property and assignment-result captures: %s", (capture) => {
+    const expected = [
+      { value: "wss://example.test/exact", mechanism: "call:Socket" },
+    ];
+    expect(
+      socketEndpoints(`${capture} new Socket("wss://example.test/exact");`),
+    ).toEqual([expected, expected]);
+  });
+
+  it.each([
+    '(function () { new Socket("wss://example.test/invalid"); })``; const Socket = globalThis.WebSocket;',
+    '(() => new Socket("wss://example.test/invalid"))``; const Socket = globalThis.WebSocket;',
+    '(function () { new Socket("wss://example.test/invalid"); }).call``; const Socket = globalThis.WebSocket;',
+    '(function () { new Socket("wss://example.test/invalid"); }).bind(null)``; const Socket = globalThis.WebSocket;',
+    '((function () { new Socket("wss://example.test/invalid"); }) as any)``; const Socket = globalThis.WebSocket;',
+    '(function* (strings, x = new Socket("wss://example.test/invalid")) {})``; const Socket = globalThis.WebSocket;',
+    '(function* () { new Socket("wss://example.test/invalid"); })``.next(); const Socket = globalThis.WebSocket;',
+    'let holder = 0; const Socket = (holder += globalThis.WebSocket); new Socket("wss://example.test/invalid");',
+    'let holder = class {}; const Socket = (holder ||= globalThis.WebSocket); new Socket("wss://example.test/invalid");',
+  ])("retains eager tag and non-exact assignment boundaries: %s", (source) => {
+    expect(socketEndpoints(source)).toEqual([[], []]);
+  });
+
+  it.each([
+    "`${await ready}`;",
+    "`${await ready}${0}`;",
+    "(function () {})`${await ready}`;",
+    "for (const item of await ready) {}",
+    "for (const key in await ready) {}",
+  ])(
+    "carries mandatory substitutions and iterable evaluation: %s",
+    (prefix) => {
+      const expected = [
+        { value: "wss://example.test/continuation", mechanism: "call:Socket" },
+      ];
+      expect(
+        socketEndpoints(
+          `(async () => { ${prefix} new Socket("wss://example.test/continuation"); })(); const Socket = globalThis.WebSocket;`,
+        ),
+      ).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    'for (const item of await ready) { new Socket("wss://example.test/body"); }',
+    'for (const key in await ready) { new Socket("wss://example.test/body"); }',
+  ])("carries an awaited iterable into the selected body: %s", (body) => {
+    const expected = [
+      { value: "wss://example.test/body", mechanism: "call:Socket" },
+    ];
+    expect(
+      socketEndpoints(
+        `(async () => { ${body} })(); const Socket = globalThis.WebSocket;`,
+      ),
+    ).toEqual([expected, expected]);
+  });
+
+  it("keeps generator tag bodies deferred until resumption", () => {
+    const expected = [
+      { value: "wss://example.test/generator", mechanism: "call:Socket" },
+    ];
+    expect(
+      socketEndpoints(
+        '(function* () { new Socket("wss://example.test/generator"); })``; const Socket = globalThis.WebSocket;',
+      ),
+    ).toEqual([expected, expected]);
+  });
+
+  it.each([
+    "for (const item of []) { await ready; }",
+    "for (const key in {}) { await ready; }",
+    "`${condition && (await ready)}`;",
+  ])("does not promote skipped loop/substitution bodies: %s", (prefix) => {
+    expect(
+      socketEndpoints(
+        `(async () => { ${prefix} new Socket("wss://example.test/invalid"); })(); const Socket = globalThis.WebSocket;`,
+      ),
+    ).toEqual([[], []]);
+  });
+});
+
 describe("web bundle mandatory operands and literal projections", () => {
   it.each(["+=", "**=", "<<="])(
     "retains mandatory waits in %s assignments",

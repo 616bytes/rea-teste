@@ -44,6 +44,17 @@ export const unwrapJavaScriptExpression = (
   return { node: current, depth };
 };
 
+/** Only sequence-final and plain assignment operands are exact result values. */
+export const javaScriptExactResultOperand = (
+  node: t.Node,
+): t.Node | undefined => {
+  node = unwrapJavaScriptExpression(node).node;
+  if (t.isSequenceExpression(node)) return node.expressions.at(-1);
+  return t.isAssignmentExpression(node) && node.operator === "="
+    ? node.right
+    : undefined;
+};
+
 /** Read one syntax-level primitive only when its value is exact. */
 export const readExactJavaScriptLiteral = (
   node: t.Node,
@@ -130,6 +141,9 @@ export const semanticLiteralProperty = (
   key: string | number,
 ): t.Node | undefined => {
   const node = unwrapJavaScriptExpression(rawNode).node;
+  // Numeric projections denote array-pattern iteration, not property lookup.
+  // Object patterns retain string keys, including a numeric property's spelling.
+  if (typeof key === "number" && !t.isArrayExpression(node)) return undefined;
   if (t.isObjectExpression(node))
     return semanticFinalObjectProperty(node, String(key));
   if (!t.isArrayExpression(node)) return undefined;

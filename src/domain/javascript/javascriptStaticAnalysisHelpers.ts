@@ -17,6 +17,7 @@ import {
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
   semanticLiteralProperty,
+  javaScriptExactResultOperand,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
@@ -657,12 +658,9 @@ export const isWebSocketEndpointCandidate = (
       );
     }
     const { root, members } = electronMemberPath(current);
-    if (t.isSequenceExpression(root)) {
-      const result = root.expressions.at(-1);
-      if (
-        result === undefined ||
-        !members.every((key): key is string => typeof key === "string")
-      )
+    const result = javaScriptExactResultOperand(root);
+    if (result !== undefined) {
+      if (!members.every((key): key is string => typeof key === "string"))
         return false;
       if (selectedCapture === undefined && members.length > 0)
         selectedCapture = current;
@@ -735,7 +733,7 @@ export const isWebSocketEndpointCandidate = (
       projected = value;
       projection = projection.slice(1);
     }
-    // Numeric positions are meaningful only on a fresh literal array/object;
+    // Numeric pattern positions require a fresh array; string keys select properties.
     // never infer a mutable aliased array or an unknown/rest projection.
     if (!projection.every((key): key is string => typeof key === "string"))
       return false;

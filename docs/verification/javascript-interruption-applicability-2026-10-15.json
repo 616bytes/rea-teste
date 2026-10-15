@@ -34,7 +34,8 @@
     },
     "cleanup": "Removed AST-only unavailable helper; corrected normal package/JSON/map gap authority and native caller-exclusion scope; metadata progress consumes same scope owner. No parser resumes after interruption.",
     "failure_sharing": "At most5 applicable phase entries per interruption; no persistent cache or freshness assumption.",
-    "public_contract": "Existing CLI/MCP inputs, selection, schemas and effects retained. analysis_status is an additive graph-observation property; corrected provenance/phase values and removal of false native scopes change derived Evidence identities."
+    "public_contract": "Existing CLI/MCP inputs, selection, schemas and effects retained. analysis_status is an additive graph-observation property; corrected provenance/phase values and removal of false native scopes change derived Evidence identities.",
+    "semantic_applicability": "Semantic projection recordUnavailableFile owns JavaScript applicability for full and incremental callers; non-JavaScript files add no semantic nodes, limits or unknowns."
   },
   "baseline_source_sha256": {
     "docs/javascript-artifact-reconstruction.md": "78208db9ec08778d78be295fff7038eeabcd9451f2f9adfc415e7f308614e8d4",
@@ -47,7 +48,9 @@
     "src/application/javascript/JavaScriptArtifactReconstruction.ts": "24108a0365ae106e8aca3657f1d88fee7cfa1a2e3ddd379dc2982505382d0d92",
     "tests/acceptance/applications/javascriptAnalysisLimits.test.ts": "2001849b4917ab7198025bdd17929ad3e4c18fa250408b4d2cd50a2a2fdb0fc4",
     "tests/boundary/filesystem/javascriptArtifactReconstruction.test.ts": "b6a4059f4079cfb1e288fb51a50d79364ea22af0c70681b73e2eff1cd275cc07",
-    "tests/boundary/javascript/javascriptApplicationCancellation.test.ts": "4af48d06f4f78ace504ea441f3e049db67268af72b25b2689c11ae3672798178"
+    "tests/boundary/javascript/javascriptApplicationCancellation.test.ts": "4af48d06f4f78ace504ea441f3e049db67268af72b25b2689c11ae3672798178",
+    "src/application/javascript/JavaScriptSemanticGraphBuilder.ts": "6efe0f4695b76722c6d446dcb88a5cbcef3ba762fa553215473359ef4021cc88",
+    "tests/boundary/filesystem/javascript-applications/javascriptArtifactReconstruction.test.ts": "c14e443a5d7d0dd58de86041cada09da070bbb1b3c572f6e2768b8be0482e8e1"
   },
   "baseline_execution_driver_sources": {
     "revision": "c7f6b8bad1a34d5efb30ff2a017672dea1fcdabb",
@@ -69,7 +72,7 @@
   "final_source_sha256": {
     "docs/javascript-artifact-reconstruction.md": "58c472f61537f7aeca477440712a44a12dc020554f966cfdf7d5c1ea71166895",
     "scripts/verify/javascript/native-handoffs.mjs": "1795c183370ed8289eb961da470073530ccbdbb46599d4a8966881639b219155",
-    "src/application/javascript/JavaScriptArtifactAnalysis.ts": "dc0cc638ac7e8163efbe779f97bd9e945ef43688f71dc2c365de6439cc1823e6",
+    "src/application/javascript/JavaScriptArtifactAnalysis.ts": "6d895f0efb37225e9b7f74ab824729e8cf6de3151a7fe4ae9fd599bedfffdd94",
     "src/application/javascript/JavaScriptArtifactAnalysisTypes.ts": "4569780dcaff8e783b3169770473373d202e3a8d558e5ea03df88cd3f6853bf7",
     "src/application/javascript/JavaScriptArtifactGraphContext.ts": "b1e486b5b29f15466b033464780fc57d5619506aad94f4c5053e1882c4bd30d2",
     "src/application/javascript/JavaScriptArtifactGraphEvidence.ts": "4ac2d6c95011ee6a86ef79b3477557fd296df1ebb84e57ebb3d359848ca92cc3",
@@ -80,7 +83,9 @@
     "tests/boundary/javascript/javascriptApplicationCancellation.test.ts": "c604554072e6f848c24926b8630a738b9247ccd04b337374e8060cfb6a0a069f",
     "scripts/lib/javascript-file-scope-oracle.mjs": "e36f0aa114c7c2d2a2e9657f5ef7119f179d7bd6ba4ef899d0fc9ee67b4b7b07",
     "scripts/lib/javascript-file-scope-oracle.d.mts": "f3ac21ce936613d650fa6d610b9905406ae02a0afa97afd677b5b11377369134",
-    "tests/boundary/process/javascriptVerifierScopeOracle.test.ts": "e94c3659b660482aaf75652a60440916f58921c97c4b9bc3182e647a505a2b6b"
+    "tests/boundary/process/javascriptVerifierScopeOracle.test.ts": "e94c3659b660482aaf75652a60440916f58921c97c4b9bc3182e647a505a2b6b",
+    "src/application/javascript/JavaScriptSemanticGraphBuilder.ts": "b9e4d45f01ec1dfdf492dbcbdda4fa957d4e8941e1faeff489dadc582d7bd094",
+    "tests/boundary/filesystem/javascript-applications/javascriptArtifactReconstruction.test.ts": "26993f5cbd2ff862e134f9d364779bbd9432f3cc7be9ddaf1a64fcdb50b54a71"
   },
   "preprogress_source_sha256": {
     "docs/javascript-artifact-reconstruction.md": "e826a5d17f43a70915326c35cadcd236cb7155c596baefb230b9bc033bd81c74",
@@ -1648,10 +1653,14 @@
   },
   "validation": {
     "base_public": "Final public timeout case and cancellation case failed on native AST scopes;21 other cases passed. Corrected cancellation oracle then independently reproduced false native AST scope and phantom semantic module,16 controls passed.",
-    "final_focused": "49 distinct passing cases across8files through documented invocations; first preprogress7file selection44/44; final7file selection43pass/1testdeadline, unchangednative+CLIcancellation rerun7/7 withone already-passed overlap. No test deadline raised.",
-    "static_docs": "Passed including5 consistency tests",
     "review_oracle": "Six new passing cases use the actual retained Joplin baseline/final source-map snapshots and counterexamples: wrong metadata operation, entered instead of unvisited status, missing status, missing/empty/mixed scopes, and malformed explicit expectations. No production phase map is imported. 55 distinct passing cases across9files including original49; production source unchanged since pre_review_revision.",
-    "post_review_static_docs": "Passed on the strict verifier/helper/test changes, including5 consistency tests."
+    "post_review_static_docs": "Passed on the strict verifier/helper/test changes, including5 consistency tests.",
+    "shared_boundary_focused": "78 distinct cases across10files passed after centralizing semantic applicability:9file run65/65 and original root reconstruction file13/13. Includes both full/incremental producer paths, all original49cases, six oracle regressions and23cases in the alternate-builder owning test file. No test deadline changed.",
+    "shared_boundary_static_docs": "Passed including5 consistency tests",
+    "initial_focused": "49 distinct passing cases across8files through documented invocations; first preprogress7file selection44/44; final7file selection43pass/1testdeadline, unchangednative+CLIcancellation rerun7/7 withone already-passed overlap. No test deadline raised.",
+    "final_focused": "78 distinct cases across10files passed after centralizing semantic applicability:9file run65/65 and original root reconstruction file13/13. Includes both full/incremental producer paths, all original49cases, six oracle regressions and23cases in the alternate-builder owning test file. No test deadline changed.",
+    "initial_static_docs": "Passed including5 consistency tests",
+    "static_docs": "Passed including5 consistency tests"
   },
   "validation_resources": {
     "preprogress_focused_44": {
@@ -1913,6 +1922,86 @@
           "max": 0
         }
       }
+    },
+    "full_builder_baseline_failure": {
+      "elapsed_seconds": 4.753,
+      "cpu_seconds": 4.55027,
+      "peak_cgroup_bytes": 490741760,
+      "payload_exit_code": 1,
+      "payload_cleanup_verified": true,
+      "events_at_payload_exit": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    },
+    "shared_boundary_focused": {
+      "elapsed_seconds": 260.67,
+      "cpu_seconds": 222.352926,
+      "peak_cgroup_bytes": 3058573312,
+      "payload_exit_code": 0,
+      "payload_cleanup_verified": true,
+      "events_at_payload_exit": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    },
+    "shared_boundary_original_root_tests": {
+      "elapsed_seconds": 16.735,
+      "cpu_seconds": 15.157791,
+      "peak_cgroup_bytes": 692125696,
+      "payload_exit_code": 0,
+      "payload_cleanup_verified": true,
+      "events_at_payload_exit": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    },
+    "shared_boundary_static_docs": {
+      "elapsed_seconds": 117.636,
+      "cpu_seconds": 117.194118,
+      "peak_cgroup_bytes": 4263153664,
+      "payload_exit_code": 0,
+      "payload_cleanup_verified": true,
+      "events_at_payload_exit": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
     }
   },
   "attempts": [
@@ -2101,6 +2190,54 @@
           }
         }
       }
+    },
+    {
+      "kind": "test command rejected before execution",
+      "detail": "The development wrapper rejected built-project local mode or unsupported -t filter; no tests ran. The exact Vitest runner then reproduced the baseline on already-built runtime323fae8cb.",
+      "resources": {
+        "elapsed_seconds": 0.633,
+        "cpu_seconds": 0.390636,
+        "peak_cgroup_bytes": 42291200,
+        "payload_exit_code": 1,
+        "payload_cleanup_verified": true,
+        "events_at_payload_exit": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        }
+      }
+    },
+    {
+      "kind": "test command rejected before execution",
+      "detail": "The development wrapper rejected built-project local mode or unsupported -t filter; no tests ran. The exact Vitest runner then reproduced the baseline on already-built runtime323fae8cb.",
+      "resources": {
+        "elapsed_seconds": 0.422,
+        "cpu_seconds": 0.225054,
+        "peak_cgroup_bytes": 46489600,
+        "payload_exit_code": 1,
+        "payload_cleanup_verified": true,
+        "events_at_payload_exit": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        }
+      }
     }
   ],
   "cost_interpretation": {
@@ -2185,7 +2322,8 @@
     "tests/boundary/mcp/javascriptNativeHandoffIdentity.test.ts",
     "tests/boundary/mcp/javascriptAnalysisResources.test.ts",
     "tests/acceptance/applications/javascriptCancellationCli.test.ts",
-    "tests/boundary/process/javascriptVerifierScopeOracle.test.ts"
+    "tests/boundary/process/javascriptVerifierScopeOracle.test.ts",
+    "tests/boundary/filesystem/javascript-applications/javascriptArtifactReconstruction.test.ts"
   ],
   "pre_review_revision": "04ca36ad86831e2d3639141bf41cd6994d8575d7",
   "pre_review_source_sha256": {
@@ -2335,5 +2473,169 @@
     "correction": "Scenario supplies independent per-path exact operation/status expectations. Every retained gap must also have artifact-bytes authority, unavailable state and unknown confidence. Missing expectations, empty gap sets and any conflicting observation fail.",
     "runtime_change": "None in this review correction. Original analytical observations, identities, coverage, token projections and CLI/MCP parity match exactly in both strict reruns; timing receipts are additional runs and do not replace the slower original rows.",
     "initial_ci_failure": "At pre_review_revision,36 checks succeeded; Apple fixture hdiutil create failed before REA verification, causing aggregate CI required failure. Apple fixture/workflow code is unchanged; no Apple coverage pass claimed for that attempt."
+  },
+  "pre_shared_boundary_revision": "323fae8cbf3e36677bcb7b22ba31fa1a7e3c5cd4",
+  "pre_shared_boundary_source_sha256": {
+    "docs/javascript-artifact-reconstruction.md": "58c472f61537f7aeca477440712a44a12dc020554f966cfdf7d5c1ea71166895",
+    "scripts/verify/javascript/native-handoffs.mjs": "1795c183370ed8289eb961da470073530ccbdbb46599d4a8966881639b219155",
+    "src/application/javascript/JavaScriptArtifactAnalysis.ts": "dc0cc638ac7e8163efbe779f97bd9e945ef43688f71dc2c365de6439cc1823e6",
+    "src/application/javascript/JavaScriptArtifactAnalysisTypes.ts": "4569780dcaff8e783b3169770473373d202e3a8d558e5ea03df88cd3f6853bf7",
+    "src/application/javascript/JavaScriptArtifactGraphContext.ts": "b1e486b5b29f15466b033464780fc57d5619506aad94f4c5053e1882c4bd30d2",
+    "src/application/javascript/JavaScriptArtifactGraphEvidence.ts": "4ac2d6c95011ee6a86ef79b3477557fd296df1ebb84e57ebb3d359848ca92cc3",
+    "src/application/javascript/JavaScriptArtifactGraphStructure.ts": "167be12f869088aeab0e521d6e85ee11348b40f15d5a24dff3030d8dec39b8a3",
+    "src/application/javascript/JavaScriptArtifactReconstruction.ts": "583e14e34c5f4d2d6118f2dc750862b86f656bf2d98cca5b28fad2620168308c",
+    "tests/acceptance/applications/javascriptAnalysisLimits.test.ts": "25ea7addf365c3ab992d1f24d65d57b02655033e28b2b100406c9c90712064c7",
+    "tests/boundary/filesystem/javascriptArtifactReconstruction.test.ts": "bdb6dc9fd8a9921e956d01017ac9d32a499b3815f0611929185add7e42c5ba37",
+    "tests/boundary/javascript/javascriptApplicationCancellation.test.ts": "c604554072e6f848c24926b8630a738b9247ccd04b337374e8060cfb6a0a069f",
+    "scripts/lib/javascript-file-scope-oracle.mjs": "e36f0aa114c7c2d2a2e9657f5ef7119f179d7bd6ba4ef899d0fc9ee67b4b7b07",
+    "scripts/lib/javascript-file-scope-oracle.d.mts": "f3ac21ce936613d650fa6d610b9905406ae02a0afa97afd677b5b11377369134",
+    "tests/boundary/process/javascriptVerifierScopeOracle.test.ts": "e94c3659b660482aaf75652a60440916f58921c97c4b9bc3182e647a505a2b6b"
+  },
+  "post_shared_boundary_controls": {
+    "timeout": {
+      "result_equivalent_to": "cohorts.final.timeout.result except timing and the explicit structured_expectations oracle input",
+      "structured_expectations": {
+        "ElectronAppWrapper.js.map": {
+          "operation": "parse-local-source-map",
+          "analysis_status": "not-started"
+        },
+        "index.html": {
+          "operation": "parse-html-script-references",
+          "analysis_status": "not-started"
+        },
+        "package.json": {
+          "operation": "parse-package-json",
+          "analysis_status": "not-started"
+        }
+      },
+      "parent_evidence_id": "ev_ba7919ad7d538a41c183dfb5e27bb9dff6058a01b83fb583beebf4205c7c9939",
+      "trace_evidence_id": "ev_c95f2477bbc503d71094288ca11354fbb5bb0d8c86d26c7ea2b373a98458587f",
+      "facts_sha256": "70adc49dd7b9e13136c9ba3616a9a7210e86c2bacba734c329274f911e38458d",
+      "safe_identity": true,
+      "safe_applicability": true,
+      "preparation_ms": 36108.770459,
+      "samples": [
+        {
+          "round": 0,
+          "elapsed_ms": 145.29439700000512,
+          "structured_reply_bytes": 9654,
+          "full_tool_reply_bytes": 20161
+        },
+        {
+          "round": 1,
+          "elapsed_ms": 93.87837699999363,
+          "structured_reply_bytes": 9654,
+          "full_tool_reply_bytes": 20161
+        },
+        {
+          "round": 2,
+          "elapsed_ms": 93.54142800000409,
+          "structured_reply_bytes": 9654,
+          "full_tool_reply_bytes": 20161
+        }
+      ],
+      "resources": {
+        "elapsed_seconds": 60.443,
+        "cpu_seconds": 59.970344,
+        "peak_cgroup_bytes": 3078295552,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true,
+        "events_at_payload_exit": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        }
+      }
+    },
+    "control": {
+      "result_equivalent_to": "cohorts.final.control.result except timing and the explicit structured_expectations oracle input",
+      "structured_expectations": {
+        "ElectronAppWrapper.js.map": {
+          "operation": "parse-local-source-map",
+          "analysis_status": "not-started"
+        },
+        "index.html": {
+          "operation": "parse-html-script-references",
+          "analysis_status": "not-started"
+        },
+        "package.json": {
+          "operation": "parse-package-json",
+          "analysis_status": "not-started"
+        }
+      },
+      "parent_evidence_id": "ev_11a21c98651e2f165e0a2a223734ceafb44ca8dcc0dd691647053237661b732a",
+      "trace_evidence_id": "ev_c70e3df14722c16822221309a873d064cb5772f644f0c537d6b3ec3dcee7e3ce",
+      "facts_sha256": "1ddcb621546636066ceea7f24b493ea1e2d2578f941ad96ba01bd11e98a673b4",
+      "safe_identity": true,
+      "safe_applicability": true,
+      "preparation_ms": 39018.51578,
+      "samples": [
+        {
+          "round": 0,
+          "elapsed_ms": 155.72985699999845,
+          "structured_reply_bytes": 9835,
+          "full_tool_reply_bytes": 20513
+        },
+        {
+          "round": 1,
+          "elapsed_ms": 96.90781799999968,
+          "structured_reply_bytes": 9835,
+          "full_tool_reply_bytes": 20513
+        },
+        {
+          "round": 2,
+          "elapsed_ms": 94.82594799999788,
+          "structured_reply_bytes": 9835,
+          "full_tool_reply_bytes": 20513
+        }
+      ],
+      "resources": {
+        "elapsed_seconds": 63.574,
+        "cpu_seconds": 63.177884,
+        "peak_cgroup_bytes": 3189719040,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true,
+        "events_at_payload_exit": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        }
+      }
+    }
+  },
+  "measurement_source_ownership": {
+    "cohorts.baseline": "base_revision runtime; baseline_execution_driver_sources identifies supplied verifier versions",
+    "cohorts.final": "pre_review_revision runtime and pre_review_source_sha256",
+    "post_review_strict_controls": "pre_shared_boundary_revision; pre_shared_boundary_source_sha256",
+    "post_shared_boundary_controls": "Current final_source_sha256, after the shared semantic boundary correction"
+  },
+  "shared_semantic_boundary_review": {
+    "thread": "https://github.com/morluto/rea/pull/4207#discussion_r4287280551",
+    "observed_baseline": "Actual artifact reader + full analysis + application/semantic graph builders with source_paths=[a.js] created semantic modules for five excluded non-JavaScript kinds: native-addon, JSON, HTML, package-json and source-map. Selected a.js and excluded b.js are positive controls. Baseline regression failed with all7 paths instead of only2 JavaScript paths.",
+    "root_cause": "Incremental callers guarded semantic applicability individually; the full builder called the same projection without that guard.",
+    "structural_fix": "The semantic projection recordUnavailableFile entry point now ignores non-JavaScript file kinds before retaining limits, nodes, roots or unknowns. Both construction paths use it; removed3 duplicate caller-side checks. Actual excluded JavaScript continues to produce partial semantic coverage and source-bound unknowns.",
+    "verification_limits": "Real Joplin controls exercise public incremental CLI/MCP workflows. The alternate full-builder path is verified through the actual filesystem producer boundary, not a separately measured full-builder real-app workflow."
+  },
+  "intermediate_ci": {
+    "revision": "323fae8cbf3e36677bcb7b22ba31fa1a7e3c5cd4",
+    "successful_checks": 39,
+    "apple_fixture": "Passed without Apple code/workflow changes; initial04ca attempt remains recorded",
+    "final_revision_checks": "Pending after shared semantic boundary correction"
   }
 }

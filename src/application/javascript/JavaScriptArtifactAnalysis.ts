@@ -269,13 +269,12 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
                 },
               }),
         });
-        if (file.kind === "javascript")
-          projection.recordUnavailableFile(
-            file,
-            interruption.message,
-            null,
-            "incomplete-module",
-          );
+        projection.recordUnavailableFile(
+          file,
+          interruption.message,
+          null,
+          "incomplete-module",
+        );
       }
       break;
     }
@@ -313,16 +312,15 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         semantic: null,
         ...(unavailable === undefined ? {} : { analysis_failure: unavailable }),
       });
-      if (file.kind === "javascript")
-        projection.recordUnavailableFile(
-          file,
-          failure.reason,
-          failure.limits,
-          interruption instanceof AnalysisResourceConstraintError ||
-            interruption instanceof AnalysisTimeoutError
-            ? "resource-limit"
-            : "incomplete-module",
-        );
+      projection.recordUnavailableFile(
+        file,
+        failure.reason,
+        failure.limits,
+        interruption instanceof AnalysisResourceConstraintError ||
+          interruption instanceof AnalysisTimeoutError
+          ? "resource-limit"
+          : "incomplete-module",
+      );
     }
   }
   return { analysis: finalizeArtifactAnalysis(state), interruption };
@@ -450,13 +448,12 @@ const classifyOutsideAnalysisScope = <
   if (file.text.included || file.text.reason !== "outside-analysis-scope")
     return false;
   state.files.push({ file, javascript: null, semantic: null });
-  if (file.kind === "javascript")
-    projection?.recordUnavailableFile(
-      file,
-      "Source was not analyzed because it is outside the caller-selected source_paths.",
-      null,
-      "incomplete-module",
-    );
+  projection?.recordUnavailableFile(
+    file,
+    "Source was not analyzed because it is outside the caller-selected source_paths.",
+    null,
+    "incomplete-module",
+  );
   return true;
 };
 

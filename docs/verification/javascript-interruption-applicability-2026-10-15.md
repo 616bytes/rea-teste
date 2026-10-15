@@ -34,6 +34,16 @@ its source phase, and metadata uses `process_javascript_artifact_metadata`.
 Remaining parsers do not run after interruption. Failure sharing is limited to
 five applicable phases during one interruption; no persistent cache is added.
 
+A second review found the alternate full-analysis semantic builder still
+created modules for every excluded file kind. An actual filesystem-producer
+regression on revision `323fae8cbf3e36677bcb7b22ba31fa1a7e3c5cd4` reproduced
+phantom native/JSON/HTML/package/source-map modules, while selected and excluded
+JavaScript were positive controls. Semantic applicability now belongs to the
+shared `recordUnavailableFile` projection entry point, before retaining limits,
+nodes, roots or unknowns. Three duplicate caller checks are removed. Both full
+and incremental construction use this boundary; actual excluded JavaScript
+continues to carry source-bound unknowns and partial semantic coverage.
+
 ## Real input and reproduction
 
 Use the [official Joplin v3.7.21 acquisition and extraction instructions](https://github.com/morluto/rea/blob/c7f6b8bad1a34d5efb30ff2a017672dea1fcdabb/docs/verification/javascript-native-handoff-identity-2026-10-15.md).
@@ -158,6 +168,12 @@ analytical fields, identities, coverage and BPE exactly; only timings and the ne
 explicit oracle-input field differ. These additional receipts do not replace the
 slower rows above.
 
+After centralizing semantic applicability, both real public controls passed again:
+timeout 60.443 s wall / 59.970344 s CPU / 3,078,295,552 B peak; default control
+63.574 s / 63.177884 s / 3,189,719,040 B. Analytical results, identities, coverage,
+BPE and exact CLI/MCP parity remain unchanged. JSON identifies the runtime and
+verifier source manifests for each cohort and keeps all earlier receipts.
+
 Static `cl100k_base`/tiktoken 0.12.0 projections include the selected or complete
 name/description/inputSchema catalog, requests and structured Evidence or parsed
 text errors. Complete-tool-reply alternatives include MCP text/structured
@@ -170,7 +186,7 @@ from the incorrect timeout baseline earns no efficiency credit.
 
 ## Verification and limitations
 
-The production source has 49 distinct passing cases across eight files. The initial
+The initial production fix had 49 distinct passing cases across eight files. The initial
 pre-progress-cleanup seven-file selection passed 44/44. After progress cleanup,
 the same selection passed 43 and hit the existing 30-second test deadline in one
 native identity case; an unchanged two-file rerun passed both native cases and
@@ -181,7 +197,7 @@ malformed structures, actual worker resource constraints,
 retained large partial observations, cancellation/publication/cleanup, native
 identity and both public adapters remain covered.
 
-Review found that the real verifier previously accepted any non-JavaScript
+The first review found that the real verifier previously accepted any non-JavaScript
 operation with artifact-byte authority and ignored phase-entry status. The
 scenario now supplies exact operation/status expectations independently of the
 production phase map. Six additional oracle cases use the actual retained
@@ -190,6 +206,15 @@ statuses, and absent or conflicting gaps. They passed, bringing the distinct
 coverage to 55 cases across nine files. The production implementation did not
 change during this review correction.
 
+After the shared semantic-boundary correction from the second review, 78
+distinct cases passed across ten files: the nine-file selection passed 65/65,
+and the original root reconstruction file passed 13/13. This includes the
+alternate-builder owning test file's 23 cases. The new producer-boundary
+regression checks both construction paths, all five excluded metadata/native
+kinds, and selected/excluded JavaScript controls. Real Joplin controls exercise
+the public incremental workflow; the alternate full-builder path has filesystem
+boundary verification rather than a separately measured real-app workflow.
+
 Recorded attempts also include the verifier's initial non-null-subject assumption
 and an invalid top-level semantic-module-path absence check. Both were corrected
 before their assertions were used as proof. Corrected cancellation reproduction
@@ -197,7 +222,7 @@ shows the actual native AST scope and phantom module on the baseline. Final
 source and execution-driver versions, source pins, input digests, prior attempts
 and resource receipts are in the [compact JSON record](javascript-interruption-applicability-2026-10-15.json).
 
-Final `npm run check && npm run docs:check` passed, including five consistency
+Before review, `npm run check && npm run docs:check` passed, including five consistency
 tests: 165.553 s wall / 150.247257 s CPU /
 4,232,491,008 B peak cgroup memory, clean owned exit and no OOM.
 The first full check stopped on a 172-line test callback exceeding the 150-line
@@ -206,6 +231,9 @@ results; the strengthened six-case file passed again before the final gates.
 After the review correction, the full static/docs gate passed again, including
 the five consistency tests: 111.395 s wall / 110.979710 s CPU /
 4,347,125,760 B peak, with clean owned exit and no OOM.
+After centralizing semantic applicability, the final full static/docs gate also
+passed, including five consistency tests: 117.636 s wall / 117.194118 s CPU /
+4,263,153,664 B peak, clean owned exit and no OOM.
 
 At the initial PR revision, 36 CI checks passed; macOS `hdiutil create` failed
 while creating its DMG fixture before REA verification, also failing the aggregate

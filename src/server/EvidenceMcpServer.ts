@@ -604,8 +604,30 @@ class ErrorEvidenceTransport implements Transport {
   }
 }
 
-const extractEvidenceId = (value: unknown): string | undefined => {
+export const extractEvidenceId = (value: unknown): string | undefined => {
   if (typeof value !== "object" || value === null) return undefined;
-  const evidenceId = Reflect.get(value, "evidence_id");
-  return typeof evidenceId === "string" ? evidenceId : undefined;
+  const direct = Reflect.get(value, "evidence_id");
+  if (typeof direct === "string") return direct;
+
+  const error = Reflect.get(value, "error");
+  if (typeof error === "object" && error !== null) {
+    const details = Reflect.get(error, "details");
+    if (typeof details === "object" && details !== null) {
+      const partialObs = Reflect.get(details, "partial_observation");
+      if (typeof partialObs === "object" && partialObs !== null) {
+        const id = Reflect.get(partialObs, "evidence_id");
+        if (typeof id === "string") return id;
+      }
+      const reportedLimits = Reflect.get(details, "reported_limits");
+      if (typeof reportedLimits === "object" && reportedLimits !== null) {
+        const evidenceRef = Reflect.get(reportedLimits, "evidence_reference");
+        if (typeof evidenceRef === "object" && evidenceRef !== null) {
+          const id = Reflect.get(evidenceRef, "evidence_id");
+          if (typeof id === "string") return id;
+        }
+      }
+    }
+  }
+
+  return undefined;
 };

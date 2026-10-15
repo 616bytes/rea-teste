@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { ActivityJournal } from "./ActivityJournal.js";
+import { ActivityJournal, activityLogPath } from "./ActivityJournal.js";
 
 describe("ActivityJournal", () => {
   it("projects started and terminal events without caller arguments", async () => {
@@ -65,5 +65,45 @@ describe("ActivityJournal", () => {
     await expect(
       deadJournal.read(10, (pid) => pid !== 12345),
     ).resolves.toMatchObject([{ tool: "binary_overview", status: "unknown" }]);
+  });
+
+  it("falls back to default path when XDG_STATE_HOME or LOCALAPPDATA is empty or relative", () => {
+    const emptyLog = activityLogPath({ XDG_STATE_HOME: "", LOCALAPPDATA: "" });
+    expect(emptyLog).toMatch(/rea[/\\]activity\.jsonl$/);
+
+    const relativeLog = activityLogPath({
+      XDG_STATE_HOME: "relative/state",
+      LOCALAPPDATA: "relative\\state",
+    });
+    expect(relativeLog).toMatch(/rea[/\\]activity\.jsonl$/);
+  });
+
+  it("safely serializes concurrent appends across journal instances", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-activity-concurrent-"));
+    const path = join(root, "activity.jsonl");
+    const journalA = new ActivityJournal(path);
+    const journalB = new ActivityJournal(path);
+
+    const idA = journalA.start("binary_overview", "2026-10-14T00:00:00.000Z");
+    const idB = journalB.start("analyze_function", "2026-10-14T00:00:01.000Z");
+
+    journalA.finish({
+      activityId: idA,
+      status: "completed",
+      startedAt: "2026-10-14T00:00:00.000Z",
+      at: "2026-10-14T00:00:02.000Z",
+    });
+    journalB.finish({
+      activityId: idB,
+      status: "completed",
+      startedAt: "2026-10-14T00:00:01.000Z",
+      at: "2026-10-14T00:00:03.000Z",
+    });
+
+    await journalB.read();
+    const records = await journalA.read();
+    expect(records).toHaveLength(2);
+    expect(records.map((r) => r.tool)).toContain("binary_overview");
+    expect(records.map((r) => r.tool)).toContain("analyze_function");
   });
 });

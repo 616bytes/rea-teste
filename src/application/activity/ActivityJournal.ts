@@ -1,6 +1,13 @@
-import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  readFile,
+  rmdir,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 export type ActivityStatus =
@@ -48,17 +55,73 @@ type ActivityEvent =
 
 const MAX_EVENTS = 200;
 const MAX_BYTES = 1024 * 1024;
+const LOCK_TIMEOUT_MS = 5000;
+const LOCK_RETRY_INTERVAL_MS = 25;
+const LOCK_MAX_ATTEMPTS = 20;
 
 export const activityLogPath = (
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): string => {
   const configured = environment.REA_ACTIVITY_LOG_PATH;
-  if (configured !== undefined && configured.length > 0) return configured;
+  if (configured !== undefined && configured.trim().length > 0)
+    return configured;
+  if (process.platform === "win32") {
+    const localAppData = environment.LOCALAPPDATA;
+    const base =
+      localAppData !== undefined &&
+      localAppData.trim().length > 0 &&
+      isAbsolute(localAppData)
+        ? localAppData
+        : join(homedir(), "AppData", "Local");
+    return join(base, "rea", "activity.jsonl");
+  }
+  const xdg = environment.XDG_STATE_HOME;
   const base =
-    process.platform === "win32"
-      ? (environment.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"))
-      : (environment.XDG_STATE_HOME ?? join(homedir(), ".local", "state"));
+    xdg !== undefined && xdg.trim().length > 0 && isAbsolute(xdg)
+      ? xdg
+      : join(homedir(), ".local", "state");
   return join(base, "rea", "activity.jsonl");
+};
+
+const acquireDirectoryLock = async (lockPath: string): Promise<boolean> => {
+  for (let attempt = 0; attempt < LOCK_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await mkdir(lockPath);
+      return true;
+    } catch (cause: unknown) {
+      if ((cause as NodeJS.ErrnoException).code === "EEXIST") {
+        try {
+          const info = await stat(lockPath);
+          if (Date.now() - info.mtimeMs > LOCK_TIMEOUT_MS) {
+            await rmdir(lockPath).catch(() => undefined);
+            continue;
+          }
+        } catch {
+          continue;
+        }
+        await new Promise((resolve) =>
+          setTimeout(resolve, LOCK_RETRY_INTERVAL_MS),
+        );
+        continue;
+      }
+      return false;
+    }
+  }
+  return false;
+};
+
+const withJournalLock = async <T>(
+  lockPath: string,
+  action: () => Promise<T>,
+): Promise<T> => {
+  const acquired = await acquireDirectoryLock(lockPath);
+  try {
+    return await action();
+  } finally {
+    if (acquired) {
+      await rmdir(lockPath).catch(() => undefined);
+    }
+  }
 };
 
 export const isProcessAlive = (pid: number | undefined): boolean => {
@@ -194,16 +257,20 @@ export class ActivityJournal {
       .then(async () => {
         try {
           await mkdir(dirname(this.#path), { recursive: true });
-          await appendFile(this.#path, `${JSON.stringify(event)}\n`, "utf8");
-          const current = await stat(this.#path);
-          if (current.size <= MAX_BYTES) return;
-          const text = await readFile(this.#path, "utf8");
-          const lines = text.split(/\r?\n/u).filter((line) => line.length > 0);
-          await writeFile(
-            this.#path,
-            `${lines.slice(-MAX_EVENTS * 2).join("\n")}\n`,
-            "utf8",
-          );
+          await withJournalLock(`${this.#path}.lock`, async () => {
+            await appendFile(this.#path, `${JSON.stringify(event)}\n`, "utf8");
+            const current = await stat(this.#path);
+            if (current.size <= MAX_BYTES) return;
+            const text = await readFile(this.#path, "utf8");
+            const lines = text
+              .split(/\r?\n/u)
+              .filter((line) => line.length > 0);
+            await writeFile(
+              this.#path,
+              `${lines.slice(-MAX_EVENTS * 2).join("\n")}\n`,
+              "utf8",
+            );
+          });
         } catch {
           // Observability is deliberately best-effort and cannot change analysis truth.
         }

@@ -9,7 +9,7 @@ export interface ActivityProgressEstimate {
   readonly started_at: string;
   readonly finished_at?: string;
   readonly duration_ms?: number;
-  readonly elapsed_ms: number;
+  readonly elapsed_ms?: number;
   readonly estimate_ms: number;
   readonly progress_percent: number;
   readonly remaining_ms: number;
@@ -49,11 +49,15 @@ export const estimateFor = (
 };
 
 export const elapsedMs = (
-  record: Pick<ActivityRecord, "started_at"> &
+  record: Pick<ActivityRecord, "started_at" | "status"> &
     Partial<Pick<ActivityRecord, "duration_ms">>,
   now = Date.now(),
-): number =>
-  record.duration_ms ?? Math.max(0, now - Date.parse(record.started_at));
+): number | undefined => {
+  if (record.duration_ms !== undefined) return record.duration_ms;
+  if (record.status === "running")
+    return Math.max(0, now - Date.parse(record.started_at));
+  return undefined;
+};
 
 export const formatDuration = (durationMs: number): string => {
   const seconds = Math.floor(Math.max(0, durationMs) / 1000);
@@ -92,14 +96,16 @@ export const estimateActivity = (
   const elapsed = elapsedMs(record, now);
   const estimate = estimateFor(record.tool, records);
   const isRunning = record.status === "running";
-  const progress = isRunning
-    ? calculateProgress(elapsed, estimate)
-    : {
-        progressPercent: record.status === "completed" ? 100 : 0,
-        remainingMs: 0,
-        elapsedFormatted: formatDuration(elapsed),
-        etaFormatted: "0s",
-      };
+  const progress =
+    isRunning && elapsed !== undefined
+      ? calculateProgress(elapsed, estimate)
+      : {
+          progressPercent: record.status === "completed" ? 100 : 0,
+          remainingMs: 0,
+          elapsedFormatted:
+            elapsed !== undefined ? formatDuration(elapsed) : "-",
+          etaFormatted: isRunning ? formatDuration(estimate) : "0s",
+        };
 
   return {
     activity_id: record.activity_id,
@@ -110,7 +116,7 @@ export const estimateActivity = (
     ...(record.duration_ms !== undefined
       ? { duration_ms: record.duration_ms }
       : {}),
-    elapsed_ms: elapsed,
+    ...(elapsed !== undefined ? { elapsed_ms: elapsed } : {}),
     estimate_ms: estimate,
     progress_percent: progress.progressPercent,
     remaining_ms: progress.remainingMs,

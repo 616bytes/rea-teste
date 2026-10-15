@@ -96,4 +96,22 @@ describe("activityEstimates", () => {
     expect(estimate.elapsed_formatted).toBe("10s");
     expect(estimate.eta_formatted).toBe("10s");
   });
+
+  it("preserves unknown duration and elapsed format for abandoned activities", () => {
+    const record: ActivityRecord = {
+      activity_id: "act-orphan",
+      tool: "binary_overview",
+      status: "unknown",
+      started_at: new Date(Date.now() - 50_000).toISOString(),
+    };
+
+    expect(elapsedMs(record)).toBeUndefined();
+
+    const estimate = estimateActivity(record, []);
+    expect(estimate.status).toBe("unknown");
+    expect(estimate.elapsed_ms).toBeUndefined();
+    expect(estimate.elapsed_formatted).toBe("-");
+    expect(estimate.eta_formatted).toBe("0s");
+    expect(estimate.progress_percent).toBe(0);
+  });
 });

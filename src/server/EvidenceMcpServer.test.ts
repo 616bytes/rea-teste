@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { InvestigationRecords } from "../application/investigation/InvestigationRecords.js";
 import {
   EvidenceMcpServer,
+  extractEvidenceId,
   forgetPendingMcpRequest,
 } from "./EvidenceMcpServer.js";
 import { ToolResultDelivery } from "./toolResult.js";
@@ -254,5 +255,47 @@ describe("MCP activity journal", () => {
     } finally {
       await Promise.all([client.close(), server.close()]);
     }
+  });
+
+  describe("extractEvidenceId", () => {
+    it("extracts top-level evidence_id", () => {
+      expect(extractEvidenceId({ evidence_id: "evi-123" })).toBe("evi-123");
+    });
+
+    it("extracts evidence_id from partial_observation in error details", () => {
+      const result = {
+        error: {
+          details: {
+            partial_observation: {
+              kind: "retained-evidence",
+              evidence_id: "evi-partial-456",
+            },
+          },
+        },
+      };
+      expect(extractEvidenceId(result)).toBe("evi-partial-456");
+    });
+
+    it("extracts evidence_id from reported_limits evidence_reference in error details", () => {
+      const result = {
+        error: {
+          details: {
+            reported_limits: {
+              evidence_reference: {
+                kind: "retained-evidence",
+                evidence_id: "evi-limits-789",
+              },
+            },
+          },
+        },
+      };
+      expect(extractEvidenceId(result)).toBe("evi-limits-789");
+    });
+
+    it("returns undefined when no evidence_id is present", () => {
+      expect(extractEvidenceId(null)).toBeUndefined();
+      expect(extractEvidenceId({})).toBeUndefined();
+      expect(extractEvidenceId({ error: {} })).toBeUndefined();
+    });
   });
 });

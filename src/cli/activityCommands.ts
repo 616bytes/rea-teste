@@ -17,20 +17,26 @@ const activityOptions = z.object({
   intervalMs: z
     .number()
     .int()
-    .safe()
+    .min(50)
+    .max(2_147_483_647)
     .default(1000)
     .describe("Refresh interval in milliseconds"),
   limit: z
     .number()
     .int()
+    .min(1)
     .safe()
     .default(25)
     .describe("Maximum activity records to display"),
 });
 
-const activityView = (path: string, records: readonly ActivityRecord[]) => ({
+const activityView = (
+  path: string,
+  records: readonly ActivityRecord[],
+  allRecords: readonly ActivityRecord[] = records,
+) => ({
   activity_log_path: path,
-  records: records.map((record) => estimateActivity(record, records)),
+  records: records.map((record) => estimateActivity(record, allRecords)),
 });
 
 const DEFAULT_ESTIMATE_MS = 30_000;
@@ -102,13 +108,16 @@ const watchActivity = async (
   locale: ActivityLocale,
 ): Promise<{ readonly stopped: true; readonly activity_log_path: string }> =>
   await new Promise((resolve) => {
-    let rendering = false;
+    let stopped = false;
+    let activeRender: Promise<void> | null = null;
     process.stdout.write("\u001b[?1049h\u001b[2J\u001b[H");
+
     const render = async (): Promise<void> => {
-      if (rendering) return;
-      rendering = true;
+      if (stopped) return;
       try {
-        const records = await journal.read(limit);
+        const allRecords = await journal.read();
+        if (stopped) return;
+        const records = allRecords.slice(0, limit);
         const labels = activityLabels[locale];
         process.stdout.write("\u001b[2J\u001b[H");
         process.stdout.write(`${labels.title}\n${path}\n\n`);
@@ -118,26 +127,40 @@ const watchActivity = async (
             : [
                 `${labels.status.padEnd(9)} ${labels.elapsed.padEnd(8)} ${labels.phase.padEnd(38)} ${labels.progress.padEnd(7)} ${labels.eta}`,
                 "────────────────────────────────────────────────────────────────────",
-                ...records.map((record) => activityLine(record, records)),
+                ...records.map((record) => activityLine(record, allRecords)),
                 "",
                 labels.estimate,
               ].join("\n") + "\n",
         );
-      } finally {
-        rendering = false;
+      } catch {
+        // Best-effort terminal view
       }
     };
-    const stop = (): void => {
+
+    const triggerRender = (): void => {
+      if (stopped || activeRender !== null) return;
+      activeRender = render().finally(() => {
+        activeRender = null;
+      });
+    };
+
+    const stop = async (): Promise<void> => {
+      if (stopped) return;
+      stopped = true;
       clearInterval(timer);
       process.off("SIGINT", stop);
       process.off("SIGTERM", stop);
+      if (activeRender !== null) {
+        await activeRender.catch(() => undefined);
+      }
       process.stdout.write("\u001b[?1049l");
       resolve({ stopped: true as const, activity_log_path: path });
     };
-    const timer = setInterval(() => void render(), intervalMs);
-    process.once("SIGINT", stop);
-    process.once("SIGTERM", stop);
-    void render();
+
+    const timer = setInterval(() => triggerRender(), intervalMs);
+    process.once("SIGINT", () => void stop());
+    process.once("SIGTERM", () => void stop());
+    triggerRender();
   });
 
 export const registerActivityCommands = (
@@ -159,7 +182,12 @@ export const registerActivityCommands = (
           activityLocale(environment),
         );
       logger.debug({ activity_log_path: journal.path() }, "Read REA activity");
-      return activityView(journal.path(), await journal.read(options.limit));
+      const allRecords = await journal.read();
+      return activityView(
+        journal.path(),
+        allRecords.slice(0, options.limit),
+        allRecords,
+      );
     },
   });
 };

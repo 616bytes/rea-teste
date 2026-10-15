@@ -182,6 +182,18 @@ partial Evidence. Cancellation after source analysis begins can also retain
 completed facts, including when interrupted during cleanup, graph construction,
 or Evidence sealing. Unexamined relationships remain unknown.
 
+Per-file gaps identify the applicable processing phase: JavaScript source analysis
+uses AST authority, while package/JSON, HTML-reference and source-map processing
+use artifact-byte authority. File-analysis interruption gaps carry `analysis_status`:
+`interrupted` means the phase was entered (including source-worker startup),
+and `not-started` means interruption prevented that phase from beginning.
+Neither state establishes that parsing completed. Remaining parsers are not run
+after interruption just to populate a result.
+
+Native add-ons remain metadata-only and acquire no JavaScript parse or analysis
+gap. This also applies when their paths are outside `source_paths`; their inventory
+and caller selection remain available without implying applicable AST work.
+
 MCP returns a `partial_observation` retained reference after recording succeeds;
 open it with `inspect_analysis_view` on the same connection. If the SDK stopped
 waiting before receiving the reply, follow [MCP cancellation recovery](mcp-contracts.md#progress-and-cancellation)
@@ -276,8 +288,13 @@ RPC client syntax also contributes network endpoint candidates, in both
   named operation found at the start of a string or cooked template literal —
   the name must be followed by variable definitions (`($`), a directive, or a
   selection set starting with a field name — or in a precompiled
-  `OperationDefinition` document object. A graphql-tag `loc.source.body` copy is
-  not reported twice. Anonymous operations are not reported.
+  `OperationDefinition` document object. A standalone Source object's `body`
+  remains an operation candidate even when it has `locationOffset` metadata.
+  A graphql-tag `loc.source.body` copy is suppressed only when that source
+  belongs to a recovered document with the same operation and its containing
+  document, location and source have proven private metadata ownership. Writes,
+  escapes and classic-script global bindings retain the source observation.
+  Anonymous operations are not reported.
 
 Literal link options and precompiled document fields follow object property
 order: the final definition owns the key. A later spread, dynamic computed key,
@@ -432,7 +449,18 @@ retained candidate strings and temporary canonical-key serialization. This is
 an in-memory semantic allocation bound independent of CLI or MCP transport
 budgets. Source literal bytes remain in the parsed source and artifact evidence;
 when a normalized semantic value exceeds the bound, its value is unknown and
-coverage is partial. Expression
+coverage is partial. Direct string literals, cooked templates without
+substitutions, and derived strings all use this normalization boundary. A
+single exact primitive is validated without allocating deduplication or sort
+state or serializing a canonical key. Configuration defaults use the same
+normalizer; limited defaults retain `value_resource_limit` and an anchored
+resource-limit unknown. Known null, false, zero, and empty-string defaults stay
+exact. This primitive-value bound does not truncate lookup identities such as
+source paths, field names or request endpoints. Full endpoint properties remain
+available for endpoint queries, tracing and comparison. Each analysis records encountered limit classifications independently of
+later projections: a selected healthy sibling can remain exact while whole-file
+coverage reports the encountered bound. Projection preserves limiting values
+from the shared property-slot owner. Expression
 evaluation and provenance walks stop after 256 nested levels. Union products
 and string lengths are checked before allocating combinations or concatenated
 strings. When a boundary is reached, the value stays unknown, semantic coverage

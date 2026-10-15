@@ -440,10 +440,13 @@ when a normalized semantic value exceeds the bound, its value is unknown and
 coverage is partial. Direct string literals, cooked templates without
 substitutions, and derived strings all use this normalization boundary. A
 single exact primitive is validated without allocating deduplication or sort
-state or serializing a canonical key. Configuration defaults use the same
-normalizer; limited defaults retain `value_resource_limit` and an anchored
+state or serializing a canonical key. Configuration defaults and request
+endpoint values share this normalizer, including bare calls with no result
+binding. Limited defaults retain `value_resource_limit`; requests and their
+linked response consumers retain `endpoint_resource_limit`. Each has an anchored
 resource-limit unknown. Known null, false, zero, and empty-string defaults stay
-exact. Each analysis records encountered limit classifications independently of
+exact, as do bounded endpoint strings. Source lookup keys, paths and field names
+retain their separate identity semantics. Each analysis records encountered limit classifications independently of
 later projections: a selected healthy sibling can remain exact while whole-file
 coverage reports the encountered bound. Projection preserves limiting values
 from the shared property-slot owner. Expression

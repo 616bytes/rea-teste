@@ -178,11 +178,7 @@ const collectDefaults = (
     const source = unwrapJavaScriptExpression(node.left).node;
     const candidate = configurationsByNode.get(source);
     if (candidate === undefined) return;
-    const literal = readExactJavaScriptLiteral(node.right);
-    const value: JavaScriptSemanticValue = literal.found
-      ? semanticPrimitiveSet([literal.value])
-      : { status: "unknown", reason: "Default is not an exact primitive." };
-    recordSemanticValueLimit(context.state, value);
+    const value = dataEffectValue(node.right, context.state);
     output.push({
       configId: `config:default:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
       kind: "default",
@@ -215,7 +211,11 @@ const collectRequests = (
       return;
     const method = requestMethod(node, context.state);
     if (method === null) return;
-    const endpoint = requestEndpoint(node);
+    const value = dataEffectValue(node.arguments[0], context.state);
+    const endpoint =
+      value.status === "literal" && typeof value.value === "string"
+        ? value.value
+        : null;
     output.push({
       node,
       operation: {
@@ -234,6 +234,9 @@ const collectRequests = (
         ),
         linkedRequestIds: [],
         endpoint,
+        ...(value.status === "unknown" && value.resourceLimit !== undefined
+          ? { endpointResourceLimit: value.resourceLimit }
+          : {}),
         fields: requestFields(node, method, context.state),
         resolution: endpoint === null ? "partial" : "complete",
       },
@@ -293,6 +296,7 @@ const collectResponseConsumers = (
     // Any other write (assignment, update, loop or destructuring target) can
     // replace the response before this read, so its endpoint stays unknown.
     const soleWrite = binding?.initializers.length === 1;
+    const endpointSource = soleWrite ? uniqueRequest?.operation : undefined;
     output.push({
       requestId: `response:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
       kind: "response-consumer",
@@ -310,9 +314,16 @@ const collectResponseConsumers = (
       linkedRequestIds: linked
         .map(({ operation }) => operation.requestId)
         .sort(compareUnicodeCodePoints),
-      endpoint: soleWrite ? (uniqueRequest?.operation.endpoint ?? null) : null,
+      endpoint: endpointSource?.endpoint ?? null,
+      ...(endpointSource?.endpointResourceLimit === undefined
+        ? {}
+        : { endpointResourceLimit: endpointSource.endpointResourceLimit }),
       fields: [],
-      resolution: uniqueRequest === undefined ? "partial" : "complete",
+      resolution:
+        uniqueRequest === undefined ||
+        endpointSource?.endpointResourceLimit !== undefined
+          ? "partial"
+          : "complete",
     });
   });
   return output;
@@ -432,9 +443,21 @@ const requestFields = (
   });
 };
 
-const requestEndpoint = (
-  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
-): string | null =>
-  t.isObjectExpression(node.arguments[0])
-    ? null
-    : literalString(node.arguments[0]);
+/** Normalize retained effect values; source lookup keys keep their own identity. */
+const dataEffectValue = (
+  node: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticValue => {
+  const literal =
+    node === undefined
+      ? { found: false as const }
+      : readExactJavaScriptLiteral(node);
+  const value: JavaScriptSemanticValue = literal.found
+    ? semanticPrimitiveSet([literal.value])
+    : {
+        status: "unknown",
+        reason: "Data-effect value is not an exact primitive.",
+      };
+  recordSemanticValueLimit(state, value);
+  return value;
+};

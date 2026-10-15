@@ -327,6 +327,7 @@ export interface JavaScriptSemanticRequestOperation {
   readonly projectedResultBindings: readonly JavaScriptSemanticProjectedResultBinding[];
   readonly linkedRequestIds: readonly string[];
   readonly endpoint: string | null;
+  readonly endpointResourceLimit?: JavaScriptSemanticResourceLimit;
   readonly fields: readonly {
     readonly name: string;
     readonly sourceBindingId: string | null;

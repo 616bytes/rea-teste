@@ -39,6 +39,32 @@ for (const scenario of [
     name: "configuration-only default",
     expression: `process.env.MODE ?? ${JSON.stringify(large)}`,
     bare: true,
+    dataKind: "config-source",
+    dataField: "value",
+    limited: true,
+  },
+  {
+    name: "request-only endpoint",
+    expression: `fetch(${JSON.stringify(large)})`,
+    bare: true,
+    dataKind: "request",
+    dataField: "endpoint",
+    limited: true,
+  },
+  {
+    name: "linked response endpoint",
+    expression: `const response = fetch(${JSON.stringify(large)}); response.json()`,
+    bare: true,
+    dataKind: "response",
+    dataField: "endpoint",
+    limited: true,
+  },
+  {
+    name: "WebSocket cooked endpoint",
+    expression: `new WebSocket(\`${large}\`)`,
+    bare: true,
+    dataKind: "request",
+    dataField: "endpoint",
     limited: true,
   },
   {
@@ -54,7 +80,7 @@ for (const scenario of [
       const root = await createTestTempDirectory("rea-literal-budget-");
       const path = join(root, "main.js");
       const source =
-        "bare" in scenario
+        scenario.bare === true
           ? `${scenario.expression};\n`
           : `export const payload = ${scenario.expression};\n`;
       await writeFile(path, source);
@@ -83,9 +109,9 @@ for (const scenario of [
         );
         const stringLengths = analysis.semantic_graph.nodes.flatMap(
           ({ properties }) =>
-            typeof properties.value === "string"
-              ? [properties.value.length]
-              : [],
+            [properties.value, properties.endpoint].flatMap((value) =>
+              typeof value === "string" ? [value.length] : [],
+            ),
         );
         expect(stringLengths).not.toContain(large.length);
         if (scenario.limited) {
@@ -109,14 +135,16 @@ for (const scenario of [
           expect(stringLengths).toContain(5);
           expect(analysis.graph.coverage.limits).toEqual([]);
         }
-        if ("bare" in scenario) {
+        if (scenario.bare === true) {
           const node = analysis.semantic_graph.nodes.find(
             ({ kind, properties }) =>
-              kind === "config-source" && properties.source_kind === "default",
+              kind === scenario.dataKind &&
+              (kind !== "config-source" ||
+                properties.source_kind === "default"),
           );
           expect(node?.properties).toMatchObject({
-            value: null,
-            value_resource_limit: "primitive-bytes",
+            [scenario.dataField]: null,
+            [`${scenario.dataField}_resource_limit`]: "primitive-bytes",
           });
           expect(analysis.semantic_graph.unknowns).toContainEqual(
             expect.objectContaining({

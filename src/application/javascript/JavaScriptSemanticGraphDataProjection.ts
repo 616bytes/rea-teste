@@ -134,7 +134,16 @@ export const projectSemanticRequests = (
             ? ["constructs-request", "supplies-request-field"]
             : ["consumed-by"],
         location: operation.location,
-        detail: `Static ${operation.method} request resolution was ${operation.resolution}.`,
+        ...(operation.endpointResourceLimit === undefined
+          ? {
+              detail: `Static ${operation.method} request resolution was ${operation.resolution}.`,
+            }
+          : {
+              reason: "resource-limit",
+              detail: semanticResourceLimitReason(
+                operation.endpointResourceLimit,
+              ),
+            }),
         candidateNodeIds: operation.linkedRequestIds.flatMap((identifier) => {
           const candidate = requestNodes.get(identifier);
           return candidate === undefined ? [] : [candidate.node_id];
@@ -163,6 +172,9 @@ const addRequestNode = (
           null),
     properties: {
       endpoint: operation.endpoint,
+      ...(operation.endpointResourceLimit === undefined
+        ? {}
+        : { endpoint_resource_limit: operation.endpointResourceLimit }),
       method: operation.method,
       operation_kind: operation.kind,
     },

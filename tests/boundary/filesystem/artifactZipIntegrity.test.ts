@@ -319,6 +319,24 @@ it("retains duplicate ZIP members without replacing their source identities", as
         .parse(result.value.result)
         .occurrences.filter(({ logical_path }) => logical_path === "x.txt"),
     ).toHaveLength(2);
+    for (const integrityPolicy of ["fail", "record-and-continue"]) {
+      const output = join(root, `output-${integrityPolicy}`);
+      const extraction = await client.execute("extract_artifact", {
+        output_root: output,
+        integrity_policy: integrityPolicy,
+      });
+      expect(extraction).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "ArtifactOperationError",
+          reason: "path",
+          detail: expect.stringContaining(
+            'Artifact extraction path collision: "x.txt"',
+          ),
+        },
+      });
+      await expect(readdir(output)).rejects.toMatchObject({ code: "ENOENT" });
+    }
   });
 });
 

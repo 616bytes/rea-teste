@@ -202,6 +202,9 @@ export class KunaProjectCache {
   readonly #pins = new Map<string, number>();
   /** One eviction decision at a time; exports themselves remain concurrent. */
   #eviction: Promise<void> = Promise.resolve();
+  #capacity: "within_limit" | "pinned" | "building" = "within_limit";
+  #maintenance: Promise<void> | undefined;
+  #maintenanceRequested = false;
   readonly #retainedProcesses: ProviderCleanupError[] = [];
   /** Only resources whose process cleanup is proven may be retried as files. */
   readonly #retainedFiles = new Map<string, ProviderCleanupError>();
@@ -226,8 +229,10 @@ export class KunaProjectCache {
       if (released) return;
       released = true;
       const count = (this.#pins.get(key) ?? 1) - 1;
-      if (count === 0) this.#pins.delete(key);
-      else this.#pins.set(key, count);
+      if (count === 0) {
+        this.#pins.delete(key);
+        if (this.#capacity !== "within_limit") this.#scheduleEviction();
+      } else this.#pins.set(key, count);
     };
   }
 
@@ -330,6 +335,8 @@ export class KunaProjectCache {
     void promise.then(() => {
       this.#unfinished.delete(created);
       if (this.#inflight.get(key) === created) this.#inflight.delete(key);
+      if (this.#unfinished.size === 0 && this.#capacity === "building")
+        this.#scheduleEviction();
     });
     return this.#await(created, request);
   }
@@ -339,6 +346,7 @@ export class KunaProjectCache {
     await Promise.allSettled(
       [...this.#unfinished].map((entry) => entry.promise),
     );
+    while (this.#maintenance !== undefined) await this.#maintenance;
     for (const path of [...this.#retainedFiles.keys()])
       await this.#removeRetired(path).catch(() => undefined);
     const retained = [
@@ -556,13 +564,31 @@ export class KunaProjectCache {
   }
 
   /** Evict least recently used entries above the cap, keeping pinned ones. */
-  #evict(keep: string): Promise<void> {
+  #evict(keep: string | null): Promise<void> {
     const eviction = this.#eviction.then(() => this.#evictUnpinned(keep));
     this.#eviction = eviction.catch(() => undefined);
     return eviction;
   }
 
-  async #evictUnpinned(keep: string): Promise<void> {
+  /** Coalesce deferred reclamation after callers have had a turn to pin results. */
+  #scheduleEviction(): void {
+    this.#maintenanceRequested = true;
+    if (this.#maintenance !== undefined) return;
+    const maintenance = (async () => {
+      while (this.#maintenanceRequested) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        this.#maintenanceRequested = false;
+        await this.#evict(null).catch(() => undefined);
+      }
+    })();
+    this.#maintenance = maintenance;
+    void maintenance.then(() => {
+      if (this.#maintenance === maintenance) this.#maintenance = undefined;
+      if (this.#maintenanceRequested) this.#scheduleEviction();
+    });
+  }
+
+  async #evictUnpinned(keep: string | null): Promise<void> {
     // A successful build must reach its callers before they can pin its entry.
     // Protect every unfinished build while reading this eviction snapshot.
     const building = new Set([...this.#unfinished].map(({ key }) => key));
@@ -587,17 +613,23 @@ export class KunaProjectCache {
       );
     }
     let total = entries.reduce((sum, entry) => sum + entry.bytes, 0);
+    let deferredByBuild = false;
     for (const entry of entries.sort((a, b) => a.mtimeMs - b.mtimeMs)) {
       if (total <= this.#maxBytes && entry.mtimeMs >= 0) break;
-      if (
-        entry.key === keep ||
-        building.has(entry.key) ||
-        this.#pins.has(entry.key)
-      )
+      if (building.has(entry.key)) {
+        deferredByBuild = true;
         continue;
+      }
+      if (entry.key === keep || this.#pins.has(entry.key)) continue;
       await this.#discard(entry.key);
       total -= entry.bytes;
     }
+    this.#capacity =
+      total <= this.#maxBytes
+        ? "within_limit"
+        : deferredByBuild
+          ? "building"
+          : "pinned";
   }
 
   /** Atomically retire one owned entry, then remove it. */

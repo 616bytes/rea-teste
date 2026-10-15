@@ -150,6 +150,24 @@ const unusable = (reason: string): KunaExportOutcome => ({
   ),
 });
 
+/** Verify the selected installation at each execution and publication boundary. */
+const verifyKunaExecutable = async (
+  installation: KunaInstallation,
+  signal: AbortSignal,
+): Promise<Result<null, ProviderAdapterError>> => {
+  const executable = await hashStableFile(installation.executable, signal);
+  if (executable.sha256 === installation.sha256) return ok(null);
+  return err(
+    new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
+      userMessage: `${installation.executable} changed after readiness inspection; reopen the target so REA probes the current Kuna executable.`,
+      diagnostics: {
+        expected_sha256: installation.sha256,
+        observed_sha256: executable.sha256,
+      },
+    }),
+  );
+};
+
 /**
  * Inventory and export one target with Kuna, then validate the result.
  *
@@ -176,20 +194,6 @@ export const exportKunaProject = async (
           request.targetPath,
           "the target no longer matches the digest selected for analysis",
         ),
-      ),
-    };
-  const executable = await hashStableFile(installation.executable, signal);
-  if (executable.sha256 !== installation.sha256)
-    return {
-      kind: "done",
-      result: err(
-        new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
-          userMessage: `${installation.executable} changed after readiness inspection; reopen the target so REA probes the current Kuna executable.`,
-          diagnostics: {
-            expected_sha256: installation.sha256,
-            observed_sha256: executable.sha256,
-          },
-        }),
       ),
     };
   await prepareProcessOwnershipInspection(signal);
@@ -265,6 +269,8 @@ export const exportKunaProject = async (
     signal,
   );
   if (!parsed.ok) return unusable(parsed.error);
+  const identity = await verifyKunaExecutable(installation, signal);
+  if (!identity.ok) return { kind: "done", result: identity };
   return {
     kind: "done",
     result: ok({ files: complete, summary, ...parsed.value }),
@@ -314,6 +320,9 @@ const runKuna = async (
 > => {
   const { installation, signal } = request;
   try {
+    const identity = await verifyKunaExecutable(installation, signal);
+    if (!identity.ok)
+      return { ok: false, outcome: { kind: "done", result: identity } };
     const snapshot = await runOwnedCommand(
       {
         command: installation.executable,

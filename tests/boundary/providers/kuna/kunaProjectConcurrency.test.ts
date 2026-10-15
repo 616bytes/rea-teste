@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { appendFileSync } from "node:fs";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, expect, it as test, onTestFinished, vi } from "vitest";
@@ -72,47 +73,82 @@ const fixture = async (maxBytes = 64 * 1024 ** 2) => {
   };
 };
 
-it("keeps concurrent exports readable until their callers can pin them", async () => {
-  const { cache, request, cacheRoot } = await fixture(600 * 1024);
-  const actual =
-    await vi.importActual<typeof import("node:fs/promises")>(
-      "node:fs/promises",
-    );
-  let releaseListing = () => {};
-  const gate = new Promise<void>((resolve) => {
-    releaseListing = resolve;
-  });
-  listing.directory = join(cacheRoot, "projects");
-  listing.gate = gate;
-  const releases: (() => void)[] = [];
-  const inputs = await Promise.all([request("first"), request("second")]);
-  const builds = inputs.map(async (input) => {
-    const result = await cache.build(input);
-    if (!result.ok) throw result.error;
-    releases.push(cache.pin(result.value.key));
-    return result.value;
-  });
-  onTestFinished(async () => {
+it.each([true, false])(
+  "preserves concurrent results and reclaims capacity (pin: %s)",
+  async (pin) => {
+    const { cache, request, cacheRoot } = await fixture(600 * 1024);
+    const actual =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    let releaseListing = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseListing = resolve;
+    });
+    listing.directory = join(cacheRoot, "projects");
+    listing.gate = gate;
+    const releases: (() => void)[] = [];
+    const inputs = await Promise.all([request("first"), request("second")]);
+    const builds = inputs.map(async (input) => {
+      const result = await cache.build(input);
+      if (!result.ok) throw result.error;
+      if (pin) releases.push(cache.pin(result.value.key));
+      return result.value;
+    });
+    onTestFinished(async () => {
+      releaseListing();
+      await Promise.allSettled(builds);
+      for (const release of releases) release();
+      const closed = await cache.close();
+      if (!closed.ok) throw closed.error;
+    });
+    await expect
+      .poll(() => actual.readdir(listing.directory).catch(() => []))
+      .toHaveLength(2);
+    listing.names = await actual.readdir(listing.directory);
     releaseListing();
-    await Promise.allSettled(builds);
-    for (const release of releases) release();
-    const closed = await cache.close();
-    if (!closed.ok) throw closed.error;
-  });
-  await expect
-    .poll(() => actual.readdir(listing.directory).catch(() => []))
-    .toHaveLength(2);
-  listing.names = await actual.readdir(listing.directory);
-  releaseListing();
-  for (const project of await Promise.all(builds)) {
-    expect(
-      await readFile(
-        join(project.directory, project.manifest.files.c.path),
-        "utf8",
-      ),
-    ).toContain("// Function: main @ 0x1000");
-  }
-});
+    const projects = await Promise.all(builds);
+    if (!pin) {
+      expect(await cache.close()).toEqual({ ok: true, value: null });
+      expect(await actual.readdir(listing.directory)).toHaveLength(1);
+      return;
+    }
+    for (const project of projects) {
+      expect(
+        await readFile(
+          join(project.directory, project.manifest.files.c.path),
+          "utf8",
+        ),
+      ).toContain("// Function: main @ 0x1000");
+    }
+  },
+);
+
+it.each(["decompiling", "sealing"] as const)(
+  "rejects an executable changed during %s",
+  async (phase) => {
+    const { kuna, cache, request, cacheRoot } = await fixture();
+    const input = await request("program");
+    const result = await cache.build({
+      ...input,
+      onStatus: (status) => {
+        if (status.phase === phase)
+          appendFileSync(kuna, "\n// installation replaced\n");
+      },
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        diagnostics: {
+          expected_sha256: input.installation.sha256,
+          observed_sha256: expect.any(String),
+        },
+      },
+    });
+    expect(await readdir(join(cacheRoot, "projects"))).toEqual([]);
+    expect(await cache.close()).toEqual({ ok: true, value: null });
+  },
+);
 
 it("keeps a shared progress callback registered for the remaining waiter", async () => {
   const { kuna, cache, request } = await fixture();

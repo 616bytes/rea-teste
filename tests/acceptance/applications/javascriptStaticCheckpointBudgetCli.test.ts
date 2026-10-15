@@ -6,15 +6,18 @@ import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-// A 256 MiB parent heap leaves a result budget that the large file's static
-// checkpoint exhausts, so the next file's checkpoint stops the analysis.
+// A 256 MiB parent heap leaves the parent with no result budget to retain
+// complete static facts, so the first source's checkpoint stops the analysis
+// before the remaining sources are read. The fixture's own complete static
+// facts stay well inside the worker's complete-fact byte budget, so the
+// transport limit is not what stops the run.
 cliTest.skipIf(process.versions.bun !== undefined)(
   "explains parent budget exhaustion after a static checkpoint",
   { timeout: 120_000 },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-js-static-budget-");
     const source = Array.from(
-      { length: 30_000 },
+      { length: 5_000 },
       (_, index) =>
         `import x${String(index)} from "./m${String(index % 50)}.js"; export const s${String(index)} = "literal-${String(index)}-" + x${String(index)}; fetch("/api/e${String(index)}");`,
     ).join("\n");
@@ -41,7 +44,7 @@ cliTest.skipIf(process.versions.bun !== undefined)(
       })
       .parse(response.json);
     expect(failure.message).toContain(
-      "exhausted after retaining static facts for z-tiny.mjs",
+      "exhausted after retaining static facts for a-large.mjs",
     );
     expect(failure.remediation.action).toContain("parent result budget");
     expect(failure.remediation.action).toContain(

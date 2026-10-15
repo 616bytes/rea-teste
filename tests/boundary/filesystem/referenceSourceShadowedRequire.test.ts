@@ -56,6 +56,15 @@ it("resolves require calls by lexical binding and source mode", async () => {
       "with ({}) { require = () => 'local'; }",
       "console.log(require('./throwing.cjs'));",
     ].join("\n"),
+    "default-param-var.cjs": [
+      "function patch(x = (() => { with ({}) { require = () => 'local'; } })()) { var require; }",
+      "patch();",
+      "console.log(require('./throwing.cjs'));",
+    ].join("\n"),
+    "computed-key.cjs": [
+      "const o = { [(() => { with ({}) { require = () => 'local'; } })()](require) {} };",
+      "console.log(require('./throwing.cjs'));",
+    ].join("\n"),
     "initialized-var.cjs": [
       "var require = () => 'local';",
       "console.log(require('./throwing.cjs'));",
@@ -102,6 +111,8 @@ it("resolves require calls by lexical binding and source mode", async () => {
     ["for-of-var.cjs", "local\n"],
     ["for-in-var.cjs", "shadowed\n"],
     ["with-write.cjs", "local\n"],
+    ["default-param-var.cjs", "local\n"],
+    ["computed-key.cjs", "local\n"],
     ["initialized-var.cjs", "local\n"],
     ["assigned-var.cjs", "local\n"],
     ["unbound-esm.mjs", "no-global-require\n"],
@@ -167,6 +178,18 @@ it("keeps loader edges when a local binding shields a dynamic write", async () =
       "patch();",
       "console.log(require('./loaded.cjs'));",
     ].join("\n"),
+    "nested-fn-var.cjs": [
+      "function patch() {",
+      "  if (false) { var require; }",
+      "  with ({}) { require = () => 'local'; }",
+      "}",
+      "patch();",
+      "console.log(require('./loaded.cjs'));",
+    ].join("\n"),
+    "empty-loop-var.cjs": [
+      "for (var require of []) {}",
+      "console.log(require('./loaded.cjs'));",
+    ].join("\n"),
     "loaded.cjs": "console.log('loaded');\nmodule.exports = 'real';\n",
   };
 
@@ -199,10 +222,12 @@ it("keeps loader edges when a local binding shields a dynamic write", async () =
       .map(({ from_path, to }) => [from_path, to])
       .sort((left, right) => (left[0] ?? "").localeCompare(right[0] ?? "")),
   ).toEqual([
+    ["empty-loop-var.cjs", "loaded.cjs"],
     ["local-fn-let.cjs", "loaded.cjs"],
     ["local-fn-var-init.cjs", "loaded.cjs"],
     ["local-fn-var.cjs", "loaded.cjs"],
     ["local-param.cjs", "loaded.cjs"],
+    ["nested-fn-var.cjs", "loaded.cjs"],
   ]);
 });
 

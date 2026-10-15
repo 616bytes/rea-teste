@@ -203,7 +203,7 @@ const loaderWriteReachesProgramScope = (
       if (
         (reference.resolution === "unknown" ||
           reference.resolution === "ambiguous") &&
-        !writeShieldedByLocalBinding(readAncestors())
+        !writeShieldedByLocalBinding(node, readAncestors())
       ) {
         reached = true;
       }
@@ -243,18 +243,52 @@ const bindsRequireIdentifier = (
 const functionBodyBindsRequire = (body: t.Node | null | undefined): boolean => {
   if (body === null || body === undefined || !t.isBlockStatement(body))
     return false;
+  let found = false;
+  let depth = 0;
+  traverseJavaScriptAst(body, {
+    enter: (node, parent) => {
+      if (found || node === body) return;
+      if (t.isFunction(node) || t.isClass(node)) {
+        if (
+          t.isFunctionDeclaration(node) &&
+          parent === body &&
+          node.id?.name === "require"
+        )
+          found = true;
+        depth += 1;
+        return;
+      }
+      if (depth > 0) return;
+      if (
+        t.isVariableDeclaration(node, { kind: "var" }) &&
+        node.declarations.some((declaration) =>
+          bindsRequireIdentifier([declaration.id]),
+        )
+      )
+        found = true;
+    },
+    exit: (node) => {
+      if (node !== body && (t.isFunction(node) || t.isClass(node))) depth -= 1;
+    },
+  });
+  return found;
+};
+
+const functionDeclarationsBindRequire = (
+  body: t.Node | null | undefined,
+): boolean => {
+  if (body === null || body === undefined || !t.isBlockStatement(body))
+    return false;
   return body.body.some(
     (statement) =>
-      (t.isVariableDeclaration(statement) &&
-        statement.declarations.some((declaration) =>
-          bindsRequireIdentifier([declaration.id]),
-        )) ||
-      (t.isFunctionDeclaration(statement) &&
-        statement.id !== null &&
-        statement.id !== undefined &&
-        statement.id.name === "require"),
+      t.isFunctionDeclaration(statement) && statement.id?.name === "require",
   );
 };
+
+const isComputedKeyOf = (scope: t.Node, child: t.Node): boolean =>
+  (t.isObjectMethod(scope) || t.isClassMethod(scope)) &&
+  scope.computed &&
+  (scope.key === child || contains(scope.key, child));
 
 const blockBindsLexicalRequire = (body: readonly t.Node[]): boolean =>
   body.some(
@@ -266,14 +300,25 @@ const blockBindsLexicalRequire = (body: readonly t.Node[]): boolean =>
       ),
   );
 
-const writeShieldedByLocalBinding = (ancestors: readonly t.Node[]): boolean => {
+const writeShieldedByLocalBinding = (
+  node: t.Node,
+  ancestors: readonly t.Node[],
+): boolean => {
+  let child: t.Node = node;
   for (let index = ancestors.length - 1; index >= 0; index -= 1) {
     const scope = ancestors[index];
     if (scope === undefined) continue;
     if (t.isProgram(scope)) return false;
     if (t.isFunction(scope)) {
+      if (isComputedKeyOf(scope, child)) {
+        child = scope;
+        continue;
+      }
       if (bindsRequireIdentifier(scope.params)) return true;
-      if (functionBodyBindsRequire(scope.body)) return true;
+      if (child === scope.body) {
+        if (functionBodyBindsRequire(scope.body)) return true;
+      } else if (functionDeclarationsBindRequire(scope.body)) return true;
+      child = scope;
       continue;
     }
     if (t.isCatchClause(scope) && bindsRequireIdentifier([scope.param]))
@@ -294,13 +339,23 @@ const writeShieldedByLocalBinding = (ancestors: readonly t.Node[]): boolean => {
         )
       )
         return true;
+      child = scope;
       continue;
     }
-    if (!t.isBlockStatement(scope) && !t.isStaticBlock(scope)) continue;
+    if (!t.isBlockStatement(scope) && !t.isStaticBlock(scope)) {
+      child = scope;
+      continue;
+    }
     if (blockBindsLexicalRequire(scope.body)) return true;
+    child = scope;
   }
   return false;
 };
+
+const isStaticallyEmptyIterable = (node: t.Node | null | undefined): boolean =>
+  (t.isArrayExpression(node) && node.elements.length === 0) ||
+  (t.isObjectExpression(node) && node.properties.length === 0) ||
+  (t.isStringLiteral(node) && node.value === "");
 
 const hasUninitializedTopLevelVarRequire = (program: t.Program): boolean => {
   let found = false;
@@ -321,11 +376,14 @@ const hasUninitializedTopLevelVarRequire = (program: t.Program): boolean => {
         // A for-in/of head has no initializer yet assigns the binding on
         // every iteration, so it initializes the loader just as an
         // assignment does. A bare `for (var require;;)` head stays
-        // uninitialized.
-        initialized ||=
-          declaration.init !== null ||
-          ((t.isForInStatement(parent) || t.isForOfStatement(parent)) &&
-            parent.left === node);
+        // uninitialized, as does a head over a statically empty iterable
+        // that never assigns.
+        if (t.isForInStatement(parent) || t.isForOfStatement(parent)) {
+          if (parent.left !== node) continue;
+          initialized ||= !isStaticallyEmptyIterable(parent.right);
+          continue;
+        }
+        initialized ||= declaration.init !== null;
       }
     },
   });

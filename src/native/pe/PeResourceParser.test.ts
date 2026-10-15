@@ -286,6 +286,28 @@ describe("PE resource section virtual extent", () => {
     },
   );
 
+  it("admits a zero-length resource payload at the section virtual boundary", async () => {
+    const fixture = peResourceFixture();
+    const { virtualSize } = sectionSizes(fixture);
+    const rva = 0x2000 + virtualSize;
+    fixture.bytes.writeUInt32LE(rva, fixture.dataOffsets[0]);
+    fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
+    const result = await parse(fixture.bytes);
+    expect(result.resources[0]?.payload).toMatchObject({
+      rva,
+      location: { offset: expect.any(Number), bytes: 0 },
+      sha256: createHash("sha256").update(Buffer.alloc(0)).digest("hex"),
+    });
+
+    const pastBoundary = peResourceFixture();
+    pastBoundary.bytes.writeUInt32LE(rva + 1, pastBoundary.dataOffsets[0]);
+    pastBoundary.bytes.writeUInt32LE(0, (pastBoundary.dataOffsets[0] ?? 0) + 4);
+    await expect(parse(pastBoundary.bytes)).rejects.toMatchObject({
+      reason: "format",
+      message: "Resource RVA has missing or overlapping section mappings.",
+    });
+  });
+
   it("maps raw bytes when VirtualSize is zero, as the image loader does", async () => {
     const fixture = peResourceFixture();
     fixture.bytes.writeUInt32LE(0, fixture.sectionAt + 8);

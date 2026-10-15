@@ -94,10 +94,18 @@ export const readPeResourceLayout = (bytes: Buffer) => {
   }
   const map = (rva: number, size: number): number => {
     if (rva + size > 0x100000000) peFailure("Resource RVA range overflows.");
-    const candidates = sections.filter(
+    const inside = sections.filter(
       (section) =>
         rva >= section.rva && rva - section.rva < virtualExtent(section),
     );
+    const candidates =
+      inside.length > 0 || size > 0
+        ? inside
+        : sections.filter(
+            (section) =>
+              rva >= section.rva &&
+              rva - section.rva === virtualExtent(section),
+          );
     if (rva < headerSize) {
       if (
         sections.some(

@@ -1,19 +1,25 @@
+import { execFile } from "node:child_process";
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
 import { expect, it } from "vitest";
 
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { inspectApktoolClient } from "./ApktoolConfiguration.js";
 
-const alive = (pid: number): boolean => {
+/** A zombie has already exited; it only waits for its parent to reap it. */
+const alive = async (pid: number): Promise<boolean> => {
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
   }
+  const state = await promisify(execFile)("ps", ["-o", "stat=", "-p", `${pid}`])
+    .then(({ stdout }) => stdout.trim())
+    .catch(() => "");
+  return state !== "" && !state.startsWith("Z");
 };
 
 const waitFor = async (check: () => Promise<boolean>, ms: number) => {
@@ -24,6 +30,11 @@ const waitFor = async (check: () => Promise<boolean>, ms: number) => {
   }
   return false;
 };
+
+const readPids = async (path: string): Promise<readonly number[]> =>
+  readFile(path, "utf8")
+    .then((text) => JSON.parse(text) as number[])
+    .catch(() => []);
 
 // The interpreter is the test runtime itself, so its environment (and the
 // ownership run token) is readable on both Linux and macOS.
@@ -51,18 +62,38 @@ it.skipIf(process.platform === "win32")(
       controller.signal,
       process.env,
     ).catch((cause: unknown) => cause);
-    expect(
-      await waitFor(
-        async () =>
-          (await readFile(pids, "utf8").catch(() => "")).startsWith("["),
-        10_000,
-      ),
-    ).toBe(true);
-    const launched = JSON.parse(await readFile(pids, "utf8")) as number[];
-    controller.abort();
-    expect(await probe).toBeInstanceOf(AnalysisCancelledError);
-    expect(performance.now() - started).toBeLessThan(15_000);
-    expect(await waitFor(async () => !launched.some(alive), 5_000)).toBe(true);
+    try {
+      expect(
+        await waitFor(async () => (await readPids(pids)).length === 2, 10_000),
+      ).toBe(true);
+      const launched = await readPids(pids);
+      controller.abort();
+      // A regressed probe never settles; bound the wait so cleanup still runs.
+      const outcome = await Promise.race([
+        probe,
+        delay(15_000).then(() => "still pending"),
+      ]);
+      expect(outcome).toBeInstanceOf(AnalysisCancelledError);
+      expect(performance.now() - started).toBeLessThan(15_000);
+      expect(
+        await waitFor(
+          async () =>
+            (await Promise.all(launched.map(alive))).every((live) => !live),
+          5_000,
+        ),
+      ).toBe(true);
+    } finally {
+      // A failed assertion must not leave the fixture's processes running.
+      controller.abort();
+      await Promise.race([probe, delay(10_000)]);
+      for (const pid of await readPids(pids))
+        if (await alive(pid))
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {
+            // Already exited between the check and the signal.
+          }
+    }
   },
   30_000,
 );

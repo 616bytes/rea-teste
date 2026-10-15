@@ -12,6 +12,7 @@ import {
 import {
   NonRegularFileReadError,
   openRegularFile,
+  RegularFileAdmissionFailure,
 } from "../../filesystem/RegularFile.js";
 import { RECOVERY_LIMITS } from "./WakaruRelease.js";
 
@@ -33,6 +34,9 @@ const scanRecoveryFile = async (
     symlinks: "reject",
     signal,
   }).catch((cause: unknown) => {
+    // A descriptor whose close failed stays owned by its error, even when
+    // cancellation was also requested.
+    if (cause instanceof RegularFileAdmissionFailure) throw cause;
     checkRecoveryCancellation(signal);
     if (cause instanceof NonRegularFileReadError)
       throw new AnalysisOutputError(

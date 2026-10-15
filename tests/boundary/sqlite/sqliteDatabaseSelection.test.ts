@@ -38,7 +38,7 @@ const replySchema = z.object({
   row_selection: sqliteRowSelectionSchema.nullable(),
 });
 
-it.each([
+const MISMATCHES = [
   { mismatch: "table", cleanup: "worker" },
   { mismatch: "columns", cleanup: "snapshot" },
   { mismatch: "row-limit", cleanup: "worker" },
@@ -55,7 +55,83 @@ it.each([
   { mismatch: "inventory-virtual", cleanup: "worker" },
   { mismatch: "row-selection", cleanup: "snapshot" },
   { mismatch: "missing-row-selection", cleanup: "worker" },
-] as const)(
+] as const;
+
+type Mismatch = (typeof MISMATCHES)[number]["mismatch"];
+
+const mutateReply = (
+  reply: z.output<typeof replySchema>,
+  mismatch: Mismatch,
+): void => {
+  if (reply.inspection.rows === null)
+    throw new Error("Worker did not return selected rows");
+  switch (mismatch) {
+    case "table":
+      reply.inspection.rows.table = "another-table";
+      break;
+    case "columns":
+      reply.inspection.rows.columns = ["integer_value"];
+      break;
+    case "all-columns":
+    case "inventory-columns":
+      reply.inspection.rows.columns[0] = "unselected-column";
+      break;
+    case "schema-virtual":
+    case "schema-shadow":
+    case "schema-unknown":
+    case "inventory-virtual":
+      reply.inspection.schema.tables = reply.inspection.schema.tables.map(
+        (table) => ({
+          ...table,
+          kind:
+            table.name !== "records"
+              ? table.kind
+              : mismatch === "schema-shadow"
+                ? "shadow"
+                : mismatch === "schema-unknown"
+                  ? "unknown"
+                  : "virtual",
+        }),
+      );
+      break;
+    case "row-selection":
+      if (reply.row_selection === null)
+        throw new Error("Worker did not retain column facts");
+      reply.row_selection.table = "another-table";
+      break;
+    case "missing-row-selection":
+      Reflect.deleteProperty(reply, "row_selection");
+      break;
+    case "row-limit":
+      reply.inspection.rows.row_limit = 3;
+      break;
+    case "schema-scope":
+      reply.inspection.schema.scope = "database";
+      break;
+    case "schema-table":
+      reply.inspection.schema.tables = reply.inspection.schema.tables.map(
+        (table) => ({ ...table, name: "another-table" }),
+      );
+      break;
+    case "schema-index":
+      reply.inspection.schema.indexes = reply.inspection.schema.indexes.map(
+        (index) => ({ ...index, table: "another-table" }),
+      );
+      break;
+    case "schema-trigger":
+      reply.inspection.schema.triggers = reply.inspection.schema.triggers.map(
+        (trigger) => ({ ...trigger, table: "another-table" }),
+      );
+      break;
+    case "schema-views":
+      reply.inspection.schema.views = [
+        { name: "unexpected-view", sql: "SELECT 1" },
+      ];
+      break;
+  }
+};
+
+it.each(MISMATCHES)(
   "rejects a shape-valid $mismatch mismatch with $cleanup cleanup before retaining Evidence",
   async ({ mismatch, cleanup }) => {
     const workspace = await createTestWorkspace("rea-sqlite-selection-");
@@ -83,77 +159,7 @@ it.each([
               const reply = replySchema.parse(
                 JSON.parse(await readFile(replyPath, "utf8")),
               );
-              if (reply.inspection.rows === null)
-                throw new Error("Worker did not return selected rows");
-              switch (mismatch) {
-                case "table":
-                  reply.inspection.rows.table = "another-table";
-                  break;
-                case "columns":
-                  reply.inspection.rows.columns = ["integer_value"];
-                  break;
-                case "all-columns":
-                case "inventory-columns":
-                  reply.inspection.rows.columns[0] = "unselected-column";
-                  break;
-                case "schema-virtual":
-                case "schema-shadow":
-                case "schema-unknown":
-                case "inventory-virtual":
-                  reply.inspection.schema.tables =
-                    reply.inspection.schema.tables.map((table) => ({
-                      ...table,
-                      kind:
-                        table.name !== "records"
-                          ? table.kind
-                          : mismatch === "schema-shadow"
-                            ? "shadow"
-                            : mismatch === "schema-unknown"
-                              ? "unknown"
-                              : "virtual",
-                    }));
-                  break;
-                case "row-selection":
-                  if (reply.row_selection === null)
-                    throw new Error("Worker did not retain column facts");
-                  reply.row_selection.table = "another-table";
-                  break;
-                case "missing-row-selection":
-                  Reflect.deleteProperty(reply, "row_selection");
-                  break;
-                case "row-limit":
-                  reply.inspection.rows.row_limit = 3;
-                  break;
-                case "schema-scope":
-                  reply.inspection.schema.scope = "database";
-                  break;
-                case "schema-table":
-                  reply.inspection.schema.tables =
-                    reply.inspection.schema.tables.map((table) => ({
-                      ...table,
-                      name: "another-table",
-                    }));
-                  break;
-                case "schema-index":
-                  reply.inspection.schema.indexes =
-                    reply.inspection.schema.indexes.map((index) => ({
-                      ...index,
-                      table: "another-table",
-                    }));
-                  break;
-                case "schema-trigger":
-                  reply.inspection.schema.triggers =
-                    reply.inspection.schema.triggers.map((trigger) => ({
-                      ...trigger,
-                      table: "another-table",
-                    }));
-                  break;
-                case "schema-views":
-                  reply.inspection.schema.views = [
-                    { name: "unexpected-view", sql: "SELECT 1" },
-                  ];
-                  break;
-              }
+              mutateReply(reply, mismatch);
               sqliteDatabaseSchema.parse({
                 artifact: {
                   path: database.path,

@@ -24,6 +24,63 @@ const workerPath = fileURLToPath(
   new URL("../../../dist/sqlite/SqliteDatabaseWorker.js", import.meta.url),
 );
 
+type RetainedMode = "rows" | "inventory" | "schema";
+
+const selectionFor = (mode: RetainedMode) => {
+  if (mode === "rows")
+    return { table: "records", columns: ["id"], row_limit: 2 };
+  if (mode === "inventory")
+    return {
+      table: "records",
+      schema_scope: "inventory" as const,
+      row_limit: 2,
+    };
+  return { schema_scope: "database" as const };
+};
+
+const expectedRows = (mode: RetainedMode) => {
+  if (mode === "schema") return null;
+  if (mode === "inventory")
+    return {
+      returned_rows: 2,
+      columns: [
+        "id",
+        "integer_value",
+        "blob_value",
+        "real_value",
+        "nullable_value",
+        "text_value",
+        "generated_value",
+      ],
+    };
+  return {
+    returned_rows: 2,
+    columns: ["id"],
+    values: [
+      [{ type: "integer", value: "1" }],
+      [{ type: "integer", value: "2" }],
+    ],
+  };
+};
+
+const expectInventoryScope = (partial: unknown) => {
+  expect(partial).toMatchObject({
+    normalized_result: {
+      schema: {
+        scope: "inventory",
+        tables: expect.arrayContaining([
+          expect.objectContaining({
+            name: "records",
+            columns: [],
+            columns_completeness: "not_requested",
+          }),
+        ]),
+      },
+    },
+  });
+  expect(partial).not.toHaveProperty(["normalized_result", "row_selection"]);
+};
+
 it.each(["rows", "inventory", "schema"] as const)(
   "retains completed worker %s while retrying process cleanup before snapshot cleanup",
   async (mode) => {
@@ -93,18 +150,7 @@ it.each(["rows", "inventory", "schema"] as const)(
       if (mode === "schema") database.close();
       await removeTestWorkspace(workspace.root);
     });
-    const input = {
-      path: database.path,
-      ...(mode === "rows"
-        ? { table: "records", columns: ["id"], row_limit: 2 }
-        : mode === "inventory"
-          ? {
-              table: "records",
-              schema_scope: "inventory" as const,
-              row_limit: 2,
-            }
-          : { schema_scope: "database" as const }),
-    };
+    const input = { path: database.path, ...selectionFor(mode) };
     const first = await provider.inspect(input);
     if (first.ok) throw new Error("Unconfirmed cleanup must fail");
     const partial = first.error.partialObservation;
@@ -139,49 +185,12 @@ it.each(["rows", "inventory", "schema"] as const)(
                 expect.objectContaining({ name: "records" }),
               ]),
             },
-            rows:
-              mode === "schema"
-                ? null
-                : mode === "inventory"
-                  ? {
-                      returned_rows: 2,
-                      columns: [
-                        "id",
-                        "integer_value",
-                        "blob_value",
-                        "real_value",
-                        "nullable_value",
-                        "text_value",
-                        "generated_value",
-                      ],
-                    }
-                  : {
-                      returned_rows: 2,
-                      columns: ["id"],
-                      values: [
-                        [{ type: "integer", value: "1" }],
-                        [{ type: "integer", value: "2" }],
-                      ],
-                    },
+            rows: expectedRows(mode),
           },
         },
       },
     });
-    if (mode === "inventory") {
-      expect(partial?.normalized_result).toMatchObject({
-        schema: {
-          scope: "inventory",
-          tables: expect.arrayContaining([
-            expect.objectContaining({
-              name: "records",
-              columns: [],
-              columns_completeness: "not_requested",
-            }),
-          ]),
-        },
-      });
-      expect(partial?.normalized_result).not.toHaveProperty("row_selection");
-    }
+    if (mode === "inventory") expectInventoryScope(partial);
     expect(processAttempts).toBe(1);
     expect(rootAttempts).toBe(0);
     const root = roots[0];

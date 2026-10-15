@@ -286,6 +286,26 @@ describe("PE resource section virtual extent", () => {
     },
   );
 
+  it("accepts a zero-length resource at the section virtual end", async () => {
+    const fixture = peResourceFixture();
+    const { virtualSize } = sectionSizes(fixture);
+    const rva = 0x2000 + virtualSize;
+
+    fixture.bytes.writeUInt32LE(rva, fixture.dataOffsets[0]);
+    fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
+
+    const result = peResourcesSchema.parse(await parse(fixture.bytes));
+
+    expect(result.coverage).toMatchObject({
+      status: "complete",
+      resources: 5,
+    });
+    expect(result.resources[0]?.payload).toMatchObject({
+      rva,
+      location: { bytes: 0 },
+    });
+  });
+
   it("maps raw bytes when VirtualSize is zero, as the image loader does", async () => {
     const fixture = peResourceFixture();
     fixture.bytes.writeUInt32LE(0, fixture.sectionAt + 8);

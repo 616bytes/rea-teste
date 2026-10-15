@@ -37,7 +37,7 @@ export const attestGhidraDosLoadImage = (
   const header = parsed.value;
   const loadSegment = 0x1000;
   const modified = Buffer.from(bytes);
-  const expectedRelocations = [];
+  const applied = [];
   for (let index = 0; index < header.relocationCount; index += 1) {
     const table = header.relocationTableOffset + index * 4;
     const offset = bytes.readUInt16LE(table);
@@ -49,7 +49,12 @@ export const attestGhidraDosLoadImage = (
     const relocated =
       (modified.readUInt16LE(fileOffset) + loadSegment) & 0xffff;
     modified.writeUInt16LE(relocated, fileOffset);
-    expectedRelocations.push({
+    applied.push({ segment, offset, fileOffset, original, relocated });
+  }
+  // The provider reads each record's memory window from the loaded Program,
+  // after every fixup; a later overlapping relocation can rewrite it.
+  const expectedRelocations = applied.map(
+    ({ segment, offset, fileOffset, original, relocated }) => ({
       address: address(loadSegment * 16 + segment * 16 + offset),
       segment: (loadSegment + segment) & 0xffff,
       offset,
@@ -60,8 +65,8 @@ export const attestGhidraDosLoadImage = (
       memory_bytes_hex: modified
         .subarray(fileOffset, fileOffset + 2)
         .toString("hex"),
-    });
-  }
+    }),
+  );
   const checks: NativeLoadImageCheck[] = [];
   const check = (
     name: string,

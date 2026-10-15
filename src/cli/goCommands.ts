@@ -12,11 +12,17 @@ import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
   cli.command(CLI_COMMANDS.inspectGoBinary, {
     description:
-      "Inspect embedded Go compiler, modules and build settings without target execution",
+      "Inspect Go build metadata and supported function entries without target execution",
     args: z.object({
       path: z.string().describe("Local ELF, PE or thin Mach-O image"),
     }),
-    run: ({ args }) =>
+    options: z.object({
+      functions: z
+        .boolean()
+        .optional()
+        .describe("Read supported Go function names and entry coordinates"),
+    }),
+    run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
         const service = createGoBinaryService();
         return await logCliCommand(
@@ -24,7 +30,16 @@ export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
           CLI_COMMANDS.inspectGoBinary,
           async () =>
             finishAnalysisCommand(
-              () => service.inspect({ path: resolve(args.path) }, { signal }),
+              () =>
+                service.inspect(
+                  {
+                    path: resolve(args.path),
+                    ...(options.functions === undefined
+                      ? {}
+                      : { functions: options.functions }),
+                  },
+                  { signal },
+                ),
               service,
               "go-build-info",
               "inspect_go_binary",

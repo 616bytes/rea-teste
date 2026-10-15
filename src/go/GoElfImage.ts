@@ -220,6 +220,7 @@ export const readGoElfImage = (bytes: Buffer): GoBinaryContainer => {
   const machine = reader.u16(18);
   return {
     format: "elf",
+    elf_type: reader.u16(16),
     architecture: elfArchitecture(machine),
     bits,
     byte_order: reader.little ? "little" : "big",
@@ -319,7 +320,13 @@ const elfImageSection = ({
     (flags & 1n) === 0n &&
     (flags & 4n) === 0n &&
     (flags & 2n) !== 0n;
-  return { name, ...range, read_only: readOnly, compressed };
+  return {
+    name,
+    address: reader.word(header + (wide ? 16 : 12), bits),
+    ...range,
+    read_only: readOnly,
+    compressed,
+  };
 };
 
 const SHT_NOBITS = 8;

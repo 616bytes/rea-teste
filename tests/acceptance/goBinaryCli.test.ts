@@ -16,6 +16,59 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import { createGoFunctionFixture } from "../fixtures/go/functions.js";
+
+cliTest(
+  "preserves function-table evidence through public CLI and stdio MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-go-functions-");
+    const path = join(root, "functions.elf");
+    const { bytes, table, text } = createGoFunctionFixture();
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-go-binary", path, "--functions", "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_go_binary").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.subject?.digest?.sha256).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+    expect(evidence.normalized_result.functions).toMatchObject({
+      state: "complete",
+      entries: [
+        { name: "main.加法", file_offset: text },
+        { name: "main.choose", file_offset: text + 32 },
+      ],
+    });
+    expect(evidence.locations).toContainEqual({
+      kind: "file-offset-range",
+      start: table,
+      end: table + 512,
+    });
+    const { client, call } = await connectLocalToolsMcp();
+    const response = await call("inspect_go_binary", { path, functions: true });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expect(response.structuredContent).toEqual(evidence);
+    const metadataOnly = await cli.run({
+      arguments: ["inspect-go-binary", path, "--json"],
+    });
+    expect(metadataOnly.exitCode, metadataOnly.stderr).toBe(0);
+    const metadataEvidence = toolContract(
+      "inspect_go_binary",
+    ).outputSchema.parse(metadataOnly.json);
+    expect(metadataEvidence.normalized_result.functions).toEqual({
+      state: "not-requested",
+      entries: [],
+    });
+    expect(
+      (await call("inspect_go_binary", { path })).structuredContent,
+    ).toEqual(metadataEvidence);
+    await client.ping();
+  },
+  30000,
+);
 
 cliTest(
   "bounds overlapping ELF scans through CLI and keeps MCP responsive",

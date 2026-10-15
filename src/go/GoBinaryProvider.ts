@@ -28,6 +28,8 @@ import {
   GoBinaryResourceFailure,
 } from "./GoBinaryImage.js";
 import { parseGoModuleBytes, parseGoModuleText } from "./GoModuleText.js";
+import { jsonParts } from "../domain/jsonSerialization.js";
+import { GoFunctionMappingLimit } from "./GoFunctionTable.js";
 
 /** Bundled format reader identity; embedded compiler versions are separate observed facts. */
 export const GO_BINARY_PROVIDER_IDENTITY = {
@@ -52,6 +54,14 @@ const failureForPrimary = (
   if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
     return new AnalysisCancelledError(OPERATION, { cause });
   if (signal?.aborted) return new AnalysisCancelledError(OPERATION, { cause });
+  if (cause instanceof GoFunctionMappingLimit)
+    return new AnalysisResourceConstraintError(
+      OPERATION,
+      "cpu",
+      cause.message,
+      { maximum_mapping_comparisons: cause.maximum_comparisons },
+      { cause },
+    );
   if (cause instanceof GoBinaryResourceFailure)
     return new AnalysisResourceConstraintError(
       OPERATION,
@@ -163,7 +173,7 @@ export class GoBinaryProvider implements GoBinaryPort {
         ),
       );
       options?.signal?.throwIfAborted();
-      const image = readGoBinaryImage(snapshot.bytes);
+      const image = readGoBinaryImage(snapshot.bytes, input.functions === true);
       const info = image.build_info;
       if (
         info !== null &&
@@ -193,7 +203,10 @@ export class GoBinaryProvider implements GoBinaryPort {
         build_info: info === null ? null : { ...info, module },
         limitations: [
           "Embedded build metadata is observed file content, not proof of compiler identity, dependency authenticity or runtime behavior.",
-          "Only Go build information is inspected; function names, source mappings, type metadata and decompiled code are not recovered.",
+          "Function-table coverage is limited to named Go 1.20-layout .gopclntab sections in ELF64 little-endian amd64 executables. Compiler-declared names and entry coordinates do not recover source mappings, types, inline functions or decompiled code.",
+          ...(image.functions.state === "unavailable"
+            ? [image.functions.limitation]
+            : []),
           "Resource guards bound stable artifact reads and cumulative header searches to 256 MiB each, aggregate embedded strings to 1 MiB, structural table decoding to 16 MiB and complete metadata payloads to 8 MiB; these are not operating-system memory or CPU limits.",
           ...(info !== null &&
           (info.go_version === null || info.module_text === null)
@@ -213,8 +226,11 @@ export class GoBinaryProvider implements GoBinaryPort {
             : []),
         ],
       };
-      if (Buffer.byteLength(JSON.stringify(report), "utf8") > OUTPUT_BYTES)
-        throw outputLimit(input.path);
+      let outputBytes = 0;
+      for (const part of jsonParts(report)) {
+        outputBytes += Buffer.byteLength(part, "utf8");
+        if (outputBytes > OUTPUT_BYTES) throw outputLimit(input.path);
+      }
       const parsed = goBinarySchema.safeParse(report);
       if (!parsed.success)
         throw new AnalysisOutputError(

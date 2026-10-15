@@ -15,6 +15,8 @@ import {
 import { readGoElfImage } from "./GoElfImage.js";
 import { readGoMachoImage } from "./GoMachoImage.js";
 import { readGoPeImage } from "./GoPeImage.js";
+import { readGoFunctionTable } from "./GoFunctionTable.js";
+import type { GoFunctionTable } from "../domain/go/goFunctionTable.js";
 
 export {
   GoBinaryFormatFailure,
@@ -52,12 +54,19 @@ export interface GoBinaryImage {
   readonly bits: 32 | 64;
   readonly byte_order: "little" | "big";
   readonly build_info: GoBuildInfo | null;
+  readonly functions: GoFunctionTable;
 }
 
 /** Inspect bounded executable bytes using native mappings, without loading or executing code. */
-export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
+export const readGoBinaryImage = (
+  bytes: Buffer,
+  includeFunctions = false,
+): GoBinaryImage => {
   const container = readGoBinaryContainer(bytes);
   const { format, architecture, bits, byte_order } = container;
+  const functions: GoFunctionTable = includeFunctions
+    ? readGoFunctionTable(bytes, container)
+    : { state: "not-requested", entries: [] };
   let selected: { search: GoFileMapping; header: number } | null = null;
   const searched = new Set<string>();
   let remainingSearchBytes = MAX_HEADER_SEARCH_BYTES;
@@ -81,7 +90,14 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
     }
   }
   if (selected === null)
-    return { format, architecture, bits, byte_order, build_info: null };
+    return {
+      format,
+      architecture,
+      bits,
+      byte_order,
+      build_info: null,
+      functions,
+    };
   const { search, header } = selected;
   const verifyMapping = (size: number): void => {
     const address = search.address + BigInt(header - search.offset);
@@ -179,6 +195,7 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
     architecture,
     bits,
     byte_order,
+    functions,
     build_info: {
       header_offset: header,
       encoding,

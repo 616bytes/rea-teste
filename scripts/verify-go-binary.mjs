@@ -284,7 +284,7 @@ async function prepareFixture() {
   );
   await writeFile(
     join(sourceRoot, "main.go"),
-    'package main\nimport ("fmt"; "example.test/dependency")\nfunc main() { fmt.Println(dependency.Value()) }\n',
+    'package main\nimport ("fmt"; "example.test/dependency")\n//go:noinline\nfunc 输出(value string) { fmt.Println(value) }\nfunc main() { 输出(dependency.Value()) }\n',
   );
   await writeFile(
     join(sourceRoot, "oracle", "main.go"),
@@ -293,8 +293,11 @@ async function prepareFixture() {
 import (
   "context"
   "debug/buildinfo"
+  "debug/elf"
+  "debug/gosym"
   "encoding/base64"
   "encoding/json"
+  "fmt"
   "os"
   "os/exec"
   "time"
@@ -302,6 +305,32 @@ import (
 )
 
 func main() {
+  if len(os.Args) == 3 && os.Args[1] == "--functions" {
+    file, err := elf.Open(os.Args[2])
+    if err != nil { panic(err) }
+    defer file.Close()
+    table, text := file.Section(".gopclntab"), file.Section(".text")
+    if table == nil || text == nil { panic("missing Go function sections") }
+    data, err := table.Data()
+    if err != nil { panic(err) }
+    symbols, err := gosym.NewTable(nil, gosym.NewLineTable(data, text.Addr))
+    if err != nil { panic(err) }
+    entries := make([]map[string]interface{}, 0, len(symbols.Funcs))
+    for _, function := range symbols.Funcs {
+      var offset uint64
+      found := false
+      for _, segment := range file.Progs {
+        if segment.Type != elf.PT_LOAD || function.Entry < segment.Vaddr || function.Entry-segment.Vaddr >= segment.Filesz { continue }
+        candidate := segment.Off + function.Entry-segment.Vaddr
+        if found && offset != candidate { panic("ambiguous function mapping") }
+        found, offset = true, candidate
+      }
+      if !found { panic("unmapped function entry") }
+      entries = append(entries, map[string]interface{}{"name": function.Name, "entry_address": fmt.Sprintf("0x%x", function.Entry), "file_offset": offset})
+    }
+    if err := json.NewEncoder(os.Stdout).Encode(map[string]interface{}{"table": map[string]uint64{"offset": table.Offset, "bytes": table.Size}, "text_start": fmt.Sprintf("0x%x", text.Addr), "entries": entries}); err != nil { panic(err) }
+    return
+  }
   byteFixture := len(os.Args) == 4 && os.Args[1] == "--build-byte-fixture"
   path := os.Args[1]
   if byteFixture {
@@ -350,13 +379,13 @@ async function inspect(mode, path) {
   if (mode === "cli") {
     const { stdout } = await execute(
       process.execPath,
-      [entrypoint, "inspect-go-binary", path, "--json"],
+      [entrypoint, "inspect-go-binary", path, "--functions", "--json"],
       { env: environment, timeout: 30_000, maxBuffer: 8 * 1024 * 1024 },
     );
     envelope = JSON.parse(stdout);
   } else {
     const response = await client.callTool(
-      { name: "inspect_go_binary", arguments: { path } },
+      { name: "inspect_go_binary", arguments: { path, functions: true } },
       { timeout: 30_000 },
     );
     assert.notEqual(response.isError, true, mcpTextValue(response));
@@ -444,10 +473,41 @@ async function verify(
     reports[1],
     "Public CLI and MCP projections disagree",
   );
+  const functions = reports[0].functions;
+  if (
+    target[0] === "linux" &&
+    target[1] === "amd64" &&
+    !fileKind.includes("sectionless") &&
+    !fileKind.includes("pie")
+  ) {
+    assert.equal(functions.state, "complete", JSON.stringify(functions));
+    const expectedFunctions = JSON.parse(
+      (
+        await execute(oracle, ["--functions", path], {
+          timeout: 10_000,
+          maxBuffer: 8 * 1024 * 1024,
+        })
+      ).stdout,
+    );
+    assert.deepEqual(functions.table, expectedFunctions.table);
+    assert.equal(functions.text_start, expectedFunctions.text_start);
+    assert.deepEqual(
+      functions.entries.map(({ name, entry_address, file_offset }) => ({
+        name,
+        entry_address,
+        file_offset,
+      })),
+      expectedFunctions.entries,
+    );
+    assert.ok(functions.entries.some((entry) => entry.name === "main.输出"));
+  } else {
+    assert.equal(functions.state, "unavailable");
+  }
   verified.push({
     target: `${target[0]}/${target[1]}`,
     file: byteExpected === null ? fileKind : "byte-valued-strings",
     go_version: expected.GoVersion,
+    functions: { state: functions.state, count: functions.entries.length },
     ...(byteExpected === null
       ? {}
       : { go_version_bytes_base64: expected.GoVersionBytesBase64 }),

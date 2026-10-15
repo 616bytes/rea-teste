@@ -187,6 +187,7 @@ export const readGoMachoImage = (bytes: Buffer): GoBinaryContainer => {
   ]);
   return {
     format: "macho",
+    elf_type: null,
     architecture: names.get(cpu) ?? `macho-cpu-${cpu}`,
     bits,
     byte_order: little ? "little" : "big",
@@ -253,6 +254,7 @@ const machoImageSection = ({
     (flags & 0x80000400) === 0;
   return {
     name,
+    address: sectionAddress,
     ...range,
     file_backed: fileBacked,
     read_only: readOnly,

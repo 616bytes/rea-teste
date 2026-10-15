@@ -103,3 +103,51 @@ it.each([
 ])("refuses contradictory or ambiguous PSP headers: %s", (before, after) => {
   assert.throws(() => parsePspReadelfMips(metadata.replace(before, after)));
 });
+
+// GNU readelf 2.40 independently decoded this declaration from a constructed
+// ELF32/PSP-shaped control, not a PSPSDK build or a real Allegrex import.
+const gnuDeclaration = `Attribute Section: gnu
+File Attributes
+  Tag_GNU_MIPS_ABI_FP: Hard float (single precision)
+`;
+const gnuMetadata = metadata.replace(
+  ".text             PROGBITS",
+  ".text             GNU_ATTRIBUTES",
+);
+
+it.each(["before", "after"])(
+  "retains the independent single-float GNU declaration %s the ABI dump",
+  (position) => {
+    const text =
+      position === "before"
+        ? gnuMetadata.replace(observed, `${gnuDeclaration}\n${observed}`)
+        : `${gnuMetadata}\n${gnuDeclaration}`;
+    assert.deepEqual(parsePspReadelfMips(text), {
+      ...parsePspReadelfMips(metadata),
+      gnuAttributes: { fpAbi: 2, msa: null },
+    });
+  },
+);
+
+it.each([
+  ["unknown vendor", gnuDeclaration.replace("gnu", "aeabi")],
+  ["wrong float ABI", gnuDeclaration.replace("single", "double")],
+  ["unknown tag", `${gnuDeclaration}  Tag_GNU_Unknown: 1\n`],
+  [
+    "unsupported scope",
+    gnuDeclaration.replace("File Attributes", "Section Attributes: 1"),
+  ],
+  ["duplicate declaration", `${gnuDeclaration}${gnuDeclaration}`],
+])("refuses %s rather than inventing PSP GNU facts", (_name, declaration) => {
+  assert.throws(
+    () => parsePspReadelfMips(`${gnuMetadata}\n${declaration}`),
+    /GNU attributes/u,
+  );
+});
+
+it("refuses undeclared GNU attributes rather than reporting absence", () => {
+  assert.throws(
+    () => parsePspReadelfMips(`${metadata}\n${gnuDeclaration}`),
+    /GNU attributes/u,
+  );
+});

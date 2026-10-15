@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { copyFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { parseMipsReadelfGnuAttributeAbsence } from "./mips-checks.mjs";
+import { parseMipsReadelfSectionTypes } from "./mips-checks.mjs";
 
 const execute = promisify(execFile);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -182,8 +182,43 @@ export function parsePspReadelfMips(text) {
     type: 2,
     flags: 0x10a23001,
     abiFlags: abi,
-    gnuAttributes: parseMipsReadelfGnuAttributeAbsence(text),
+    gnuAttributes: parsePspGnuAttributes(text),
   };
+}
+
+// The maintained PSP fixture is single-float. Retain that independently decoded
+// GNU declaration when present, and refuse other tags/vendors/scopes rather
+// than confusing an uninspected or unsupported declaration with absence.
+function parsePspGnuAttributes(text) {
+  const count = parseMipsReadelfSectionTypes(text).filter(
+    (type) => type === "GNU_ATTRIBUTES",
+  ).length;
+  const headers = [...text.matchAll(/^Attribute Section: (.+)$/gmu)];
+  if (count === 0) {
+    assert.equal(
+      headers.length,
+      0,
+      "GNU attributes without a declared section",
+    );
+    return null;
+  }
+  assert.equal(count, 1, "Ambiguous GNU attributes sections");
+  assert.equal(headers.length, 1, "Missing or ambiguous GNU attributes output");
+  const header = headers[0];
+  assert.equal(header[1].trim(), "gnu", "Unsupported GNU attributes vendor");
+  const tail = text.slice(header.index + header[0].length);
+  // GNU attributes may precede or follow the architecture-specific ABI dump.
+  const end = tail.search(/^MIPS ABI Flags Version:/mu);
+  const lines = (end < 0 ? tail : tail.slice(0, end))
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  assert.deepEqual(
+    lines,
+    ["File Attributes", "Tag_GNU_MIPS_ABI_FP: Hard float (single precision)"],
+    "Unsupported or incomplete PSP GNU attributes declaration",
+  );
+  return { fpAbi: 2, msa: null };
 }
 
 /** Observations from Ghidra, not an echo of the requested profile. */

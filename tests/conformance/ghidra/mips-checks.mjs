@@ -23,8 +23,8 @@ const SOFT_FLOAT_SYMBOLS = [
   "rea_mips_soft_caller",
 ];
 
-/** Shared ELF32 fixture oracle: only complete section coverage proves absence. */
-export function parseMipsReadelfGnuAttributeAbsence(text) {
+/** Complete indexed ELF32 section types shared by the independent fixture readers. */
+export function parseMipsReadelfSectionTypes(text) {
   const counts = [
     ...text.matchAll(/^\s*Number of section headers:\s*(\d+)\s*$/gmu),
   ];
@@ -37,20 +37,15 @@ export function parseMipsReadelfGnuAttributeAbsence(text) {
     sectionCount,
     "Incomplete readelf section table",
   );
-  for (const [index, section] of sections.entries()) {
+  return sections.map((section, index) => {
     assert.equal(Number(section[1]), index, "Ambiguous readelf section index");
     const columns =
       /^(?:\S+[ \t]+)?(\S+)[ \t]+[\da-f]{8}[ \t]+[\da-f]+[ \t]+[\da-f]+[ \t]+[\da-f]{2}[ \t]+(?:[A-Za-z]+[ \t]+)?\d+[ \t]+\d+[ \t]+\d+[ \t]*$/u.exec(
         section[2],
       );
     assert.ok(columns !== null, "Malformed readelf section header");
-    assert.notEqual(
-      columns[1],
-      "GNU_ATTRIBUTES",
-      "Fixture unexpectedly declares GNU attributes",
-    );
-  }
-  return null;
+    return columns[1];
+  });
 }
 
 /**
@@ -81,7 +76,10 @@ export function parseMipsReadelf(
     objectType === "rel" ? /^REL\b/u : /^EXEC\b/u,
   );
   assert.match(field(/^\s*Machine:\s*(.+)$/gmu, "machine"), /^MIPS\b/u);
-  const gnuAttributes = parseMipsReadelfGnuAttributeAbsence(text);
+  assert.ok(
+    !parseMipsReadelfSectionTypes(text).includes("GNU_ATTRIBUTES"),
+    "Fixture unexpectedly declares GNU attributes",
+  );
   const flags = Number(field(/^\s*Flags:\s*(0x[\da-f]+),.*$/gmu, "flags"));
   assert.equal(flags, 0x70001001, "Fixture ELF flags differ from build intent");
   assert.equal(field(/^ISA:\s*(.+)$/gmu, "ISA"), "MIPS32r2");
@@ -154,7 +152,7 @@ export function parseMipsReadelf(
       type: objectType === "rel" ? 1 : 2,
       flags,
       abiFlags,
-      gnuAttributes,
+      gnuAttributes: null,
     },
     symbols,
   };

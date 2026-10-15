@@ -1,9 +1,14 @@
 # Radare2 transport experiment
 
 This is an isolated prototype for the [transport proposal](../../docs/radare2-proposal.md).
-It is not imported by REA, advertised to agents, included in the npm package or
+It is not imported by REA, registered in REA's agent catalog, included in the npm package or
 an approved provider. It uses REA's existing process supervision and tagged
 errors/Result; it does not implement production Evidence or session admission.
+
+The separate [analyst capability prototype](CAPABILITIES.md) exposes CFG,
+database layouts, native type synthesis and value dependencies through an
+explicitly launched experimental CLI/MCP server. It is usable for the documented
+experiments; it is not enabled by running REA's normal MCP entrypoint.
 
 The separate [task comparison](BENCHMARK.md) measures actual Codex investigations
 and cold/warm MCP workloads through PR #3521, upstream r2mcp and Ghidra.
@@ -54,6 +59,12 @@ core receives the same settings. `R2_COLOR=0 R2_UTF8=0` also works for standalon
 r2 commands. External HTTP cores keep the caller's settings; use an explicit
 command or scoped `@e:scr.color=0,scr.utf8=0` when desired. No display filtering
 is applied to captured results.
+
+Local connection `settings` are applied before opening the target, for example
+`"settings":{"bin.relocs.apply":true}`. Preserve this load-time distinction:
+setting `bin.relocs.apply` after opening does not retroactively apply relocation
+patches. HTTP connections have no startup settings field and preserve the
+already running core's configuration.
 
 `e cfg.json.num=string` is supported, including the r2pipe2 `value` field.
 For individual JSON reads, `aflj @e:cfg.json.num=string` scopes the setting to

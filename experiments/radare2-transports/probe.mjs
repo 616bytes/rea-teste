@@ -42,20 +42,32 @@ const requestSchema = z.strictObject({
 });
 const batch = { commands: z.array(z.union([command, requestSchema])).min(1) };
 const local = {
-  ...batch,
   path: z.string().min(1),
   executable: z.string().min(1).optional(),
+  settings: z
+    .record(
+      z.string().regex(/^[a-z][a-z0-9_.]*$/u),
+      z.union([
+        z.boolean(),
+        z.number().finite(),
+        z.string().regex(/^[a-zA-Z0-9_.:/ +-]*$/u),
+      ]),
+    )
+    .optional(),
 };
-const inputSchema = z.discriminatedUnion("transport", [
+export const connectionSchema = z.discriminatedUnion("transport", [
   z.strictObject({ transport: z.literal("exec"), ...local }),
   z.strictObject({ transport: z.literal("r2pipe"), ...local }),
   z.strictObject({ transport: z.literal("r2mcp"), ...local }),
   z.strictObject({
     transport: z.literal("http"),
-    ...batch,
     endpoint: z.string().url(),
   }),
 ]);
+const inputSchema = z.discriminatedUnion(
+  "transport",
+  connectionSchema.options.map((schema) => schema.extend(batch)),
+);
 const retainedOwners = new Set();
 
 /** Settle observed output before stop() releases the supervisor's event listeners. */
@@ -475,6 +487,8 @@ export async function probe(input, options = {}) {
           ? (environment.REA_R2MCP_COMMAND ?? "r2mcp")
           : (environment.REA_R2_COMMAND ?? "r2"));
       const flags = ["-N", "-q", "-e", "scr.color=0", "-e", "scr.utf8=0"];
+      const settings = Object.entries(selected.settings ?? {});
+      for (const [key, value] of settings) flags.push("-e", `${key}=${value}`);
       if (selected.transport === "exec") {
         for (const command of selected.commands) {
           const output = await runOwnedCommand(
@@ -502,7 +516,16 @@ export async function probe(input, options = {}) {
         const args =
           selected.transport === "r2pipe"
             ? [...flags, "-0", path]
-            : ["-r", "-N", "-c", "e scr.color=0;e scr.utf8=0"];
+            : [
+                "-r",
+                "-N",
+                "-c",
+                [
+                  "e scr.color=0",
+                  "e scr.utf8=0",
+                  ...settings.map(([key, value]) => `e ${key}=${value}`),
+                ].join(";"),
+              ];
         await withOwned(
           executable,
           args,

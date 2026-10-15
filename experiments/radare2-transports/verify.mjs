@@ -1,13 +1,16 @@
 // Explicit real-provider experiment, intentionally outside the portable test suite.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { runOwnedCommand } from "../../dist/process/OwnedCommand.js";
 import {
   ProviderProcessSupervisor,
@@ -15,11 +18,13 @@ import {
 } from "../../dist/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../dist/process/ProcessOwnership.js";
 import { probe, retryCleanup, stopAndDrain } from "./probe.mjs";
+import { createAnalysisExperiment } from "./analysis.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "rea-radare2-probe-"));
 const artifact = join(root, "transport fixture");
 const owners = new Set();
 const r2 = process.env.REA_R2_COMMAND ?? "r2";
+let typedAddress;
 const commands = [
   "aa",
   { cmd: "aflj", json: true },
@@ -42,6 +47,14 @@ before(async () => {
     },
     { timeoutMs: 30_000, diagnosticBytes: 1024 * 1024 },
   );
+  const symbols = replies(
+    await probe({
+      transport: "exec",
+      path: artifact,
+      commands: [{ cmd: "isj", json: true }],
+    }),
+  )[0].res;
+  typedAddress = `0x${BigInt(symbols.find((symbol) => symbol.name.endsWith("consume")).vaddr).toString(16)}`;
 });
 
 after(async () => {
@@ -130,6 +143,77 @@ for (const transport of ["exec", "r2pipe", "r2mcp"]) {
       );
     }
   });
+  test(`real ${transport}: analyst CFG, inferred types, layouts and value dependencies`, async () => {
+    const experiment = createAnalysisExperiment(
+      { transport, path: artifact, settings: { "bin.relocs.apply": true } },
+      {
+        prelude: [
+          '"td struct rea_layout { char tag; int values[3]; long long end; };"',
+        ],
+      },
+    );
+    const analyzed = await experiment.analyze({
+      procedure: typedAddress,
+      recover_types: true,
+    });
+    assert.equal(analyzed.ok, true, analyzed.error?.cause?.message);
+    const fn = analyzed.value.result;
+    assert.ok(fn.basic_blocks.length >= 3);
+    assert.ok(
+      fn.basic_blocks.every((block) => BigInt(block.end) > BigInt(block.start)),
+    );
+    assert.ok(fn.esil.coverage.lifted_instructions > 0);
+    assert.ok(fn.high_pcode.def_use.length > 0);
+    assert.ok(fn.recovered_types.types.length > 0);
+    assert.equal(fn.high_pcode.procedure.address, typedAddress);
+    const type = await experiment.inspectType({ type: "rea_layout" });
+    assert.equal(type.ok, true, type.error?.cause?.message);
+    assert.deepEqual(
+      type.value.result.fields.map((field) => [
+        field.offset_bytes,
+        field.size_bytes,
+      ]),
+      [
+        [0, 1],
+        [4, 12],
+        [16, 8],
+      ],
+    );
+    assert.equal(
+      type.value.result.size_bytes,
+      null,
+      "Do not guess aggregate trailing padding",
+    );
+    const traced = await experiment.trace({
+      procedure: typedAddress,
+      parameter: 0,
+      max_nodes: 1000,
+    });
+    assert.equal(traced.ok, true, traced.error?.cause?.message);
+    assert.ok(traced.value.result.operations.length > 0);
+    assert.equal(traced.value.result.selection_status, "observed");
+    assert.equal(experiment.view(traced.value.parent_observation_id).ok, true);
+    const unknown = await experiment.trace({
+      procedure: typedAddress,
+      parameter: 99,
+    });
+    assert.equal(unknown.ok, true);
+    assert.equal(unknown.value.result.selection_status, "unknown");
+    assert.ok(
+      unknown.value.result.unknowns.some((reason) =>
+        reason.includes("parameter"),
+      ),
+    );
+    assert.equal(experiment.release(analyzed.value.observation_id), true);
+    assert.equal(experiment.view(analyzed.value.observation_id).ok, false);
+    const invalid = await experiment.analyze({ procedure: "0x4;!unexpected" });
+    assert.equal(invalid.ok, false);
+    const aborted = await experiment.analyze(
+      { procedure: typedAddress },
+      { signal: AbortSignal.abort() },
+    );
+    assert.equal(aborted.ok, false);
+  });
 }
 
 test("numeric decoding preserves native strings and unsafe JSON literals", async () => {
@@ -152,6 +236,92 @@ test("numeric decoding preserves native strings and unsafe JSON literals", async
     );
     if (transport === "exec") continue;
     await verifyStringNumbers({ transport, path: artifact });
+  }
+});
+
+test("analyst MCP advertises valid schemas and pages retained producer facts", async () => {
+  const configuration = join(root, "analysis.json");
+  await writeFile(
+    configuration,
+    JSON.stringify({ connection: { transport: "r2pipe", path: artifact } }),
+  );
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [
+      fileURLToPath(new URL("./analysis-server.mjs", import.meta.url)),
+      configuration,
+    ],
+    env: { ...process.env, REA_R2_COMMAND: r2, R2_COLOR: "0", R2_UTF8: "0" },
+    stderr: "pipe",
+  });
+  transport.stderr?.resume();
+  const client = new Client({
+    name: "radare2-capability-verifier",
+    version: "0",
+  });
+  try {
+    await client.connect(transport);
+    const catalog = await client.listTools();
+    const validator = new Ajv2020({ strict: false, validateFormats: false });
+    for (const tool of catalog.tools) {
+      assert.equal(validator.validateSchema(tool.inputSchema), true);
+      assert.equal(validator.validateSchema(tool.outputSchema), true);
+    }
+    const call = async (name, args) => {
+      const contract = catalog.tools.find((tool) => tool.name === name);
+      assert.ok(contract, `Missing named contract ${name}`);
+      assert.equal(validator.validate(contract.inputSchema, args), true);
+      const reply = await client.callTool({ name, arguments: args });
+      assert.notEqual(reply.isError, true, JSON.stringify(reply));
+      assert.equal(
+        validator.validate(contract.outputSchema, reply.structuredContent),
+        true,
+      );
+      return reply.structuredContent.observation;
+    };
+    const analyzed = await call("analyze_function", {
+      procedure: typedAddress,
+    });
+    assert.ok(analyzed.result.high_pcode.summary.operations > 0);
+    assert.equal(analyzed.result.high_pcode.operations, undefined);
+    const page = await call("view_radare2_observation", {
+      observation_id: analyzed.observation_id,
+      facet: "flow_operations",
+      limit: 1,
+    });
+    assert.equal(page.result.length, 1);
+    assert.ok(page.next_offset > 0);
+    assert.equal(page.coverage.producer, "r2ghidra-pdgx");
+    assert.ok(page.coverage.unknowns.length);
+    assert.ok(page.target.sha256_before);
+    const traced = await call("trace_native_values", {
+      procedure: typedAddress,
+      parameter: 0,
+    });
+    assert.ok(traced.result.operations.length > 0);
+    const firstInstruction = await call("view_radare2_observation", {
+      observation_id: analyzed.observation_id,
+      facet: "instructions",
+      limit: 1,
+    });
+    const native = await call("trace_native_values", {
+      ir: "esil",
+      address: firstInstruction.result[0].address,
+      instruction_count: 1,
+      register: "sp",
+    });
+    assert.equal(native.result.ir, "esil-dfg-slice");
+    assert.equal(native.result.coverage.instruction_count, 1);
+    assert.equal(
+      (
+        await call("release_radare2_observation", {
+          observation_id: analyzed.observation_id,
+        })
+      ).released,
+      true,
+    );
+  } finally {
+    await client.close();
   }
 });
 

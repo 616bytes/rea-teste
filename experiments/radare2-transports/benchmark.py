@@ -86,9 +86,11 @@ def measure(command, directory, prompt=None, timeout=600):
 
 def agent_command(config, lane, directory):
     native = lane.startswith("r2mcp")
-    tools = {
+    custom = config.get("servers", {}).get(lane)
+    tools = custom["tools"] if custom else {
         "ghidra": ["open_binary", "procedure_pseudo_code", "procedure_assembly", "close_binary",
-                   "search_strings", "xrefs", "resolve_containing_procedure", "procedure_callees", "analyze_function"],
+                   "search_strings", "xrefs", "resolve_containing_procedure", "procedure_callees", "analyze_function",
+                   "inspect_native_data_type", "trace_native_values", "view_evidence"],
         "r2-exec": ["execute_radare2_command"],
         "r2pipe2": ["start_radare2_session", "radare2_command", "close_radare2_session"],
         "r2mcp-raw": ["open_file", "run_command", "close_file"],
@@ -114,6 +116,7 @@ def agent_command(config, lane, directory):
             'for example {"cmd":"COMMAND","json":false,"trim":false}; '
             "retain the returned status and logs."
         )
+    instruction += " " + config.get("instructions", "")
     workspace = directory / "workspace"
     workspace.mkdir(parents=True)
     settings = {
@@ -121,8 +124,8 @@ def agent_command(config, lane, directory):
         "model_reasoning_effort": config["reasoning"], "developer_instructions": instruction,
         "features.multi_agent": False, "features.shell_tool": False,
         "features.unified_exec": False, "features.shell_snapshot": False,
-        "mcp_servers.engine.command": config["r2mcp"] if native else config["node"],
-        "mcp_servers.engine.args": (["-N", "-d", "pdg", "-c", "e asm.dwarf=false;e scr.utf8=0", *(["-r"] if lane == "r2mcp-raw" else [])]
+        "mcp_servers.engine.command": custom["command"] if custom else config["r2mcp"] if native else config["node"],
+        "mcp_servers.engine.args": custom["args"] if custom else (["-N", "-d", "pdg", "-c", "e asm.dwarf=false;e scr.utf8=0", *(["-r"] if lane == "r2mcp-raw" else [])]
                                     if native else [str(Path(config["rea3521"]) / "scripts/rea.mjs"), "mcp"]),
         "mcp_servers.engine.enabled_tools": tools,
         "mcp_servers.engine.required": True,
@@ -137,6 +140,8 @@ def agent_command(config, lane, directory):
         "mcp_servers.engine.env.JAVA_HOME": config["java"],
         "mcp_servers.engine.env.REA_ANALYSIS_PROVIDER": "ghidra",
     }
+    for key, value in (custom or {}).get("env", {}).items():
+        settings["mcp_servers.engine.env." + key] = value
     command = [config["codex"], "exec", "--ignore-user-config", "--ignore-rules", "--ephemeral",
                "--strict-config", "--skip-git-repo-check", "--json", "--color", "never",
                "-m", config["model"], "-C", str(workspace),

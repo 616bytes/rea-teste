@@ -24,9 +24,13 @@
 
 <code>npx rea-agents setup</code>
 
+</div>
+
 > [!IMPORTANT]
 > REA 官方来源： [morluto/rea](https://github.com/morluto/rea), [rea.tools](https://rea.tools/), [rea-agents](https://www.npmjs.com/package/rea-agents) (npm).
 > 请通过这些官方来源提供的安装和发布链接获取 REA。相似的仓库名称或复制的 README 不能证明下载内容来自官方。
+
+<div align="center">
 
 <br />
 
@@ -171,7 +175,7 @@ REA 需要 Node.js 22.x（>=22.19）、24.x（>=24.11）或 26+，以及 npm。�
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-不同提供方支持的原生格式和主机系统有所不同。请参阅 [Hopper 与 Ghidra 设置](../installation.md#hopper)、[IDA 指南](../ida-provider.md)（包含可选的原生 MCP 桥接）和[实验性 Windows Ghidra 支持](../windows-ghidra-p0.md)。Ghidra 也支持 [16 位 DOS 分析](../ghidra-dos.md)。对于较大的二进制文件，可用 `REA_GHIDRA_STARTUP_TIMEOUT_MS` 或 `REA_HOPPER_STARTUP_TIMEOUT_MS` 延长提供方的启动时限。提供方选择见 [CLI 指南](../cli.md#choose-a-provider)。对于最新 npm 版本发布后新增的功能，请查看[发布可用性](../installation.md#released-package-and-main)。
+不同提供方支持的原生格式和主机系统有所不同。请参阅 [Hopper 与 Ghidra 设置](../installation.md#hopper)、[IDA 指南](../ida-provider.md)（包含可选的原生 MCP 桥接）、[Kuna](../kuna-provider.md)和[实验性 Windows Ghidra 支持](../windows-ghidra-p0.md)。Ghidra 也支持 [16 位 DOS 分析](../ghidra-dos.md)。对于较大的二进制文件，可用 `REA_GHIDRA_STARTUP_TIMEOUT_MS` 或 `REA_HOPPER_STARTUP_TIMEOUT_MS` 延长提供方的启动时限。提供方选择见 [CLI 指南](../cli.md#choose-a-provider)。对于最新 npm 版本发布后新增的功能，请查看[发布可用性](../installation.md#released-package-and-main)。
 
 ## 案例
 
@@ -279,7 +283,7 @@ npx rea-agents@latest setup
 
 ## Star 历史
 
-🎉 **GitHub Star 达到 200,000 个，感谢大家！**
+🎉 **GitHub Star 达到 250,000 个，感谢大家！**
 
 感谢每一位使用 REA、报告错误、提出功能需求、测试构建和贡献修复的朋友。
 

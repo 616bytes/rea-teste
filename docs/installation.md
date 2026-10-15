@@ -3,13 +3,13 @@
 Run REA, connect your selected agents, and check the tools needed for your task.
 Setup previews configuration changes and asks for approval before applying them.
 
-| Task                              | Section                                                                   |
-| --------------------------------- | ------------------------------------------------------------------------- |
-| Connect an agent                  | [Start setup](#start-setup), then [review changes](#review-setup-changes) |
-| Diagnose one task                 | [Scoped readiness checks](#check-readiness-for-your-task)                 |
-| Configure an analysis engine      | [Hopper](#hopper), [Ghidra](#ghidra), or the [IDA guide](ida-provider.md) |
-| Update or remove REA              | [Maintenance](#diagnose-update-and-remove)                                |
-| Resolve a client-specific problem | [Client configuration](client-configuration.md)                           |
+| Task                              | Section                                                                                             |
+| --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Connect an agent                  | [Start setup](#start-setup), then [review changes](#review-setup-changes)                           |
+| Diagnose one task                 | [Scoped readiness checks](#check-readiness-for-your-task)                                           |
+| Configure an analysis engine      | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](ida-provider.md), or [Kuna](kuna-provider.md) |
+| Update or remove REA              | [Maintenance](#diagnose-update-and-remove)                                                          |
+| Resolve a client-specific problem | [Client configuration](client-configuration.md)                                                     |
 
 ## Start setup
 
@@ -122,6 +122,16 @@ See [client configuration](client-configuration.md) for client-specific roots,
 profiles, and environment overrides. A mixed selection plans each distinct
 destination. Selecting the skill without a client uses `~/.agents/skills`.
 Setup leaves existing skill copies in other locations untouched.
+Setup refuses symbolic links at the selected skill directory or its managed
+`references` directory, matching uninstall and update's ownership rules. Use a
+regular skill directory, or select `--skill=false` to configure the client
+registration without installing the bundled skill.
+The final selected directories are checked before approval and again before
+setup changes any client or Hopper installation. Unselected client destinations
+do not block other setup choices. Doctor reports linked or non-directory skill
+paths as `unmanaged`, names the affected paths, and provides those alternatives;
+an unreadable skill identity remains `unknown`. Uninstall retains and reports
+files it cannot safely remove, including their ownership manifest.
 
 `rea setup --skill-client claude_code --yes --json` refreshes and verifies the
 selected skill destination independently of MCP registration selection. The
@@ -137,7 +147,8 @@ identity remains available at `identity.catalog`.
 
 Setup pins package-runner MCP registrations to the exact installed REA version,
 installs the matching skill and on-demand references in the same plan, and adds
-`startup_timeout_sec = 30` for Codex and Grok Build.
+`startup_timeout_sec = 30` for Codex and Grok Build. Codex also receives a
+`tool_timeout_sec` derived from known provider startup plus operation headroom.
 
 ## Limit REA to one project or agent profile
 
@@ -249,14 +260,14 @@ Register with the variable unset:
 <!-- x-release-please-start-version -->
 
 ```bash
-claude mcp add --scope local rea -- npx -y rea-agents@6.4.0 mcp
+claude mcp add --scope local rea -- npx -y rea-agents@6.5.0 mcp
 ```
 
 On native Windows, use the same project directory and wrap the package-runner
 shim so the stdio client can launch it:
 
 ```powershell
-claude mcp add --scope local rea -- cmd.exe /d /c npx -y rea-agents@6.4.0 mcp
+claude mcp add --scope local rea -- cmd.exe /d /c npx -y rea-agents@6.5.0 mcp
 ```
 
 <!-- x-release-please-end -->
@@ -387,9 +398,11 @@ running server or its registration.
 The npm release checked on **2026-10-11** was **6.4.0**, published from
 [`a56f7bb6`](https://github.com/morluto/rea/commit/a56f7bb668ab23fec8d33f7af353ac7ed2fe1895).
 The actual registry package accepted dry-run setup plans for the 17 client IDs
-in that release, including Qwen Code, Pi and Hermes. DeepSeek Harness (`dsh`)
-is on main and is not in npm 6.4.0; `rea setup --client dsh` against `@latest`
-reports an unsupported client until a release containing it is published.
+in that release, including Qwen Code, Pi and Hermes. Seven client IDs are
+included from 6.5.0 and were absent from the checked npm 6.4.0 package: `droid`,
+`dsh`, `kimi`, `qoder`, `trae`, `workbuddy` and `zcode`.
+The 6.4.0 registry check does not establish 6.5.0 publication or live DeepSeek
+API integration.
 OpenCode's plan selected
 `OPENCODE_CONFIG_DIR` even when that directory did not yet exist. These checks
 used an isolated home on macOS with Node 24; they verify planning and argument
@@ -470,8 +483,8 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | ZCode              | `zcode`          |
 | DeepSeek Harness   | `dsh`            |
 
-`dsh`, `kimi`, and `workbuddy` require a release containing them. The registry
-check above does not cover them.
+`droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy`, and `zcode` require
+`rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
@@ -529,6 +542,37 @@ search permissions (`0700`) on a directory you own before retrying.
 
 On supported Linux distributions, approved setup verifies Hopper's official
 `.deb`, `.rpm`, or Arch package before invoking the native package manager.
+The official release feed selects the current public demo without a version
+pin. REA verifies the package's detached PGP signature against Hopper's stable
+primary fingerprint `7C2D73BAFAF5B9A710A69DA1A26DF815099B1BCD`, then checks
+that the signed package and installed launcher agree with `main_exe_hash`.
+Rotating signing subkeys remain bound to that primary identity.
+The feed row itself is not PGP-signed; doctor labels its display version as
+`reported_release_version`, separately from the authenticated launcher identity.
+
+The approval plan includes the caller-selected cache location. Approved setup
+retains the signed archive, public key and release metadata under
+`${XDG_CACHE_HOME:-$HOME/.cache}/rea/hopper-releases/<launcher-sha256>`.
+An empty `XDG_CACHE_HOME` uses `$HOME/.cache`. Approved setup can repair a
+damaged caller-owned entry after authenticating a fresh package; the previous
+entry is preserved beside it as `<launcher-sha256>.backup-<id>`. Ordinary doctor
+and launches reject damaged evidence and never repair it implicitly.
+Approved publications of the same canonical cache entry share a process-backed
+lease. Concurrent setup waits without moving another writer's evidence; a
+failed replacement restores the previous directory when possible and reports
+any retained backup path. Unavailable reads or native inspection tools do not
+authorize replacing existing evidence.
+Doctor and launches authenticate this evidence for offline use; an editable
+digest receipt alone cannot authorize a launcher. Verification reuses at most
+eight immutable package proofs per process, keyed by the complete package,
+key, signature, package format and expected launcher digest. Cached file reads
+still check identity and content. Without retained evidence, inspecting an
+existing install requires the matching current official package and network
+access. Successful live inspection can be reused within that process after
+rehashing the launcher; it does not write a persistent cache or claim that a
+previously observed release is still the latest. Older uncached builds require
+an approved update while the feed exposes only its current release.
+
 REA runs the supported demo build on a private Xvfb display and selects Hopper's
 offered demo mode for each analysis session; it does not require the user's
 desktop display. Unattended package-manager access requires
@@ -567,8 +611,15 @@ sessions before removing that recovery directory and retrying.
 
 ### Launcher paths and troubleshooting
 
-On macOS, REA uses
-`/Applications/Hopper Disassembler.app/Contents/MacOS/hopper` by default.
+On macOS, REA checks executable Hopper launchers in this order: the canonical
+system application, the canonical application installed by `rea setup` under
+`~/Applications`, then other `Hopper*.app` bundles in `/Applications` and
+`~/Applications`. The Homebrew cask location is an optional `rea doctor`
+diagnostic; to use a Homebrew-installed launcher for CLI/MCP startup, set
+`HOPPER_LAUNCHER_PATH` to the path reported by doctor. REA does not run Homebrew
+while loading runtime configuration.
+Automatic discovery accepts executable regular files, including file symlinks,
+and skips directories.
 On Linux, it prefers executable `/opt/hopper/bin/Hopper`, then executable
 `~/.local/share/rea/hopper/bin/Hopper`, followed by `/opt/hopper-v4/bin/hopper`
 and `/usr/bin/hopper`; if none exists, the former remains the diagnostic
@@ -616,6 +667,20 @@ If startup reports `Cannot launch Hopper! Connection is invalid.` or waits for
 bridge readiness, check Hopper for a pending demo, license, or loader dialog.
 Complete the dialog and retry. If REA reports `cleanup_incomplete`, follow the
 retained-resource guidance below before reopening the target.
+
+On macOS, Hopper can show an `Executing Python Script...` overlay while the REA
+bridge serves an active MCP connection. Long-lived MCP clients can keep that
+connection open across agent turns, so the overlay may remain visible after the
+analysis calls finish; by itself, it does not establish a stalled startup. REA
+does not automatically idle-close a still-connected target. When the
+investigation is finished, export an Evidence bundle first if you need to keep
+the session ledger, then call `close_binary`; set `snapshot_path` to save a
+provider-neutral analysis snapshot as part of closing. A successful close
+shuts down the REA bridge and clears its overlay; REA does not control the
+macOS Hopper application lifetime.
+The Hopper GUI Cancel button's behavior for this bridge has not been verified;
+`close_binary` is the supported cleanup path.
+
 Hopper serializes analysis requests. Cancelling a wait can leave provider work
 running, which the session reports. Successful decompilation is cached until
 a relevant rename or comment changes it.
@@ -629,12 +694,18 @@ memory has no original file offset. For FAT Mach-O, offsets refer to the origina
 container file. Results retain Hopper's image-relative offset, the observed slice
 base, and the source executable path.
 Loader selection reads the Mach-O container header, including FAT files with a
-single architecture. For FAT64, REA validates the architecture table and selected
-Mach-O header, prepares a private thin image, and loads it with Hopper's native
-Mach-O loader. It checks the entire source's SHA-256 while copying the slice;
-source identity and reported offsets still refer to the original container.
-An ambiguous architecture subtype requires an explicitly extracted thin image;
-REA does not guess. Configured loader arguments remain explicit overrides.
+single architecture. For FAT32 and FAT64 containers, REA validates the
+architecture table and selected Mach-O header, prepares a private thin image,
+and loads it with Hopper's native Mach-O loader instead of Hopper's implicit
+FAT slice choice. For arm64 targets, REA ranks subtype bases 0 (plain arm64) and
+2 (arm64e), ignoring capability bits for ranking while retaining the raw subtype
+for slice identity. These slices' function-entry encodings decode under
+`--aarch64`, ahead of Apple's arm64e.x1 variant (base subtype 12), which is
+selected only when it is the arm64 family's only candidate. REA checks the
+entire source's SHA-256 while copying the slice; source identity and reported
+offsets still refer to the original container. Any other ambiguous architecture
+subtype requires an explicitly extracted thin image; REA does not guess.
+Configured loader arguments remain explicit overrides.
 FAT64 is distinct from the CPU architecture: FAT32 containers can contain 64-bit
 executable images. This preparation avoids the Raw Binary loader dialog observed
 with native FAT64 loading on Hopper 6.1.0-demo.
@@ -726,7 +797,7 @@ and `set_addresses_names` name a function entry or any other mapped address
 session metadata edits leave executable bytes unchanged and are discarded on close. GUI controls
 require Hopper; Windows P0 remains read-only.
 
-Windows P0 admits native x86 and x86-64 PE applications and DLLs, plus explicitly
+Windows P0 admits native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, plus explicitly
 selected [raw NMOS 6502 images](raw-binary.md#nmos-6502) with a caller-supplied
 entry at file offset 0, on fixed local NTFS volumes. Other raw CPU families remain
 unsupported on Windows.
@@ -1033,7 +1104,7 @@ For a client that requires manual configuration, use:
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@6.4.0", "mcp"]
+      "args": ["-y", "rea-agents@6.5.0", "mcp"]
     }
   }
 }

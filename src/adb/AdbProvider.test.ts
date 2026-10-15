@@ -91,11 +91,71 @@ it("inspects the adb client without contacting the server", async () => {
   expect(result.contacted_adb_server).toBe(false);
 });
 
+it("fails closed when adb exits successfully without a recognized version", async () => {
+  const stdout = `unexpected adb output ${"x".repeat(700)}\n`;
+  const stderr = `probe stderr ${"y".repeat(700)}\n`;
+  const { binary } = await writeAdbStub(
+    () => `printf '%s' '${stdout}'; printf '%s' '${stderr}' >&2; exit 0`,
+  );
+  await expect(
+    providerOver(binary).inspectAvailability(),
+  ).resolves.toMatchObject({
+    status: "unavailable",
+    code: "version_unresolved",
+    diagnostics: {
+      version_probe: "unrecognized_output",
+      stdout,
+      stderr,
+    },
+  });
+});
+
+it("accepts adb's recognized protocol version when the build version is absent", async () => {
+  const { binary } = await writeAdbStub(
+    () => `printf 'Android Debug Bridge version 1.0.41\\n'`,
+  );
+  await expect(
+    providerOver(binary).inspectAvailability(),
+  ).resolves.toMatchObject({
+    status: "available",
+  });
+});
+
 it("lists devices with inferred kinds and observed daemon startup", async () => {
   const { binary } = await writeAdbStub(
     () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
 if [ "$1" = "devices" ]; then
   printf '* daemon not running; starting now at tcp:5037\\n* daemon started successfully\\n'
+  printf 'List of devices attached\\n'
+  printf 'emulator-5554          device product:sdk_gphone64_x86_64 model:sdk_gphone64_x86_64 device:emu64xa transport_id:1\\n'
+  exit 0
+fi`,
+  );
+  const result = await evidenceResult(providerOver(binary), {
+    operation: "list_adb_devices",
+    input: {},
+  });
+  expect(result.may_have_started_adb_server).toBe(true);
+  expect(result.devices).toEqual([
+    {
+      serial: "emulator-5554",
+      state: "device",
+      transport: "tcp",
+      product: "sdk_gphone64_x86_64",
+      model: "sdk_gphone64_x86_64",
+      device: "emu64xa",
+      transport_id: 1,
+      kind: "emulator",
+      kind_basis: "emulator_serial_prefix",
+    },
+  ]);
+});
+
+it("observes daemon startup when notices are printed to stderr", async () => {
+  const { binary } = await writeAdbStub(
+    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "devices" ]; then
+  printf '* daemon not running; starting now at tcp:5037\\n* daemon started successfully\\n' >&2
   printf 'List of devices attached\\n'
   printf 'emulator-5554          device product:sdk_gphone64_x86_64 model:sdk_gphone64_x86_64 device:emu64xa transport_id:1\\n'
   exit 0
@@ -649,7 +709,7 @@ it("projects package details from dumpsys package output", async () => {
   });
   expect(result).toMatchObject({
     version_name: "1.2.3",
-    version_code: 45,
+    version_code: "45",
     first_install_time: "2026-01-02 03:04:05",
     last_update_time: "2026-02-03 04:05:06",
     installer_package_name: "com.android.vending",
@@ -658,6 +718,30 @@ it("projects package details from dumpsys package output", async () => {
     coverage: "complete",
   });
 });
+
+// PackageInfo.getLongVersionCode() combines versionCodeMajor and versionCode
+// into a signed 64-bit long, which JSON numbers cannot hold exactly.
+it.each(["9007199254740993", "-4294967296"])(
+  "keeps the long version code %s exactly as dumpsys prints it",
+  async (versionCode) => {
+    const { binary } = await writeAdbStub(
+      shellStub({
+        "dumpsys:package": `Packages:
+  Package [com.example] (abcdef):
+    versionCode=${versionCode} minSdk=24 targetSdk=34
+`,
+      }),
+    );
+    const result = await evidenceResult(providerOver(binary), {
+      operation: "inspect_adb_package",
+      input: { serial: "emulator-5554", package: "com.example" },
+    });
+    expect(result).toMatchObject({
+      version_code: versionCode,
+      coverage: "complete",
+    });
+  },
+);
 
 // Android 10 and 11 append ": restricted=true" to hard- and soft-restricted
 // entries of the requested-permissions list (Settings.dumpPackageLPr).
@@ -1162,15 +1246,21 @@ exit 1`,
   const apk = join(root, "app.apk");
   await writeFile(apk, "apk");
   const digest = createHash("sha256").update("apk").digest("hex");
-  const installed = await evidenceResult(providerOver(binary), {
+  const execution = await providerOver(binary).execute({
     operation: "install_adb_package",
     input: { serial: "emulator-5554", apk_path: apk, replace: false },
   });
-  expect(installed).toMatchObject({
+  expect(execution.ok).toBe(true);
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
     bytes: 3,
     sha256: digest,
-    replaced: false,
+    replace_requested: false,
+    replaced: null,
   });
+  expect(execution.value.limitations).toContain(
+    "Whether an existing package was replaced is unknown; replace_requested records only the adb install mode",
+  );
 
   const { binary: failing } = await writeAdbStub(
     () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi

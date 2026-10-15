@@ -153,8 +153,8 @@ overview merely because its source artifact is unchanged.
 
 Function extents and instruction completeness refer to Ghidra's analyzed body.
 An inferred no-return call can terminate that body before subsequent bytes.
-Pseudocode, assembly, procedure info, instruction windows, callee and caller
-reads, and dossiers report observed terminal call sites in Evidence limitations,
+Pseudocode, assembly, procedure info, instruction windows, incoming and outgoing
+references, callee and caller reads, and dossiers report observed terminal call sites in Evidence limitations,
 including resolved callee names, addresses, and FunctionManager flags when
 available. On x86-32, the same views also report the exact Borland/Delphi-style
 FS exception-registration pattern when its handler address falls outside the
@@ -193,7 +193,11 @@ these tools before compilation. Keeping this matrix separate lets Linux
 host/provider acceptance run with only the host compiler.
 
 `npm run verify:ghidra:windows` checks source-owned native x86-64 PE applications;
-`-- --x86` selects x86 and `-- --dll` selects DLLs, and the flags can be combined.
+`-- --x86`, `-- --arm`, or `-- --arm64` selects another target architecture;
+`-- --dll` selects DLLs. Choose one architecture and optionally combine it with
+`--dll`. These static fixtures contain source-owned encoded instructions; they
+are not compiler-produced programs. See the [Windows verification scope](windows-ghidra-p0.md#native-authority-and-target-identity)
+for real-provider coverage and exclusions.
 These lanes check all 26 read-only operations, target/snapshot/import SHA-256 linkage,
 and project, endpoint, process, and runtime cleanup. The independent native
 lane checks DACLs, handle admission, cancellation, and Job Object lifecycle.

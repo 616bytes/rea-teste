@@ -6,7 +6,7 @@ are `inspect_analysis_view`, `trace_application_feature`,
 `trace_javascript_semantics`, `compare_application_versions`,
 `compare_source_to_bundle`, and `compare_javascript_export_shapes`; their CLI
 equivalents use the same names with hyphens. `inspect_analysis_view` projects a
-summary, module page, or one module from already completed application
+summary, module page, typed module references, or one module from already completed application
 Evidence; it does not walk relationships.
 
 `inspect_analysis_view` also projects retained `inspect_binary_layout`
@@ -40,6 +40,46 @@ combine its fields with the fact's location. Semantic trace results include the
 canonical context subset referenced by their returned facts, so those facts
 remain self-contained in the response.
 
+## Retained module facts
+
+For canonical identities and retained source-range counts, query the existing
+`inspect_analysis_view` tool with a typed module-reference projection:
+
+```json
+{
+  "source": {
+    "kind": "retained-evidence",
+    "evidence_id": "ev_ACTUAL_PARENT_ID"
+  },
+  "view": {
+    "kind": "javascript",
+    "collection": "modules",
+    "projection": "references",
+    "where": { "path": "main.js", "kind": "javascript-module" },
+    "offset": 0,
+    "limit": 16
+  }
+}
+```
+
+Replace the parent ID with the actual analysis summary's `parent_evidence_id`.
+Filters match exact retained paths and kinds. Omission includes all values;
+`path: null` selects an unavailable path and `path: ""` selects a recorded empty
+path. Multiple identities can share a path. The default offset is 0 and limit
+is 64; follow `coverage.next_offset` for later matching rows in retained order.
+
+Each row contains its `node_id`, kind, path, canonical identity, retained
+source-range observation count, and distinct supporting authority/state/confidence
+combinations in `basis`. These counts do not prove unique reference sites or
+runtime loading. Use the existing module item view with the row's `node_id` for
+exact source ranges and complete observations. The result retains parent/query
+Evidence identity, artifact identity, limitations and unknowns. `source_coverage`
+keeps selected/unselected sources, graph coverage and unknown counts separate
+from page exhaustion; an exhausted or empty page cannot prove absence from an
+incompletely analyzed application. CLI `inspect-analysis-view` reads the same
+request from a JSON file; portable input uses `source.kind: "inline"` with the
+complete parent Evidence.
+
 ## Feature tracing
 
 Select one literal seed kind: node ID, route, string, API, IPC channel, module,
@@ -60,6 +100,8 @@ provider implicitly.
 `trace_javascript_semantics` queries the authenticated companion graph without
 rereading mutable files. A seed may identify a semantic or application node,
 literal, function fingerprint, property, endpoint, event, or boundary field.
+For a recovered parse, coercion, or validation boundary, its field value is the
+static operation's method name (for example, `Number`).
 The query declares backward provenance, forward influence, callers, or
 ownership and can restrict admitted relation kinds. REA returns every matching
 seed and the complete reachable subgraph; callers do not choose node, relation,
@@ -83,10 +125,22 @@ callee bodies and built-ins such as `Object.assign`, `Reflect.set`, and
 values. This uncertainty does not prove that a call actually mutated a value.
 Interprocedural aliasing beyond the supported call-site references remains
 outside this mutation pass.
+For process configuration, only known environment value slots and canonical
+argument indexes are treated as primitive when passed to calls. Unknown or
+inherited selections can expose a mutable prototype, so later reads of that
+configuration container retain uncertainty; earlier top-level reads and unrelated
+configuration containers remain independent.
 
 Function fingerprints commit normalized syntax, control-flow shape, relation
 shape, literal sets, arity, and detected effects without using local names or
-source offsets. Equal duplicate fingerprints remain ambiguous. Dynamic
+source offsets. Function-local directive literals contribute their values while
+preserving escape spelling: `"use\x20strict"` differs from `"use strict"`.
+Quote style, formatting, and local names remain normalized. Equal duplicate
+fingerprints remain ambiguous.
+Fingerprints are static candidates, not behavioral-equivalence proofs or a
+version-independent identity. Re-analyze affected sources and obtain new seeds
+after analyzer corrections; previously retained Evidence remains queryable using
+its original component commitments. Dynamic
 calls/properties/names, parser recovery, unresolved handles, and unsupported API
 shapes stay explicit unknowns; a missing relation is never reported as proven
 behavioral absence.

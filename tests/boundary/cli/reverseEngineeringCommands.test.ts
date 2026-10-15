@@ -43,7 +43,6 @@ const observation = (completionStatus: "complete" | "unknown") =>
       operation: "inspect_with_objdump",
       parameters: { operation: "file_headers" },
       result: { completion_status: completionStatus },
-      rawResult: { completion_status: completionStatus },
     },
   );
 
@@ -313,6 +312,67 @@ it("does not project cancellation cleanup as incomplete after a successful retry
   });
 });
 
+it("runs an independent service for each command so cleanup cannot close later runs", async () => {
+  const { directory, path } = await createArtifact();
+  const commands = new Map<
+    string,
+    {
+      run(input: {
+        args: { path: string; operation: string };
+        options: { followDebugLinks: boolean };
+      }): Promise<unknown>;
+    }
+  >();
+  const cli = {
+    command: (
+      name: string,
+      definition: {
+        run(input: {
+          args: { path: string; operation: string };
+          options: { followDebugLinks: boolean };
+        }): Promise<unknown>;
+      },
+    ) => {
+      commands.set(name, definition);
+      return cli;
+    },
+  } as unknown as CliInstance;
+  const created: ReverseEngineeringService[] = [];
+  registerReverseEngineeringCommands(
+    cli,
+    pino({ enabled: false }),
+    {},
+    undefined,
+    (environment = process.env) => {
+      const service = new CoreReverseEngineeringService({
+        environment,
+        commands: createReverseEngineeringCommandPort(environment),
+        runOwned: vi.fn(async () => providerSnapshot()),
+      });
+      created.push(service);
+      return service;
+    },
+  );
+  const command = commands.get(CLI_COMMANDS.inspectWithObjdump);
+  if (command === undefined)
+    throw new Error("objdump CLI command was not registered");
+  const invoke = () =>
+    command.run({
+      args: { path, operation: "file_headers" },
+      options: { followDebugLinks: false },
+    });
+
+  try {
+    // The first run closes its own service; a repeated command must still run
+    // instead of reporting that the service has been closed.
+    expect(await invoke()).toMatchObject({ provider: { id: "gnu.objdump" } });
+    expect(await invoke()).toMatchObject({ provider: { id: "gnu.objdump" } });
+    expect(created).toHaveLength(2);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it("parses the Rizin inferior TTY as an option and passes it to the manager", async () => {
   const commands = new Map<
     string,
@@ -349,7 +409,6 @@ it("parses the Rizin inferior TTY as an option and passes it to the manager", as
         inferior_tty: "/dev/pts/7",
       },
       result: { output: "registers" },
-      rawResult: { output: "registers" },
     },
   );
   const start = vi

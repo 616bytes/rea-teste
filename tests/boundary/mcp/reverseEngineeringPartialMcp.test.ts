@@ -230,7 +230,7 @@ it("preserves the Rizin operation error when analysis retirement also fails", as
   });
 });
 
-it.each(["success", "timeout"])(
+it.skipIf(process.platform === "win32").each(["success", "timeout"])(
   "retains %s output and requires reopening after a symlink command",
   async (outcome) => {
     const [target] = await createBinarySessionTargets();

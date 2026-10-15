@@ -188,16 +188,20 @@ export const spawnOwnedProviderProcess = async (
   await prepareProcessOwnershipInspection(options.signal);
   options.signal?.throwIfAborted();
   const platform = options.platform ?? process.platform;
-  const sweepTokenOwnedProcesses =
-    options.sweepTokenOwnedProcesses === true && platform !== "win32";
+  // The token sweep depends on the host's prelaunch identity baseline, which
+  // only hosts providing that primitive expose (linux and darwin). A POSIX
+  // platform test cannot decide this: android/Termux is POSIX without a
+  // baseline, and Windows keeps its Job Object launcher instead.
+  const captureOwnershipBaseline =
+    options.sweepTokenOwnedProcesses === true && platform !== "win32"
+      ? systemProcessOwnershipHost.captureBaseline
+      : undefined;
   let captureBaseline: ProcessOwnershipBaseline | undefined;
-  if (sweepTokenOwnedProcesses) {
-    const capture = systemProcessOwnershipHost.captureBaseline;
-    if (capture === undefined)
-      throw new Error("Process ownership baseline is unavailable on this host");
-    captureBaseline = await capture(options.signal);
+  if (captureOwnershipBaseline !== undefined) {
+    captureBaseline = await captureOwnershipBaseline(options.signal);
     options.signal?.throwIfAborted();
   }
+  const sweepTokenOwnedProcesses = captureOwnershipBaseline !== undefined;
   const hostEnvironment = options.hostEnvironment ?? process.env;
   const environment = {
     ...hostEnvironment,

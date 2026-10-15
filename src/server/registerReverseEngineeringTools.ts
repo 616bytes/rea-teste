@@ -139,7 +139,7 @@ export const registerReverseEngineeringTools = (
         async () => {
           if (
             invalidateSnapshotForExternalMutation !== undefined &&
-            rizinInputSchema.safeParse(input).success
+            parsed.success
           )
             invalidateSnapshotForExternalMutation();
           const result = await logToolExecution(logger, rizin.name, () =>

@@ -8,6 +8,23 @@ export interface WindowsExecutableLookup {
   readonly isFile?: (path: string) => boolean;
 }
 
+/**
+ * Bound on the PATH entries one lookup examines, and on the total candidate
+ * probes those entries produce. A real Windows PATH is far shorter than the
+ * entry bound, so this leaves every ordinary lookup untouched while keeping a
+ * hostile or accidental environment from turning one lookup into an unbounded
+ * filesystem walk before dispatch.
+ */
+export const WINDOWS_PATH_ENTRY_LIMIT = 64;
+export const WINDOWS_PATH_PROBE_LIMIT = 128;
+
+/**
+ * `\\server\share\...` and `//server/share/...` are UNC roots. A single
+ * leading separator is drive- or root-relative, and four leading separators
+ * are malformed rather than UNC, so neither may take this branch.
+ */
+const isUncPath = (value: string): boolean => /^[\\/]{2}(?![\\/])/u.test(value);
+
 const splitWindowsPath = (value: string): readonly string[] => {
   const entries: string[] = [];
   let start = 0;
@@ -35,7 +52,15 @@ const isRegularFile = (path: string): boolean => {
   }
 };
 
-/** Resolve Windows bare command names against the captured child environment. */
+/**
+ * Resolve Windows bare command names against the captured child environment.
+ *
+ * The probe is synchronous because the command-port contract it feeds is
+ * synchronous (`ReverseEngineeringCommandPort` returns `executable: string`).
+ * Its cost is bounded by `WINDOWS_PATH_ENTRY_LIMIT`/`WINDOWS_PATH_PROBE_LIMIT`;
+ * a non-blocking probe would need an asynchronous port contract, which this
+ * boundary does not own.
+ */
 export const resolveWindowsProviderExecutable = (
   executable: string,
   environment: Readonly<NodeJS.ProcessEnv>,
@@ -43,6 +68,9 @@ export const resolveWindowsProviderExecutable = (
 ): string => {
   const cwd = lookup.cwd ?? process.cwd();
   const absolute = (...paths: string[]): string => win32.resolve(cwd, ...paths);
+  // A UNC selection is already absolute. Return it verbatim instead of
+  // re-rooting it against the process drive through win32.resolve(cwd, ...).
+  if (isUncPath(executable)) return executable;
   if (
     win32.isAbsolute(executable) ||
     executable.includes("/") ||
@@ -66,11 +94,21 @@ export const resolveWindowsProviderExecutable = (
             [".com", ".exe"].includes(extension.toLowerCase()),
           );
 
+  const isFile = lookup.isFile ?? isRegularFile;
+  let entryCount = 0;
+  let probeCount = 0;
   for (const entry of pathEntries) {
     if (entry.length === 0) continue;
+    if (entryCount >= WINDOWS_PATH_ENTRY_LIMIT) break;
+    entryCount += 1;
     for (const extension of extensions) {
-      const candidate = absolute(entry, `${executable}${extension}`);
-      if ((lookup.isFile ?? isRegularFile)(candidate)) return candidate;
+      if (probeCount >= WINDOWS_PATH_PROBE_LIMIT) return executable;
+      probeCount += 1;
+      // A UNC PATH entry owns its root, so join without the process drive CWD.
+      const candidate = isUncPath(entry)
+        ? win32.join(entry, `${executable}${extension}`)
+        : absolute(entry, `${executable}${extension}`);
+      if (isFile(candidate)) return candidate;
     }
   }
   return executable;

@@ -35,8 +35,9 @@ code executes, no device or `adb`, no acquisition, no mutation.
   declared lineage covers a difference. Also `v1_only`, strongest scheme,
   rotation and source-stamp presence.
 - Unknown is never reported as absent: a central directory that cannot be
-  walked is an input error (v1 presence would otherwise be guessed), and scheme
-  errors name the scheme and reason.
+  walked, or whose record count does not consume its declared extent, is an
+  input error (v1 presence would otherwise be guessed); a signer without a
+  certificate makes agreement `null`; scheme errors name the scheme and reason.
 
 ## Authority
 
@@ -51,10 +52,12 @@ Every ZIP-tail and signing-block size/offset is checked against the buffer.
 Signers per scheme and lineage nodes are capped at 32 (format-justified: one
 node per rotation, one v3 signer per SDK range); pairs and per-signer elements
 at 4096. The result size is projected from decoded counts before
-materialisation and re-checked exactly against the 8 MiB output budget;
-over-budget is a capacity refusal, not truncation. The content digest is
-computed at most once per algorithm in 1 MiB chunks. Peak memory is the file
-size; the digest passes run synchronously (a streamed positioned-read design is
+materialisation (an estimate), and the exact serialized size is checked against
+the 8 MiB output budget (authoritative); over-budget is a capacity refusal, not
+truncation. The content digest is
+computed at most once per algorithm in 1 MiB chunks. Peak memory is about
+twice the file size (the shared stable read concatenates its chunks) plus
+bounded decoding overhead; the digest passes run synchronously (a streamed positioned-read design is
 a follow-up).
 
 ## Verification

@@ -407,6 +407,11 @@ try {
     "v3 keeps the original signer below the v3.1 SDK range",
   );
   assert.equal(rotated31Report.posture.self_consistent, true);
+  assert.equal(rotated31Report.posture.schemes_agree_on_signer, false);
+  assert.equal(
+    rotated31Report.posture.signer_change_declared_by_rotation,
+    true,
+  );
 
   // 3c) Source stamp (apksigner requires an RSA stamp key).
   const stamped = join(workspace, "stamped.apk");

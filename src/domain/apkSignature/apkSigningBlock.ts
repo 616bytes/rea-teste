@@ -98,12 +98,16 @@ const findEocd = (bytes: Uint8Array): number | null => {
 const centralDirectoryOffset = (
   bytes: Uint8Array,
   eocdOffset: number,
-): Result<{ offset: number; size: number }, ApkSigningBlockError> => {
+): Result<
+  { offset: number; size: number; entries: number },
+  ApkSigningBlockError
+> => {
   const dv = view(bytes);
+  const entries = dv.getUint16(eocdOffset + 10, true);
   const size = dv.getUint32(eocdOffset + 12, true);
   const offset = dv.getUint32(eocdOffset + 16, true);
   if (offset !== ZIP64_SENTINEL && size !== ZIP64_SENTINEL)
-    return ok({ offset, size });
+    return ok({ offset, size, entries });
   // Zip64: a locator precedes the EOCD, pointing at the Zip64 EOCD record.
   const locator = eocdOffset - 20;
   if (
@@ -126,12 +130,14 @@ const centralDirectoryOffset = (
     });
   const z64Offset = u64(dv, recordOffset + 48);
   const z64Size = u64(dv, recordOffset + 40);
-  if (z64Offset === null || z64Size === null)
+  // The Zip64 record's total entry count; the 16-bit EOCD field saturates.
+  const z64Entries = u64(dv, recordOffset + 32);
+  if (z64Offset === null || z64Size === null || z64Entries === null)
     return err({
       kind: "zip64-unsupported",
       detail: "Zip64 sizes exceed safe range",
     });
-  return ok({ offset: z64Offset, size: z64Size });
+  return ok({ offset: z64Offset, size: z64Size, entries: z64Entries });
 };
 
 /** Parse the ZIP end-of-central-directory to find the central directory. */
@@ -170,7 +176,7 @@ export const parseZipTail = (
     eocdOffset,
     centralDirectoryOffset: cd.value.offset,
     centralDirectorySize: cd.value.size,
-    totalEntries: view(bytes).getUint16(eocdOffset + 10, true),
+    totalEntries: cd.value.entries,
   });
 };
 

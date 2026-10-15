@@ -14,7 +14,7 @@ describe("deriveApkPosture", () => {
     v31Present: false,
     sourceStampPresent: false,
     rotationPresent: false,
-    schemeSignerFingerprints: [] as string[][],
+    schemeSignerFingerprints: [] as (string | null)[][],
     lineageFingerprints: [] as string[],
     selfConsistent: null,
   };
@@ -39,7 +39,7 @@ describe("deriveApkPosture", () => {
     expect(p.schemes_agree_on_signer).toBe(true);
   });
 
-  it("reports signer disagreement across schemes as a tamper signal", () => {
+  it("observes different signers across schemes as disagreement", () => {
     const p = deriveApkPosture({
       ...base,
       v2Present: true,
@@ -72,6 +72,16 @@ describe("deriveApkPosture", () => {
       lineageFingerprints: ["old", "new"],
     });
     expect(p.signer_change_declared_by_rotation).toBe(false);
+  });
+
+  it("leaves agreement unknown when a signer carries no certificate", () => {
+    const p = deriveApkPosture({
+      ...base,
+      v2Present: true,
+      v3Present: true,
+      schemeSignerFingerprints: [["aa"], [null]],
+    });
+    expect(p.schemes_agree_on_signer).toBeNull();
   });
 
   it("compares signer sets, so an extra signer in one scheme is disagreement", () => {

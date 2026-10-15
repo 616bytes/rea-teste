@@ -52,7 +52,7 @@ export const mapApkBlockError = (
         OPERATION,
         "capacity",
         `APK Signing Block holds more ${error.resource} than the ${String(error.limit)} limit.`,
-        { maximum_pairs: error.limit },
+        { max_signing_block_pairs: error.limit },
       );
   }
 };
@@ -70,7 +70,7 @@ export const mapApkSchemeError = (
         OPERATION,
         "capacity",
         `APK Signature Scheme ${scheme} holds more ${error.resource} than the ${String(error.limit)} limit.`,
-        { [`maximum_${error.resource.replace(/-/g, "_")}`]: error.limit },
+        { [`max_${error.resource.replace(/-/g, "_")}`]: error.limit },
       );
 
 /** A central directory that cannot be walked leaves v1 presence unknown: refuse. */

@@ -37,7 +37,9 @@ rea inspect-apk-signature /path/app.apk
   - `v1_only`: only JAR signing, so the signature is strippable.
   - `schemes_agree_on_signer` (observed): every present block scheme presents
     the same _set_ of signer certificates. An extra signer in one scheme is
-    disagreement.
+    disagreement; a signer without a certificate makes it `null` (unknown).
+    Build-tools 33+ rotate through v3.1 by default, so a rotated app usually
+    reads `false` here and `true` below.
   - `signer_change_declared_by_rotation` (declared): the signers differ, but
     each appears in a lineage the APK declares. Read the two together: a
     legitimately rotated APK shows `false` / `true`; signers that differ with
@@ -66,17 +68,21 @@ source-stamp certificate.
 The archive is read once, bounded at 512 MiB, without following symlinks and
 with change detection. Every size and offset in the ZIP tail and signing block
 is checked against the buffer before use. Signers per scheme and lineage nodes
-are capped at 32 each (real APKs use a handful), and the report's size is
-projected from those counts before anything is materialised and re-checked
-exactly against an 8 MiB output budget; an over-budget report is refused, not
-truncated.
+are capped at 32 each (real APKs use a handful). The report's size is
+estimated from those counts before anything is materialised, and the exact
+serialized size is then checked against an 8 MiB output budget (the exact check
+is authoritative); an over-budget report is refused, not truncated. Peak memory
+is about twice the file size plus bounded decoding overhead.
 
 A file that is not a ZIP is refused as an unsupported target. A damaged ZIP
 (local headers but no end-of-central-directory), a central directory that
-cannot be walked, or a malformed signing block or signer is an input error
-naming the scheme and reason. When the central directory does not directly
-follow the signing block, the content digest is not recomputed and a
-limitation says so.
+cannot be walked or whose declared record count does not account for all of
+its bytes, or a malformed signing block or signer is an input error naming the
+scheme and reason. When the central directory is not immediately followed by
+the end-of-central-directory record (a declared-size mismatch or a Zip64
+record), the content digest is not recomputed and a limitation says so. A
+rotation attribute that cannot be decoded still counts as `rotation_present`
+(the attribute exists) and carries its `decode_error`.
 
 Verified by the `verify:apk-signature` real lane. It builds a real minimal APK
 with `aapt2`, signs it with the SDK's `apksigner` (default v2+v3, v1-only, a

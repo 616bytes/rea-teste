@@ -17,7 +17,7 @@ export const registerApkSignatureCommands = (
   const service = apkSignatureModule.create(environment);
   cli.command(apkSignatureModule.cliCommand, {
     description:
-      "Inspect the signature schemes (v1/v2/v3) of a selected local APK/ZIP/AAB",
+      "Inspect the signature schemes (v1/v2/v3/v3.1) of a selected local APK/ZIP/AAB",
     args: z.object({
       path: z.string().describe("Local .apk/.zip/.aab artifact to inspect"),
     }),

@@ -179,9 +179,13 @@ const lineageOf = (
     : nodes;
 };
 
-/** Conservative serialized-size bound for one certificate's facts. */
+/**
+ * Estimated serialized size of one certificate's facts. RFC 2253-escaped DNs
+ * can reach ~2.6x the DER once JSON-escaped, hence 3x; this is an admission
+ * estimate — the exact serialized re-check below is authoritative.
+ */
 const certificateBytes = (der: Uint8Array | undefined): number =>
-  256 + 2 * (der?.length ?? 0);
+  256 + 3 * (der?.length ?? 0);
 
 /** Project the result size from decoded counts before materialising any of it. */
 const projectedOutputBytes = (schemes: readonly DecodedScheme[]): number => {
@@ -252,15 +256,21 @@ const selfConsistency = (
   return results.every(Boolean);
 };
 
-const fingerprintsOf = (
+/** Signer fingerprints; null marks a signer whose certificate is absent. */
+const signerFingerprintsOf = (
   signers: readonly { readonly certificate: Certificate }[],
+): (string | null)[] =>
+  signers.map((s) => s.certificate?.sha256_fingerprint ?? null);
+
+const lineageFingerprintsOf = (
+  nodes: readonly { readonly certificate: Certificate }[],
 ): string[] =>
-  signers.flatMap((s) =>
-    s.certificate === null ? [] : [s.certificate.sha256_fingerprint],
+  nodes.flatMap((n) =>
+    n.certificate === null ? [] : [n.certificate.sha256_fingerprint],
   );
 
 const LAYOUT_LIMITATION =
-  "The content digest was not recomputed because the central directory does not directly follow the APK Signing Block (or the EOCD does not directly follow the central directory); matches_apk is null for those digests.";
+  "The content digest was not recomputed because the central directory is not immediately followed by the end-of-central-directory record (declared size mismatch or an intervening Zip64 record); matches_apk is null for those digests.";
 
 /** Read exactly the selected APK bytes and report its signature schemes. */
 export class ApkSignatureProvider implements ApkSignaturePort {
@@ -344,7 +354,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
       (s) => s.rotation.present,
     );
     const lineageFingerprints = [...v3signers, ...v31signers].flatMap(
-      (signer) => fingerprintsOf(signer.rotation.lineage),
+      (signer) => lineageFingerprintsOf(signer.rotation.lineage),
     );
 
     const result: ApkSignatureResult = {
@@ -369,7 +379,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
         sourceStampPresent,
         rotationPresent,
         schemeSignerFingerprints: [v2signers, v3signers, v31signers].map(
-          fingerprintsOf,
+          signerFingerprintsOf,
         ),
         lineageFingerprints,
         selfConsistent: selfConsistency([

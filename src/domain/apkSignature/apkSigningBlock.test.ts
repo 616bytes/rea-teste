@@ -164,6 +164,8 @@ describe("APK signing block locator", () => {
     if (!tail.ok) return;
     expect(tail.value.centralDirectoryOffset).toBe(cdOffset);
     expect(tail.value.centralDirectorySize).toBe(cd.b.length);
+    // Entry count comes from the Zip64 record, not the saturated EOCD field.
+    expect(tail.value.totalEntries).toBe(1);
   });
 
   it("refuses a block footer smaller than its own 24 bytes", () => {

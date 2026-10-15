@@ -43,7 +43,11 @@ const seq = (els: readonly (readonly number[])[]): number[] =>
 /** [entries][signing block with the given pairs][central directory][EOCD]. */
 const syntheticSigned = (
   pairs: readonly { readonly id: number; readonly value: Uint8Array }[],
-  options: { corruptLeadingSize?: boolean; cdEntries?: number } = {},
+  options: {
+    corruptLeadingSize?: boolean;
+    cdEntries?: number;
+    gapBeforeEocd?: number;
+  } = {},
 ): Uint8Array => {
   const entries = Buffer.from(Array.from({ length: 64 }, (_, i) => i & 0xff));
   const framed = Buffer.concat(
@@ -60,7 +64,12 @@ const syntheticSigned = (
     Buffer.from("APK Sig Block 42", "latin1"),
   ]);
   if (options.corruptLeadingSize) block[0] = 0xff;
-  const cd = Buffer.from([0x50, 0x4b, 0x01, 0x02, 0, 0, 0, 0]);
+  // An empty central directory unless a test declares (bogus) records in it.
+  const cd =
+    options.cdEntries === undefined
+      ? Buffer.alloc(0)
+      : Buffer.from([0x50, 0x4b, 0x01, 0x02, 0, 0, 0, 0]);
+  const gap = Buffer.alloc(options.gapBeforeEocd ?? 0);
   const cdOffset = entries.length + block.length;
   const records = options.cdEntries ?? 0;
   const eocd = Buffer.from([
@@ -73,7 +82,7 @@ const syntheticSigned = (
     ...u32(cdOffset),
     ...u16(0),
   ]);
-  return Uint8Array.from(Buffer.concat([entries, block, cd, eocd]));
+  return Uint8Array.from(Buffer.concat([entries, block, cd, gap, eocd]));
 };
 
 const V2 = 0x7109871a;
@@ -189,7 +198,9 @@ describe("ApkSignatureProvider without the Android SDK", () => {
     ]);
     expect(r.posture.self_consistent).toBe(false);
   });
+});
 
+describe("ApkSignatureProvider failure surfaces", () => {
   it("refuses a non-ZIP file as an unsupported target", async () => {
     const result = await provider.inspect({
       path: await write("plain.bin", "not an archive at all"),
@@ -256,6 +267,41 @@ describe("ApkSignatureProvider without the Android SDK", () => {
     expect(result.error._tag).toBe("AnalysisInputError");
     expect(JSON.stringify(result.error)).toContain(
       "Malformed ZIP central directory",
+    );
+  });
+
+  it("refuses an under-declared entry count rather than hiding v1 signing", async () => {
+    const zip = await zipOf([
+      "classes.dex",
+      "META-INF/MANIFEST.MF",
+      "META-INF/CERT.SF",
+      "META-INF/CERT.RSA",
+    ]);
+    const eocd = zip.length - 22;
+    zip.set(u16(1), eocd + 8);
+    zip.set(u16(1), eocd + 10);
+    const result = await provider.inspect({
+      path: await write("undercount.apk", zip),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisInputError");
+  });
+
+  it("says why the digest was not recomputed when the EOCD does not follow the directory", async () => {
+    const result = await provider.inspect({
+      path: await write(
+        "gap.apk",
+        syntheticSigned([{ id: V2, value: bogusV2Value() }], {
+          gapBeforeEocd: 4,
+        }),
+      ),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect((result.value.result as Report).posture.self_consistent).toBeNull();
+    expect(result.value.limitations.at(-1)).toContain(
+      "not immediately followed by the end-of-central-directory",
     );
   });
 

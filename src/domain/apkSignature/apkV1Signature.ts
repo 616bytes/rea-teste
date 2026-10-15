@@ -77,11 +77,19 @@ export const centralDirectoryNames = (
     );
     at = nameStart + nameLength + extraLength + commentLength;
   }
+  // An under-declared record count would silently hide entries (and so v1
+  // signing): the walk must consume exactly the declared directory.
+  if (at !== end)
+    return err({
+      kind: "malformed-central-directory",
+      offset: at,
+      detail: `${String(end - at)} bytes of the declared central directory remain after ${String(totalEntries)} records`,
+    });
   return ok(names);
 };
 
 const META_INF = "META-INF/";
-const BLOCK_SUFFIX = /\.(RSA|DSA|EC)$/i;
+const BLOCK_SUFFIX = /\.(RSA|DSA|EC)$/;
 
 /** Classify central-directory names into the v1 (JAR) signing facts. */
 export const detectV1Signature = (names: readonly string[]): ApkV1Signature => {
@@ -89,9 +97,8 @@ export const detectV1Signature = (names: readonly string[]): ApkV1Signature => {
     (name) =>
       name.startsWith(META_INF) && !name.slice(META_INF.length).includes("/"),
   );
-  const signatureFiles = metaInf.filter((name) =>
-    name.toUpperCase().endsWith(".SF"),
-  );
+  // Case-sensitive throughout, as apksig matches JAR signature entries.
+  const signatureFiles = metaInf.filter((name) => name.endsWith(".SF"));
   const blockFiles = metaInf.filter((name) => BLOCK_SUFFIX.test(name));
   const hasManifest = names.includes("META-INF/MANIFEST.MF");
   return {

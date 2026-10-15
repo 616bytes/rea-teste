@@ -112,7 +112,8 @@ export const apkSignatureResultSchema = z.strictObject({
     v1_only: z.boolean(),
     /**
      * Observed: every present block scheme (v2/v3/v3.1) presents the same set
-     * of signer certificates. Null when no block scheme carries a certificate.
+     * of signer certificates. Null when no block scheme has a signer, or when
+     * any signer carries no certificate (identity unknown).
      */
     schemes_agree_on_signer: z.boolean().nullable(),
     /**
@@ -144,8 +145,11 @@ export interface ApkPostureInput {
   readonly v31Present: boolean;
   readonly sourceStampPresent: boolean;
   readonly rotationPresent: boolean;
-  /** Per present block scheme, the fingerprints of ALL its signers' certificates. */
-  readonly schemeSignerFingerprints: readonly (readonly string[])[];
+  /**
+   * Per present block scheme, the fingerprint of every signer's certificate;
+   * `null` for a signer that carries no certificate (identity unknown).
+   */
+  readonly schemeSignerFingerprints: readonly (readonly (string | null)[])[];
   /** Fingerprints of every certificate in the declared v3/v3.1 rotation lineage(s). */
   readonly lineageFingerprints: readonly string[];
   readonly selfConsistent: boolean | null;
@@ -169,12 +173,20 @@ export const deriveApkPosture = (
           ? "v1"
           : "none";
   const sets = input.schemeSignerFingerprints.filter((fps) => fps.length > 0);
-  const union = new Set(sets.flat());
+  // A signer without a certificate has unknown identity: agreement is unknown,
+  // never assumed.
+  const identityUnknown = sets.some((fps) => fps.includes(null));
+  const known = sets.map((fps) =>
+    fps.filter((fp): fp is string => fp !== null),
+  );
+  const union = new Set(known.flat());
   const lineage = new Set(input.lineageFingerprints);
   return {
     v1_only: input.v1Present && !blockPresent,
     schemes_agree_on_signer:
-      sets.length === 0 ? null : new Set(sets.map(setKey)).size === 1,
+      sets.length === 0 || identityUnknown
+        ? null
+        : new Set(known.map(setKey)).size === 1,
     signer_change_declared_by_rotation:
       union.size > 1 && [...union].every((fp) => lineage.has(fp)),
     rotation_present: input.rotationPresent,

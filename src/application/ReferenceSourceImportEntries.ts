@@ -202,10 +202,19 @@ const selectPackageMain = (
   // Node would load a declared entry outside the imported root.
   if (logicalPathEscapesRoot(target))
     return { to: target, resolution: "unresolved" };
-  const selected = context.lookupPath.resolveCandidates([
-    ...fileCandidates(target, resolutionMode),
-    ...indexCandidates(target, resolutionMode),
-  ]);
+  const mainCandidates =
+    resolutionMode === "node-require"
+      ? [
+          ...nodeModuleFileCandidates(target),
+          ...nodeModuleIndexCandidates(target),
+        ]
+      : [
+          ...nodeModuleFileCandidates(target),
+          ...fileCandidates(target, "source"),
+          ...nodeModuleIndexCandidates(target),
+          ...indexCandidates(target, "source"),
+        ];
+  const selected = context.lookupPath.resolveCandidates(mainCandidates);
   return { to: selected ?? index, resolution: "internal" };
 };
 

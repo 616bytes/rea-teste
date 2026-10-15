@@ -158,13 +158,16 @@ it("resolves extensionless TypeScript import-equals references to source files",
   const files = [
     [
       "src/main.ts",
-      'import sibling = require("./dep");\nimport indexed = require("./indexed");\nimport main = require("./pkg-source");\n',
+      'import sibling = require("./dep");\nimport indexed = require("./indexed");\nimport main = require("./pkg-source");\nimport data = require("./json-package");\n',
     ],
     ["src/dep.ts", 'export const value = "sibling";\n'],
     ["src/indexed/index.ts", 'export const value = "index";\n'],
     ["src/pkg-source/package.json", '{"main":"entry"}\n'],
     ["src/pkg-source/entry.ts", 'export const value = "package main";\n'],
     ["src/pkg-source/index.ts", 'export const value = "fallback";\n'],
+    ["src/json-package/package.json", '{"main":"data"}\n'],
+    ["src/json-package/data.json", '{"answer":42}\n'],
+    ["src/json-package/index.js", 'module.exports = "fallback";\n'],
   ] as const;
   const read: ReferenceSourceRead = {
     root: "/selected/source",
@@ -204,6 +207,13 @@ it("resolves extensionless TypeScript import-equals references to source files",
     {
       from_path: "src/main.ts",
       to: "src/pkg-source/entry.ts",
+      kind: "requires",
+      resolution: "internal",
+      parse_state: "parsed",
+    },
+    {
+      from_path: "src/main.ts",
+      to: "src/json-package/data.json",
       kind: "requires",
       resolution: "internal",
       parse_state: "parsed",

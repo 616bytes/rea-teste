@@ -136,6 +136,70 @@ it("does not reuse a later resolved callback at an earlier read", () => {
   expect(context.resolve(after)).toMatchObject({ complete: true });
 });
 
+it.each([false, true])(
+  "bounds separate branch assignments with intrinsic cycle=%s",
+  (cyclic) => {
+    const measure = (depth: number) => {
+      const context = indexed(`function fallback(){return {};}
+function choose(flag){let a0=${cyclic ? "flag?a0:{make:fallback}" : "{make:fallback}"};
+${Array.from({ length: depth }, (_, i) => `let a${i + 1};if(flag)a${i + 1}=a${i};else a${i + 1}=a${i};`).join("")}
+return a${depth}.make();}`);
+      const choose = context.state.program.body[1];
+      if (!t.isFunctionDeclaration(choose)) throw new Error("Missing choose");
+      const last = choose.body.body.at(-1);
+      if (!t.isReturnStatement(last) || !t.isCallExpression(last.argument))
+        throw new Error("Missing call");
+      const lookups = context.state.scopes.map((scope) =>
+        vi.spyOn(scope.bindings, "get"),
+      );
+      try {
+        expect(
+          createSemanticReturnedReferences(context.state)(last.argument.callee),
+        ).toHaveLength(1);
+        return lookups.reduce(
+          (total, lookup) => total + lookup.mock.calls.length,
+          0,
+        );
+      } finally {
+        for (const lookup of lookups) lookup.mockRestore();
+      }
+    };
+    const small = measure(8),
+      large = measure(12);
+    expect(small).toBeGreaterThan(0);
+    expect(large).toBeLessThan(3 * small);
+  },
+);
+
+it.each(["||=", "??="])(
+  "retains definite assignment to an empty local: %s",
+  (operator) => {
+    const { state } = indexed(
+      `function choose(){let cb;cb ${operator} fallback;cb();}`,
+    );
+    const binding = [...state.bindingsById.values()].find(
+      (binding) => binding.name === "cb",
+    );
+    if (binding === undefined) throw new Error("Missing cb binding");
+    let reads = 0;
+    traverseJavaScriptAst(state.program, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "cb" })
+        ) {
+          reads++;
+          expect(
+            semanticBindingAtRead(binding, node.callee, state.parentsByNode)
+              .hasDefiniteInitializer,
+          ).toBe(true);
+        }
+      },
+    });
+    expect(reads).toBe(1);
+  },
+);
+
 it("does not memoize alias cycle cuts across entry paths", () => {
   const context = indexed(
     `function fallback(){} let a,b; function setA(){a=flag?b:fallback;} function setB(){b=a;} a(); b();`,

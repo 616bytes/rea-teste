@@ -34,6 +34,10 @@ export function guarded(cb,flag) { if(flag){cb=fallback;return cb();}return "ski
 export function guardedVar(flag) { if(flag){var cb=fallback;return cb();}return "skipped"; }
 export function logicalAssign(cb) { cb ||= fallback;return cb(); }
 export function restored() { let cb=fallback;const saved=cb;cb=saved;return cb(); }
+export function emptyOr() { let cb;cb ||= fallback;return cb(); }
+export function emptyNullish() { let cb;cb ??= fallback;return cb(); }
+export function knownLocal(flag) { let cb=fallback;if(flag)cb=fallback;return cb(); }
+export function finallyDefinite(cb,flag) { if(flag)cb=fallback;cb=fallback;return cb(); }
 `,
   );
   const oracle = await promisify(execFile)(process.execPath, [
@@ -47,7 +51,7 @@ console.log(JSON.stringify([
 m.choose(cb,false),m.choose(cb,true),m.logical(cb,false),m.definite(cb),
 m.beforeAfter(cb),m.captured(cb),m.delayed(cb),m.caught(cb,false),
 m.defaulted(cb,false),m.defaulted(undefined,false),m.local(false),m.local(true),m.replaced(),
-m.guarded(cb,false),m.guarded(cb,true),m.guardedVar(false),m.guardedVar(true),m.logicalAssign(cb),m.restored()
+m.guarded(cb,false),m.guarded(cb,true),m.guardedVar(false),m.guardedVar(true),m.logicalAssign(cb),m.restored(),m.emptyOr(),m.emptyNullish(),m.knownLocal(false),m.knownLocal(true),m.finallyDefinite(cb,false)
 ]));`,
     file,
   ]);
@@ -71,8 +75,87 @@ m.guarded(cb,false),m.guarded(cb,true),m.guardedVar(false),m.guardedVar(true),m.
     "local",
     "incoming",
     "local",
+    "local",
+    "local",
+    "local",
+    "local",
+    "local",
   ]);
   return root;
+};
+
+const verifyCallbackGraph = (
+  graph: ReturnType<
+    typeof javascriptApplicationAnalysisResultSchema.parse
+  >["semantic_graph"],
+) => {
+  const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
+  const calls = (name: string) =>
+    graph.nodes
+      .filter(
+        (node) =>
+          node.kind === "call-site" &&
+          node.function_node_id !== null &&
+          nodes.get(node.function_node_id)?.properties.name === name,
+      )
+      .sort(
+        (a, b) =>
+          (a.identity.source_range?.start.column ?? 0) -
+          (b.identity.source_range?.start.column ?? 0),
+      );
+  const targets = (nodeId: string) =>
+    graph.relations
+      .filter(
+        (relation) =>
+          relation.relation === "calls" && relation.source_node_id === nodeId,
+      )
+      .map((relation) => ({
+        target: nodes.get(relation.target_node_id)?.label,
+        resolution: relation.resolution,
+      }))
+      .sort((a, b) => String(a.target).localeCompare(String(b.target)));
+  for (const name of ["choose", "logical", "delayed", "caught", "defaulted"]) {
+    const call = calls(name)[0];
+    if (call === undefined) throw new Error(`Missing ${name} call`);
+    expect(targets(call.node_id), name).toContainEqual({
+      target: "fallback",
+      resolution: "candidate",
+    });
+    expect(
+      targets(call.node_id).every((target) => target.resolution !== "resolved"),
+      name,
+    ).toBe(true);
+  }
+  for (const name of [
+    "definite",
+    "replaced",
+    "guarded",
+    "guardedVar",
+    "restored",
+    "emptyOr",
+    "emptyNullish",
+    "knownLocal",
+    "finallyDefinite",
+  ]) {
+    const call = calls(name)[0];
+    if (call === undefined) throw new Error(`Missing ${name} call`);
+    expect(targets(call.node_id), name).toEqual([
+      { target: "fallback", resolution: "resolved" },
+    ]);
+  }
+  expect(targets(calls("logicalAssign")[0]!.node_id)).toEqual([]);
+  expect(calls("beforeAfter")).toHaveLength(2);
+  expect(targets(calls("beforeAfter")[0]!.node_id)).toEqual([]);
+  expect(targets(calls("beforeAfter")[1]!.node_id)).toEqual([
+    { target: "fallback", resolution: "resolved" },
+  ]);
+  expect(targets(calls("captured")[0]!.node_id)).toEqual([]);
+  expect(targets(calls("local")[0]!.node_id)).toEqual([
+    { target: "fallback", resolution: "candidate" },
+    { target: "original", resolution: "candidate" },
+  ]);
+
+  return calls;
 };
 
 cliTest(
@@ -94,75 +177,7 @@ cliTest(
     const graph = javascriptApplicationAnalysisResultSchema.parse(
       evidence.normalized_result,
     ).semantic_graph;
-    const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
-    const calls = (name: string) =>
-      graph.nodes
-        .filter(
-          (node) =>
-            node.kind === "call-site" &&
-            node.function_node_id !== null &&
-            nodes.get(node.function_node_id)?.properties.name === name,
-        )
-        .sort(
-          (a, b) =>
-            (a.identity.source_range?.start.column ?? 0) -
-            (b.identity.source_range?.start.column ?? 0),
-        );
-    const targets = (nodeId: string) =>
-      graph.relations
-        .filter(
-          (relation) =>
-            relation.relation === "calls" && relation.source_node_id === nodeId,
-        )
-        .map((relation) => ({
-          target: nodes.get(relation.target_node_id)?.label,
-          resolution: relation.resolution,
-        }))
-        .sort((a, b) => String(a.target).localeCompare(String(b.target)));
-    for (const name of [
-      "choose",
-      "logical",
-      "delayed",
-      "caught",
-      "defaulted",
-    ]) {
-      const call = calls(name)[0];
-      if (call === undefined) throw new Error(`Missing ${name} call`);
-      expect(targets(call.node_id), name).toContainEqual({
-        target: "fallback",
-        resolution: "candidate",
-      });
-      expect(
-        targets(call.node_id).every(
-          (target) => target.resolution !== "resolved",
-        ),
-        name,
-      ).toBe(true);
-    }
-    for (const name of [
-      "definite",
-      "replaced",
-      "guarded",
-      "guardedVar",
-      "restored",
-    ]) {
-      const call = calls(name)[0];
-      if (call === undefined) throw new Error(`Missing ${name} call`);
-      expect(targets(call.node_id), name).toEqual([
-        { target: "fallback", resolution: "resolved" },
-      ]);
-    }
-    expect(targets(calls("logicalAssign")[0]!.node_id)).toEqual([]);
-    expect(calls("beforeAfter")).toHaveLength(2);
-    expect(targets(calls("beforeAfter")[0]!.node_id)).toEqual([]);
-    expect(targets(calls("beforeAfter")[1]!.node_id)).toEqual([
-      { target: "fallback", resolution: "resolved" },
-    ]);
-    expect(targets(calls("captured")[0]!.node_id)).toEqual([]);
-    expect(targets(calls("local")[0]!.node_id)).toEqual([
-      { target: "fallback", resolution: "candidate" },
-      { target: "original", resolution: "candidate" },
-    ]);
+    const calls = verifyCallbackGraph(graph);
 
     const { client, call } = await connectLocalToolsMcp();
     const retainedResponse = await call("analyze_javascript_application", {

@@ -126,7 +126,7 @@ const requireLoaderMembersIntact = (
     return key === null || key === "resolve" || key === "main";
   };
   traverseJavaScriptAst(program, {
-    enter: (node, parent) => {
+    enter: (node, parent, readAncestors) => {
       if (!intact) return;
       const site = semanticWriteSiteTarget(node);
       if (site !== null) {
@@ -140,12 +140,27 @@ const requireLoaderMembersIntact = (
         !isLoaderReference(node)
       )
         return;
+      // Inert parentheses and TypeScript wrappers do not change how the
+      // loader value is used.
+      let used: t.Node = node;
+      let user: t.Node | undefined = parent;
+      const read = readAncestors();
+      const ancestors = read.at(-1) === parent ? read : [...read, parent];
+      for (let index = ancestors.length - 1; index >= 0; index -= 1) {
+        user = ancestors[index];
+        if (
+          user === undefined ||
+          unwrapJavaScriptExpression(user).node !== node
+        )
+          break;
+        used = user;
+      }
       const usedAsLoader =
-        (t.isCallExpression(parent) && parent.callee === node) ||
-        ((t.isMemberExpression(parent) ||
-          t.isOptionalMemberExpression(parent)) &&
-          parent.object === node) ||
-        t.isUnaryExpression(parent, { operator: "typeof" });
+        ((t.isCallExpression(user) || t.isOptionalCallExpression(user)) &&
+          user.callee === used) ||
+        ((t.isMemberExpression(user) || t.isOptionalMemberExpression(user)) &&
+          user.object === used) ||
+        t.isUnaryExpression(user, { operator: "typeof" });
       if (!usedAsLoader) intact = false;
     },
   });

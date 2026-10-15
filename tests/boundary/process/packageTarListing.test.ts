@@ -56,6 +56,20 @@ try {
   return { result: JSON.parse(stdout), workspace };
 }
 
+it.each(members)(
+  "preserves a trailing CR in an LF-listed member %s",
+  async (member) => {
+    const listing =
+      members.map((path) => (path === member ? `${path}\r` : path)).join("\n") +
+      "\n";
+    const { result } = await verifyListing(listing);
+    expect(result).toEqual({
+      error: `package omitted ${member}`,
+      bridgeParsed: false,
+    });
+  },
+);
+
 for (const ending of ["\n", "\r\n"]) {
   const label = ending === "\n" ? "LF" : "CRLF";
   it(`accepts exact bridge members in ${label} tar output`, async () => {

@@ -176,3 +176,65 @@ describe("readProcmonExport review of 6e44894", () => {
     expect(reading.missing_columns).toEqual([]);
   });
 });
+
+describe("readProcmonExport review of e3aaded", () => {
+  const all = { ...selection, event_limit: null };
+  const xml = (event: string) =>
+    Buffer.from(
+      `<procmon><eventlist><event><Operation>Read</Operation>${event}</event></eventlist></procmon>`,
+    );
+  const nestedPath = "<Path><frame>0x1</frame></Path>";
+
+  it.each([
+    ["simple then nested", `<Path>C:\\a</Path>${nestedPath}`],
+    ["nested then simple", `${nestedPath}<Path>C:\\a</Path>`],
+    ["nested twice", `${nestedPath}${nestedPath}`],
+  ])("stops at a field repeated %s", async (_order, event) => {
+    const reading = await readProcmonExport(xml(event), all);
+    expect(reading.events).toEqual([]);
+    expect(reading.coverage).toMatchObject({
+      status: "partial",
+      reason: "malformed",
+    });
+  });
+
+  it("counts a nested projected field as present", async () => {
+    const reading = await readProcmonExport(
+      xml("<Detail><frame>0x1</frame></Detail>"),
+      all,
+    );
+    expect(reading.omitted_nested_fields).toEqual(["Detail"]);
+    expect(reading.missing_columns).not.toContain("Detail");
+    expect(reading.events[0]?.detail).toBeNull();
+  });
+
+  it("bounds a long non-procmon root name in the error", async () => {
+    const name = `r${"x".repeat(1_000_000)}`;
+    const error = await readProcmonExport(Buffer.from(`<${name}/>`), all).catch(
+      (cause: unknown) => cause,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message.length).toBeLessThan(300);
+  });
+
+  it("rejects a UTF-16BE high surrogate followed by a non-low-surrogate byte", async () => {
+    const body = Buffer.from(header + '"a.exe","Read"\n', "utf16le").swap16();
+    const bytes = Buffer.concat([
+      Buffer.from([0xfe, 0xff]),
+      body,
+      Buffer.from([0xd8, 0x00, 0x00]),
+    ]);
+    await expect(readProcmonExport(bytes, all)).rejects.toThrow(
+      "not valid utf-16be",
+    );
+  });
+
+  it("does not suggest a smaller page when the first event alone is too big", async () => {
+    const big = Buffer.from(
+      `${header}"a.exe","${"v".repeat(9 * 1024 * 1024)}"\n"b.exe","Read"\n`,
+    );
+    await expect(
+      readProcmonExport(big, { ...all, event_limit: 1 }),
+    ).rejects.toThrow("Event 1 alone exceeds");
+  });
+});

@@ -21,13 +21,19 @@ export class ProcmonExportFormatFailure extends Error {
 export class ProcmonExportOutputFailure extends Error {
   constructor(
     readonly retainedEvents: number,
-    /** Column or nested-field names, which no page size can shrink. */
-    readonly budget: "events" | "metadata" = "events",
+    /**
+     * What a caller can change: `metadata` (column or field names) and
+     * `first-event` (one event alone) cannot be fixed by a smaller page.
+     */
+    readonly budget: "events" | "metadata" | "first-event" = "events",
+    readonly ordinal?: number,
   ) {
     super(
       budget === "metadata"
         ? `The export's column and field names alone exceed the ${PROCMON_EXPORT_LIMITS.output_bytes}-byte inline output budget; no event page fits. Re-export with fewer or shorter columns.`
-        : `The report exceeds the ${PROCMON_EXPORT_LIMITS.output_bytes}-byte inline output budget after ${retainedEvents} events; choose a smaller event_limit.`,
+        : budget === "first-event"
+          ? `Event ${ordinal ?? "?"} alone exceeds the ${PROCMON_EXPORT_LIMITS.output_bytes}-byte inline output budget; a smaller event_limit cannot help. Skip it with a larger event_offset or re-export with narrower fields.`
+          : `The report exceeds the ${PROCMON_EXPORT_LIMITS.output_bytes}-byte inline output budget after ${retainedEvents} events; choose a smaller event_limit.`,
     );
     this.name = "ProcmonExportOutputFailure";
   }
@@ -182,7 +188,7 @@ export class ProcmonEventWindow {
     let bytes = EMPTY_EVENT_BYTES + String(this.examined).length + 1;
     for (const [column, value] of fields) {
       if (value.length > PROCMON_EXPORT_LIMITS.output_bytes)
-        throw new ProcmonExportOutputFailure(this.events.length);
+        throw this.#eventOverflow();
       bytes +=
         procmonCoreColumn(column, this.format) === undefined
           ? ADDITIONAL_ENTRY_BYTES +
@@ -198,13 +204,19 @@ export class ProcmonEventWindow {
     if (kind === "metadata") this.#metadataBytes += bytes;
     // Metadata is the cause only when it alone exceeds the budget; otherwise
     // a smaller page would fit.
-    if (this.#bytes > PROCMON_EXPORT_LIMITS.output_bytes)
-      throw new ProcmonExportOutputFailure(
-        this.events.length,
-        this.#metadataBytes > PROCMON_EXPORT_LIMITS.output_bytes
-          ? "metadata"
-          : "events",
-      );
+    if (this.#bytes <= PROCMON_EXPORT_LIMITS.output_bytes) return;
+    if (this.#metadataBytes > PROCMON_EXPORT_LIMITS.output_bytes)
+      throw new ProcmonExportOutputFailure(this.events.length, "metadata");
+    throw kind === "events"
+      ? this.#eventOverflow()
+      : new ProcmonExportOutputFailure(this.events.length);
+  }
+
+  /** With no event retained yet, the event being admitted is the whole page. */
+  #eventOverflow(): ProcmonExportOutputFailure {
+    return this.events.length === 0
+      ? new ProcmonExportOutputFailure(0, "first-event", this.examined)
+      : new ProcmonExportOutputFailure(this.events.length);
   }
 }
 

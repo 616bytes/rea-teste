@@ -60,8 +60,11 @@ export const readProcmonExport = async (
           signal,
           decoded.cutBytes > 0,
         );
+  // A projected field with child elements is present, though not projected.
   const present = new Set(
-    parsed.columns.map((column) => procmonCoreColumn(column, format)),
+    [...parsed.columns, ...parsed.nested].map((column) =>
+      procmonCoreColumn(column, format),
+    ),
   );
   // One final coverage decision drives both the columns claim and its note.
   const coverage = withCutCharacter(parsed, decoded.cutBytes);
@@ -206,7 +209,15 @@ const isIncompleteCharacter = (
   // UTF-16: an odd final byte, a high surrogate, or a high surrogate and one byte.
   if (tail.length === 1) return true;
   const high = encoding === "utf-16le" ? tail[1] : tail[0];
-  return high !== undefined && high >= 0xd8 && high <= 0xdb;
+  if (high === undefined || high < 0xd8 || high > 0xdb) return false;
+  // A byte after the high surrogate must start a low surrogate. In UTF-16BE
+  // that byte is the surrogate's high byte; in UTF-16LE any low byte fits.
+  const next = tail[2];
+  return (
+    next === undefined ||
+    encoding === "utf-16le" ||
+    (next >= 0xdc && next <= 0xdf)
+  );
 };
 
 const decodeText = (bytes: Uint8Array, encoding: Encoding): DecodedExport => {

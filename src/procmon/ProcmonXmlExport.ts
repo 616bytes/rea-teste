@@ -28,6 +28,7 @@ class ProcmonXmlEvents {
   #depth = 0;
   #inEventList = false;
   #event: Map<string, string> | undefined;
+  #eventFields = new Set<string>();
   #field: { name: string; text: string; nested: boolean } | undefined;
 
   constructor(readonly window: ProcmonEventWindow) {}
@@ -38,15 +39,16 @@ class ProcmonXmlEvents {
       if (tag.name !== "procmon")
         throw new ProcmonExportFormatFailure(
           "format",
-          `XML root element is ${tag.name}; a Process Monitor export uses procmon.`,
+          `XML root element is ${JSON.stringify(tag.name.slice(0, 100))}${tag.name.length > 100 ? " (truncated)" : ""}; a Process Monitor export uses procmon.`,
         );
       this.rootSeen = true;
     } else if (this.#depth === 2 && tag.name === "eventlist") {
       this.#inEventList = true;
       this.eventLists += 1;
-    } else if (this.#depth === 3 && this.#inEventList && tag.name === "event")
+    } else if (this.#depth === 3 && this.#inEventList && tag.name === "event") {
       this.#event = new Map();
-    else if (this.#depth === 4 && this.#event !== undefined)
+      this.#eventFields = new Set();
+    } else if (this.#depth === 4 && this.#event !== undefined)
       this.#field = { name: tag.name, text: "", nested: false };
     else if (this.#depth === 5 && this.#field !== undefined)
       this.#field.nested = true;
@@ -71,16 +73,18 @@ class ProcmonXmlEvents {
     const event = this.#event;
     this.#field = undefined;
     if (field === undefined || event === undefined) return;
+    // Names repeat whether simple or nested; either way the value is ambiguous.
+    if (this.#eventFields.has(field.name))
+      throw new XmlStop(
+        `Event ${this.window.examined + 1} repeats field ${field.name.slice(0, 100)}.`,
+      );
+    this.#eventFields.add(field.name);
     if (field.nested) {
       // Reported in omitted_nested_fields and repeated in a limitation.
       if (!this.nested.has(field.name)) this.window.charge(field.name, 2);
       this.nested.add(field.name);
       return;
     }
-    if (event.has(field.name))
-      throw new XmlStop(
-        `Event ${this.window.examined + 1} repeats field ${field.name}.`,
-      );
     event.set(field.name, field.text);
     if (this.#known.has(field.name)) return;
     if (this.#known.size >= PROCMON_EXPORT_LIMITS.columns)

@@ -81,8 +81,11 @@ describe("omitted network initiator URLs", () => {
 
   it("retains known initiator and response differences", () => {
     const retained = capture();
+    retained.network.requests[0]!.initiator.url =
+      "https://app.example.test/main.js";
     const changedInitiator = structuredClone(retained);
-    changedInitiator.network.requests[0]!.initiator.url = "https://app.example.test/other.js";
+    changedInitiator.network.requests[0]!.initiator.url =
+      "https://app.example.test/other.js";
     expect(compare(retained, changedInitiator)).toMatchObject({
       status: "changed",
       total_changes: 1,

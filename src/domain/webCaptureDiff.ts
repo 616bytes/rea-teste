@@ -388,7 +388,7 @@ const networkDimension = (
   for (const inspection of [before, after]) {
     const limited = !sectionsComplete(inspection, ["network_initiators"]);
     for (const request of inspection.network.requests) {
-      if (limited || request.initiator.url === null) {
+      if (limited) {
         incompleteInitiatorUrls.add(networkIdentity(request));
         initiatorsComplete = false;
       }

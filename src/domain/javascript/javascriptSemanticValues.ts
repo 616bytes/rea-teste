@@ -9,7 +9,7 @@ import {
   semanticCapturePosition,
   semanticEscapeFollowsCapture,
   semanticBindingPrecedesCapture,
-  semanticReadInitializers,
+  semanticBindingAtRead,
 } from "./javascriptSemanticMutationInitializers.js";
 
 import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
@@ -294,6 +294,8 @@ const collectEvaluationDependencies = <T>(
 const evaluateBinding = (
   binding: JavaScriptSemanticBindingState,
   context: EvaluationContext,
+  // Read snapshots share their source binding ID, but not its whole-binding cache.
+  memoize = true,
 ): JavaScriptSemanticValue => {
   recordBindingDependency(binding, context);
   const cycleHead = context.bindings.get(binding.bindingId);
@@ -302,6 +304,7 @@ const evaluateBinding = (
     return { status: "cycle", reason: `Alias cycle at ${binding.name}.` };
   }
   if (
+    memoize &&
     context.capturePoint !== undefined &&
     !semanticBindingPrecedesCapture(
       binding,
@@ -315,14 +318,16 @@ const evaluateBinding = (
       primitiveBindingValues: primitiveBindingValuesFor(context.state),
     });
   }
-  const cached = context.primitiveBindingValues.get(binding.bindingId);
+  const cached = memoize
+    ? context.primitiveBindingValues.get(binding.bindingId)
+    : undefined;
   if (cached !== undefined) return cached;
   // Each closure that aliases an outer binding evaluates it both live and at
   // its capture point, so re-deriving it doubles the work at every level of
   // nesting. A deeper reader derives it again: the retained value would carry
   // more nesting than the remaining depth budget allows it to observe.
   const independent =
-    context.capturePoint === undefined
+    memoize && context.capturePoint === undefined
       ? callerIndependentBindingValuesFor(context.state)
       : undefined;
   const retained = independent?.get(binding.bindingId);
@@ -336,7 +341,9 @@ const evaluateBinding = (
   if (binding.initializers.length === 0)
     return {
       status: "unknown",
-      reason: `Binding ${binding.name} has no constant initializer.`,
+      reason: memoize
+        ? `Binding ${binding.name} has no constant initializer.`
+        : `Binding ${binding.name} has no proven initializer at this read.`,
     };
   if (
     binding.initializers.some(
@@ -438,12 +445,13 @@ const evaluateBinding = (
   // Point-local memoization also bounds failed speculative captures. Only a
   // primitive result is allowed back into ordinary value evaluation.
   if (
-    context.capturePoint !== undefined ||
-    projected.status === "literal" ||
-    projected.status === "union" ||
-    (isSemanticResourceLimit(projected) &&
-      (projected.resourceLimit === "primitive-bytes" ||
-        projected.resourceLimit === "primitive-candidates"))
+    memoize &&
+    (context.capturePoint !== undefined ||
+      projected.status === "literal" ||
+      projected.status === "union" ||
+      (isSemanticResourceLimit(projected) &&
+        (projected.resourceLimit === "primitive-bytes" ||
+          projected.resourceLimit === "primitive-candidates")))
   )
     context.primitiveBindingValues.set(binding.bindingId, projected);
   return projected;
@@ -484,9 +492,28 @@ const evaluateExpressionValue = (
   if (literal.found) return primitiveSet([literal.value]);
   if (t.isIdentifier(node)) {
     const binding = resolveSemanticBindingState(context.state, node, node.name);
-    return binding === undefined
-      ? { status: "unknown", reason: `Unbound identifier ${node.name}.` }
-      : evaluateBinding(binding, nestedContext(context));
+    if (binding === undefined)
+      return { status: "unknown", reason: `Unbound identifier ${node.name}.` };
+    const read =
+      binding.mutable &&
+      binding.definitions.some(({ kind }) => kind === "assignment")
+        ? semanticBindingAtRead(binding, node, context.state.parentsByNode)
+        : undefined;
+    if (read?.status === "unresolved") {
+      const value = evaluateBinding(binding, nestedContext(context));
+      if (
+        value.status === "unknown" ||
+        value.status === "ambiguous" ||
+        value.status === "cycle"
+      )
+        return value;
+      return {
+        status: "unknown",
+        reason: `Binding ${binding.name} has unresolved ordering at this read.`,
+      };
+    }
+    const atRead = read?.binding ?? binding;
+    return evaluateBinding(atRead, nestedContext(context), atRead === binding);
   }
   if (t.isTemplateLiteral(node)) return evaluateTemplate(node, context);
   if (t.isConditionalExpression(node))
@@ -1021,26 +1048,17 @@ const provenanceForBindingAtRead = (
   read: t.Identifier,
   context: EvaluationContext,
 ): JavaScriptBindingProvenance => {
-  const selected = semanticReadInitializers(
+  const { binding: snapshot } = semanticBindingAtRead(
     binding,
     read,
     context.state.parentsByNode,
   );
-  if (selected.initializers === binding.initializers)
-    return provenanceForBinding(binding, context);
+  if (snapshot === binding) return provenanceForBinding(binding, context);
   if (context.bindings.has(binding.bindingId))
     return semanticUnresolvedProvenance(
       "cycle",
       `Alias cycle at ${binding.name}.`,
     );
-  const snapshot: JavaScriptSemanticBindingState = {
-    ...binding,
-    ...selected,
-    // Assignment facts after the read cannot change the captured value.
-    definitions: binding.definitions.filter(
-      ({ kind }) => kind !== "assignment",
-    ),
-  };
   context.bindings.set(binding.bindingId, context.bindings.size);
   try {
     return provenanceForBindingValue(snapshot, context);

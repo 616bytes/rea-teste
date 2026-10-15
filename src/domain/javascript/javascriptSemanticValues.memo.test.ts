@@ -25,6 +25,51 @@ const property = (
 };
 
 it.each([false, true])(
+  "isolates captured parameter values from the assigned binding cache (prewarmed: %s)",
+  (prewarmed) => {
+    const parsed = parseJavaScriptSource(
+      `export function read(x) {
+        const earlier = x;
+        x = 2;
+        const later = x;
+        return { earlier, later };
+      }`,
+      "captured-parameter.js",
+    );
+    if (parsed === null) throw new Error("Expected parsed source");
+    const steps = indexJavaScriptBindingsSteps(parsed.program);
+    let step = steps.next();
+    while (step.done !== true) step = steps.next();
+    const state = step.value;
+    const bindings = new Map(
+      [...state.bindingsById.values()].map((binding) => [
+        binding.name,
+        binding,
+      ]),
+    );
+    const assigned = bindings.get("x");
+    const earlier = bindings.get("earlier");
+    const later = bindings.get("later");
+    if (assigned === undefined || earlier === undefined || later === undefined)
+      throw new Error("Missing capture bindings");
+    if (prewarmed)
+      expect(evaluateSemanticBinding(assigned, state)).toEqual({
+        status: "literal",
+        value: 2,
+      });
+    expect(evaluateSemanticBinding(earlier, state).status).toBe("unknown");
+    expect(evaluateSemanticBinding(later, state)).toEqual({
+      status: "literal",
+      value: 2,
+    });
+    expect(evaluateSemanticBinding(assigned, state)).toEqual({
+      status: "literal",
+      value: 2,
+    });
+  },
+);
+
+it.each([false, true])(
   "recomputes a shared cyclic value under a different active ancestor (prewarmed: %s)",
   (prewarmed) => {
     const parsed = parseJavaScriptSource(

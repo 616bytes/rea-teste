@@ -12,6 +12,11 @@ interface StatementPosition {
   readonly declaratorIndex: number;
 }
 
+interface BindingReadPosition {
+  readonly position: StatementPosition | null;
+  readonly repeating: boolean;
+}
+
 /**
  * Initializer positions depend only on a node and its parent map, which one
  * analysis builds once and never changes. Different mutations and initializers
@@ -22,6 +27,7 @@ interface InitializerPositionCache {
   readonly direct: WeakMap<t.Node, StatementPosition | null>;
   readonly mutation: WeakMap<t.Node, StatementPosition | null>;
   readonly reference: WeakMap<t.Node, StatementPosition | null>;
+  readonly read: WeakMap<t.Node, BindingReadPosition>;
 }
 
 const initializerPositionCaches = new WeakMap<
@@ -38,6 +44,7 @@ const initializerPositionCache = (
     direct: new WeakMap(),
     mutation: new WeakMap(),
     reference: new WeakMap(),
+    read: new WeakMap(),
   };
   initializerPositionCaches.set(parents, created);
   return created;
@@ -165,6 +172,12 @@ const computeDirectInitializerPosition = (
   node: t.Node,
   parents: WeakMap<t.Node, t.Node>,
 ): StatementPosition | null => {
+  if (
+    (t.isAssignmentExpression(node) &&
+      t.isIdentifier(unwrapJavaScriptExpression(node.left).node)) ||
+    t.isUpdateExpression(node)
+  )
+    return directMutationPosition(node, parents);
   const parent = parents.get(node);
   if (t.isVariableDeclarator(parent) && parent.init === node) {
     const declaration = parents.get(parent);
@@ -174,14 +187,10 @@ const computeDirectInitializerPosition = (
   }
   if (
     t.isAssignmentExpression(parent) &&
-    parent.operator === "=" &&
     parent.right === node &&
     t.isIdentifier(parent.left)
   ) {
-    const statement = parents.get(parent);
-    return t.isExpressionStatement(statement) && statement.expression === parent
-      ? statementPosition(statement, parents)
-      : null;
+    return directMutationPosition(parent, parents);
   }
   return null;
 };
@@ -232,6 +241,9 @@ const computeDirectMutationPosition = (
       parent === undefined ||
       t.isFunction(parent) ||
       (t.isLogicalExpression(parent) && parent.right === current) ||
+      (t.isAssignmentExpression(parent) &&
+        ["&&=", "||=", "??="].includes(parent.operator) &&
+        parent.right === current) ||
       (t.isConditionalExpression(parent) && parent.test !== current)
     )
       return null;
@@ -268,8 +280,11 @@ const computeReferenceInitializerPosition = (
     const direct = directInitializerPosition(current, parents);
     if (direct !== null) return direct;
     const parent = parents.get(current);
-    if (parent === undefined || t.isStatement(parent) || t.isFunction(parent))
-      return null;
+    if (t.isFunction(parent))
+      return t.isBlockStatement(parent.body)
+        ? { body: parent.body.body, index: -1, declaratorIndex: -1 }
+        : null;
+    if (parent === undefined || t.isStatement(parent)) return null;
     if (t.isVariableDeclarator(parent)) {
       const declaration = parents.get(parent);
       return t.isVariableDeclaration(declaration)
@@ -292,6 +307,19 @@ const referenceInitializerPosition = (
   return computed;
 };
 
+/** Parameter-to-body copies and ordinary expressions share one position owner. */
+const initializerPosition = (
+  initializer: JavaScriptSemanticBindingState["initializers"][number],
+  parents: WeakMap<t.Node, t.Node>,
+  reference = false,
+): StatementPosition | null => {
+  if (initializer.entryBody !== undefined)
+    return { body: initializer.entryBody.body, index: -1, declaratorIndex: -1 };
+  return reference
+    ? referenceInitializerPosition(initializer.node, parents)
+    : directInitializerPosition(initializer.node, parents);
+};
+
 /** Resolve origins at their use or capture, never at a later transitive effect. */
 export const semanticMutationInitializers = (
   binding: JavaScriptSemanticBindingState,
@@ -308,18 +336,11 @@ export const semanticMutationInitializers = (
   const origins = [
     ...binding.initializers.map((initializer) => ({
       initializer,
-      position:
-        initializer.entryBody === undefined
-          ? directInitializerPosition(initializer.node, parents)
-          : {
-              body: initializer.entryBody.body,
-              index: -1,
-              declaratorIndex: -1,
-            },
+      position: initializerPosition(initializer, parents),
     })),
     ...binding.referenceInitializers.map((initializer) => ({
       initializer,
-      position: referenceInitializerPosition(initializer.node, parents),
+      position: initializerPosition(initializer, parents, true),
     })),
   ];
   if (
@@ -329,27 +350,14 @@ export const semanticMutationInitializers = (
     )
   )
     return binding;
-  const latest = origins.reduce<StatementPosition | null>(
-    (latest, { position }) =>
-      position !== null &&
-      (latest === null || positionPrecedes(latest, position))
-        ? position
-        : latest,
-    null,
-  );
-  const retained = new Set(
-    origins
-      .filter(
-        ({ position }) =>
-          position?.index === latest?.index &&
-          position?.declaratorIndex === latest?.declaratorIndex,
-      )
-      .map(({ initializer }) => initializer),
+  const { retained, replacesEntry } = retainedInitializerOrigins(
+    origins,
+    parents,
   );
   return {
     // A proven earlier assignment replaces even an import-equals value. A
     // capture before or inside an uncertain assignment retains the full binding.
-    directOrigins: origins.length === 0 ? binding.directOrigins : [],
+    directOrigins: replacesEntry ? [] : binding.directOrigins,
     initializers: binding.initializers.filter((initializer) =>
       retained.has(initializer),
     ),
@@ -359,96 +367,149 @@ export const semanticMutationInitializers = (
   };
 };
 
-/** Select a local alias at its read, before any later straight-line reassignment. */
-export const semanticReadInitializers = (
-  binding: JavaScriptSemanticBindingState,
+/** Reuse immutable ancestry facts across reads nested in the same expression. */
+const bindingReadPosition = (
   read: t.Node,
   parents: WeakMap<t.Node, t.Node>,
-): Pick<
-  JavaScriptSemanticBindingState,
-  "initializers" | "referenceInitializers"
-> => {
-  let position: StatementPosition | null = null;
+): BindingReadPosition => {
+  const cache = initializerPositionCache(parents).read;
+  const path: t.Node[] = [];
   let current = read;
-  for (
-    let parent = parents.get(current);
-    parent;
-    parent = parents.get(current)
-  ) {
-    if (t.isLoop(parent)) return binding;
-    if (t.isFunction(parent)) break;
-    if (position === null) {
-      if (t.isVariableDeclarator(parent)) {
-        const declaration = parents.get(parent);
-        if (t.isVariableDeclaration(declaration))
-          position = statementPosition(declaration, parents, parent);
-      } else if (t.isStatement(parent))
-        position = statementPosition(parent, parents);
+  let result: BindingReadPosition;
+  while (true) {
+    const cached = cache.get(current);
+    if (cached !== undefined) {
+      result = cached;
+      break;
+    }
+    path.push(current);
+    const parent = parents.get(current);
+    if (t.isLoop(parent)) {
+      result = { position: null, repeating: true };
+      break;
+    }
+    if (parent === undefined || t.isFunction(parent)) {
+      result = { position: null, repeating: false };
+      break;
     }
     current = parent;
   }
-  return selectInitializers(binding, position, parents, true);
+  for (let index = path.length - 1; index >= 0; index--) {
+    const node = path[index];
+    if (node === undefined) continue;
+    const parent = parents.get(node);
+    let position: StatementPosition | null = null;
+    if (t.isVariableDeclarator(parent)) {
+      const declaration = parents.get(parent);
+      if (t.isVariableDeclaration(declaration))
+        position = statementPosition(declaration, parents, parent);
+    } else if (
+      t.isStatement(parent) &&
+      !t.isLoop(parent) &&
+      !t.isFunction(parent)
+    )
+      position = statementPosition(parent, parents);
+    if (position !== null && position !== result.position)
+      result = { ...result, position };
+    cache.set(node, result);
+  }
+  return result;
+};
+
+/** Select a local alias at its read, before any later straight-line reassignment. */
+type SemanticBindingRead = {
+  readonly status: "ordered" | "unresolved";
+  /** Unresolved reads retain all possible origins for conservative alias effects. */
+  readonly binding: JavaScriptSemanticBindingState;
+};
+
+export const semanticBindingAtRead = (
+  binding: JavaScriptSemanticBindingState,
+  read: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): SemanticBindingRead => {
+  if (
+    binding.initializers.length === 0 &&
+    binding.referenceInitializers.length === 0
+  )
+    return { status: "ordered", binding };
+  const initializer = binding.initializers[0];
+  const reference = binding.referenceInitializers[0];
+  const sourcePosition =
+    initializer === undefined
+      ? reference === undefined
+        ? null
+        : initializerPosition(reference, parents, true)
+      : initializerPosition(initializer, parents);
+  const { position, repeating } = bindingReadPosition(read, parents);
+  if (
+    !repeating &&
+    binding.initializers.length + binding.referenceInitializers.length === 1 &&
+    sourcePosition !== null &&
+    position !== null &&
+    positionPrecedes(sourcePosition, position)
+  )
+    return { status: "ordered", binding };
+  const uncertainOrder =
+    repeating ||
+    sourcePosition === null ||
+    position === null ||
+    sourcePosition.body !== position.body;
+  if (uncertainOrder) return { status: "unresolved", binding };
+  const selected = selectInitializers(binding, position, read, parents);
+  if (selected === undefined) return { status: "unresolved", binding };
+  if (selected === binding) return { status: "ordered", binding };
+  return {
+    status: "ordered",
+    binding: {
+      ...binding,
+      ...selected,
+      // Later assignment definitions do not describe the value captured here.
+      definitions: binding.definitions.filter(
+        ({ kind }) => kind !== "assignment",
+      ),
+    },
+  };
 };
 
 const selectInitializers = (
   binding: JavaScriptSemanticBindingState,
   position: StatementPosition | null,
+  read: t.Node,
   parents: WeakMap<t.Node, t.Node>,
-  atRead = false,
-): Pick<
-  JavaScriptSemanticBindingState,
-  "initializers" | "referenceInitializers"
-> => {
-  if (position === null) return binding;
+):
+  | Pick<
+      JavaScriptSemanticBindingState,
+      "initializers" | "referenceInitializers"
+    >
+  | undefined => {
+  if (position === null) return undefined;
   const origins = [
     ...binding.initializers.map((initializer) => ({
       initializer,
-      position:
-        initializer.entryBody === undefined
-          ? directInitializerPosition(initializer.node, parents)
-          : {
-              body: initializer.entryBody.body,
-              index: -1,
-              declaratorIndex: -1,
-            },
+      position: initializerPosition(initializer, parents),
     })),
     ...binding.referenceInitializers.map((initializer) => ({
       initializer,
-      position: referenceInitializerPosition(initializer.node, parents),
+      position: initializerPosition(initializer, parents, true),
     })),
   ];
   if (
     origins.some(
       ({ position: origin }) =>
-        origin === null ||
-        origin.body !== position.body ||
-        (!atRead && !positionPrecedes(origin, position)),
+        origin === null || origin.body !== position.body,
     )
   )
-    return binding;
-  const preceding = atRead
-    ? origins.filter(
-        ({ position: origin }) =>
-          origin !== null && positionPrecedes(origin, position),
-      )
-    : origins;
-  const latest = preceding.reduce<StatementPosition | null>(
-    (latest, { position }) =>
-      position !== null &&
-      (latest === null || positionPrecedes(latest, position))
-        ? position
-        : latest,
-    null,
+    return undefined;
+  const preceding = origins.filter(
+    ({ initializer, position: origin }) =>
+      origin !== null &&
+      (positionPrecedes(origin, position) ||
+        (origin.index === position.index &&
+          origin.declaratorIndex === position.declaratorIndex &&
+          expressionEvaluationPrecedes(initializer.node, read, parents))),
   );
-  const retained = new Set(
-    preceding
-      .filter(
-        ({ position }) =>
-          position?.index === latest?.index &&
-          position?.declaratorIndex === latest?.declaratorIndex,
-      )
-      .map(({ initializer }) => initializer),
-  );
+  const { retained } = retainedInitializerOrigins(preceding, parents);
   // Preserve the owner's identity when selection removes no facts. Consumers
   // can then reuse the binding's dependency-aware provenance memo rather than
   // treating every equivalent read as a new temporal snapshot.
@@ -465,6 +526,56 @@ const selectInitializers = (
     ),
     referenceInitializers: binding.referenceInitializers.filter((initializer) =>
       retained.has(initializer),
+    ),
+  };
+};
+
+/** Logical writes retain the preceding value as a possible alias. */
+const logicalInitializer = (
+  node: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  const parent = parents.get(node);
+  const assignment = t.isAssignmentExpression(node)
+    ? node
+    : t.isAssignmentExpression(parent) && parent.right === node
+      ? parent
+      : undefined;
+  return (
+    t.isAssignmentExpression(assignment) &&
+    ["&&=", "||=", "??="].includes(assignment.operator)
+  );
+};
+
+/** Certain writes replace prior origins; short-circuit writes retain both. */
+const retainedInitializerOrigins = (
+  origins: readonly {
+    readonly initializer: JavaScriptSemanticBindingState["initializers"][number];
+    readonly position: StatementPosition | null;
+  }[],
+  parents: WeakMap<t.Node, t.Node>,
+) => {
+  const latest = origins.reduce<StatementPosition | null>(
+    (latest, { initializer, position }) =>
+      position !== null &&
+      !logicalInitializer(initializer.node, parents) &&
+      (latest === null || positionPrecedes(latest, position))
+        ? position
+        : latest,
+    null,
+  );
+  return {
+    replacesEntry: latest !== null,
+    retained: new Set(
+      origins
+        .filter(
+          ({ position }) =>
+            latest === null ||
+            (position?.index === latest.index &&
+              position?.declaratorIndex === latest.declaratorIndex) ||
+            (position !== null && positionPrecedes(latest, position)),
+        )
+        .map(({ initializer }) => initializer),
     ),
   };
 };
@@ -500,7 +611,7 @@ export const semanticBindingPrecedesCapture = (
   const initializer = binding.initializers[0];
   if (binding.initializers.length !== 1 || initializer === undefined)
     return false;
-  const sourcePosition = directInitializerPosition(initializer.node, parents);
+  const sourcePosition = initializerPosition(initializer, parents);
   const capturePosition = semanticCapturePosition(capture, parents);
   return (
     sourcePosition !== null &&

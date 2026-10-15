@@ -4,6 +4,9 @@ import { digestSchema, prefixedDigestSchema } from "./digests.js";
 import { evidenceSchema, type Evidence } from "./evidence.js";
 import type { EvidenceBundle } from "./evidenceBundle.js";
 
+/** Each distinct term rescans every retained string, so terms bound search CPU. */
+export const MAX_QUERY_TERMS = 16;
+
 /** Exact retained-record selectors; selection never resolves a provider address. */
 export const evidenceRecordFiltersSchema = z.strictObject({
   evidence_id: prefixedDigestSchema("ev").optional(),
@@ -15,6 +18,10 @@ export const evidenceRecordFiltersSchema = z.strictObject({
     .string()
     .trim()
     .min(1)
+    .refine(
+      (query) => new Set(query.split(/\s+/)).size <= MAX_QUERY_TERMS,
+      `query accepts at most ${MAX_QUERY_TERMS} distinct terms; each term rescans retained text`,
+    )
     .optional()
     .describe(
       "Case-insensitive literal text search; every whitespace-separated term must occur in some string of the record's normalized result or limitations (terms may match different strings)",
@@ -141,23 +148,17 @@ const pointerSegment = (key: string | number): string =>
   String(key).replaceAll("~", "~0").replaceAll("/", "~1");
 
 /**
- * Lowercase each code point independently, so a character folds the same way
- * in a query and in retained text (no context-dependent final sigma). `source`
- * maps every folded UTF-16 unit back to its source code point's offset.
+ * Caseless form for literal matching. Context-dependent final sigma and long s
+ * fold to the forms their capitals share, so the result does not depend on
+ * where a character sits; folding one code point yields the same length as it
+ * contributes to a folded string.
  */
-export const foldCase = (
-  text: string,
-): { readonly folded: string; readonly source: readonly number[] } => {
-  let folded = "";
-  const source: number[] = [];
-  for (let i = 0; i < text.length;) {
-    const char = String.fromCodePoint(text.codePointAt(i)!);
-    const lower = char.toLowerCase();
-    folded += lower;
-    for (let unit = 0; unit < lower.length; unit++) source.push(i);
-    i += char.length;
-  }
-  return { folded, source };
+export const foldCase = (text: string): string =>
+  text.toLowerCase().replaceAll("ς", "σ").replaceAll("ſ", "s");
+
+const isHighSurrogate = (text: string, index: number): boolean => {
+  const unit = text.charCodeAt(index);
+  return unit >= 0xd800 && unit <= 0xdbff;
 };
 
 const isLowSurrogate = (text: string, index: number): boolean => {
@@ -165,20 +166,41 @@ const isLowSurrogate = (text: string, index: number): boolean => {
   return unit >= 0xdc00 && unit <= 0xdfff;
 };
 
-/** Excerpt the original text around a folded match without splitting a code point. */
+/** Split position that keeps a valid surrogate pair together. */
+const splitsPair = (text: string, index: number): boolean =>
+  index > 0 &&
+  index < text.length &&
+  isLowSurrogate(text, index) &&
+  isHighSurrogate(text, index - 1);
+
+/**
+ * Excerpt the original text around a folded match. Source offsets are derived
+ * by folding code points only up to the end of the match.
+ */
 const snippetAt = (
   text: string,
-  source: readonly number[],
   foldedStart: number,
   foldedLength: number,
 ): Omit<QueryMatch, "path"> => {
-  const matchStart = source[foldedStart]!;
-  const last = source[foldedStart + foldedLength - 1]!;
-  const matchEnd = last + String.fromCodePoint(text.codePointAt(last)!).length;
+  const foldedEnd = foldedStart + foldedLength;
+  let folded = 0;
+  let matchStart = -1;
+  let matchEnd = text.length;
+  for (let i = 0; i < text.length;) {
+    const char = String.fromCodePoint(text.codePointAt(i)!);
+    const next = folded + foldCase(char).length;
+    if (matchStart === -1 && next > foldedStart) matchStart = i;
+    i += char.length;
+    folded = next;
+    if (folded >= foldedEnd) {
+      matchEnd = i;
+      break;
+    }
+  }
   let start = Math.max(0, matchStart - SNIPPET_CONTEXT);
-  if (isLowSurrogate(text, start)) start--;
+  if (splitsPair(text, start)) start--;
   let end = Math.min(text.length, matchEnd + SNIPPET_CONTEXT);
-  if (end < text.length && isLowSurrogate(text, end)) end++;
+  if (splitsPair(text, end)) end++;
   const prefix = start > 0 ? "…" : "";
   return {
     snippet: prefix + text.slice(start, end) + (end < text.length ? "…" : ""),
@@ -199,6 +221,8 @@ type Frame = {
  * Match every folded term against string leaves of the record's result and
  * limitations, reporting the first leaf containing the first term. Containers
  * are walked by index so wide arrays are never copied onto the stack.
+ * ponytail: one `includes` per pending term per leaf; cost is terms × text,
+ * bounded by MAX_QUERY_TERMS. Use a multi-pattern automaton if that falls short.
  */
 const matchQuery = (
   evidence: Evidence,
@@ -208,12 +232,12 @@ const matchQuery = (
   let first: QueryMatch | undefined;
   const visit = (value: unknown, path: string): Frame | undefined => {
     if (typeof value === "string") {
-      const { folded, source } = foldCase(value);
+      const folded = foldCase(value);
       for (const term of pending)
         if (folded.includes(term)) pending.delete(term);
       const at = first === undefined ? folded.indexOf(terms[0]!) : -1;
       if (at !== -1)
-        first = { path, ...snippetAt(value, source, at, terms[0]!.length) };
+        first = { path, ...snippetAt(value, at, terms[0]!.length) };
       return undefined;
     }
     if (Array.isArray(value))
@@ -222,7 +246,8 @@ const matchQuery = (
       return {
         path,
         container: value as Record<string, unknown>,
-        keys: Object.keys(value),
+        // Canonical export order, so paths survive bundle round trips.
+        keys: Object.keys(value).sort(),
         index: 0,
       };
     return undefined;
@@ -265,10 +290,10 @@ export const summarizeEvidenceBundle = (
   const selectedFilters: Record<string, string> = {};
   for (const [field, value] of Object.entries(filters))
     if (value !== undefined) selectedFilters[field] = value;
-  const terms = filters.query
-    ?.split(/\s+/)
-    .filter(Boolean)
-    .map((term) => foldCase(term).folded);
+  const terms =
+    filters.query === undefined
+      ? undefined
+      : [...new Set(filters.query.split(/\s+/).filter(Boolean).map(foldCase))];
   const records: EvidenceBundleSummary["records"] = [];
   for (const evidence of bundle.records) {
     if (

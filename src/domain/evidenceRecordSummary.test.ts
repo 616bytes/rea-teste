@@ -2,7 +2,12 @@ import { expect, it } from "vitest";
 
 import { createEvidence } from "./evidence.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
-import { summarizeEvidenceBundle } from "./evidenceRecordSummary.js";
+import {
+  evidenceRecordFiltersSchema,
+  MAX_QUERY_TERMS,
+  summarizeEvidenceBundle,
+} from "./evidenceRecordSummary.js";
+import type { JsonValue } from "./jsonValue.js";
 
 it("preserves native identity independently of missing or incompatible value-flow metadata", () => {
   const records = [
@@ -139,4 +144,43 @@ it("folds case per code point and excerpts the original text", () => {
   const emoji = match("😀" + "x".repeat(29) + "MATCH", "match")!;
   expect(emoji.snippet.startsWith("😀")).toBe(true);
   expect(emoji.offset_units).toBe("utf16-code-units");
+});
+
+it("matches sigma variants, keeps lone surrogates and follows canonical key order", () => {
+  const summarize = (result: JsonValue, query: string) =>
+    summarizeEvidenceBundle(
+      createEvidenceBundle([
+        createEvidence(
+          {
+            path: "/fixtures/app.asar",
+            format: "asar",
+            sha256: "e".repeat(64),
+          },
+          { id: "provider", name: "Provider", version: "1" },
+          { operation: "list_strings", parameters: {}, result },
+        ),
+      ]),
+      { query },
+    ).records[0]?.query_match;
+  expect(summarize(["ΟΣ"], "ς")?.snippet).toBe("ΟΣ");
+  expect(summarize(["ſHIP"], "ship")?.snippet).toBe("ſHIP");
+  const lone = summarize(["\udc00" + "x".repeat(29) + "MATCH"], "match")!;
+  expect(
+    lone.snippet.slice(lone.match_start, lone.match_start + lone.match_length),
+  ).toBe("MATCH");
+  expect(summarize({ z: "hit one", a: "hit two" }, "hit")?.path).toBe(
+    "/normalized_result/a",
+  );
+});
+
+it("rejects queries with more distinct terms than the search budget", () => {
+  const terms = Array.from({ length: MAX_QUERY_TERMS + 1 }, (_, i) => `t${i}`);
+  expect(
+    evidenceRecordFiltersSchema.safeParse({ query: terms.join(" ") }).success,
+  ).toBe(false);
+  expect(
+    evidenceRecordFiltersSchema.safeParse({
+      query: terms.slice(1).join(" "),
+    }).success,
+  ).toBe(true);
 });

@@ -78,6 +78,10 @@ export class WebSourceLocationService {
         this.decoder.close?.bind(this.decoder),
       ],
       "Web source-location cleanup failed",
+      {
+        providerId: "web-source-location",
+        operation: OPERATION,
+      },
     );
   }
 

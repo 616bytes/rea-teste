@@ -77,6 +77,10 @@ export class WebModuleTraceService {
         this.resolver.close?.bind(this.resolver),
       ],
       "Web module trace cleanup failed",
+      {
+        providerId: "web-module-trace",
+        operation: OPERATION,
+      },
     );
   }
 

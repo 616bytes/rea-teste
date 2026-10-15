@@ -5,6 +5,7 @@ import {
 
 /** A provider adapter failed outside its more precise typed variants. */
 export interface ProviderAdapterErrorOptions extends AnalysisErrorOptions {
+  readonly message?: string;
   readonly userMessage?: string;
 }
 
@@ -18,7 +19,11 @@ export class ProviderAdapterError extends AnalysisError {
     readonly operation: string,
     options: ProviderAdapterErrorOptions = {},
   ) {
-    super(`Provider ${providerId} adapter failed during ${operation}`, options);
+    super(
+      options.message ??
+        `Provider ${providerId} adapter failed during ${operation}`,
+      options,
+    );
     this.userMessage = options.userMessage;
   }
 }

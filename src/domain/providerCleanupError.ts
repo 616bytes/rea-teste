@@ -15,6 +15,7 @@ export class ProviderCleanupError extends ProviderAdapterError {
     diagnostics: Readonly<Record<string, JsonValue>>,
     /** Identify the operation owning these resources; binary callers retain their default. */
     options?: ErrorOptions & {
+      readonly message?: string;
       readonly operation?: string;
       readonly partialObservation?: AnalysisPartialObservation;
     },
@@ -22,10 +23,12 @@ export class ProviderCleanupError extends ProviderAdapterError {
     const {
       operation = "close_binary",
       partialObservation,
+      message,
       ...errorOptions
     } = options ?? {};
     super(providerId, operation, {
       ...errorOptions,
+      ...(message === undefined ? {} : { message }),
       ...(partialObservation === undefined ? {} : { partialObservation }),
       diagnostics,
     });

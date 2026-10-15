@@ -2,7 +2,7 @@ import { z } from "incur";
 import { createWebSourceLocationService } from "../composition/webSourceLocations.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -12,8 +12,8 @@ export const registerWebSourceLocationCommands = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
+  service = createWebSourceLocationService(environment),
 ): void => {
-  const service = createWebSourceLocationService(environment);
   cli.command(CLI_COMMANDS.traceWebSourceLocation, {
     description:
       "Trace one retained script position through an explicitly selected local source map",
@@ -38,13 +38,11 @@ export const registerWebSourceLocationCommands = (
         .describe("Zero-based UTF-16 generated column"),
     }),
     run: ({ args }) =>
-      withCommandCancellation(async (signal) => {
-        try {
-          return await logCliCommand(
-            logger,
-            CLI_COMMANDS.traceWebSourceLocation,
-            async () => {
-              const result = await service.trace(
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.traceWebSourceLocation, () =>
+          finishAnalysisCommand(
+            () =>
+              service.trace(
                 {
                   manifest_path: args.manifestPath,
                   script_index: args.scriptIndex,
@@ -52,18 +50,18 @@ export const registerWebSourceLocationCommands = (
                     path: args.sourceMapPath,
                     url: args.sourceMapUrl,
                   },
-                  generated_position: { line: args.line, column: args.column },
+                  generated_position: {
+                    line: args.line,
+                    column: args.column,
+                  },
                 },
                 { signal },
-              );
-              return result.ok
-                ? result.value
-                : projectAnalysisError(result.error);
-            },
-          );
-        } finally {
-          await service.close();
-        }
-      }),
+              ),
+            service,
+            "web-source-location",
+            "trace_web_source_location",
+          ),
+        ),
+      ),
   });
 };

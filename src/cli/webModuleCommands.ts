@@ -2,7 +2,7 @@ import { z } from "incur";
 import { createWebModuleTraceService } from "../composition/webModules.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { webModuleTraceInputSchema } from "../domain/webModuleTrace.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
@@ -16,8 +16,8 @@ export const registerWebModuleCommands = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
+  service = createWebModuleTraceService(environment),
 ): void => {
-  const service = createWebModuleTraceService(environment);
   cli.command(CLI_COMMANDS.traceWebModuleImports, {
     description:
       "Trace one captured script's native imports to URLs and captured source candidates",
@@ -41,13 +41,11 @@ export const registerWebModuleCommands = (
         .describe("HTTP(S) import-map base URL; requires --import-map-path"),
     }),
     run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        try {
-          return await logCliCommand(
-            logger,
-            CLI_COMMANDS.traceWebModuleImports,
-            async () => {
-              const result = await service.trace(
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.traceWebModuleImports, () =>
+          finishAnalysisCommand(
+            () =>
+              service.trace(
                 {
                   manifest_path: args.manifestPath,
                   script_index: args.scriptIndex,
@@ -65,15 +63,12 @@ export const registerWebModuleCommands = (
                       }),
                 },
                 { signal },
-              );
-              return result.ok
-                ? result.value
-                : projectAnalysisError(result.error);
-            },
-          );
-        } finally {
-          await service.close();
-        }
-      }),
+              ),
+            service,
+            "web-module-trace",
+            "trace_web_module_imports",
+          ),
+        ),
+      ),
   });
 };

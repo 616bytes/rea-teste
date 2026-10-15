@@ -175,6 +175,40 @@ describe("ZipArtifactReader decompression budget", () => {
   });
 });
 
+describe("ZipArtifactReader archive bounds", () => {
+  it("classifies a member offset beyond the archive as a malformed archive", async () => {
+    const directory = await createTestTempDirectory("rea-zip-beyond-eof-");
+    const path = join(directory, "beyond-eof.zip");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("member.bin", new TextReader("valid member bytes"));
+    const bytes = Buffer.from(await writer.close());
+    const central = bytes.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+    if (central < 0) throw new Error("Expected a ZIP central directory");
+    // A malformed archive can declare a member offset past the archive end.
+    // Reading it must be a format fault, not an untyped allocation failure
+    // that consumers report as file access.
+    bytes.writeUInt32LE(bytes.length + 1024, central + 42);
+    await writeFile(path, bytes);
+    const reader = new ZipArtifactReader(path, "zip");
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const entry = entries[0];
+      if (entry === undefined) throw new Error("Expected a ZIP member");
+      await expect(
+        (async () => {
+          for await (const chunk of await reader.open(entry)) void chunk;
+        })(),
+      ).rejects.toMatchObject({
+        name: "ArtifactReaderFailure",
+        reason: "format",
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+});
+
 describe("artifactDecompressionBudgetBytes", () => {
   it("grants at least the floor and grows with the compressed size", () => {
     expect(artifactDecompressionBudgetBytes(0)).toBe(

@@ -29,8 +29,8 @@ function exists(relativePath) {
   return existsSync(resolve(pluginRoot, relativePath));
 }
 function getFrontmatter(content, label) {
-  if (!content.startsWith("---\\n")) return null;
-  const end = content.indexOf("\\n---", 4);
+  if (!content.startsWith("---\n")) return null;
+  const end = content.indexOf("\n---", 4);
   if (end < 0) return null;
   try {
     const value = parseYaml(content.slice(4, end));

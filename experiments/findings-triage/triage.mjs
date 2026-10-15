@@ -218,10 +218,11 @@ export const validate = (input, bundle) => {
   return { triage, issues };
 };
 
-/** First 16 hex digits of the stable identity used to deduplicate exports. */
+// Keyed by target name, not artifact digest, so a problem that survives into
+// a new build matches the issue already filed for it.
 const fingerprint = (target, findingId) =>
   createHash("sha256")
-    .update(`${target.artifact_digest ?? target.name}\0${findingId}`)
+    .update(`${target.name}\0${findingId}`)
     .digest("hex")
     .slice(0, 16);
 

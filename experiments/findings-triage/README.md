@@ -157,15 +157,15 @@ Output is deterministic: no timestamps, and every list has a fixed order.
 Bodies contain only triage text, the Evidence table and limitations; they never
 copy `raw_result`, `parameters` or `environment`, which can carry local paths.
 Each body ends with `<!-- findings-triage:<fingerprint> -->`. The fingerprint
-is the first 16 hex digits of SHA-256 over
-`(artifact_digest ?? name) + "\0" + id`.
+is the first 16 hex digits of SHA-256 over `target.name + "\0" + id`, so a
+finding that survives into a new build matches the issue already filed.
 
 ## Filing issues
 
 To file public items with `gh` and `jq`, skipping ones already filed, search
 existing issues for the marker:
 
-```sh
+```bash
 out=/path/to/render-output
 jq -c '.[]' "$out/issues.json" | while read -r item; do
   fingerprint=$(jq -r .fingerprint <<<"$item")
@@ -179,9 +179,9 @@ done
 
 GitHub search indexing can lag, so this skips duplicates on later runs but is
 not a lock against concurrent runs. Never file `advisories/` as public issues.
-Submit each one through the repository's private vulnerability reporting
-(**Security** tab, **Report a vulnerability**), as [SECURITY.md](../../SECURITY.md)
-requires.
+Submit each one through the target repository's private vulnerability
+reporting (**Security** tab, **Report a vulnerability**) or the channel its
+security policy names.
 
 ## Fixture
 
@@ -259,6 +259,6 @@ device-name check is a pattern test, not a Windows file system test.
 The rules check cited records' metadata (presence, confidence, authority,
 subject digest and unknown state). They do not check that a statement says what
 its Evidence shows; that remains the analyst's responsibility. The fingerprint
-includes the artifact digest, so the same problem in a new build gets a new
-fingerprint. No performance measurements were taken; the experiment adds no
-REA analysis work beyond the fixture generator.
+depends on the finding ID, so renaming a finding files it again. No performance
+measurements were taken; the experiment adds no REA analysis work beyond the
+fixture generator.

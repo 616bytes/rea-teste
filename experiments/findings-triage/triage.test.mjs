@@ -232,8 +232,9 @@ test("finding IDs are safe ASCII file names", () => {
     "CON",
     "nul.md",
     "Com1",
-    "Key",
-    "ſx",
+    // Case-insensitive Unicode matching folds these into ASCII letters.
+    "\u212Aey",
+    "\u017Fx",
   ];
   for (const id of unsafe) {
     const { issues } = validate(

@@ -221,7 +221,7 @@ it("retains active hook evidence within its event-retention budget", async () =>
   );
 });
 
-it("blocks app.moveToApplicationsFolder as an app-lifecycle OS-integration effect", async () => {
+it("blocks app.moveToApplicationsFolder as an updater effect", async () => {
   const root = await createTestTempDirectory(
     "rea-electron-hook-move-to-applications-",
   );
@@ -231,7 +231,7 @@ it("blocks app.moveToApplicationsFolder as an app-lifecycle OS-integration effec
   await writeFile(
     script,
     `const electron = require("electron");
-const moved = electron.app.moveToApplicationsFolder();
+const moved = electron.app.moveToApplicationsFolder({ conflictHandler: () => true });
 const snapshot = globalThis.__reaElectronActiveSnapshot();
 process.stdout.write(JSON.stringify({ moved, snapshot }) + "\\n");
 `,
@@ -251,9 +251,11 @@ process.stdout.write(JSON.stringify({ moved, snapshot }) + "\\n");
   expect(snapshot.events).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
-        kind: "app-lifecycle",
+        kind: "updater",
         event: "moveToApplicationsFolder",
         phase: "blocked",
+        argument_shapes: ["object"],
+        error: true,
       }),
     ]),
   );

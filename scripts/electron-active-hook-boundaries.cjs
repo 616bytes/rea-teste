@@ -223,11 +223,9 @@ const createElectronActiveBoundaryPatches = ({
       if (typeof original !== "function") continue;
       app[method] = function blockedApplicationEffect(...args) {
         recordRuntime(
-          method === "relaunch"
+          method === "relaunch" || method === "moveToApplicationsFolder"
             ? "updater"
-            : method === "moveToApplicationsFolder"
-              ? "app-lifecycle"
-              : "protocol",
+            : "protocol",
           method,
           "blocked",
           { argument_shape_values: args, error: true },

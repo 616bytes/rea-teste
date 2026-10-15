@@ -365,6 +365,26 @@ const verifyVariant = async ({ flavor, directory, symbols }, variant) => {
 
 const results = [];
 try {
+  let callerPairs = [];
+  if (values.targets !== undefined) {
+    const names = (values.functions ?? "").split(",").filter(Boolean);
+    assert.ok(names.length > 0, "--targets requires --functions");
+    callerPairs = await targetPairs(values.targets, names);
+    assert.ok(
+      callerPairs.length > 0,
+      `No caller-built targets contain the requested functions in ${values.targets}`,
+    );
+    const found = new Set(
+      callerPairs.flatMap(({ symbols }) => [...symbols.keys()]),
+    );
+    const missing = names.filter((name) => !found.has(name));
+    assert.deepEqual(
+      missing,
+      [],
+      "Requested functions were not found in any caller-built target",
+    );
+  }
+
   // Source-owned fixture: always built and verified.
   const fixtureDir = join(workspace, "fixture");
   await mkdir(fixtureDir);
@@ -387,13 +407,9 @@ try {
     });
 
   // Caller-built matrix.
-  if (values.targets !== undefined) {
-    const names = (values.functions ?? "").split(",").filter(Boolean);
-    assert.ok(names.length > 0, "--targets requires --functions");
-    for (const pair of await targetPairs(values.targets, names))
-      for (const variant of [pair.file, `${pair.file}.stripped`])
-        results.push(await verifyVariant(pair, variant));
-  }
+  for (const pair of callerPairs)
+    for (const variant of [pair.file, `${pair.file}.stripped`])
+      results.push(await verifyVariant(pair, variant));
 } finally {
   await rm(workspace, { recursive: true, force: true });
 }

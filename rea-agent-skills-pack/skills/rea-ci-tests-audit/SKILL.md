@@ -9,9 +9,9 @@ Establish which checks still catch real regressions and which costs can be
 removed without losing that protection. The outcome may be a verified fix,
 an evidence-backed recommendation, or an explicit decision to stop.
 
-Follow the checkout's `AGENTS.md`, [testing guide](../../../docs/testing.md),
-and [contribution rules](../../../CONTRIBUTING.md). Use their current commands
-and pinned toolchain, rather than commands remembered from an earlier audit.
+Follow the active checkout's `AGENTS.md`, `docs/testing.md`, and
+`CONTRIBUTING.md`. Resolve these paths from the REA repository root, not from
+the installed skill directory. If no checkout is available, use the [upstream testing guide](https://github.com/morluto/rea/blob/main/docs/testing.md) and [contribution rules](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md). Use current commands and pinned toolchain, not commands remembered from an earlier audit.
 Preserve the requested scope: investigation alone does not authorize edits;
 this skill does not grant permission to publish issues, push, or merge. Existing
 user authorization still applies. Keep audit notes and raw results outside the

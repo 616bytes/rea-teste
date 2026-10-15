@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
 import {
+  normalizeCliOutputArguments,
   renderCliOutputArgumentError,
   renderEmptyFilteredCliOutput,
   validateCliOutputArguments,
@@ -55,6 +56,50 @@ describe("CLI output argument boundary", () => {
     expect(
       validateCliOutputArguments(["providers", "--token-count", "--json"]),
     ).toEqual({ ok: true });
+  });
+});
+
+describe("CLI output flag value forms", () => {
+  it("splits only the equals forms of valued output flags", () => {
+    expect(
+      normalizeCliOutputArguments([
+        "inspect-sqlite-database",
+        "--table=a=b",
+        "--format=json",
+        "--filter-output=a.b,c[0,1]",
+        "--token-limit=5",
+        "--token-offset=",
+        "--json",
+        "--format-hint=x",
+      ]),
+    ).toEqual([
+      "inspect-sqlite-database",
+      "--table=a=b",
+      "--format",
+      "json",
+      "--filter-output",
+      "a.b,c[0,1]",
+      "--token-limit",
+      "5",
+      "--token-offset",
+      "",
+      "--json",
+      "--format-hint=x",
+    ]);
+  });
+
+  it("reports a missing value only for a flag the parser did not consume", () => {
+    expect(
+      validateCliOutputArguments([
+        "capabilities",
+        "--json",
+        "--filter-output",
+        "--format",
+      ]),
+    ).toEqual({ ok: true });
+    expect(
+      validateCliOutputArguments(["capabilities", "--json", "--format"]),
+    ).toMatchObject({ ok: false, code: "MISSING_OUTPUT_VALUE" });
   });
 });
 

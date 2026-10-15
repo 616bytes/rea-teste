@@ -7,6 +7,7 @@ import type {
   AnalyzedJavaScriptArtifactFile,
   JavaScriptModuleArtifactAnalysis,
 } from "./JavaScriptArtifactAnalysisTypes.js";
+import { javascriptArtifactAnalysisScopes } from "./JavaScriptArtifactAnalysisTypes.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import type { JavaScriptArtifactGraphContext } from "./JavaScriptArtifactGraphContext.js";
 import {
@@ -36,6 +37,8 @@ const skippedEntry = (
   javascript: null,
   semantic: null,
   analysis_failure: {
+    scope: javascriptArtifactAnalysisScopes["javascript"],
+    status: "interrupted",
     reason: REASON,
     error: { code: "resource_constraint" },
     limits: null,

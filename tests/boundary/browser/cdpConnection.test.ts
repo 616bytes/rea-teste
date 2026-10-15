@@ -145,6 +145,40 @@ describe("CDP connection", () => {
       }
     },
   );
+
+  it("preserves Chromium's unrouted rejection for a detached flat session", async () => {
+    const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
+    browsers.push(browser);
+    const connection = await CdpConnection.connect(
+      browser.browserWebSocketUrl,
+      "capture_browser_scenario",
+    );
+    try {
+      const pending = connection.send("Page.enable", {}, "detached-session");
+      const rejection = expect(pending).rejects.toMatchObject({
+        command: "Page.enable",
+        code: -32_001,
+        reportedMessage: "Session with given id not found.",
+      });
+      await vi.waitFor(() => expect(browser.commands).toHaveLength(1));
+      const command = browser.commands[0];
+      if (command === undefined)
+        throw new Error("Fake browser received no command");
+      browser.emitRawMessage(
+        JSON.stringify({
+          id: command.id,
+          error: {
+            code: -32_001,
+            message: "Session with given id not found.",
+          },
+        }),
+      );
+      await rejection;
+      await expect(connection.send("Runtime.enable")).resolves.toEqual({});
+    } finally {
+      await connection.close();
+    }
+  });
 });
 
 describe("CDP connection payload budgets", () => {

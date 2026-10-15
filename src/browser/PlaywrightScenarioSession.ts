@@ -264,15 +264,18 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         let storageFailure: { readonly cause: unknown } | undefined;
         let policyFailure: { readonly cause: unknown } | undefined;
         let browserFailure: { readonly cause: unknown } | undefined;
+        const storageOwnsStopLoading =
+          storage !== undefined && options.signal?.aborted === true;
         if (!storageReleased) {
           try {
-            await storage?.close(options.signal?.aborted === true);
+            await storage?.close(storageOwnsStopLoading);
           } catch (failure: unknown) {
             storageFailure = { cause: failure };
           }
         }
         try {
-          if (!opened.cleanup.browserClosed) await serviceWorkers?.close(true);
+          if (!opened.cleanup.browserClosed)
+            await serviceWorkers?.close(!storageOwnsStopLoading);
         } catch (failure: unknown) {
           policyFailure = { cause: failure };
         }
@@ -394,6 +397,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     let storageFailure: { readonly cause: unknown } | undefined;
     let policyFailure: { readonly cause: unknown } | undefined;
     let browserFailure: { readonly cause: unknown } | undefined;
+    const storageOwnsStopLoading = this.storage !== undefined && stopLoading;
     if (!this.#storageReleased) {
       try {
         await this.storage?.close(stopLoading);
@@ -403,7 +407,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     }
     try {
       if (!this.opened.cleanup.browserClosed)
-        await this.serviceWorkers?.close(stopLoading);
+        await this.serviceWorkers?.close(
+          stopLoading && !storageOwnsStopLoading,
+        );
     } catch (failure: unknown) {
       policyFailure = { cause: failure };
     }

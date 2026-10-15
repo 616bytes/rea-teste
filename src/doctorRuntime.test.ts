@@ -71,6 +71,27 @@ it("composes the reported jadx heap as a healthy provider check", async () => {
   expect(heap).not.toHaveProperty("remediation");
 });
 
+it("carries a validated REA_KUNA_COMMAND into the provider registration environment", async () => {
+  expect(DOCTOR_PROVIDER_IDS).toContain("kuna");
+  const root = await createTestTempDirectory("rea-kuna-registration-");
+  const kuna = join(root, "kuna");
+  await writeFile(kuna, "#!/bin/sh\nprintf 'kuna 1.833\\n'\n", { mode: 0o700 });
+
+  const inspections = await createSystemDoctorHost({
+    REA_KUNA_COMMAND: kuna,
+    REA_KUNA_CACHE_DIR: join(root, "cache"),
+  }).providerInspections?.();
+
+  expect(inspections?.find(({ id }) => id === "kuna")).toMatchObject({
+    available: true,
+    providerVersion: "1.833",
+  });
+  expect(providerRegistrationEnvironment(inspections ?? [])).toMatchObject({
+    REA_KUNA_COMMAND: kuna,
+    REA_KUNA_CACHE_DIR: join(root, "cache"),
+  });
+});
+
 const createFakeJdk = async (root: string): Promise<string> => {
   const javaHome = join(root, "fake-jdk");
   const bin = join(javaHome, "bin");

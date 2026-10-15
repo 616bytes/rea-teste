@@ -356,18 +356,15 @@ class AttachedScenarioEnvironmentOwner {
     environment: BrowserScenario["environment"],
     signal: AbortSignal | undefined,
   ): Promise<void> {
-    // Mark each target mutation before sending it: a lost response leaves its
-    // outcome unknown, so cleanup must still attempt the matching reset.
-    this.#mediaOverride = true;
     await this.page.emulateMedia({
       colorScheme: environment.color_scheme,
       reducedMotion: environment.reduced_motion,
     });
+    this.#mediaOverride = true;
     throwIfScenarioCancelled(signal);
 
     // setViewportSize also resizes the external browser window. CDP metrics
     // provide the scenario viewport without changing that caller-owned window.
-    this.#deviceMetricsOverride = true;
     await this.session.send("Emulation.setDeviceMetricsOverride", {
       width: environment.viewport.width,
       height: environment.viewport.height,
@@ -375,18 +372,19 @@ class AttachedScenarioEnvironmentOwner {
       mobile: false,
       dontSetVisibleSize: true,
     });
+    this.#deviceMetricsOverride = true;
     throwIfScenarioCancelled(signal);
 
-    this.#localeOverride = true;
     await this.session.send("Emulation.setLocaleOverride", {
       locale: environment.locale,
     });
+    this.#localeOverride = true;
     throwIfScenarioCancelled(signal);
 
-    this.#timezoneOverride = true;
     await this.session.send("Emulation.setTimezoneOverride", {
       timezoneId: environment.timezone,
     });
+    this.#timezoneOverride = true;
     throwIfScenarioCancelled(signal);
   }
 

@@ -816,8 +816,10 @@ rea setup
 ```
 
 Official Ghidra releases ship native decompilers only for Linux x64 and
-Windows. On macOS, build them once with the JDK selected above and Gradle 8.5+
-or the bundled wrapper:
+Windows. On macOS, install Xcode Command Line Tools first, then build them once
+with the JDK selected above and Gradle 8.5+ or the bundled wrapper. See
+[Missing macOS native decompiler](#missing-macos-native-decompiler) for a
+manual `make` alternative on macOS x64:
 
 ```bash
 cd "$GHIDRA_INSTALL_DIR/support/gradle"

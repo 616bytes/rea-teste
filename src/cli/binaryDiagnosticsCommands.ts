@@ -4,6 +4,7 @@ import {
   createRecordedCrashService,
   createBinaryLayoutService,
   createPeResourcesService,
+  createPackerIndicatorsService,
 } from "../composition/binaryDiagnostics.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
@@ -11,6 +12,7 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { inspectPeResourcesInputSchema } from "../domain/native/peResources.js";
+import { inspectPackerIndicatorsInputSchema } from "../domain/native/packerIndicators.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
@@ -48,6 +50,36 @@ export const registerBinaryDiagnosticsCommands = (
               pe,
               "rea-pe-resources",
               "inspect_pe_resources",
+            ),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectPackerIndicators, {
+    description:
+      "Report static PE/ELF packer indicators and a verdict without executing or unpacking the image",
+    args: z.object({ path: z.string().describe("Local PE or ELF image") }),
+    options: z.object({
+      maxFileBytes: inspectPackerIndicatorsInputSchema.shape.max_file_bytes,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const packer = createPackerIndicatorsService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectPackerIndicators,
+          async () =>
+            finishAnalysisCommand(
+              () =>
+                packer.inspect(
+                  {
+                    path: resolve(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                  },
+                  { signal },
+                ),
+              packer,
+              "rea-packer-indicators",
+              "inspect_packer_indicators",
             ),
         );
       }),

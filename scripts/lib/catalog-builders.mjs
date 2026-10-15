@@ -226,7 +226,9 @@ export const providerCatalog = (sources) => {
       identity: sources.pwntoolsProvider.PWNTOOLS_PROVIDER_IDENTITY,
       contracts:
         sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
-          ({ name }) => name !== "inspect_pe_resources",
+          ({ name }) =>
+            name !== "inspect_pe_resources" &&
+            name !== "inspect_packer_indicators",
         ),
     },
     {
@@ -234,6 +236,13 @@ export const providerCatalog = (sources) => {
       contracts:
         sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
           ({ name }) => name === "inspect_pe_resources",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.PACKER_INDICATORS_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_packer_indicators",
         ),
     },
     {

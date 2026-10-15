@@ -9,9 +9,16 @@ import { wasmArtifactModule } from "../composition/wasm.js";
 import { registerWasmTools } from "./registerWasmTools.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
-import { createPeResourcesService } from "../composition/binaryDiagnostics.js";
+import {
+  createPackerIndicatorsService,
+  createPeResourcesService,
+} from "../composition/binaryDiagnostics.js";
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
-import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
+import type { PackerIndicatorsService } from "../application/binaryDiagnostics/PackerIndicatorsService.js";
+import {
+  registerPackerIndicatorsTool,
+  registerPeResourcesTool,
+} from "./registerPeResourcesTool.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import { evmInterfaceModule } from "../composition/evm.js";
 import { registerEvmTools } from "./registerEvmTools.js";
@@ -309,6 +316,7 @@ export const createServer = (
     options.webModuleTrace ?? createWebModuleTraceService(environment);
   const goBinary = options.goBinary ?? createGoBinaryService();
   const peResources = createPeResourcesService();
+  const packerIndicators = createPackerIndicatorsService();
   const webNetworkCapture =
     options.webNetworkCapture ?? createWebNetworkCaptureService(environment);
   const javascriptRecovery =
@@ -385,6 +393,7 @@ export const createServer = (
       webModuleTrace.close(),
       goBinary.close(),
       peResources.close(),
+      packerIndicators.close(),
       webNetworkCapture.close(),
       javascriptRecovery.close?.() ?? Promise.resolve(),
       artifactResources.close(),
@@ -434,6 +443,7 @@ export const createServer = (
     artifactResources,
     goBinary,
     peResources,
+    packerIndicators,
     webNetworkCapture,
   };
   registerBinaryAnalysisTools(toolContext);
@@ -631,6 +641,7 @@ const registerConfiguredAnalysisTools = (
     withAdmittedAnalysis,
     goBinary,
     peResources,
+    packerIndicators,
     webNetworkCapture,
   }: ServerToolContext,
   android: AndroidAnalysisPort,
@@ -672,6 +683,13 @@ const registerConfiguredAnalysisTools = (
   registerPeResourcesTool(
     server,
     peResources,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerPackerIndicatorsTool(
+    server,
+    packerIndicators,
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -797,6 +815,7 @@ const createSessionRecorders = (
 interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
   readonly goBinary: GoBinaryService;
   readonly peResources: PeResourcesService;
+  readonly packerIndicators: PackerIndicatorsService;
   readonly webNetworkCapture: WebNetworkCaptureService;
   readonly artifactResources: ArtifactResourceScope;
   readonly server: EvidenceMcpServer;

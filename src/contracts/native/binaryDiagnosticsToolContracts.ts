@@ -15,6 +15,10 @@ import type { ToolContract } from "../toolContractTypes.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import {
+  inspectPackerIndicatorsInputSchema,
+  packerIndicatorsSchema,
+} from "../../domain/native/packerIndicators.js";
+import {
   inspectPeResourcesInputSchema,
   peResourcesSchema,
 } from "../../domain/native/peResources.js";
@@ -36,6 +40,21 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     examples: [
       {
         title: "Inspect PE resource identities and icon relationships",
+        input: { path: "/artifacts/application.exe" },
+      },
+    ],
+  },
+  {
+    name: "inspect_packer_indicators",
+    ...toolContractMetadata("inspect_packer_indicators"),
+    kind: "native-provider",
+    description:
+      "Report static packer indicators for one explicit local PE32/PE32+ or ELF32/ELF64 image without executing, emulating or unpacking it. Returns per-section/segment raw and virtual sizes, flags and Shannon entropy, known packer section names and magic (for example UPX0/UPX1 and UPX!) with file offsets, PE import count with loader-style API detection, entry-point placement, overlay range and a likely_packed/not_observed/unknown verdict with supporting indicators and limitations. not_observed does not establish that a file is unpacked. Reads a stable regular file; portable on supported Node hosts with no external tool.",
+    inputSchema: inspectPackerIndicatorsInputSchema,
+    outputSchema: evidenceResultOf(packerIndicatorsSchema),
+    examples: [
+      {
+        title: "Check a PE or ELF image for packer indicators",
         input: { path: "/artifacts/application.exe" },
       },
     ],

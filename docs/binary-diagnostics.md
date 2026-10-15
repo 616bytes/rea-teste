@@ -192,3 +192,67 @@ Large Evidence envelopes may require a caller-configured MCP transport receive
 buffer because envelope copies add overhead. Requests honor cancellation during
 snapshot reading, directory traversal and payload hashing. The operation reads
 regular files only and rejects symbolic links.
+
+## Static packer identification
+
+`inspect_packer_indicators` / `inspect-packer-indicators` reports static packer
+indicators for an explicit PE32, PE32+, ELF32 or ELF64 file. It reads bytes only:
+the file is not executed, emulated, unpacked or passed to an external tool.
+
+```sh
+rea inspect-packer-indicators ./selected.exe --json
+```
+
+```json
+{
+  "name": "inspect_packer_indicators",
+  "arguments": { "path": "/artifacts/selected.exe" }
+}
+```
+
+The Evidence identifies the stable snapshot by path, byte count and SHA-256 and
+reports:
+
+- `regions`: PE sections, or ELF `PT_LOAD` segments followed by any section
+  headers, with virtual address (PE RVA), virtual size, file range, raw flags,
+  read/write/execute flags and Shannon entropy over file-backed bytes (`null`
+  when no file bytes back the region);
+- `entry_point`: address, containing region and file offset when file-backed;
+- `signatures`: known packer section names (for example `UPX0`/`UPX1`,
+  `.aspack`, `.MPRESS1`) and byte-exact magic (`UPX!` and the UPX info string)
+  with file offsets. At most 16 magic offsets are listed;
+  `magic_matches_total` counts all of them;
+- `imports` (PE only): libraries, function and ordinal counts, the loader-style
+  APIs present (`LoadLibrary*`, `GetProcAddress`, `GetModuleHandle*`,
+  `VirtualAlloc*`, `VirtualProtect*`, `VirtualFree`) and whether imports are
+  limited to those APIs plus at most one other function per library. A directory
+  that cannot be decoded consistently is reported as `unreadable`, not guessed;
+- `overlay`: bytes after the last file range used by headers, sections or
+  segments, with entropy and any PE certificate table range;
+- `indicators` and `verdict`.
+
+Known section names and magic are `strong` indicators. Entry outside the first
+PE section, entry in a writable and executable region, entry outside every
+region, high-entropy (at least 7.2 bits per byte over at least 1 KiB) executable
+regions, executable regions whose virtual size is at least four times their file
+size and at least 64 KiB, loader-style-only imports, ELF executables without
+section headers and non-certificate overlays are `supporting` indicators. The
+verdict is `likely_packed` for any strong indicator or two supporting
+indicators, `unknown` for one supporting indicator or when part of the image
+could not be examined, and `not_observed` otherwise.
+
+`not_observed` does not establish that a file is unpacked. Custom, renamed or
+unknown packers and protectors can avoid every indicator. Section names and
+magic are recognition hints that any build can add or strip, so they do not
+prove which tool produced a file. Compressed resources or embedded data can raise
+entropy without packing. ELF import heuristics and PE delay-load imports are not
+evaluated. Malformed or truncated headers fail as invalid input; section ranges
+that extend past the end of the file are clamped and reported as limitations.
+
+`max_file_bytes` defaults to 64 MiB (maximum 512 MiB); the CLI option is
+`--max-file-bytes`. The operation reads regular files only and rejects symbolic
+links.
+
+Producing an unpacked derived artifact (for example a static `upx -d` copy with
+linked digests) is not part of this operation. That scope is pending a
+maintainer decision on [#3413](https://github.com/morluto/rea/issues/3413).

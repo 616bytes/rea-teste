@@ -277,6 +277,45 @@ describe("LLDB pre-target phase proof", () => {
 });
 
 describe("LLDB retains ambiguous target ownership", () => {
+  it("releases a launch failure after the bridge proves the process exited", async () => {
+    let configPath: string | undefined;
+    const tracer = new LldbCallTracer(
+      {},
+      async (_executable, arguments_) => {
+        const resolved = await configFromArguments(arguments_);
+        configPath = resolved.configPath;
+        await writeFile(
+          resolved.config.result_path,
+          JSON.stringify({
+            status: "launch-error",
+            error: "attach failed after the launched process exited",
+            target_process_created: true,
+            target_process_exit_observed: true,
+          }),
+        );
+        return {
+          kind: "exited",
+          targetLaunched: true,
+          exitCode: 1,
+          output: "",
+          targetIdentity: undefined,
+          cleanupFailure: undefined,
+        };
+      },
+      async () => ok(fakeTool),
+    );
+
+    const result = await tracer.trace(request);
+    if (result.ok) throw new Error("expected LLDB launch failure");
+    expect(projectAnalysisError(result.error).code).toBe(
+      "capability_unavailable",
+    );
+    expect(result.error.cleanup).toBeUndefined();
+    expect(configPath).toBeDefined();
+    if (configPath !== undefined)
+      await expect(access(dirname(configPath))).rejects.toThrow();
+  });
+
   it("keeps a post-target integrity rejection unresolved when its PID is missing", async () => {
     let runtime: string | undefined;
     const tracer = new LldbCallTracer(

@@ -12,6 +12,7 @@ import { IdaProvider } from "../ida/IdaProvider.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import {
   ghidraMipsProfileParameters,
+  ghidraMipsLanguageOverride,
   ghidraPinnedMipsLanguage,
 } from "./GhidraMipsProfile.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
@@ -66,6 +67,23 @@ const abi = (
   return { abiFlags: { ...flags, ...change } };
 };
 const softFloat = abi({ cpr1Size: 0, fpAbi: 3 });
+
+it.each([
+  ["little", 0x1001],
+  ["big", 0x1001],
+  ["little", 0x1801],
+  ["big", 0x1801],
+] as const)(
+  "refuses MIPS I load-delay semantics independently of an explicit o32 declaration (%s, %i)",
+  (byteOrder, flags) => {
+    const provider = new GhidraProvider(config, silentLogger, {}, host);
+    const value = target({ flags, byteOrder, abiFlags: null });
+    const support = provider.inspectTargetSupport(value);
+    expect(support).toMatchObject({ status: "unsupported" });
+    expect(JSON.stringify(support)).toContain("load-delay semantics");
+    expect(ghidraMipsLanguageOverride(value)).toBeUndefined();
+  },
+);
 
 describe("bounded Ghidra MIPS admission", () => {
   it("binds endian and flags without widening Windows P0", async () => {

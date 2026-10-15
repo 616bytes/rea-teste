@@ -129,6 +129,8 @@ export const ghidraMipsUnsupportedReason = (
   if ((metadata.flags & 0x00ff0000) !== 0)
     return "Machine-specific MIPS variants, including PSP Allegrex, need a separately supported processor profile.";
   const arch = metadata.flags & 0xf0000000;
+  if (arch === 0)
+    return "MIPS I remains unsupported: the generic Ghidra MIPS processor does not establish MIPS I load-delay semantics; instruction decoding alone cannot verify decompiler/dataflow correctness.";
   if (arch !== 0x70000000 && arch !== 0x50000000)
     return "This Ghidra MIPS lane requires EF_MIPS_ARCH_32R2 or a recordless legacy EF_MIPS_ARCH_32 header; other ISA revisions need separate verification.";
   const recordlessShape =

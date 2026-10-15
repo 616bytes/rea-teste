@@ -171,6 +171,46 @@ const target = (mips: MipsElfMetadata) => ({
 });
 
 for (const little of [true, false]) {
+  it(`refuses PT-backed admission when the final GNU section header is partial (${little ? "LE" : "BE"})`, async () => {
+    const original = fixture(little);
+    const bytes = Buffer.concat([original, Buffer.alloc(24)]);
+    const u32 = (value: number, offset: number) =>
+      little
+        ? bytes.writeUInt32LE(value, offset)
+        : bytes.writeUInt32BE(value, offset);
+    const u16 = (value: number, offset: number) =>
+      little
+        ? bytes.writeUInt16LE(value, offset)
+        : bytes.writeUInt16BE(value, offset);
+    // PT_MIPS_ABIFLAGS is valid; the partial section prefix still declares a
+    // conflicting soft-float payload, but full section coverage is unproved.
+    u32(original.length, 32);
+    u16(1, 48);
+    u32(0x6ffffff5, original.length + 4);
+    u32(abiOffset + 24, original.length + 16);
+    u32(16, original.length + 20);
+    bytes[abiOffset + 24] = 0x41;
+    u32(15, abiOffset + 25);
+    bytes.write("gnu\0", abiOffset + 29, "ascii");
+    bytes[abiOffset + 33] = 1;
+    u32(7, abiOffset + 34);
+    bytes[abiOffset + 38] = 4;
+    bytes[abiOffset + 39] = 3;
+    const path = await writeFixture(bytes);
+    const result = await parseBinaryTarget(path);
+    assert.ok(result.ok);
+    assert.ok(
+      result.value.kind === "executable" &&
+        result.value.format === "elf" &&
+        result.value.architecture === "mips",
+    );
+    assert.equal(result.value.mips.abiFlags?.fpAbi, 5);
+    assert.match(
+      ghidraMipsUnsupportedReason(result.value) ?? "",
+      /ABI declaration inspection is incomplete/u,
+    );
+    assert.deepEqual(await readFile(path), bytes);
+  });
   it(`reads a remote ABI record through both ELF tables (${little ? "LE" : "BE"})`, async () => {
     const bytes = fixture(little);
     const result = await inspect(bytes, little);

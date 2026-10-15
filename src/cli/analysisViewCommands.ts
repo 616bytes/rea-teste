@@ -1,6 +1,7 @@
 import { z } from "incur";
 
 import { inspectAnalysisViewValidated } from "../application/analysisView/AnalysisViewService.js";
+import { deriveUiStateTransition } from "../application/uiStateTransition/UiStateTransitionService.js";
 import { readEvidenceBundle } from "../application/EvidenceBundleFiles.js";
 import { inspectEvidenceBundle } from "../application/investigation/InspectEvidenceBundle.js";
 import {
@@ -99,6 +100,28 @@ export const registerAnalysisViewCommands = (
           ? jsonValueSchema.parse(result.value)
           : {
               error: "Application workflow failed",
+              ...projectAnalysisError(result.error),
+            };
+      }),
+  });
+  cli.command(CLI_COMMANDS.deriveUiStateTransition, {
+    description:
+      "Derive read-only browser UI state and transition Evidence from before/after page observations",
+    args: z.object({
+      inputJson: z.string().describe("Inline workflow JSON or JSON file path"),
+    }),
+    run: ({ args }) =>
+      logCliCommand(logger, CLI_COMMANDS.deriveUiStateTransition, async () => {
+        const input = await parseCliJsonInput(
+          args.inputJson,
+          CLI_COMMANDS.deriveUiStateTransition,
+        );
+        if (!input.ok) return input.error;
+        const result = deriveUiStateTransition(input.value);
+        return result.ok
+          ? jsonValueSchema.parse(result.value)
+          : {
+              error: "UI state transition derivation failed",
               ...projectAnalysisError(result.error),
             };
       }),

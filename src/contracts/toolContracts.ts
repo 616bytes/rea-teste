@@ -6,6 +6,7 @@ import { GO_TOOL_CONTRACTS } from "./go/goToolContracts.js";
 import { RUST_TOOL_CONTRACTS } from "./rust/rustToolContracts.js";
 import { SQLITE_TOOL_CONTRACTS } from "./sqlite/sqliteToolContracts.js";
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "./analysisViewToolContracts.js";
+import { UI_STATE_TRANSITION_TOOL_CONTRACTS } from "./uiStateTransitionToolContracts.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "./native/binaryDiagnosticsToolContracts.js";
 import { NATIVE_TOOL_CONTRACTS } from "./native/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
@@ -42,6 +43,7 @@ export const TOOL_CONTRACTS = [
   ...NATIVE_TOOL_CONTRACTS,
   ...BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
   ...ANALYSIS_VIEW_TOOL_CONTRACTS,
+  ...UI_STATE_TRANSITION_TOOL_CONTRACTS,
   ...ARTIFACT_TOOL_CONTRACTS,
   ...EVM_TOOL_CONTRACTS,
   ...GO_TOOL_CONTRACTS,

@@ -135,6 +135,77 @@ it("resolves require calls by lexical binding and source mode", async () => {
   ]);
 });
 
+it("keeps loader edges when a local binding shields a dynamic write", async () => {
+  const root = await createTestTempDirectory("rea-reference-require-shield-");
+  const sources: Record<string, string> = {
+    "local-param.cjs": [
+      "function patch(require) { with ({}) { require = () => 'local'; } }",
+      "patch(null);",
+      "console.log(require('./loaded.cjs'));",
+    ].join("\n"),
+    "local-fn-var.cjs": [
+      "function patch() {",
+      "  var require;",
+      "  with ({}) { require = () => 'local'; }",
+      "}",
+      "patch();",
+      "console.log(require('./loaded.cjs'));",
+    ].join("\n"),
+    "local-fn-var-init.cjs": [
+      "function patch() {",
+      "  var require = () => 'a';",
+      "  with ({}) { require = () => 'local'; }",
+      "}",
+      "patch();",
+      "console.log(require('./loaded.cjs'));",
+    ].join("\n"),
+    "local-fn-let.cjs": [
+      "function patch() {",
+      "  let require;",
+      "  with ({}) { require = () => 'local'; }",
+      "}",
+      "patch();",
+      "console.log(require('./loaded.cjs'));",
+    ].join("\n"),
+    "loaded.cjs": "console.log('loaded');\nmodule.exports = 'real';\n",
+  };
+
+  await Promise.all(
+    Object.entries(sources).map(([path, source]) =>
+      writeFile(join(root, path), source),
+    ),
+  );
+
+  const runNode = promisify(execFile);
+  for (const path of Object.keys(sources)) {
+    if (path === "loaded.cjs") continue;
+    const executed = await runNode(process.execPath, [join(root, path)], {
+      cwd: root,
+      timeout: 5_000,
+    });
+    expect(executed.stdout).toBe("loaded\nreal\n");
+    expect(executed.stderr).toBe("");
+  }
+
+  const result = await importReferenceSource({
+    root,
+    caller: "reference-shielded-require-test",
+    policy: { secretPatterns: [] },
+  });
+  if (!result.ok) throw result.error;
+  expect(
+    result.value.relationships
+      .filter(({ kind }) => kind === "requires")
+      .map(({ from_path, to }) => [from_path, to])
+      .sort((left, right) => (left[0] ?? "").localeCompare(right[0] ?? "")),
+  ).toEqual([
+    ["local-fn-let.cjs", "loaded.cjs"],
+    ["local-fn-var-init.cjs", "loaded.cjs"],
+    ["local-fn-var.cjs", "loaded.cjs"],
+    ["local-param.cjs", "loaded.cjs"],
+  ]);
+});
+
 it("does not attribute overwritten require members to Node's resolver", async () => {
   const root = await createTestTempDirectory("rea-reference-require-member-");
   const sources: Record<string, string> = {

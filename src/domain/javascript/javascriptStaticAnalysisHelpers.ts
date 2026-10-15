@@ -719,7 +719,12 @@ export const isWebSocketEndpointCandidate = (
       initializer === undefined ||
       binding.referenceInitializers.length !== 0 ||
       !members.every((key): key is string => typeof key === "string") ||
-      !webSocketInitializerDominatesRead(initializer.node, root, state)
+      !webSocketInitializerDominatesRead(
+        initializer.node,
+        root,
+        state,
+        initializer.bindingNode,
+      )
     )
       return false;
     visited.add(binding.bindingId);
@@ -741,8 +746,7 @@ export const isWebSocketEndpointCandidate = (
     // constructor itself is selected, including destructuring at initialization.
     if (selectedCapture === undefined) {
       if (members.length > 0) selectedCapture = current;
-      else if (initializer.projection.length > 0)
-        selectedCapture = initializer.node;
+      else if (projection.length > 0) selectedCapture = initializer.node;
     }
     selected = [...projection, ...members, ...selected];
     current = projected;

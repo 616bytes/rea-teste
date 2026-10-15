@@ -5,10 +5,14 @@ import {
   semanticStaticPropertyName,
   javaScriptExactResultOperand,
 } from "./javascriptAstValues.js";
-import { javaScriptOptionalOperandsMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
+import {
+  javaScriptOptionalOperandsMayBeSkipped,
+  semanticPatternInitializationPrecedesRead,
+} from "./javascriptSemanticEvaluationOrder.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { semanticAwaitedResultSites } from "./javascriptSemanticPromiseIdentity.js";
 import { syntaxUnconditionalOperands } from "./javascriptSymbolicControlFlow.js";
+import { childNodes } from "./javascriptSemanticTraversal.js";
 
 interface WebSocketExecutionFrame {
   readonly owner: t.Node;
@@ -85,7 +89,29 @@ const webSocketImmediateInvocation = (
   }
 };
 
-type WebSocketSuspension = t.AwaitExpression | t.YieldExpression;
+type WebSocketSuspension =
+  | t.AwaitExpression
+  | t.YieldExpression
+  | t.ForOfStatement;
+
+const loopJumpFacts = new WeakMap<t.Node, boolean>();
+/** An abrupt loop path cannot prove normal body completion before its test/update. */
+const webSocketBodyMayJump = (body: t.Node): boolean => {
+  const known = loopJumpFacts.get(body);
+  if (known !== undefined) return known;
+  const pending = [body];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node === undefined || t.isFunction(node)) continue;
+    if (t.isBreakStatement(node) || t.isContinueStatement(node)) {
+      loopJumpFacts.set(body, true);
+      return true;
+    }
+    for (const child of childNodes(node)) pending.push(child);
+  }
+  loopJumpFacts.set(body, false);
+  return false;
+};
 
 /** Class keys complete before any static initializer or instance construction. */
 const webSocketClassKeys = (node: t.Class): readonly t.Node[] => [
@@ -114,7 +140,12 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   if (t.isExpressionStatement(node)) return [node.expression];
   if (t.isVariableDeclaration(node)) return node.declarations;
   if (t.isVariableDeclarator(node))
-    return t.isNode(node.init) ? [node.init] : [];
+    return t.isNode(node.init) ? [node.init, node.id] : [];
+  if (t.isObjectPattern(node)) return node.properties;
+  if (t.isArrayPattern(node))
+    return node.elements.filter((item) => item !== null);
+  if (t.isRestElement(node) || t.isAssignmentPattern(node))
+    return [t.isRestElement(node) ? node.argument : node.left];
   if (t.isUnaryExpression(node)) return [node.argument];
   if (t.isMemberExpression(node))
     return node.computed ? [node.object, node.property] : [node.object];
@@ -141,6 +172,13 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   // Every normally completed loop evaluates its initial test, but its body
   // and updates may never execute. A do/while body precedes its first test.
   if (t.isWhileStatement(node)) return [node.test];
+  if (t.isDoWhileStatement(node))
+    return webSocketBodyMayJump(node.body) ? [] : [node.body, node.test];
+  if (t.isTryStatement(node))
+    return [
+      node.handler == null ? node.block : undefined,
+      node.finalizer,
+    ].filter((item) => item != null);
   if (t.isForOfStatement(node) || t.isForInStatement(node)) return [node.right];
   if (t.isForStatement(node))
     return [node.init, node.test].filter((element) => element != null);
@@ -184,6 +222,7 @@ const webSocketCompletedSuspension = (
         : undefined;
     if (
       t.isAwaitExpression(current) ||
+      (t.isForOfStatement(current) && current.await) ||
       (t.isYieldExpression(current) &&
         (!current.delegate ||
           // Async delegation awaits the iterator result even when it is done;
@@ -218,6 +257,14 @@ const webSocketPrecedingSuspension = (
     return webSocketCompletedSuspension(parent.test, state);
   if (t.isLogicalExpression(parent) && child === parent.right)
     return webSocketCompletedSuspension(parent.left, state);
+  // Finally also runs after an abrupt try; normal-block proof does not carry into it.
+  if (t.isTryStatement(parent) && child === parent.finalizer) return undefined;
+  if (
+    t.isForOfStatement(parent) &&
+    parent.await &&
+    (child === parent.body || child === parent.left)
+  )
+    return parent;
   if (
     (t.isForOfStatement(parent) || t.isForInStatement(parent)) &&
     (child === parent.body || child === parent.left)
@@ -229,6 +276,11 @@ const webSocketPrecedingSuspension = (
       (t.isForStatement(parent) && child === parent.update))
   )
     return (
+      (t.isForStatement(parent) &&
+      child === parent.update &&
+      !webSocketBodyMayJump(parent.body)
+        ? webSocketCompletedSuspension(parent.body, state)
+        : undefined) ??
       (parent.test == null
         ? undefined
         : webSocketCompletedSuspension(parent.test, state)) ??
@@ -356,6 +408,7 @@ export const webSocketInitializerDominatesRead = (
   initializer: t.Node,
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  bindingNode?: t.Node,
 ): boolean => {
   let current: t.Node | undefined = initializer;
   while (
@@ -379,6 +432,15 @@ export const webSocketInitializerDominatesRead = (
     initializerContexts.some((frame) => frame.owner === owner),
   );
   if (shared === undefined) return true;
+  const patternOrder =
+    bindingNode === undefined
+      ? undefined
+      : semanticPatternInitializationPrecedesRead(
+          bindingNode,
+          read,
+          state.parentsByNode,
+        );
+  if (patternOrder !== undefined) return patternOrder;
   return !initializerContexts.some(
     (before) =>
       before.owner === shared.owner &&

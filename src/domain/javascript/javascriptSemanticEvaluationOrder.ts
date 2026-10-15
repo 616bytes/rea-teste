@@ -4,6 +4,58 @@ import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 
 const preserveGrouping = { stopAtParentheses: true } as const;
 
+/** Order a binding event against evaluation in the same declaration pattern. */
+export const semanticPatternInitializationPrecedesRead = (
+  binding: t.Node,
+  read: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean | undefined => {
+  if (t.isVariableDeclarator(parents.get(binding))) return undefined;
+  const path = new Map<t.Node, t.Node>();
+  let child = binding;
+  let declarator: t.VariableDeclarator | undefined;
+  for (;;) {
+    const parent = parents.get(child);
+    if (parent === undefined || t.isFunction(parent) || t.isProgram(parent))
+      break;
+    path.set(parent, child);
+    if (t.isVariableDeclarator(parent)) {
+      declarator = parent;
+      break;
+    }
+    child = parent;
+  }
+  if (declarator === undefined) return undefined;
+  child = read;
+  for (;;) {
+    const parent = parents.get(child);
+    if (parent === undefined) return undefined;
+    const boundChild = path.get(parent);
+    if (boundChild !== undefined) {
+      const siblings: readonly (t.Node | null)[] | undefined =
+        t.isObjectPattern(parent)
+          ? parent.properties
+          : t.isArrayPattern(parent)
+            ? parent.elements
+            : undefined;
+      if (siblings !== undefined) {
+        const before = siblings.indexOf(boundChild);
+        const after = siblings.indexOf(child);
+        return before >= 0 && after >= 0 ? before < after : undefined;
+      }
+      // RHS, computed key and a selected default all precede their own binding.
+      if (
+        t.isVariableDeclarator(parent) ||
+        t.isAssignmentPattern(parent) ||
+        t.isObjectProperty(parent)
+      )
+        return false;
+      return undefined;
+    }
+    child = parent;
+  }
+};
+
 /** Whether call arguments or an optional member key may be short-circuited. */
 export const javaScriptOptionalOperandsMayBeSkipped = (
   node:

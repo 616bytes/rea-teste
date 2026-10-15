@@ -939,6 +939,100 @@ describe("web bundle promise aliases and object evaluation", () => {
   );
 });
 
+describe("web bundle binding events and structured continuations", () => {
+  it.each([
+    'const { WebSocket: Socket, unused = new Socket("wss://example.test/event") } = globalThis;',
+    'const [Socket, unused = new Socket("wss://example.test/event")] = [globalThis.WebSocket];',
+    'const { WebSocket: Socket, [new Socket("wss://example.test/event")]: unused } = globalThis;',
+    'const { nested: [Socket], unused = new Socket("wss://example.test/event") } = { nested: [globalThis.WebSocket] };',
+  ])(
+    "orders binding initialization before later pattern evaluation: %s",
+    (source) => {
+      const expected = [
+        { value: "wss://example.test/event", mechanism: "call:Socket" },
+      ];
+      expect(socketEndpoints(source)).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    'const { unused = new Socket("wss://example.test/invalid"), WebSocket: Socket } = globalThis;',
+    'const [unused = new Socket("wss://example.test/invalid"), Socket] = [undefined, globalThis.WebSocket];',
+    'const { [new Socket("wss://example.test/invalid")]: unused, WebSocket: Socket } = globalThis;',
+  ])("keeps earlier pattern reads before initialization: %s", (source) => {
+    expect(socketEndpoints(source)).toEqual([[], []]);
+  });
+
+  it.each([
+    'for await (const item of [1]) { new Socket("wss://example.test/structured"); }',
+    'for await (const item of []) {} new Socket("wss://example.test/structured");',
+    'do { await ready; } while (false); new Socket("wss://example.test/structured");',
+    'try { await ready; } finally {} new Socket("wss://example.test/structured");',
+    'try {} catch {} finally { await ready; } new Socket("wss://example.test/structured");',
+    'for (let i = 0; i < 1; new Socket("wss://example.test/structured"), i++) { await ready; }',
+    'const {[await 0]: value} = {}; new Socket("wss://example.test/structured");',
+    'const {outer: {[await 0]: value}} = { outer: {} }; new Socket("wss://example.test/structured");',
+    'let value; ({[await 0]: value} = {}); new Socket("wss://example.test/structured");',
+  ])(
+    "carries mandatory structured evaluation into a later read: %s",
+    (body) => {
+      const expected = [
+        { value: "wss://example.test/structured", mechanism: "call:Socket" },
+      ];
+      expect(
+        socketEndpoints(
+          `(async () => { ${body} })(); const Socket = globalThis.WebSocket;`,
+        ),
+      ).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    'for await (const item of [new Socket("wss://example.test/invalid")]) {}',
+    'do { break; await ready; } while (false); new Socket("wss://example.test/invalid");',
+    'do { if (condition) break; await ready; } while (false); new Socket("wss://example.test/invalid");',
+    'for (let i = 0; i < 1; new Socket("wss://example.test/invalid"), i++) { if (condition) continue; await ready; }',
+    'try { throw 0; await ready; } finally { new Socket("wss://example.test/invalid"); }',
+    'try { if (condition) throw 0; await ready; } catch {} new Socket("wss://example.test/invalid");',
+    'const { value = await ready } = { value: 1 }; new Socket("wss://example.test/invalid");',
+    'let value; ({[await 0]: value} = { value: new Socket("wss://example.test/invalid") });',
+  ])("does not promote skipped/abrupt structured paths: %s", (body) => {
+    expect(
+      socketEndpoints(
+        `(async () => { ${body} })(); const Socket = globalThis.WebSocket;`,
+      ),
+    ).toEqual([[], []]);
+  });
+
+  it.each([
+    'const ws = require("ws"); const { WebSocket: Socket } = { WebSocket: ws.WebSocket, later: (ws.WebSocket = class {}) };',
+    'const ws = require("ws"); const [Socket] = [ws.WebSocket, (ws.WebSocket = class {})];',
+    'const ws = require("ws"); const Saved = ws.WebSocket; ws.WebSocket = class {}; const { copy: Socket } = { copy: Saved };',
+  ])(
+    "retains a constructor copied before a later export write: %s",
+    (capture) => {
+      const expected = [
+        { value: "wss://example.test/copy", mechanism: "call:Socket" },
+      ];
+      expect(
+        socketEndpoints(`${capture} new Socket("wss://example.test/copy");`),
+      ).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    'const ws = require("ws"); const { WebSocket: Socket } = { later: (ws.WebSocket = class {}), WebSocket: ws.WebSocket };',
+    'const ws = require("ws"); const { nested: { WebSocket: Socket } } = { nested: ws, later: (ws.WebSocket = class {}) };',
+  ])(
+    "does not confuse a namespace copy with a constructor copy: %s",
+    (capture) => {
+      expect(
+        socketEndpoints(`${capture} new Socket("wss://example.test/invalid");`),
+      ).toEqual([[], []]);
+    },
+  );
+});
+
 describe("web bundle projection kinds, tags and result operands", () => {
   it.each([
     "const [Socket] = { 0: globalThis.WebSocket };",

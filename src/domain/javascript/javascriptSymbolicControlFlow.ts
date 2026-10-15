@@ -62,6 +62,11 @@ export const syntaxUnconditionalOperands = (
       : [node.left];
   }
   if (t.isAssignmentExpression(node)) {
+    if (
+      node.operator === "=" &&
+      (t.isObjectPattern(node.left) || t.isArrayPattern(node.left))
+    )
+      return [node.right, node.left];
     // Only logical assignments can short-circuit the RHS. Non-logical
     // compound operators read the left value, then always evaluate the RHS.
     return ["&&=", "||=", "??="].includes(node.operator)

@@ -129,6 +129,24 @@ it("retains constructor captures, ws imports and template keys with their graph 
 });
 
 const socketExecutionPhaseSources = {
+  "implicit-await.js":
+    '(async () => { for await (const item of [0]) { new Socket("wss://example.test/implicit-await"); } })(); const Socket = globalThis.WebSocket;',
+  "do-await.js":
+    '(async () => { do { await ready; } while (false); new Socket("wss://example.test/do-await"); })(); const Socket = globalThis.WebSocket;',
+  "try-await.js":
+    '(async () => { try { await ready; } finally {} new Socket("wss://example.test/try-await"); })(); const Socket = globalThis.WebSocket;',
+  "update-await.js":
+    '(async () => { for (let i = 0; i < 1; new Socket("wss://example.test/update-await"), i++) { await ready; } })(); const Socket = globalThis.WebSocket;',
+  "pattern-await.js":
+    '(async () => { const {[await 0]: value} = {}; new Socket("wss://example.test/pattern-await"); })(); const Socket = globalThis.WebSocket;',
+  "binding-event.js":
+    'const { WebSocket: Socket, unused = new Socket("wss://example.test/binding-event") } = globalThis;',
+  "copy-order.js":
+    'const ws = require("ws"); const { WebSocket: Socket } = { WebSocket: ws.WebSocket, later: (ws.WebSocket = class {}) }; new Socket("wss://example.test/copy-order");',
+  "binding-before-event.js":
+    'const { unused = new Socket("wss://example.test/tdz-binding-event"), WebSocket: Socket } = globalThis;',
+  "do-skipped-await.js":
+    '(async () => { do { break; await ready; } while (false); new Socket("wss://example.test/tdz-do-jump"); })(); const Socket = globalThis.WebSocket;',
   "tag-eager.js":
     '(function () { new Socket("wss://example.test/tdz-tag"); })``; const Socket = globalThis.WebSocket;',
   "tag-generator.js":
@@ -247,14 +265,18 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/array-projection",
       "wss://example.test/assignment",
       "wss://example.test/assignment-capture",
+      "wss://example.test/binding-event",
       "wss://example.test/branch-continuation",
       "wss://example.test/compound-continuation",
       "wss://example.test/computed-key",
       "wss://example.test/continuation",
+      "wss://example.test/copy-order",
       "wss://example.test/deferred-bind",
+      "wss://example.test/do-await",
       "wss://example.test/dynamic-import",
       "wss://example.test/field",
       "wss://example.test/generator-body",
+      "wss://example.test/implicit-await",
       "wss://example.test/import-alias",
       "wss://example.test/import-equals-member",
       "wss://example.test/iterable-body",
@@ -265,14 +287,24 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/object-key",
       "wss://example.test/optional-call",
       "wss://example.test/optional-capture",
+      "wss://example.test/pattern-await",
       "wss://example.test/pending-initialized",
       "wss://example.test/selected-branch",
       "wss://example.test/sequence-capture",
       "wss://example.test/skipped-wait",
       "wss://example.test/tag-generator",
       "wss://example.test/template-continuation",
+      "wss://example.test/try-await",
+      "wss://example.test/update-await",
     ]);
     for (const [path, source, line] of [
+      ["implicit-await", "implicit-await.js", 1],
+      ["do-await", "do-await.js", 1],
+      ["try-await", "try-await.js", 1],
+      ["update-await", "update-await.js", 1],
+      ["pattern-await", "pattern-await.js", 1],
+      ["binding-event", "binding-event.js", 1],
+      ["copy-order", "copy-order.js", 1],
       ["assignment-capture", "assignment-capture.js", 1],
       ["iterable-body", "iterable-body.js", 1],
       ["iterable-continuation", "iterable.js", 1],

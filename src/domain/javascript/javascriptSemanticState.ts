@@ -23,6 +23,8 @@ import type {
 interface JavaScriptSemanticInitializer {
   readonly node: t.Node;
   readonly projection: readonly (string | number | null)[];
+  /** Binding event in a declaration pattern, distinct from the RHS spelling. */
+  readonly bindingNode?: t.Node;
   readonly entryBody?: t.BlockStatement;
 }
 

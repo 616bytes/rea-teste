@@ -11,7 +11,7 @@ install_to() {
     local name target backup staged
     name="$(basename "$skill")"
     target="$dest/$name"
-    staged="$dest/.${name}.staging-$-$RANDOM"
+    staged="$dest/.${name}.staging-$BASHPID-$RANDOM"
     backup=""
 
     # Prepare the complete replacement before touching the active installation.

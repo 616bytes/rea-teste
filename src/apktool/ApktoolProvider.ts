@@ -59,6 +59,7 @@ import {
   type ApktoolProbeCleanup,
   apktoolConfigurationAvailability,
   apktoolInvocation,
+  apktoolVersionLimitations,
   inspectApktoolClient,
   resolveApktoolCommand,
   type ApktoolCommandSelection,
@@ -516,7 +517,11 @@ export class ApktoolProvider {
       version: identity.version,
     };
     if (request.operation === "inspect_apktool_client")
-      return ok(createAnalysisExecution({ client }, provider));
+      return ok(
+        createAnalysisExecution({ client }, provider, {
+          limitations: apktoolVersionLimitations(identity.version),
+        }),
+      );
     return this.decodeResources(
       request.operation,
       selection,
@@ -801,6 +806,7 @@ export class ApktoolProvider {
           provider,
           {
             limitations: [
+              ...apktoolVersionLimitations(client.apktool_version),
               "Decoding skips smali (--no-src); Java-source recovery belongs to the JADX family",
               ...(input.locale !== undefined &&
               stringsRead.text === null &&

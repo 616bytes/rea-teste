@@ -5,6 +5,7 @@ import {
   apktoolConfigurationAvailability,
   ApktoolConfigurationFailure,
   apktoolInvocation,
+  apktoolVersionLimitations,
   inspectApktoolClient,
   parseApktoolVersionOutput,
   resolveApktoolCommand,
@@ -80,6 +81,28 @@ describe("parseApktoolVersionOutput", () => {
     expect(parseApktoolVersionOutput("v2.7.0\n")).toEqual({
       version: "v2.7.0",
     });
+  });
+});
+
+describe("apktoolVersionLimitations", () => {
+  it("warns for launchers older than the CVE-2024-21633 fix", () => {
+    for (const version of ["2.7.0-dirty", "2.9.1", "v1.5.2", "2.9.2-rc.1"])
+      expect(apktoolVersionLimitations(version).join(" ")).toContain(
+        "CVE-2024-21633",
+      );
+  });
+
+  it("stays silent for fixed or unparseable versions", () => {
+    for (const version of [
+      "2.9.2",
+      "2.9.3",
+      "2.12.1",
+      "3.0.0",
+      "2.10.0-dirty",
+      "unknown",
+      null,
+    ])
+      expect(apktoolVersionLimitations(version)).toEqual([]);
   });
 });
 

@@ -17,7 +17,7 @@ import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { gte, valid } from "semver";
+import { gte, lt, valid } from "semver";
 import {
   isWindowsBatchFile,
   windowsBatchCommand,
@@ -225,12 +225,37 @@ export const parseApktoolVersionOutput = (
   return { version: line };
 };
 
+// Debian's verified 2.7.0-dirty build is a downstream build marker, not a
+// prerelease. Treat only that known marker as build metadata for comparisons.
+const comparableApktoolVersion = (version: string): string | null =>
+  valid(version.replace(/-dirty$/u, "+dirty"));
+
 const supportsDocumentedApktoolVersion = (version: string): boolean => {
-  // Debian's verified 2.7.0-dirty build is a downstream build marker, not a
-  // prerelease. Treat only that known marker as build metadata for the floor.
-  const comparisonVersion = version.replace(/-dirty$/u, "+dirty");
-  const parsedVersion = valid(comparisonVersion);
+  const parsedVersion = comparableApktoolVersion(version);
   return parsedVersion !== null && gte(parsedVersion, "2.7.0");
+};
+
+/** First apktool release that keeps decoded resource paths inside the output. */
+const PATH_CONTAINED_APKTOOL_VERSION = "2.9.2";
+
+/**
+ * Warn when the launcher predates the CVE-2024-21633 fix. Distribution
+ * packages such as Debian's 2.7.0 remain usable, so this is a limitation
+ * rather than a refusal; unparseable versions produce no claim.
+ */
+export const apktoolVersionLimitations = (
+  version: string | null,
+): readonly string[] => {
+  const parsedVersion =
+    version === null ? null : comparableApktoolVersion(version);
+  if (
+    parsedVersion === null ||
+    !lt(parsedVersion, PATH_CONTAINED_APKTOOL_VERSION)
+  )
+    return [];
+  return [
+    `apktool ${String(version)} predates ${PATH_CONTAINED_APKTOOL_VERSION}, which fixed CVE-2024-21633 (decoded resource paths could escape the output directory); decode untrusted APKs with apktool ${PATH_CONTAINED_APKTOOL_VERSION} or newer`,
+  ];
 };
 
 /** Probe the selected apktool launcher without decoding anything. */

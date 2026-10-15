@@ -475,17 +475,13 @@ def authorize_display(
     display_name: str,
     xauth_path: str,
 ) -> None:
+    # Send the cookie on stdin: argv is readable by other local users through
+    # /proc/<pid>/cmdline while xauth runs.
     try:
         authorized = subprocess.run(
-            [
-                xauth_path,
-                "-f",
-                str(authority),
-                "add",
-                display_name,
-                ".",
-                secrets.token_hex(16),
-            ],
+            [xauth_path, "-q", "-f", str(authority), "source", "-"],
+            input=f"add {display_name} . {secrets.token_hex(16)}\n",
+            text=True,
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,

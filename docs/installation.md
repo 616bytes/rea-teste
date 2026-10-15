@@ -1174,6 +1174,16 @@ The optional curl wrapper installs only the global npm package:
 curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
 ```
 
+The `main` URL runs whatever the branch holds when you fetch it. To review a
+fixed script first, download it from a release tag (`rea-agents-<version>`),
+read it, and pass the same version:
+
+```bash
+curl -fsSLo install.sh https://raw.githubusercontent.com/morluto/rea/rea-agents-<version>/install.sh
+less install.sh
+bash install.sh --version <version>
+```
+
 It prints the version, runtime, npm command, and destination before installing. When a controlling terminal exists it starts `rea setup`; otherwise it prints the command to run later.
 
 Pass options with `bash -s --`:

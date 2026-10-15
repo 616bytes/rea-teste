@@ -58,10 +58,7 @@ if (
   throw new Error(
     "Windows native artifact metadata or SHA-256 does not match this package; run the Windows native build lane.",
   );
-if (
-  manifest.sourceSha256 !== undefined &&
-  (await exists(new URL("native/windows/src/addon.cc", root)))
-) {
+if (await exists(new URL("native/windows/src/addon.cc", root))) {
   const buildInputs = [
     "native/windows/src/addon.cc",
     "native/windows/src/authority.hpp",

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   appendFile,
+  chmod,
   mkdir,
   readdir,
   readFile,
@@ -71,7 +72,6 @@ const fixture = async (
 const newCache = (installation: KunaInstallation, maxBytes = 64 * 1024 ** 2) =>
   new KunaProjectCache(installation.configuration.cacheRoot, {
     maxBytes,
-    staleStagingMs: 24 * 60 * 60 * 1000,
   });
 
 const keyOf = (installation: KunaInstallation, target: Target) =>
@@ -469,7 +469,7 @@ it("reports each build phase to every waiting request", async () => {
   ]);
 });
 
-it("sweeps abandoned staging and evicted entries before a build", async () => {
+it("sweeps retired entries but preserves staging with unresolved process ownership", async () => {
   const { installation, cacheRoot, cache, target } =
     await fixture("rea-kuna-sweep-");
   const abandoned = join(cacheRoot, "staging", "build-abandoned");
@@ -484,8 +484,38 @@ it("sweeps abandoned staging and evicted entries before a build", async () => {
     (await cache.build({ installation, ...(await target("program")) })).ok,
   ).toBe(true);
 
-  expect(await entries(cacheRoot, "staging")).toEqual(["build-recent"]);
+  expect(await entries(cacheRoot, "staging")).toEqual([
+    "build-abandoned",
+    "build-recent",
+  ]);
   expect(await entries(cacheRoot, "trash")).toEqual([]);
+});
+
+it("keeps ownership of retired files when a sweep cannot remove them", async () => {
+  const { installation, cacheRoot, cache, target } = await fixture(
+    "rea-kuna-trash-cleanup-",
+  );
+  const retired = join(cacheRoot, "trash", "retired");
+  await mkdir(retired, { recursive: true });
+  await writeFile(join(retired, "evidence"), "retained export");
+  await chmod(retired, 0o500);
+  let built;
+  let closed;
+  try {
+    built = await cache.build({ installation, ...(await target("program")) });
+    closed = await cache.close();
+  } finally {
+    await chmod(retired, 0o700);
+  }
+
+  if (!built.ok) throw built.error;
+  expect(closed).toMatchObject({
+    ok: false,
+    error: { cleanupIncomplete: true, cleanupResources: [retired] },
+  });
+  expect(await readFile(join(retired, "evidence"), "utf8")).toBe(
+    "retained export",
+  );
 });
 
 it("keeps staging owned when a cancelled Kuna process cannot be proven stopped", async () => {
@@ -496,14 +526,18 @@ it("keeps staging owned when a cancelled Kuna process cannot be proven stopped",
   // Stop the process for real, but report that ownership could not be revalidated.
   const cache = new KunaProjectCache(cacheRoot, {
     maxBytes: 64 * 1024 ** 2,
-    staleStagingMs: 24 * 60 * 60 * 1000,
     launcher: async (options) => {
       const spawned = await spawnOwnedProviderProcess(options);
       if (options.arguments[0] !== "decompile-project") return spawned;
+      const workspace = options.cwd;
+      if (workspace === undefined) throw new Error("Kuna workspace is missing");
       return {
         ...spawned,
         cleanup: async () => {
           await cleanupOwnedProcessGroup(spawned.ownership);
+          // A full disk or lost directory write access can prevent a final
+          // lifecycle marker. Cleanup must remain fail-closed across instances.
+          await chmod(workspace, 0o500);
           return {
             cleaned: false,
             reason: "ownership could not be revalidated",
@@ -526,6 +560,10 @@ it("keeps staging owned when a cancelled Kuna process cannot be proven stopped",
     error: { _tag: "AnalysisCancelledError" },
   });
   const closed = await cache.close();
+  const staged = await entries(cacheRoot, "staging");
+  const retained = join(cacheRoot, "staging", staged[0] ?? "missing");
+  // Restore access before assertions so the fixture can always remove it.
+  await chmod(retained, 0o700);
 
   expect(closed).toMatchObject({
     ok: false,
@@ -534,15 +572,23 @@ it("keeps staging owned when a cancelled Kuna process cannot be proven stopped",
       diagnostics: { reason: "ownership could not be revalidated" },
     },
   });
-  const staged = await entries(cacheRoot, "staging");
   expect(staged).toHaveLength(1);
-  expect(await readdir(join(cacheRoot, "staging", staged[0] ?? ""))).toContain(
-    ".retained",
+  if (!closed.ok) expect(closed.error.cleanupResources).toContain(retained);
+
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  await utimes(retained, twoDaysAgo, twoDaysAgo);
+  await setFakeKunaBehavior(kuna, {});
+  const other = newCache(installation);
+  const built = await other.build({
+    installation,
+    ...(await target("other")),
+  });
+  if (!built.ok) throw built.error;
+  expect(await entries(cacheRoot, "staging")).toEqual(staged);
+  expect(await readFile(join(retained, "input", "program"), "utf8")).toBe(
+    "program",
   );
-  if (!closed.ok)
-    expect(closed.error.cleanupResources).toContain(
-      join(cacheRoot, "staging", staged[0] ?? ""),
-    );
+  expect(await other.close()).toEqual({ ok: true, value: null });
 });
 
 it("rebuilds an entry another cache instance evicted after this one verified it", async () => {
@@ -575,7 +621,6 @@ it("reports an abandoned build's unproven cleanup even after a retry replaced it
   let exports = 0;
   const cache = new KunaProjectCache(cacheRoot, {
     maxBytes: 64 * 1024 ** 2,
-    staleStagingMs: 24 * 60 * 60 * 1000,
     launcher: async (options) => {
       const spawned = await spawnOwnedProviderProcess(options);
       if (options.arguments[0] !== "decompile-project" || ++exports > 1)
@@ -617,23 +662,6 @@ it("reports an abandoned build's unproven cleanup even after a retry replaced it
     ok: false,
     error: { diagnostics: { reason: "first export unverified" } },
   });
-});
-
-it("never sweeps staging marked as retained, however old", async () => {
-  const { installation, cacheRoot, cache, target } = await fixture(
-    "rea-kuna-sweep-retained-",
-  );
-  const retained = join(cacheRoot, "staging", "build-retained");
-  await mkdir(retained, { recursive: true });
-  await writeFile(join(retained, ".retained"), "{}\n");
-  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
-  await utimes(retained, twoDaysAgo, twoDaysAgo);
-
-  expect(
-    (await cache.build({ installation, ...(await target("program")) })).ok,
-  ).toBe(true);
-
-  expect(await entries(cacheRoot, "staging")).toEqual(["build-retained"]);
 });
 
 it("removes its staging when publication itself fails", async () => {

@@ -206,6 +206,9 @@ code unit, matching the original bytes identified by the artifact digest.
 
 Plain `.ts` artifact sources use TypeScript syntax without JSX, including
 angle-bracket type assertions. `.tsx` and `.jsx` retain JSX parsing.
+JavaScript sources use JavaScript grammar with JSX, never TypeScript syntax,
+so valid JavaScript that TypeScript reads differently keeps its JavaScript
+meaning.
 
 Relative TypeScript imports can name their emitted `.js`, `.mjs`, or `.cjs`
 counterparts while resolving to inventoried source files. This substitution
@@ -220,7 +223,10 @@ Selected bounded text is then parsed as inert data to recover:
 - Webpack and Rspack chunk registrations and module factories represented as
   AST literals;
 - static imports, dynamic imports, CommonJS `require` calls, workers, and
-  service workers;
+  service workers (only `new Worker(new URL(path, import.meta.url))` resolves
+  relative to the calling module; string worker and service-worker paths use
+  the document base URL or Node's working directory, which static analysis
+  does not establish, so they keep their expression and stay unresolved);
 - route, network endpoint, storage, and vendor-marker observations;
 - local source-map declarations and original
   source names and content digests;
@@ -270,8 +276,13 @@ RPC client syntax also contributes network endpoint candidates, in both
   named operation found at the start of a string or cooked template literal —
   the name must be followed by variable definitions (`($`), a directive, or a
   selection set starting with a field name — or in a precompiled
-  `OperationDefinition` document object. A graphql-tag `loc.source.body` copy is
-  not reported twice. Anonymous operations are not reported.
+  `OperationDefinition` document object. A standalone Source object's `body`
+  remains an operation candidate even when it has `locationOffset` metadata.
+  A graphql-tag `loc.source.body` copy is suppressed only when that source
+  belongs to a recovered document with the same operation and its containing
+  document, location and source have proven private metadata ownership. Writes,
+  escapes and classic-script global bindings retain the source observation.
+  Anonymous operations are not reported.
 
 Literal link options and precompiled document fields follow object property
 order: the final definition owns the key. A later spread, dynamic computed key,
@@ -426,7 +437,18 @@ retained candidate strings and temporary canonical-key serialization. This is
 an in-memory semantic allocation bound independent of CLI or MCP transport
 budgets. Source literal bytes remain in the parsed source and artifact evidence;
 when a normalized semantic value exceeds the bound, its value is unknown and
-coverage is partial. Expression
+coverage is partial. Direct string literals, cooked templates without
+substitutions, and derived strings all use this normalization boundary. A
+single exact primitive is validated without allocating deduplication or sort
+state or serializing a canonical key. Configuration defaults use the same
+normalizer; limited defaults retain `value_resource_limit` and an anchored
+resource-limit unknown. Known null, false, zero, and empty-string defaults stay
+exact. This primitive-value bound does not truncate lookup identities such as
+source paths, field names or request endpoints. Full endpoint properties remain
+available for endpoint queries, tracing and comparison. Each analysis records encountered limit classifications independently of
+later projections: a selected healthy sibling can remain exact while whole-file
+coverage reports the encountered bound. Projection preserves limiting values
+from the shared property-slot owner. Expression
 evaluation and provenance walks stop after 256 nested levels. Union products
 and string lengths are checked before allocating combinations or concatenated
 strings. When a boundary is reached, the value stays unknown, semantic coverage
@@ -626,6 +648,10 @@ href are read without surrounding whitespace or embedded tabs and newlines, and
 their percent-encoded path bytes are decoded; encoded dot and separator bytes
 are still rejected. CommonJS module lookups retain extension and directory
 resolution.
+ESM, HTML, and URL references apply URL dot segments to empty path segments:
+`./assets//../app.js` selects `assets/app.js`, while a remaining empty segment
+such as `./assets//app.js` stays unavailable. CommonJS keeps filesystem path
+semantics and selects `app.js` for the same text.
 Unresolved HTML references retain their declaration, source range, and resolution
 reason in the renderer observations.
 HTML script source ranges follow the HTML parser across LF, CRLF, and bare CR

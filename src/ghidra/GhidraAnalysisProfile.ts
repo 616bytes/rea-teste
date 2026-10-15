@@ -43,6 +43,9 @@ import {
 
 const PROTOTYPE_CONSISTENCY_EVIDENCE = "bounded-x86-32-listing-pcode-v6";
 const callRelationshipCoverage = "function-body-call-coverage-v5";
+const functionBoundaryObservations = "ghidra-function-boundary-limitations-v4";
+const instructionReferenceCoverage =
+  "exact-address-incoming-without-synthetic-entry-v2";
 
 /**
  * The processor language REA pins for this target, or undefined when Ghidra may
@@ -138,9 +141,8 @@ export const resolveGhidraAnalysisProfile = async (
           procedure_file_offset_resolution:
             "address-first-unique-target-source-mapping-v2",
           instruction_flow_evidence: "decoded-return-pcode-v1",
-          instruction_references: "exact-address-incoming-v1",
-          function_boundary_observations:
-            "ghidra-function-boundary-limitations-v3",
+          instruction_references: instructionReferenceCoverage,
+          function_boundary_observations: functionBoundaryObservations,
           no_return_repair:
             installation.platform === "win32"
               ? "disabled-windows-p0"
@@ -227,6 +229,17 @@ export const resolveGhidraAnalysisProfile = async (
         ...(target.format === "pe"
           ? { pdb_observations: "program-info-v5" }
           : {}),
+        ...(installation.platform === "win32" &&
+        target.format === "pe" &&
+        (target.architecture === "arm" || target.architecture === "arm64")
+          ? {
+              windows_arm_pe_import:
+                selectedLanguage === undefined
+                  ? "loader-selected-language-v1"
+                  : "explicit-language-v1",
+              windows_arm_pe_machine: target.peMachine ?? null,
+            }
+          : {}),
         annotation_policy: "atomic-function-entry-metadata-v1",
         load_image_observations: "source-mappings-entry-context-v2",
         function_body_evidence: "complete-inclusive-ranges-v1",
@@ -239,9 +252,8 @@ export const resolveGhidraAnalysisProfile = async (
         procedure_file_offset_resolution:
           "address-first-unique-target-source-mapping-v2",
         instruction_flow_evidence: "decoded-return-pcode-v1",
-        instruction_references: "exact-address-incoming-v1",
-        function_boundary_observations:
-          "ghidra-function-boundary-limitations-v3",
+        instruction_references: instructionReferenceCoverage,
+        function_boundary_observations: functionBoundaryObservations,
         no_return_repair:
           installation.platform === "win32"
             ? "disabled-windows-p0"

@@ -146,6 +146,18 @@ export const resolveJavaScriptIntrinsicInvocation = (
             intrinsicReadChanged(member, memberPath)
           )
             return { kind: "opaque", path: memberPath, arguments: undefined };
+          // The alias froze the member's value at its initializer, but the
+          // callee reads the member again now: `invoke.call` resolves a new
+          // slot on the captured function. A replaced outer member is not
+          // the intrinsic, so this call cannot claim a confirmed write.
+          const callSitePath: readonly string[] | undefined =
+            memberPath === undefined ? undefined : [...memberPath, method];
+          if (
+            member !== undefined &&
+            callSitePath !== undefined &&
+            intrinsicReadChanged(callee, callSitePath)
+          )
+            return { kind: "opaque", path: callSitePath, arguments: undefined };
           // Function.prototype.call/apply uses the outer explicit receiver
           // as its callable, even when the member was read from a bound value.
           const callable: t.Node | undefined = explicitReceiver

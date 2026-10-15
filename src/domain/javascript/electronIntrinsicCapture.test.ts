@@ -5,6 +5,10 @@ import { ROLLDOWN_MODULE_INTEROP } from "./javascriptModuleInterop.fixture.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import {
+  collectJavaScriptIdentityWritesSteps,
+  electronMemberPath,
+} from "./javascriptElectronMemberWrites.js";
 import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
 import {
   completeSemanticSteps,
@@ -40,6 +44,52 @@ const invocationKinds = (source: string) => {
     },
   });
   return { interop, invocations, parsed };
+};
+
+/**
+ * Run the real identity-write collection and record each retained write plus
+ * each call's invocation classification at the moment it was decided. Writes
+ * feed `interop.retainWrite` so later reads observe earlier mutations — the
+ * write-free `invocationKinds` helper cannot exercise read timing.
+ */
+const collectedWrites = (source: string) => {
+  const parsed = parseJavaScriptSource(source);
+  if (parsed === null) throw new Error("invocation fixture did not parse");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const interop = createSemanticModuleInterop(state);
+  const invocations: (
+    | ReturnType<typeof interop.intrinsicInvocation>
+    | undefined
+  )[] = [];
+  const writes: (readonly (string | null)[])[] = [];
+  completeSemanticSteps(
+    collectJavaScriptIdentityWritesSteps(
+      parsed.program,
+      (node, kind) => {
+        if (kind === "opaque-call") return [interop.opaqueMutationPath(node)];
+        const { root, members } = electronMemberPath(node);
+        const path =
+          interop.intrinsicPath(root) ??
+          (kind === "member" ? interop.boundIntrinsic(root)?.path : undefined);
+        return path === undefined ? [] : [[...path, ...members]];
+      },
+      (node) => {
+        const invocation = interop.intrinsicInvocation(node);
+        invocations.push(invocation);
+        return invocation;
+      },
+      interop.staticString,
+      interop.isFreshObject,
+      (node, path, kind) => {
+        writes.push(path);
+        interop.retainWrite(node, path, kind);
+      },
+      interop.observeEvaluation,
+    ),
+  );
+  return { invocations, writes };
 };
 
 describe("captured intrinsic invocation reads", () => {
@@ -182,6 +232,68 @@ describe("identifier-aliased intrinsic invocation members", () => {
       });
     },
   );
+
+  it("models the write while the captured member's later read is unchanged", () => {
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const invoke = change.call;
+      invoke.call(change,null,{value:customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it.each([
+    ["call", "invoke.call(change,null,{value:customCreate});"],
+    ["apply", "invoke.apply(change,[null,{value:customCreate}]);"],
+  ])(
+    "does not claim the intrinsic when Function.prototype.call.%s is replaced",
+    (member, invoke) => {
+      // `invoke` captured Function.prototype.call at its initializer, but
+      // `invoke.call` is a fresh property read at the call site: after
+      // `Function.prototype.call.call` is replaced the invoked value is the
+      // replacement, so no confirmed defineProperty write exists.
+      const { invocations, writes } = collectedWrites(
+        `const change = Object.defineProperty.bind(null,Object,"create");
+        const invoke = change.call;
+        Function.prototype.call.${member} = replacement;
+        ${invoke}`,
+      );
+      expect(invocations.at(-1)).toEqual(
+        expect.objectContaining({ kind: "opaque" }),
+      );
+      expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
+      expect(writes).toContainEqual(["intrinsic"]);
+    },
+  );
+
+  it("retains argument effects when the outer member read is replaced", () => {
+    // The argument's own write is recorded even though the replaced outer
+    // member makes the invocation itself unknown.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const invoke = change.call;
+      Function.prototype.call.call = replacement;
+      invoke.call(change,null,(Object.create = customCreate, {value:1}));`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({ kind: "opaque" }),
+    );
+    expect(
+      writes.filter(
+        (path) =>
+          path.length === 3 &&
+          path[0] === "intrinsic" &&
+          path[1] === "Object" &&
+          path[2] === "create",
+      ),
+    ).toHaveLength(1);
+  });
 
   it.each([
     'const change = Object.defineProperty.call; change(null,Object,"create",{value:customCreate});',

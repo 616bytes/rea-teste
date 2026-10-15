@@ -1077,6 +1077,26 @@ describe("web metadata key semantics", () => {
   });
 });
 
+it("requires an exact modelContext receiver segment for WebMCP declarations", () => {
+  const result = analyzeCapturedWebBundle(
+    inspection(`
+      document.modelContext.registerTool({ name: "document" });
+      navigator.modelContext.registerTool({ name: "navigator" });
+      modelContext.registerTool({ name: "bare" });
+      local.modelContext.registerTool({ name: "nested" });
+      foobar_modelContext.registerTool({ name: "suffix" });
+      local.foobar_modelContext.registerTool({ name: "nested suffix" });
+      renamed.registerTool({ name: "renamed" });
+      document.modelContext[method]({ name: "dynamic" });
+    `),
+  );
+  expect(result.observations.webmcp_declarations).toEqual(
+    ["document", "navigator", "bare", "nested"].map((name) =>
+      expect.objectContaining({ name, trust: "page-declared-untrusted" }),
+    ),
+  );
+});
+
 it("retains WebMCP declarations through optional member and call chaining", () => {
   const result = analyzeCapturedWebBundle(
     inspection(`

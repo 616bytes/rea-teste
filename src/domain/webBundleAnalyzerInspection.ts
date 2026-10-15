@@ -209,7 +209,7 @@ const inspectCall = (
       accumulator,
     });
   if (
-    name.endsWith("modelContext.registerTool") ||
+    name.endsWith(".modelContext.registerTool") ||
     name === "modelContext.registerTool"
   )
     addWebMcpDeclaration(script, node, accumulator);

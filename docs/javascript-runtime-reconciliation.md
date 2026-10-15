@@ -97,8 +97,8 @@ nodes. REA evaluates compatible static candidates conservatively:
 3. Without captured bytes, one unique mapped artifact path can produce a
    medium-confidence location match.
 4. Multiple candidates remain `ambiguous`; no `observed_as` edge is emitted.
-   When mapped candidates exist, only those with matching content qualify;
-   unrelated content matches elsewhere are excluded.
+   With captured source and mapped candidates, only mapped content matches
+   qualify; unrelated content matches elsewhere are excluded.
    `candidate_static_count` reports the full qualified layer/node count, and
    `candidate_static_nodes` includes every unique candidate reference.
 5. If captured bytes disagree with the static candidate at the mapped path,

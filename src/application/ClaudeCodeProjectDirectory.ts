@@ -13,6 +13,22 @@ export const claudeCodeLocalClients = async (
   workspaceDirectory: string,
   resources: ArtifactResourceScope,
 ): Promise<readonly SetupClient[]> => {
+  const client = clients.find(({ name }) => name === "claude_code");
+  if (client === undefined)
+    throw new AnalysisInputError(
+      "Claude Code local registration",
+      {
+        userMessage:
+          "Claude Code is unavailable in the selected client catalog.",
+      },
+      [
+        {
+          path: ["client"],
+          reason: "invalid_value",
+          message: "Local scope requires the Claude Code client.",
+        },
+      ],
+    );
   let claudeProjectDirectory: string;
   try {
     claudeProjectDirectory = await claudeCodeProjectDirectory(
@@ -36,9 +52,7 @@ export const claudeCodeLocalClients = async (
       ],
     );
   }
-  return clients
-    .filter(({ name }) => name === "claude_code")
-    .map((client) => ({ ...client, claudeProjectDirectory }));
+  return [{ ...client, claudeProjectDirectory }];
 };
 
 /** Claude Code keys private project state by the physical enclosing Git root, or cwd. */

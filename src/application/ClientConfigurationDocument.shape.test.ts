@@ -6,36 +6,41 @@ import {
   withClientServers,
 } from "./ClientConfigurationDocument.js";
 
-it("does not select a Windows backslash alias that native Claude ignores", () => {
-  const directory = "C:\\work\\project";
-  const original = {
-    mcpServers: { rea: { command: "user" } },
-    projects: { [directory]: { mcpServers: { rea: { command: "ignored" } } } },
-  };
-  const parsed = parseClientConfiguration(JSON.stringify(original), "json");
-  const effective = claudeCodeRegistrationConfiguration(parsed, directory, {
-    platform: "win32",
-  });
-  expect(effective.serversPath).toEqual(["mcpServers"]);
-  const local = parseClientConfiguration(
-    JSON.stringify(original),
-    "json",
-    directory,
-    { platform: "win32" },
-  );
-  expect(local.serversPath).toEqual([
-    "projects",
-    "C:/work/project",
-    "mcpServers",
-  ]);
-  expect(withClientServers(local, { rea: { command: "new-local" } })).toEqual({
-    ...original,
-    projects: {
-      ...original.projects,
-      "C:/work/project": { mcpServers: { rea: { command: "new-local" } } },
-    },
-  });
-});
+it.each(["C:\\work\\project", "c:/work/project"])(
+  "does not select the inactive Windows project alias %s",
+  (alias) => {
+    const directory = "C:\\work\\project";
+    const original = {
+      mcpServers: { rea: { command: "user" } },
+      projects: { [alias]: { mcpServers: { rea: { command: "ignored" } } } },
+    };
+    const parsed = parseClientConfiguration(JSON.stringify(original), "json");
+    const effective = claudeCodeRegistrationConfiguration(parsed, directory, {
+      platform: "win32",
+    });
+    expect(effective.serversPath).toEqual(["mcpServers"]);
+    const local = parseClientConfiguration(
+      JSON.stringify(original),
+      "json",
+      directory,
+      { platform: "win32" },
+    );
+    expect(local.serversPath).toEqual([
+      "projects",
+      "C:/work/project",
+      "mcpServers",
+    ]);
+    expect(withClientServers(local, { rea: { command: "new-local" } })).toEqual(
+      {
+        ...original,
+        projects: {
+          ...original.projects,
+          "C:/work/project": { mcpServers: { rea: { command: "new-local" } } },
+        },
+      },
+    );
+  },
+);
 
 it("selects native Windows project keys using the injected platform", () => {
   const parsed = parseClientConfiguration(

@@ -326,11 +326,12 @@ user-level file only. Loading this registration and real REA tool calls
 through WorkBuddy are verified.
 
 If a gateway in front of WorkBuddy or CodeBuddy rejects the full catalog with
-HTTP 400 `code 11133` and an empty `param`, set
-`"REA_MCP_INPUT_SCHEMA_PROFILE": "compact"` on the REA registration in the MCP
-host that owns the session, then restart that host. The host name alone does
-not identify the downstream model; see [#2999](https://github.com/morluto/rea/issues/2999)
-and the compact profile section in [mcp-contracts.md](mcp-contracts.md).
+HTTP 400 `code 11133` and an empty `param`, add
+`"REA_MCP_INPUT_SCHEMA_PROFILE": "compact"` to the `env` object of
+`mcpServers.rea` in that host's MCP config, then restart the host. The host
+name alone does not identify the downstream model; see
+[#2999](https://github.com/morluto/rea/issues/2999) and the compact profile
+section in [mcp-contracts.md](mcp-contracts.md).
 
 ## ZCode
 

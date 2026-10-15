@@ -1,6 +1,7 @@
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
+import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 
 import {
   createAnalysisExecution,
@@ -77,7 +78,7 @@ import {
 } from "./GhidraMipsProfile.js";
 import { ghidraRiscvLimitations } from "./GhidraRiscvProfile.js";
 import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
-import { unverifiedGhidraBuildLimitation } from "./GhidraInstallationPolicy.js";
+import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import {
@@ -602,7 +603,10 @@ export const createGhidraProviderClient = (input: {
         ? {}
         : { javaVmName: installation.javaVmName }),
       bridgeScriptPath: fileURLToPath(
-        new URL("../../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
+        new URL(
+          `../../bridge/ghidra/${GHIDRA_BRIDGE_SOURCES.bridge}`,
+          import.meta.url,
+        ),
       ),
       ...(pspExtension?.success === true
         ? { pspExtension: pspExtension.data }

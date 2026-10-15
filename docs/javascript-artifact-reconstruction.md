@@ -223,10 +223,12 @@ Selected bounded text is then parsed as inert data to recover:
 - Webpack and Rspack chunk registrations and module factories represented as
   AST literals;
 - static imports, dynamic imports, CommonJS `require` calls, workers, and
-  service workers (only `new Worker(new URL(path, import.meta.url))` resolves
-  relative to the calling module; string worker and service-worker paths use
-  the document base URL or Node's working directory, which static analysis
-  does not establish, so they keep their expression and stay unresolved);
+  service workers, where a registration is attributed only to the unmodified
+  `navigator.serviceWorker` global (only a `new URL(path, import.meta.url)`
+  argument resolves relative to the calling module; string worker and
+  service-worker paths use the document base URL or Node's working directory,
+  which static analysis does not establish, so they keep their expression and
+  stay unresolved);
 - route, network endpoint, storage, and vendor-marker observations;
 - local source-map declarations and original
   source names and content digests;

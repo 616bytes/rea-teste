@@ -245,7 +245,10 @@ const registerSharedReverseEngineeringEdgeCasesPart2 = (): void => {
       });
       // The later Rizin attempt observes the outstanding cleanup, but the
       // refusal belongs to the objdump operation that kept the process.
-      const blocked = await service.executeRizinCommand({ path, command: "iI" });
+      const blocked = await service.executeRizinCommand({
+        path,
+        command: "iI",
+      });
       expect(blocked).toMatchObject({
         ok: false,
         error: {
@@ -436,7 +439,10 @@ const registerSharedReverseEngineeringEdgeCasesPart4 = (): void => {
       expect(removedResult).toMatchObject({
         ok: true,
         value: {
-          normalized_result: { artifact_sha256_after: null, artifact_changed: null },
+          normalized_result: {
+            artifact_sha256_after: null,
+            artifact_changed: null,
+          },
           limitations: expect.arrayContaining([
             expect.stringContaining("post-run artifact digest"),
           ]),
@@ -520,7 +526,10 @@ const registerSharedReverseEngineeringEdgeCasesPart5 = (): void => {
         error: {
           _tag: "AnalysisCancelledError",
           partialObservation: {
-            normalized_result: { exit_code: null, completion_status: "unknown" },
+            normalized_result: {
+              exit_code: null,
+              completion_status: "unknown",
+            },
           },
         },
       });

@@ -860,8 +860,10 @@ Installation inspection derives the private configuration directory identity fro
 The launcher uses that inspected coordinate; it does not reread the properties
 or guess from the extracted folder's name.
 If the identity is missing, malformed, or unsafe as a single path component,
-startup fails before creating runtime subdirectories or starting Java. Restore
-the selected release's properties instead of renaming its installation folder.
+the launcher fails before preparing its home/cache/config/temp directories or
+starting Java. The client may already have allocated private runtime/endpoint
+resources and a target snapshot; existing startup-failure cleanup still applies.
+Restore the selected release's properties instead of renaming its installation folder.
 This coordinate selects only REA's session-private configuration directory, not
 the installation or an existing user configuration directory.
 

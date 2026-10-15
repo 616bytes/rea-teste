@@ -34,6 +34,11 @@ objects stay in the adapter. Preserve caller-selected executable, path, endpoint
 command, analysis settings, output format and decompiler; never select an
 operation by catalog position or command-name suffix.
 
+For provider-neutral analysis, reuse r2mcp's named tools through a thin adapter
+to REA's existing operations instead of creating another typed radare2 API.
+The command/session operations above serve the separate unrestricted-command
+use case. Typed r2mcp calls do not require enabling `run_command`.
+
 ## Transport choices
 
 | Transport         | Use and effects                                                                                                                 | Ownership and performance                                                                                          |
@@ -67,6 +72,39 @@ Optional transport authorization is supplied separately and is not recorded.
 The installed r2 6.2.5 emits LF-only HTTP response headers. The experiment uses
 Node's HTTP compatibility parser for this explicit loopback peer, retaining raw
 header values; it does not repair response bytes with string replacements.
+
+iaito already exposes this attachment path: its **Start Web Server** action
+starts `=h&` on the existing core. POST the r2pipe2 request to `/cmd` or `/cmd/`
+to use that session's loaded file and analysis. A separate iaito GUI automation
+bridge is unnecessary for command access. REA must treat the session as
+externally owned and live; releasing its connection must not close the file or
+server. The prototype accepts loopback endpoints, including a caller-established
+local tunnel; it does not currently admit arbitrary remote hosts.
+
+## Reusing typed r2mcp calls
+
+The installed r2mcp 1.8.8 advertises named tools including `list_functions`,
+`list_strings`, `decompile_function`, `disassemble_function`, `xrefs_to`,
+`show_info`, and decompiler selection. Its `-u URL` HTTP-client mode can route
+supported named tools to an existing r2/iaito `/cmd` endpoint. Its core plugin
+can instead expose MCP on the existing `RCore`. These paths avoid duplicating
+r2 command construction in REA. Discover the actual catalog because the exposed
+tools differ between local, HTTP-client, restricted and plugin configurations.
+
+The adapter still owns conversion into REA's function identities, address
+strings, relationship coverage, tagged errors and Evidence. Typed inputs do
+not imply structured result facts: a local run returned function-list lines,
+and `-C structured` returned pseudocode as a `structuredContent.content` string.
+The inspected catalog advertises input schemas without per-tool output schemas.
+Prefer upstream structured-result improvements where facts are missing rather
+than duplicating fragile text interpretation across REA consumers.
+
+Preserve analysis policy as well as tool arguments. The inspected
+`list_functions` implementation runs `aaa` when its initial inventory is empty;
+it is not an observation-only operation in that state. Decompiler choice and
+mutation readback also need explicit semantics. The current experiment only
+uses `open_file` and `run_command`; named-tool mapping, `-u`, core-plugin MCP and
+their REA CLI/MCP parity remain unimplemented and unverified here.
 
 ## r2pipe2 results and failure ownership
 
@@ -173,3 +211,54 @@ sessions. Include server startup costs for cold HTTP/r2mcp runs. Linux, Windows,
 older radare2 versions, r2mcp MCP-over-HTTP, actual agent selection, decompiler
 quality, live-target detach and production failure/limit semantics remain
 unverified.
+
+## Implementation review
+
+This review examined the prototype at `67eee62fa3`, the existing provider
+adapters in this checkout, and the separate command/session PR #3521 at
+`16b98bd1f1`. These are REA integration comparisons, not rankings of the engines.
+
+| Integration             | Implemented surface                                                                                                                                       | Material limits                                                                                                                                                                     |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| This radare2 experiment | r2pipe2 over exec, owned pipe, HTTP POST and owned r2mcp stdio; native replies, logs and separate process stderr                                          | No runtime provider registration, shared native analysis operations or production Evidence; target identity is explicitly unverified                                                |
+| Radare2 PR #3521        | One-shot commands, persistent owned pipe sessions, command Evidence, doctor and real-provider verification lane                                           | Separate command/session family rather than an `AnalysisProvider` registered for shared native operations; no HTTP/iaito or r2mcp connection in the inspected diff                  |
+| Ghidra                  | Shared inventories, decompilation, instruction reads, typed references, CFG, bounded p-code value flow, types, byte reads/search and metadata annotations | Ephemeral headless Program, waits for default auto-analysis, no attached GUI; cancellation discards the database; Windows P0 excludes mutation                                      |
+| IDA                     | Shared inventories, pseudocode, assembly, xrefs and partial dossiers through upstream MCP; attached and headless profiles                                 | Read-only; no complete body ranges, typed references, referenced data or basic blocks; direct callers unavailable in modern/native profiles; live results are not snapshot-replayed |
+| Hopper                  | Shared analysis/dossiers, byte reads, file mappings, GUI position/navigation and names/comments/bookmarks through its bridge                              | Depends on completed GUI analysis; masked byte search is explicitly unavailable; string inventory and reference metadata have documented limits                                     |
+
+Two prototype defects were reproduced during review and remain to be fixed:
+
+1. **High priority: unsafe JSON integers silently change.** Sending
+   `{"cmd":"?e 9007199254740993","json":true}` through the real owned r2pipe
+   transport retained native `res:9007199254740993` but emitted parsed
+   `res:9007199254740992`. `JSON.parse` at the common reply boundary loses
+   precision before finite-number validation. Use lossless decoding and an
+   explicit representation policy; never emit a rounded address or numeric fact
+   as authoritative. This is a JavaScript consumer defect, not a radare2 error.
+2. **Medium priority: expected failures lose their category.** An already-aborted
+   HTTP request, before any dispatch, projected as `unreadable_output` with
+   completion `unknown`. The outer catch wraps cancellation and other expected
+   failures in `AnalysisOutputError`. Preserve tagged cancellation, deadline,
+   capability, input and capacity failures while retaining partial observations;
+   distinguish a request never submitted from unknown completion after dispatch.
+
+Further integration limits are source-derived: owned pipe/MCP state survives
+only within one `probe()` batch, while exec starts a new process per command;
+raw and parsed replies are duplicated in the transcript; decompiler selection
+has no retained provider profile; and external GUI changes have no identity or
+freshness checks. Arbitrary commands are available, but their results cannot yet
+feed REA's shared function dossiers or value/call tracing as typed provider facts.
+
+The review ran the two defect reproductions against the prototype and a local
+r2mcp named-tool workflow covering file open, analysis, function inventory,
+r2ghidra decompilation, xrefs and close. An initial DSL invocation passed numeric
+arguments as strings and was rejected; the successful run used default analysis
+and inventory options. iaito attachment was confirmed from its webserver source,
+not by operating a running GUI. Ghidra, IDA and Hopper comparison claims are
+source-derived; their engines and comparative performance were not rerun.
+
+The next implementation should reuse r2mcp for named analysis calls, retain direct
+r2pipe2/raw HTTP access, and attach to iaito through its existing server. Add
+shared provider registration, Evidence and lifecycle semantics around those
+boundaries. Measure equivalent completed tasks before choosing transport defaults
+or claiming an engine, token, latency, CPU or memory advantage.

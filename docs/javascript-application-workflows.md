@@ -6,7 +6,7 @@ are `inspect_analysis_view`, `trace_application_feature`,
 `trace_javascript_semantics`, `compare_application_versions`,
 `compare_source_to_bundle`, and `compare_javascript_export_shapes`; their CLI
 equivalents use the same names with hyphens. `inspect_analysis_view` projects a
-summary, module page, or one module from already completed application
+summary, module page, typed module references, or one module from already completed application
 Evidence; it does not walk relationships.
 
 `inspect_analysis_view` also projects retained `inspect_binary_layout`
@@ -40,6 +40,46 @@ combine its fields with the fact's location. Semantic trace results include the
 canonical context subset referenced by their returned facts, so those facts
 remain self-contained in the response.
 
+## Retained module facts
+
+For canonical identities and retained source-range counts, query the existing
+`inspect_analysis_view` tool with a typed module-reference projection:
+
+```json
+{
+  "source": {
+    "kind": "retained-evidence",
+    "evidence_id": "ev_ACTUAL_PARENT_ID"
+  },
+  "view": {
+    "kind": "javascript",
+    "collection": "modules",
+    "projection": "references",
+    "where": { "path": "main.js", "kind": "javascript-module" },
+    "offset": 0,
+    "limit": 16
+  }
+}
+```
+
+Replace the parent ID with the actual analysis summary's `parent_evidence_id`.
+Filters match exact retained paths and kinds. Omission includes all values;
+`path: null` selects an unavailable path and `path: ""` selects a recorded empty
+path. Multiple identities can share a path. The default offset is 0 and limit
+is 64; follow `coverage.next_offset` for later matching rows in retained order.
+
+Each row contains its `node_id`, kind, path, canonical identity, retained
+source-range observation count, and distinct supporting authority/state/confidence
+combinations in `basis`. These counts do not prove unique reference sites or
+runtime loading. Use the existing module item view with the row's `node_id` for
+exact source ranges and complete observations. The result retains parent/query
+Evidence identity, artifact identity, limitations and unknowns. `source_coverage`
+keeps selected/unselected sources, graph coverage and unknown counts separate
+from page exhaustion; an exhausted or empty page cannot prove absence from an
+incompletely analyzed application. CLI `inspect-analysis-view` reads the same
+request from a JSON file; portable input uses `source.kind: "inline"` with the
+complete parent Evidence.
+
 ## Feature tracing
 
 Select one literal seed kind: node ID, route, string, API, IPC channel, module,
@@ -55,11 +95,21 @@ matches exactly. Otherwise the result recommends provider-neutral follow-up
 tools and reports `requires-provider-analysis`; it never starts or switches a
 provider implicitly.
 
+A handoff requires the add-on's exact content identity. Unavailable unpacked
+companions remain visible in the trace graph with their canonical path,
+availability and container-backed Evidence. They yield no actionable handoff
+until their bytes are available and the application is reanalyzed; the archive
+digest does not identify the missing add-on. An empty handoff list does not prove
+that the trace contains no native components. Source partial coverage remains
+visible independently of handoff eligibility.
+
 ## Semantic relation tracing
 
 `trace_javascript_semantics` queries the authenticated companion graph without
 rereading mutable files. A seed may identify a semantic or application node,
 literal, function fingerprint, property, endpoint, event, or boundary field.
+For a recovered parse, coercion, or validation boundary, its field value is the
+static operation's method name (for example, `Number`).
 The query declares backward provenance, forward influence, callers, or
 ownership and can restrict admitted relation kinds. REA returns every matching
 seed and the complete reachable subgraph; callers do not choose node, relation,
@@ -126,6 +176,9 @@ valid inputs.
 
 Endpoint nodes keep the exact endpoint in each observation's `properties.value`;
 semantic request and response nodes keep it in `properties.endpoint`. Endpoint
+lookup identities are preserved independently of the primitive-value lattice's
+byte budget. An oversized normalized literal can become unknown while the same
+string remains an exact endpoint for tracing and comparison. Endpoint
 identity keys use `value-sha256:<digest>` over the canonical JSON string when
 that is shorter, or when the original value starts with the reserved digest
 prefix. Other short endpoint keys remain unchanged. Endpoint labels use the

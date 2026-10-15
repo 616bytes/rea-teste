@@ -94,10 +94,114 @@ const failedEntry = (
   };
 };
 
+/** A package directory's legacy `main` entry point, as its manifest declares it. */
+type PackageMain =
+  | { readonly state: "declared"; readonly main: string }
+  | { readonly state: "none" }
+  | { readonly state: "unknown" };
+
+/**
+ * Read each inventoried `package.json` once. Node selects a non-empty string
+ * `main` before a directory index; an unreadable or invalid manifest leaves
+ * that selection unknown.
+ */
+const readPackageMains = (
+  read: ReferenceSourceRead,
+): ReadonlyMap<string, PackageMain> => {
+  const mains = new Map<string, PackageMain>();
+  for (const entry of read.entries) {
+    if (posix.basename(entry.path) !== "package.json") continue;
+    const directory = posix.dirname(entry.path);
+    if (entry.status !== "read" || entry.kind !== "file") {
+      mains.set(directory, { state: "unknown" });
+      continue;
+    }
+    try {
+      const manifest: unknown = JSON.parse(
+        new TextDecoder("utf-8", { fatal: true }).decode(entry.bytes),
+      );
+      const main =
+        typeof manifest === "object" && manifest !== null
+          ? Reflect.get(manifest, "main")
+          : undefined;
+      mains.set(
+        directory,
+        typeof main === "string" && main !== ""
+          ? { state: "declared", main }
+          : { state: "none" },
+      );
+    } catch {
+      mains.set(directory, { state: "unknown" });
+    }
+  }
+  return mains;
+};
+
+/**
+ * Extension slots in probe order. Within a slot, files precede directory
+ * indexes. The CommonJS loader tries `X.json` after `X.js` and before any
+ * directory index; ESM and TypeScript require an explicit `.json`.
+ */
+const RESOLUTION_SUFFIXES: readonly (readonly string[])[] = [
+  [""],
+  [".ts"],
+  [".js"],
+  [".mjs"],
+  [".cjs"],
+  [".tsx"],
+  [".jsx"],
+];
+const REQUIRE_RESOLUTION_SUFFIXES = RESOLUTION_SUFFIXES.map((slot) =>
+  slot.includes(".js") ? [...slot, ".json"] : slot,
+);
+
+/** Inventory facts an internal specifier resolves against. */
+interface SpecifierContext {
+  readonly lookupPath: ReferenceSourcePathLookup;
+  readonly packageMains: ReadonlyMap<string, PackageMain>;
+}
+
+/**
+ * Apply a package `main` to a directory resolved through its index. Node loads
+ * the declared entry as a file, then as a directory index, and falls back to
+ * the package's own index only when neither exists.
+ */
+const selectPackageMain = (
+  index: string,
+  context: SpecifierContext,
+  slots: readonly (readonly string[])[],
+): { to: string; resolution: "internal" | "unresolved" } => {
+  const directory = posix.dirname(index);
+  const manifest = context.packageMains.get(directory);
+  if (manifest === undefined || manifest.state === "none")
+    return { to: index, resolution: "internal" };
+  if (manifest.state === "unknown")
+    return { to: directory, resolution: "unresolved" };
+  // Node resolves `main` with path.resolve: an absolute main leaves the
+  // package, and a trailing separator does not make the entry a directory.
+  if (posix.isAbsolute(manifest.main))
+    return { to: posix.normalize(manifest.main), resolution: "unresolved" };
+  const target = posix
+    .normalize(posix.join(directory, manifest.main))
+    .replace(/(?<=.)\/+$/u, "");
+  // Node would load a declared entry outside the imported root.
+  if (logicalPathEscapesRoot(target))
+    return { to: target, resolution: "unresolved" };
+  const suffixes = slots.flat();
+  const selected = context.lookupPath.resolveCandidates([
+    ...suffixes.map((suffix) => `${target}${suffix}`),
+    ...suffixes
+      .filter((suffix) => suffix !== "")
+      .map((suffix) => posix.join(target, `index${suffix}`)),
+  ]);
+  return { to: selected ?? index, resolution: "internal" };
+};
+
 const resolveInternalSpecifier = (
   fromPath: string,
   specifier: string,
-  lookupPath: ReferenceSourcePathLookup,
+  context: SpecifierContext,
+  slots: readonly (readonly string[])[],
 ): { to: string; resolution: "internal" | "unresolved" } => {
   if (posix.isAbsolute(specifier))
     return { to: specifier, resolution: "unresolved" };
@@ -109,10 +213,15 @@ const resolveInternalSpecifier = (
   // Preserve directory intent before normalization removes terminal dot segments.
   const directoryReference =
     specifier.endsWith("/") || [".", ".."].includes(posix.basename(specifier));
-  const suffixes = ["", ".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx"];
-  const candidates = suffixes.flatMap((suffix) => [
-    ...(directoryReference ? [] : [`${normalized}${suffix}`]),
-    posix.join(normalized, `index${suffix}`),
+  // A directory resolves only to an index with an extension; neither Node nor
+  // TypeScript selects an extensionless `index` file.
+  const candidates = slots.flatMap((slot) => [
+    ...(directoryReference
+      ? []
+      : slot.map((suffix) => `${normalized}${suffix}`)),
+    ...slot
+      .filter((suffix) => suffix !== "")
+      .map((suffix) => posix.join(normalized, `index${suffix}`)),
   ]);
   // Retain present runtime files first; substitute only a missing counterpart.
   // Counterparts cover explicit filenames, not directory/index resolution.
@@ -122,9 +231,13 @@ const resolveInternalSpecifier = (
         ({ path }) => path,
       ),
     );
-  const match = lookupPath.resolveCandidates(candidates);
-  return match === undefined
-    ? { to: normalized, resolution: "unresolved" }
+  const match = context.lookupPath.resolveCandidates(candidates);
+  if (match === undefined) return { to: normalized, resolution: "unresolved" };
+  const resolvedThroughIndex =
+    posix.basename(match).startsWith("index.") &&
+    posix.dirname(match).normalize("NFC") === normalized.normalize("NFC");
+  return resolvedThroughIndex
+    ? selectPackageMain(match, context, slots)
     : { to: match, resolution: "internal" };
 };
 
@@ -132,7 +245,7 @@ type ReadFile = Extract<ReferenceSourceEntry, { status: "read"; kind: "file" }>;
 
 const appendFile = (
   entry: ReadFile,
-  lookupPath: ReferenceSourcePathLookup,
+  context: SpecifierContext,
   output: ParsedReferenceSourceEntries,
 ): void => {
   const language = detectReferenceSourceLanguage(entry.path);
@@ -159,7 +272,10 @@ const appendFile = (
     const resolved = resolveInternalSpecifier(
       relationship.from_path,
       relationship.to,
-      lookupPath,
+      context,
+      relationship.kind === "requires"
+        ? REQUIRE_RESOLUTION_SUFFIXES
+        : RESOLUTION_SUFFIXES,
     );
     output.relationships.push({
       ...relationship,
@@ -172,11 +288,11 @@ const appendFile = (
 
 const appendReadEntry = (
   entry: Extract<ReferenceSourceEntry, { status: "read" }>,
-  lookupPath: ReferenceSourcePathLookup,
+  context: SpecifierContext,
   output: ParsedReferenceSourceEntries,
 ): void => {
   if (entry.kind === "file") {
-    appendFile(entry, lookupPath, output);
+    appendFile(entry, context, output);
     return;
   }
   const classifications = classifyReferenceSourcePath(entry.path);
@@ -219,11 +335,14 @@ export const parseReferenceSourceEntries = (
     parseFailures: [],
     limitations: [...read.limitations],
   };
-  const lookupPath = createReferenceSourcePathLookup(filePaths);
+  const context: SpecifierContext = {
+    lookupPath: createReferenceSourcePathLookup(filePaths),
+    packageMains: readPackageMains(read),
+  };
   for (const entry of read.entries) {
     if (signal?.aborted === true) break;
     if (entry.status === "failed") output.entries.push(failedEntry(entry));
-    else appendReadEntry(entry, lookupPath, output);
+    else appendReadEntry(entry, context, output);
   }
   return output;
 };

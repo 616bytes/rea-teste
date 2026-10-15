@@ -267,7 +267,7 @@ describe("HarmonyOS inventory coverage", () => {
     );
     const inventory = await inventoryApplicationPackage(path);
     expect(inventory.normalized_result).toMatchObject({
-      coverage_status: "complete",
+      coverage: { scope: "container-entries", status: "complete" },
     });
 
     const projection = requireDeterministicProjection(

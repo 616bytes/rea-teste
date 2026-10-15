@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { basename } from "node:path";
+import { posix, win32 } from "node:path";
 
 import canonicalize from "canonicalize";
 
@@ -106,13 +106,19 @@ const sameSymbolName = (expected: string, native: NativeSymbol): boolean =>
     ? native.name.slice(1)
     : native.name);
 
+const moduleFilename = (value: string): string =>
+  (win32.isAbsolute(value) && !posix.isAbsolute(value)
+    ? win32
+    : posix
+  ).basename(value);
+
 const normalizeModule = (value: string): string =>
-  basename(value)
+  moduleFilename(value)
     .toLowerCase()
     .replace(/\.(dll|dylib|so|node|exe)$/u, "");
 
 const nativeModuleIdentities = (value: string): ReadonlySet<string> => {
-  const filename = basename(value).toLowerCase();
+  const filename = moduleFilename(value).toLowerCase();
   const stem = normalizeModule(filename);
   const identities = new Set([stem]);
   if (/\.(dylib|so)$/u.test(filename) && stem.startsWith("lib"))

@@ -232,6 +232,48 @@ it("keeps literal module names distinct and accepts the shared-library lib alias
   });
 });
 
+it.each([
+  [String.raw`C:\deps\nativehelper.dll`, "/examples/nativehelper.dll"],
+  ["C:/deps/nativehelper.dll", "/examples/nativehelper.dll"],
+  [String.raw`\\server\share\nativehelper.dll`, "/examples/nativehelper.dll"],
+  ["nativehelper.dll", String.raw`C:\deps\nativehelper.dll`],
+  ["nativehelper.dll", String.raw`\\server\share\nativehelper.dll`],
+])(
+  "matches target module paths independently of the host: %s / %s",
+  (scope, path) => {
+    const result = verifyManagedNativeBoundaries({
+      ...inputWithImportScope(scope),
+      native_observations: [nativeEvidenceWithExports(["open_native"], path)],
+    });
+    expect(result.pinvoke_imports[0]).toMatchObject({
+      managed: { import_scope_name: scope },
+      status: "verified",
+      basis: "exact-export-name",
+      matched_native: { module_path: path },
+    });
+  },
+);
+
+it.each([
+  [String.raw`C:\deps\nativehelper.dll`, "/examples/other.dll"],
+  [String.raw`/deps/native\helper.dll`, "/examples/helper.dll"],
+  ["helper.dll", String.raw`/examples/native\helper.dll`],
+])(
+  "retains module mismatches and literal POSIX backslashes: %s / %s",
+  (scope, path) => {
+    const result = verifyManagedNativeBoundaries({
+      ...inputWithImportScope(scope),
+      native_observations: [nativeEvidenceWithExports(["open_native"], path)],
+    });
+    expect(result.pinvoke_imports[0]).toMatchObject({
+      managed: { import_scope_name: scope },
+      status: "contradicted",
+      basis: "module-mismatch",
+      matched_native: { module_path: path },
+    });
+  },
+);
+
 it("keeps name candidates unresolved when a required module identity is absent", () => {
   for (const scope of [null, "", "   "]) {
     const result = verifyManagedNativeBoundaries({

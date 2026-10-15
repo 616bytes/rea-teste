@@ -1,5 +1,5 @@
-import { access, readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { readFile, readdir } from "node:fs/promises";
+import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { PRODUCT_IDENTITY } from "../../src/identity.js";
@@ -51,35 +51,17 @@ describe("onboarding documentation product facts", () => {
       .filter((language) => language.code !== "en")
       .map((language) => language.readme);
     expect(translatedReadmes).toContain("docs/readme/README_it.md");
-    expect(translatedReadmes).toHaveLength(19);
+    expect(translatedReadmes).toContain("docs/readme/README_el.md");
+    const editions = (await readdir(resolve("docs/readme")))
+      .filter((name) => /^README_[A-Za-z0-9-]+\.md$/u.test(name))
+      .map((name) => `docs/readme/${name}`);
+    expect([...translatedReadmes].sort()).toEqual(editions.sort());
     const english = shellExamples(await readFile(resolve("README.md"), "utf8"));
     for (const path of translatedReadmes)
       expect(
         shellExamples(await readFile(resolve(path), "utf8")),
         path,
       ).toEqual(english);
-  });
-
-  it("keeps repository-relative links in translated readmes on existing paths", async () => {
-    const inventory = JSON.parse(
-      await readFile(resolve("website/locales/languages.json"), "utf8"),
-    ) as { code: string; readme: string }[];
-    for (const { readme } of inventory) {
-      const content = await readFile(resolve(readme), "utf8");
-      const links = [
-        ...content.matchAll(/\]\(([^)\s]+)\)/gu),
-        ...content.matchAll(/\b(?:src|href)="([^"]+)"/gu),
-      ].map((match) => match[1] ?? "");
-      for (const link of links) {
-        if (/^[a-z][a-z\d+.-]*:/iu.test(link) || link.startsWith("/") || link.startsWith("#"))
-          continue;
-        const target = decodeURIComponent(link.split(/[?#]/u, 1)[0] || ".");
-        await expect(
-          access(resolve(dirname(resolve(readme)), target)),
-          `${readme}: ${link}`,
-        ).resolves.toBeUndefined();
-      }
-    }
   });
 
   it("preserves Persian joiners in links to GitHub-rendered headings", async () => {

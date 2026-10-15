@@ -8,6 +8,20 @@ import { createWebTextArtifact } from "./webContentArtifact.js";
 
 const origin = "https://app.example.test";
 
+it("retains standalone GraphQL Source operations in captured scripts", () => {
+  const result = analyzeCapturedWebBundle(
+    inspection(`
+    const source = {
+      body: "query GetUser { user { id } }",
+      locationOffset: { line: 1, column: 1 },
+    };
+  `),
+  );
+  expect(result.observations.endpoints).toEqual([
+    expect.objectContaining({ value: "GetUser", mechanism: "graphql:query" }),
+  ]);
+});
+
 it.each([
   {
     kind: "recovered",
@@ -427,6 +441,38 @@ describe("web bundle bound WebSocket constructors", () => {
       'import Imported from "ws"; const Socket = Imported; new Socket("wss://example.test/bound");',
       "Socket",
     ],
+    [
+      'const WebSocket = require("ws"); new WebSocket("wss://example.test/bound");',
+      "WebSocket",
+    ],
+    [
+      'import WebSocket = require("ws"); new WebSocket("wss://example.test/bound");',
+      "WebSocket",
+    ],
+    [
+      'const Imported = require("ws"); const Socket = Imported; new Socket("wss://example.test/bound");',
+      "Socket",
+    ],
+    [
+      'const { WebSocket } = globalThis; new WebSocket("wss://example.test/bound");',
+      "WebSocket",
+    ],
+    [
+      'const { [`WebSocket`]: Socket } = window; new Socket("wss://example.test/bound");',
+      "Socket",
+    ],
+    [
+      'function connect() { new WebSocket("wss://example.test/bound"); } const WebSocket = globalThis.WebSocket; connect();',
+      "WebSocket",
+    ],
+    [
+      'const connect = () => new Socket("wss://example.test/bound"); const { WebSocket: Socket } = globalThis; connect();',
+      "Socket",
+    ],
+    [
+      'const connect = (function () { new Socket("wss://example.test/bound"); }).bind(null); const Socket = globalThis.WebSocket; connect();',
+      "Socket",
+    ],
   ])(
     "retains a proven constructor binding in both consumers: %s",
     (source, name) => {
@@ -450,6 +496,17 @@ describe("web bundle bound WebSocket constructors", () => {
     'function local(globalThis) { const WebSocket = globalThis.WebSocket; new WebSocket("wss://example.test/local"); }',
     'const Socket = globalThis.WebSocket; new Socket("wss://example.test/local"); globalThis.WebSocket = replacement;',
     'import Socket from "ws"; Socket.WebSocket = replacement; new Socket.WebSocket("wss://example.test/local");',
+    'function local(require) { const WebSocket = require("ws"); new WebSocket("wss://example.test/local"); }',
+    'const WebSocket = require("ws"); WebSocket = replacement; new WebSocket("wss://example.test/local");',
+    'import type WebSocket = require("ws"); new WebSocket("wss://example.test/local");',
+    'const { [key]: WebSocket } = globalThis; new WebSocket("wss://example.test/local");',
+    'const { WebSocket = replacement } = globalThis; new WebSocket("wss://example.test/local");',
+    'const { WebSocket } = globalThis; globalThis.WebSocket = replacement; new WebSocket("wss://example.test/local");',
+    '(function connect() { new WebSocket("wss://example.test/local"); })(); const WebSocket = globalThis.WebSocket;',
+    'new (function () { new Socket("wss://probe.test/new"); })(); const Socket = globalThis.WebSocket;',
+    '(function () { new Socket("wss://probe.test/call"); }).call(null); const Socket = globalThis.WebSocket;',
+    '(function () { new Socket("wss://probe.test/apply"); }).apply(null, []); const Socket = globalThis.WebSocket;',
+    'new WebSocket("wss://example.test/local"); import WebSocket = require("ws");',
   ])(
     "does not infer constructor identity from an unresolved binding: %s",
     (source) => {

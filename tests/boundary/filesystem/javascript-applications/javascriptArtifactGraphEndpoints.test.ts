@@ -61,7 +61,20 @@ it("retains constructor captures, ws imports and template keys with their graph 
       'new Socket("wss://example.test/imported");',
       'new Captured("wss://example.test/captured");',
       'new globalThis[`WebSocket`]("wss://example.test/template");',
+      'const CommonJs = require("ws");',
+      'new CommonJs("wss://example.test/commonjs");',
+      "const { WebSocket: Projected } = globalThis;",
+      'new Projected("wss://example.test/projected");',
+      "function connect() {",
+      'new Deferred("wss://example.test/deferred");',
+      "}",
+      "const Deferred = globalThis.WebSocket;",
+      "connect();",
     ].join("\n"),
+  );
+  await writeFile(
+    join(root, "import-equals.ts"),
+    'import Socket = require("ws");\nnew Socket("wss://example.test/import-equals");',
   );
   const snapshot = await scanCanonicalArtifactInventory(root, {});
   const reader = createJavaScriptArtifactReader(root, "directory");
@@ -70,11 +83,15 @@ it("retains constructor captures, ws imports and template keys with their graph 
     const analysis = analyzeJavaScriptArtifactFiles(files);
     const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
     const endpoints = graph.nodes.filter(({ kind }) => kind === "endpoint");
-    expect(endpoints).toHaveLength(3);
-    for (const [path, constructor, line] of [
-      ["imported", "Socket", 3],
-      ["captured", "Captured", 4],
-      ["template", "globalThis.WebSocket", 5],
+    expect(endpoints).toHaveLength(7);
+    for (const [path, constructor, line, source] of [
+      ["imported", "Socket", 3, "app.js"],
+      ["captured", "Captured", 4, "app.js"],
+      ["template", "globalThis.WebSocket", 5, "app.js"],
+      ["commonjs", "CommonJs", 7, "app.js"],
+      ["projected", "Projected", 9, "app.js"],
+      ["deferred", "Deferred", 11, "app.js"],
+      ["import-equals", "Socket", 2, "import-equals.ts"],
     ] as const) {
       const observation = endpoints.find(({ observations }) =>
         observations.some(
@@ -93,7 +110,7 @@ it("retains constructor captures, ws imports and template keys with their graph 
           available: true,
           value: {
             kind: "source-range",
-            source: "app.js",
+            source,
             start: { line, column: 0 },
           },
         },

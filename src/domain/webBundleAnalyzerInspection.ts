@@ -8,10 +8,9 @@ import {
   completeSemanticSteps,
   traverseJavaScriptAst,
 } from "./javascript/javascriptSemanticTraversal.js";
-import { indexJavaScriptDefinitionsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascript/javascriptSemanticState.js";
-import { indexJavaScriptAmbientWritesSteps } from "./javascript/javascriptSemanticAmbientWrites.js";
 import { semanticStaticPropertyName } from "./javascript/javascriptAstValues.js";
 import {
   calleeName,
@@ -66,17 +65,17 @@ export const analyzeScript = (
   if ((file.errors?.length ?? 0) > 0)
     accumulator.recoveredScripts.push(script.script_key);
   detectVendorFingerprints(script, accumulator);
-  const { bindings, receivers } = completeSemanticSteps(
-    indexJavaScriptDefinitionsWithReceiversSteps(file.program),
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(file.program),
   );
+  const { bindings, receivers } = index;
   if (receivers.hasWebSocketEndpointCandidate)
-    completeSemanticSteps(
-      indexJavaScriptAmbientWritesSteps(file.program, bindings),
-    );
+    completeSemanticSteps(index.indexAmbientWritesSteps());
   const openReceiverFacts = receivers.openReceivers;
   const rpc = createJavaScriptRpcScan(
     script.source.artifact.text,
     receivers.rpcClientRoots,
+    index,
   );
   traverseJavaScriptAst(file, {
     enter: (node) => {
@@ -94,6 +93,16 @@ export const analyzeScript = (
         });
     },
   });
+  for (const endpoint of rpc.finish())
+    if (endpoint !== undefined)
+      addFinding({
+        collection: accumulator.endpoints,
+        script,
+        rawValue: endpoint.value,
+        mechanism: endpoint.mechanism,
+        node: endpoint.node,
+        accumulator,
+      });
 };
 
 const inspectNode = (

@@ -26,6 +26,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
+import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import {
   compareUnicodeCodePoints,
   compositeKey,
@@ -608,16 +609,25 @@ export const isWebSocketEndpointCandidate = (
 ): boolean => {
   const visited = new Set<string>();
   let current = callee;
+  let selected: readonly string[] = [];
   for (;;) {
     current = unwrapJavaScriptExpression(current).node;
-    if (isUnmodifiedGlobalReference(current, state, "WebSocket")) return true;
+    if (isUnmodifiedGlobalReference(current, state, "WebSocket", selected))
+      return true;
+    const required = semanticRequireOrigin(current, state)?.origin;
+    if (required !== undefined)
+      return (
+        required.specifier === "ws" &&
+        required.importedPath.length === 0 &&
+        selected.length === 0
+      );
     const { root, members } = electronMemberPath(current);
     if (!t.isIdentifier(root)) return false;
     const binding = resolveSemanticBindingState(state, root, root.name);
     if (binding === undefined || visited.has(binding.bindingId)) return false;
     const [origin] = binding.directOrigins;
     if (binding.runtimeImport) {
-      const path = [...(origin?.importedPath ?? []), ...members];
+      const path = [...(origin?.importedPath ?? []), ...members, ...selected];
       return (
         binding.definitions.length === 1 &&
         binding.directOrigins.length === 1 &&
@@ -626,18 +636,92 @@ export const isWebSocketEndpointCandidate = (
         (path[0] === "default" || path[0] === "WebSocket")
       );
     }
-    // A captured constructor retains the value; an arbitrary object's member
-    // would need a separate mutation/projection proof and stays unresolved.
-    if (members.length !== 0) return false;
+    // Import-equals records its exact runtime require as a direct origin.
+    // It is evaluated at its declaration, unlike hoisted ECMAScript imports.
+    if (origin !== undefined) {
+      const definition = binding.definitions[0];
+      const location = root.loc?.start;
+      const initialized =
+        webSocketExecutionContext(root, state) !== state.program ||
+        (definition !== undefined &&
+          location !== undefined &&
+          (definition.location.end.line < location.line ||
+            (definition.location.end.line === location.line &&
+              definition.location.end.column < location.column)));
+      return (
+        binding.scopeId === state.scopes[0]?.scopeId &&
+        binding.definitions.length === 1 &&
+        binding.directOrigins.length === 1 &&
+        binding.initializers.length === 0 &&
+        origin.resolutionMode === "require" &&
+        origin.specifier === "ws" &&
+        origin.importedPath.length === 0 &&
+        members.length === 0 &&
+        selected.length === 0 &&
+        initialized
+      );
+    }
     const initializer = semanticStableInitializer(binding, state);
     if (
       initializer === undefined ||
-      initializer.projection.length !== 0 ||
-      (initializer.node.end ?? Infinity) >= (root.start ?? -1)
+      binding.referenceInitializers.length !== 0 ||
+      !initializer.projection.every(
+        (key): key is string => typeof key === "string",
+      ) ||
+      !members.every((key): key is string => typeof key === "string") ||
+      (webSocketExecutionContext(initializer.node, state) ===
+        webSocketExecutionContext(root, state) &&
+        (initializer.node.end ?? Infinity) >= (root.start ?? -1))
     )
       return false;
     visited.add(binding.bindingId);
+    selected = [...initializer.projection, ...members, ...selected];
     current = initializer.node;
+  }
+};
+
+/** Direct literal invocation and call/apply share the caller's eager context. */
+const webSocketExecutionContext = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.Node => {
+  let current = node;
+  for (;;) {
+    const parent = state.parentsByNode.get(current);
+    if (parent === undefined) return current;
+    if (t.isFunction(parent)) {
+      if (
+        (t.isObjectMethod(parent) || t.isClassMethod(parent)) &&
+        parent.key === current
+      ) {
+        current = parent;
+        continue;
+      }
+      let callee: t.Node = parent;
+      let invocation = state.parentsByNode.get(parent);
+      if (
+        (t.isMemberExpression(invocation) ||
+          t.isOptionalMemberExpression(invocation)) &&
+        invocation.object === parent &&
+        ["call", "apply"].includes(
+          semanticStaticPropertyName(invocation.property, invocation.computed),
+        )
+      ) {
+        callee = invocation;
+        invocation = state.parentsByNode.get(invocation);
+      }
+      if (
+        (!t.isArrowFunctionExpression(parent) &&
+          parent.generator &&
+          !t.isNewExpression(invocation)) ||
+        (!t.isCallExpression(invocation) &&
+          !t.isOptionalCallExpression(invocation) &&
+          !t.isNewExpression(invocation)) ||
+        invocation.callee !== callee
+      )
+        return parent;
+    }
+    current = parent;
   }
 };
 

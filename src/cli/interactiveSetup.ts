@@ -15,6 +15,7 @@ import type {
   SetupProgressEvent,
   SetupResult,
 } from "../application/SetupTypes.js";
+import { failedConfigurationMessage } from "../application/SetupClients.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../application/SupportedClients.js";
 import { invokingPackageRunner } from "../application/ClientRegistrationIdentity.js";
 
@@ -142,10 +143,7 @@ const renderPendingSetupActions = (result: SetupResult): void => {
   });
   if (pending.length === 0) return;
   writeLine("◇  Planned changes not completed");
-  for (const action of pending) {
-    writeLine(`│  ${action.operation.toUpperCase()}  ${action.label}`);
-    writeLine(`│          ${action.target}`);
-  }
+  for (const action of pending) renderActionDisclosure(action);
 };
 
 /** Show mutations kept after a later setup step failed. */
@@ -154,9 +152,10 @@ const renderRetainedSetupOutcomes = (result: SetupResult): void => {
   const actions = result.plannedActions.filter((action) =>
     applied.has(appliedActionKey(action)),
   );
-  const failedActions = result.plannedActions.filter((action) => {
+  const failedActions = result.plannedActions.flatMap((action) => {
     const name = configuredClientName(action);
-    return name !== undefined && result.clients[name]?.status === "failed";
+    const client = name === undefined ? undefined : result.clients[name];
+    return client?.status === "failed" ? [{ action, client }] : [];
   });
   const represented = new Set(
     actions.flatMap((action) => {
@@ -184,9 +183,11 @@ const renderRetainedSetupOutcomes = (result: SetupResult): void => {
   }
   for (const name of extraClients) writeLine(`│  CONFIGURED  ${name}`);
   if (failedActions.length > 0) writeLine("◆  Failed configuration");
-  for (const action of failedActions) {
+  for (const { action, client } of failedActions) {
     writeLine(`│  FAILED  ${action.label}`);
     writeLine(`│          ${action.target}`);
+    // Setup reports only the first failure's remediation; name each one here.
+    writeLine(`│          ${failedConfigurationMessage(client)}`);
   }
 };
 
@@ -409,23 +410,28 @@ const renderPreflight = (actions: readonly SetupAction[]): void => {
   writeLine("◆  Ready to review");
   for (const action of actions) {
     writeLine("│");
-    writeLine(`│  ${action.operation.toUpperCase()}  ${action.label}`);
-    writeLine(`│          ${action.target}`);
-    if (action.backupPath !== undefined)
-      writeLine(`│          backup: ${action.backupPath}`);
-    for (const origin of action.networkOrigins ?? [])
-      writeLine(`│          network: ${origin}`);
-    if (action.integrity !== undefined)
-      writeLine(`│          integrity: ${action.integrity}`);
-    for (const command of action.commands ?? [])
-      writeLine(`│          command: ${command}`);
-    writeLine(`│          ${action.detail}`);
-    if (action.external) writeLine("│          external software");
+    renderActionDisclosure(action);
   }
   writeLine("│");
   writeLine(
     "│  REA will preserve unrelated configuration and will not install or upgrade Node.js, npm, Homebrew, Java, or Ghidra.",
   );
+};
+
+/** Every disclosure the approval view shows for one planned action. */
+const renderActionDisclosure = (action: SetupAction): void => {
+  writeLine(`│  ${action.operation.toUpperCase()}  ${action.label}`);
+  writeLine(`│          ${action.target}`);
+  if (action.backupPath !== undefined)
+    writeLine(`│          backup: ${action.backupPath}`);
+  for (const origin of action.networkOrigins ?? [])
+    writeLine(`│          network: ${origin}`);
+  if (action.integrity !== undefined)
+    writeLine(`│          integrity: ${action.integrity}`);
+  for (const command of action.commands ?? [])
+    writeLine(`│          command: ${command}`);
+  writeLine(`│          ${action.detail}`);
+  if (action.external) writeLine("│          external software");
 };
 
 const cancelledDecision = (): SetupConfirmationDecision => {

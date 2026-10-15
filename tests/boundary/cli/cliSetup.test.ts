@@ -492,6 +492,9 @@ describe("non-interactive setup in a terminal", () => {
           expect(output).toContain(config);
           expect(output).toContain("Failed configuration");
           expect(output).toContain("FAILED  OpenCode");
+          expect(output).toContain(
+            "Agent configuration could not be updated. Check file permissions",
+          );
           expect(output.indexOf("Already applied")).toBeLessThan(
             output.indexOf("Failed configuration"),
           );
@@ -745,59 +748,89 @@ const runJourney = async (
   });
 };
 
-it("identifies a failed planned client and its target in terminal remediation", async () => {
+it("names every failed client with its own recovery reason in terminal remediation", async () => {
+  const opencode = {
+    ...actions[0],
+    id: "configure_client:opencode",
+    label: "OpenCode",
+    target: "/isolated/.config/opencode/opencode.json",
+  };
   const result = {
     status: "needs_human",
-    plannedActions: [actions[0]],
+    plannedActions: [actions[0], opencode],
     appliedActions: [],
-    clients: { codex: { status: "failed", detail: "write failed" } },
+    clients: {
+      codex: { status: "failed", reason: "write" },
+      opencode: {
+        status: "failed",
+        reason: "rollback",
+        backupPath: "/isolated/opencode.json.rea.backup",
+        failure: {
+          kind: "restore",
+          path: "/isolated/.config/opencode/opencode.json",
+          detail: "restore denied",
+        },
+      },
+    },
     doctor: {},
     clientStates: [],
-    remediation: "Repair the configuration",
+    remediation: "Agent configuration could not be updated.",
   };
-  const { stderr } = await execute(
-    process.execPath,
-    [
-      "--input-type=module",
-      "--eval",
-      [
-        'import {renderTerminalSetupSummary} from "./dist/cli/interactiveSetup.js";',
-        `renderTerminalSetupSummary(${JSON.stringify(result)});`,
-      ].join("\n"),
-    ],
-    { cwd: process.cwd(), env: { ...process.env, NO_COLOR: "1" } },
-  );
+  const stderr = await renderSummary(result);
   expect(stderr).toContain("FAILED  Codex");
   expect(stderr).toContain("/isolated/.codex/config.toml");
-  expect(stderr).toContain("Repair the configuration");
+  expect(stderr).toContain("FAILED  OpenCode");
+  // Setup's remediation names only the first failure; the second keeps its own.
+  expect(stderr).toContain("restore denied");
+  expect(stderr).toContain("/isolated/opencode.json.rea.backup");
+  expect(stderr.indexOf("FAILED  OpenCode")).toBeLessThan(
+    stderr.indexOf("restore denied"),
+  );
 });
 
-it("shows planned actions when setup stops before reporting any outcomes", async () => {
+it("shows planned actions with their full disclosures when setup stops before reporting any outcomes", async () => {
+  const hopper = {
+    ...actions[2],
+    networkOrigins: ["https://www.hopperapp.com"],
+    integrity: "sha256:0000",
+    commands: ["/usr/bin/installer -pkg Hopper.pkg"],
+  };
   const result = {
     status: "needs_human",
-    plannedActions: [actions[0]],
+    plannedActions: [actions[0], hopper],
     appliedActions: [],
     clients: {},
     doctor: {},
     clientStates: [],
     remediation: "Setup host cleanup failed",
   };
+  const stderr = await renderSummary(result);
+  expect(stderr).toContain("Planned changes not completed");
+  expect(stderr).toContain("CREATE  Codex");
+  expect(stderr).toContain("/isolated/.codex/config.toml");
+  expect(stderr).toContain("Add the REA MCP registration for Codex.");
+  expect(stderr).toContain("network: https://www.hopperapp.com");
+  expect(stderr).toContain("integrity: sha256:0000");
+  expect(stderr).toContain("command: /usr/bin/installer -pkg Hopper.pkg");
+  expect(stderr).toContain("external software");
+  expect(stderr.indexOf("Planned changes not completed")).toBeLessThan(
+    stderr.indexOf("Setup host cleanup failed"),
+  );
+});
+
+/** Render a terminal summary through the built CLI module. */
+const renderSummary = async (result: unknown): Promise<string> => {
   const { stderr } = await execute(
     process.execPath,
     [
       "--input-type=module",
       "--eval",
       [
-        'import {renderTerminalSetupSummary} from "./dist/cli/interactiveSetup.js";',
+        'import { renderTerminalSetupSummary } from "./dist/cli/interactiveSetup.js";',
         `renderTerminalSetupSummary(${JSON.stringify(result)});`,
       ].join("\n"),
     ],
     { cwd: process.cwd(), env: { ...process.env, NO_COLOR: "1" } },
   );
-  expect(stderr).toContain("Planned changes not completed");
-  expect(stderr).toContain("CREATE  Codex");
-  expect(stderr).toContain("/isolated/.codex/config.toml");
-  expect(stderr.indexOf("Planned changes not completed")).toBeLessThan(
-    stderr.indexOf("Setup host cleanup failed"),
-  );
-});
+  return stderr;
+};

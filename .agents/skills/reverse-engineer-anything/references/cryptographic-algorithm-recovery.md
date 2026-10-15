@@ -99,9 +99,12 @@ corroborate, never a conclusion on its own.
 - **Hash:** MD5 (init + 64-entry T table), SHA-1, SHA-256 (init + K table),
   SHA-512, SM3 (init + T_j round constants), SHA-3/Keccak round constants,
   CRC32, FNV-1a. In an active hashing region the main-loop constants (T/K/T_j)
-  dominate the signal, not the IV. Count per compression block: each table
-  entry typically appears once per block across its rounds, so an entry's hit
-  count tracks block count, not round count.
+  dominate the signal, not the IV. Count carefully: for algorithms with one
+  distinct constant per round (MD5, SHA-256), each table entry appears about
+  once per block, so its hit count tracks block count. This does not hold where
+  a constant is reused across many rounds — SHA-1 reuses each of four constants
+  for 20 rounds, SM3 reuses two base constants — so there a high hit count
+  reflects per-round reuse, not many blocks.
 - **Symmetric:** AES (sbox, `sbox[0]=0x63` / Te tables), SM4, DES/3DES
   (SP-boxes), TEA/XTEA/XXTEA (delta `0x9E3779B9`), ChaCha20/Salsa20
   (`"expand 32-byte k"`).
@@ -126,7 +129,7 @@ GM/T (Chinese national)
   SM3 IV         7380166F 4914B2B9 172442D7 DA8A0600
                  A96F30BC 163138AA E38DEE4D B0FB0E4E
   SM4 FK         A3B1BAC6 56AA3350 677D9197 B27022DC
-  SM4 CK[0..3]   00070E15 1C232A31 383F464D 545B6269   (32 round consts;
+  SM4 CK[0..7]   00070E15 1C232A31 383F464D 545B6269   (32 round consts;
                  70777E85 8C939AA1 A8AFB6BD C4CBD2D9     +0x07 step, mod 0x100)
   SM2 sm2p256v1
     p  FFFFFFFE FFFFFFFF FFFFFFFF FFFFFFFF FFFFFFFF 00000000 FFFFFFFF FFFFFFFF
@@ -140,7 +143,8 @@ Modern
   ChaCha20/Salsa  "expand 32-byte k" = 61707865 3320646E 79622D32 6B206574
                   "expand 16-byte k" = 61707865 3120646E 79622D36 6B206574
   Poly1305 r-mask 0FFFFFFC 0FFFFFFC 0FFFFFFC 0FFFFFFF
-  Curve25519      a24 = 0x1DB41 (121665); Ed25519 d low64 = 0x52036CEE2B6FFE73
+  Curve25519      a24 = 0x1DB41 (121665)
+  Ed25519 d       high64 = 0x52036CEE2B6FFE73  low64 = 0x75EB4DCA135978A3
   GCM GHASH poly  E1000000 00000000 00000000 00000000  (reflected)
   SHA-256 IV[0]   6A09E667  (remaining IV/K are the standard tables)
 
@@ -154,13 +158,21 @@ Classic / checksums
 
 ### AEAD mode composition
 
-No single marker identifies an AEAD; require the composition in the trace.
+No single marker identifies an AEAD; require the composition in the trace. The
+authentication tag is produced on encryption and compared on decryption, so key
+the identification to the tag operation the trace actually shows — a tag write,
+not a compare, for an encrypting trace. Tag length is 16 bytes by default but
+not fixed (GCM supports shorter tags); treat a shorter tag as supported, not as
+counter-evidence.
 
 - **AES-GCM:** AES block encryption + GHASH accumulation (a GF(2^128) multiply
-  per 16 bytes, GHASH poly above) + a 16-byte tag compare; IV usually 12 bytes.
-- **AES-CCM:** AES + CBC-MAC accumulation + tag compare; IV usually 13-L bytes.
+  per 16 bytes, GHASH poly above) + a tag produced or verified; IV usually
+  12 bytes.
+- **AES-CCM:** AES + CBC-MAC accumulation + a tag produced or verified; nonce
+  `15-L` bytes, where `L` is the message-length field size (a 13-byte nonce is
+  `L=2`).
 - **ChaCha20-Poly1305:** the `"expand 32-byte k"` constant + Poly1305
-  mod-2^130-5 accumulation + 16-byte tag compare; IV 12 bytes.
+  mod-2^130-5 accumulation + a tag produced or verified; IV 12 bytes.
 - **AES-SIV:** AES-CMAC + AES-CTR with the IV derived from the CMAC step
   (synthetic IV).
 

@@ -122,10 +122,9 @@ const loaderShape = (
     cacheId: cache?.cacheId,
     cacheSites: new Set(cache === undefined ? [] : [cache.site]),
   };
-  // A first load that falls off the end yields undefined, not the exports.
-  return returns.some((argument) =>
-    returnsDispatchedExports(argument, shape, state),
-  ) && returns.every((argument) => returnsModuleExports(argument, shape, state))
+  return returns.every((argument) =>
+    returnsModuleExports(argument, shape, state),
+  )
     ? withCacheReads(loader, shape, state)
     : undefined;
 };
@@ -371,22 +370,6 @@ const sideEffectBeforeReturn = (
   return key !== null && key !== "exports";
 };
 
-/** A return whose value is the dispatched module object's `exports`. */
-const returnsDispatchedExports = (
-  argument: t.Expression | null | undefined,
-  shape: LoaderShape,
-  state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  const value = t.isSequenceExpression(argument)
-    ? argument.expressions.at(-1)
-    : argument;
-  return (
-    t.isMemberExpression(value) &&
-    t.isIdentifier(value.object) &&
-    bindingOf(state, value.object) === shape.moduleId
-  );
-};
-
 /** The binding of `owner` in `owner[key]` when `key` is the loader parameter. */
 const keyedSlot = (
   node: t.Node,
@@ -532,24 +515,9 @@ const exposedSlotWrite = (use: Use, replacedKeys: Set<string>): void => {
   )
     return;
   const key = slot.computed
-    ? (argumentValue(slot.property) ?? constantKey(slot.property, use.state))
+    ? argumentValue(slot.property)
     : semanticStaticPropertyKey(slot.property, false);
   if (key !== undefined && key !== null) replacedKeys.add(key);
-};
-
-/** `const id = 45840; loader.m[id] = ...` names a declared slot too. */
-const constantKey = (
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): string | undefined => {
-  if (!t.isIdentifier(node)) return undefined;
-  const initializer = semanticStableInitializer(
-    resolveSemanticBindingState(state, node, node.name),
-    state,
-  );
-  return initializer?.projection.length === 0
-    ? argumentValue(initializer.node)
-    : undefined;
 };
 
 const bindingOf = (

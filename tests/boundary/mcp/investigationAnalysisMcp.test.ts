@@ -511,6 +511,175 @@ it("cannot omit a session-owned active unknown from reconstruction input", async
   }
 });
 
+it("awaits in-flight call-path derivation before close drains records (#4002)", async () => {
+  const session = createTestBinarySession(() => ({
+    health: () => Promise.resolve(),
+    execute: () => Promise.resolve(observed(null)),
+    close: () => Promise.resolve(resultOk(null)),
+  }));
+  const server = createServer({ kind: "session", session });
+  const client = new Client({ name: "investigation-admission", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+
+  let resolvePrepared!: () => void;
+  const prepared = new Promise<void>((resolve) => {
+    resolvePrepared = resolve;
+  });
+  let resolveRelease!: () => void;
+  const release = new Promise<void>((resolve) => {
+    resolveRelease = resolve;
+  });
+
+  const send = serverTransport.send.bind(serverTransport);
+  serverTransport.send = async (message, options) => {
+    await send(message, options);
+    if (
+      "method" in message &&
+      message.method === "notifications/progress" &&
+      "params" in message &&
+      typeof message.params === "object" &&
+      message.params !== null &&
+      "message" in message.params &&
+      message.params.message === "prepare: Preparing build_call_path"
+    ) {
+      resolvePrepared();
+      await release;
+    }
+  };
+
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    const input = INVESTIGATION_EXAMPLES.build_call_path;
+    for (const evidence of input.functions) {
+      expect(session.recordEvidence(evidence).ok).toBe(true);
+    }
+    const control = await client.callTool({
+      name: "build_call_path",
+      arguments: input,
+    });
+    expect(control.isError).not.toBe(true);
+
+    const request = client.callTool(
+      { name: "build_call_path", arguments: input },
+      { onprogress: () => {} },
+    );
+    await prepared;
+
+    // Start close_binary while build_call_path is in flight
+    const closePromise = client.callTool({
+      name: "close_binary",
+      arguments: {},
+    });
+
+    const settledOrder: string[] = [];
+    const requestPromise = request.then((res) => {
+      settledOrder.push("build_call_path");
+      return res;
+    });
+    const closePromiseTracking = closePromise.then((res) => {
+      settledOrder.push("close_binary");
+      return res;
+    });
+
+    // Unblock the in-flight build_call_path
+    resolveRelease();
+
+    const [response, closed] = await Promise.all([
+      requestPromise,
+      closePromiseTracking,
+    ]);
+    expect(settledOrder).toEqual(["build_call_path", "close_binary"]);
+    expect(response.isError).not.toBe(true);
+    expect(closed.isError).not.toBe(true);
+
+    const callPathEvidence = inlineEvidence(response.structuredContent);
+    expect(callPathEvidence.evidence_links.length).toBeGreaterThan(0);
+
+    const bundle = session.exportEvidenceBundle();
+    // After close settles, all retained session records are cleared
+    expect(bundle.records).toHaveLength(0);
+  } finally {
+    resolveRelease();
+    await close(session, server, client);
+  }
+}, 30_000);
+
+it("rejects call-path recording when source Evidence is cleared before publishing (#4002)", async () => {
+  const session = createTestBinarySession(() => ({
+    health: () => Promise.resolve(),
+    execute: () => Promise.resolve(observed(null)),
+    close: () => Promise.resolve(resultOk(null)),
+  }));
+  const server = createServer({ kind: "session", session });
+  const client = new Client({ name: "investigation-admission", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+
+  let resolvePrepared!: () => void;
+  const prepared = new Promise<void>((resolve) => {
+    resolvePrepared = resolve;
+  });
+  let resolveRelease!: () => void;
+  const release = new Promise<void>((resolve) => {
+    resolveRelease = resolve;
+  });
+
+  const send = serverTransport.send.bind(serverTransport);
+  serverTransport.send = async (message, options) => {
+    await send(message, options);
+    if (
+      "method" in message &&
+      message.method === "notifications/progress" &&
+      "params" in message &&
+      typeof message.params === "object" &&
+      message.params !== null &&
+      "message" in message.params &&
+      message.params.message === "prepare: Preparing build_call_path"
+    ) {
+      resolvePrepared();
+      await release;
+    }
+  };
+
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    const input = INVESTIGATION_EXAMPLES.build_call_path;
+    for (const evidence of input.functions) {
+      expect(session.recordEvidence(evidence).ok).toBe(true);
+    }
+
+    const request = client.callTool(
+      { name: "build_call_path", arguments: input },
+      { onprogress: () => {} },
+    );
+    await prepared;
+
+    // Simulate source records being cleared before publishing
+    (
+      session as unknown as { clearSessionRecords: () => void }
+    ).clearSessionRecords();
+
+    resolveRelease();
+
+    const response = await request;
+    expect(response.isError).toBe(true);
+    expect(response.content).toMatchObject([
+      expect.objectContaining({
+        text: expect.stringContaining("dangling Evidence link"),
+      }),
+    ]);
+
+    // Ledger remains free of dangling records
+    expect(session.exportEvidenceBundle().records).toHaveLength(0);
+  } finally {
+    resolveRelease();
+    await close(session, server, client);
+  }
+}, 30_000);
+
 const connected = async (analysis?: AnalysisOperationPort) => {
   const session = createTestBinarySession(() => ({
     health: () => Promise.resolve(),

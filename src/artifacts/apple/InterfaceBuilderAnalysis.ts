@@ -700,6 +700,24 @@ const readEntry = async (
   return Buffer.concat(chunks, length);
 };
 
+/**
+ * The shared parser bounds plist value nesting before its recursive decode and
+ * reports the limit as a RangeError; that is an omitted archive, not a
+ * malformed one.
+ */
+const parseXmlWithinDecodeBudget = (text: string) => {
+  try {
+    return parseXmlPropertyList(text);
+  } catch (cause: unknown) {
+    if (cause instanceof RangeError)
+      throw new InterfaceBuilderDecodeBudgetExceeded(
+        "aggregate_decode_budget_exhausted",
+        cause.message,
+      );
+    throw cause;
+  }
+};
+
 /** Project decoded plist data and dates while retaining omitted-key coverage. */
 const decodePlist = (
   bytes: Buffer,
@@ -716,7 +734,7 @@ const decodePlist = (
         value: parseBinary(bytes),
         omittedPrototypeKeys: binaryPrototypeKeyObserved ? null : 0,
       }
-    : parseXmlPropertyList(xmlText ?? decodeXmlPlistText(bytes));
+    : parseXmlWithinDecodeBudget(xmlText ?? decodeXmlPlistText(bytes));
   const projected = projectPlistValue(value);
   return {
     value: projected.value,

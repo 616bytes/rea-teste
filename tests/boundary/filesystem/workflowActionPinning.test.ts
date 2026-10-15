@@ -30,15 +30,16 @@ const unpinnedReferences = (source: string): readonly string[] => {
     (reference): reference is string =>
       reference !== undefined &&
       !reference.startsWith("./") &&
-      !reference.startsWith("docker://") &&
-      !/@[0-9a-f]{40}$/iu.test(reference),
+      (reference.startsWith("docker://")
+        ? !/@sha256:[0-9a-f]{64}$/iu.test(reference)
+        : !/@[0-9a-f]{40}$/iu.test(reference)),
   );
 };
 
 describe("external GitHub action pinning", () => {
   const sha = "11d5960a326750d5838078e36cf38b85af677262";
 
-  it("finds tags in block, flow, composite and reusable workflow calls", () => {
+  it("finds mutable GitHub and Docker references in all action call sites", () => {
     expect(
       unpinnedReferences(`
 jobs:
@@ -48,6 +49,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - { uses: actions/setup-node@v4 }
+      - uses: docker://alpine:3.20
+      - uses: docker://alpine@sha256:abcd
 runs:
   using: composite
   steps:
@@ -57,11 +60,13 @@ runs:
       "owner/repo/.github/workflows/build.yml@main",
       "actions/checkout@v4",
       "actions/setup-node@v4",
+      "docker://alpine:3.20",
+      "docker://alpine@sha256:abcd",
       "actions/cache@v4",
     ]);
   });
 
-  it("accepts full SHAs, local calls and Docker references", () => {
+  it("accepts full GitHub SHAs, local calls and Docker SHA256 digests", () => {
     expect(
       unpinnedReferences(`
 jobs:
@@ -74,7 +79,7 @@ jobs:
       - uses: "actions/checkout@${sha}" # version comment
       - uses: actions/cache/restore@${sha.toUpperCase()}
       - uses: './.github/actions/npm-cache'
-      - uses: docker://alpine:3.20
+      - uses: docker://alpine@sha256:${"a".repeat(64)}
 `),
     ).toEqual([]);
   });

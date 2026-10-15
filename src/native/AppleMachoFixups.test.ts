@@ -973,17 +973,25 @@ describe("legacy pointer fixup streams", () => {
       BASE,
     );
 
-  it("applies a SET_ADDEND_SLEB addend to the following bind", () => {
-    const opcodes = addendStream([0x78]); // -8
-    opcodes[opcodes.length - 1] = 0x90; // DO_BIND
-    const fixups = parseBinds(Buffer.concat([opcodes, Buffer.from([0x00])]));
-    expect(fixups.failures).toEqual([]);
-    expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject({
-      kind: "bind",
-      symbol: "_x",
-      addend: -8n,
-    });
-  });
+  it.each([
+    { addend: -8n, sleb: [0x78] },
+    // Ten-byte operands at the signed 64-bit limits are still valid.
+    { addend: -(2n ** 63n), sleb: [...Array<number>(9).fill(0x80), 0x7f] },
+    { addend: 2n ** 63n - 1n, sleb: [...Array<number>(9).fill(0xff), 0x00] },
+  ])(
+    "applies a SET_ADDEND_SLEB addend of $addend to the following bind",
+    ({ addend, sleb }) => {
+      const opcodes = addendStream(sleb);
+      opcodes[opcodes.length - 1] = 0x90; // DO_BIND
+      const fixups = parseBinds(Buffer.concat([opcodes, Buffer.from([0x00])]));
+      expect(fixups.failures).toEqual([]);
+      expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject({
+        kind: "bind",
+        symbol: "_x",
+        addend,
+      });
+    },
+  );
 
   it("rejects an oversized SET_ADDEND_SLEB instead of running its tail as opcodes", () => {
     // Ten continuation bytes, then 0x90. dyld keeps reading 0x90 as part of

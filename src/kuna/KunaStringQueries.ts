@@ -81,7 +81,7 @@ export class KunaStringQueries {
           operation,
           pattern: query.data.pattern,
           caseSensitive: query.data.case_sensitive,
-          values: available.map((item) => item.value),
+          values: () => available.map((item) => item.value),
           signal,
         });
         if (!matched.ok) return matched;

@@ -662,42 +662,35 @@ export class KunaSessionClient implements AnalysisClient {
     installation: KunaInstallation,
     options: ExecutionOptions,
   ): Promise<Result<Answer, AnalysisError>> {
+    const query =
+      operation === "search_procedures"
+        ? analysisSearchQuerySchema.safeParse(parameters)
+        : undefined;
+    if (query !== undefined && !query.success)
+      return err(
+        analysisInputErrorFromIssues(operation, query.error.issues, parameters),
+      );
     const inventory = await this.#ensureInventory(installation, options);
     if (!inventory.ok) return inventory;
-    const items = inventory.value.map(({ address, name }) => ({
-      address,
-      value: name,
-    }));
-    let selected = items;
-    if (operation === "search_procedures") {
-      const parsed = analysisSearchQuerySchema.safeParse(parameters);
-      if (!parsed.success)
-        return err(
-          analysisInputErrorFromIssues(
-            operation,
-            parsed.error.issues,
-            parameters,
-          ),
-        );
-      const query = parsed.data;
-      if (query.mode === "regex") {
+    let selected = inventory.value;
+    if (query?.success === true) {
+      if (query.data.mode === "regex") {
         const matches = await this.#queryWork.match({
           operation,
-          pattern: query.pattern,
-          caseSensitive: query.case_sensitive,
-          values: items.map(({ value }) => value),
+          pattern: query.data.pattern,
+          caseSensitive: query.data.case_sensitive,
+          values: () => inventory.value.map(({ name }) => name),
           signal: options.signal,
         });
         if (!matches.ok) return matches;
-        const indices = new Set(matches.value);
-        selected = items.filter((_, index) => indices.has(index));
+        selected = matches.value.map((index) => inventory.value[index]!);
       } else {
-        const matches = analysisSearchPredicate(query);
-        selected = items.filter(({ value }) => matches(value));
+        const matches = analysisSearchPredicate(query.data);
+        selected = inventory.value.filter(({ name }) => matches(name));
       }
     }
     return ok({
-      result: selected,
+      result: selected.map(({ address, name }) => ({ address, value: name })),
       source: null,
       locations: [],
       limitations: [],

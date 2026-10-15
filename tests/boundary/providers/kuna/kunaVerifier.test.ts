@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { expect, it as test } from "vitest";
 
@@ -8,6 +9,43 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
 
 const it = test.skipIf(process.platform === "win32");
+
+it("accepts empty caller inventories but requires source-owned fixture literals", async () => {
+  const root = await createTestTempDirectory("rea-kuna-verifier-empty-");
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+import assert from "node:assert/strict";
+import { verifyKunaStrings } from ${JSON.stringify(pathToFileURL(resolve("scripts/lib/kuna-string-verifier.mjs")).href)};
+const calls = [];
+const options = {
+  cacheRoot: ${JSON.stringify(root)}, nativeStrings: async () => [],
+  call: async (name, input) => {
+    calls.push({ name, input });
+    return { value: [], ms: 0, bytes: 0, structured: {
+      provider: { id: "kuna" }, evidence_id: "ev_empty",
+      raw_result: { strings: { inventory_count: 0, selected_count: 0, xrefs: false, sha256: "a".repeat(64), bytes: 1 } },
+    } };
+  },
+};
+const checked = await verifyKunaStrings(options);
+assert.equal(checked.inventory_count, 0);
+assert.equal(checked.exact_address_ms, null);
+assert.ok(calls.some(call => call.name === "list_strings"));
+assert.ok(calls.some(call => call.name === "search_strings"));
+assert.ok(calls.every(call => call.input?.address === undefined));
+await assert.rejects(() => verifyKunaStrings({ ...options, expectedStrings: ["required fixture literal"] }), /Source-owned string fixture/);
+`,
+    ],
+    { encoding: "utf8", timeout: 10_000 },
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.stderr).toBe("");
+  expect(result.status).toBe(0);
+});
 
 it.each([
   { populated: false, names: "main", reason: "No caller-built targets" },

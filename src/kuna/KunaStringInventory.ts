@@ -40,6 +40,41 @@ const row = z.object({
   functions: z.tuple([]),
 });
 
+/** JSON text omits terminators; native lengths describe the encoded source. */
+const validateStringFacts = (entry: z.infer<typeof row>): void => {
+  let characters = 0;
+  for (const character of entry.text) {
+    const point = character.codePointAt(0)!;
+    if (
+      point === 0 ||
+      (point >= 0xd800 && point <= 0xdfff) ||
+      (entry.encoding === "ascii" && point > 0x7f) ||
+      (entry.encoding === "utf16" && point > 0xff)
+    )
+      throw new Error("string text contradicts its reported encoding");
+    characters += 1;
+  }
+  const textBytes =
+    entry.encoding === "utf16"
+      ? entry.text.length * 2
+      : entry.encoding === "ascii"
+        ? entry.text.length
+        : Buffer.byteLength(entry.text);
+  const terminatorBytes = entry.nul_terminated
+    ? entry.encoding === "utf16"
+      ? 2
+      : 1
+    : 0;
+  if (
+    characters < KUNA_STRING_MIN_LENGTH ||
+    entry.length !== characters ||
+    entry.byte_length !== textBytes + terminatorBytes
+  )
+    throw new Error(
+      "string length or termination contradicts its encoded text",
+    );
+};
+
 export type KunaStringItem = z.infer<typeof analysisStringSchema>;
 
 export interface KunaStringInventory {
@@ -65,6 +100,7 @@ export const parseKunaStringInventory = (
     const seen = new Set<string>();
     const items = document.strings.map((value): KunaStringItem => {
       const entry = row.parse(value);
+      validateStringFacts(entry);
       if (entry.address !== entry.address_hex)
         throw new Error("string address disagrees with its hex field");
       const identity = `${entry.address}:${entry.encoding}`;

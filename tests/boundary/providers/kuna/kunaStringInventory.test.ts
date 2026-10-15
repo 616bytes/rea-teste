@@ -76,3 +76,33 @@ it.each([
     ).toBe(false);
   },
 );
+
+it.each([
+  { encoding: "utf8", text: "😀😀😀😀😀", length: 5, byte_length: 21 },
+  { encoding: "utf16", text: "café!", length: 5, byte_length: 12 },
+])("counts $encoding source units without losing text", (facts) => {
+  const value = { ...document(), strings: [{ ...row, ...facts }] };
+  expect(parseKunaStringInventory(wire(value), input)).toMatchObject({
+    ok: true,
+    value: {
+      items: [
+        { value: facts.text, string: { byte_length: facts.byte_length } },
+      ],
+    },
+  });
+});
+
+it.each([
+  { byte_length: 0 },
+  { length: 6 },
+  { nul_terminated: false },
+  { encoding: "ascii" },
+  { encoding: "utf16", text: "hello", length: 5, byte_length: 11 },
+  { encoding: "utf8", text: "hi", length: 2, byte_length: 3 },
+  { encoding: "utf8", text: "hello\u0000", length: 6, byte_length: 7 },
+  { encoding: "utf8", text: "hello\ud800", length: 6, byte_length: 9 },
+  { encoding: "utf16", text: "Δelta", length: 5, byte_length: 12 },
+])("rejects conflicting encoded string facts: %j", (facts) => {
+  const value = { ...document(), strings: [{ ...row, ...facts }] };
+  expect(parseKunaStringInventory(wire(value), input).ok).toBe(false);
+});

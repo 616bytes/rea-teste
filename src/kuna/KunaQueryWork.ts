@@ -18,6 +18,10 @@ export interface KunaPendingQuery<T> {
   settled: boolean;
 }
 
+type RegexQuery = Omit<Parameters<typeof matchRegexValues>[0], "values"> & {
+  readonly values: () => readonly string[];
+};
+
 /** Shared admission, cancellation and cleanup for session metadata queries. */
 export class KunaQueryWork {
   readonly #nativeSlots = new KunaRunSlots(1);
@@ -59,9 +63,7 @@ export class KunaQueryWork {
   }
 
   /** Bound inventory copies and regex workers; close cancels and drains both. */
-  match(
-    input: Parameters<typeof matchRegexValues>[0],
-  ): ReturnType<typeof matchRegexValues> {
+  match(input: RegexQuery): ReturnType<typeof matchRegexValues> {
     const signal = AbortSignal.any([
       this.lifetime.signal,
       ...(input.signal === undefined ? [] : [input.signal]),
@@ -70,14 +72,18 @@ export class KunaQueryWork {
   }
 
   async #match(
-    input: Parameters<typeof matchRegexValues>[0],
+    input: RegexQuery,
     signal: AbortSignal,
   ): ReturnType<typeof matchRegexValues> {
     const release = await this.#regexSlots.acquire(signal);
     if (release === undefined)
       return err(new AnalysisCancelledError(input.operation));
     try {
-      return await matchRegexValues({ ...input, signal });
+      return await matchRegexValues({
+        ...input,
+        values: input.values(),
+        signal,
+      });
     } finally {
       release();
     }

@@ -170,8 +170,8 @@ const isReleasedWorkerRow = (entry: {
 }): boolean =>
   entry.backend === "worker" &&
   entry.session_id === "" &&
-  entry.owned !== true &&
-  entry.is_active !== true;
+  entry.owned === false &&
+  entry.is_active === false;
 
 /** Serial read-only session whose lifecycle authority excludes an attached GUI. */
 export class IdaSessionClient implements AnalysisClient {

@@ -68,6 +68,26 @@ describe("parseCapinfosOutput", () => {
     });
   });
 
+  it("projects timestamps from Wireshark 4.0 to 4.2 capinfos labels", () => {
+    const output = REAL_CAPINFOS.replace(
+      "Earliest packet time",
+      "First packet time",
+    ).replace("Latest packet time", "Last packet time");
+    expect(parseCapinfosOutput(output)).toEqual(
+      parseCapinfosOutput(REAL_CAPINFOS),
+    );
+  });
+
+  it("keeps absent capture timestamps unknown", () => {
+    const output = REAL_CAPINFOS.split("\n")
+      .filter((line) => !line.includes("packet time:"))
+      .join("\n");
+    expect(parseCapinfosOutput(output)).toMatchObject({
+      captureStart: null,
+      captureEnd: null,
+    });
+  });
+
   it("rejects empty metadata rather than reporting complete unknown facts", () => {
     expect(() => parseCapinfosOutput("")).toThrow(/machine-readable/u);
   });

@@ -35,6 +35,12 @@ export interface SetupClient {
    * supersedes; setup seeds the new file with them instead of dropping them.
    */
   readonly supersededConfigPath?: string;
+  /**
+   * Legacy file the client honors only while configPath is absent; a
+   * read-only fallback layer for status and uninstall, never a merge layer
+   * or a setup write target.
+   */
+  readonly fallbackConfigPath?: string;
   readonly markerPath?: string;
   /** MSIX package storage that decides which configuration the client reads. */
   readonly msixPackage?: MsixPackageView;
@@ -106,6 +112,7 @@ interface ClientDefinitionBase {
   readonly quitBeforeSetup?: boolean;
   readonly zcodeFallbackPath?: (context: ClientPathContext) => string;
   readonly supersededConfigPath?: ClientPath;
+  readonly fallbackConfigPath?: ClientPath;
   readonly skillPath?: ClientPath;
   readonly configPaths?: (context: ClientPathContext) => readonly string[];
   readonly geminiSettings?: (
@@ -692,12 +699,10 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       join(ggcodeDirectory(context), "skills"),
     configPath: (context: ClientPathContext) =>
       join(ggcodeDirectory(context), "mcp_servers.yaml"),
-    // ggcode auto-migrates an in-main mcp_servers section into the standalone
-    // file; until it does, that section is the effective registration.
-    configPaths: (context: ClientPathContext) => [
+    // ggcode honors an in-main mcp_servers section only while the standalone
+    // file is absent; keep it a read-only fallback, never a merge layer.
+    fallbackConfigPath: (context: ClientPathContext) =>
       join(ggcodeDirectory(context), "ggcode.yaml"),
-      join(ggcodeDirectory(context), "mcp_servers.yaml"),
-    ],
     supersededConfigPath: (context: ClientPathContext) =>
       join(ggcodeDirectory(context), "ggcode.yaml"),
     markerPath: ggcodeDirectory,
@@ -739,12 +744,16 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
  * directory override does not exist.
  */
 export const clientEvidencePaths = (
-  client: Pick<SetupClient, "configPath" | "configPaths" | "markerPath">,
+  client: Pick<
+    SetupClient,
+    "configPath" | "configPaths" | "fallbackConfigPath" | "markerPath"
+  >,
 ): readonly string[] => [
   ...new Set(
     [
       client.configPath,
       ...(client.configPaths ?? []),
+      client.fallbackConfigPath,
       client.markerPath,
     ].filter((path): path is string => path !== undefined && path.length > 0),
   ),
@@ -819,6 +828,15 @@ export const supportedClients = (
               return resolved.ok
                 ? { supersededConfigPath: resolved.value }
                 : {};
+            })()),
+        ...(definition.fallbackConfigPath === undefined
+          ? {}
+          : (() => {
+              const resolved = resolvePath(
+                definition.fallbackConfigPath,
+                context,
+              );
+              return resolved.ok ? { fallbackConfigPath: resolved.value } : {};
             })()),
         markerPath,
         ...(msixPackage === undefined ? {} : { msixPackage }),

@@ -452,7 +452,13 @@ const parseRegistration = (
       args,
     });
   }
-  const registration = registrationSchema.parse(value);
+  const parsed = registrationSchema.parse(value);
+  // ggcode treats an empty `type` as stdio; normalize before the checks so an
+  // explicit empty marker stays aligned with a stdio registration.
+  const registration =
+    client.format === "ggcode" && parsed.type === ""
+      ? { ...parsed, type: "stdio" as const }
+      : parsed;
   if (
     client.format === "kimi" &&
     registration.transport !== undefined &&

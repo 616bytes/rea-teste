@@ -133,7 +133,8 @@ const parseDocument = (
     );
   // ggcode stores MCP servers as a top-level YAML sequence in
   // mcp_servers.yaml; the legacy in-main ggcode.yaml section is a mapping
-  // whose `mcp_servers` member holds the same entries.
+  // whose `mcp_servers` member holds the same entries. Standalone reads
+  // reject the mapping layout because ggcode cannot load it there.
   if (format === "ggcode") return parseGgcodeConfigurationYaml(text);
   // ZCode loads nonempty native files with strict JSON.parse.
   if (format === "zcode")
@@ -178,6 +179,28 @@ export const parseZcodeFallbackConfiguration = (
         : requireObject(document.mcpServers, "ZCode fallback mcpServers"),
     serversPath: ["mcpServers"],
     dialect: "zcode_fallback",
+    legacyServers: {},
+  };
+};
+
+/**
+ * The legacy ggcode.yaml main config: a mapping root whose `mcp_servers`
+ * member holds legacy entries. Only the read-only fallback layer, superseded
+ * seeding, and uninstall read this layout; the standalone file uses the strict
+ * sequence parser.
+ */
+export const parseGgcodeLegacyConfiguration = (
+  text: string,
+): ClientConfigurationDocument => {
+  const document = parseGgcodeConfigurationYaml(text, "legacy");
+  return {
+    document,
+    servers:
+      document.mcp_servers === undefined
+        ? {}
+        : requireObject(document.mcp_servers, '"mcp_servers"'),
+    serversPath: ["mcp_servers"],
+    dialect: "ggcode",
     legacyServers: {},
   };
 };

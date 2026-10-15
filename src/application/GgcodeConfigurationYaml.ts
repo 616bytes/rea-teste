@@ -9,7 +9,8 @@ import { isMap, isNode, isScalar, isSeq, parseDocument, Document } from "yaml";
  * into that standalone file, and honors the section only while the file is
  * absent. This module accepts both layouts so setup can read the legacy layer
  * and seed a fresh standalone file with its entries instead of suppressing
- * them. REA only ever writes the standalone file.
+ * them. REA writes only the standalone file; uninstall removes REA's legacy
+ * in-main entry in place.
  */
 
 // A comment-only document has no root; a bare marker has an unwritten null
@@ -37,7 +38,7 @@ const sequenceEntries = (
   items: readonly unknown[],
   description: string,
 ): Record<string, unknown> => {
-  const entries: Record<string, unknown> = {};
+  const entries = new Map<string, unknown>();
   for (const item of items) {
     if (!isPlainObject(item))
       throw new TypeError(`${description} entries must be named mappings`);
@@ -45,9 +46,17 @@ const sequenceEntries = (
     // ggcode loads an unnamed entry, but no registration can address it by
     // name, so it stays written yet outside REA's server table.
     if (typeof name !== "string" || name === "") continue;
-    entries[name] = entry;
+    // A read keeps the last duplicate while an edit replaces the first;
+    // reject duplicate names so every path agrees on the addressed entry.
+    if (entries.has(name))
+      throw new TypeError(
+        `${description} holds duplicate server name ${JSON.stringify(name)}`,
+      );
+    entries.set(name, entry);
   }
-  return entries;
+  // Object.fromEntries keeps a `__proto__` server name as own data instead
+  // of assigning it to the prototype.
+  return Object.fromEntries(entries);
 };
 
 /** Legacy mapping form `mcp_servers: {name: entry}`; the key names the entry. */
@@ -55,15 +64,15 @@ const mappingEntries = (
   value: Record<string, unknown>,
   description: string,
 ): Record<string, unknown> => {
-  const entries: Record<string, unknown> = {};
+  const entries = new Map<string, unknown>();
   for (const [name, entry] of Object.entries(value)) {
     if (!isPlainObject(entry))
       throw new TypeError(`${description} entries must be mappings`);
     const { name: innerName, ...rest } = entry;
     void innerName;
-    entries[name] = rest;
+    entries.set(name, rest);
   }
-  return entries;
+  return Object.fromEntries(entries);
 };
 
 const serverEntries = (
@@ -77,9 +86,16 @@ const serverEntries = (
   );
 };
 
-/** Parse either ggcode layout into the synthetic `mcp_servers` server table. */
+/**
+ * Parse one ggcode layout into the synthetic `mcp_servers` server table. The
+ * standalone mcp_servers.yaml is a top-level sequence; a mapping root is only
+ * the legacy in-main ggcode.yaml layout, which ggcode cannot load as the
+ * standalone file, so standalone reads reject it instead of reporting the
+ * unreadable registration as healthy.
+ */
 export const parseGgcodeConfigurationYaml = (
   text: string,
+  layout: "standalone" | "legacy" = "standalone",
 ): Record<string, unknown> => {
   const document = parseGgcodeDocument(text);
   if (isEmptyYamlRoot(document.contents)) return {};
@@ -87,6 +103,10 @@ export const parseGgcodeConfigurationYaml = (
   if (Array.isArray(value))
     return { mcp_servers: sequenceEntries(value, "The configuration root") };
   if (isPlainObject(value)) {
+    if (layout === "standalone")
+      throw new TypeError(
+        "The configuration root must be a sequence of named server mappings; a mapping root is only valid as the legacy ggcode.yaml layout",
+      );
     const section = value.mcp_servers;
     return section === undefined
       ? {}
@@ -98,9 +118,29 @@ export const parseGgcodeConfigurationYaml = (
 };
 
 /**
+ * Whether either ggcode layout holds sequence entries no `name` addresses.
+ * ggcode loads them, but setup cannot migrate an unnamed entry into the keyed
+ * standalone table without dropping it, so migration refuses such a file.
+ */
+export const ggcodeConfigurationHasUnnamedServers = (text: string): boolean => {
+  const hasUnnamed = (node: unknown): boolean =>
+    isSeq(node) &&
+    node.items.some(
+      (item) =>
+        isMap(item) &&
+        (typeof item.get("name") !== "string" || item.get("name") === ""),
+    );
+  const root = parseGgcodeDocument(text).contents;
+  if (isSeq(root)) return hasUnnamed(root);
+  if (isMap(root)) return hasUnnamed(root.get("mcp_servers", true));
+  return false;
+};
+
+/**
  * Set or delete one named entry in a standalone mcp_servers.yaml, keeping the
- * rest of the document as written. A mapping root, which ggcode cannot load
- * as its standalone file, is rejected instead of being rewritten.
+ * rest of the document as written. A mapping root is the legacy ggcode.yaml
+ * layout, which accepts only deletion so uninstall can drop REA's in-main
+ * entry in place; upserts into it stay rejected.
  */
 export const editGgcodeConfigurationYaml = (
   text: string,
@@ -117,6 +157,24 @@ export const editGgcodeConfigurationYaml = (
         .join("\n");
     document.contents = sequence;
     root = sequence;
+  }
+  if (isMap(root)) {
+    // The legacy in-main ggcode.yaml layout: setup never writes this file,
+    // but uninstall removes REA's entry from its mcp_servers section in place.
+    if (entry !== undefined)
+      throw new TypeError(
+        "The configuration root must be a sequence of named server mappings",
+      );
+    const section = root.get("mcp_servers", true);
+    if (isSeq(section)) {
+      const index = section.items.findIndex(
+        (item) => isMap(item) && item.get("name") === serverKey,
+      );
+      if (index >= 0) section.items.splice(index, 1);
+    } else if (isMap(section)) {
+      section.delete(serverKey);
+    }
+    return document.toString({ lineWidth: 0 });
   }
   if (!isSeq(root))
     throw new TypeError(

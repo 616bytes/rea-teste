@@ -302,9 +302,10 @@ user-level `~/.ggcode/mcp_servers.yaml`. Entries carry `name`, `type`
 (`stdio`), `command`, `args`, and `env`; an empty `type` also connects as
 stdio. ggcode auto-migrates a legacy `mcp_servers` section of the main
 `~/.ggcode/ggcode.yaml` into that standalone file and honors the section only
-while the file is absent, so setup reads it as a lower-precedence layer and
-seeds a freshly created standalone file with its entries instead of
-suppressing them. ggcode discovers personal skills from `~/.ggcode/skills`,
+while the file is absent, so doctor reports it as the effective registration
+only in that case, and setup seeds a freshly created standalone file with its
+entries instead of suppressing them. Uninstall removes REA's entry from the
+legacy file as well. ggcode discovers personal skills from `~/.ggcode/skills`,
 so setup installs its skill copy there.
 
 ## Trae

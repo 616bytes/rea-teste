@@ -17,11 +17,13 @@ import {
   OMP_DISABLED_SERVERS_KEY,
   parseClientConfiguration,
   parseZcodeFallbackConfiguration,
+  parseGgcodeLegacyConfiguration,
   serializeClientConfiguration,
   withClientServers,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
 import { dshDocument, DshCordisDocument } from "./DshCordisPatch.js";
+import { ggcodeConfigurationHasUnnamedServers } from "./GgcodeConfigurationYaml.js";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import writeFileAtomic from "write-file-atomic";
@@ -153,7 +155,10 @@ const configureClientDocument = async (
   try {
     parsed = parseClientConfiguration(
       original ??
-        (format === "toml" || format === "grok" || format === "dsh"
+        (format === "toml" ||
+        format === "grok" ||
+        format === "dsh" ||
+        format === "ggcode"
           ? ""
           : "{}"),
       format,
@@ -201,7 +206,7 @@ const configureClientDocument = async (
     command,
     {
       ...parsed,
-      servers: { ...fallback.value, ...parsed.servers },
+      servers: { ...superseded.value, ...fallback.value, ...parsed.servers },
     },
     files.value,
     resolveProviderRequestBudget,
@@ -613,6 +618,29 @@ const readSupersededServers = async (
 > => {
   const path = client.supersededConfigPath;
   if (path === undefined || targetExists) return ok({});
+  if (client.format === "ggcode") {
+    // ggcode.yaml is the mapping-root main config, not the standalone layout,
+    // and its unnamed entries cannot survive migration into the keyed
+    // standalone table, so refuse instead of silently dropping them.
+    const text = await readConfigurationText(path);
+    if (!text.ok) return text;
+    if (text.value === undefined) return ok({});
+    try {
+      if (ggcodeConfigurationHasUnnamedServers(text.value))
+        return err({
+          kind: "malformed",
+          path,
+          detail: `Configuration ${path} holds MCP server entries without a \`name\`; ggcode loads them, but setup cannot migrate unnamed entries into mcp_servers.yaml without dropping them. Name or remove those entries, then rerun setup.`,
+        });
+      return ok(parseGgcodeLegacyConfiguration(text.value).servers);
+    } catch (cause: unknown) {
+      return err({
+        kind: "malformed",
+        path,
+        detail: `Configuration ${path} is malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      });
+    }
+  }
   const document = await readConfigurationFile(path, client.format);
   if (!document.ok) return document;
   return ok(document.value?.servers ?? {});

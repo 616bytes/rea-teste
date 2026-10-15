@@ -41,10 +41,7 @@ describe("ggcode configuration paths", () => {
       name: "ggcode",
       displayName: "ggcode",
       configPath: join("/home/a", ".ggcode", "mcp_servers.yaml"),
-      configPaths: [
-        join("/home/a", ".ggcode", "ggcode.yaml"),
-        join("/home/a", ".ggcode", "mcp_servers.yaml"),
-      ],
+      fallbackConfigPath: join("/home/a", ".ggcode", "ggcode.yaml"),
       supersededConfigPath: join("/home/a", ".ggcode", "ggcode.yaml"),
       markerPath: join("/home/a", ".ggcode"),
       format: "ggcode",
@@ -268,5 +265,171 @@ mcp_servers:
     );
     const servers = await readServers(client.configPath);
     expect(servers).toEqual([{ name: "other", command: "other-server" }]);
+  });
+});
+
+describe("ggcode legacy fallback semantics", () => {
+  const ggcodeClient = async () => {
+    const home = await createTestTempDirectory("rea-ggcode-");
+    const client = ggcodePath(home, process.platform);
+    if (client?.markerPath === undefined)
+      throw new Error("missing ggcode client");
+    await mkdir(client.markerPath, { recursive: true });
+    return { home, client };
+  };
+
+  const readServers = async (path: string) =>
+    parse(await readFile(path, "utf8"));
+
+  it("preserves the legacy rea entry environment when seeding the standalone file", async () => {
+    const { home, client } = await ggcodeClient();
+    await writeFile(
+      join(home, ".ggcode", "ggcode.yaml"),
+      `mcp_servers:
+  - name: rea
+    type: stdio
+    command: old-rea
+    env:
+      REA_LOG_LEVEL: debug
+  - name: legacy
+    command: legacy-cmd
+`,
+    );
+
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("configured");
+    const servers = await readServers(client.configPath);
+    expect(servers.map(({ name }: { name: string }) => name).sort()).toEqual([
+      "legacy",
+      "rea",
+    ]);
+    expect(
+      servers.find(({ name }: { name: string }) => name === "rea"),
+    ).toMatchObject({
+      command: command[0],
+      args: command.slice(1),
+      env: { REA_LOG_LEVEL: "debug" },
+    });
+  });
+
+  it("refuses to migrate unnamed in-main servers instead of dropping them", async () => {
+    const { home, client } = await ggcodeClient();
+    await writeFile(
+      join(home, ".ggcode", "ggcode.yaml"),
+      `mcp_servers:
+  - command: unnamed-cmd
+`,
+    );
+
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("failed");
+    await expect(readFile(client.configPath, "utf8")).rejects.toThrow();
+  });
+
+  it("rejects a mapping-shaped standalone file that ggcode cannot load", async () => {
+    const { home, client } = await ggcodeClient();
+    await writeFile(
+      client.configPath,
+      `mcp_servers:
+  - name: rea
+    type: stdio
+    command: ${JSON.stringify(command[0])}
+    args: ${JSON.stringify(command.slice(1))}
+`,
+    );
+
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("failed");
+    expect(
+      (await registrationStatuses(home)).find(
+        ({ client: name }) => name === "ggcode",
+      )?.state,
+    ).not.toBe("aligned");
+  });
+
+  it("rejects duplicate server names instead of repairing the wrong entry", async () => {
+    const { client } = await ggcodeClient();
+    const duplicated = `- name: rea
+  command: first
+- name: rea
+  command: second
+`;
+    await writeFile(client.configPath, duplicated);
+
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("failed");
+    expect(await readFile(client.configPath, "utf8")).toBe(duplicated);
+  });
+
+  it("removes the rea entry from the legacy in-main file on uninstall", async () => {
+    const { home } = await ggcodeClient();
+    const legacyPath = join(home, ".ggcode", "ggcode.yaml");
+    await writeFile(
+      legacyPath,
+      `model: demo
+mcp_servers:
+  - name: other
+    command: other-cmd
+  - name: rea
+    type: stdio
+    command: ${JSON.stringify(command[0])}
+    args: ${JSON.stringify(command.slice(1))}
+`,
+    );
+    const host = systemUninstallHost(home);
+    const legacyClient = (await host.clients()).find(
+      (entry) => entry.name === "ggcode" && entry.configPath === legacyPath,
+    );
+    if (legacyClient === undefined)
+      throw new Error("missing legacy ggcode uninstall client");
+
+    expect((await host.removeClient(legacyClient)).status).toBe("removed");
+    const content = parse(await readFile(legacyPath, "utf8"));
+    expect(content.model).toBe("demo");
+    expect(content.mcp_servers).toEqual([
+      { name: "other", command: "other-cmd" },
+    ]);
+  });
+
+  it("treats an explicit empty type as stdio", async () => {
+    const { home, client } = await ggcodeClient();
+    await writeFile(
+      client.configPath,
+      `- name: rea
+  type: ""
+  command: ${JSON.stringify(command[0])}
+  args: ${JSON.stringify(command.slice(1))}
+`,
+    );
+
+    expect(
+      (await registrationStatuses(home)).find(
+        ({ client: name }) => name === "ggcode",
+      ),
+    ).toMatchObject({ state: "aligned", command });
+  });
+
+  it("keeps a __proto__ server name as data without prototype pollution", async () => {
+    const { client } = await ggcodeClient();
+    await writeFile(
+      client.configPath,
+      `- name: __proto__
+  command: proto-cmd
+`,
+    );
+
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("configured");
+    expect(({} as Record<string, unknown>).command).toBeUndefined();
+    const servers = await readServers(client.configPath);
+    expect(servers.map(({ name }: { name: string }) => name)).toEqual([
+      "__proto__",
+      "rea",
+    ]);
   });
 });

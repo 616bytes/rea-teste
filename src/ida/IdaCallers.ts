@@ -1,7 +1,11 @@
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
-import { readCallGraphTargets } from "./IdaCallGraph.js";
+import { readCallGraphTargetBatch } from "./IdaCallGraph.js";
 import type { IdaFunction } from "./IdaProtocolValues.js";
+
+// Upstream defaults to 200 edges per root. Limit each frame to at most 6,400
+// default edges while amortizing MCP latency; producer truncation stays explicit.
+const CALLER_ROOTS_PER_BATCH = 32;
 
 /** A code reference is a candidate only; the root call graph must confirm a call. */
 export const readModernCallers = async (
@@ -41,15 +45,27 @@ export const readModernCallers = async (
     candidates.set(reference.function.address, reference.function);
   }
   const callers: IdaFunction[] = [];
-  for (const candidate of candidates.values()) {
-    const graph = await readCallGraphTargets(call, candidate.address);
-    if (graph.addresses.includes(target.address)) callers.push(candidate);
-    // A confirmed edge remains proven even if other edges were omitted. Only an
-    // unconfirmed candidate needs complete coverage to establish its exclusion.
-    else if (graph.coverage.status !== "complete")
-      limitations.add(
-        `Upstream callgraph did not completely examine caller candidate ${candidate.address}; its relationship remains unknown.`,
-      );
+  const unique = [...candidates.values()];
+  for (
+    let offset = 0;
+    offset < unique.length;
+    offset += CALLER_ROOTS_PER_BATCH
+  ) {
+    const batch = unique.slice(offset, offset + CALLER_ROOTS_PER_BATCH);
+    const graphs = await readCallGraphTargetBatch(
+      call,
+      batch.map(({ address }) => address),
+    );
+    for (const candidate of batch) {
+      const graph = graphs.get(candidate.address)!;
+      if (graph.addresses.includes(target.address)) callers.push(candidate);
+      // A confirmed edge remains proven even if other edges were omitted. Only an
+      // unconfirmed candidate needs complete coverage to establish its exclusion.
+      else if (graph.coverage.status !== "complete")
+        limitations.add(
+          `Upstream callgraph did not completely examine caller candidate ${candidate.address}; its relationship remains unknown.`,
+        );
+    }
   }
   const diagnostics = [
     "Callers are functions with incoming code references to the selected entry and a confirmed root-only callgraph edge; interior-only references and unresolved indirect calls remain unknown.",

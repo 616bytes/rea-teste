@@ -31,10 +31,15 @@ const fixture = async (
         },
       ];
     if (name === "callgraph") {
-      const root = Array.isArray(args.roots) ? String(args.roots[0]) : "";
-      const graph = graphs[root];
-      if (graph === undefined) throw new Error(`Unexpected candidate ${root}`);
-      return graph;
+      const roots = Array.isArray(args.roots) ? args.roots.map(String) : [];
+      return roots
+        .flatMap((root) => {
+          const graph = graphs[root];
+          if (!Array.isArray(graph))
+            throw new Error(`Unexpected candidate ${root}`);
+          return graph;
+        })
+        .reverse();
     }
     return original?.(name, args);
   };
@@ -79,7 +84,7 @@ describe("headless IDA verified callers", () => {
         producer.calls
           .filter(({ name }) => name === "callgraph")
           .map(({ args }) => args.roots),
-      ).toEqual([["0x2000"], ["0x3000"]]);
+      ).toEqual([["0x2000", "0x3000"]]);
       expect(producer.calls.some(({ name }) => name === "callees")).toBe(false);
     } finally {
       expect((await client.close()).ok).toBe(true);
@@ -127,6 +132,72 @@ describe("headless IDA verified callers", () => {
             ),
           ),
         ).toBe(true);
+      } finally {
+        expect((await client.close()).ok).toBe(true);
+      }
+    },
+  );
+});
+
+describe("headless IDA caller batches", () => {
+  it("verifies 1000 candidates with bounded roots and preserves reversed-row identities", async () => {
+    const roots = Array.from(
+      { length: 1000 },
+      (_, i) => `0x${(0x2000 + i * 0x20).toString(16)}`,
+    );
+    const graphs = Object.fromEntries(
+      roots.map((root) => [root, candidateGraph(root, true)]),
+    );
+    const { client, producer } = await fixture(
+      roots.map((root) => reference(root, "code", root)),
+      graphs,
+    );
+    try {
+      const result = await client.execute("procedure_callers", {
+        procedure: "main",
+      });
+      if (!result.ok) throw result.error;
+      expect(result.value.result).toEqual(roots);
+      const requests = producer.calls.filter(
+        ({ name }) => name === "callgraph",
+      );
+      expect(requests).toHaveLength(32);
+      expect(
+        requests.every(
+          ({ args }) => Array.isArray(args.roots) && args.roots.length <= 32,
+        ),
+      ).toBe(true);
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
+  });
+
+  it.each(["missing", "duplicate", "error"] as const)(
+    "rejects %s batch rows",
+    async (fault) => {
+      const { client, producer } = await fixture(
+        [reference("0x2004"), reference("0x3004", "code", "0x3000")],
+        {},
+      );
+      const original = producer.overrideCall;
+      producer.overrideCall = (name, args) =>
+        name === "callgraph"
+          ? [
+              ...(candidateGraph("0x2000", true) as JsonValue[]),
+              ...(fault === "missing"
+                ? []
+                : (candidateGraph(
+                    fault === "duplicate" ? "0x2000" : "0x3000",
+                    false,
+                    fault === "error" ? { error: "producer failed" } : {},
+                  ) as JsonValue[])),
+            ]
+          : original?.(name, args);
+      try {
+        const result = await client.execute("procedure_callers", {
+          procedure: "main",
+        });
+        expect(result.ok).toBe(false);
       } finally {
         expect((await client.close()).ok).toBe(true);
       }

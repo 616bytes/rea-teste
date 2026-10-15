@@ -146,8 +146,10 @@ or arbitrary Python evaluation is used. Discovery covers references to the
 selected function entry, so caller coverage remains partial: interior-only
 references and unresolved indirect calls remain unknown. Truncated or unassigned
 candidates add explicit limitations. A truncated candidate graph still proves an edge it contains, but
-cannot exclude a candidate whose edge was omitted. Each candidate requires one
-root-only graph read, without resolving unrelated callee display names. A missing
+cannot exclude a candidate whose edge was omitted. Candidate roots are verified
+in batches of up to 32 per depth-zero graph request, without resolving unrelated
+callee display names. Batch replies must contain exactly one row per requested
+root; missing, duplicate, unexpected, and failed rows fail the read. A missing
 graph tool leaves direct callers unavailable; an erroneous or inconsistent graph
 fails the read. The native attached profile retains its existing caller limitation.
 
@@ -167,7 +169,7 @@ Run `npm run verify:ida -- --target /absolute/path/to/program --procedure main` 
 
 Native verification requires `--second-procedure other_function --second-marker unique_second_body_text`; these options remain optional for the other profiles. The marker must occur in the second function's pseudocode and be absent from the first; the verifier also checks that returning to the first restores its text.
 
-The verifier requires the resolved procedure in both inventory and procedure search, then compares address, assembly, pseudocode, instruction windows and relationship results with the CLI/MCP dossier. Supply `--expected-string known_literal` to check a known positive string inventory/search result and `--expected-xref 0xSOURCE` to check a known reference source address. Choose those oracles independently from the operation under test. Without them, string and xref correctness are listed in `unverified`; valid output shapes alone do not establish those behaviors. Callee parity does not independently establish semantic completeness. Native callee successes must report an explicit truncation marker; missing markers remain protocol failures.
+The verifier requires the resolved procedure in both inventory and procedure search, then compares address, assembly, pseudocode, instruction windows and relationship results with the CLI/MCP dossier. Supply `--expected-string known_literal` to check a known positive string inventory/search result, `--expected-xref 0xSOURCE` to check a known reference source address, and `--expected-caller 0xFUNCTION` to check a known caller function entry in both CLI/MCP dossiers and the direct MCP caller query. Choose those oracles independently from the operation under test. Without them, string, xref, and available caller correctness are listed in `unverified`; valid output shapes or agreement between outputs from the same adapter do not establish those behaviors. Callee parity does not independently establish semantic completeness. Native callee successes must report an explicit truncation marker; missing markers remain protocol failures.
 
 The initial real workflows use stdio registrations for the legacy Windows GUI profile and a Windows x64 headless supervisor with IDA 9.3. The headless workflow has also passed on macOS arm64 with IDA Professional 9.1 (build 9.1.250226) against the same upstream commit `c133c3853faa111a9b00ee615c013b720d0c4acd`, using a source-built arm64 Mach-O fixture; Mach-O C symbols carry a leading underscore, so the procedure name is `_rea_fixture_add`. Streamable HTTP is tested against a loopback MCP fixture with the pinned client SDK; a real IDA HTTP-supervisor workflow remains unverified. Linux headless engine operation, other IDA releases, architectures, and modern attached GUI tools require their corresponding real workflows before support is claimed.
 

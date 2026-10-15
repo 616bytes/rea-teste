@@ -207,22 +207,26 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
         String pseudocode = null;
         Method initialize = privateMethod(bridge.getClass(), "initializeDecompiler");
         try {
-            invoke(initialize, bridge);
-            decompilerAvailable = true;
-            Method pseudocodeMethod = privateMethod(bridge.getClass(), "procedurePseudocode", JsonObject.class);
-            JsonObject output = (JsonObject)invoke(
-                pseudocodeMethod,
-                bridge,
-                procedureQuery(currentProgram.getName(), reader.getName())
-            );
-            pseudocode = output.get("value").getAsString();
-            require("pseudocode_does_not_use_file_constant", !pseudocode.contains("11111111"));
-        }
-        catch (IllegalStateException unavailable) {
-            Throwable cause = unavailable.getCause();
-            require("native_decompiler_unavailable_is_explicit",
-                cause instanceof IllegalStateException &&
-                cause.getMessage() != null && cause.getMessage().contains("could not open"));
+            try {
+                invoke(initialize, bridge);
+                decompilerAvailable = true;
+            }
+            catch (IllegalStateException unavailable) {
+                Throwable cause = unavailable.getCause();
+                require("native_decompiler_unavailable_is_explicit",
+                    cause instanceof IllegalStateException &&
+                    cause.getMessage() != null && cause.getMessage().contains("could not open"));
+            }
+            if (decompilerAvailable) {
+                Method pseudocodeMethod = privateMethod(bridge.getClass(), "procedurePseudocode", JsonObject.class);
+                JsonObject output = (JsonObject)invoke(
+                    pseudocodeMethod,
+                    bridge,
+                    procedureQuery(currentProgram.getName(), reader.getName())
+                );
+                pseudocode = output.get("value").getAsString();
+                require("pseudocode_does_not_use_file_constant", !pseudocode.contains("11111111"));
+            }
         }
         finally {
             Object decompiler = getField(bridge, "decompiler");

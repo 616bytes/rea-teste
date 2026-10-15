@@ -252,3 +252,21 @@ describe("readProcmonExport review of 46cba65", () => {
     expect((error as Error).message.length).toBeLessThan(200);
   });
 });
+
+describe("readProcmonExport review of 8d3d950", () => {
+  it("bounds parser diagnostics kept in partial coverage", async () => {
+    const name = `a${"x".repeat(1_000_000)}`;
+    const reading = await readProcmonExport(
+      Buffer.from(
+        `<procmon><eventlist><event><Operation>Read</Operation></event><event ${name}="1" ${name}="2"/></eventlist></procmon>`,
+      ),
+      { ...selection, event_limit: null },
+    );
+    expect(reading.coverage.status).toBe("partial");
+    expect(
+      reading.coverage.status === "partial"
+        ? reading.coverage.message.length
+        : 0,
+    ).toBeLessThan(400);
+  });
+});

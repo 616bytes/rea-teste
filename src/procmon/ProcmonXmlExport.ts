@@ -172,7 +172,10 @@ const stoppedCoverage = (
     );
   if (cause instanceof XmlStop)
     return partialCoverage("malformed", cause.message, line);
-  const detail = cause instanceof Error ? cause.message : String(cause);
+  // Parser diagnostics can quote source tokens of any length; keep a bounded prefix.
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const detail =
+    message.length > 300 ? `${message.slice(0, 300)}… (truncated)` : message;
   return stage === "close"
     ? partialCoverage("truncated", `XML export ends early: ${detail}`, line)
     : partialCoverage(

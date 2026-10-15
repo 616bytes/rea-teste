@@ -436,6 +436,11 @@ export const SCOPES = {
     "tests/fixtures/nativeaot/**",
     ".github/workflows/nativeaot-fixtures.yml",
   ],
+  ghidra_bridge: [
+    "bridge/ghidra/**",
+    "scripts/verify-ghidra-bridge-sources.mjs",
+    ".github/workflows/ghidra-bridge-sources.yml",
+  ],
   website: [
     "website/**",
     "scripts/*website*.py",

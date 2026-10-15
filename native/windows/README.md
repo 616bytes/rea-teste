@@ -38,7 +38,8 @@ unavailable.
 
 The source tree omits `native/windows/build/` from Git. To run Windows
 provider-backed workflows from a checkout without the MinGW build lane, extract
-the two files from the published `rea-agents` tarball whose version exactly
+`manifest.json` and the packaged addon (`rea-windows-x64.node` or
+`rea-windows-arm64.node`) from a `rea-agents` tarball whose version exactly
 matches the checkout's `package.json` version. Do not use `latest` or copy files
 from another REA version; the loader verifies the manifest version, ABI,
 architecture, and addon digest before it grants authority.
@@ -51,7 +52,7 @@ npm pack rea-agents@<matching-version>
 tar -xzf rea-agents-<matching-version>.tgz
 mkdir -p native/windows/build
 cp package/native/windows/build/manifest.json native/windows/build/
-cp package/native/windows/build/rea-windows-x64.node native/windows/build/
+cp package/native/windows/build/rea-windows-*.node native/windows/build/
 ```
 
 This is a manual recovery step. REA does not fetch or install the artifact

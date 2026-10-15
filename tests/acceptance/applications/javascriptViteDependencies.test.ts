@@ -457,6 +457,79 @@ const allScenarios = [
       kept: true,
     },
     {
+      file: "restored-through-container-alias.js",
+      mutation:
+        '__vite__mapDeps([0]); const copy = {...__vite__mapDeps}; const alias = copy; copy.f = []; alias.f = __vite__mapDeps.f; copy.f[0] = "./last.js";',
+    },
+    {
+      file: "assigned-existing-container.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; Object.assign(box, __vite__mapDeps); box.f[0] = "./last.js";',
+    },
+    {
+      file: "custom-cache-method.js",
+      mutation:
+        '__vite__mapDeps([0]); const cache = __vite__mapDeps.f; cache.custom = function () { this[0] = "./last.js"; }; cache.custom();',
+    },
+    {
+      file: "detached-through-container-alias.js",
+      mutation:
+        '__vite__mapDeps([0]); const copy = {...__vite__mapDeps}; const alias = copy; alias.f = []; copy.f[0] = "./last.js";',
+      kept: true,
+    },
+    {
+      file: "restored-through-assigned-alias.js",
+      mutation:
+        '__vite__mapDeps([0]); const copy = {...__vite__mapDeps}; const alias = Object.assign(copy, {}); copy.f = []; alias.f = __vite__mapDeps.f; copy.f[0] = "./last.js";',
+    },
+    {
+      file: "restored-through-nested-alias.js",
+      mutation:
+        '__vite__mapDeps([0]); const copy = {...__vite__mapDeps}; const box = {copy}; copy.f = []; box.copy.f = __vite__mapDeps.f; copy.f[0] = "./last.js";',
+    },
+    {
+      file: "restored-through-reflect.js",
+      mutation:
+        '__vite__mapDeps([0]); const copy = {...__vite__mapDeps}; const alias = copy; copy.f = []; Reflect.set(alias, "f", __vite__mapDeps.f); copy.f[0] = "./last.js";',
+    },
+    {
+      file: "assigned-container-fresh-override.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; Object.assign(box, __vite__mapDeps, {f: []}); box.f[0] = "./last.js";',
+      kept: true,
+    },
+    {
+      file: "assigned-through-existing-alias.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; const alias = box; Object.assign(alias, __vite__mapDeps); box.f[0] = "./last.js";',
+    },
+    {
+      file: "restored-through-assigned-target.js",
+      mutation:
+        '__vite__mapDeps([0]); const copy = {...__vite__mapDeps}; const alias = Object.assign(copy, {f: []}); Object.assign(copy, __vite__mapDeps); alias.f[0] = "./last.js";',
+    },
+    {
+      file: "custom-container-method.js",
+      mutation:
+        '__vite__mapDeps([0]); const copy = {...__vite__mapDeps}; copy.custom = function () { this.f[0] = "./last.js"; }; copy.custom();',
+    },
+    {
+      file: "borrowed-custom-cache-method.js",
+      mutation:
+        '__vite__mapDeps([0]); const cache = __vite__mapDeps.f; cache.custom = function () { this[0] = "./last.js"; }; cache.custom.call(cache);',
+    },
+    {
+      file: "overridden-cache-reader.js",
+      mutation:
+        '__vite__mapDeps([0]); const cache = __vite__mapDeps.f; cache.slice = function () { this[0] = "./last.js"; }; cache.slice(0, 1);',
+    },
+    {
+      file: "readonly-cache-method.js",
+      mutation:
+        "__vite__mapDeps([0]); const cache = __vite__mapDeps.f; cache.slice(0, 1);",
+      kept: true,
+    },
+    {
       file: "helper-alias.js",
       mutation: 'const alias = __vite__mapDeps; alias.f = ["./last.js"];',
     },

@@ -266,6 +266,57 @@ console.log(JSON.stringify([objectOrder(),bothSides(),arrayOrder(),computedOrder
 );
 
 cliTest(
+  "shares captured dependency chains while separating values at escape capture points",
+  async ({ cli }) => {
+    const depth = 30;
+    const source = `export function read(){let a0=1;
+${Array.from({ length: depth }, (_, index) => `let a${index + 1}=a${index}+a${index};`).join("\n")}
+const saved=a${depth};
+${Array.from({ length: depth + 1 }, (_, index) => `a${index}=0;`).join("\n")}
+return {value:saved};}
+export function captured(external) {
+let shared={value:1};
+const before=shared.value; external(shared); const after=shared.value;
+shared={value:2}; return {before,after};
+}`;
+    const oracle = await promisify(execFile)(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `${source}
+console.log(JSON.stringify([read(),captured(object=>{object.value=3;})]));`,
+      ],
+      { timeout: 10_000 },
+    );
+    expect(JSON.parse(oracle.stdout)).toEqual([
+      { value: 2 ** depth },
+      { before: 1, after: 3 },
+    ]);
+    await verifyJavaScriptReturnShapes(cli, source, (fields) => {
+      expect(fields("read")).toContainEqual(
+        expect.objectContaining({
+          path: "/value",
+          state: "literal",
+          value: 2 ** depth,
+        }),
+      );
+      expect(fields("captured")).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: "/before",
+            state: "literal",
+            value: 1,
+          }),
+          expect.objectContaining({ path: "/after", state: "unknown" }),
+        ]),
+      );
+    });
+  },
+  120_000,
+);
+
+cliTest(
   "keeps a captured parameter unknown when comparing export shapes through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-captured-comparison-");

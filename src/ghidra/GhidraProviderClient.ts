@@ -1,5 +1,6 @@
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { fileURLToPath } from "node:url";
+import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 
 import {
   createAnalysisExecution,
@@ -73,8 +74,8 @@ import {
   isGhidraMipsSoftFloatTarget,
 } from "./GhidraMipsProfile.js";
 import { ghidraRiscvLimitations } from "./GhidraRiscvProfile.js";
-import { ghidraPeCodeViewLimitations } from "./GhidraPeProfile.js";
-import { unverifiedGhidraBuildLimitation } from "./GhidraInstallationPolicy.js";
+import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
+import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import {
@@ -93,10 +94,7 @@ import {
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
 import type { GhidraSessionError } from "./GhidraSessionError.js";
-import {
-  ghidraPdbLimitations,
-  type GhidraSessionInfo,
-} from "./GhidraSessionValues.js";
+import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
 import { ghidraExtensionFailure } from "./extensions/GhidraExtensionFailures.js";
 import {
   ghidraExtensionSchema,
@@ -532,7 +530,6 @@ export const createGhidraProviderClient = (input: {
   // Replaced by the reported outcome once the session handshake is checked.
   const seedLimitations: string[] = [...ghidraSeedLimitations(seeds)];
   const pdbLimitations: string[] = [];
-  let pdbLoaded = false;
   // Replaced by the reported storage outcome once the handshake is checked.
   const softFloatLimitations: string[] = [
     ...ghidraMipsSoftFloatLimitations(softFloat),
@@ -588,7 +585,10 @@ export const createGhidraProviderClient = (input: {
         ? {}
         : { javaVmName: installation.javaVmName }),
       bridgeScriptPath: fileURLToPath(
-        new URL("../../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
+        new URL(
+          `../../bridge/ghidra/${GHIDRA_BRIDGE_SOURCES.bridge}`,
+          import.meta.url,
+        ),
       ),
       ...(pspExtension?.success === true
         ? { pspExtension: pspExtension.data }
@@ -663,11 +663,10 @@ export const createGhidraProviderClient = (input: {
     info: GhidraSessionInfo,
   ): Promise<AnalysisError | undefined> => {
     if (target.format === "pe") {
-      pdbLoaded = info.pdb?.loaded === true;
       pdbLimitations.splice(
         0,
         pdbLimitations.length,
-        ...ghidraPdbLimitations(info.pdb),
+        ...ghidraPePdbLimitations(target, info.pdb),
       );
     }
     const softFloatReason = ghidraMipsSoftFloatFailure(
@@ -722,7 +721,6 @@ export const createGhidraProviderClient = (input: {
     ...ghidraExtensionLimitations(extensions),
     ...seedLimitations,
     ...pdbLimitations,
-    ...ghidraPeCodeViewLimitations(target, pdbLoaded),
     ...(releaseLimitation === undefined ? [] : [releaseLimitation]),
   ];
   const nativeAotOwner =
@@ -864,8 +862,16 @@ export const createGhidraProviderClient = (input: {
         if (!result.ok) return result;
         normalized = result.value;
       }
-      if (operation === "inspect_native_data_type") {
-        const address = input.value.address;
+      if (
+        operation === "inspect_native_data_type" &&
+        normalized !== null &&
+        typeof normalized === "object" &&
+        !Array.isArray(normalized) &&
+        normalized.metadata_recovery === undefined
+      ) {
+        // The bridge owns address-space resolution. Enrich its parsed identity;
+        // request parameters retain the caller's spelling.
+        const address = normalized.address;
         if (typeof address === "string") {
           if (target.format === "pe" && nativeAotOwner !== undefined) {
             const started = await client.start(
@@ -889,23 +895,12 @@ export const createGhidraProviderClient = (input: {
             );
             if (!derived.ok) return derived;
           }
-          let metadata:
-            | ReturnType<NativeAotPeResult["readTypeDetail"]>
-            | undefined;
-          metadata = nativeAotOwner?.readTypeDetail(address);
-          if (
-            metadata !== undefined &&
-            normalized !== null &&
-            typeof normalized === "object" &&
-            !Array.isArray(normalized)
-          ) {
-            const nativeResult = normalized as Record<string, JsonValue>;
-            if (nativeResult.metadata_recovery === undefined)
-              normalized = jsonValueSchema.parse({
-                ...nativeResult,
-                metadata_recovery: metadata,
-              });
-          }
+          const metadata = nativeAotOwner?.readTypeDetail(address);
+          if (metadata !== undefined)
+            normalized = jsonValueSchema.parse({
+              ...normalized,
+              metadata_recovery: metadata,
+            });
         }
       }
       if (operation === "inspect_native_load_image") {

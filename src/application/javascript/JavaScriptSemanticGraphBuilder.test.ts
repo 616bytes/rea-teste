@@ -25,6 +25,43 @@ import { semanticCoverageResourceLimits } from "../../domain/javascript/javascri
 
 const SHA256 = "a".repeat(64);
 
+it.each([
+  ["plain export", "const answer = 42; export { answer };", 0],
+  ["aliased export", "const answer = 42; export { answer as result };", 0],
+  ["declaration only", "const answer = 42;", 0],
+  ["genuine assignment", "let answer = 0; answer = 1;", 1],
+])(
+  "projects writes only for actual writes: %s",
+  (_name, source, writeCount) => {
+    const graph = graphFor(source);
+    const binding = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "answer",
+    );
+    if (binding === undefined) throw new Error("Expected answer binding");
+    const writes = graph.relations.filter(
+      ({ relation, target_node_id }) =>
+        relation === "writes" && target_node_id === binding.node_id,
+    );
+    expect(writes).toHaveLength(writeCount);
+    const exportReference = graph.nodes.find(
+      ({ identity }) => identity.role_key === "reference:0:export:answer",
+    );
+    if (source.includes("export {")) expect(exportReference).toBeDefined();
+
+    const trace = queryJavaScriptSemanticGraph(graph, {
+      seed: { kind: "semantic-node", node_id: binding.node_id },
+      direction: "backward-provenance",
+      allowed_relations: ["writes"],
+    });
+    expect(trace.status).toBe("found");
+    expect(trace.summary).toMatchObject({
+      total_seed_matches: 1,
+      traversed_relations: writeCount,
+    });
+    expect(trace.relations).toHaveLength(writeCount);
+  },
+);
+
 it("projects closure and direct interprocedural flow without execution", () => {
   const graph = graphFor(`
       const outer = 2;
@@ -382,6 +419,33 @@ it("keeps duplicate function fingerprints ambiguous", () => {
   });
   expect(query.status).toBe("ambiguous");
   expect(query.summary.total_seed_matches).toBe(2);
+});
+
+it("selects analyzer-produced boundaries by their method field", () => {
+  const graph = graphFor("const port = Number(process.env.PORT);");
+  const boundary = graph.nodes.find(({ kind }) => kind === "boundary");
+  if (boundary === undefined) throw new Error("Expected a boundary node");
+
+  expect(boundary.properties).toMatchObject({
+    boundary_kind: "coerce",
+    field: "Number",
+    method: "Number",
+  });
+  expect(
+    queryJavaScriptSemanticGraph(graph, {
+      seed: { kind: "boundary-field", field: "Number" },
+      direction: "forward-influence",
+    }),
+  ).toMatchObject({
+    seed_node_ids: [boundary.node_id],
+    summary: { total_seed_matches: 1 },
+  });
+  expect(
+    queryJavaScriptSemanticGraph(graph, {
+      seed: { kind: "boundary-field", field: "missing-field" },
+      direction: "forward-influence",
+    }).summary.total_seed_matches,
+  ).toBe(0);
 });
 
 const semanticNodeFor = (roleKey: string) => {

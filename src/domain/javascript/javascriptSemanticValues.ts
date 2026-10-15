@@ -26,6 +26,7 @@ import type {
   JavaScriptSemanticValue,
 } from "./javascriptSemanticValueTypes.js";
 import {
+  recordSemanticValueLimit,
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
@@ -360,6 +361,11 @@ const evaluateBinding = (
   const initializer = binding.initializers[0];
   if (initializer === undefined)
     return { status: "unknown", reason: "Missing binding initializer." };
+  if (context.state.conditionallySkippedExpressions.has(initializer.node))
+    return {
+      status: "unknown",
+      reason: `Binding ${binding.name} may remain uninitialized.`,
+    };
   const position = context.bindings.size;
   const callerDependence = context.dependence.lowest;
   context.dependence.lowest = CALLER_INDEPENDENT;
@@ -447,6 +453,15 @@ const evaluateExpression = (
   node: t.Node,
   context: EvaluationContext,
 ): JavaScriptSemanticValue => {
+  const value = evaluateExpressionValue(node, context);
+  recordSemanticValueLimit(context.state, value);
+  return value;
+};
+
+const evaluateExpressionValue = (
+  node: t.Node,
+  context: EvaluationContext,
+): JavaScriptSemanticValue => {
   if (context.expressionDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
     context.dependence.lowest = EVERY_CALLER;
     return semanticResourceLimitUnknown("expression-depth");
@@ -466,10 +481,7 @@ const evaluateExpression = (
     });
   }
   const literal = readExactJavaScriptLiteral(node);
-  if (literal.found)
-    return typeof literal.value === "number"
-      ? primitiveSet([literal.value])
-      : { status: "literal", value: literal.value };
+  if (literal.found) return primitiveSet([literal.value]);
   if (t.isIdentifier(node)) {
     const binding = resolveSemanticBindingState(context.state, node, node.name);
     return binding === undefined
@@ -752,11 +764,12 @@ const projectValue = (
   value: JavaScriptSemanticValue,
   projection: readonly (string | number | null)[],
 ): JavaScriptSemanticValue => {
+  if (isSemanticResourceLimit(value)) return value;
   if (projection.includes(null))
     return { status: "unknown", reason: "Cannot project a dynamic property." };
   const path = projection.map((key) => String(key));
   const slot = semanticSlotAtPath(value, path);
-  return slot.presence === "present"
+  return slot.presence === "present" || isSemanticResourceLimit(slot.value)
     ? slot.value
     : {
         status: "unknown",
@@ -817,7 +830,7 @@ const provenanceForBindingUncached = (
     ({ kind }) => kind === "assignment",
   );
   const conditionallyInitialized = binding.initializers.some(({ node }) =>
-    context.state.conditionalInitializers.has(node),
+    context.state.conditionallySkippedExpressions.has(node),
   );
   if (
     provenance.status !== "module" ||
@@ -828,7 +841,7 @@ const provenanceForBindingUncached = (
     provenance.origins,
     assigned
       ? `Binding ${binding.name} may be reassigned.`
-      : `Binding ${binding.name} is conditionally initialized.`,
+      : `Binding ${binding.name} may remain uninitialized.`,
   );
 };
 

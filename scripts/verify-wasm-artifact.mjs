@@ -24,6 +24,7 @@ import {
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { WABT_OPERATION_TIMEOUT_MS } from "./lib/wabt-verifier-timeouts.mjs";
 
 const directory = process.env.REA_WABT_BIN_DIRECTORY;
 if (!isAbsolute(directory ?? "")) {
@@ -112,6 +113,8 @@ const mcpEnvironment = Object.fromEntries(
     ([name]) => name.toUpperCase() !== "REA_MCP_MAX_RESPONSE_BYTES",
   ),
 );
+const callTool = (request) =>
+  client.callTool(request, { timeout: WABT_OPERATION_TIMEOUT_MS });
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -126,7 +129,7 @@ const transport = new StdioClientTransport({
 let cases = 0;
 const failures = [];
 const retainedEvidence = async (evidenceId) => {
-  const reply = await client.callTool({
+  const reply = await callTool({
     name: "get_evidence_bundle",
     arguments: {},
   });
@@ -176,7 +179,7 @@ try {
                 TMP: childTempRoot,
                 TEMP: childTempRoot,
               },
-              timeout: 120_000,
+              timeout: WABT_OPERATION_TIMEOUT_MS,
               maxBuffer: 64 * 1024 * 1024,
             },
           )
@@ -286,7 +289,7 @@ try {
     const cliValue = await inspectCli(input);
     assert.equal(cliValue.category, undefined, JSON.stringify(cliValue));
     const cli = parseEvidence(cliValue);
-    const reply = await client.callTool({
+    const reply = await callTool({
       name: "inspect_wasm_artifact",
       arguments: input,
     });
@@ -401,7 +404,7 @@ try {
         JSON.stringify(cliError),
       );
       const error = requireMcpToolError(
-        await client.callTool({
+        await callTool({
           name: "inspect_wasm_artifact",
           arguments: invalidInput,
         }),
@@ -462,7 +465,7 @@ try {
     ),
   );
   const largeError = requireMcpToolError(
-    await client.callTool({
+    await callTool({
       name: "inspect_wasm_artifact",
       arguments: largeInput,
     }),
@@ -474,7 +477,7 @@ try {
     kind: "retained-evidence",
     evidence_id: largeCli.evidence_id,
   });
-  const largeSummary = await client.callTool({
+  const largeSummary = await callTool({
     name: "inspect_wasm_artifact",
     arguments: { ...largeInput, detail: "summary" },
   });
@@ -484,7 +487,7 @@ try {
   ).normalized_result;
   assert.equal(summary.parent_evidence_id, largeCli.evidence_id);
   assert.equal(summary.summary.wat.sha256, sha256(largeWat));
-  const largePage = await client.callTool({
+  const largePage = await callTool({
     name: "inspect_analysis_view",
     arguments: {
       source: largeReference,

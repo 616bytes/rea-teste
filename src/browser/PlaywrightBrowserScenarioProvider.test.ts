@@ -145,15 +145,16 @@ class FakeSession implements BrowserScenarioSessionPort {
     return 0;
   }
 
-  events(): {
-    readonly retained: number;
-    readonly dropped: number;
-    readonly items: readonly BrowserScenarioEvent[];
-  } {
+  events(): ReturnType<BrowserScenarioSessionPort["events"]> {
     return {
       retained: this.eventItems.length,
       dropped: 0,
       items: this.eventItems,
+      omissions: {
+        by_kind: [],
+        network_transactions: [],
+        network_transaction_range: null,
+      },
     };
   }
 
@@ -559,9 +560,16 @@ describe("PlaywrightBrowserScenarioProvider operation failures", () => {
               },
               steps: [{ step_id: "scenario_start" }],
               events: {
+                retained: 1,
+                dropped: 0,
                 items: [
                   expect.objectContaining({ text: "navigation started" }),
                 ],
+                omissions: {
+                  by_kind: [],
+                  network_transactions: [],
+                  network_transaction_range: null,
+                },
               },
             },
           },
@@ -722,3 +730,49 @@ it("keeps failed event finalization failed across cleanup retries", async () => 
   expect(finishEvents).toHaveBeenCalledTimes(1);
   expect(closeBrowser).toHaveBeenCalledTimes(1);
 });
+
+it.each(["launch", "connect"] as const)(
+  "reports locale coverage in %s success and retained operation/cleanup failures",
+  async (mode) => {
+    const input = scenario({ mode });
+    input.environment.locale = "fr-FR";
+    for (const failures of [
+      {},
+      {
+        capture: {
+          call: 1,
+          error: new AnalysisCancelledError("capture_browser_scenario"),
+        },
+      },
+      { close: new Error("fixture cleanup interrupted") },
+    ]) {
+      const session = new FakeSession(mode, failures);
+      const provider = new PlaywrightBrowserScenarioProvider(
+        async () => session,
+      );
+      const result = await provider.captureScenario(input);
+      expect(result.ok).toBe(!("capture" in failures || "close" in failures));
+      const expected = {
+        limitations:
+          mode === "connect"
+            ? expect.arrayContaining([
+                "Attached locale fr-FR applies to Intl formatting only; navigator.language(s) and Accept-Language remain caller-controlled. Use launch mode for matching page and request languages.",
+              ])
+            : expect.not.arrayContaining([
+                expect.stringContaining("Attached locale"),
+              ]),
+      };
+      if (result.ok) expect(result.value).toMatchObject(expected);
+      else
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          details: {
+            partial_observation: {
+              kind: "browser-scenario-observation",
+              capture: expected,
+            },
+          },
+        });
+      expect(session.closeCalls).toBe(1);
+    }
+  },
+);

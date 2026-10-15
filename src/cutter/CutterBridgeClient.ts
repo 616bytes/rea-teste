@@ -3,7 +3,6 @@ import { constants as fsConstants } from "node:fs";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createConnection } from "node:net";
 import { lstat, open, opendir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -16,6 +15,7 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { requireWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
+import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 
 const descriptorSchema = z.object({
   session_id: z.string().uuid(),
@@ -240,27 +240,6 @@ export interface CutterBridgeDiscovery {
     | "not_checked";
 }
 
-/**
- * Expands a leading `~` or `~/...` to the home directory. An empty or
- * whitespace-only `REA_CUTTER_BRIDGE_DIR` is unset.
- */
-const resolveCutterBridgeDirectory = (
-  environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform,
-): string => {
-  const configured = environment.REA_CUTTER_BRIDGE_DIR;
-  if (configured !== undefined && configured.trim().length > 0) {
-    if (configured === "~") return homedir();
-    if (configured.startsWith("~/"))
-      return join(homedir(), configured.slice(2));
-    return configured;
-  }
-  const localAppData = environment.LOCALAPPDATA;
-  return platform === "win32" && localAppData
-    ? join(localAppData, "REA", "CutterBridge")
-    : join(homedir(), ".cache", "rea", "cutter-bridge");
-};
-
 /** Discovers and communicates with REA Python bridge plugins in live Cutter processes. */
 export class CutterBridgeClient {
   readonly #directory: string;
@@ -297,7 +276,12 @@ export class CutterBridgeClient {
                 ),
           }
         : undefined);
-    this.#directory = resolveCutterBridgeDirectory(environment, this.#platform);
+    this.#directory = resolveBridgeDirectory(
+      environment.REA_CUTTER_BRIDGE_DIR,
+      this.#platform,
+      environment.LOCALAPPDATA,
+      homeDirectoryFromEnvironment(environment, this.#platform),
+    );
   }
 
   async listSessions(): Promise<CutterBridgeDiscovery> {
@@ -904,3 +888,22 @@ export class CutterBridgeClient {
     });
   }
 }
+
+const resolveBridgeDirectory = (
+  configured: string | undefined,
+  platform: NodeJS.Platform,
+  localAppData: string | undefined,
+  homeDirectory: string,
+): string => {
+  if (configured !== undefined && configured.trim() !== "") {
+    if (configured === "~") return homeDirectory;
+    if (configured.startsWith("~/"))
+      return join(homeDirectory, configured.slice(2));
+    if (platform === "win32" && configured.startsWith("~\\"))
+      return join(homeDirectory, configured.slice(2));
+    return configured;
+  }
+  return platform === "win32" && localAppData
+    ? join(localAppData, "REA", "CutterBridge")
+    : join(homeDirectory, ".cache", "rea", "cutter-bridge");
+};

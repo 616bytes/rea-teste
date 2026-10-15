@@ -73,15 +73,50 @@ it.each([
 );
 
 it.each([
-  { rejectClose: false, rejectRead: true, wrongXrefs: false },
-  { rejectClose: true, rejectRead: false, wrongXrefs: false },
-  { rejectClose: true, rejectRead: true, wrongXrefs: false },
-  { rejectClose: false, rejectRead: false, wrongXrefs: true },
+  {
+    rejectClose: false,
+    rejectRead: true,
+    wrongXrefs: false,
+    wrongStrings: false,
+  },
+  {
+    rejectClose: true,
+    rejectRead: false,
+    wrongXrefs: false,
+    wrongStrings: false,
+  },
+  {
+    rejectClose: true,
+    rejectRead: true,
+    wrongXrefs: false,
+    wrongStrings: false,
+  },
+  {
+    rejectClose: false,
+    rejectRead: false,
+    wrongXrefs: true,
+    wrongStrings: false,
+  },
+  {
+    rejectClose: false,
+    rejectRead: false,
+    wrongXrefs: false,
+    wrongStrings: true,
+  },
 ])(
-  "reports failure-path lineage (cleanup: $rejectClose, read: $rejectRead, wrong xrefs: $wrongXrefs)",
-  async ({ rejectClose, rejectRead, wrongXrefs }) => {
+  "reports failure-path lineage (cleanup: $rejectClose, read: $rejectRead, wrong xrefs: $wrongXrefs, wrong strings: $wrongStrings)",
+  async ({ rejectClose, rejectRead, wrongXrefs, wrongStrings }) => {
     const root = await createTestTempDirectory("rea-kuna-verifier-cleanup-");
     const kuna = await writeFakeKuna(root, {
+      stringRows: [
+        { address: 12288, text: "REA fixture prompt" },
+        {
+          address: 12320,
+          text: "＿φ( °-°)/ REA unicode marker",
+          encoding: "utf8",
+        },
+        { address: 12400, text: "REA wide marker", encoding: "utf16" },
+      ],
       functions: [
         { name: "main", addr: "0x1000" },
         { name: "rea_checksum", addr: "0x1040" },
@@ -111,11 +146,14 @@ const methods = new Map();
 const output = createInterface({ input: backend.stdout });
 output.on("line", (line) => {
   const message = JSON.parse(line);
-  if (${wrongXrefs} && methods.get(message.id) === "xrefs" && message.result?.structuredContent) {
-    message.result.structuredContent.normalized_result = ["0xdeadbeef"];
+  if ((${wrongXrefs} && methods.get(message.id) === "xrefs" || ${wrongStrings} && methods.get(message.id) === "search_strings") && message.result?.structuredContent) {
+    const corrupted = ${wrongStrings}
+      ? message.result.structuredContent.normalized_result.map(row => ({ ...row, value: row.value + " [wrong string]" }))
+      : ["0xdeadbeef"];
+    message.result.structuredContent.normalized_result = corrupted;
     for (const block of message.result.content) if (block.type === "text") {
       const projection = JSON.parse(block.text);
-      projection.normalized_result = ["0xdeadbeef"];
+      projection.normalized_result = corrupted;
       block.text = JSON.stringify(projection);
     }
   }
@@ -178,7 +216,9 @@ await exited;
         ? "injected cleanup rejection"
         : wrongXrefs
           ? "incoming references differ from exact-target native sites"
-          : "injected verification failure",
+          : wrongStrings
+            ? "String search differs from native scan"
+            : "injected verification failure",
     );
     if (rejectRead)
       expect(JSON.stringify(report.failures)).toContain(

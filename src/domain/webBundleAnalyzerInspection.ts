@@ -4,9 +4,14 @@ import { sanitizeEndpointCandidate } from "./browserObservation.js";
 import { compositeKey } from "./unicodeCodePointOrder.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
 import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
-import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
-import { classifyParsedJavaScriptReceivers } from "./javascript/javascriptSemanticAnalysis.js";
+import {
+  completeSemanticSteps,
+  traverseJavaScriptAst,
+} from "./javascript/javascriptSemanticTraversal.js";
+import { indexJavaScriptDefinitionsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticAnalysis.js";
+import type { JavaScriptSemanticAnalysisState } from "./javascript/javascriptSemanticState.js";
+import { indexJavaScriptAmbientWritesSteps } from "./javascript/javascriptSemanticAmbientWrites.js";
 import { semanticStaticPropertyName } from "./javascript/javascriptAstValues.js";
 import {
   calleeName,
@@ -61,7 +66,13 @@ export const analyzeScript = (
   if ((file.errors?.length ?? 0) > 0)
     accumulator.recoveredScripts.push(script.script_key);
   detectVendorFingerprints(script, accumulator);
-  const receivers = classifyParsedJavaScriptReceivers(file);
+  const { bindings, receivers } = completeSemanticSteps(
+    indexJavaScriptDefinitionsWithReceiversSteps(file.program),
+  );
+  if (receivers.hasWebSocketEndpointCandidate)
+    completeSemanticSteps(
+      indexJavaScriptAmbientWritesSteps(file.program, bindings),
+    );
   const openReceiverFacts = receivers.openReceivers;
   const rpc = createJavaScriptRpcScan(
     script.source.artifact.text,
@@ -70,7 +81,7 @@ export const analyzeScript = (
   traverseJavaScriptAst(file, {
     enter: (node) => {
       accumulator.visitedNodes += 1;
-      inspectNode(script, node, accumulator, openReceiverFacts);
+      inspectNode(script, node, accumulator, bindings, openReceiverFacts);
       const endpoint = rpc.inspect(node);
       if (endpoint !== undefined)
         addFinding({
@@ -89,6 +100,7 @@ const inspectNode = (
   script: IncludedScript,
   node: t.Node,
   accumulator: AnalysisAccumulator,
+  bindings: JavaScriptSemanticAnalysisState,
   openReceiverFacts: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
 ): void => {
   if (
@@ -127,13 +139,14 @@ const inspectNode = (
     t.isOptionalCallExpression(node) ||
     t.isNewExpression(node)
   )
-    inspectCall(script, node, accumulator, openReceiverFacts);
+    inspectCall(script, node, accumulator, bindings, openReceiverFacts);
 };
 
 const inspectCall = (
   script: IncludedScript,
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   accumulator: AnalysisAccumulator,
+  bindings: JavaScriptSemanticAnalysisState,
   openReceiverFacts: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
 ): void => {
   const name = calleeName(node.callee);
@@ -177,6 +190,7 @@ const inspectCall = (
     name,
     node.arguments,
     node.callee,
+    bindings,
     openReceiverFacts.get(node.start ?? -1),
   );
   if (endpoint?.kind === "candidate")

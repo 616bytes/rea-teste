@@ -10,6 +10,47 @@ import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javasc
 import { analyzeJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
 import { buildJavaScriptArtifactGraph } from "../../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
 
+it("projects a qualified global socket with its source evidence and excludes a local lookalike", async () => {
+  const root = await createTestTempDirectory("rea-js-qualified-socket-");
+  await writeFile(
+    join(root, "app.js"),
+    [
+      'function local(window) { new window.WebSocket("wss://example.test/local"); }',
+      'new globalThis.WebSocket("wss://example.test/socket");',
+    ].join("\n"),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const analysis = analyzeJavaScriptArtifactFiles(files);
+    const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
+    const endpoints = graph.nodes.filter(({ kind }) => kind === "endpoint");
+    expect(endpoints).toHaveLength(1);
+    const observation = endpoints[0]?.observations[0];
+    expect(observation?.properties).toMatchObject({
+      value: "wss://example.test/socket",
+      mechanism: "call:globalThis.WebSocket",
+    });
+    expect(observation?.evidence).toMatchObject({
+      authority: "ast-static-analysis",
+      state: "observed",
+      confidence: "exact",
+      location: {
+        available: true,
+        value: {
+          kind: "source-range",
+          source: "app.js",
+          start: { line: 2, column: 0 },
+        },
+      },
+    });
+  } finally {
+    await reader.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("keeps ambiguous endpoint candidates inferred through artifact graph projection", async () => {
   const root = await createTestTempDirectory("rea-js-endpoint-certainty-");
   await writeFile(join(root, "app.js"), 'form.get("shared"); fetch("shared");');

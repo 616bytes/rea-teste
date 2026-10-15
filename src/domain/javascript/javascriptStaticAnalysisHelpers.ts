@@ -19,6 +19,8 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
+import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import {
   compareUnicodeCodePoints,
   compositeKey,
@@ -590,6 +592,10 @@ export interface JavaScriptEndpointArgument {
   readonly value: string;
 }
 
+/** Name gate only; lexical and ambient-write facts still establish identity. */
+export const isWebSocketEndpointCandidate = (name: string): boolean =>
+  name === "WebSocket" || name.endsWith(".WebSocket");
+
 /** Classify one literal without treating a generic method name as network identity. */
 export const endpointArgument = (
   name: string,
@@ -600,6 +606,7 @@ export const endpointArgument = (
     | t.ArgumentPlaceholder
   )[],
   callee: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
   receiverFact?: JavaScriptOpenReceiverFact,
 ): JavaScriptEndpointArgument | undefined => {
   const literal = (
@@ -607,10 +614,13 @@ export const endpointArgument = (
   ): JavaScriptEndpointArgument | undefined =>
     value === undefined ? undefined : { kind: "endpoint", value };
   if (receiverFact === "window") return undefined;
+  if (isWebSocketEndpointCandidate(name))
+    return isUnmodifiedGlobalReference(callee, bindings, "WebSocket")
+      ? literal(stringValue(args[0]))
+      : undefined;
   if (
     name === "fetch" ||
     name.endsWith(".fetch") ||
-    name === "WebSocket" ||
     name === "EventSource" ||
     name.endsWith(".EventSource")
   )

@@ -59,7 +59,11 @@ import {
   electronMemberPath,
   ELECTRON_MODULE,
 } from "./javascriptElectronMemberWrites.js";
-import { range } from "./javascriptStaticAnalysisHelpers.js";
+import {
+  calleeName,
+  isWebSocketEndpointCandidate,
+  range,
+} from "./javascriptStaticAnalysisHelpers.js";
 import { semanticCoverage } from "./javascriptSemanticCoverage.js";
 import { semanticResourceLimitsIn } from "./javascriptSemanticResourceLimits.js";
 import {
@@ -241,35 +245,16 @@ export type JavaScriptOpenReceiverFact =
 export interface JavaScriptReceiverFacts {
   readonly openReceivers: ReadonlyMap<number, JavaScriptOpenReceiverFact>;
   readonly rpcClientRoots: ReadonlySet<t.Node>;
+  /** This syntax needs ambient-write facts before endpoint interpretation. */
+  readonly hasWebSocketEndpointCandidate: boolean;
 }
 
 /**
- * Resolve only the lexical receiver identities needed to distinguish browser
- * `window.open` from XHR and global storage `.open` calls, configuration
- * `.get` reads from HTTP client calls, and tRPC client roots (excluding
- * overwritten bindings). This deliberately builds definitions without running
- * semantic value or provenance analysis.
+ * Index the shared definitions-only phase. Consumers which do not interpret
+ * ambient identities need not scan writes; those which do must index them
+ * before reading those identities.
  */
-export const classifyParsedJavaScriptReceivers = (
-  file: ParsedJavaScriptSource,
-): JavaScriptReceiverFacts =>
-  completeSemanticSteps(classifyParsedJavaScriptReceiversSteps(file));
-
-/** Classify receivers while yielding during lexical and AST scans. */
-export function* classifyParsedJavaScriptReceiversSteps(
-  file: ParsedJavaScriptSource,
-): Generator<void, JavaScriptReceiverFacts> {
-  const state = createState(file.program);
-  yield* collectDefinitionsSteps(file.program, state);
-  return yield* classifyDefinitionReceiversSteps(file.program, state);
-}
-
-/**
- * Index bindings and classify receivers from one definitions pass. Receiver
- * facts read the definitions-only phase, so they are classified before the
- * same state is extended with ambient writes.
- */
-export function* indexJavaScriptBindingsWithReceiversSteps(
+export function* indexJavaScriptDefinitionsWithReceiversSteps(
   program: t.Program,
 ): Generator<
   void,
@@ -281,8 +266,16 @@ export function* indexJavaScriptBindingsWithReceiversSteps(
   const state = createState(program);
   yield* collectDefinitionsSteps(program, state);
   const receivers = yield* classifyDefinitionReceiversSteps(program, state);
-  yield* indexJavaScriptAmbientWritesSteps(program, state);
   return { bindings: state, receivers };
+}
+
+/** Complete the same definitions/receiver state with ambient-write ownership. */
+export function* indexJavaScriptBindingsWithReceiversSteps(
+  program: t.Program,
+): ReturnType<typeof indexJavaScriptDefinitionsWithReceiversSteps> {
+  const indexed = yield* indexJavaScriptDefinitionsWithReceiversSteps(program);
+  yield* indexJavaScriptAmbientWritesSteps(program, indexed.bindings);
+  return indexed;
 }
 
 function* classifyDefinitionReceiversSteps(
@@ -293,6 +286,7 @@ function* classifyDefinitionReceiversSteps(
   const extensionStateReads: number[] = [];
   const roots = new Set<t.Node>();
   const clients = new Map<string, boolean>();
+  let hasWebSocketEndpointCandidate = false;
   const classifyRpcRoot = (node: t.Node): void => {
     if (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node))
       return;
@@ -392,6 +386,13 @@ function* classifyDefinitionReceiversSteps(
   };
   yield* traverseJavaScriptAstSteps(program, {
     enter: (node) => {
+      if (
+        (t.isCallExpression(node) ||
+          t.isOptionalCallExpression(node) ||
+          t.isNewExpression(node)) &&
+        isWebSocketEndpointCandidate(calleeName(node.callee))
+      )
+        hasWebSocketEndpointCandidate = true;
       classifyRpcRoot(node);
       classifyOpenReceiver(node);
     },
@@ -399,7 +400,11 @@ function* classifyDefinitionReceiversSteps(
   if (extensionStateReads.length > 0 && importsVsCodeModule(state))
     for (const start of extensionStateReads)
       facts.set(start, "extension-state");
-  return { openReceivers: facts, rpcClientRoots: roots };
+  return {
+    openReceivers: facts,
+    rpcClientRoots: roots,
+    hasWebSocketEndpointCandidate,
+  };
 }
 
 /** VS Code passes extension state through ExtensionContext, not an import. */

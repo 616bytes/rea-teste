@@ -41,10 +41,13 @@ export const registerArtifactTools = (
       if (operation === "extract_artifact") {
         const execution = artifactExtractionInputSchema.parse(parameters);
         return {
-          ...execution,
+          integrity_policy: execution.integrity_policy,
           output_root: createArtifactExtractionDestination(
             execution.output_root,
           ),
+          ...(execution.occurrence_ids === undefined
+            ? {}
+            : { occurrence_ids: execution.occurrence_ids }),
         };
       }
       return decodeWithoutDelivery(operation, parameters);

@@ -122,6 +122,64 @@ it("retains constructor captures, ws imports and template keys with their graph 
   }
 });
 
+it("preserves eager and deferred socket phases through filesystem graph projection", async () => {
+  const root = await createTestTempDirectory("rea-js-socket-phases-");
+  const fixtures = {
+    "wrapped.ts":
+      '(function () { new Socket("wss://example.test/eager-wrapper"); } as any)();\nconst Socket = globalThis.WebSocket;',
+    "fields.js":
+      'class Client { socket = new Socket("wss://example.test/field"); }\nconst Socket = globalThis.WebSocket; new Client();',
+    "generator.js":
+      '(function* (x = new Socket("wss://example.test/eager-parameter")) {})();\n(function* () { new Socket("wss://example.test/generator-body"); })();\nconst Socket = globalThis.WebSocket;',
+    "bound.js":
+      '(function () { new Socket("wss://example.test/eager-bind"); }).bind(null)();\nconst connect = (function () { new Socket("wss://example.test/deferred-bind"); }).bind(null);\nconst Socket = globalThis.WebSocket; connect();',
+    "async.js":
+      '(async () => { new Socket("wss://example.test/eager-async"); await ready; })();\n(async () => { await ready; new Socket("wss://example.test/continuation"); })();\nconst Socket = globalThis.WebSocket;',
+  };
+  for (const [path, source] of Object.entries(fixtures))
+    await writeFile(join(root, path), source);
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const analysis = analyzeJavaScriptArtifactFiles(files);
+    const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
+    const observations = graph.nodes
+      .filter(({ kind }) => kind === "endpoint")
+      .flatMap(({ observations }) => observations);
+    expect(
+      observations.map(({ properties }) => properties.value).sort(),
+    ).toEqual([
+      "wss://example.test/continuation",
+      "wss://example.test/deferred-bind",
+      "wss://example.test/field",
+      "wss://example.test/generator-body",
+    ]);
+    for (const [path, source, line] of [
+      ["continuation", "async.js", 2],
+      ["deferred-bind", "bound.js", 2],
+      ["field", "fields.js", 1],
+      ["generator-body", "generator.js", 2],
+    ] as const) {
+      const observation = observations.find(
+        ({ properties }) => properties.value === `wss://example.test/${path}`,
+      );
+      expect(observation?.evidence).toMatchObject({
+        authority: "ast-static-analysis",
+        state: "observed",
+        confidence: "exact",
+        location: {
+          available: true,
+          value: { kind: "source-range", source, start: { line } },
+        },
+      });
+    }
+  } finally {
+    await reader.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("keeps ambiguous endpoint candidates inferred through artifact graph projection", async () => {
   const root = await createTestTempDirectory("rea-js-endpoint-certainty-");
   await writeFile(join(root, "app.js"), 'form.get("shared"); fetch("shared");');

@@ -298,7 +298,9 @@ describe("web bundle static-analysis parity", () => {
 });
 
 const socketEndpoints = (source: string) => {
-  const staticEndpoints = analyzeJavaScriptStaticSource(source).endpoints;
+  const analysis = analyzeJavaScriptStaticSource(source);
+  expect(analysis.parse_status).not.toBe("failed");
+  const staticEndpoints = analysis.endpoints;
   const capturedEndpoints = analyzeCapturedWebBundle(inspection(source))
     .observations.endpoints;
   return [staticEndpoints, capturedEndpoints].map((items) =>
@@ -513,6 +515,54 @@ describe("web bundle bound WebSocket constructors", () => {
       expect(socketEndpoints(source)).toEqual([[], []]);
     },
   );
+});
+
+describe("web bundle WebSocket execution phases", () => {
+  it.each([
+    '(function () { new Socket("wss://example.test/eager"); } as any)();',
+    '(function () { new Socket("wss://example.test/eager"); })!();',
+    '(function () { new Socket("wss://example.test/eager"); } satisfies Function).call(null);',
+    '(function () { new Socket("wss://example.test/eager"); }).bind(null)();',
+    'new ((function () { new Socket("wss://example.test/eager"); }).bind(null))();',
+    '(function* (x = new Socket("wss://example.test/eager")) {})();',
+    '(function* (x = new Socket("wss://example.test/eager")) {}).call(null);',
+    '(function* (x = new Socket("wss://example.test/eager")) {}).apply(null, []);',
+    'class Client { static socket = new Socket("wss://example.test/eager"); }',
+    'class Client { [new Socket("wss://example.test/eager")] = 1; }',
+    '(async () => { new Socket("wss://example.test/eager"); await ready; })();',
+    '(async () => { new Socket("wss://example.test/eager", await ready); })();',
+    '(async () => { if (condition) await ready; new Socket("wss://example.test/eager"); })();',
+    '(async () => { const later = async () => { await ready; }; new Socket("wss://example.test/eager"); })();',
+  ])("excludes an eager capture before initialization: %s", (expression) => {
+    expect(
+      socketEndpoints(`${expression} const Socket = globalThis.WebSocket;`),
+    ).toEqual([[], []]);
+  });
+
+  it.each([
+    'class Client { socket = new Socket("wss://example.test/deferred"); }',
+    'class Client { #socket = new Socket("wss://example.test/deferred"); }',
+    '(function* () { new Socket("wss://example.test/deferred"); })();',
+    '(async () => { await ready; new Socket("wss://example.test/deferred"); })();',
+    '(async () => { const value = await ready; new Socket("wss://example.test/deferred"); })();',
+    '(async () => { (await ready, new Socket("wss://example.test/deferred")); })();',
+    'const connect = (function () { new Socket("wss://example.test/deferred"); } as any).bind(null);',
+  ])("retains a deferred capture of the later binding: %s", (expression) => {
+    const expected = [
+      { value: "wss://example.test/deferred", mechanism: "call:Socket" },
+    ];
+    expect(
+      socketEndpoints(`${expression} const Socket = globalThis.WebSocket;`),
+    ).toEqual([expected, expected]);
+  });
+
+  it("preserves initializer ordering within an async continuation", () => {
+    expect(
+      socketEndpoints(
+        '(async () => { await ready; new Socket("wss://example.test/tdz"); const Socket = globalThis.WebSocket; })();',
+      ),
+    ).toEqual([[], []]);
+  });
 });
 
 describe("web bundle API classification parity", () => {

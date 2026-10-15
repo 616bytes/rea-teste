@@ -27,6 +27,7 @@ import {
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { webSocketExecutionContext } from "./javascriptWebSocketExecution.js";
 import {
   compareUnicodeCodePoints,
   compositeKey,
@@ -677,51 +678,6 @@ export const isWebSocketEndpointCandidate = (
     visited.add(binding.bindingId);
     selected = [...initializer.projection, ...members, ...selected];
     current = initializer.node;
-  }
-};
-
-/** Direct literal invocation and call/apply share the caller's eager context. */
-const webSocketExecutionContext = (
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): t.Node => {
-  let current = node;
-  for (;;) {
-    const parent = state.parentsByNode.get(current);
-    if (parent === undefined) return current;
-    if (t.isFunction(parent)) {
-      if (
-        (t.isObjectMethod(parent) || t.isClassMethod(parent)) &&
-        parent.key === current
-      ) {
-        current = parent;
-        continue;
-      }
-      let callee: t.Node = parent;
-      let invocation = state.parentsByNode.get(parent);
-      if (
-        (t.isMemberExpression(invocation) ||
-          t.isOptionalMemberExpression(invocation)) &&
-        invocation.object === parent &&
-        ["call", "apply"].includes(
-          semanticStaticPropertyName(invocation.property, invocation.computed),
-        )
-      ) {
-        callee = invocation;
-        invocation = state.parentsByNode.get(invocation);
-      }
-      if (
-        (!t.isArrowFunctionExpression(parent) &&
-          parent.generator &&
-          !t.isNewExpression(invocation)) ||
-        (!t.isCallExpression(invocation) &&
-          !t.isOptionalCallExpression(invocation) &&
-          !t.isNewExpression(invocation)) ||
-        invocation.callee !== callee
-      )
-        return parent;
-    }
-    current = parent;
   }
 };
 

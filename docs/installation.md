@@ -28,6 +28,29 @@ For the latest published release, use `npx rea-agents@latest setup`.
 [Package-runner and global-installation options](#package-runners-and-global-installation)
 cover explicit versions, Bun, runtime requirements, and the curl wrapper.
 
+### NixOS
+
+The repository flake builds REA's CLI and MCP server for `x86_64-linux`, with
+the pinned Node.js/npm toolchain and procps. From a checkout:
+
+```bash
+nix build .
+nix run . -- --version
+./result/bin/rea setup
+nix flake check
+```
+
+Use `nix build . --verbose -L` for Nix diagnostics and live build logs.
+`--verbose` controls Nix's logging, not the sandboxed builder's environment.
+`nix develop` provides the development toolchain.
+
+Keep installed MCP registrations reachable through a Nix profile or declarative
+configuration; a build's `result` link alone is not a permanent installation.
+Update REA through the owning Nix configuration or profile, not `rea update`,
+then rerun setup to review registration and skill changes. Analysis engines are
+bring-your-own; automated Hopper installation and optional Frida bindings are
+not included in this Nix package. Provider compatibility needs separate checks.
+
 ## Review setup changes
 
 `rea setup` first offers the supported agents in a multi-select. Existing REA

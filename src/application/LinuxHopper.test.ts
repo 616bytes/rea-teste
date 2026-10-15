@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   formatCommandForDisplay,
@@ -205,8 +205,30 @@ describe("Linux Hopper host classification", () => {
     },
   );
 
-  it("withholds host support from a distribution with no package family", () => {
-    expect(supportsReaHost(parseLinuxDistribution("ID=nixos\n"))).toBe(false);
+  it.each(["ID=nixos\n", 'ID="nixos"\nVERSION_ID="26.05"\n'])(
+    "recognizes NixOS as a REA host without a Hopper package family: %s",
+    (document) => {
+      const distribution = parseLinuxDistribution(document);
+      expect(distribution).toMatchObject({
+        id: "nixos",
+        packageFamily: undefined,
+        hopperSetupSupported: false,
+      });
+      expect(supportsReaHost(distribution)).toBe(true);
+    },
+  );
+
+  it.each(["ID=unrecognized\n", "ID=alpine\n", ""])(
+    "withholds host support from an unrecognized distribution: %s",
+    (document) => {
+      const distribution = parseLinuxDistribution(document);
+      expect(distribution.packageFamily).toBeUndefined();
+      expect(distribution.hopperSetupSupported).toBe(false);
+      expect(supportsReaHost(distribution)).toBe(false);
+    },
+  );
+
+  it("withholds host support when the distribution is unavailable", () => {
     expect(supportsReaHost(undefined)).toBe(false);
   });
 });
@@ -277,6 +299,21 @@ describe("Linux Hopper package installation", () => {
 });
 
 describe("Linux Hopper installation failure classification", () => {
+  it("rejects automated Hopper installation on NixOS before network or mutation", async () => {
+    const host = new RecordingLinuxHost();
+    host.distributionValue = parseLinuxDistribution("ID=nixos\n");
+    const release = vi.spyOn(host, "release");
+
+    expect(await installFixture(host)).toEqual({
+      status: "failed",
+      reason: "unsupported_host",
+    });
+    expect(release).not.toHaveBeenCalled();
+    expect(host.downloads).toEqual([]);
+    expect(host.installed).toEqual([]);
+    expect(host.cleaned).toEqual([]);
+  });
+
   it.each([
     ["signatureValid", "publisher_verification_failed"],
     ["cacheWritable", "verification_unavailable"],

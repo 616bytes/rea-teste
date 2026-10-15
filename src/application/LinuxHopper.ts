@@ -65,7 +65,7 @@ interface LinuxDistributionIdentity {
  *
  * `hopperSetupSupported` is the automated Hopper installer's tested list. It is
  * narrower than the hosts where REA itself runs, which {@link supportsReaHost}
- * answers from the package family.
+ * answers independently of Hopper package selection and provider readiness.
  */
 export type LinuxDistribution = LinuxDistributionIdentity &
   (
@@ -80,14 +80,13 @@ export type LinuxDistribution = LinuxDistributionIdentity &
   );
 
 /**
- * Whether REA's analysis providers run on this distribution. A recognized
- * package family means a glibc host with a known package layout, which is what
- * the providers need; downloading and installing the official Hopper package
- * additionally requires a distribution on its tested list.
+ * Whether this distribution is a supported REA CLI/MCP host. Provider readiness
+ * and automated Hopper setup support are separate from host recognition.
  */
 export const supportsReaHost = (
   distribution: LinuxDistribution | undefined,
-): boolean => distribution?.packageFamily !== undefined;
+): boolean =>
+  distribution?.id === "nixos" || distribution?.packageFamily !== undefined;
 
 /** Download response kept independent of Node's global fetch implementation. */
 export interface LinuxHopperDownload {

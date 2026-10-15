@@ -142,7 +142,7 @@ const hostCheck = async (host: DoctorHost): Promise<DoctorCheck> => {
       : `${linuxDistribution.id} ${linuxDistribution.versionId ?? "unknown"}`);
   return check("host", supported, detail, {
     remediation:
-      "REA supports macOS 12+, Linux distributions with a recognized apt, dnf, or pacman package family, and the experimental Windows x64 Ghidra P0 boundary; automated Hopper setup additionally requires Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, or Omarchy.",
+      "REA supports macOS 12+, NixOS and Linux distributions with a recognized apt, dnf, or pacman package family, and the experimental Windows x64 Ghidra P0 boundary. Provider readiness is checked separately; automated Hopper setup requires Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, or Omarchy.",
     classification: "unsupported_host",
   });
 };
@@ -195,7 +195,7 @@ const hopperCheck = (
     {
       remediation:
         host.configuredHopperPath === undefined
-          ? "Run rea setup to install Hopper, or set HOPPER_LAUNCHER_PATH."
+          ? "Set HOPPER_LAUNCHER_PATH, or run rea setup to install Hopper on a host with automated Hopper setup support."
           : "Unset or update HOPPER_LAUNCHER_PATH to an executable Hopper launcher.",
       classification:
         host.configuredHopperPath === undefined
@@ -314,8 +314,8 @@ const providerDoctorChecks = (
 
 const unsupportedHopperRemediation = (configured: boolean): string =>
   configured
-    ? "Check HOPPER_LAUNCHER_PATH and its publisher verification evidence. Run rea setup to install and retain an authenticated official Hopper package for offline use."
-    : "Run rea setup to install and retain an authenticated official Hopper package for offline use.";
+    ? "Check HOPPER_LAUNCHER_PATH and its publisher verification evidence. On hosts with automated Hopper setup support, run rea setup to install and retain an authenticated official Hopper package for offline use."
+    : "On hosts with automated Hopper setup support, run rea setup to install and retain an authenticated official Hopper package for offline use.";
 
 const parseMajor = (version: string | undefined): number =>
   Number.parseInt(version?.split(".")[0] ?? "0", 10);

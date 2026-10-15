@@ -15,6 +15,7 @@ import {
   type JavaScriptSemanticPropertyPath as PropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 
 export interface JavaScriptSemanticObjectReference {
   readonly node: t.Node;
@@ -752,12 +753,17 @@ interface ObjectPropertyIndex {
 // index removes the per-write scan of every property.
 const propertyIndexes = new WeakMap<t.ObjectExpression, ObjectPropertyIndex>();
 
-const objectPropertyIndex = (node: t.ObjectExpression): ObjectPropertyIndex => {
+function* objectPropertyIndexSteps(
+  node: t.ObjectExpression,
+): Generator<void, ObjectPropertyIndex> {
   const cached = propertyIndexes.get(node);
   if (cached !== undefined) return cached;
   const keyIndependent: number[] = [];
   const byName = new Map<string, number[]>();
-  node.properties.forEach((property, index) => {
+  for (let index = 0; index < node.properties.length; index++) {
+    if (index % 1024 === 0) yield;
+    const property = node.properties[index];
+    if (property === undefined) continue;
     const name = t.isSpreadElement(property)
       ? null
       : semanticStaticPropertyKey(property.key, property.computed);
@@ -769,34 +775,43 @@ const objectPropertyIndex = (node: t.ObjectExpression): ObjectPropertyIndex => {
         name === "__proto__")
     ) {
       keyIndependent.push(index);
-      return;
+      continue;
     }
     const positions = byName.get(name);
     if (positions === undefined) byName.set(name, [index]);
     else positions.push(index);
-  });
+  }
   const index = { keyIndependent, byName };
   propertyIndexes.set(node, index);
   return index;
-};
+}
 
 /**
  * Properties in reverse source order that can affect `key`. For an exact key,
  * another static name only updates bookkeeping for that other name, which
  * this key never reads, so only same-name and key-independent entries remain.
  */
-const relevantPropertiesInReverse = (
+function* relevantPropertiesInReverseSteps(
   node: t.ObjectExpression,
   key: PropertyPath[number] | undefined,
-): readonly ObjectLiteralMember[] => {
-  if (typeof key !== "string" && typeof key !== "number")
-    return [...node.properties].reverse();
-  const { keyIndependent, byName } = objectPropertyIndex(node);
+): Generator<void, readonly ObjectLiteralMember[]> {
+  if (typeof key !== "string" && typeof key !== "number") {
+    const properties: ObjectLiteralMember[] = [];
+    for (let index = node.properties.length - 1; index >= 0; index--) {
+      if (index % 1024 === 0) yield;
+      const property = node.properties[index];
+      if (property !== undefined) properties.push(property);
+    }
+    return properties;
+  }
+  const { keyIndependent, byName } = yield* objectPropertyIndexSteps(node);
   const named = byName.get(String(key)) ?? [];
   const relevant: ObjectLiteralMember[] = [];
   let left = keyIndependent.length - 1;
   let right = named.length - 1;
+  let examined = 0;
   while (left >= 0 || right >= 0) {
+    if (examined++ % 1024 === 0) yield;
     const fromLeft =
       right < 0 ||
       (left >= 0 && (keyIndependent[left] ?? -1) > (named[right] ?? -1));
@@ -806,13 +821,23 @@ const relevantPropertiesInReverse = (
     if (property !== undefined) relevant.push(property);
   }
   return relevant;
-};
+}
 
 export const semanticObjectPropertyReferences = (
   node: t.ObjectExpression,
   path: PropertyPath,
   state: JavaScriptSemanticAnalysisState,
-): readonly JavaScriptSemanticObjectReference[] => {
+): readonly JavaScriptSemanticObjectReference[] =>
+  completeSemanticSteps(
+    semanticObjectPropertyReferencesSteps(node, path, state),
+  );
+
+/** examine the same property owner cooperatively for asynchronous analyses. */
+export function* semanticObjectPropertyReferencesSteps(
+  node: t.ObjectExpression,
+  path: PropertyPath,
+  state: JavaScriptSemanticAnalysisState,
+): Generator<void, readonly JavaScriptSemanticObjectReference[]> {
   const [key, ...remaining] = path;
   const references: JavaScriptSemanticObjectReference[] = [];
   const overwritten = new Set<string>();
@@ -820,7 +845,9 @@ export const semanticObjectPropertyReferences = (
   const accessorNames = new Set<string>();
   const getterNames = new Set<string>();
   const setterNames = new Set<string>();
-  for (const property of relevantPropertiesInReverse(node, key)) {
+  let examined = 0;
+  for (const property of yield* relevantPropertiesInReverseSteps(node, key)) {
+    if (examined++ % 1024 === 0) yield;
     if (t.isSpreadElement(property)) {
       const selected = key ?? null;
       if (typeof selected !== "object" && overwritten.has(String(selected)))
@@ -846,7 +873,10 @@ export const semanticObjectPropertyReferences = (
         selected !== null &&
         typeof selected !== "object" &&
         t.isObjectExpression(property.argument) &&
-        objectExpressionDefinesKey(property.argument, String(selected))
+        (yield* semanticObjectExpressionDefinesKeySteps(
+          property.argument,
+          String(selected),
+        ))
       ) {
         overwritten.add(String(selected));
         dataOverwritten.add(String(selected));
@@ -871,7 +901,7 @@ export const semanticObjectPropertyReferences = (
         });
       } else if (
         typeof selected === "string" &&
-        !objectExpressionDefinesKey(node, selected) &&
+        !(yield* semanticObjectExpressionDefinesKeySteps(node, selected)) &&
         t.isExpression(property.value)
       ) {
         references.push({
@@ -933,19 +963,24 @@ export const semanticObjectPropertyReferences = (
     }
   }
   return references;
-};
+}
 
-const objectExpressionDefinesKey = (
+export function* semanticObjectExpressionDefinesKeySteps(
   root: t.ObjectExpression,
   key: string,
-): boolean => {
+): Generator<void, boolean> {
   const pending: t.ObjectExpression[] = [root];
   const seen = new Set<t.ObjectExpression>();
+  let examined = 0;
   for (let cursor = 0; cursor < pending.length; cursor++) {
     const object = pending[cursor];
     if (object === undefined || seen.has(object)) continue;
     seen.add(object);
-    for (const property of object.properties) {
+    for (const property of yield* relevantPropertiesInReverseSteps(
+      object,
+      key,
+    )) {
+      if (examined++ % 1024 === 0) yield;
       if (t.isSpreadElement(property)) {
         if (t.isObjectExpression(property.argument))
           pending.push(property.argument);
@@ -965,4 +1000,4 @@ const objectExpressionDefinesKey = (
     }
   }
   return false;
-};
+}

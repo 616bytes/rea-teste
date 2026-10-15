@@ -368,6 +368,18 @@ export const semanticReadInitializers = (
   JavaScriptSemanticBindingState,
   "initializers" | "referenceInitializers"
 > => {
+  return selectInitializers(
+    binding,
+    readPosition(read, parents),
+    parents,
+    true,
+  );
+};
+
+const readPosition = (
+  read: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): StatementPosition | null => {
   let position: StatementPosition | null = null;
   let current = read;
   for (
@@ -375,7 +387,7 @@ export const semanticReadInitializers = (
     parent;
     parent = parents.get(current)
   ) {
-    if (t.isLoop(parent)) return binding;
+    if (t.isLoop(parent)) return null;
     if (t.isFunction(parent)) break;
     if (position === null) {
       if (t.isVariableDeclarator(parent)) {
@@ -387,7 +399,29 @@ export const semanticReadInitializers = (
     }
     current = parent;
   }
-  return selectInitializers(binding, position, parents, true);
+  return position;
+};
+
+/** prove a straight-line write precedes a read in the same activation. */
+export const semanticWritePrecedesRead = (
+  write: t.Node,
+  read: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  const left = directMutationPosition(write, parents);
+  const right = readPosition(read, parents);
+  return left !== null && right !== null && positionPrecedes(left, right);
+};
+
+/** retain an earlier capture when a later write belongs to the same activation. */
+export const semanticReadPrecedesWrite = (
+  read: t.Node,
+  write: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  const left = readPosition(read, parents);
+  const right = directMutationPosition(write, parents);
+  return left !== null && right !== null && positionPrecedes(left, right);
 };
 
 const selectInitializers = (

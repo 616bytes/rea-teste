@@ -73,11 +73,6 @@ export const inspectCall = (
       kind: "dynamic-import",
       specifier: chunkLoad.specifier,
     });
-  if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
-    for (const specifier of context.viteDependencySpecifiers?.get(node) ?? []) {
-      if (specifier === undefined) accumulator.unknownFindings += 1;
-      addReference(context, { node, kind: "dynamic-import", specifier });
-    }
   const worker = t.isNewExpression(node) ? node : undefined;
   const workerConstructor =
     worker === undefined

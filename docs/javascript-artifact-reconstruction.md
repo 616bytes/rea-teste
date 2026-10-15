@@ -266,6 +266,13 @@ and aliases captured before the replacement retain possible sharing. compressed
 return sequences preserve equivalent TypeScript default guards. chained calls
 keep the helper invocation's exact source range.
 
+cache ownership follows static object keys, array slots, `Object.assign` targets,
+and `Object.create` prototypes. a later write through another name for the same
+container can restore sharing after replacement. non-index metadata writes leave
+dependency slots intact; unproven methods and callbacks keep possible mutation
+explicit. table decoding, ownership propagation, and reference projection yield
+cooperatively during large analyses.
+
 RPC client syntax also contributes network endpoint candidates, in both
 `analyze_javascript_application` and `analyze_web_bundle`, distinguished by
 `mechanism`:

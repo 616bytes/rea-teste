@@ -1,0 +1,392 @@
+import type { JavaScriptIntrinsicInvocation } from "./javascriptElectronMemberWrites.js";
+import * as t from "@babel/types";
+import {
+  semanticReadPrecedesWrite,
+  semanticWritePrecedesRead,
+} from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticObjectExpressionDefinesKeySteps,
+  semanticObjectPropertyReferencesSteps,
+} from "./javascriptSemanticObjectReferences.js";
+import {
+  semanticArrayIndex,
+  semanticPropertyPathKeyMatches,
+} from "./javascriptSemanticPropertyPaths.js";
+import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
+import {
+  FOREIGN,
+  UNKNOWN,
+  type ViteCacheAllocation,
+  type ViteCacheWrite,
+  type Vertex,
+  type Input,
+} from "./javascriptViteCacheIdentityTypes.js";
+
+type Key = string | null;
+export interface ViteCachePropertyGraph {
+  readonly vertex: () => Vertex;
+  readonly normalize: (node: t.Node) => Vertex;
+  readonly project: (
+    source: Vertex,
+    path: readonly (string | number | null)[],
+    read: t.Node,
+  ) => Vertex;
+  readonly connect: (target: Vertex, input: Input) => void;
+  readonly enqueue: (vertex: Vertex) => void;
+  readonly objectCall: (node: t.Node) => "create" | "assign" | undefined;
+  readonly objectArguments: (
+    node: t.CallExpression,
+  ) => readonly t.CallExpression["arguments"][number][] | undefined;
+}
+
+/** shallow property selection and ordered snapshots share one literal owner. */
+export class ViteCacheProperties {
+  private readonly lateWrites = new Map<
+    ViteCacheAllocation,
+    Map<Key, Vertex>
+  >();
+  private readonly slots = new Map<ViteCacheAllocation, Map<Key, Vertex>>();
+  private readonly snapshotReads = new Map<
+    ViteCacheAllocation,
+    Map<string, Map<t.Node, Vertex>>
+  >();
+  readonly writes = new Map<ViteCacheAllocation, ViteCacheWrite[]>();
+  readonly escapes = new Map<ViteCacheAllocation, t.Node[]>();
+  constructor(
+    private readonly state: JavaScriptSemanticAnalysisState,
+    private readonly graph: ViteCachePropertyGraph,
+  ) {}
+
+  private lateGroup(allocation: ViteCacheAllocation, key: Key): Vertex {
+    const groups = this.lateWrites.get(allocation) ?? new Map<Key, Vertex>();
+    this.lateWrites.set(allocation, groups);
+    let group = groups.get(key);
+    if (group === undefined) {
+      group = this.graph.vertex();
+      groups.set(key, group);
+    }
+    return group;
+  }
+
+  retainLateWrite(
+    allocation: ViteCacheAllocation,
+    write: ViteCacheWrite,
+  ): void {
+    const group = this.lateGroup(allocation, write.key);
+    if (write.value === undefined)
+      group.seed = { allocation: null, owner: null };
+    else {
+      if (write.propertySource !== undefined) group.seed = UNKNOWN;
+      this.graph.connect(group, {
+        kind: write.propertySource === undefined ? "alias" : "family",
+        source: this.graph.normalize(write.value),
+      });
+    }
+    this.graph.enqueue(group);
+  }
+
+  private readonly writeGroups = new Map<
+    ViteCacheAllocation,
+    Map<
+      Key,
+      { readonly writes: readonly ViteCacheWrite[]; readonly vertex: Vertex }
+    >
+  >();
+
+  private *writeGroupsSteps(
+    allocation: ViteCacheAllocation,
+  ): Generator<
+    void,
+    Map<
+      Key,
+      { readonly writes: readonly ViteCacheWrite[]; readonly vertex: Vertex }
+    >
+  > {
+    const previous = this.writeGroups.get(allocation);
+    if (previous !== undefined) return previous;
+    const groups = new Map<Key, { writes: ViteCacheWrite[]; vertex: Vertex }>();
+    this.writeGroups.set(allocation, groups);
+    let examined = 0;
+    for (const write of this.writes.get(allocation) ?? []) {
+      if (examined++ % 1024 === 0) yield;
+      let group = groups.get(write.key);
+      if (group === undefined) {
+        group = { writes: [], vertex: this.graph.vertex() };
+        groups.set(write.key, group);
+      }
+      group.writes.push(write);
+      if (write.value === undefined)
+        group.vertex.seed = { allocation: null, owner: null };
+      else {
+        if (write.propertySource !== undefined) group.vertex.seed = UNKNOWN;
+        this.graph.connect(group.vertex, {
+          kind: write.propertySource === undefined ? "alias" : "family",
+          source: this.graph.normalize(write.value),
+        });
+      }
+      this.graph.enqueue(group.vertex);
+    }
+    return groups;
+  }
+
+  *snapshotSteps(
+    initial: Vertex,
+    allocation: ViteCacheAllocation,
+    key: string,
+    read: t.Node,
+  ): Generator<void, Vertex> {
+    const byKey =
+      this.snapshotReads.get(allocation) ??
+      new Map<string, Map<t.Node, Vertex>>();
+    this.snapshotReads.set(allocation, byKey);
+    const byRead = byKey.get(key) ?? new Map<t.Node, Vertex>();
+    byKey.set(key, byRead);
+    const previous = byRead.get(read);
+    if (previous !== undefined) return previous;
+    const base = this.graph.vertex();
+    byRead.set(read, base);
+    for (const selection of [key, null])
+      this.graph.connect(base, {
+        kind: "alias",
+        source: this.lateGroup(allocation, selection),
+      });
+    const groups = yield* this.writeGroupsSteps(allocation);
+    const exact = groups.get(key);
+    const latest = yield* this.latestWriteSteps(
+      [exact?.writes ?? [], groups.get(null)?.writes ?? []],
+      key,
+      read,
+    );
+    this.graph.connect(base, {
+      kind: "alias",
+      source:
+        latest?.propertySource !== undefined
+          ? this.graph.project(
+              this.graph.normalize(latest.propertySource),
+              [key],
+              latest.node,
+            )
+          : latest?.value === undefined
+            ? initial
+            : this.graph.normalize(latest.value),
+    });
+    for (const group of [exact, groups.get(null)]) {
+      if (group === undefined) continue;
+      for (let index = 0; index < group.writes.length; index++) {
+        if (index % 1024 === 0) yield;
+        const write = group.writes[index];
+        if (write !== undefined && !this.inertWrite(write, latest, read)) {
+          // one shared junction retains uncertain writes for every slot read.
+          this.graph.connect(base, { kind: "alias", source: group.vertex });
+          break;
+        }
+      }
+    }
+    let examined = 0;
+    for (const escape of this.escapes.get(allocation) ?? []) {
+      if (examined++ % 1024 === 0) yield;
+      if (!semanticReadPrecedesWrite(read, escape, this.state.parentsByNode))
+        base.seed = { allocation: null, owner: null };
+    }
+    this.graph.enqueue(base);
+    return base;
+  }
+
+  private *latestWriteSteps(
+    groups: readonly (readonly ViteCacheWrite[])[],
+    key: string,
+    read: t.Node,
+  ): Generator<void, ViteCacheWrite | undefined> {
+    let latest: ViteCacheWrite | undefined;
+    let examined = 0;
+    for (const writes of groups)
+      for (const write of writes) {
+        if (examined++ % 1024 === 0) yield;
+        const defines =
+          write.propertySource === undefined
+            ? write.key === key
+            : yield* semanticObjectExpressionDefinesKeySteps(
+                write.propertySource,
+                key,
+              );
+        if (
+          defines &&
+          write.value !== undefined &&
+          semanticWritePrecedesRead(
+            write.node,
+            read,
+            this.state.parentsByNode,
+          ) &&
+          (latest === undefined ||
+            semanticWritePrecedesRead(
+              latest.node,
+              write.node,
+              this.state.parentsByNode,
+            ))
+        )
+          latest = write;
+      }
+    return latest;
+  }
+
+  private inertWrite(
+    write: ViteCacheWrite,
+    latest: ViteCacheWrite | undefined,
+    read: t.Node,
+  ): boolean {
+    return (
+      write === latest ||
+      semanticReadPrecedesWrite(read, write.node, this.state.parentsByNode) ||
+      (latest !== undefined &&
+        semanticWritePrecedesRead(
+          write.node,
+          latest.node,
+          this.state.parentsByNode,
+        ))
+    );
+  }
+
+  *slotSteps(
+    allocation: ViteCacheAllocation,
+    key: string,
+  ): Generator<void, Vertex> {
+    const slots = this.slots.get(allocation) ?? new Map<Key, Vertex>();
+    this.slots.set(allocation, slots);
+    const previous = slots.get(key);
+    if (previous !== undefined) return previous;
+    const slot = this.graph.vertex();
+    slots.set(key, slot);
+    if (allocation.copy !== undefined) {
+      this.copySlot(slot, allocation.copy, key);
+      this.graph.enqueue(slot);
+      return slot;
+    }
+    const node = allocation.node;
+    if (t.isObjectExpression(node)) {
+      for (const reference of yield* semanticObjectPropertyReferencesSteps(
+        node,
+        [key],
+        this.state,
+      )) {
+        const path = reference.path.map((segment) =>
+          typeof segment === "object" ? null : segment,
+        );
+        this.graph.connect(slot, {
+          kind: "alias",
+          source: this.graph.project(
+            this.graph.normalize(reference.node),
+            path,
+            node,
+          ),
+        });
+      }
+    } else if (t.isArrayExpression(node)) {
+      yield* this.arraySlotSteps(slot, node, key);
+    } else if (t.isCallExpression(node)) {
+      yield* this.callSlotSteps(slot, node, key);
+    }
+    if (slot.inputs.length === 0 && slot.seed === undefined)
+      slot.seed = FOREIGN;
+    this.graph.enqueue(slot);
+    return slot;
+  }
+  private copySlot(
+    slot: Vertex,
+    copy: NonNullable<ViteCacheAllocation["copy"]>,
+    key: string,
+  ): void {
+    const initializer = copy.initializer;
+    if (
+      initializer.copyKind === "object-rest" &&
+      !semanticPropertyPathKeyMatches(
+        { excludedKeys: initializer.copyExcludedKeys ?? [] },
+        key,
+      )
+    )
+      slot.seed = FOREIGN;
+    else {
+      const selected =
+        initializer.copyKind === "array-rest" &&
+        semanticArrayIndex(key) !== null
+          ? String(Number(key) + (initializer.copyStartIndex ?? 0))
+          : key;
+      this.graph.connect(slot, {
+        kind: "select",
+        source: copy.source,
+        key: selected,
+        read: initializer.node,
+      });
+    }
+  }
+  private *arraySlotSteps(
+    slot: Vertex,
+    node: t.ArrayExpression,
+    key: string,
+  ): Generator<void> {
+    const index = semanticArrayIndex(key) ?? -1;
+    let uncertain = false;
+    for (
+      let cursor = 0;
+      cursor <= index && cursor < node.elements.length;
+      cursor++
+    ) {
+      if (cursor % 1024 === 0) yield;
+      const element = node.elements[cursor];
+      if (t.isSpreadElement(element)) uncertain = true;
+      if (
+        cursor === index &&
+        element !== null &&
+        element !== undefined &&
+        !uncertain
+      )
+        this.graph.connect(slot, {
+          kind: "alias",
+          source: this.graph.normalize(element),
+        });
+    }
+    if (uncertain) slot.seed = UNKNOWN;
+  }
+  private *callSlotSteps(
+    slot: Vertex,
+    node: t.CallExpression,
+    key: string,
+  ): Generator<void> {
+    const method = this.graph.objectCall(node);
+    const arguments_ =
+      method === "create"
+        ? (this.graph.objectArguments(node)?.slice(0, 1) ?? [])
+        : (this.graph.objectArguments(node) ?? []);
+    for (let index = arguments_.length - 1; index >= 0; index--) {
+      if (index % 1024 === 0) yield;
+      const argument = arguments_[index];
+      if (argument === undefined || t.isSpreadElement(argument))
+        slot.seed = UNKNOWN;
+      else
+        this.graph.connect(slot, {
+          kind: "select",
+          source: this.graph.normalize(argument),
+          key,
+          read: node,
+        });
+    }
+  }
+}
+
+export const viteCacheObjectOperation = (
+  node: t.Node,
+  invocation: (
+    node: t.CallExpression | t.OptionalCallExpression,
+  ) => JavaScriptIntrinsicInvocation | undefined,
+): "create" | "assign" | undefined => {
+  if (!t.isCallExpression(node)) return undefined;
+  const parsed = invocation(node);
+  if (
+    parsed?.kind !== "known" ||
+    parsed.path.length !== 3 ||
+    parsed.path[0] !== "intrinsic" ||
+    parsed.path[1] !== "Object"
+  )
+    return undefined;
+  const key = parsed.path[2];
+  return key === "create" || key === "assign" ? key : undefined;
+};

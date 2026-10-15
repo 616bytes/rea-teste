@@ -70,11 +70,6 @@ export interface JavaScriptFindingContext {
   readonly openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>;
   /** Proven Electron export path segments by root offset. */
   readonly electronBindings?: ReadonlyMap<number, readonly string[]>;
-  /** Vite dependency values interpreted once for the exact call node. */
-  readonly viteDependencySpecifiers?: ReadonlyMap<
-    t.CallExpression | t.OptionalCallExpression,
-    readonly (string | undefined)[]
-  >;
 }
 
 /** Candidate import, require, worker, or service-worker reference. */

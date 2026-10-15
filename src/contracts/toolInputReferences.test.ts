@@ -240,45 +240,54 @@ describe("advertised schema metadata and validation", () => {
   );
 });
 
-describe("advertised input references", () => {
-  const referenceKeys = [
-    "$defs",
-    "$ref",
-    "$dynamicRef",
-    "$recursiveRef",
-    "definitions",
-  ];
+const referenceKeys = [
+  "$defs",
+  "$ref",
+  "$dynamicRef",
+  "$recursiveRef",
+  "definitions",
+];
 
-  /** Collect reference sharing in schema positions; annotation data stays opaque. */
-  const findReferences = (
-    node: unknown,
-    position: "schema" | "data",
-    found: string[] = [],
-    path = "schema",
-  ): string[] => {
-    if (Array.isArray(node)) {
-      node.forEach((child, index) =>
-        findReferences(child, position, found, `${path}[${index}]`),
-      );
-      return found;
-    }
-    if (typeof node !== "object" || node === null) return found;
-    for (const [key, value] of Object.entries(node)) {
-      const childPath = `${path}.${key}`;
-      if (position === "schema" && referenceKeys.includes(key))
-        found.push(childPath);
-      const childPosition = schemaMaps.has(key)
-        ? "map"
-        : schemaArrays.has(key) || schemaChildren.has(key)
-          ? "schema"
-          : "data";
-      if (childPosition === "data") continue;
-      if (Array.isArray(value) || (value !== null && typeof value === "object"))
-        findReferences(value, "schema", found, childPath);
-    }
+/** Collect reference sharing in schema positions; annotation data stays opaque. */
+const findReferences = (
+  node: unknown,
+  position: "schema" | "map",
+  found: string[] = [],
+  path = "schema",
+): string[] => {
+  if (Array.isArray(node)) {
+    node.forEach((child, index) =>
+      findReferences(child, "schema", found, `${path}[${index}]`),
+    );
     return found;
-  };
+  }
+  if (typeof node !== "object" || node === null) return found;
+  // A schema map (properties, $defs, …) keys by name: its keys are never
+  // reference positions and each value is itself a full schema. Scanning the
+  // map as a flat schema both misses references nested inside its values
+  // (e.g. `properties.before.$ref`) and reports schema values that merely
+  // carry a reference-shaped name (a property literally named "$ref").
+  if (position === "map") {
+    for (const [name, value] of Object.entries(node))
+      findReferences(value, "schema", found, `${path}.${name}`);
+    return found;
+  }
+  for (const [key, value] of Object.entries(node)) {
+    const childPath = `${path}.${key}`;
+    if (referenceKeys.includes(key)) found.push(childPath);
+    const childPosition = schemaMaps.has(key)
+      ? "map"
+      : schemaArrays.has(key) || schemaChildren.has(key)
+        ? "schema"
+        : "data";
+    if (childPosition === "data") continue;
+    if (Array.isArray(value) || (value !== null && typeof value === "object"))
+      findReferences(value, childPosition, found, childPath);
+  }
+  return found;
+};
 
+describe("advertised input references", () => {
   it.each(["draft-2020-12", "draft-07"] as const)(
     "advertises every tool input without schema-local references in %s",
     (target) => {
@@ -364,6 +373,28 @@ describe("advertised input references", () => {
         properties.field_00,
       );
     }
+  });
+
+  it("finds references nested inside schema map values", () => {
+    const nested = {
+      type: "object",
+      properties: {
+        before: { $ref: "#/$defs/range" },
+        after: { items: { $ref: "#/$defs/range" } },
+      },
+    };
+    expect(findReferences(nested, "schema")).toEqual([
+      "schema.properties.before.$ref",
+      "schema.properties.after.items.$ref",
+    ]);
+  });
+
+  it("does not flag schema values named like reference keywords", () => {
+    const tricky = {
+      type: "object",
+      properties: { $ref: { type: "string" }, $defs: { type: "object" } },
+    };
+    expect(findReferences(tricky, "schema")).toEqual([]);
   });
 
   it("ignores reference-shaped annotation data while scanning", () => {

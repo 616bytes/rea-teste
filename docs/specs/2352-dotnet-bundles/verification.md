@@ -97,3 +97,33 @@ Windows uses process-scoped Git ownership configuration for this exact checkout
 and `TURBO_ENV_MODE=loose`; global Git configuration and project checks are
 unchanged. Upstream CI and the human author's readiness declaration remain
 separate pending gates.
+
+## Scan-to-materialize identity review (2026-10-15)
+
+A new regression replaced the host after inventory with another bundle whose
+members were byte-identical but whose native host bytes differed. The initial
+test failed: extraction succeeded and linked the output to the old root digest.
+Earlier replacement tests covered changes after the reader had opened its
+descriptor, but not this gap between inventory and extraction.
+
+Extraction now verifies the complete host digest against its inventory snapshot
+using the same descriptor it later reads for members, before creating an output
+directory. The existing reader checks continue to reject later descriptor/path
+changes. This adds one full-host read pass to extraction. The regression now
+rejects the replacement with an integrity failure and verifies that no output
+directory was created.
+
+The selected bundle boundary, owned-reader cleanup and compiled CLI/stdio MCP
+acceptance suites passed 31 tests. `npm run check:ci` passed typecheck, lint,
+formatting, metadata, duplication, TODO, module-boundary and architecture
+checks. `npm run docs:check` passed, including five README consistency tests.
+The temporary-directory hygiene run passed the same 31 tests with no owned
+residues. These results are local; current-head upstream CI must be checked
+after the new commit is pushed.
+
+Microsoft HostModel from SDK 8.0.416 generated v1, v2, plain v6 and compressed
+v6 hosts again. All four passed public CLI inspection and extraction; extracted
+assembly/resource SHA-256 values matched their source files, and each host's
+SHA-256 was unchanged. The generated hosts were not executed. The compiled
+stdio MCP acceptance suite above uses a synthetic bundle; the real-producer MCP
+workflow was last run before this fix.

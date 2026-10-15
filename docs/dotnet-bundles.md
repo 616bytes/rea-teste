@@ -45,13 +45,19 @@ resource policies, not limits imposed by Microsoft's format. Marker scanning
 streams 64 KiB chunks; ordinary native files without a marker incur one extra
 read pass before host hashing.
 
+Extraction hashes the whole host again through the same descriptor used to read
+members and compares it with the inventory's root digest before creating an
+output directory. This adds a full-host read pass to extraction, including when
+the embedded members themselves are small.
+
 Malformed/truncated headers, unsafe or conflicting paths, overlapping member
 ranges, members crossing the manifest, contradictory configuration extents,
 invalid UTF-8, corrupt/trailing compressed data, and incorrect expanded sizes
 fail before output publication. Source descriptor/path identity is checked
-during reading; extraction also verifies bytes against the inventory. Existing
-output roots are never overwritten. Cancellation and failures release owned
-streams/descriptors and use the shared extraction rollback scope.
+during reading; extraction verifies the host digest and member bytes against
+the inventory. Existing output roots are never overwritten. Cancellation and
+failures release owned streams/descriptors through the shared extraction
+rollback scope.
 
 ## Reproduce producer fixtures
 

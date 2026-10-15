@@ -25,6 +25,7 @@ import {
   type DotnetBundle,
   type DotnetBundleFile,
 } from "./dotnet/DotnetBundle.js";
+import { hashStableRootArtifactHandle } from "./inventory/hashStableRootArtifact.js";
 
 /** Stable, range-streamed .NET bundle reader; extraction paths remain owned by SafeOutputTree. */
 export class DotnetBundleArtifactReader implements ArtifactReader {
@@ -44,6 +45,26 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
     source?: StableRegularFileDescriptor,
   ) {
     this.#source = source;
+  }
+
+  /** Bind extraction to the whole host that produced its inventory snapshot. */
+  async verifyRootDigest(
+    expectedSha256: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const source = await this.#getSource(signal);
+    await this.#verifySource(source, signal);
+    const observed = await hashStableRootArtifactHandle(
+      this.path,
+      source.handle,
+      source.initial,
+      signal,
+    );
+    if (observed.sha256 !== expectedSha256)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        ".NET bundle host differs from its inventoried root",
+      );
   }
 
   async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {

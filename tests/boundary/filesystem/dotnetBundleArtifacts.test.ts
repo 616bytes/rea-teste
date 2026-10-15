@@ -7,8 +7,14 @@ import { expect, it } from "vitest";
 
 import { DotnetBundleArtifactReader } from "../../../src/artifacts/DotnetBundleArtifactReader.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
-import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
+import {
+  extractArtifact,
+  materializeArtifactInventory,
+} from "../../../src/artifacts/extraction/ArtifactExtraction.js";
+import {
+  inventoryArtifact,
+  scanArtifactInventory,
+} from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import { dotnetBundleFixture } from "../../../src/artifacts/dotnet/DotnetBundle.fixture.js";
 import {
   findDotnetBundleHeader,
@@ -238,6 +244,37 @@ it("rejects replacement, forged entry metadata and cancellation without losing c
     await reader.close();
   }
   await reader.close();
+});
+
+it("rejects a replaced host even when its inventoried members are unchanged", async () => {
+  const root = await createTestTempDirectory("rea-dotnet-host-identity-");
+  const path = join(root, "host.exe");
+  const original = dotnetBundleFixture().bytes;
+  await writeFile(path, original);
+  const snapshot = await scanArtifactInventory(path, {
+    resourceScope: new ArtifactResourceScope(),
+  });
+  const changed = Buffer.from(original);
+  // Change native host bytes without changing the inventoried member.
+  changed[400] = changed[400]! ^ 1;
+  await rename(path, join(root, "original.exe"));
+  await writeFile(path, changed);
+  const outputRoot = join(root, "output");
+  await expect(
+    materializeArtifactInventory(
+      {
+        inputPath: path,
+        inputFormat: "pe",
+        outputRoot,
+        environment: process.env,
+        integrityPolicy: "fail",
+        resourceScope: new ArtifactResourceScope(),
+      },
+      path,
+      snapshot,
+    ),
+  ).rejects.toMatchObject({ reason: "integrity" });
+  await expect(access(outputRoot)).rejects.toThrow();
 });
 
 it("detects a renamed host, cancels an active compressed stream, and closes its descriptor", async () => {

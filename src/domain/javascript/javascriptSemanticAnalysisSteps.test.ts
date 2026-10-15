@@ -24,7 +24,7 @@ it.each([false, true])(
       const declaration = aliased ? `const source${index}=${value};` : "";
       return `${declaration}const doc${index}={kind:"OperationDefinition",operation:"query",name:{kind:"Name",value:"Q${index}"},loc:{source:${aliased ? `source${index}` : value}}};`;
     }).join("\n");
-    const parsed = parseJavaScriptSource(source, "sources.js");
+    const parsed = parseJavaScriptSource(source, "sources.mjs");
     if (parsed === null) throw new Error("Expected parsed source");
     const index = completeSemanticSteps(
       indexJavaScriptBindingsWithReceiversSteps(parsed.program),

@@ -170,9 +170,16 @@ interface GraphqlSourceCopy {
 const graphqlPrivateBinding = (
   node: t.Identifier,
   state: JavaScriptSemanticAnalysisState,
+  sourceType: t.Program["sourceType"],
 ) => {
   const binding = resolveSemanticBindingState(state, node, node.name);
   if (binding === undefined || binding.mutable) return undefined;
+  const scope = state.scopesById.get(binding.scopeId);
+  if (
+    scope === undefined ||
+    (scope.kind === "program" && sourceType !== "module")
+  )
+    return undefined;
   const initializer = semanticStableInitializer(binding, state);
   if (initializer?.projection.length !== 0) return undefined;
   const declaration = state.parentsByNode.get(initializer.node);
@@ -188,17 +195,18 @@ const graphqlPrivateBinding = (
 /** Resolve potential metadata ownership; references must still prove exclusivity. */
 const graphqlSourceObjectValue = (
   node: t.Node | undefined,
-  state: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
   dependencies: GraphqlSourceDependency[],
 ): t.ObjectExpression | undefined => {
   if (node === undefined) return undefined;
+  const state = index.bindings;
   const visited = new Set<t.Node>();
   while (node !== undefined && !visited.has(node)) {
     visited.add(node);
     node = unwrapJavaScriptExpression(node).node;
     if (t.isObjectExpression(node)) return node;
     if (!t.isIdentifier(node)) return undefined;
-    const owner = graphqlPrivateBinding(node, state);
+    const owner = graphqlPrivateBinding(node, state, index.sourceType);
     if (owner === undefined) return undefined;
     const { binding, initializer } = owner;
     if (
@@ -220,13 +228,13 @@ const graphqlSourceObjectValue = (
 
 const graphqlDocumentSource = (
   node: t.ObjectExpression,
-  state: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
 ): Omit<GraphqlSourceCopy, "operations"> | undefined => {
   const dependencies: GraphqlSourceDependency[] = [];
-  if (!graphqlContainerOwnership(node, state, dependencies)) return undefined;
+  if (!graphqlContainerOwnership(node, index, dependencies)) return undefined;
   const loc = graphqlSourceObjectValue(
     semanticFinalObjectProperty(node, "loc"),
-    state,
+    index,
     dependencies,
   );
   const source =
@@ -234,7 +242,7 @@ const graphqlDocumentSource = (
       ? undefined
       : graphqlSourceObjectValue(
           semanticFinalObjectProperty(loc, "source"),
-          state,
+          index,
           dependencies,
         );
   return source === undefined ? undefined : { source, dependencies };
@@ -243,9 +251,10 @@ const graphqlDocumentSource = (
 /** Follow containment to the binding that can expose or mutate this document. */
 const graphqlContainerOwnership = (
   document: t.ObjectExpression,
-  state: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
   dependencies: GraphqlSourceDependency[],
 ): boolean => {
+  const state = index.bindings;
   let node: t.Node = document;
   for (;;) {
     const parent = state.parentsByNode.get(node);
@@ -262,7 +271,7 @@ const graphqlContainerOwnership = (
     else if (t.isExpressionStatement(parent)) return true;
     else if (t.isVariableDeclarator(parent) && parent.init === node) {
       if (!t.isIdentifier(parent.id)) return false;
-      const owner = graphqlPrivateBinding(parent.id, state);
+      const owner = graphqlPrivateBinding(parent.id, state, index.sourceType);
       if (owner?.initializer.node !== node) return false;
       const { binding } = owner;
       dependencies.push({ bindingId: binding.bindingId, name: binding.name });
@@ -330,22 +339,15 @@ function* graphqlSourceReferenceIndexSteps(
 function* uncertainGraphqlSourceBindingsSteps(
   index: GraphqlSourceReferenceIndex,
   references: readonly JavaScriptSemanticReference[],
-  sourceType: t.Program["sourceType"],
 ): Generator<void, ReadonlySet<string>> {
   const { allowed, neighbors, byName } = index;
   const uncertain = new Set<string>();
   let examined = 0;
   for (const reference of references) {
     if (++examined % 1024 === 0) yield;
-    // Direct eval may reach any lexical scope. Classic scripts additionally
-    // expose top-level lexical objects to external code, including indirect
-    // eval through a global object or alias. Unresolved uses cannot prove that
-    // those objects remain exclusive metadata.
-    if (
-      reference.name === "eval" ||
-      (sourceType === "script" && reference.resolution !== "resolved")
-    )
-      return new Set(allowed.keys());
+    // Direct eval may reach private lexical objects. Indirect eval cannot;
+    // classic-script globals are already rejected at private-binding admission.
+    if (reference.name === "eval") return new Set(allowed.keys());
     if (reference.bindingId !== null) {
       const sites = allowed.get(reference.bindingId);
       if (
@@ -380,13 +382,11 @@ function* uncertainGraphqlSourceBindingsSteps(
 function* provenGraphqlSourceCopiesSteps(
   copies: readonly GraphqlSourceCopy[],
   references: readonly JavaScriptSemanticReference[],
-  sourceType: t.Program["sourceType"],
 ): Generator<GraphqlSourceCopy | void, void> {
   const index = yield* graphqlSourceReferenceIndexSteps(copies);
   const uncertain = yield* uncertainGraphqlSourceBindingsSteps(
     index,
     references,
-    sourceType,
   );
   for (const copy of copies)
     yield copy.dependencies.every(({ bindingId }) => !uncertain.has(bindingId))
@@ -441,7 +441,7 @@ export const createJavaScriptGraphqlScan = (
         const source =
           operations.length === 0
             ? undefined
-            : graphqlDocumentSource(node, index.bindings);
+            : graphqlDocumentSource(node, index);
         if (source !== undefined) {
           copies.push({ ...source, operations });
         }
@@ -461,11 +461,7 @@ export const createJavaScriptGraphqlScan = (
     *finish() {
       if (sources.length > 0 && copies.length > 0) {
         const references = yield* index.referencesSteps();
-        for (const copy of provenGraphqlSourceCopiesSteps(
-          copies,
-          references,
-          index.sourceType,
-        )) {
+        for (const copy of provenGraphqlSourceCopiesSteps(copies, references)) {
           if (copy !== undefined) retainCopy(copy);
           yield;
         }

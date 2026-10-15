@@ -437,7 +437,7 @@ describe("GraphQL document ownership", () => {
         body: "query GetUser { user { id } }",
         locationOffset: { line: 1, column: 1 },
       }`;
-      const document = `const doc = { kind: "Document", definitions: [{
+      const document = `export {}; const doc = { kind: "Document", definitions: [{
         kind: "OperationDefinition", operation: "query",
         name: { kind: "Name", value: "GetUser" },
       }], loc: { source: ${representation === "referenced" ? "source" : source} } };`;
@@ -502,6 +502,24 @@ describe("GraphQL document ownership", () => {
 });
 
 describe("GraphQL document container ownership", () => {
+  it.each([
+    ["", "", 2],
+    ["export {};", "", 1],
+    ["function inspect() {", "}", 1],
+  ] as const)(
+    "distinguishes global script bindings from private lexical objects: %s",
+    (prefix, suffix, count) => {
+      expect(
+        rpcEndpoints(`
+          ${prefix}
+          const source={body:"query GetUser { user { id } }",locationOffset:{line:1,column:1}};
+          const doc={kind:"OperationDefinition",operation:"query",name:{kind:"Name",value:"GetUser"},loc:{source}};
+          ${suffix}
+        `),
+      ).toHaveLength(count);
+    },
+  );
+
   it("does not prove a copy when a caller supplies direct eval", () => {
     expect(
       rpcEndpoints(`
@@ -515,8 +533,8 @@ describe("GraphQL document container ownership", () => {
   });
 
   it.each([
-    ["", "", 1],
-    ["", "holder.docs[0].loc.source = {};", 2],
+    ["export {}; ", "", 1],
+    ["export {}; ", "holder.docs[0].loc.source = {};", 2],
     ["export ", "", 2],
   ] as const)(
     "checks containing object and array ownership: %s %s",
@@ -661,9 +679,10 @@ describe("GraphQL document recognition", () => {
     ).toEqual([]);
   });
 
-  it("reports a precompiled graphql-tag document once, not again from loc.source.body", () => {
+  it("reports a private precompiled document once, not again from loc.source.body", () => {
     expect(
       rpcEndpoints(`
+        export {};
         const doc = { kind: "Document", definitions: [{
           kind: "OperationDefinition",
           operation: "query",
@@ -690,6 +709,7 @@ describe("GraphQL document recognition", () => {
     (sourceFields) => {
       expect(
         rpcEndpoints(`
+          export {};
           const source = { ${sourceFields} };
           const operation = {
             kind: "OperationDefinition",

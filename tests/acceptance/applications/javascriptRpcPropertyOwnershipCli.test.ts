@@ -13,6 +13,16 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
   async (surface, { cli }) => {
     const root = await createTestTempDirectory("rea-graphql-source-");
     await writeFixtureFiles(root, {
+      "classic.js": `
+        const document = {
+          kind: "OperationDefinition", operation: "query",
+          name: { kind: "Name", value: "ClassicSource" },
+          loc: { source: {
+            body: "query ClassicSource { viewer { id } }",
+            locationOffset: { line: 1, column: 1 },
+          } },
+        };
+      `,
       "entry.mjs": `
         const source = {
           body: "query Standalone { viewer { id } }",
@@ -65,6 +75,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       [
         "ChangedSource",
         "ChangedSource",
+        "ClassicSource",
+        "ClassicSource",
         "Compiled",
         "ExposedSource",
         "ExposedSource",
@@ -80,7 +92,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         artifact: { available: true },
         location: {
           available: true,
-          value: { kind: "source-range", source: "entry.mjs" },
+          value: {
+            kind: "source-range",
+            source:
+              observation.properties.value === "ClassicSource"
+                ? "classic.js"
+                : "entry.mjs",
+          },
         },
       });
     expect(result.statistics.parse_failures).toBe(0);

@@ -280,8 +280,8 @@ RPC client syntax also contributes network endpoint candidates, in both
   remains an operation candidate even when it has `locationOffset` metadata.
   A graphql-tag `loc.source.body` copy is suppressed only when that source
   belongs to a recovered document with the same operation and its containing
-  document, location and source have proven metadata ownership. Writes, escapes
-  and unresolved classic-script global uses retain the source observation.
+  document, location and source have proven private metadata ownership. Writes,
+  escapes and classic-script global bindings retain the source observation.
   Anonymous operations are not reported.
 
 Literal link options and precompiled document fields follow object property

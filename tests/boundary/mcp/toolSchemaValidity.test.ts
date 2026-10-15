@@ -5,6 +5,11 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { advertisedInputExamples } from "../../../src/contracts/advertisedInputExamples.js";
+import {
+  advertisedReferenceExpansionBudget,
+  inputSchemaWithinReferenceExpansionBudget,
+} from "../../../src/contracts/inputSchemaPresentation.js";
+import { transformAdvertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { emptyArraySchema } from "../../../src/domain/emptyArraySchema.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
@@ -252,23 +257,36 @@ function localReferenceExpansions(schema: Record<string, unknown>): number {
       if (target !== undefined) {
         count += 1;
         visit(target, new Set([...active, node.$ref]));
-        return;
       }
     }
-    for (const [key, value] of Object.entries(node)) {
-      if (
-        [
-          "$defs",
-          "definitions",
-          "examples",
-          "default",
-          "const",
-          "enum",
-        ].includes(key)
-      )
-        continue;
-      visit(value, active);
+    for (const key of [
+      "properties",
+      "patternProperties",
+      "dependentSchemas",
+      "dependencies",
+    ]) {
+      const children = node[key];
+      if (isRecord(children))
+        Object.values(children).forEach((child) => visit(child, active));
     }
+    for (const key of [
+      "allOf",
+      "anyOf",
+      "oneOf",
+      "prefixItems",
+      "items",
+      "additionalItems",
+      "contains",
+      "additionalProperties",
+      "unevaluatedProperties",
+      "unevaluatedItems",
+      "propertyNames",
+      "not",
+      "if",
+      "then",
+      "else",
+    ])
+      visit(node[key], active);
   };
   visit(schema, new Set());
   return count;
@@ -375,6 +393,95 @@ const advertiseAndEnforceProcessEnvironmentKeyConstraint =
       await Promise.allSettled([client.close(), server.close()]);
     }
   };
+
+it("applies the reference budget to schema-valued siblings after SDK conversion", async () => {
+  const server = new McpServer({ name: "reference-siblings", version: "0" });
+  const client = new Client({ name: "reference-siblings", version: "0" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const literal = { properties: { ignored: { $ref: "#/$defs/value" } } };
+  const reference = { $ref: "#/$defs/value" };
+  for (const extra of [false, true]) {
+    const properties: Record<string, unknown> = Object.fromEntries(
+      Array.from({ length: 16 }, (_, index) => [
+        // Keyword-named properties are schemas, not literal annotations.
+        index === 0 ? "default" : `field_${index}`,
+        { ...reference, allOf: [reference] },
+      ]),
+    );
+    if (extra) properties.extra = reference;
+    const canonical = z.strictObject(
+      Object.fromEntries(
+        Object.keys(properties).map((name) => [name, z.string().min(1)]),
+      ),
+    );
+    const shared = {
+      type: "object",
+      properties,
+      required: Object.keys(properties),
+      additionalProperties: false,
+      $defs: { value: { type: "string", minLength: 1 } },
+      default: literal,
+      examples: [literal],
+    };
+    const inlined = {
+      ...z.toJSONSchema(canonical),
+      default: literal,
+      examples: [literal],
+    };
+    server.registerTool(
+      extra ? "over_budget" : "at_budget",
+      {
+        inputSchema: transformAdvertisedInputJsonSchema(canonical, () =>
+          inputSchemaWithinReferenceExpansionBudget(
+            shared,
+            () => inlined,
+            advertisedReferenceExpansionBudget,
+          ),
+        ),
+      },
+      async () => ({ content: [] }),
+    );
+  }
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const { tools } = await client.listTools();
+    expect(schemaErrors(tools)).toEqual([]);
+    const atBudget = tools.find(({ name }) => name === "at_budget");
+    const overBudget = tools.find(({ name }) => name === "over_budget");
+    if (atBudget === undefined || overBudget === undefined)
+      throw new Error("Reference-budget fixture tools were not advertised");
+    expect(atBudget.inputSchema.$defs).toBeDefined();
+    expect(atBudget.inputSchema.properties).toMatchObject({
+      default: { $ref: "#/$defs/value", allOf: [reference] },
+    });
+    expect(localReferenceExpansions(atBudget.inputSchema)).toBe(
+      advertisedReferenceExpansionBudget,
+    );
+    expect(overBudget.inputSchema.$defs).toBeUndefined();
+    expect(localReferenceExpansions(overBudget.inputSchema)).toBe(0);
+    for (const tool of tools) {
+      expect(tool.inputSchema).toMatchObject({
+        default: literal,
+        examples: [literal],
+      });
+      const properties = tool.inputSchema.properties;
+      if (!isRecord(properties)) throw new Error("Missing fixture properties");
+      const valid = Object.fromEntries(
+        Object.keys(properties).map((name) => [name, "value"]),
+      );
+      const validate = new Ajv2020({ strict: false }).compile(tool.inputSchema);
+      expect(validate(valid)).toBe(true);
+      expect(validate({ ...valid, default: "" })).toBe(false);
+      expect(
+        (await client.callTool({ name: tool.name, arguments: valid })).isError,
+      ).not.toBe(true);
+    }
+  } finally {
+    await Promise.allSettled([client.close(), server.close()]);
+  }
+});
 
 describe("MCP JSON Schema validity", () => {
   it("preserves empty-array validation in the advertised representation", () => {

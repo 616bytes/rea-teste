@@ -283,7 +283,8 @@ const countReferenceExpansions = (
         new Set([...active, node.$ref]),
         count,
       );
-      return;
+      // Draft 2020-12 evaluates schema-valued siblings alongside the target.
+      // Keep their traversal on the caller's reference path, not the target's.
     }
   }
   for (const [key, value] of Object.entries(node)) {

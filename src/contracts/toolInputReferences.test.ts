@@ -253,6 +253,51 @@ describe("advertised reference expansion budget", () => {
     };
     expect(countLocalReferenceExpansions(schema)).toBe(fields.length);
   });
+
+  it("counts reference siblings without interpreting literal annotations as schemas", () => {
+    const literal = {
+      properties: { value: { $ref: "#/$defs/value" } },
+    };
+    const schema = {
+      type: "object",
+      properties: {
+        value: {
+          $ref: "#/$defs/value",
+          allOf: [{ $ref: "#/$defs/value" }],
+          properties: { nested: { $ref: "#/$defs/value" } },
+          default: literal,
+          const: literal,
+          enum: [literal],
+          examples: [literal],
+        },
+      },
+      $defs: { value: { type: "object" } },
+    };
+    expect(countLocalReferenceExpansions(schema)).toBe(3);
+  });
+
+  it("keeps reference cycles path-scoped while counting sibling schemas", () => {
+    const branch = {
+      $ref: "#/$defs/recursive",
+      allOf: [{ $ref: "#/$defs/value" }],
+    };
+    const schema = {
+      type: "object",
+      properties: { before: branch, after: branch },
+      $defs: {
+        recursive: {
+          type: "object",
+          properties: {
+            next: { $ref: "#/$defs/recursive" },
+            value: { $ref: "#/$defs/value" },
+          },
+        },
+        value: { type: "object" },
+      },
+    };
+    expect(countLocalReferenceExpansions(schema)).toBe(6);
+  });
+
   const reusedComponent = z
     .object({ kind: z.literal("rec"), value: z.string() })
     .strict();

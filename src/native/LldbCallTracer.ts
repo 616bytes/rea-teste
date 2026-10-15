@@ -286,6 +286,16 @@ export class LldbCallTracer implements NativeCallTracer {
         ),
       );
     }
+    if (result.ok && signal?.aborted === true)
+      return err(
+        new AnalysisCancelledError(OPERATION, {
+          partialObservation: partialObservationFromTrace(
+            request,
+            result.value,
+            "cancelled",
+          ),
+        }),
+      );
     return result;
   }
 
@@ -698,6 +708,7 @@ const partialNativeObservation = async (options: {
 const partialObservationFromTrace = (
   request: Parameters<NativeCallTracer["trace"]>[0],
   trace: NativeCallTrace,
+  reason: NativeCallPartialObservation["coverage"]["reason"] = "cleanup-failure",
 ): NativeCallPartialObservation =>
   projectLldbPartialObservation({
     target: {
@@ -717,7 +728,7 @@ const partialObservationFromTrace = (
       otherStops: trace.run.other_stops,
       limitations: [],
     },
-    reason: "cleanup-failure",
+    reason,
   });
 
 const lldbRuntimePaths = (directory: string) => ({

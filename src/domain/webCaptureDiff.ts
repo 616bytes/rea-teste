@@ -208,11 +208,14 @@ const scriptDimension = (
   before: WebPageInspection,
   after: WebPageInspection,
 ): Dimension => {
+  const inventoryComplete =
+    sectionsComplete(before, ["scripts"]) &&
+    sectionsComplete(after, ["scripts"]);
   const afterScripts = new Map(
     after.scripts.items.map((script) => [script.script_key, script]),
   );
-  // Duplicate occurrence suffixes follow source sorting, so missing source can
-  // renumber otherwise identical scripts. Never pair their digests by ordinal.
+  // Duplicate occurrence suffixes follow source sorting. Missing inventory rows
+  // or retained sources can renumber them without proving a content change.
   const sourceGroup = (key: string) => key.replace(/_[0-9]+$/u, "");
   const incompleteSourceGroups = new Set(
     [...before.scripts.items, ...after.scripts.items]
@@ -223,6 +226,8 @@ const scriptDimension = (
     before.scripts.items
       .filter(
         (script) =>
+          (inventoryComplete ||
+            script.script_key === sourceGroup(script.script_key)) &&
           !incompleteSourceGroups.has(sourceGroup(script.script_key)) &&
           script.source.included &&
           afterScripts.get(script.script_key)?.source.included,
@@ -240,9 +245,6 @@ const scriptDimension = (
       })),
       (script) => script.script_key,
     );
-  const inventoryComplete =
-    sectionsComplete(before, ["scripts"]) &&
-    sectionsComplete(after, ["scripts"]);
   const contentComplete = before.scripts.items.every((script) => {
     const other = afterScripts.get(script.script_key);
     return (

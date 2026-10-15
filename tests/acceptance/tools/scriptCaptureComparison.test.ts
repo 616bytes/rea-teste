@@ -192,6 +192,74 @@ cliTest(
 );
 
 cliTest(
+  "CLI preserves observed source changes for unique scripts in incomplete inventories",
+  async ({ cli }) => {
+    const captures = [
+      scriptCapture("export let x = 1;\n"),
+      scriptCapture("export let x = 2;\n"),
+    ];
+    for (const capture of captures) {
+      capture.inspection.scripts.total = 2;
+      capture.inspection.completeness.truncated_sections.push("scripts");
+    }
+    const paths = await writeCaptures(captures);
+    for (const [left, right] of [
+      [0, 1],
+      [1, 0],
+    ] as const) {
+      expect(
+        await compareScripts(cli, paths[left]!, paths[right]!),
+      ).toMatchObject({ status: "changed", total_changes: 1 });
+    }
+  },
+);
+
+cliTest(
+  "CLI keeps duplicate source identity unknown across truncated script inventories",
+  async ({ cli }) => {
+    const complete = scriptCapture("export let x = 1;\n");
+    const base = complete.inspection.scripts.items[0]!.script_key;
+    complete.inspection.scripts.items.push(
+      scriptCapture("export let x = 2;\n").inspection.scripts.items[0]!,
+      scriptCapture("export let x = 3;\n").inspection.scripts.items[0]!,
+    );
+    complete.inspection.scripts.items.sort((left, right) => {
+      if (!left.source.included || !right.source.included)
+        throw new Error("Expected retained fixture sources");
+      return left.source.artifact.sha256.localeCompare(
+        right.source.artifact.sha256,
+      );
+    });
+    complete.inspection.scripts.total = 3;
+    const captures = [
+      [0, 1, 2],
+      [0, 1],
+      [1, 2],
+    ].map((indexes) => {
+      const capture = structuredClone(complete);
+      capture.inspection.scripts.items = indexes.map((index, ordinal) => ({
+        ...complete.inspection.scripts.items[index]!,
+        script_key: `${base}_${String(ordinal + 1)}`,
+      }));
+      if (indexes.length < 3)
+        capture.inspection.completeness.truncated_sections.push("scripts");
+      return captureSnapshotSchema.parse(capture);
+    });
+    const paths = await writeCaptures(captures);
+    for (const [left, right] of [
+      [0, 2],
+      [2, 0],
+      [1, 2],
+      [2, 1],
+    ] as const) {
+      expect(
+        await compareScripts(cli, paths[left]!, paths[right]!),
+      ).toMatchObject({ status: "unknown", total_changes: 0, changes: [] });
+    }
+  },
+);
+
+cliTest(
   "CLI keeps duplicate script source identity unknown when retention renumbers occurrences",
   async ({ cli }) => {
     const before = scriptCapture("export let x = 1;\n");

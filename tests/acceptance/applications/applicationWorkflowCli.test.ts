@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
@@ -1183,7 +1184,9 @@ describe("application workflow CLI copy boundaries", () => {
 
 describe("application workflow CLI and MCP capture lifetimes", () => {
   it("compares captured primitives and source values after aliases are replaced", async () => {
-    const root = await createTestTempDirectory("rea-capture-lifetime-cli-");
+    const parent = await createTestTempDirectory("rea-capture-lifetime-cli-");
+    const root = join(parent, "fixtures # capture");
+    await mkdir(root);
     const fields = [
       "rebound",
       "rest",
@@ -1677,8 +1680,9 @@ const runtimeDefaultExport = async (path: string): Promise<unknown> => {
   const { stdout } = await execute(process.execPath, [
     "--input-type=module",
     "--eval",
-    'import { pathToFileURL } from "node:url"; const module = await import(pathToFileURL(process.argv[1]).href); console.log(JSON.stringify(module.default()));',
-    path,
+    "const module = await import(process.argv[1]); console.log(JSON.stringify(module.default()));",
+    // ESM specifiers encode drive letters and literal path characters such as #.
+    pathToFileURL(path).href,
   ]);
   return JSON.parse(stdout);
 };

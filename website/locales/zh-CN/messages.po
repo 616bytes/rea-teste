@@ -6828,7 +6828,7 @@ msgctxt "page:showcase/ctf/index.html"
 msgid ""
 "The instructions come from the summing helper and its caller. The C is an "
 "explanatory summary with descriptive names and a flattened 36-cell loop."
-msgstr "指令来自求和辅助函数及其调用方。C 版本是一份说明性摘要：使用有意义的命名，并把 36 个单元格的循环展开。"
+msgstr "指令来自求和辅助函数及其调用方。C 版本是一份说明性摘要：使用有意义的命名，并将二维遍历改写为遍历 36 个单元格的单层循环。"
 
 #: website/public/showcase/ctf/index.html:581
 msgctxt "page:showcase/ctf/index.html"

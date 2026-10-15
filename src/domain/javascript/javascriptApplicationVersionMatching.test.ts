@@ -71,17 +71,23 @@ const compare = (
   });
 
 describe("application version matching", () => {
-  it.each(["babel-ast-v1", "babel-ast-v2", "babel-ast-v3"])(
-    "keeps %s Evidence comparable without mixing fingerprint algorithms",
-    (algorithm) => {
-      const left = moduleNode("before", "1", "a", algorithm);
-      const right = moduleNode("after", "2", "a", "babel-ast-v3");
+  it.each([
+    ["babel-ast-v1", "babel-ast-v1"],
+    ["babel-ast-v2", "babel-ast-v2"],
+    ["babel-ast-v3", "babel-ast-v3"],
+    ["babel-ast-v1", "babel-ast-v3"],
+    ["babel-ast-v2", "babel-ast-v3"],
+  ])(
+    "compares %s with %s without mixing fingerprint algorithms",
+    (leftAlgorithm, rightAlgorithm) => {
+      const left = moduleNode("before", "1", "a", leftAlgorithm);
+      const right = moduleNode("after", "2", "a", rightAlgorithm);
       const result = compare(graph([left]), graph([right]));
       expect(result.matching.structural_fingerprint).toBe(
-        algorithm === "babel-ast-v3" ? 1 : 0,
+        leftAlgorithm === rightAlgorithm ? 1 : 0,
       );
       expect(result.matching.unmatched).toBe(
-        algorithm === "babel-ast-v3" ? 0 : 2,
+        leftAlgorithm === rightAlgorithm ? 0 : 2,
       );
     },
   );

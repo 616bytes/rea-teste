@@ -296,14 +296,25 @@ and links whose callee was renamed by a minifier are not recognized.
 Each recovered bundle module retains the exact factory-source digest. A complete
 bounded AST also receives a `babel-ast-v3` structural fingerprint that ignores
 ordinary identifier names while retaining syntax, literals, operators, object
-keys, and member properties. Computed member identifiers retain their access
-syntax without treating a local variable's spelling as a fixed property; template
-literal contents remain part of the fingerprint. Bigint values and keys,
-directive text, and assignment operators also retain their distinct values.
+keys, member properties, and public class method/field names. Computed member
+and class keys retain their syntax without treating a local variable's spelling
+as a fixed property; template literal contents remain part of the fingerprint.
+Bigint values and keys, directive text, and assignment operators also retain
+their distinct values.
 Version comparison keeps the algorithm in its matching key, so retained
 `babel-ast-v1` and `babel-ast-v2` fingerprints cannot match these new fingerprints
-through structural equality. Their Evidence remains usable through other matching
-tiers. Re-analyze both snapshots to compare their new structure.
+through structural equality. Two retained snapshots using the same older
+algorithm can still match structurally. Other matching tiers remain available
+across algorithm versions. Re-analyze both snapshots to compare using the new
+fingerprint rules.
+
+Different structural fingerprints prevent a structural match, but other tiers
+may still pair the modules. If no tier produces a match or an ambiguous candidate
+and the input coverage is complete, comparison reports separate `removed` and
+`added` module items; their containing files may still match by path and report
+`changed`. Incomplete
+coverage and ambiguous candidates retain their existing `unknown` outcomes.
+
 If fingerprint construction reaches its structural
 bound, the fingerprint is unavailable and its status is `truncated`; a bounded
 prefix is never presented as a complete stable fingerprint.

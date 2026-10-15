@@ -10,7 +10,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
-  "retains bundle literals and operators while matching renamed local bindings",
+  "retains bundle literals, operators and class keys while matching renamed local bindings",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-fingerprint-version-");
     const pairs = [
@@ -20,9 +20,25 @@ cliTest(
       ["assignment", "exports.v = 1;", "exports.v += 1;"],
       ["string", 'exports.v = "left";', 'exports.v = "right";'],
       [
+        "class-method",
+        "class A { foo() { return 1; } }",
+        "class A { bar() { return 1; } }",
+      ],
+      ["class-field", "class A { foo = 1; }", "class A { bar = 1; }"],
+      [
         "rename",
         "const key = selectKey(); exports.read = value[key];",
         "const selector = selectKey(); exports.read = value[selector];",
+      ],
+      [
+        "rename-class-method",
+        "const key = selectKey(); class A { [key]() { return 1; } }",
+        "const selector = selectKey(); class B { [selector]() { return 1; } }",
+      ],
+      [
+        "rename-class-field",
+        "const key = selectKey(); class A { [key] = 1; }",
+        "const selector = selectKey(); class B { [selector] = 1; }",
       ],
     ] as const;
     const versions = [];
@@ -69,7 +85,9 @@ cliTest(
     const result = applicationVersionComparisonResultSchema.parse(
       parseEvidence(response.json).normalized_result,
     );
+    expect(result.coverage.status).toBe("complete-within-inputs");
     for (const [name] of pairs) {
+      const isRename = name.startsWith("rename");
       const a = modules[0]?.get(`${name}.js`);
       const b = modules[1]?.get(`${name}.js`);
       if (a === undefined || b === undefined)
@@ -81,12 +99,12 @@ cliTest(
         a.properties.structural_fingerprint_sha256 ===
           b.properties.structural_fingerprint_sha256,
         name,
-      ).toBe(name === "rename");
+      ).toBe(isRename);
       const item = result.items.find(
         ({ left_node_id }) => left_node_id === a.node.node_id,
       );
       expect(item).toMatchObject(
-        name === "rename"
+        isRename
           ? {
               right_node_id: b.node.node_id,
               status: "changed",
@@ -96,10 +114,41 @@ cliTest(
                 confidence: "medium",
               },
             }
-          : { right_node_id: null, match: { status: "unmatched" } },
+          : {
+              right_node_id: null,
+              status: "removed",
+              match: { status: "unmatched" },
+            },
       );
+      if (!isRename)
+        expect(
+          result.items.find(
+            ({ right_node_id }) => right_node_id === b.node.node_id,
+          ),
+        ).toMatchObject({
+          left_node_id: null,
+          status: "added",
+          match: { status: "unmatched" },
+        });
+      const asset = analyses[0]?.graph.nodes.find(
+        ({ kind, observations }) =>
+          kind === "javascript-asset" &&
+          observations.some(
+            ({ properties }) => properties.path === `${name}.js`,
+          ),
+      );
+      expect(asset).toBeDefined();
+      expect(
+        result.items.find(
+          ({ left_node_id }) => left_node_id === asset?.node_id,
+        ),
+      ).toMatchObject({
+        status: "changed",
+        dimensions: expect.arrayContaining(["content"]),
+        match: { status: "matched", basis: "semantic-key" },
+      });
     }
-    expect(result.matching.structural_fingerprint).toBe(1);
+    expect(result.matching.structural_fingerprint).toBe(3);
   },
 );
 

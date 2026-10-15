@@ -103,7 +103,13 @@ const semanticTokens = (node: t.Node): string[] => {
       if (property !== null) tokens.push(`property:${property}`);
     }
   }
-  if ((t.isObjectProperty(node) || t.isObjectMethod(node)) && !node.computed) {
+  if (
+    (t.isObjectProperty(node) ||
+      t.isObjectMethod(node) ||
+      t.isClassMethod(node) ||
+      t.isClassProperty(node)) &&
+    !node.computed
+  ) {
     const key = semanticStaticPropertyKey(node.key, false);
     if (key !== null) tokens.push(`key:${key}`);
   }

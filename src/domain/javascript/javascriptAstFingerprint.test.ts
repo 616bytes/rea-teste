@@ -12,6 +12,32 @@ describe("JavaScript AST fingerprints", () => {
     ["assignment reads", "exports.v = 1;", "exports.v += 1;"],
     ["arithmetic assignments", "exports.v += 1;", "exports.v -= 1;"],
     ["logical assignments", "exports.v ||= 1;", "exports.v ??= 1;"],
+    [
+      "class methods",
+      "class A { foo() { return 1; } }",
+      "class A { bar() { return 1; } }",
+    ],
+    ["class fields", "class A { foo = 1; }", "class A { bar = 1; }"],
+    [
+      "static class methods",
+      "class A { static foo() {} }",
+      "class A { static bar() {} }",
+    ],
+    [
+      "static class fields",
+      "class A { static foo = 1; }",
+      "class A { static bar = 1; }",
+    ],
+    [
+      "class getters",
+      "class A { get foo() { return 1; } }",
+      "class A { get bar() { return 1; } }",
+    ],
+    [
+      "class setters",
+      "class A { set foo(value) {} }",
+      "class A { set bar(value) {} }",
+    ],
   ])("distinguishes %s", (_name, left, right) => {
     expect(fingerprintJavaScriptAst(parse(left))).not.toBe(
       fingerprintJavaScriptAst(parse(right)),
@@ -28,6 +54,36 @@ describe("JavaScript AST fingerprints", () => {
     );
   });
 });
+
+it.each(["() { return 1; }", "= 1;"])(
+  "preserves computed class key semantics for %s",
+  (member) => {
+    const fingerprint = (source: string) =>
+      fingerprintJavaScriptAst(parse(source));
+    expect(
+      fingerprint(`const key = selectKey(); class A { [key]${member} }`),
+    ).toBe(
+      fingerprint(
+        `const selector = selectKey(); class B { [selector]${member} }`,
+      ),
+    );
+    expect(fingerprint(`class A { ["foo"]${member} }`)).not.toBe(
+      fingerprint(`class A { ["bar"]${member} }`),
+    );
+    expect(fingerprint(`class A { [key]${member} }`)).not.toBe(
+      fingerprint(`class A { key${member} }`),
+    );
+  },
+);
+
+it.each(["() { return 1; }", "= 1;"])(
+  "keeps private class member renames compatible for %s",
+  (member) => {
+    expect(fingerprintJavaScriptAst(parse(`class A { #foo${member} }`))).toBe(
+      fingerprintJavaScriptAst(parse(`class A { #bar${member} }`)),
+    );
+  },
+);
 
 it.each(["obj[key]", "obj?.[key]"])(
   "ignores a local computed key binding in %s",

@@ -8,15 +8,40 @@ install_to() {
   mkdir -p "$dest"
   for skill in "$src"/*; do
     [[ -d "$skill" ]] || continue
-    local name target backup
+    local name target backup staged
     name="$(basename "$skill")"
     target="$dest/$name"
+    staged="$dest/.${name}.staging-$-$RANDOM"
+    backup=""
+
+    # Prepare the complete replacement before touching the active installation.
+    if ! cp -R -- "$skill" "$staged"; then
+      rm -rf -- "$staged"
+      echo "Falha ao preparar skill $name; instalação existente preservada." >&2
+      return 1
+    fi
+
     if [[ -e "$target" ]]; then
       backup="$dest/.${name}.backup-$(date +%Y%m%d-%H%M%S)"
-      mv -- "$target" "$backup"
+      if ! mv -- "$target" "$backup"; then
+        rm -rf -- "$staged"
+        echo "Falha ao criar backup de $target; instalação existente preservada." >&2
+        return 1
+      fi
       printf 'Backup %s: %s\n' "$kind" "$backup"
     fi
-    cp -R -- "$skill" "$target"
+
+    if ! mv -- "$staged" "$target"; then
+      rm -rf -- "$staged"
+      if [[ -n "$backup" && -e "$backup" && ! -e "$target" ]]; then
+        mv -- "$backup" "$target" || {
+          echo "ERRO: não foi possível restaurar $backup para $target" >&2
+          return 1
+        }
+      fi
+      echo "Falha ao ativar skill $name; backup restaurado quando possível." >&2
+      return 1
+    fi
     printf 'Instalada %s: %s\n' "$kind" "$target"
   done
 }

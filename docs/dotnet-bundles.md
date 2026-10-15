@@ -40,7 +40,9 @@ explicitly with the managed tools to establish PE/CLI facts.
 
 Metadata is range-read with a 64 KiB cache. Policy budgets are 16 MiB of
 manifest metadata, 100,000 files, 64 KiB per UTF-8 string, 512 MiB of stored or
-expanded bytes per file, and 2 GiB of aggregate expanded bytes. These are REA
+expanded bytes per file, 256 path parts per member, 250,000 distinct in-memory
+path-tree nodes, and 2 GiB of aggregate expanded bytes. The node budget counts
+shared directory prefixes only once. These are REA
 resource policies, not limits imposed by Microsoft's format. Marker scanning
 streams 64 KiB chunks; ordinary native files without a marker incur one extra
 read pass before host hashing.

@@ -65,6 +65,23 @@ test("inspects and extracts a compressed bundle through public CLI and stdio MCP
       root_format: "dotnet-bundle",
       root_sha256: createHash("sha256").update(bytes).digest("hex"),
     });
+    expect(inventory.next_probes).toHaveLength(1);
+    expect(inventory.next_probes[0]).toMatchObject({
+      operation: "extract_artifact",
+      authority: "artifact-bytes",
+    });
+    expect(inventory.next_probes[0]?.rationale).toContain(
+      "fresh owned directory",
+    );
+    expect(inventory.next_probes[0]?.rationale).toContain(
+      "inspect candidate files separately",
+    );
+    expect(inventory.next_probes[0]?.rationale).toContain(
+      "do not establish their format",
+    );
+    expect(
+      inventory.unexplored_branches.map(({ next_probe }) => next_probe),
+    ).toEqual(inventory.next_probes);
     const extracted = await cli.run({
       arguments: ["extract-artifact", path, "--json"],
       environment,
@@ -108,3 +125,27 @@ test("inspects and extracts a compressed bundle through public CLI and stdio MCP
     );
   }
 }, 120_000);
+
+test("reports excessive bundle path depth as a public CLI limit", async ({
+  cli,
+  workspace,
+}) => {
+  const path = workspace.path("deep-host.exe");
+  await writeFile(
+    path,
+    dotnetBundleFixture([
+      { path: `${"a/".repeat(256)}file`, bytes: Buffer.alloc(0) },
+    ]).bytes,
+  );
+
+  const result = await cli.run({
+    arguments: ["inspect-artifact", path, "--json"],
+    environment: { REA_LOG_LEVEL: "silent" },
+  });
+  expect(result.exitCode, result.stderr).toBe(1);
+  expect(result.json).toMatchObject({
+    code: "truncated",
+    category: "truncated",
+    details: { reason: "limit", truncated: true },
+  });
+});

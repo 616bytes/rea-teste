@@ -19,6 +19,8 @@ export const DOTNET_BUNDLE_SIGNATURE = Buffer.from(
 const MAX_METADATA_BYTES = 16 * 1024 * 1024;
 const MAX_ENTRIES = 100_000;
 const MAX_PATH_BYTES = 64 * 1024;
+const MAX_PATH_PARTS = 256;
+const MAX_PATH_NODES = 250_000;
 const MAX_BUNDLE_ENTRY_BYTES = 512 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 2 * 1024 * 1024 * 1024;
 
@@ -117,7 +119,10 @@ export const readDotnetBundle = async (
       );
   }
   const files: DotnetBundleFile[] = [];
-  const paths = new ArtifactPathRegistry();
+  const paths = new ArtifactPathRegistry({
+    maxParts: MAX_PATH_PARTS,
+    maxNodes: MAX_PATH_NODES,
+  });
   let expandedBytes = 0;
   for (let index = 0; index < count; index++) {
     abortIfNeeded(signal);

@@ -132,3 +132,40 @@ assembly/resource SHA-256 values matched their source files, and each host's
 SHA-256 was unchanged. The generated hosts were not executed. The compiled
 stdio MCP acceptance suite above uses a synthetic bundle; the real-producer MCP
 workflow was last run before this fix.
+
+## Automated review follow-up (2026-10-15)
+
+Two regressions failed against PR head `9f1391e` before the local fixes. First,
+the parser accepted a 257-part path and a manifest with 251,000 total path
+parts. Source inspection and a smaller retained-tree measurement showed how
+distinct prefixes allocate a node and `Map` per part. Existing tests bounded
+metadata bytes, entry count and expanded bytes, but not the memory expansion
+from path structure. The path registry now rejects paths above 256 parts and
+stops before allocating more than 250,000 path-tree nodes. A distinct-prefix
+regression triggers the node limit, while a shared-prefix regression verifies
+that many members under the same deep directory remain admissible. These are
+REA resource policies, not Microsoft format limits.
+
+Second, public CLI inspection identified a bundle but returned no `next_probes`
+or `unexplored_branches`. The inspection projection now suggests extraction
+into a fresh owned directory followed by separate inspection of candidate
+files, without treating bundle declarations as verified assembly types. The
+existing acceptance test had checked classification and extraction separately,
+but not the inspection report's follow-up guidance.
+For a directory containing a bundle, select the host file before extraction:
+extracting the directory itself copies its files without unpacking nested hosts.
+
+On the working tree based on `9f1391e`, `npm run test:focused --
+src/artifacts/ArtifactPaths.test.ts
+tests/boundary/filesystem/dotnetBundleArtifacts.test.ts
+tests/acceptance/dotnetBundleJourney.test.ts` passed 38 tests, including a
+compiled public CLI limit error and CLI/stdio MCP inspection parity.
+`npm run check:ci` and `npm run docs:check` passed.
+
+Microsoft HostModel from SDK 8.0.416 then generated v1, v2, plain v6 and
+compressed v6 Windows x64 hosts. The compiled public CLI inspected and
+extracted all four. Each inspection classified the root as `dotnet-bundle` and
+suggested `extract_artifact`; extracted DLL/resource SHA-256 values matched
+the producer files, and each host's SHA-256 remained unchanged. Generated
+hosts were not executed. These local checks do not replace upstream CI on the
+resulting commit.

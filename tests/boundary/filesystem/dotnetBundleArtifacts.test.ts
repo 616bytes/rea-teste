@@ -88,6 +88,58 @@ it.each([1, 2, 6])(
 
 it.each([
   [
+    "one deeply nested path",
+    [{ path: `${"a/".repeat(256)}file`, bytes: Buffer.alloc(0) }],
+  ],
+  [
+    "too many distinct path nodes across members",
+    Array.from({ length: 1_000 }, (_, index) => ({
+      path: `${index}/${"a/".repeat(249)}file`,
+      bytes: Buffer.alloc(0),
+    })),
+  ],
+] as const)("rejects %s before building path trees", async (_name, files) => {
+  const root = await createTestTempDirectory("rea-dotnet-path-budget-");
+  const path = join(root, "host.exe");
+  const fixture = dotnetBundleFixture(files);
+  await writeFile(path, fixture.bytes);
+  const handle = await open(path, "r");
+  try {
+    await expect(
+      readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
+    ).rejects.toMatchObject({ reason: "limit" });
+  } finally {
+    await handle.close();
+  }
+});
+
+it("admits many members beneath a shared deep path prefix", async () => {
+  const root = await createTestTempDirectory("rea-dotnet-shared-prefix-");
+  const path = join(root, "host.exe");
+  const files = Array.from({ length: 1_000 }, (_, index) => ({
+    path: `${"a/".repeat(250)}${index}`,
+    bytes: Buffer.alloc(0),
+  }));
+  const fixture = dotnetBundleFixture(files);
+  await writeFile(path, fixture.bytes);
+  const handle = await open(path, "r");
+  try {
+    expect(
+      (
+        await readDotnetBundle(
+          handle,
+          fixture.bytes.length,
+          fixture.headerOffset,
+        )
+      ).files,
+    ).toHaveLength(files.length);
+  } finally {
+    await handle.close();
+  }
+});
+
+it.each([
+  [
     "traversal",
     () =>
       dotnetBundleFixture([{ path: "../escape", bytes: Buffer.from("x") }])

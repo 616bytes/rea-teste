@@ -153,7 +153,10 @@ function* csvRecords(
   }
 }
 
-const readHeader = (records: Generator<CsvRecord>): string[] => {
+const readHeader = (
+  records: Generator<CsvRecord>,
+  endsInsideCharacter: boolean,
+): string[] => {
   let first: IteratorResult<CsvRecord>;
   try {
     first = records.next();
@@ -168,6 +171,11 @@ const readHeader = (records: Generator<CsvRecord>): string[] => {
     throw new ProcmonExportFormatFailure(
       "format",
       "CSV export is empty; expected a header row.",
+    );
+  if (endsInsideCharacter && !first.value.terminated)
+    throw new ProcmonExportFormatFailure(
+      "format",
+      "CSV header row ends inside a character; its column names are incomplete.",
     );
   validateHeader(first.value.fields);
   return first.value.fields;
@@ -220,7 +228,7 @@ export const readProcmonCsv = async (
     maximum: PROCMON_EXPORT_LIMITS.columns,
   };
   const records = csvRecords(text, width);
-  const columns = readHeader(records);
+  const columns = readHeader(records, endsInsideCharacter);
   for (const column of columns) window.charge(column);
   width.maximum = columns.length;
   const stop = (coverage: ParsedProcmonExport["coverage"]) => ({

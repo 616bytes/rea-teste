@@ -132,6 +132,7 @@ export class ProcmonEventWindow {
   examined = 0;
   readonly events: ProcmonEvent[] = [];
   #bytes = 0;
+  #metadataBytes = 0;
   constructor(
     readonly format: ProcmonFormat,
     readonly offset: number,
@@ -192,10 +193,18 @@ export class ProcmonEventWindow {
     return bytes;
   }
 
-  #admit(bytes: number, cause: "events" | "metadata" = "events"): void {
+  #admit(bytes: number, kind: "events" | "metadata" = "events"): void {
     this.#bytes += bytes;
+    if (kind === "metadata") this.#metadataBytes += bytes;
+    // Metadata is the cause only when it alone exceeds the budget; otherwise
+    // a smaller page would fit.
     if (this.#bytes > PROCMON_EXPORT_LIMITS.output_bytes)
-      throw new ProcmonExportOutputFailure(this.events.length, cause);
+      throw new ProcmonExportOutputFailure(
+        this.events.length,
+        this.#metadataBytes > PROCMON_EXPORT_LIMITS.output_bytes
+          ? "metadata"
+          : "events",
+      );
   }
 }
 

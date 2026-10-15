@@ -13,6 +13,7 @@ import {
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import {
+  PROCMON_CORE_COLUMNS,
   PROCMON_EXPORT_LIMITS,
   procmonExportSchema,
   type InspectProcmonExportInput,
@@ -21,6 +22,7 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
+  procmonCoreColumn,
   ProcmonExportFormatFailure,
   ProcmonExportOutputFailure,
 } from "./ProcmonExportEvents.js";
@@ -96,6 +98,7 @@ const limitationsFor = (reading: ProcmonExportReading): string[] => [
         `The export has no ${reading.missing_columns.join(", ")} column; those event fields are null, not empty.`,
       ]
     : []),
+  ...unseenColumnLimitation(reading),
   ...(reading.omitted_nested_fields.length > 0
     ? [
         `Nested event fields (${reading.omitted_nested_fields.join(", ")}) are not projected.`,
@@ -112,6 +115,21 @@ const limitationsFor = (reading: ProcmonExportReading): string[] => [
       ]
     : []),
 ];
+
+/** Partial XML cannot show that a column is absent from the whole export. */
+const unseenColumnLimitation = (reading: ProcmonExportReading): string[] => {
+  if (reading.source.format !== "xml" || reading.coverage.status !== "partial")
+    return [];
+  const seen = new Set(
+    reading.source.columns.map((column) => procmonCoreColumn(column, "xml")),
+  );
+  const unseen = PROCMON_CORE_COLUMNS.filter((column) => !seen.has(column));
+  return unseen.length === 0
+    ? []
+    : [
+        `${unseen.join(", ")} did not appear before reading stopped; later events may contain them, so missing_columns is empty rather than claiming they are absent.`,
+      ];
+};
 
 const failureFor = (
   cause: unknown,

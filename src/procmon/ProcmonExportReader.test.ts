@@ -116,3 +116,43 @@ describe("readProcmonExport Codex review cases", () => {
     );
   });
 });
+
+describe("readProcmonExport review of e014743", () => {
+  const all = { ...selection, event_limit: null };
+
+  it("does not claim columns are missing from a partial XML export", async () => {
+    const xml =
+      "<procmon><eventlist><event><Operation>Read</Operation></event><event><Path>C:";
+    const reading = await readProcmonExport(Buffer.from(xml), all);
+    expect(reading.coverage.status).toBe("partial");
+    expect(reading.missing_columns).toEqual([]);
+  });
+
+  it("rejects an impossible UTF-8 prefix at the end", async () => {
+    const bytes = Buffer.concat([
+      Buffer.from(`${header}"a.exe","Read"\n`),
+      Buffer.from([0xe0, 0x80]),
+    ]);
+    await expect(readProcmonExport(bytes, all)).rejects.toThrow(
+      "not valid utf-8",
+    );
+  });
+
+  it("rejects a header that ends inside a character", async () => {
+    const bytes = Buffer.concat([
+      Buffer.from('"Process Name",Operation'),
+      Buffer.from([0xc3]),
+    ]);
+    await expect(readProcmonExport(bytes, all)).rejects.toThrow(
+      "header row ends inside a character",
+    );
+  });
+
+  it("blames events, not metadata, when a smaller page would fit", async () => {
+    // Events nearly fill the budget; a later event then names a new field.
+    const xml = `<procmon><eventlist><event><Path>${"p".repeat(8 * 1024 * 1024 - 150)}</Path></event><event><Extra_Field>x</Extra_Field></event></eventlist></procmon>`;
+    await expect(readProcmonExport(Buffer.from(xml), all)).rejects.toThrow(
+      "choose a smaller event_limit",
+    );
+  });
+});

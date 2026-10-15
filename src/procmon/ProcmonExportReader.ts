@@ -70,9 +70,12 @@ export const readProcmonExport = async (
       byte_order_mark: byteOrderMark,
       columns: parsed.columns,
     },
-    missing_columns: PROCMON_CORE_COLUMNS.filter(
-      (column) => !present.has(column),
-    ),
+    // A column unseen before a partial XML parse stopped may appear later;
+    // CSV headers name every column up front.
+    missing_columns:
+      format === "xml" && parsed.coverage.status === "partial"
+        ? []
+        : PROCMON_CORE_COLUMNS.filter((column) => !present.has(column)),
     omitted_nested_fields: parsed.nested,
     events: window.events,
     output_window: {
@@ -178,9 +181,24 @@ const isIncompleteCharacter = (
           : lead >= 0xf0 && lead <= 0xf4
             ? 4
             : 0;
+    // The second byte's range depends on the lead (no overlongs or surrogates).
+    const [low, high] =
+      lead === 0xe0
+        ? [0xa0, 0xbf]
+        : lead === 0xed
+          ? [0x80, 0x9f]
+          : lead === 0xf0
+            ? [0x90, 0xbf]
+            : lead === 0xf4
+              ? [0x80, 0x8f]
+              : [0x80, 0xbf];
     return (
       tail.length < length &&
-      tail.subarray(1).every((byte) => byte >= 0x80 && byte <= 0xbf)
+      tail
+        .subarray(1)
+        .every((byte, at) =>
+          at === 0 ? byte >= low && byte <= high : byte >= 0x80 && byte <= 0xbf,
+        )
     );
   }
   // UTF-16: an odd final byte, a high surrogate, or a high surrogate and one byte.

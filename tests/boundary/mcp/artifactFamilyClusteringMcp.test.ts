@@ -5,6 +5,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it } from "vitest";
 
+import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import {
   CPU,
@@ -12,6 +13,21 @@ import {
   machoImage,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { parseArtifactInventoryEvidence } from "../../../src/domain/artifactInventoryEvidence.js";
+import {
+  artifactEdgeId,
+  artifactGraphDigest,
+  artifactIdForContent,
+  artifactManifestId,
+  occurrenceIdForLocation,
+} from "../../../src/domain/artifactIdentity.js";
+import { compareUnicodeCodePoints } from "../../../src/domain/unicodeCodePointOrder.js";
+import type {
+  ArtifactEdge,
+  ArtifactNode,
+  ArtifactOccurrence,
+} from "../../../src/domain/artifactGraph.js";
+import { createEvidence } from "../../../src/domain/evidence.js";
+import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
 import type { Evidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
@@ -57,6 +73,158 @@ const retainedEvidence = (
   if (evidence === undefined)
     throw new Error(`Evidence ${evidenceId} was not retained`);
   return evidence;
+};
+
+const budgetRootSha = "f".repeat(64);
+const budgetChildren = Array.from({ length: 6_000 }, (_, index) => ({
+  path: `entry-${index}.bin`,
+  sha: index.toString(16).padStart(64, "0"),
+}));
+const inventoryProvider = {
+  id: "rea-artifact",
+  name: "REA artifact graph",
+  version: "1",
+} as const;
+
+/**
+ * One deterministic inventory: a byte root plus 6,000 distinct child
+ * entries, committed in the canonical order the parser re-digests.
+ */
+const budgetMemberEvidence = (label: string): Evidence => {
+  const rootArtifactId = artifactIdForContent(budgetRootSha);
+  const nodes: ArtifactNode[] = [
+    {
+      artifact_id: rootArtifactId,
+      format: "file",
+      sha256: budgetRootSha,
+      size: 1,
+      media_type: null,
+      architecture: null,
+      content_state: "materialized",
+      limitations: [],
+    },
+  ];
+  const occurrences: ArtifactOccurrence[] = [
+    {
+      occurrence_id: occurrenceIdForLocation({
+        rootArtifactId,
+        logicalPath: ".",
+        entryKind: "file",
+      }),
+      artifact_id: rootArtifactId,
+      parent_occurrence_id: null,
+      logical_path: ".",
+      entry_kind: "file",
+      artifact_kind: "resource",
+      artifact_format: "file",
+      declared_size: 1,
+      compressed_size: null,
+      executable: false,
+      encrypted: false,
+      hash_status: "verified",
+      source_location: null,
+      limitations: [],
+    },
+  ];
+  const edges: ArtifactEdge[] = [];
+  for (const [index, child] of budgetChildren.entries()) {
+    const childId = artifactIdForContent(child.sha);
+    const childOccurrenceId = occurrenceIdForLocation({
+      rootArtifactId,
+      logicalPath: child.path,
+      entryKind: "file",
+    });
+    nodes.push({
+      artifact_id: childId,
+      format: "file",
+      sha256: child.sha,
+      size: 1,
+      media_type: null,
+      architecture: null,
+      content_state: "materialized",
+      limitations: [],
+    });
+    occurrences.push({
+      occurrence_id: childOccurrenceId,
+      artifact_id: childId,
+      parent_occurrence_id: occurrenceIdForLocation({
+        rootArtifactId,
+        logicalPath: ".",
+        entryKind: "file",
+      }),
+      logical_path: child.path,
+      entry_kind: "file",
+      artifact_kind: "resource",
+      artifact_format: "file",
+      declared_size: 1,
+      compressed_size: null,
+      executable: false,
+      encrypted: false,
+      hash_status: "verified",
+      source_location: null,
+      limitations: [],
+    });
+    edges.push({
+      edge_id: artifactEdgeId(
+        {
+          parent_artifact_id: rootArtifactId,
+          relation: "contains",
+          occurrence_id: childOccurrenceId,
+        },
+        { artifact_id: childId, logical_path: child.path },
+      ),
+      ordinal: index,
+      parent_artifact_id: rootArtifactId,
+      relation: "contains",
+      occurrence_id: childOccurrenceId,
+      producer: null,
+    });
+  }
+  // The parser reorders the graph to canonical form before it re-digests,
+  // so the manifest commits to that order: nodes by artifact id,
+  // occurrences by logical path (unique here, so groups stay single),
+  // edges by edge id.
+  const graphSha256 = artifactGraphDigest({
+    nodes: [...nodes].sort((left, right) =>
+      compareUnicodeCodePoints(left.artifact_id, right.artifact_id),
+    ),
+    occurrences: [...occurrences].sort((left, right) =>
+      compareUnicodeCodePoints(left.logical_path, right.logical_path),
+    ),
+    edges: [...edges].sort((left, right) =>
+      compareUnicodeCodePoints(left.edge_id, right.edge_id),
+    ),
+    contradictions: [],
+  });
+  return createEvidence(
+    { path: label, sha256: budgetRootSha, format: "file" },
+    inventoryProvider,
+    {
+      operation: "inventory_artifact",
+      parameters: {},
+      result: jsonValueSchema.parse({
+        manifest: {
+          manifest_id: artifactManifestId(rootArtifactId, graphSha256),
+          root_artifact_id: rootArtifactId,
+          root_sha256: budgetRootSha,
+          root_format: "file",
+          graph_sha256: graphSha256,
+          node_count: nodes.length,
+          occurrence_count: occurrences.length,
+          edge_count: edges.length,
+        },
+        nodes,
+        occurrences,
+        edges,
+        provenance: [],
+        integrity_contradictions: [],
+        coverage: { scope: "root", status: "complete" },
+        limitations: [],
+      }),
+      confidence: "observed",
+      authority: "shipped-artifact",
+    },
+  );
 };
 
 it("clusters three inspected archives through MCP by family and shared members", async () => {
@@ -321,3 +489,128 @@ it("refuses a member that is not artifact inventory Evidence", async () => {
     await Promise.allSettled([client.close(), server.close(), session.close()]);
   }
 });
+
+/**
+ * A member set whose serialized index sits between one third and one half of
+ * the default response budget: the wire repeats the result as structured
+ * content and as an escaped text copy, so a half-budget index bound let this
+ * call through and the delivery then failed with no clustering result at all.
+ * The index is instead withheld complete-or-absent while the family and the
+ * coverage — including member_index_withheld — still ship.
+ */
+it("withholds the member index instead of failing a large clustering response", async () => {
+  const root = await createTestTempDirectory("rea-cluster-artifacts-budget-");
+  const archive = join(root, "admission.zip");
+  await writeArchive(archive, [["one.txt", "entry"]]);
+
+  const session = createTestBinarySession(new ArtifactProvider(process.env));
+  const server = createServer({ kind: "session", session });
+  const client = new Client({
+    name: "cluster-artifacts-budget",
+    version: "1",
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    expect(
+      (
+        await client.callTool({
+          name: "open_binary",
+          arguments: { path: archive },
+        })
+      ).isError,
+    ).not.toBe(true);
+
+    const resultBudgetBytes = STDIO_DEFAULT_MAX_BUFFER_SIZE - 1024;
+    const thirdBudget = Math.floor((resultBudgetBytes - 64 * 1024) / 3);
+    const halfBudget = Math.floor((resultBudgetBytes - 64 * 1024) / 2);
+
+    // One index row per graph node (6,000 children plus the root), each
+    // carrying both observations. The caller labels are sized so the
+    // serialized index lands between the one-third wire-copy bound and the
+    // half-budget bound that previously shipped it into a failed delivery.
+    const rows = budgetChildren.length + 1;
+    const sampleRowBytes = (
+      labelA: string,
+      labelB: string,
+      idA: string,
+      idB: string,
+    ) =>
+      Buffer.byteLength(
+        JSON.stringify({
+          artifact_id: artifactIdForContent(budgetChildren[0]!.sha),
+          sha256: budgetChildren[0]!.sha,
+          formats: ["file"],
+          observations: [
+            { label: labelA, evidence_id: idA },
+            { label: labelB, evidence_id: idB },
+          ],
+          member_count: 2,
+        }),
+      );
+    const rowBytesFloor = sampleRowBytes(
+      "",
+      "",
+      budgetMemberEvidence("a").evidence_id,
+      budgetMemberEvidence("b").evidence_id,
+    );
+    // Labels are caller text, capped at 200 characters by the input schema.
+    const targetRowBytes = Math.min(
+      rowBytesFloor + 2 * 200,
+      Math.max(
+        rowBytesFloor + 2,
+        Math.floor((4_200_000 - 2 - (rows - 1)) / rows),
+      ),
+    );
+    const labelA = "a".repeat(Math.ceil((targetRowBytes - rowBytesFloor) / 2));
+    const labelB = "b".repeat(Math.floor((targetRowBytes - rowBytesFloor) / 2));
+    const members = [
+      { label: labelA, evidence: budgetMemberEvidence(labelA) },
+      { label: labelB, evidence: budgetMemberEvidence(labelB) },
+    ];
+    const expectedIndexBytes =
+      2 +
+      rows *
+        sampleRowBytes(
+          labelA,
+          labelB,
+          members[0]!.evidence.evidence_id,
+          members[1]!.evidence.evidence_id,
+        ) +
+      (rows - 1);
+    expect(expectedIndexBytes).toBeGreaterThan(thirdBudget);
+    expect(expectedIndexBytes).toBeLessThan(halfBudget);
+
+    const clustered = await client.callTool({
+      name: "cluster_artifacts",
+      arguments: { members },
+    });
+    const result = resultOf(clustered) as unknown as {
+      readonly status: string;
+      readonly summary: Record<string, number>;
+      readonly families: readonly unknown[];
+      readonly shared_members: readonly unknown[];
+      readonly partially_shared_members: readonly unknown[];
+      readonly unique_members: readonly unknown[];
+      readonly coverage: { readonly member_index_withheld: boolean };
+      readonly limitations: readonly string[];
+    };
+    // The call ships its clustering: one family for the shared root digest,
+    // with the member index withheld rather than the whole response failing
+    // as an oversized delivery with no result at all.
+    expect(result.status).toBe("partitioned");
+    expect(result.families).toHaveLength(1);
+    expect(result.summary.families).toBe(1);
+    expect(result.coverage.member_index_withheld).toBe(true);
+    expect(result.shared_members).toHaveLength(0);
+    expect(result.partially_shared_members).toHaveLength(0);
+    expect(result.unique_members).toHaveLength(0);
+    expect(
+      result.limitations.some((item) => item.includes("byte budget")),
+    ).toBe(true);
+  } finally {
+    await Promise.allSettled([client.close(), server.close(), session.close()]);
+  }
+}, 60_000);

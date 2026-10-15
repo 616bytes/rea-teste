@@ -2,23 +2,61 @@ import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
-import { clusterArtifactFamilies } from "../domain/artifactFamilyClustering.js";
-import { createEvidence, parseEvidence } from "../domain/evidence.js";
+import {
+  clusterArtifactFamilies,
+  type ArtifactFamilyClusteringResult,
+} from "../domain/artifactFamilyClustering.js";
+import {
+  createEvidence,
+  parseEvidence,
+  type Evidence,
+} from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { resolveArtifactFamilyClusteringEvidence } from "../application/artifacts/ArtifactFamilyClusteringEvidence.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
+import { encodeToolResult } from "./toolResultEncoding.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "../application/InvestigationProviders.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
 
 /**
- * Room for the result envelope, families, summary and limitations inside one
- * successful response: the wire repeats the JSON as structured content and as
- * escaped text, so a payload of B bytes costs about 2B.
+ * Room for the result envelope, families, summary and Evidence fields inside
+ * one successful response. The wire repeats the JSON as structured content
+ * and as an escaped text copy, and escaping quotes and backslashes can push
+ * that copy past the structured copy, so the index receives a third of the
+ * remaining budget — the worst case where every byte escapes costs 3x — and a
+ * preflight still measures the complete repeated form before anything is
+ * recorded, retrying with the index withheld instead of failing a call whose
+ * families could still ship.
  */
 const INDEX_RESULT_HEADROOM_BYTES = 64 * 1024;
+
+/** Build the derived Evidence one clustering call retains for this session. */
+const buildClusteringEvidence = (
+  result: ArtifactFamilyClusteringResult,
+  contract: ReturnType<typeof toolContract<"cluster_artifacts">>,
+  memberEvidenceIds: string[],
+  extraLimitations: readonly string[] = [],
+): Evidence =>
+  createEvidence(undefined, ARTIFACT_COMPARISON_PROVIDER, {
+    predicateType: "rea.artifact-family-clustering",
+    operation: contract.name,
+    parameters: {
+      member_evidence_ids: memberEvidenceIds,
+      shared_member_minimum: result.coverage.shared_member_minimum,
+      // The retained record states its own page, so reopening this Evidence
+      // never implies a wider family list than it holds.
+      offset: result.coverage.families_offset,
+      limit: result.coverage.families_limit,
+    },
+    result: jsonValueSchema.parse(result),
+    confidence: "derived",
+    authority: "analyst-inference",
+    limitations: [...result.limitations, ...extraLimitations],
+    evidenceLinks: memberEvidenceIds,
+  });
 
 /** Register Evidence-backed deterministic artifact family clustering. */
 export const registerArtifactFamilyClusteringTool = (
@@ -40,6 +78,24 @@ export const registerArtifactFamilyClusteringTool = (
         contract.name,
         context.mcpReq.signal,
         async () => {
+          // Bound what the transport can actually carry: the wire repeats the
+          // result as structured content and as an escaped text copy, so an
+          // index of S bytes costs up to 3S and gets a third of the budget.
+          const clusteringOptions = {
+            ...(input.shared_member_minimum === undefined
+              ? {}
+              : { sharedMemberMinimum: input.shared_member_minimum }),
+            indexBudgetBytes: Math.max(
+              0,
+              Math.floor(
+                (server.delivery.resultBudgetBytes -
+                  INDEX_RESULT_HEADROOM_BYTES) /
+                  3,
+              ),
+            ),
+            offset: input.offset,
+            limit: input.limit,
+          };
           const computed = await runDerivedOperation(
             context,
             contract.name,
@@ -53,60 +109,53 @@ export const registerArtifactFamilyClusteringTool = (
                 if (!resolved.ok) throw resolved.error;
                 return { label: member.label, evidence: resolved.value };
               });
-              const clustering = clusterArtifactFamilies(members, {
-                ...(input.shared_member_minimum === undefined
-                  ? {}
-                  : { sharedMemberMinimum: input.shared_member_minimum }),
-                // Bound what the transport can actually carry: an index that
-                // would overshoot it is withheld with an explicit flag instead
-                // of becoming a delivery error with no clustering result.
-                indexBudgetBytes: Math.max(
-                  0,
-                  Math.floor(
-                    (server.delivery.resultBudgetBytes -
-                      INDEX_RESULT_HEADROOM_BYTES) /
-                      2,
-                  ),
-                ),
-                offset: input.offset,
-                limit: input.limit,
-              });
-              return { members, clustering };
+              const clustering = clusterArtifactFamilies(
+                members,
+                clusteringOptions,
+              );
+              const memberEvidenceIds = members.map(
+                (member) => member.evidence.evidence_id,
+              );
+              let evidence = buildClusteringEvidence(
+                clustering,
+                contract,
+                memberEvidenceIds,
+              );
+              // Measure the complete repeated wire form before anything is
+              // recorded: when it cannot ship, retry once with the member
+              // index withheld so the caller still receives families and
+              // coverage.member_index_withheld instead of a transport error
+              // carrying no clustering result at all.
+              const shipped = encodeToolResult(
+                evidence,
+                server.delivery.resultBudgetBytes,
+                "structured-and-text",
+                contract.returnsTargetContent,
+              );
+              if (!shipped.ok && !clustering.coverage.member_index_withheld) {
+                evidence = buildClusteringEvidence(
+                  clusterArtifactFamilies(members, {
+                    ...clusteringOptions,
+                    indexBudgetBytes: 0,
+                  }),
+                  contract,
+                  memberEvidenceIds,
+                  [
+                    "The complete response, including its repeated escaped text copy, measured over this transport's response budget before delivery, so this call withholds the member index instead of failing the call; the families and coverage above still ship and the complete inventory Evidence stays retained.",
+                  ],
+                );
+              }
+              return { members, evidence };
             },
           );
           if (!computed.ok)
             return server.delivery.toCallToolResult(computed, contract);
-          const { members, clustering } = computed.value;
+          const { members, evidence } = computed.value;
           for (const member of members) {
             const recorded = session.recordEvidence(member.evidence);
             if (!recorded.ok)
               return server.delivery.toCallToolResult(recorded, contract);
           }
-          const memberEvidenceIds = members.map(
-            (member) => member.evidence.evidence_id,
-          );
-          const evidence = createEvidence(
-            undefined,
-            ARTIFACT_COMPARISON_PROVIDER,
-            {
-              predicateType: "rea.artifact-family-clustering",
-              operation: contract.name,
-              parameters: {
-                member_evidence_ids: memberEvidenceIds,
-                shared_member_minimum:
-                  clustering.coverage.shared_member_minimum,
-                // The retained record states its own page, so reopening this
-                // Evidence never implies a wider family list than it holds.
-                offset: clustering.coverage.families_offset,
-                limit: clustering.coverage.families_limit,
-              },
-              result: jsonValueSchema.parse(clustering),
-              confidence: "derived",
-              authority: "analyst-inference",
-              limitations: clustering.limitations,
-              evidenceLinks: memberEvidenceIds,
-            },
-          );
           return server.delivery.toEvidenceToolResult(
             evidence,
             contract,

@@ -2,7 +2,6 @@ import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparis
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { z } from "incur";
-import { resolve } from "node:path";
 import { wasmArtifactModule } from "../composition/wasm.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -66,9 +65,11 @@ export const registerWasmCommands = (
               const result = await service.inspect(
                 {
                   path: absoluteCallerPath(args.path),
-                  glue_paths: options.glue_paths?.map((path) => resolve(path)),
+                  glue_paths: options.glue_paths?.map((path) =>
+                    absoluteCallerPath(path),
+                  ),
                   candidate_paths: options.candidate_paths?.map((path) =>
-                    resolve(path),
+                    absoluteCallerPath(path),
                   ),
                 },
                 { signal },

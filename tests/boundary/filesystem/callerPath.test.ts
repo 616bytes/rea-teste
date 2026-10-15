@@ -10,10 +10,16 @@ it("keeps POSIX parent components for the filesystem to resolve", () => {
   expect(absoluteCallerPath("/abs/link/../sample", posix)).toBe(
     "/abs/link/../sample",
   );
+  expect(absoluteCallerPath("../sample", posix)).toBe("/work/../sample");
+});
+
+it("removes only POSIX spellings that cannot change the named file", () => {
+  const posix = { cwd: "/work/", platform: "darwin" } as const;
+  expect(absoluteCallerPath("./module.wasm", posix)).toBe("/work/module.wasm");
+  expect(absoluteCallerPath("a//./b/", posix)).toBe("/work/a/b");
+  expect(absoluteCallerPath("/x/./y", posix)).toBe("/x/y");
   expect(absoluteCallerPath("sample", { ...posix, cwd: "/" })).toBe("/sample");
-  expect(absoluteCallerPath("./a//b", { ...posix, cwd: "/work/" })).toBe(
-    "/work/./a//b",
-  );
+  expect(absoluteCallerPath("/", posix)).toBe("/");
 });
 
 it("uses lexical resolution on Windows, where it is exact", () => {

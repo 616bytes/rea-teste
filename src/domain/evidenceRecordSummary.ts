@@ -243,16 +243,21 @@ const matchQuery = (
   const stack: Frame[] = [];
   const visit = (value: unknown, key: string | number): Frame | undefined => {
     if (typeof value === "string") {
-      for (const term of pending) if (term.test(value)) pending.delete(term);
+      // The first term stays pending exactly until its first hit, so one exec
+      // both settles it and locates the snippet.
+      for (const term of pending)
+        if (term !== terms[0] && term.test(value)) pending.delete(term);
       if (first === undefined) {
         const hit = terms[0]!.exec(value);
-        if (hit !== null)
+        if (hit !== null) {
+          pending.delete(terms[0]!);
           first = {
             path: [...stack.map((frame) => frame.key), key]
               .map((segment) => `/${pointerSegment(segment)}`)
               .join(""),
             ...snippetAt(value, hit.index, hit[0].length),
           };
+        }
       }
       return undefined;
     }

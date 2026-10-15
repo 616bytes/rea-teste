@@ -1,9 +1,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { expect } from "vitest";
 
 import { skillDestinations } from "../../../src/application/SetupSkill.js";
-import { supportedClients } from "../../../src/application/SupportedClients.js";
+import {
+  SUPPORTED_CLIENT_DEFINITIONS,
+  supportedClients,
+} from "../../../src/application/SupportedClients.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -13,21 +16,14 @@ const sweepEnvironment = (home: string): NodeJS.ProcessEnv => ({
   APPDATA: join(home, "AppData", "Roaming"),
   LOCALAPPDATA: join(home, "AppData", "Local"),
   XDG_CONFIG_HOME: join(home, ".config"),
+  GEMINI_CLI_SYSTEM_SETTINGS_PATH: join(home, "system.json"),
+  GEMINI_CLI_SYSTEM_DEFAULTS_PATH: join(home, "defaults.json"),
 });
 
-// Enumerate the current catalog without creating an installation. Absolute
-// roots keep platform path validation from silently dropping valid clients.
-const catalogHome = resolve("rea-client-lifecycle-sweep", "home");
-const sweepClientNames = supportedClients(
-  catalogHome,
-  process.platform,
-  sweepEnvironment(catalogHome),
-)
-  .filter(
-    (client) =>
-      client.format !== "unsupported" && client.markerPath !== undefined,
-  )
-  .map((client) => client.name);
+// Path resolution must not decide which clients receive lifecycle coverage.
+const sweepClientNames = SUPPORTED_CLIENT_DEFINITIONS.filter(
+  (client) => client.format !== "unsupported",
+).map((client) => client.name);
 
 for (const name of sweepClientNames)
   cliTest(
@@ -48,9 +44,9 @@ for (const name of sweepClientNames)
       const client = supportedClients(home, process.platform, environment).find(
         (candidate) => candidate.name === name,
       );
+      expect(client?.configPathError, name).toBeUndefined();
       if (client?.markerPath === undefined)
         throw new Error(`client ${name} is not sweepable on this platform`);
-      expect(client.configPathError).toBeUndefined();
       await mkdir(client.markerPath, { recursive: true });
 
       const setupArguments = ["setup", "--client", name, "--yes", "--json"];

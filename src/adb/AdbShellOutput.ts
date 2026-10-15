@@ -207,11 +207,13 @@ const DETAIL_LINE = /^\s+([A-Za-z][A-Za-z0-9_]*)=(.*)$/u;
 
 /**
  * Package Manager prints its `String` fields by concatenation, so an absent
- * `versionName` or `installerPackageName` appears as the literal text `null`
- * (morluto/rea#3943). An empty value or that sentinel is the absence of the
- * fact, not a package named "null"; both become the nullable result's null.
+ * `installerPackageName` appears as the literal text `null`
+ * (morluto/rea#3943). No installer can be named "null", so an empty value or
+ * that sentinel is the absence of the fact and becomes the nullable result's
+ * null. `versionName` keeps the printed text: a manifest may declare the
+ * string "null" on purpose, and the parser cannot tell the two apart.
  */
-const absentOrText = (value: string): string | null =>
+const absentInstallerOrName = (value: string): string | null =>
   value === "" || value === "null" ? null : value;
 
 /**
@@ -260,7 +262,7 @@ export const parseDumpsysPackageOutput = (
     const key = match[1]!;
     const value = match[2]!.trim();
     if (key === "versionName" && details.versionName === null)
-      details.versionName = absentOrText(value);
+      details.versionName = value === "" ? null : value;
     else if (key === "versionCode" && details.versionCode === null) {
       const parsed = /^(-?\d+)/u.exec(value);
       if (parsed !== null) details.versionCode = parsed[1]!;
@@ -272,7 +274,7 @@ export const parseDumpsysPackageOutput = (
       key === "installerPackageName" &&
       details.installerPackageName === null
     )
-      details.installerPackageName = absentOrText(value);
+      details.installerPackageName = absentInstallerOrName(value);
     else if (key === "userId" && details.userId === null) {
       const parsed = /^(\d+)/u.exec(value);
       if (parsed !== null) details.userId = Number(parsed[1]!);

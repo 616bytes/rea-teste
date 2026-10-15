@@ -37,7 +37,9 @@ describe("parseDumpsysPackageOutput", () => {
     });
   });
 
-  it("reports an absent version name as null", () => {
+  // A manifest may declare the literal string "null" as its version name and
+  // dumpsys prints it the same way as an absent one, so the text is kept.
+  it("keeps a version name printed as the text null", () => {
     expect(
       parseDumpsysPackageOutput(
         packageDump("installerPackageName=null").replace(
@@ -45,7 +47,7 @@ describe("parseDumpsysPackageOutput", () => {
           "versionName=null",
         ),
       ).versionName,
-    ).toBeNull();
+    ).toBe("null");
   });
 });
 

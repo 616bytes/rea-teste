@@ -185,9 +185,16 @@ export function* collectJavaScriptIdentityWritesSteps(
       }
     }
   };
-  const retainTarget = (leaf: t.Node, effect: t.Node): void => {
+  // A write's context locates the enclosing assignment so target identities
+  // resolve at the statement position, while the effect node keeps each leaf's
+  // exact timing inside a destructuring pattern.
+  const retainTarget = (
+    leaf: t.Node,
+    effect: t.Node,
+    context: t.Node = effect,
+  ): void => {
     if (t.isIdentifier(leaf)) {
-      for (const identity of origin(leaf, "binding", effect))
+      for (const identity of origin(leaf, "binding", context))
         retain(effect, identity, "replace-value");
       return;
     }
@@ -195,7 +202,7 @@ export function* collectJavaScriptIdentityWritesSteps(
     if (!t.isMemberExpression(member) && !t.isOptionalMemberExpression(member))
       return;
     const key = semanticStaticPropertyKey(member.property, member.computed);
-    for (const identity of origin(member.object, "member", effect))
+    for (const identity of origin(member.object, "member", context))
       retain(effect, [...identity, key], "replace-value");
   };
   const targetOf = (node: t.Node): t.Node | undefined =>
@@ -216,6 +223,7 @@ export function* collectJavaScriptIdentityWritesSteps(
       for (const leaf of semanticWriteTargets(target)) retainTarget(leaf, node);
   };
   const patternLeaves = new WeakSet<t.Node>();
+  const patternLeafContexts = new WeakMap<t.Node, t.Node>();
   const loopBodies = new WeakMap<t.Node, t.ForOfStatement | t.ForInStatement>();
   yield* traverseJavaScriptAstSteps(program, {
     childKeys: (node) => {
@@ -235,8 +243,10 @@ export function* collectJavaScriptIdentityWritesSteps(
     enter: (node) => {
       const target = targetOf(node);
       if (isPattern(target) && target !== undefined)
-        for (const leaf of semanticWriteTargets(target))
+        for (const leaf of semanticWriteTargets(target)) {
           patternLeaves.add(leaf);
+          patternLeafContexts.set(leaf, node);
+        }
       if (t.isForOfStatement(node) || t.isForInStatement(node))
         loopBodies.set(node.body, node);
       const loop = loopBodies.get(node);
@@ -251,9 +261,13 @@ export function* collectJavaScriptIdentityWritesSteps(
         // The default expression runs after the target reference is evaluated,
         // but before its value is written. Later leaves see this completed write.
         if (!t.isAssignmentPattern(parent) || parent.left !== node)
-          retainTarget(node, node);
+          retainTarget(node, node, patternLeafContexts.get(node) ?? node);
       } else if (t.isAssignmentPattern(node) && patternLeaves.has(node.left))
-        retainTarget(node.left, node);
+        retainTarget(
+          node.left,
+          node,
+          patternLeafContexts.get(node.left) ?? node,
+        );
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
         retainCallEffects(node);
       else if (

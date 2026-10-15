@@ -50,7 +50,10 @@ interface CallCollectionContext {
   readonly state: JavaScriptSemanticAnalysisState;
   readonly callableById: ReadonlyMap<string, JavaScriptSemanticCallable>;
   readonly output: MutableCallAnalysis;
-  readonly bindingResolutionCache: Map<string, LocalCallableResolution>;
+  readonly bindingResolutionCache: WeakMap<
+    t.Identifier,
+    LocalCallableResolution
+  >;
   readonly parameterBindingCache: Map<
     string,
     readonly JavaScriptSemanticBindingState[]
@@ -79,7 +82,7 @@ export const collectJavaScriptSemanticCalls = (
     state,
     callableById,
     output,
-    bindingResolutionCache: new Map(),
+    bindingResolutionCache: new WeakMap(),
     parameterBindingCache: new Map(),
     ancestors: [],
   };

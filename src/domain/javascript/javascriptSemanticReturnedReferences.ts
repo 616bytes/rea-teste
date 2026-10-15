@@ -9,6 +9,7 @@ import {
   type LocalCallableResolution,
 } from "./javascriptSemanticCallResolution.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticArrayIndex,
   type JavaScriptSemanticPropertyPath,
@@ -53,7 +54,7 @@ export const createSemanticReturnedReferences = (
   const callableById = new Map(
     state.callables.map((callable) => [callable.callableId, callable]),
   );
-  const bindingCache = new Map<string, LocalCallableResolution>();
+  const bindingCache = new WeakMap<t.Identifier, LocalCallableResolution>();
   const results = new WeakMap<t.Node, readonly SemanticReturnedReference[]>();
   const objectTargets = new WeakMap<t.ObjectExpression, ObjectTargetIndex>();
   return (callee) => {
@@ -108,9 +109,14 @@ export const createSemanticReturnedReferences = (
         if (binding === undefined || item.bindings.has(binding.bindingId))
           continue;
         const bindings = new Set([...item.bindings, binding.bindingId]);
+        const selected = binding.definitions.some(
+          ({ kind }) => kind === "assignment",
+        )
+          ? semanticBindingAtRead(binding, node, state.parentsByNode).binding
+          : binding;
         for (const initializer of [
-          ...binding.initializers,
-          ...binding.referenceInitializers,
+          ...selected.initializers,
+          ...selected.referenceInitializers,
         ])
           pending.push({
             node: initializer.node,

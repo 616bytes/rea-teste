@@ -216,3 +216,29 @@ it("folds symbol variants with their capitals and bounds query length", () => {
     }).success,
   ).toBe(false);
 });
+
+it("folds both sharp s cases and slices long strings consistently", () => {
+  const summarize = (text: string, query: string) =>
+    summarizeEvidenceBundle(
+      createEvidenceBundle([
+        createEvidence(
+          {
+            path: "/fixtures/app.asar",
+            format: "asar",
+            sha256: "1".repeat(64),
+          },
+          { id: "provider", name: "Provider", version: "1" },
+          { operation: "list_strings", parameters: {}, result: [text] },
+        ),
+      ]),
+      { query },
+    ).records[0]?.query_match;
+  expect(summarize("STRAẞE", "straße")?.snippet).toBe("STRAẞE");
+  expect(summarize("straße", "STRAẞE")?.snippet).toBe("straße");
+  expect(summarize("ẞ", "SS")?.snippet).toBe("ẞ");
+  // A surrogate pair straddling the slice boundary stays whole.
+  const long = summarize("x".repeat(65_535) + "😀MATCH", "😀match")!;
+  expect(
+    long.snippet.slice(long.match_start, long.match_start + long.match_length),
+  ).toBe("😀MATCH");
+});

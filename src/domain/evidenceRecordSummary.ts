@@ -150,14 +150,31 @@ const SNIPPET_CONTEXT = 30;
 const pointerSegment = (key: string | number): string =>
   String(key).replaceAll("~", "~0").replaceAll("/", "~1");
 
+/** Code units folded at once; bounds the expanded intermediate per slice. */
+const FOLD_CHUNK = 65_536;
+
+const foldSlice = (text: string): string =>
+  text.toUpperCase().toLowerCase().replaceAll("ς", "σ").replaceAll("ß", "ss");
+
 /**
  * Caseless form for literal matching: uppercasing first merges symbol variants
- * such as micro sign, long s and Greek letterforms with their capitals, and
- * final sigma folds to sigma so position never matters. Each code point folds
+ * such as micro sign, long s and Greek letterforms with their capitals; final
+ * sigma folds to sigma and sharp s (either case) to "ss". Each code point folds
  * to the same length alone as inside a string, which snippet offsets rely on.
+ * Long strings fold in bounded slices, so only the folded result grows with
+ * input size.
  */
-export const foldCase = (text: string): string =>
-  text.toUpperCase().toLowerCase().replaceAll("ς", "σ");
+export const foldCase = (text: string): string => {
+  if (text.length <= FOLD_CHUNK) return foldSlice(text);
+  let folded = "";
+  for (let start = 0; start < text.length;) {
+    let end = Math.min(text.length, start + FOLD_CHUNK);
+    if (splitsPair(text, end)) end++;
+    folded += foldSlice(text.slice(start, end));
+    start = end;
+  }
+  return folded;
+};
 
 const isHighSurrogate = (text: string, index: number): boolean => {
   const unit = text.charCodeAt(index);

@@ -220,6 +220,38 @@ describe("logical primitive unions", () => {
 });
 
 describe("semantic primitive allocation and binding reuse", () => {
+  it.each(["quoted", "template"])(
+    "applies the normalized byte boundary to %s literals",
+    (syntax) => {
+      // Six estimated JSON bytes per UTF-16 code unit plus two quotes:
+      // 174762 code units fit; one more exceeds the 1 MiB bound.
+      for (const length of [174_762, 174_763]) {
+        const text = "x".repeat(length);
+        const expression =
+          syntax === "quoted" ? JSON.stringify(text) : `\`${text}\``;
+        const ir = analyzeJavaScriptSemantics(`const answer = ${expression};`);
+        const value = topLevelBinding(ir, "answer").value;
+        if (length === 174_762) {
+          expect(value.status).toBe("literal");
+          if (value.status !== "literal")
+            throw new Error("Expected exact value");
+          expect(typeof value.value === "string" && value.value.length).toBe(
+            length,
+          );
+          expect(ir.coverage.resourceLimits ?? []).toEqual([]);
+        } else {
+          expect(value.status).toBe("unknown");
+          expect(value).toMatchObject({ resourceLimit: "primitive-bytes" });
+          expect(ir.coverage).toMatchObject({
+            status: "partial",
+            omittedCount: null,
+            resourceLimits: ["primitive-bytes"],
+          });
+        }
+      }
+    },
+  );
+
   it("returns an explicit unknown before expanding a large addition product", () => {
     const term = '(choice ? "a" : "b")';
     const expression = Array.from({ length: 20 }, () => term).join(" + ");

@@ -437,7 +437,10 @@ retained candidate strings and temporary canonical-key serialization. This is
 an in-memory semantic allocation bound independent of CLI or MCP transport
 budgets. Source literal bytes remain in the parsed source and artifact evidence;
 when a normalized semantic value exceeds the bound, its value is unknown and
-coverage is partial. Expression
+coverage is partial. Direct string literals, cooked templates without
+substitutions, and derived strings all use this normalization boundary. A
+single exact primitive is validated without allocating deduplication or sort
+state or serializing a canonical key. Expression
 evaluation and provenance walks stop after 256 nested levels. Union products
 and string lengths are checked before allocating combinations or concatenated
 strings. When a boundary is reached, the value stays unknown, semantic coverage

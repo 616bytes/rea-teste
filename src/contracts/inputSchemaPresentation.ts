@@ -146,6 +146,115 @@ const inputGroup = (branch: Readonly<Record<string, unknown>>): string => {
   return [...required, ...optional].join(" + ");
 };
 
+const isBooleanDescriptor = (
+  schema: unknown,
+): schema is Readonly<Record<string, unknown>> =>
+  isObject(schema) &&
+  (schema.type === "boolean" ||
+    typeof schema.const === "boolean" ||
+    (Array.isArray(schema.enum) &&
+      schema.enum.length > 0 &&
+      schema.enum.every((val) => typeof val === "boolean")));
+
+const collapseBooleanCombinator = (
+  branches: readonly unknown[],
+  base: Readonly<Record<string, unknown>> = {},
+): Record<string, unknown> | undefined => {
+  if (
+    branches.length === 0 ||
+    !branches.every((branch) => isBooleanDescriptor(branch))
+  )
+    return undefined;
+  const merged: Record<string, unknown> = { ...base, type: "boolean" };
+  const defaultBranch = branches.find(
+    (b) => isObject(b) && b.default !== undefined,
+  );
+  if (defaultBranch !== undefined && merged.default === undefined) {
+    merged.default = (defaultBranch as Record<string, unknown>).default;
+  }
+  const descBranch = branches.find(
+    (b) => isObject(b) && typeof b.description === "string",
+  );
+  if (descBranch !== undefined && merged.description === undefined) {
+    merged.description = (descBranch as Record<string, unknown>).description;
+  }
+  return merged;
+};
+
+/** Normalize non-string const/enum and collapse boolean combinators for client compatibility. */
+export const normalizeAdvertisedLiterals = (schema: unknown): unknown => {
+  if (!isObject(schema)) return schema;
+  const normalizedEntries = Object.entries(schema).map(([key, value]) => {
+    if (schemaMaps.has(key) && isObject(value)) {
+      return [
+        key,
+        Object.fromEntries(
+          Object.entries(value).map(([name, child]) => [
+            name,
+            normalizeAdvertisedLiterals(child),
+          ]),
+        ),
+      ];
+    }
+    if (schemaArrays.has(key) && Array.isArray(value)) {
+      return [key, value.map((child) => normalizeAdvertisedLiterals(child))];
+    }
+    if (schemaChildren.has(key)) {
+      return [
+        key,
+        Array.isArray(value)
+          ? value.map((child) => normalizeAdvertisedLiterals(child))
+          : normalizeAdvertisedLiterals(value),
+      ];
+    }
+    return [key, value];
+  });
+  let node: Record<string, unknown> = Object.fromEntries(normalizedEntries);
+
+  if (
+    "const" in node &&
+    typeof node.const !== "string" &&
+    !isObject(node.const)
+  ) {
+    const constValue = node.const;
+    const { const: _const, ...rest } = node;
+    node =
+      !rest.type && typeof constValue === "boolean"
+        ? { ...rest, type: "boolean" }
+        : rest;
+  }
+
+  if (
+    Array.isArray(node.enum) &&
+    node.enum.some((val) => typeof val !== "string" && !isObject(val))
+  ) {
+    const enumValues = node.enum;
+    const allBoolean =
+      enumValues.length > 0 &&
+      enumValues.every((val) => typeof val === "boolean");
+    const { enum: _enum, ...rest } = node;
+    node = !rest.type && allBoolean ? { ...rest, type: "boolean" } : rest;
+  }
+
+  if (Array.isArray(node.anyOf)) {
+    const collapsed = collapseBooleanCombinator(node.anyOf, node);
+    if (collapsed !== undefined) {
+      const { anyOf: _anyOf, const: _const, ...rest } = collapsed;
+      node = rest;
+    }
+  }
+
+  if (Array.isArray(node.oneOf)) {
+    const collapsed = collapseBooleanCombinator(node.oneOf, node);
+    if (collapsed !== undefined) {
+      const { oneOf: _oneOf, const: _const, ...rest } = collapsed;
+      node = rest;
+    }
+  }
+
+  return node;
+};
+
 // Anthropic tool input schemas reject anyOf, oneOf, and allOf at the root, and
 // clients then drop the tool or advertise it without parameters. Present a
 // root union of strict object groups as one object whose properties are the
@@ -195,10 +304,12 @@ const flattenRootObjectUnion = (
     type: "object",
     ...(description.length > 0 ? { description: description.join(" ") } : {}),
     properties: Object.fromEntries(
-      [...variants].map(([name, schemas]) => [
-        name,
-        schemas.length === 1 ? schemas[0] : { anyOf: schemas },
-      ]),
+      [...variants].map(([name, schemas]) => {
+        if (schemas.length === 1) return [name, schemas[0]];
+        const collapsed = collapseBooleanCombinator(schemas);
+        if (collapsed !== undefined) return [name, collapsed];
+        return [name, { anyOf: schemas }];
+      }),
     ),
     ...(required.length > 0 ? { required } : {}),
     ...(fewestRequired > 0 ? { minProperties: fewestRequired } : {}),
@@ -213,7 +324,11 @@ export const presentInputJsonSchema = (
   root: Record<string, unknown>,
   describeProperty: (property: string) => string | undefined,
 ): Record<string, unknown> => {
-  const flattened = flattenRootObjectUnion(root);
+  const normalizedRoot = normalizeAdvertisedLiterals(root) as Record<
+    string,
+    unknown
+  >;
+  const flattened = flattenRootObjectUnion(normalizedRoot);
   const described = describeSchema(flattened, flattened, describeProperty);
   if (!isObject(described)) return flattened;
   const {
@@ -237,14 +352,17 @@ export const presentInputJsonSchema = (
               ]
             : [],
         );
-  if (dependencyGuidance.length === 0) return presentation;
+  const normalizedPresentation = normalizeAdvertisedLiterals(
+    presentation,
+  ) as Record<string, unknown>;
+  if (dependencyGuidance.length === 0) return normalizedPresentation;
   const description = [
-    typeof presentation.description === "string"
-      ? presentation.description
+    typeof normalizedPresentation.description === "string"
+      ? normalizedPresentation.description
       : undefined,
     ...dependencyGuidance,
   ].filter((text) => text !== undefined);
-  return { ...presentation, description: description.join(" ") };
+  return { ...normalizedPresentation, description: description.join(" ") };
 };
 
 /**

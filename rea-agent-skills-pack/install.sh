@@ -22,7 +22,7 @@ install_to() {
     fi
 
     if [[ -e "$target" ]]; then
-      backup="$dest/.${name}.backup-$(date +%Y%m%d-%H%M%S)"
+      backup="$dest/.${name}.backup-$(date +%Y%m%d-%H%M%S)-$BASHPID-$RANDOM"
       if ! mv -- "$target" "$backup"; then
         rm -rf -- "$staged"
         echo "Falha ao criar backup de $target; instalação existente preservada." >&2

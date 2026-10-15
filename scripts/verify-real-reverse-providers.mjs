@@ -186,7 +186,8 @@ const verifyObjdump = async (fixture, expectedDigest) => {
       JSON.stringify(evidence.parameters),
     );
   }
-  const architectures = cli(["list-objdump-architectures"]).normalized_result ?? {};
+  const architectures =
+    cli(["list-objdump-architectures"]).normalized_result ?? {};
   observed.architectures = {
     exit_code: architectures.exit_code,
     completion_status: architectures.completion_status,
@@ -392,7 +393,9 @@ const verifyGdb = async (fixture, expectedDigest) => {
       "--inferior-tty",
       controlTty.path,
     ]);
-    observed.one_shot.accepted = (accepted.normalized_result ?? {}).completion_status;
+    observed.one_shot.accepted = (
+      accepted.normalized_result ?? {}
+    ).completion_status;
     check(
       "gdb one-shot accepted an ordinary console command",
       typeof accepted.evidence_id === "string",

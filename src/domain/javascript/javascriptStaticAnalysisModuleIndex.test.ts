@@ -104,6 +104,23 @@ it("recovers exports when the factory declares only its module parameter", () =>
 });
 
 it.each([
+  ["exports.parse = 1;", []],
+  ["exports.exports.parse = 1;", ["parse"]],
+] as const)(
+  "keeps a sole parameter named exports in the module slot: %s",
+  (body, exports) => {
+    const analysis =
+      analyzeJavaScriptStaticSource(`globalThis.webpackChunkApp.push([[1], {
+    17(exports) { ${body} }
+  }]);`);
+    expect(analysis.parse_status).toBe("complete");
+    expect(analysis.bundler_registrations[0]?.modules).toMatchObject([
+      { module_key: "17", exports },
+    ]);
+  },
+);
+
+it.each([
   [
     "module = {}, exports, r",
     "module.exports = { parse: value => value };",

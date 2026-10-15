@@ -51,6 +51,10 @@ export const collectJavaScriptExports = (
             ?.bindingId
         : undefined,
     );
+  // recoverBundlerModule supplies binding state for positional module/exports
+  // slots. An unresolved factory binding must stay unmatched to exclude shadows.
+  // Syntax-only callers without binding state (or non-factory nodes) retain
+  // the conventional literal names instead.
   const isParameter = (reference: t.Node | null, index: 0 | 1): boolean => {
     if (!t.isIdentifier(reference)) return false;
     if (bindings === undefined || !t.isFunction(node))

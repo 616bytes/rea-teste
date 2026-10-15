@@ -31,6 +31,17 @@ for (const scenario of [
   { name: "quoted literal", expression: JSON.stringify(large), limited: true },
   { name: "cooked template", expression: `\`${large}\``, limited: true },
   {
+    name: "limited member receiver",
+    expression: `(${JSON.stringify(large)}).field`,
+    limited: true,
+  },
+  {
+    name: "configuration-only default",
+    expression: `process.env.MODE ?? ${JSON.stringify(large)}`,
+    bare: true,
+    limited: true,
+  },
+  {
     name: "equivalent addition",
     expression: `${JSON.stringify(large.slice(0, 100_000))} + ${JSON.stringify(large.slice(100_000))}`,
     limited: true,
@@ -42,7 +53,10 @@ for (const scenario of [
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-literal-budget-");
       const path = join(root, "main.js");
-      const source = `export const payload = ${scenario.expression};\n`;
+      const source =
+        "bare" in scenario
+          ? `${scenario.expression};\n`
+          : `export const payload = ${scenario.expression};\n`;
       await writeFile(path, source);
       const digest = createHash("sha256").update(source).digest("hex");
       const cliResponse = await cli.run({
@@ -67,13 +81,12 @@ for (const scenario of [
         const analysis = javascriptApplicationAnalysisResultSchema.parse(
           candidate.normalized_result,
         );
-        const stringLengths = analysis.semantic_graph.nodes
-          .filter((node) => node.kind === "literal")
-          .flatMap(({ properties }) =>
+        const stringLengths = analysis.semantic_graph.nodes.flatMap(
+          ({ properties }) =>
             typeof properties.value === "string"
               ? [properties.value.length]
               : [],
-          );
+        );
         expect(stringLengths).not.toContain(large.length);
         if (scenario.limited) {
           expect(analysis.graph.coverage.status).toBe("partial");
@@ -95,6 +108,22 @@ for (const scenario of [
         } else {
           expect(stringLengths).toContain(5);
           expect(analysis.graph.coverage.limits).toEqual([]);
+        }
+        if ("bare" in scenario) {
+          const node = analysis.semantic_graph.nodes.find(
+            ({ kind, properties }) =>
+              kind === "config-source" && properties.source_kind === "default",
+          );
+          expect(node?.properties).toMatchObject({
+            value: null,
+            value_resource_limit: "primitive-bytes",
+          });
+          expect(analysis.semantic_graph.unknowns).toContainEqual(
+            expect.objectContaining({
+              node_id: node?.node_id,
+              reason: "resource-limit",
+            }),
+          );
         }
         expect(
           analysis.graph.nodes.find((node) => node.kind === "javascript-asset")

@@ -219,6 +219,87 @@ describe("logical primitive unions", () => {
   });
 });
 
+describe("semantic primitive resource observations", () => {
+  it.each([
+    {
+      name: "member",
+      source: (large: string) =>
+        `const answer = (${JSON.stringify(large)}).field;`,
+    },
+    {
+      name: "destructuring",
+      source: (large: string) =>
+        `const { nested: { answer } } = { nested: ${JSON.stringify(large)} };`,
+    },
+  ])("preserves a limiting value through $name projection", ({ source }) => {
+    const ir = analyzeJavaScriptSemantics(source("x".repeat(200_000)));
+    expect(topLevelBinding(ir, "answer").value).toMatchObject({
+      status: "unknown",
+      resourceLimit: "primitive-bytes",
+    });
+    expect(ir.coverage).toMatchObject({
+      status: "partial",
+      resourceLimits: ["primitive-bytes"],
+    });
+  });
+
+  it("records an encountered bound without weakening a selected healthy sibling", () => {
+    const ir = analyzeJavaScriptSemantics(
+      `const answer = ({ ignored: ${JSON.stringify("x".repeat(200_000))}, kept: 7 }).kept;`,
+    );
+    expect(topLevelBinding(ir, "answer").value).toEqual({
+      status: "literal",
+      value: 7,
+    });
+    expect(ir.coverage).toMatchObject({
+      status: "partial",
+      resourceLimits: ["primitive-bytes"],
+    });
+  });
+});
+
+describe("configuration default normalization", () => {
+  it.each(["quoted", "template"])(
+    "normalizes a bare %s configuration default",
+    (syntax) => {
+      const large = "x".repeat(200_000);
+      const expression =
+        syntax === "quoted" ? JSON.stringify(large) : `\`${large}\``;
+      const ir = analyzeJavaScriptSemantics(
+        `process.env.MODE ?? ${expression};`,
+      );
+      const operation = ir.configurationOperations.find(
+        ({ kind }) => kind === "default",
+      );
+      expect(
+        typeof operation?.value === "string" ? operation.value.length : 0,
+      ).toBeLessThanOrEqual(174_762);
+      expect(operation).toMatchObject({
+        value: null,
+        resolution: "partial",
+        valueResourceLimit: "primitive-bytes",
+      });
+      expect(ir.coverage).toMatchObject({
+        status: "partial",
+        resourceLimits: ["primitive-bytes"],
+      });
+    },
+  );
+
+  it.each([null, false, 0, ""])(
+    "keeps an exact bounded configuration default %j",
+    (value) => {
+      const ir = analyzeJavaScriptSemantics(
+        `process.env.MODE ?? ${JSON.stringify(value)};`,
+      );
+      expect(
+        ir.configurationOperations.find(({ kind }) => kind === "default"),
+      ).toMatchObject({ value, resolution: "complete" });
+      expect(ir.coverage.resourceLimits ?? []).toEqual([]);
+    },
+  );
+});
+
 describe("semantic primitive allocation and binding reuse", () => {
   it.each(["quoted", "template"])(
     "applies the normalized byte boundary to %s literals",
@@ -288,7 +369,7 @@ describe("semantic primitive allocation and binding reuse", () => {
     expect(ir.coverage).toMatchObject({
       status: "partial",
       omittedCount: null,
-      resourceLimits: ["primitive-bytes"],
+      resourceLimits: expect.arrayContaining(["primitive-bytes"]),
     });
   });
 

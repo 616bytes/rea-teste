@@ -314,8 +314,7 @@ class Debuggable<T> {
     assert.equal(realReport.source_file.name, realOracle.sourceFile);
     for (const m of realReport.methods)
       assert.ok(
-        oracle.descriptors.has(m.descriptor) ||
-          realOracle.descriptors.has(m.descriptor),
+        realOracle.descriptors.has(m.descriptor),
         `real-jar descriptor ${m.descriptor} not reported by javap`,
       );
   }

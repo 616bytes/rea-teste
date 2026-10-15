@@ -70,3 +70,30 @@ A final Windows temporary-directory hygiene run passed all 30 tests across
 the bundle boundary, owned-reader cleanup and CLI/MCP journey files, leaving
 no owned residues. This includes two additional regressions ensuring that
 unbundled PE/ELF hosts retain native identity and refuse empty extraction.
+
+## PR preparation after upstream synchronization (2026-10-15)
+
+Merged immutable upstream `59f528f0e5bfd780e314e929db9ebf1ad65c1303`.
+The executed source revision was `a53f791d3cf8397c48a5bb7db73fdf69319f2e06`;
+the subsequent verification-record commit changes documentation only.
+
+- Windows `npm run test:focused -- <selected paths>`: 92 passed, one existing
+  POSIX FIFO skip across ten files. Selected the bundle boundary, owned-reader
+  cleanup, inventory descriptor cleanup, regular root, MZ inventory, comparison,
+  inventory snapshot, graph construction, artifact MCP and bundle journey suites.
+- Independent WSL Ubuntu source checkout, Linux Node 24.18.0 and independent
+  locked dependencies: 67 passed across eight files. Selected the first seven
+  filesystem suites above and `ArtifactOccurrenceIdentity.test.ts`, including
+  the POSIX mode and FIFO checks. The initial offline dependency installation
+  lacked an upstream-added package; cached-first installation completed before
+  executing these tests.
+- Microsoft HostModel v1, v2, plain v6 and compressed v6 again passed the public
+  CLI/stdio MCP workflow with byte-equal DLL/resources and unchanged hosts.
+- `node scripts/verify-test-temp-hygiene.mjs` on bundle boundary, owned-reader
+  cleanup and bundle journey with `--maxWorkers=1`: 30 passed, no owned residues.
+- `npm run check:ci`: passed against the synchronized production code.
+
+Windows uses process-scoped Git ownership configuration for this exact checkout
+and `TURBO_ENV_MODE=loose`; global Git configuration and project checks are
+unchanged. Upstream CI and the human author's readiness declaration remain
+separate pending gates.

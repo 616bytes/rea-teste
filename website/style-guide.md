@@ -256,7 +256,9 @@ Embedded SVGs inherit the page's `color-scheme`; canvas demos listen for
 that differs from the system preference.
 
 Use the system sans-serif stack for prose and the shared monospace stack for
-code. The current container is at most 1080px wide, with article text limited to
+code. Korean editions use Noto Sans KR from Google Fonts, with local Korean
+fonts as fallbacks; code retains the shared monospace fonts for Latin glyphs.
+The current container is at most 1080px wide, with article text limited to
 760px. Reuse the existing heading sizes, line heights, section spacing and
 component classes.
 

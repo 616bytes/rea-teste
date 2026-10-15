@@ -4,6 +4,7 @@ import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import { artifactComparisonResultSchema } from "./artifactComparison.js";
+import { artifactInspectionResultSchema } from "./artifactInspection.js";
 import { artifactInventoryResultSchema } from "./artifactGraph.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
@@ -195,19 +196,24 @@ const readValidatedSourceFacts = (
   claim: Claim,
   sources: readonly Evidence[],
 ): readonly FunctionSourceFacts[] => {
-  const expected =
-    claim.kind === "behavioral"
-      ? ["capture_process_scenario", "rea.process-capture"]
-      : claim.kind === "structural-function"
-        ? ["analyze_function", "rea.analysis"]
-        : ["inventory_artifact", "rea.analysis"];
-  if (
-    sources.some(
-      (source) =>
-        source.operation !== expected[0] ||
-        source.predicate_type !== expected[1],
-    )
-  )
+  const isExpectedType = (source: Evidence): boolean => {
+    if (claim.kind === "behavioral")
+      return (
+        source.operation === "capture_process_scenario" &&
+        source.predicate_type === "rea.process-capture"
+      );
+    if (claim.kind === "structural-function")
+      return (
+        source.operation === "analyze_function" &&
+        source.predicate_type === "rea.analysis"
+      );
+    return (
+      (source.operation === "inventory_artifact" ||
+        source.operation === "inspect_artifact") &&
+      source.predicate_type === "rea.analysis"
+    );
+  };
+  if (sources.some((source) => !isExpectedType(source)))
     throw new TypeError(
       "Comparison source Evidence has an unexpected observation type",
     );
@@ -226,7 +232,11 @@ const readValidatedSourceFacts = (
         callCoverageBlockers: callCoverage.blockers,
         callCoverageDiagnostics: callCoverage.diagnostics,
       });
-    } else artifactInventoryResultSchema.parse(source.normalized_result);
+    } else if (source.operation === "inventory_artifact") {
+      artifactInventoryResultSchema.parse(source.normalized_result);
+    } else {
+      artifactInspectionResultSchema.parse(source.normalized_result);
+    }
   }
   return functionSources;
 };

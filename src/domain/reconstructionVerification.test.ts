@@ -7,6 +7,7 @@ import type { JsonValue } from "./jsonValue.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./process/processCaptureExample.js";
 import { reconstructionSpecificationSchema } from "./reconstructionVerificationSchemas.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
+import { createArtifactInspection } from "./artifactInspection.js";
 import { createResidualUnknown } from "./residualUnknown.js";
 
 import { verifyReconstruction } from "./reconstructionVerification.js";
@@ -423,6 +424,51 @@ describe("reconstruction verification outcomes", () => {
     );
     expect(result.status).toBe("unknown");
     expect(result.recommended_probes[0]?.operation).toBe("inspect_artifact");
+  });
+
+  it("accepts artifact comparisons sourced from inspect_artifact Evidence", () => {
+    const target = ARTIFACT_COMPARISON_EXAMPLE.left.subject!;
+    const makeInspection = (inv: typeof ARTIFACT_COMPARISON_EXAMPLE.left) =>
+      createEvidence(
+        {
+          path: target.local_path,
+          sha256: target.digest.sha256,
+          format: target.format,
+        },
+        inv.provider,
+        {
+          operation: "inspect_artifact",
+          parameters: {},
+          result: createArtifactInspection(inv),
+          confidence: "observed",
+          authority: "shipped-artifact",
+        },
+      );
+    const leftInspection = makeInspection(ARTIFACT_COMPARISON_EXAMPLE.left);
+    const rightInspection = makeInspection(ARTIFACT_COMPARISON_EXAMPLE.right);
+    const comparison = artifactComparison(
+      leftInspection,
+      rightInspection,
+      false,
+    );
+    const result = verifyReconstruction(
+      {
+        name: "Artifact structure",
+        claims: [
+          {
+            kind: "structural-artifact",
+            claim_id: "artifact-inspection-graph",
+            title: "Artifact inspection graph agrees",
+            comparison_evidence_id: comparison.evidence_id,
+            dimension: "overall",
+          },
+        ],
+      },
+      createEvidenceBundle([leftInspection, comparison, rightInspection]),
+    );
+    expect(result.status).toBe("pass");
+    expect(result.claims.items[0]?.status).toBe("pass");
+    expect(result.claims.items[0]?.observed_status).toBe("unchanged");
   });
 });
 

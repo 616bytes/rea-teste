@@ -332,17 +332,13 @@ describe("setup plan application", () => {
     expect(result.plannedActions.map(({ id }) => id)).toEqual([
       "configure_client:codex",
     ]);
-    // Codex keeps a positive caller-selected timeout, so the plan must not
-    // claim setup replaces it.
-    expect(result.plannedActions[0]?.detail).not.toContain(
-      "startup_timeout_sec with",
-    );
-    expect(result.plannedActions[0]?.detail).toContain(
+    const detail = result.plannedActions[0]?.detail ?? "";
+    // Codex keeps a positive caller-selected startup timeout.
+    expect(detail).not.toContain("startup_timeout_sec with");
+    expect(detail).toContain(
       "registration fields that do not parse are removed",
     );
-    expect(result.plannedActions[0]?.detail).toContain(
-      "A tools value is removed.",
-    );
+    expect(detail).toContain("A tools value is removed.");
     expect(host.hopperInstalls).toBe(0);
     expect(host.configurations).toBe(0);
   });
@@ -495,7 +491,10 @@ describe("setup approval disclosure", () => {
     const [executable = "rea", ...args] = host.registrationCommand;
 
     expect(detail).toContain(
-      'Other fields on the existing Cordis server are kept, except the row-level disabled flag is removed to activate the registration and name is set to "@deepseek-ai/dsh-mcp-client".',
+      "Other fields on the retained Cordis server row are kept.",
+    );
+    expect(detail).toContain(
+      'The row-level disabled flag is removed to activate the registration and name is set to "@deepseek-ai/dsh-mcp-client".',
     );
     expect(detail).toContain(`serverName with ${JSON.stringify("rea")}`);
     expect(detail).toContain(`transport with ${JSON.stringify("stdio")}`);

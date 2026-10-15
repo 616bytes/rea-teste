@@ -9,7 +9,10 @@ import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { emptyArraySchema } from "../../../src/domain/emptyArraySchema.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
-import { arrayItemSchemaError } from "../../fixtures/mcpClientSchemaConstraints.js";
+import {
+  arrayItemSchemaError,
+  nonStringConstOrEnumSchemaError,
+} from "../../fixtures/mcpClientSchemaConstraints.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
 interface ToolSchemas {
@@ -40,7 +43,13 @@ function schemaErrors(tools: readonly ToolSchemas[]): string[] {
           schema,
           `${tool.name}.${kind}`,
         );
-        return clientError === undefined ? [] : [clientError];
+        const dialectError =
+          kind === "inputSchema"
+            ? nonStringConstOrEnumSchemaError(schema, `${tool.name}.${kind}`)
+            : undefined;
+        return [clientError, dialectError].filter(
+          (error): error is string => error !== undefined,
+        );
       } catch (cause: unknown) {
         return [
           `${tool.name}.${kind}: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -532,7 +541,11 @@ describe("MCP root input schemas", () => {
             (name === "inspect_web_page" && flag === false);
           const parsed = contract.inputSchema.safeParse(input);
           expect(parsed.success, `${name}: ${String(flag)}`).toBe(accepted);
-          expect(validate(input), `${name}: ${String(flag)}`).toBe(accepted);
+          const advertisedAccepted =
+            flag === undefined || typeof flag === "boolean";
+          expect(validate(input), `${name}: ${String(flag)}`).toBe(
+            advertisedAccepted,
+          );
           if (parsed.success && flag === undefined)
             expect(parsed.data).toMatchObject({
               include_script_sources: name === "analyze_web_bundle",

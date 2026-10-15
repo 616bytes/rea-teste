@@ -683,13 +683,17 @@ The projection merges properties, retains shared required fields, and
 describes the accepted input groups. Which fields belong together is guidance
 in that description rather than a `dependentRequired` or `dependencies`
 keyword, because Gemini function declarations reject both and one unknown
-keyword fails the client's whole tool catalog. Canonical runtime validation
-enforces the exact union, including partner fields and exclusions that the
-advertised projection does not express, so a client must not rely on the
-advertised schema to reject an incomplete group. Tests validate the schemas
-after SDK conversion and check advertised validation and actual calls.
-Individual model APIs can impose additional nesting limits; complete producer
-captures can exceed ten structural levels.
+keyword fails the client's whole tool catalog. Likewise, non-string literals
+(such as boolean consts from discriminated unions) are projected as their
+declared types (preserving `default` and `description` where present) because
+Google Gemini function declaration parameters enforce that enum values must be
+strings (`TYPE_STRING`), and non-string enum/const declarations fail the entire
+tool catalog. Canonical runtime validation enforces the exact union, including
+partner fields and exclusions that the advertised projection does not express,
+so a client must not rely on the advertised schema to reject an incomplete group.
+Tests validate the schemas after SDK conversion and check advertised
+validation and actual calls. Individual model APIs can impose additional
+nesting limits; complete producer captures can exceed ten structural levels.
 
 ### Compact input schema profile
 

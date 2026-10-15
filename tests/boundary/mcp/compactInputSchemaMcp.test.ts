@@ -21,7 +21,10 @@ import { processScenarioSchema } from "../../../src/domain/process/processScenar
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { ToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
-import { arrayItemSchemaError } from "../../fixtures/mcpClientSchemaConstraints.js";
+import {
+  arrayItemSchemaError,
+  nonStringConstOrEnumSchemaError,
+} from "../../fixtures/mcpClientSchemaConstraints.js";
 
 interface AdvertisedTool {
   readonly name: string;
@@ -226,6 +229,9 @@ describe("MCP compact schema constraints", () => {
     for (const tool of tools) {
       expect(arrayItemSchemaError(tool.inputSchema, tool.name)).toBeUndefined();
       expect(
+        nonStringConstOrEnumSchemaError(tool.inputSchema, tool.name),
+      ).toBeUndefined();
+      expect(
         ajv.validateSchema(tool.inputSchema),
         `${tool.name}: ${ajv.errorsText(ajv.errors)}`,
       ).toBe(true);
@@ -247,7 +253,7 @@ describe("MCP compact schema constraints", () => {
       listToolsThroughTransport(full),
       listToolsThroughTransport(compact),
     ]);
-    for (const tools of [fullTools, compactTools])
+    for (const tools of [fullTools, compactTools]) {
       expect(
         tools.flatMap(({ name, inputSchema }) =>
           unsupportedDependencyKeywords(inputSchema).map(
@@ -255,6 +261,11 @@ describe("MCP compact schema constraints", () => {
           ),
         ),
       ).toEqual([]);
+      for (const tool of tools)
+        expect(
+          nonStringConstOrEnumSchemaError(tool.inputSchema, tool.name),
+        ).toBeUndefined();
+    }
     const sqlite = fullTools.find(
       ({ name }) => name === "inspect_sqlite_database",
     );

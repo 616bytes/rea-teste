@@ -150,13 +150,15 @@ export const gdbThreadGroupPids = (
       quoted = true;
       continue;
     }
-    if (character === "[") squareDepth += 1;
-    else if (character === "]") {
+    if (character === "[") {
+      // Nested thread-group lists are unquoted `groups=[...]`. Quoted path
+      // bytes such as executable="fixture/groups=[.out" are inventory data.
+      if (index >= 7 && mi.startsWith("groups=[", index - 7)) return undefined;
+      squareDepth += 1;
+    } else if (character === "]") {
       squareDepth -= 1;
       if (squareDepth === 0) {
         if (objectDepth !== 0) return undefined;
-        const body = mi.slice(start, index);
-        if (body.includes("groups=[")) return undefined;
         return pids;
       }
     } else if (character === "{") {

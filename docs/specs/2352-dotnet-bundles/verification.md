@@ -118,8 +118,13 @@ acceptance suites passed 31 tests. `npm run check:ci` passed typecheck, lint,
 formatting, metadata, duplication, TODO, module-boundary and architecture
 checks. `npm run docs:check` passed, including five README consistency tests.
 The temporary-directory hygiene run passed the same 31 tests with no owned
-residues. These results are local; current-head upstream CI must be checked
-after the new commit is pushed.
+residues. Upstream CI on `fb46280a` passed 33 execution jobs but failed its
+Linux real-browser job at a service-worker page-state timeout, so the required
+summary failed too. The browser workflow and verifier are unchanged by this PR.
+With the version-matched Windows native artifact restored from that CI run,
+`npm run verify:browser` passed twice on the same source revision with real
+Chrome 155, including the service-worker scenario. This does not resolve the
+Linux CI failure; GitHub rejected a rerun of the upstream job with HTTP 403.
 
 Microsoft HostModel from SDK 8.0.416 generated v1, v2, plain v6 and compressed
 v6 hosts again. All four passed public CLI inspection and extraction; extracted

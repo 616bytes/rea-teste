@@ -62,14 +62,15 @@ export const analyzeScript = (
   if ((file.errors?.length ?? 0) > 0)
     accumulator.recoveredScripts.push(script.script_key);
   detectVendorFingerprints(script, accumulator);
-  const { receivers, bindings } = completeSemanticSteps(
+  const index = completeSemanticSteps(
     indexJavaScriptBindingsWithReceiversSteps(file.program),
   );
+  const { receivers } = index;
   const openReceiverFacts = receivers.openReceivers;
   const rpc = createJavaScriptRpcScan(
     script.source.artifact.text,
     receivers.rpcClientRoots,
-    bindings,
+    index,
   );
   traverseJavaScriptAst(file, {
     enter: (node) => {
@@ -88,14 +89,15 @@ export const analyzeScript = (
     },
   });
   for (const endpoint of rpc.finish())
-    addFinding({
-      collection: accumulator.endpoints,
-      script,
-      rawValue: endpoint.value,
-      mechanism: endpoint.mechanism,
-      node: endpoint.node,
-      accumulator,
-    });
+    if (endpoint !== undefined)
+      addFinding({
+        collection: accumulator.endpoints,
+        script,
+        rawValue: endpoint.value,
+        mechanism: endpoint.mechanism,
+        node: endpoint.node,
+        accumulator,
+      });
 };
 
 const inspectNode = (

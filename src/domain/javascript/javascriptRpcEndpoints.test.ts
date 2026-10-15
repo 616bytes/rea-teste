@@ -501,6 +501,62 @@ describe("GraphQL document ownership", () => {
   });
 });
 
+describe("GraphQL source alias effects", () => {
+  it.each([
+    'source.body = "query Changed { user { id } }";',
+    "mutate(source);",
+    'eval("source.body = replacement");',
+  ])(
+    "retains Source observations after an unproven member effect: %s",
+    (effect) => {
+      const actual = rpcEndpoints(`
+      const source = {
+        body: "query GetUser { user { id } }",
+        locationOffset: { line: 1, column: 1 },
+      };
+      ${effect}
+      const operation = {
+        kind: "OperationDefinition", operation: "query",
+        name: { kind: "Name", value: "GetUser" }, loc: { source },
+      };
+    `);
+      expect(actual.filter(({ value }) => value === "GetUser")).toHaveLength(2);
+    },
+  );
+
+  it("does not prove source ownership through a changed location alias", () => {
+    const actual = rpcEndpoints(`
+      const source = {
+        body: "query GetUser { user { id } }",
+        locationOffset: { line: 1, column: 1 },
+      };
+      const loc = { source };
+      loc.source = {};
+      const operation = {
+        kind: "OperationDefinition", operation: "query",
+        name: { kind: "Name", value: "GetUser" }, loc,
+      };
+    `);
+    expect(actual).toHaveLength(2);
+  });
+
+  it.each(["inline", "specifier"])(
+    "retains separately exported sources: %s",
+    (form) => {
+      const actual = rpcEndpoints(`
+      ${form === "inline" ? "export" : ""} const source = {
+        body: "query GetUser { user { id } }",
+        locationOffset: { line: 1, column: 1 },
+      };
+      ${form === "specifier" ? "export { source };" : ""}
+      const doc = { kind: "OperationDefinition", operation: "query",
+        name: { kind: "Name", value: "GetUser" }, loc: { source } };
+    `);
+      expect(actual).toHaveLength(2);
+    },
+  );
+});
+
 describe("GraphQL document recognition", () => {
   it("recognizes precompiled GraphQL document objects", () => {
     expect(

@@ -82,8 +82,9 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
 ): Generator<void, JavaScriptStaticAnalysis> {
   const accumulator = createJavaScriptAnalysisAccumulator(source.length);
   // One definitions pass serves receiver classification and binding lookup.
-  const { bindings, receivers } =
-    yield* indexJavaScriptBindingsWithReceiversSteps(file.program);
+  const index = yield* indexJavaScriptBindingsWithReceiversSteps(file.program);
+  const { bindings, receivers } = index;
+  yield* index.indexAmbientWritesSteps();
   const electronIdentity = yield* indexJavaScriptElectronIdentitySteps(
     file.program,
     bindings,
@@ -96,11 +97,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
       vitePreloadDependencyTable: indexVitePreloadDependencyTable(file.program),
       openReceiverFacts: receivers.openReceivers,
       electronBindings: electronIdentity.bindings,
-      rpcScan: createJavaScriptRpcScan(
-        source,
-        receivers.rpcClientRoots,
-        bindings,
-      ),
+      rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
     },
     bindings,
   );

@@ -459,7 +459,7 @@ export function* finishRpcScanSteps(
   context: FindingContext,
 ): Generator<void, void> {
   for (const rpc of context.rpcScan.finish()) {
-    addEndpoint(context, { kind: "network", ...rpc });
+    if (rpc !== undefined) addEndpoint(context, { kind: "network", ...rpc });
     yield;
   }
 }

@@ -27,6 +27,7 @@ import type {
   JavaScriptSemanticAnalysisState,
   JavaScriptSemanticBindingState,
   JavaScriptSemanticScopeState,
+  JavaScriptBindingIndex,
 } from "./javascriptSemanticState.js";
 import {
   currentSemanticScope,
@@ -243,25 +244,36 @@ export interface JavaScriptReceiverFacts {
   readonly rpcClientRoots: ReadonlySet<t.Node>;
 }
 
+export interface JavaScriptReceiverIndex extends JavaScriptBindingIndex {
+  readonly receivers: JavaScriptReceiverFacts;
+}
+
 /**
  * Index bindings and classify receivers from one definitions pass. Receiver
- * facts read the definitions-only phase, so they are classified before the
- * same state is extended with ambient writes.
+ * facts read the definitions-only phase. Consumers request ambient writes and
+ * lexical references only when needed; each optional index is built once.
  */
 export function* indexJavaScriptBindingsWithReceiversSteps(
   program: t.Program,
-): Generator<
-  void,
-  {
-    readonly bindings: JavaScriptSemanticAnalysisState;
-    readonly receivers: JavaScriptReceiverFacts;
-  }
-> {
+): Generator<void, JavaScriptReceiverIndex> {
   const state = createState(program);
   yield* collectDefinitionsSteps(program, state);
   const receivers = yield* classifyDefinitionReceiversSteps(program, state);
-  yield* indexJavaScriptAmbientWritesSteps(program, state);
-  return { bindings: state, receivers };
+  let ambientIndexed = false;
+  let references: readonly JavaScriptSemanticReference[] | undefined;
+  return {
+    bindings: state,
+    receivers,
+    *indexAmbientWritesSteps() {
+      if (ambientIndexed) return;
+      yield* indexJavaScriptAmbientWritesSteps(program, state);
+      ambientIndexed = true;
+    },
+    *referencesSteps() {
+      references ??= yield* collectSemanticReferencesSteps(program, state);
+      return references;
+    },
+  };
 }
 
 function* classifyDefinitionReceiversSteps(

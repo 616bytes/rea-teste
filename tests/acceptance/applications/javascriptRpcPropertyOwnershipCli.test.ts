@@ -34,6 +34,16 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
           kind: "OperationDefinition", operation: "query",
           name: { kind: "Name", value: "Independent" },
         };
+        const changedSource = {
+          body: "query ChangedSource { viewer { id } }",
+          locationOffset: { line: 1, column: 1 },
+        };
+        const location = { source: changedSource };
+        location.source = {};
+        const changedDocument = {
+          kind: "OperationDefinition", operation: "query",
+          name: { kind: "Name", value: "ChangedSource" }, loc: location,
+        };
       `,
     });
     const result = await analyzeJavaScriptDirectory(surface, cli, root);
@@ -42,7 +52,14 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       .flatMap((node) => node.observations)
       .filter(({ properties }) => properties.mechanism === "graphql:query");
     expect(operations.map(({ properties }) => properties.value).sort()).toEqual(
-      ["Compiled", "Independent", "Independent", "Standalone"],
+      [
+        "ChangedSource",
+        "ChangedSource",
+        "Compiled",
+        "Independent",
+        "Independent",
+        "Standalone",
+      ],
     );
     for (const observation of operations)
       expect(observation.evidence).toMatchObject({

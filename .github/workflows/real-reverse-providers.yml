@@ -50,14 +50,14 @@ jobs:
       - name: Verify the installed providers through public CLI and MCP
         shell: bash
         run: |
-          providers="objdump gdb"
-          skipped=""
+          providers=(objdump gdb)
+          skipped=()
           if command -v rizin >/dev/null; then
-            providers="${providers} rizin"
+            providers+=(rizin)
           else
-            skipped="--skipped=rizin:absent from the runner distribution"
+            skipped+=(--skipped="rizin:absent from the runner distribution")
           fi
-          npm run verify:reverse-providers -- ${providers} ${skipped}
+          npm run verify:reverse-providers -- "${providers[@]}" "${skipped[@]}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:

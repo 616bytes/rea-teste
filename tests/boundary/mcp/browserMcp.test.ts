@@ -42,6 +42,7 @@ it(
       sessionTimeline: "same_origin",
       webMcpTools: true,
       sensitiveShapes: true,
+      eventsBeforeReply: ["Network.enable"],
     });
     browsers.push(browser);
     const connected = await connectBrowser();

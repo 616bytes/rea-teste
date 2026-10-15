@@ -70,6 +70,7 @@ import {
 import { isJavaScriptRpcClientFactory } from "./javascriptRpcEndpoints.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { SemanticPropertyPathCoverage } from "./javascriptSemanticPropertyPaths.js";
+import { indexCommonJsExportReceiversSteps } from "./javascriptCommonJsExportReceivers.js";
 import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
 
 interface BindPatternInput {
@@ -78,6 +79,7 @@ interface BindPatternInput {
   readonly scope: JavaScriptSemanticScopeState;
   readonly state: JavaScriptSemanticAnalysisState;
   readonly mutable: boolean;
+  readonly declarationKind?: "var" | "let" | "const" | "using" | "await using";
   readonly kind?: JavaScriptSemanticDefinition["kind"];
   readonly projection?: readonly (string | number | null)[];
   readonly referenceOnly?: boolean;
@@ -101,6 +103,7 @@ interface AddBindingInput {
   readonly name: string;
   readonly kind: JavaScriptSemanticDefinition["kind"];
   readonly mutable: boolean;
+  readonly declarationKind?: "var" | "let" | "const" | "using" | "await using";
   readonly definitionNode: t.Node;
   readonly initializer: t.Node | null;
   readonly directOrigin?: JavaScriptModuleOrigin;
@@ -161,8 +164,9 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   yield* collectDefinitionsSteps(file.program, state);
   yield* indexJavaScriptAmbientWritesSteps(file.program, state);
   yield* collectSemanticMemberMutationsSteps(file.program, state);
+  const commonJsReceivers = yield* indexCommonJsExportReceiversSteps(state);
   yield* traverseJavaScriptAstSteps(file.program, {
-    enter: (node) => collectSemanticModuleLink(node, state),
+    enter: (node) => collectSemanticModuleLink(node, state, commonJsReceivers),
   });
   yield;
   const references = yield* collectSemanticReferencesSteps(file.program, state);
@@ -219,37 +223,6 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   };
 }
 
-/** Resolve tRPC client roots by lexical identity, excluding overwritten bindings. */
-export function* classifyParsedJavaScriptRpcClientRootsSteps(
-  file: ParsedJavaScriptSource,
-): Generator<void, ReadonlySet<t.Node>> {
-  const state = createState(file.program);
-  yield* collectDefinitionsSteps(file.program, state);
-  const roots = new Set<t.Node>();
-  const clients = new Map<string, boolean>();
-  yield* traverseJavaScriptAstSteps(file.program, {
-    enter: (node) => {
-      if (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node))
-        return;
-      const root = node.object;
-      if (!t.isIdentifier(root)) return;
-      const binding = resolveSemanticBindingState(state, root, root.name);
-      if (binding === undefined) return;
-      let client = clients.get(binding.bindingId);
-      if (client === undefined) {
-        const initializer = semanticStableInitializer(binding, state);
-        client =
-          initializer !== undefined &&
-          initializer.projection.length === 0 &&
-          isJavaScriptRpcClientFactory(initializer.node);
-        clients.set(binding.bindingId, client);
-      }
-      if (client) roots.add(root);
-    },
-  });
-  return roots;
-}
-
 /**
  * Receiver identity facts for the overloaded `.open` syntax, plus
  * `configuration` for `.get` reads of a `getConfiguration(...)` result.
@@ -264,111 +237,169 @@ export type JavaScriptOpenReceiverFact =
   | "configuration"
   | "extension-state";
 
-/**
- * Resolve only the lexical receiver identity needed to distinguish browser
- * `window.open` from XHR and global storage `.open` calls, and configuration
- * `.get` reads from HTTP client calls. This deliberately builds definitions
- * without running semantic value or provenance analysis.
- */
-export const classifyParsedJavaScriptOpenReceivers = (
-  file: ParsedJavaScriptSource,
-): ReadonlyMap<number, JavaScriptOpenReceiverFact> =>
-  completeSemanticSteps(classifyParsedJavaScriptOpenReceiversSteps(file));
+/** Lexical receiver identities that select static endpoint interpretations. */
+export interface JavaScriptReceiverFacts {
+  readonly openReceivers: ReadonlyMap<number, JavaScriptOpenReceiverFact>;
+  readonly rpcClientRoots: ReadonlySet<t.Node>;
+}
 
-/** Classify `.open` receivers while yielding during lexical and AST scans. */
-export function* classifyParsedJavaScriptOpenReceiversSteps(
+/**
+ * Resolve only the lexical receiver identities needed to distinguish browser
+ * `window.open` from XHR and global storage `.open` calls, configuration
+ * `.get` reads from HTTP client calls, and tRPC client roots (excluding
+ * overwritten bindings). This deliberately builds definitions without running
+ * semantic value or provenance analysis.
+ */
+export const classifyParsedJavaScriptReceivers = (
   file: ParsedJavaScriptSource,
-): Generator<void, ReadonlyMap<number, JavaScriptOpenReceiverFact>> {
+): JavaScriptReceiverFacts =>
+  completeSemanticSteps(classifyParsedJavaScriptReceiversSteps(file));
+
+/** Classify receivers while yielding during lexical and AST scans. */
+export function* classifyParsedJavaScriptReceiversSteps(
+  file: ParsedJavaScriptSource,
+): Generator<void, JavaScriptReceiverFacts> {
   const state = createState(file.program);
   yield* collectDefinitionsSteps(file.program, state);
+  return yield* classifyDefinitionReceiversSteps(file.program, state);
+}
+
+/**
+ * Index bindings and classify receivers from one definitions pass. Receiver
+ * facts read the definitions-only phase, so they are classified before the
+ * same state is extended with ambient writes.
+ */
+export function* indexJavaScriptBindingsWithReceiversSteps(
+  program: t.Program,
+): Generator<
+  void,
+  {
+    readonly bindings: JavaScriptSemanticAnalysisState;
+    readonly receivers: JavaScriptReceiverFacts;
+  }
+> {
+  const state = createState(program);
+  yield* collectDefinitionsSteps(program, state);
+  const receivers = yield* classifyDefinitionReceiversSteps(program, state);
+  yield* indexJavaScriptAmbientWritesSteps(program, state);
+  return { bindings: state, receivers };
+}
+
+function* classifyDefinitionReceiversSteps(
+  program: t.Program,
+  state: JavaScriptSemanticAnalysisState,
+): Generator<void, JavaScriptReceiverFacts> {
   const facts = new Map<number, JavaScriptOpenReceiverFact>();
   const extensionStateReads: number[] = [];
-  yield* traverseJavaScriptAstSteps(file.program, {
-    enter: (node) => {
-      if (
-        (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) ||
-        (!t.isMemberExpression(node.callee) &&
-          !t.isOptionalMemberExpression(node.callee))
-      )
-        return;
-      const method = semanticStaticPropertyKey(
-        node.callee.property,
-        node.callee.computed,
+  const roots = new Set<t.Node>();
+  const clients = new Map<string, boolean>();
+  const classifyRpcRoot = (node: t.Node): void => {
+    if (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node))
+      return;
+    const root = node.object;
+    if (!t.isIdentifier(root)) return;
+    const binding = resolveSemanticBindingState(state, root, root.name);
+    if (binding === undefined) return;
+    let client = clients.get(binding.bindingId);
+    if (client === undefined) {
+      const initializer = semanticStableInitializer(binding, state);
+      client =
+        initializer !== undefined &&
+        initializer.projection.length === 0 &&
+        isJavaScriptRpcClientFactory(initializer.node);
+      clients.set(binding.bindingId, client);
+    }
+    if (client) roots.add(root);
+  };
+  const classifyOpenReceiver = (node: t.Node): void => {
+    if (
+      (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) ||
+      (!t.isMemberExpression(node.callee) &&
+        !t.isOptionalMemberExpression(node.callee))
+    )
+      return;
+    const method = semanticStaticPropertyKey(
+      node.callee.property,
+      node.callee.computed,
+    );
+    if (method === "get") {
+      if (isConfigurationReceiver(state, node.callee.object))
+        facts.set(node.start ?? -1, "configuration");
+      else if (isExtensionStateMember(node.callee.object))
+        extensionStateReads.push(node.start ?? -1);
+      return;
+    }
+    if (method !== "open" || !t.isIdentifier(node.callee.object)) return;
+    const receiver = node.callee.object.name;
+    const binding = resolveSemanticBindingState(state, node, receiver);
+    if (binding === undefined) {
+      if (semanticResolutionBlocked(state, node, receiver)) return;
+      const fact = openGlobalFact(receiver);
+      if (fact !== undefined) facts.set(node.start ?? -1, fact);
+      return;
+    }
+    // A lexically bound receiver overrides ambient browser globals. Mark an
+    // otherwise unresolved local as local so name-based window.open
+    // heuristics do not hide its XHR-like overloads.
+    facts.set(node.start ?? -1, "local");
+    if (receiver === "indexedDB" || receiver === "caches") {
+      facts.set(
+        node.start ?? -1,
+        receiver === "indexedDB" ? "local-indexed-db" : "local-cache-storage",
       );
-      if (method === "get") {
-        if (isConfigurationReceiver(state, node.callee.object))
-          facts.set(node.start ?? -1, "configuration");
-        else if (isExtensionStateMember(node.callee.object))
-          extensionStateReads.push(node.start ?? -1);
-        return;
-      }
-      if (method !== "open" || !t.isIdentifier(node.callee.object)) return;
-      const receiver = node.callee.object.name;
-      const binding = resolveSemanticBindingState(state, node, receiver);
-      if (binding === undefined) {
-        if (semanticResolutionBlocked(state, node, receiver)) return;
-        const fact = openGlobalFact(receiver);
-        if (fact !== undefined) facts.set(node.start ?? -1, fact);
-        return;
-      }
-      // A lexically bound receiver overrides ambient browser globals. Mark an
-      // otherwise unresolved local as local so name-based window.open
-      // heuristics do not hide its XHR-like overloads.
-      facts.set(node.start ?? -1, "local");
-      if (receiver === "indexedDB" || receiver === "caches") {
-        facts.set(
-          node.start ?? -1,
-          receiver === "indexedDB" ? "local-indexed-db" : "local-cache-storage",
-        );
-        return;
-      }
-      if (binding.mutable || binding.initializers.length !== 1) return;
-      const initializer = binding.initializers[0]?.node;
-      if (!t.isIdentifier(initializer)) return;
-      const initializerBinding = resolveSemanticBindingState(
-        state,
-        initializer,
-        initializer.name,
-      );
-      if (initializerBinding !== undefined) {
-        if (initializer.name === "indexedDB" || initializer.name === "caches") {
-          const localFact =
-            initializer.name === "indexedDB"
-              ? "local-indexed-db"
-              : "local-cache-storage";
-          facts.set(node.start ?? -1, localFact);
-          if (
-            initializerBinding.mutable ||
-            initializerBinding.initializers.length !== 1
-          )
-            return;
-          const nested = initializerBinding.initializers[0]?.node;
-          if (t.isIdentifier(nested)) {
-            const nestedFact = resolveGlobalAliasFact(
-              state,
-              initializer,
-              nested.name,
-            );
-            if (nestedFact !== undefined)
-              facts.set(node.start ?? -1, nestedFact);
-          }
-        } else if (initializer.name === "window") {
-          facts.set(node.start ?? -1, "local");
+      return;
+    }
+    if (binding.mutable || binding.initializers.length !== 1) return;
+    const initializer = binding.initializers[0]?.node;
+    if (!t.isIdentifier(initializer)) return;
+    const initializerBinding = resolveSemanticBindingState(
+      state,
+      initializer,
+      initializer.name,
+    );
+    if (initializerBinding !== undefined) {
+      if (initializer.name === "indexedDB" || initializer.name === "caches") {
+        const localFact =
+          initializer.name === "indexedDB"
+            ? "local-indexed-db"
+            : "local-cache-storage";
+        facts.set(node.start ?? -1, localFact);
+        if (
+          initializerBinding.mutable ||
+          initializerBinding.initializers.length !== 1
+        )
+          return;
+        const nested = initializerBinding.initializers[0]?.node;
+        if (t.isIdentifier(nested)) {
+          const nestedFact = resolveGlobalAliasFact(
+            state,
+            initializer,
+            nested.name,
+          );
+          if (nestedFact !== undefined) facts.set(node.start ?? -1, nestedFact);
         }
-        return;
+      } else if (initializer.name === "window") {
+        facts.set(node.start ?? -1, "local");
       }
-      const aliasFact = resolveGlobalAliasFact(
-        state,
-        initializer,
-        initializer.name,
-      );
-      if (aliasFact !== undefined) facts.set(node.start ?? -1, aliasFact);
+      return;
+    }
+    const aliasFact = resolveGlobalAliasFact(
+      state,
+      initializer,
+      initializer.name,
+    );
+    if (aliasFact !== undefined) facts.set(node.start ?? -1, aliasFact);
+  };
+  yield* traverseJavaScriptAstSteps(program, {
+    enter: (node) => {
+      classifyRpcRoot(node);
+      classifyOpenReceiver(node);
     },
   });
   if (extensionStateReads.length > 0 && importsVsCodeModule(state))
     for (const start of extensionStateReads)
       facts.set(start, "extension-state");
-  return facts;
+  return { openReceivers: facts, rpcClientRoots: roots };
 }
 
 /** VS Code passes extension state through ExtensionContext, not an import. */
@@ -685,7 +716,8 @@ const createState = (
     moduleLinks: [],
     linkedRequireCalls: new WeakSet(),
     moduleLinkBindings: new WeakMap(),
-    conditionalInitializers: new WeakSet(),
+    defaultExportExpressions: new WeakMap(),
+    conditionallySkippedExpressions: new WeakSet(),
     requiredModuleEffects: new Map(),
     ambientBindingWrites: new Map(),
     ambientWrites: new SemanticPropertyPathCoverage(),
@@ -704,6 +736,7 @@ function* collectDefinitionsSteps(
   const assignments: {
     readonly node: t.Node;
     readonly scope: JavaScriptSemanticScopeState;
+    readonly conditionallySkipped: boolean;
   }[] = [];
   const functionBodies: {
     readonly body: t.BlockStatement;
@@ -779,16 +812,23 @@ function* collectDefinitionsSteps(
         node.init != null &&
         parent !== null &&
         t.isVariableDeclaration(parent, { kind: "var" }) &&
-        hasConditionalInitializer(readAncestors())
+        writeMayBeSkipped(node, readAncestors())
       )
-        state.conditionalInitializers.add(node.init);
+        state.conditionallySkippedExpressions.add(node.init);
       if (
         t.isAssignmentExpression(node) ||
         t.isUpdateExpression(node) ||
         t.isForOfStatement(node) ||
         t.isForInStatement(node)
       )
-        assignments.push({ node, scope });
+        assignments.push({
+          node,
+          scope,
+          conditionallySkipped:
+            t.isForOfStatement(node) ||
+            t.isForInStatement(node) ||
+            writeMayBeSkipped(node, readAncestors()),
+        });
     },
     exit: (node) => {
       for (let count = openedScopes.get(node) ?? 0; count > 0; count--)
@@ -797,9 +837,12 @@ function* collectDefinitionsSteps(
   });
   // All declarations must exist before resolving writes, including hoisted
   // functions and local declarations that shadow an outer binding.
-  for (const [index, { node, scope }] of assignments.entries()) {
+  for (const [
+    index,
+    { node, scope, conditionallySkipped },
+  ] of assignments.entries()) {
     if (index % 64 === 0) yield;
-    bindAssignment(node, scope, state);
+    bindAssignment(node, scope, state, conditionallySkipped);
   }
   for (const [index, { body, scope, parameters }] of functionBodies.entries()) {
     if (index % 64 === 0) yield;
@@ -853,27 +896,70 @@ const copyParameterToBody = (input: {
   }
 };
 
-const hasConditionalInitializer = (ancestors: readonly t.Node[]): boolean => {
-  // A hoisted var can remain undefined when control flow skips its initializer.
-  // Conditions outside the owning callable/static block do not govern its body.
+const writeMayBeSkipped = (
+  node: t.Node,
+  ancestors: readonly t.Node[],
+): boolean => {
+  let child = node;
   for (let index = ancestors.length - 1; index >= 0; index -= 1) {
-    const node = ancestors[index];
-    if (t.isFunction(node) || t.isProgram(node) || t.isStaticBlock(node))
+    const parent = ancestors[index];
+    if (
+      parent === undefined ||
+      t.isFunction(parent) ||
+      t.isProgram(parent) ||
+      t.isStaticBlock(parent)
+    )
       return false;
-    if (t.isIfStatement(node) || t.isSwitchCase(node) || t.isTryStatement(node))
-      return true;
-    if (t.isLoop(node)) {
-      const bodyOrTest = ancestors[index + 1];
-      if (
-        (t.isForStatement(node) && bodyOrTest === node.init) ||
-        (t.isDoWhileStatement(node) &&
-          (bodyOrTest === node.body || bodyOrTest === node.test))
-      )
-        continue;
-      return true;
-    }
+    if (isSkippedBranch(parent, child)) return true;
+    child = parent;
   }
   return false;
+};
+
+const isSkippedBranch = (parent: t.Node, child: t.Node): boolean => {
+  if (t.isIfStatement(parent))
+    return child === parent.consequent || child === parent.alternate;
+  if (t.isSwitchCase(parent)) return true;
+  if (t.isTryStatement(parent))
+    return child === parent.block || child === parent.handler;
+  if (t.isForStatement(parent))
+    return child === parent.body || child === parent.update;
+  if (t.isWhileStatement(parent)) return child === parent.body;
+  if (t.isDoWhileStatement(parent)) return false;
+  if (t.isForInStatement(parent) || t.isForOfStatement(parent))
+    return child === parent.left || child === parent.body;
+  if (t.isLogicalExpression(parent)) return child === parent.right;
+  if (t.isConditionalExpression(parent))
+    return child === parent.consequent || child === parent.alternate;
+  if (t.isOptionalCallExpression(parent) || t.isCallExpression(parent))
+    return (
+      parent.arguments.includes(child as t.Expression) &&
+      optionalCallArgumentsMayBeSkipped(parent)
+    );
+  if (t.isOptionalMemberExpression(parent))
+    return parent.optional && parent.computed && child === parent.property;
+  return false;
+};
+
+const optionalCallArgumentsMayBeSkipped = (
+  call: t.CallExpression | t.OptionalCallExpression,
+): boolean => {
+  if (t.isOptionalCallExpression(call) && call.optional) return true;
+  let callee: t.Node = call.callee;
+  while (true) {
+    // Parentheses terminate optional-chain short-circuiting. In particular,
+    // `(foo?.bar)(arg)` evaluates arg before attempting the call.
+    if (callee.extra?.parenthesized === true) return false;
+    if (t.isOptionalMemberExpression(callee)) {
+      if (callee.optional) return true;
+      callee = callee.object;
+    } else if (t.isMemberExpression(callee)) callee = callee.object;
+    else if (t.isOptionalCallExpression(callee)) {
+      if (callee.optional) return true;
+      callee = callee.callee;
+    } else if (t.isCallExpression(callee)) callee = callee.callee;
+    else return false;
+  }
 };
 
 const bindOuterDeclaration = (
@@ -922,6 +1008,9 @@ const bindInnerDeclaration = (
         parent !== null && t.isVariableDeclaration(parent)
           ? parent.kind !== "const"
           : true,
+      ...(parent !== null && t.isVariableDeclaration(parent)
+        ? { declarationKind: parent.kind }
+        : {}),
     });
   else if (t.isClassExpression(node) && t.isIdentifier(node.id))
     addBinding({
@@ -983,6 +1072,7 @@ const bindAssignment = (
   node: t.Node,
   scope: JavaScriptSemanticScopeState,
   state: JavaScriptSemanticAnalysisState,
+  conditionallySkipped: boolean,
 ): void => {
   if (t.isAssignmentExpression(node)) {
     const left = unwrapJavaScriptExpression(node.left).node;
@@ -996,21 +1086,23 @@ const bindAssignment = (
           : node,
         scope,
         state,
+        conditionallySkipped,
       );
     else
       for (const identifier of semanticWriteTargets(node.left))
         if (t.isIdentifier(identifier))
-          addAssignment(identifier, node, scope, state);
+          addAssignment(identifier, node, scope, state, conditionallySkipped);
   } else if (t.isUpdateExpression(node)) {
     const argument = unwrapJavaScriptExpression(node.argument).node;
-    if (t.isIdentifier(argument)) addAssignment(argument, node, scope, state);
+    if (t.isIdentifier(argument))
+      addAssignment(argument, node, scope, state, conditionallySkipped);
   } else if (t.isForOfStatement(node) || t.isForInStatement(node))
     for (const pattern of t.isVariableDeclaration(node.left)
       ? node.left.declarations.map(({ id }) => id)
       : [node.left]) {
       for (const identifier of semanticWriteTargets(pattern))
         if (t.isIdentifier(identifier))
-          addAssignment(identifier, node, scope, state);
+          addAssignment(identifier, node, scope, state, conditionallySkipped);
       if (t.isForOfStatement(node))
         // Keep the loop value unknown, but preserve references yielded into
         // each bound slot so writes/escapes can reach their iterable origins.
@@ -1201,6 +1293,7 @@ const bindPattern = (input: BindPatternInput): void => {
     scope,
     state,
     mutable,
+    declarationKind,
     kind = "variable",
     projection = [],
     referenceOnly = false,
@@ -1243,6 +1336,7 @@ const bindPattern = (input: BindPatternInput): void => {
       name: pattern.name,
       kind,
       mutable,
+      ...(declarationKind === undefined ? {} : { declarationKind }),
       definitionNode: pattern,
       initializer,
       projection,
@@ -1345,6 +1439,7 @@ const addBinding = (input: AddBindingInput): void => {
     name,
     kind,
     mutable,
+    declarationKind,
     definitionNode,
     initializer,
     directOrigin,
@@ -1359,6 +1454,8 @@ const addBinding = (input: AddBindingInput): void => {
     state.bindingsById.set(binding.bindingId, binding);
   }
   binding.mutable ||= mutable;
+  if (declarationKind !== undefined)
+    binding.declarationKinds.add(declarationKind);
   binding.definitions.push({ kind, location: range(definitionNode) });
   if (initializer !== null)
     binding.initializers.push({ node: initializer, projection });
@@ -1386,6 +1483,7 @@ const createBinding = (
   name,
   kind,
   mutable,
+  declarationKinds: new Set(),
   memberWrites: [],
   escapedPaths: [],
   definitions: [],
@@ -1400,6 +1498,7 @@ const addAssignment = (
   initializer: t.Node,
   scope: JavaScriptSemanticScopeState,
   state: JavaScriptSemanticAnalysisState,
+  conditionallySkipped: boolean,
 ): void => {
   const binding = resolveSemanticBindingFromScope(
     scope,
@@ -1417,4 +1516,6 @@ const addAssignment = (
   binding.mutable = true;
   binding.definitions.push({ kind: "assignment", location: range(identifier) });
   binding.initializers.push({ node: initializer, projection: [] });
+  if (conditionallySkipped)
+    state.conditionallySkippedExpressions.add(initializer);
 };

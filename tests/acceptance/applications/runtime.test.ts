@@ -6,7 +6,6 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
   evidenceResultOf,
@@ -14,6 +13,7 @@ import {
   toolAvailabilityInventory,
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 const mainPath = fileURLToPath(
   new URL("../../../dist/main.js", import.meta.url),
@@ -70,20 +70,13 @@ const completeStderrRecords = (stderr: string): unknown[] =>
     .filter((line) => line.length > 0)
     .map((line): unknown => JSON.parse(line));
 
-const hasFatalRecord = (records: readonly unknown[]): boolean =>
-  records.some(
-    (record) =>
-      typeof record === "object" &&
-      record !== null &&
-      "level" in record &&
-      typeof record.level === "number" &&
-      record.level >= 50,
-  );
-
-const callCurrentDocument = async (target?: {
-  readonly path: string;
-  readonly kind?: "database";
-}) => {
+const callCurrentDocument = async (
+  target?: {
+    readonly path: string;
+    readonly kind?: "database";
+  },
+  inspectSession?: (client: Client) => Promise<void>,
+) => {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [mainPath],
@@ -116,6 +109,7 @@ const callCurrentDocument = async (target?: {
       name: "current_document",
       arguments: {},
     });
+    await inspectSession?.(client);
   } finally {
     await client.close();
     await transport.close();
@@ -241,45 +235,83 @@ describe("production stdio runtime", () => {
     expect(records).toContainEqual(
       expect.objectContaining({ tool: "close_binary", status: "ok" }),
     );
-    expect(hasFatalRecord(records)).toBe(false);
+    const fatal = records.filter(
+      (record): record is { level: number } =>
+        typeof record === "object" &&
+        record !== null &&
+        "level" in record &&
+        typeof record.level === "number" &&
+        record.level >= 50,
+    );
+    expect(fatal).toEqual([]);
   });
+});
 
+describe("production stdio saved-database admission", () => {
   it.runIf(process.platform === "darwin")(
-    "reports an unsupported database-kind initial target without a fatal record on macOS",
+    "refuses database analysis on macOS while keeping the session usable without a fatal record",
     async () => {
-      const { result, records } = await callCurrentDocument({
-        path: fileURLToPath(import.meta.url),
-        kind: "database",
-      });
-      expect(result.isError).toBe(true);
-      const text = result.content.find((item) => item.type === "text");
-      if (text?.type !== "text") throw new Error("Missing target error");
-      const failure = z
-        .object({ error: analysisErrorProjectionSchema })
-        .parse(JSON.parse(text.text));
-      expect(failure.error).toMatchObject({
-        code: "capability_unavailable",
-        category: "unsupported_provider",
-        retryable: false,
-        details: {
-          operation: "current_document",
-          selection_reason: "target_unsupported",
-          rejections: expect.arrayContaining([
-            expect.objectContaining({
-              provider_id: "hopper",
-              code: "target_kind_unsupported",
-              diagnostics: expect.objectContaining({
-                target_kind: "database",
-                target_format: "analysis-database",
+      const path = fileURLToPath(import.meta.url);
+      const { result, records } = await callCurrentDocument(
+        { path, kind: "database" },
+        async (client) => {
+          const status = await expectAvailableToolInventory(
+            client,
+            await client.listTools(),
+          );
+          expect(status.structuredContent).toMatchObject({
+            result: {
+              open: true,
+              path,
+              kind: "database",
+              format: "analysis-database",
+              analysis_provider_binding: null,
+            },
+          });
+        },
+      );
+      expect(parseMcpToolError(result)).toMatchObject({
+        error: {
+          code: "capability_unavailable",
+          category: "unsupported_provider",
+          retryable: false,
+          details: {
+            operation: "current_document",
+            selection_reason: "target_unsupported",
+            rejections: expect.arrayContaining([
+              expect.objectContaining({
+                provider_id: "hopper",
+                code: "target_kind_unsupported",
+                reason: expect.stringContaining(
+                  "cannot start REA's analysis bridge",
+                ),
+                diagnostics: {
+                  target_kind: "database",
+                  target_format: "analysis-database",
+                  architecture: null,
+                },
               }),
-            }),
-          ]),
+            ]),
+          },
         },
       });
       expect(records).toContainEqual(
-        expect.objectContaining({ tool: "current_document", status: "error" }),
+        expect.objectContaining({
+          tool: "current_document",
+          status: "error",
+          level: 40,
+        }),
       );
-      expect(hasFatalRecord(records)).toBe(false);
+      expect(
+        records.some(
+          (record) =>
+            typeof record === "object" &&
+            record !== null &&
+            "level" in record &&
+            typeof record.level === "number" &&
+            record.level >= 50,
+        ),
+      ).toBe(false);
     },
     15_000,
   );

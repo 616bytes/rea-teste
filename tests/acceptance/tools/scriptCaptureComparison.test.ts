@@ -192,7 +192,7 @@ cliTest(
 );
 
 cliTest(
-  "CLI preserves observed source changes for unique scripts in incomplete inventories",
+  "CLI keeps bare source keys unknown when omissions can hide duplicate members",
   async ({ cli }) => {
     const captures = [
       scriptCapture("export let x = 1;\n"),
@@ -209,7 +209,7 @@ cliTest(
     ] as const) {
       expect(
         await compareScripts(cli, paths[left]!, paths[right]!),
-      ).toMatchObject({ status: "changed", total_changes: 1 });
+      ).toMatchObject({ status: "unknown", total_changes: 0, changes: [] });
     }
   },
 );

@@ -214,8 +214,8 @@ const scriptDimension = (
   const afterScripts = new Map(
     after.scripts.items.map((script) => [script.script_key, script]),
   );
-  // Duplicate occurrence suffixes follow source sorting. Missing inventory rows
-  // or retained sources can renumber them without proving a content change.
+  // Source-sorted occurrence keys can shift after omissions; even a bare key
+  // may represent the only retained member of a larger duplicate group.
   const sourceGroup = (key: string) => key.replace(/_[0-9]+$/u, "");
   const incompleteSourceGroups = new Set(
     [...before.scripts.items, ...after.scripts.items]
@@ -226,8 +226,7 @@ const scriptDimension = (
     before.scripts.items
       .filter(
         (script) =>
-          (inventoryComplete ||
-            script.script_key === sourceGroup(script.script_key)) &&
+          inventoryComplete &&
           !incompleteSourceGroups.has(sourceGroup(script.script_key)) &&
           script.source.included &&
           afterScripts.get(script.script_key)?.source.included,

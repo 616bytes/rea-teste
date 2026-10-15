@@ -298,17 +298,42 @@ const isComputedKeyOf = (scope: t.Node, child: t.Node): boolean =>
 const blockBindsLexicalRequire = (body: readonly t.Node[]): boolean =>
   body.some(
     (statement) =>
-      t.isVariableDeclaration(statement) &&
-      statement.kind !== "var" &&
-      statement.declarations.some((declaration) =>
-        bindsRequireIdentifier([declaration.id]),
-      ),
+      (t.isVariableDeclaration(statement) &&
+        statement.kind !== "var" &&
+        statement.declarations.some((declaration) =>
+          bindsRequireIdentifier([declaration.id]),
+        )) ||
+      (t.isClassDeclaration(statement) &&
+        statement.id !== null &&
+        statement.id !== undefined &&
+        statement.id.name === "require"),
   );
+
+const withObjectDeclaresRequire = (ancestors: readonly t.Node[]): boolean => {
+  for (let index = ancestors.length - 1; index >= 0; index -= 1) {
+    const scope = ancestors[index];
+    if (scope === undefined) continue;
+    if (t.isProgram(scope)) return false;
+    if (!t.isWithStatement(scope)) continue;
+    const object = scope.object;
+    if (!t.isObjectExpression(object)) continue;
+    return object.properties.some(
+      (property) =>
+        (t.isObjectProperty(property) || t.isObjectMethod(property)) &&
+        !property.computed &&
+        ((t.isIdentifier(property.key) && property.key.name === "require") ||
+          (t.isStringLiteral(property.key) &&
+            property.key.value === "require")),
+    );
+  }
+  return false;
+};
 
 const writeShieldedByLocalBinding = (
   node: t.Node,
   ancestors: readonly t.Node[],
 ): boolean => {
+  if (withObjectDeclaresRequire(ancestors)) return true;
   let child: t.Node = node;
   for (let index = ancestors.length - 1; index >= 0; index -= 1) {
     const scope = ancestors[index];
@@ -320,12 +345,24 @@ const writeShieldedByLocalBinding = (
         continue;
       }
       if (bindsRequireIdentifier(scope.params)) return true;
+      if (
+        t.isFunctionExpression(scope) &&
+        scope.id !== null &&
+        scope.id !== undefined &&
+        scope.id.name === "require"
+      )
+        return true;
       if (child === scope.body && functionBodyBindsRequire(scope.body))
         return true;
       child = scope;
       continue;
     }
     if (t.isCatchClause(scope) && bindsRequireIdentifier([scope.param]))
+      return true;
+    if (
+      t.isSwitchStatement(scope) &&
+      scope.cases.some((entry) => blockBindsLexicalRequire(entry.consequent))
+    )
       return true;
     if (t.isSwitchCase(scope) && blockBindsLexicalRequire(scope.consequent))
       return true;
@@ -361,72 +398,130 @@ const writeShieldedByLocalBinding = (
 const ITERATION_PROTOTYPES = new Set(["Object", "Array", "String"]);
 
 /**
- * Whether a member write can affect iteration over fresh literals. A write
- * through `X.prototype` (or through `__proto__`) mutates shared iteration
- * behavior: `for-in` then sees inherited keys on `{}`/`[]`, and a replaced
- * `Symbol.iterator` makes `for-of []` iterate. Reflective mutation
- * (`defineProperty`, `Reflect`, `setPrototypeOf`) is not covered — see the
- * residual note on `fileMayPolluteIteration`.
+ * Which loop kinds a member write can affect. Plain string members of a
+ * shared prototype add enumerable keys seen by `for-in`; only iterator or
+ * prototype-chain changes affect `for-of` over an empty literal.
  */
-const memberWriteTouchesSharedPrototype = (target: t.Node): boolean => {
+interface IterationPollution {
+  readonly forIn: boolean;
+  readonly forOf: boolean;
+}
+
+const NO_ITERATION_POLLUTION: IterationPollution = {
+  forIn: false,
+  forOf: false,
+};
+
+const FULL_ITERATION_POLLUTION: IterationPollution = {
+  forIn: true,
+  forOf: true,
+};
+
+const memberWriteIterationPollution = (target: t.Node): IterationPollution => {
   let current: t.Node | null | undefined = target;
+  let landedComputed: boolean | undefined;
   while (current !== null && current !== undefined) {
     if (
       !t.isMemberExpression(current) &&
       !t.isOptionalMemberExpression(current)
     )
-      return false;
+      return NO_ITERATION_POLLUTION;
     const key = semanticStaticPropertyKey(current.property, current.computed);
-    if (key === "__proto__") return true;
+    if (key === "__proto__") return FULL_ITERATION_POLLUTION;
+    if (landedComputed === undefined)
+      landedComputed = current.computed === true;
     const object: t.Node = unwrapJavaScriptExpression(current.object).node;
     if (
       t.isIdentifier(object) &&
       ITERATION_PROTOTYPES.has(object.name) &&
       key === "prototype"
-    )
-      return true;
+    ) {
+      if (current === target) return FULL_ITERATION_POLLUTION;
+      return landedComputed === true
+        ? FULL_ITERATION_POLLUTION
+        : { forIn: true, forOf: false };
+    }
     current = object;
   }
-  return false;
+  return NO_ITERATION_POLLUTION;
+};
+
+const isReflectivePrototypeMutation = (node: t.Node): boolean => {
+  if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+    return false;
+  const callee = node.callee;
+  if (
+    !t.isMemberExpression(callee) ||
+    callee.computed ||
+    !t.isIdentifier(callee.property)
+  )
+    return false;
+  const object = unwrapJavaScriptExpression(callee.object).node;
+  if (
+    !t.isIdentifier(object) ||
+    (object.name !== "Object" && object.name !== "Reflect")
+  )
+    return false;
+  if (
+    callee.property.name === "defineProperty" ||
+    callee.property.name === "defineProperties" ||
+    callee.property.name === "setPrototypeOf"
+  )
+    return true;
+  return (
+    callee.property.name === "assign" &&
+    node.arguments.length > 0 &&
+    t.isMemberExpression(node.arguments[0])
+  );
 };
 
 /**
- * Whether this file may have mutated shared iteration behavior before any
- * loop runs. The scan is whole-file and order-insensitive (a later write
- * still disables the exemption), which is conservative: a polluted file
- * loses a static-emptiness shortcut it cannot prove. Deletion is excluded —
- * removing keys or iterators cannot make an empty literal iterate.
+ * Which loop kinds may iterate from shared-prototype mutation. Reflective
+ * mutation is unprovable either way; the scan stays lazy per file.
  */
-const fileMayPolluteIteration = (program: t.Program): boolean => {
-  let polluted = false;
+const fileIterationPollution = (program: t.Program): IterationPollution => {
+  let forIn = false;
+  let forOf = false;
   traverseJavaScriptAst(program, {
     enter: (node) => {
-      if (polluted) return;
+      if (forIn && forOf) return;
+      if (isReflectivePrototypeMutation(node)) {
+        forIn = true;
+        forOf = true;
+        return;
+      }
       if (t.isUnaryExpression(node, { operator: "delete" })) return;
       const site = semanticWriteSiteTarget(node);
       if (site === null) return;
       for (const target of semanticWriteTargets(site)) {
-        if (memberWriteTouchesSharedPrototype(target)) {
-          polluted = true;
-          return;
-        }
+        const kind = memberWriteIterationPollution(target);
+        forIn ||= kind.forIn;
+        forOf ||= kind.forOf;
       }
     },
   });
-  return polluted;
+  return { forIn, forOf };
 };
+
+const isNonComputedProtoSetter = (property: t.Node): boolean =>
+  t.isObjectProperty(property) &&
+  !property.computed &&
+  ((t.isIdentifier(property.key) && property.key.name === "__proto__") ||
+    (t.isStringLiteral(property.key) && property.key.value === "__proto__"));
 
 const isStaticallyEmptyIterable = (
   node: t.Node | null | undefined,
   isForIn: boolean,
 ): boolean => {
   // `for-in` skips array holes; `for-of` yields them. Emptiness therefore
-  // depends on the loop kind, never just the literal.
+  // depends on the loop kind, never just the literal. A non-computed
+  // `__proto__` entry sets the prototype instead of creating a key.
   if (t.isArrayExpression(node))
     return isForIn
       ? node.elements.every((element) => element === null)
       : node.elements.length === 0;
-  if (t.isObjectExpression(node)) return node.properties.length === 0;
+  if (t.isObjectExpression(node))
+    return node.properties.every(isNonComputedProtoSetter);
   if (t.isStringLiteral(node)) return node.value === "";
   return false;
 };
@@ -434,9 +529,7 @@ const isStaticallyEmptyIterable = (
 const hasUninitializedTopLevelVarRequire = (program: t.Program): boolean => {
   let found = false;
   let initialized = false;
-  // Computed once per file: the exemption below infers non-iteration from
-  // literal contents, which holds only while shared prototypes are intact.
-  const mayPollute = fileMayPolluteIteration(program);
+  let pollution: IterationPollution | undefined;
   traverseJavaScriptAst(program, {
     enter: (node, parent, readAncestors) => {
       if (!t.isVariableDeclaration(node, { kind: "var" })) return;
@@ -454,16 +547,15 @@ const hasUninitializedTopLevelVarRequire = (program: t.Program): boolean => {
         // every iteration, so it initializes the loader just as an
         // assignment does. A bare `for (var require;;)` head stays
         // uninitialized, as does a head over a statically empty iterable
-        // that never assigns — unless the file may have mutated shared
-        // iteration behavior, in which case no literal proves emptiness.
+        // that never assigns — unless the file may have mutated the shared
+        // iteration behavior that loop kind relies on.
         if (t.isForInStatement(parent) || t.isForOfStatement(parent)) {
           if (parent.left !== node) continue;
+          pollution ??= fileIterationPollution(program);
+          const loopIsForIn = t.isForInStatement(parent);
           initialized ||=
-            mayPollute ||
-            !isStaticallyEmptyIterable(
-              parent.right,
-              t.isForInStatement(parent),
-            );
+            (loopIsForIn ? pollution.forIn : pollution.forOf) ||
+            !isStaticallyEmptyIterable(parent.right, loopIsForIn);
           continue;
         }
         initialized ||= declaration.init !== null;

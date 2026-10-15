@@ -176,6 +176,20 @@ it("evaluates empty loop heads and polluted prototypes by semantics, not syntax"
       "for (var require of []) {}",
       "try { require('./throwing.cjs'); } catch { console.log('shadowed'); }",
     ].join("\n"),
+    "defineproperty-forin-pollution.cjs": [
+      'Object.defineProperty(Object.prototype, "x", { enumerable: true, value: 1 });',
+      "for (var require in {}) {}",
+      "try { require('./throwing.cjs'); } catch { console.log('shadowed'); }",
+    ].join("\n"),
+    "proto-null-forin.cjs": [
+      "for (var require in { __proto__: null }) {}",
+      "console.log(require('./loaded.cjs'));",
+    ].join("\n"),
+    "proto-helper-forof.cjs": [
+      "Array.prototype.helper = () => 1;",
+      "for (var require of []) {}",
+      "console.log(require('./loaded.cjs'));",
+    ].join("\n"),
     "loaded.cjs": "console.log('loaded');\nmodule.exports = 'real';\n",
     "throwing.cjs": "throw new Error('A shadowed require must not load me');\n",
   };
@@ -192,6 +206,9 @@ it("evaluates empty loop heads and polluted prototypes by semantics, not syntax"
     ["forof-hole.cjs", "shadowed\n"],
     ["proto-forin-pollution.cjs", "shadowed\n"],
     ["proto-forof-pollution.cjs", "shadowed\n"],
+    ["defineproperty-forin-pollution.cjs", "shadowed\n"],
+    ["proto-null-forin.cjs", "loaded\nreal\n"],
+    ["proto-helper-forof.cjs", "loaded\nreal\n"],
   ] as const) {
     const executed = await runNode(process.execPath, [join(root, path)], {
       cwd: root,
@@ -212,7 +229,11 @@ it("evaluates empty loop heads and polluted prototypes by semantics, not syntax"
       .filter(({ kind }) => kind === "requires")
       .map(({ from_path, to }) => [from_path, to])
       .sort((left, right) => (left[0] ?? "").localeCompare(right[0] ?? "")),
-  ).toEqual([["sparse-forin-holes.cjs", "loaded.cjs"]]);
+  ).toEqual([
+    ["proto-helper-forof.cjs", "loaded.cjs"],
+    ["proto-null-forin.cjs", "loaded.cjs"],
+    ["sparse-forin-holes.cjs", "loaded.cjs"],
+  ]);
 });
 
 it("keeps loader edges when a local binding shields a dynamic write", async () => {
@@ -243,6 +264,29 @@ it("keeps loader edges when a local binding shields a dynamic write", async () =
       "function patch() {",
       "  let require;",
       "  with ({}) { require = () => 'local'; }",
+      "}",
+      "patch();",
+      "console.log(require('./loaded.cjs'));",
+    ].join("\n"),
+    "with-capture.cjs": [
+      "with ({ __proto__: null, require: null }) { require = () => 'local'; }",
+      "console.log(require('./loaded.cjs'));",
+    ].join("\n"),
+    "block-class.cjs": [
+      "function patch() {",
+      "  { class require {}; with ({}) { require = () => 'local'; } }",
+      "}",
+      "patch();",
+      "console.log(require('./loaded.cjs'));",
+    ].join("\n"),
+    "named-fn-expr.cjs": [
+      "const patch = function require() { with ({}) { require = () => 'local'; } };",
+      "patch();",
+      "console.log(require('./loaded.cjs'));",
+    ].join("\n"),
+    "cross-case-let.cjs": [
+      "function patch() {",
+      "  switch (1) { case 1: let require; case 0: with ({}) { require = () => 'local'; } }",
       "}",
       "patch();",
       "console.log(require('./loaded.cjs'));",
@@ -299,13 +343,17 @@ it("keeps loader edges when a local binding shields a dynamic write", async () =
       .map(({ from_path, to }) => [from_path, to])
       .sort((left, right) => (left[0] ?? "").localeCompare(right[0] ?? "")),
   ).toEqual([
+    ["block-class.cjs", "loaded.cjs"],
+    ["cross-case-let.cjs", "loaded.cjs"],
     ["empty-loop-var.cjs", "loaded.cjs"],
     ["local-fn-let.cjs", "loaded.cjs"],
     ["local-fn-var-init.cjs", "loaded.cjs"],
     ["local-fn-var.cjs", "loaded.cjs"],
     ["local-param.cjs", "loaded.cjs"],
+    ["named-fn-expr.cjs", "loaded.cjs"],
     ["nested-fn-var.cjs", "loaded.cjs"],
     ["switch-let.cjs", "loaded.cjs"],
+    ["with-capture.cjs", "loaded.cjs"],
   ]);
 });
 

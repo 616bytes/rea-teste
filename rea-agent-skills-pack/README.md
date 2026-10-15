@@ -40,9 +40,9 @@ O Codex pode precisar reiniciar/recarregar a sessão para detectar skills recém
 O script `install.sh` instala apenas o destino selecionado e cria backup datado de pastas existentes antes de atualizá-las:
 
 ```bash
-./install.sh claude
-./install.sh codex
-./install.sh both
+bash install.sh claude
+bash install.sh codex
+bash install.sh both
 ```
 
 Para destinos de projeto, defina `CLAUDE_SKILLS_DIR` e/ou `CODEX_SKILLS_DIR` com o caminho completo antes de executar. O script não altera configuração MCP nem instala o REA; ele somente copia as skills.

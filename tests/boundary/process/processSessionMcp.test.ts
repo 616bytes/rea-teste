@@ -79,6 +79,24 @@ it("rejects oversized terminal buffers and reserved environment names through MC
     );
     await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
   }
+  // Clients validating the advertised contract reject the same names.
+  const advertised = (await client.listTools()).tools.find(
+    ({ name }) => name === "capture_process_scenario",
+  )?.inputSchema;
+  if (advertised === undefined)
+    throw new Error("Missing process capture input schema");
+  const validate = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(z.record(z.string(), z.unknown()).parse(advertised));
+  for (const [environment, admitted] of [
+    [{ NORMAL_CAPTURE_KEY: "caller-value" }, true],
+    [{ REA_PROCESS_RUN_ID: "caller-value" }, false],
+    [JSON.parse('{"__proto__":"caller-value"}') as unknown, false],
+  ] as const)
+    expect(validate({ executable: process.execPath, environment })).toBe(
+      admitted,
+    );
   await client.ping();
 });
 

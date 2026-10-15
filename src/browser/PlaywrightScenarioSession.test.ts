@@ -394,6 +394,40 @@ it("rejects an init script accepted by CDP when the live realm is unprotected", 
   expect(cleanup.close).toHaveBeenCalledTimes(1);
 });
 
+it("restores an owned policy script after later setup fails", async () => {
+  const { cleanup } = fixture();
+  const setupFailure = new Error("auto-attach rejected");
+  mocks.policySend.mockImplementation(async (method: string) => {
+    if (method === "Target.setAutoAttach") throw setupFailure;
+    return policyResponse(method);
+  });
+  const attached = browserScenarioSchema.parse({
+    ...scenario,
+    browser: {
+      mode: "connect",
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "target",
+    },
+    environment: { service_workers: "block" },
+  });
+
+  await expect(PlaywrightScenarioSession.open(attached, {}, {})).rejects.toBe(
+    setupFailure,
+  );
+  expect(mocks.policySend).toHaveBeenCalledWith(
+    "Page.removeScriptToEvaluateOnNewDocument",
+    { identifier: "owned-policy-script" },
+    "policy-session",
+  );
+  expect(
+    mocks.policySend.mock.calls.some(
+      ([method]) => method === "Runtime.evaluate",
+    ),
+  ).toBe(true);
+  expect(mocks.policyTransportClose).toHaveBeenCalledTimes(1);
+  expect(cleanup.close).toHaveBeenCalledTimes(1);
+});
+
 it("retains an owned script identifier after rejected removal", async () => {
   const { cleanup } = fixture();
   const attached = browserScenarioSchema.parse({

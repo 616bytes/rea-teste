@@ -224,6 +224,16 @@ export class PlaywrightScenarioServiceWorkers {
     }
   }
 
+  private async settleTargetForRestore(target: PolicyTarget): Promise<void> {
+    try {
+      await Promise.race([target.ready, target.detached]);
+    } catch {
+      // Setup already reports its own failure. Cleanup must continue from the
+      // side effects that were acquired before it failed, such as an init
+      // script whose identifier was returned before auto-attach was rejected.
+    }
+  }
+
   private restorationScript(): string {
     return `(() => {
       const restore = globalThis[${this.restoreKey}];
@@ -307,7 +317,9 @@ export class PlaywrightScenarioServiceWorkers {
       if (stopLoading && !this.#detached && session.sessionId !== undefined)
         await this.send(session.sessionId, "Page.stopLoading");
       await Promise.all(
-        [...this.#targets.values()].map((target) => this.settleTarget(target)),
+        [...this.#targets.values()].map((target) =>
+          this.settleTargetForRestore(target),
+        ),
       );
       for (const target of this.#targets.values()) {
         if (!this.#detached && target.identifier !== undefined) {

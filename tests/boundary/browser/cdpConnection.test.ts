@@ -21,6 +21,14 @@ const INVALID_REPLIES = [
     }),
   ],
   [
+    "detached-session error and result",
+    (id: number) => ({
+      id,
+      result: {},
+      error: { code: -32_001, message: "Session with given id not found." },
+    }),
+  ],
+  [
     "malformed error",
     (id: number) => ({
       id,
@@ -33,6 +41,28 @@ const INVALID_REPLIES = [
   [
     "foreign session id",
     (id: number) => ({ id, result: {}, sessionId: "foreign-session" }),
+  ],
+  [
+    "detached-session error with a foreign session id",
+    (id: number) => ({
+      id,
+      error: { code: -32_001, message: "Session with given id not found." },
+      sessionId: "foreign-session",
+    }),
+  ],
+  [
+    "unrouted detached-session message with another code",
+    (id: number) => ({
+      id,
+      error: { code: -32_000, message: "Session with given id not found." },
+    }),
+  ],
+  [
+    "unrouted detached-session code with another message",
+    (id: number) => ({
+      id,
+      error: { code: -32_001, message: "No session with given id" },
+    }),
   ],
 ] as const;
 

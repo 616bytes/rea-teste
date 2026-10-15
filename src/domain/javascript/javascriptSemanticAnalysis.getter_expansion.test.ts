@@ -4,7 +4,78 @@ import {
   onlyBinding,
   onlyCallable,
 } from "./javascriptSemanticAnalysis.fixture.js";
-import { getterExpansionSource } from "../../../tests/fixtures/javascriptGetterExpansion.js";
+import {
+  bundledGetterSource,
+  getterExpansionSource,
+  plainGetterSource,
+} from "../../../tests/fixtures/javascriptGetterExpansion.js";
+
+const expectUnrelatedFacts = (
+  ir: ReturnType<typeof analyzeJavaScriptSemantics>,
+) => {
+  expect(onlyBinding(ir, "unrelated").value).toEqual({
+    status: "literal",
+    value: 42,
+  });
+  expect(ir.moduleLinks).toContainEqual(
+    expect.objectContaining({
+      kind: "import",
+      specifier: "dep",
+      localName: "imported",
+    }),
+  );
+};
+
+it("does not memoize ancestry-pruned results reached through an independent branch", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import imported from "dep";
+    const one = { x: { y: 1 }, y: 1 };
+    const two = { x: { y: 1 }, y: 1 };
+    class C {
+      get c() { return choose() ? this.a : this.d; }
+      get a() { return choose() ? this.b.x : two; }
+      get b() { return choose() ? this.a : one; }
+      get d() { return this.e; }
+      get e() { return this.b.x; }
+    }
+    new C().c.y = 5;
+    const result = two.x.y;
+    const unrelated = 42;
+  `);
+  expect(onlyBinding(ir, "result").value.status).toBe("unknown");
+  expectUnrelatedFacts(ir);
+});
+
+it.each([130, 300])(
+  "retains precise unrelated facts with %i plain class getters",
+  (count) => {
+    const ir = analyzeJavaScriptSemantics(plainGetterSource(count));
+    expectUnrelatedFacts(ir);
+    expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
+  },
+);
+
+it("retains precise unrelated facts with 300 plain object getters", () => {
+  const ir = analyzeJavaScriptSemantics(plainGetterSource(300, true));
+  expectUnrelatedFacts(ir);
+  expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
+});
+
+it.each([130, 300])(
+  "does not charge retained field results for %i plain getters",
+  (count) => {
+    const ir = analyzeJavaScriptSemantics(
+      plainGetterSource(count, false, true),
+    );
+    expectUnrelatedFacts(ir);
+    expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
+  },
+);
+
+it("bounds a bundle of dynamic getter classes without discarding unrelated facts", () => {
+  const ir = analyzeJavaScriptSemantics(bundledGetterSource());
+  expectUnrelatedFacts(ir);
+}, 1_000);
 
 it.each([10, 30])(
   "bounds permutations across %i unknown-key getters (#3839)",
@@ -17,10 +88,9 @@ it.each([10, 30])(
     });
     expect(onlyBinding(ir, "result").value).toMatchObject({
       status: "unknown",
-      resourceLimit: "getter-expansion",
     });
     expect(onlyBinding(ir, "result").provenance).toMatchObject({
-      status: "unknown",
+      status: "local",
       origins: [],
     });
     expect(ir.references).toContainEqual(
@@ -31,13 +101,13 @@ it.each([10, 30])(
       }),
     );
     expect(onlyCallable(ir, "field0").returnCoverage).toMatchObject({
-      status: "partial",
-      omittedCount: null,
+      status: "complete",
+      omittedCount: 0,
     });
     expect(ir.moduleLinks).toEqual([]);
-    expect(ir.callSites).toEqual([]);
+    expect(ir.callSites.length).toBeGreaterThan(0);
     expect(ir.limitations.join(" ")).toMatch(
-      /Getter expansion budget exceeded/,
+      /Getter expansion was conservatively bounded/,
     );
   },
 );
@@ -50,6 +120,26 @@ it("bounds static getter permutations with the same query budget", () => {
     status: "partial",
     resourceLimits: ["getter-expansion"],
   });
+});
+
+it("escapes the selected deep getter result while preserving other objects and imports", () => {
+  const getters = Array.from(
+    { length: 600 },
+    (_, index) => `get field${index}() { return this.field${index + 1}; }`,
+  ).join("\n");
+  const ir = analyzeJavaScriptSemantics(`
+    import imported from "dep";
+    const shared = { x: 1 };
+    const untouched = { x: 42 };
+    class C { ${getters} get field600() { return shared; } }
+    new C().field0.x = 2;
+    const result = shared.x;
+    const unrelated = untouched.x;
+  `);
+  expectUnrelatedFacts(ir);
+  expect(onlyBinding(ir, "result").value.status).toBe("unknown");
+  expect(onlyBinding(ir, "imported").provenance.status).toBe("module");
+  expect(ir.coverage.resourceLimits).toEqual(["getter-expansion"]);
 });
 
 it("bounds inherited dynamic getters", () => {

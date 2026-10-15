@@ -31,7 +31,9 @@ it("preserves getter expansion limits in semantic graph coverage", () => {
     expect.objectContaining({
       family: "data-flow",
       reason: "resource-limit",
-      detail: expect.stringMatching(/getter expansion budget exceeded/i),
+      detail: expect.stringMatching(
+        /getter expansion was conservatively bounded/i,
+      ),
     }),
   );
   expect(graph.coverage.status).toBe("unknown");

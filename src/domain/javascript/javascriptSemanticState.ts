@@ -13,6 +13,7 @@ import type {
   JavaScriptSemanticScope,
 } from "./javascriptSemanticIr.js";
 import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
+import type { JavaScriptSemanticResourceLimit } from "./javascriptSemanticValueTypes.js";
 
 /** Internal initializer plus a destructuring/member projection. */
 interface JavaScriptSemanticInitializer {
@@ -71,6 +72,7 @@ export interface JavaScriptSemanticScopeState {
 
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
+  readonly resourceLimits: Set<JavaScriptSemanticResourceLimit>;
   readonly program: t.Program;
   /** Effective loader for static imports in this source artifact. */
   readonly staticImportResolutionMode: JavaScriptModuleResolutionMode;

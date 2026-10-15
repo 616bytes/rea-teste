@@ -8,6 +8,70 @@ import {
 } from "./javascriptSemanticObjectReferences.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { getterExpansionSource } from "../../../tests/fixtures/javascriptGetterExpansion.js";
+
+const classAndState = (source: string) => {
+  const parsed = parseJavaScriptSource(source);
+  if (parsed === null) throw new Error("Expected a parsed class fixture");
+  const klass = parsed.program.body.find((node) => t.isClassDeclaration(node));
+  if (!t.isClassDeclaration(klass)) throw new Error("Expected a class");
+  return {
+    klass,
+    state: completeSemanticSteps(indexJavaScriptBindingsSteps(parsed.program)),
+  };
+};
+
+it("memoizes convergent getter states before spending another visit", () => {
+  const getters = Array.from(
+    { length: 510 },
+    (_, index) => `get g${index}() { return this.leaf; }`,
+  ).join("\n");
+  const { klass, state } = classAndState(`
+    const shared = {};
+    class C { ${getters} get leaf() { return shared; } }
+  `);
+  const references = semanticClassPropertyReferences(
+    { owner: klass, kind: "instance" },
+    [null],
+    state,
+  );
+  expect(references).toHaveLength(1);
+  expect(state.resourceLimits.size).toBe(0);
+});
+
+it("keeps distinct remaining paths when getter expansions converge", () => {
+  const { klass, state } = classAndState(`
+    const shared = {};
+    class C {
+      get left() { return this.leaf.x; }
+      get right() { return this.leaf.y; }
+      get leaf() { return shared; }
+    }
+  `);
+  const references = semanticClassPropertyReferences(
+    { owner: klass, kind: "instance" },
+    [null],
+    state,
+  );
+  expect(references.map(({ path }) => path)).toEqual([[], ["x"], ["y"]]);
+  expect(state.resourceLimits.size).toBe(0);
+});
+
+it("collapses dynamic getter permutations to distinct escaped references", () => {
+  const { klass, state } = classAndState(getterExpansionSource(30));
+  const references = semanticClassPropertyReferences(
+    { owner: klass, kind: "instance" },
+    ["field0"],
+    state,
+  );
+  expect(references).toHaveLength(1);
+  expect(references[0]).toMatchObject({
+    node: { type: "Identifier", name: "shared" },
+    path: [],
+    escapes: true,
+  });
+  expect([...state.resourceLimits]).toEqual(["getter-expansion"]);
+});
 
 const objectAndState = (source: string) => {
   const parsed = parseJavaScriptSource(source, "object.js");

@@ -665,6 +665,10 @@ it.each([
     { code: true, ghidra_bridge: true, runtime: true, package: false },
   ],
   [
+    "src/ghidra/GhidraReleasePolicy.ts",
+    { code: true, ghidra_bridge: true, runtime: true },
+  ],
+  [
     ".github/workflows/ghidra-bridge-sources.yml",
     { code: false, ghidra_bridge: true, runtime: false, package: false },
   ],

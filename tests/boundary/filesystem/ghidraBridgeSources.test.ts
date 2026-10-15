@@ -13,8 +13,14 @@ import {
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
+import { z } from "zod";
 
 import { GHIDRA_BRIDGE_SOURCES } from "../../../src/ghidra/GhidraBridgeSources.js";
+import {
+  SUPPORTED_GHIDRA_JAVA_MAJOR,
+  SUPPORTED_GHIDRA_VERSION,
+} from "../../../src/ghidra/GhidraReleasePolicy.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
@@ -134,6 +140,7 @@ it.skipIf(process.platform === "win32").each(admissionCases)(
 it.skipIf(process.platform === "win32").each([
   { source: GHIDRA_BRIDGE_SOURCES.prepareCom, action: "deleted" },
   { source: GHIDRA_BRIDGE_SOURCES.applySeeds, action: "renamed" },
+  { source: "UnregisteredHelper.java", action: "added" },
 ])(
   "rejects a $action launcher source before compilation: $source",
   async ({ source, action }) => {
@@ -145,13 +152,16 @@ it.skipIf(process.platform === "win32").each([
       "scripts/verify-ghidra-bridge-sources.mjs",
       "src/ghidra/GhidraBridgeSources.ts",
       "src/ghidra/GhidraJavaProperties.ts",
+      "src/ghidra/GhidraReleasePolicy.ts",
     ])
       await copyFile(resolve(path), join(repository, path));
     await cp(resolve("bridge/ghidra"), join(repository, "bridge/ghidra"), {
       recursive: true,
     });
     const path = join(repository, "bridge/ghidra", source);
-    if (action === "deleted") await unlink(path);
+    if (action === "added")
+      await writeFile(path, "class UnregisteredHelper {}\n");
+    else if (action === "deleted") await unlink(path);
     else {
       const className = source.slice(0, -".java".length);
       await writeFile(
@@ -177,7 +187,9 @@ it.skipIf(process.platform === "win32").each([
     ).rejects.toMatchObject({
       code: 1,
       stderr: expect.stringContaining(
-        `Required Ghidra bridge source is missing: bridge/ghidra/${source}`,
+        action === "added"
+          ? `Ghidra bridge sources absent from the manifest: ${source}`
+          : `Required Ghidra bridge source is missing: bridge/ghidra/${source}`,
       ),
     });
     expect(await readdir(fixture.scratchParent)).toEqual([]);
@@ -207,4 +219,72 @@ it("rejects an omitted auxiliary source at the actual package verification bound
       `package omitted package/bridge/ghidra/${source}`,
     ),
   });
+});
+
+it("binds the workflow SDK pin and verified compile mode to the canonical release", async () => {
+  const { jobs } = z
+    .object({
+      jobs: z.object({
+        "ghidra-bridge-sources": z.object({
+          env: z.object({
+            GHIDRA_RELEASE_URL: z.string(),
+            GHIDRA_RELEASE_SHA256: z.string(),
+          }),
+          steps: z.array(
+            z.object({ run: z.string().optional() }).passthrough(),
+          ),
+        }),
+      }),
+    })
+    .parse(
+      parseYaml(
+        await readFile(
+          resolve(".github/workflows/ghidra-bridge-sources.yml"),
+          "utf8",
+        ),
+      ),
+    );
+  const job = jobs["ghidra-bridge-sources"];
+  const pinIndex = job.steps.findIndex((step) =>
+    step.run?.includes("--check-sdk-pin"),
+  );
+  const downloadIndex = job.steps.findIndex((step) =>
+    step.run?.includes("curl "),
+  );
+  expect(pinIndex).toBeGreaterThanOrEqual(0);
+  expect(downloadIndex).toBeGreaterThan(pinIndex);
+  expect(job.steps.some((step) => step.run?.includes("--verified-sdk"))).toBe(
+    true,
+  );
+  const command = [
+    "scripts/verify-ghidra-bridge-sources.mjs",
+    "--check-sdk-pin",
+  ];
+  await expect(
+    execute(process.execPath, command, {
+      env: { ...process.env, ...job.env },
+    }),
+  ).resolves.toMatchObject({
+    stdout: `GHIDRA_JAVA_MAJOR=${SUPPORTED_GHIDRA_JAVA_MAJOR}\n`,
+  });
+  for (const env of [
+    {
+      ...job.env,
+      GHIDRA_RELEASE_URL: job.env.GHIDRA_RELEASE_URL.replaceAll(
+        SUPPORTED_GHIDRA_VERSION,
+        "0.0.0",
+      ),
+    },
+    { ...job.env, GHIDRA_RELEASE_SHA256: "not-a-digest" },
+  ])
+    await expect(
+      execute(process.execPath, command, {
+        env: { ...process.env, ...env },
+      }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        "SDK URL and SHA256 must match verified Ghidra",
+      ),
+    });
 });

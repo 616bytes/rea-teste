@@ -994,10 +994,13 @@ which compiles the packaged bridge sources against the pinned Ghidra 12.1.4
 jars with `npm run verify:ghidra:bridge-sources`. It never launches Ghidra or
 imports a target, so a missing import fails the PR instead of every Ghidra
 session. The launcher, compiler and package checks share named required source
-roles; deleting a standalone helper cannot silently reduce the checked cohort.
+roles. The manifest must match the complete Java cohort, so deleting a helper
+or adding an unregistered dependency cannot silently change the shipped set.
 The preflight reuses the provider's Java Properties parser with the pinned Node
 toolchain's native type stripping, without an npm install or runtime build.
-Changes to these source owners also select the compile lane.
+The shared release policy owns the verified version and JDK major. CI checks
+the archive pin before downloading and verifies the extracted SDK version;
+changes to these source owners also select the compile lane.
 Manual-provider/Android workflow changes run workflow validation only.
 The four-version SQLite compatibility matrix has its own `sqlite` scope for
 SQLite implementation, contracts, CLI/MCP registration, fixtures, and shared

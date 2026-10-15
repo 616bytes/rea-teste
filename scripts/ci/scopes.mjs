@@ -441,6 +441,7 @@ export const SCOPES = {
     "bridge/ghidra/**",
     "src/ghidra/GhidraBridgeSources.ts",
     "src/ghidra/GhidraJavaProperties.ts",
+    "src/ghidra/GhidraReleasePolicy.ts",
     "scripts/verify-ghidra-bridge-sources.mjs",
     ".github/workflows/ghidra-bridge-sources.yml",
   ],

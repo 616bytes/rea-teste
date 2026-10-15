@@ -14,13 +14,53 @@ import { fileURLToPath } from "node:url";
 // this preflight therefore uses runtime facts without needing npm ci or a build.
 import { GHIDRA_BRIDGE_SOURCES } from "../src/ghidra/GhidraBridgeSources.ts";
 import { parseGhidraJavaProperties } from "../src/ghidra/GhidraJavaProperties.ts";
+import {
+  SUPPORTED_GHIDRA_VERSION,
+  SUPPORTED_GHIDRA_JAVA_MAJOR,
+  ghidraReleaseAccepted,
+  ghidraReleaseLine,
+} from "../src/ghidra/GhidraReleasePolicy.ts";
+
+const args = process.argv.slice(2);
+if (
+  args.length > 1 ||
+  (args.length === 1 &&
+    !["--check-sdk-pin", "--verified-sdk"].includes(args[0]))
+)
+  fail(
+    "Usage: verify-ghidra-bridge-sources.mjs [--check-sdk-pin|--verified-sdk]",
+  );
+if (args[0] === "--check-sdk-pin") {
+  let url;
+  try {
+    url = new URL(process.env.GHIDRA_RELEASE_URL);
+  } catch {
+    fail("GHIDRA_RELEASE_URL must name the checksum-pinned official release");
+  }
+  const prefix = `/NationalSecurityAgency/ghidra/releases/download/Ghidra_${SUPPORTED_GHIDRA_VERSION}_build/ghidra_${SUPPORTED_GHIDRA_VERSION}_PUBLIC_`;
+  if (
+    url.origin !== "https://github.com" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    !url.pathname.startsWith(prefix) ||
+    !url.pathname.endsWith(".zip") ||
+    !/^[a-f0-9]{64}$/iu.test(process.env.GHIDRA_RELEASE_SHA256 ?? "")
+  )
+    fail(
+      `SDK URL and SHA256 must match verified Ghidra ${SUPPORTED_GHIDRA_VERSION}`,
+    );
+  console.log(`GHIDRA_JAVA_MAJOR=${SUPPORTED_GHIDRA_JAVA_MAJOR}`);
+  process.exit(0);
+}
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const bridge = join(root, "bridge/ghidra");
 const install = process.env.GHIDRA_INSTALL_DIR;
 if (!install)
   fail(
-    "Set GHIDRA_INSTALL_DIR to an existing Ghidra 12.1.x installation (verified with 12.1.4). REA does not install Ghidra.",
+    `Set GHIDRA_INSTALL_DIR to an existing Ghidra ${ghidraReleaseLine()} installation (verified with ${SUPPORTED_GHIDRA_VERSION}). REA does not install Ghidra.`,
   );
 const properties = await readFile(
   join(install, "Ghidra/application.properties"),
@@ -33,10 +73,13 @@ const properties = await readFile(
 const parsedProperties = parseGhidraJavaProperties(properties);
 if (!parsedProperties.ok) fail(parsedProperties.error);
 const version = parsedProperties.value.get("application.version");
-// Same 12.1 line as GhidraInstallationPolicy, including a distro suffix.
-if (!/^12\.1(?:\.\d+)?(?:[-+].*)?$/u.test(version ?? ""))
+if (!ghidraReleaseAccepted(version))
   fail(
-    `Bridge sources are compiled against Ghidra 12.1.x (verified with 12.1.4). Observed application.version=${version === undefined ? "missing" : JSON.stringify(version)}.`,
+    `Bridge sources require Ghidra ${ghidraReleaseLine()} (verified with ${SUPPORTED_GHIDRA_VERSION}). Observed application.version=${version === undefined ? "missing" : JSON.stringify(version)}.`,
+  );
+if (args[0] === "--verified-sdk" && version !== SUPPORTED_GHIDRA_VERSION)
+  fail(
+    `CI SDK must be verified Ghidra ${SUPPORTED_GHIDRA_VERSION}; observed ${JSON.stringify(version)}`,
   );
 const sourceNames = (await readdir(bridge, { withFileTypes: true }))
   .filter((entry) => entry.isFile() && entry.name.endsWith(".java"))
@@ -44,6 +87,12 @@ const sourceNames = (await readdir(bridge, { withFileTypes: true }))
 for (const name of Object.values(GHIDRA_BRIDGE_SOURCES))
   if (!sourceNames.includes(name))
     fail(`Required Ghidra bridge source is missing: bridge/ghidra/${name}`);
+const requiredNames = new Set(Object.values(GHIDRA_BRIDGE_SOURCES));
+const unregistered = sourceNames.filter((name) => !requiredNames.has(name));
+if (unregistered.length)
+  fail(
+    `Ghidra bridge sources absent from the manifest: ${unregistered.join(", ")}`,
+  );
 const sources = sourceNames
   .map((name) => relative(root, join(bridge, name)))
   .sort();
@@ -55,9 +104,9 @@ const banner = run(javac, ["-version"]);
 if (banner.error || banner.status !== 0)
   fail(`javac is unavailable: ${banner.error?.message ?? output(banner)}`);
 const major = Number(/^javac (\d+)/mu.exec(output(banner))?.[1]);
-if (!Number.isInteger(major) || major < 21)
+if (!Number.isInteger(major) || major < SUPPORTED_GHIDRA_JAVA_MAJOR)
   fail(
-    `Ghidra 12.1 compiles bridge scripts with Java 21 or newer. Observed: ${output(banner) || "no version"}. REA does not install or upgrade Java.`,
+    `Ghidra ${ghidraReleaseLine()} compiles bridge scripts with Java ${SUPPORTED_GHIDRA_JAVA_MAJOR} or newer. Observed: ${output(banner) || "no version"}. REA does not install or upgrade Java.`,
   );
 
 const jars = (
@@ -82,7 +131,7 @@ try {
       "-encoding",
       "UTF-8",
       "--release",
-      "21",
+      String(SUPPORTED_GHIDRA_JAVA_MAJOR),
       "-cp",
       jars.join(process.platform === "win32" ? ";" : ":"),
       "-d",

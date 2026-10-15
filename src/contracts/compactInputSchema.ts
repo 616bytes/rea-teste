@@ -24,7 +24,14 @@ const jsonValueTypes = [
   "string",
 ];
 
-export type AdvertisedInputSchemaPresentation = "inline" | "reduced";
+export type AdvertisedInputSchemaPresentation = "inline" | "capped" | "reduced";
+
+/**
+ * Some MCP clients reject the whole tool list while any input schema nests
+ * deeper than ten levels (#2813). Depth counts every JSON object and array
+ * level, data included, from the root at zero, after references are expanded.
+ */
+export const COMPACT_INPUT_SCHEMA_MAX_DEPTH = 10;
 
 /** Budget selected by the caller for compact MCP input-schema presentation. */
 export interface CompactInputSchemaPresentation {
@@ -41,22 +48,6 @@ const isSchemaObject = (value: unknown): value is Record<string, unknown> =>
 
 const serializedBytes = (value: unknown): number =>
   Buffer.byteLength(JSON.stringify(value), "utf8");
-
-const schemaDepth = (value: unknown, depth = 0): number => {
-  if (Array.isArray(value))
-    return Math.max(
-      depth,
-      ...value.map((child) => schemaDepth(child, depth + 1)),
-    );
-  if (!isSchemaObject(value)) return depth;
-  return Math.max(
-    depth,
-    ...Object.values(value).map((child) => schemaDepth(child, depth + 1)),
-  );
-};
-
-/** Strict clients commonly reject advertised schemas deeper than ten nodes. */
-const COMPACT_SCHEMA_MAX_DEPTH = 10;
 
 /** Rewrite every schema-valued position; literal data stays opaque. */
 const rebuildSchemaPositions = (
@@ -247,6 +238,137 @@ const detectedTypes = (
   return [...new Set(types.flatMap((type) => type ?? []))];
 };
 
+/** JSON depth of the deepest scalar, counting each object and array level. */
+export const schemaTreeDepth = (node: unknown, depth = 0): number => {
+  if (typeof node !== "object" || node === null) return depth;
+  let deepest = depth;
+  for (const child of Array.isArray(node) ? node : Object.values(node))
+    deepest = Math.max(deepest, schemaTreeDepth(child, depth + 1));
+  return deepest;
+};
+
+// Accepts every JSON value. Its type list costs two levels below the schema.
+const anyJsonValue = (): Record<string, unknown> => ({
+  type: [...jsonValueTypes],
+});
+const ANY_JSON_VALUE_DEPTH = 2;
+
+// Widening these subschemas at all would narrow the schema: a wider `not`
+// rejects more, and a wider `if` applies `then` to more inputs. They leave
+// together instead, which only widens.
+const narrowingWhenWidened: Readonly<Record<string, readonly string[]>> = {
+  not: ["not"],
+  if: ["if", "then", "else"],
+};
+
+// Evaluation annotations from a removed or replaced subschema no longer mark
+// properties or items as evaluated, so these leave whenever their object
+// changes rather than rejecting what the removed parts had allowed.
+const unevaluatedKeys = ["unevaluatedProperties", "unevaluatedItems"];
+
+const sameItems = (left: readonly unknown[], right: readonly unknown[]) =>
+  left.length === right.length &&
+  left.every((child, index) => child === right[index]);
+
+/**
+ * Keep every schema level that fits within `maximum` and replace a subschema
+ * that does not with one accepting every JSON value, or drop it where an
+ * accepting schema would narrow its parent. The result only ever accepts
+ * more than its input. Unchanged subschemas keep their identity. Returns
+ * undefined when this node cannot fit even then, so its parent replaces it
+ * instead.
+ */
+const capSchemaDepth = (
+  node: unknown,
+  depth: number,
+  maximum: number,
+): unknown => {
+  if (schemaTreeDepth(node, depth) <= maximum) return node;
+  if (!isSchemaObject(node)) return undefined;
+  const dropped = new Set<string>();
+  const drop = (names: readonly string[]): void => {
+    for (const name of names) {
+      dropped.add(name);
+      delete out[name];
+    }
+  };
+  const capChild = (child: unknown, childDepth: number): unknown => {
+    const capped = capSchemaDepth(child, childDepth, maximum);
+    if (capped !== undefined) return capped;
+    return childDepth + ANY_JSON_VALUE_DEPTH <= maximum
+      ? anyJsonValue()
+      : undefined;
+  };
+  const capList = (
+    value: readonly unknown[],
+  ): { items: unknown[]; replaced: boolean } | undefined => {
+    const exact = value.map((child) =>
+      capSchemaDepth(child, depth + 2, maximum),
+    );
+    const items = exact.map((child, index) =>
+      child === undefined ? capChild(value[index], depth + 2) : child,
+    );
+    if (items.some((child) => child === undefined)) return undefined;
+    return { items, replaced: exact.some((child) => child === undefined) };
+  };
+  const out: Record<string, unknown> = {};
+  let changed = false;
+  for (const [key, value] of Object.entries(node)) {
+    if (dropped.has(key)) continue;
+    let capped: unknown = value;
+    if (schemaMaps.has(key) && isSchemaObject(value)) {
+      const entries = Object.entries(value).map(([name, child]) => [
+        name,
+        capChild(child, depth + 2),
+      ]);
+      if (entries.some(([, child]) => child === undefined)) return undefined;
+      if (entries.some(([name, child]) => child !== value[name as string]))
+        capped = Object.fromEntries(entries);
+    } else if (schemaArrays.has(key) && Array.isArray(value)) {
+      const list = capList(value);
+      if (list === undefined) return undefined;
+      if (!sameItems(list.items, value)) {
+        capped = list.items;
+        // A widened branch can make a value match two alternatives, which
+        // oneOf rejects; anyOf accepts everything the oneOf did.
+        if (key === "oneOf") {
+          if (Object.hasOwn(node, "anyOf")) return undefined;
+          out.anyOf = capped;
+          changed = true;
+          continue;
+        }
+      }
+    } else if (schemaChildren.has(key)) {
+      const narrowing = narrowingWhenWidened[key];
+      if (Array.isArray(value)) {
+        const list = capList(value);
+        if (list === undefined) return undefined;
+        if (!sameItems(list.items, value)) capped = list.items;
+      } else {
+        capped = capSchemaDepth(value, depth + 1, maximum);
+        if (capped === undefined && narrowing === undefined)
+          capped = capChild(value, depth + 1);
+        if (capped === undefined && narrowing === undefined) return undefined;
+      }
+      if (capped !== value && narrowing !== undefined) {
+        drop(narrowing);
+        changed = true;
+        continue;
+      }
+      // A wider `contains` can match more items than maxContains allows.
+      if (capped !== value && key === "contains") drop(["maxContains"]);
+    }
+    if (capped !== value) changed = true;
+    out[key] = capped;
+  }
+  if (changed) drop(unevaluatedKeys);
+  // Dropping `not` or `if` can leave nothing, and Kimi reads an empty schema
+  // as a string; say "any JSON value" explicitly, or let the parent do it.
+  if (changed && Object.keys(out).length === 0)
+    return depth + ANY_JSON_VALUE_DEPTH <= maximum ? anyJsonValue() : undefined;
+  return schemaTreeDepth(out, depth) <= maximum ? out : undefined;
+};
+
 const REDUCED_ANNOTATION =
   "Advertised in reduced form by the compact input schema profile; the server still validates complete canonical inputs.";
 
@@ -312,7 +434,10 @@ const reduceToShallowProperties = (
     ...(typeof schema.minProperties === "number"
       ? { minProperties: schema.minProperties }
       : {}),
-    ...(schema.additionalProperties === false
+    // Without its patternProperties, a closed object would reject names
+    // the canonical schema accepts, so it stays open.
+    ...(schema.additionalProperties === false &&
+    schema.patternProperties === undefined
       ? { additionalProperties: false }
       : {}),
   };
@@ -330,8 +455,21 @@ export const compactAdvertisedInputSchema = (
   budgetBytes: number,
 ): CompactedInputSchema => {
   const inline = inlineWithinBudget(stripAnnotations(schema), budgetBytes);
-  if (inline !== undefined && schemaDepth(inline) <= COMPACT_SCHEMA_MAX_DEPTH)
-    return { schema: inline, presentation: "inline" };
+  if (inline !== undefined) {
+    if (schemaTreeDepth(inline) <= COMPACT_INPUT_SCHEMA_MAX_DEPTH)
+      return { schema: inline, presentation: "inline" };
+    const capped = capSchemaDepth(inline, 0, COMPACT_INPUT_SCHEMA_MAX_DEPTH);
+    if (isSchemaObject(capped)) {
+      // Like the reduced form, leave out root keywords some clients reject.
+      const {
+        dependencies: _dependencies,
+        dependentRequired: _dependentRequired,
+        ...presented
+      } = capped;
+      if (serializedBytes(presented) <= budgetBytes)
+        return { schema: presented, presentation: "capped" };
+    }
+  }
   const reduced = reduceToShallowProperties(schema);
   if (serializedBytes(reduced) <= budgetBytes)
     return { schema: reduced, presentation: "reduced" };

@@ -771,8 +771,24 @@ JSON Schema:
   root-property names, types, guidance, and required fields retained. The
   server continues to enforce the full canonical input contract.
 
-Boundary tests pin every advertised compact schema to the budget, keep them
-valid JSON Schema that still accepts every canonical example. Client verification
+- Some clients and model providers also reject the whole tool list while any
+  input schema nests deeper than ten levels
+  ([#2813](https://github.com/morluto/rea/issues/2813)). Compact schemas are
+  therefore at most ten levels deep after references are expanded, counting
+  every JSON object and array level, data included, from the root at zero. A
+  deeper schema keeps every level that fits, and each subschema below that is
+  advertised as accepting any JSON value. The result only ever accepts more
+  than the canonical schema: a `oneOf` with a widened alternative becomes
+  `anyOf`, and a `not` or an `if` with its `then` and `else` is left out
+  rather than widened, since widening those would narrow the schema. A
+  widened `contains` loses its `maxContains`, and `unevaluatedProperties` and
+  `unevaluatedItems` leave any schema object that capping changed, because
+  removed or replaced parts no longer mark what they had evaluated. The
+  default `full` profile is not depth-limited.
+
+Boundary tests pin every advertised compact schema to the budget and the
+nesting limit, and keep them valid JSON Schema that still accepts every
+canonical example. Client verification
 also checks provider-facing sizes and canonical examples after conversion by
 the actual Kimi Code CLI; local captures do not establish Moonshot acceptance.
 

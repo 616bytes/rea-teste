@@ -231,6 +231,9 @@ const createAnalysisViewEvidence = (
             (limitation) => limitation !== UNAVAILABLE_SUBJECT_LIMITATION,
           )
         : result.limitations,
+    ...(result.kind === "native" && parent.relationship_coverage !== null
+      ? { relationshipCoverage: parent.relationship_coverage }
+      : {}),
     locations: [
       ...(result.artifact.path.length > 0
         ? [{ kind: "artifact-path" as const, path: result.artifact.path }]

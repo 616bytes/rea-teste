@@ -6,19 +6,18 @@ import {
   AnalysisCancelledError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
-import { matchInventoryByRegex } from "../application/binary/RegexInventoryMatch.js";
 import { analysisStringSchema } from "../domain/hopperValues.js";
 import { HopperRemoteError } from "../domain/hopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisSearchInput } from "../contracts/analysisSearchContract.js";
 import type { HopperClient } from "./HopperClient.js";
+import { matchRegexValues } from "../process/RegexMatcher.js";
 
 const inputSchema = z.strictObject({
   ...analysisSearchInput,
   mode: z.literal("regex"),
 });
-
 /** Match collected native facts off Hopper's API thread, with cancellable lifetime. */
 export class HopperRegexSearch {
   readonly #active = new Map<
@@ -26,7 +25,7 @@ export class HopperRegexSearch {
     Promise<Result<JsonValue, AnalysisError>>
   >();
 
-  constructor(private readonly client: HopperClient) {}
+  constructor(private readonly client: Pick<HopperClient, "callTool">) {}
 
   execute(
     operation: "search_strings" | "search_procedures",
@@ -116,19 +115,17 @@ export class HopperRegexSearch {
       .catch(() => undefined);
     if (options.signal?.aborted)
       return err(new AnalysisCancelledError(operation));
-    const matched = await matchInventoryByRegex({
+    const matched = await matchRegexValues({
       operation,
-      values: parsed.data.map((item) => item.value),
       pattern: input.data.pattern,
       caseSensitive: input.data.case_sensitive,
+      values: parsed.data.map((item) => item.value),
       signal: options.signal,
       invalidPattern: (reason) =>
         new HopperRemoteError(-32000, `Invalid regex pattern: ${reason}`, {
           diagnosticType: "invalid_request",
           operation,
         }),
-      deadlineRemediation:
-        "Simplify the ECMAScript Unicode regex or use literal mode, then retry in the same session.",
     });
     if (!matched.ok) return matched;
     const selected = new Set(matched.value);

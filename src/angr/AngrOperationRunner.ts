@@ -22,7 +22,7 @@ import {
   ANGR_MUTATING_OPERATIONS,
 } from "./AngrProviderCapabilities.js";
 import { AngrEditRunner } from "./AngrEditRunner.js";
-import { matchInventoryByRegex } from "../application/binary/RegexInventoryMatch.js";
+import { matchRegexValues } from "../process/RegexMatcher.js";
 import {
   angrAddressSchema,
   basicBlocksSchema,
@@ -533,7 +533,7 @@ export class AngrOperationRunner {
         ? await this.functions()
         : await this.strings();
     if (query?.mode === "regex") {
-      const matched = await matchInventoryByRegex({
+      const matched = await matchRegexValues({
         operation,
         values: items.map(({ value }) => value),
         pattern: query.pattern,
@@ -547,8 +547,6 @@ export class AngrOperationRunner {
               message: `Supply a valid ECMAScript Unicode regex: ${reason}`,
             },
           ]),
-        deadlineRemediation:
-          "Simplify the ECMAScript Unicode regex or use literal mode, then retry in the same session.",
       });
       if (!matched.ok) throw matched.error;
       const selected = new Set(matched.value);

@@ -110,6 +110,7 @@ const SOURCE_PATHS = {
   ghidraProvider: "dist/ghidra/GhidraProviderCapabilities.js",
   idaProvider: "dist/ida/IdaProviderCapabilities.js",
   angrProvider: "dist/angr/AngrProviderCapabilities.js",
+  kunaProvider: "dist/kuna/KunaProviderCapabilities.js",
   nativeProvider: "dist/native/NativeMacOSProviderMetadata.js",
   artifactProviders: "dist/application/InvestigationProviders.js",
   browserIdentities: "dist/browser/providerIdentities.js",

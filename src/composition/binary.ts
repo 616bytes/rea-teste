@@ -5,6 +5,7 @@ import { HopperProvider } from "../hopper/HopperProvider.js";
 import { GhidraProvider } from "../ghidra/GhidraProvider.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { AngrProvider } from "../angr/AngrProvider.js";
+import { KunaProvider } from "../kuna/KunaProvider.js";
 import type { Logger } from "pino";
 import { auxiliaryAnalysisProviderDeclarations } from "./auxiliaryAnalysisProviders.js";
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
@@ -27,9 +28,10 @@ export const createBinarySession = (
   const ghidra = new GhidraProvider(config, logger, environment);
   const ida = new IdaProvider(config, environment);
   const angr = new AngrProvider(config, environment);
+  const kuna = new KunaProvider(environment);
   return composeBinarySession(
     new AnalysisProviderRegistry(
-      [hopper, ghidra, ida, angr],
+      [hopper, ghidra, ida, angr, kuna],
       config.analysisProvider,
     ),
     auxiliaryAnalysisProviderDeclarations(environment).map(

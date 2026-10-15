@@ -346,6 +346,45 @@ it("builds a dossier with pseudocode and assembly, and the rest explicitly unava
 
   const dossier = await run(client, "analyze_function", { procedure: "main" });
 
+  expect(dossier.rawResult).toMatchObject({
+    source: {
+      kind: "project-export",
+      files: [
+        {
+          facet: "pseudocode",
+          file_sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        },
+        {
+          facet: "assembly",
+          file_sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        },
+      ],
+    },
+  });
+  const { source } = dossier.rawResult as {
+    source: {
+      directory: string;
+      files: {
+        facet: "pseudocode" | "assembly";
+        file: string;
+        file_sha256: string;
+        byte_offset: number;
+        byte_length: number;
+      }[];
+    };
+  };
+  for (const file of source.files) {
+    const bytes = await readFile(join(source.directory, file.file));
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+      file.file_sha256,
+    );
+    const text = bytes
+      .subarray(file.byte_offset, file.byte_offset + file.byte_length)
+      .toString("utf8");
+    const facet = (dossier.result as Record<string, JsonValue>)[file.facet];
+    expect(text).toContain(Array.isArray(facet) ? facet.join("\n") : facet);
+  }
+
   expect(dossier.result).toMatchObject({
     procedure: {
       address: "0x1000",

@@ -86,11 +86,12 @@ interface InventoryIndex {
 interface Answer {
   readonly result: JsonValue;
   readonly source: AnswerSource | null;
-  readonly file?: {
+  readonly files?: readonly {
+    readonly facet: "pseudocode" | "assembly";
     readonly path: string;
     readonly byteOffset: number;
     readonly byteLength: number;
-  };
+  }[];
   readonly locations: readonly EvidenceLocation[];
   readonly limitations: readonly string[];
 }
@@ -414,6 +415,23 @@ export class KunaSessionClient implements AnalysisClient {
     answer: Answer,
   ): AnalysisExecution {
     const source = answer.source;
+    const files =
+      source?.kind !== "project-export"
+        ? []
+        : (answer.files ?? []).map((file) => ({
+            facet: file.facet,
+            file: file.path,
+            file_sha256:
+              Object.values(source.project.manifest.files).find(
+                ({ path }) => path === file.path,
+              )?.sha256 ?? null,
+            byte_offset: file.byteOffset,
+            byte_length: file.byteLength,
+          }));
+    // Preserve the direct text source shape; combined answers retain every
+    // component once, including its producing file digest and byte range.
+    const recordedFiles =
+      files.length === 1 ? files[0] : files.length === 0 ? {} : { files };
     return createAnalysisExecution(
       answer.result,
       {
@@ -435,18 +453,7 @@ export class KunaSessionClient implements AnalysisClient {
                         kind: "project-export",
                         key: source.project.key,
                         directory: source.project.directory,
-                        ...(answer.file === undefined
-                          ? {}
-                          : {
-                              file: answer.file.path,
-                              file_sha256:
-                                Object.values(
-                                  source.project.manifest.files,
-                                ).find(({ path }) => path === answer.file?.path)
-                                  ?.sha256 ?? null,
-                              byte_offset: answer.file.byteOffset,
-                              byte_length: answer.file.byteLength,
-                            }),
+                        ...recordedFiles,
                       },
                 project_export: this.#exportState(),
               },
@@ -651,11 +658,14 @@ export class KunaSessionClient implements AnalysisClient {
         return ok({
           result: null,
           source: { kind: "project-export", project },
-          file: {
-            path: project.manifest.files.c.path,
-            byteOffset: block.cOffset,
-            byteLength: block.cLength,
-          },
+          files: [
+            {
+              facet: "pseudocode",
+              path: project.manifest.files.c.path,
+              byteOffset: block.cOffset,
+              byteLength: block.cLength,
+            },
+          ],
           limitations: [
             `Kuna could not decompile this function: ${block.error}`,
           ],
@@ -668,11 +678,14 @@ export class KunaSessionClient implements AnalysisClient {
       return ok({
         result: blockCode(text),
         source: { kind: "project-export", project },
-        file: {
-          path: project.manifest.files.c.path,
-          byteOffset: block.cOffset,
-          byteLength: block.cLength,
-        },
+        files: [
+          {
+            facet: "pseudocode",
+            path: project.manifest.files.c.path,
+            byteOffset: block.cOffset,
+            byteLength: block.cLength,
+          },
+        ],
         limitations: [],
       });
     }
@@ -734,11 +747,14 @@ export class KunaSessionClient implements AnalysisClient {
     return ok({
       result: text.replace(/\n+$/u, ""),
       source: { kind: "project-export", project },
-      file: {
-        path: project.manifest.files.asm.path,
-        byteOffset: span.offset,
-        byteLength: span.length,
-      },
+      files: [
+        {
+          facet: "assembly",
+          path: project.manifest.files.asm.path,
+          byteOffset: span.offset,
+          byteLength: span.length,
+        },
+      ],
       limitations: [],
     });
   }
@@ -823,6 +839,10 @@ export class KunaSessionClient implements AnalysisClient {
     return ok({
       result: dossier,
       source: pseudocode.value.source,
+      files: [
+        ...(pseudocode.value.files ?? []),
+        ...(assembly.value.files ?? []),
+      ],
       locations: [{ kind: "address", address: entry.address }],
       limitations: pseudocode.value.limitations,
     });

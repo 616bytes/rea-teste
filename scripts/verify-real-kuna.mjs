@@ -274,6 +274,29 @@ const verifyKuna = async (path, functions) => {
         exported.value === null || block.includes(exported.value),
         "Served pseudocode differs from the recorded export span",
       );
+      const dossier = await cold.call("analyze_function", {
+        procedure: address,
+      });
+      const combined = dossier.structured.raw_result.source;
+      assert.equal(combined.kind, "project-export");
+      assert.deepEqual(
+        combined.files.map(({ facet }) => facet),
+        ["pseudocode", "assembly"],
+      );
+      for (const file of combined.files) {
+        const bytes = await readFile(join(combined.directory, file.file));
+        assert.equal(
+          createHash("sha256").update(bytes).digest("hex"),
+          file.file_sha256,
+        );
+        const span = bytes
+          .subarray(file.byte_offset, file.byte_offset + file.byte_length)
+          .toString("utf8");
+        const facet = dossier.value[file.facet];
+        assert.ok(
+          span.includes(Array.isArray(facet) ? facet.join("\n") : facet),
+        );
+      }
       answers.push({
         name,
         address,
@@ -282,6 +305,7 @@ const verifyKuna = async (path, functions) => {
         export_wait_ms: assembly.ms,
         warm_same_session_ms: exported.ms,
         response_bytes: exported.bytes,
+        dossier_response_bytes: dossier.bytes,
         ...quality(exported.value),
       });
     }

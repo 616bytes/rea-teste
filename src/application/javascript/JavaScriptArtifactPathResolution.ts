@@ -551,22 +551,24 @@ const contextualCandidate = (
       return unresolvedCandidate("rejected", [
         "The URL reference path percent-decodes to NUL or to bytes that are not UTF-8.",
       ]);
-    // Empty URL segments are significant; canonical filesystem paths cannot
-    // preserve them, including their interaction with following dot segments.
-    if (decoded.includes("//"))
-      return unresolvedCandidate("unavailable", [
-        "Repeated URL path separators cannot be mapped to an exact canonical artifact file.",
-      ]);
-    return exactUrlPathCandidate(
+    const candidate = urlRelativeCandidate(
+      posix.dirname(input.sourcePath),
       decoded,
-      relativeCandidate(input.sourcePath, decoded),
-      "URL",
     );
+    return typeof candidate === "string"
+      ? exactUrlPathCandidate(decoded, candidate, "URL")
+      : candidate;
   }
-  const candidate = relativeCandidate(input.sourcePath, declared);
-  return context === "module-specifier" && input.moduleKind === "import"
-    ? exactUrlPathCandidate(declared, candidate, "module URL")
-    : candidate;
+  if (context === "module-specifier" && input.moduleKind === "import") {
+    const candidate = urlRelativeCandidate(
+      posix.dirname(input.sourcePath),
+      declared,
+    );
+    return typeof candidate === "string"
+      ? exactUrlPathCandidate(declared, candidate, "module URL")
+      : candidate;
+  }
+  return relativeCandidate(input.sourcePath, declared);
 };
 
 const decodeModuleUrlPath = (
@@ -592,6 +594,39 @@ const relativeCandidate = (sourcePath: string, declared: string): string =>
   declared.startsWith("/")
     ? declared.slice(1)
     : posix.join(posix.dirname(sourcePath), declared);
+
+/**
+ * Resolve a URL path reference against a canonical directory. URL dot
+ * segments remove the previous segment even when it is empty, so
+ * `assets//../app.js` names `assets/app.js`. An empty segment that remains
+ * cannot name a canonical artifact file; a trailing one is directory form.
+ */
+const urlRelativeCandidate = (
+  directory: string,
+  reference: string,
+): string | CandidateResolution => {
+  const absolute = reference.startsWith("/");
+  const segments =
+    absolute || directory === "" || directory === "."
+      ? []
+      : directory.split("/");
+  let escapes = 0;
+  for (const part of (absolute ? reference.slice(1) : reference).split("/")) {
+    if (part === ".") continue;
+    if (part !== "..") segments.push(part);
+    else if (segments.length > 0) segments.pop();
+    else escapes += 1;
+  }
+  if (segments.at(-1) === "") segments.pop();
+  if (segments.includes(""))
+    return unresolvedCandidate("unavailable", [
+      "Repeated URL path separators cannot be mapped to an exact canonical artifact file.",
+    ]);
+  // Confinement rejects a reference that climbs above the artifact root.
+  return [...Array.from({ length: escapes }, () => ".."), ...segments].join(
+    "/",
+  );
+};
 
 const bareModuleCandidate = (
   input: ResolveArtifactPathInput,
@@ -1066,11 +1101,12 @@ const htmlCandidate = (
     return unresolvedCandidate("rejected", [
       "The HTML reference path percent-decodes to NUL or to bytes that are not UTF-8.",
     ]);
-  if (declaredPath.startsWith("/")) return declaredPath.slice(1);
+  if (declaredPath.startsWith("/"))
+    return urlRelativeCandidate("", declaredPath);
   if (base === undefined || base === null || base === "")
     return declaredPath === ""
       ? input.sourcePath
-      : posix.join(posix.dirname(input.sourcePath), declaredPath);
+      : urlRelativeCandidate(posix.dirname(input.sourcePath), declaredPath);
   // A local base href is a second untrusted path input; apply the same
   // admission rules a declared path gets so it cannot smuggle traversal or
   // separator syntax past canonicalization.
@@ -1083,12 +1119,17 @@ const htmlCandidate = (
     return unresolvedCandidate("rejected", [
       "The document base href path percent-decodes to NUL or to bytes that are not UTF-8.",
     ]);
-  const basePath = decodedBase.startsWith("/")
-    ? decodedBase.slice(1)
-    : posix.join(posix.dirname(input.sourcePath), decodedBase);
+  const basePath = urlRelativeCandidate(
+    posix.dirname(input.sourcePath),
+    decodedBase,
+  );
+  if (typeof basePath !== "string") return basePath;
   if (declaredPath === "")
     return exactUrlPathCandidate(decodedBase, basePath, "HTML");
-  return posix.join(htmlBaseDirectory(decodedBase, basePath), declaredPath);
+  return urlRelativeCandidate(
+    htmlBaseDirectory(decodedBase, basePath),
+    declaredPath,
+  );
 };
 
 const exactUrlPathCandidate = (

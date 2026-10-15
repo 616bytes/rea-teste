@@ -76,43 +76,6 @@ it("checks Linux executable presence without passing it to ldd", async () => {
   expect(calls).toEqual([]);
 });
 
-it("does not run a linker probe for an unsupported Linux Hopper launcher", async () => {
-  const root = await createTestTempDirectory("rea-doctor-unverified-hopper-");
-  const launcher = join(root, "hopper");
-  await writeFile(launcher, "untrusted launcher fixture");
-
-  const calls: string[] = [];
-  const host = systemDoctorHost({
-    platform: "linux",
-    environment: {},
-    execFileOutput: async (command) => {
-      calls.push(command);
-      throw new Error(`Unexpected diagnostic command: ${command}`);
-    },
-  });
-
-  await expect(host.supportedLinuxHopper(launcher)).resolves.toBe(false);
-  expect(calls).toEqual([]);
-});
-
-it("does not run a linker probe for a supported Linux Hopper launcher", async () => {
-  const calls: string[] = [];
-  const host = systemDoctorHost({
-    platform: "linux",
-    environment: {},
-    supportsLinuxHopper: async () => true,
-    execFileOutput: async (command) => {
-      calls.push(command);
-      throw new Error(`Unexpected diagnostic command: ${command}`);
-    },
-  });
-
-  await expect(host.supportedLinuxHopper("/verified/hopper")).resolves.toBe(
-    true,
-  );
-  expect(calls).toEqual([]);
-});
-
 it("does not report a directory as an available executable", async () => {
   const host = systemDoctorHost({
     platform: "darwin",

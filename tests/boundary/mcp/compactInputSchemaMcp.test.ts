@@ -4,6 +4,10 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
+import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
+import { presentAdvertisedInputSchema } from "../../../src/contracts/compactInputSchema.js";
+import { createCatalogDigests } from "../../../src/catalogIdentity.js";
 import {
   schemaArrays,
   schemaChildren,
@@ -17,6 +21,7 @@ import { processScenarioSchema } from "../../../src/domain/process/processScenar
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { ToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
+import { arrayItemSchemaError } from "../../fixtures/mcpClientSchemaConstraints.js";
 
 interface AdvertisedTool {
   readonly name: string;
@@ -109,6 +114,68 @@ const fullServer = (): EvidenceMcpServer =>
   );
 
 describe("MCP compact input schema profile", () => {
+  it("matches profile digests to tools/list and excludes stripped annotations", async () => {
+    const compactPresentation = {
+      budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+    };
+    const full = fullServer();
+    const compact = compactServer();
+    registerCatalog(full);
+    registerCatalog(compact);
+    const [fullTools, compactTools] = await Promise.all([
+      listToolsThroughTransport(full),
+      listToolsThroughTransport(compact),
+    ]);
+    const toolsByName = [
+      new Map(fullTools.map((tool) => [tool.name, tool])),
+      new Map(compactTools.map((tool) => [tool.name, tool])),
+    ];
+    for (const [index, presentation] of [
+      undefined,
+      compactPresentation,
+    ].entries()) {
+      for (const contract of TOOL_CONTRACTS) {
+        expect(toolsByName[index]?.get(contract.name)?.inputSchema).toEqual(
+          presentAdvertisedInputSchema(
+            advertisedInputJsonSchema(contract),
+            presentation,
+          ),
+        );
+      }
+    }
+
+    const fullIdentity = createCatalogDigests();
+    const compactIdentity = createCatalogDigests(
+      TOOL_CONTRACTS,
+      PROMPT_CONTRACTS,
+      compactPresentation,
+    );
+    expect(full.catalogIdentity.digests).toEqual(fullIdentity);
+    expect(compact.catalogIdentity.digests).toEqual(compactIdentity);
+    expect(compactIdentity.tools_sha256).not.toBe(fullIdentity.tools_sha256);
+    expect(
+      createCatalogDigests(TOOL_CONTRACTS, PROMPT_CONTRACTS, {
+        budgetBytes: 1,
+      }).tools_sha256,
+    ).not.toBe(compactIdentity.tools_sha256);
+
+    const withoutExamples = TOOL_CONTRACTS.map((contract) =>
+      contract.examples.length === 0 ? contract : { ...contract, examples: [] },
+    );
+    expect(createCatalogDigests(withoutExamples).tools_sha256).not.toBe(
+      fullIdentity.tools_sha256,
+    );
+    expect(
+      createCatalogDigests(
+        withoutExamples,
+        PROMPT_CONTRACTS,
+        compactPresentation,
+      ).tools_sha256,
+    ).toBe(compactIdentity.tools_sha256);
+  });
+});
+
+describe("MCP compact schema constraints", () => {
   it("advertises every tool input schema within the provider budget", async () => {
     const server = compactServer();
     registerCatalog(server);
@@ -157,6 +224,7 @@ describe("MCP compact input schema profile", () => {
       TOOL_CONTRACTS.map((contract) => [contract.name, contract]),
     );
     for (const tool of tools) {
+      expect(arrayItemSchemaError(tool.inputSchema, tool.name)).toBeUndefined();
       expect(
         ajv.validateSchema(tool.inputSchema),
         `${tool.name}: ${ajv.errorsText(ajv.errors)}`,
@@ -193,6 +261,11 @@ describe("MCP compact input schema profile", () => {
     expect(sqlite?.inputSchema.description).toContain(
       "When row_limit is provided, also provide table.",
     );
+    for (const tools of [fullTools, compactTools])
+      expect(
+        tools.find(({ name }) => name === "inspect_sqlite_database")
+          ?.inputSchema.description,
+      ).toContain("When schema_scope is selected_table, also provide table.");
   });
 
   it("retains parameter types and avoids client-side reference expansion", async () => {

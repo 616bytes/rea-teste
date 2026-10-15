@@ -6,11 +6,13 @@ import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
   resolveSemanticBindingState,
   isUnmodifiedCommonJsWrapperBinding,
+  isUnshadowedGlobal,
   semanticResolutionBlocked,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import {
+  readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -285,12 +287,36 @@ const writesModuleRequire = (
         const args = invocation?.arguments;
         if (
           (owner === "Object" || owner === "Reflect") &&
-          (method === "defineProperty" ||
-            (owner === "Reflect" && method === "set")) &&
+          method === "defineProperty" &&
           isModuleObject(args?.[0] ?? t.nullLiteral())
         ) {
           const key = interop.staticString(args?.[1]);
           if (key === "require" || key === undefined) writes.push(node);
+        } else if (owner === "Reflect" && method === "set") {
+          const key = args?.slice(0, 2).some(t.isSpreadElement)
+            ? undefined
+            : interop.staticString(args?.[1]);
+          if (key !== "require" && key !== undefined) return;
+          // Ordinary [[Set]] writes the receiver, which defaults to the target
+          // only when omitted. An unknown receiver can still be this module.
+          const receiver =
+            args !== undefined && args.length >= 4 ? args[3] : args?.[0];
+          if (
+            receiver === undefined ||
+            args?.slice(0, 4).some(t.isSpreadElement)
+          ) {
+            writes.push(node);
+            return;
+          }
+          const value = unwrapJavaScriptExpression(receiver).node;
+          if (
+            !interop.isFreshObject(value) &&
+            !readExactJavaScriptLiteral(value).found &&
+            !t.isBigIntLiteral(value) &&
+            !t.isUnaryExpression(value, { operator: "void" }) &&
+            !isUnshadowedGlobal(value, state, "undefined")
+          )
+            writes.push(node);
         } else if (
           owner === "Object" &&
           method === "defineProperties" &&

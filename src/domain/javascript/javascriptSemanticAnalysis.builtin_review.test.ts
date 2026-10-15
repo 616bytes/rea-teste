@@ -8,6 +8,13 @@ it.each([
   "Object.defineProperties(module, { [key]: { value: replacement } });",
   "Reflect.set(module, 'require', replacement);",
   "Reflect.set(module, key, replacement);",
+  "Reflect.set({}, 'require', replacement, module);",
+  "const receiver=module; Reflect.set({}, 'require', replacement, receiver);",
+  "Reflect.set(module, 'require', replacement, receiver);",
+  "Reflect.set(module, 'require', replacement, ...receivers);",
+  "Reflect.apply(Reflect.set, null, [{}, 'require', replacement, module]);",
+  "const set=Reflect.set.bind(null, {}, 'require', replacement); set(module);",
+  "Object.defineProperty(module, 'require', {value: replacement}, {});",
   "let owner=module; owner.require=replacement; owner={};",
 ])("invalidates the wrapper loader at its write: %s", (write) => {
   const ir = analyzeJavaScriptSemantics(`${write}
@@ -19,6 +26,12 @@ it.each([
   "Object.assign(module, { unrelated: replacement });",
   "Object.defineProperties(module, { unrelated: { value: replacement } });",
   "Reflect.set(module, 'unrelated', replacement);",
+  "Reflect.set(module, 'require', replacement, {});",
+  "const receiver={}; Reflect.set(module, 'require', replacement, receiver);",
+  "Reflect.set(module, 'require', replacement, null);",
+  "Reflect.set(module, 'require', replacement, undefined);",
+  "Reflect.apply(Reflect.set, null, [module, 'require', replacement, {}]);",
+  "const set=Reflect.set.bind(null, module, 'require', replacement); set({});",
   "let owner=module; owner={}; owner.require=replacement;",
 ])("preserves the wrapper loader across unrelated writes: %s", (write) => {
   const ir = analyzeJavaScriptSemantics(`${write}

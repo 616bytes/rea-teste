@@ -91,6 +91,16 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     `const fs=require('fs'); fs.readFileSync('nested-kept.json');
      if(flag) { fs.readFileSync=custom; } fs.readFileSync('wrong-nested.json');`,
   );
+  await writeFile(
+    join(root, "reflect-receiver.cjs"),
+    `Reflect.set(module, 'require', replacement, {});
+     const fs=require('fs'); fs.readFileSync('reflect-receiver-kept.json');`,
+  );
+  await writeFile(
+    join(root, "reflect-module.cjs"),
+    `Reflect.set({}, 'require', replacement, module);
+     const fs=require('fs'); fs.readFileSync('wrong-reflect-module.json');`,
+  );
   const { stdout } = await execute(
     process.execPath,
     ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
@@ -116,6 +126,7 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "loader-before.json",
     "nested-kept.json",
     "ordered-kept.json",
+    "reflect-receiver-kept.json",
     "replacement-kept.json",
     "saved-destructured.json",
     "saved.json",

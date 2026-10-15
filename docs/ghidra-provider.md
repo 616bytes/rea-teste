@@ -7,6 +7,8 @@ Executable bytes remain unchanged.
 
 Use [installation](installation.md#ghidra) for supported hosts, prerequisites,
 configuration, startup deadlines, resource controls, and cleanup recovery.
+[Linux Ghidra launches](installation.md#linux-owned-process-prerequisite) also
+require a procps-compatible `ps` on REA's `PATH` for process ownership checks.
 [Windows P0](windows-ghidra-p0.md) has its own admission and lifecycle boundary;
 [NativeAOT observations](ghidra-nativeaot.md) include a built-in read-only PE
 snapshot parser and a separate optional annotation extension. Check the
@@ -151,8 +153,8 @@ overview merely because its source artifact is unchanged.
 
 Function extents and instruction completeness refer to Ghidra's analyzed body.
 An inferred no-return call can terminate that body before subsequent bytes.
-Pseudocode, assembly, procedure info, instruction windows, callee and caller
-reads, and dossiers report observed terminal call sites in Evidence limitations,
+Pseudocode, assembly, procedure info, instruction windows, incoming and outgoing
+references, callee and caller reads, and dossiers report observed terminal call sites in Evidence limitations,
 including resolved callee names, addresses, and FunctionManager flags when
 available. On x86-32, the same views also report the exact Borland/Delphi-style
 FS exception-registration pattern when its handler address falls outside the

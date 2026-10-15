@@ -1,18 +1,11 @@
-import { parse } from "@babel/parser";
 import * as t from "@babel/types";
 
 import { sanitizeEndpointCandidate } from "./browserObservation.js";
 import { compositeKey } from "./unicodeCodePointOrder.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
 import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
-import {
-  completeSemanticSteps,
-  traverseJavaScriptAst,
-} from "./javascript/javascriptSemanticTraversal.js";
-import {
-  classifyParsedJavaScriptOpenReceivers,
-  classifyParsedJavaScriptRpcClientRootsSteps,
-} from "./javascript/javascriptSemanticAnalysis.js";
+import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
+import { classifyParsedJavaScriptReceivers } from "./javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticAnalysis.js";
 import { semanticStaticPropertyName } from "./javascript/javascriptAstValues.js";
 import {
@@ -29,6 +22,7 @@ import {
   isUrlLikeModuleSpecifier,
 } from "./webBundleAnalyzerAst.js";
 import { createJavaScriptRpcScan } from "./javascript/javascriptRpcEndpoints.js";
+import { parseJavaScriptSource } from "./javascript/javascriptSourceParser.js";
 
 type BundleObservations = WebBundleAnalysis["observations"];
 type ChunkEdge = BundleObservations["chunks"]["edges"][number];
@@ -58,16 +52,8 @@ export const analyzeScript = (
   script: IncludedScript,
   accumulator: AnalysisAccumulator,
 ): void => {
-  let file: ReturnType<typeof parse>;
-  try {
-    file = parse(script.source.artifact.text, {
-      sourceType: "unambiguous",
-      errorRecovery: true,
-      plugins: ["jsx", "typescript"],
-    });
-  } catch (cause: unknown) {
-    // Unparseable scripts are counted; the failure needs no extra detail.
-    void cause;
+  const file = parseJavaScriptSource(script.source.artifact.text);
+  if (file === null) {
     accumulator.failedScripts.push(script.script_key);
     return;
   }
@@ -75,10 +61,11 @@ export const analyzeScript = (
   if ((file.errors?.length ?? 0) > 0)
     accumulator.recoveredScripts.push(script.script_key);
   detectVendorFingerprints(script, accumulator);
-  const openReceiverFacts = classifyParsedJavaScriptOpenReceivers(file);
+  const receivers = classifyParsedJavaScriptReceivers(file);
+  const openReceiverFacts = receivers.openReceivers;
   const rpc = createJavaScriptRpcScan(
     script.source.artifact.text,
-    completeSemanticSteps(classifyParsedJavaScriptRpcClientRootsSteps(file)),
+    receivers.rpcClientRoots,
   );
   traverseJavaScriptAst(file, {
     enter: (node) => {
@@ -216,11 +203,12 @@ const inspectRouteProperty = (
   accumulator: AnalysisAccumulator,
 ): void => {
   const key = semanticStaticPropertyName(node.key, node.computed);
-  if ((key === "path" || key === "route") && t.isStringLiteral(node.value))
+  const route = stringValue(node.value);
+  if ((key === "path" || key === "route") && route !== undefined)
     addFinding({
       collection: accumulator.routes,
       script,
-      rawValue: node.value.value,
+      rawValue: route,
       mechanism: `property:${key}`,
       node,
       accumulator,

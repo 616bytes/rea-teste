@@ -161,7 +161,9 @@ describe("web bundle analyzer", () => {
       trust: "page-declared-untrusted",
     });
   });
+});
 
+describe("web bundle source-map coverage", () => {
   it("reports unavailable source maps as partial without dropping requested maps", () => {
     const analysis = analyzeCapturedWebBundle(inspection("export {};"), {
       status: "unavailable",
@@ -189,6 +191,18 @@ describe("web bundle analyzer", () => {
         "One or more requested source maps were unavailable or incomplete",
       affected_script_keys: [`scr_${"1".repeat(64)}`],
     });
+  });
+
+  it("keeps map-less captured source complete when no maps were requested", () => {
+    const analysis = analyzeCapturedWebBundle(inspection("export {};"), {
+      status: "not_requested",
+      requested: 0,
+      processed: 0,
+      items: [],
+    });
+
+    expect(analysis.completeness.status).toBe("complete");
+    expect(analysis.unknowns).toEqual([]);
   });
 
   it("rejects inconsistent source-map coverage counts", () => {
@@ -901,6 +915,38 @@ const inspection = (source: string) =>
     },
     limitations: [],
   });
+
+it("recognizes expression-free template literals as route properties", () => {
+  const result = analyzeCapturedWebBundle(
+    inspection(`
+      const routes = [
+        { path: \`score-board\`, component: ScoreBoard },
+        { route: \`administration\`, component: Admin },
+        { path: \`/user/\${name}\`, component: Dynamic },
+      ];
+    `),
+  );
+
+  expect(result.observations.routes.map(({ value }) => value)).toEqual([
+    "score-board",
+    "administration",
+  ]);
+});
+
+it("uses the shared parser for decorated captured scripts", () => {
+  const result = analyzeCapturedWebBundle(
+    inspection(`@sealed class Widget {} fetch('/decorated');`),
+  );
+
+  expect(result.completeness).toMatchObject({
+    status: "complete",
+    parsed_scripts: 1,
+    parse_failures: 0,
+  });
+  expect(result.observations.endpoints).toEqual([
+    expect.objectContaining({ value: "/decorated" }),
+  ]);
+});
 
 it("keeps bare module locations unresolved without inventing URL-relative paths", () => {
   const result = analyzeCapturedWebBundle(

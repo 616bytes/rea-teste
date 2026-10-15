@@ -11,6 +11,10 @@ import { isUrlLikeModuleSpecifier } from "../domain/webBundleAnalyzerAst.js";
 import { analyzeParsedJavaScriptReferences } from "../domain/javascript/javascriptSemanticAnalysis.js";
 import { traverseJavaScriptAst } from "../domain/javascript/javascriptSemanticTraversal.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
+import {
+  isTypeOnlyExportDeclaration,
+  isTypeOnlyImportDeclaration,
+} from "../domain/javascript/javascriptModuleDeclaration.js";
 import { stringValue } from "../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import type {
   AnalyzeWebBundleInput,
@@ -77,6 +81,14 @@ export const fetchWebSourceMaps = async (
   signal?: AbortSignal,
   host: SourceMapFetchHost = { fetch: globalThis.fetch },
 ): Promise<SourceMaps> => {
+  throwIfAborted(signal);
+  if (requests.length === 0)
+    return webSourceMapsSchema.parse({
+      status: "not_requested",
+      requested: 0,
+      processed: 0,
+      items: [],
+    });
   const items: SourceMapItem[] = [];
   const operationController = new AbortController();
   const timeout = setTimeout(
@@ -164,6 +176,10 @@ export const fetchWebSourceMaps = async (
     items,
     ...(limitation === undefined ? {} : { limitation }),
   });
+};
+
+const throwIfAborted = (signal?: AbortSignal): void => {
+  if (signal?.aborted === true) throw signal.reason;
 };
 
 const sourceMapOutputLimitation = (unprocessed: number): string =>
@@ -1061,7 +1077,11 @@ const originalDependency = (
     t.isExportAllDeclaration(node) ||
     t.isExportNamedDeclaration(node)
   )
-    return node.source === null || node.source === undefined
+    return node.source === null ||
+      node.source === undefined ||
+      (t.isImportDeclaration(node)
+        ? isTypeOnlyImportDeclaration(node)
+        : isTypeOnlyExportDeclaration(node))
       ? null
       : { kind: "static_import", specifier: node.source.value };
   if (t.isImportExpression(node)) {

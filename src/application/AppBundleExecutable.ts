@@ -177,18 +177,46 @@ const resolveLayoutExecutable = async (
   fileSystem: AppBundleFileSystem,
 ): Promise<Result<ResolvedAppBundle, BinaryTargetError>> => {
   const plistPath = join(bundle, ...layout.plist);
-  let plist: Buffer;
+  let canonicalBundle: string;
   try {
-    plist = await fileSystem.readFile(plistPath);
+    canonicalBundle = await fileSystem.realpath(bundle);
+  } catch (cause: unknown) {
+    return err(
+      new BinaryTargetError(bundle, errorReason(cause, bundle), { cause }),
+    );
+  }
+  let canonicalPlist: string;
+  try {
+    canonicalPlist = await fileSystem.realpath(plistPath);
   } catch (cause: unknown) {
     return err(
       new BinaryTargetError(
         plistPath,
         isPermissionDenied(cause)
-          ? `permission denied reading app Info.plist ${plistPath}`
+          ? `permission denied resolving app Info.plist ${plistPath}`
           : isAbsence(cause)
             ? `app Info.plist is missing: ${plistPath}`
-            : `could not read app Info.plist ${plistPath}${codeDescription(cause)}`,
+            : `could not resolve app Info.plist ${plistPath}${codeDescription(cause)}`,
+        { cause },
+      ),
+    );
+  }
+  if (!isPathWithinRoot(canonicalBundle, canonicalPlist))
+    return err(
+      new BinaryTargetError(plistPath, "app Info.plist leaves bundle"),
+    );
+  let plist: Buffer;
+  try {
+    plist = await fileSystem.readFile(canonicalPlist);
+  } catch (cause: unknown) {
+    return err(
+      new BinaryTargetError(
+        canonicalPlist,
+        isPermissionDenied(cause)
+          ? `permission denied reading app Info.plist ${canonicalPlist}`
+          : isAbsence(cause)
+            ? `app Info.plist is missing: ${canonicalPlist}`
+            : `could not read app Info.plist ${canonicalPlist}${codeDescription(cause)}`,
         { cause },
       ),
     );
@@ -197,18 +225,18 @@ const resolveLayoutExecutable = async (
   let name: string;
   try {
     name = hasBinaryPlistSignature(plist)
-      ? await (fileSystem.decodeBinaryPlist?.(plistPath) ??
+      ? await (fileSystem.decodeBinaryPlist?.(canonicalPlist) ??
           parseBinaryPlistExecutable(plist))
       : parseXmlPlistExecutable(decodeXmlPlistText(plist));
   } catch (cause: unknown) {
     return err(
       new BinaryTargetError(
-        plistPath,
+        canonicalPlist,
         isPermissionDenied(cause)
-          ? `permission denied decoding app Info.plist ${plistPath}${codeDescription(cause)}`
+          ? `permission denied decoding app Info.plist ${canonicalPlist}${codeDescription(cause)}`
           : isSystemErrorCode(cause)
-            ? `could not decode app Info.plist ${plistPath}${codeDescription(cause)}`
-            : `app Info.plist is malformed, unsupported, or lacks CFBundleExecutable: ${plistPath}${cause instanceof Error ? ` (${cause.message})` : ""}`,
+            ? `could not decode app Info.plist ${canonicalPlist}${codeDescription(cause)}`
+            : `app Info.plist is malformed, unsupported, or lacks CFBundleExecutable: ${canonicalPlist}${cause instanceof Error ? ` (${cause.message})` : ""}`,
         { cause },
       ),
     );
@@ -220,10 +248,12 @@ const resolveLayoutExecutable = async (
   const programs = join(bundle, ...layout.programs);
   const executable = join(programs, name);
   try {
-    const [canonicalPrograms, canonicalExecutable] = await Promise.all([
-      fileSystem.realpath(programs),
-      fileSystem.realpath(executable),
-    ]);
+    const canonicalPrograms = await fileSystem.realpath(programs);
+    if (!isPathWithinRoot(canonicalBundle, canonicalPrograms))
+      return err(
+        new BinaryTargetError(bundle, "app program directory leaves bundle"),
+      );
+    const canonicalExecutable = await fileSystem.realpath(executable);
     if (!isPathWithinRoot(canonicalPrograms, canonicalExecutable))
       return err(
         new BinaryTargetError(
@@ -231,7 +261,7 @@ const resolveLayoutExecutable = async (
           `app program file leaves ${layout.programsLabel}`,
         ),
       );
-    return ok({ executable: canonicalExecutable, infoPlist: plistPath });
+    return ok({ executable: canonicalExecutable, infoPlist: canonicalPlist });
   } catch (cause: unknown) {
     return err(
       new BinaryTargetError(

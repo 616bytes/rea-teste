@@ -164,6 +164,7 @@ it("resolves extensionless TypeScript import-equals references to source files",
     ["src/indexed/index.ts", 'export const value = "index";\n'],
     ["src/pkg-source/package.json", '{"main":"entry"}\n'],
     ["src/pkg-source/entry.ts", 'export const value = "package main";\n'],
+    ["src/pkg-source/entry.js", 'module.exports = "emitted";\n'],
     ["src/pkg-source/index.ts", 'export const value = "fallback";\n'],
     ["src/json-package/package.json", '{"main":"data"}\n'],
     ["src/json-package/data.json", '{"answer":42}\n'],
@@ -214,6 +215,55 @@ it("resolves extensionless TypeScript import-equals references to source files",
     {
       from_path: "src/main.ts",
       to: "src/json-package/data.json",
+      kind: "requires",
+      resolution: "internal",
+      parse_state: "parsed",
+    },
+  ]);
+});
+
+it("does not implicitly resolve CJS or ESM siblings for TypeScript imports", () => {
+  const files = [
+    [
+      "src/main.cts",
+      'import cjs = require("./cjsSibling");\nimport esm = require("./mjsSibling");\n',
+    ],
+    ["src/cjsSibling.cjs", 'module.exports = "cjs";\n'],
+    ["src/cjsSibling/index.js", 'module.exports = "index";\n'],
+    ["src/mjsSibling.mjs", 'export default "esm";\n'],
+    ["src/mjsSibling/index.js", 'module.exports = "index";\n'],
+  ] as const;
+  const read: ReferenceSourceRead = {
+    root: "/selected/source",
+    entries: files.map(([path, content]) => ({
+      status: "read",
+      kind: "file",
+      path,
+      bytes: Buffer.from(content),
+      size: Buffer.byteLength(content),
+    })),
+    bytesRead: files.reduce(
+      (sum, [, content]) => sum + Buffer.byteLength(content),
+      0,
+    ),
+    limitations: [],
+  };
+  const parsed = parseReferenceSourceEntries(
+    read,
+    new Set(files.map(([path]) => path)),
+  );
+
+  expect(parsed.relationships).toEqual([
+    {
+      from_path: "src/main.cts",
+      to: "src/cjsSibling/index.js",
+      kind: "requires",
+      resolution: "internal",
+      parse_state: "parsed",
+    },
+    {
+      from_path: "src/main.cts",
+      to: "src/mjsSibling/index.js",
       kind: "requires",
       resolution: "internal",
       parse_state: "parsed",

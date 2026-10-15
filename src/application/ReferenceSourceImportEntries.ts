@@ -12,6 +12,7 @@ import {
   detectReferenceSourceLanguage,
 } from "../domain/referenceSourceClassification.js";
 import {
+  NODE_MODULE_EXTENSIONS,
   nodeModuleFileCandidates,
   nodeModuleIndexCandidates,
 } from "../domain/javascript/nodeModulePathCandidates.js";
@@ -151,7 +152,32 @@ const SOURCE_RESOLUTION_SUFFIXES = [
   ".jsx",
 ];
 
-type InternalSpecifierResolutionMode = "source" | "node-require";
+const TYPESCRIPT_SOURCE_RESOLUTION_SUFFIXES = [
+  "",
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".d.ts",
+  ".js",
+  ".jsx",
+];
+
+const NODE_RUNTIME_FALLBACK_EXTENSIONS = NODE_MODULE_EXTENSIONS.filter(
+  (extension) => extension !== ".js",
+);
+
+type InternalSpecifierResolutionMode =
+  | "source"
+  | "typescript-source"
+  | "node-require";
+
+const resolutionSuffixes = (
+  mode: InternalSpecifierResolutionMode,
+): readonly string[] =>
+  mode === "typescript-source"
+    ? TYPESCRIPT_SOURCE_RESOLUTION_SUFFIXES
+    : SOURCE_RESOLUTION_SUFFIXES;
 
 const fileCandidates = (
   candidate: string,
@@ -159,7 +185,7 @@ const fileCandidates = (
 ): readonly string[] =>
   mode === "node-require"
     ? nodeModuleFileCandidates(candidate)
-    : SOURCE_RESOLUTION_SUFFIXES.map((suffix) => `${candidate}${suffix}`);
+    : resolutionSuffixes(mode).map((suffix) => `${candidate}${suffix}`);
 
 const indexCandidates = (
   directory: string,
@@ -167,9 +193,19 @@ const indexCandidates = (
 ): readonly string[] =>
   mode === "node-require"
     ? nodeModuleIndexCandidates(directory)
-    : SOURCE_RESOLUTION_SUFFIXES.filter((suffix) => suffix !== "").map(
-        (suffix) => posix.join(directory, `index${suffix}`),
-      );
+    : resolutionSuffixes(mode)
+        .filter((suffix) => suffix !== "")
+        .map((suffix) => posix.join(directory, `index${suffix}`));
+
+const nodeRuntimeFallbackFileCandidates = (candidate: string): string[] =>
+  NODE_RUNTIME_FALLBACK_EXTENSIONS.map(
+    (extension) => `${candidate}${extension}`,
+  );
+
+const nodeRuntimeFallbackIndexCandidates = (directory: string): string[] =>
+  NODE_RUNTIME_FALLBACK_EXTENSIONS.map((extension) =>
+    posix.join(directory, `index${extension}`),
+  );
 
 /** Inventory facts an internal specifier resolves against. */
 interface SpecifierContext {
@@ -208,12 +244,19 @@ const selectPackageMain = (
           ...nodeModuleFileCandidates(target),
           ...nodeModuleIndexCandidates(target),
         ]
-      : [
-          ...nodeModuleFileCandidates(target),
-          ...fileCandidates(target, "source"),
-          ...nodeModuleIndexCandidates(target),
-          ...indexCandidates(target, "source"),
-        ];
+      : resolutionMode === "typescript-source"
+        ? [
+            ...fileCandidates(target, resolutionMode),
+            ...nodeRuntimeFallbackFileCandidates(target),
+            ...indexCandidates(target, resolutionMode),
+            ...nodeRuntimeFallbackIndexCandidates(target),
+          ]
+        : [
+            ...nodeModuleFileCandidates(target),
+            ...fileCandidates(target, resolutionMode),
+            ...nodeModuleIndexCandidates(target),
+            ...indexCandidates(target, resolutionMode),
+          ];
   const selected = context.lookupPath.resolveCandidates(mainCandidates);
   return { to: selected ?? index, resolution: "internal" };
 };
@@ -290,10 +333,11 @@ const appendFile = (
       continue;
     }
     const resolutionMode =
-      graphRelationship.kind === "requires" &&
-      resolutionStrategy !== "typescript-source"
-        ? "node-require"
-        : "source";
+      graphRelationship.kind !== "requires"
+        ? "source"
+        : resolutionStrategy === "typescript-source"
+          ? "typescript-source"
+          : "node-require";
     const resolved = resolveInternalSpecifier(
       graphRelationship.from_path,
       graphRelationship.to,

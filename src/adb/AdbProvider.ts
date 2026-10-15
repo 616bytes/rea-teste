@@ -63,6 +63,15 @@ import {
   parsePmPathOutput,
 } from "./AdbDeviceOutput.js";
 import { adbHostFileName } from "./AdbHostFileName.js";
+import { captureUiState, sendInput, waitForBoot } from "./AdbInteraction.js";
+import {
+  adbArguments,
+  runAdb,
+  prepareOutputDirectory,
+  refuseExistingTarget,
+  runAdbCapture,
+  type AdbRunLimits,
+} from "./AdbRun.js";
 import {
   ADB_DIRECTORY_BATCH_SCRIPT,
   parseAdbDirectoryListing,
@@ -114,7 +123,6 @@ const SCREEN_TIMEOUT_MS = 60_000;
 const SCREEN_MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
 const BUGREPORT_TIMEOUT_MS = 600_000;
 const BUGREPORT_MAX_OUTPUT_BYTES = 1024 * 1024;
-const STDERR_EXCERPT_BYTES = 512;
 const UNPARSED_LINES_REPORTED = 10;
 
 const hashAdbFile = async (
@@ -129,125 +137,6 @@ const hashAdbFile = async (
       throw new AnalysisCancelledError(operation, { cause });
     throw cause;
   }
-};
-
-/** adb joins shell operands into a remote POSIX command; quote at that boundary. */
-const quoteShellOperand = (value: string): string =>
-  /^[A-Za-z0-9_./:=@+,-]+$/u.test(value)
-    ? value
-    : "'" + value.replaceAll("'", "'\\''") + "'";
-
-const adbArguments = (
-  serial: string | undefined,
-  arguments_: readonly string[],
-): readonly string[] => {
-  const operands =
-    arguments_[0] === "shell"
-      ? ["shell", ...arguments_.slice(1).map(quoteShellOperand)]
-      : [...arguments_];
-  return serial === undefined ? operands : ["-s", serial, ...operands];
-};
-
-interface AdbRunLimits {
-  readonly timeoutMs: number;
-  readonly maxOutputBytes: number;
-}
-
-/** Run one bounded adb invocation and keep its exact failure shape. */
-const runAdbCapture = async (
-  operation: string,
-  targetPath: string,
-  binary: string,
-  arguments_: readonly string[],
-  limits: AdbRunLimits,
-  signal: AbortSignal | undefined,
-): Promise<Result<{ stdout: Buffer; stderr: Buffer }, AnalysisError>> => {
-  if (signal?.aborted === true)
-    return err(new AnalysisCancelledError(operation));
-  try {
-    return ok(
-      await execFileBytes(binary, arguments_, {
-        timeout: limits.timeoutMs,
-        maxBuffer: limits.maxOutputBytes,
-        stopSignal: "SIGTERM",
-        ...(signal === undefined ? {} : { signal }),
-      }),
-    );
-  } catch (cause) {
-    if (signal?.aborted || execFileOutputFailure(cause)?.code === "ABORT_ERR")
-      return err(new AnalysisCancelledError(operation, { cause }));
-    const failure = execFileOutputFailure(cause);
-    if (failure === undefined)
-      return err(
-        new AnalysisProtocolError(`adb failed for ${operation}`, { cause }),
-      );
-    if (failure.outputTruncated)
-      return err(
-        new AnalysisResourceConstraintError(
-          operation,
-          "memory",
-          `adb output exceeded the ${String(limits.maxOutputBytes)}-byte capture budget`,
-          { max_output_bytes: limits.maxOutputBytes },
-          { cause },
-        ),
-      );
-    const excerpt = failure.stderr.trim().slice(0, STDERR_EXCERPT_BYTES);
-    if (/unauthorized/iu.test(excerpt))
-      return err(
-        new AnalysisUnsupportedTargetError(operation, targetPath, excerpt, {
-          cause,
-        }),
-      );
-    if (
-      /device[^\n]*not found|device offline|still authorizing|more than one device/iu.test(
-        excerpt,
-      )
-    )
-      return err(
-        new AnalysisUnsupportedTargetError(operation, targetPath, excerpt, {
-          cause,
-        }),
-      );
-    if (
-      /No such file or directory|Permission denied|read: Permission denied/iu.test(
-        excerpt,
-      )
-    )
-      return err(
-        new AnalysisUnsupportedTargetError(operation, targetPath, excerpt, {
-          cause,
-        }),
-      );
-    if (failure.killed)
-      return err(
-        new AnalysisTimeoutError(operation, limits.timeoutMs, { cause }),
-      );
-    return err(
-      new AnalysisProtocolError(
-        excerpt === ""
-          ? `adb exited with code ${String(failure.code)} for ${operation}`
-          : excerpt,
-        { cause },
-      ),
-    );
-  }
-};
-
-/** Decode textual adb protocols after the shared byte capture and error boundary. */
-const runAdb = async (
-  ...arguments_: Parameters<typeof runAdbCapture>
-): Promise<
-  Result<{ stdout: string; stderr: string; stdoutBytes: number }, AnalysisError>
-> => {
-  const captured = await runAdbCapture(...arguments_);
-  if (!captured.ok) return captured;
-  return ok({
-    stdout: captured.value.stdout.toString("utf8"),
-    stderr: captured.value.stderr.toString("utf8"),
-    // Byte count of the captured output before UTF-8 decoding, so malformed
-    // sequences replaced by U+FFFD still report their true captured size.
-    stdoutBytes: captured.value.stdout.byteLength,
-  });
 };
 
 /**
@@ -305,44 +194,6 @@ const unparsedOverflowLimitation = (
         `unparsed_lines reports the first ${String(UNPARSED_LINES_REPORTED)} of ${String(unparsedLines.length)} unrecognized lines`,
       ]
     : [];
-
-/** Materialize the caller's output directory, refusing existing files inside. */
-const prepareOutputDirectory = async (
-  operation: string,
-  directory: string,
-): Promise<Result<string, AnalysisError>> => {
-  const root = resolve(directory);
-  try {
-    await mkdir(root, { recursive: true });
-    await access(root, fsConstants.W_OK);
-  } catch (cause) {
-    return err(
-      new AnalysisOutputError(
-        operation,
-        `The output directory is not writable or could not be created: ${root}`,
-        { cause },
-      ),
-    );
-  }
-  return ok(root);
-};
-
-const refuseExistingTarget = async (
-  operation: string,
-  path: string,
-): Promise<AnalysisError | undefined> => {
-  if (
-    await lstat(path).then(
-      () => true,
-      () => false,
-    )
-  )
-    return new AnalysisOutputError(
-      operation,
-      `The output file already exists: ${path}`,
-    );
-  return undefined;
-};
 
 /** Publish an ADB-produced archive without replacing an existing caller file. */
 const publishBugreport = async (
@@ -1297,6 +1148,54 @@ export class AdbProvider {
           request.input,
           signal,
         );
+      case "wait_adb_boot": {
+        const waited = await waitForBoot(
+          { binary: selection.binary, serial: request.input.serial, signal },
+          request.input,
+        );
+        if (!waited.ok) return waited;
+        return ok(
+          createAnalysisExecution({ client, ...waited.value }, provider, {
+            limitations: [
+              "Boot completion is sys.boot_completed=1 as the device reports it; services and the launcher may still be settling",
+              "Probe failures while the device is unreachable are retried until the deadline; only the last one is reported",
+            ],
+          }),
+        );
+      }
+      case "capture_adb_ui_state": {
+        const captured = await captureUiState(
+          { binary: selection.binary, serial: request.input.serial, signal },
+          request.input,
+        );
+        if (!captured.ok) return captured;
+        return ok(
+          createAnalysisExecution({ client, ...captured.value }, provider, {
+            limitations: [
+              "The hierarchy dump and the screenshot are sequential reads, not one atomic snapshot; animations or async updates between them can differ",
+              "uiautomator sees accessibility nodes only: WebView content, games, and custom-drawn views may expose few or no nodes",
+              "uiautomator dump fails while the window never idles (continuous animation); a device temp file under /data/local/tmp is created and removed by the same shell",
+              "Node ordinals are document order within this dump only and do not identify elements across captures",
+            ],
+          }),
+        );
+      }
+      case "send_adb_input": {
+        const sent = await sendInput(
+          { binary: selection.binary, serial: request.input.serial, signal },
+          request.input,
+        );
+        if (!sent.ok) return sent;
+        return ok(
+          createAnalysisExecution({ client, ...sent.value }, provider, {
+            limitations: [
+              "Input events are injected with `input`; completion means the event was delivered, not that the app reacted",
+              "tap_element resolves the selector against a fresh hierarchy dump immediately before tapping the node center",
+              "input text types printable ASCII only and uses the focused field; it cannot select a field itself",
+            ],
+          }),
+        );
+      }
     }
   }
 

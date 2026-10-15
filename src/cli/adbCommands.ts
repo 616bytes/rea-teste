@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { z } from "incur";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
@@ -410,5 +411,156 @@ export const registerAdbCommands = (
         serial: args.serial,
         package: args.package,
       }),
+  });
+  cli.command(CLI_COMMANDS.waitAdbBoot, {
+    description: "Wait until a device reports sys.boot_completed=1",
+    args: z.object({ serial }),
+    options: z.object({
+      "timeout-ms": z
+        .number()
+        .int()
+        .optional()
+        .describe("Longest wait in milliseconds (default 120000)"),
+      "poll-interval-ms": z
+        .number()
+        .int()
+        .optional()
+        .describe("Delay between probes in milliseconds (default 2000)"),
+    }),
+    run: ({ args, options }) =>
+      execute(CLI_COMMANDS.waitAdbBoot, "wait_adb_boot", {
+        serial: args.serial,
+        ...(options["timeout-ms"] === undefined
+          ? {}
+          : { timeout_ms: options["timeout-ms"] }),
+        ...(options["poll-interval-ms"] === undefined
+          ? {}
+          : { poll_interval_ms: options["poll-interval-ms"] }),
+      }),
+  });
+  cli.command(CLI_COMMANDS.captureAdbUiState, {
+    description:
+      "Dump the UI hierarchy and a screenshot under one timestamped state id",
+    args: z.object({ serial }),
+    options: z.object({
+      "output-directory": z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Local directory for <state_id>.xml and <state_id>.png"),
+      "state-label": z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Navigation-state name appended to the state id"),
+      "no-screen": z
+        .boolean()
+        .default(false)
+        .describe("Skip the screenshot; return the hierarchy only"),
+      compressed: z
+        .boolean()
+        .default(false)
+        .describe("Pass --compressed to uiautomator dump"),
+      all: z
+        .boolean()
+        .default(false)
+        .describe("Return every node instead of meaningful nodes only"),
+      "max-nodes": z
+        .number()
+        .int()
+        .optional()
+        .describe("Most inline nodes returned (default 300)"),
+    }),
+    run: ({ args, options }) =>
+      execute(CLI_COMMANDS.captureAdbUiState, "capture_adb_ui_state", {
+        serial: args.serial,
+        ...(options["output-directory"] === undefined
+          ? {}
+          : { output_directory: options["output-directory"] }),
+        ...(options["state-label"] === undefined
+          ? {}
+          : { state_label: options["state-label"] }),
+        include_screen: !options["no-screen"],
+        compressed: options.compressed,
+        node_filter: options.all ? "all" : "meaningful",
+        ...(options["max-nodes"] === undefined
+          ? {}
+          : { max_nodes: options["max-nodes"] }),
+      }),
+  });
+  cli.command(CLI_COMMANDS.sendAdbInput, {
+    description:
+      "Inject tap, tap_element, long_press, swipe, text, or key actions in order",
+    args: z.object({ serial }),
+    options: z.object({
+      actions: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("JSON array of actions, as send_adb_input accepts"),
+      "actions-file": z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "JSON file holding an actions array, such as a recorded executed list",
+        ),
+      "settle-ms": z
+        .number()
+        .int()
+        .optional()
+        .describe("Delay after each action in milliseconds (default 300)"),
+    }),
+    run: async ({ args, options }) => {
+      const refuse = (message: string) =>
+        logCliCommand(logger, CLI_COMMANDS.sendAdbInput, async () => {
+          throw new AnalysisInputError("send_adb_input", undefined, [
+            {
+              path: ["actions"],
+              reason: "invalid_format",
+              message,
+              expected: "JSON array of actions",
+            },
+          ]);
+        });
+      if (
+        (options.actions === undefined) ===
+        (options["actions-file"] === undefined)
+      )
+        return refuse("Pass exactly one of --actions or --actions-file.");
+      let source: string;
+      try {
+        source =
+          options.actions ?? (await readFile(options["actions-file"]!, "utf8"));
+      } catch (cause) {
+        return refuse(
+          `Cannot read --actions-file: ${cause instanceof Error ? cause.message : String(cause)}`,
+        );
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(source);
+      } catch {
+        return refuse("Actions are not valid JSON.");
+      }
+      // Accept a recorded send_adb_input result's executed list as a replay.
+      const actions = Array.isArray(parsed)
+        ? parsed.map((entry: unknown) =>
+            typeof entry === "object" &&
+            entry !== null &&
+            "action" in entry &&
+            "command" in entry
+              ? entry.action
+              : entry,
+          )
+        : parsed;
+      return execute(CLI_COMMANDS.sendAdbInput, "send_adb_input", {
+        serial: args.serial,
+        actions,
+        ...(options["settle-ms"] === undefined
+          ? {}
+          : { settle_ms: options["settle-ms"] }),
+      });
+    },
   });
 };

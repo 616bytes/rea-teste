@@ -133,6 +133,7 @@ describe("tool effects", () => {
       ({ effects }) => effects.executesForeignCode || effects.mutatesDevice,
     );
     expect(destructive.map(({ name }) => name).sort()).toEqual([
+      "capture_adb_ui_state",
       "capture_browser_scenario",
       "capture_electron_scenario",
       "capture_native_ui_scenario",
@@ -149,6 +150,7 @@ describe("tool effects", () => {
       "push_adb_file",
       "resume_frida_session",
       "rizin_debug_command",
+      "send_adb_input",
       "start_adb_activity",
       "start_adb_app",
       "start_rizin_debug_session",

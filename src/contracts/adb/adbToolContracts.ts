@@ -379,4 +379,84 @@ export const ADB_TOOL_CONTRACTS = [
       },
     ],
   },
+  {
+    name: "wait_adb_boot",
+    ...toolContractMetadata("wait_adb_boot"),
+    description:
+      "Wait until one device reports sys.boot_completed=1, probing getprop at a fixed interval and tolerating a device that is still offline or not yet listed. Returns boot_completed or timed_out with the last observed boot properties. Read-only; REA never boots or manages the emulator itself.",
+    kind: "adb-provider",
+    inputSchema: adbInputSchemas.wait_adb_boot,
+    outputSchema: evidenceResultOf(adbResultSchemas.wait_adb_boot),
+    examples: [
+      {
+        title: "Wait for an emulator to finish booting",
+        input: { serial: "emulator-5554", timeout_ms: 180000 },
+      },
+    ],
+  },
+  {
+    name: "capture_adb_ui_state",
+    ...toolContractMetadata("capture_adb_ui_state"),
+    description:
+      "Dump the active window's UI hierarchy with uiautomator and, immediately after, one screenshot, under one timestamped state_id. Returns parsed nodes inline (resource-id, text, content-desc, class, bounds, center, true flags) and writes <state_id>.xml and <state_id>.png into a caller-selected directory for exact element/pixel correlation. Uses and removes one device temp file.",
+    kind: "adb-provider",
+    inputSchema: adbInputSchemas.capture_adb_ui_state,
+    outputSchema: evidenceResultOf(adbResultSchemas.capture_adb_ui_state),
+    examples: [
+      {
+        title: "Capture the login screen state",
+        input: {
+          serial: "emulator-5554",
+          output_directory: "/tmp/rea-ui",
+          state_label: "login",
+        },
+      },
+      {
+        title: "Inline hierarchy only",
+        input: { serial: "emulator-5554", include_screen: false },
+      },
+    ],
+  },
+  {
+    name: "send_adb_input",
+    ...toolContractMetadata("send_adb_input"),
+    description:
+      "Inject input events in order: tap, tap_element (exact selector over a fresh hierarchy dump), long_press, swipe, text (printable ASCII into the focused field), or key (HOME, BACK, APP_SWITCH, ENTER, ... or a keycode). A device- and UI-mutating tool for dynamic analysis. Stops at the first failure; the executed list echoes each action and resolved node and can be replayed as a recorded sequence.",
+    kind: "adb-provider",
+    inputSchema: adbInputSchemas.send_adb_input,
+    outputSchema: evidenceResultOf(adbResultSchemas.send_adb_input),
+    examples: [
+      {
+        title: "Log in through resource ids",
+        input: {
+          serial: "emulator-5554",
+          actions: [
+            {
+              type: "tap_element",
+              selector: { resource_id: "com.example.app:id/username" },
+            },
+            { type: "text", text: "analyst" },
+            {
+              type: "tap_element",
+              selector: { resource_id: "com.example.app:id/login" },
+            },
+          ],
+        },
+      },
+      {
+        title: "Scroll and go back",
+        input: {
+          serial: "emulator-5554",
+          actions: [
+            {
+              type: "swipe",
+              from: { x: 540, y: 1600 },
+              to: { x: 540, y: 600 },
+            },
+            { type: "key", key: "BACK" },
+          ],
+        },
+      },
+    ],
+  },
 ] as const satisfies readonly ToolContract[];

@@ -238,6 +238,10 @@ it.each([
   [String.raw`\\server\share\nativehelper.dll`, "/examples/nativehelper.dll"],
   ["nativehelper.dll", String.raw`C:\deps\nativehelper.dll`],
   ["nativehelper.dll", String.raw`\\server\share\nativehelper.dll`],
+  [
+    String.raw`/decl/C:\deps\helper.dll`,
+    String.raw`/examples/C:\deps\helper.dll`,
+  ],
 ])(
   "matches target module paths independently of the host: %s / %s",
   (scope, path) => {
@@ -255,15 +259,39 @@ it.each([
 );
 
 it.each([
-  [String.raw`C:\deps\nativehelper.dll`, "/examples/other.dll"],
-  [String.raw`/deps/native\helper.dll`, "/examples/helper.dll"],
-  ["helper.dll", String.raw`/examples/native\helper.dll`],
+  [String.raw`C:\deps\nativehelper.dll`, "/examples/other.dll", "other.dll"],
+  [String.raw`/deps/native\helper.dll`, "/examples/helper.dll", "helper.dll"],
+  [
+    "helper.dll",
+    String.raw`/examples/native\helper.dll`,
+    String.raw`native\helper.dll`,
+  ],
+  [
+    "helper.dll",
+    String.raw`/examples/C:\deps\helper.dll`,
+    String.raw`C:\deps\helper.dll`,
+  ],
+  [
+    "helper.dll",
+    String.raw`/examples/\deps\helper.dll`,
+    String.raw`\deps\helper.dll`,
+  ],
+  [
+    "helper.dll",
+    String.raw`/examples/\\server\share\helper.dll`,
+    String.raw`\\server\share\helper.dll`,
+  ],
 ])(
   "retains module mismatches and literal POSIX backslashes: %s / %s",
-  (scope, path) => {
+  (scope, path, name) => {
+    const native = nativeEvidenceWithExports(["open_native"], path);
+    if (native.subject === null) throw new Error("missing native subject");
     const result = verifyManagedNativeBoundaries({
       ...inputWithImportScope(scope),
-      native_observations: [nativeEvidenceWithExports(["open_native"], path)],
+      // Model the producer's POSIX filename independently of the test host.
+      native_observations: [
+        { ...native, subject: { ...native.subject, name } },
+      ],
     });
     expect(result.pinvoke_imports[0]).toMatchObject({
       managed: { import_scope_name: scope },

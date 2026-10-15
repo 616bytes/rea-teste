@@ -112,19 +112,28 @@ const moduleFilename = (value: string): string =>
     : posix
   ).basename(value);
 
-const normalizeModule = (value: string): string =>
-  moduleFilename(value)
-    .toLowerCase()
-    .replace(/\.(dll|dylib|so|node|exe)$/u, "");
+const moduleStem = (filename: string): string =>
+  filename.toLowerCase().replace(/\.(dll|dylib|so|node|exe)$/u, "");
 
-const nativeModuleIdentities = (value: string): ReadonlySet<string> => {
-  const filename = moduleFilename(value).toLowerCase();
-  const stem = normalizeModule(filename);
+const normalizeModule = (value: string): string =>
+  moduleStem(moduleFilename(value));
+
+const nativeModuleIdentities = (filename: string): ReadonlySet<string> => {
+  const stem = moduleStem(filename);
   const identities = new Set([stem]);
-  if (/\.(dylib|so)$/u.test(filename) && stem.startsWith("lib"))
+  if (/\.(dylib|so)$/iu.test(filename) && stem.startsWith("lib"))
     identities.add(stem.slice("lib".length));
   return identities;
 };
+
+const nativeModuleFilenames = (symbol: NativeSymbol): readonly string[] =>
+  [
+    symbol.module_name,
+    symbol.module_path === null ? null : moduleFilename(symbol.module_path),
+  ].filter(
+    (filename): filename is string =>
+      filename !== null && moduleStem(filename).length > 0,
+  );
 
 const moduleCompatible = (
   scope: string | null,
@@ -132,18 +141,13 @@ const moduleCompatible = (
 ): boolean => {
   if (scope === null || scope.trim().length === 0) return false;
   const expected = normalizeModule(scope);
-  return [symbol.module_name, symbol.module_path]
-    .filter(
-      (value): value is string =>
-        value !== null && normalizeModule(value).length > 0,
-    )
-    .some((value) => nativeModuleIdentities(value).has(expected));
+  return nativeModuleFilenames(symbol).some((filename) =>
+    nativeModuleIdentities(filename).has(expected),
+  );
 };
 
 const hasModuleIdentity = (symbol: NativeSymbol): boolean =>
-  [symbol.module_name, symbol.module_path].some(
-    (value) => value !== null && normalizeModule(value).length > 0,
-  );
+  nativeModuleFilenames(symbol).length > 0;
 
 const candidateNames = (
   managed: Pick<

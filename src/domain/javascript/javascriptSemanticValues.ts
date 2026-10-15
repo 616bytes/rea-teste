@@ -98,7 +98,7 @@ interface EvaluationContext {
   readonly expressionDepth: number;
   readonly capturePoint?: t.Node;
   readonly primitiveBindingValues: Map<string, JavaScriptSemanticValue>;
-  /** Reachability uses source reads and must not reuse whole-binding values. */
+  /** Branch operands use source reads and must not reuse whole-binding values. */
   readonly sourceReadValues?: Map<string, CallerIndependentBindingValue>;
   readonly dependence: EvaluationDependence;
   readonly memo: EvaluationMemo;
@@ -487,22 +487,8 @@ const evaluateExpressionValue = (
   if (literal.found) return primitiveSet([literal.value]);
   if (t.isIdentifier(node)) return evaluateIdentifier(node, context);
   if (t.isTemplateLiteral(node)) return evaluateTemplate(node, context);
-  if (t.isConditionalExpression(node)) {
-    const test = primitiveCandidates(evaluateSelector(node.test, context));
-    if (test !== null && test.length > 0) {
-      const truth = Boolean(test[0]);
-      if (test.every((value) => Boolean(value) === truth))
-        return evaluateExpression(
-          truth ? node.consequent : node.alternate,
-          nestedContext(context),
-        );
-    }
-    return mergeValues([
-      evaluateExpression(node.consequent, nestedContext(context)),
-      evaluateExpression(node.alternate, nestedContext(context)),
-    ]);
-  }
-  if (t.isLogicalExpression(node)) return evaluateLogical(node, context);
+  if (t.isConditionalExpression(node) || t.isLogicalExpression(node))
+    return evaluateBranches(node, context);
   if (t.isObjectExpression(node)) return evaluateObject(node, context);
   if (t.isArrayExpression(node)) return evaluateArray(node, context);
   if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
@@ -524,11 +510,14 @@ const evaluateIdentifier = (
       node,
       context.state.parentsByNode,
     );
-    // A hoisted var can supply undefined when write/read ordering is unknown.
-    // Lexical bindings instead throw if reached before initialization.
+    // Both hoisted vars and declared-but-unassigned lexical bindings can supply
+    // undefined before an unordered write. A lexical declaration initializer
+    // itself is preceded by a TDZ rather than a competing primitive value.
     if (
       selected.initializers !== binding.initializers ||
-      (selected.ordering === "unknown" && binding.declarationKinds.has("var"))
+      (selected.ordering === "unknown" &&
+        (binding.declarationKinds.has("var") ||
+          binding.definitions.some(({ kind }) => kind === "assignment")))
     ) {
       recordBindingDependency(binding, context);
       return {
@@ -542,27 +531,45 @@ const evaluateIdentifier = (
     : evaluateBinding(binding, nestedContext(context));
 };
 
-/** Prove branch reachability at each read, including reads through aliases. */
-const evaluateSelector = (
-  node: t.Node,
-  context: EvaluationContext,
-): JavaScriptSemanticValue => {
-  const nested = nestedContext(context);
-  if (nested.sourceReadValues !== undefined)
-    return evaluateExpression(node, nested);
-  const { capturePoint: _capturePoint, ...readContext } = nested;
-  return evaluateExpression(node, {
+/** One branch expression owns source-read evaluation for all of its operands. */
+const sourceReadContext = (context: EvaluationContext): EvaluationContext => {
+  if (context.sourceReadValues !== undefined) return context;
+  const { capturePoint: _capturePoint, ...readContext } = context;
+  return {
     ...readContext,
     primitiveBindingValues: new Map(),
     sourceReadValues: new Map(),
-  });
+  };
+};
+
+const evaluateBranches = (
+  node: t.ConditionalExpression | t.LogicalExpression,
+  context: EvaluationContext,
+): JavaScriptSemanticValue => {
+  const readContext = sourceReadContext(context);
+  if (t.isLogicalExpression(node)) return evaluateLogical(node, readContext);
+  const test = primitiveCandidates(
+    evaluateExpression(node.test, nestedContext(readContext)),
+  );
+  if (test !== null && test.length > 0) {
+    const truth = Boolean(test[0]);
+    if (test.every((value) => Boolean(value) === truth))
+      return evaluateExpression(
+        truth ? node.consequent : node.alternate,
+        nestedContext(readContext),
+      );
+  }
+  return mergeValues([
+    evaluateExpression(node.consequent, nestedContext(readContext)),
+    evaluateExpression(node.alternate, nestedContext(readContext)),
+  ]);
 };
 
 const evaluateLogical = (
   node: t.LogicalExpression,
   context: EvaluationContext,
 ): JavaScriptSemanticValue => {
-  const left = evaluateSelector(node.left, context);
+  const left = evaluateExpression(node.left, nestedContext(context));
   const candidates = primitiveCandidates(left);
   if (candidates === null || candidates.length === 0)
     return mergeValues([

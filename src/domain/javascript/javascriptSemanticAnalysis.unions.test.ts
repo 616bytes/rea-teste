@@ -375,6 +375,77 @@ describe("branch selector source reads", () => {
         ?.value,
     ).toEqual({ status: "literal", value: "on" });
   });
+
+  it("evaluates selected conditional and logical operands at their source reads", () => {
+    for (const expression of [
+      'true ? enabled : "off"',
+      'false ? "off" : enabled',
+      "false || enabled",
+      "true && enabled",
+      "null ?? enabled",
+      'true ? alias : "off"',
+      'true ? ({ value: enabled }).value : "off"',
+      'true ? [enabled][0] : "off"',
+    ]) {
+      const ir = analyzeJavaScriptSemantics(`
+        const alias = enabled;
+        const answer = ${expression};
+        var enabled = "on";
+      `);
+      expect(topLevelBinding(ir, "answer").value.status, expression).toBe(
+        "unknown",
+      );
+    }
+  });
+
+  it("retains uncertain future operands in merged branch candidates", () => {
+    for (const expression of [
+      'choice ? enabled : "off"',
+      "choice || enabled",
+      "(choice ? 0 : 1) && enabled",
+    ])
+      expect(
+        topLevelBinding(
+          analyzeJavaScriptSemantics(`
+        const answer = ${expression}; var enabled = "on";
+      `),
+          "answer",
+        ).value.status,
+        expression,
+      ).toBe("ambiguous");
+  });
+
+  it("keeps unordered assignment-backed lexical bindings uncertain", () => {
+    for (const source of [
+      'let enabled; const answer = enabled ? "on" : "off"; 0, enabled = true;',
+      'let enabled; 0, enabled = true; const answer = enabled ? "on" : "off";',
+      'let enabled; const alias = enabled; 0, enabled = true; const answer = alias ? "on" : "off";',
+    ])
+      expect(
+        topLevelBinding(analyzeJavaScriptSemantics(source), "answer").value,
+      ).toEqual({
+        status: "union",
+        values: ["off", "on"],
+      });
+    for (const operator of ["||", "&&", "??"])
+      expect(
+        topLevelBinding(
+          analyzeJavaScriptSemantics(`
+        let enabled; const answer = enabled ${operator} "fallback"; 0, enabled = true;
+      `),
+          "answer",
+        ).value.status,
+      ).toBe("ambiguous");
+    expect(
+      topLevelBinding(
+        analyzeJavaScriptSemantics(`
+      let enabled; enabled = true;
+      const answer = enabled ? "on" : "off";
+    `),
+        "answer",
+      ).value,
+    ).toEqual({ status: "literal", value: "on" });
+  });
 });
 
 describe("semantic primitive resource observations", () => {

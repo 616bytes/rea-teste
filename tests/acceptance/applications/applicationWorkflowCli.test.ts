@@ -1417,6 +1417,77 @@ describe("application workflow CLI and MCP constant branches", () => {
   }, 20_000);
 });
 
+it("keeps selected operands and unordered lexical writes uncertain through CLI and MCP", async () => {
+  const root = await createTestTempDirectory("rea-branch-operands-cli-");
+  const roots = await writeComparisonSources(root, [
+    `export default function config() {
+      let enabled;
+      const lexical = enabled ? "on" : "off";
+      0, enabled = true;
+      const conditional = true ? later : "off";
+      const orValue = false || later;
+      const andValue = true && later;
+      const nullish = null ?? later;
+      var later = "on";
+      return { type: "source-read", lexical, conditional, orValue, andValue, nullish };
+    }`,
+    `export default () => ({ type: "source-read", lexical: "on",
+      conditional: "on", orValue: "on", andValue: "on", nullish: "on" });`,
+  ]);
+  expect(await runtimeDefaultExport(join(roots[0]!, "parser.mjs"))).toEqual({
+    type: "source-read",
+    lexical: "off",
+  });
+  expect(await runtimeDefaultExport(join(roots[1]!, "parser.mjs"))).toEqual({
+    type: "source-read",
+    lexical: "on",
+    conditional: "on",
+    orValue: "on",
+    andValue: "on",
+    nullish: "on",
+  });
+  const [left, right] = await Promise.all(
+    roots.map((path) =>
+      runCli(["analyze-javascript-application", path, "--json"]),
+    ),
+  );
+  const input = {
+    left,
+    right,
+    left_module_path: "parser.mjs",
+    left_export_name: "default",
+    right_module_path: "parser.mjs",
+    right_export_name: "default",
+  };
+  const expected = {
+    normalized_result: {
+      summary: { added: 0, removed: 0, changed: 1, unknown: 4 },
+      changes: expect.arrayContaining([
+        expect.objectContaining({
+          path: "/lexical",
+          status: "changed",
+          left: { availability: "union", values: ["off", "on"] },
+        }),
+        ...["/conditional", "/orValue", "/andValue", "/nullish"].map((path) =>
+          expect.objectContaining({
+            path,
+            status: "unknown",
+            left: expect.objectContaining({ availability: "unknown" }),
+          }),
+        ),
+      ]),
+    },
+  };
+  expect(
+    await runCliWithRequestFile(
+      root,
+      "compare-javascript-export-shapes",
+      input,
+    ),
+  ).toMatchObject(expected);
+  expect(await compareThroughStdioMcp(input)).toMatchObject(expected);
+}, 20_000);
+
 describe("application workflow CLI export Evidence", () => {
   it("preserves uncertainty after a helper can mutate an awaited return object", async () => {
     const root = await createTestTempDirectory("rea-awaited-export-shape-cli-");

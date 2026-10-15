@@ -1,0 +1,8 @@
+[
+  {
+    "id": "insecure-web-preferences",
+    "title": "BrowserWindow disables webSecurity and the renderer sandbox",
+    "body_file": "issues/insecure-web-preferences.md",
+    "fingerprint": "70466c545b0fb25f"
+  }
+]

@@ -1,3 +1,5 @@
-import type { MipsAbiFlags } from "../../../src/domain/binaryTargetTypes.js";
+import type { MipsElfMetadata } from "../../../src/domain/binaryTargetTypes.js";
 
-export declare function parsePspReadelfAbi(text: string): MipsAbiFlags;
+export declare function parsePspReadelfMips(
+  text: string,
+): MipsElfMetadata & { readonly gnuAttributes: null };

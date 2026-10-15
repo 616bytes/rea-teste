@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { copyFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { parseMipsReadelfGnuAttributeAbsence } from "./mips-checks.mjs";
 
 const execute = promisify(execFile);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -42,15 +43,11 @@ export async function buildPspFixture(directory, globalValue = 7) {
   assert.equal(bytes.readUInt32LE(36), 0x10a23001);
   const readelf = await execute(
     "psp-readelf",
-    ["-h", "-A", "-sW", path],
+    ["-h", "-A", "-S", "-sW", path],
     options,
   );
   assert.equal(readelf.stderr.trim(), "");
-  assert.match(readelf.stdout, /Class:\s+ELF32/u);
-  assert.match(readelf.stdout, /Data:\s+2's complement, little endian/u);
-  assert.match(readelf.stdout, /Type:\s+EXEC\b/u);
-  assert.match(readelf.stdout, /Flags:\s+0x10a23001\b/u);
-  const abiFlags = parsePspReadelfAbi(readelf.stdout);
+  const mips = parsePspReadelfMips(readelf.stdout);
   const abiDump = await execute(
     "psp-readelf",
     ["-x", ".MIPS.abiflags", path],
@@ -99,13 +96,7 @@ export async function buildPspFixture(directory, globalValue = 7) {
     source_sha256: sourceDigests,
     symbols,
     flags: "0x10a23001",
-    mips: {
-      elfClass: 32,
-      byteOrder: "little",
-      type: 2,
-      flags: 0x10a23001,
-      abiFlags,
-    },
+    mips,
     abi_record_hex_dump: abiDump.stdout,
     global_value: globalValue,
     versions,
@@ -115,8 +106,8 @@ export async function buildPspFixture(directory, globalValue = 7) {
   };
 }
 
-/** Independent GNU fields for the pinned PSPSDK fixture, not REA's parser. */
-export function parsePspReadelfAbi(text) {
+/** Complete independent fields for the pinned PSPSDK fixture, not REA's parser. */
+export function parsePspReadelfMips(text) {
   const field = (expression, label) => {
     const matches = [...text.matchAll(expression)];
     assert.equal(
@@ -126,6 +117,13 @@ export function parsePspReadelfAbi(text) {
     );
     return matches[0][1].trim();
   };
+  assert.equal(field(/^\s*Class:\s*(.+)$/gmu, "class"), "ELF32");
+  assert.equal(
+    field(/^\s*Data:.*?,\s*(little|big) endian\s*$/gmu, "byte order"),
+    "little",
+  );
+  assert.match(field(/^\s*Type:\s*(.+)$/gmu, "type"), /^EXEC\b/u);
+  assert.match(field(/^\s*Flags:\s*(.+)$/gmu, "flags"), /^0x10a23001\b/u);
   const width = (name) => {
     const bits = Number(
       field(new RegExp(`^${name} size:\\s*(\\d+)\\s*$`, "gmu"), name),
@@ -178,7 +176,14 @@ export function parsePspReadelfAbi(text) {
     },
     "PSPSDK ABI declaration differs from independently inspected build intent",
   );
-  return abi;
+  return {
+    elfClass: 32,
+    byteOrder: "little",
+    type: 2,
+    flags: 0x10a23001,
+    abiFlags: abi,
+    gnuAttributes: parseMipsReadelfGnuAttributeAbsence(text),
+  };
 }
 
 /** Observations from Ghidra, not an echo of the requested profile. */

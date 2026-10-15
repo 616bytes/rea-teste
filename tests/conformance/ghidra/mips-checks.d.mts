@@ -5,6 +5,7 @@ export interface MipsReadelfFacts {
   mips: MipsElfMetadata & { readonly gnuAttributes: null };
   symbols: Record<string, string>;
 }
+export function parseMipsReadelfGnuAttributeAbsence(text: string): null;
 export function parseMipsReadelf(
   text: string,
   byteOrder: string,

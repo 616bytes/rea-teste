@@ -1,6 +1,7 @@
 # Semantic literal byte-budget verification
 
-Tracks #3933 under #4027. Normalized semantic literals, configuration defaults and request endpoints use the primitive owner. Its singleton path validates strings/nonfinite
+Tracks #3933 under #4027. All normalized semantic literals and configuration
+defaults use the primitive owner. Its singleton path validates strings/nonfinite
 numbers/negative zero without a Set, sorting or canonical-key serialization.
 Each source analysis owns a bounded set of encountered limit classifications;
 coverage consumes these observations after evaluation. This replaces a recursive
@@ -10,11 +11,11 @@ scan that only saw retained binding/return values. No persistent cache is added.
 
 Public CLI and actual stdio MCP cases cover quoted strings, cooked templates,
 equivalent concatenation, member receivers, a configuration-only expression
-statement, bare fetch/WebSocket endpoints, a linked response consumer and a small exact control. Direct/default oversized values become
+statement and a small exact control. Direct/default oversized values become
 `resource-limit` unknowns with partial application coverage and
 `javascript_semantic_primitive_bytes = 1048576`. Defaults carry
 `value_resource_limit` inline and an unknown anchored to their config node.
-Requests and linked response consumers carry `endpoint_resource_limit` and an anchored unknown. Known null/false/zero/empty defaults and bounded endpoints remain exact; source lookup paths/keys and field identities remain unchanged. Original source/digests and
+Known null/false/zero/empty defaults remain exact. Original source/digests and
 CLI/MCP identity parity are preserved.
 
 Member and destructuring projections use the shared slot owner's tagged value.
@@ -36,12 +37,15 @@ before the separate domain reproduction (2 failed/16 passed). Review head
 25 passed). The first review correction passed 65/66 focused tests; a doubling
 chain now truthfully retains an additional encountered expression-depth limit,
 so its byte-growth assertion was updated to allow other recorded limits.
-Final review exposed a request-endpoint bypass at `38d263a`: **7 failed/14 passed** in 13 new domain and eight public cases. Defaults and request endpoint values now share one exact-literal/normalization entry, and linked response consumers retain the limiting fact. The raw endpoint helper is removed. The additional public response case was not in that baseline run.
-
-Final validation: **81 focused tests** passed in six files; after adding the linked-response public case, that CLI/MCP file passed **9/9**. These cover **82 distinct cases**, not one 82-case invocation. **945 semantic tests** passed in 37 files, with overlapping domain coverage. The full static gate caught an optional-field narrowing error in the public test; an explicit boolean discriminant fixed it without changing scenario inputs or runtime code. Full static checks, the final nine-case public file and the documentation gate (five consistency tests) then passed. The large-wire fixture retains
+Prior validation on the restored runtime: **66 focused tests** in five files and **932 semantic tests**
+in 36 files, with overlapping domain coverage. The large-wire fixture retains
 16 individually admitted values and at least the former aggregate UTF-16 payload,
 plus complete CLI/MCP delivery, typed identities, empty strings and retained
 tracing. Inputs regenerate from the tests.
+
+## Endpoint identity compatibility
+
+An attempted endpoint normalization at `5808872` passed its new local cases and real Obsidian control, but failed the existing CI endpoint-payload acceptance workflow (1 failed/1,573 passed/19 skipped in that shard). It violated the established full endpoint lookup/trace contract. This extension was reverted; endpoint values are lookup identities, outside the normalized primitive lattice. The original large endpoint is preserved. Corrected public validation passed **7/7** across two files; this adds one acceptance workflow to the previous 66-case focused selection (**67 distinct cases**, not one 67-case invocation). Its acceptance workflow now also normalizes that identical string as an exported primitive, requiring the typed value bound while endpoint lookup, both trace workflows and version comparison remain usable. Prior measurements and failed attempts remain in the JSON record. Production source is restored byte-identical to `38d263a`; the 932-test semantic run belongs to that state. Final full static and documentation gates (five consistency tests) passed after the compatibility correction.
 
 ## Real application control and costs
 
@@ -60,9 +64,9 @@ to #4097; these are controls for semantic normalization and coverage.
 
 | Complete real verifier |        Before | Final correction |
 | ---------------------- | ------------: | ---------------: |
-| Elapsed seconds        |        33.394 |           33.062 |
-| CPU seconds            |     33.016802 |        32.716240 |
-| Peak cgroup bytes      | 1,979,863,040 |    1,897,406,464 |
+| Elapsed seconds        |        33.394 |           32.949 |
+| CPU seconds            |     33.016802 |        32.559187 |
+| Peak cgroup bytes      | 1,979,863,040 |    1,880,096,768 |
 
 Includes initial analysis, both query arms, export, CLI parity and tokenizer.
 One CPU, 8 GiB hard cap, 6 GiB early stop, no swap; cleanup verified and no OOM.

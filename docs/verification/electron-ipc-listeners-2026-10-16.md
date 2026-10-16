@@ -4,7 +4,7 @@
 [#4389](https://github.com/morluto/rea/pull/4389), umbrella
 [#4027](https://github.com/morluto/rea/issues/4027).
 
-All 62 IPC boundary regressions pass, alongside shared projection/actions and
+All 67 IPC boundary regressions pass, alongside shared projection/actions and
 converted MCP schema checks. Real draw.io operation phases succeed.
 Every real capture still **fails overall provider cleanup**. These are distinct
 results; neither completed-task acceleration nor token savings is established.
@@ -503,3 +503,53 @@ Sources, failures and resource limitations are appended under
 
 The final docs gate passes six tasks and five README consistency cases; source
 digests are verified again afterward.
+
+## Unknown listener-chain ownership
+
+Fresh review of `0b4f2e81` found that the bounded Boolean chain test treats a
+still-unexamined function as fresh when 17 app decorators hide an owned once
+wrapper. Two emits then produce three invocation records for one actual once
+callback. The same unknown-as-fresh error affects accessor/Proxy links. Four
+native controls fail before correction (63 passed, four failed of 67); the
+16-decorator boundary already passes. A deep ordinary on control confirms
+missing ownership cannot justify fabricated captured IPC either.
+
+Source `ef46b8f0b` classifies metadata as owned, unowned or unknown. Bounded-walk
+exhaustion, accessor links and Proxies preserve native registration without
+adding another recording wrapper. Successful unknown registrations retain a
+bounded `listener-chain` gap; this is not proof of IPC delivery. An existing
+inner wrapper may still report its actual once invocation. Shared native
+data-descriptor parsing preserves accessor uncertainty at recognition/removal
+and avoids inherited descriptor-value interpretation. The superseded Boolean
+classification is removed.
+
+The shared projection explains both gap boundaries and retention/coverage, and
+an actual MCP SDK client receives custom-apply and listener-chain gaps alongside
+ordinary IPC Evidence, validated by its converted advertised schema. All **96**
+hook/projection/actions/MCP cases pass (67 + 5 + 16 + 8). A test-only lint length
+failure is corrected by generating repeated fixture rows from one table without
+relaxing rules; all **13** affected client/projection cases pass again. The
+canonical schema and unchanged verifier/five controlled oracle sources retain
+their earlier passing checks by verified hashes; the changed projection/client
+are freshly tested rather than claimed unchanged.
+
+Prior CI run `38951509761` uses confirmed merge
+`fa090a6bde3a5dadeb71066824477292520fb43b` (0b4f + mainf31b231a). All **36 jobs
+succeed**. The earlier unrelated firmware failures do not recur in this
+combination; their cause is not inferred or claimed fixed here. Current-source
+CI/review remain required. No firmware code/assertions were modified.
+
+Frozen-source unchanged draw.io recovery/insertion again completes with seven
+IPC events, SVG **0 → 2**, unsaved true, no deadline and failed overall provider
+cleanup. Pipeline wall **11.163 s**; observed payload-exit cgroup CPU **6.203177 s**,
+peak **547,418,112 bytes**. An extra scope descendant leaves complete-family
+resource observation unverified; later inactive/dead scope after external
+recovery does not establish provider cleanup.
+
+Final static checks pass two uncached tasks in **88.383 s wall, 87.726306 family
+CPU s and 4,399,632,384 peak cgroup bytes**, no OOM. All source identities, failed
+controls, corrected fixture-only lint failure and resource caveats are appended
+under `chain_ownership_followup`; historical fields are unchanged.
+
+Final docs validation passes six tasks and five README consistency cases;
+current source digests are verified again afterward.

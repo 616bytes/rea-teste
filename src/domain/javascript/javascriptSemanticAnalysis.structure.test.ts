@@ -544,6 +544,7 @@ describe("JavaScript semantic analysis: write references", () => {
           public z = seed,
         ) {
           console.log(this.x);
+          console.log(y);
         }
       }
     `);
@@ -552,8 +553,15 @@ describe("JavaScript semantic analysis: write references", () => {
 
     // Parameter properties are definitions, not source identifier reads.
     expect(referencesFor("x")).toEqual([]);
-    expect(referencesFor("y")).toEqual([]);
     expect(referencesFor("z")).toEqual([]);
+
+    // Actual reads in constructor body survive.
+    expect(referencesFor("y")).toEqual([
+      expect.objectContaining({
+        name: "y",
+        role: "read",
+      }),
+    ]);
 
     // Actual reads in parameter default values remain references.
     expect(referencesFor("seed")).toEqual([

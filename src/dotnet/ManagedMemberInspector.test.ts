@@ -687,6 +687,16 @@ describe("managed exported types", () => {
 
     expect(result.coverage.state).toBe("unavailable");
     expect(result.exported_types).toBeNull();
+    // Unexamined is not historical: the comparison names the side and why.
+    const limitations = comparisonLimitations(result, result);
+    expect(limitations).toContain(
+      "The left managed member observation is unavailable, so none of its members were compared: The PE has no admitted CLI metadata; managed member inspection is unavailable.",
+    );
+    expect(
+      limitations.some((limitation) =>
+        limitation.includes("predates ExportedType inspection"),
+      ),
+    ).toBe(false);
   });
 
   it("reads member Evidence recorded before exported types as unexamined", () => {

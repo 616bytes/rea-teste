@@ -322,6 +322,13 @@ constants, and bounded shape context. It reports all candidates at the winning
 score and remains ambiguous when the evidence does not distinguish them. The
 digest does not itself remap metadata tokens.
 
+A side whose member inspection is unavailable, for example because it reached
+the representation budget, contributes no members. The comparison names that
+side and its coverage issues in its limitations rather than reporting an empty
+difference. To compare such assemblies, inspect the same declaring types on both
+sides with `inspect_managed_members` `type_names` and compare those Evidence
+records; the path-based CLI command inspects whole assemblies.
+
 Tokens are always remapped through observed structure. A caller cannot carry
 `0x06001234` into a new MVID and assume it names the same method.
 

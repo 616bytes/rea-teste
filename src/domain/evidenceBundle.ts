@@ -60,6 +60,14 @@ export class NonCanonicalEvidenceBundleError extends TypeError {
   }
 }
 
+/** Caller input repeats an Evidence record ID within one bundle. */
+export class DuplicateEvidenceRecordIdError extends TypeError {
+  constructor() {
+    super("Evidence bundle contains duplicate record IDs");
+    this.name = "DuplicateEvidenceRecordIdError";
+  }
+}
+
 /** Build and authenticate a sealed bundle while reusing immutable Evidence records. */
 export const createImmutableEvidenceBundle = (
   records: readonly Evidence[],
@@ -290,7 +298,7 @@ const authenticateBundle = (
 ): EvidenceBundle => {
   const recordIds = parsed.records.map(({ evidence_id: id }) => id);
   if (new Set(recordIds).size !== recordIds.length)
-    throw new TypeError("Evidence bundle contains duplicate record IDs");
+    throw new DuplicateEvidenceRecordIdError();
   validateUnknownGraph(parsed.unknowns, parsed.records);
   const canonical = createEvidenceBundle(
     parsed.records.map((record, index) => {

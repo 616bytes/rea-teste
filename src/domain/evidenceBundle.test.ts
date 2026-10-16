@@ -5,6 +5,7 @@ import { ANALYSIS_SNAPSHOT_TARGET } from "./analysisSnapshot.fixture.js";
 import {
   createEvidenceBundle,
   createImmutableEvidenceBundle,
+  DuplicateEvidenceRecordIdError,
   NonCanonicalEvidenceBundleError,
   describeEvidenceBundleFailure,
   evidenceBundleForTarget,
@@ -36,6 +37,22 @@ describe("evidence bundle failure classification", () => {
         records: [...canonical.records].reverse(),
       }),
     ).toThrow(NonCanonicalEvidenceBundleError);
+  });
+
+  it("tags bundles that repeat an Evidence record", () => {
+    const canonical = createEvidenceBundle([
+      createEvidence(undefined, provider, {
+        operation: "observe",
+        parameters: {},
+        result: { observed: true },
+      }),
+    ]);
+    expect(() =>
+      parseEvidenceBundle({
+        ...canonical,
+        records: [...canonical.records, ...canonical.records],
+      }),
+    ).toThrow(DuplicateEvidenceRecordIdError);
   });
 
   it("treats only authenticated standalone Evidence as the wrong input kind", () => {

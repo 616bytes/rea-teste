@@ -5,7 +5,10 @@ import {
   createJavaScriptSemanticGraphNode,
   JavaScriptSemanticEvidenceContextRegistry,
 } from "../domain/javascript/javascriptSemanticGraph.js";
-import { proofEvidence } from "./ReconstructionObligationLedger.fixture.js";
+import {
+  proofEvidence,
+  reviewedObligation,
+} from "./ReconstructionObligationLedger.fixture.js";
 import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../domain/evidence.js";
@@ -31,7 +34,10 @@ import {
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { MANAGED_WORKFLOW_PROVIDER } from "./InvestigationProviders.js";
 import { createProcessCaptureEvidence } from "./process/ProcessEvidence.js";
-import { deriveReconstructionObligationCandidates } from "./ReconstructionObligationCandidates.js";
+import {
+  deriveReconstructionObligationCandidates,
+  MissingReviewedObligationEvidenceError,
+} from "./ReconstructionObligationCandidates.js";
 
 const applicationWithUnknowns = (keys: readonly string[]) => {
   const source = createEvidence(
@@ -177,6 +183,14 @@ describe("reconstruction obligation candidates", () => {
     expect(generated.limitations).toContain(
       `Process capture ${evidence.evidence_id} has no validated executable artifact identity; packaged-process lifecycle obligation was not bound to an artifact.`,
     );
+  });
+
+  it("tags reviewed obligations that cite Evidence absent from the bundle", () => {
+    expect(() =>
+      deriveReconstructionObligationCandidates(createEvidenceBundle([]), [
+        reviewedObligation("obl.review.absent", `ev_${"a".repeat(64)}`),
+      ]),
+    ).toThrow(MissingReviewedObligationEvidenceError);
   });
 });
 

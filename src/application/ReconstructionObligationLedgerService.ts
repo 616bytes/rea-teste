@@ -2,6 +2,10 @@ import { z } from "zod";
 
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  DuplicateEvidenceRecordIdError,
+  NonCanonicalEvidenceBundleError,
+} from "../domain/evidenceBundle.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { jsonObjectSchema, jsonValueSchema } from "../domain/jsonValue.js";
 import {
@@ -13,7 +17,10 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import { requestInputError, workflowInputError } from "./workflowInputError.js";
 import { JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER } from "./InvestigationProviders.js";
-import { deriveReconstructionObligationCandidates } from "./ReconstructionObligationCandidates.js";
+import {
+  deriveReconstructionObligationCandidates,
+  MissingReviewedObligationEvidenceError,
+} from "./ReconstructionObligationCandidates.js";
 import { evaluateReconstructionObligationLedger } from "./ReconstructionObligationLedgerEvaluation.js";
 
 const OPERATION = "build_reconstruction_obligation_ledger" as const;
@@ -45,7 +52,12 @@ export const buildReconstructionObligationLedgerEvidenceValidated = (
     });
     return ok(createLedgerEvidence(input, ledger));
   } catch (cause: unknown) {
-    if (cause instanceof TypeError || cause instanceof z.ZodError)
+    if (
+      cause instanceof NonCanonicalEvidenceBundleError ||
+      cause instanceof DuplicateEvidenceRecordIdError ||
+      cause instanceof MissingReviewedObligationEvidenceError ||
+      cause instanceof z.ZodError
+    )
       return err(workflowInputError(OPERATION, cause));
     return err(
       new AnalysisProtocolError(

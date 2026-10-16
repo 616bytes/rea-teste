@@ -25,6 +25,14 @@ type CandidateFields = Omit<
   "binding" | "status" | "diagnostics"
 >;
 
+/** Caller input cites review Evidence that its bundle does not contain. */
+export class MissingReviewedObligationEvidenceError extends TypeError {
+  constructor(evidenceId: string) {
+    super(`Reviewed obligation Evidence is missing: ${evidenceId}`);
+    this.name = "MissingReviewedObligationEvidenceError";
+  }
+}
+
 /** Internal generated or reviewed obligation before manifest closure evaluation. */
 export interface ReconstructionObligationCandidate extends CandidateFields {
   readonly definitionCount: number;
@@ -322,9 +330,7 @@ const reviewedCandidate = (
     authority_references: reviewEvidenceIds.map((evidenceId) => {
       const evidence = records.get(evidenceId);
       if (evidence === undefined)
-        throw new TypeError(
-          `Reviewed obligation Evidence is missing: ${evidenceId}`,
-        );
+        throw new MissingReviewedObligationEvidenceError(evidenceId);
       return {
         evidence_id: evidenceId,
         authority: evidence.authority,

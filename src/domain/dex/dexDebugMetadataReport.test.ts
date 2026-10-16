@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   type DexDebugMetadataResult,
+  dexDebugMetadataResultSchema,
   dexReportMatchesSelection,
 } from "./dexDebugMetadataReport.js";
 
@@ -17,7 +18,6 @@ const summary = (entries: string[]): DexDebugMetadataResult =>
     ...base,
     mode: "summary",
     members: entries.map((entry) => ({ entry })),
-    class_detail: null,
   }) as unknown as DexDebugMetadataResult;
 
 const detail = (
@@ -27,7 +27,6 @@ const detail = (
   ({
     ...base,
     mode: "class-detail",
-    members: [],
     class_detail: { entry, descriptor, source_file: null, methods: [] },
   }) as unknown as DexDebugMetadataResult;
 
@@ -90,6 +89,36 @@ describe("archive member identity", () => {
       dexReportMatchesSelection(summary(["classes2.dex"]), {
         entry: "/classes2.dex",
       }),
+    ).toBe(false);
+  });
+});
+
+describe("report shape by mode", () => {
+  it("requires the matched descriptor in class detail and no detail in a summary", () => {
+    const valid = {
+      ...base,
+      mode: "class-detail",
+      class_detail: {
+        entry: null,
+        descriptor: "LFoo;",
+        source_file: null,
+        methods: [],
+      },
+    };
+    expect(dexDebugMetadataResultSchema.safeParse(valid).success).toBe(true);
+    expect(
+      dexDebugMetadataResultSchema.safeParse({
+        ...valid,
+        class_detail: { ...valid.class_detail, descriptor: null },
+      }).success,
+    ).toBe(false);
+    expect(
+      dexDebugMetadataResultSchema.safeParse({
+        ...base,
+        mode: "summary",
+        members: [],
+        class_detail: valid.class_detail,
+      }).success,
     ).toBe(false);
   });
 });

@@ -453,7 +453,9 @@ export class DexFileProvider implements DexDebugMetadataPort {
           `Class ${descriptor} appears in more than one dex member; select one with entry.${context}`,
         ),
       );
-    return ok(buildDexClassDetailResult(artifact, container, found[0]!));
+    return ok(
+      buildDexClassDetailResult(artifact, container, found[0]!, descriptor),
+    );
   }
 
   #rejectIfOversized(

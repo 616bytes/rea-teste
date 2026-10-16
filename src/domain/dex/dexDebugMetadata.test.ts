@@ -267,7 +267,7 @@ describe("dexDebugMetadata validates the frame and class identities", () => {
 
   it("matches a class by its modified-UTF-8 bytes, not a near miss", async () => {
     const result = await detailOf(debuggableDex());
-    expect(result.ok && result.value?.descriptor).toBe("Lcom/example/Foo;");
+    expect(result.ok && result.value?.sourceFile).toBe("Foo.java");
     const parsed = parseDexFile(debuggableDex());
     if (!parsed.ok) throw new Error("fixture must frame");
     for (const near of ["Lcom/example/Foo", "Lcom/example/Fo\u00f6;", ""])

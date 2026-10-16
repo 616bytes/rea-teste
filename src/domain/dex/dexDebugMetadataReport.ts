@@ -45,8 +45,10 @@ export type InspectDexDebugMetadataInput = z.infer<
 >;
 
 /**
- * `unknown`: no local evidence was found, but damaged structures (see
- * `unreadable`) could have hidden it, so "stripped" is not established.
+ * Same vocabulary as a method's state: line positions and local evidence both
+ * observed is `present`, exactly one is `partial`, neither is `stripped`.
+ * `unknown`: the observed evidence does not settle the label and damaged
+ * structures (see `unreadable`) could have hidden the rest.
  */
 const readiness = z.enum(["present", "partial", "stripped", "unknown"]);
 
@@ -69,7 +71,8 @@ const summarySchema = z.strictObject({
   }),
   /**
    * Structures that could not be read; their debug metadata is unknown, not
-   * absent. Non-zero values make `readiness` unknown unless evidence was found.
+   * absent. Non-zero values make `readiness` unknown unless both line and
+   * local evidence were found.
    */
   unreadable: z.strictObject({
     class_data: z.number().int().nonnegative(),
@@ -115,26 +118,36 @@ const methodDetailSchema = z.strictObject({
 
 const classDetailSchema = z.strictObject({
   entry: z.string().nullable(),
-  descriptor: z.string().nullable(),
+  /** The selected class was matched by this exact descriptor. */
+  descriptor: z.string(),
   source_file: z.string().nullable(),
   methods: z.array(methodDetailSchema),
 });
 
-export const dexDebugMetadataResultSchema = z.strictObject({
+const reportFields = {
   artifact: z.strictObject({
     path: z.string().min(1),
     sha256: digest,
     bytes: z.number().int().nonnegative(),
   }),
   container: z.enum(["dex-file", "apk", "zip"]),
-  mode: z.enum(["summary", "class-detail"]),
-  /** One per summarized DEX member (just one for a loose .dex or a selected entry). */
-  members: z.array(memberSummarySchema),
-  /** Set only in class-detail mode. */
-  class_detail: classDetailSchema.nullable(),
   runtime_execution: z.literal("not-performed"),
   limitations: z.array(z.string()),
-});
+};
+
+export const dexDebugMetadataResultSchema = z.discriminatedUnion("mode", [
+  z.strictObject({
+    ...reportFields,
+    mode: z.literal("summary"),
+    /** One per summarized DEX member (just one for a loose .dex or a selected entry). */
+    members: z.array(memberSummarySchema),
+  }),
+  z.strictObject({
+    ...reportFields,
+    mode: z.literal("class-detail"),
+    class_detail: classDetailSchema,
+  }),
+]);
 export type DexDebugMetadataResult = z.infer<
   typeof dexDebugMetadataResultSchema
 >;
@@ -199,7 +212,6 @@ export const buildDexSummaryResult = (
     bytes: m.bytes,
     summary: projectSummary(m.summary),
   })),
-  class_detail: null,
   runtime_execution: "not-performed",
   limitations: [...DEX_DEBUG_METADATA_LIMITATIONS],
 });
@@ -209,14 +221,15 @@ export const buildDexClassDetailResult = (
   artifact: DexArtifactIdentity,
   container: DexDebugMetadataResult["container"],
   found: { readonly entry: string | null; readonly detail: DexClassDetail },
+  /** The descriptor the class was matched by (resolution may decode it as null). */
+  descriptor: string,
 ): DexDebugMetadataResult => ({
   artifact,
   container,
   mode: "class-detail",
-  members: [],
   class_detail: {
     entry: found.entry,
-    descriptor: found.detail.descriptor,
+    descriptor,
     source_file: found.detail.sourceFile,
     methods: found.detail.methods.map((m) => ({
       name: m.name,
@@ -269,16 +282,13 @@ export const dexReportMatchesSelection = (
     selection.entry === undefined
       ? undefined
       : normalizeArchiveMemberPath(selection.entry);
-  if (selection.class_descriptor === undefined)
+  if (report.mode === "summary")
     return (
-      report.mode === "summary" &&
-      report.class_detail === null &&
+      selection.class_descriptor === undefined &&
       (entry === undefined ||
         (report.members.length === 1 && report.members[0]?.entry === entry))
     );
   return (
-    report.mode === "class-detail" &&
-    report.class_detail !== null &&
     report.class_detail.descriptor === selection.class_descriptor &&
     (entry === undefined || report.class_detail.entry === entry)
   );

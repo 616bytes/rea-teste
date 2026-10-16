@@ -65,8 +65,8 @@ export interface DexMethodDetail {
   readonly setFileEvents: number;
 }
 
+/** One class's detail; it is identified by the descriptor it was matched by. */
 export interface DexClassDetail {
-  readonly descriptor: string | null;
   readonly sourceFile: string | null;
   readonly methods: readonly DexMethodDetail[];
 }
@@ -452,7 +452,6 @@ export const assembleClassDetail = async (
   const spent = outOfWork(work);
   if (spent !== null) return err(spent);
   return ok({
-    descriptor: resolver.typeDescriptor(classDef.classIdx),
     sourceFile: resolver.string(classDef.sourceFileIdx),
     methods,
   });

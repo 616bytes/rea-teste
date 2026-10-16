@@ -129,7 +129,7 @@ const dexdumpMethodLocals = async (dexPath) => {
     }
     const t = /^      type          : '(.*)'/.exec(line);
     if (t) type = t[1];
-    if (line.startsWith('      locals        :')) {
+    if (line.startsWith("      locals        :")) {
       inLocals = true;
       byMethod.set(`${cls}->${name}${type}`, []);
       continue;

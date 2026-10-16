@@ -360,6 +360,8 @@ const substitutePrototypeKeys = (text: string, document: Document) => {
 };
 
 const EPOCH_2001 = 978307200000;
+const UTF8_DECODER = new TextDecoder("utf-8");
+const UTF16BE_DECODER = new TextDecoder("utf-16be");
 
 const readSizedUint = (
   view: DataView,
@@ -388,7 +390,7 @@ const readUid = (view: DataView, offset: number, byteCount: number): number => {
   for (let i = 0; i < byteCount; i++) {
     value = value * 256 + view.getUint8(offset + i);
   }
-  return value;
+  return Number.isSafeInteger(value) ? value : -1;
 };
 
 /**
@@ -470,21 +472,13 @@ export const parseBinaryPropertyList = (data: Uint8Array): unknown => {
         return new Date(timestamp * 1000 + EPOCH_2001);
       }
       case 0x4: {
-        return new Uint8Array(data.buffer, data.byteOffset + offset, size);
+        return data.subarray(offset, offset + size);
       }
       case 0x5: {
-        let s = "";
-        for (let i = 0; i < size; i++) {
-          s += String.fromCharCode(view.getUint8(offset + i));
-        }
-        return s;
+        return UTF8_DECODER.decode(data.subarray(offset, offset + size));
       }
       case 0x6: {
-        let s = "";
-        for (let i = 0; i < size; i++) {
-          s += String.fromCharCode(view.getUint16(offset + i * 2));
-        }
-        return s;
+        return UTF16BE_DECODER.decode(data.subarray(offset, offset + size * 2));
       }
       case 0x8: {
         const byteCount = size + 1;

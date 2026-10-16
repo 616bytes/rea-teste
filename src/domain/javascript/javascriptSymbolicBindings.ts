@@ -462,7 +462,10 @@ export class JavaScriptSymbolicBindings {
     }
     if (t.isSequenceExpression(node))
       return this.evaluate(node.expressions.at(-1), env);
-    if (t.isAssignmentExpression(node)) return this.evaluate(node.right, env);
+    if (t.isAssignmentExpression(node))
+      return node.operator === "="
+        ? this.evaluate(node.right, env)
+        : symbolicUnknown(`unsupported assignment operator: ${node.operator}`);
     if (t.isAwaitExpression(node)) return this.evaluate(node.argument, env);
     if (t.isUnaryExpression(node)) {
       const value = this.evaluate(node.argument, env);
@@ -981,7 +984,9 @@ export class JavaScriptSymbolicBindings {
     ) {
       this.#indexWrite(
         direct,
-        t.isAssignmentExpression(site) ? site.right : site,
+        t.isAssignmentExpression(site) && site.operator === "="
+          ? site.right
+          : site,
         site,
       );
       return;

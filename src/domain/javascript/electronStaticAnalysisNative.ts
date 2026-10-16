@@ -15,14 +15,19 @@ import {
 import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
 import {
   argumentNode,
-  calleeName,
   range,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
 import {
   propertyName,
   semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import {
+  semanticFactoryLoaderMemberAt,
+  semanticRequireLoaderAt,
+} from "./javascriptSemanticRequireOrigin.js";
+import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
 interface NativeBindingInput {
@@ -40,12 +45,15 @@ interface NativeBindingInput {
 export const inspectElectronNativeNode = (
   node: t.Node,
   context: JavaScriptFindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
 ): void => {
   if (t.isImportDeclaration(node)) inspectImport(node, context);
   else if (t.isExportNamedDeclaration(node)) inspectNamedExport(node, context);
   else if (t.isExportAllDeclaration(node)) inspectExportAll(node, context);
-  else if (t.isVariableDeclarator(node)) inspectRequireBinding(node, context);
-  else if (t.isAssignmentExpression(node)) inspectReExport(node, context);
+  else if (t.isVariableDeclarator(node))
+    inspectRequireBinding(node, context, bindings);
+  else if (t.isAssignmentExpression(node))
+    inspectReExport(node, context, bindings);
 };
 
 const inspectImport = (
@@ -140,8 +148,9 @@ const inspectExportAll = (
 const inspectRequireBinding = (
   node: t.VariableDeclarator,
   context: JavaScriptFindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
 ): void => {
-  const required = nativeRequire(node.init);
+  const required = nativeRequire(node.init, context, bindings);
   if (required === undefined) return;
   addBinding({
     context,
@@ -156,14 +165,15 @@ const inspectRequireBinding = (
 const inspectReExport = (
   node: t.AssignmentExpression,
   context: JavaScriptFindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
 ): void => {
-  const required = nativeRequire(node.right);
+  const required = nativeRequire(node.right, context, bindings);
   if (required === undefined || !isModuleExport(node.left)) return;
   addBinding({
     context,
     node,
     specifier: required.specifier,
-    kind: "re-export",
+    kind: node.operator === "=" ? "re-export" : "require",
     moduleKind: "require",
     ...required.access,
   });
@@ -200,6 +210,8 @@ const addBinding = (input: NativeBindingInput): void => {
 
 const nativeRequire = (
   node: t.Node | null | undefined,
+  context: JavaScriptFindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
 ):
   | {
       readonly specifier: string;
@@ -217,12 +229,9 @@ const nativeRequire = (
     hasMemberAccess = true;
     node = node.object;
   }
-  if (!t.isCallExpression(node)) return undefined;
-  const name = calleeName(node.callee);
   if (
-    name !== "require" &&
-    !name.endsWith(".require") &&
-    !name.includes("__webpack_require__")
+    !t.isCallExpression(node) ||
+    !isProvenNativeRequireCall(node, context, bindings)
   )
     return undefined;
   const specifier = stringValue(argumentNode(node.arguments[0]));
@@ -237,6 +246,30 @@ const nativeRequire = (
         },
       }
     : undefined;
+};
+
+const isProvenNativeRequireCall = (
+  node: t.CallExpression,
+  context: JavaScriptFindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  if (t.isIdentifier(callee, { name: "require" })) {
+    const loader = semanticRequireLoaderAt(
+      node,
+      bindings,
+      context.accumulator.factoryRequireBindingIds,
+    );
+    return loader !== "local" && loader !== "unknown";
+  }
+  return (
+    semanticFactoryLoaderMemberAt(
+      node,
+      bindings,
+      context.accumulator.factoryRequireBindingIds,
+      null,
+    ) === "factory-loader"
+  );
 };
 
 interface NativeMemberAccess {

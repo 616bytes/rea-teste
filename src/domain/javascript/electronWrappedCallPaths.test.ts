@@ -632,6 +632,52 @@ it("does not follow a statically false callback branch", () => {
   );
   expect(result.electron.call_paths ?? []).toEqual([]);
 });
+it("preserves guarded candidate branches for compound assignment tests while pruning plain known-false assignments", () => {
+  const analyzeTest = (test: string) =>
+    analyzeJavaScriptStaticSource(`
+      const {contextBridge, ipcRenderer} = require("electron");
+      function action(step) {
+        let flag = 1;
+        if ((${test})) ipcRenderer.send("channel-then");
+        else ipcRenderer.send("channel-else");
+      }
+      contextBridge.exposeInMainWorld("desktop", {action});
+    `);
+  const compound = analyzeTest("flag -= 1");
+  expect(compound.electron.call_paths).toEqual([
+    expect.objectContaining({
+      entry: "desktop.action",
+      channel: "channel-then",
+      conditions: [expect.objectContaining({ expression: "flag -= 1" })],
+    }),
+    expect.objectContaining({
+      entry: "desktop.action",
+      channel: "channel-else",
+      conditions: [expect.objectContaining({ expression: "!(flag -= 1)" })],
+    }),
+  ]);
+  const plain = analyzeTest("flag = 0");
+  expect(plain.electron.call_paths).toEqual([
+    expect.objectContaining({
+      entry: "desktop.action",
+      channel: "channel-else",
+      conditions: [],
+    }),
+  ]);
+  const unknown = analyzeTest("flag -= step");
+  expect(unknown.electron.call_paths).toEqual([
+    expect.objectContaining({
+      entry: "desktop.action",
+      channel: "channel-then",
+      conditions: [expect.objectContaining({ expression: "flag -= step" })],
+    }),
+    expect.objectContaining({
+      entry: "desktop.action",
+      channel: "channel-else",
+      conditions: [expect.objectContaining({ expression: "!(flag -= step)" })],
+    }),
+  ]);
+});
 it("retains early rejection guards and excludes calls after definite returns", () => {
   const guarded = analyzeJavaScriptStaticSource(
     `const e=require("electron");e.ipcMain.on("guard",event=>{if(!allowed(event))return;event.sender.copy()});`,

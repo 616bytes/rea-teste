@@ -5,16 +5,23 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { CdpConnection } from "./CdpConnection.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 
+const cdpTransportCleanupLeases = new WeakMap<
+  AnalysisError,
+  readonly AnalysisCleanupLease[]
+>();
+
 /** Typed ownership facts shared by transport errors and their adapter projections. */
 class CdpTransportCleanupFailure extends ProviderCleanupError {
   constructor(
     readonly cleanupLeases: readonly AnalysisCleanupLease[],
+    providerId: string,
     failure: {
       readonly resources: readonly string[];
       readonly operation: string;
@@ -22,11 +29,12 @@ class CdpTransportCleanupFailure extends ProviderCleanupError {
       readonly cause: unknown;
     },
   ) {
-    super("rea-cdp-browser", failure.resources, failure.diagnostics, {
+    super(providerId, failure.resources, failure.diagnostics, {
       operation: failure.operation,
       cause: failure.cause,
     });
     new AnalysisCleanupLeaseGroup(this, cleanupLeases);
+    cdpTransportCleanupLeases.set(this, cleanupLeases);
   }
 }
 
@@ -35,8 +43,14 @@ export const bindCdpTransportCleanup = <Failure extends AnalysisError>(
   cause: unknown,
   failure: Failure,
 ): Failure => {
-  if (cause instanceof CdpTransportCleanupFailure)
-    new AnalysisCleanupLeaseGroup(failure, cause.cleanupLeases);
+  const leases =
+    cause instanceof AnalysisError
+      ? cdpTransportCleanupLeases.get(cause)
+      : undefined;
+  if (leases !== undefined) {
+    new AnalysisCleanupLeaseGroup(failure, leases);
+    cdpTransportCleanupLeases.set(failure, leases);
+  }
   return failure;
 };
 
@@ -60,6 +74,11 @@ export class CdpTargetSessionOwner {
   #admissions = 0;
   #closePromise: Promise<void> | undefined;
   readonly #admissionWaiters = new Set<() => void>();
+  readonly #providerId: string;
+
+  constructor(providerId = "rea-cdp-browser") {
+    this.#providerId = providerId;
+  }
 
   /** Admit and own one WebSocket from handshake completion onward. */
   async connect(
@@ -71,7 +90,7 @@ export class CdpTargetSessionOwner {
   ): Promise<CdpConnection> {
     if (this.#closing)
       throw new ProviderCleanupError(
-        "rea-cdp-browser",
+        this.#providerId,
         [resource],
         { reason: "CDP provider is closing and cannot admit another session." },
         { operation },
@@ -79,7 +98,7 @@ export class CdpTargetSessionOwner {
     await this.retryPending();
     if (this.#closing)
       throw new ProviderCleanupError(
-        "rea-cdp-browser",
+        this.#providerId,
         [resource],
         { reason: "CDP provider is closing and cannot admit another session." },
         { operation },
@@ -106,14 +125,18 @@ export class CdpTargetSessionOwner {
       try {
         await this.finish(connection);
       } catch (cleanupCause: unknown) {
-        if (
-          cause instanceof AnalysisError &&
-          cleanupCause instanceof AnalysisError
-        )
+        if (cleanupCause instanceof AnalysisError) {
+          const primary =
+            cause instanceof AnalysisError
+              ? cause
+              : new ProviderAdapterError(this.#providerId, operation, {
+                  cause,
+                });
           throw bindCdpTransportCleanup(
             cleanupCause,
-            analysisErrorWithCleanupFailure(cause, cleanupCause, operation),
+            analysisErrorWithCleanupFailure(primary, cleanupCause, operation),
           );
+        }
         throw new AggregateError(
           [cause, cleanupCause],
           `CDP operation ${operation} failed during handshake and cleanup remains incomplete.`,
@@ -171,7 +194,7 @@ export class CdpTargetSessionOwner {
       await record.cleanupLease.release();
       this.#connections.delete(connection);
     } catch (cause: unknown) {
-      const failure = cleanupError(record, cause);
+      const failure = cleanupError(record, cause, this.#providerId);
       record.failure = failure;
       throw failure;
     } finally {
@@ -199,13 +222,14 @@ export class CdpTargetSessionOwner {
         await record.cleanupLease.release();
         this.#connections.delete(record.connection);
       } catch (cause: unknown) {
-        const failure = cleanupError(record, cause);
+        const failure = cleanupError(record, cause, this.#providerId);
         record.failure = failure;
         failures.push(failure);
       }
     }
     if (failures.length === 1) throw failures[0];
-    if (failures.length > 1) throw aggregateCleanupFailures(failures);
+    if (failures.length > 1)
+      throw aggregateCleanupFailures(failures, this.#providerId);
   }
 
   async #closeAll(): Promise<void> {
@@ -224,21 +248,23 @@ export class CdpTargetSessionOwner {
         await record.cleanupLease.release();
         this.#connections.delete(record.connection);
       } catch (cause: unknown) {
-        const failure = cleanupError(record, cause);
+        const failure = cleanupError(record, cause, this.#providerId);
         record.failure = failure;
         failures.push(failure);
       }
     }
     if (failures.length === 1) throw failures[0];
-    if (failures.length > 1) throw aggregateCleanupFailures(failures);
+    if (failures.length > 1)
+      throw aggregateCleanupFailures(failures, this.#providerId);
   }
 }
 
 const cleanupError = (
   record: OwnedConnection,
   cause: unknown,
+  providerId: string,
 ): CdpTransportCleanupFailure =>
-  new CdpTransportCleanupFailure([record.cleanupLease], {
+  new CdpTransportCleanupFailure([record.cleanupLease], providerId, {
     resources: [record.resource],
     operation: record.operation,
     cause,
@@ -254,9 +280,11 @@ const cleanupError = (
 
 const aggregateCleanupFailures = (
   failures: readonly CdpTransportCleanupFailure[],
+  providerId: string,
 ): CdpTransportCleanupFailure =>
   new CdpTransportCleanupFailure(
     failures.flatMap((failure) => failure.cleanupLeases),
+    providerId,
     {
       resources: failures.flatMap(({ cleanupResources }) => cleanupResources),
       operation: "close_cdp_transports",

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { CdpConnection } from "../../../src/browser/CdpConnection.js";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
 import { observeWebExecutionInputSchema } from "../../../src/domain/webExecution.js";
 import { inspectWebEventListenersInputSchema } from "../../../src/domain/webEventListeners.js";
@@ -185,6 +186,115 @@ describe("runtime window and producer granularity", () => {
       "script-b",
     );
     expect(result.value.script_inventory.coverage_absence).toBe("unknown");
+  });
+});
+
+describe("runtime cleanup ownership", () => {
+  it("resolves runtime cleanup errors after the retained socket is released", async () => {
+    const { browser, provider, execution } = await fixture();
+    const originalClose = CdpConnection.prototype.close;
+    let denied = true;
+    const closing = vi
+      .spyOn(CdpConnection.prototype, "close")
+      .mockImplementation(function (this: CdpConnection) {
+        return denied
+          ? Promise.reject(new Error("controlled transport close failure"))
+          : originalClose.call(this);
+      });
+    onTestFinished(async () => {
+      closing.mockRestore();
+      await provider.close();
+    });
+
+    const result = await provider.observeExecution(execution);
+    if (result.ok) throw new Error("Expected retained socket cleanup failure");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    const observation = result.error.partialObservation;
+    expect(observation).toBeDefined();
+
+    const retry = await provider.close().catch((cause: unknown) => cause);
+    expect(retry).toMatchObject({ cleanupIncomplete: true });
+    expect(browser.activeConnectionCount()).toBe(1);
+
+    denied = false;
+    await provider.close();
+    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.partialObservation).toBe(observation);
+  });
+
+  it("resolves a primary runtime failure after the retained socket is released", async () => {
+    const { browser, provider, execution } = await fixture({
+      commandError: (command) =>
+        command.method === "Profiler.startPreciseCoverage"
+          ? { code: -32_000, message: "controlled primary failure" }
+          : undefined,
+    });
+    const originalClose = CdpConnection.prototype.close;
+    let denied = true;
+    const closing = vi
+      .spyOn(CdpConnection.prototype, "close")
+      .mockImplementation(function (this: CdpConnection) {
+        return denied
+          ? Promise.reject(new Error("controlled transport close failure"))
+          : originalClose.call(this);
+      });
+    onTestFinished(async () => {
+      closing.mockRestore();
+      await provider.close();
+    });
+
+    const result = await provider.observeExecution(execution);
+    if (result.ok) throw new Error("Expected primary runtime failure");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.diagnostics).toHaveProperty("primary_error");
+
+    denied = false;
+    await provider.close().catch(() => undefined);
+    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    expect(result.error.cleanupIncomplete).toBe(false);
+  });
+
+  it("resolves cancellation cleanup after the retained socket is released", async () => {
+    const { browser, provider, execution } = await fixture();
+    const controller = new AbortController();
+    const originalClose = CdpConnection.prototype.close;
+    let denied = true;
+    const closing = vi
+      .spyOn(CdpConnection.prototype, "close")
+      .mockImplementation(function (this: CdpConnection) {
+        return denied
+          ? Promise.reject(new Error("controlled transport close failure"))
+          : originalClose.call(this);
+      });
+    onTestFinished(async () => {
+      closing.mockRestore();
+      await provider.close();
+    });
+
+    const result = await provider.observeExecution(
+      { ...execution, observation_ms: 30_000 },
+      {
+        signal: controller.signal,
+        progress: {
+          report: async (update) => {
+            if (update.completed === 1) controller.abort();
+          },
+        },
+      },
+    );
+    if (result.ok) throw new Error("Expected runtime cancellation");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    if (!(result.error.cause instanceof AggregateError))
+      throw new Error("Missing cancellation/cleanup aggregate");
+    expect(result.error.cause.errors[0]).toMatchObject({
+      _tag: "AnalysisCancelledError",
+    });
+
+    denied = false;
+    await provider.close().catch(() => undefined);
+    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    expect(result.error.cleanupIncomplete).toBe(false);
   });
 });
 

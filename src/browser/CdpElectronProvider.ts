@@ -40,7 +40,9 @@ import {
 } from "./CdpTargetSessionOwner.js";
 /** Passive Electron provider for local file pages exposed by loopback CDP. */
 export class CdpElectronProvider implements ElectronObservationPort {
-  readonly #owner = new CdpTargetSessionOwner();
+  readonly #owner = new CdpTargetSessionOwner(
+    CDP_ELECTRON_PROVIDER_IDENTITY.id,
+  );
 
   close(): Promise<void> {
     return this.#owner.close();

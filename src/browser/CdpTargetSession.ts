@@ -3,6 +3,8 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { cdpProviderIdForOperation } from "./providerIdentities.js";
 import { CdpConnection } from "./CdpConnection.js";
 import {
   CdpTargetSessionOwner,
@@ -159,10 +161,22 @@ const combineOpenFailure = (
   cleanup: unknown,
   operation: BrowserObservationOperation,
 ): unknown =>
-  primary instanceof AnalysisError && cleanup instanceof AnalysisError
+  cleanup instanceof AnalysisError
     ? bindCdpTransportCleanup(
         cleanup,
-        analysisErrorWithCleanupFailure(primary, cleanup, operation),
+        analysisErrorWithCleanupFailure(
+          primary instanceof AnalysisError
+            ? primary
+            : new ProviderAdapterError(
+                cdpProviderIdForOperation(operation),
+                operation,
+                {
+                  cause: primary,
+                },
+              ),
+          cleanup,
+          operation,
+        ),
       )
     : new AggregateError(
         [primary, cleanup],

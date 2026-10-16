@@ -24,7 +24,10 @@ import {
   type WebEventListeners,
 } from "../../domain/webEventListeners.js";
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "../providerIdentities.js";
-import { CdpTargetSessionOwner } from "../CdpTargetSessionOwner.js";
+import {
+  bindCdpTransportCleanup,
+  CdpTargetSessionOwner,
+} from "../CdpTargetSessionOwner.js";
 import { CdpRuntimeSession } from "./CdpRuntimeSession.js";
 import { CdpRuntimeSources } from "./CdpRuntimeSources.js";
 import { captureWebExecution } from "./CdpExecutionCapture.js";
@@ -35,7 +38,7 @@ import {
 
 /** Native CDP integration with distinct inspection/instrumentation authority and confirmed cleanup. */
 export class CdpWebRuntimeProvider implements WebRuntimePort {
-  readonly #owner = new CdpTargetSessionOwner();
+  readonly #owner = new CdpTargetSessionOwner(CDP_BROWSER_PROVIDER_IDENTITY.id);
 
   close(): Promise<void> {
     return this.#owner.close();
@@ -109,21 +112,31 @@ export class CdpWebRuntimeProvider implements WebRuntimePort {
         result.ok ? undefined : result.error,
         group,
       );
-      if (failure !== undefined)
-        return err(
-          result.ok
-            ? options.signal?.aborted === true
-              ? analysisErrorWithCleanupFailure(
+      if (failure !== undefined) {
+        if (result.ok) {
+          if (options.signal?.aborted === true)
+            return err(
+              bindCdpTransportCleanup(
+                failure,
+                analysisErrorWithCleanupFailure(
                   new AnalysisCancelledError(operation, {
                     cause: options.signal.reason,
                     partialObservation: result.value,
                   }),
                   failure,
                   operation,
-                )
-              : failure.retainPartialObservation(result.value)
-            : analysisErrorWithCleanupFailure(result.error, failure, operation),
+                ),
+              ),
+            );
+          return err(failure.retainPartialObservation(result.value));
+        }
+        return err(
+          bindCdpTransportCleanup(
+            failure,
+            analysisErrorWithCleanupFailure(result.error, failure, operation),
+          ),
         );
+      }
     }
     if (result.ok && options.signal?.aborted === true)
       return err(

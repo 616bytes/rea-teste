@@ -12,6 +12,21 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 
 const execute = promisify(execFile);
 
+const writeReceiverReviewSources = async (root: string): Promise<void> => {
+  const sources = [
+    "Object.create.call=()=>module; const r=Object.create.call(null,null); Reflect.set(r,'require',custom); require('fs').readFileSync('wrong-create');",
+    "const fs=require('fs'); const r={fs,set hook(v){this.fs.readFileSync=custom;}}; Reflect.set(r,'hook',1); fs.readFileSync('wrong-setter');",
+    "import fs = require('fs'); fs={}; fs={}; fs.readFileSync('wrong-entry');",
+    "const fs=require('fs'); Reflect.set(fs,'readFileSync',custom,{}); fs.readFileSync('receiver-data.json');",
+    "Reflect.set(module,'require',custom,-1); require('fs').readFileSync('receiver-primitive.json');",
+    "let fs; fs=require('fs'),fs.readFileSync('sequence-one.json'),fs={},fs=require('fs'),fs.readFileSync('sequence-two.json');",
+    "const fs=require('fs'); fs.globSync('*'); fs.readFileSync('glob-kept.json');",
+    "let fs=require('fs'); {{fs.readFileSync('nested-timeline.json');}} fs={};",
+  ];
+  for (const [index, source] of sources.entries())
+    await writeFile(join(root, `receiver-review-${index}.ts`), source);
+};
+
 const writeBuiltinIdentitySources = async (root: string): Promise<void> => {
   await writeFile(
     join(root, "app.cjs"),
@@ -119,6 +134,7 @@ const writeBuiltinIdentitySources = async (root: string): Promise<void> => {
 it("preserves earlier and sibling effects without inventing replaced cached-module or process effects", async () => {
   const root = await createTestTempDirectory("rea-builtin-identity-");
   await writeBuiltinIdentitySources(root);
+  await writeReceiverReviewSources(root);
   const { stdout } = await execute(
     process.execPath,
     ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
@@ -139,16 +155,22 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "before.json",
     "direct.json",
     "escaped.json",
+    "glob-kept.json",
     "later.json",
     "loader-after.json",
     "loader-before.json",
     "nested-kept.json",
+    "nested-timeline.json",
     "ordered-kept.json",
+    "receiver-data.json",
+    "receiver-primitive.json",
     "reflect-independent-kept.json",
     "reflect-receiver-kept.json",
     "replacement-kept.json",
     "saved-destructured.json",
     "saved.json",
+    "sequence-one.json",
+    "sequence-two.json",
     "sibling.json",
     "timeline-first.json",
     "timeline-second.json",

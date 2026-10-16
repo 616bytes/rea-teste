@@ -712,6 +712,7 @@ const matchingReadPosition = (
   read: BindingReadPosition,
   body: readonly t.Statement[] | undefined,
 ): StatementPosition | null => {
+  if (body === undefined) return read.position;
   for (
     let current: BindingReadPosition | undefined = read;
     current !== undefined;

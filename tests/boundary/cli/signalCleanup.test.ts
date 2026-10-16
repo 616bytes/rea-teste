@@ -101,6 +101,8 @@ it.each([false, true])(
               { reason: "retry failed" },
               { operation: "decode_signal_recording" },
             );
+          // Only the owner can confirm release of its retained resource.
+          original.resolveCleanup();
         },
       },
     );

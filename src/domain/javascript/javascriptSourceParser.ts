@@ -6,6 +6,7 @@ import {
   isTypeOnlyExportDeclaration,
   isTypeOnlyImportDeclaration,
   isErasedJavaScriptDeclaration,
+  semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
 
 /** Babel AST produced by REA's inert JavaScript parser boundary. */
@@ -27,6 +28,8 @@ export const javaScriptRuntimeContext = (
 
 const hasRuntimeModuleDeclaration = (program: t.Program): boolean =>
   program.body.some((node) => {
+    if (t.isTSImportEqualsDeclaration(node))
+      return semanticImportEqualsSpecifier(node) !== null;
     if (t.isImportDeclaration(node))
       return (
         !isTypeOnlyImportDeclaration(node) &&

@@ -149,6 +149,13 @@ const annexBSource = `
   execFile("cjs-hoisted-callback",done);
 `;
 
+const importEqualsSource = `
+  import cp = require("node:child_process");
+  const argv=[]; function done(){}
+  cp.spawn("import-equals-argv",argv,{stdio:"inherit"});
+  cp.exec("import-equals-callback",done);
+`;
+
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "preserves effective stdio, overloads and explicit unknowns through %s",
   async (surface, { cli }) => {
@@ -189,6 +196,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         spawn("cts-argv",argv,{stdio:"inherit"});exec("cts-callback",done);
       `,
       "annex-b.cjs": annexBSource,
+      "import-equals.ts": importEqualsSource,
       "parameters.cjs": `
         const {exec}=require("node:child_process");
         function mapped(cb){cb=()=>{};arguments[0]={stdio:'inherit'};exec("mapped-callback",cb)}
@@ -215,6 +223,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     }
     expected.set("cjs-var-argv", ["inherit", null]);
     expected.set("cjs-hoisted-callback", ["default", null]);
+    expected.set("import-equals-argv", ["inherit", null]);
+    expected.set("import-equals-callback", ["default", null]);
     for (const [command, count] of [
       ["Function-global", 0],
       ["frames-global", 0],

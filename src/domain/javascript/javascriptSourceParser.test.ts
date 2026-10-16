@@ -13,6 +13,8 @@ it.each([
   ['import type {T} from "example";', "fixture.cts", "commonjs"],
   ['import type {T} from "example";', "fixture.mts", "module"],
   ['import type {T} from "example";', "fixture.ts", "unknown"],
+  ['import cp = require("node:child_process");', "fixture.ts", "module"],
+  ['import type cp = require("node:child_process");', "fixture.ts", "unknown"],
   ['export type {T} from "example";', "fixture.ts", "unknown"],
   ['import {type T} from "example";', "fixture.ts", "unknown"],
   ['export {type T} from "example";', "fixture.ts", "unknown"],

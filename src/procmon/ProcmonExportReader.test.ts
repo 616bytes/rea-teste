@@ -319,3 +319,18 @@ describe("readProcmonExport review of f171915", () => {
     });
   });
 });
+
+describe("readProcmonExport review of 75016b0", () => {
+  it("reads many blank rows in linear time", async () => {
+    // One column makes each blank line a valid empty row, so none stops reading.
+    const blankRows = 300_000;
+    const started = performance.now();
+    const reading = await readProcmonExport(
+      Buffer.from(`Operation\n${"\n".repeat(blankRows)}Read\n`),
+      selection,
+    );
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(reading.output_window.examined_events).toBe(blankRows + 1);
+    expect(reading.coverage).toEqual({ status: "complete" });
+  });
+});

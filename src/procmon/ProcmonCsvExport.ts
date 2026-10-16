@@ -135,14 +135,20 @@ function* csvRecords(
   width: { maximum: number },
 ): Generator<CsvRecord> {
   const cursor = new CsvCursor(text);
+  // Offset after the last character that is not a line ending, found once so
+  // checking for trailing blank lines stays linear.
+  let contentEnd = text.length;
+  while (contentEnd > 0 && /[\r\n]/u.test(text[contentEnd - 1] ?? ""))
+    contentEnd -= 1;
   let started = false;
   while (!cursor.done) {
     const blankLine = cursor.line;
     if (cursor.lineEnding()) {
       // Blank lines before the header or at the end are layout; a blank line
-      // between rows is an empty record and fails the width check.
+      // between rows is an empty record, which fails the width check unless
+      // the header has one column.
       if (!started) continue;
-      if (/^[\r\n]*$/u.test(text.slice(cursor.index))) return;
+      if (cursor.index >= contentEnd) return;
       yield {
         fields: [""],
         line: blankLine,

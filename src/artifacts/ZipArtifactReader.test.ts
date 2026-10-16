@@ -307,6 +307,54 @@ describe("ZipArtifactReader member names", () => {
       await reader.close();
     }
   });
+
+  it("classifies a directory by the stored name, never by a Unicode Path name", async () => {
+    const directory = await createTestTempDirectory("rea-zip-unicode-dir-");
+    const path = join(directory, "unicode-dir.zip");
+    const writer = new ZipWriter(new Uint8ArrayWriter(), {
+      useUnicodeFileNames: false,
+    });
+    // Stored file "foo" (8 bytes) whose Unicode Path names "foo/", and stored
+    // directory "bar/" whose Unicode Path names "bar": the JDK, Python and ART
+    // read the stored names, so "foo" is a file and "bar/" a directory.
+    await writer.add("foo", new TextReader("payload!"), {
+      extraField: new Map([[0x7075, unicodePathField("foo", "foo/")]]),
+    });
+    await writer.add("bar/", undefined, {
+      directory: true,
+      extraField: new Map([[0x7075, unicodePathField("bar/", "bar")]]),
+    });
+    await writeFile(path, await writer.close());
+
+    const reader = new ZipArtifactReader(path, "zip");
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      expect(
+        entries.map(({ path, kind, storedPath }) => ({
+          path,
+          kind,
+          storedPath,
+        })),
+      ).toEqual([
+        { path: "foo/", kind: "file", storedPath: "foo" },
+        { path: "bar", kind: "directory", storedPath: "bar/" },
+      ]);
+      const [file] = entries;
+      if (file === undefined) throw new Error("Expected a ZIP member");
+      expect(file.declaredSize).toBe(8);
+      // A plain file mode is not reported as directory attributes.
+      expect(file.limitations.join("\n")).not.toContain(
+        "directory external attributes",
+      );
+      const chunks: Buffer[] = [];
+      for await (const chunk of await reader.open(file))
+        chunks.push(Buffer.from(chunk));
+      expect(Buffer.concat(chunks).toString()).toBe("payload!");
+    } finally {
+      await reader.close();
+    }
+  });
 });
 
 describe("artifactDecompressionBudgetBytes", () => {

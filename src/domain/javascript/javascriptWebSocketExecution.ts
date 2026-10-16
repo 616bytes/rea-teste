@@ -632,10 +632,10 @@ const webSocketSelectedCallee = (raw: t.Node): t.Node => {
 
 const immediateCallers = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  WeakMap<t.Node, t.Function>
+  WeakMap<t.Node, t.Function | null>
 >();
 
-/** Invert the same literal activation owner used for body execution, once per AST. */
+/** Reuse body activation ownership, caching only each requested callee subtree. */
 const webSocketImmediateCaller = (
   call: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -644,21 +644,33 @@ const webSocketImmediateCaller = (
   if (callers === undefined) {
     callers = new WeakMap();
     immediateCallers.set(state, callers);
-    const pending: t.Node[] = [state.program];
-    while (pending.length > 0) {
-      const node = pending.pop();
-      if (node === undefined) continue;
-      if (t.isFunction(node)) {
-        const invocation =
-          t.isClassMethod(node) && node.kind === "constructor"
-            ? webSocketClassConstruction(node, state)
-            : webSocketImmediateInvocation(node, state);
-        if (invocation !== undefined) callers.set(invocation, node);
-      }
-      pending.push(...childNodes(node));
-    }
   }
-  return callers.get(call);
+  const cached = callers.get(call);
+  if (cached !== undefined) return cached ?? undefined;
+  if (
+    !t.isCallExpression(call) &&
+    !t.isOptionalCallExpression(call) &&
+    !t.isNewExpression(call)
+  )
+    return undefined;
+  const pending: t.Node[] = [call.callee];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node === undefined) continue;
+    if (t.isFunction(node)) {
+      const invocation =
+        t.isClassMethod(node) && node.kind === "constructor"
+          ? webSocketClassConstruction(node, state)
+          : webSocketImmediateInvocation(node, state);
+      if (invocation === call) {
+        callers.set(call, node);
+        return node;
+      }
+    }
+    pending.push(...childNodes(node));
+  }
+  callers.set(call, null);
+  return undefined;
 };
 
 /** Match a known literal invocation's positional argument, never an unknown spread offset. */

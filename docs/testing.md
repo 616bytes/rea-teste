@@ -222,6 +222,8 @@ owned cleanup seams while preserving real cleanup where feasible. Check server
 settlement and retained resources even if the MCP SDK rejects the client promise
 before the handler finishes. A cancellation during active execution does not
 cover cancellation during final cleanup.
+Use explicit abort reasons and assert their identity at admission and after
+provider completion, alongside retained observations and cleanup state.
 
 For atomic writes, exercise cancellation on both sides of the documented commit
 point and preserve any publication receipt. A late interruption does not prove

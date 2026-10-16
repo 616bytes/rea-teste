@@ -93,6 +93,8 @@ providers need not expose identical state machines.
   last awaited finalization step.
   Retain collected observations under typed cancellation. Preserve an existing
   primary failure and let incomplete cleanup retain its own classification.
+  Preserve the caller's abort reason as the typed cancellation error's cause,
+  including when cancellation is observed only after provider completion.
   Client cancellation alone does not prove native work stopped.
   For atomic publication, document the cancellation cutoff and preserve any
   committed output's publication receipt.

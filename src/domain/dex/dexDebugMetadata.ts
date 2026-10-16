@@ -99,7 +99,7 @@ export interface DexSummary {
   readonly readiness: DexReadiness;
 }
 
-const SOURCE_FILE_SAMPLE_CAP = 16;
+const SOURCE_FILE_SAMPLE_CAP = 3;
 /** Longest source-file name (JSON bytes) included in the sample; longer ones are counted only. */
 const SOURCE_FILE_SAMPLE_MAX_BYTES = 1024;
 

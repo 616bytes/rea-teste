@@ -597,8 +597,14 @@ export const createSemanticModuleInterop = (
       let ownerPath = intrinsicPath(owner) ?? boundIntrinsic(owner)?.path;
       if (ownerPath === undefined && depth < 4) {
         const capturedOwner = capturedInvocationMember(owner, depth + 1);
-        if (capturedOwner !== undefined && capturedOwner.replaced !== true)
+        // A replaced owner stores an unknown value — a member read on it is
+        // unknown too. Propagate the replaced marker instead of discarding
+        // the capture, or `outer = invoke.call; outer()` loses its effect.
+        if (capturedOwner !== undefined) {
+          if (capturedOwner.replaced === true)
+            return { replaced: true, path: capturedOwner.path };
           ownerPath = intrinsicInvocationMemberPath(capturedOwner.key);
+        }
       }
       if (ownerPath === undefined) return undefined;
       // A provable owner whose slot was overwritten before the read stores an

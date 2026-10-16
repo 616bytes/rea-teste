@@ -742,6 +742,27 @@ describe("captured member canonicalization and timing", () => {
     expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
   });
 
+  it("propagates replaced state through a nested captured owner", () => {
+    // `invoke` stores the replaced `{call: poison}` object, so `outer =
+    // invoke.call` captures `poison` — `outer()` executes it and must stay
+    // opaque rather than effect-free.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const poison = () => { Object.create = customCreate; };
+      change.call = {call: poison};
+      const invoke = change.call;
+      const outer = invoke.call;
+      outer();`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({ kind: "opaque" }),
+    );
+    expect(writes).toContainEqual(["intrinsic"]);
+    // The poison body's own write is a static fact — opaque means unknown,
+    // not absent.
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
   it("times a destructured capture at its own duplicate-key read", () => {
     // `call` appears twice: `first` reads the intact member, then the
     // `missing` default overwrites it, so the second read stores `noop` in

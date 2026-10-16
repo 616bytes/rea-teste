@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { expect } from "vitest";
+import { z } from "zod";
 
 import { browserScenarioCaptureSchema } from "../../../src/domain/browserScenarioCapture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -66,8 +67,16 @@ processTest
       expect(stderr).toContain("REA_CONTROLLED_CLOSE_CALLBACK");
       expect(stderr).toContain("REA_CONTROLLED_PROFILE_CALLBACK");
       const document: unknown = JSON.parse(stdout);
-      const evidence = parseEvidence(document);
-      expect(evidence).toEqual(document);
+      const failure = z
+        .object({
+          code: z.literal("cancelled"),
+          category: z.literal("cancelled"),
+          details: z.object({ partial_observation: z.unknown() }),
+        })
+        .parse(document);
+      const evidence = parseEvidence(failure.details.partial_observation);
+      expect(evidence).toEqual(failure.details.partial_observation);
+      expect(evidence.operation).toBe("capture_browser_scenario");
       const capture = browserScenarioCaptureSchema.parse(
         evidence.normalized_result,
       );

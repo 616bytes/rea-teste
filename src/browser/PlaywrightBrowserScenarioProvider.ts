@@ -325,24 +325,29 @@ const runScenario = async (
         ],
       }),
     });
+  const completeness = globalCompleteness(scenario, session, steps);
   if (options.signal?.aborted)
     throw new AnalysisCancelledError(OPERATION, {
       cause: options.signal?.reason,
       partialObservation: {
         kind: "browser-scenario-observation",
-        capture: browserScenarioCaptureData({
-          session,
-          scenario,
-          startedAt,
-          steps,
-          cleanup: cleanupOutcome.cleanup,
-          limitations: [
-            "Scenario capture completed, but the request was cancelled during final browser cleanup.",
-          ],
+        // All steps settled; retain a complete capture envelope so the service
+        // can authenticate these partial observations as Evidence.
+        capture: browserScenarioCaptureSchema.parse({
+          ...browserScenarioCaptureData({
+            session,
+            scenario,
+            startedAt,
+            steps,
+            cleanup: cleanupOutcome.cleanup,
+            limitations: [
+              "Scenario capture was cancelled; settled steps and cleanup are retained.",
+            ],
+          }),
+          completeness,
         }),
       },
     });
-  const completeness = globalCompleteness(scenario, session, steps);
   return browserScenarioCaptureSchema.parse({
     ...browserScenarioCaptureData({
       session,

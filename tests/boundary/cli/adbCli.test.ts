@@ -111,6 +111,9 @@ if [ "$1" = version ]; then
   exit 0
 fi
 if [ "$1" = -s ] && [ "$3" = install ]; then
+  for argument in "$@"; do snapshot="$argument"; done
+  printf '%s\\n' "$snapshot" >> "$root/snapshots"
+  cat "$snapshot" >> "$root/payloads" || exit 1
   if [ -f "$root/installed" ]; then
     if [ "$4" != -r ]; then
       printf 'Failure [INSTALL_FAILED_ALREADY_EXISTS]\\n'
@@ -185,13 +188,24 @@ exit 1
       "fresh-install\nreplacement\nfresh-install\n",
     );
     const calls = await readFile(workspace.path("calls"), "utf8");
+    const snapshots = (await readFile(workspace.path("snapshots"), "utf8"))
+      .trim()
+      .split("\n");
+    expect(new Set(snapshots).size).toBe(3);
+    expect(await readFile(workspace.path("payloads"), "utf8")).toBe(
+      "apkapkapk",
+    );
+    for (const snapshot of snapshots) {
+      expect(snapshot).not.toBe(apk);
+      await expect(lstat(snapshot)).rejects.toMatchObject({ code: "ENOENT" });
+    }
     expect(calls.split("\n").filter((line) => line !== "")).toEqual([
       "version",
-      `-s emulator-5554 install -r ${apk}`,
+      `-s emulator-5554 install -r ${snapshots[0]}`,
       "version",
-      `-s emulator-5554 install -r ${apk}`,
+      `-s emulator-5554 install -r ${snapshots[1]}`,
       "version",
-      `-s emulator-5554 install ${apk}`,
+      `-s emulator-5554 install ${snapshots[2]}`,
     ]);
   },
 );

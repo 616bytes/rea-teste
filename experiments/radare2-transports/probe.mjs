@@ -96,12 +96,21 @@ export async function retryCleanup() {
 }
 
 function decoded(bytes) {
+  const invalid_utf8 = !isUtf8(bytes);
   return {
     text: bytes.toString("utf8"),
     bytes: bytes.length,
-    invalid_utf8: !isUtf8(bytes),
-    ...(!isUtf8(bytes) ? { base64: bytes.toString("base64") } : {}),
+    invalid_utf8,
+    ...(invalid_utf8 ? { base64: bytes.toString("base64") } : {}),
   };
+}
+
+function protocolText(output) {
+  if (output.invalid_utf8 || output.invalidUtf8)
+    throw new AnalysisProtocolError("Protocol JSON contains invalid UTF-8", {
+      partialObservation: { raw_reply: output },
+    });
+  return output.text;
 }
 
 // One owner decodes r2pipe2 for every carrier; logs are distinct from process stderr.
@@ -166,7 +175,8 @@ function losslessJson(text) {
   return { value: root.value, numeric_literals };
 }
 
-function r2pipe2Reply(text) {
+function r2pipe2Reply(output) {
+  const text = protocolText(output);
   let reply;
   let numeric_literals;
   try {
@@ -215,6 +225,9 @@ function frames(stream, separator) {
   const queue = [];
   let waiting;
   let failure;
+  const partial = () => ({
+    unterminated_frame: decoded(Buffer.concat(parts, size)),
+  });
   const fail = (cause) => {
     failure ??= cause;
     waiting?.reject(failure);
@@ -257,42 +270,56 @@ function frames(stream, separator) {
   stream.once("end", () =>
     fail(
       new AnalysisProtocolError("Provider exited before the next frame", {
-        partialObservation: {
-          unterminated_frame: decoded(Buffer.concat(parts, size)),
-        },
+        partialObservation: partial(),
       }),
     ),
   );
   return {
-    next: () => {
+    next: (signal) => {
+      const interrupted = () =>
+        new AnalysisOutputError(
+          "radare2_probe",
+          "Provider frame read interrupted",
+          {
+            cause: signal.reason,
+            partialObservation: partial(),
+          },
+        );
+      if (signal.aborted) return Promise.reject(interrupted());
       const bytes = queue.shift();
       if (bytes !== undefined) {
         queuedBytes -= bytes.length;
-        return Promise.resolve({ value: bytes });
+        return Promise.resolve(bytes);
       }
       if (failure) return Promise.reject(failure);
       return new Promise((accept, reject) => {
-        waiting = { accept: (value) => accept({ value }), reject };
+        const abort = () => fail(interrupted());
+        const settle = (callback) => (value) => {
+          signal.removeEventListener("abort", abort);
+          callback(value);
+        };
+        waiting = { accept: settle(accept), reject: settle(reject) };
+        signal.addEventListener("abort", abort, { once: true });
       });
     },
   };
 }
 
-function nextFrame(iterator, signal) {
+function send(stream, value, signal) {
   signal.throwIfAborted();
   return new Promise((accept, reject) => {
-    const abort = () => reject(signal.reason);
+    const finish = (error) => {
+      signal.removeEventListener("abort", abort);
+      if (error) reject(error);
+      else accept();
+    };
+    const abort = () => finish(signal.reason);
     signal.addEventListener("abort", abort, { once: true });
-    void iterator.next().then(
-      (value) => {
-        signal.removeEventListener("abort", abort);
-        accept(value.value);
-      },
-      (cause) => {
-        signal.removeEventListener("abort", abort);
-        reject(cause);
-      },
-    );
+    try {
+      stream.write(value + "\n", finish);
+    } catch (cause) {
+      finish(cause);
+    }
   });
 }
 
@@ -477,7 +504,7 @@ export async function probe(input, options = {}) {
           throw new AnalysisProtocolError(
             "HTTP command returned an unsuccessful status",
           );
-        record({ command, ...r2pipe2Reply(reply.output.text) });
+        record({ command, ...r2pipe2Reply(reply.output) });
       }
     } else {
       const path = resolve(selected.path);
@@ -510,7 +537,7 @@ export async function probe(input, options = {}) {
             },
           );
           record({ command, output });
-          record({ command, ...r2pipe2Reply(output.stdout.text) });
+          record({ command, ...r2pipe2Reply(output.stdout) });
         }
       } else {
         const args =
@@ -537,27 +564,21 @@ export async function probe(input, options = {}) {
               child.stdout,
               selected.transport === "r2pipe" ? 0 : 10,
             );
-            const send = async (value) => {
-              await new Promise((accept, reject) =>
-                child.stdin.write(value + "\n", (error) =>
-                  error ? reject(error) : accept(),
-                ),
-              );
-            };
+            const write = (value) => send(child.stdin, value, signal);
             if (selected.transport === "r2pipe") {
-              const startup = await nextFrame(iterator, signal);
+              const startup = await iterator.next(signal);
               if (startup.length) record({ startup: decoded(startup) });
               for (const command of selected.commands) {
-                await send(encode(command));
-                const output = decoded(await nextFrame(iterator, signal));
+                await write(encode(command));
+                const output = decoded(await iterator.next(signal));
                 record({ command, output });
-                record({ command, ...r2pipe2Reply(output.text) });
+                record({ command, ...r2pipe2Reply(output) });
               }
             } else {
               let id = 0;
               const rpc = async (method, params) => {
                 const requestId = ++id;
-                await send(
+                await write(
                   JSON.stringify({
                     jsonrpc: "2.0",
                     id: requestId,
@@ -566,10 +587,11 @@ export async function probe(input, options = {}) {
                   }),
                 );
                 for (;;) {
-                  const raw = await nextFrame(iterator, signal);
+                  const raw = decoded(await iterator.next(signal));
+                  const text = protocolText(raw);
                   let reply;
                   try {
-                    const decoded = losslessJson(raw.toString("utf8"));
+                    const decoded = losslessJson(text);
                     reply = decoded.value;
                     if (decoded.numeric_literals.length)
                       record({
@@ -579,7 +601,7 @@ export async function probe(input, options = {}) {
                   } catch (cause) {
                     throw new AnalysisProtocolError("Malformed MCP JSON", {
                       cause,
-                      partialObservation: { raw_reply: decoded(raw) },
+                      partialObservation: { raw_reply: raw },
                     });
                   }
                   if (!reply || reply.jsonrpc !== "2.0")
@@ -610,7 +632,7 @@ export async function probe(input, options = {}) {
                   version: "0",
                 },
               });
-              await send(
+              await write(
                 JSON.stringify({
                   jsonrpc: "2.0",
                   method: "notifications/initialized",
@@ -648,7 +670,7 @@ export async function probe(input, options = {}) {
                   throw new AnalysisProtocolError(
                     "r2mcp did not return one text block; raw result retained",
                   );
-                record({ command, ...r2pipe2Reply(text[0].text) });
+                record({ command, ...r2pipe2Reply({ text: text[0].text }) });
               }
             }
           },

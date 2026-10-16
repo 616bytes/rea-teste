@@ -6,7 +6,10 @@ import {
 } from "./javascriptAstValues.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT } from "./javascriptSemanticResourceLimits.js";
+import {
+  SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT,
+  SEMANTIC_RETURNED_REFERENCE_PATH_LINK_LIMIT,
+} from "./javascriptSemanticResourceLimits.js";
 import {
   semanticArrayIndex,
   type JavaScriptSemanticPropertyPath,
@@ -52,12 +55,13 @@ interface PathInterner {
   readonly prepend: (
     base: PathLink,
     keys: readonly (string | number | null)[],
-  ) => PathLink;
+  ) => PathLink | null;
 }
 
-const createPathInterner = (): PathInterner => {
+const createPathInterner = (chargeLink: () => boolean): PathInterner => {
   // Key by base link identity and the original key reference so no serialized
-  // key text is retained per entry.
+  // key text is retained per entry. Newly created links draw on the caller's
+  // budget; a null result drops the candidate instead of truncating its path.
   const slotsByBase = new Map<
     PathLink,
     Map<string | number | null, PathLink>
@@ -67,7 +71,7 @@ const createPathInterner = (): PathInterner => {
   const prependOne = (
     base: PathLink,
     key: string | number | null,
-  ): PathLink => {
+  ): PathLink | null => {
     let slots = slotsByBase.get(base);
     if (slots === undefined) {
       slots = new Map();
@@ -75,6 +79,7 @@ const createPathInterner = (): PathInterner => {
     }
     const existing = slots.get(key);
     if (existing !== undefined) return existing;
+    if (!chargeLink()) return null;
     const link: PathLink = {
       rest: base,
       key,
@@ -88,8 +93,8 @@ const createPathInterner = (): PathInterner => {
   return {
     root,
     prepend: (base, keys) => {
-      let link = base;
-      for (let index = keys.length - 1; index >= 0; index--)
+      let link: PathLink | null = base;
+      for (let index = keys.length - 1; index >= 0 && link !== null; index--)
         link = prependOne(link, keys[index] ?? null);
       return link;
     },
@@ -204,7 +209,38 @@ export const createSemanticReturnedReferences = (
     const existing = results.get(callee);
     if (existing !== undefined) return existing;
     const functions = new Set<t.Node>();
-    const paths = createPathInterner();
+    // Recursive reassignment webs (for example fiber locals reassigned
+    // across switch arms) enumerate every simple initializer chain as a
+    // distinct path. Reserve budget before each candidate or path link is
+    // constructed so the candidate representations — not just completed
+    // visits — stay bounded for one call target; keep the references proven
+    // so far and disclose the limit through coverage instead of claiming
+    // completeness.
+    let remaining = SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT;
+    let remainingLinks = SEMANTIC_RETURNED_REFERENCE_PATH_LINK_LIMIT;
+    let budgeted = false;
+    const recordLimit = (): void => {
+      if (budgeted) return;
+      state.valueResourceLimits.add("returned-reference-expansion");
+      budgeted = true;
+    };
+    const reserve = (): boolean => {
+      if (remaining > 0) {
+        remaining -= 1;
+        return true;
+      }
+      recordLimit();
+      return false;
+    };
+    const chargeLink = (): boolean => {
+      if (remainingLinks > 0) {
+        remainingLinks -= 1;
+        return true;
+      }
+      recordLimit();
+      return false;
+    };
+    const paths = createPathInterner(chargeLink);
     const work: ExpansionTask[] = [
       {
         kind: "visit",
@@ -216,25 +252,6 @@ export const createSemanticReturnedReferences = (
     // cycle blockers affect reuse; branch history is not a dependency. An
     // acyclic expression/path is consequently expanded once across a diamond.
     const expanded: CompletedExpansions = new WeakMap();
-    // Recursive reassignment webs (for example fiber locals reassigned
-    // across switch arms) enumerate every simple initializer chain as a
-    // distinct path. Reserve budget before each child is constructed so the
-    // candidate representations — not just completed visits — stay bounded
-    // for one call target; keep the references proven so far and disclose
-    // the limit through coverage instead of claiming completeness.
-    let remaining = SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT;
-    let budgeted = false;
-    const reserve = (): boolean => {
-      if (remaining > 0) {
-        remaining -= 1;
-        return true;
-      }
-      if (!budgeted) {
-        state.valueResourceLimits.add("returned-reference-expansion");
-        budgeted = true;
-      }
-      return false;
-    };
     while (work.length > 0) {
       const task = work.pop();
       if (task === undefined) break;
@@ -281,9 +298,11 @@ export const createSemanticReturnedReferences = (
             continue;
           }
           if (!reserve()) break;
+          const path = paths.prepend(item.path, initializer.projection);
+          if (path === null) break;
           pending.push({
             node: initializer.node,
-            path: paths.prepend(item.path, initializer.projection),
+            path,
             initializers: { parent: item.initializers, value: initializer },
           });
         }
@@ -302,12 +321,11 @@ export const createSemanticReturnedReferences = (
           );
           receiver = unwrapJavaScriptExpression(receiver.object).node;
         }
-        if (reserve())
-          pending.push({
-            ...item,
-            node: receiver,
-            path: paths.prepend(item.path, path.reverse()),
-          });
+        if (reserve()) {
+          const receiverPath = paths.prepend(item.path, path.reverse());
+          if (receiverPath !== null)
+            pending.push({ ...item, node: receiver, path: receiverPath });
+        }
       } else if (
         t.isConditionalExpression(node) ||
         t.isLogicalExpression(node)
@@ -335,12 +353,15 @@ export const createSemanticReturnedReferences = (
           if (element === null) return;
           if (t.isSpreadElement(element)) {
             uncertainOffset = true;
-            if (reserve())
-              pending.push({
-                ...item,
-                node: element.argument,
-                path: paths.prepend(rest, [null]),
-              });
+            if (reserve()) {
+              const spreadPath = paths.prepend(rest, [null]);
+              if (spreadPath !== null)
+                pending.push({
+                  ...item,
+                  node: element.argument,
+                  path: spreadPath,
+                });
+            }
           } else if (
             (index === null || uncertainOffset || index === offset) &&
             reserve()

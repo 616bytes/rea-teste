@@ -12,6 +12,10 @@ export const SEMANTIC_GETTER_EXPANSION_LIMIT = 512;
 /** Distinct expression/path candidates admitted while resolving one call
  * target's returned references. */
 export const SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT = 16384;
+/** Distinct projection-path links created while resolving one call target's
+ * returned references. One candidate can prepend a long member chain, so
+ * links are budgeted independently of candidates. */
+export const SEMANTIC_RETURNED_REFERENCE_PATH_LINK_LIMIT = 262144;
 /** Bound normalized strings and transient keys independently of transport limits. */
 export const SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT = 1_048_576;
 

@@ -168,6 +168,35 @@ it("bounds a projection chain deeper than a copied-path representation", () => {
   expect(references).toEqual([]);
 });
 
+it("bounds path links created when one long member chain meets many suffixes", () => {
+  const chainKeys = Array.from({ length: 4096 }, () => ".p").join("");
+  const arms = Array.from(
+    { length: 3000 },
+    (_, index) => `case ${index}: x = y.k${index}; break;`,
+  ).join("\n");
+  const { program, state } = indexed(`
+    function target() { return { p: 1 }; }
+    const source = target;
+    const y = source${chainKeys};
+    function run(flag, x) {
+      switch (flag) {
+        ${arms}
+      }
+      x();
+    }
+    run(flag, x0);
+  `);
+  const run = program.body[3];
+  if (!t.isFunctionDeclaration(run)) throw new Error("Missing run function");
+  const call = run.body.body.at(-1);
+  if (!t.isExpressionStatement(call) || !t.isCallExpression(call.expression))
+    throw new Error("Missing x() call");
+  createSemanticReturnedReferences(state)(call.expression.callee);
+  expect([...state.valueResourceLimits]).toEqual([
+    "returned-reference-expansion",
+  ]);
+});
+
 it("keeps references proven before the budget cuts off a reassignment web", () => {
   const bindings = ["t", "e", "a", "n", "r"];
   const keys = [

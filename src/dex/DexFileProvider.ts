@@ -75,7 +75,7 @@ interface MemberSource {
 }
 
 /** What one inspection keeps from its members after each is released. */
-type MemberFindings =
+type MemberFindings = (
   | { readonly mode: "summary"; readonly members: DexSummaryMember[] }
   | {
       readonly mode: "detail";
@@ -83,7 +83,11 @@ type MemberFindings =
         readonly entry: string | null;
         readonly detail: DexClassDetail;
       }[];
-    };
+    }
+) & {
+  /** Facts about the members read that the caller must see (e.g. unread bytes). */
+  readonly limitations: readonly string[];
+};
 
 const execution = (
   result: DexDebugMetadataResult,
@@ -301,21 +305,31 @@ export class DexFileProvider implements DexDebugMetadataPort {
     const occurrences = new Map<string, number>();
     const keep = (member: ArtifactEntry): boolean => {
       if (member.kind !== "file") return false;
-      const index = multidexIndex(member.path);
+      // ART finds auto-loaded members by their exact stored name, so a member
+      // stored as `./classes.dex` is not auto-loaded (it stays selectable).
+      const index =
+        member.storedPath === undefined ? multidexIndex(member.path) : null;
       const wanted =
         requested !== undefined
           ? member.path === requested
           : index !== null && index <= DEX_LIMITS.maxDexMembers;
-      const seen = occurrences.get(member.path) ?? 0;
-      if (!wanted || seen >= 2) return false;
-      occurrences.set(member.path, seen + 1);
+      if (!wanted) return false;
+      // Every occurrence is counted for the report; two are enough to keep.
+      const seen = (occurrences.get(member.path) ?? 0) + 1;
+      occurrences.set(member.path, seen);
+      if (seen > 2) return false;
       candidates.push({ entry: member.path, member });
       return true;
     };
     for await (const member of reader.entries(signal, { retain: keep }))
       void member;
     if (requested !== undefined)
-      return this.#resolveRequested(candidates, requested, path);
+      return this.#resolveRequested(
+        candidates,
+        requested,
+        path,
+        occurrences.get(requested) ?? 0,
+      );
     // Only the contiguous sequence Android loads is promised; a member after a
     // gap is never loaded, so it can neither fail nor shadow the inspection.
     const sequence = autoLoadedDexMembers(candidates.map(({ entry }) => entry));
@@ -343,7 +357,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
         return err(
           this.#inputError(
             "entry",
-            `${path} holds more than one member named ${name}; the identity is ambiguous.`,
+            `${path} holds ${String(occurrences.get(name) ?? 2)} members named ${name}; the identity is ambiguous.`,
           ),
         );
       names.add(name);
@@ -378,6 +392,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
     matches: readonly { entry: string; member: ArtifactEntry }[],
     requested: string,
     path: string,
+    occurrences: number,
   ): Result<{ entry: string; member: ArtifactEntry }[], AnalysisError> {
     if (matches.length === 0)
       return err(
@@ -387,7 +402,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
       return err(
         this.#inputError(
           "entry",
-          `${path} holds ${String(matches.length)} members named ${requested}; the identity is ambiguous.`,
+          `${path} holds ${String(occurrences)} members named ${requested}; the identity is ambiguous.`,
         ),
       );
     const only = matches[0]!;
@@ -415,11 +430,19 @@ export class DexFileProvider implements DexDebugMetadataPort {
     const cancelled = (): boolean => signal?.aborted === true;
     const summaries: DexSummaryMember[] = [];
     const found: { entry: string | null; detail: DexClassDetail }[] = [];
+    const limitations: string[] = [];
     for (const source of sources) {
       if (signal?.aborted) return err(new AnalysisCancelledError(OPERATION));
-      const buffer = await source.load();
-      const parsed = parseDexFile(buffer);
+      const loaded = await source.load();
+      const parsed = parseDexFile(loaded);
       if (!parsed.ok) return err(mapDexParseError(parsed.error, source.label));
+      // Analysis reads only the bytes the header frames; identity (SHA-256,
+      // size) stays over the selected bytes.
+      const buffer = parsed.value.framed;
+      if (parsed.value.trailingBytes > 0)
+        limitations.push(
+          `${source.label} has ${String(parsed.value.trailingBytes)} bytes after its declared file_size; they were not read (ART on Android 15+ ignores them; Android 14 and earlier reject the DEX).`,
+        );
       const work: DexWork = {
         budget: dexWorkBudget(
           Math.max(
@@ -434,8 +457,8 @@ export class DexFileProvider implements DexDebugMetadataPort {
         if (!summary.ok) return err(mapDexWorkError(summary.error));
         summaries.push({
           entry: source.entry,
-          sha256: sha256(buffer),
-          bytes: buffer.length,
+          sha256: sha256(loaded),
+          bytes: loaded.length,
           summary: summary.value,
         });
         continue;
@@ -455,8 +478,8 @@ export class DexFileProvider implements DexDebugMetadataPort {
     }
     return ok(
       input.class_descriptor === undefined
-        ? { mode: "summary", members: summaries }
-        : { mode: "detail", found },
+        ? { mode: "summary", members: summaries, limitations }
+        : { mode: "detail", found, limitations },
     );
   }
 
@@ -481,9 +504,13 @@ export class DexFileProvider implements DexDebugMetadataPort {
             container,
           );
     if (!result.ok) return result;
-    const tooLarge = this.#rejectIfOversized(result.value, artifact.path);
+    const report = {
+      ...result.value,
+      limitations: [...result.value.limitations, ...findings.limitations],
+    };
+    const tooLarge = this.#rejectIfOversized(report, artifact.path);
     if (tooLarge) return err(tooLarge);
-    return ok(execution(result.value, artifact.path, artifact.sha256, format));
+    return ok(execution(report, artifact.path, artifact.sha256, format));
   }
 
   #classDetail(

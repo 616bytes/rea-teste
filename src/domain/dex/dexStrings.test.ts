@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DexHeader } from "./dexFile.js";
+import { encodeModifiedUtf8 } from "../modifiedUtf8.js";
 import { DexStringResolver } from "./dexStrings.js";
 
 const STRING_IDS_OFF = 40;
@@ -75,5 +76,28 @@ describe("DexStringResolver", () => {
     const { bytes, header } = fixture();
     bytes.fill(0x41, DATA1 + 1); // overwrite the NUL and the rest with 'A'
     expect(new DexStringResolver(bytes, header).string(1)).toBeNull();
+  });
+});
+
+describe("DexStringResolver.typeIdentity", () => {
+  it("matches, differs, or reports an undecodable descriptor as unreadable", () => {
+    const { bytes, header } = fixture();
+    const resolver = new DexStringResolver(bytes, header);
+    expect(resolver.typeIdentity(0, encodeModifiedUtf8("Lcom/Foo;"))).toBe(
+      "match",
+    );
+    expect(resolver.typeIdentity(0, encodeModifiedUtf8("Lcom/Bar;"))).toBe(
+      "different",
+    );
+    // An overlong (invalid) encoding is unknown whatever was requested.
+    bytes[DATA1 + 1] = 0xc1;
+    bytes[DATA1 + 2] = 0x8c;
+    for (const request of ["Lcom/Foo;", "Lcom/Zzz;"])
+      expect(
+        new DexStringResolver(bytes, header).typeIdentity(
+          0,
+          encodeModifiedUtf8(request),
+        ),
+      ).toBe("unreadable");
   });
 });

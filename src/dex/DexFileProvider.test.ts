@@ -225,6 +225,41 @@ describe("DexFileProvider APK selection", () => {
     ]);
   });
 
+  it("auto-loads members by their stored name, as ART does", async () => {
+    const dotted = await write(
+      "dotted.apk",
+      await buildApk([
+        { name: "./classes.dex", bytes: minimalDex() },
+        { name: "classes.dex", bytes: minimalDex() },
+      ]),
+    );
+    const result = await provider.inspect({ path: dotted });
+    // Only the plain stored name loads; `./classes.dex` is not ambiguous with it.
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const r = result.value.result as { members: { entry: string }[] };
+    expect(r.members.map((m) => m.entry)).toEqual(["classes.dex"]);
+    const onlyDotted = await provider.inspect({
+      path: await write(
+        "only-dotted.apk",
+        await buildApk([{ name: "./classes.dex", bytes: minimalDex() }]),
+      ),
+    });
+    expect(onlyDotted.ok).toBe(false);
+  });
+
+  it("reports bytes after file_size as unread instead of refusing the DEX", async () => {
+    const dex = minimalDex();
+    const padded = new Uint8Array(dex.length + 5);
+    padded.set(dex);
+    const result = await provider.inspect({
+      path: await write("trailing.dex", padded),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.limitations.at(-1)).toContain("5 bytes after");
+  });
+
   it("selects one dex member by entry", async () => {
     const apk = await write(
       "one.apk",

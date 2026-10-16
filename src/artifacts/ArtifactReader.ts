@@ -27,6 +27,12 @@ export interface ArtifactEntry {
   readonly unpacked: boolean;
   readonly limitations: readonly string[];
   readonly adapterKey: string;
+  /**
+   * The name exactly as the container stores it, when it differs from `path`
+   * (e.g. a ZIP member stored as `./classes.dex`). Runtimes that look members
+   * up by stored name (ART) must match on this, not on `path`.
+   */
+  readonly storedPath?: string;
   /** Filesystem identity captured during traversal, when supplied by an adapter. */
   readonly sourceIdentity?: {
     readonly device: bigint;
@@ -82,6 +88,7 @@ export const sameArtifactEntry = (
   entry.declaredSha256 === produced.declaredSha256 &&
   entry.unpacked === produced.unpacked &&
   entry.adapterKey === produced.adapterKey &&
+  entry.storedPath === produced.storedPath &&
   entry.limitations.length === produced.limitations.length &&
   entry.limitations.every(
     (limitation, index) => limitation === produced.limitations[index],

@@ -212,6 +212,10 @@ export interface DexClassDef {
  */
 export interface DexFile {
   readonly header: DexHeader;
+  /** The bytes the header frames: the first `file_size` bytes. */
+  readonly framed: Uint8Array;
+  /** Bytes after `file_size`, never read (ART 15+ ignores them). */
+  readonly trailingBytes: number;
 }
 
 /** Read the `index`-th class_def_item (caller keeps `index < classDefsSize`). */
@@ -315,15 +319,23 @@ export const parseDexFile = (
     dataSize: view.getUint32(104, true),
     dataOff: view.getUint32(108, true),
   };
-  // ART's verifier rejects a DEX whose file_size is not its length: every
-  // offset check below uses the bytes present, so a disagreeing header could
-  // otherwise hide structures in trailing bytes or claim truncated ones.
-  if (fileSize !== bytes.length)
+  // ART frames a DEX on file_size: claiming more bytes than exist is
+  // truncation, and trailing bytes past it are ignored by ART 15+ (rejected by
+  // ART 14 and earlier). Every offset is checked against the framed bytes, so
+  // nothing in the trailing bytes is ever read.
+  if (fileSize > bytes.length)
     return err({
-      kind: "bad-header",
+      kind: "truncated",
       offset: 32,
-      detail: `file_size ${String(fileSize)} does not match the ${String(bytes.length)}-byte DEX`,
+      need: fileSize,
+      have: bytes.length,
     });
+  if (fileSize < bytes.length) {
+    const framed = parseDexFile(bytes.subarray(0, fileSize));
+    return framed.ok
+      ? ok({ ...framed.value, trailingBytes: bytes.length - fileSize })
+      : framed;
+  }
 
   // Each class_def_item is a fixed 32 bytes; reject an impossible count up front.
   if (header.classDefsSize * 32 > bytes.length - header.classDefsOff)
@@ -335,7 +347,7 @@ export const parseDexFile = (
       remaining: Math.max(0, bytes.length - header.classDefsOff),
     });
 
-  return ok({ header });
+  return ok({ header, framed: bytes, trailingBytes: 0 });
 };
 
 /**

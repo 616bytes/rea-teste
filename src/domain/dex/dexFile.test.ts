@@ -110,13 +110,24 @@ describe("parseDexFile framing", () => {
     expect(code.value.insnsSize).toBe(0);
   });
 
-  it("refuses a file_size that disagrees with the buffer, as ART does", () => {
+  it("refuses a file_size past the bytes present as truncation", () => {
     const bytes = minimalDex();
     new DataView(bytes.buffer).setUint32(32, 999999, true);
     const result = parseDexFile(bytes);
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toMatchObject({ kind: "bad-header", offset: 32 });
+    expect(result.error).toMatchObject({ kind: "truncated", offset: 32 });
+  });
+
+  it("frames on file_size and never reads trailing bytes, as ART 15+ does", () => {
+    const dex = minimalDex();
+    const bytes = new Uint8Array(dex.length + 7);
+    bytes.set(dex);
+    const result = parseDexFile(bytes);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.trailingBytes).toBe(7);
+    expect(result.value.framed.length).toBe(dex.length);
   });
 
   it("refuses a non-dex buffer as bad-magic", () => {

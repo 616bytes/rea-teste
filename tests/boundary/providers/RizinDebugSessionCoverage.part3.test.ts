@@ -94,7 +94,10 @@ it.skipIf(process.platform === "win32")(
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.result.output).toBe("first frame\nsecond frame");
+      // All three frames arrived before expiry; the third is still queued.
+      expect(result.value.result.output).toBe(
+        "first frame\nsecond frame\nthird frame",
+      );
       expect(result.value.result.completion_status).toBe("unknown");
     }
   },

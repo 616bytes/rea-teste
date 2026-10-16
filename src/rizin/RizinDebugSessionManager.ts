@@ -100,7 +100,7 @@ const createRizinCommandEvidence = ({
     ],
   });
 
-export class RizinCommandTimeoutError extends Error {
+class RizinCommandTimeoutError extends Error {
   constructor(
     readonly partialOutput: string,
     readonly outputInvalidUtf8 = false,
@@ -111,12 +111,6 @@ export class RizinCommandTimeoutError extends Error {
 
 export const isRizinCommandDeadlineExpired = (remainingMs: number): boolean =>
   remainingMs <= 0;
-
-export const createRizinCommandTimeoutError = (
-  partialFrames: readonly string[],
-  outputInvalidUtf8 = false,
-): RizinCommandTimeoutError =>
-  new RizinCommandTimeoutError(partialFrames.join("\n"), outputInvalidUtf8);
 
 interface RizinCommandTimeoutEvidenceInput {
   readonly sessionId: string;
@@ -210,6 +204,7 @@ class RizinProcessExitError extends Error {
   constructor(
     readonly partialOutput: string,
     readonly outputInvalidUtf8 = false,
+    readonly outputTruncated = false,
   ) {
     super("Rizin process exited before completing the active command");
   }
@@ -220,13 +215,14 @@ class RizinCommandCancelledError extends AnalysisCancelledError {
     readonly partialOutput: string,
     readonly outputInvalidUtf8: boolean,
     cause: unknown,
+    readonly outputTruncated = false,
   ) {
     super("rizin_debug_command", {
       cause,
       capturedOutput: {
         stdout: partialOutput,
         stderr: "",
-        truncated: false,
+        truncated: outputTruncated,
       },
     });
   }
@@ -612,7 +608,7 @@ export class RizinDebugSessionManager {
         session.protocolError !== undefined
       )
         return err(new AnalysisInputError("rizin_debug_command"));
-      if (session.frames.length > 0) {
+      if (hasUnclaimedRizinFrames(session)) {
         const message =
           "Unsolicited Rizin frames arrived before a command; command output can no longer be safely correlated.";
         this.#failProtocol(session, message);
@@ -626,6 +622,7 @@ export class RizinDebugSessionManager {
       session.inferiorInventoryComplete = false;
       session.knownInferiorIdentities.clear();
       commandSent = true;
+      session.commandCaptureActive = true;
       const stdin = session.launched.process.stdin;
       if (
         stdin === null ||
@@ -656,7 +653,6 @@ export class RizinDebugSessionManager {
       }
       if (session.protocolError !== undefined)
         throw new Error(session.protocolError);
-      session.commandCaptureActive = true;
       const captured = await waitForCommandFrames(
         session,
         marker,
@@ -737,7 +733,9 @@ export class RizinDebugSessionManager {
                   command,
                   output: partialOutput,
                   output_scope: "command_and_interleaved_session_output",
-                  output_truncated: false,
+                  output_truncated:
+                    cause instanceof RizinCommandCancelledError &&
+                    cause.outputTruncated,
                   completion_status: "unknown",
                   backend: session.backend,
                   ...(commandInvalidUtf8
@@ -831,7 +829,7 @@ export class RizinDebugSessionManager {
           command,
           output: cause.partialOutput,
           output_scope: "command_and_interleaved_session_output",
-          output_truncated: false,
+          output_truncated: cause.outputTruncated,
           completion_status: "unknown",
           backend: session.backend,
           ...(cause.outputInvalidUtf8
@@ -994,7 +992,6 @@ export class RizinDebugSessionManager {
       if (session.discardingOversizedFrame) {
         if (boundary < 0) return;
         session.discardingOversizedFrame = false;
-        this.#deliverBufferedFrame(session, true);
         offset = nextOffset;
         continue;
       }
@@ -1016,6 +1013,7 @@ export class RizinDebugSessionManager {
         }
         if (boundary < 0) {
           session.discardingOversizedFrame = true;
+          this.#deliverBufferedFrame(session, true);
           return;
         }
         this.#deliverBufferedFrame(session, true);
@@ -1033,30 +1031,15 @@ export class RizinDebugSessionManager {
   }
 
   #deliverBufferedFrame(session: RizinDebugSession, truncated: boolean): void {
-    const frameBytes = Buffer.concat(
-      session.frameChunks,
-      session.bufferedFrameBytes,
-    );
+    const captured = bufferedRizinFrame(session, truncated);
     session.frameChunks = [];
     session.bufferedFrameBytes = 0;
-    const invalidUtf8 = !isUtf8(frameBytes);
-    session.invalidUtf8Observed ||= invalidUtf8;
-    this.#deliverFrame(
-      session,
-      { text: frameBytes.toString("utf8"), truncated, invalidUtf8 },
-      frameBytes.length,
-    );
+    this.#deliverFrame(session, captured.frame, captured.bytes);
   }
 
   #startupCapturedOutput(session: RizinDebugSession) {
     const output = session.supervisor.snapshot();
-    const partialFrame =
-      session.bufferedFrameBytes === 0
-        ? ""
-        : Buffer.concat(
-            session.frameChunks,
-            session.bufferedFrameBytes,
-          ).toString("utf8");
+    const partialFrame = bufferedRizinFrame(session, false).frame.text;
     const protocolOutput = [...session.history, partialFrame]
       .filter((frame) => frame.length > 0)
       .join("\n");
@@ -1263,6 +1246,10 @@ export class RizinDebugSessionManager {
     session: RizinDebugSession,
     command: string,
   ): Promise<string> {
+    if (hasUnclaimedRizinFrames(session))
+      throw new Error(
+        "Unsolicited Rizin output prevents correlated cleanup readback.",
+      );
     const marker = `__REA_CLEANUP_COMPLETE_${randomUUID().replaceAll("-", "")}__`;
     const stdin = session.launched.process.stdin;
     if (
@@ -1397,6 +1384,22 @@ export const assertRizinProcessStartTimeStable = (
 const readProcStartTime = async (pid: string): Promise<string> =>
   parseRizinProcStartTime(await readFile(`/proc/${pid}/stat`, "utf8"));
 
+const hasUnclaimedRizinFrames = (session: RizinDebugSession): boolean =>
+  session.frames.length > 0 ||
+  session.bufferedFrameBytes > 0 ||
+  session.discardingOversizedFrame;
+
+/** Parse the receiver's bounded bytes once for normal, startup and interrupted reads. */
+const bufferedRizinFrame = (session: RizinDebugSession, truncated: boolean) => {
+  const bytes = Buffer.concat(session.frameChunks, session.bufferedFrameBytes);
+  const invalidUtf8 = !isUtf8(bytes);
+  session.invalidUtf8Observed ||= invalidUtf8;
+  return {
+    bytes: bytes.length,
+    frame: { text: bytes.toString("utf8"), truncated, invalidUtf8 },
+  };
+};
+
 const waitForCommandFrames = async (
   session: RizinDebugSession,
   marker: string,
@@ -1410,11 +1413,70 @@ const waitForCommandFrames = async (
 }> => {
   const deadline = Date.now() + timeoutMs;
   const output: string[] = [];
-  let outputInvalidUtf8 = false;
-  const commandTimeoutError = (): RizinCommandTimeoutError =>
-    createRizinCommandTimeoutError(output, outputInvalidUtf8);
   let outputBytes = 0;
+  let outputInvalidUtf8 = false;
+  let outputTruncated = false;
   let frameCount = 0;
+  const snapshot = () => ({
+    output: output.join("\n"),
+    outputTruncated,
+    outputInvalidUtf8,
+  });
+  const append = (frame: RizinFrame): boolean => {
+    outputInvalidUtf8 ||= frame.invalidUtf8;
+    outputTruncated ||= frame.truncated;
+    const markerIndex = frame.text.indexOf(marker);
+    const text =
+      markerIndex < 0 ? frame.text : frame.text.slice(0, markerIndex).trimEnd();
+    if (markerIndex >= 0 && text.length === 0) return true;
+    const separatorBytes = output.length > 0 ? 1 : 0;
+    const remaining = maxCommandOutputBytes - outputBytes - separatorBytes;
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (bytes > remaining) {
+      outputTruncated = true;
+      const retained = truncateUtf8(text, remaining);
+      if (retained.length > 0) output.push(retained);
+      outputBytes = maxCommandOutputBytes;
+    } else {
+      output.push(text);
+      outputBytes += separatorBytes + bytes;
+    }
+    return markerIndex >= 0;
+  };
+  // After dispatch, queued complete frames and the unfinished frame belong to
+  // this command interval. Never publish the private completion marker or bytes
+  // following it, and apply the same decoded UTF-8 budget as normal frames.
+  const interrupted = () => {
+    let markerSeen = false;
+    for (;;) {
+      const queued = session.frames.shift();
+      if (queued === undefined) break;
+      session.queuedFrameBytes -= queued.queueChargeBytes;
+      frameCount += 1;
+      if (frameCount > MAX_COMMAND_FRAMES) {
+        outputTruncated = true;
+        break;
+      }
+      markerSeen = append(queued.frame);
+      if (markerSeen || outputTruncated) break;
+    }
+    if (!markerSeen && !outputTruncated && session.bufferedFrameBytes > 0)
+      append(
+        bufferedRizinFrame(session, session.discardingOversizedFrame).frame,
+      );
+    else if (session.bufferedFrameBytes > 0 && !markerSeen)
+      outputTruncated = true;
+    session.frameChunks = [];
+    session.bufferedFrameBytes = 0;
+    return snapshot();
+  };
+  const commandTimeoutError = (): RizinCommandTimeoutError => {
+    const captured = interrupted();
+    return new RizinCommandTimeoutError(
+      captured.output,
+      captured.outputInvalidUtf8,
+    );
+  };
   for (;;) {
     const remaining = deadline - Date.now();
     if (isRizinCommandDeadlineExpired(remaining)) throw commandTimeoutError();
@@ -1427,102 +1489,49 @@ const waitForCommandFrames = async (
         commandTimeoutError,
       );
     } catch (cause) {
-      if (cause instanceof AnalysisCancelledError)
+      if (cause instanceof AnalysisCancelledError) {
+        const captured = interrupted();
         throw new RizinCommandCancelledError(
-          output.join("\n"),
-          outputInvalidUtf8,
+          captured.output,
+          captured.outputInvalidUtf8,
           cause,
+          captured.outputTruncated,
         );
-      if (cause instanceof RizinProcessExitError)
-        throw new RizinProcessExitError(output.join("\n"), outputInvalidUtf8);
+      }
+      if (cause instanceof RizinProcessExitError) {
+        const captured = interrupted();
+        throw new RizinProcessExitError(
+          captured.output,
+          captured.outputInvalidUtf8,
+          captured.outputTruncated,
+        );
+      }
       throw cause;
     }
-    outputInvalidUtf8 ||= received.invalidUtf8;
     frameCount += 1;
     if (frameCount > MAX_COMMAND_FRAMES) {
-      const message =
+      session.protocolError =
         "Rizin emitted more than 4096 frames for one command; the session was stopped because output correlation is ambiguous.";
-      session.protocolError = message;
-      return {
-        output: output.join("\n"),
-        outputTruncated: true,
-        outputInvalidUtf8,
-      };
+      outputTruncated = true;
+      return snapshot();
     }
-    if (received.truncated) {
-      const separatorBytes = output.length > 0 ? 1 : 0;
-      output.push(
-        truncateUtf8(
-          received.text,
-          maxCommandOutputBytes - outputBytes - separatorBytes,
-        ),
-      );
-      return {
-        output: output.join("\n"),
-        outputTruncated: true,
-        outputInvalidUtf8,
-      };
+    const markerSeen = append(received);
+    if (outputTruncated) {
+      session.protocolError ??=
+        "Rizin command output exceeded the 16 MiB command limit.";
+      return snapshot();
     }
-    const frame = received.text;
-    const markerIndex = frame.indexOf(marker);
-    if (markerIndex >= 0) {
-      const beforeMarker = frame.slice(0, markerIndex).trimEnd();
-      if (beforeMarker.length > 0) {
-        const beforeMarkerBytes = Buffer.byteLength(beforeMarker, "utf8");
-        const separatorBytes = output.length > 0 ? 1 : 0;
-        if (
-          outputBytes + separatorBytes + beforeMarkerBytes >
-          maxCommandOutputBytes
-        ) {
-          const message =
-            "Rizin command output exceeded the 16 MiB command limit.";
-          session.protocolError = message;
-          const retained = truncateUtf8(
-            beforeMarker,
-            maxCommandOutputBytes - outputBytes - separatorBytes,
-          );
-          if (retained.length > 0) output.push(retained);
-          return {
-            output: output.join("\n"),
-            outputTruncated: true,
-            outputInvalidUtf8,
-          };
-        }
-        outputBytes += separatorBytes + beforeMarkerBytes;
-        output.push(beforeMarker);
-      }
-      return {
-        output: output.join("\n"),
-        outputTruncated: false,
-        outputInvalidUtf8,
-      };
-    }
-    const frameBytes = Buffer.byteLength(frame, "utf8");
-    const separatorBytes = output.length > 0 ? 1 : 0;
-    if (outputBytes + separatorBytes + frameBytes > maxCommandOutputBytes) {
-      const message = "Rizin command output exceeded the 16 MiB command limit.";
-      session.protocolError = message;
-      output.push(
-        truncateUtf8(
-          frame,
-          maxCommandOutputBytes - outputBytes - separatorBytes,
-        ),
-      );
-      return {
-        output: output.join("\n"),
-        outputTruncated: true,
-        outputInvalidUtf8,
-      };
-    }
-    outputBytes += separatorBytes + frameBytes;
-    output.push(frame);
+    if (markerSeen) return snapshot();
   }
 };
 
 const truncateUtf8 = (value: string, maximumBytes: number): string => {
   if (maximumBytes <= 0) return "";
-  const bytes = Buffer.from(value, "utf8").subarray(0, maximumBytes);
-  return bytes.toString("utf8").replace(/\uFFFD$/u, "");
+  const bytes = Buffer.from(value, "utf8");
+  let end = Math.min(bytes.length, maximumBytes);
+  while (end > 0 && end < bytes.length && (bytes[end]! & 0xc0) === 0x80)
+    end -= 1;
+  return bytes.subarray(0, end).toString("utf8");
 };
 
 const waitForFrame = (

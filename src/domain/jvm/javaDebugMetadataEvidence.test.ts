@@ -14,6 +14,7 @@ const method = (
   descriptor,
   state,
   hasCode: state !== "not-applicable",
+  maxLocals: state === "not-applicable" ? null : 1,
   lineNumbers: absent,
   localVariables: absent,
   localVariableTypes: absent,

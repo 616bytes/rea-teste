@@ -18,7 +18,9 @@ positions and are never substituted for these.
 Bind every fact to exact identity: class internal name/descriptor, source file
 name as declared, major/minor version, and per method the name **plus
 descriptor**, bytecode offset, local **slot** and scope range. A method debug
-state is reported as `present | partial | stripped | malformed | not-applicable`.
+state is reported as `present | partial | stripped | malformed | not-applicable`;
+a `LocalVariableTable` is not applicable when the method's `max_locals` is 0, so
+line numbers alone make such a method `present`.
 Absent tables, malformed records, partial examination and ambiguous mappings are
 distinguished; a reused local slot may denote different variables across scope
 ranges and is never collapsed. `SourceDebugExtension` bytes are preserved opaquely with bounded

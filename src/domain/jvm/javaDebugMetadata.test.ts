@@ -91,10 +91,10 @@ const localVariableTable = (
   return b.parts;
 };
 
-const codeAttrInfo = (subAttrs: readonly number[]): number[] =>
+const codeAttrInfo = (subAttrs: readonly number[], maxLocals = 1): number[] =>
   new Blob()
     .u2(1) // max_stack
-    .u2(1) // max_locals
+    .u2(maxLocals)
     .u4(1) // code_length
     .u1(0xb1) // return
     .u2(0) // exception_table_length
@@ -457,5 +457,44 @@ describe("Code sub-attribute recovery", () => {
     expect(method.lineNumbers.entries).toEqual([{ startPc: 0, lineNumber: 5 }]);
     expect(method.localVariables.presence).toBe("unread");
     expect(method.localVariableTypes.presence).toBe("unread");
+  });
+});
+
+const decodeOnly = (methodAttrs: Blob, classAttrs = new Blob().u2(0)) => {
+  const cls = parseJavaClassFile(classWith(methodAttrs, classAttrs));
+  if (!cls.ok) throw new Error(`fixture did not frame: ${cls.error.kind}`);
+  return decodeClassDebugMetadata(cls.value);
+};
+
+describe("decodeClassDebugMetadata — readiness without locals", () => {
+  const linesOnly = (maxLocals: number) =>
+    codeAttrInfo(
+      subAttrs(1, new Blob().attr(4, lineNumberTable([[0, 3]]))).parts,
+      maxLocals,
+    );
+
+  it("treats line numbers with max_locals 0 as present: no local can be named", () => {
+    const method = decodeOnly(new Blob().u2(1).attr(3, linesOnly(0)))
+      .methods[0]!;
+    expect(method.maxLocals).toBe(0);
+    expect(method.localVariables.presence).toBe("absent");
+    expect(method.state).toBe("present");
+  });
+
+  it("keeps line numbers without a LocalVariableTable partial when locals exist", () => {
+    const method = decodeOnly(new Blob().u2(1).attr(3, linesOnly(1)))
+      .methods[0]!;
+    expect(method.maxLocals).toBe(1);
+    expect(method.state).toBe("partial");
+  });
+
+  it("classifies a max_locals 0 body with no line numbers as stripped", () => {
+    const code = codeAttrInfo(subAttrs(0, new Blob()).parts, 0);
+    const method = decodeOnly(new Blob().u2(1).attr(3, code)).methods[0]!;
+    expect(method.state).toBe("stripped");
+  });
+
+  it("reports max_locals as unknown without a Code attribute", () => {
+    expect(decodeOnly(new Blob().u2(0)).methods[0]!.maxLocals).toBeNull();
   });
 });

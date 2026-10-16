@@ -71,8 +71,14 @@ export interface LocalVariableTypeEntry {
 
 /** Overall debugging-readiness of one method's body. */
 export type MethodDebugState =
-  | "present" // line and local-variable tables both decoded
-  | "partial" // one of them present, the other absent
+  // Line and local-variable tables both decoded; or line numbers decoded and
+  // max_locals is 0, so no local can exist and a LocalVariableTable is not
+  // applicable (javac -g emits none for such a method).
+  | "present"
+  // One table present, the other absent. With max_locals > 0 an absent
+  // LocalVariableTable may also mean the method has only compiler-synthetic
+  // locals, which javac -g does not name.
+  | "partial"
   | "stripped" // a body exists but carries neither table (e.g. javac -g:none)
   | "malformed" // a present table failed to decode fully
   | "not-applicable"; // no Code attribute (native/abstract, or no body)
@@ -82,6 +88,8 @@ export interface MethodDebugMetadata {
   readonly descriptor: string | null;
   readonly state: MethodDebugState;
   readonly hasCode: boolean;
+  /** The Code attribute's max_locals, or null with no (readable) Code header. */
+  readonly maxLocals: number | null;
   readonly lineNumbers: DebugTable<LineNumberEntry>;
   readonly localVariables: DebugTable<LocalVariableEntry>;
   readonly localVariableTypes: DebugTable<LocalVariableTypeEntry>;
@@ -238,13 +246,18 @@ const decodeLocalVariableTypeTable = (
     };
   });
 
-/** Advance past the fixed Code header and exception table to its sub-attributes, keeping code_length. */
+/** Advance past the fixed Code header and exception table to its sub-attributes, keeping max_locals and code_length. */
 const seekCodeSubAttributes = (
   code: Uint8Array,
-): { readonly cursor: ByteCursor; readonly codeLength: number } | null => {
+): {
+  readonly cursor: ByteCursor;
+  readonly maxLocals: number;
+  readonly codeLength: number;
+} | null => {
   const cursor = new ByteCursor(code);
   if (!cursor.u2().ok) return null; // max_stack
-  if (!cursor.u2().ok) return null; // max_locals
+  const maxLocals = cursor.u2();
+  if (!maxLocals.ok) return null;
   const codeLength = cursor.u4();
   if (!codeLength.ok || !cursor.slice(codeLength.value).ok) return null;
   const exceptionTableLength = cursor.u2();
@@ -253,7 +266,7 @@ const seekCodeSubAttributes = (
     !cursor.slice(exceptionTableLength.value * 8).ok
   )
     return null;
-  return { cursor, codeLength: codeLength.value };
+  return { cursor, maxLocals: maxLocals.value, codeLength: codeLength.value };
 };
 
 const computeReusedSlots = (
@@ -270,6 +283,7 @@ const computeReusedSlots = (
 
 const classifyMethod = (
   hasCode: boolean,
+  maxLocals: number,
   lineNumbers: DebugTable<LineNumberEntry>,
   localVariables: DebugTable<LocalVariableEntry>,
   localVariableTypes: DebugTable<LocalVariableTypeEntry>,
@@ -283,6 +297,10 @@ const classifyMethod = (
     return "malformed";
   }
   const hasLine = lineNumbers.presence === "present";
+  // With max_locals 0 no local (not even `this` or a parameter) exists, so an
+  // absent LocalVariableTable is not missing debug information.
+  if (maxLocals === 0 && localVariables.presence === "absent")
+    return hasLine ? "present" : "stripped";
   const hasLocals = localVariables.presence === "present";
   if (hasLine && hasLocals) return "present";
   if (!hasLine && !hasLocals) return "stripped";
@@ -306,6 +324,7 @@ export const decodeMethodDebugMetadata = (
       descriptor: method.descriptor,
       state: "not-applicable",
       hasCode: false,
+      maxLocals: null,
       lineNumbers: absentTable(),
       localVariables: absentTable(),
       localVariableTypes: absentTable(),
@@ -347,13 +366,20 @@ export const decodeMethodDebugMetadata = (
 
   const state = codeMalformed
     ? "malformed"
-    : classifyMethod(true, lineNumbers, localVariables, localVariableTypes);
+    : classifyMethod(
+        true,
+        seeked.maxLocals,
+        lineNumbers,
+        localVariables,
+        localVariableTypes,
+      );
 
   return {
     name: method.name,
     descriptor: method.descriptor,
     state,
     hasCode: true,
+    maxLocals: seeked?.maxLocals ?? null,
     lineNumbers,
     localVariables,
     localVariableTypes,

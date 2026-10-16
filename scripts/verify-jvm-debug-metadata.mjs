@@ -186,6 +186,7 @@ class Debuggable<T> {
   int compute(int a) { return a; }
   <E> List<E> wrap(E e) { List<E> list = new ArrayList<>(); list.add(e); return list; }
   double mix(double d, long l) { double r = d + (double) l; return r; }
+  static int answer() { return 42; }
 }
 `;
   const src = join(workspace, "Debuggable.java");
@@ -264,6 +265,14 @@ class Debuggable<T> {
     mix.local_variable_table.entries.some((e) => e.name === "d"),
     "named local 'd' expected",
   );
+
+  // A static method with no parameters or locals has max_locals 0: javac -g
+  // emits line numbers and no LocalVariableTable, and that is fully debuggable.
+  const answer = report.methods.find((m) => m.name === "answer");
+  assert.equal(answer?.max_locals, 0, "answer() has no locals");
+  assert.equal(answer.local_variable_table.presence, "absent");
+  assert.equal(answer.line_number_table.presence, "present");
+  assert.equal(answer.state, "present", "no-locals method is not partial");
 
   // -g:none: stripped, no source file.
   const strippedReport = await inspectBoth(join(noneDir, "Debuggable.class"));

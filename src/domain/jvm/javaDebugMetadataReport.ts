@@ -97,6 +97,8 @@ const method = z.strictObject({
     "not-applicable",
   ]),
   has_code: z.boolean(),
+  /** The Code attribute's max_locals; null without a readable Code header. */
+  max_locals: z.number().int().nonnegative().nullable(),
   line_number_table: table(lineNumberEntry),
   local_variable_table: table(localVariableEntry),
   local_variable_type_table: table(localVariableTypeEntry),
@@ -217,6 +219,7 @@ export const buildJavaDebugMetadataResult = (
       descriptor: m.descriptor,
       state: m.state,
       has_code: m.hasCode,
+      max_locals: m.maxLocals,
       line_number_table: {
         presence: m.lineNumbers.presence,
         declared_count: m.lineNumbers.declaredCount,

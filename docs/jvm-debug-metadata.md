@@ -56,8 +56,9 @@ The normalized result binds every fact to exact identity:
   declared `name` when present.
 - `source_debug_extension` — `presence` and opaque `byte_length`. The bytes are
   preserved but never interpreted; no source-map dialect is parsed.
-- `methods[]` — each with `name`, `descriptor`, debugging `state`, and the three
-  decoded tables:
+- `methods[]` — each with `name`, `descriptor`, debugging `state`, `max_locals`
+  (from the `Code` attribute; `null` without a readable `Code` header), and the
+  three decoded tables:
   - `line_number_table` — `start_pc` → `line_number` entries.
   - `local_variable_table` — `start_pc`, `length`, `name`, `descriptor`, `slot`,
     and `out_of_range` (the scope lies outside the method's code length).
@@ -69,13 +70,20 @@ The normalized result binds every fact to exact identity:
 
 ### Method debugging state
 
-| `state`          | Meaning                                                            |
-| ---------------- | ------------------------------------------------------------------ |
-| `present`        | both line and local-variable tables decoded                        |
-| `partial`        | one table present, the other absent                                |
-| `stripped`       | a body exists but carries neither table (e.g. `javac -g:none`)     |
-| `malformed`      | a present table failed to decode fully; recovered entries are kept |
-| `not-applicable` | no `Code` attribute (native/abstract, or no body)                  |
+| `state`          | Meaning                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------ |
+| `present`        | both line and local-variable tables decoded; or line numbers decoded and `max_locals` is 0 |
+| `partial`        | one table present, the other absent                                                        |
+| `stripped`       | a body exists but carries neither table (e.g. `javac -g:none`)                             |
+| `malformed`      | a present table failed to decode fully; recovered entries are kept                         |
+| `not-applicable` | no `Code` attribute (native/abstract, or no body)                                          |
+
+A method with `max_locals` 0 has no local at all (not even `this` or a
+parameter), so `javac -g` emits no `LocalVariableTable` for it; that absent table
+is reported as `absent` but does not make the method `partial`. When
+`max_locals` is greater than 0, `partial` with an absent local-variable table can
+also mean the method has only compiler-synthetic locals, which `javac -g` does
+not name.
 
 A table whose declared entry count exceeds its bytes is reported `malformed` with
 the entries recovered before the short read. When a later sibling inside the

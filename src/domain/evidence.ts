@@ -171,7 +171,15 @@ export const evidenceSchema = evidenceBaseSchema.superRefine(
 const authenticatedEvidenceSchema = evidenceSchema.superRefine(
   (evidence, context) => {
     const { evidence_id: evidenceId, ...withoutId } = evidence;
-    if (computeEvidenceId(withoutId) !== evidenceId)
+    const matchesCurrentIdentity = computeEvidenceId(withoutId) === evidenceId;
+    // 6.5.0 omitted an explicit null relationship_coverage from its identity.
+    // Keep those IDs valid while still requiring the field in the envelope.
+    const matchesLegacyNullCoverageIdentity =
+      !matchesCurrentIdentity &&
+      evidence.relationship_coverage === null &&
+      computeEvidenceId(withoutId, { omitNullRelationshipCoverage: true }) ===
+        evidenceId;
+    if (!matchesCurrentIdentity && !matchesLegacyNullCoverageIdentity)
       context.addIssue({
         code: "custom",
         path: ["evidence_id"],
@@ -244,7 +252,10 @@ export interface EvidenceObservation {
 
 type EvidenceWithoutId = Omit<EvidenceSchemaValue, "evidence_id">;
 
-const semanticProjection = (evidence: EvidenceWithoutId): JsonValue => ({
+const semanticProjection = (
+  evidence: EvidenceWithoutId,
+  options: { readonly omitNullRelationshipCoverage?: boolean } = {},
+): JsonValue => ({
   subject:
     evidence.subject === null
       ? null
@@ -264,14 +275,20 @@ const semanticProjection = (evidence: EvidenceWithoutId): JsonValue => ({
   authority: evidence.authority,
   environment: evidence.environment,
   limitations: evidence.limitations,
-  relationship_coverage: evidence.relationship_coverage,
+  ...(options.omitNullRelationshipCoverage &&
+  evidence.relationship_coverage === null
+    ? {}
+    : { relationship_coverage: evidence.relationship_coverage }),
   locations: evidence.locations,
   evidence_links: evidence.evidence_links,
 });
 
 /** Hash semantic content, including raw results and excluding display-subject fields. */
-const computeEvidenceId = (evidence: EvidenceWithoutId): string =>
-  `ev_${digestCanonicalValue(semanticProjection(evidence), "Evidence")}`;
+const computeEvidenceId = (
+  evidence: EvidenceWithoutId,
+  options?: { readonly omitNullRelationshipCoverage?: boolean },
+): string =>
+  `ev_${digestCanonicalValue(semanticProjection(evidence, options), "Evidence")}`;
 
 /** Parse evidence and reject a syntactically valid but tampered semantic ID. */
 export const parseEvidence = (input: unknown): Evidence => {

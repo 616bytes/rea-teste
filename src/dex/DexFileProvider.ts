@@ -75,6 +75,10 @@ interface MemberSource {
 }
 
 /** What one inspection keeps from its members after each is released. */
+/** Stated once, before the per-member counts of unread trailing bytes. */
+const TRAILING_BYTES_NOTE =
+  "Bytes after a DEX's declared file_size are never read: ART on Android 15+ ignores them, while Android 14 and earlier reject such a DEX.";
+
 type MemberFindings = (
   | { readonly mode: "summary"; readonly members: DexSummaryMember[] }
   | {
@@ -435,14 +439,17 @@ export class DexFileProvider implements DexDebugMetadataPort {
       if (signal?.aborted) return err(new AnalysisCancelledError(OPERATION));
       const loaded = await source.load();
       const parsed = parseDexFile(loaded);
-      if (!parsed.ok) return err(mapDexParseError(parsed.error, source.label));
+      if (!parsed.ok)
+        return err(mapDexParseError(parsed.error, source.label, limitations));
       // Analysis reads only the bytes the header frames; identity (SHA-256,
       // size) stays over the selected bytes.
       const buffer = parsed.value.framed;
-      if (parsed.value.trailingBytes > 0)
+      if (parsed.value.trailingBytes > 0) {
+        if (limitations.length === 0) limitations.push(TRAILING_BYTES_NOTE);
         limitations.push(
-          `${source.label} has ${String(parsed.value.trailingBytes)} bytes after its declared file_size; they were not read (ART on Android 15+ ignores them; Android 14 and earlier reject the DEX).`,
+          `${source.label} has ${String(parsed.value.trailingBytes)} bytes after its declared file_size; they were not read.`,
         );
+      }
       const work: DexWork = {
         budget: dexWorkBudget(
           Math.max(
@@ -455,7 +462,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
       if (input.class_descriptor === undefined) {
         const summary = summarizeDex(parsed.value, buffer, work);
         if (!summary.ok)
-          return err(mapDexWorkError(summary.error, limitations));
+          return err(mapDexWorkError(summary.error, source.label, limitations));
         summaries.push({
           entry: source.entry,
           sha256: sha256(loaded),
@@ -471,7 +478,8 @@ export class DexFileProvider implements DexDebugMetadataPort {
         work,
         DEX_LIMITS.outputBytes,
       );
-      if (!detail.ok) return err(mapDexWorkError(detail.error, limitations));
+      if (!detail.ok)
+        return err(mapDexWorkError(detail.error, source.label, limitations));
       if (detail.value !== null)
         found.push({ entry: source.entry, detail: detail.value });
       // A second match is already ambiguous; reading further members is waste.

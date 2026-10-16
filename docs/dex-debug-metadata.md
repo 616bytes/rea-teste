@@ -102,6 +102,27 @@ refused structurally; archive members are read under a size budget so a
 decompression bomb cannot be buffered; the archive is admitted once through a
 no-follow descriptor and hashed only after a member is selected.
 
+Limits and refusals a caller can meet:
+
+- **Multidex selection.** Without `entry`, an APK/ZIP contributes the members
+  Android auto-loads, matched by their exact stored names: `classes.dex`,
+  `classes2.dex`, … up to the first missing name. A member stored as
+  `./classes.dex`, `classes1.dex`, a zero-padded name, or one after a gap is not
+  auto-loaded; select it with `entry`. More than 64 auto-loaded members is
+  refused; select one with `entry`.
+- **`file_size` framing.** A header `file_size` larger than the bytes present,
+  or smaller than the 0x70-byte header, is refused. When it is smaller than the
+  member, analysis reads only the first `file_size` bytes (as ART on Android 15+
+  does) and says how many bytes were not read; SHA-256 and size still cover the
+  selected bytes.
+- **Unknown, never absent.** An unreadable `class_def` identity, a second
+  definition of the requested class, malformed `class_data` or an inconsistent
+  `code_item` leaves the answer unknown (an explicit refusal or `unknown`
+  readiness), never "absent" or "stripped".
+- **Budgets.** Decoding work is proportional to each member's size; output is
+  bounded to 8 MiB and projected before the report is built. Exceeding either is
+  refused, naming the member.
+
 Verified by the `verify:dex` real lane, which compiles an owned Java fixture with
 `-g` and `-g:none`, dexes each with the Android SDK's `d8`, and cross-checks the
 decoded facts — including the `this` and parameter locals — against `dexdump`,

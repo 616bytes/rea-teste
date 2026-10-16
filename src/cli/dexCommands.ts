@@ -21,7 +21,9 @@ export const registerDexCommands = (
     args: z.object({
       path: z
         .string()
-        .describe("Local .dex artifact, or an .apk/.zip when --entry is given"),
+        .describe(
+          "Local .dex artifact, or an .apk/.zip (its auto-loaded classes*.dex members, or one member with --entry)",
+        ),
     }),
     options: z.object({
       entry: z

@@ -27,7 +27,7 @@ detail resolves `compute`/`(IJ)I` and its locals, and the local **names**
 (`this`, `a`, `b`) REA reports are names dexdump also resolves. An APK built from
 the dex exercises summarize-all and entry selection and a missing-entry input
 error. All through the built CLI and the stdio MCP in Evidence parity, advertised
-schema validated. 12 cases; skips cleanly without the SDK.
+schema validated. 14 cases; skips cleanly without the SDK.
 
 Real APKs via the CLI: `retro-probe.apk` (debug) → 11 members, readiness
 `present`; the robokiller R8 release → readiness `stripped`, 0 locals, lines
@@ -68,7 +68,8 @@ fail-closed scope (no adb/dynamic leakage).
 - Discoverability parity (README capability row, reverse-engineer skill source,
   `architecture.mermaid`) — shared with the JVM tool.
 - A duplicate-class-across-members and a malformed/truncated-DEX adapter case in
-  the real lane (unit-covered today).
+  the real lane. Today these are covered by unit and provider tests plus the
+  adversarial audit fixtures (not by the real-toolchain lane).
 
 ## Limits
 

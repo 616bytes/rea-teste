@@ -26,7 +26,7 @@ Two output modes, because a DEX holds thousands of classes:
   `dex_version`, `class_count`, method tallies, `line_positions`,
   `local_declarations`, `set_file_events`, `source_file_present`,
   `distinct_source_files` (count + bounded sample), and a derived `readiness`
-  (`present | partial | stripped`).
+  (`present | partial | stripped | unknown`; `unknown` when unreadable structures leave the answer open).
 - **class-detail** (`class_descriptor` = `Lpkg/Name;`): per method `name`,
   JVM-form `descriptor`, `state`, parameter names, and `locals` with
   name/type/signature/`register`/scope (`start_address`/`end_address` in 16-bit

@@ -20,7 +20,7 @@ const CLASS_DESCRIPTOR = /^L[^;]+;$/;
 /** All artifacts are explicitly selected local files; references never trigger acquisition. */
 export const inspectDexDebugMetadataInputSchema = z.strictObject({
   path: localPathStringSchema.describe(
-    "Absolute selected local .dex artifact, or an APK/ZIP when entry is given",
+    "Absolute selected local .dex artifact, or an APK/ZIP (its auto-loaded classes*.dex members, or one member when entry is given)",
   ),
   entry: z
     .string()

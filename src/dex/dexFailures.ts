@@ -23,17 +23,23 @@ const inputError = (
     { path: ["path"], reason, message },
   ]);
 
-/** Map a tagged DEX parse failure to the shared analysis error algebra. */
+/**
+ * Map a tagged DEX parse failure to the shared analysis error algebra. `path`
+ * names the member (`archive!entry` inside an APK/ZIP); `limitations` are facts
+ * about members already read that the refusal must still carry.
+ */
 export const mapDexParseError = (
   error: DexFileParseError,
   path: string,
+  limitations: readonly string[] = [],
 ): AnalysisError => {
+  const context = limitations.length === 0 ? "" : ` ${limitations.join(" ")}`;
   switch (error.kind) {
     case "bad-magic":
       return new AnalysisUnsupportedTargetError(
         OPERATION,
         path,
-        "The selected file does not begin with the DEX magic (dex\\n0NN).",
+        `${path} does not begin with the DEX magic (dex\\n0NN).${context}`,
         {
           remediationAction:
             "Select a .dex file, or pass entry to select a classesN.dex inside an APK/ZIP.",
@@ -43,7 +49,7 @@ export const mapDexParseError = (
       return new AnalysisUnsupportedTargetError(
         OPERATION,
         path,
-        "This is a compact dex (cdex) extracted from a vdex; it is a device-optimized format.",
+        `${path} is a compact dex (cdex) extracted from a vdex; it is a device-optimized format.${context}`,
         {
           remediationAction:
             "Provide a canonical .dex (e.g. from the APK), not an on-device odex/vdex/cdex.",
@@ -53,33 +59,33 @@ export const mapDexParseError = (
       return new AnalysisUnsupportedTargetError(
         OPERATION,
         path,
-        "This DEX declares the reverse-endian tag, which ART itself rejects; it is not read.",
+        `${path} declares the reverse-endian tag, which ART itself rejects; it is not read.${context}`,
       );
     case "unsupported-version":
       return new AnalysisUnsupportedTargetError(
         OPERATION,
         path,
-        `DEX format version ${error.version} is not supported (reads 035, 037-040).`,
+        `${path}: DEX format version ${error.version} is not supported (reads 035, 037-040).${context}`,
       );
     case "bad-header":
       return inputError(
         "invalid_format",
-        `Malformed DEX header: ${error.detail}.`,
+        `${path}: malformed DEX header: ${error.detail}.${context}`,
       );
     case "truncated":
       return inputError(
         "invalid_format",
-        `DEX ended before a structure completed at byte ${String(error.offset)}.`,
+        `${path}: DEX ended before a structure completed at byte ${String(error.offset)}.${context}`,
       );
     case "budget-exceeded":
       return inputError(
         "invalid_value",
-        `Declared ${error.resource} count (${String(error.declared)}) exceeds the remaining ${String(error.remaining)} bytes at byte ${String(error.offset)}.`,
+        `${path}: declared ${error.resource} count (${String(error.declared)}) exceeds the remaining ${String(error.remaining)} bytes at byte ${String(error.offset)}.${context}`,
       );
     case "invalid-index":
       return inputError(
         "invalid_value",
-        `DEX offset ${String(error.index)} is outside the file bound ${String(error.bound)}.`,
+        `${path}: DEX offset ${String(error.index)} is outside the file bound ${String(error.bound)}.${context}`,
       );
   }
 };
@@ -160,6 +166,7 @@ export const dexFileFailure = (cause: unknown, path: string): AnalysisError => {
  */
 export const mapDexWorkError = (
   error: DexWorkError,
+  label: string,
   limitations: readonly string[] = [],
 ): AnalysisError => {
   const context = limitations.length === 0 ? "" : ` ${limitations.join(" ")}`;
@@ -170,7 +177,7 @@ export const mapDexWorkError = (
       return new AnalysisResourceConstraintError(
         OPERATION,
         "cpu",
-        `Decoding a DEX member's debug metadata needs more than ${String(error.limit)} work units (proportional to its size); a well-formed DEX never does, so it was refused rather than run unbounded.${context}`,
+        `Decoding the debug metadata of ${label} needs more than ${String(error.limit)} work units (proportional to its size); a well-formed DEX never does, so it was refused rather than run unbounded.${context}`,
         { max_work_units: error.limit },
       );
     case "malformed-class-data":
@@ -178,7 +185,7 @@ export const mapDexWorkError = (
         {
           path: ["class_descriptor"],
           reason: "invalid_value",
-          message: `The selected class's class_data at byte ${String(error.classDataOff)} cannot be read; its methods' debug metadata is unknown.${context}`,
+          message: `${label}: the selected class's class_data at byte ${String(error.classDataOff)} cannot be read; its methods' debug metadata is unknown.${context}`,
         },
       ]);
     case "unreadable-class-identity":
@@ -186,7 +193,7 @@ export const mapDexWorkError = (
         {
           path: ["class_descriptor"],
           reason: "invalid_value",
-          message: `${String(error.count)} class_def entr${error.count === 1 ? "y has" : "ies have"} an unreadable type identity, so whether this DEX member defines the class (once) is unknown, not absent.${context}`,
+          message: `${label}: ${String(error.count)} class_def entr${error.count === 1 ? "y has" : "ies have"} an unreadable type identity, so whether this DEX member defines the class (once) is unknown, not absent.${context}`,
         },
       ]);
     case "duplicate-class-definition":
@@ -194,14 +201,14 @@ export const mapDexWorkError = (
         {
           path: ["class_descriptor"],
           reason: "invalid_value",
-          message: `${String(error.count)} class_def entries declare the class in one DEX member; the DEX is malformed and the definition is ambiguous.${context}`,
+          message: `${label}: ${String(error.count)} class_def entries declare the class in one DEX member; the DEX is malformed and the definition is ambiguous.${context}`,
         },
       ]);
     case "output-budget-exceeded":
       return new AnalysisResourceConstraintError(
         OPERATION,
         "capacity",
-        `The class detail would serialise to about ${String(error.projectedBytes)} bytes, over the ${String(error.limit)}-byte output budget; refused before building it.${context}`,
+        `${label}: the class detail would serialise to about ${String(error.projectedBytes)} bytes, over the ${String(error.limit)}-byte output budget; refused before building it.${context}`,
         { maximum_output_bytes: error.limit },
       );
   }

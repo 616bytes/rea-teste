@@ -30,7 +30,7 @@ const nodes = [channelNode("ff"), channelNode("ﬀ")] as const;
 
 const matchedNodeIds = (
   value: string,
-  match: "exact" | "substring",
+  match: "exact" | "contains",
   caseSensitive: boolean,
 ) =>
   findApplicationFeatureSeeds(nodes, {
@@ -47,7 +47,7 @@ describe("application feature seed Unicode matching", () => {
   });
 
   it("does not compatibility-fold case-sensitive substring seeds", () => {
-    expect(matchedNodeIds("f", "substring", true)).toEqual([nodes[0].node_id]);
+    expect(matchedNodeIds("f", "contains", true)).toEqual([nodes[0].node_id]);
   });
 
   it("retains compatibility folding for explicit case-insensitive matching", () => {

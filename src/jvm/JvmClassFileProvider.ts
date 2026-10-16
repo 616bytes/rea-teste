@@ -209,7 +209,9 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       retainedAttributeBudget: JVM_LIMITS.maxDebugEntries,
     });
     if (!parsed.ok) return err(mapParseError(parsed.error, input.path));
-    const tooMany = this.#rejectIfTooManyEntries(parsed.value, input.path);
+    const tooMany = this.#rejectIfTooManyEntries(parsed.value, input.path, [
+      input.path,
+    ]);
     if (tooMany) return err(tooMany);
     const result = buildJavaDebugMetadataResult(parsed.value, {
       path: input.path,
@@ -286,7 +288,10 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
           retainedAttributeBudget: JVM_LIMITS.maxDebugEntries,
         });
         if (!parsed.ok) return err(mapParseError(parsed.error, jar));
-        const tooMany = this.#rejectIfTooManyEntries(parsed.value, jar);
+        const tooMany = this.#rejectIfTooManyEntries(parsed.value, jar, [
+          jar,
+          entry,
+        ]);
         if (tooMany) return err(tooMany);
         // Hash only after a member is selected and parsed: a refused call never
         // pays the full-archive (up to 512 MiB) digest.
@@ -472,6 +477,7 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
   #rejectIfTooManyEntries(
     classFile: Parameters<typeof projectDebugOutput>[0],
     path: string,
+    echoed: readonly string[],
   ): AnalysisResourceConstraintError | undefined {
     const projection = projectDebugOutput(
       classFile,
@@ -491,11 +497,16 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
         `${path} declares ${String(projection.entries)} debug-table entries, over the ${String(JVM_LIMITS.maxDebugEntries)} limit; refused before allocation.`,
         { maximum_debug_entries: JVM_LIMITS.maxDebugEntries },
       );
-    if (projection.encodedBytes > JVM_LIMITS.outputBytes)
+    // Caller-selected strings (path, entry name) are echoed verbatim too.
+    const encodedBytes = echoed.reduce(
+      (total, value) => total + Buffer.byteLength(JSON.stringify(value)),
+      projection.encodedBytes,
+    );
+    if (encodedBytes > JVM_LIMITS.outputBytes)
       return new AnalysisResourceConstraintError(
         OPERATION,
         "capacity",
-        `${path} would project to about ${String(projection.encodedBytes)} bytes of debug metadata, over the ${String(JVM_LIMITS.outputBytes)}-byte output budget; refused before building it.`,
+        `${path} would project to about ${String(encodedBytes)} bytes of debug metadata, over the ${String(JVM_LIMITS.outputBytes)}-byte output budget; refused before building it.`,
         { maximum_output_bytes: JVM_LIMITS.outputBytes },
       );
     return undefined;

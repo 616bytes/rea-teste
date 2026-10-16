@@ -224,10 +224,17 @@ const modifiedUtf8Units = (bytes: Uint8Array): number | null => {
       // continuation bytes and are never valid as a lead. (0xc0 0x80 remains
       // the modified-UTF8 encoding of U+0000 and stays accepted.)
       if (a < 0xc0 || !isContinuation(bytes[i + 1])) return null;
+      // Shortest form only (JVMS §4.4.7): a 2-byte sequence encodes
+      // U+0080..U+07FF, or U+0000 as exactly 0xC0 0x80. An overlong form
+      // (e.g. 0xC0 0x81 for U+0001) is rejected, as the JVM rejects it.
+      const unit = ((a & 0x1f) << 6) | (bytes[i + 1]! & 0x3f);
+      if (unit < 0x80 && !(a === 0xc0 && bytes[i + 1] === 0x80)) return null;
       i += 2;
     } else {
       if (!isContinuation(bytes[i + 1]) || !isContinuation(bytes[i + 2]))
         return null;
+      // Shortest form only: a 3-byte sequence encodes U+0800..U+FFFF.
+      if (a === 0xe0 && bytes[i + 1]! < 0xa0) return null;
       i += 3;
     }
     units += 1;
@@ -324,7 +331,10 @@ export const resolveConstantUtf8 = (
 
 /**
  * Upper bound on the UTF-8 bytes `JSON.stringify` emits for a validated
- * modified-UTF8 constant (quotes included), computed from its bytes alone:
+ * modified-UTF8 constant (quotes included), computed from its bytes alone.
+ * Sound because validation rejects overlong forms: a control character can
+ * only arrive as one byte (or U+0000 as 0xC0 0x80), never packed into a
+ * multi-byte sequence that is charged less than its escape.
  * control characters escape to `\\u00XX`, quote/backslash to two bytes, and a
  * 3-byte sequence is charged 6 in case it is a lone surrogate (`\\udXXX`).
  */

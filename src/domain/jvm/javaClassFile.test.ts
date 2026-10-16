@@ -293,3 +293,36 @@ describe("lazy constant-pool strings", () => {
     );
   });
 });
+
+describe("modified-UTF8 validation", () => {
+  it("rejects overlong modified-UTF8 as the JVM does (JVMS §4.4.7)", () => {
+    const withConstant = (bytes: readonly number[]): Uint8Array => {
+      const b = new Blob()
+        .u4(0xcafebabe)
+        .u2(0)
+        .u2(52)
+        .u2(2)
+        .u1(CONSTANT_TAG.utf8)
+        .u2(bytes.length);
+      for (const byte of bytes) b.u1(byte);
+      return b.u2(0x0021).u2(0).u2(0).u2(0).u2(0).u2(0).u2(0).bytes();
+    };
+    // U+0001 as 2 bytes, U+0041 as 2 bytes, U+0041 as 3 bytes: all overlong.
+    for (const overlong of [
+      [0xc0, 0x81],
+      [0xc1, 0x81],
+      [0xe0, 0x81, 0x81],
+    ]) {
+      const result = parseJavaClassFile(withConstant(overlong));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.kind).toBe("invalid-utf8");
+    }
+    // The canonical 0xC0 0x80 (U+0000) and shortest 2/3-byte forms stay valid.
+    for (const valid of [
+      [0xc0, 0x80],
+      [0xc2, 0x80],
+      [0xe0, 0xa0, 0x80],
+    ])
+      expect(parseJavaClassFile(withConstant(valid)).ok).toBe(true);
+  });
+});

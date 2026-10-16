@@ -16,6 +16,12 @@ export const SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT = 16384;
  * returned references. One candidate can prepend a long member chain, so
  * links are budgeted independently of candidates. */
 export const SEMANTIC_RETURNED_REFERENCE_PATH_LINK_LIMIT = 262144;
+/** Distinct cycle-blocker entries retained while resolving one call target's
+ * returned references. */
+export const SEMANTIC_RETURNED_REFERENCE_BLOCKER_LIMIT = 262144;
+/** Largest cached blocker context per completed expansion. Richer expansions
+ * stay uncached; re-expansion is bounded by the candidate reserve. */
+export const SEMANTIC_RETURNED_REFERENCE_BLOCKER_CONTEXT_LIMIT = 1024;
 /** Bound normalized strings and transient keys independently of transport limits. */
 export const SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT = 1_048_576;
 

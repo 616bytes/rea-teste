@@ -197,6 +197,42 @@ it("bounds path links created when one long member chain meets many suffixes", (
   ]);
 });
 
+it("bounds blocker propagation when a chain ends in a literal of aliases", () => {
+  const depth = 4096;
+  const properties = Array.from(
+    { length: depth },
+    (_, index) => `q${index}: a${index}`,
+  ).join(", ");
+  const declarations = Array.from(
+    { length: depth + 1 },
+    (_, index) => `a${index}`,
+  ).join(", ");
+  const arms = Array.from({ length: depth + 1 }, (_, index) =>
+    index < depth
+      ? `case ${index}: a${index} = a${index + 1}; break;`
+      : `case ${index}: a${index} = { ${properties} }; break;`,
+  ).join("\n");
+  const { program, state } = indexed(`
+    function run(t) {
+      let ${declarations};
+      switch (t) {
+        ${arms}
+      }
+      a0();
+    }
+    run(t0);
+  `);
+  const run = program.body[0];
+  if (!t.isFunctionDeclaration(run)) throw new Error("Missing run function");
+  const call = run.body.body.at(-1);
+  if (!t.isExpressionStatement(call) || !t.isCallExpression(call.expression))
+    throw new Error("Missing chain call");
+  createSemanticReturnedReferences(state)(call.expression.callee);
+  expect([...state.valueResourceLimits]).toEqual([
+    "returned-reference-expansion",
+  ]);
+});
+
 it("keeps references proven before the budget cuts off a reassignment web", () => {
   const bindings = ["t", "e", "a", "n", "r"];
   const keys = [

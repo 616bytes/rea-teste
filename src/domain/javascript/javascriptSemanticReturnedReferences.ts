@@ -7,6 +7,8 @@ import {
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
+  SEMANTIC_RETURNED_REFERENCE_BLOCKER_CONTEXT_LIMIT,
+  SEMANTIC_RETURNED_REFERENCE_BLOCKER_LIMIT,
   SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT,
   SEMANTIC_RETURNED_REFERENCE_PATH_LINK_LIMIT,
 } from "./javascriptSemanticResourceLimits.js";
@@ -36,6 +38,7 @@ interface Candidate {
 interface InitializerChain {
   readonly parent: InitializerChain | null;
   readonly value: JavaScriptSemanticInitializer;
+  readonly depth: number;
 }
 
 /**
@@ -101,25 +104,17 @@ const createPathInterner = (chargeLink: () => boolean): PathInterner => {
   };
 };
 
-const initializerChainHas = (
+const initializerChainLink = (
   chain: InitializerChain | null,
   target: JavaScriptSemanticInitializer,
-): boolean => {
+): InitializerChain | null => {
   for (let link = chain; link !== null; link = link.parent)
-    if (link.value === target) return true;
-  return false;
+    if (link.value === target) return link;
+  return null;
 };
 
-const initializerChainCovers = (
-  chain: InitializerChain | null,
-  required: InitializerContext,
-): boolean => {
-  for (const initializer of required)
-    if (!initializerChainHas(chain, initializer)) return false;
-  return true;
-};
-
-type InitializerContext = ReadonlySet<JavaScriptSemanticInitializer>;
+/** Cycle-blocked initializers with their depth on the completing frame's chain. */
+type InitializerContext = ReadonlyMap<JavaScriptSemanticInitializer, number>;
 type CompletedExpansions = WeakMap<
   t.Node,
   Map<string, readonly InitializerContext[]>
@@ -130,7 +125,7 @@ interface ExpansionFrame {
   readonly node: t.Node;
   readonly pathKey: string;
   readonly parent: ExpansionFrame | null;
-  readonly blockers: Set<JavaScriptSemanticInitializer>;
+  readonly blockers: Map<JavaScriptSemanticInitializer, number>;
 }
 
 type ExpansionTask =
@@ -145,7 +140,7 @@ const contextContains = (
   context: InitializerContext,
   required: InitializerContext,
 ): boolean => {
-  for (const initializer of required)
+  for (const initializer of required.keys())
     if (!context.has(initializer)) return false;
   return true;
 };
@@ -153,34 +148,48 @@ const contextContains = (
 const propagateBlockers = (
   blockers: InitializerContext,
   parent: ExpansionFrame | null,
+  chargeBlocker: () => boolean,
 ): void => {
   if (parent === null) return;
-  for (const initializer of blockers)
-    if (initializerChainHas(parent.item.initializers, initializer))
-      parent.blockers.add(initializer);
+  // A parent chain is always a prefix of a descendant chain, so a blocker
+  // belongs to the parent chain exactly when its depth fits the prefix.
+  const parentDepth = parent.item.initializers?.depth ?? 0;
+  for (const [initializer, depth] of blockers) {
+    if (depth > parentDepth || parent.blockers.has(initializer)) continue;
+    if (!chargeBlocker()) return;
+    parent.blockers.set(initializer, depth);
+  }
 };
 
 const completeExpansion = (
   frame: ExpansionFrame,
   expanded: CompletedExpansions,
+  chargeBlocker: () => boolean,
 ): void => {
-  const paths =
-    expanded.get(frame.node) ??
-    new Map<string, readonly InitializerContext[]>();
-  const contexts = paths.get(frame.pathKey) ?? [];
-  const covered = contexts.find((context) =>
-    contextContains(frame.blockers, context),
-  );
-  if (covered === undefined) {
-    paths.set(frame.pathKey, [
-      ...contexts.filter(
-        (context) => !contextContains(context, frame.blockers),
-      ),
-      frame.blockers,
-    ]);
-    expanded.set(frame.node, paths);
+  let covered: InitializerContext | undefined;
+  // Rich contexts stay uncached: re-expansion is bounded by the candidate
+  // reserve, while every cached context keeps lookups and retention small.
+  if (
+    frame.blockers.size <= SEMANTIC_RETURNED_REFERENCE_BLOCKER_CONTEXT_LIMIT
+  ) {
+    const paths =
+      expanded.get(frame.node) ??
+      new Map<string, readonly InitializerContext[]>();
+    const contexts = paths.get(frame.pathKey) ?? [];
+    covered = contexts.find((context) =>
+      contextContains(frame.blockers, context),
+    );
+    if (covered === undefined) {
+      paths.set(frame.pathKey, [
+        ...contexts.filter(
+          (context) => !contextContains(context, frame.blockers),
+        ),
+        frame.blockers,
+      ]);
+      expanded.set(frame.node, paths);
+    }
   }
-  propagateBlockers(covered ?? frame.blockers, frame.parent);
+  propagateBlockers(covered ?? frame.blockers, frame.parent, chargeBlocker);
 };
 
 interface ObjectTargetIndex {
@@ -240,6 +249,15 @@ export const createSemanticReturnedReferences = (
       recordLimit();
       return false;
     };
+    let remainingBlockers = SEMANTIC_RETURNED_REFERENCE_BLOCKER_LIMIT;
+    const chargeBlocker = (): boolean => {
+      if (remainingBlockers > 0) {
+        remainingBlockers -= 1;
+        return true;
+      }
+      recordLimit();
+      return false;
+    };
     const paths = createPathInterner(chargeLink);
     const work: ExpansionTask[] = [
       {
@@ -256,20 +274,28 @@ export const createSemanticReturnedReferences = (
       const task = work.pop();
       if (task === undefined) break;
       if (task.kind === "complete") {
-        completeExpansion(task.frame, expanded);
+        completeExpansion(task.frame, expanded, chargeBlocker);
         continue;
       }
       if (budgeted) break;
       const { item, parent } = task;
       const node = unwrapJavaScriptExpression(item.node).node;
       const pathKey = String(item.path.id);
-      const covered = expanded
-        .get(node)
-        ?.get(pathKey)
-        ?.find((context) => initializerChainCovers(item.initializers, context));
+      const covered = ((): InitializerContext | undefined => {
+        const contexts = expanded.get(node)?.get(pathKey);
+        if (contexts === undefined || contexts.length === 0) return undefined;
+        const chainValues = new Set<JavaScriptSemanticInitializer>();
+        for (let link = item.initializers; link !== null; link = link.parent)
+          chainValues.add(link.value);
+        return contexts.find((context) => {
+          for (const initializer of context.keys())
+            if (!chainValues.has(initializer)) return false;
+          return true;
+        });
+      })();
       if (covered !== undefined) {
         // Cached cycle dependencies must reach the caller's proof too.
-        propagateBlockers(covered, parent);
+        propagateBlockers(covered, parent, chargeBlocker);
         continue;
       }
       const frame: ExpansionFrame = {
@@ -277,7 +303,7 @@ export const createSemanticReturnedReferences = (
         node,
         pathKey,
         parent,
-        blockers: new Set(),
+        blockers: new Map(),
       };
       work.push({ kind: "complete", frame });
       const pending: Candidate[] = [];
@@ -293,8 +319,13 @@ export const createSemanticReturnedReferences = (
           ...selected.initializers,
           ...selected.referenceInitializers,
         ]) {
-          if (initializerChainHas(item.initializers, initializer)) {
-            frame.blockers.add(initializer);
+          const blockerLink = initializerChainLink(
+            item.initializers,
+            initializer,
+          );
+          if (blockerLink !== null) {
+            if (!frame.blockers.has(initializer) && chargeBlocker())
+              frame.blockers.set(initializer, blockerLink.depth);
             continue;
           }
           if (!reserve()) break;
@@ -303,7 +334,11 @@ export const createSemanticReturnedReferences = (
           pending.push({
             node: initializer.node,
             path,
-            initializers: { parent: item.initializers, value: initializer },
+            initializers: {
+              parent: item.initializers,
+              value: initializer,
+              depth: (item.initializers?.depth ?? 0) + 1,
+            },
           });
         }
       } else if (

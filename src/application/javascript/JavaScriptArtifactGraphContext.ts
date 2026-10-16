@@ -151,7 +151,7 @@ export const applicationRootPath = (
     const defaultEntry = context.filesByPath.get(`${prefix}index.js`);
     if (
       entryRoots === undefined &&
-      (metadata.main !== null ||
+      (metadata.main_status === "declared" ||
         metadata.renderer !== null ||
         defaultEntry?.container_sha256 === source.container_sha256)
     )

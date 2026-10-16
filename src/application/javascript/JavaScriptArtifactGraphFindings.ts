@@ -3,10 +3,7 @@ import { createHash } from "node:crypto";
 import { compactStringIdentityKey } from "../../domain/compactStringIdentity.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
-import type {
-  JavaScriptArtifactFile,
-  JavaScriptArtifactFileKind,
-} from "../../domain/javascript/javascriptArtifactFiles.js";
+import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   addStaticInferenceEdge,
   applicationRootPath,
@@ -48,7 +45,7 @@ interface FindingInput<Value> {
 }
 
 interface ResolvedReference {
-  readonly targetKind?: JavaScriptArtifactFileKind;
+  readonly targetIsJson?: true;
   readonly path: string | null;
   readonly file: JavaScriptArtifactFile | null;
   readonly node: ApplicationNode | null;
@@ -155,7 +152,7 @@ const addReference = (
     (input.value.specifier === null ||
       resolved === null ||
       (resolved.resolutionStatus === "unavailable" &&
-        resolved.targetKind !== "json"))
+        resolved.targetIsJson !== true))
   ) {
     const container = applicationContainerIdentity(context.fileSet, input.file);
     const gaps =
@@ -608,6 +605,10 @@ const resolveReference = (
       resolution.candidate_path === undefined
         ? undefined
         : context.unanalyzedFiles?.get(resolution.candidate_path)?.kind;
+    // Inventory kinds are case-folded; the loader's extension dispatch is not.
+    const targetIsJson =
+      resolution.candidate_path?.endsWith(".json") === true &&
+      (targetKind === "json" || targetKind === "package-json");
     return source === undefined
       ? null
       : {
@@ -624,7 +625,7 @@ const resolveReference = (
               ),
           limitations: resolution.limitations,
           resolutionStatus: resolution.resolution_status,
-          ...(targetKind === undefined ? {} : { targetKind }),
+          ...(targetIsJson ? { targetIsJson: true as const } : {}),
           resolution,
         };
   }

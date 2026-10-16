@@ -88,10 +88,28 @@ it("does not let a known-absent optional import erase another application's page
   ).toHaveLength(1);
 });
 
-it.each(["unselected", "unavailable", "dynamic", "unavailable-json"] as const)(
+it.each([
+  "unselected",
+  "unavailable",
+  "dynamic",
+  "unavailable-json",
+  "unavailable-package-json",
+  "unavailable-uppercase-json",
+] as const)(
   "distinguishes hidden imports from inert unavailable data through %s",
   async (omission) => {
     const root = await createTestTempDirectory("rea-competing-gap-");
+    const targetPath =
+      omission === "unavailable-json"
+        ? "b/config.json"
+        : omission === "unavailable-package-json"
+          ? "b/node_modules/pkg/package.json"
+          : omission === "unavailable-uppercase-json"
+            ? "shared/bridge.JSON"
+            : "shared/bridge.cjs";
+    const inertJson =
+      omission === "unavailable-json" ||
+      omission === "unavailable-package-json";
     await writeFixtureFiles(root, {
       "a/package.json": JSON.stringify({ main: "main.cjs" }),
       "b/package.json": JSON.stringify({ main: "main.cjs" }),
@@ -99,10 +117,10 @@ it.each(["unselected", "unavailable", "dynamic", "unavailable-json"] as const)(
       "b/main.cjs":
         omission === "dynamic"
           ? "require(process.env.CHILD);"
-          : omission === "unavailable-json"
-            ? 'require("./config.json");'
-            : 'require("../shared/bridge.cjs");',
+          : `require(${JSON.stringify(targetPath.startsWith("b/") ? `./${targetPath.slice(2)}` : `../${targetPath}`)});`,
       "b/config.json": "{}",
+      "b/node_modules/pkg/package.json": "{}",
+      "shared/bridge.JSON": 'require("./window.cjs");',
       "shared/bridge.cjs": 'require("./window.cjs");',
       "shared/window.cjs":
         'const {BrowserWindow} = require("electron"); const w = new BrowserWindow(); w.loadFile("index.html");',
@@ -127,33 +145,26 @@ it.each(["unselected", "unavailable", "dynamic", "unavailable-json"] as const)(
             ]
           : undefined,
       );
-      const bridge = files.files.find(
-        ({ path }) =>
-          path ===
-          (omission === "unavailable-json"
-            ? "b/config.json"
-            : "shared/bridge.cjs"),
-      );
+      const bridge = files.files.find(({ path }) => path === targetPath);
       if (bridge === undefined) throw new Error("Missing bridge");
-      const partial =
-        omission !== "unavailable" && omission !== "unavailable-json"
-          ? files
-          : {
-              ...files,
-              files: files.files.filter(({ path }) => path !== bridge.path),
-              unavailable_relevant_files: [
-                ...files.unavailable_relevant_files,
-                {
-                  path: bridge.path,
-                  container_sha256: bridge.container_sha256,
-                  sha256: null,
-                  bytes: null,
-                  inventory_artifact_id: bridge.inventory_artifact_id,
-                  kind: bridge.kind,
-                  hash_status: "unavailable" as const,
-                },
-              ],
-            };
+      const partial = !omission.startsWith("unavailable")
+        ? files
+        : {
+            ...files,
+            files: files.files.filter(({ path }) => path !== bridge.path),
+            unavailable_relevant_files: [
+              ...files.unavailable_relevant_files,
+              {
+                path: bridge.path,
+                container_sha256: bridge.container_sha256,
+                sha256: null,
+                bytes: null,
+                inventory_artifact_id: bridge.inventory_artifact_id,
+                kind: bridge.kind,
+                hash_status: "unavailable" as const,
+              },
+            ],
+          };
       const graph = buildJavaScriptArtifactGraph(
         snapshot,
         partial,
@@ -167,10 +178,8 @@ it.each(["unselected", "unavailable", "dynamic", "unavailable-json"] as const)(
         expect.arrayContaining([
           expect.objectContaining({
             properties: expect.objectContaining({
-              resolved_path:
-                omission === "unavailable-json" ? "a/index.html" : null,
-              resolution_status:
-                omission === "unavailable-json" ? "resolved" : "unavailable",
+              resolved_path: inertJson ? "a/index.html" : null,
+              resolution_status: inertJson ? "resolved" : "unavailable",
             }),
           }),
         ]),
@@ -180,7 +189,7 @@ it.each(["unselected", "unavailable", "dynamic", "unavailable-json"] as const)(
           ({ source_node_id, relation }) =>
             source_node_id === roles[0]?.node_id && relation === "maps_to",
         ),
-      ).toHaveLength(omission === "unavailable-json" ? 1 : 0);
+      ).toHaveLength(inertJson ? 1 : 0);
     } finally {
       await reader.close();
     }

@@ -135,6 +135,49 @@ const writeRuntimeFixture = async (root: string): Promise<void> => {
 };
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
+  "does not invent a nested default-entry owner without index.js through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-empty-default-owner-");
+    for (const [directory, metadata] of [
+      ["empty", { main: "" }],
+      ["absent", {}],
+    ] as const)
+      await writeFixtureFiles(root, {
+        [`${directory}/package.json`]: JSON.stringify(metadata),
+        [`${directory}/helper.cjs`]:
+          'const {BrowserWindow} = require("electron"); const w = new BrowserWindow(); w.loadFile("index.html");',
+        [`${directory}/index.html`]: "nested decoy without launch entry",
+        "index.html": "artifact-root page",
+      });
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    const roles = graph.nodes.filter(
+      ({ kind }) => kind === "electron-renderer",
+    );
+    expect(roles).toHaveLength(2);
+    for (const role of roles) {
+      expect(role.observations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              resolution_status: "resolved",
+              resolved_path: "index.html",
+            }),
+          }),
+        ]),
+      );
+      expect(
+        graph.edges
+          .filter(
+            ({ source_node_id, relation }) =>
+              source_node_id === role.node_id && relation === "maps_to",
+          )
+          .map(({ properties }) => properties.resolved_path),
+      ).toEqual(["index.html"]);
+    }
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
   "keeps invalid main declarations distinct from default entries through %s",
   async (surface, { cli }) => {
     const root = await createTestTempDirectory("rea-invalid-main-owner-");

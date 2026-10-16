@@ -129,7 +129,7 @@ try {
     { signal: controller.signal },
   );
   const capture = result.ok
-    ? result.value
+    ? result.value.normalized_result
     : result.error.partialObservation?.capture;
   await writeFile(join(profile, "result.json"), JSON.stringify(result));
   const actionsCompleted =

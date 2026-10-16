@@ -412,8 +412,10 @@ selected families, except that a popup page refused by an event budget is an
 omitted `popup-opened` record whenever any family is selected, because popup
 discovery serves every selected family. `network_transaction_range` is present
 exactly when events were dropped for `max-network-transactions`, and each
-omitted transaction dropped at least one; per-transaction omissions are also
-dropped events. Launch captures record `provider-owned` and
+omitted transaction dropped at least one. Each `network_transactions` record
+names kinds and budget reasons that `by_kind` dropped, no more transactions per
+kind than that kind's drops, and every budget drop of a network kind names its
+transaction there. Launch captures record `provider-owned` and
 `terminated-owned-process`; connect captures record `external` and
 `disconnected-external`. Comparisons and views reject inline captures that
 contradict any of these rules, the completeness rules above or their initial

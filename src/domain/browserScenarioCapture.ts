@@ -20,6 +20,7 @@ import {
   enabledScenarioEventFamilies,
   sameCompletenessSections,
   type BrowserScenarioCompletenessSection,
+  type BrowserScenarioEventBudgetReason,
   type BrowserScenarioEventKind,
 } from "./browserScenarioCaptureValues.js";
 
@@ -157,25 +158,25 @@ const refineBrowserIdentity = (
     });
 };
 
+/** Without network the family rule already rejects network omission records. */
+const networkSelected = ({ scenario }: CapturedFields): boolean =>
+  enabledScenarioEventFamilies(
+    scenario.event_families,
+    scenario.network_content,
+  ).includes("network");
+
 /**
- * Network omission accounting: only transactions refused by
- * max-network-transactions fill the omitted range, each refused transaction
- * drops at least one event, and per-transaction omissions are dropped events.
- * Without network the family rule already rejects these records.
+ * Only transactions refused by max-network-transactions fill the omitted
+ * range, and each refused transaction drops at least one of its events.
  */
-const refineTransactionAccounting = (
-  { scenario, events }: CapturedFields,
+const refineTransactionRange = (
+  capture: CapturedFields,
   context: z.RefinementCtx,
 ): void => {
-  if (
-    !enabledScenarioEventFamilies(
-      scenario.event_families,
-      scenario.network_content,
-    ).includes("network")
-  )
-    return;
-  const range = events.omissions.network_transaction_range;
-  const refusedDrops = events.omissions.by_kind
+  if (!networkSelected(capture)) return;
+  const { omissions } = capture.events;
+  const range = omissions.network_transaction_range;
+  const refusedDrops = omissions.by_kind
     .filter(({ reasons }) => reasons.includes("max-network-transactions"))
     .reduce((count, omission) => count + omission.count, 0);
   if (range === null ? refusedDrops > 0 : refusedDrops < range.count)
@@ -187,12 +188,79 @@ const refineTransactionAccounting = (
           ? "Events dropped for max-network-transactions require the omitted transaction range"
           : "Each transaction in the omitted range drops at least one event for max-network-transactions",
     });
-  if (events.omissions.network_transactions.length > 0 && events.dropped === 0)
-    context.addIssue({
-      code: "custom",
-      path: ["events", "omissions", "network_transactions"],
-      message: "Omitted network transaction content requires dropped events",
-    });
+};
+
+const TRANSACTION_OMISSION_REASONS: ReadonlySet<BrowserScenarioEventBudgetReason> =
+  new Set([
+    "max-events",
+    "max-event-allocation-bytes",
+    "max-total-event-allocation-bytes",
+  ]);
+
+/**
+ * An admitted transaction names an omitted kind and reason only after that
+ * event was dropped for that reason, so each per-transaction omission is
+ * backed by by_kind, and every budget drop of a network kind names its
+ * transaction. Refused transactions belong to the omitted range instead.
+ */
+const refineTransactionOmissions = (
+  capture: CapturedFields,
+  context: z.RefinementCtx,
+): void => {
+  if (!networkSelected(capture)) return;
+  const { by_kind: byKind, network_transactions: transactions } =
+    capture.events.omissions;
+  const dropped = new Map(byKind.map((omission) => [omission.kind, omission]));
+  const transactionsByKind = new Map<BrowserScenarioEventKind, number>();
+  for (const [index, omission] of transactions.entries()) {
+    // The family rule reports non-network kinds.
+    if (
+      omission.omitted_kinds.some(
+        (kind) => browserScenarioEventKindFamily(kind) !== "network",
+      )
+    )
+      continue;
+    for (const kind of new Set(omission.omitted_kinds))
+      transactionsByKind.set(kind, (transactionsByKind.get(kind) ?? 0) + 1);
+    const backed =
+      omission.omitted_kinds.every((kind) => dropped.has(kind)) &&
+      omission.reasons.every(
+        (reason) =>
+          TRANSACTION_OMISSION_REASONS.has(reason) &&
+          omission.omitted_kinds.some((kind) =>
+            dropped.get(kind)?.reasons.includes(reason),
+          ),
+      );
+    if (!backed)
+      context.addIssue({
+        code: "custom",
+        path: ["events", "omissions", "network_transactions", index],
+        message:
+          "Each omitted transaction kind and budget reason must be dropped in by_kind",
+      });
+  }
+  for (const [index, omission] of byKind.entries()) {
+    if (browserScenarioEventKindFamily(omission.kind) !== "network") continue;
+    const unnamed = omission.reasons.filter(
+      (reason) =>
+        TRANSACTION_OMISSION_REASONS.has(reason) &&
+        !transactions.some(
+          (transaction) =>
+            transaction.omitted_kinds.includes(omission.kind) &&
+            transaction.reasons.includes(reason),
+        ),
+    );
+    const named = transactionsByKind.get(omission.kind) ?? 0;
+    if (unnamed.length > 0 || named > omission.count)
+      context.addIssue({
+        code: "custom",
+        path: ["events", "omissions", "by_kind", index],
+        message:
+          unnamed.length > 0
+            ? `${omission.kind} events dropped for ${unnamed.join(", ")} must name their transactions in network_transactions`
+            : `${String(named)} transactions omit ${omission.kind}, but only ${String(omission.count)} ${omission.kind} events were dropped`,
+      });
+  }
 };
 
 /** What in the capture itself shows that event coverage is incomplete. */
@@ -315,7 +383,8 @@ export const browserScenarioCaptureSchema = capturedFieldsSchema.superRefine(
   (capture, context) => {
     refineBrowserIdentity(capture, context);
     refineSelectedEventFamilies(capture, context);
-    refineTransactionAccounting(capture, context);
+    refineTransactionRange(capture, context);
+    refineTransactionOmissions(capture, context);
     refineStartStep(capture, context);
     refineStepOutcomes(capture, context);
     refineCaptureCompleteness(capture, context);

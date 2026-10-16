@@ -417,28 +417,29 @@ it("limits event omission accounting to selected families", () => {
     ["events", "omissions", "network_transactions", 0],
     ["events", "omissions", "network_transaction_range"],
   ]);
-  const transactionOmitting = (kind: "network-content" | "popup-opened") =>
-    browserScenarioCaptureSchema.safeParse({
-      ...capture,
-      events: {
-        ...capture.events,
-        omissions: {
-          ...capture.events.omissions,
-          network_transactions: [
-            {
-              transaction_id: "request-1",
-              omitted_kinds: [kind],
-              reasons: ["max-total-event-allocation-bytes"],
-            },
-          ],
-        },
-      },
-    });
-  expect(transactionOmitting("network-content").success).toBe(true);
+  // Per-transaction records name only network kinds.
   expect(
-    transactionOmitting("popup-opened").error?.issues.map(({ path }) => path),
+    browserScenarioCaptureSchema
+      .safeParse({
+        ...capture,
+        events: {
+          ...capture.events,
+          omissions: {
+            ...capture.events.omissions,
+            network_transactions: [
+              ...capture.events.omissions.network_transactions,
+              {
+                transaction_id: "request-1",
+                omitted_kinds: ["popup-opened"],
+                reasons: ["max-total-event-allocation-bytes"],
+              },
+            ],
+          },
+        },
+      })
+      .error?.issues.map(({ path }) => path),
   ).toEqual([
-    ["events", "omissions", "network_transactions", 0, "omitted_kinds", 0],
+    ["events", "omissions", "network_transactions", 1, "omitted_kinds", 0],
   ]);
   // Popup discovery serves every selected family, so an unadmitted popup page
   // is an omission whenever any family is selected.
@@ -621,7 +622,101 @@ it("keeps browser ownership and transaction omissions consistent", () => {
         },
       },
     })),
-  ).toEqual([["events", "omissions", "network_transactions"]]);
+  ).toEqual([["events", "omissions", "network_transactions", 0]]);
+});
+
+it("backs each transaction omission with its per-kind drop", () => {
+  const { request } = fixtureFacts();
+  const transaction = (
+    kind: string,
+    reason: string,
+    id = request.transaction_id,
+  ) => ({
+    transaction_id: id,
+    omitted_kinds: [kind],
+    reasons: [reason],
+  });
+  const omitting = (
+    byKind: readonly { kind: string; count: number; reasons: string[] }[],
+    transactions: readonly unknown[],
+    range: unknown = null,
+  ) =>
+    fixtureIssues((capture) => ({
+      ...capture,
+      events: {
+        ...capture.events,
+        dropped: byKind.reduce((count, omission) => count + omission.count, 0),
+        omissions: {
+          by_kind: byKind,
+          network_transactions: transactions,
+          network_transaction_range: range,
+        },
+      },
+      completeness: scenarioFixtureCompleteness(capture.steps, true),
+    }));
+  const responseDrop = { kind: "response", count: 1, reasons: ["max-events"] };
+  const entry = (index: number) => [
+    "events",
+    "omissions",
+    "network_transactions",
+    index,
+  ];
+  const kindEntry = ["events", "omissions", "by_kind", 0];
+
+  expect(
+    omitting([responseDrop], [transaction("response", "max-events")]),
+  ).toBeUndefined();
+  // A dropped console event cannot stand behind an omitted response.
+  expect(
+    omitting(
+      [{ kind: "console", count: 1, reasons: ["max-events"] }],
+      [transaction("response", "max-events")],
+    ),
+  ).toEqual([entry(0)]);
+  // Every kind a transaction omits needs its own drop.
+  expect(
+    omitting(
+      [{ kind: "request", count: 1, reasons: ["max-events"] }],
+      [
+        {
+          transaction_id: request.transaction_id,
+          omitted_kinds: ["request", "response"],
+          reasons: ["max-events"],
+        },
+      ],
+    ),
+  ).toEqual([entry(0)]);
+  // More transactions omit a kind than events of that kind were dropped.
+  expect(
+    omitting(
+      [responseDrop],
+      [
+        transaction("response", "max-events"),
+        transaction("response", "max-events", "request-9"),
+      ],
+    ),
+  ).toEqual([kindEntry]);
+  // Reasons must match in both directions.
+  expect(
+    omitting(
+      [{ ...responseDrop, reasons: ["max-event-allocation-bytes"] }],
+      [transaction("response", "max-events")],
+    ),
+  ).toEqual([entry(0), kindEntry]);
+  expect(omitting([responseDrop], [])).toEqual([kindEntry]);
+  // Refused transactions belong to the omitted range, not to per-transaction records.
+  expect(
+    omitting(
+      [{ kind: "request", count: 1, reasons: ["max-network-transactions"] }],
+      [transaction("request", "max-network-transactions")],
+      {
+        first_transaction_id: "request-9",
+        last_transaction_id: "request-9",
+        count: 1,
+        reason: "max-network-transactions",
+      },
+    ),
+  ).toEqual([entry(0)]);
 });
 
 it("keeps capture completeness equal to the aggregated step ledgers", () => {

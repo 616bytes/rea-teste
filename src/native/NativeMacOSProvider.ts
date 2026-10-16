@@ -819,7 +819,7 @@ class NativeMacOSClient implements AnalysisClient {
     const result = inspectPlistSchema.parse({
       format: /binary property list/iu.test(classified.value.stdout)
         ? "binary"
-        : /XML|text/iu.test(classified.value.stdout)
+        : /\bXML\b/iu.test(classified.value.stdout)
           ? "xml"
           : "unknown",
       value: parsed.value.value,

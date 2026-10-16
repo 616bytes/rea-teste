@@ -2,22 +2,16 @@ import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { compareKunaAddresses } from "./KunaAddress.js";
 import { parseKunaJson } from "./KunaJson.js";
+import { KunaJsonDocumentReader, parseKunaRow } from "./KunaJsonStream.js";
 
-/** Raw JSON budgets also bound the materialized indexes; no decompiled bodies are admitted. */
-export const KUNA_GRAPH_OUTPUT_BYTES = 32 * 1024 * 1024;
+/** The raw xref budget also bounds its materialized rows. */
 export const KUNA_XREF_OUTPUT_BYTES = 16 * 1024 * 1024;
 
-const addressKeys = new Set([
-  "address",
-  "callerAddress",
-  "calleeAddress",
-  "forwardsTo",
-  "from_address",
-  "to_address",
-]);
+const addressKeys = new Set(["address", "from_address", "to_address"]);
 const address = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/u);
 const count = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const kind = z.enum(["call", "jump", "data", "read", "write"]);
@@ -29,8 +23,6 @@ const graphHeader = z.object({
     functionCount: count,
     edgeCount: count,
   }),
-  functions: z.array(z.unknown()),
-  edges: z.array(z.unknown()),
 });
 const graphNode = z.object({
   address,
@@ -60,37 +52,118 @@ export interface KunaCallGraph {
   readonly callees: ReadonlyMap<string, readonly string[]>;
 }
 
-/** Validate once at the producer boundary and retain only facts used by queries. */
-export const parseKunaCallGraph = (
-  text: string,
-  input: string,
-): Result<KunaCallGraph, string> => {
-  try {
-    const header = graphHeader.parse(
-      parseKunaJson(text, KUNA_GRAPH_OUTPUT_BYTES, addressKeys),
-    );
-    if (header.binary.sourcePath !== input)
-      throw new Error("graph names a different input");
+const fieldsOf = (schema: z.ZodObject, excluded: readonly string[]) =>
+  new Set(Object.keys(schema.shape).filter((key) => !excluded.includes(key)));
+
+const GRAPH_DOCUMENT = {
+  header: new Set(["schemaVersion"]),
+  sections: new Map([
+    ["binary", new Set(Object.keys(graphHeader.shape.binary.shape))],
+  ]),
+  rows: new Map([
+    [
+      "functions",
+      {
+        fields: fieldsOf(graphNode, [
+          "address",
+          "forwardsTo",
+          "codeC",
+          "assembly",
+          "error",
+        ]),
+        addresses: new Set(["address", "forwardsTo"]),
+        empty: new Set<string>(),
+        // `--functions ''` requests no bodies; one is refused unassembled.
+        nulls: new Set(["codeC", "assembly", "error"]),
+      },
+    ],
+    [
+      "edges",
+      {
+        fields: fieldsOf(graphEdge, ["callerAddress", "calleeAddress"]),
+        addresses: new Set(["callerAddress", "calleeAddress"]),
+        empty: new Set<string>(),
+        nulls: new Set<string>(),
+      },
+    ],
+  ]),
+};
+
+/**
+ * Validates `kuna decompile-graph --functions ''` as Kuna writes it and
+ * retains only the facts call queries use.
+ */
+export class KunaCallGraphReader extends KunaJsonDocumentReader<KunaCallGraph> {
+  readonly #nodes = new Map<string, KunaGraphNode>();
+  #edges: z.infer<typeof graphEdge>[] = [];
+  #hasIndirectCalls = false;
+
+  constructor() {
+    super("kuna:call-graph", "Kuna's call graph", GRAPH_DOCUMENT);
+  }
+
+  override finish(input: string): Result<KunaCallGraph, AnalysisError> {
+    const completed = this.complete();
+    if (!completed.ok) return completed;
+    const header = graphHeader.safeParse(completed.value.header);
+    if (!header.success)
+      return err(this.unusable("the graph header is not Kuna's schema 4"));
+    if (header.data.binary.sourcePath !== input)
+      return err(this.unusable("graph names a different input"));
     if (
-      header.binary.functionCount !== header.functions.length ||
-      header.binary.edgeCount !== header.edges.length
+      header.data.binary.functionCount !== this.#nodes.size ||
+      header.data.binary.edgeCount !== this.#edges.length
     )
-      throw new Error("graph counts disagree with examined rows");
-    const nodes = new Map<string, KunaGraphNode>();
-    let hasIndirectCalls = false;
-    for (const raw of header.functions) {
-      const node = graphNode.parse(raw);
-      if (nodes.has(node.address))
-        throw new Error("graph repeats a function address");
-      nodes.set(node.address, node);
-      hasIndirectCalls ||= node.hasIndirectCalls;
+      return err(this.unusable("graph counts disagree with examined rows"));
+    const edges = this.#edges;
+    this.#edges = [];
+    try {
+      const { callers, callees } = this.#index(edges);
+      return ok({
+        nodes: this.#nodes,
+        callers,
+        callees,
+        edgeCount: edges.length,
+        hasIndirectCalls: this.#hasIndirectCalls,
+        bytes: completed.value.bytes,
+        sha256: completed.value.sha256,
+      });
+    } catch (cause: unknown) {
+      return err(
+        this.unusable(cause instanceof Error ? cause.message : String(cause)),
+      );
     }
+  }
+
+  protected override acceptRow(
+    member: string,
+    fields: Readonly<Record<string, unknown>>,
+  ): void {
+    if (member === "edges") {
+      // Endpoints are checked once every node is known.
+      this.#edges.push(parseKunaRow(graphEdge, "graph edge", fields));
+      return;
+    }
+    const node = parseKunaRow(graphNode, "graph function", fields);
+    if (this.#nodes.has(node.address))
+      throw new Error("graph repeats a function address");
+    this.#nodes.set(node.address, node);
+    this.#hasIndirectCalls ||= node.hasIndirectCalls;
+  }
+
+  protected override discardRows(): void {
+    this.#nodes.clear();
+    this.#edges = [];
+  }
+
+  /** Check every edge against the nodes and index the call edges. */
+  #index(edges: readonly z.infer<typeof graphEdge>[]) {
+    const nodes = this.#nodes;
     const callers = new Map<string, string[]>();
     const callees = new Map<string, string[]>();
     const pairs = new Set<string>();
     const orders = new Map<string, Set<number>>();
-    for (const raw of header.edges) {
-      const edge = graphEdge.parse(raw);
+    for (const edge of edges) {
       if (!nodes.has(edge.callerAddress) || !nodes.has(edge.calleeAddress))
         throw new Error("graph edge has an unknown endpoint");
       const pair = `${edge.callerAddress}:${edge.calleeAddress}`;
@@ -115,19 +188,9 @@ export const parseKunaCallGraph = (
           throw new Error("graph callee orders are incomplete");
     for (const list of [...callers.values(), ...callees.values()])
       list.sort(compareKunaAddresses);
-    return ok({
-      nodes,
-      callers,
-      callees,
-      edgeCount: header.edges.length,
-      hasIndirectCalls,
-      bytes: Buffer.byteLength(text),
-      sha256: createHash("sha256").update(text).digest("hex"),
-    });
-  } catch (cause: unknown) {
-    return err(cause instanceof Error ? cause.message : String(cause));
+    return { callers, callees };
   }
-};
+}
 
 const xrefFunction = z.object({
   name: z.string().min(1),

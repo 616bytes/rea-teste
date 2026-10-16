@@ -4,7 +4,7 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { analysisStringSchema } from "../domain/hopperValues.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { compareKunaAddresses } from "./KunaAddress.js";
-import { KunaJsonDocumentReader } from "./KunaJsonStream.js";
+import { KunaJsonDocumentReader, parseKunaRow } from "./KunaJsonStream.js";
 import { KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
 
 const count = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -49,6 +49,7 @@ const DOCUMENT = {
         addresses: new Set(["address"]),
         // Rows are scanned with --no-xrefs, so `functions` must be empty.
         empty: new Set(["functions"]),
+        nulls: new Set<string>(),
       },
     ],
   ]),
@@ -99,7 +100,7 @@ export interface KunaStringInventory {
 }
 
 /** Validates `kuna strings --json` row by row as Kuna writes it. */
-export class KunaStringInventoryReader extends KunaJsonDocumentReader {
+export class KunaStringInventoryReader extends KunaJsonDocumentReader<KunaStringInventory> {
   readonly #items: KunaStringItem[] = [];
   readonly #identities = new Set<string>();
 
@@ -107,8 +108,7 @@ export class KunaStringInventoryReader extends KunaJsonDocumentReader {
     super("kuna:strings", "Kuna's string inventory", DOCUMENT);
   }
 
-  /** The validated inventory, once Kuna has exited successfully. */
-  finish(input: string): Result<KunaStringInventory, AnalysisError> {
+  override finish(input: string): Result<KunaStringInventory, AnalysisError> {
     const completed = this.complete();
     if (!completed.ok) return completed;
     const fields = header.safeParse(completed.value.header);
@@ -142,12 +142,7 @@ export class KunaStringInventoryReader extends KunaJsonDocumentReader {
     _member: string,
     fields: Readonly<Record<string, unknown>>,
   ): void {
-    const parsed = row.safeParse(fields);
-    if (!parsed.success)
-      throw new Error(
-        `string row field ${parsed.error.issues[0]?.path.join(".") ?? ""} is not Kuna's`,
-      );
-    const entry = parsed.data;
+    const entry = parseKunaRow(row, "string", fields);
     validateStringFacts(entry);
     if (entry.address !== entry.address_hex)
       throw new Error("string address disagrees with its hex field");

@@ -1,8 +1,11 @@
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+
 import { expect, it } from "vitest";
 
 import { normalizeKunaAddress } from "../../../../src/kuna/KunaAddress.js";
 import {
-  parseKunaCallGraph,
+  KunaCallGraphReader,
   parseKunaIncomingReferences,
 } from "../../../../src/kuna/KunaReferenceFiles.js";
 
@@ -44,8 +47,19 @@ const graph = () => ({
   ],
 });
 
-it("preserves u64 numeric tokens and excludes non-call edges", () => {
-  const result = parseKunaCallGraph(wire(graph()), input);
+/** Stream a graph through the reader in small pieces, as Kuna's stdout arrives. */
+const parseKunaCallGraph = async (text: string, selected: string) => {
+  const bytes = Buffer.from(text);
+  const chunks: Buffer[] = [];
+  for (let offset = 0; offset < bytes.byteLength; offset += 7)
+    chunks.push(bytes.subarray(offset, offset + 7));
+  const reader = new KunaCallGraphReader();
+  await pipeline(Readable.from(chunks), reader);
+  return reader.finish(selected);
+};
+
+it("preserves u64 numeric tokens and excludes non-call edges", async () => {
+  const result = await parseKunaCallGraph(wire(graph()), input);
   expect(result.ok).toBe(true);
   if (!result.ok) return;
   expect([...result.value.nodes.keys()]).toEqual([
@@ -62,9 +76,9 @@ it("preserves u64 numeric tokens and excludes non-call edges", () => {
   expect(result.value.callers.has("0x1")).toBe(false);
 });
 
-it("keeps a forwarding instruction address separate from function identity", () => {
+it("keeps a forwarding instruction address separate from function identity", async () => {
   const value = graph();
-  const result = parseKunaCallGraph(
+  const result = await parseKunaCallGraph(
     wire({
       ...value,
       functions: value.functions.map((fn, index) =>
@@ -135,16 +149,21 @@ it.each([
   ],
 ] as const)(
   "rejects graph %s rather than returning an empty relationship set",
-  (_name, mutate) => {
+  async (_name, mutate) => {
     const value = graph();
     mutate(value);
-    expect(parseKunaCallGraph(wire(value), input).ok).toBe(false);
+    expect(await parseKunaCallGraph(wire(value), input)).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError", operation: "kuna:call-graph" },
+    });
   },
 );
 
-it("rejects unrequested bodies and a document for a different input", () => {
+it("rejects unrequested bodies and a document for a different input", async () => {
   const value = graph();
-  expect(parseKunaCallGraph(wire(value), "/other/program").ok).toBe(false);
+  expect((await parseKunaCallGraph(wire(value), "/other/program")).ok).toBe(
+    false,
+  );
   const body = {
     ...value,
     functions: value.functions.map((fn) => ({
@@ -152,7 +171,29 @@ it("rejects unrequested bodies and a document for a different input", () => {
       codeC: "must not be materialized as reference data",
     })),
   };
-  expect(parseKunaCallGraph(wire(body), input).ok).toBe(false);
+  expect(await parseKunaCallGraph(wire(body), input)).toMatchObject({
+    ok: false,
+    error: { reason: "functions row codeC must be null" },
+  });
+});
+
+it("skips fields it does not interpret, including nested parameters", async () => {
+  const value = graph();
+  const result = await parseKunaCallGraph(
+    wire({
+      ...value,
+      binary: { ...value.binary, name: "program", analysisImageBase: 0 },
+      functions: value.functions.map((fn) => ({
+        ...fn,
+        size: 16,
+        parameters: [{ name: "a0", type: "int" }],
+        signature: "int f(int a0)",
+        isEntryPoint: false,
+      })),
+    }),
+    input,
+  );
+  expect(result).toMatchObject({ ok: true, value: { edgeCount: 2 } });
 });
 
 const identity = (name: string, value: number) => ({

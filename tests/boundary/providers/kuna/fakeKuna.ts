@@ -47,15 +47,17 @@ export interface FakeKunaBehavior {
   readonly inventoryDelayMs?: number;
   /** Milliseconds the export takes before writing its files. */
   readonly delayMs?: number;
-  /** `oversized` writes more graph output than REA buffers (32 MiB). */
+  /** `noisy` writes more diagnostics than REA buffers (8 MiB) before the graph. */
   readonly graph?:
     | "ok"
     | "hang"
     | "not-json"
     | "miscounted"
     | "with-bodies"
-    | "oversized";
+    | "noisy";
   readonly graphIndirectCalls?: boolean;
+  /** Bytes of an extra root member in the graph JSON. */
+  readonly graphPadding?: number;
   readonly xrefs?: "ok" | "hang" | "not-json";
   readonly referenceDelayMs?: number;
   readonly referencePadding?: number;
@@ -117,15 +119,15 @@ if (args[0] === "--version") {
 } else if (args[0] === "decompile-graph") {
   if (behavior.graph === "hang") hang();
   else if (behavior.graph === "not-json") process.stdout.write("not graph JSON");
-  else if (behavior.graph === "oversized") process.stdout.write(Buffer.alloc(33 * 1024 * 1024, 0x20));
   else {
+    if (behavior.graph === "noisy") process.stderr.write(Buffer.alloc(9 * 1024 * 1024, 0x78));
     if (args[args.indexOf("--functions") + 1] !== "") throw new Error("graph must request no bodies");
     const nodes = [...functions, { name: "puts", addr: "0x2000" }].map((fn) => ({ address: parseInt(fn.addr, 16), name: fn.name, kind: "normal", hasIndirectCalls: behavior.graphIndirectCalls !== false && fn === functions[0], forwardsTo: null, codeC: behavior.graph === "with-bodies" ? "unrequested code" : null, assembly: null, error: null }));
     const edges = [];
     if (functions[1]) edges.push({ callerAddress: nodes[0].address, calleeAddress: nodes[1].address, kind: "call", calleeOrder: 0 });
     if (functions[2]) edges.push({ callerAddress: nodes[0].address, calleeAddress: nodes[2].address, kind: functions[2].error ? "jump" : "call", calleeOrder: 1 });
     if (functions[1]?.name === "parse") edges.push({ callerAddress: nodes[1].address, calleeAddress: 8192, kind: "call", calleeOrder: 0 });
-    setTimeout(() => process.stdout.write(JSON.stringify({ schemaVersion: 4, binary: { sourcePath: args[1], functionCount: nodes.length + (behavior.graph === "miscounted" ? 1 : 0), edgeCount: edges.length }, functions: nodes, edges })), behavior.referenceDelayMs ?? 0);
+    setTimeout(() => process.stdout.write(JSON.stringify({ schemaVersion: 4, binary: { sourcePath: args[1], functionCount: nodes.length + (behavior.graph === "miscounted" ? 1 : 0), edgeCount: edges.length }, functions: nodes, edges, padding: "x".repeat(behavior.graphPadding ?? 0) })), behavior.referenceDelayMs ?? 0);
   }
 } else if (args[0] === "xrefs") {
   if (behavior.xrefs === "hang") hang();

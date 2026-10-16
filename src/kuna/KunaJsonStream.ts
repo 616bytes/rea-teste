@@ -5,6 +5,7 @@ import { getHeapStatistics } from "node:v8";
 import { getManyValues, isMany, none, type Many } from "stream-chain/defs.js";
 import * as streamJsonParser from "stream-json/core/parser.js";
 import type { ParserOptions, Token } from "stream-json/core/parser.js";
+import type { z } from "zod";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -29,10 +30,12 @@ const { jsonParser } = streamJsonParser as unknown as {
 export interface KunaJsonRows {
   /** Scalar fields kept from each row; other fields are skipped unassembled. */
   readonly fields: ReadonlySet<string>;
-  /** Kept numeric u64 fields, read from their exact tokens as hex. */
+  /** Kept numeric u64 fields, read from their exact tokens as hex, or null. */
   readonly addresses: ReadonlySet<string>;
   /** Array fields that must be empty, kept as `[]`. */
   readonly empty: ReadonlySet<string>;
+  /** Fields that must be null, rejected before any other value is assembled. */
+  readonly nulls: ReadonlySet<string>;
 }
 
 /** The members of one Kuna JSON document that a reader interprets. */
@@ -90,6 +93,19 @@ const describe = (cause: unknown): string =>
  */
 const MAX_TOKEN_CODE_UNITS = 64;
 
+/** Parse one row with its schema, naming the first field that is not Kuna's. */
+export const parseKunaRow = <Schema extends z.ZodType>(
+  schema: Schema,
+  member: string,
+  fields: unknown,
+): z.infer<Schema> => {
+  const parsed = schema.safeParse(fields);
+  if (parsed.success) return parsed.data;
+  throw new Error(
+    `${member} row field ${parsed.error.issues[0]?.path.join(".") ?? ""} is not Kuna's`,
+  );
+};
+
 /** V8 copies shorter substrings instead of slicing them. */
 const SLICED_STRING_MIN_LENGTH = 13;
 
@@ -115,7 +131,7 @@ const detached = (text: string): string =>
  * fails, so the command's own outcome stays authoritative; `complete` reports
  * what the document established.
  */
-export abstract class KunaJsonDocumentReader extends Writable {
+export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
   readonly #hash = createHash("sha256");
   readonly #decoder = new TextDecoder("utf-8", { fatal: true });
   readonly #tokens = jsonParser({
@@ -162,6 +178,9 @@ export abstract class KunaJsonDocumentReader extends Writable {
 
   /** Release retained rows once the document is rejected. */
   protected abstract discardRows(): void;
+
+  /** The validated document, once Kuna has exited successfully on `input`. */
+  abstract finish(input: string): Result<Parsed, AnalysisError>;
 
   /** Aborted at the first contradiction or refused retention. */
   get rejected(): AbortSignal {
@@ -280,9 +299,12 @@ export abstract class KunaJsonDocumentReader extends Writable {
         this.#text = "";
         return;
       case "nullValue":
+        this.#aim("null");
+        this.#store(null, "literal");
+        return;
       case "trueValue":
       case "falseValue":
-        this.#aim("literal");
+        this.#aim("boolean");
         this.#store(token.value, "literal");
         return;
       case "startObject":
@@ -321,7 +343,7 @@ export abstract class KunaJsonDocumentReader extends Writable {
   }
 
   /** Decide where a scalar value goes, before any of it is assembled. */
-  #aim(kind: "string" | "number" | "literal"): void {
+  #aim(kind: "string" | "number" | "null" | "boolean"): void {
     const frame = this.#frames.at(-1);
     const key = this.#key!;
     this.#key = undefined;
@@ -342,11 +364,17 @@ export abstract class KunaJsonDocumentReader extends Writable {
       case "row":
         if (frame.spec.empty.has(key))
           throw new Error(`${frame.member} row ${key} is not an array`);
+        if (frame.spec.nulls.has(key)) {
+          if (kind !== "null")
+            throw new Error(`${frame.member} row ${key} must be null`);
+          this.#target = this.#kept(frame.values, key, frame.spec.nulls);
+          return;
+        }
         if (frame.spec.addresses.has(key)) {
-          if (kind !== "number")
+          if (kind !== "number" && kind !== "null")
             throw new Error(`invalid numeric address in ${key}`);
           this.#target = this.#kept(frame.values, key, frame.spec.addresses);
-          this.#targetIsAddress = true;
+          this.#targetIsAddress = kind === "number";
           return;
         }
         this.#target = this.#kept(frame.values, key, frame.spec.fields);
@@ -453,7 +481,8 @@ export abstract class KunaJsonDocumentReader extends Writable {
           this.#frames.push({ kind: "empty", field: key! });
         } else if (
           frame.spec.fields.has(key!) ||
-          frame.spec.addresses.has(key!)
+          frame.spec.addresses.has(key!) ||
+          frame.spec.nulls.has(key!)
         )
           throw new Error(`${frame.member} row ${key!} is not a scalar`);
         else this.#skipping = 1;

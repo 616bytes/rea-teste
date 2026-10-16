@@ -1,10 +1,11 @@
 import { z } from "incur";
-import { resolve } from "node:path";
 import type { Logger } from "pino";
 
 import { dexDebugMetadataModule } from "../composition/dex.js";
 import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { DEX_PROVIDER_IDENTITY } from "../dex/DexFileRelease.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 
@@ -40,15 +41,13 @@ export const registerDexCommands = (
         ),
     }),
     run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        try {
-          return await logCliCommand(
-            logger,
-            dexDebugMetadataModule.cliCommand,
-            async () => {
-              const result = await service.inspect(
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, dexDebugMetadataModule.cliCommand, () =>
+          finishAnalysisCommand(
+            () =>
+              service.inspect(
                 {
-                  path: resolve(args.path),
+                  path: absoluteCallerPath(args.path),
                   ...(options.entry === undefined
                     ? {}
                     : { entry: options.entry }),
@@ -57,15 +56,14 @@ export const registerDexCommands = (
                     : { class_descriptor: options["class-descriptor"] }),
                 },
                 { signal },
-              );
-              return result.ok
-                ? result.value
-                : projectAnalysisError(result.error);
-            },
-          );
-        } finally {
-          await service.close();
-        }
-      }),
+              ),
+            service,
+            DEX_PROVIDER_IDENTITY.id,
+            dexDebugMetadataModule.contract.name,
+            undefined,
+            signal,
+          ),
+        ),
+      ),
   });
 };

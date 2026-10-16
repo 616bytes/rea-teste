@@ -220,3 +220,54 @@ describe("DexFileProvider APK selection", () => {
     expect(result.ok).toBe(false);
   });
 });
+
+describe("DexFileProvider members Android does not auto-load", () => {
+  it("names canonical members past the retained member cap", async () => {
+    const members = Array.from({ length: 64 }, (_, i) => ({
+      name: i === 0 ? "classes.dex" : `classes${String(i + 1)}.dex`,
+      bytes: debuggableDex(),
+    }));
+    members.push({ name: "classes66.dex", bytes: debuggableDex() });
+    const result = await provider.inspect({
+      path: await write("cap-gap.apk", await zipArchive(members)),
+      class_descriptor: "LAbsent;",
+    });
+    if (result.ok) throw new Error("Expected an absent class");
+    expect(result.error.message + JSON.stringify(result.error)).toContain(
+      "also holds classes66.dex",
+    );
+  });
+
+  it("names skipped members on a selection refusal", async () => {
+    const result = await provider.inspect({
+      path: await write(
+        "no-root.apk",
+        await zipArchive([
+          { name: "classes2.dex", bytes: debuggableDex() },
+          { name: "classes3.dex", bytes: debuggableDex() },
+        ]),
+      ),
+    });
+    if (result.ok) throw new Error("Expected a refusal");
+    expect(JSON.stringify(result.error)).toContain(
+      "also holds classes2.dex, classes3.dex",
+    );
+  });
+
+  it("explains a member stored under a non-exact name as not auto-loaded", async () => {
+    const result = await provider.inspect({
+      path: await write(
+        "dot-stored.apk",
+        await zipArchive([
+          { name: "classes.dex", bytes: debuggableDex() },
+          { name: "./classes2.dex", bytes: debuggableDex() },
+          { name: "classes3.dex", bytes: debuggableDex() },
+        ]),
+      ),
+    });
+    if (!result.ok) throw new Error("Expected a summary");
+    const note = result.value.limitations.join(" ");
+    expect(note).toContain("also holds ./classes2.dex, classes3.dex");
+    expect(note).toContain("present under its exact stored name");
+  });
+});

@@ -1,8 +1,22 @@
+import type { DexDebugMetadataExecution } from "../application/dex/DexDebugMetadataPort.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
+  artifactFileCancellationCause,
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
+import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
+import {
+  ARTIFACT_DECOMPRESSION_RATIO,
+  MINIMUM_ARTIFACT_DECOMPRESSION_BYTES,
+} from "../domain/artifactDecompressionBudget.js";
+import type { InspectDexDebugMetadataInput } from "../domain/dex/dexDebugMetadataReport.js";
+import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -96,114 +110,308 @@ export const mapDexParseError = (
   }
 };
 
-/** Preserve lifecycle failures and distinguish cancellation, access, integrity and limits. */
+/**
+ * An inspection whose report completed inside an owned descriptor operation.
+ * Wrapping it lets a later cleanup failure or cancellation retain the report
+ * as a partial observation without mistaking another completed read (a magic
+ * peek, the loose-file bytes) for a report.
+ */
+export class DexCompletedInspection {
+  constructor(readonly execution: DexDebugMetadataExecution) {}
+}
+
+/** The archive's ZIP reader failed to close after the archive work settled. */
+export class DexReaderCleanupFailure extends Error {
+  constructor(
+    readonly path: string,
+    /** The settled archive work: its completed report or its primary failure. */
+    readonly outcome:
+      | { readonly kind: "completed"; readonly value: DexCompletedInspection }
+      | { readonly kind: "failed"; readonly cause: unknown },
+    readonly cleanupCause: unknown,
+    readonly cleanupLease: AnalysisCleanupLease,
+  ) {
+    super(`ZIP reader cleanup failed for ${path}`, { cause: cleanupCause });
+    this.name = "DexReaderCleanupFailure";
+  }
+}
+
+/** The resource name a retained ZIP reader is reported under. */
+export const dexReaderResource = (path: string): string =>
+  `${path} (ZIP reader)`;
+
+/** Evidence for a report that completed before cancellation or failed cleanup. */
+export const completedDexEvidence = (
+  execution: DexDebugMetadataExecution,
+  input: InspectDexDebugMetadataInput,
+): Evidence =>
+  createEvidence(execution.subject, execution.provider, {
+    operation: OPERATION,
+    parameters: {
+      path: input.path,
+      ...(input.entry === undefined ? {} : { entry: input.entry }),
+      ...(input.class_descriptor === undefined
+        ? {}
+        : { class_descriptor: input.class_descriptor }),
+    },
+    result: execution.result,
+    confidence: "observed",
+    locations: execution.locations,
+    limitations: execution.limitations,
+  });
+
+/** Cancellation always carries the caller's abort reason as its cause. */
+export const dexCancelled = (
+  signal: AbortSignal | undefined,
+  fallbackCause?: unknown,
+  partialObservation?: Evidence,
+): AnalysisCancelledError =>
+  new AnalysisCancelledError(OPERATION, {
+    cause: signal?.aborted === true ? signal.reason : fallbackCause,
+    ...(partialObservation === undefined ? {} : { partialObservation }),
+  });
+
+const messageOf = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
+
+/** The owned cleanup layers of a failure, down to the work's own outcome. */
+interface CleanupLayers {
+  readonly cleanups: readonly AnalysisCleanupObservation[];
+  /** Exact owners to bind, or undefined when one is not a known lease. */
+  readonly leases: readonly AnalysisCleanupLease[] | undefined;
+  /** The work's failure, when it did not complete. */
+  readonly failure: unknown;
+  /** The work's completed value, when it did. */
+  readonly completed: unknown;
+}
+
+const unwindCleanup = (cause: unknown): CleanupLayers => {
+  const cleanups: AnalysisCleanupObservation[] = [];
+  let leases: AnalysisCleanupLease[] | undefined = [];
+  let current = cause;
+  for (;;) {
+    let outcome:
+      | { readonly kind: "completed"; readonly value: unknown }
+      | { readonly kind: "failed"; readonly cause: unknown };
+    if (current instanceof ArtifactFileCleanupFailure) {
+      const physical = current.fileCleanupFailure;
+      cleanups.push(
+        ArtifactReaderFailure.cleanupObservation(
+          physical.cleanupCause,
+          physical.path,
+        ),
+      );
+      leases =
+        leases === undefined || current.cleanupLeases === undefined
+          ? undefined
+          : [...leases, ...current.cleanupLeases];
+      outcome = physical.outcome;
+    } else if (current instanceof DexReaderCleanupFailure) {
+      cleanups.push({
+        reason: messageOf(current.cleanupCause),
+        resources: [dexReaderResource(current.path)],
+      });
+      leases =
+        leases === undefined ? undefined : [...leases, current.cleanupLease];
+      outcome = current.outcome;
+    } else if (current instanceof ArtifactFileCancelled)
+      // Cancelled after the descriptor closed: the physical work completed.
+      outcome = current.fileCancellation.outcome;
+    else return { cleanups, leases, failure: current, completed: undefined };
+    if (outcome.kind === "completed")
+      return { cleanups, leases, failure: undefined, completed: outcome.value };
+    current = outcome.cause;
+  }
+};
+
+/**
+ * Translate a provider failure, walking the owned cleanup layers (descriptor
+ * close, ZIP reader close) down to the work's own outcome. The work's primary
+ * failure (or completed report) is kept, every failed close is reported by the
+ * exact owner it names, and the returned error is bound to those owners'
+ * cleanup leases so a confirmed `close()` retry resolves it.
+ */
 export const dexFileFailure = (
   cause: unknown,
-  path: string,
+  input: InspectDexDebugMetadataInput,
   signal?: AbortSignal,
 ): AnalysisError => {
-  // A failed descriptor close keeps the read's primary failure (or
-  // cancellation) and binds its cleanup lease, so close() retries it.
+  const { cleanups, leases, failure, completed } = unwindCleanup(cause);
+  const report =
+    completed instanceof DexCompletedInspection
+      ? completedDexEvidence(completed.execution, input)
+      : undefined;
+  const cleanedUp = cleanups.length === 0;
+  // Which failure the caller sees first: the work's own failure, a
+  // cancellation observed after it settled, or (a completed read whose close
+  // failed) an execution failure, as for any other one-shot reader.
+  const primary: AnalysisError | undefined =
+    completed === undefined
+      ? primaryFileFailure(failure, input.path, signal)
+      : signal?.aborted === true
+        ? dexCancelled(signal, undefined, report)
+        : report !== undefined
+          ? undefined
+          : cleanedUp
+            ? dexCancelled(signal, cause)
+            : new ProviderAdapterError(DEX_PROVIDER_IDENTITY.id, OPERATION, {
+                cause,
+                diagnostics: {
+                  path: input.path,
+                  reason: cleanups.map(({ reason }) => reason).join("; "),
+                },
+              });
+  if (cleanedUp) {
+    const error = primary ?? dexCancelled(signal, cause, report);
+    bindArtifactFileCleanup(cause, error);
+    return error;
+  }
+  const cleanup = new ProviderCleanupError(
+    DEX_PROVIDER_IDENTITY.id,
+    [...new Set(cleanups.flatMap(({ resources }) => resources))],
+    { reason: cleanups.map(({ reason }) => reason).join("; ") },
+    {
+      operation: OPERATION,
+      cause,
+      ...(report === undefined ? {} : { partialObservation: report }),
+    },
+  );
   const error =
-    cause instanceof ArtifactFileCleanupFailure &&
-    cause.fileCleanupFailure.outcome.kind === "failed"
-      ? withCleanupFacts(
-          primaryFileFailure(cause.fileCleanupFailure.outcome.cause, path),
-          cause,
-        )
-      : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
-        ? withCleanupFacts(
-            new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
-            cause,
-          )
-        : primaryFileFailure(cause, path);
-  bindArtifactFileCleanup(cause, error);
+    primary === undefined
+      ? cleanup
+      : analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
+  if (leases !== undefined) new AnalysisCleanupLeaseGroup(error, leases);
   return error;
 };
 
-/** Attach a failed close as a cleanup fact to a primary failure. */
-const withCleanupFacts = (
-  primary: AnalysisError,
+/** Size limits by the bound the reader names; each reports its own maximum. */
+const limitFailure = (
   cause: ArtifactReaderFailure,
-): AnalysisError =>
-  cause.cleanup === undefined
-    ? primary
-    : analysisErrorWithCleanupFailure(
-        primary,
-        new ProviderCleanupError(
-          DEX_PROVIDER_IDENTITY.id,
-          cause.cleanup.resources,
-          { reason: cause.cleanup.reason },
-          { cause, operation: OPERATION },
-        ),
+  options: {
+    readonly cause: unknown;
+    readonly cleanup?: AnalysisCleanupObservation;
+  },
+): AnalysisError => {
+  switch (cause.boundary) {
+    case "memory":
+      return new AnalysisResourceConstraintError(
         OPERATION,
+        "memory",
+        cause.message,
+        {
+          maximum_archive_metadata_read_bytes: DEX_LIMITS.archiveMetadataBytes,
+        },
+        {
+          ...options,
+          remediationAction:
+            "The archive metadata budget is fixed; extract the DEX member and select it directly.",
+        },
       );
+    case "capacity":
+      return new AnalysisResourceConstraintError(
+        OPERATION,
+        "capacity",
+        cause.message,
+        {
+          decompression_ratio: ARTIFACT_DECOMPRESSION_RATIO,
+          minimum_decompression_budget_bytes:
+            MINIMUM_ARTIFACT_DECOMPRESSION_BYTES,
+        },
+        {
+          ...options,
+          remediationAction:
+            "The decompression budget scales with the archive size; extract the DEX member and select it directly.",
+        },
+      );
+    default:
+      return new AnalysisResourceConstraintError(
+        OPERATION,
+        "file-size",
+        cause.message,
+        { max_input_bytes: DEX_LIMITS.inputBytes },
+        {
+          ...options,
+          remediationAction:
+            "The DEX size budget is fixed; select a smaller artifact.",
+        },
+      );
+  }
+};
 
-const primaryFileFailure = (cause: unknown, path: string): AnalysisError => {
+/** A typed reader failure: cancellation, limit, change, or the artifact's form. */
+const readerFailure = (
+  cause: ArtifactReaderFailure,
+  path: string,
+  signal: AbortSignal | undefined,
+): AnalysisError => {
+  const options = {
+    cause,
+    ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
+  };
+  switch (cause.reason) {
+    case "cancelled":
+      return new AnalysisCancelledError(OPERATION, {
+        ...options,
+        cause:
+          signal?.aborted === true
+            ? signal.reason
+            : artifactFileCancellationCause(cause),
+      });
+    case "limit":
+      return limitFailure(cause, options);
+    case "integrity":
+      return new AnalysisArtifactChangedError(
+        OPERATION,
+        path,
+        cause.message,
+        options,
+      );
+    // A malformed container or a non-regular path describes the selected
+    // artifact, so it stays a caller-facing input error.
+    case "format":
+    case "path":
+      return new AnalysisInputError(OPERATION, options, [
+        { path: ["path"], reason: "invalid_format", message: cause.message },
+      ]);
+    // I/O and unavailable resources (including retained cleanup that still
+    // cannot close) are adapter failures, never blamed on the input.
+    case "io":
+    case "unavailable":
+      return new ProviderAdapterError(DEX_PROVIDER_IDENTITY.id, OPERATION, {
+        ...options,
+        diagnostics: { path, reason: cause.message },
+      });
+  }
+};
+
+const primaryFileFailure = (
+  cause: unknown,
+  path: string,
+  signal: AbortSignal | undefined,
+): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  const cleanup =
-    cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
-      ? { cleanup: cause.cleanup }
-      : {};
-  const reason = cause instanceof Error ? cause.message : String(cause);
-  if (
-    (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled") ||
-    (cause instanceof Error && cause.name === "AbortError")
-  )
-    return new AnalysisCancelledError(OPERATION, { cause, ...cleanup });
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "file-size",
-      reason,
-      { max_input_bytes: DEX_LIMITS.inputBytes },
-      {
-        cause,
-        ...cleanup,
-        remediationAction:
-          "The size budget is fixed; select a smaller artifact.",
-      },
-    );
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-    return new AnalysisArtifactChangedError(OPERATION, path, reason, {
-      cause,
-      ...cleanup,
+  if (cause instanceof ArtifactReaderFailure)
+    return readerFailure(cause, path, signal);
+  const code =
+    cause instanceof Error && "code" in cause ? String(cause.code) : undefined;
+  if (cause instanceof Error && cause.name === "AbortError")
+    return new AnalysisCancelledError(OPERATION, {
+      cause: signal?.aborted === true ? signal.reason : cause,
     });
-  if (
-    cause instanceof Error &&
-    "code" in cause &&
-    (cause.code === "EACCES" || cause.code === "EPERM")
-  )
-    return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-      cause,
-      ...cleanup,
-    });
-  if (
-    cause instanceof Error &&
-    "code" in cause &&
-    (cause.code === "ENOENT" ||
-      cause.code === "ENOTDIR" ||
-      cause.code === "ELOOP")
-  )
-    return new AnalysisInputError(OPERATION, { cause, ...cleanup }, [
+  if (code === "EACCES" || code === "EPERM")
+    return new AnalysisAccessDeniedError(OPERATION, path, code, { cause });
+  if (code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP")
+    return new AnalysisInputError(OPERATION, { cause }, [
       {
         path: ["path"],
         reason: "invalid_value",
-        message: `No regular file can be read at the selected path (${String(cause.code)}): ${path}.`,
+        message: `No regular file can be read at the selected path (${code}): ${path}.`,
       },
     ]);
-  // A typed reader failure (format, path, io, unavailable) describes the
-  // selected artifact, so it stays a caller-facing input error.
-  if (cause instanceof ArtifactReaderFailure)
-    return new AnalysisInputError(OPERATION, { cause, ...cleanup }, [
-      { path: ["path"], reason: "invalid_value", message: reason },
-    ]);
-  // Anything else (e.g. a RangeError) is an adapter defect, never blamed on
-  // the caller's input.
+  // Anything untyped (e.g. a RangeError) is an adapter defect.
   return new ProviderAdapterError(DEX_PROVIDER_IDENTITY.id, OPERATION, {
     cause,
-    ...cleanup,
-    diagnostics: { path, reason },
+    diagnostics: { path, reason: messageOf(cause) },
   });
 };
 
@@ -216,11 +424,12 @@ export const mapDexWorkError = (
   error: DexWorkError,
   label: string,
   limitations: readonly string[] = [],
+  signal?: AbortSignal,
 ): AnalysisError => {
   const context = limitations.length === 0 ? "" : ` ${limitations.join(" ")}`;
   switch (error.kind) {
     case "cancelled":
-      return new AnalysisCancelledError(OPERATION);
+      return dexCancelled(signal);
     case "work-budget-exceeded":
       return new AnalysisResourceConstraintError(
         OPERATION,
@@ -231,7 +440,7 @@ export const mapDexWorkError = (
     case "malformed-class-data":
       return new AnalysisInputError(OPERATION, undefined, [
         {
-          path: ["class_descriptor"],
+          path: ["path"],
           reason: "invalid_value",
           message: `${label}: the selected class's class_data at byte ${String(error.classDataOff)} cannot be read; its methods' debug metadata is unknown.${context}`,
         },
@@ -239,7 +448,7 @@ export const mapDexWorkError = (
     case "unreadable-class-identity":
       return new AnalysisInputError(OPERATION, undefined, [
         {
-          path: ["class_descriptor"],
+          path: ["path"],
           reason: "invalid_value",
           message: `${label}: ${String(error.count)} class_def entr${error.count === 1 ? "y has" : "ies have"} an unreadable type identity, so whether this DEX member defines the class (once) is unknown, not absent.${context}`,
         },
@@ -247,7 +456,7 @@ export const mapDexWorkError = (
     case "duplicate-class-definition":
       return new AnalysisInputError(OPERATION, undefined, [
         {
-          path: ["class_descriptor"],
+          path: ["path"],
           reason: "invalid_value",
           message: `${label}: ${String(error.count)} class_def entries declare the class in one DEX member; the DEX is malformed and the definition is ambiguous.${context}`,
         },

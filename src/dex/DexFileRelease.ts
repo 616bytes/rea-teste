@@ -17,6 +17,11 @@ export const DEX_LIMITS = {
   /** Cap on auto-loaded multidex members summarized for an archive; refuse past it. */
   maxDexMembers: 64,
   /**
+   * Canonical member names remembered for the "not auto-loaded" note, beyond
+   * the retained members; further names are counted, not listed.
+   */
+  maxNamedCanonicalMembers: 128,
+  /**
    * Work units (debug opcodes, parameter-name reads, class_data entries walked)
    * allowed per member, per byte of that member. Each opcode, encoded_field and
    * encoded_method is at least one byte, class_data is walked twice, and a debug

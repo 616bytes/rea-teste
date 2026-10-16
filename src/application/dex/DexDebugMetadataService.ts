@@ -16,7 +16,8 @@ import {
 } from "../../domain/dex/dexDebugMetadataReport.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
+import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 const OPERATION = "inspect_dex_debug_metadata";
 
@@ -34,7 +35,9 @@ export class DexDebugMetadataService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      return err(
+        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
+      );
     const input = inspectDexDebugMetadataInputSchema.safeParse(rawInput);
     if (!input.success)
       return err(
@@ -54,8 +57,6 @@ export class DexDebugMetadataService {
       );
     const inspected = await this.provider.inspect(input.data, options);
     if (!inspected.ok) return inspected;
-    if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
     const execution = inspected.value;
     const report = dexDebugMetadataResultSchema.safeParse(execution.result);
     if (
@@ -73,7 +74,8 @@ export class DexDebugMetadataService {
           "DEX reader returned malformed data, changed the selected artifact identity, or answered a different selection.",
         ),
       );
-    return ok(
+    // Validated before classifying completion: a late abort keeps the report.
+    return completeProviderEvidence(
       createEvidence(execution.subject, execution.provider, {
         operation: OPERATION,
         parameters: {
@@ -93,6 +95,7 @@ export class DexDebugMetadataService {
         locations: execution.locations,
         limitations: execution.limitations,
       }),
+      options?.signal,
     );
   }
 }

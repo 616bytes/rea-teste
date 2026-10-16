@@ -1,8 +1,8 @@
 /**
- * Shared helpers for selecting and reading one member from a ZIP-family archive
- * (JAR, APK, AAB, plain ZIP). Used by every provider that admits an archive and
- * reads a single entry, so the magic sniff, member-path normalization, and the
- * bounded buffering live in one place rather than being copied per provider.
+ * Helpers for selecting and reading one member from a ZIP-family archive (JAR,
+ * APK, AAB, plain ZIP): the magic sniff, member-path normalization, and bounded
+ * buffering of one entry. A provider that admits an archive and reads single
+ * entries reuses these instead of copying them.
  */
 import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
 import type { ZipArtifactReader } from "./ZipArtifactReader.js";
@@ -10,8 +10,6 @@ import type { ZipArtifactReader } from "./ZipArtifactReader.js";
 /** Local-file-header, empty-archive, and spanned ZIP signatures all open with "PK". */
 export const looksLikeZip = (bytes: Uint8Array): boolean =>
   bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b;
-
-export { normalizeArchiveMemberPath } from "../domain/archiveMemberPath.js";
 
 /**
  * Buffer one archive member, bounded by `maximumBytes`. Mirrors the admission a
@@ -31,7 +29,9 @@ export const readArchiveMember = async (
   for await (const chunk of stream) {
     if (signal?.aborted) {
       stream.destroy();
-      throw new ArtifactReaderFailure("cancelled", "archive read cancelled");
+      throw new ArtifactReaderFailure("cancelled", "archive read cancelled", {
+        cause: signal.reason,
+      });
     }
     if (!Buffer.isBuffer(chunk)) {
       stream.destroy();
@@ -46,6 +46,7 @@ export const readArchiveMember = async (
       throw new ArtifactReaderFailure(
         "limit",
         `Selected archive entry exceeds ${String(maximumBytes)} bytes`,
+        { boundary: "file-size" },
       );
     }
     chunks.push(chunk);

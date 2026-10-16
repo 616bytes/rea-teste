@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import type { FileHandle } from "node:fs/promises";
+import type { Stats } from "node:fs";
 
 import { createAnalysisExecution } from "../application/AnalysisProvider.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
@@ -6,12 +8,12 @@ import type {
   DexDebugMetadataExecution,
   DexDebugMetadataPort,
 } from "../application/dex/DexDebugMetadataPort.js";
-import type { ArtifactEntry } from "../artifacts/ArtifactReader.js";
+import { looksLikeZip, readArchiveMember } from "../artifacts/archiveMember.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
-  looksLikeZip,
-  normalizeArchiveMemberPath,
-  readArchiveMember,
-} from "../artifacts/archiveMember.js";
+  bindArtifactFileCleanup,
+  withArtifactRegularFile,
+} from "../artifacts/ArtifactFileOperation.js";
 import { hashStableRootArtifactHandle } from "../artifacts/inventory/hashStableRootArtifact.js";
 import {
   peekArtifactMagic,
@@ -22,10 +24,8 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { dexWorkBudget } from "../domain/dex/dexDebugInfo.js";
 import {
@@ -37,6 +37,7 @@ import {
 import {
   buildDexClassDetailResult,
   buildDexSummaryResult,
+  type DexArtifactIdentity,
   type DexDebugMetadataResult,
   type DexSummaryMember,
   type InspectDexDebugMetadataInput,
@@ -46,16 +47,16 @@ import { err, ok, type Result } from "../domain/result.js";
 import { zipPackageFormatForPath } from "../domain/zipPackageFormat.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
-  openRegularFile,
-  RegularFileAdmissionFailure,
-} from "../filesystem/RegularFile.js";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import {
+  completedDexEvidence,
+  dexCancelled,
+  DexCompletedInspection,
   dexFileFailure,
+  dexReaderResource,
+  DexReaderCleanupFailure,
   mapDexParseError,
   mapDexWorkError,
 } from "./dexFailures.js";
-import { autoLoadedDexMembers, multidexIndex } from "./dexEntry.js";
+import { selectDexMembers } from "./dexMemberSelection.js";
 import { DEX_LIMITS, DEX_PROVIDER_IDENTITY } from "./DexFileRelease.js";
 
 const OPERATION = "inspect_dex_debug_metadata";
@@ -78,17 +79,11 @@ interface MemberSource {
   readonly label: string;
 }
 
-/** What one inspection keeps from its members after each is released. */
 /** Stated once, before the per-member counts of unread trailing bytes. */
 const TRAILING_BYTES_NOTE =
   "Bytes after a DEX's declared file_size are never read: ART on Android 15+ ignores them, while Android 14 and earlier reject such a DEX.";
 
-/** The members to analyse and the canonical ones Android would not auto-load. */
-interface DexMemberSelection {
-  readonly members: readonly { entry: string; member: ArtifactEntry }[];
-  readonly skipped: readonly string[];
-}
-
+/** What one inspection keeps from its members after each is released. */
 type MemberFindings = (
   | { readonly mode: "summary"; readonly members: DexSummaryMember[] }
   | {
@@ -117,77 +112,78 @@ const execution = (
 
 /** Read exactly the selected DEX bytes and report compiler-emitted debug metadata. */
 export class DexFileProvider implements DexDebugMetadataPort {
-  /** Handles whose close failed stay owned here and are retried by `close()`. */
+  /** Owners whose close failed stay here as cleanup leases, retried by `close()`. */
   readonly #resources = new ArtifactResourceScope();
 
-  /** Retry retained cleanup without discarding handles that still cannot close. */
+  /** Retry retained cleanup, binding a remaining failure to its exact owners. */
   async close(): Promise<void> {
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
-      const cleanup =
-        cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
-      throw new ProviderCleanupError(
+      if (
+        !(cause instanceof ArtifactReaderFailure) ||
+        cause.cleanup === undefined
+      )
+        throw cause;
+      const error = new ProviderCleanupError(
         DEX_PROVIDER_IDENTITY.id,
-        cleanup?.resources ?? ["artifact-resources"],
-        {
-          reason:
-            cleanup?.reason ??
-            (cause instanceof Error ? cause.message : String(cause)),
-        },
-        { operation: OPERATION, cause },
+        cause.cleanup.resources,
+        { reason: cause.cleanup.reason },
+        { cause, operation: OPERATION },
       );
+      bindArtifactFileCleanup(cause, error);
+      throw error;
     }
-  }
-
-  /** Close now; on failure the scope retains the owner for `close()` and the call fails. */
-  async #releaseOrRetain(
-    owner: Parameters<ArtifactResourceScope["release"]>[0],
-  ): Promise<void> {
-    const attempt = await this.#resources.release(owner);
-    if (attempt.kind === "failed") throw attempt.cause;
   }
 
   async inspect(
     input: InspectDexDebugMetadataInput,
     options?: ExecutionOptions,
   ): Promise<Result<DexDebugMetadataExecution, AnalysisError>> {
+    const signal = options?.signal;
+    if (signal?.aborted) return err(dexCancelled(signal));
     try {
-      if (options?.signal?.aborted)
-        return err(new AnalysisCancelledError(OPERATION));
-      return await this.#resources.run(async () => {
+      const execution = await this.#resources.run(async () => {
         if (input.entry !== undefined)
-          return this.#inspectArchive(input.path, input, options);
+          return this.#inspectArchive(input, signal);
         const magic = await peekArtifactMagic(
           input.path,
           8,
-          options?.signal,
+          signal,
           undefined,
           this.#resources,
         );
         return looksLikeZip(magic)
-          ? this.#inspectArchive(input.path, input, options)
-          : this.#inspectLooseDex(input.path, input, options);
+          ? this.#inspectArchive(input, signal)
+          : this.#inspectLooseDex(input, signal);
       });
+      // Observed only after the final close: keep the completed report.
+      if (signal?.aborted)
+        return err(
+          dexCancelled(
+            signal,
+            undefined,
+            completedDexEvidence(execution, input),
+          ),
+        );
+      return ok(execution);
     } catch (cause: unknown) {
-      return err(dexFileFailure(cause, input.path, options?.signal));
+      return err(dexFileFailure(cause, input, signal));
     }
   }
 
   async #inspectLooseDex(
-    path: string,
     input: InspectDexDebugMetadataInput,
-    options?: ExecutionOptions,
-  ): Promise<Result<DexDebugMetadataExecution, AnalysisError>> {
+    signal: AbortSignal | undefined,
+  ): Promise<DexDebugMetadataExecution> {
+    const { path } = input;
     const selected = await readStableArtifact(
       path,
       DEX_LIMITS.inputBytes,
-      options?.signal,
+      signal,
       undefined,
       this.#resources,
     );
-    if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
     const findings = await this.#analyse(
       [
         {
@@ -197,9 +193,9 @@ export class DexFileProvider implements DexDebugMetadataPort {
         },
       ],
       input,
-      options?.signal,
+      signal,
     );
-    if (!findings.ok) return findings;
+    if (!findings.ok) throw findings.error;
     return this.#assemble(findings.value, input, {
       artifact: {
         path,
@@ -211,253 +207,110 @@ export class DexFileProvider implements DexDebugMetadataPort {
     });
   }
 
+  /**
+   * Admit the archive once and keep its descriptor and ZIP reader owned
+   * through the work: the reader is released after the work settles and the
+   * descriptor after the reader, and a failed close is retained as a cleanup
+   * lease while the work's report or primary failure is carried to the caller.
+   */
   async #inspectArchive(
-    path: string,
     input: InspectDexDebugMetadataInput,
-    options?: ExecutionOptions,
-  ): Promise<Result<DexDebugMetadataExecution, AnalysisError>> {
-    let handle;
-    try {
-      handle = await openRegularFile(path, {
-        symlinks: "reject",
-        signal: options?.signal,
-      });
-    } catch (cause: unknown) {
-      // Admission failed and its descriptor close failed too: keep that owner
-      // so a later close() retries it instead of leaking the descriptor.
-      if (cause instanceof RegularFileAdmissionFailure)
-        await this.#resources.release({
-          kind: "file-handle",
-          resource: path,
-          handle: cause.owner,
-        });
-      throw cause;
-    }
-    const owner = new OwnedFileHandle(handle);
-    try {
-      const initial = await handle.stat();
-      if (initial.size > DEX_LIMITS.archiveBytes)
-        return err(
-          new AnalysisResourceConstraintError(
+    signal: AbortSignal | undefined,
+  ): Promise<DexDebugMetadataExecution> {
+    const { path } = input;
+    const completed = await withArtifactRegularFile(
+      path,
+      this.#resources,
+      signal,
+      async (handle) => {
+        const initial = await handle.stat();
+        if (initial.size > DEX_LIMITS.archiveBytes)
+          throw new AnalysisResourceConstraintError(
             OPERATION,
             "file-size",
             `Selected archive exceeds ${String(DEX_LIMITS.archiveBytes)} bytes: ${path}`,
             { maximum_archive_bytes: DEX_LIMITS.archiveBytes },
-          ),
-        );
-      const zipFormat = zipPackageFormatForPath(path) ?? "zip";
-      const reader = new ZipArtifactReader(
-        path,
-        zipFormat,
-        DEX_LIMITS.archiveMetadataBytes,
-        { handle, initial },
-      );
-      try {
-        const selected = await this.#selectDexMembers(
-          reader,
-          input.entry,
+          );
+        const zipFormat = zipPackageFormatForPath(path) ?? "zip";
+        const reader = new ZipArtifactReader(
           path,
-          options?.signal,
+          zipFormat,
+          DEX_LIMITS.archiveMetadataBytes,
+          { handle, initial },
         );
-        if (!selected.ok) return err(selected.error);
-        const findings = await this.#analyse(
-          selected.value.members.map(({ entry, member }) => ({
-            entry,
-            label: `${path}!${entry}`,
-            load: () =>
-              readArchiveMember(
-                reader,
-                member,
-                DEX_LIMITS.inputBytes,
-                options?.signal,
-              ),
-          })),
-          input,
-          options?.signal,
-          selected.value.skipped.length === 0
-            ? []
-            : [
-                `${path} also holds ${selected.value.skipped.join(", ")}, which Android does not auto-load because an earlier classesN.dex is missing; select ${selected.value.skipped.length === 1 ? "it" : "one"} with entry.`,
-              ],
-        );
-        if (!findings.ok) return findings;
-        const digest = await hashStableRootArtifactHandle(
-          path,
-          handle,
-          initial,
-          options?.signal,
-        );
-        const format = zipFormat === "apk" ? "apk" : "zip";
-        return this.#assemble(findings.value, input, {
-          artifact: { path, sha256: digest.sha256, bytes: digest.bytes },
-          container: format,
-          format,
+        const lease = new AnalysisCleanupLease(() => reader.close());
+        let outcome: DexReaderCleanupFailure["outcome"];
+        try {
+          outcome = {
+            kind: "completed",
+            value: new DexCompletedInspection(
+              await this.#readArchive(reader, input, signal, {
+                handle,
+                initial,
+                format: zipFormat === "apk" ? "apk" : "zip",
+              }),
+            ),
+          };
+        } catch (cause: unknown) {
+          outcome = { kind: "failed", cause };
+        }
+        const released = await this.#resources.release({
+          kind: "lease",
+          resource: dexReaderResource(path),
+          lease,
         });
-      } finally {
-        await this.#releaseOrRetain({ kind: "reader", resource: path, reader });
-      }
-    } finally {
-      await this.#releaseOrRetain({
-        kind: "file-handle",
-        resource: path,
-        handle: owner,
-      });
-    }
+        if (released.kind === "failed")
+          throw new DexReaderCleanupFailure(
+            path,
+            outcome,
+            released.cause,
+            lease,
+          );
+        if (outcome.kind === "failed") throw outcome.cause;
+        return outcome.value;
+      },
+    );
+    return completed.execution;
   }
 
-  /** Choose the archive's DEX members: the explicit entry, or the auto-loaded multidex sequence. */
-  async #selectDexMembers(
+  async #readArchive(
     reader: ZipArtifactReader,
-    entry: string | undefined,
-    path: string,
+    input: InspectDexDebugMetadataInput,
     signal: AbortSignal | undefined,
-  ): Promise<Result<DexMemberSelection, AnalysisError>> {
-    const requested =
-      entry === undefined ? undefined : normalizeArchiveMemberPath(entry);
-    // Only members this call may open are kept (the reader retains ~8 KB of
-    // decoded metadata per kept entry): the requested name, or the canonical
-    // names up to one past the member cap (enough to detect "over the cap").
-    // Two occurrences of a name already prove it ambiguous, so no more are kept.
-    const candidates: { entry: string; member: ArtifactEntry }[] = [];
-    const occurrences = new Map<string, number>();
-    const keep = (member: ArtifactEntry): boolean => {
-      if (member.kind !== "file") return false;
-      // ART finds auto-loaded members by their exact stored name, so a member
-      // stored as `./classes.dex` is not auto-loaded (it stays selectable).
-      const index =
-        member.storedPath === undefined ? multidexIndex(member.path) : null;
-      const wanted =
-        requested !== undefined
-          ? member.path === requested
-          : index !== null && index <= DEX_LIMITS.maxDexMembers;
-      if (!wanted) return false;
-      // Every occurrence is counted for the report; two are enough to keep.
-      const seen = (occurrences.get(member.path) ?? 0) + 1;
-      occurrences.set(member.path, seen);
-      if (seen > 2) return false;
-      candidates.push({ entry: member.path, member });
-      return true;
-    };
-    for await (const member of reader.entries(signal, { retain: keep }))
-      void member;
-    if (requested !== undefined)
-      return this.#resolveRequestedSelection(
-        candidates,
-        requested,
-        path,
-        occurrences.get(requested) ?? 0,
-      );
-    // Only the contiguous sequence Android loads is promised; a member after a
-    // gap is never loaded, so it can neither fail nor shadow the inspection.
-    const sequence = autoLoadedDexMembers(candidates.map(({ entry }) => entry));
-    const loadOrder = new Map(sequence.map((name, index) => [name, index]));
-    const matches = candidates.filter(({ entry }) => loadOrder.has(entry));
-    // Canonical members after a gap are never auto-loaded; name them so their
-    // absence from the summary is not mistaken for absence from the archive.
-    const skipped = [
-      ...new Set(
-        candidates
-          .map(({ entry }) => entry)
-          .filter((entry) => !loadOrder.has(entry)),
-      ),
-    ];
-    // Every root member is promised, so one that cannot be read is refused,
-    // never silently skipped (that would turn unknown into absent).
-    const encrypted = matches.filter((m) => m.member.encrypted);
-    if (encrypted.length > 0)
-      return err(
-        new AnalysisUnsupportedTargetError(
-          OPERATION,
-          path,
-          `${path} has encrypted root DEX member(s) (${encrypted.map((m) => m.entry).join(", ")}); their debug metadata is unavailable, not absent.`,
-          {
-            remediationAction:
-              "Select a readable member with entry to inspect it alone.",
-          },
-        ),
-      );
-    // A reported entry must identify exactly one member.
-    const names = new Set<string>();
-    for (const { entry: name } of matches) {
-      if (names.has(name))
-        return err(
-          this.#inputError(
-            "entry",
-            `${path} holds ${String(occurrences.get(name) ?? 2)} members named ${name}; the identity is ambiguous.`,
-          ),
-        );
-      names.add(name);
-    }
-    if (matches.length === 0)
-      return err(
-        this.#inputError(
-          "entry",
-          `${path} holds no classes.dex for Android to load; select a .dex with entry.`,
-        ),
-      );
-    if (matches.length > DEX_LIMITS.maxDexMembers)
-      return err(
-        new AnalysisResourceConstraintError(
-          OPERATION,
-          "capacity",
-          `${path} auto-loads more than ${String(DEX_LIMITS.maxDexMembers)} dex members, over the limit; select one with entry.`,
-          { maximum_dex_members: DEX_LIMITS.maxDexMembers },
-          {
-            remediationAction:
-              "Select one member with entry; members are inspected one at a time.",
-          },
-        ),
-      );
-    matches.sort(
-      (a, b) => (loadOrder.get(a.entry) ?? 0) - (loadOrder.get(b.entry) ?? 0),
+    archive: {
+      readonly handle: FileHandle;
+      readonly initial: Stats;
+      readonly format: "apk" | "zip";
+    },
+  ): Promise<DexDebugMetadataExecution> {
+    const { path } = input;
+    const selected = await selectDexMembers(reader, input.entry, path, signal);
+    if (!selected.ok) throw selected.error;
+    const findings = await this.#analyse(
+      selected.value.members.map(({ entry, member }) => ({
+        entry,
+        label: `${path}!${entry}`,
+        load: () =>
+          readArchiveMember(reader, member, DEX_LIMITS.inputBytes, signal),
+      })),
+      input,
+      signal,
+      selected.value.skippedNote === undefined
+        ? []
+        : [selected.value.skippedNote],
     );
-    return ok({ members: matches, skipped });
-  }
-
-  #resolveRequestedSelection(
-    matches: readonly { entry: string; member: ArtifactEntry }[],
-    requested: string,
-    path: string,
-    occurrences: number,
-  ): Result<DexMemberSelection, AnalysisError> {
-    const resolved = this.#resolveRequested(
-      matches,
-      requested,
+    if (!findings.ok) throw findings.error;
+    const digest = await hashStableRootArtifactHandle(
       path,
-      occurrences,
+      archive.handle,
+      archive.initial,
+      signal,
     );
-    return resolved.ok
-      ? ok({ members: resolved.value, skipped: [] })
-      : resolved;
-  }
-
-  #resolveRequested(
-    matches: readonly { entry: string; member: ArtifactEntry }[],
-    requested: string,
-    path: string,
-    occurrences: number,
-  ): Result<{ entry: string; member: ArtifactEntry }[], AnalysisError> {
-    if (matches.length === 0)
-      return err(
-        this.#inputError("entry", `No member ${requested} exists in ${path}.`),
-      );
-    if (matches.length > 1)
-      return err(
-        this.#inputError(
-          "entry",
-          `${path} holds ${String(occurrences)} members named ${requested}; the identity is ambiguous.`,
-        ),
-      );
-    const only = matches[0]!;
-    if (only.member.encrypted)
-      return err(
-        new AnalysisUnsupportedTargetError(
-          OPERATION,
-          path,
-          `The selected member ${requested} is encrypted and cannot be read without a key; unavailable, not absent.`,
-        ),
-      );
-    return ok([only]);
+    return this.#assemble(findings.value, input, {
+      artifact: { path, sha256: digest.sha256, bytes: digest.bytes },
+      container: archive.format,
+      format: archive.format,
+    });
   }
 
   /**
@@ -476,7 +329,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
     const found: { entry: string | null; detail: DexClassDetail }[] = [];
     const limitations: string[] = [...selectionFacts];
     for (const source of sources) {
-      if (signal?.aborted) return err(new AnalysisCancelledError(OPERATION));
+      if (signal?.aborted) return err(dexCancelled(signal));
       const loaded = await source.load();
       const parsed = parseDexFile(loaded);
       if (!parsed.ok)
@@ -505,7 +358,9 @@ export class DexFileProvider implements DexDebugMetadataPort {
       if (input.class_descriptor === undefined) {
         const summary = await summarizeDex(parsed.value, buffer, work);
         if (!summary.ok)
-          return err(mapDexWorkError(summary.error, source.label, limitations));
+          return err(
+            mapDexWorkError(summary.error, source.label, limitations, signal),
+          );
         summaries.push({
           entry: source.entry,
           sha256: sha256(loaded),
@@ -522,7 +377,9 @@ export class DexFileProvider implements DexDebugMetadataPort {
         DEX_LIMITS.outputBytes,
       );
       if (!detail.ok)
-        return err(mapDexWorkError(detail.error, source.label, limitations));
+        return err(
+          mapDexWorkError(detail.error, source.label, limitations, signal),
+        );
       if (detail.value !== null)
         found.push({ entry: source.entry, detail: detail.value });
       // A second match is already ambiguous; reading further members is waste.
@@ -540,11 +397,11 @@ export class DexFileProvider implements DexDebugMetadataPort {
     findings: MemberFindings,
     input: InspectDexDebugMetadataInput,
     context: {
-      readonly artifact: { path: string; sha256: string; bytes: number };
+      readonly artifact: DexArtifactIdentity;
       readonly container: DexDebugMetadataResult["container"];
       readonly format: "file" | "apk" | "zip";
     },
-  ): Result<DexDebugMetadataExecution, AnalysisError> {
+  ): DexDebugMetadataExecution {
     const { artifact, container, format } = context;
     const result: Result<DexDebugMetadataResult, AnalysisError> =
       findings.mode === "summary"
@@ -556,7 +413,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
             container,
             findings.limitations,
           );
-    if (!result.ok) return result;
+    if (!result.ok) throw result.error;
     const report = {
       ...result.value,
       limitations: [...result.value.limitations, ...findings.limitations],
@@ -566,8 +423,8 @@ export class DexFileProvider implements DexDebugMetadataPort {
       artifact.path,
       findings.limitations,
     );
-    if (tooLarge) return err(tooLarge);
-    return ok(execution(report, artifact.path, artifact.sha256, format));
+    if (tooLarge) throw tooLarge;
+    return execution(report, artifact.path, artifact.sha256, format);
   }
 
   #classDetail(
@@ -576,7 +433,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
       readonly detail: DexClassDetail;
     }[],
     descriptor: string,
-    artifact: { path: string; sha256: string; bytes: number },
+    artifact: DexArtifactIdentity,
     container: DexDebugMetadataResult["container"],
     limitations: readonly string[],
   ): Result<DexDebugMetadataResult, AnalysisError> {

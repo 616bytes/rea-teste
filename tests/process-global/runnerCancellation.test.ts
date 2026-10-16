@@ -14,6 +14,8 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { expect, it, onTestFinished, vi } from "vitest";
 
+import { describeUnownedWindowsCommand } from "../../scripts/lib/windows-owned-command.mjs";
+import { systemWindowsNativeAuthority } from "../../src/windows/WindowsNativeLoader.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const supervisorPath = fileURLToPath(
@@ -23,6 +25,16 @@ const supervisorPath = fileURLToPath(
 const runnerPath = fileURLToPath(
   new URL("../../scripts/run-exclusive.mjs", import.meta.url),
 );
+
+const windowsNativeLoad =
+  process.platform === "win32" ? systemWindowsNativeAuthority() : undefined;
+const windowsNativeOwnership = windowsNativeLoad?.available === true;
+
+/** Exactly what the supervisor itself writes to stderr before the command. */
+function supervisorStderr(lockName: string): string {
+  if (windowsNativeLoad === undefined || windowsNativeLoad.available) return "";
+  return `${describeUnownedWindowsCommand(lockName, windowsNativeLoad.reason)}\n`;
+}
 
 it.runIf(process.platform !== "win32")(
   "holds ownership until an uncooperative command has finished cancellation",
@@ -101,7 +113,7 @@ it.runIf(process.platform !== "win32")(
   },
 );
 
-it.runIf(process.platform === "win32")(
+it.runIf(windowsNativeOwnership)(
   "terminates the owned command after supervisor IPC cancellation",
   async () => {
     const directory = await createTestTempDirectory("rea-runner-win-cancel-");
@@ -117,6 +129,9 @@ it.runIf(process.platform === "win32")(
       await expect(readFile(started, "utf8")).resolves.toBe("started");
       runner.child.send("SIGTERM");
       await expect(runner.closed()).resolves.toMatchObject({ code: 143 });
+      expect(runner.stderr).not.toContain(
+        "without Windows Job Object ownership",
+      );
       expect(await pathExists(gate)).toBe(false);
       await expect(
         launch(directory, 'process.stdout.write("released");').closed,
@@ -127,7 +142,7 @@ it.runIf(process.platform === "win32")(
   },
 );
 
-it.runIf(process.platform === "win32")(
+it.runIf(windowsNativeOwnership)(
   "keeps the lock after leader exit and cancels a surviving grandchild by message or disconnect",
   async () => {
     await exerciseWindowsGrandchild("message");
@@ -250,7 +265,7 @@ async function exerciseWindowsGrandchild(
   }
 }
 
-it.runIf(process.platform === "win32")(
+it.runIf(windowsNativeOwnership)(
   "stops the owned command after the supervisor IPC disconnects",
   async () => {
     const directory = await createTestTempDirectory(
@@ -267,6 +282,70 @@ it.runIf(process.platform === "win32")(
       await runner.ready;
       await expect(readFile(started, "utf8")).resolves.toBe("started");
       runner.child.disconnect();
+      await expect(runner.closed()).resolves.toMatchObject({ code: 143 });
+      expect(await pathExists(gate)).toBe(false);
+      await expect(
+        launch(directory, 'process.stdout.write("released");').closed,
+      ).resolves.toMatchObject({ code: 0, stdout: "released" });
+    } finally {
+      await writeFile(gate, "release");
+    }
+  },
+);
+
+it.runIf(process.platform === "win32" && !windowsNativeOwnership)(
+  "runs the command with leader-only supervision and reports it when the native artifact is missing",
+  async () => {
+    const directory = await createTestTempDirectory("rea-runner-win-unowned-");
+    const payload = 'argument with spaces and "quotes" & ^ % !';
+    const result = await execute(directory, process.execPath, [
+      "-e",
+      "process.stdout.write(JSON.stringify(process.argv.slice(1))); process.exitCode = 3;",
+      payload,
+    ]);
+    expect(result).toMatchObject({
+      code: 3,
+      stdout: JSON.stringify([payload]),
+      stderr: supervisorStderr("test"),
+    });
+    expect(result.stderr).toContain("REA Windows native controls");
+    expect(result.stderr).toContain(
+      "The test command runs without Windows Job Object ownership",
+    );
+    expect(result.stderr).toContain("cancellation stops only that leader");
+    expect(result.stderr).toContain(
+      "native/windows/README.md#restore-the-artifact-in-a-source-checkout",
+    );
+  },
+);
+
+it.runIf(process.platform === "win32" && !windowsNativeOwnership)(
+  "keeps the lock exclusive and stops only the leader on cancellation without the native artifact",
+  async () => {
+    const directory = await createTestTempDirectory(
+      "rea-runner-win-unowned-cancel-",
+    );
+    const gate = join(directory, "release-child");
+    const started = join(directory, "child-started");
+    const runner = launchSupervisor(directory, gatedCommand(gate, started));
+    onTestFinished(async () => {
+      await writeFile(gate, "release");
+      await runner.closed();
+    });
+    try {
+      await runner.ready;
+      await expect(readFile(started, "utf8")).resolves.toBe("started");
+      await vi.waitFor(() =>
+        expect(runner.stderr).toBe(supervisorStderr("test")),
+      );
+      await expect(
+        launch(directory, 'process.stdout.write("unexpected");').closed,
+      ).resolves.toMatchObject({
+        code: 1,
+        stdout: "",
+        stderr: expect.stringContaining("already running"),
+      });
+      runner.child.send("SIGTERM");
       await expect(runner.closed()).resolves.toMatchObject({ code: 143 });
       expect(await pathExists(gate)).toBe(false);
       await expect(
@@ -314,7 +393,7 @@ it("preserves executable arguments through the public runner", async () => {
   ).toMatchObject({
     code: 0,
     stdout: JSON.stringify([payload]),
-    stderr: "",
+    stderr: supervisorStderr("test"),
   });
 });
 
@@ -332,7 +411,7 @@ it.runIf(process.platform === "win32")(
     ).toMatchObject({
       code: 0,
       stdout: JSON.stringify([payload]),
-      stderr: "",
+      stderr: supervisorStderr("test"),
     });
   },
 );
@@ -348,11 +427,11 @@ it.runIf(process.platform === "win32")(
     ).toMatchObject({
       code: 0,
       stdout: JSON.stringify([payload]),
-      stderr: "",
+      stderr: supervisorStderr("test"),
     });
 
     const npm = await execute(directory, "npm", ["--version"]);
-    expect(npm).toMatchObject({ code: 0, stderr: "" });
+    expect(npm).toMatchObject({ code: 0, stderr: supervisorStderr("test") });
     expect(npm.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/u);
 
     const npmProject = join(directory, "npm project");
@@ -373,7 +452,10 @@ it.runIf(process.platform === "win32")(
       "--",
       shimPayload,
     ]);
-    expect(npmArgv).toMatchObject({ code: 0, stderr: "" });
+    expect(npmArgv).toMatchObject({
+      code: 0,
+      stderr: supervisorStderr("test"),
+    });
     expect(npmArgv.stdout).toContain(JSON.stringify([shimPayload]));
 
     const turbo = await execute(
@@ -381,7 +463,7 @@ it.runIf(process.platform === "win32")(
       join(process.cwd(), "node_modules", ".bin", "turbo"),
       ["--version"],
     );
-    expect(turbo).toMatchObject({ code: 0, stderr: "" });
+    expect(turbo).toMatchObject({ code: 0, stderr: supervisorStderr("test") });
     expect(turbo.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/u);
   },
 );

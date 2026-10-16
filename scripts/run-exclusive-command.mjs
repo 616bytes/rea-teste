@@ -6,7 +6,8 @@ import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   createWindowsOwnedCommand,
-  loadWindowsOwnedProcessClass,
+  describeUnownedWindowsCommand,
+  loadWindowsCommandOwnership,
   superviseWindowsOwnedProcess,
 } from "./lib/windows-owned-command.mjs";
 
@@ -77,33 +78,46 @@ async function run() {
 
 async function runCommand() {
   if (process.platform === "win32") {
-    const WindowsOwnedProcess = await loadWindowsOwnedProcessClass();
+    const ownership = await loadWindowsCommandOwnership();
     if (shutdownSignal !== undefined) return { code: 1 };
-    child = createWindowsOwnedCommand({
-      WindowsOwnedProcess,
-      command: command[0],
-      arguments: command.slice(1),
-      cwd: process.cwd(),
-      environment: process.env,
-    });
-    windowsOwnership = superviseWindowsOwnedProcess(child, {
-      onCleanupDiagnostic: reportCleanupDiagnostic,
-    });
-    try {
-      child.stdout.pipe(process.stdout);
-      child.stderr.pipe(process.stderr);
-      process.stdin.pipe(child.stdin);
-      const { code } = await windowsOwnership.finished;
-      return { code };
-    } catch (cause) {
-      windowsOwnership.requestCleanup();
-      await windowsOwnership.finished.catch(() => {});
-      throw cause;
-    } finally {
-      process.stdin.unpipe(child.stdin);
-      windowsOwnership = undefined;
-    }
+    if (ownership.available) return runOwnedWindowsCommand(ownership);
+    // Only the package-owned native authority can own a Windows process tree.
+    // Without it the lock covers the command leader alone; say so before
+    // running rather than refusing the build.
+    console.error(describeUnownedWindowsCommand(lockName, ownership.reason));
   }
+  return runSpawnedCommand();
+}
+
+async function runOwnedWindowsCommand({ WindowsOwnedProcess, authority }) {
+  const owned = createWindowsOwnedCommand({
+    WindowsOwnedProcess,
+    authority,
+    command: command[0],
+    arguments: command.slice(1),
+    cwd: process.cwd(),
+    environment: process.env,
+  });
+  windowsOwnership = superviseWindowsOwnedProcess(owned, {
+    onCleanupDiagnostic: reportCleanupDiagnostic,
+  });
+  try {
+    owned.stdout.pipe(process.stdout);
+    owned.stderr.pipe(process.stderr);
+    process.stdin.pipe(owned.stdin);
+    const { code } = await windowsOwnership.finished;
+    return { code };
+  } catch (cause) {
+    windowsOwnership.requestCleanup();
+    await windowsOwnership.finished.catch(() => {});
+    throw cause;
+  } finally {
+    process.stdin.unpipe(owned.stdin);
+    windowsOwnership = undefined;
+  }
+}
+
+function runSpawnedCommand() {
   return new Promise((resolveResult, reject) => {
     let spawned = false;
     let hasChildError = false;
@@ -147,13 +161,20 @@ function handleDisconnect() {
 
 function handleSignal(signal) {
   if (shutdownSignal !== undefined) {
-    if (process.platform === "win32") windowsOwnership?.requestCleanup();
+    windowsOwnership?.requestCleanup();
     return;
   }
   shutdownSignal = signal;
+  if (windowsOwnership !== undefined) {
+    windowsOwnership.requestCleanup();
+    return;
+  }
   if (child === undefined) return;
   if (process.platform === "win32") {
-    windowsOwnership?.requestCleanup();
+    // Windows has no POSIX process groups, and without the native owner there
+    // is no Job Object either. Stop only the command leader, and keep the
+    // SQLite transaction until its close event.
+    child.kill(signal);
     return;
   }
   // Establish cancellation before signalling the group. This supervisor is

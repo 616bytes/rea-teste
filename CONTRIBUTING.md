@@ -224,17 +224,26 @@ The published npm package includes the Windows x64 native addon and its
 manifest. A source checkout does not: `native/windows/build/` is ignored by
 Git, and neither `npm ci` nor `npm run build:cached` (or `npm run build`)
 produces `rea-windows-x64.node` or `manifest.json` in that directory.
-Windows workflows and tests that require native controls need these artifacts;
-this includes `run-exclusive` commands, which use the native Job Object to keep
-the artifact lock until every command descendant has exited. Without the
-artifacts, those controls are unavailable even after a successful runtime
-build.
 
-Follow the [Windows native build guide](native/windows/README.md#build) before
-running those workflows from source. The artifact build requires Linux,
-MinGW-w64, and `tar`; the build script does not run on Windows. See that guide
-for the build and artifact-verification commands and the separate real Windows
-verification prerequisites. Keep the generated addon and manifest uncommitted.
+Development commands still run without them. With the artifact present,
+`run-exclusive` commands such as `npm run build:cached` and
+`npm run test:focused` use the native Job Object to keep the artifact lock
+until every command descendant has exited. Without it, the wrapper prints the
+loader's unavailability reason and runs the command with leader-only
+supervision: the lock is released when the command leader exits, and
+cancellation stops only that leader, so descendants it leaves behind are not
+covered. Windows provider-backed workflows and the owned-command regressions in
+`tests/process-global/` need the artifact; those tests are skipped without it.
+
+To reinstate owned supervision, run `npm pack rea-agents@<matching-version>`
+with the exact `version` from `package.json` and copy the two files as
+described in
+[restore the artifact in a source checkout](native/windows/README.md#restore-the-artifact-in-a-source-checkout),
+or follow the [Windows native build guide](native/windows/README.md#build). The
+artifact build requires Linux, MinGW-w64, and `tar`; the build script does not
+run on Windows. See that guide for the build and artifact-verification commands
+and the separate real Windows verification prerequisites. Keep the generated
+addon and manifest uncommitted.
 
 ## Documentation website
 
@@ -336,7 +345,9 @@ schema identity.
 Build/generation commands hold a SQLite transaction around the entire Turbo
 graph, including cache restoration. `.cache/rea-command-locks/` databases identify
 locks, not stale files; never remove them while commands run. POSIX cancellation
-retains process-group ownership until settlement; Windows waits for completion.
+retains process-group ownership until settlement. Windows waits for Job Object
+completion when the native artifact is present; otherwise the wrapper reports
+leader-only supervision (see [Windows source checkouts](#windows-source-checkouts)).
 Real-provider execution is uncached.
 
 ### Temporary files and diagnostics

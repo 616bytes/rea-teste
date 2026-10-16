@@ -8,13 +8,20 @@ import { expect, it, vi } from "vitest";
 
 import {
   createWindowsOwnedCommand,
+  describeUnownedWindowsCommand,
+  loadWindowsCommandOwnership,
   loadWindowsOwnedProcessClass,
   superviseWindowsOwnedProcess,
 } from "../../scripts/lib/windows-owned-command.mjs";
-import { requireWindowsNativeAuthority } from "../../src/windows/WindowsNativeLoader.js";
+import {
+  requireWindowsNativeAuthority,
+  systemWindowsNativeAuthority,
+} from "../../src/windows/WindowsNativeLoader.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const require = createRequire(import.meta.url);
+const windowsNativeOwnership =
+  process.platform === "win32" && systemWindowsNativeAuthority().available;
 
 async function readOptional(path: string): Promise<string | undefined> {
   return readFile(path, "utf8").catch(() => undefined);
@@ -76,6 +83,32 @@ it("imports the source Windows owner without dist using a fake native authority"
 
   await expect(once(child, "close")).resolves.toEqual([0, null]);
   expect(calls).toEqual(["process_spawn", "process_poll", "process_close"]);
+});
+
+it("reports the package owner's native availability from source", async () => {
+  const ownership = await loadWindowsCommandOwnership();
+  const expected = systemWindowsNativeAuthority();
+  if (!ownership.available || !expected.available) {
+    expect(ownership).toEqual(expected);
+    return;
+  }
+  expect(ownership.authority.inspection).toEqual(expected.authority.inspection);
+  expect(typeof ownership.WindowsOwnedProcess).toBe("function");
+});
+
+it("explains leader-only supervision when the native authority is unavailable", () => {
+  const reason =
+    "REA Windows native controls are unavailable: Missing packaged Windows native file native/windows/build/manifest.json (ENOENT)";
+  const diagnostic = describeUnownedWindowsCommand("artifacts", reason);
+  expect(diagnostic.startsWith(`${reason}\n`)).toBe(true);
+  expect(diagnostic).toContain(
+    "The artifacts command runs without Windows Job Object ownership",
+  );
+  expect(diagnostic).toContain("released when the command leader exits");
+  expect(diagnostic).toContain("cancellation stops only that leader");
+  expect(diagnostic).toContain(
+    "native/windows/README.md#restore-the-artifact-in-a-source-checkout",
+  );
 });
 
 it("passes cross-spawn's resolved executable to the native owner", () => {
@@ -190,7 +223,7 @@ it("supervises protocol stdin errors until the owned job and stream close", asyn
   expect(calls).toContain("process_close");
 });
 
-it.runIf(process.platform === "win32")(
+it.runIf(windowsNativeOwnership)(
   "supervises native protocol stdin through Job Object close",
   async () => {
     const directory = await createTestTempDirectory("rea-owned-stdin-probe-");
@@ -240,7 +273,7 @@ it.runIf(process.platform === "win32")(
   },
 );
 
-it.runIf(process.platform === "win32")(
+it.runIf(windowsNativeOwnership)(
   "keeps native Job Object ownership after the leader exits",
   async () => {
     const directory = await createTestTempDirectory("rea-owned-tree-probe-");

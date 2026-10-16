@@ -1,16 +1,57 @@
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
+const sourceWindowsNativeLoader = new URL(
+  "../../src/windows/WindowsNativeLoader.ts",
+  import.meta.url,
+).href;
 const sourceWindowsProcess = new URL(
   "../../src/windows/WindowsOwnedProcess.ts",
   import.meta.url,
 ).href;
 
+/** Import source modules through one tsx namespace, without a generated dist tree. */
+async function importWindowsSources(load) {
+  const { register } = await import("tsx/esm/api");
+  const scope = register({
+    namespace: `rea-exclusive-${process.pid}-${Math.random().toString(36).slice(2)}`,
+  });
+  try {
+    return await load((url) => scope.import(url, import.meta.url));
+  } finally {
+    await scope.unregister();
+  }
+}
+
 /** Load the source owner without requiring a generated dist tree. */
 export async function loadWindowsOwnedProcessClass() {
-  const { tsImport } = await import("tsx/esm/api");
-  const source = await tsImport(sourceWindowsProcess, import.meta.url);
-  return source.WindowsOwnedProcess;
+  return importWindowsSources(async (importSource) => {
+    const source = await importSource(sourceWindowsProcess);
+    return source.WindowsOwnedProcess;
+  });
+}
+
+/**
+ * Ask the package-owned loader whether Windows native controls are available.
+ * The owner class is loaded only alongside a verified authority; nothing is
+ * downloaded or installed, and an unavailable result keeps the loader's reason.
+ */
+export async function loadWindowsCommandOwnership() {
+  return importWindowsSources(async (importSource) => {
+    const loader = await importSource(sourceWindowsNativeLoader);
+    const loaded = loader.systemWindowsNativeAuthority();
+    if (!loaded.available) return loaded;
+    const source = await importSource(sourceWindowsProcess);
+    return { ...loaded, WindowsOwnedProcess: source.WindowsOwnedProcess };
+  });
+}
+
+/** Explain the reduced supervision used when no native owner is available. */
+export function describeUnownedWindowsCommand(lockName, reason) {
+  return [
+    reason,
+    `The ${lockName} command runs without Windows Job Object ownership: the command lock is released when the command leader exits, and cancellation stops only that leader, so descendants it leaves behind are not covered. Restore the artifact as described in native/windows/README.md#restore-the-artifact-in-a-source-checkout to reinstate owned supervision.`,
+  ].join("\n");
 }
 
 /** Start an owned Windows command while preserving cross-spawn's shim rules. */

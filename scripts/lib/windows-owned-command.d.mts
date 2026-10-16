@@ -1,6 +1,9 @@
 import type { EventEmitter } from "node:events";
 
-import type { WindowsNativeAuthority } from "../../src/windows/WindowsNativeLoader.js";
+import type {
+  WindowsNativeAuthority,
+  WindowsNativeLoadResult,
+} from "../../src/windows/WindowsNativeLoader.js";
 import type { WindowsOwnedProcess } from "../../src/windows/WindowsOwnedProcess.js";
 
 export type WindowsOwnedProcessConstructor = typeof WindowsOwnedProcess;
@@ -34,6 +37,20 @@ export interface WindowsOwnedProcessSupervisionOptions {
 }
 
 export function loadWindowsOwnedProcessClass(): Promise<WindowsOwnedProcessConstructor>;
+
+/** The loader's availability fact, carrying the source owner only when verified. */
+export type WindowsCommandOwnership =
+  | (Extract<WindowsNativeLoadResult, { available: true }> & {
+      readonly WindowsOwnedProcess: WindowsOwnedProcessConstructor;
+    })
+  | Exclude<WindowsNativeLoadResult, { available: true }>;
+
+export function loadWindowsCommandOwnership(): Promise<WindowsCommandOwnership>;
+
+export function describeUnownedWindowsCommand(
+  lockName: string,
+  reason: string,
+): string;
 
 export function createWindowsOwnedCommand(
   options: WindowsOwnedCommandOptions,

@@ -49,6 +49,14 @@ cp package/native/windows/build/rea-windows-x64.node native/windows/build/
 This is a manual recovery step. REA does not fetch or install the artifact
 automatically. Alternatively, build it using the Linux/MinGW lane above.
 
+Without the artifact, development commands still run. The `run-exclusive`
+wrapper behind `npm run build:cached` and `npm run test:focused` prints the
+loader's unavailability reason, then runs the command with leader-only
+supervision: the command lock is released when the command leader exits, and
+cancellation stops only that leader. Windows provider-backed workflows and the
+owned-command regressions in `tests/process-global/` need the restored
+artifact. See [Windows source checkouts](../../CONTRIBUTING.md#windows-source-checkouts).
+
 ## Boundaries
 
 - Opaque Node objects carry a native type tag, resource kind, and closed state.

@@ -56,15 +56,12 @@ import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { semanticBundledRequireOrigin } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
-import { semanticBindingProofExposure } from "./javascriptSemanticBindingProof.js";
 import {
   indexJavaScriptAmbientWritesSteps,
   isUnmodifiedGlobalReference,
 } from "./javascriptSemanticAmbientWrites.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
-  isErasedJavaScriptDeclaration,
-  isUnmodeledJavaScriptRuntimeScope,
   semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
 import {
@@ -98,13 +95,11 @@ import { indexCommonJsExportReceiversSteps } from "./javascriptCommonJsExportRec
 import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
 
 interface BindPatternInput {
-  readonly declarationNode: t.Node;
   readonly pattern: t.Node;
   readonly initializer: t.Node | null;
   readonly scope: JavaScriptSemanticScopeState;
   readonly state: JavaScriptSemanticAnalysisState;
   readonly mutable: boolean;
-  readonly runtimeDeclaration?: boolean;
   readonly declarationKind?: "var" | "let" | "const" | "using" | "await using";
   readonly kind?: JavaScriptSemanticDefinition["kind"];
   readonly projection?: readonly (string | number | null)[];
@@ -124,13 +119,11 @@ interface BindPatternInput {
 }
 
 interface AddBindingInput {
-  readonly declarationNode: t.Node;
   readonly state: JavaScriptSemanticAnalysisState;
   readonly scope: JavaScriptSemanticScopeState;
   readonly name: string;
   readonly kind: JavaScriptSemanticDefinition["kind"];
   readonly mutable: boolean;
-  readonly runtimeDeclaration?: boolean;
   readonly declarationKind?: "var" | "let" | "const" | "using" | "await using";
   readonly definitionNode: t.Node;
   readonly initializer: t.Node | null;
@@ -206,16 +199,10 @@ const visitSemanticReferenceEffectsAtSite = (
   const resolution =
     lookup.kind === "binding" ? "resolved" : blocked ? "unknown" : "unbound";
   const path = requestedPath ?? inferredPath;
-  const proofExposure = semanticBindingProofExposure(
-    state,
-    binding,
-    "contents",
-  );
   const metadata: Omit<JavaScriptSemanticReferenceEffectsAtSite, "effects"> = {
     bindingId: binding?.bindingId ?? null,
     resolution,
     memberEffectsIndexed,
-    ...(proofExposure === undefined ? {} : { proofExposure }),
   };
   const retain = (
     kind: JavaScriptSemanticReferenceEffectsAtSite["effects"][number]["kind"],
@@ -439,7 +426,6 @@ export function* indexJavaScriptBindingsWithReceiversSteps(
     const binding: JavaScriptSemanticBindingState = {
       ...createBinding(scope, "require", "parameter", false),
       hostOrigin: "commonjs-wrapper",
-      runtimeDeclarations: [{ kind: "parameter", initializer: null }],
     };
     scope.bindings.set(binding.name, binding);
     state.bindingsById.set(binding.bindingId, binding);
@@ -484,11 +470,7 @@ export function* indexJavaScriptBindingsWithReceiversSteps(
         },
         propertyPath,
       );
-      return (
-        metadata.resolution !== "resolved" ||
-        metadata.proofExposure !== undefined ||
-        changed
-      );
+      return metadata.resolution !== "resolved" || changed;
     },
     *referencesSteps() {
       references ??= yield* collectSemanticReferencesSteps(program, state);
@@ -936,7 +918,6 @@ const createState = (
     moduleLinkBindings: new WeakMap(),
     defaultExportExpressions: new WeakMap(),
     conditionallySkippedExpressions: new WeakSet(),
-    runtimeDeclarationByNode: new WeakMap(),
     requiredModuleEffects: new Map(),
     ambientBindingWrites: new Map(),
     ambientWrites: new SemanticPropertyPathCoverage(),
@@ -1258,7 +1239,6 @@ const bindOuterDeclaration = (
 ): void => {
   if (t.isFunctionDeclaration(node) && t.isIdentifier(node.id))
     addBinding({
-      declarationNode: node,
       state,
       scope,
       name: node.id.name,
@@ -1269,7 +1249,6 @@ const bindOuterDeclaration = (
     });
   else if (t.isClassDeclaration(node) && t.isIdentifier(node.id))
     addBinding({
-      declarationNode: node,
       state,
       scope,
       name: node.id.name,
@@ -1291,7 +1270,6 @@ const bindInnerDeclaration = (
     bindImportEquals(node, scope, state);
   else if (t.isVariableDeclarator(node))
     bindPattern({
-      declarationNode: node,
       pattern: node.id,
       initializer: node.init ?? null,
       scope: semanticVariableScope(scope, parent, state),
@@ -1306,7 +1284,6 @@ const bindInnerDeclaration = (
     });
   else if (t.isClassExpression(node) && t.isIdentifier(node.id))
     addBinding({
-      declarationNode: node,
       state,
       scope,
       name: node.id.name,
@@ -1318,7 +1295,6 @@ const bindInnerDeclaration = (
   else if (t.isFunction(node)) bindFunctionLocals(node, scope, state);
   else if (t.isCatchClause(node) && node.param != null)
     bindPattern({
-      declarationNode: node,
       pattern: node.param,
       initializer: null,
       scope,
@@ -1336,7 +1312,6 @@ const bindImportEquals = (
   const specifier = semanticImportEqualsSpecifier(node);
   if (specifier === null) return;
   addBinding({
-    declarationNode: node,
     state,
     scope,
     name: node.id.name,
@@ -1424,7 +1399,6 @@ const bindAssignment = (
         // Keep the loop value unknown, but preserve references yielded into
         // each bound slot so writes/escapes can reach their iterable origins.
         bindPattern({
-          declarationNode: node,
           pattern,
           initializer: node,
           scope,
@@ -1489,7 +1463,6 @@ const functionNameScope = (
   state.scopes.push(scope);
   state.scopesById.set(scope.scopeId, scope);
   addBinding({
-    declarationNode: node,
     state,
     scope,
     name: node.id.name,
@@ -1564,11 +1537,6 @@ const bindImports = (
   state: JavaScriptSemanticAnalysisState,
 ): void => {
   for (const specifier of node.specifiers) {
-    const runtimeImport =
-      node.importKind !== "type" &&
-      node.importKind !== "typeof" &&
-      (!t.isImportSpecifier(specifier) ||
-        (specifier.importKind !== "type" && specifier.importKind !== "typeof"));
     const importedPath = t.isImportDefaultSpecifier(specifier)
       ? ["default"]
       : t.isImportNamespaceSpecifier(specifier)
@@ -1583,9 +1551,12 @@ const bindImports = (
       definitionNode: specifier.local,
       initializer: null,
       directOrigin: { specifier: node.source.value, importedPath },
-      runtimeImport,
-      runtimeDeclaration: runtimeImport,
-      declarationNode: node,
+      runtimeImport:
+        node.importKind !== "type" &&
+        node.importKind !== "typeof" &&
+        (!t.isImportSpecifier(specifier) ||
+          (specifier.importKind !== "type" &&
+            specifier.importKind !== "typeof")),
     });
   }
 };
@@ -1597,7 +1568,6 @@ const bindFunctionLocals = (
 ): void => {
   for (const parameter of runtimeFunctionParameters(node))
     bindPattern({
-      declarationNode: node,
       pattern: t.isTSParameterProperty(parameter)
         ? parameter.parameter
         : parameter,
@@ -1611,14 +1581,12 @@ const bindFunctionLocals = (
 
 const bindPattern = (input: BindPatternInput): void => {
   const {
-    declarationNode,
     pattern,
     initializer,
     scope,
     state,
     mutable,
     declarationKind,
-    runtimeDeclaration,
     kind = "variable",
     projection = [],
     referenceOnly = false,
@@ -1656,13 +1624,11 @@ const bindPattern = (input: BindPatternInput): void => {
       return;
     }
     addBinding({
-      declarationNode,
       state,
       scope,
       name: pattern.name,
       kind,
       mutable,
-      ...(runtimeDeclaration === undefined ? {} : { runtimeDeclaration }),
       ...(declarationKind === undefined ? {} : { declarationKind }),
       definitionNode: pattern,
       initializer,
@@ -1684,7 +1650,6 @@ const bindPattern = (input: BindPatternInput): void => {
       ],
     });
     bindPattern({
-      declarationNode,
       state,
       scope,
       mutable,
@@ -1762,7 +1727,6 @@ const bindPattern = (input: BindPatternInput): void => {
 
 const addBinding = (input: AddBindingInput): void => {
   const {
-    declarationNode,
     state,
     scope,
     name,
@@ -1773,7 +1737,6 @@ const addBinding = (input: AddBindingInput): void => {
     initializer,
     directOrigin,
     runtimeImport,
-    runtimeDeclaration = true,
     projection = [],
   } = input;
   let binding = scope.bindings.get(name);
@@ -1787,15 +1750,6 @@ const addBinding = (input: AddBindingInput): void => {
   if (declarationKind !== undefined)
     binding.declarationKinds.add(declarationKind);
   binding.definitions.push({ kind, location: range(definitionNode) });
-  if (
-    runtimeDeclaration &&
-    declarationEstablishesRuntimeBinding(declarationNode, state)
-  )
-    binding.runtimeDeclarations.push({
-      kind,
-      ...(declarationKind === undefined ? {} : { declarationKind }),
-      initializer,
-    });
   if (initializer !== null)
     binding.initializers.push({ node: initializer, projection });
   if (directOrigin !== undefined)
@@ -1809,36 +1763,6 @@ const addBinding = (input: AddBindingInput): void => {
         : directOrigin,
     );
   binding.runtimeImport ||= runtimeImport === true;
-};
-
-// Transformed namespace members may execute, but this index does not establish
-// their visibility in the surrounding source scope. They cannot prove shadowing.
-const declarationEstablishesRuntimeBinding = (
-  definition: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  let node: t.Node | undefined = definition;
-  const pending: t.Node[] = [];
-  let runtime = true;
-  while (node !== undefined) {
-    const cached = state.runtimeDeclarationByNode.get(node);
-    if (cached !== undefined) {
-      runtime = cached;
-      break;
-    }
-    pending.push(node);
-    if (
-      isErasedJavaScriptDeclaration(node) ||
-      isUnmodeledJavaScriptRuntimeScope(node)
-    ) {
-      runtime = false;
-      break;
-    }
-    node = state.parentsByNode.get(node);
-  }
-  for (const ancestor of pending)
-    state.runtimeDeclarationByNode.set(ancestor, runtime);
-  return runtime;
 };
 
 const createBinding = (
@@ -1856,7 +1780,6 @@ const createBinding = (
   memberWrites: [],
   escapedPaths: [],
   definitions: [],
-  runtimeDeclarations: [],
   initializers: [],
   referenceInitializers: [],
   directOrigins: [],

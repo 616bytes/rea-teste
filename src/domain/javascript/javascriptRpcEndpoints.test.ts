@@ -30,13 +30,6 @@ describe("RPC object property ownership", () => {
     ['url: "/trpc/live", [0x1n]: {}', "/trpc/live"],
     ['url: "/trpc/live", [0b1n]: {}', "/trpc/live"],
     ['url: "/trpc/live", [-1n]: {}', "/trpc/live"],
-    ['url: "/trpc/live", [true]: {}', "/trpc/live"],
-    ['url: "/trpc/live", [null]: {}', "/trpc/live"],
-    ['url: "/trpc/live", [-1]: {}', "/trpc/live"],
-    ['url: "/trpc/live", [-0]: {}', "/trpc/live"],
-    ['url: "/trpc/live", ...null', "/trpc/live"],
-    ['url: "/trpc/live", ...undefined', "/trpc/live"],
-    ['url: "/trpc/live", ...void 0', "/trpc/live"],
   ] as const)(
     "reads only the final known link URL from {%s}",
     (options, value) => {
@@ -56,13 +49,6 @@ describe("RPC object property ownership", () => {
     ["get name() { return runtimeName; }", null, null],
     ["...options", null, null],
     ["[key]: runtimeValue", null, null],
-    ["[true]: 1", "Old", "graphql:query"],
-    ["[null]: 1", "Old", "graphql:query"],
-    ["[-1]: 1", "Old", "graphql:query"],
-    ["[-0]: 1", "Old", "graphql:query"],
-    ["...null", "Old", "graphql:query"],
-    ["...undefined", "Old", "graphql:query"],
-    ["...void 0", "Old", "graphql:query"],
   ] as const)(
     "honors final GraphQL document properties: %s",
     (override, value, mechanism) => {
@@ -75,37 +61,6 @@ describe("RPC object property ownership", () => {
       );
     },
   );
-
-  it("keeps shadowed undefined spreads uncertain in RPC and GraphQL", () => {
-    expect(
-      rpcEndpoints(`function run(undefined) {
-      httpBatchLink({ url: "/trpc/old", ...undefined });
-      const doc = { kind: "OperationDefinition", operation: "query",
-        name: { kind: "Name", value: "Old" }, ...undefined };
-    }`),
-    ).toEqual([]);
-  });
-
-  it("uses nullish aliases at their spread reads in RPC and GraphQL", () => {
-    expect(
-      rpcEndpoints(`function run(incoming) {
-      let value = null; const saved = value; value = incoming;
-      httpBatchLink({ url: "/trpc/kept", ...saved });
-      httpBatchLink({ url: "/trpc/unknown", ...value });
-      const kept = { kind: "OperationDefinition", operation: "query",
-        name: { kind: "Name", value: "Kept" }, ...saved };
-      const unknown = { kind: "OperationDefinition", operation: "query",
-        name: { kind: "Name", value: "Unknown" }, ...value };
-    }`),
-    ).toEqual([
-      {
-        kind: "network",
-        value: "/trpc/kept",
-        mechanism: "trpc:link:httpBatchLink",
-      },
-      { kind: "network", value: "Kept", mechanism: "graphql:query" },
-    ]);
-  });
 });
 
 describe("tRPC procedure recognition", () => {
@@ -789,26 +744,9 @@ it("keeps existing network endpoint recognition unchanged", () => {
   ]);
 });
 
-it.each([
-  "function run(p){p=null;arguments[0]={url:'/changed'};",
-  "function run(p){p=null;const args=arguments;args[0]={url:'/changed'};",
-  "function run(p){p=null;Object.defineProperty(arguments,'0',{value:{url:'/changed'}});",
-])(
-  "does not skip a mapped-parameter spread in shared RPC/GraphQL: %s",
-  (prefix) => {
-    expect(
-      rpcEndpoints(`${prefix}
-    httpLink({url:'/safe',...p});
-    const doc={kind:'OperationDefinition',operation:'query',name:{kind:'Name',value:'Unsafe'},...p};
-  }`),
-    ).toEqual([]);
-  },
-);
-
-it("keeps a classic global binding uncertain after a global-object exposure", () => {
+it("keeps named spreads unknown without proving nullish aliases", () => {
   expect(
-    rpcEndpoints(
-      "var p=null;globalThis.p={url:'/changed'};httpLink({url:'/safe',...p});",
-    ),
+    rpcEndpoints(`var p=null;const root=Function("return this")();
+    root.p={url:"/changed"};httpLink({url:"/safe",...p});`),
   ).toEqual([]);
 });

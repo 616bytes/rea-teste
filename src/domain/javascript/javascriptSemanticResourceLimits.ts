@@ -5,8 +5,6 @@ import type {
 
 /** Maximum distinct alternatives retained in one normalized primitive value. */
 export const SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT = 256;
-/** Maximum expression visits charged to one local callable proof. */
-export const SEMANTIC_CALLABLE_EXPANSION_LIMIT = 4096;
 /** Maximum active expression nesting during inert semantic evaluation. */
 export const SEMANTIC_EXPRESSION_DEPTH_LIMIT = 256;
 /** Distinct getter, receiver and path states retained in one precise query. */
@@ -19,8 +17,6 @@ const RESOURCE_LIMIT_REASON: Record<JavaScriptSemanticResourceLimit, string> = {
     "Primitive candidate budget exceeded (maximum 256 alternatives).",
   "primitive-bytes":
     "Primitive string-byte budget exceeded (maximum 1048576 estimated JSON bytes).",
-  "callable-expansion":
-    "Callable proof work budget exceeded (maximum 4096 expression visits).",
   "expression-depth":
     "Semantic expression depth budget exceeded (maximum 256 nested expressions).",
   "getter-expansion":

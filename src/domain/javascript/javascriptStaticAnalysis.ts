@@ -53,7 +53,6 @@ import {
 } from "./javascriptSourceParser.js";
 
 import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
-import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
   isTypeOnlyExportDeclaration,
@@ -92,21 +91,13 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     file.program,
     bindings,
   );
-  const expressionShape = createSemanticExpressionShapeResolver(bindings);
-  const isNullishExpression = expressionShape.isNullish;
   const findings: JavaScriptFindingContext = {
-    isNullishExpression,
     source,
     accumulator,
     vitePreloadDependencyTable: indexVitePreloadDependencyTable(file.program),
     openReceiverFacts: receivers.openReceivers,
     electronBindings: electronIdentity.bindings,
-    rpcScan: createJavaScriptRpcScan(
-      source,
-      receivers.rpcClientRoots,
-      index,
-      expressionShape,
-    ),
+    rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
   };
   yield* traverseStaticSourceSteps(file, findings, bindings);
   yield* finishElectronBrowserWindowsSteps(findings, index);

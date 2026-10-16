@@ -5,7 +5,6 @@ export type JavaScriptSemanticPrimitive = string | number | boolean | null;
 export type JavaScriptSemanticResourceLimit =
   | "primitive-candidates"
   | "primitive-bytes"
-  | "callable-expansion"
   | "expression-depth"
   | "getter-expansion";
 

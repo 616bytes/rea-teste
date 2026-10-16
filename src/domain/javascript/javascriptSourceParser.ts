@@ -30,7 +30,9 @@ const hasRuntimeModuleDeclaration = (program: t.Program): boolean =>
       return (
         !isTypeOnlyExportDeclaration(node) &&
         (!t.isExportNamedDeclaration(node) ||
-          !hasOnlyInlineTypeExportSpecifiers(node))
+          (!hasOnlyInlineTypeExportSpecifiers(node) &&
+            (node.declaration == null ||
+              !isErasedJavaScriptDeclaration(node.declaration))))
       );
     return (
       t.isExportDefaultDeclaration(node) &&

@@ -8,7 +8,6 @@ import {
   classifyParsedJavaScriptElectronBindingsSteps,
   indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
-import { semanticBindingProofExposure } from "./javascriptSemanticBindingProof.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { createJavaScriptGraphqlScan } from "./javascriptGraphqlOperations.js";
 import {
@@ -16,40 +15,6 @@ import {
   traverseJavaScriptAst,
   traverseJavaScriptAstSteps,
 } from "./javascriptSemanticTraversal.js";
-
-it.each([
-  ["declare const value: any;", false],
-  ["declare class value {}", false],
-  ['import type {value} from "example";', false],
-  ["const value = {};", true],
-] as const)(
-  "preserves source ownership without inventing runtime declarations: %s",
-  (declaration, runtime) => {
-    const parsed = parseJavaScriptSource(
-      `${declaration} inspect(value);`,
-      "fixture.cts",
-    );
-    if (parsed === null) throw new Error("Expected parsed source");
-    expect(parsed.errors ?? []).toEqual([]);
-    const index = completeSemanticSteps(
-      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
-    );
-    const statement = parsed.program.body.at(-1);
-    if (
-      !t.isExpressionStatement(statement) ||
-      !t.isCallExpression(statement.expression)
-    )
-      throw new Error("Expected reference site");
-    const binding = index.bindingForReferenceAt(
-      statement.expression.arguments[0]!,
-    );
-    expect(binding?.definitions).toHaveLength(1);
-    expect(binding?.bindingId).toEqual(expect.any(String));
-    expect(
-      semanticBindingProofExposure(index.bindings, binding) === undefined,
-    ).toBe(runtime);
-  },
-);
 
 it("bounds repeated capture checks while preserving unindexed and escaped unknowns", () => {
   const count = 128;
@@ -308,88 +273,3 @@ conditionalAlias.handle("conditional-alias:ping", () => "local");
     [text.indexOf('require("electron")["ipcMain.handle"]'), []],
   ]);
 });
-
-it.each([false, true])(
-  "preserves ownership while reporting exposed reference contents (eval: %s)",
-  (exposed) => {
-    const parsed = parseJavaScriptSource(`
-      const config = {url: "/safe"};
-      ${exposed ? 'config.url = "/explicit"; eval("config.url = changed");' : ""}
-      fetch(config.url);
-    `);
-    if (parsed === null) throw new Error("Expected parsed source");
-    const index = completeSemanticSteps(
-      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
-    );
-    completeSemanticSteps(index.indexMemberMutationFactsSteps());
-    const last = parsed.program.body.at(-1);
-    if (!t.isExpressionStatement(last) || !t.isCallExpression(last.expression))
-      throw new Error("Expected request");
-    const site = last.expression;
-    const reference = site.arguments[0];
-    if (!t.isMemberExpression(reference)) throw new Error("Expected member");
-    const effects = index.effectsForReferenceAt(site, reference);
-    expect(effects.bindingId).not.toBeNull();
-    expect(effects.resolution).toBe("resolved");
-    expect("proofExposure" in effects).toBe(exposed);
-    if (exposed)
-      expect(effects.effects).toContainEqual({
-        kind: "member-write",
-        path: ["url"],
-        timing: "before",
-      });
-    expect(index.referenceMayHaveChangedAt(site, reference)).toBe(exposed);
-  },
-);
-
-it.each([false, true])(
-  "keeps binding and contents proofs stable across query/index order (contents first: %s)",
-  (contentsFirst) => {
-    const parsed = parseJavaScriptSource(`
-      function open(parameter) {
-        const options = {preload: "./safe.js"};
-        parameter = options;
-        arguments[0].preload = "./changed.js";
-        inspect(options);
-      }
-    `);
-    if (parsed === null) throw new Error("Expected parsed source");
-    const index = completeSemanticSteps(
-      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
-    );
-    let reference: t.Identifier | undefined;
-    traverseJavaScriptAst(parsed.program, {
-      enter(node) {
-        if (
-          t.isCallExpression(node) &&
-          t.isIdentifier(node.callee, { name: "inspect" }) &&
-          t.isIdentifier(node.arguments[0])
-        )
-          reference = node.arguments[0];
-      },
-    });
-    if (reference === undefined) throw new Error("Expected contents read");
-    const binding = index.bindingForReferenceAt(reference);
-    if (contentsFirst)
-      expect(
-        semanticBindingProofExposure(index.bindings, binding, "contents"),
-      ).toMatch(/mapped arguments/u);
-    else
-      expect(
-        semanticBindingProofExposure(index.bindings, binding),
-      ).toBeUndefined();
-    const proofs = () => ({
-      binding: semanticBindingProofExposure(index.bindings, binding),
-      contents: semanticBindingProofExposure(
-        index.bindings,
-        binding,
-        "contents",
-      ),
-    });
-    const before = proofs();
-    expect(before.binding).toBeUndefined();
-    expect(before.contents).toMatch(/mapped arguments/u);
-    completeSemanticSteps(index.indexMemberMutationFactsSteps());
-    expect(proofs()).toEqual(before);
-  },
-);

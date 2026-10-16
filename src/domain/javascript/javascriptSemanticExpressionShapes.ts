@@ -4,101 +4,104 @@ import {
   isNullishJavaScriptSyntax,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import {
+  isErasedJavaScriptDeclaration,
+  isUnmodeledJavaScriptRuntimeScope,
+} from "./javascriptModuleDeclaration.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { semanticBindingProofExposure } from "./javascriptSemanticBindingProof.js";
+import { collectSemanticReferences } from "./javascriptSemanticProjection.js";
 import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   isUnshadowedGlobal,
   resolveSemanticBindingState,
+  semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { hasProvenJavaScriptModuleContext } from "./javascriptSourceParser.js";
 
-type ExpressionShape = "array" | "nullish" | "unknown";
+type Shape = "array" | "callback" | "unknown";
 
-/** Query identity without claiming container contents or intrinsic length. */
+/** Bounded child-argument identity only; never recover named object contents. */
 export const createSemanticExpressionShapeResolver = (
   state: JavaScriptSemanticAnalysisState,
-): {
-  readonly isArray: (node: t.Node) => boolean;
-  readonly isNullish: (node: t.Node) => boolean;
-} => {
-  // Read nodes, binding facts and parent links are fixed for this source. Depth
-  // is part of the key so a budget-limited alias never poisons a shallower read.
-  const cache = new WeakMap<t.Node, Map<number, ExpressionShape>>();
-  const active = new Set<t.Node>();
-  const commonShape = (
-    nodes: readonly t.Node[],
-    depth: number,
-  ): ExpressionShape => {
-    const first = nodes[0];
-    if (first === undefined) return "unknown";
-    const shape = resolve(first, depth);
-    return shape !== "unknown" &&
-      nodes.slice(1).every((node) => resolve(node, depth) === shape)
-      ? shape
-      : "unknown";
+) => {
+  // Most modules have no named child arguments. Collect source-wide blockers
+  // only when a query actually needs a named binding or ambient undefined.
+  let blocked: boolean | undefined;
+  const namedProofBlocked = (): boolean => {
+    if (blocked !== undefined) return blocked;
+    blocked = collectSemanticReferences(state.program, state).some(
+      ({ name }) => name === "eval",
+    );
+    if (!blocked)
+      traverseJavaScriptAst(state.program, {
+        enter(node) {
+          blocked ||=
+            isErasedJavaScriptDeclaration(node) ||
+            isUnmodeledJavaScriptRuntimeScope(node);
+        },
+      });
+    return blocked;
   };
-  const resolve = (input: t.Node, depth: number): ExpressionShape => {
-    const { node, depth: wrappers } = unwrapJavaScriptExpression(input);
-    depth += wrappers;
-    if (depth > SEMANTIC_EXPRESSION_DEPTH_LIMIT || active.has(node))
-      return "unknown";
-    const binding = t.isIdentifier(node)
-      ? resolveSemanticBindingState(state, node, node.name)
-      : undefined;
-    if (
-      t.isIdentifier(node) &&
-      semanticBindingProofExposure(state, binding) !== undefined
-    )
-      return "unknown";
-    const cached = cache.get(node)?.get(depth);
-    if (cached !== undefined) return cached;
-    active.add(node);
-    let shape: ExpressionShape = "unknown";
-    try {
-      if (t.isArrayExpression(node)) shape = "array";
-      else if (
-        isNullishJavaScriptSyntax(node) ||
-        isUnshadowedGlobal(node, state, "undefined")
-      )
-        shape = "nullish";
-      else if (t.isConditionalExpression(node))
-        shape = commonShape([node.consequent, node.alternate], depth + 1);
-      else if (t.isLogicalExpression(node))
-        shape = commonShape([node.left, node.right], depth + 1);
-      else if (t.isIdentifier(node)) {
-        if (binding !== undefined) {
-          const read = semanticBindingAtRead(
-            binding,
-            node,
-            state.parentsByNode,
-          );
-          if (
-            read.status === "ordered" &&
-            read.hasDefiniteInitializer &&
-            read.binding.referenceInitializers.length === 0 &&
-            read.binding.initializers.every(
-              (initializer) =>
-                initializer.projection.length === 0 &&
-                !state.conditionallySkippedExpressions.has(initializer.node),
-            )
-          )
-            shape = commonShape(
-              read.binding.initializers.map(({ node }) => node),
-              depth + 1,
-            );
-        }
+  const shape = (input: t.Node): Shape => {
+    const seen = new Set<t.Node>();
+    let node = input;
+    let depth = 0;
+    while (true) {
+      const unwrapped = unwrapJavaScriptExpression(node);
+      node = unwrapped.node;
+      depth += unwrapped.depth;
+      if (depth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
+        state.valueResourceLimits.add("expression-depth");
+        return "unknown";
       }
-    } finally {
-      active.delete(node);
+      if (seen.has(node)) return "unknown";
+      seen.add(node);
+      if (t.isArrayExpression(node)) return "array";
+      if (t.isFunction(node) && !("declare" in node && node.declare))
+        return "callback";
+      if (!t.isIdentifier(node)) return "unknown";
+      const binding = resolveSemanticBindingState(state, node, node.name);
+      if (binding === undefined || binding.referenceInitializers.length > 0)
+        return "unknown";
+      // Unknown/classic program bindings can change via global objects or
+      // constructed code. Do not try to enumerate all paths to that environment.
+      if (
+        state.scopesById.get(binding.scopeId)?.kind === "program" &&
+        !hasProvenJavaScriptModuleContext(state.program)
+      )
+        return "unknown";
+      if (namedProofBlocked()) return "unknown";
+      const initializer = semanticStableInitializer(binding, state);
+      if (initializer === undefined || initializer.projection.length > 0)
+        return "unknown";
+      const read = semanticBindingAtRead(binding, node, state.parentsByNode);
+      // Hoisted function declarations are the only accepted unordered source.
+      const parent = state.parentsByNode.get(initializer.node);
+      const hoisted =
+        t.isFunctionDeclaration(initializer.node) &&
+        (t.isProgram(parent) ||
+          (t.isBlockStatement(parent) &&
+            t.isFunction(state.parentsByNode.get(parent))));
+      if (
+        !hoisted &&
+        (read.status !== "ordered" || !read.hasDefiniteInitializer)
+      )
+        return "unknown";
+      node = initializer.node;
+      depth++;
     }
-    const depths = cache.get(node) ?? new Map<number, ExpressionShape>();
-    depths.set(depth, shape);
-    cache.set(node, depths);
-    return shape;
   };
   return {
-    isArray: (node) => resolve(node, 0) === "array",
-    isNullish: (node) => resolve(node, 0) === "nullish",
+    isArray: (node: t.Node) => shape(node) === "array",
+    isCallback: (node: t.Node) => shape(node) === "callback",
+    isNullish: (input: t.Node) => {
+      const { node } = unwrapJavaScriptExpression(input);
+      return (
+        isNullishJavaScriptSyntax(node) ||
+        (isUnshadowedGlobal(node, state, "undefined") && !namedProofBlocked())
+      );
+    },
   };
 };

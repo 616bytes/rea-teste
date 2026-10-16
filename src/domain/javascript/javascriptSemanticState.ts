@@ -58,8 +58,6 @@ export interface JavaScriptSemanticReferenceEffect {
 export interface JavaScriptSemanticReferenceEffectsAtSite {
   readonly bindingId: string | null;
   readonly resolution: JavaScriptSemanticReference["resolution"];
-  /** Opaque access can invalidate value/content proofs without changing lexical ownership. */
-  readonly proofExposure?: string;
   /** Whether alias-aware member and escape effects were collected for this source. */
   readonly memberEffectsIndexed: boolean;
   readonly effects: readonly JavaScriptSemanticReferenceEffect[];
@@ -81,17 +79,6 @@ export interface JavaScriptSemanticBindingState {
   readonly memberWrites: JavaScriptSemanticMemberEffect[];
   readonly escapedPaths: JavaScriptSemanticMemberEffect[];
   readonly definitions: JavaScriptSemanticDefinition[];
-  /** Established runtime declarations in this indexed scope can prove shadowing; source definitions remain above. */
-  readonly runtimeDeclarations: {
-    readonly kind: JavaScriptSemanticDefinition["kind"];
-    readonly declarationKind?:
-      | "var"
-      | "let"
-      | "const"
-      | "using"
-      | "await using";
-    readonly initializer: t.Node | null;
-  }[];
   readonly initializers: JavaScriptSemanticInitializer[];
   readonly referenceInitializers: JavaScriptSemanticReferenceInitializer[];
   readonly directOrigins: JavaScriptModuleOrigin[];
@@ -114,8 +101,6 @@ export interface JavaScriptSemanticScopeState {
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
   readonly program: t.Program;
-  /** Immutable declaration context, populated while collecting definitions. */
-  readonly runtimeDeclarationByNode: WeakMap<t.Node, boolean>;
   /** Effective loader for static imports in this source artifact. */
   readonly staticImportResolutionMode: JavaScriptModuleResolutionMode;
   /** Bounds encountered during this analysis, independent of later projections. */

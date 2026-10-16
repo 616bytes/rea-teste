@@ -132,11 +132,7 @@ export const staticObjectProperty = (
   if (!t.isObjectExpression(object)) return { status: "dynamic" };
   for (const property of object.properties.toReversed()) {
     if (t.isSpreadElement(property)) {
-      if (
-        isNullishJavaScriptSyntax(property.argument) ||
-        isNullish?.(property.argument) === true
-      )
-        continue;
+      if (isNullish?.(property.argument) === true) continue;
       return { status: "dynamic" };
     }
     const key = semanticStaticPropertyKey(property.key, property.computed);
@@ -153,18 +149,16 @@ export const staticObjectProperty = (
 export const semanticFinalObjectProperty = (
   node: t.ObjectExpression,
   key: string,
-  isNullish?: (node: t.Node) => boolean,
 ): t.Node | undefined => {
-  const property = staticObjectProperty(node, key, isNullish);
+  const property = staticObjectProperty(node, key);
   return property.status === "explicit" ? property.property.value : undefined;
 };
 
 export const semanticFinalObjectStringProperty = (
   node: t.ObjectExpression,
   key: string,
-  isNullish?: (node: t.Node) => boolean,
 ): string | undefined => {
-  const value = semanticFinalObjectProperty(node, key, isNullish);
+  const value = semanticFinalObjectProperty(node, key);
   return t.isStringLiteral(value) ? value.value : undefined;
 };
 

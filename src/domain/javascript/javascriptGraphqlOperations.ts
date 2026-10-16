@@ -1,5 +1,4 @@
 import * as t from "@babel/types";
-import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import {
   unwrapJavaScriptExpression,
   semanticStaticPropertyKey,
@@ -137,32 +136,19 @@ const graphqlOperationFromText = (
 /** Recover a named operation from a precompiled GraphQL document object. */
 const graphqlOperationFromDocumentNode = (
   node: t.ObjectExpression,
-  isNullishExpression: (node: t.Node) => boolean,
 ): JavaScriptRpcEndpoint | undefined => {
-  if (
-    semanticFinalObjectStringProperty(node, "kind", isNullishExpression) !==
-    "OperationDefinition"
-  )
+  if (semanticFinalObjectStringProperty(node, "kind") !== "OperationDefinition")
     return undefined;
-  const type = semanticFinalObjectStringProperty(
-    node,
-    "operation",
-    isNullishExpression,
-  );
+  const type = semanticFinalObjectStringProperty(node, "operation");
   if (type === undefined || !GRAPHQL_OPERATION_TYPES.has(type))
     return undefined;
-  const name = semanticFinalObjectProperty(node, "name", isNullishExpression);
+  const name = semanticFinalObjectProperty(node, "name");
   if (
     !t.isObjectExpression(name) ||
-    semanticFinalObjectStringProperty(name, "kind", isNullishExpression) !==
-      "Name"
+    semanticFinalObjectStringProperty(name, "kind") !== "Name"
   )
     return undefined;
-  const value = semanticFinalObjectStringProperty(
-    name,
-    "value",
-    isNullishExpression,
-  );
+  const value = semanticFinalObjectStringProperty(name, "value");
   return value === undefined
     ? undefined
     : { value, mechanism: `graphql:${type}` };
@@ -243,11 +229,10 @@ const graphqlSourceObjectValue = (
 const graphqlDocumentSource = (
   node: t.ObjectExpression,
   index: JavaScriptBindingIndex,
-  isNullishExpression: (node: t.Node) => boolean,
 ): Omit<GraphqlSourceCopy, "operations"> | undefined => {
   const dependencies: GraphqlSourceDependency[] = [];
   const loc = graphqlSourceObjectValue(
-    semanticFinalObjectProperty(node, "loc", isNullishExpression),
+    semanticFinalObjectProperty(node, "loc"),
     index,
     dependencies,
   );
@@ -255,7 +240,7 @@ const graphqlDocumentSource = (
     loc === undefined
       ? undefined
       : graphqlSourceObjectValue(
-          semanticFinalObjectProperty(loc, "source", isNullishExpression),
+          semanticFinalObjectProperty(loc, "source"),
           index,
           dependencies,
         );
@@ -300,23 +285,14 @@ const graphqlContainerOwnership = (
 const graphqlDocumentOperations = (
   node: t.ObjectExpression,
   operation: JavaScriptRpcEndpoint | undefined,
-  isNullishExpression: (node: t.Node) => boolean,
 ): readonly JavaScriptRpcEndpoint[] => {
   if (operation !== undefined) return [operation];
-  if (
-    semanticFinalObjectStringProperty(node, "kind", isNullishExpression) !==
-    "Document"
-  )
-    return [];
-  const definitions = semanticFinalObjectProperty(
-    node,
-    "definitions",
-    isNullishExpression,
-  );
+  if (semanticFinalObjectStringProperty(node, "kind") !== "Document") return [];
+  const definitions = semanticFinalObjectProperty(node, "definitions");
   return t.isArrayExpression(definitions)
     ? definitions.elements.flatMap((definition) => {
         const recovered = t.isObjectExpression(definition)
-          ? graphqlOperationFromDocumentNode(definition, isNullishExpression)
+          ? graphqlOperationFromDocumentNode(definition)
           : undefined;
         return recovered === undefined ? [] : [recovered];
       })
@@ -438,9 +414,7 @@ const graphqlOperationFromTemplate = (
 
 export const createJavaScriptGraphqlScan = (
   index: JavaScriptBindingIndex,
-  expressionShape = createSemanticExpressionShapeResolver(index.bindings),
 ): JavaScriptRpcScan => {
-  const isNullishExpression = expressionShape.isNullish;
   const bodies = new WeakSet<t.Node>();
   const copied = new WeakMap<t.ObjectExpression, Set<string>>();
   const copies: GraphqlSourceCopy[] = [];
@@ -463,23 +437,13 @@ export const createJavaScriptGraphqlScan = (
           : graphqlOperationFromText(node.value);
       if (t.isTemplateLiteral(node)) return graphqlOperationFromTemplate(node);
       if (!t.isObjectExpression(node)) return undefined;
-      const operation = graphqlOperationFromDocumentNode(
-        node,
-        isNullishExpression,
-      );
-      if (
-        semanticFinalObjectProperty(node, "loc", isNullishExpression) !==
-        undefined
-      ) {
-        const operations = graphqlDocumentOperations(
-          node,
-          operation,
-          isNullishExpression,
-        );
+      const operation = graphqlOperationFromDocumentNode(node);
+      if (semanticFinalObjectProperty(node, "loc") !== undefined) {
+        const operations = graphqlDocumentOperations(node, operation);
         const source =
           operations.length === 0
             ? undefined
-            : graphqlDocumentSource(node, index, isNullishExpression);
+            : graphqlDocumentSource(node, index);
         if (source !== undefined) {
           copies.push({ ...source, operations });
         }
@@ -487,11 +451,7 @@ export const createJavaScriptGraphqlScan = (
       const owned = graphqlSourceBodyLiterals(node);
       if (owned !== undefined) {
         for (const body of owned) bodies.add(body);
-        const body = semanticFinalObjectProperty(
-          node,
-          "body",
-          isNullishExpression,
-        );
+        const body = semanticFinalObjectProperty(node, "body");
         const recovered = t.isStringLiteral(body)
           ? graphqlOperationFromText(body.value)
           : undefined;

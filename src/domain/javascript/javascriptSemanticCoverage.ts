@@ -2,7 +2,6 @@ import type { JavaScriptSemanticResourceLimit } from "./javascriptSemanticValueT
 import type { ApplicationCoverage } from "./javascriptApplicationEvidenceSchemas.js";
 import {
   SEMANTIC_EXPRESSION_DEPTH_LIMIT,
-  SEMANTIC_CALLABLE_EXPANSION_LIMIT,
   SEMANTIC_GETTER_EXPANSION_LIMIT,
   SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
   SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT,
@@ -59,10 +58,6 @@ const semanticResourceBounds: Record<
   "primitive-bytes": {
     value: SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT,
     unit: "bytes",
-  },
-  "callable-expansion": {
-    value: SEMANTIC_CALLABLE_EXPANSION_LIMIT,
-    unit: "items",
   },
   "expression-depth": {
     value: SEMANTIC_EXPRESSION_DEPTH_LIMIT,

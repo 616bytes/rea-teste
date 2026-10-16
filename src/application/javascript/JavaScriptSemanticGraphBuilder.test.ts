@@ -1079,26 +1079,3 @@ it("projects and adopts more than the default per-file capacity when explicitly 
     "exceed the offered tree capacity",
   );
 });
-
-it.each([
-  "function run(cb){cb=fallback;const args=arguments;args[0]=options;",
-  "function run(){let cb=fallback;eval('cb=options');",
-])(
-  "keeps exposed local call and argument/return edges candidate: %s",
-  (prefix) => {
-    const graph = graphFor(
-      `function fallback(value){return value;} ${prefix}const result=cb(input);}`,
-    );
-    for (const relation of [
-      "calls",
-      "argument-to-parameter",
-      "returns-to-call",
-    ] as const) {
-      const edges = graph.relations.filter(
-        (edge) => edge.relation === relation,
-      );
-      expect(edges, relation).toHaveLength(1);
-      expect(edges[0]?.resolution, relation).toBe("candidate");
-    }
-  },
-);

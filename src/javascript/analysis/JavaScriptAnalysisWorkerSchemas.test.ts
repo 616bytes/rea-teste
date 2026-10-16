@@ -116,21 +116,3 @@ it("preserves partial request targets through the strict worker schema", () => {
   const serialized = JSON.parse(JSON.stringify(facts)) as unknown;
   expect(javaScriptWorkerStaticAnalysisSchema.parse(serialized)).toEqual(facts);
 });
-
-it("transfers callable proof work exhaustion without losing the module", () => {
-  const ir = analyzeJavaScriptSemantics(`function fallback(){};
-    function run(flag){let a0=flag?a0:fallback;
-    ${Array.from({ length: 14 }, (_, i) => `const a${i + 1}=flag?a${i}:a${i};`).join("\n")}
-    a14();}`);
-  expect(ir.coverage).toMatchObject({
-    status: "partial",
-    resourceLimits: ["callable-expansion"],
-  });
-  expect(ir.callables.some(({ name }) => name === "fallback")).toBe(true);
-  const header = { coverage: ir.coverage, limitations: ir.limitations };
-  expect(
-    javaScriptWorkerModuleHeaderSchema.parse(
-      JSON.parse(JSON.stringify(header)),
-    ),
-  ).toEqual(header);
-});

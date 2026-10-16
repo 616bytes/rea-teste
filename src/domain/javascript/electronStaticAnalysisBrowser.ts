@@ -44,7 +44,7 @@ export const inspectElectronBrowserNode = (
   if (t.isNewExpression(node)) {
     const path = electronCalleePath(node.callee, context);
     if (path?.length === 1 && path[0] === "BrowserWindow") {
-      if (needsConstantOptions(node, context))
+      if (needsConstantOptions(node))
         context.accumulator.pendingBrowserWindows.push(node);
       else inspectBrowserWindow(node, context);
     }
@@ -54,18 +54,11 @@ export const inspectElectronBrowserNode = (
   inspectUtilityProcess(node, context);
 };
 
-const needsConstantOptions = (
-  node: t.NewExpression,
-  context: JavaScriptFindingContext,
-): boolean => {
+const needsConstantOptions = (node: t.NewExpression): boolean => {
   const argument = argumentNode(node.arguments[0]);
   const options = argument && unwrapJavaScriptExpression(argument).node;
   if (t.isIdentifier(options)) return true;
-  const lookup = staticObjectProperty(
-    options,
-    "webPreferences",
-    context.isNullishExpression,
-  );
+  const lookup = staticObjectProperty(options, "webPreferences");
   return (
     lookup.status === "explicit" &&
     t.isIdentifier(unwrapJavaScriptExpression(lookup.property.value).node)
@@ -85,11 +78,7 @@ export function* finishElectronBrowserWindowsSteps(
       const options = argument && unwrapJavaScriptExpression(argument).node;
       if (t.isIdentifier(options))
         return hasElectronOptionObjectCandidate(options, index);
-      const lookup = staticObjectProperty(
-        options,
-        "webPreferences",
-        context.isNullishExpression,
-      );
+      const lookup = staticObjectProperty(options, "webPreferences");
       return (
         lookup.status === "explicit" &&
         hasElectronOptionObjectCandidate(lookup.property.value, index)
@@ -123,11 +112,7 @@ const inspectBrowserWindow = (
     (index &&
       resolveElectronOptionObject(options, node, index, ["webPreferences"])) ??
     options;
-  const lookup = staticObjectProperty(
-    resolvedOptions,
-    "webPreferences",
-    context.isNullishExpression,
-  );
+  const lookup = staticObjectProperty(resolvedOptions, "webPreferences");
   const declaredPreferences =
     lookup.status === "explicit"
       ? unwrapJavaScriptExpression(lookup.property.value).node
@@ -148,7 +133,6 @@ const inspectBrowserWindow = (
     context.source,
     lookup.status,
     resolvedPreferences,
-    context.isNullishExpression,
   );
   context.accumulator.unknownFindings += collected.unknown;
   const finding: ElectronBrowserWindowFinding = {
@@ -179,7 +163,6 @@ const collectWindowOptions = (
   source: string,
   lookupStatus: "explicit" | "missing" | "dynamic",
   preferences: t.Node | undefined,
-  isNullishExpression: (node: t.Node) => boolean,
 ): {
   readonly status: ElectronBrowserWindowFinding["web_preferences_status"];
   readonly preferences: readonly ElectronWebPreference[];
@@ -193,13 +176,12 @@ const collectWindowOptions = (
       preload: { preload_path: null, preload_resolution_context: null },
       unknown: lookupStatus === "missing" ? 0 : 1,
     };
-  return collectWebPreferences(source, preferences, isNullishExpression);
+  return collectWebPreferences(source, preferences);
 };
 
 const collectWebPreferences = (
   source: string,
   object: t.ObjectExpression,
-  isNullishExpression: (node: t.Node) => boolean,
 ): {
   readonly status: "object-literal";
   readonly preferences: readonly ElectronWebPreference[];
@@ -208,11 +190,7 @@ const collectWebPreferences = (
 } => {
   const preferences: ElectronWebPreference[] = [];
   let unknown = 0;
-  const effectivePreload = staticObjectProperty(
-    object,
-    "preload",
-    isNullishExpression,
-  );
+  const effectivePreload = staticObjectProperty(object, "preload");
   const preloadPath =
     effectivePreload.status === "explicit"
       ? staticPath(effectivePreload.property.value)
@@ -329,11 +307,7 @@ const inspectUtilityProcess = (
   const modulePath =
     moduleNode === undefined ? undefined : staticPath(moduleNode);
   const options = argumentNode(node.arguments[2]);
-  const serviceNameProperty = staticObjectProperty(
-    options,
-    "serviceName",
-    context.isNullishExpression,
-  );
+  const serviceNameProperty = staticObjectProperty(options, "serviceName");
   const serviceName =
     serviceNameProperty.status === "explicit"
       ? staticPath(serviceNameProperty.property.value)

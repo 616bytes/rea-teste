@@ -4,8 +4,36 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { expect, it } from "vitest";
 
-import { executePortableCommand } from "../../scripts/lib/portable-command.mjs";
+import {
+  executePortableBatchHelp,
+  executePortableCommand,
+} from "../../scripts/lib/portable-command.mjs";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+
+it.skipIf(process.platform !== "win32")(
+  "finds batch help outside the package cwd and preserves literal path markers",
+  async () => {
+    const cwd = await createTestTempDirectory("rea-portable-batch-");
+    const directory = join(cwd, "package %REA_PORTABLE_PROBE% & !NAME! 中文");
+    await mkdir(directory);
+    await writeFile(
+      join(directory, "rea.cmd"),
+      "@echo off\r\necho portable-batch-ok\r\ncd\r\n",
+      "utf8",
+    );
+    const result = await executePortableBatchHelp(directory, {
+      cwd,
+      env: { ...process.env, REA_PORTABLE_PROBE: "expanded", NAME: "expanded" },
+      timeout: 5_000,
+      maxBuffer: 4096,
+    });
+    expect(result.stdout.trim().split("\r\n")).toEqual([
+      "portable-batch-ok",
+      cwd,
+    ]);
+    expect(result.stderr).toBe("");
+  },
+);
 
 it.skipIf(process.platform !== "win32")(
   "preserves command output and nonzero status and rejects output overflow",

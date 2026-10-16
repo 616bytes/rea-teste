@@ -1,7 +1,22 @@
+import { join } from "node:path";
+
 import {
   loadWindowsOwnedProcessClass,
   superviseWindowsOwnedProcess,
 } from "./windows-owned-command.mjs";
+
+/** Keep UNC paths out of cmd's cwd and literal package paths out of command text. */
+export function executePortableBatchHelp(directory, options) {
+  return executePortableCommand(
+    join(process.env.SystemRoot, "System32/cmd.exe"),
+    ["/d", "/v:off", "/s", "/c", '""%REA_PORTABLE_BATCH%" "--help""'],
+    {
+      ...options,
+      env: { ...options.env, REA_PORTABLE_BATCH: join(directory, "rea.cmd") },
+      windowsVerbatimArguments: true,
+    },
+  );
+}
 
 /** Bound finite verifier calls by output bytes and the owned Windows job lifetime. */
 export async function executePortableCommand(command, arguments_, options) {

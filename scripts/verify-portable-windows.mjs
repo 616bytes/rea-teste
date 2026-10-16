@@ -20,7 +20,10 @@ import {
   readPortableManifest,
   verifyPortableInventory,
 } from "./lib/portable-inventory.mjs";
-import { executePortableCommand as execute } from "./lib/portable-command.mjs";
+import {
+  executePortableBatchHelp,
+  executePortableCommand as execute,
+} from "./lib/portable-command.mjs";
 
 const { values } = parseArgs({
   options: { directory: { type: "string" }, powershell: { type: "string" } },
@@ -77,25 +80,6 @@ try {
     REA_PORTABLE_PROBE: "expanded-probe",
     NO_COLOR: "1",
   };
-  // Keep %NAME% paths out of cmd text and exercise a caller with delayed expansion.
-  const batchLauncher = async (args) =>
-    execute(
-      join(process.env.SystemRoot, "System32/cmd.exe"),
-      [
-        "/d",
-        "/v:on",
-        "/s",
-        "/c",
-        `""rea.cmd" ${args.map((arg) => `"${arg}"`).join(" ")}"`,
-      ],
-      {
-        cwd: directory,
-        env: environment,
-        windowsVerbatimArguments: true,
-        timeout: 120_000,
-        maxBuffer: 8 * 1024 * 1024,
-      },
-    );
   // Invoke the full script path through inbox Windows PowerShell (including 5.1).
   // The artifact is local test output; bypass policy only in this child process.
   const powershellExecutable =
@@ -162,7 +146,14 @@ try {
   });
   reportStage("CLI help and offline setup/doctor");
   assert.match(
-    (await batchLauncher(["--help"])).stdout,
+    (
+      await executePortableBatchHelp(directory, {
+        cwd: workspace,
+        env: environment,
+        timeout: 120_000,
+        maxBuffer: 8 * 1024 * 1024,
+      })
+    ).stdout,
     /analyze-javascript-application/u,
   );
   assert.match(

@@ -17,8 +17,9 @@ const NOMINAL_CATEGORIES: ReadonlyMap<string, SwiftTypeCategory> = new Map([
 ]);
 
 /**
- * Decode literal module/nominal contexts and supported protocol witnesses.
- * Unresolved substitutions and generic contexts remain unknown.
+ * Decode literal module/nominal prefixes, stopping at supported substituted
+ * extension contexts. Unsupported tails retain the nominal prefix category;
+ * this is deliberately not full mangling validation or extension decoding.
  */
 export const classifySwiftSymbol = (
   name: string,
@@ -48,17 +49,9 @@ export const classifySwiftSymbol = (
           remaining: 0,
           continuing: false,
         };
-        const first = readSubstitution(mangling, cursor);
-        // A module reference can start an extension or protocol context, even
-        // when grouped/repeated with later references. Nominal constructor
-        // result substitutions must not be mistaken for module contexts.
-        // Any retained identifier can serve as a module, not just index zero.
         if (
-          first === undefined ||
-          substitutions[first] === undefined ||
-          (substitutions[first] === "identifier" &&
-            (first !== 0 ||
-              !isSameModuleWitness(mangling, cursor, substitutions.length)))
+          category !== null &&
+          isSubstitutedExtensionContext(mangling, cursor, substitutions)
         )
           category = null;
       }
@@ -88,43 +81,98 @@ type SubstitutionCursor = {
   continuing: boolean;
 };
 
-/** Decode a same-module conformance and its literal protocol requirement. */
-const isSameModuleWitness = (
+/**
+ * Recognize only module + [supported generic signature] + E, at token
+ * boundaries. See Swift ABI Mangling.rst: Declaration Contexts and Generics.
+ * Witness bodies and global wrappers are intentionally never inspected.
+ */
+const isSubstitutedExtensionContext = (
   mangling: string,
   cursor: SubstitutionCursor,
-  substitutionCount: number,
+  substitutions: readonly ("identifier" | "nominal")[],
 ): boolean => {
-  // Literal identifiers cannot begin while grouped references are pending.
-  if (cursor.remaining !== 0 || cursor.continuing) return false;
-  let contextIndex = 0;
-  let protocolNameIndex = substitutionCount;
+  const module = readSubstitution(mangling, cursor);
+  if (module === undefined || substitutions[module] !== "identifier")
+    return false;
+  const atBoundary = () => cursor.remaining === 0 && !cursor.continuing;
+  if (atBoundary() && mangling.charAt(cursor.offset) === "E") return true;
   for (;;) {
-    const end = identifierEnd(mangling, cursor.offset);
+    if (atBoundary()) {
+      // Single-parameter and explicit parameter-count signature terminators.
+      if (mangling.charAt(cursor.offset) === "l")
+        return mangling.charAt(cursor.offset + 1) === "E";
+      if (mangling.charAt(cursor.offset) === "r") {
+        cursor.offset++;
+        while (mangling.charAt(cursor.offset) !== "l") {
+          if (mangling.charAt(cursor.offset) === "z") cursor.offset++;
+          else {
+            const end = indexEnd(mangling, cursor.offset);
+            if (end === undefined) return false;
+            cursor.offset = end;
+          }
+        }
+        return mangling.charAt(cursor.offset + 1) === "E";
+      }
+      if (mangling.startsWith("Ri", cursor.offset)) {
+        const end = indexEnd(mangling, cursor.offset + 2);
+        if (end === undefined) return false;
+        cursor.offset = end;
+      } else if (mangling.startsWith("SQR", cursor.offset)) {
+        // SQ is the standard Equatable protocol substitution.
+        cursor.offset += 3;
+      } else if (!readProtocolRequirement(mangling, cursor, substitutions))
+        return false;
+    } else if (!readProtocolRequirement(mangling, cursor, substitutions))
+      return false;
+    const end = genericParamIndexEnd(mangling, cursor.offset);
     if (end === undefined) return false;
-    if (!NOMINAL_CATEGORIES.has(mangling.charAt(end))) {
-      cursor.offset = end;
-      break;
-    }
-    // A nested protocol's enclosing nominal path registers its name and type.
-    contextIndex = protocolNameIndex + 1;
-    protocolNameIndex += 2;
-    cursor.offset = end + 1;
+    cursor.offset = end;
   }
-  // Conformance module, requirement's enclosing context, and protocol name
-  // must resolve to the identities just decoded, not merely look like `A…P`.
-  for (const expected of [0, contextIndex, protocolNameIndex]) {
-    if (readSubstitution(mangling, cursor) !== expected) return false;
-  }
+};
+
+/** Only a module identifier/reference and literal protocol name followed by R. */
+const readProtocolRequirement = (
+  mangling: string,
+  cursor: SubstitutionCursor,
+  substitutions: readonly ("identifier" | "nominal")[],
+): boolean => {
   if (
     cursor.remaining !== 0 ||
     cursor.continuing ||
-    mangling.charAt(cursor.offset) !== "P"
-  )
-    return false;
-  // The conforming nominal depends on the decoded context, not the kind of
-  // requirement (function, accessor, initializer, etc.). The entity body is
-  // deliberately opaque: this is category classification, not validation.
-  return cursor.offset + 1 < mangling.length - 2 && mangling.endsWith("TW");
+    mangling.charAt(cursor.offset) === "A"
+  ) {
+    const module = readSubstitution(mangling, cursor);
+    if (module === undefined || substitutions[module] !== "identifier")
+      return false;
+  } else {
+    const end = identifierEnd(mangling, cursor.offset);
+    if (end === undefined) return false;
+    cursor.offset = end;
+  }
+  if (cursor.remaining !== 0 || cursor.continuing) return false;
+  const end = identifierEnd(mangling, cursor.offset);
+  if (end === undefined || mangling.charAt(end) !== "R") return false;
+  cursor.offset = end + 1;
+  return true;
+};
+
+// Swift's demangleIndex accepts decimal digits (including 0) then underscore.
+const indexEnd = (mangling: string, offset: number): number | undefined => {
+  const token = /^(?:[0-9]+)?_/u.exec(mangling.slice(offset))?.[0];
+  if (token === undefined || Number(token.slice(0, -1)) >= 0x7fffffff)
+    return undefined;
+  return offset + token.length;
+};
+
+const genericParamIndexEnd = (
+  mangling: string,
+  offset: number,
+): number | undefined => {
+  const kind = mangling.charAt(offset);
+  if (kind === "z" || kind === "s") return offset + 1;
+  if (kind !== "d") return indexEnd(mangling, offset);
+  const depthEnd = indexEnd(mangling, offset + 1);
+  return depthEnd === undefined ? undefined : indexEnd(mangling, depthEnd);
 };
 
 /** Read one reference lazily; repeated groups never allocate expanded arrays. */

@@ -284,8 +284,20 @@ describe("Unresolved Swift contexts through MCP", () => {
   );
 });
 
-describe("Same-module Swift protocol witnesses through MCP", () => {
+describe("Substituted Swift contexts through MCP", () => {
+  // These expectations preserve baseline nominal-prefix classification, even
+  // for malformed/unsupported tails. This classifier is not a Swift validator.
+  // Witness-malformation negatives were introduced only by this PR; none were
+  // upstream guarantees. Only recognized extension contexts discard the prefix.
   it.each([
+    // Reported async/resume regressions and ABI-derived private/punycode names.
+    ["$s5Async1SVAA1PA2aDP1fyyYaFTWTQ0_", "structs"],
+    ["$s1M1SVAA1PA2aDP1xSivMTW.resume.0", "structs"],
+    ["$s1M1SVAA005P_geaA2aDP1fyyFTW", "structs"],
+    [
+      "$s1M1SVAA8PrivateP33_0123456789ABCDEF0123456789ABCDEFLLAAAAADAELLP1fyyFTW",
+      "structs",
+    ],
     // Additional review regressions: grouped extension, static and nested witnesses.
     ["$s1M1WVA2A1PRzlE1fyyF", "other"],
     ["$s1M1SVAA1PA2aDP1gSiyFZTW", "structs"],
@@ -299,23 +311,23 @@ describe("Same-module Swift protocol witnesses through MCP", () => {
     ["$s1M1SVAA1PA2aDPyS2icigTW", "structs"],
     ["$s1M1SVAA1PA2aDPxycfCTW", "structs"],
     ["$s1M1SVAA1PA2aDPxycfcTW", "structs"],
-    ["$s1M1SVAA1PA2aDPTW", "other"],
-    ["$s1M1SVAA1PA2aDTW", "other"],
+    ["$s1M1SVAA1PA2aDPTW", "structs"],
+    ["$s1M1SVAA1PA2aDTW", "structs"],
     // Equivalent grouping, nested nominal paths, and malformed boundaries.
     ["$s1M1WVAaA1PRzlE1fyyF", "other"],
-    ["$s1M1WVA999999999999999999999A1PRzlE1fyyF", "other"],
+    ["$s1M1WVA999999999999999999999A1PRzlE1fyyF", "structs"],
     ["$s1M1SVA1A1PA2aDP1gSiyFZTW", "structs"],
     ["$s1N1SVAA9NamespaceC1PAaeFP1fyyFTW", "structs"],
     ["$s1N1SVAA9NamespaceO5InnerV1PAagHP1fyyFZTW", "structs"],
     ["$s1N5OuterV1SVAA9NamespaceO1PAagHP1fyyFTW", "structs"],
-    ["$s1N1SVAA9NamespaceO1PAaeDP1fyyFTW", "other"],
-    ["$s1N1SVAA9NamespaceO1PAacFP1fyyFTW", "other"],
-    ["$s1N1SVAA9NamespaceO1PA2aeFP1fyyFTW", "other"],
-    ["$s1N1SVAA9NamespaceO1PAae2FP1fyyFTW", "other"],
-    ["$s1N1SVAA9NamespaceO1PAaefP1fyyFTW", "other"],
-    ["$s1N1SVAA99NamespaceO1PAaeFP1fyyFTW", "other"],
-    ["$s1N1SVAA9NamespaceO01PAaeFP1fyyFTW", "other"],
-    ["$s1M1SVAA1PA2aDP1gSiyFZTWjunk", "other"],
+    ["$s1N1SVAA9NamespaceO1PAaeDP1fyyFTW", "structs"],
+    ["$s1N1SVAA9NamespaceO1PAacFP1fyyFTW", "structs"],
+    ["$s1N1SVAA9NamespaceO1PA2aeFP1fyyFTW", "structs"],
+    ["$s1N1SVAA9NamespaceO1PAae2FP1fyyFTW", "structs"],
+    ["$s1N1SVAA9NamespaceO1PAaefP1fyyFTW", "structs"],
+    ["$s1N1SVAA99NamespaceO1PAaeFP1fyyFTW", "structs"],
+    ["$s1N1SVAA9NamespaceO01PAaeFP1fyyFTW", "structs"],
+    ["$s1M1SVAA1PA2aDP1gSiyFZTWjunk", "structs"],
     ["$s1M1SVAA1PA2aDP3ZTWSiyFZTW", "structs"],
     // Reported Scorer witness; remaining names are grammar-derived controls.
     ["_$s4main6ScorerVAA7ScoringA2aDP5scoreyS2iFTW", "structs"],
@@ -332,16 +344,16 @@ describe("Same-module Swift protocol witnesses through MCP", () => {
         .join("")}AA7ScoringA2a0_P5scoreyS2iFTW`,
       "structs",
     ],
-    // Unknown identities and malformed context/witness boundaries.
-    ["_$s4main6ScorerVAA7ScoringA2aEP5scoreyS2iFTW", "other"],
-    ["_$s4main6ScorerVAA7ScoringA2a_P5scoreyS2iFTW", "other"],
-    ["_$s4main6ScorerVAA7ScoringA2a0_P5scoreyS2iFTW", "other"],
-    ["_$s4main5OuterV6ScorerVAA7ScoringA2aDP5scoreyS2iFTW", "other"],
-    ["_$s4main6ScorerVAA7ScoringA999999999999aDP5scoreyS2iFTW", "other"],
-    ["_$s4main6ScorerVAA7ScoringA2adP5scoreyS2iFTW", "other"],
-    ["_$s4main6ScorerVAA7ScoringA2aDE5scoreyS2iFTW", "other"],
-    ["_$s4main6ScorerVAA7ScoringA2aDP5scoreyS2iFTWjunk", "other"],
-    ["_$s4main6ScorerVAA7ScoringA2aDP5scoreyS2iF", "other"],
+    // Unsupported identities/tails retain baseline nominal-prefix evidence.
+    ["_$s4main6ScorerVAA7ScoringA2aEP5scoreyS2iFTW", "structs"],
+    ["_$s4main6ScorerVAA7ScoringA2a_P5scoreyS2iFTW", "structs"],
+    ["_$s4main6ScorerVAA7ScoringA2a0_P5scoreyS2iFTW", "structs"],
+    ["_$s4main5OuterV6ScorerVAA7ScoringA2aDP5scoreyS2iFTW", "structs"],
+    ["_$s4main6ScorerVAA7ScoringA999999999999aDP5scoreyS2iFTW", "structs"],
+    ["_$s4main6ScorerVAA7ScoringA2adP5scoreyS2iFTW", "structs"],
+    ["_$s4main6ScorerVAA7ScoringA2aDE5scoreyS2iFTW", "structs"],
+    ["_$s4main6ScorerVAA7ScoringA2aDP5scoreyS2iFTWjunk", "structs"],
+    ["_$s4main6ScorerVAA7ScoringA2aDP5scoreyS2iF", "structs"],
   ] as const)("classifies %s as %s", async (name, category) => {
     const client = await connect({
       execute: async (operation) => {

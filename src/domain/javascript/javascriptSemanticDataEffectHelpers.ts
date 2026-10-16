@@ -299,7 +299,7 @@ export const builtinDataEffectMethod = (
       true,
     )?.length === 0 &&
     !requiredModuleChanged(
-      provenance.origins[0].specifier,
+      origin.specifier,
       selected,
       callee,
       state,
@@ -793,13 +793,19 @@ const builtinEscapes = (
 const builtinModuleEffects = (
   specifier: string,
   state: JavaScriptSemanticAnalysisState,
+  collecting = false,
 ): readonly JavaScriptSemanticRequiredModuleEffect[] => {
-  const cache = builtinEffectIndex(state).moduleEffects;
-  let effects = cache.get(specifier);
+  const cache = collecting
+    ? undefined
+    : builtinEffectIndex(state).moduleEffects;
+  const original = (node: t.Node | undefined) =>
+    collecting
+      ? computeOriginalBuiltinReceiver(node, state, true)
+      : originalBuiltinReceiver(node, state);
+  let effects = cache?.get(specifier);
   if (effects === undefined) {
     effects = (state.requiredModuleEffects.get(specifier) ?? []).filter(
-      ({ kind, node }) =>
-        kind === "write" || !originalBuiltinReceiver(node, state),
+      ({ kind, node }) => kind === "write" || !original(node),
     );
     if (specifier === "fs/promises") {
       const sharedFsEscapes = (state.requiredModuleEffects.get("fs") ?? [])
@@ -807,7 +813,7 @@ const builtinModuleEffects = (
           ({ kind, path, node }) =>
             kind === "escape" &&
             (path.length === 0 || path[0] === "promises") &&
-            !originalBuiltinReceiver(node, state),
+            !original(node),
         )
         .map((effect) => ({
           ...effect,
@@ -816,7 +822,7 @@ const builtinModuleEffects = (
         }));
       effects = [...effects, ...sharedFsEscapes];
     }
-    cache.set(specifier, effects);
+    cache?.set(specifier, effects);
   }
   return effects;
 };
@@ -838,6 +844,7 @@ const requiredModuleChanged = (
     effects.some(
       ({ path, node, kind }) =>
         !(
+          kind === "write" &&
           savedObjectCapture !== undefined &&
           path.length < selection.length &&
           semanticTopLevelEffectFollowsCapture(
@@ -888,6 +895,7 @@ const originalBuiltinReceiver = (
 const computeOriginalBuiltinReceiver = (
   node: t.Node | undefined,
   state: JavaScriptSemanticAnalysisState,
+  collecting = false,
 ): boolean => {
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return false;
@@ -923,8 +931,11 @@ const computeOriginalBuiltinReceiver = (
         affectsBuiltinPath(path, [method]) &&
         !semanticTopLevelEffectFollowsCapture(node, write, state.parentsByNode),
     ) ||
-    (
-      builtinEffectIndex(state).writesByModule.get(identity.specifier) ?? []
+    (collecting
+      ? (state.requiredModuleEffects.get(identity.specifier) ?? []).filter(
+          ({ kind }) => kind === "write",
+        )
+      : (builtinEffectIndex(state).writesByModule.get(identity.specifier) ?? [])
     ).some(
       ({ path, node: write }) =>
         affectsBuiltinPath(path, identity.path) &&
@@ -955,6 +966,25 @@ export const semanticBuiltinDataMethod = (
   return (
     origin.importedPath.length === 0 &&
     (BUILTIN_RECEIVER_METHODS[origin.specifier]?.has(method) ?? false)
+  );
+};
+
+/** Live descriptor proof for mutation collection; never cache unfinished facts. */
+export const semanticBuiltinSlotChanged = (
+  source: JavaScriptModuleOrigin,
+  method: string,
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const origin = builtinNamespaceOrigin(source);
+  const identity = semanticRequireExportsIdentity(origin.specifier, [
+    ...origin.importedPath,
+    method,
+  ]);
+  return builtinModuleEffects(identity.specifier, state, true).some(
+    ({ path, node }) =>
+      affectsBuiltinPath(path, identity.path) &&
+      !semanticTopLevelEffectFollowsCapture(capture, node, state.parentsByNode),
   );
 };
 

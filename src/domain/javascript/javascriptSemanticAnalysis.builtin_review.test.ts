@@ -2,6 +2,77 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
 it.each([
+  "const {promises:fsp}=require('fs'); patch(require('fs/promises'));",
+  "const fsp=require('fs').promises; patch(require('fs/promises'));",
+  "const {promises:fsp}=require('fs'); patch(require('fs'));",
+  "const {promises:fsp}=require('fs'); patch(fsp);",
+])("keeps escapes of saved objects effective: %s", (setup) => {
+  expect(
+    analyzeJavaScriptSemantics(`${setup} const h=fsp.open('wrong'); h.close();`)
+      .resourceOperations,
+  ).toEqual([]);
+});
+
+it.each([
+  "Reflect.set(Object.create(null),'hook',1,{fs});",
+  "const target=Object.create(null); Reflect.set(target,'hook',1,{fs});",
+  "const target={__proto__:null}; Reflect.set(target,'hook',1,{fs});",
+  "const target=Object.create(null); const alias=target; Reflect.set(alias,'hook',1,{fs});",
+  "Object.defineProperty(Object.prototype,'statSync',{set(){this.readFileSync=custom;}}); Reflect.set(fs,'statSync',custom);",
+  "fs.statSync('probe'); Reflect.set(fs,'readFileSync',custom,{});",
+  "const target=Object.create(null); Reflect.set(target,'hook',1,{fs}); Reflect.set(target,'hook',2,{fs});",
+])("preserves reads when the selected setter cannot run: %s", (setup) => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `const fs=require('fs'); ${setup} fs.readFileSync('kept');`,
+    ).configurationOperations.map(({ key }) => key),
+  ).toEqual(["kept"]);
+});
+
+it.each([
+  "delete fs.statSync; Object.defineProperty(Object.prototype,'statSync',{set(){this.readFileSync=custom;}}); Reflect.set(fs,'statSync',custom);",
+  "delete require('fs').statSync; Object.defineProperty(Object.prototype,'statSync',{set(){this.readFileSync=custom;}}); Reflect.set(fs,'statSync',custom);",
+  "const target=Object.create(null,{hook:{set(){this.fs.readFileSync=custom;}}}); Reflect.set(target,'hook',1,{fs});",
+  "const target=Object.create(null); Object.defineProperty(target,'hook',{set(){this.fs.readFileSync=custom;}}); Reflect.set(target,'hook',1,{fs});",
+  "Object.create=()=>({set hook(v){this.fs.readFileSync=custom;}}); Reflect.set(Object.create(null),'hook',1,{fs});",
+  "const target=Object.create(null); const alias=target; Object.defineProperty(alias,'hook',{set(){this.fs.readFileSync=custom;}}); Reflect.set(target,'hook',1,{fs});",
+])("rechecks descriptors before excluding setter effects: %s", (setup) => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `const fs=require('fs'); ${setup} fs.readFileSync('wrong');`,
+    ).configurationOperations,
+  ).toEqual([]);
+});
+
+it.each([
+  "let fs=require('fs'); fs.readFileSync('kept'); {fs={};}",
+  "let fs=require('fs'); fs.readFileSync('kept'); {{{fs={};}}}",
+  "let fs=require('fs'); {fs.readFileSync('kept'); {fs={};}}",
+  "let fs; {fs=require('fs');} fs.readFileSync('kept');",
+  "let fs={}; {fs=require('fs');} fs.readFileSync('kept');",
+  "let fs=require('fs'); fs.readFileSync('kept'); if(flag){fs={};}",
+])("retains reads before later nested initializers: %s", (source) => {
+  expect(
+    analyzeJavaScriptSemantics(source).configurationOperations.map(
+      ({ key }) => key,
+    ),
+  ).toEqual(["kept"]);
+});
+
+it.each([
+  "let fs=require('fs'); if(flag){fs={};} fs.readFileSync('wrong');",
+  "let fs; if(flag){fs=require('fs');} fs.readFileSync('wrong');",
+  "let fs=require('fs'); function later(){fs={};} fs.readFileSync('wrong');",
+])(
+  "keeps conditional and deferred initializer projection conservative: %s",
+  (source) => {
+    expect(analyzeJavaScriptSemantics(source).configurationOperations).toEqual(
+      [],
+    );
+  },
+);
+
+it.each([
   "Object.assign=(target,source)=>{target.require=source.require;}; Object.assign(module,{require:replacement});",
   "Object.defineProperty=(target,key,descriptor)=>{target[key]=descriptor.value;}; Object.defineProperty(module,'require',{value:replacement});",
   "Object.defineProperties=(target,descriptors)=>{target.require=descriptors.require.value;}; Object.defineProperties(module,{require:{value:replacement}});",

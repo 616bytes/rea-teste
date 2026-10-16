@@ -68,6 +68,12 @@ interface InitializerPositionCache {
   readonly direct: WeakMap<t.Node, StatementPosition | null>;
   readonly mutation: WeakMap<t.Node, StatementPosition | null>;
   readonly reference: WeakMap<t.Node, StatementPosition | null>;
+  initializerProjection:
+    | {
+        readonly body: readonly t.Statement[];
+        readonly positions: WeakMap<t.Node, StatementPosition | null>;
+      }
+    | undefined;
   readonly effect: WeakMap<t.Node, EffectAncestry | null>;
   effectMatches:
     | {
@@ -105,6 +111,7 @@ const initializerPositionCache = (
     direct: new WeakMap(),
     mutation: new WeakMap(),
     reference: new WeakMap(),
+    initializerProjection: undefined,
     effect: new WeakMap(),
     effectMatches: undefined,
     read: new WeakMap(),
@@ -424,6 +431,7 @@ const expressionChildIndices = (
   const cached = cache.get(node);
   if (cached !== undefined) return cached;
   const children = ((): readonly (t.Node | null)[] | null => {
+    if (t.isProgram(node) || t.isBlockStatement(node)) return node.body;
     if (t.isSequenceExpression(node)) return node.expressions;
     if (t.isArrayExpression(node)) return node.elements;
     if (t.isObjectExpression(node)) return node.properties;
@@ -634,6 +642,50 @@ const initializerPosition = (
     : directInitializerPosition(initializer.node, parents);
 };
 
+/** Project nested unconditional blocks into the read's shared statement body. */
+const initializerInBody = (
+  initializer: JavaScriptSemanticBindingState["initializers"][number],
+  parents: WeakMap<t.Node, t.Node>,
+  body: readonly t.Statement[] | undefined,
+  reference = false,
+): StatementPosition | null => {
+  const direct = initializerPosition(initializer, parents, reference);
+  if (direct === null || body === undefined || direct.body === body)
+    return direct;
+  const owner = initializerPositionCache(parents);
+  if (owner.initializerProjection?.body !== body)
+    owner.initializerProjection = { body, positions: new WeakMap() };
+  const cache = owner.initializerProjection.positions;
+  const pending: t.Node[] = [];
+  let current: t.Node | undefined = initializer.node;
+  let result: StatementPosition | null = null;
+  while (current !== undefined) {
+    if (cache.has(current)) {
+      result = cache.get(current) ?? null;
+      break;
+    }
+    pending.push(current);
+    if (t.isStatement(current)) {
+      const position = statementPosition(current, parents);
+      if (position?.body === body) {
+        result = position;
+        break;
+      }
+    }
+    const parent = parents.get(current);
+    if (
+      parent === undefined ||
+      t.isFunction(parent) ||
+      t.isLoop(parent) ||
+      semanticBranchMayBeSkipped(parent, current)
+    )
+      break;
+    current = parent;
+  }
+  for (const node of pending) cache.set(node, result);
+  return result;
+};
+
 /** Resolve origins at their use or capture, never at a later transitive effect. */
 export const semanticMutationInitializers = (
   binding: JavaScriptSemanticBindingState,
@@ -676,7 +728,11 @@ export const semanticMutationInitializers = (
           ? []
           : binding.directOrigins,
       };
-    const timeline = bindingTimeline(binding, parents).timeline;
+    const timeline = bindingTimeline(
+      binding,
+      parents,
+      mutationPosition.body,
+    ).timeline;
     const latest = timeline?.at(-1);
     if (timeline !== null && latest !== undefined)
       return positionPrecedes(latest.position, mutationPosition)
@@ -801,6 +857,7 @@ type SemanticBindingRead = {
 };
 
 interface BindingTimelineCache {
+  readonly body: readonly t.Statement[] | undefined;
   readonly initializers: JavaScriptSemanticBindingState["initializers"];
   readonly length: number;
   readonly references: number;
@@ -827,11 +884,18 @@ interface BindingTimelineCache {
 const bindingTimeline = (
   binding: JavaScriptSemanticBindingState,
   parents: WeakMap<t.Node, t.Node>,
+  body?: readonly t.Statement[],
 ): BindingTimelineCache => {
+  const firstInitializer = binding.initializers[0];
+  body ??=
+    firstInitializer === undefined
+      ? undefined
+      : initializerPosition(firstInitializer, parents)?.body;
   const cache = initializerPositionCache(parents).timelines;
   const prior = cache.get(binding);
   if (
     prior !== undefined &&
+    prior.body === body &&
     prior.initializers === binding.initializers &&
     prior.length === binding.initializers.length &&
     prior.references === binding.referenceInitializers.length &&
@@ -843,7 +907,7 @@ const bindingTimeline = (
   let timeline: NonNullable<BindingTimelineCache["timeline"]>[number][] | null =
     [];
   for (const initializer of binding.initializers) {
-    const position = initializerPosition(initializer, parents);
+    const position = initializerInBody(initializer, parents, body);
     if (
       position === null ||
       initializerMayRetainEntry(initializer, binding, parents) ||
@@ -874,6 +938,7 @@ const bindingTimeline = (
   )
     timeline = null;
   const result: BindingTimelineCache = {
+    body,
     initializers: binding.initializers,
     length: binding.initializers.length,
     references: binding.referenceInitializers.length,
@@ -895,7 +960,7 @@ const readFromTimeline = (
   read: t.Node,
   parents: WeakMap<t.Node, t.Node>,
 ): SemanticBindingRead | undefined => {
-  const index = bindingTimeline(binding, parents);
+  const index = bindingTimeline(binding, parents, position.body);
   const timeline = index.timeline;
   if (timeline === null || timeline[0]?.position.body !== position.body)
     return undefined;
@@ -948,7 +1013,7 @@ export const semanticBindingAtRead = (
   const initializer = binding.initializers[0];
   const reference = binding.referenceInitializers[0];
   const origin = initializer ?? reference;
-  const sourcePosition =
+  let sourcePosition =
     initializer === undefined
       ? reference === undefined
         ? null
@@ -957,10 +1022,22 @@ export const semanticBindingAtRead = (
   const readPosition = bindingReadPosition(read, parents);
   const { repeating } = readPosition;
   const position = matchingReadPosition(readPosition, sourcePosition?.body);
+  const projectedInitializer =
+    origin !== undefined &&
+    position !== null &&
+    sourcePosition !== null &&
+    sourcePosition.body !== position.body;
+  if (projectedInitializer)
+    sourcePosition = initializerInBody(
+      origin,
+      parents,
+      position.body,
+      initializer === undefined,
+    );
   if (
     !repeating &&
     position !== null &&
-    binding.initializers.length > 1 &&
+    (binding.initializers.length > 1 || projectedInitializer) &&
     binding.referenceInitializers.length === 0
   ) {
     const indexed = readFromTimeline(binding, position, read, parents);
@@ -971,7 +1048,7 @@ export const semanticBindingAtRead = (
   const hasDefiniteInitializer =
     position !== null &&
     binding.initializers.some((initializer) => {
-      const source = initializerPosition(initializer, parents);
+      const source = initializerInBody(initializer, parents, position?.body);
       return (
         source !== null &&
         positionPrecedes(source, position) &&
@@ -1041,17 +1118,27 @@ const selectInitializers = (
   const origins = [
     ...binding.initializers.map((initializer) => ({
       initializer,
-      position: initializerPosition(initializer, parents),
+      position: initializerInBody(initializer, parents, position.body),
     })),
     ...binding.referenceInitializers.map((initializer) => ({
       initializer,
-      position: initializerPosition(initializer, parents, true),
+      position: initializerInBody(initializer, parents, position.body, true),
     })),
   ];
   const preceding: typeof origins = [];
   for (const origin of origins) {
     const source = origin.position;
-    if (source === null || source.body !== position.body) return undefined;
+    if (source === null || source.body !== position.body) {
+      if (
+        semanticTopLevelEffectFollowsCapture(
+          read,
+          origin.initializer.node,
+          parents,
+        )
+      )
+        continue;
+      return undefined;
+    }
     if (positionPrecedes(source, position)) preceding.push(origin);
     else if (!positionPrecedes(position, source)) {
       if (

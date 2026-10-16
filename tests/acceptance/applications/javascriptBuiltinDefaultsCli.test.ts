@@ -25,6 +25,10 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
     "const fs=require('fs'); const target={__proto__:{set hook(v){this.fs.readFileSync=custom;}}}; Reflect.set(target,'hook',1,{fs}); fs.readFileSync('wrong-inherited-setter');",
     "const {promises:fsp}=require('fs'); delete require('fs').promises; const handle=fsp.open('saved-promises'); handle.close();",
     "Object.assign=(target,source)=>{target.require=source.require;}; Object.assign(module,{require:replacement}); require('fs').readFileSync('wrong-opaque-mutator');",
+    "const {promises:fsp}=require('fs'); patch(require('fs/promises')); const h=fsp.open('wrong-escaped-object'); h.close();",
+    "const fs=require('fs'); Reflect.set(Object.create(null),'hook',1,{fs}); fs.readFileSync('null-prototype-kept.json');",
+    "const fs=require('fs'); delete fs.statSync; Object.defineProperty(Object.prototype,'statSync',{set(){this.readFileSync=custom;}}); Reflect.set(fs,'statSync',custom); fs.readFileSync('wrong-removed-descriptor');",
+    "let fs=require('fs'); fs.readFileSync('outer-before-nested.json'); {fs={};}",
   ];
   for (const [index, source] of sources.entries())
     await writeFile(join(root, `receiver-review-${index}.ts`), source);
@@ -164,7 +168,9 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "loader-before.json",
     "nested-kept.json",
     "nested-timeline.json",
+    "null-prototype-kept.json",
     "ordered-kept.json",
+    "outer-before-nested.json",
     "receiver-data.json",
     "receiver-primitive.json",
     "reflect-independent-kept.json",

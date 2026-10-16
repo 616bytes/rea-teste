@@ -1,3 +1,4 @@
+import { semanticExactResultOperand } from "./javascriptSemanticExpressionResults.js";
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +17,6 @@ import {
   runtimeFunctionParameters,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
-  javaScriptExactResultOperand,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
@@ -667,7 +667,7 @@ export const isWebSocketEndpointCandidate = (
       );
     }
     const { root, members } = electronMemberPath(current);
-    const result = javaScriptExactResultOperand(root);
+    const result = semanticExactResultOperand(root, state);
     if (result !== undefined) {
       if (!members.every((key): key is string => typeof key === "string"))
         return false;

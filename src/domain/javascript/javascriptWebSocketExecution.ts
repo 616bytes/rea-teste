@@ -1,9 +1,9 @@
+import { semanticExactResultOperand } from "./javascriptSemanticExpressionResults.js";
 import * as t from "@babel/types";
 
 import {
   unwrapJavaScriptExpression,
   semanticStaticPropertyName,
-  javaScriptExactResultOperand,
   readExactJavaScriptLiteral,
   semanticFinalObjectMember,
   semanticFinalClassMember,
@@ -21,6 +21,8 @@ import { semanticAwaitedResultSites } from "./javascriptSemanticPromiseIdentity.
 import {
   syntaxMayExitByJump,
   syntaxUnconditionalOperands,
+  syntaxEvaluationOperands,
+  syntaxEvaluationCannotThrow,
 } from "./javascriptSymbolicControlFlow.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
 
@@ -53,7 +55,7 @@ const webSocketOuterExpression = (
     const parent = state.parentsByNode.get(current);
     if (
       parent !== undefined &&
-      javaScriptExactResultOperand(parent) === current
+      semanticExactResultOperand(parent, state) === current
     ) {
       current = parent;
       identity = parent;
@@ -222,12 +224,7 @@ const webSocketFinalizerEntrySuspension = (
       finalizerEntries.set(block, node);
       return node;
     }
-    if (
-      readExactJavaScriptLiteral(node).found ||
-      t.isEmptyStatement(node) ||
-      t.isFunctionDeclaration(node)
-    )
-      continue;
+    if (syntaxEvaluationCannotThrow(node)) continue;
     if (t.isExpressionStatement(node)) pending.push(node.expression);
     else if (t.isThrowStatement(node) || t.isReturnStatement(node)) {
       // Abrupt completion discards every later statement, but evaluates its
@@ -272,9 +269,9 @@ const webSocketStaticInitializers = (member: t.Node): readonly t.Node[] =>
 
 /** Children completed in order if this straight-line node completes normally. */
 const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
-  const operands = syntaxUnconditionalOperands(node);
+  const operands =
+    syntaxUnconditionalOperands(node) ?? syntaxEvaluationOperands(node);
   if (operands !== undefined) return operands;
-  if (t.isBlockStatement(node)) return node.body;
   if (t.isLabeledStatement(node)) {
     const prefix: t.Node[] = [];
     for (const statement of t.isBlockStatement(node.body)
@@ -285,47 +282,12 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
     }
     return prefix;
   }
-  if (t.isSwitchCase(node)) return node.consequent;
-  if (t.isExpressionStatement(node)) return [node.expression];
-  if (t.isVariableDeclaration(node)) return node.declarations;
-  if (t.isVariableDeclarator(node))
-    return t.isNode(node.init) ? [node.init, node.id] : [];
-  if (t.isObjectPattern(node)) return node.properties;
-  if (t.isArrayPattern(node))
-    return node.elements.filter((item) => item !== null);
-  if (t.isRestElement(node) || t.isAssignmentPattern(node))
-    return [t.isRestElement(node) ? node.argument : node.left];
-  if (t.isUnaryExpression(node) || t.isUpdateExpression(node))
-    return [node.argument];
-  if (t.isMemberExpression(node))
-    return node.computed ? [node.object, node.property] : [node.object];
-  if (t.isOptionalMemberExpression(node))
-    return node.computed && !javaScriptOptionalOperandsMayBeSkipped(node)
-      ? [node.object, node.property]
-      : [node.object];
+  if (t.isWithStatement(node)) return [node.object, node.body];
   if (t.isClass(node))
     return [
       ...webSocketClassKeys(node),
       ...node.body.body.flatMap(webSocketStaticInitializers),
     ];
-  if (t.isSequenceExpression(node)) return node.expressions;
-  if (t.isTemplateLiteral(node)) return node.expressions;
-  if (t.isTaggedTemplateExpression(node)) return [node.tag, node.quasi];
-  if (t.isArrayExpression(node))
-    return node.elements.filter((element) => element !== null);
-  if (t.isObjectExpression(node)) return node.properties;
-  if (t.isObjectProperty(node))
-    return node.computed ? [node.key, node.value] : [node.value];
-  if (t.isObjectMethod(node)) return node.computed ? [node.key] : [];
-  if (t.isJSXElement(node)) return [node.openingElement, ...node.children];
-  if (t.isJSXFragment(node)) return node.children;
-  if (t.isJSXOpeningElement(node)) return node.attributes;
-  if (t.isJSXAttribute(node)) return node.value == null ? [] : [node.value];
-  if (t.isJSXSpreadAttribute(node)) return [node.argument];
-  if (t.isJSXExpressionContainer(node) || t.isJSXSpreadChild(node))
-    return [node.expression];
-  if (t.isSpreadElement(node)) return [node.argument];
-  if (t.isBinaryExpression(node)) return [node.left, node.right];
   if (t.isSwitchStatement(node)) return [node.discriminant];
   // Every normally completed loop evaluates its initial test, but its body
   // and updates may never execute. A do/while body precedes its first test.
@@ -342,13 +304,6 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
     return [node.init, node.test].filter((element) => element != null);
   if (t.isYieldExpression(node) && node.argument != null)
     return [node.argument];
-  if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
-    return javaScriptOptionalOperandsMayBeSkipped(node)
-      ? [node.callee]
-      : [node.callee, ...node.arguments];
-  if (t.isImportExpression(node))
-    return [node.source, node.options].filter((item) => item != null);
-  if (t.isNewExpression(node)) return [node.callee, ...node.arguments];
   // Conditional/short-circuit branches, nested functions and try/catch do not
   // establish a suspension on every path to the following expression.
   return [];
@@ -541,7 +496,7 @@ const webSocketDecoratedClass = (
   return undefined;
 };
 
-/** A direct next call or for-of iteration resumes its fresh generator. */
+/** Direct iteration and iterable spreads resume a fresh generator in-turn. */
 const webSocketGeneratorResume = (
   invocation: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -549,10 +504,20 @@ const webSocketGeneratorResume = (
   | t.CallExpression
   | t.OptionalCallExpression
   | t.ForOfStatement
+  | t.SpreadElement
   | undefined => {
   const result = webSocketOuterExpression(invocation, state);
   const member = state.parentsByNode.get(result);
   if (t.isForOfStatement(member) && member.right === result) return member;
+  if (t.isSpreadElement(member) && member.argument === result) {
+    const consumer = state.parentsByNode.get(member);
+    if (
+      t.isArrayExpression(consumer) ||
+      t.isCallExpression(consumer) ||
+      t.isNewExpression(consumer)
+    )
+      return member;
+  }
   if (
     (!t.isMemberExpression(member) && !t.isOptionalMemberExpression(member)) ||
     member.object !== result ||
@@ -579,7 +544,8 @@ const webSocketBodyMaySuspend = (body: t.Node): boolean => {
     if (
       t.isAwaitExpression(node) ||
       t.isYieldExpression(node) ||
-      (t.isForOfStatement(node) && node.await)
+      (t.isForOfStatement(node) && node.await) ||
+      (t.isVariableDeclaration(node) && node.kind === "await using")
     ) {
       bodySuspensionFacts.set(body, true);
       return true;
@@ -770,7 +736,8 @@ export const webSocketExecutionContexts = (
       }
       let invocation:
         | ReturnType<typeof webSocketImmediateInvocation>
-        | t.ForOfStatement =
+        | t.ForOfStatement
+        | t.SpreadElement =
         t.isClassMethod(parent) && parent.kind === "constructor"
           ? webSocketClassConstruction(parent, state)
           : webSocketImmediateInvocation(parent, state);
@@ -799,11 +766,12 @@ export const webSocketExecutionContexts = (
         current === parent.body &&
         // Synchronous for-of resumes after every ordinary yield in the same turn.
         !(
-          t.isForOfStatement(invocation) &&
-          !invocation.await &&
           !parent.async &&
-          !webSocketBodyMaySuspend(invocation.left) &&
-          !webSocketBodyMaySuspend(invocation.body)
+          (t.isSpreadElement(invocation) ||
+            (t.isForOfStatement(invocation) &&
+              !invocation.await &&
+              !webSocketBodyMaySuspend(invocation.left) &&
+              !webSocketBodyMaySuspend(invocation.body)))
         )
       ) {
         const continuation = webSocketContinuation(node, parent.body, state);

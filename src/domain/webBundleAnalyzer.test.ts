@@ -2924,3 +2924,228 @@ describe("fresh member reads and synchronous generator consumption", () => {
     },
   );
 });
+
+const completionReviewCases = [
+  {
+    name: "immutable assignment",
+    source:
+      'const holder = 0; new (holder = globalThis.WebSocket)("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    name: "spread generator",
+    source:
+      '[...(function* () { new Socket("wss://example.test/review-latest"); yield 0; })()]; const Socket = globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "caught prefix skips wait",
+    source:
+      '(async () => { const pending = (async () => { await ready; new Socket("wss://example.test/review-latest"); })(); try { null.value; await pending; } catch {} const Socket = globalThis.WebSocket; })();',
+    present: true,
+  },
+  {
+    name: "with body suspension",
+    source:
+      '(async () => { with ({}) { await ready; } new Socket("wss://example.test/review-latest"); })(); const Socket = globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "global self member",
+    source:
+      'new globalThis.globalThis.WebSocket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    name: "computed expression key before value write",
+    source:
+      'const ws = require("ws"); const object = { [new ws.WebSocket("wss://example.test/review-latest")]: (ws.WebSocket = class {}) };',
+    present: true,
+  },
+  {
+    name: "async disposal between yields",
+    source:
+      '(async () => { for (const item of (function* () { yield 0; new Socket("wss://example.test/review-latest"); })()) { await using resource = null; } })(); const Socket = globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "mutable let assignment",
+    source:
+      'let holder; new (holder = globalThis.WebSocket)("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    name: "hoisted var assignment",
+    source:
+      'new (holder = globalThis.WebSocket)("wss://example.test/review-latest"); var holder;',
+    present: true,
+  },
+  {
+    name: "lexical assignment before initialization",
+    source:
+      'new (holder = globalThis.WebSocket)("wss://example.test/review-latest"); let holder;',
+    present: false,
+  },
+  {
+    name: "readonly selected object assignment",
+    source:
+      'const holder = 0; const { WebSocket: Socket } = (holder = globalThis); new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    name: "mutable selected object assignment",
+    source:
+      'let holder; const { WebSocket: Socket } = (holder = globalThis); new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    name: "unproven setter assignment",
+    source:
+      'const holder = { set socket(value) { throw 0; } }; new (holder.socket = globalThis.WebSocket)("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    name: "spread generator after yield",
+    source:
+      '[...(function* () { yield 0; new Socket("wss://example.test/review-latest"); })()]; const Socket = globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "call spread generator",
+    source:
+      'consume(...(function* () { yield 0; new Socket("wss://example.test/review-latest"); })()); const Socket = globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "construct spread generator",
+    source:
+      'new Target(...(function* () { new Socket("wss://example.test/review-latest"); yield 0; })()); const Socket = globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "object spread does not iterate",
+    source:
+      '({...(function* () { new Socket("wss://example.test/review-latest"); yield 0; })()}); const Socket = globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "stored generator after initialization",
+    source:
+      'const iterator = (function* () { yield 0; new Socket("wss://example.test/review-latest"); })(); const Socket = globalThis.WebSocket; [...iterator];',
+    present: true,
+  },
+  {
+    name: "sync disposal does not suspend",
+    source:
+      '(async () => { for (const item of (function* () { yield 0; new Socket("wss://example.test/review-latest"); })()) { using resource = null; } })(); const Socket = globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "async disposal cannot delay first yield",
+    source:
+      '(async () => { for (const item of (function* () { new Socket("wss://example.test/review-latest"); yield 0; })()) { await using resource = null; } })(); const Socket = globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "stored async disposal does not suspend",
+    source:
+      '(async () => { for (const item of (function* () { yield 0; new Socket("wss://example.test/review-latest"); })()) { const later = async () => { await using resource = null; }; } })(); const Socket = globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "with no suspension",
+    source:
+      '(async () => { with ({}) { 0; } new Socket("wss://example.test/review-latest"); })(); const Socket = globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "with stored async function",
+    source:
+      '(async () => { with ({}) { const later = async () => await ready; } new Socket("wss://example.test/review-latest"); })(); const Socket = globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "repeated global self path",
+    source:
+      'new globalThis.globalThis.globalThis.WebSocket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    name: "self path constructor capture",
+    source:
+      'const Socket = globalThis.self.globalThis.WebSocket; new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    name: "shadowed global self path",
+    source:
+      'const globalThis = {globalThis: {WebSocket: class {}}}; new globalThis.globalThis.WebSocket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    name: "overwritten global self path",
+    source:
+      'globalThis.globalThis.WebSocket = class {}; new globalThis.globalThis.WebSocket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    name: "overwritten self reference",
+    source:
+      'globalThis.self = {WebSocket: class {}}; new globalThis.self.WebSocket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    name: "arbitrary global property",
+    source:
+      'new globalThis.custom.WebSocket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    name: "computed key after earlier write",
+    source:
+      'const ws = require("ws"); const object = { [(ws.WebSocket = class {})]: new ws.WebSocket("wss://example.test/review-latest") };',
+    present: false,
+  },
+  {
+    name: "computed key keeps earlier capture",
+    source:
+      'const ws = require("ws"); const Socket = ws.WebSocket; const object = { [new Socket("wss://example.test/review-latest")]: (ws.WebSocket = class {}) };',
+    present: true,
+  },
+  {
+    name: "nonthrowing caught prefix still waits",
+    source:
+      '(async () => { const pending = (async () => { await ready; new Socket("wss://example.test/review-latest"); })(); try { 0; await pending; } catch {} const Socket = globalThis.WebSocket; })();',
+    present: false,
+  },
+  {
+    name: "caught sequence prefix skips wait",
+    source:
+      '(async () => { const pending = (async () => { await ready; new Socket("wss://example.test/review-latest"); })(); try { (null.value, await pending); } catch {} const Socket = globalThis.WebSocket; })();',
+    present: true,
+  },
+  {
+    name: "caught await operand skips wait",
+    source:
+      '(async () => { const pending = (async () => { await ready; new Socket("wss://example.test/review-latest"); })(); try { await (null.value, pending); } catch {} const Socket = globalThis.WebSocket; })();',
+    present: true,
+  },
+  {
+    name: "stored function prefix cannot throw",
+    source:
+      '(async () => { const pending = (async () => { await ready; new Socket("wss://example.test/review-latest"); })(); try { const later = () => null.value; await pending; } catch {} const Socket = globalThis.WebSocket; })();',
+    present: false,
+  },
+];
+
+describe("web bundle completed writes and consumer suspension", () => {
+  it.each(completionReviewCases)(
+    "preserves $name in both consumers",
+    ({ source, present }) => {
+      const expected = present ? ["wss://example.test/review-latest"] : [];
+      expect(
+        socketEndpoints(source).map((items) => items.map((item) => item.value)),
+      ).toEqual([expected, expected]);
+    },
+  );
+});

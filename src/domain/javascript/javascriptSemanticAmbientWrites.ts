@@ -1,8 +1,9 @@
+import { semanticExactResultOperand } from "./javascriptSemanticExpressionResults.js";
 import * as t from "@babel/types";
 
 import {
-  semanticStaticPropertyKey,
   javaScriptExactResultOperand,
+  semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -47,6 +48,7 @@ const globalObjectName = (
 /** Global self references retain object identity, rather than adding a property. */
 const canonicalAmbientPath = (
   path: readonly (string | null)[],
+  onGlobalSelf?: (name: string) => void,
 ): readonly (string | null)[] => {
   // The CommonJS ws constructor is its own WebSocket member. Resolve the
   // written receiver first; the collector then appends the actual replaced key.
@@ -57,8 +59,10 @@ const canonicalAmbientPath = (
   }
   if (path[0] !== "global") return path;
   let firstProperty = 1;
-  while (GLOBAL_OBJECT_NAMES.includes(path[firstProperty] ?? ""))
+  while (GLOBAL_OBJECT_NAMES.includes(path[firstProperty] ?? "")) {
+    onGlobalSelf?.(path[firstProperty] as string);
     firstProperty += 1;
+  }
   return ["global", ...path.slice(firstProperty)];
 };
 
@@ -139,7 +143,9 @@ const createAmbientPathResolver = (
           suffix: path,
           ...(current.readsAtSelf && { readsAtSelf: true }),
         });
-      const exactResult = javaScriptExactResultOperand(root);
+      const exactResult = possibleWrites
+        ? javaScriptExactResultOperand(root, () => true)
+        : semanticExactResultOperand(root, state);
       if (exactResult !== undefined) {
         continueWith(exactResult);
         continue;
@@ -345,15 +351,21 @@ export const isUnmodifiedGlobalReference = (
   if (state.ambientWrites.covers(["global", ...path])) return false;
   const { root, members } = electronMemberPath(callee);
   const selected = [...members, ...projection];
-  const matches = (expected: readonly string[]) =>
-    selected.length === expected.length &&
-    selected.every((key, index) => key === expected[index]);
+  const matches = (expected: readonly string[], actual = selected) =>
+    actual.length === expected.length &&
+    actual.every((key, index) => key === expected[index]);
   if (isUnshadowedGlobal(root, state, path[0]) && matches(path.slice(1)))
     return true;
   const namespace = globalObjectName(root, state);
+  let selfReferencesUnmodified = true;
+  const canonical = canonicalAmbientPath(["global", ...selected], (name) => {
+    if (state.ambientWrites.covers(["global", name]))
+      selfReferencesUnmodified = false;
+  });
   return (
     namespace !== undefined &&
-    matches(path) &&
+    selfReferencesUnmodified &&
+    matches(path, canonical.slice(1)) &&
     !state.ambientWrites.covers(["global", namespace])
   );
 };

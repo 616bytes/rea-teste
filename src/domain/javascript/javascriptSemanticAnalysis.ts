@@ -1789,6 +1789,7 @@ const addBinding = (input: AddBindingInput): void => {
   if (declarationKind !== undefined)
     binding.declarationKinds.add(declarationKind);
   binding.definitions.push({ kind, location: range(definitionNode) });
+  binding.definitionNodes.push(definitionNode);
   if (initializer !== null)
     binding.initializers.push({
       node: initializer,
@@ -1823,6 +1824,7 @@ const createBinding = (
   memberWrites: [],
   escapedPaths: [],
   definitions: [],
+  definitionNodes: [],
   initializers: [],
   referenceInitializers: [],
   directOrigins: [],

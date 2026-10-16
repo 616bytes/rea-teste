@@ -55,6 +55,7 @@ describe("parameter references copied into function body bindings", () => {
         memberWrites: [],
         escapedPaths: [],
         definitions: [],
+        definitionNodes: [],
         initializers: [entry, assigned],
         referenceInitializers: [],
         directOrigins: [],

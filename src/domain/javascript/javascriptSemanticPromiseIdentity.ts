@@ -1,8 +1,8 @@
+import { semanticExactResultOperand } from "./javascriptSemanticExpressionResults.js";
 import * as t from "@babel/types";
 
 import {
   unwrapJavaScriptExpression,
-  javaScriptExactResultOperand,
   semanticDirectFunctionReturn,
 } from "./javascriptAstValues.js";
 import { semanticLiteralInitializerProjection } from "./javascriptSemanticLiteralProjection.js";
@@ -19,12 +19,15 @@ import {
 import { createUnconditionalEvaluationProof } from "./javascriptSymbolicControlFlow.js";
 
 /** A zero-argument literal wrapper can return a promise without allocating one. */
-const directLiteralReturn = (node: t.Node): t.Node | undefined => {
+const directLiteralReturn = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.Node | undefined => {
   if (!t.isCallExpression(node) || node.arguments.length !== 0)
     return undefined;
   let callee = unwrapJavaScriptExpression(node.callee).node;
   for (;;) {
-    const result = javaScriptExactResultOperand(callee);
+    const result = semanticExactResultOperand(callee, state);
     if (result === undefined) break;
     callee = unwrapJavaScriptExpression(result).node;
   }
@@ -56,7 +59,8 @@ export const semanticPromiseResultIdentity = (
   for (;;) {
     node = unwrapJavaScriptExpression(node).node;
     const result =
-      javaScriptExactResultOperand(node) ?? directLiteralReturn(node);
+      semanticExactResultOperand(node, state) ??
+      directLiteralReturn(node, state);
     if (result !== undefined) {
       node = result;
       continue;

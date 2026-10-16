@@ -80,6 +80,57 @@ export const syntaxUnconditionalOperands = (
   return undefined;
 };
 
+/** Evaluation order shared by continuation and caught-prefix proofs. */
+export const syntaxEvaluationOperands = (
+  node: t.Node,
+): readonly t.Node[] | undefined => {
+  if (t.isBlockStatement(node)) return node.body;
+  if (t.isSwitchCase(node)) return node.consequent;
+  if (t.isExpressionStatement(node)) return [node.expression];
+  if (t.isVariableDeclaration(node)) return node.declarations;
+  if (t.isVariableDeclarator(node))
+    return t.isNode(node.init) ? [node.init, node.id] : [];
+  if (t.isObjectPattern(node)) return node.properties;
+  if (t.isArrayPattern(node))
+    return node.elements.filter((item) => item !== null);
+  if (t.isRestElement(node) || t.isAssignmentPattern(node))
+    return [t.isRestElement(node) ? node.argument : node.left];
+  if (t.isUnaryExpression(node) || t.isUpdateExpression(node))
+    return [node.argument];
+  if (t.isMemberExpression(node))
+    return node.computed ? [node.object, node.property] : [node.object];
+  if (t.isOptionalMemberExpression(node))
+    return node.computed && !javaScriptOptionalOperandsMayBeSkipped(node)
+      ? [node.object, node.property]
+      : [node.object];
+  if (t.isSequenceExpression(node)) return node.expressions;
+  if (t.isTemplateLiteral(node)) return node.expressions;
+  if (t.isTaggedTemplateExpression(node)) return [node.tag, node.quasi];
+  if (t.isArrayExpression(node))
+    return node.elements.filter((element) => element !== null);
+  if (t.isObjectExpression(node)) return node.properties;
+  if (t.isObjectProperty(node))
+    return node.computed ? [node.key, node.value] : [node.value];
+  if (t.isObjectMethod(node)) return node.computed ? [node.key] : [];
+  if (t.isJSXElement(node)) return [node.openingElement, ...node.children];
+  if (t.isJSXFragment(node)) return node.children;
+  if (t.isJSXOpeningElement(node)) return node.attributes;
+  if (t.isJSXAttribute(node)) return node.value == null ? [] : [node.value];
+  if (t.isJSXSpreadAttribute(node)) return [node.argument];
+  if (t.isJSXExpressionContainer(node) || t.isJSXSpreadChild(node))
+    return [node.expression];
+  if (t.isSpreadElement(node)) return [node.argument];
+  if (t.isBinaryExpression(node)) return [node.left, node.right];
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
+    return javaScriptOptionalOperandsMayBeSkipped(node)
+      ? [node.callee]
+      : [node.callee, ...node.arguments];
+  if (t.isImportExpression(node))
+    return [node.source, node.options].filter((item) => item != null);
+  if (t.isNewExpression(node)) return [node.callee, ...node.arguments];
+  return undefined;
+};
+
 type SyntaxAbruptCompletion =
   | { readonly kind: "return" | "throw" | "unknown" }
   | { readonly kind: "break" | "continue"; readonly label: string | null };
@@ -251,10 +302,85 @@ export const symbolicDefiniteExit = (
   depth = 0,
 ): boolean => syntaxDefiniteExit(node, depth, false);
 
+const nonthrowingEvaluations = new WeakMap<t.Node, boolean>();
+/** Narrow syntax-only completion proof; reads, calls and disposal remain uncertain. */
+export const syntaxEvaluationCannotThrow = (node: t.Node): boolean => {
+  const cached = nonthrowingEvaluations.get(node);
+  if (cached !== undefined) return cached;
+  let result =
+    readExactJavaScriptLiteral(node).found ||
+    t.isEmptyStatement(node) ||
+    t.isFunctionDeclaration(node) ||
+    t.isFunctionExpression(node) ||
+    t.isArrowFunctionExpression(node);
+  if (
+    !result &&
+    (t.isExpressionStatement(node) ||
+      t.isBlockStatement(node) ||
+      t.isSequenceExpression(node) ||
+      t.isArrayExpression(node) ||
+      (t.isVariableDeclaration(node) &&
+        ["var", "let", "const"].includes(node.kind)) ||
+      (t.isVariableDeclarator(node) && t.isIdentifier(node.id)))
+  ) {
+    const operands = syntaxEvaluationOperands(node);
+    // Binding identifiers do not perform a read during a simple declaration.
+    result = t.isVariableDeclarator(node)
+      ? node.init == null || syntaxEvaluationCannotThrow(node.init)
+      : operands !== undefined && operands.every(syntaxEvaluationCannotThrow);
+  }
+  nonthrowingEvaluations.set(node, result);
+  return result;
+};
+
+/** A catch may resume after an earlier throwing operand without reaching a wait. */
+const createCaughtPrefixBypassProof = (parents: WeakMap<t.Node, t.Node>) => {
+  const prefixes = new WeakMap<t.Node, ReadonlyMap<t.Node, boolean>>();
+  return (node: t.Node): boolean => {
+    let child = node;
+    if (t.isAwaitExpression(child)) {
+      child = child.argument;
+      for (;;) {
+        const selected = javaScriptExactResultOperand(child);
+        if (selected === undefined) break;
+        child = selected;
+      }
+    }
+    let mayThrow = false;
+    for (;;) {
+      const parent = parents.get(child);
+      if (parent === undefined || t.isFunction(parent)) return false;
+      let indexed = prefixes.get(parent);
+      if (indexed === undefined) {
+        const values = new Map<t.Node, boolean>();
+        let throws = false;
+        for (const operand of syntaxUnconditionalOperands(parent) ??
+          syntaxEvaluationOperands(parent) ??
+          []) {
+          values.set(operand, throws);
+          throws ||= !syntaxEvaluationCannotThrow(operand);
+        }
+        indexed = values;
+        prefixes.set(parent, indexed);
+      }
+      mayThrow ||= indexed.get(child) === true;
+      if (
+        t.isTryStatement(parent) &&
+        parent.block === child &&
+        parent.handler != null &&
+        mayThrow
+      )
+        return true;
+      child = parent;
+    }
+  };
+};
+
 /** Prove a syntax-local path is unconditional; unknown branches remain unknown. */
 export const createUnconditionalEvaluationProof = (
   parents: WeakMap<t.Node, t.Node>,
 ): ((node: t.Node, boundary?: t.Node) => boolean) => {
+  const caughtPrefixMayBypass = createCaughtPrefixBypassProof(parents);
   const reachableStatements = new WeakMap<
     t.Program | t.BlockStatement | t.SwitchCase,
     ReadonlySet<t.Node>
@@ -264,6 +390,7 @@ export const createUnconditionalEvaluationProof = (
     return literal.found ? Boolean(literal.value) : undefined;
   };
   return (node, boundary) => {
+    if (caughtPrefixMayBypass(node)) return false;
     let child = node;
     for (;;) {
       if (child === boundary) return true;

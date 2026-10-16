@@ -1,3 +1,4 @@
+import { semanticExactResultOperand } from "./javascriptSemanticExpressionResults.js";
 import * as t from "@babel/types";
 
 import {
@@ -21,12 +22,13 @@ export const semanticLiteralInitializerProjection = (
   state: JavaScriptSemanticAnalysisState,
   onLiteralProjection?: () => void,
 ): JavaScriptSemanticInitializer | undefined => {
+  const exactResult = (node: t.Node) => semanticExactResultOperand(node, state);
   let node = initializer.node;
   let projection = initializer.projection;
   while (projection.length > 0) {
     const key = projection[0];
     if (typeof key !== "string" && typeof key !== "number") return undefined;
-    const container = semanticLiteralContainer(node);
+    const container = semanticLiteralContainer(node, exactResult);
     if (container !== undefined) onLiteralProjection?.();
     if (typeof key === "number" && state.arrayIterationUnknown === true)
       return undefined;
@@ -60,7 +62,7 @@ export const semanticLiteralInitializerProjection = (
       })
     )
       return undefined;
-    const value = semanticLiteralProperty(node, key);
+    const value = semanticLiteralProperty(node, key, exactResult);
     if (value === undefined) break;
     node = value;
     projection = projection.slice(1);

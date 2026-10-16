@@ -679,3 +679,91 @@ it("preserves partial and exact endpoint identity through graph projection", asy
     await rm(root, { recursive: true, force: true });
   }
 });
+
+const completedWriteAndConsumerSources = [
+  {
+    file: "review-0.js",
+    source:
+      'const holder = 0; new (holder = globalThis.WebSocket)("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "review-1.js",
+    source:
+      '[...(function* () { new Socket("wss://example.test/review-latest"); yield 0; })()]; const Socket = globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "review-2.js",
+    source:
+      '(async () => { const pending = (async () => { await ready; new Socket("wss://example.test/review-latest"); })(); try { null.value; await pending; } catch {} const Socket = globalThis.WebSocket; })();',
+    present: true,
+  },
+  {
+    file: "review-3.js",
+    source:
+      '(async () => { with ({}) { await ready; } new Socket("wss://example.test/review-latest"); })(); const Socket = globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "review-4.js",
+    source:
+      'new globalThis.globalThis.WebSocket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "review-5.js",
+    source:
+      'const ws = require("ws"); const object = { [new ws.WebSocket("wss://example.test/review-latest")]: (ws.WebSocket = class {}) };',
+    present: true,
+  },
+  {
+    file: "review-6.js",
+    source:
+      '(async () => { for (const item of (function* () { yield 0; new Socket("wss://example.test/review-latest"); })()) { await using resource = null; } })(); const Socket = globalThis.WebSocket;',
+    present: true,
+  },
+];
+
+it("retains reviewed completion endpoints with filesystem source provenance", async () => {
+  const root = await createTestTempDirectory("rea-reviewed-completion-");
+  for (const { file, source } of completedWriteAndConsumerSources)
+    await writeFile(join(root, file), source);
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const analysis = analyzeJavaScriptArtifactFiles(files);
+    const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
+    const observations = graph.nodes
+      .filter((node) => node.kind === "endpoint")
+      .flatMap((node) => node.observations);
+    expect(observations).toHaveLength(5);
+    for (const { file, present } of completedWriteAndConsumerSources) {
+      const matching = observations.filter(
+        ({ evidence }) =>
+          evidence.location.available &&
+          evidence.location.value.kind === "source-range" &&
+          evidence.location.value.source === file,
+      );
+      expect(matching).toHaveLength(present ? 1 : 0);
+      if (present) {
+        expect(matching[0]?.properties.value).toBe(
+          "wss://example.test/review-latest",
+        );
+        expect(matching[0]?.evidence).toMatchObject({
+          authority: "ast-static-analysis",
+          state: "observed",
+          confidence: "exact",
+          location: {
+            available: true,
+            value: { kind: "source-range", source: file, start: { line: 1 } },
+          },
+        });
+      }
+    }
+  } finally {
+    await reader.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

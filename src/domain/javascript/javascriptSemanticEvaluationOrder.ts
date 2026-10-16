@@ -71,9 +71,10 @@ export const semanticPatternInitializationPrecedesRead = (
   read: t.Node,
   parents: WeakMap<t.Node, t.Node>,
 ): boolean | undefined => {
-  if (t.isVariableDeclarator(parents.get(binding))) return undefined;
+  if (!t.isIdentifier(binding) || t.isVariableDeclarator(parents.get(binding)))
+    return undefined;
   const path = new Map<t.Node, t.Node>();
-  let child = binding;
+  let child: t.Node = binding;
   let declarator: t.VariableDeclarator | undefined;
   for (;;) {
     const parent = parents.get(child);
@@ -81,6 +82,7 @@ export const semanticPatternInitializationPrecedesRead = (
       break;
     path.set(parent, child);
     if (t.isVariableDeclarator(parent)) {
+      if (parent.id !== child) return undefined;
       declarator = parent;
       break;
     }

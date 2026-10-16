@@ -55,6 +55,7 @@ export const unwrapJavaScriptExpression = (
 /** Result identity follows only one syntax-proven selected operand. */
 export const javaScriptExactResultOperand = (
   node: t.Node,
+  assignmentCompletes?: (node: t.AssignmentExpression) => boolean,
 ): t.Node | undefined => {
   node = unwrapJavaScriptExpression(node).node;
   if (t.isSequenceExpression(node)) return node.expressions.at(-1);
@@ -77,7 +78,9 @@ export const javaScriptExactResultOperand = (
           : !left.value;
     return right ? node.right : node.left;
   }
-  return t.isAssignmentExpression(node) && node.operator === "="
+  return t.isAssignmentExpression(node) &&
+    node.operator === "=" &&
+    assignmentCompletes?.(node) === true
     ? node.right
     : undefined;
 };
@@ -252,10 +255,13 @@ export const semanticFinalClassMember = (
 /** Preserve allocation identity through expressions with one exact result. */
 export const semanticLiteralContainer = (
   rawNode: t.Node,
+  exactResult: (
+    node: t.Node,
+  ) => t.Node | undefined = javaScriptExactResultOperand,
 ): t.ObjectExpression | t.ArrayExpression | undefined => {
   let node = unwrapJavaScriptExpression(rawNode).node;
   for (;;) {
-    const result = javaScriptExactResultOperand(node);
+    const result = exactResult(node);
     if (result === undefined) break;
     node = unwrapJavaScriptExpression(result).node;
   }
@@ -268,8 +274,9 @@ export const semanticLiteralContainer = (
 export const semanticLiteralProperty = (
   rawNode: t.Node,
   key: string | number,
+  exactResult?: (node: t.Node) => t.Node | undefined,
 ): t.Node | undefined => {
-  const node = semanticLiteralContainer(rawNode);
+  const node = semanticLiteralContainer(rawNode, exactResult);
   // Numeric projections denote array-pattern iteration, not property lookup.
   // Object patterns retain string keys, including a numeric property's spelling.
   if (typeof key === "number" && !t.isArrayExpression(node)) return undefined;

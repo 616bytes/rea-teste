@@ -85,6 +85,8 @@ export interface JavaScriptSemanticBindingState {
   readonly memberWrites: JavaScriptSemanticMemberEffect[];
   readonly escapedPaths: JavaScriptSemanticMemberEffect[];
   readonly definitions: JavaScriptSemanticDefinition[];
+  /** Declaration syntax retains binding completion independently of its RHS value. */
+  readonly definitionNodes: t.Node[];
   readonly initializers: JavaScriptSemanticInitializer[];
   readonly referenceInitializers: JavaScriptSemanticReferenceInitializer[];
   readonly directOrigins: JavaScriptModuleOrigin[];

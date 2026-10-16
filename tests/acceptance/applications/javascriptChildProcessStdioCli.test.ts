@@ -71,9 +71,15 @@ const cases = [
     0,
   ],
   [
-    'spawn("inline-getter", [], {stdio:"pipe",...{get other(){return input},stdio:"inherit"}})',
+    'spawn("inline-getter", [], {stdio:"ignore",...{get other(){this.stdio="pipe";return 0},stdio:"inherit"}})',
     "inline-getter",
     "dynamic",
+    0,
+  ],
+  [
+    'spawn("inline-helper", [], {stdio:"inherit",...{...{helper(){}}}})',
+    "inline-helper",
+    "inherit",
     0,
   ],
   [

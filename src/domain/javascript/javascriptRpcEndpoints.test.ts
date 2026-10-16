@@ -19,7 +19,7 @@ describe("RPC object property ownership", () => {
     ['url: "/trpc/old", url: runtimeUrl', null],
     ['url: "/trpc/old", ...options', null],
     [
-      'url: "/trpc/old", ...{url:"/trpc/ignored",url:"/trpc/live"}',
+      'url: "/trpc/old", ...{helper(){},url:"/trpc/ignored",url:"/trpc/live"}',
       "/trpc/live",
     ],
     ['url: "/trpc/old", [key]: runtimeUrl', null],

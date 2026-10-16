@@ -149,10 +149,12 @@ export const staticObjectProperty = (
         );
         if (t.isObjectExpression(spread)) {
           const nextDepth = depth + wrappers + 1;
-          // Copying an accessor can run code that changes another source key.
+          // Copying a getter can run code that changes another source key.
           if (
             nextDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT ||
-            spread.properties.some((entry) => t.isObjectMethod(entry))
+            spread.properties.some((entry) =>
+              t.isObjectMethod(entry, { kind: "get" }),
+            )
           )
             return { status: "dynamic" };
           const found = lookup(spread, nextDepth);

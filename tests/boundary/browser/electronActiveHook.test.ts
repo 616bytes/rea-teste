@@ -624,6 +624,150 @@ process.stdout.write(JSON.stringify({
   expect(hooked).toEqual(plain);
 });
 
+it("keeps a replacement registered by a removeListener observer during ipcMain removeAllListeners", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-ipc-replace-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-replacement.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const event = { sender: { id: 9 }, senderFrame: { routingId: 7 } };
+const scenario = (emitter) => {
+  const log = [];
+  const names = new Map();
+  const named = (name) => {
+    const listener = () => { log.push("call:" + name); };
+    names.set(listener, name);
+    return listener;
+  };
+  // A wrapper is labelled by the listener its .listener names.
+  const label = (listener) =>
+    names.get(listener) ??
+    (names.has(listener.listener) ? "wrapper(" + names.get(listener.listener) + ")" : "unknown");
+  const [a, b, c, replacement] = ["a", "b", "c", "replacement"].map(named);
+  let replaced = false;
+  emitter.on("removeListener", (channel, listener) => {
+    if (channel !== "ch") return;
+    log.push("remove:" + label(listener));
+    if (replaced) return;
+    replaced = true;
+    emitter.on("ch", replacement);
+  });
+  emitter.on("ch", a);
+  emitter.once("ch", b);
+  emitter.on("ch", c);
+  const returned = emitter.removeAllListeners("ch");
+  log.push("returns_emitter:" + (returned === emitter));
+  log.push("listeners:" + emitter.listeners("ch").map(label).join(","));
+  emitter.emit("ch", event);
+  emitter.removeAllListeners();
+  log.push("cleared:" + emitter.listenerCount("ch") + ":" + emitter.listenerCount("removeListener"));
+  return log;
+};
+const plain = scenario(new EventEmitter());
+const hooked = scenario(ipcMain);
+const snapshot = globalThis.__reaElectronActiveSnapshot();
+process.stdout.write(JSON.stringify({
+  plain,
+  hooked,
+  // The hooked removeListener observer records its own invocations.
+  invocations: snapshot.events.filter((item) => item.kind === "main-event-invocation" && item.channel === "ch").map((item) => item.channel),
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const { plain, hooked, invocations } = JSON.parse(execution.stdout) as {
+    plain: string[];
+    hooked: string[];
+    invocations: string[];
+  };
+  expect(plain).toEqual([
+    "remove:c",
+    "remove:wrapper(b)",
+    "remove:a",
+    "returns_emitter:true",
+    "listeners:replacement",
+    "call:replacement",
+    "remove:replacement",
+    "cleared:0:0",
+  ]);
+  expect(hooked).toEqual(plain);
+  expect(invocations).toEqual(["ch"]);
+});
+
+it("keeps ipcMain once self-removal through an on decorator that wraps the hook", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-ipc-wrap-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-wrapping-decorator.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const event = { sender: { id: 9 }, senderFrame: { routingId: 7 } };
+// Installed after the hook: wraps each listener and names it via .listener.
+const decorate = (emitter) => {
+  const decoratedOn = emitter.on;
+  emitter.on = function wrappingOn(channel, listener) {
+    const layer = function decoratedListener(...args) {
+      return listener.apply(this, args);
+    };
+    layer.listener = listener;
+    return decoratedOn.call(this, channel, layer);
+  };
+};
+const scenario = (emitter) => {
+  decorate(emitter);
+  let calls = 0;
+  const listener = () => { calls += 1; };
+  const returned = emitter.once("decorated", listener);
+  const registered = emitter.listenerCount("decorated");
+  emitter.emit("decorated", event);
+  const afterFirst = emitter.listenerCount("decorated");
+  emitter.emit("decorated", event);
+  emitter.once("decorated", listener);
+  emitter.emit("decorated", event);
+  return {
+    returns_emitter: returned === emitter,
+    registered,
+    after_first: afterFirst,
+    remaining: emitter.listenerCount("decorated"),
+    raw: emitter.rawListeners("decorated").length,
+    calls,
+  };
+};
+const plain = scenario(new EventEmitter());
+const hooked = scenario(ipcMain);
+const snapshot = globalThis.__reaElectronActiveSnapshot();
+process.stdout.write(JSON.stringify({
+  plain,
+  hooked,
+  invocations: snapshot.events.filter((item) => item.kind === "main-event-invocation").map((item) => item.channel),
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const { plain, hooked, invocations } = JSON.parse(execution.stdout) as {
+    plain: Record<string, unknown>;
+    hooked: Record<string, unknown>;
+    invocations: string[];
+  };
+  expect(plain).toEqual({
+    returns_emitter: true,
+    registered: 1,
+    after_first: 0,
+    remaining: 0,
+    raw: 0,
+    calls: 2,
+  });
+  expect(hooked).toEqual(plain);
+  expect(invocations).toEqual(["decorated", "decorated"]);
+});
+
 it("isolates hook and exercise from ancestor Electron packages", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ancestor-");
   temporary.push(root);

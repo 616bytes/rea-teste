@@ -467,22 +467,25 @@ const installationCoordinates = (
       ? undefined
       : host.readText(applicationPropertiesPath);
   const javaCandidates = (() => {
-    if (options.javaHome === undefined) {
-      return platform === "win32"
-        ? ["java.exe"]
-        : [
-            "java",
-            "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home/bin/java",
-            "/usr/local/opt/openjdk/libexec/openjdk.jdk/Contents/Home/bin/java",
-          ];
+    if (options.javaHome !== undefined) {
+      return [
+        path.join(
+          options.javaHome,
+          "bin",
+          platform === "win32" ? "java.exe" : "java",
+        ),
+      ];
     }
-    return [
-      path.join(
-        options.javaHome,
-        "bin",
-        platform === "win32" ? "java.exe" : "java",
-      ),
-    ];
+    if (platform === "win32") {
+      return ["java.exe"];
+    }
+    // Order Homebrew paths based on the process architecture to prevent Rosetta mismatches
+    const brewOpt = "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home/bin/java";
+    const brewUsrLocal = "/usr/local/opt/openjdk/libexec/openjdk.jdk/Contents/Home/bin/java";
+
+    return architecture === "arm64"
+      ? ["java", brewOpt, brewUsrLocal]
+      : ["java", brewUsrLocal, brewOpt];
   })();
 
   const javaCommand =

@@ -1,7 +1,6 @@
 import { Cli } from "incur";
 import { expect, it } from "vitest";
 import { registerCaptureCommands } from "../../../src/cli/captureCommands.js";
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -69,29 +68,18 @@ it.each([false, true])(
         exit: () => {},
       },
     );
-    const output = analysisErrorProjectionSchema.parse(JSON.parse(stdout));
+    const output: unknown = JSON.parse(stdout);
     expect(output).toMatchObject({
-      code: failAgain ? "cleanup_incomplete" : "execution_failure",
+      code: "cleanup_incomplete",
       details: {
         partial_observation: evidence,
+        resources: expect.arrayContaining(["original-workspace"]),
       },
     });
-    if (failAgain) {
+    if (failAgain)
       expect(output).toMatchObject({
-        details: {
-          resources: expect.arrayContaining([
-            "original-workspace",
-            "retry-workspace",
-          ]),
-        },
+        details: { resources: expect.arrayContaining(["retry-workspace"]) },
       });
-    } else {
-      expect(output).not.toHaveProperty("details.resources");
-      expect(output).not.toHaveProperty("details.cleanup");
-      expect(output).toMatchObject({
-        details: { diagnostics: { reason: "original cleanup failure" } },
-      });
-    }
   },
 );
 

@@ -3,8 +3,8 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, vi } from "vitest";
 
 import type { BrowserScenarioCapturePort } from "../../../src/application/BrowserScenarioCapturePort.js";
-import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
-import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
+import { createBrowserObservationProvider } from "../../../src/composition/browserObservation.js";
+import { createElectronObservationProvider } from "../../../src/composition/electronObservation.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err } from "../../../src/domain/result.js";
@@ -38,11 +38,11 @@ it("keeps the shared browser scenario provider open when the SDK discards its di
     captureScenario,
     close,
   };
-  const browserObservation = new CdpBrowserProvider();
+  const browserObservation = createBrowserObservationProvider();
   const closeBrowser = vi
     .spyOn(browserObservation, "close")
     .mockResolvedValue(undefined);
-  const electronObservation = new CdpElectronProvider();
+  const electronObservation = createElectronObservationProvider();
   const cleanupFailure = new ProviderCleanupError(
     "controlled-electron",
     ["controlled-transport"],
@@ -120,8 +120,13 @@ it("keeps the shared browser scenario provider open when the SDK discards its di
       "rejected",
     ]);
     for (const attempt of attempts) {
-      if (attempt.status === "rejected")
-        expect(attempt.reason).toBe(cleanupFailure);
+      if (attempt.status === "rejected") {
+        expect(attempt.reason).toBeInstanceOf(AggregateError);
+        if (!(attempt.reason instanceof AggregateError))
+          throw new Error("Expected optional provider cleanup aggregate");
+        expect(attempt.reason.errors).toHaveLength(1);
+        expect(attempt.reason.errors[0]).toBe(cleanupFailure);
+      }
     }
     expect(close).toHaveBeenCalledTimes(1);
     expect(closeBrowser).toHaveBeenCalledTimes(1);
@@ -144,7 +149,15 @@ it("closes optional providers when MCP server startup throws", async () => {
   const session = createTestBinarySession(() => {
     throw new Error("Unexpected deep provider");
   });
-  const close = vi.fn(async () => undefined);
+  const scenarioClose = vi.fn(async () => undefined);
+  const browserObservation = createBrowserObservationProvider();
+  const browserClose = vi
+    .spyOn(browserObservation, "close")
+    .mockResolvedValue(undefined);
+  const electronObservation = createElectronObservationProvider();
+  const electronClose = vi
+    .spyOn(electronObservation, "close")
+    .mockResolvedValue(undefined);
   const browserScenarioCapture: BrowserScenarioCapturePort = {
     identity: () => ({
       id: "fake-browser",
@@ -154,7 +167,7 @@ it("closes optional providers when MCP server startup throws", async () => {
     captureScenario: async () => {
       throw new Error("Unexpected scenario capture");
     },
-    close,
+    close: scenarioClose,
   };
   const runtime: RuntimeDependencies = {
     env: {},
@@ -171,11 +184,17 @@ it("closes optional providers when MCP server startup throws", async () => {
       serverLogger: silentLogger,
       environment: runtime.env,
       delivery: new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
-      loadOptionalProviders: async () => ({ browserScenarioCapture }),
+      loadOptionalProviders: async () => ({
+        browserObservation,
+        browserScenarioCapture,
+        electronObservation,
+      }),
     });
 
     expect(transport).toEqual({ ok: false });
-    expect(close).toHaveBeenCalledTimes(1);
+    expect(browserClose).toHaveBeenCalledTimes(1);
+    expect(scenarioClose).toHaveBeenCalledTimes(1);
+    expect(electronClose).toHaveBeenCalledTimes(1);
   } finally {
     await session.close();
   }

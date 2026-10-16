@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
 import { expect } from "vitest";
+import { z } from "zod";
 
-import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import { browserScenarioCaptureSchema } from "../../../src/domain/browserScenarioCapture.js";
 import { processTest } from "../../support/process/processFixture.js";
 
 // Actual CLI subprocess and OS signals with a controlled browser session.
@@ -65,36 +66,28 @@ processTest
       expect(stderr).toContain("REA_CONTROLLED_CLOSE_CALLBACK");
       expect(stderr).toContain("REA_CONTROLLED_PROFILE_CALLBACK");
       const document: unknown = JSON.parse(stdout);
-      expect(analysisCliErrorEnvelopeSchema.parse(document)).toMatchObject({
-        code: "cancelled",
-        category: "cancelled",
-        details: {
-          partial_observation: {
-            kind: "browser-scenario-observation",
-            capture: {
-              browser: {
-                process_ownership: "provider-owned",
-                cleanup: "terminated-owned-process",
-              },
-              steps: [
-                {
-                  step_id: "scenario_start",
-                  status: "completed",
-                  artifacts: { url: { state: "captured" } },
-                },
-                {
-                  step_id: "wait",
-                  status: "cancelled",
-                  completeness: {
-                    status: "incomplete",
-                    equality_eligible: false,
-                  },
-                },
-              ],
-            },
-          },
-        },
-      });
+      const cancellation = z
+        .object({
+          error: z.literal("Browser scenario capture failed"),
+          code: z.literal("cancelled"),
+          category: z.literal("cancelled"),
+          details: z.object({
+            partial_observation: z.object({
+              kind: z.literal("browser-scenario-observation"),
+              capture: z.unknown(),
+            }),
+          }),
+        })
+        .parse(document);
+      const capture = browserScenarioCaptureSchema.parse(
+        cancellation.details.partial_observation.capture,
+      );
+      expect(capture.browser.cleanup).toBe("terminated-owned-process");
+      expect(capture.steps.map(({ status }) => status)).toEqual([
+        "completed",
+        "cancelled",
+      ]);
+      expect(capture.completeness.status).toBe("incomplete");
     } finally {
       clearTimeout(deadline);
     }

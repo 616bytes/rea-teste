@@ -8,6 +8,7 @@ import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
+import { cliIntegerArgument } from "./options.js";
 
 /** Register commands that control an already-running Cutter instance. */
 export const registerCutterCommands = (
@@ -22,8 +23,11 @@ export const registerCutterCommands = (
       "List live Cutter instances connected through the REA Python plugin bridge",
     args: z.object({}),
     run: () =>
-      logCliCommand(logger, CLI_COMMANDS.listCutterSessions, () =>
-        cutter.listSessions(),
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.listCutterSessions, async () => {
+          const result = await cutter.listSessions({ signal });
+          return result.ok ? result.value : projectAnalysisError(result.error);
+        }),
       ),
   });
   cli.command(CLI_COMMANDS.cutterCommand, {
@@ -33,11 +37,9 @@ export const registerCutterCommands = (
         .string()
         .uuid()
         .describe("Session ID copied from list-cutter-sessions."),
-      expectedGeneration: z.coerce
-        .number()
-        .int()
-        .nonnegative()
-        .describe("Session generation returned by list-cutter-sessions."),
+      expectedGeneration: cliIntegerArgument(0).describe(
+        "Session generation returned by list-cutter-sessions.",
+      ),
       command: z
         .string()
         .min(1)

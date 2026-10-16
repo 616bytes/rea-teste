@@ -880,6 +880,65 @@ process.stdout.write(JSON.stringify({ plain: scenario(new EventEmitter()), hooke
   expect(hooked).toEqual(plain);
 });
 
+it.each(["single-on", "multiple-on", "empty-once", "event-once"])(
+  "preserves native callable method reads during %s dispatch",
+  async (mode) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-hook-ipc-dispatch-",
+    );
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const script = join(root, "ipc-native-dispatch.cjs");
+    await writeFile(
+      script,
+      `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const mode = ${JSON.stringify(mode)};
+const scenario = (emitter) => {
+  const calls = [];
+  const reads = [];
+  const listener = new Proxy(function() { calls.push("first"); }, {
+    get(target, key, receiver) {
+      if (key === "apply" || key === "call") {
+        reads.push(key);
+        throw new Error("application invocation metadata");
+      }
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  if (mode.endsWith("once")) emitter.once("ch", listener);
+  else emitter.on("ch", listener);
+  if (mode === "multiple-on") emitter.on("ch", () => calls.push("second"));
+  let failure = null;
+  try {
+    if (mode === "empty-once") emitter.emit("ch");
+    else emitter.emit("ch", { sender: { id: 9 } });
+  } catch (cause) { failure = cause.message; }
+  return { calls, reads, failure, remaining: emitter.listenerCount("ch") };
+};
+console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain) }));
+`,
+    );
+    const execution = await runNode(script, root);
+    expect(execution.code, execution.stderr).toBe(0);
+    const { plain, hooked } = JSON.parse(execution.stdout) as {
+      plain: Record<string, unknown>;
+      hooked: Record<string, unknown>;
+    };
+    expect(plain).toEqual({
+      calls: mode === "multiple-on" ? ["first", "second"] : [],
+      reads:
+        mode === "multiple-on"
+          ? []
+          : [mode === "empty-once" ? "call" : "apply"],
+      failure:
+        mode === "multiple-on" ? null : "application invocation metadata",
+      remaining: mode === "multiple-on" ? 2 : mode === "single-on" ? 1 : 0,
+    });
+    expect(hooked).toEqual(plain);
+  },
+);
+
 it("invokes handle callbacks without reading callable method properties", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-callable-");
   temporary.push(root);

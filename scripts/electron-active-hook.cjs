@@ -346,7 +346,13 @@ const recordInvocation = (kind, channel, event, args) =>
     error: false,
   });
 
-const invokeObservedEventListener = (thisArg, channel, listener, args) => {
+const invokeObservedEventListener = (
+  thisArg,
+  channel,
+  listener,
+  args,
+  nativeMethod,
+) => {
   const recorded = recordInvocation(
     "main-event-invocation",
     channel,
@@ -354,7 +360,9 @@ const invokeObservedEventListener = (thisArg, channel, listener, args) => {
     args.slice(1),
   );
   try {
-    return listener.apply(thisArg, args);
+    if (nativeMethod === "call") return listener.call(thisArg);
+    if (nativeMethod === "apply") return listener.apply(thisArg, args);
+    return applyFunction(listener, thisArg, args);
   } catch (cause) {
     if (recorded !== null) recorded.error = true;
     throw cause;
@@ -434,6 +442,22 @@ const patchIpcMain = (ipcMain) => {
     const wrapped = function wrappedEventListener(...args) {
       return invokeObservedEventListener(this, channel, listener, args);
     };
+    // Native single-listener dispatch reads .apply; array dispatch invokes the
+    // function directly. Let Node select that path without inspecting or
+    // copying the emitter's listener storage, including during reentrant emits.
+    Object.defineProperty(wrapped, "apply", {
+      configurable: true,
+      writable: true,
+      value: function nativeApply(thisArg, args) {
+        return invokeObservedEventListener(
+          thisArg,
+          channel,
+          listener,
+          args,
+          "apply",
+        );
+      },
+    });
     wrapped.listener = listener;
     hookListenerRemovalTargets.set(wrapped, listener);
     return on.call(this, channel, wrapped);
@@ -450,7 +474,13 @@ const patchIpcMain = (ipcMain) => {
         if (fired) return undefined;
         target.removeListener(channel, wrapped);
         fired = true;
-        return invokeObservedEventListener(target, channel, listener, args);
+        return invokeObservedEventListener(
+          target,
+          channel,
+          listener,
+          args,
+          args.length === 0 ? "call" : "apply",
+        );
       };
       wrapped.listener = listener;
       hookListenerRemovalTargets.set(wrapped, wrapped);

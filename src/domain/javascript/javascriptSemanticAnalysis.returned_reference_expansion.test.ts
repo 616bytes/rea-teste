@@ -1,7 +1,20 @@
+import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
 import { onlyBinding } from "./javascriptSemanticAnalysis.fixture.js";
+import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+
+const indexed = (source: string) => {
+  const parsed = parseJavaScriptSource(source, "web.js");
+  if (parsed === null) throw new Error("Expected valid fixture");
+  const steps = indexJavaScriptBindingsSteps(parsed.program);
+  let step = steps.next();
+  while (step.done !== true) step = steps.next();
+  return { program: parsed.program, state: step.value };
+};
 
 const reassignmentWebSource = (count: number) => {
   const bindings = ["t", "e", "a", "n", "r"];
@@ -63,4 +76,70 @@ it("resolves returned references within the expansion budget", () => {
     status: "literal",
     value: 42,
   });
+});
+
+it("returns the selected callable's result expressions below the budget", () => {
+  const { program, state } = indexed(`
+    const shared = { value: 1 };
+    function source() { return shared; }
+    function choose(flag) { return flag ? source : source; }
+    choose(true);
+  `);
+  const call = program.body[3];
+  if (!t.isExpressionStatement(call) || !t.isCallExpression(call.expression))
+    throw new Error("Missing choose call");
+  const references = createSemanticReturnedReferences(state)(
+    call.expression.callee,
+  );
+  expect([...state.valueResourceLimits]).toEqual([]);
+  expect(references).toHaveLength(1);
+  expect(t.isConditionalExpression(references[0]?.node)).toBe(true);
+});
+
+it("keeps references proven before the budget cuts off a reassignment web", () => {
+  const bindings = ["t", "e", "a", "n", "r"];
+  const keys = [
+    "child",
+    "sibling",
+    "return",
+    "memoizedState",
+    "pendingProps",
+    "stateNode",
+  ];
+  const arms = Array.from({ length: 24 }, (_, index) => {
+    const target = bindings[index % bindings.length];
+    const source = bindings[(index + 1) % bindings.length];
+    const key = keys[index % keys.length];
+    return `case ${index}: ${target} = ${source}.${key}; break;`;
+  }).join("\n");
+  const { program, state } = indexed(`
+    const marker = { value: 1 };
+    function direct() { return marker; }
+    function run(t, e, a, n, r, flag) {
+      switch (t.tag) {
+        ${arms}
+      }
+      const d = t.deletions;
+      const f = flag ? direct : d.push;
+      f();
+    }
+    run(fiber, e0, a0, n0, r0, true);
+  `);
+  const run = program.body[2];
+  if (!t.isFunctionDeclaration(run)) throw new Error("Missing run function");
+  const call = run.body.body.at(-1);
+  if (!t.isExpressionStatement(call) || !t.isCallExpression(call.expression))
+    throw new Error("Missing f() call");
+  const references = createSemanticReturnedReferences(state)(
+    call.expression.callee,
+  );
+  expect([...state.valueResourceLimits]).toEqual([
+    "returned-reference-expansion",
+  ]);
+  expect(
+    references.some(
+      (reference) =>
+        t.isIdentifier(reference.node) && reference.node.name === "marker",
+    ),
+  ).toBe(true);
 });

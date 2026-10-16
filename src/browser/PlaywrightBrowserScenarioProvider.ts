@@ -325,12 +325,7 @@ const runScenario = async (
         ],
       }),
     });
-  const cancellationWasCapturedInStep = steps.some(
-    ({ status, error }) =>
-      status === "cancelled" &&
-      error !== "not executed after an earlier action failure",
-  );
-  if (options.signal?.aborted && !cancellationWasCapturedInStep)
+  if (options.signal?.aborted)
     throw new AnalysisCancelledError(OPERATION, {
       cause: options.signal?.reason,
       partialObservation: {

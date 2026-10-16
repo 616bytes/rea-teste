@@ -703,8 +703,22 @@ describe("PlaywrightBrowserScenarioProvider request cancellation", () => {
     const result = await provider.captureScenario(scenario(), {
       signal: controller.signal,
     });
-    if (!result.ok) throw result.error;
-    expect(result.value.steps[1]?.status).toBe("cancelled");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cancelled",
+      details: {
+        partial_observation: {
+          kind: "browser-scenario-observation",
+          capture: {
+            steps: [
+              expect.anything(),
+              expect.objectContaining({ status: "cancelled" }),
+            ],
+          },
+        },
+      },
+    });
     expect(session.closeCalls).toBe(1);
   });
 });

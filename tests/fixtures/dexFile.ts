@@ -86,9 +86,10 @@ const STRINGS = ["Foo.java", "run", "x", "Lcom/example/Foo;", "I", "V"];
 /**
  * One class `Lcom/example/Foo;` (source `Foo.java`) with one static method
  * `run` `(I)V` whose code_item carries a debug_info_item with one parameter
- * name (`x`, seeded as an implicit local) and one line position.
+ * name (`x`, seeded as an implicit local) and one line position, plus
+ * `extraPositions` more (a long stream whose decode spans many work slices).
  */
-export const debuggableDex = (): Uint8Array => {
+export const debuggableDex = (extraPositions = 0): Uint8Array => {
   const d = new DexBuilder();
   for (let i = 0; i < 112; i += 1) d.u1(0); // header placeholder
   const stringDataOff = STRINGS.map((s) => {
@@ -112,7 +113,9 @@ export const debuggableDex = (): Uint8Array => {
   d.u2(0).u2(0).u4(1);
   const debugInfoOff = d.at();
   d.uleb(10).uleb(1).ulebp1(2); // line_start 10, 1 param, name "x"
-  d.u1(0x0e).u1(0x00); // special emit (position at line 10), END_SEQUENCE
+  d.u1(0x0e); // special emit (position at line 10)
+  for (let i = 0; i < extraPositions; i += 1) d.u1(0x0e);
+  d.u1(0x00); // END_SEQUENCE
   // code_item: registers 1, ins 1, outs 0, tries 0, debug_info_off, insns 4
   const codeOff = d.at();
   d.u2(1).u2(1).u2(0).u2(0).u4(debugInfoOff).u4(4);

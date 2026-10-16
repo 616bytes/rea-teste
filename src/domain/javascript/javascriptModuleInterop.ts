@@ -17,7 +17,6 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import {
   electronMemberPath,
-  intrinsicInvocationMemberPath,
   javaScriptIdentityWriteOffset,
   type JavaScriptIdentityWriteKind,
   type JavaScriptIntrinsicInvocation,
@@ -460,6 +459,7 @@ export const createSemanticModuleInterop = (
   // transitively with a cycle guard.
   const capturedInvocationMember = (
     node: t.Node,
+    depth = 0,
   ): CapturedInvocationMember | undefined => {
     const visited = new Set<string>();
     let current = unwrapJavaScriptExpression(node).node;
@@ -470,7 +470,6 @@ export const createSemanticModuleInterop = (
       if (
         binding === undefined ||
         initializer === undefined ||
-        initializer.projection.length !== 0 ||
         (initializer.node.end ?? Infinity) >= (current.start ?? -1) ||
         visited.has(binding.bindingId)
       )
@@ -485,27 +484,55 @@ export const createSemanticModuleInterop = (
         if (tail === undefined) return undefined;
         next = unwrapJavaScriptExpression(tail).node;
       }
-      if (t.isIdentifier(next)) {
+      if (t.isIdentifier(next) && initializer.projection.length === 0) {
         current = next;
         continue;
       }
-      if (!t.isMemberExpression(next) && !t.isOptionalMemberExpression(next))
-        return undefined;
-      const key = semanticStaticPropertyKey(next.property, next.computed);
-      if (key !== "call" && key !== "apply" && key !== "bind") return undefined;
+      // A destructured capture stores the projected member directly:
+      // `const {call: invoke} = change` binds invoke to change.call.
+      let owner: t.Node;
+      let key: "call" | "apply" | "bind" | null;
+      let at: t.Node;
+      if (initializer.projection.length === 0) {
+        if (!t.isMemberExpression(next) && !t.isOptionalMemberExpression(next))
+          return undefined;
+        const rawKey = semanticStaticPropertyKey(next.property, next.computed);
+        key =
+          rawKey === "call" || rawKey === "apply" || rawKey === "bind"
+            ? rawKey
+            : null;
+        owner = next.object;
+        at = next;
+      } else {
+        if (initializer.projection.length !== 1) return undefined;
+        const [projected] = initializer.projection;
+        key =
+          projected === "call" || projected === "apply" || projected === "bind"
+            ? projected
+            : null;
+        owner = next;
+        at = initializer.node;
+      }
+      if (key === null) return undefined;
       // The canonical Function.prototype member identity holds only while
       // the owner is a provable callable: an alias of `custom.call` on
-      // application data does not hold the intrinsic member at all.
-      const ownerPath =
-        intrinsicPath(next.object) ?? boundIntrinsic(next.object)?.path;
+      // application data does not hold the intrinsic member at all. A
+      // captured member is itself provable — `outer = invoke.call` reads the
+      // member from the function `invoke` already stores.
+      let ownerPath = intrinsicPath(owner) ?? boundIntrinsic(owner)?.path;
+      if (ownerPath === undefined && depth < 4) {
+        const capturedOwner = capturedInvocationMember(owner, depth + 1);
+        if (capturedOwner !== undefined && capturedOwner.replaced !== true)
+          ownerPath = ["intrinsic", "Function", "prototype", capturedOwner.key];
+      }
       if (ownerPath === undefined) return undefined;
       // A provable owner whose slot was overwritten before the read stores an
       // unknown replacement in `invoke` — recognized member shape, unknown
       // callable. The call must stay opaque rather than effect-free.
       const ownerMemberPath = [...ownerPath, key];
-      if (intrinsicReadChanged(next, ownerMemberPath))
+      if (intrinsicReadChanged(at, ownerMemberPath))
         return { replaced: true, path: ownerMemberPath };
-      return { member: next };
+      return { owner, key, at };
     }
   };
 
@@ -518,7 +545,7 @@ export const createSemanticModuleInterop = (
   ): readonly string[] | undefined => {
     const captured = capturedInvocationMember(node);
     return captured !== undefined && captured.replaced !== true
-      ? intrinsicInvocationMemberPath(captured.member)
+      ? ["intrinsic", "Function", "prototype", captured.key]
       : undefined;
   };
 

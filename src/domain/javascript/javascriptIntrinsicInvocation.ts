@@ -1,9 +1,6 @@
 import * as t from "@babel/types";
 
-import {
-  intrinsicInvocationMemberPath,
-  type JavaScriptIntrinsicInvocation,
-} from "./javascriptElectronMemberWrites.js";
+import type { JavaScriptIntrinsicInvocation } from "./javascriptElectronMemberWrites.js";
 import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
@@ -67,16 +64,18 @@ const invocationArguments = (
       : arguments_?.slice(1);
 
 /**
- * The callee can name a captured invocation member in three ways: `member`
- * holds the intact read for the canonical identity; `replaced` means the
- * member shape is recognized on a provable callable but its owner slot was
- * overwritten before capture — the stored value is unknown, not the
- * intrinsic; `undefined` means the alias does not reference such a member
- * at all.
+ * The callee can name a captured invocation member in three ways: `owner` +
+ * `key` describe the intact read (`at` marks its position for read-timing
+ * checks); `replaced` means the member shape is recognized on a provable
+ * callable but its owner slot was overwritten before capture — the stored
+ * value is unknown, not the intrinsic; `undefined` means the alias does not
+ * reference such a member at all.
  */
 export type CapturedInvocationMember =
   | {
-      readonly member: t.MemberExpression | t.OptionalMemberExpression;
+      readonly owner: t.Node;
+      readonly key: "call" | "apply" | "bind";
+      readonly at: t.Node;
       readonly replaced?: false;
     }
   | { readonly replaced: true; readonly path: readonly string[] };
@@ -94,6 +93,13 @@ export const resolveJavaScriptIntrinsicInvocation = (
 ): JavaScriptIntrinsicInvocation | undefined => {
   const visited = new Set<t.Node>();
   let callee: t.Node = node.callee;
+  // A captured member substituted in as the callee behaves like a member
+  // read `callee.<key>` — e.g. `invoke` aliasing `change.call` names
+  // Function.prototype.call. The view survives unwrapping and sequence
+  // peeling; `at` keeps the capture-time position for read checks.
+  let virtualMember:
+    | { readonly key: "call" | "apply" | "bind"; readonly at: t.Node }
+    | undefined;
   let arguments_: JavaScriptIntrinsicInvocation["arguments"] =
     expandJavaScriptInvocationArguments(node.arguments);
   let receiver: t.Node | undefined;
@@ -112,100 +118,119 @@ export const resolveJavaScriptIntrinsicInvocation = (
     }
     if (visited.has(callee)) return undefined;
     visited.add(callee);
+    const virtual = virtualMember;
+    virtualMember = undefined;
     let path = intrinsicPath(callee);
     if (path !== undefined && intrinsicReadChanged(callee, path))
       return { kind: "opaque", path, arguments: undefined };
     if (path === undefined) {
-      if (
-        t.isMemberExpression(callee) ||
-        t.isOptionalMemberExpression(callee)
-      ) {
-        const method = semanticStaticPropertyKey(
-          callee.property,
-          callee.computed,
-        );
-        if (method === "call" || method === "apply") {
-          const bound = boundIntrinsic(callee.object);
-          // An alias can capture an invocation member read, as in
-          // `const invoke = change.call` — its stored value is the member's
-          // function. Follow the captured read before giving up on a callable.
-          const captured: CapturedInvocationMember | undefined =
-            bound === undefined ? memberRead?.(callee.object) : undefined;
-          if (bound === undefined && captured === undefined) return undefined;
-          // A recognized member whose owner slot was overwritten before
-          // capture holds an unknown replacement: the call is neither the
-          // intrinsic nor effect-free.
-          if (captured !== undefined && captured.replaced === true)
-            return {
-              kind: "opaque",
-              path: captured.path,
-              arguments: undefined,
-            };
-          const member:
-            | t.MemberExpression
-            | t.OptionalMemberExpression
-            | undefined = captured?.member;
-          const memberPath: readonly string[] | undefined =
-            member === undefined
-              ? undefined
-              : intrinsicInvocationMemberPath(member);
-          if (explicitReceiver && !t.isExpression(receiver))
-            return {
-              kind: "opaque",
-              path: bound?.path ?? memberPath ?? ["intrinsic"],
-              arguments: undefined,
-            };
-          if (
-            bound !== undefined &&
-            intrinsicReadChanged(callee, [...bound.path, method])
-          )
-            return { kind: "opaque", path: bound.path, arguments: undefined };
-          if (
-            member !== undefined &&
-            memberPath !== undefined &&
-            intrinsicReadChanged(member, memberPath)
-          )
-            return { kind: "opaque", path: memberPath, arguments: undefined };
-          // The alias froze the member's value at its initializer, but the
-          // callee reads the member again now: `invoke.call` resolves a new
-          // slot on the captured function. A replaced outer member is not
-          // the intrinsic, so this call cannot claim a confirmed write.
-          const callSitePath: readonly string[] | undefined =
-            memberPath === undefined ? undefined : [...memberPath, method];
-          if (
-            member !== undefined &&
-            callSitePath !== undefined &&
-            intrinsicReadChanged(callee, callSitePath)
-          )
-            return { kind: "opaque", path: callSitePath, arguments: undefined };
-          // Function.prototype.call/apply uses the outer explicit receiver
-          // as its callable, even when the member was read from a bound value.
-          const callable: t.Node | undefined = explicitReceiver
-            ? receiver
-            : (member ?? callee.object);
+      const memberObject: t.Node | undefined =
+        virtual !== undefined
+          ? callee
+          : t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
+            ? callee.object
+            : undefined;
+      const method =
+        virtual !== undefined
+          ? virtual.key
+          : t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
+            ? semanticStaticPropertyKey(callee.property, callee.computed)
+            : undefined;
+      const memberAt = virtual === undefined ? callee : virtual.at;
+      if (virtual !== undefined && method === "bind") return undefined;
+      if (method === "call" || method === "apply") {
+        const bound: JavaScriptIntrinsicInvocation | undefined =
+          memberObject === undefined ? undefined : boundIntrinsic(memberObject);
+        // An alias can capture an invocation member read, as in
+        // `const invoke = change.call` — its stored value is the member's
+        // function. Follow the captured read before giving up on a callable.
+        const captured: CapturedInvocationMember | undefined =
+          bound === undefined && memberObject !== undefined
+            ? memberRead?.(memberObject)
+            : undefined;
+        if (bound === undefined && captured === undefined) return undefined;
+        // A recognized member whose owner slot was overwritten before
+        // capture holds an unknown replacement: the call is neither the
+        // intrinsic nor effect-free.
+        if (captured !== undefined && captured.replaced === true)
+          return {
+            kind: "opaque",
+            path: captured.path,
+            arguments: undefined,
+          };
+        const memberPath: readonly string[] | undefined =
+          captured === undefined
+            ? undefined
+            : ["intrinsic", "Function", "prototype", captured.key];
+        if (explicitReceiver && !t.isExpression(receiver))
+          return {
+            kind: "opaque",
+            path: bound?.path ?? memberPath ?? ["intrinsic"],
+            arguments: undefined,
+          };
+        if (
+          bound !== undefined &&
+          intrinsicReadChanged(memberAt, [...bound.path, method])
+        )
+          return { kind: "opaque", path: bound.path, arguments: undefined };
+        if (
+          captured !== undefined &&
+          memberPath !== undefined &&
+          intrinsicReadChanged(captured.at, memberPath)
+        )
+          return { kind: "opaque", path: memberPath, arguments: undefined };
+        // The alias froze the member's value at its initializer, but the
+        // callee reads the member again now: `invoke.call` resolves a new
+        // slot on the captured function. A replaced outer member is not
+        // the intrinsic, so this call cannot claim a confirmed write.
+        const callSitePath: readonly string[] | undefined =
+          memberPath === undefined ? undefined : [...memberPath, method];
+        if (
+          captured !== undefined &&
+          callSitePath !== undefined &&
+          intrinsicReadChanged(callee, callSitePath)
+        )
+          return { kind: "opaque", path: callSitePath, arguments: undefined };
+        // Function.prototype.call/apply uses the outer explicit receiver
+        // as its callable, even when the member was read from a bound value.
+        // A captured alias substitutes the member itself — `invoke.call`
+        // names `owner.call.call` — modeled by viewing the owner as a
+        // virtual member for one more call level.
+        const callable: t.Node | undefined = explicitReceiver
+          ? receiver
+          : memberObject;
+        if (captured !== undefined) {
+          callee = captured.owner;
+          virtualMember = { key: captured.key, at: captured.at };
+        } else {
           if (!t.isExpression(callable)) return undefined;
-          receiver = arguments_?.[0];
-          explicitReceiver = true;
           callee = callable;
-          arguments_ = invocationArguments(method, arguments_);
-          continue;
         }
+        receiver = arguments_?.[0];
+        explicitReceiver = true;
+        arguments_ = invocationArguments(method, arguments_);
+        continue;
       }
       const bound = boundIntrinsic(callee);
       if (bound === undefined) {
         // `Reflect.apply(invoke, target, args)` replaces the callee with the
         // bare identifier: it names the captured member itself, not a read
-        // on it. Only an explicit receiver can make that stored value
-        // callable, so a bare `invoke(...)` still resolves to nothing.
-        // Rewriting the callee to the captured member lets the call/apply
-        // branch resolve it like `invoke.call(target, ...)`.
-        const captured: CapturedInvocationMember | undefined = explicitReceiver
-          ? memberRead?.(callee)
-          : undefined;
+        // on it, and only an explicit receiver makes it callable. A bare
+        // `invoke(...)` still invokes the stored member function — with no
+        // receiver its effect is unknown, not absent.
+        const captured: CapturedInvocationMember | undefined =
+          memberRead?.(callee);
         if (captured === undefined) return undefined;
         if (captured.replaced === true)
           return { kind: "opaque", path: captured.path, arguments: undefined };
-        callee = captured.member;
+        if (!explicitReceiver)
+          return {
+            kind: "opaque",
+            path: ["intrinsic", "Function", "prototype", captured.key],
+            arguments: undefined,
+          };
+        callee = captured.owner;
+        virtualMember = { key: captured.key, at: captured.at };
         continue;
       }
       if (bound.kind === "opaque") return bound;

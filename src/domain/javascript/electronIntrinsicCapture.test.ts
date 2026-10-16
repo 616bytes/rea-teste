@@ -514,7 +514,61 @@ describe("captured invocation member identity", () => {
     );
     expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
   });
+});
 
+describe("extended captured invocation member resolution", () => {
+  it("keeps a bare call of a replaced captured member opaque", () => {
+    // `invoke` stores the replacement arrow — `invoke()` runs it, so the
+    // call has an unknown effect, not no effect at all.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      change.call = () => { Object.create = customCreate; };
+      const invoke = change.call;
+      invoke();`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({ kind: "opaque" }),
+    );
+    expect(writes).toContainEqual(["intrinsic"]);
+  });
+
+  it("follows a destructured captured-member alias", () => {
+    // `const {call: invoke} = change` stores the projected member read —
+    // invoke is Function.prototype.call, so the call writes Object.create.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const {call: invoke} = change;
+      invoke.call(change,null,{value:customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("follows a captured member through a nested owner read", () => {
+    // `outer = invoke.call` reads .call off the captured FP.call — the
+    // chain still resolves to the bound defineProperty write.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const invoke = change.call;
+      const outer = invoke.call;
+      outer.call(invoke, change, null, {value: customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+});
+
+describe("captured invocation member identity", () => {
   it("follows a copied captured-member alias", () => {
     // `copy` is a second stable alias of the captured member; the call still
     // reaches the bound defineProperty and must keep its write.

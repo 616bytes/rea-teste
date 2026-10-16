@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { decodeBase64 } from "./CdpCaptureEventHelpers.js";
+import { base64DecodedLength, decodeBase64 } from "./CdpCaptureEventHelpers.js";
 
 describe("decodeBase64", () => {
   it.each(["", "QQ==", "QUI=", "QUJD", "QUJDRA=="])(
     "decodes canonical base64 %j",
     (value) => {
       expect(decodeBase64(value)).toEqual(Buffer.from(value, "base64"));
+      expect(base64DecodedLength(value)).toBe(
+        Buffer.from(value, "base64").byteLength,
+      );
     },
   );
 
@@ -21,6 +24,7 @@ describe("decodeBase64", () => {
     "QUJDR===",
   ])("rejects non-canonical base64 %j", (value) => {
     expect(decodeBase64(value)).toBeUndefined();
+    expect(base64DecodedLength(value)).toBeUndefined();
   });
 
   it("validates a large payload without exhausting the stack", () => {

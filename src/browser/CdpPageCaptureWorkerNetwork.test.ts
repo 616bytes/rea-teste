@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
@@ -937,5 +937,67 @@ describe("CDP worker network metadata and JSON shapes", () => {
         },
       ]),
     );
+  });
+
+  it("sizes base64 bodies from their text without decoding rejected ones", async () => {
+    const { workers } = await admitted({ includeJsonBodyShapes: true });
+    workers.ingest(requested("worker-0", "fits"));
+    workers.ingest(requested("worker-0", "oversized"));
+    const fits = Buffer.alloc(
+      CDP_WORKER_NETWORK_LIMITS.responseBytes - 1,
+    ).toString("base64");
+    const oversized = Buffer.alloc(2).toString("base64");
+    const decode = vi.spyOn(Buffer, "from");
+    try {
+      expect(
+        workers.admitsResponseBody("fits", { body: fits, base64Encoded: true }),
+      ).toBe(true);
+      expect(
+        workers.admitsResponseBody("oversized", {
+          body: oversized,
+          base64Encoded: true,
+        }),
+      ).toBe(false);
+      expect(
+        // Buffer.from is overloaded; the spy types only its first signature.
+        (decode.mock.calls as readonly (readonly unknown[])[]).filter(
+          (call) => call[1] === "base64",
+        ),
+      ).toEqual([]);
+    } finally {
+      decode.mockRestore();
+    }
+  });
+
+  it("releases a worker attachment that omits its target ID", async () => {
+    const { events, sent, workers } = observation();
+    await workers.start();
+    workers.ingest({
+      sessionId: "page-session",
+      method: "Target.attachedToTarget",
+      params: {
+        sessionId: "anonymous",
+        targetInfo: { type: "worker", url: `${origin}/w.js` },
+        waitingForDebugger: false,
+      },
+    });
+    await workers.settle();
+
+    expect(sent).not.toContainEqual(
+      expect.objectContaining({
+        method: "Network.enable",
+        sessionId: "anonymous",
+      }),
+    );
+    expect(sent).toContainEqual({
+      method: "Target.detachFromTarget",
+      params: { sessionId: "anonymous" },
+      sessionId: "page-session",
+    });
+    expect(events.completeness.snapshot().excluded).toContainEqual({
+      section: "network_requests",
+      reason: "invalid_protocol_value",
+      count: null,
+    });
   });
 });

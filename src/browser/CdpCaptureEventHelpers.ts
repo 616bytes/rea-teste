@@ -117,7 +117,15 @@ export const consolePrimitive = (
 // exhausted the stack on payloads of several megabytes.
 const BASE64 = /^[A-Za-z\d+/]*={0,2}$/u;
 
+const isCanonicalBase64 = (value: string): boolean =>
+  value.length % 4 === 0 && BASE64.test(value);
+
 export const decodeBase64 = (value: string): Buffer | undefined =>
-  value.length % 4 === 0 && BASE64.test(value)
-    ? Buffer.from(value, "base64")
+  isCanonicalBase64(value) ? Buffer.from(value, "base64") : undefined;
+
+/** Decoded byte length of canonical base64, computed without decoding it. */
+export const base64DecodedLength = (value: string): number | undefined =>
+  isCanonicalBase64(value)
+    ? (value.length / 4) * 3 -
+      (value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0)
     : undefined;

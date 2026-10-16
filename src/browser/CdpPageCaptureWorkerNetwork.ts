@@ -8,7 +8,7 @@ import {
 } from "./CdpCaptureEventHandlers.js";
 import { updateResponseBodyShape } from "./CdpCaptureEventBodyShapes.js";
 import {
-  decodeBase64,
+  base64DecodedLength,
   initiatorLocation,
   isJsonContentType,
   isJsonMediaType,
@@ -348,8 +348,9 @@ export class CdpWorkerNetworkObservation {
     const base64Encoded = response?.base64Encoded;
     // A malformed envelope retains no shape; the body parser classifies it.
     if (body === undefined || typeof base64Encoded !== "boolean") return true;
+    // Size base64 from its text so rejected bodies are never decoded.
     const bytes = base64Encoded
-      ? decodeBase64(body)?.byteLength
+      ? base64DecodedLength(body)
       : Buffer.byteLength(body);
     if (bytes === undefined) return true;
     if (
@@ -475,11 +476,15 @@ export class CdpWorkerNetworkObservation {
     const sessionId = cdpStringValue(params?.sessionId);
     const targetInfo = recordValue(params?.targetInfo);
     const type = cdpStringValue(targetInfo?.type);
+    // The target ID ties a worker to its pre-attach state, so it is required.
+    const targetId = cdpStringValue(targetInfo?.targetId);
     if (
       sessionId === undefined ||
       sessionId.length === 0 ||
       targetInfo === undefined ||
-      type === undefined
+      type === undefined ||
+      targetId === undefined ||
+      targetId.length === 0
     ) {
       this.#workerTrafficOmitted("invalid_protocol_value");
       // Chrome created the child session even if it described it badly.
@@ -511,8 +516,7 @@ export class CdpWorkerNetworkObservation {
     this.#admittedWorkers += 1;
     const detach = new AbortController();
     this.#workerSessions.set(sessionId, detach);
-    const targetId = cdpStringValue(targetInfo.targetId);
-    if (targetId !== undefined) this.#targetsBySession.set(sessionId, targetId);
+    this.#targetsBySession.set(sessionId, targetId);
     if (
       parentSessionId !== undefined &&
       this.#workerSessions.has(parentSessionId)

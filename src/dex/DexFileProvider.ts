@@ -79,6 +79,12 @@ interface MemberSource {
 const TRAILING_BYTES_NOTE =
   "Bytes after a DEX's declared file_size are never read: ART on Android 15+ ignores them, while Android 14 and earlier reject such a DEX.";
 
+/** The members to analyse and the canonical ones Android would not auto-load. */
+interface DexMemberSelection {
+  readonly members: readonly { entry: string; member: ArtifactEntry }[];
+  readonly skipped: readonly string[];
+}
+
 type MemberFindings = (
   | { readonly mode: "summary"; readonly members: DexSummaryMember[] }
   | {
@@ -160,7 +166,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
           : this.#inspectLooseDex(input.path, input, options);
       });
     } catch (cause: unknown) {
-      return err(dexFileFailure(cause, input.path));
+      return err(dexFileFailure(cause, input.path, options?.signal));
     }
   }
 
@@ -251,7 +257,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
         );
         if (!selected.ok) return err(selected.error);
         const findings = await this.#analyse(
-          selected.value.map(({ entry, member }) => ({
+          selected.value.members.map(({ entry, member }) => ({
             entry,
             label: `${path}!${entry}`,
             load: () =>
@@ -264,6 +270,11 @@ export class DexFileProvider implements DexDebugMetadataPort {
           })),
           input,
           options?.signal,
+          selected.value.skipped.length === 0
+            ? []
+            : [
+                `${path} also holds ${selected.value.skipped.join(", ")}, which Android does not auto-load because an earlier classesN.dex is missing; select ${selected.value.skipped.length === 1 ? "it" : "one"} with entry.`,
+              ],
         );
         if (!findings.ok) return findings;
         const digest = await hashStableRootArtifactHandle(
@@ -296,9 +307,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
     entry: string | undefined,
     path: string,
     signal: AbortSignal | undefined,
-  ): Promise<
-    Result<{ entry: string; member: ArtifactEntry }[], AnalysisError>
-  > {
+  ): Promise<Result<DexMemberSelection, AnalysisError>> {
     const requested =
       entry === undefined ? undefined : normalizeArchiveMemberPath(entry);
     // Only members this call may open are kept (the reader retains ~8 KB of
@@ -328,7 +337,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
     for await (const member of reader.entries(signal, { retain: keep }))
       void member;
     if (requested !== undefined)
-      return this.#resolveRequested(
+      return this.#resolveRequestedSelection(
         candidates,
         requested,
         path,
@@ -339,6 +348,15 @@ export class DexFileProvider implements DexDebugMetadataPort {
     const sequence = autoLoadedDexMembers(candidates.map(({ entry }) => entry));
     const loadOrder = new Map(sequence.map((name, index) => [name, index]));
     const matches = candidates.filter(({ entry }) => loadOrder.has(entry));
+    // Canonical members after a gap are never auto-loaded; name them so their
+    // absence from the summary is not mistaken for absence from the archive.
+    const skipped = [
+      ...new Set(
+        candidates
+          .map(({ entry }) => entry)
+          .filter((entry) => !loadOrder.has(entry)),
+      ),
+    ];
     // Every root member is promised, so one that cannot be read is refused,
     // never silently skipped (that would turn unknown into absent).
     const encrypted = matches.filter((m) => m.member.encrypted);
@@ -389,7 +407,24 @@ export class DexFileProvider implements DexDebugMetadataPort {
     matches.sort(
       (a, b) => (loadOrder.get(a.entry) ?? 0) - (loadOrder.get(b.entry) ?? 0),
     );
-    return ok(matches);
+    return ok({ members: matches, skipped });
+  }
+
+  #resolveRequestedSelection(
+    matches: readonly { entry: string; member: ArtifactEntry }[],
+    requested: string,
+    path: string,
+    occurrences: number,
+  ): Result<DexMemberSelection, AnalysisError> {
+    const resolved = this.#resolveRequested(
+      matches,
+      requested,
+      path,
+      occurrences,
+    );
+    return resolved.ok
+      ? ok({ members: resolved.value, skipped: [] })
+      : resolved;
   }
 
   #resolveRequested(
@@ -430,11 +465,12 @@ export class DexFileProvider implements DexDebugMetadataPort {
     sources: readonly MemberSource[],
     input: InspectDexDebugMetadataInput,
     signal: AbortSignal | undefined,
+    selectionFacts: readonly string[] = [],
   ): Promise<Result<MemberFindings, AnalysisError>> {
     const cancelled = (): boolean => signal?.aborted === true;
     const summaries: DexSummaryMember[] = [];
     const found: { entry: string | null; detail: DexClassDetail }[] = [];
-    const limitations: string[] = [];
+    const limitations: string[] = [...selectionFacts];
     for (const source of sources) {
       if (signal?.aborted) return err(new AnalysisCancelledError(OPERATION));
       const loaded = await source.load();
@@ -445,7 +481,8 @@ export class DexFileProvider implements DexDebugMetadataPort {
       // size) stays over the selected bytes.
       const buffer = parsed.value.framed;
       if (parsed.value.trailingBytes > 0) {
-        if (limitations.length === 0) limitations.push(TRAILING_BYTES_NOTE);
+        if (!limitations.includes(TRAILING_BYTES_NOTE))
+          limitations.push(TRAILING_BYTES_NOTE);
         limitations.push(
           `${source.label} has ${String(parsed.value.trailingBytes)} bytes after its declared file_size; they were not read.`,
         );

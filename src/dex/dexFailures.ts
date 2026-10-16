@@ -1,4 +1,10 @@
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactFileCleanupFailure,
+  bindArtifactFileCleanup,
+} from "../artifacts/ArtifactFileOperation.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
@@ -91,7 +97,49 @@ export const mapDexParseError = (
 };
 
 /** Preserve lifecycle failures and distinguish cancellation, access, integrity and limits. */
-export const dexFileFailure = (cause: unknown, path: string): AnalysisError => {
+export const dexFileFailure = (
+  cause: unknown,
+  path: string,
+  signal?: AbortSignal,
+): AnalysisError => {
+  // A failed descriptor close keeps the read's primary failure (or
+  // cancellation) and binds its cleanup lease, so close() retries it.
+  const error =
+    cause instanceof ArtifactFileCleanupFailure &&
+    cause.fileCleanupFailure.outcome.kind === "failed"
+      ? withCleanupFacts(
+          primaryFileFailure(cause.fileCleanupFailure.outcome.cause, path),
+          cause,
+        )
+      : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
+        ? withCleanupFacts(
+            new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+            cause,
+          )
+        : primaryFileFailure(cause, path);
+  bindArtifactFileCleanup(cause, error);
+  return error;
+};
+
+/** Attach a failed close as a cleanup fact to a primary failure. */
+const withCleanupFacts = (
+  primary: AnalysisError,
+  cause: ArtifactReaderFailure,
+): AnalysisError =>
+  cause.cleanup === undefined
+    ? primary
+    : analysisErrorWithCleanupFailure(
+        primary,
+        new ProviderCleanupError(
+          DEX_PROVIDER_IDENTITY.id,
+          cause.cleanup.resources,
+          { reason: cause.cleanup.reason },
+          { cause, operation: OPERATION },
+        ),
+        OPERATION,
+      );
+
+const primaryFileFailure = (cause: unknown, path: string): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   const cleanup =
     cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined

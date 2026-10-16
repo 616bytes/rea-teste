@@ -4,7 +4,7 @@ Branch `feat/dex-debug-metadata-standalone`, from `main`; independent of #3586.
 
 ## Domain + adapter (landed)
 
-- 30 unit/adapter tests: `dexFile` framing (header/version 035/037-040; 036/041/
+- 76 unit/adapter tests (DEX domain, provider, failure mapping and modified UTF-8): `dexFile` framing (header/version 035/037-040; 036/041/
   cdex/reverse-endian refusals; LEB128; `class_defs` and `class_data` bounds),
   `dexDebugInfo` state machine (parameter seeding, SET_FILE, RESTART, implicit
   end, run-to-`insns_size`, malformed), shared `modifiedUtf8` (C0 80, CESU-8),
@@ -29,9 +29,10 @@ the dex exercises summarize-all and entry selection and a missing-entry input
 error. All through the built CLI and the stdio MCP in Evidence parity, advertised
 schema validated. 14 cases; skips cleanly without the SDK.
 
-Real APKs via the CLI: `retro-probe.apk` (debug) → 11 members, readiness
-`present`; the robokiller R8 release → readiness `stripped`, 0 locals, lines
-kept — the debug-vs-release signal.
+Real APKs via the CLI: `retro-probe.apk` (debug) → 11 members, 8 `present` and
+3 `stripped` (members holding only stripped library code); the robokiller R8
+release → 4 members, all `stripped`, explicit locals 0 while lines are kept —
+the debug-vs-release signal.
 
 ## Independent (Fable) review — resolved (landed)
 

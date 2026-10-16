@@ -275,6 +275,25 @@ describe("DexFileProvider APK selection", () => {
     );
   });
 
+  it("names canonical members Android would not auto-load after a gap", async () => {
+    const result = await provider.inspect({
+      path: await write(
+        "gap.apk",
+        await buildApk([
+          { name: "classes.dex", bytes: minimalDex() },
+          { name: "classes3.dex", bytes: minimalDex() },
+        ]),
+      ),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const r = result.value.result as { members: { entry: string }[] };
+    expect(r.members.map((m) => m.entry)).toEqual(["classes.dex"]);
+    expect(result.value.limitations.join(" ")).toContain(
+      "also holds classes3.dex",
+    );
+  });
+
   it("selects one dex member by entry", async () => {
     const apk = await write(
       "one.apk",

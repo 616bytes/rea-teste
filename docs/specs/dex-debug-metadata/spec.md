@@ -22,7 +22,7 @@ reverse-endian or unsupported/withdrawn versions (036, 041) are refused.
 
 Two output modes, because a DEX holds thousands of classes:
 
-- **summary** (default; one per root `classes*.dex` in an archive): per-member
+- **summary** (default; one per member Android auto-loads from an archive): per-member
   `dex_version`, `class_count`, method tallies, `line_positions`,
   `local_declarations`, `set_file_events`, `source_file_present`,
   `distinct_source_files` (count + bounded sample), and a derived `readiness`
@@ -42,8 +42,10 @@ a guarantee. Line positions may be R8-renumbered synthetic lines needing
 `mapping.txt`; a single `distinct_source_files` value signals
 `-renamesourcefileattribute`.
 
-In an archive the requested member is selected explicitly by `entry`, or every
-root `classes*.dex` is summarized; a duplicate member, or a `class_descriptor`
+In an archive the requested member is selected explicitly by `entry`, or the
+members Android auto-loads are summarized (`classes.dex`, `classes2.dex`, … by
+exact stored name, up to the first missing one; canonical members after a gap
+are named in `limitations`); a duplicate member, or a `class_descriptor`
 present in more than one member, is refused as ambiguous rather than guessed.
 
 ## Authority and overlap

@@ -223,23 +223,46 @@ const pageCoverage = (
   };
 };
 
+type SectionStatus =
+  | { readonly status: "observed" }
+  | { readonly status: "unknown" }
+  | {
+      readonly status: "partial";
+      readonly limitations: readonly (
+        | "truncated"
+        | "policy-filtered"
+        | "attach-limited"
+      )[];
+    };
+
 const sectionStatus = (
   inspection: WebPageInspection,
   section: "dom" | "accessibility",
-): "observed" | "partial" | "unknown" => {
+): SectionStatus => {
   if (inspection.completeness.unavailable_sections.includes(section))
-    return "unknown";
-  if (inspection.completeness.truncated_sections.includes(section))
-    return "partial";
-  return "observed";
+    return { status: "unknown" };
+  const limitations = [
+    ...(inspection.completeness.truncated_sections.includes(section)
+      ? (["truncated"] as const)
+      : []),
+    ...(inspection.completeness.policy_filtered_sections.includes(section)
+      ? (["policy-filtered"] as const)
+      : []),
+    ...(inspection.completeness.attach_limited_sections.includes(section)
+      ? (["attach-limited"] as const)
+      : []),
+  ];
+  return limitations.length === 0
+    ? { status: "observed" }
+    : { status: "partial", limitations };
 };
 
 const sectionReason = (
   section: "dom" | "accessibility",
-  status: "partial" | "unknown",
+  status: Exclude<SectionStatus, { readonly status: "observed" }>,
 ): string =>
-  status === "partial"
-    ? `The retained ${section} observation is truncated; consult the source Evidence coverage.`
+  status.status === "partial"
+    ? `The retained ${section} observation is ${status.limitations.join(" and ")}; consult the source Evidence coverage.`
     : `The ${section} observation is unavailable in the source Evidence; an empty inventory would be misleading.`;
 
 const projectState = (
@@ -249,9 +272,9 @@ const projectState = (
   const { inspection } = source;
   const domStatus = sectionStatus(inspection, "dom");
   const dom =
-    domStatus === "unknown"
+    domStatus.status === "unknown"
       ? { status: "unknown" as const, reason: sectionReason("dom", domStatus) }
-      : domStatus === "partial"
+      : domStatus.status === "partial"
         ? {
             status: "partial" as const,
             total_nodes: inspection.dom.total_nodes,
@@ -282,12 +305,12 @@ const projectState = (
       }),
     );
   const accessibility =
-    accessibilityStatus === "unknown"
+    accessibilityStatus.status === "unknown"
       ? {
           status: "unknown" as const,
           reason: sectionReason("accessibility", accessibilityStatus),
         }
-      : accessibilityStatus === "partial"
+      : accessibilityStatus.status === "partial"
         ? {
             status: "partial" as const,
             total_nodes: inspection.accessibility.total_nodes,

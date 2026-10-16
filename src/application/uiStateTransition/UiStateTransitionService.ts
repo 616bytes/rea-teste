@@ -32,6 +32,12 @@ import type { ExecutionOptions } from "../AnalysisProvider.js";
 
 const OPERATION = "derive_ui_state_transition";
 
+/** A derived transition together with the exact resolved Evidence it cites. */
+export interface UiStateTransitionDerivation {
+  readonly evidence: Evidence;
+  readonly sources: readonly Evidence[];
+}
+
 const inputError = (
   issues: readonly AnalysisInputIssue[],
 ): AnalysisInputError => new AnalysisInputError(OPERATION, undefined, issues);
@@ -160,12 +166,15 @@ const relatedEvidence = (
   confidence: evidence.confidence,
 });
 
-/** Derive one read-only UI state pair from completed browser Evidence. */
-export const deriveUiStateTransition = (
+const deriveUiStateTransitionFromInput = <T>(
   rawInput: unknown,
-  lookup?: EvidenceLookup,
-  options: ExecutionOptions = {},
-): Result<Evidence, AnalysisError> => {
+  lookup: EvidenceLookup | undefined,
+  options: ExecutionOptions,
+  derive: (
+    input: UiStateTransitionInput,
+    lookup?: EvidenceLookup,
+  ) => Result<T, AnalysisError>,
+): Result<T, AnalysisError> => {
   if (options.signal?.aborted)
     return err(new AnalysisCancelledError(OPERATION));
   const parsed = uiStateTransitionInputSchema.safeParse(rawInput);
@@ -175,17 +184,52 @@ export const deriveUiStateTransition = (
         cause: parsed.error,
       }),
     );
-  const result = deriveUiStateTransitionValidated(parsed.data, lookup);
+  const result = derive(parsed.data, lookup);
   return result.ok && options.signal?.aborted
     ? err(new AnalysisCancelledError(OPERATION))
     : result;
 };
+
+/** Derive one read-only UI state pair from completed browser Evidence. */
+export const deriveUiStateTransition = (
+  rawInput: unknown,
+  lookup?: EvidenceLookup,
+  options: ExecutionOptions = {},
+): Result<Evidence, AnalysisError> =>
+  deriveUiStateTransitionFromInput(
+    rawInput,
+    lookup,
+    options,
+    deriveUiStateTransitionValidated,
+  );
+
+/** Resolve one transition and retain its exact source records for a session adapter. */
+export const deriveUiStateTransitionWithSources = (
+  rawInput: unknown,
+  lookup?: EvidenceLookup,
+  options: ExecutionOptions = {},
+): Result<UiStateTransitionDerivation, AnalysisError> =>
+  deriveUiStateTransitionFromInput(
+    rawInput,
+    lookup,
+    options,
+    deriveUiStateTransitionValidatedWithSources,
+  );
 
 /** Execute the pure projection after the public contract owns input parsing. */
 export const deriveUiStateTransitionValidated = (
   input: UiStateTransitionInput,
   lookup?: EvidenceLookup,
 ): Result<Evidence, AnalysisError> => {
+  const result = deriveUiStateTransitionValidatedWithSources(input, lookup);
+  return result.ok ? ok(result.value.evidence) : err(result.error);
+};
+
+/** Execute one validated projection and preserve its resolved source records. */
+export const deriveUiStateTransitionValidatedWithSources = (
+  input: UiStateTransitionInput,
+  lookup?: EvidenceLookup,
+): Result<UiStateTransitionDerivation, AnalysisError> => {
   const beforeEvidence = resolveEvidence(input.before, lookup, "before");
   if (!beforeEvidence.ok) return beforeEvidence;
   const afterEvidence = resolveEvidence(input.after, lookup, "after");
@@ -206,6 +250,7 @@ export const deriveUiStateTransitionValidated = (
   }
   const related: UiStateTransitionRelatedEvidence[] = [];
   const relatedEvidenceIds: string[] = [];
+  const relatedSources: Evidence[] = [];
   for (const [index, source] of input.related_evidence.entries()) {
     const resolved = resolveEvidence(
       source,
@@ -215,6 +260,7 @@ export const deriveUiStateTransitionValidated = (
     if (!resolved.ok) return resolved;
     related.push(relatedEvidence(resolved.value));
     relatedEvidenceIds.push(resolved.value.evidence_id);
+    relatedSources.push(resolved.value);
   }
   const result = projectUiStateTransition({
     action: input.action,
@@ -230,25 +276,32 @@ export const deriveUiStateTransitionValidated = (
     ...(sessionEvidence === undefined ? [] : [sessionEvidence.evidence_id]),
     ...relatedEvidenceIds,
   ].sort();
-  return ok(
-    createEvidence(undefined, UI_STATE_TRANSITION_PROVIDER, {
-      predicateType: "rea.ui-state-transition",
-      operation: OPERATION,
-      parameters: {
-        action: input.action,
-        before_evidence_id: beforeEvidence.value.evidence_id,
-        after_evidence_id: afterEvidence.value.evidence_id,
-        ...(sessionEvidence === undefined
-          ? {}
-          : { session_evidence_id: sessionEvidence.evidence_id }),
-        related_evidence_ids: [...new Set(relatedEvidenceIds)].sort(),
-        selection: input.selection,
-      },
-      result: jsonValueSchema.parse(result),
-      confidence: "derived",
-      authority: "analyst-inference",
-      limitations: result.limitations,
-      evidenceLinks: [...new Set(evidenceLinks)],
-    }),
-  );
+  const evidence = createEvidence(undefined, UI_STATE_TRANSITION_PROVIDER, {
+    predicateType: "rea.ui-state-transition",
+    operation: OPERATION,
+    parameters: {
+      action: input.action,
+      before_evidence_id: beforeEvidence.value.evidence_id,
+      after_evidence_id: afterEvidence.value.evidence_id,
+      ...(sessionEvidence === undefined
+        ? {}
+        : { session_evidence_id: sessionEvidence.evidence_id }),
+      related_evidence_ids: [...new Set(relatedEvidenceIds)].sort(),
+      selection: input.selection,
+    },
+    result: jsonValueSchema.parse(result),
+    confidence: "derived",
+    authority: "analyst-inference",
+    limitations: result.limitations,
+    evidenceLinks: [...new Set(evidenceLinks)],
+  });
+  return ok({
+    evidence,
+    sources: [
+      beforeEvidence.value,
+      afterEvidence.value,
+      ...(sessionEvidence === undefined ? [] : [sessionEvidence]),
+      ...relatedSources,
+    ],
+  });
 };

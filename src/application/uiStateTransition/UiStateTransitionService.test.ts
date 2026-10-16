@@ -137,7 +137,11 @@ describe("deriveUiStateTransition", () => {
     );
     expect(projected).toMatchObject({
       after: {
-        accessibility: { status: "unknown" },
+        accessibility: {
+          status: "unknown",
+          reason:
+            "The accessibility observation is unavailable in the source Evidence; an empty inventory would be misleading.",
+        },
       },
       transition: {
         target_continuity: { status: "unknown" },
@@ -147,6 +151,62 @@ describe("deriveUiStateTransition", () => {
     expect(JSON.stringify(projected.after.accessibility)).not.toContain(
       '"items":[]',
     );
+  });
+
+  it("labels policy-filtered, attach-limited, and truncated sections with their actual limits", () => {
+    const complete = uiPageInspection();
+    const before = uiPageEvidence(
+      uiPageInspection({
+        completeness: {
+          ...complete.completeness,
+          status: "policy_filtered",
+          conditions: ["attach_limited", "policy_filtered"],
+          policy_filtered_sections: ["dom"],
+          attach_limited_sections: ["accessibility"],
+        },
+      }),
+    );
+    const after = uiPageEvidence(
+      uiPageInspection({
+        completeness: {
+          ...complete.completeness,
+          status: "truncated",
+          conditions: ["truncated"],
+          truncated_sections: ["dom", "accessibility"],
+        },
+      }),
+    );
+    const result = deriveUiStateTransition({ before, after, action });
+    if (!result.ok) throw result.error;
+    const projected = uiStateTransitionResultSchema.parse(
+      result.value.normalized_result,
+    );
+    expect(projected).toMatchObject({
+      before: {
+        dom: {
+          status: "partial",
+          reason:
+            "The retained dom observation is policy-filtered; consult the source Evidence coverage.",
+        },
+        accessibility: {
+          status: "partial",
+          reason:
+            "The retained accessibility observation is attach-limited; consult the source Evidence coverage.",
+        },
+      },
+      after: {
+        dom: {
+          status: "partial",
+          reason:
+            "The retained dom observation is truncated; consult the source Evidence coverage.",
+        },
+        accessibility: {
+          status: "partial",
+          reason:
+            "The retained accessibility observation is truncated; consult the source Evidence coverage.",
+        },
+      },
+    });
   });
 
   it("has retained and inline parity and rejects an unrelated Evidence operation", () => {

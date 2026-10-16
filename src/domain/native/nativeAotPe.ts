@@ -1174,15 +1174,16 @@ const discoverTables = (
   candidates.include(objectRoot);
   // Each candidate joins once: its base type and interfaces are resolved
   // through indexes, so the cost grows with candidates rather than their square.
-  const queue = new Uint32Array(candidates.count);
-  if (
-    !candidates.indexByRelated() ||
-    !budget.reserveWorkingMemory(queue.byteLength)
-  )
-    truncated = true;
+  const indexed =
+    candidates.indexByRelated() &&
+    budget.reserveWorkingMemory(
+      candidates.count * Uint32Array.BYTES_PER_ELEMENT,
+    );
+  if (!indexed) truncated = true;
+  const queue = new Uint32Array(indexed ? candidates.count : 0);
   let head = 0;
   let tail = 0;
-  queue[tail++] = objectRoot;
+  if (indexed) queue[tail++] = objectRoot;
   const enqueue = (index: number): void => {
     if (candidates.isIncluded(index)) return;
     candidates.include(index);

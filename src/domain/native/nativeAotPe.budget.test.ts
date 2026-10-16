@@ -81,6 +81,46 @@ describe("NativeAOT work budget scaling", () => {
   });
 });
 
+describe("NativeAOT base-type closure", () => {
+  const imageBase = 0x140000000n;
+  const rva = (value: number): bigint => imageBase + BigInt(value);
+  // Extra tables sit at 0x2400 + 0x20 * n in .rdata, which starts at file offset 0x600.
+  const fileOffset = (index: number): number => 0x600 + 0x400 + index * 0x20;
+  const tableRva = (index: number): bigint => rva(0x2400 + index * 0x20);
+
+  it("includes ancestors listed after descendants and tables reachable only through an interface", () => {
+    const bytes = nativeAotPeFixture(9, 1, 5);
+    const object = rva(0x2200);
+    const relate = (index: number, related: bigint): void => {
+      bytes.writeBigUInt64LE(related, fileOffset(index) + 8);
+    };
+    // Descending addresses: 0 -> 1 -> 2 -> object, each a child of the next.
+    relate(2, object);
+    relate(1, tableRva(2));
+    relate(0, tableRva(1));
+    // Table 3 hangs under table 4, which nothing in the object tree reaches.
+    relate(3, tableRva(4));
+    relate(4, 0n);
+    // Table 2 reaches table 3 only through its interface slot.
+    bytes.writeUInt16LE(1, fileOffset(2) + 18);
+    bytes.writeBigUInt64LE(tableRva(3), fileOffset(2) + 24);
+    const report = parseNativeAotPe(
+      bytes,
+      nativeAotPeDigest(bytes),
+      REPORT_BUDGET,
+    ).summary;
+    expect(report.status).toBe("complete");
+    // object, its two fixture children, tables 0-2, and table 3 through the interface.
+    expect(report.method_tables).toBe(7);
+    expect(report.types.map((type) => type.address)).toContain(
+      `0x${tableRva(3).toString(16)}`,
+    );
+    expect(report.types.map((type) => type.address)).not.toContain(
+      `0x${tableRva(4).toString(16)}`,
+    );
+  });
+});
+
 describe("NativeAOT parser report admission", () => {
   it("never returns an over-budget report from early exits", () => {
     const bytes = nativeAotPeFixture();

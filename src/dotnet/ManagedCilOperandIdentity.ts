@@ -41,7 +41,7 @@ const USER_STRING = 0x70;
 /** Separates a kind tag, which never holds NUL, from the framed parts. */
 const KIND_SEPARATOR = Buffer.from([0]);
 
-/** Retained bookkeeping for one remembered token identity. */
+/** Retained bookkeeping for one remembered token identity or blob digest. */
 const CACHED_IDENTITY_BYTES = 128;
 
 /**
@@ -72,20 +72,20 @@ interface IdentitySources {
   readonly signatureTypeName: SignatureTypeName;
 }
 
+type RowCursor = ReturnType<typeof metadataRowCursor>;
+
+/** The grammar a blob decodes with. */
+type BlobForm = "type" | "instantiation" | "signature";
+
 interface IdentityContext extends IdentitySources {
   /** The cached lookup, for tokens that name other tokens. */
   readonly identity: CilOperandIdentity;
+  /**
+   * The resolved digest of the blob the cursor's next column names, decoded
+   * once per heap index and form because many rows can share one blob.
+   */
+  readonly resolvedBlob: (cursor: RowCursor, form: BlobForm) => Buffer | null;
 }
-
-type RowCursor = ReturnType<typeof metadataRowCursor>;
-
-const blobColumn = (context: IdentityContext, cursor: RowCursor): Buffer =>
-  readMetadataBlob(
-    context.bytes,
-    context.layout,
-    cursor.readIndex(context.layout.blobIndexSize),
-    context.layout.blob.size,
-  );
 
 const stringColumn = (context: IdentityContext, cursor: RowCursor): string =>
   readMetadataString(
@@ -117,19 +117,9 @@ const typeSpecIdentity = (
   context: IdentityContext,
   row: number,
 ): Buffer | null => {
-  const cursor = metadataRowCursor(
-    context.bytes,
-    context.layout,
-    TYPE_SPEC,
-    row,
-  );
-  const spec = digestBytes(
-    resolvedSpecSha256(
-      context.layout,
-      blobColumn(context, cursor),
-      "type",
-      context.signatureTypeName,
-    ),
+  const spec = context.resolvedBlob(
+    metadataRowCursor(context.bytes, context.layout, TYPE_SPEC, row),
+    "type",
   );
   return spec === null ? null : framed("typespec", spec);
 };
@@ -155,13 +145,7 @@ const definitionIdentity = (
   }
   cursor.readUInt16();
   const name = stringColumn(context, cursor);
-  const signature = digestBytes(
-    resolvedSignatureSha256(
-      context.layout,
-      blobColumn(context, cursor),
-      context.signatureTypeName,
-    ),
-  );
+  const signature = context.resolvedBlob(cursor, "signature");
   return signature === null ? null : framed("member", parent, name, signature);
 };
 
@@ -204,14 +188,7 @@ const methodSpecIdentity = (
     [METHOD_DEF, MEMBER_REF],
     context.layout.rowCounts,
   );
-  const instantiation = digestBytes(
-    resolvedSpecSha256(
-      context.layout,
-      blobColumn(context, cursor),
-      "instantiation",
-      context.signatureTypeName,
-    ),
-  );
+  const instantiation = context.resolvedBlob(cursor, "instantiation");
   const generic =
     method === null ? null : context.identity(tokenNumber(method));
   return generic === null || instantiation === null
@@ -223,15 +200,9 @@ const standAloneSigIdentity = (
   context: IdentityContext,
   row: number,
 ): Buffer | null => {
-  const signature = digestBytes(
-    resolvedSignatureSha256(
-      context.layout,
-      blobColumn(
-        context,
-        metadataRowCursor(context.bytes, context.layout, STAND_ALONE_SIG, row),
-      ),
-      context.signatureTypeName,
-    ),
+  const signature = context.resolvedBlob(
+    metadataRowCursor(context.bytes, context.layout, STAND_ALONE_SIG, row),
+    "signature",
   );
   return signature === null ? null : framed("standalonesig", signature);
 };
@@ -275,32 +246,21 @@ const resolve = (
 };
 
 /**
- * Name each token by what it references rather than by its row: a TypeDef or
- * TypeRef by its framed nominal type name, so the two compare alike as in
- * signatures; a TypeSpec by its resolved blob; a field, method, or member
- * reference by its owner's identity, name, and resolved signature; a
- * MethodSpec by its method and resolved instantiation; a StandAloneSig by its
- * resolved signature; and a user string by its UTF-16 code units. A row
- * outside its table, an unreadable row, or a value the existing owners cannot
- * name, such as a TypeSpec nested in a TypeSpec or an unsupported signature,
- * has no identity. Each token is resolved once per inspection. Resolution
- * failures stay unknown rather than becoming coverage issues of their own.
+ * Remember each key's value for one inspection, charging each retained entry
+ * to the representation budget. A reader failure other than that budget
+ * leaves the key without an identity.
  */
-export const managedCilOperandIdentities = (
-  sources: IdentitySources,
-): CilOperandIdentity => {
-  const identities = new Map<number, Buffer | null>();
-  const identity: CilOperandIdentity = (token) => {
-    const cached = identities.get(token);
+const remembered = <Key>(
+  layout: ManagedMetadataLayout,
+): ((key: Key, resolveKey: () => Buffer | null) => Buffer | null) => {
+  const values = new Map<Key, Buffer | null>();
+  return (key, resolveKey) => {
+    const cached = values.get(key);
     if (cached !== undefined) return cached;
-    managedDecodeBudget(sources.layout).reserve(CACHED_IDENTITY_BYTES, null);
+    managedDecodeBudget(layout).reserve(CACHED_IDENTITY_BYTES, null);
     let value: Buffer | null;
     try {
-      value = resolve(
-        context,
-        Math.floor(token / 0x01_00_00_00),
-        token & 0xff_ffff,
-      );
+      value = resolveKey();
     } catch (cause: unknown) {
       if (
         !(cause instanceof ManagedReaderFailure) ||
@@ -309,9 +269,58 @@ export const managedCilOperandIdentities = (
         throw cause;
       value = null;
     }
-    identities.set(token, value);
+    values.set(key, value);
     return value;
   };
-  const context: IdentityContext = { ...sources, identity };
+};
+
+/**
+ * Name each token by what it references rather than by its row: a TypeDef or
+ * TypeRef by its framed nominal type name, so the two compare alike as in
+ * signatures; a TypeSpec by its resolved blob; a field, method, or member
+ * reference by its owner's identity, name, and resolved signature; a
+ * MethodSpec by its method and resolved instantiation; a StandAloneSig by its
+ * resolved signature; and a user string by its UTF-16 code units. A row
+ * outside its table, an unreadable row, or a value the existing owners cannot
+ * name, such as a TypeSpec nested in a TypeSpec or an unsupported signature,
+ * has no identity. Each token, and each blob in each form, is resolved once
+ * per inspection, so rows that share a blob share its decoding. Resolution
+ * failures stay unknown rather than becoming coverage issues of their own.
+ */
+export const managedCilOperandIdentities = (
+  sources: IdentitySources,
+): CilOperandIdentity => {
+  const tokens = remembered<number>(sources.layout);
+  const blobs = remembered<string>(sources.layout);
+  const identity: CilOperandIdentity = (token) =>
+    tokens(token, () =>
+      resolve(context, Math.floor(token / 0x01_00_00_00), token & 0xff_ffff),
+    );
+  const resolvedBlob = (cursor: RowCursor, form: BlobForm): Buffer | null => {
+    const index = cursor.readIndex(sources.layout.blobIndexSize);
+    return blobs(`${form}:${String(index)}`, () => {
+      const blob = readMetadataBlob(
+        sources.bytes,
+        sources.layout,
+        index,
+        sources.layout.blob.size,
+      );
+      return digestBytes(
+        form === "signature"
+          ? resolvedSignatureSha256(
+              sources.layout,
+              blob,
+              sources.signatureTypeName,
+            )
+          : resolvedSpecSha256(
+              sources.layout,
+              blob,
+              form,
+              sources.signatureTypeName,
+            ),
+      );
+    });
+  };
+  const context: IdentityContext = { ...sources, identity, resolvedBlob };
   return identity;
 };

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import {
@@ -434,6 +434,31 @@ describe("managed nominal CIL operands", () => {
     expect(body(retyped)?.nominal_il_sha256).not.toBe(
       body(original)?.nominal_il_sha256,
     );
+  });
+
+  it("decodes a signature blob that several rows share once", () => {
+    // Both MethodDef rows share one signature blob, which names a TypeRef.
+    const decodes = vi.spyOn(
+      ManagedDecodeBudget.prototype,
+      "admitNestedTransient",
+    );
+    try {
+      const result = inspect({
+        methodRowCount: 2,
+        methodSignature: Buffer.from([0x00, 0x00, 0x12, (1 << 2) | 1]),
+        ilBody: tokenBody([
+          [call, 0x0600_0001],
+          [call, 0x0600_0002],
+        ]),
+      });
+
+      expect(result.methods[0]?.body.nominal_il_sha256).toMatch(
+        /^[0-9a-f]{64}$/u,
+      );
+      expect(decodes).toHaveBeenCalledOnce();
+    } finally {
+      decodes.mockRestore();
+    }
   });
 
   it("names a literal by its text rather than its #US offset", () => {

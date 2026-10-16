@@ -902,6 +902,81 @@ it("records one request per transaction", () => {
   ).toEqual([["events", "items", next - 1, "transaction_id"]]);
 });
 
+it("bounds drops of refused transactions by the recorded reasons", () => {
+  const { fixture, request } = fixtureFacts();
+  const last = fixture.events.items.length - 1;
+  const range = (count: number) => ({
+    first_transaction_id: "request-8",
+    last_transaction_id: "request-9",
+    count,
+    reason: "max-network-transactions",
+  });
+  const accounting = (
+    byKind: readonly { kind: string; count: number; reasons: string[] }[],
+    transactions: readonly unknown[],
+    transactionRange: unknown,
+    lastSequence = fixture.events.items[last]?.sequence,
+  ) =>
+    fixtureIssues((capture) => ({
+      ...capture,
+      events: {
+        ...capture.events,
+        dropped: byKind.reduce((count, omission) => count + omission.count, 0),
+        items: capture.events.items.map((event, index) =>
+          index === last ? { ...event, sequence: lastSequence } : event,
+        ),
+        omissions: {
+          by_kind: byKind,
+          network_transactions: transactions,
+          network_transaction_range: transactionRange,
+        },
+      },
+      completeness: scenarioFixtureCompleteness(capture.steps, true),
+    }));
+  // by_kind counts both drops; one belongs to the admitted transaction.
+  const mixed = {
+    kind: "response",
+    count: 2,
+    reasons: ["max-network-transactions", "max-events"],
+  };
+  const admitted = [
+    {
+      transaction_id: request.transaction_id,
+      omitted_kinds: ["response"],
+      reasons: ["max-events"],
+    },
+  ];
+  expect(accounting([mixed], admitted, range(1))).toBeUndefined();
+  expect(accounting([mixed], admitted, range(2))).toEqual([
+    ["events", "omissions", "network_transaction_range"],
+  ]);
+  // Drops of refused transactions spend no sequence numbers.
+  const refusedOnly = {
+    kind: "request",
+    count: 2,
+    reasons: ["max-network-transactions"],
+  };
+  const retained = fixture.events.retained;
+  expect(accounting([refusedOnly], [], range(1), retained)).toBeUndefined();
+  expect(accounting([refusedOnly], [], range(1), retained + 1)).toEqual([
+    ["events", "items", last, "sequence"],
+  ]);
+  // Each listed reason stands for at least one drop.
+  expect(
+    accounting(
+      [
+        {
+          kind: "console",
+          count: 1,
+          reasons: ["max-events", "max-event-allocation-bytes"],
+        },
+      ],
+      [],
+      null,
+    ),
+  ).toEqual([["events", "omissions", "by_kind", 0, "count"]]);
+});
+
 it("counts only network drops toward refused transactions", () => {
   const range = {
     first_transaction_id: "request-9",
@@ -1018,7 +1093,7 @@ it("backs each transaction omission with its per-kind drop", () => {
         transaction("response", "max-events", "request-9"),
       ],
     ),
-  ).toEqual([kindEntry]);
+  ).toEqual([[...kindEntry, "count"]]);
   // Reasons must match in both directions.
   expect(
     omitting(

@@ -76,6 +76,78 @@ const networkSelected = ({ scenario }: CapturedFields): boolean =>
     scenario.network_content,
   ).includes("network");
 
+type EventOmissions = CapturedFields["events"]["omissions"];
+
+/**
+ * Admitted transactions name the network kinds they lost, one record each.
+ * A record citing only max-network-transactions is reported on its own and
+ * stands for no admitted drop.
+ */
+const transactionsNaming = (
+  { network_transactions: transactions }: EventOmissions,
+  kind: BrowserScenarioEventKind,
+): number =>
+  transactions.filter(
+    ({ omitted_kinds: kinds, reasons }) =>
+      kinds.includes(kind) &&
+      reasons.some((reason) => reason !== "max-network-transactions"),
+  ).length;
+
+/**
+ * The fewest drops one by_kind row can stand for: each listed reason occurred
+ * at least once, and each admitted transaction naming the kind lost at least
+ * one of its events for a reason other than max-network-transactions.
+ */
+const minimumDrops = (
+  omissions: EventOmissions,
+  { kind, reasons }: EventOmissions["by_kind"][number],
+): { readonly other: number; readonly refused: number } => {
+  const listed = new Set(reasons);
+  const refused = listed.has("max-network-transactions") ? 1 : 0;
+  return {
+    other: Math.max(listed.size - refused, transactionsNaming(omissions, kind)),
+    refused,
+  };
+};
+
+/**
+ * by_kind keeps one count per kind across its reasons, so drops of refused
+ * transactions are bounded rather than counted exactly.
+ */
+const refusedDropBounds = (
+  omissions: EventOmissions,
+): { readonly atLeast: number; readonly atMost: number } => {
+  let atLeast = 0;
+  let atMost = 0;
+  for (const omission of omissions.by_kind) {
+    const { other, refused } = minimumDrops(omissions, omission);
+    if (
+      refused === 0 ||
+      browserScenarioEventKindFamily(omission.kind) !== "network"
+    )
+      continue;
+    atMost += omission.count - other;
+    atLeast += new Set(omission.reasons).size === 1 ? omission.count : 1;
+  }
+  return { atLeast, atMost };
+};
+
+/** Each by_kind row counts at least the drops its reasons and records imply. */
+const refineOmissionCounts = (
+  { events }: CapturedFields,
+  context: z.RefinementCtx,
+): void => {
+  for (const [index, omission] of events.omissions.by_kind.entries()) {
+    const { other, refused } = minimumDrops(events.omissions, omission);
+    if (omission.count < other + refused)
+      context.addIssue({
+        code: "custom",
+        path: ["events", "omissions", "by_kind", index, "count"],
+        message: `${String(omission.count)} dropped ${omission.kind} events cannot cover its listed reasons and transactions, which need at least ${String(other + refused)}`,
+      });
+  }
+};
+
 /**
  * Only the network collector refuses transactions, so max-network-transactions
  * marks network drops alone; refused transactions fill the omitted range, and
@@ -106,14 +178,8 @@ const refineTransactionRange = (
       });
   if (!selected.has("network")) return;
   const range = omissions.network_transaction_range;
-  const refusedDrops = omissions.by_kind
-    .filter(
-      ({ kind, reasons }) =>
-        browserScenarioEventKindFamily(kind) === "network" &&
-        reasons.includes("max-network-transactions"),
-    )
-    .reduce((count, omission) => count + omission.count, 0);
-  if (range === null ? refusedDrops > 0 : refusedDrops < range.count)
+  const refused = refusedDropBounds(omissions);
+  if (range === null ? refused.atLeast > 0 : refused.atMost < range.count)
     context.addIssue({
       code: "custom",
       path: ["events", "omissions", "network_transaction_range"],
@@ -143,7 +209,6 @@ const refineTransactionOmissions = (
   const { by_kind: byKind, network_transactions: transactions } =
     capture.events.omissions;
   const dropped = new Map(byKind.map((omission) => [omission.kind, omission]));
-  const transactionsByKind = new Map<BrowserScenarioEventKind, number>();
   for (const [index, omission] of transactions.entries()) {
     // The family rule reports non-network kinds.
     if (
@@ -152,8 +217,6 @@ const refineTransactionOmissions = (
       )
     )
       continue;
-    for (const kind of new Set(omission.omitted_kinds))
-      transactionsByKind.set(kind, (transactionsByKind.get(kind) ?? 0) + 1);
     const backed =
       omission.omitted_kinds.every((kind) => dropped.has(kind)) &&
       omission.reasons.every(
@@ -182,42 +245,41 @@ const refineTransactionOmissions = (
             transaction.reasons.includes(reason),
         ),
     );
-    const named = transactionsByKind.get(omission.kind) ?? 0;
-    if (unnamed.length > 0 || named > omission.count)
+    if (unnamed.length > 0)
       context.addIssue({
         code: "custom",
         path: ["events", "omissions", "by_kind", index],
-        message:
-          unnamed.length > 0
-            ? `${omission.kind} events dropped for ${unnamed.join(", ")} must name their transactions in network_transactions`
-            : `${String(named)} transactions omit ${omission.kind}, but only ${String(omission.count)} ${omission.kind} events were dropped`,
+        message: `${omission.kind} events dropped for ${unnamed.join(", ")} must name their transactions in network_transactions`,
       });
   }
 };
 
 /**
  * Every sequence number the recorder spends belongs to a retained or dropped
- * event; drops of refused transactions spend none. No retained event or
- * recorded window therefore reaches past the accounted events.
+ * event, and drops of refused transactions spend none. No retained event or
+ * recorded window therefore reaches past the sequenced events.
  */
 const refineSequenceAccounting = (
   { steps, events }: CapturedFields,
   context: z.RefinementCtx,
 ): void => {
-  const accounted = events.retained + events.dropped;
+  const accounted =
+    events.retained +
+    events.dropped -
+    refusedDropBounds(events.omissions).atLeast;
   for (const [index, { sequence }] of events.items.entries())
     if (sequence > accounted)
       context.addIssue({
         code: "custom",
         path: ["events", "items", index, "sequence"],
-        message: `Event sequence ${String(sequence)} exceeds the ${String(accounted)} retained and dropped events`,
+        message: `Event sequence ${String(sequence)} exceeds the ${String(accounted)} sequenced retained and dropped events`,
       });
   for (const [index, step] of steps.entries())
     if (step.event_sequence_end > accounted)
       context.addIssue({
         code: "custom",
         path: ["steps", index, "event_sequence_end"],
-        message: `Step ${String(index)}'s receipt window ends after the ${String(accounted)} retained and dropped events`,
+        message: `Step ${String(index)}'s receipt window ends after the ${String(accounted)} sequenced retained and dropped events`,
       });
 };
 
@@ -303,6 +365,7 @@ export const refineScenarioEvents = (
   context: z.RefinementCtx,
 ): void => {
   refineSelectedEventFamilies(capture, context);
+  refineOmissionCounts(capture, context);
   refineTransactionRange(capture, context);
   refineTransactionOmissions(capture, context);
   refineSequenceAccounting(capture, context);

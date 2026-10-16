@@ -414,12 +414,15 @@ omitted `popup-opened` record whenever any family is selected, because popup
 discovery serves every selected family. `network_transaction_range` is present
 exactly when events were dropped for `max-network-transactions`, and each
 omitted transaction dropped at least one. Each `network_transactions` record
-names kinds and budget reasons that `by_kind` dropped, no more transactions per
-kind than that kind's drops, and every budget drop of a network kind names its
-transaction there. Every sequence number the recorder spends belongs to a
-retained or dropped event (drops of refused transactions spend none), so no
-retained event sequence or step window end exceeds
-`events.retained + events.dropped`. Network content records headers exactly
+names kinds and budget reasons that `by_kind` dropped, and every budget drop of
+a network kind names its transaction there. `by_kind` keeps one count per kind
+across its reasons, so each row must count at least one drop per listed reason
+and per transaction record naming the kind, and drops of refused transactions
+are bounded rather than counted: the omitted range may not exceed what the
+other reasons leave. Every sequence number the recorder spends belongs to a
+retained or dropped event, and drops of refused transactions spend none, so no
+retained event sequence or step window end exceeds the retained and dropped
+events less the drops known to belong to refused transactions. Network content records headers exactly
 when `header_values` is selected and a body exactly when its phase's body is
 selected; a phase with neither selected neither records nor drops content.
 Each transaction records at most one request event. Launch captures record `provider-owned` and

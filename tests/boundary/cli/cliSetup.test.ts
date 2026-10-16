@@ -788,6 +788,42 @@ it("names every failed client with its own recovery reason in terminal remediati
   );
 });
 
+it("shows the backup setup actually wrote for a client kept after a later failure", async () => {
+  const updatedCodex = {
+    ...actions[0],
+    operation: "update",
+    backupPath: "/isolated/.codex/config.toml.rea.planned",
+  };
+  const opencode = {
+    ...actions[0],
+    id: "configure_client:opencode",
+    label: "OpenCode",
+    target: "/isolated/.config/opencode/opencode.json",
+  };
+  const result = {
+    status: "needs_human",
+    plannedActions: [updatedCodex, opencode],
+    appliedActions: ["configured_codex"],
+    clients: {
+      codex: {
+        status: "configured",
+        backupPath: "/isolated/.codex/config.toml.rea.3f9a",
+      },
+      opencode: { status: "failed", reason: "write" },
+    },
+    doctor: {},
+    clientStates: [],
+    remediation: "Agent configuration could not be updated.",
+  };
+  const stderr = await renderSummary(result);
+  expect(stderr).toContain("UPDATE  Codex");
+  expect(stderr).toContain("backup: /isolated/.codex/config.toml.rea.3f9a");
+  expect(stderr).not.toContain("config.toml.rea.planned");
+  expect(stderr.indexOf("backup: /isolated/.codex")).toBeLessThan(
+    stderr.indexOf("Failed configuration"),
+  );
+});
+
 it("shows planned actions with their full disclosures when setup stops before reporting any outcomes", async () => {
   const hopper = {
     ...actions[2],

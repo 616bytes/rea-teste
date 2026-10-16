@@ -8,6 +8,7 @@ import {
 } from "@clack/prompts";
 
 import type {
+  ClientConfigurationResult,
   SetupAction,
   SetupConfirmationDecision,
   SetupConfirmationContext,
@@ -166,7 +167,7 @@ const renderRetainedSetupOutcomes = (result: SetupResult): void => {
   const extraClients = Object.entries(result.clients).flatMap(
     ([name, client]) =>
       client.status === "configured" && !represented.has(name)
-        ? [clientDisplayNames.get(name) ?? name]
+        ? [{ label: clientDisplayNames.get(name) ?? name, client }]
         : [],
   );
   if (
@@ -180,8 +181,13 @@ const renderRetainedSetupOutcomes = (result: SetupResult): void => {
   for (const action of actions) {
     writeLine(`│  ${action.operation.toUpperCase()}  ${action.label}`);
     writeLine(`│          ${action.target}`);
+    const name = configuredClientName(action);
+    renderRetainedBackup(name === undefined ? undefined : result.clients[name]);
   }
-  for (const name of extraClients) writeLine(`│  CONFIGURED  ${name}`);
+  for (const { label, client } of extraClients) {
+    writeLine(`│  CONFIGURED  ${label}`);
+    renderRetainedBackup(client);
+  }
   if (failedActions.length > 0) writeLine("◆  Failed configuration");
   for (const { action, client } of failedActions) {
     writeLine(`│  FAILED  ${action.label}`);
@@ -189,6 +195,14 @@ const renderRetainedSetupOutcomes = (result: SetupResult): void => {
     // Setup reports only the first failure's remediation; name each one here.
     writeLine(`│          ${failedConfigurationMessage(client)}`);
   }
+};
+
+/** The backup setup actually wrote, which can differ from the planned path. */
+const renderRetainedBackup = (
+  client: ClientConfigurationResult | undefined,
+): void => {
+  if (client?.status === "configured" && client.backupPath !== undefined)
+    writeLine(`│          backup: ${client.backupPath}`);
 };
 
 const configuredClientName = (action: SetupAction): string | undefined =>

@@ -13,6 +13,13 @@ const CANONICAL = /^classes(?:[2-9]|[1-9][0-9]+)?\.dex$/;
 export const isCanonicalDexMember = (path: string): boolean =>
   CANONICAL.test(path);
 
+/** Load position of a canonical name (`classes.dex` is 0), or null. */
+export const multidexIndex = (path: string): number | null => {
+  if (!CANONICAL.test(path)) return null;
+  const digits = path.slice("classes".length, -".dex".length);
+  return digits === "" ? 0 : Number(digits) - 1;
+};
+
 /** ART's name for the `index`-th auto-loaded member (0-based). */
 const multidexName = (index: number): string =>
   index === 0 ? "classes.dex" : `classes${String(index + 1)}.dex`;

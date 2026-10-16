@@ -73,3 +73,23 @@ describe("dexReportMatchesSelection", () => {
     ).toBe(false);
   });
 });
+
+describe("archive member identity", () => {
+  it("keeps backslashes and a leading slash as part of the stored name", () => {
+    expect(
+      dexReportMatchesSelection(summary(["dir/classes.dex"]), {
+        entry: "dir\\classes.dex",
+      }),
+    ).toBe(false);
+    expect(
+      dexReportMatchesSelection(summary(["dir\\classes.dex"]), {
+        entry: "dir\\classes.dex",
+      }),
+    ).toBe(true);
+    expect(
+      dexReportMatchesSelection(summary(["classes2.dex"]), {
+        entry: "/classes2.dex",
+      }),
+    ).toBe(false);
+  });
+});

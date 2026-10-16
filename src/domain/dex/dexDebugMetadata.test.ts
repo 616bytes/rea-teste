@@ -360,3 +360,38 @@ describe("dexDebugMetadata fails closed on unverifiable facts", () => {
     expect(summary.explicitLocalDeclarations).toBe(0);
   });
 });
+
+describe("dexDebugMetadata validates the frame and class identities", () => {
+  it("marks a method whose ins_size disagrees with its proto malformed", () => {
+    const bytes = buildDex();
+    const { view, codeOff } = layoutOf(bytes);
+    view.setUint16(codeOff + 2, 0, true); // ins_size 0 for a one-int static method
+    const summary = summaryOf(bytes);
+    expect(summary.unreadable.debugInfo).toBe(1);
+    expect(summary.readiness).toBe("unknown");
+  });
+
+  it("treats more incoming arguments than registers as an unreadable code_item", () => {
+    const bytes = buildDex();
+    const { view, codeOff } = layoutOf(bytes);
+    view.setUint16(codeOff + 2, 2, true); // ins_size 2 of a 1-register frame
+    expect(summaryOf(bytes).unreadable.codeItems).toBe(1);
+  });
+
+  it("matches a class by its modified-UTF-8 bytes, not a near miss", () => {
+    const result = detailOf(buildDex());
+    expect(result.ok && result.value?.descriptor).toBe("Lcom/example/Foo;");
+    const parsed = parseDexFile(buildDex());
+    if (!parsed.ok) throw new Error("fixture must frame");
+    for (const near of ["Lcom/example/Foo", "Lcom/example/Fo\u00f6;", ""])
+      expect(
+        assembleClassDetail(
+          parsed.value,
+          buildDex(),
+          near,
+          work(),
+          OUTPUT_LIMIT,
+        ),
+      ).toEqual({ ok: true, value: null });
+  });
+});

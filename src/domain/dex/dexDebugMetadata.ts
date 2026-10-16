@@ -12,6 +12,7 @@
  * per-string bounds while it decodes, and refuses before materialising a report
  * past the caller's output limit.
  */
+import { encodeModifiedUtf8 } from "../modifiedUtf8.js";
 import {
   type DexClassDef,
   type DexEncodedMethod,
@@ -153,6 +154,8 @@ const methodCode = (
   const code = parseCodeItem(bytes, method.codeOff);
   // An unreadable code_item leaves debug metadata unknown, never absent.
   if (!code.ok) return "unreadable";
+  // Incoming arguments occupy the top of the frame, so they cannot outnumber it.
+  if (code.value.insSize > code.value.registersSize) return "unreadable";
   if (code.value.debugInfoOff === 0) return null;
   return {
     debugInfoOff: code.value.debugInfoOff,
@@ -175,24 +178,36 @@ const decodeMethodDebug = (
   classTypeIdx: number,
   resolver: DexStringResolver,
   options: DexDecodeOptions,
-): DexMethodDebug =>
-  code === null
-    ? absentMethodDebug()
-    : code === "unreadable"
-      ? { ...absentMethodDebug(), present: true, malformed: true }
-      : decodeDebugInfo(
-          bytes,
-          code.debugInfoOff,
-          code.insnsSize,
-          {
-            firstRegister: code.firstRegister,
-            registersSize: code.registersSize,
-            accessFlags: method.accessFlags,
-            thisTypeIdx: classTypeIdx,
-            paramTypes: resolver.methodParameters(method.methodIdx),
-          },
-          options,
-        );
+): DexMethodDebug => {
+  if (code === null) return absentMethodDebug();
+  const malformed = { ...absentMethodDebug(), present: true, malformed: true };
+  if (code === "unreadable") return malformed;
+  const paramTypes = resolver.methodParameters(method.methodIdx);
+  // ins_size must be the receiver plus one word per parameter (two for
+  // long/double); otherwise `this` and the parameters would be seeded into
+  // registers the method does not use.
+  if (paramTypes !== null) {
+    const words =
+      ((method.accessFlags & ACC_STATIC) === 0 ? 1 : 0) +
+      paramTypes.reduce((sum, { wide }) => sum + (wide ? 2 : 1), 0);
+    if (words !== code.registersSize - code.firstRegister) return malformed;
+  }
+  return decodeDebugInfo(
+    bytes,
+    code.debugInfoOff,
+    code.insnsSize,
+    {
+      firstRegister: code.firstRegister,
+      registersSize: code.registersSize,
+      accessFlags: method.accessFlags,
+      thisTypeIdx: classTypeIdx,
+      paramTypes,
+    },
+    options,
+  );
+};
+
+const ACC_STATIC = 0x8;
 
 /** Methods between cancellation/budget polls inside one class. */
 const METHOD_POLL_INTERVAL = 4096;
@@ -253,6 +268,8 @@ const findClassDef = (
   classDescriptor: string,
   work: DexWork,
 ): Result<DexClassDef | undefined, DexWorkError> => {
+  // Compared as raw modified-UTF-8 bytes: no class name is decoded.
+  const wanted = encodeModifiedUtf8(classDescriptor);
   let match: DexClassDef | undefined;
   let matches = 0;
   let unreadable = 0;
@@ -261,9 +278,9 @@ const findClassDef = (
     const stop = outOfWork(work);
     if (stop !== null) return err(stop);
     const def = readClassDef(bytes, dex.header, i);
-    const descriptor = resolver.typeDescriptor(def.classIdx);
-    if (descriptor === null) unreadable += 1;
-    else if (descriptor === classDescriptor) {
+    const identity = resolver.typeIdentity(def.classIdx, wanted);
+    if (identity === "unreadable") unreadable += 1;
+    else if (identity === "match") {
       matches += 1;
       match ??= def;
     }

@@ -80,7 +80,6 @@ describe("parseDexFile framing", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.header.version).toBe("035");
-    expect(result.value.header.sizeMismatch).toBe(false);
     expect(result.value.header.classDefsSize).toBe(1);
     const def = readClassDef(minimalDex(), result.value.header, 0);
     expect(def.sourceFileIdx).toBe(0);
@@ -111,13 +110,13 @@ describe("parseDexFile framing", () => {
     expect(code.value.insnsSize).toBe(0);
   });
 
-  it("reports a file_size that disagrees with the buffer", () => {
+  it("refuses a file_size that disagrees with the buffer, as ART does", () => {
     const bytes = minimalDex();
     new DataView(bytes.buffer).setUint32(32, 999999, true);
     const result = parseDexFile(bytes);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.value.header.sizeMismatch).toBe(true);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({ kind: "bad-header", offset: 32 });
   });
 
   it("refuses a non-dex buffer as bad-magic", () => {

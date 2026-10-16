@@ -55,7 +55,7 @@ import {
   mapDexParseError,
   mapDexWorkError,
 } from "./dexFailures.js";
-import { autoLoadedDexMembers, isCanonicalDexMember } from "./dexEntry.js";
+import { autoLoadedDexMembers, multidexIndex } from "./dexEntry.js";
 import { DEX_LIMITS, DEX_PROVIDER_IDENTITY } from "./DexFileRelease.js";
 
 const OPERATION = "inspect_dex_debug_metadata";
@@ -293,16 +293,27 @@ export class DexFileProvider implements DexDebugMetadataPort {
   > {
     const requested =
       entry === undefined ? undefined : normalizeArchiveMemberPath(entry);
+    // Only members this call may open are kept (the reader retains ~8 KB of
+    // decoded metadata per kept entry): the requested name, or the canonical
+    // names up to one past the member cap (enough to detect "over the cap").
+    // Two occurrences of a name already prove it ambiguous, so no more are kept.
     const candidates: { entry: string; member: ArtifactEntry }[] = [];
-    for await (const member of reader.entries(signal)) {
-      if (member.kind !== "file") continue;
-      if (requested !== undefined) {
-        if (member.path === requested)
-          candidates.push({ entry: member.path, member });
-      } else if (isCanonicalDexMember(member.path)) {
-        candidates.push({ entry: member.path, member });
-      }
-    }
+    const occurrences = new Map<string, number>();
+    const keep = (member: ArtifactEntry): boolean => {
+      if (member.kind !== "file") return false;
+      const index = multidexIndex(member.path);
+      const wanted =
+        requested !== undefined
+          ? member.path === requested
+          : index !== null && index <= DEX_LIMITS.maxDexMembers;
+      const seen = occurrences.get(member.path) ?? 0;
+      if (!wanted || seen >= 2) return false;
+      occurrences.set(member.path, seen + 1);
+      candidates.push({ entry: member.path, member });
+      return true;
+    };
+    for await (const member of reader.entries(signal, { retain: keep }))
+      void member;
     if (requested !== undefined)
       return this.#resolveRequested(candidates, requested, path);
     // Only the contiguous sequence Android loads is promised; a member after a
@@ -349,7 +360,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
         new AnalysisResourceConstraintError(
           OPERATION,
           "capacity",
-          `${path} holds ${String(matches.length)} dex members, over the ${String(DEX_LIMITS.maxDexMembers)} limit; select one with entry.`,
+          `${path} auto-loads more than ${String(DEX_LIMITS.maxDexMembers)} dex members, over the limit; select one with entry.`,
           { maximum_dex_members: DEX_LIMITS.maxDexMembers },
           {
             remediationAction:

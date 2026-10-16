@@ -1,12 +1,9 @@
 /**
- * Canonicalize a caller-supplied archive member path to the logical form the
- * ZIP reader gives its members: forward slashes, no leading `/`, and no
- * leading `./` segments, so an archive's literal `./Foo.class` is selectable.
- * A member is identified by exactly this string, so normalization happens once,
- * here, before any match or comparison.
+ * The logical name the ZIP reader gives an archive member: its stored name
+ * without leading `./` segments, so an archive's literal `./Foo.class` is
+ * selectable as `Foo.class`. Nothing else is rewritten: a backslash or a
+ * leading `/` is part of the stored name and of the member's identity. The
+ * reader and every caller-supplied selector use this one transform.
  */
 export const normalizeArchiveMemberPath = (entry: string): string =>
-  entry
-    .replace(/\\/g, "/")
-    .replace(/^\/+/, "")
-    .replace(/^(?:\.\/)+/u, "");
+  entry.replace(/^(?:\.\/)+/u, "");

@@ -40,7 +40,6 @@ const fixture = (): { bytes: Uint8Array; header: DexHeader } => {
     classDefsOff: 0,
     dataSize: 0,
     dataOff: 0,
-    sizeMismatch: false,
   };
   return { bytes, header };
 };

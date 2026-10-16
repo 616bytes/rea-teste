@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { decodeModifiedUtf8 } from "./modifiedUtf8.js";
+import {
+  decodeModifiedUtf8,
+  encodeModifiedUtf8,
+  modifiedUtf8Units,
+} from "./modifiedUtf8.js";
 
 describe("decodeModifiedUtf8", () => {
   it("decodes ASCII", () => {
@@ -62,5 +66,21 @@ describe("modified UTF-8 hardening shared by the JVM and DEX readers", () => {
     );
     const long = Uint8Array.from({ length: 20_000 }, () => 0x61);
     expect(decodeModifiedUtf8(long)).toBe("a".repeat(20_000));
+  });
+});
+
+describe("encodeModifiedUtf8", () => {
+  it("round-trips through the decoder, including NUL and supplementary text", () => {
+    for (const text of [
+      "Lcom/example/Foo;",
+      "a\u0000b",
+      "\u00fc\u4e2d",
+      "\ud83d\ude00",
+    ]) {
+      const encoded = encodeModifiedUtf8(text);
+      expect(decodeModifiedUtf8(encoded)).toBe(text);
+      expect(modifiedUtf8Units(encoded)).toBe(text.length);
+    }
+    expect([...encodeModifiedUtf8("\u0000")]).toEqual([0xc0, 0x80]);
   });
 });

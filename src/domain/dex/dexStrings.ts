@@ -170,6 +170,25 @@ export class DexStringResolver {
     };
   }
 
+  /**
+   * Compare a type's descriptor with `wanted` (modified-UTF-8 bytes) without
+   * decoding it: `unreadable` when the descriptor cannot be located or its
+   * declared length disagrees with identical bytes.
+   */
+  typeIdentity(
+    index: number,
+    wanted: Uint8Array,
+  ): "match" | "different" | "unreadable" {
+    const stringIdx = this.#typeStringIndex(index);
+    const raw = stringIdx === null ? null : this.#raw(stringIdx);
+    if (raw === null) return "unreadable";
+    if (raw.bytes.length !== wanted.length) return "different";
+    for (let i = 0; i < wanted.length; i++)
+      if (raw.bytes[i] !== wanted[i]) return "different";
+    // Identical bytes of valid text: the declared size must agree.
+    return raw.utf16Size === modifiedUtf8Units(wanted) ? "match" : "unreadable";
+  }
+
   /** Resolve a type-pool index to its descriptor string (e.g. `Lcom/example/Foo;`). */
   typeDescriptor(index: number): string | null {
     const stringIdx = this.#typeStringIndex(index);

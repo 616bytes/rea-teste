@@ -191,8 +191,6 @@ export interface DexHeader {
   readonly classDefsOff: number;
   readonly dataSize: number;
   readonly dataOff: number;
-  /** True when `file_size` disagrees with the buffer length (reported, not fatal). */
-  readonly sizeMismatch: boolean;
 }
 
 /** A `class_def_item`: only the fields debug inspection needs are retained. */
@@ -316,8 +314,16 @@ export const parseDexFile = (
     classDefsOff: view.getUint32(100, true),
     dataSize: view.getUint32(104, true),
     dataOff: view.getUint32(108, true),
-    sizeMismatch: fileSize !== bytes.length,
   };
+  // ART's verifier rejects a DEX whose file_size is not its length: every
+  // offset check below uses the bytes present, so a disagreeing header could
+  // otherwise hide structures in trailing bytes or claim truncated ones.
+  if (fileSize !== bytes.length)
+    return err({
+      kind: "bad-header",
+      offset: 32,
+      detail: `file_size ${String(fileSize)} does not match the ${String(bytes.length)}-byte DEX`,
+    });
 
   // Each class_def_item is a fixed 32 bytes; reject an impossible count up front.
   if (header.classDefsSize * 32 > bytes.length - header.classDefsOff)

@@ -118,3 +118,23 @@ export const modifiedUtf8JsonBound = (bytes: Uint8Array): number => {
   }
   return total;
 };
+
+/**
+ * Encode text as modified UTF-8: U+0000 as `C0 80`, other BMP units as 1–3
+ * bytes, and each surrogate of a supplementary character separately (CESU-8).
+ */
+export const encodeModifiedUtf8 = (text: string): Uint8Array => {
+  const bytes: number[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const unit = text.charCodeAt(i);
+    if (unit !== 0 && unit < 0x80) bytes.push(unit);
+    else if (unit < 0x800) bytes.push(0xc0 | (unit >> 6), 0x80 | (unit & 0x3f));
+    else
+      bytes.push(
+        0xe0 | (unit >> 12),
+        0x80 | ((unit >> 6) & 0x3f),
+        0x80 | (unit & 0x3f),
+      );
+  }
+  return Uint8Array.from(bytes);
+};

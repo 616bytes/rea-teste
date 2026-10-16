@@ -3,8 +3,16 @@ import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, type FileHandle } from "node:fs/promises";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import type { RegularFileOperationOutcome } from "../filesystem/OwnedRegularFile.js";
+import {
+  withArtifactFileHandle,
+  assertArtifactReadActive,
+} from "./ArtifactFileOperation.js";
+
+/** Exact physical read completed before descriptor finalization. */
+export interface StableArtifactSnapshot {
+  readonly bytes: Buffer;
+  readonly sha256: string;
+}
 
 /** Filesystem boundary for stable reads, including deterministic replacement probes. */
 export interface StableArtifactFileSystem {
@@ -39,13 +47,6 @@ const afterValidation = async <T>(
   }
 };
 
-const assertReadActive = (signal: AbortSignal | undefined): void => {
-  if (signal?.aborted)
-    throw new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
-      cause: signal.reason,
-    });
-};
-
 /** Read one bounded regular file and reject replacement or in-place changes. */
 export const readStableArtifact = async (
   path: string,
@@ -53,8 +54,8 @@ export const readStableArtifact = async (
   signal?: AbortSignal,
   fileSystem: StableArtifactFileSystem = FILE_SYSTEM,
   resourceScope?: ArtifactResourceScope,
-): Promise<{ readonly bytes: Buffer; readonly sha256: string }> => {
-  assertReadActive(signal);
+): Promise<StableArtifactSnapshot> => {
+  assertArtifactReadActive(signal);
   const before = await fileSystem.lstat(path);
   if (!before.isFile() || before.isSymbolicLink())
     throw new ArtifactReaderFailure(
@@ -65,6 +66,7 @@ export const readStableArtifact = async (
     throw new ArtifactReaderFailure(
       "limit",
       `Selected artifact exceeds ${String(maximumBytes)} bytes: ${path}`,
+      { boundary: "file-size" },
     );
   const file = await afterValidation(path, "before open", () =>
     fileSystem.open(
@@ -72,100 +74,71 @@ export const readStableArtifact = async (
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     ),
   );
-  const owner = new OwnedFileHandle(file);
-  let outcome: RegularFileOperationOutcome<{
-    readonly bytes: Buffer;
-    readonly sha256: string;
-  }>;
-  try {
-    const initial = await file.stat({ bigint: true });
-    if (
-      !initial.isFile() ||
-      initial.dev !== before.dev ||
-      initial.ino !== before.ino
-    )
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Artifact changed before open: ${path}`,
-      );
-    const chunks: Buffer[] = [];
-    let count = 0;
-    for await (const chunk of file.createReadStream({
-      autoClose: false,
-      highWaterMark: 65536,
-    })) {
-      assertReadActive(signal);
-      const value: unknown = chunk;
-      if (!Buffer.isBuffer(value))
+  return withArtifactFileHandle(
+    path,
+    file,
+    resourceScope,
+    signal,
+    async (file) => {
+      const initial = await file.stat({ bigint: true });
+      if (
+        !initial.isFile() ||
+        initial.dev !== before.dev ||
+        initial.ino !== before.ino
+      )
         throw new ArtifactReaderFailure(
-          "format",
-          `Artifact stream did not return bytes: ${path}`,
+          "integrity",
+          `Artifact changed before open: ${path}`,
         );
-      const bytes = value;
-      count += bytes.length;
-      if (count > maximumBytes)
-        throw new ArtifactReaderFailure(
-          "limit",
-          `Selected artifact grew beyond its byte limit: ${path}`,
-        );
-      chunks.push(bytes);
-    }
-    const after = await file.stat({ bigint: true });
-    const current = await afterValidation(path, "during read", () =>
-      fileSystem.lstat(path),
-    );
-    if (
-      [after, current].some(
-        (stat) =>
-          !stat.isFile() ||
-          stat.dev !== initial.dev ||
-          stat.ino !== initial.ino ||
-          stat.size !== initial.size ||
-          stat.mtimeNs !== initial.mtimeNs ||
-          stat.ctimeNs !== initial.ctimeNs,
-      ) ||
-      BigInt(count) !== initial.size
-    )
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Artifact changed during read: ${path}`,
+      const chunks: Buffer[] = [];
+      let count = 0;
+      for await (const chunk of file.createReadStream({
+        autoClose: false,
+        highWaterMark: 65536,
+      })) {
+        assertArtifactReadActive(signal);
+        const value: unknown = chunk;
+        if (!Buffer.isBuffer(value))
+          throw new ArtifactReaderFailure(
+            "format",
+            `Artifact stream did not return bytes: ${path}`,
+          );
+        const bytes = value;
+        count += bytes.length;
+        if (count > maximumBytes)
+          throw new ArtifactReaderFailure(
+            "limit",
+            `Selected artifact grew beyond its byte limit: ${path}`,
+            { boundary: "file-size" },
+          );
+        chunks.push(bytes);
+      }
+      const after = await file.stat({ bigint: true });
+      const current = await afterValidation(path, "during read", () =>
+        fileSystem.lstat(path),
       );
-    assertReadActive(signal);
-    const bytes = Buffer.concat(chunks, count);
-    outcome = {
-      kind: "completed",
-      value: {
+      if (
+        [after, current].some(
+          (stat) =>
+            !stat.isFile() ||
+            stat.dev !== initial.dev ||
+            stat.ino !== initial.ino ||
+            stat.size !== initial.size ||
+            stat.mtimeNs !== initial.mtimeNs ||
+            stat.ctimeNs !== initial.ctimeNs,
+        ) ||
+        BigInt(count) !== initial.size
+      )
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `Artifact changed during read: ${path}`,
+        );
+      assertArtifactReadActive(signal);
+      const bytes = Buffer.concat(chunks, count);
+      return {
         bytes,
         sha256: createHash("sha256").update(bytes).digest("hex"),
-      },
-    };
-  } catch (cause: unknown) {
-    outcome = { kind: "failed", cause };
-  }
-  const cleanup =
-    resourceScope === undefined
-      ? await owner.close().then(
-          () => ({ kind: "released" as const }),
-          (cause: unknown) => ({ kind: "failed" as const, cause }),
-        )
-      : await resourceScope.release({
-          kind: "file-handle",
-          resource: path,
-          handle: owner,
-        });
-  if (cleanup.kind === "failed")
-    throw ArtifactReaderFailure.withCleanup(
-      outcome.kind === "failed" ? outcome.cause : cleanup.cause,
-      ArtifactReaderFailure.cleanupObservation(cleanup.cause, path),
-      undefined,
-      { owner, outcome },
-    );
-  if (outcome.kind === "failed") throw outcome.cause;
-  if (signal?.aborted === true)
-    throw new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
-      cause: signal.reason,
-      owner,
-      outcome,
-    });
-  return outcome.value;
+      };
+    },
+  );
 };

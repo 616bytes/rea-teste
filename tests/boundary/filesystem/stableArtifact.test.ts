@@ -8,11 +8,13 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { expect, it, onTestFinished } from "vitest";
 import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
-import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
+import {
+  ArtifactFileCleanupFailure,
+  ArtifactFileCancelled,
+} from "../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("reads exact binary and empty bytes and rejects symlink/size/cancellation boundaries", async () => {
@@ -83,144 +85,172 @@ it("keeps initially missing inputs distinguishable from later changes", async ()
   ).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-it.each([
-  { kind: "completed", primary: undefined },
-  { kind: "primary-error", primary: new Error("controlled read rejection") },
-  { kind: "undefined-failure", primary: undefined },
-  { kind: "null-failure", primary: null },
-] as const)(
-  "retains the %s operation outcome when an unscoped close rejects",
-  async ({ kind, primary }) => {
-    const root = await createTestTempDirectory("rea-stable-close-");
-    const path = join(root, "input.bin");
-    await writeFile(path, "caller-selected evidence");
-    const handle = await open(path, "r");
-    const nativeClose = handle.close.bind(handle);
-    const closeFailure = new Error("controlled close rejection");
-    let closeAttempts = 0;
-    handle.close = async () => {
-      closeAttempts += 1;
-      throw closeFailure;
-    };
-    if (kind !== "completed") {
-      const nativeStat = handle.stat.bind(handle);
-      let statCalls = 0;
-      handle.stat = (async (...arguments_) => {
-        statCalls += 1;
-        if (statCalls === 2) throw primary;
-        return nativeStat(...arguments_);
-      }) as typeof handle.stat;
-    }
+const heldDescriptor = async () => {
+  const root = await createTestTempDirectory("rea-stable-close-owner-");
+  const path = join(root, "selected.bin");
+  const bytes = Buffer.from([0, 255, 1, 254]);
+  await writeFile(path, bytes);
+  const handle = await open(path, "r");
+  const nativeClose = handle.close.bind(handle);
+  const closeFailure = new Error("controlled descriptor close failure");
+  let allowClose = false;
+  handle.close = async () => {
+    if (!allowClose) throw closeFailure;
+    await nativeClose();
+  };
+  onTestFinished(async () => {
+    if (handle.fd >= 0) await nativeClose();
+  });
+  return {
+    path,
+    bytes,
+    handle,
+    nativeClose,
+    closeFailure,
+    release: () => {
+      allowClose = true;
+    },
+    fileSystem: {
+      lstat: (selected: string) => lstat(selected, { bigint: true }),
+      open: async () => handle,
+    },
+  };
+};
 
-    try {
-      const failure = await readStableArtifact(path, 1024, undefined, {
-        lstat: (selected) => lstat(selected, { bigint: true }),
-        open: async () => handle,
-      }).catch((cause: unknown) => cause);
-      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-      if (!(failure instanceof ArtifactReaderFailure)) return;
-      expect(failure.owner).toBeInstanceOf(OwnedFileHandle);
-      expect(failure.owner?.handle).toBe(handle);
-      expect(failure.cleanup).toEqual({
-        reason: closeFailure.message,
-        resources: [path],
-      });
-      expect(failure.outcome).toEqual(
-        kind === "completed"
-          ? {
-              kind: "completed",
-              value: {
-                bytes: Buffer.from("caller-selected evidence"),
-                sha256: createHash("sha256")
-                  .update("caller-selected evidence")
-                  .digest("hex"),
-              },
-            }
-          : { kind: "failed", cause: primary },
-      );
-      expect(handle.fd).toBeGreaterThanOrEqual(0);
-      handle.close = nativeClose;
-      await failure.owner?.close();
-      expect(handle.fd).toBe(-1);
-      expect(closeAttempts).toBe(1);
-    } finally {
-      handle.close = nativeClose;
-      if (handle.fd >= 0) await nativeClose();
-    }
+it.each(["scoped", "transferred"])(
+  "retains exact completed bytes and descriptor cleanup under %s ownership",
+  async (ownership) => {
+    const file = await heldDescriptor();
+    const scope =
+      ownership === "scoped" ? new ArtifactResourceScope() : undefined;
+    const failure = await readStableArtifact(
+      file.path,
+      1024,
+      undefined,
+      file.fileSystem,
+      scope,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ArtifactFileCleanupFailure);
+    if (!(failure instanceof ArtifactFileCleanupFailure))
+      throw new Error("Missing descriptor owner");
+    expect(failure.fileCleanupFailure.owner.handle).toBe(file.handle);
+    expect(failure.fileCleanupFailure.cleanupCause).toBe(file.closeFailure);
+    expect(failure.fileCleanupFailure.outcome).toEqual({
+      kind: "completed",
+      value: {
+        bytes: file.bytes,
+        sha256: createHash("sha256").update(file.bytes).digest("hex"),
+      },
+    });
+    expect(file.handle.fd).toBeGreaterThanOrEqual(0);
+    expect(failure.cleanup?.resources).toEqual([file.path]);
+    expect(scope?.hasPending ?? false).toBe(ownership === "scoped");
+    file.release();
+    if (scope !== undefined) await scope.close();
+    else await failure.cleanupLease.release();
+    expect(file.handle.fd).toBe(-1);
   },
 );
 
-it("retains a scoped owner for close retry", async () => {
-  const root = await createTestTempDirectory("rea-stable-scoped-close-");
-  const path = join(root, "input.bin");
-  await writeFile(path, "caller-selected evidence");
-  const handle = await open(path, "r");
-  const nativeClose = handle.close.bind(handle);
-  const closeFailure = new Error("controlled scoped close rejection");
-  let closeAttempts = 0;
-  handle.close = async () => {
-    closeAttempts += 1;
-    if (closeAttempts === 1) throw closeFailure;
-    return nativeClose();
-  };
-  const scope = new ArtifactResourceScope();
-  try {
+it.each([new Error("primary read failure"), undefined, null])(
+  "preserves the explicit failed read outcome %j through close rejection",
+  async (primary) => {
+    const file = await heldDescriptor();
+    file.handle.stat = async () => {
+      throw primary;
+    };
+    const scope = new ArtifactResourceScope();
     const failure = await readStableArtifact(
-      path,
+      file.path,
       1024,
       undefined,
-      {
-        lstat: (selected) => lstat(selected, { bigint: true }),
-        open: async () => handle,
-      },
+      file.fileSystem,
       scope,
     ).catch((cause: unknown) => cause);
-    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-    if (!(failure instanceof ArtifactReaderFailure)) return;
-    expect(failure.owner?.handle).toBe(handle);
-    expect(failure.outcome?.kind).toBe("completed");
-    expect(failure.cleanup).toEqual({
-      reason: closeFailure.message,
-      resources: [path],
+    if (!(failure instanceof ArtifactFileCleanupFailure))
+      throw new Error("Missing typed read outcome");
+    expect(failure.fileCleanupFailure.outcome).toEqual({
+      kind: "failed",
+      cause: primary,
     });
-    expect(scope.hasPending).toBe(true);
-    await expect(scope.close()).resolves.toBeUndefined();
-    expect(scope.hasPending).toBe(false);
-    expect(handle.fd).toBe(-1);
-    expect(closeAttempts).toBeGreaterThanOrEqual(2);
-  } finally {
-    handle.close = nativeClose;
-    if (handle.fd >= 0) await nativeClose();
-    await scope.close().catch(() => undefined);
-  }
+    expect(failure.fileCleanupFailure.cleanupCause).toBe(file.closeFailure);
+    file.release();
+    await scope.close();
+    expect(file.handle.fd).toBe(-1);
+  },
+);
+
+it("retains physical read facts and the caller's reason when cancellation arrives during successful close", async () => {
+  const file = await heldDescriptor();
+  const controller = new AbortController();
+  const reason = new Error("cancelled during descriptor finalization");
+  file.handle.close = async () => {
+    controller.abort(reason);
+    await file.nativeClose();
+  };
+  const failure = await readStableArtifact(
+    file.path,
+    1024,
+    controller.signal,
+    file.fileSystem,
+  ).catch((cause: unknown) => cause);
+  if (!(failure instanceof ArtifactFileCancelled))
+    throw new Error("Missing late cancellation");
+  expect(failure.cause).toBe(reason);
+  expect(failure.fileCancellation.outcome.value.bytes).toEqual(file.bytes);
+  expect(file.handle.fd).toBe(-1);
 });
 
-it("retains completed bytes when cancellation arrives during close", async () => {
-  const root = await createTestTempDirectory("rea-stable-close-cancel-");
-  const path = join(root, "input.bin");
-  await writeFile(path, "caller-selected evidence");
-  const handle = await open(path, "r");
-  const nativeClose = handle.close.bind(handle);
+it("retains a completed read and failed cleanup when cancellation arrives during close rejection", async () => {
+  const file = await heldDescriptor();
   const controller = new AbortController();
-  const reason = new Error("cancelled during close");
-  handle.close = async () => {
+  const reason = new Error("cancelled during failed close");
+  file.handle.close = async () => {
     controller.abort(reason);
-    return nativeClose();
+    throw file.closeFailure;
   };
-  try {
-    const failure = await readStableArtifact(path, 1024, controller.signal, {
-      lstat: (selected) => lstat(selected, { bigint: true }),
-      open: async () => handle,
-    }).catch((cause: unknown) => cause);
-    expect(failure).toMatchObject({
-      reason: "cancelled",
-      cause: reason,
-      outcome: { kind: "completed" },
-    });
-    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-    expect(handle.fd).toBe(-1);
-  } finally {
-    handle.close = nativeClose;
-    if (handle.fd >= 0) await nativeClose();
+  const failure = await readStableArtifact(
+    file.path,
+    1024,
+    controller.signal,
+    file.fileSystem,
+  ).catch((cause: unknown) => cause);
+  if (!(failure instanceof ArtifactFileCleanupFailure))
+    throw new Error("Missing cleanup ownership");
+  expect(failure.fileCleanupFailure.outcome).toMatchObject({
+    kind: "completed",
+    value: { bytes: file.bytes },
+  });
+  expect(controller.signal.reason).toBe(reason);
+  file.handle.close = file.nativeClose;
+  await failure.cleanupLease.release();
+  expect(file.handle.fd).toBe(-1);
+});
+
+it("transfers the exact owner even when the caller's retention boundary rejects it", async () => {
+  const file = await heldDescriptor();
+  const retentionFailure = new Error("controlled owner-retention failure");
+  class RejectingScope extends ArtifactResourceScope {
+    override retain(): void {
+      throw retentionFailure;
+    }
   }
+  const failure = await readStableArtifact(
+    file.path,
+    1024,
+    undefined,
+    file.fileSystem,
+    new RejectingScope(),
+  ).catch((cause: unknown) => cause);
+  if (!(failure instanceof ArtifactFileCleanupFailure))
+    throw new Error("Lost cleanup capability after retention failure");
+  expect(failure.fileCleanupFailure.retention).toEqual({
+    kind: "callback_threw",
+    cause: retentionFailure,
+  });
+  expect(failure.fileCleanupFailure.cleanupCause).toBe(file.closeFailure);
+  expect(failure.fileCleanupFailure.owner.handle).toBe(file.handle);
+  file.release();
+  await failure.cleanupLease.release();
+  expect(file.handle.fd).toBe(-1);
 });

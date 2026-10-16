@@ -1,20 +1,32 @@
 /**
  * Multidex member selection inside an APK/ZIP. Android auto-loads the root
- * members `classes.dex`, `classes2.dex`, `classes3.dex`, … (no directory); a
- * caller may still select any other `.dex` member explicitly by its exact path.
+ * member `classes.dex`, then `classes2.dex`, `classes3.dex`, … and stops at the
+ * first missing name (ART's DexFileLoader). `classes1.dex`, zero-padded names
+ * and members after a gap are never auto-loaded; a caller may still select any
+ * `.dex` member explicitly by its exact path.
  */
 
-const ROOT_DEX = /^classes([0-9]*)\.dex$/;
+/** A canonical multidex name: `classes.dex` or `classesN.dex` with N >= 2. */
+const CANONICAL = /^classes(?:[2-9]|[1-9][0-9]+)?\.dex$/;
 
-/** A root, auto-loaded `classes*.dex` member (not one nested under a directory). */
-export const isRootDexMember = (path: string): boolean => ROOT_DEX.test(path);
+/** Whether `path` is a canonical multidex name (a candidate for auto-loading). */
+export const isCanonicalDexMember = (path: string): boolean =>
+  CANONICAL.test(path);
+
+/** ART's name for the `index`-th auto-loaded member (0-based). */
+const multidexName = (index: number): string =>
+  index === 0 ? "classes.dex" : `classes${String(index + 1)}.dex`;
 
 /**
- * Load order of a root dex member: `classes.dex` is 1, `classesN.dex` is N.
- * Non-root members sort last so an explicit selection stays stable.
+ * The members Android auto-loads, in load order: the contiguous canonical
+ * sequence starting at `classes.dex` among `paths`.
  */
-export const dexMemberOrder = (path: string): number => {
-  const match = ROOT_DEX.exec(path);
-  if (match === null) return Number.MAX_SAFE_INTEGER;
-  return match[1] === "" ? 1 : Number(match[1]);
+export const autoLoadedDexMembers = (
+  paths: Iterable<string>,
+): readonly string[] => {
+  const present = new Set(paths);
+  const sequence: string[] = [];
+  while (present.has(multidexName(sequence.length)))
+    sequence.push(multidexName(sequence.length));
+  return sequence;
 };

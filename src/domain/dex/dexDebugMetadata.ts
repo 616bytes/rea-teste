@@ -103,6 +103,10 @@ export type DexWorkError =
   | { readonly kind: "work-budget-exceeded"; readonly limit: number }
   | { readonly kind: "cancelled" }
   | { readonly kind: "malformed-class-data"; readonly classDataOff: number }
+  /** class_defs whose identity could not be read: presence is unknown. */
+  | { readonly kind: "unreadable-class-identity"; readonly count: number }
+  /** More than one class_def declares the class (ART rejects the DEX). */
+  | { readonly kind: "duplicate-class-definition"; readonly count: number }
   | {
       readonly kind: "output-budget-exceeded";
       readonly projectedBytes: number;
@@ -185,7 +189,7 @@ const decodeMethodDebug = (
             registersSize: code.registersSize,
             accessFlags: method.accessFlags,
             thisTypeIdx: classTypeIdx,
-            paramTypes: resolver.methodParameters(method.methodIdx) ?? [],
+            paramTypes: resolver.methodParameters(method.methodIdx),
           },
           options,
         );
@@ -235,10 +239,12 @@ const METHOD_OVERHEAD = 320;
 const LOCAL_OVERHEAD = 192;
 
 /**
- * Find the class_def whose type descriptor matches, scanning the table in
+ * Find the class_def whose type descriptor matches, scanning the whole table in
  * place. Every descriptor read is charged by the resolver, and the scan polls
  * the work budget and cancellation, so an absent class in a crafted table
- * cannot cost unbounded work before the answer.
+ * cannot cost unbounded work before the answer. A definition whose identity
+ * cannot be read might be the requested class, so absence or uniqueness is then
+ * unknown, never asserted; a second matching definition is malformed.
  */
 const findClassDef = (
   dex: DexFile,
@@ -247,16 +253,28 @@ const findClassDef = (
   classDescriptor: string,
   work: DexWork,
 ): Result<DexClassDef | undefined, DexWorkError> => {
+  let match: DexClassDef | undefined;
+  let matches = 0;
+  let unreadable = 0;
   for (let i = 0; i < dex.header.classDefsSize; i += 1) {
     // Checked per class: one descriptor read can cost as much as its string.
     const stop = outOfWork(work);
     if (stop !== null) return err(stop);
     const def = readClassDef(bytes, dex.header, i);
-    if (resolver.typeDescriptor(def.classIdx) === classDescriptor)
-      return ok(def);
+    const descriptor = resolver.typeDescriptor(def.classIdx);
+    if (descriptor === null) unreadable += 1;
+    else if (descriptor === classDescriptor) {
+      matches += 1;
+      match ??= def;
+    }
   }
   const spent = outOfWork(work);
-  return spent === null ? ok(undefined) : err(spent);
+  if (spent !== null) return err(spent);
+  if (matches > 1)
+    return err({ kind: "duplicate-class-definition", count: matches });
+  if (unreadable > 0)
+    return err({ kind: "unreadable-class-identity", count: unreadable });
+  return ok(match);
 };
 
 /**
@@ -291,6 +309,14 @@ export const assembleClassDetail = (
     1024 +
     resolver.typeJsonBound(classDef.classIdx) +
     resolver.jsonBound(classDef.sourceFileIdx);
+  // Checked before any method is visited: a methodless class never reaches the
+  // per-method check, and its source_file must not be decoded past the limit.
+  if (projected > outputLimit)
+    return err({
+      kind: "output-budget-exceeded",
+      projectedBytes: projected,
+      limit: outputLimit,
+    });
   let failure: DexWorkError | null = null;
   const methods: DexMethodDetail[] = [];
   const walked = forEachMethod(bytes, classDef, work, (method) => {

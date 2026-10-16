@@ -57,10 +57,13 @@ export interface DexParameterLayout {
   readonly accessFlags: number;
   /** The declaring class's type index, for the implicit `this`. */
   readonly thisTypeIdx: number;
-  readonly paramTypes: readonly {
-    readonly typeIdx: number;
-    readonly wide: boolean;
-  }[];
+  /** `null` when the method's proto cannot be resolved (count unknown). */
+  readonly paramTypes:
+    | readonly {
+        readonly typeIdx: number;
+        readonly wide: boolean;
+      }[]
+    | null;
 }
 
 /** A local-variable scope. Name/type/signature are string-pool indices (`-1` = none). */
@@ -243,13 +246,10 @@ class DebugInfoWalk {
       open(register, DEX_THIS_NAME, layout.thisTypeIdx);
       register += 1;
     }
-    for (let i = 0; i < layout.paramTypes.length; i += 1) {
-      open(
-        register,
-        this.parameterNames[i] ?? -1,
-        layout.paramTypes[i]!.typeIdx,
-      );
-      register += layout.paramTypes[i]!.wide ? 2 : 1;
+    const paramTypes = layout.paramTypes ?? [];
+    for (let i = 0; i < paramTypes.length; i += 1) {
+      open(register, this.parameterNames[i] ?? -1, paramTypes[i]!.typeIdx);
+      register += paramTypes[i]!.wide ? 2 : 1;
     }
   }
 
@@ -281,6 +281,15 @@ class DebugInfoWalk {
     this.lineStart = lineStart.value;
     const paramsSize = this.cursor.uleb128();
     if (!paramsSize.ok || paramsSize.value > DEX_MAX_PARAMETERS) return false;
+    // ART decodes one name per proto parameter: fewer is an error there, and
+    // more would leave names to be misread as opcodes. Either is malformed.
+    const declared = this.layout?.paramTypes;
+    if (
+      declared !== undefined &&
+      declared !== null &&
+      paramsSize.value !== declared.length
+    )
+      return false;
     for (let i = 0; i < paramsSize.value; i += 1) {
       if (!this.charge()) return false;
       const nameIdx = this.cursor.uleb128p1();
@@ -292,7 +301,6 @@ class DebugInfoWalk {
   }
 
   private startLocal(extended: boolean): Step {
-    this.explicitLocalCount += 1;
     const reg = this.cursor.uleb128();
     const nameIdx = this.cursor.uleb128p1();
     const typeIdx = this.cursor.uleb128p1();
@@ -307,6 +315,8 @@ class DebugInfoWalk {
     // the live-register maps at registers_size (<= 65,535).
     const registersSize = this.layout?.registersSize;
     if (registersSize !== undefined && reg.value >= registersSize) return false;
+    // Counted only once the event parsed and validated completely.
+    this.explicitLocalCount += 1;
     const existing = this.live.get(reg.value);
     if (existing) this.pushLocal(reg.value, existing, this.address); // implicit end
     const local: LiveLocal = {

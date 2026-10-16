@@ -55,7 +55,7 @@ import {
   mapDexParseError,
   mapDexWorkError,
 } from "./dexFailures.js";
-import { dexMemberOrder, isRootDexMember } from "./dexEntry.js";
+import { autoLoadedDexMembers, isCanonicalDexMember } from "./dexEntry.js";
 import { DEX_LIMITS, DEX_PROVIDER_IDENTITY } from "./DexFileRelease.js";
 
 const OPERATION = "inspect_dex_debug_metadata";
@@ -282,7 +282,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
     }
   }
 
-  /** Choose the archive's DEX members: the explicit entry, or every root classes*.dex. */
+  /** Choose the archive's DEX members: the explicit entry, or the auto-loaded multidex sequence. */
   async #selectDexMembers(
     reader: ZipArtifactReader,
     entry: string | undefined,
@@ -299,12 +299,21 @@ export class DexFileProvider implements DexDebugMetadataPort {
       if (requested !== undefined) {
         if (member.path === requested)
           matches.push({ entry: member.path, member });
-      } else if (isRootDexMember(member.path)) {
+      } else if (isCanonicalDexMember(member.path)) {
         matches.push({ entry: member.path, member });
       }
     }
     if (requested !== undefined)
       return this.#resolveRequested(matches, requested, path);
+    // Only the contiguous sequence Android loads is promised; a member after a
+    // gap is never loaded, so it can neither fail nor shadow the inspection.
+    const sequence = autoLoadedDexMembers(matches.map(({ entry }) => entry));
+    const loadOrder = new Map(sequence.map((name, index) => [name, index]));
+    matches.splice(
+      0,
+      matches.length,
+      ...matches.filter(({ entry }) => loadOrder.has(entry)),
+    );
     // Every root member is promised, so one that cannot be read is refused,
     // never silently skipped (that would turn unknown into absent).
     const encrypted = matches.filter((m) => m.member.encrypted);
@@ -336,7 +345,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
       return err(
         this.#inputError(
           "entry",
-          `${path} holds no root classes*.dex member; select a .dex with entry.`,
+          `${path} holds no classes.dex for Android to load; select a .dex with entry.`,
         ),
       );
     if (matches.length > DEX_LIMITS.maxDexMembers)
@@ -348,7 +357,9 @@ export class DexFileProvider implements DexDebugMetadataPort {
           { maximum_dex_members: DEX_LIMITS.maxDexMembers },
         ),
       );
-    matches.sort((a, b) => dexMemberOrder(a.entry) - dexMemberOrder(b.entry));
+    matches.sort(
+      (a, b) => (loadOrder.get(a.entry) ?? 0) - (loadOrder.get(b.entry) ?? 0),
+    );
     return ok(matches);
   }
 

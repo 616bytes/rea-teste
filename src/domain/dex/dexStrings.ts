@@ -314,10 +314,21 @@ export class DexStringResolver {
       const at = parametersOff + 4 + i * 2;
       if (at + 2 > this.bytes.length) return null;
       const typeIdx = this.view.getUint16(at, true);
-      const descriptor = this.typeDescriptor(typeIdx);
-      params.push({ typeIdx, wide: descriptor === "J" || descriptor === "D" });
+      params.push({ typeIdx, wide: this.#isWideType(typeIdx) });
     }
     return params;
+  }
+
+  /**
+   * Whether a type is `J` or `D` (two registers), read from the raw descriptor
+   * bytes: only the one-byte strings qualify, so no descriptor is decoded.
+   */
+  #isWideType(typeIdx: number): boolean {
+    const stringIdx = this.#typeStringIndex(typeIdx);
+    const raw = stringIdx === null ? null : this.#raw(stringIdx);
+    if (raw === null || raw.utf16Size !== 1 || raw.bytes.length !== 1)
+      return false;
+    return raw.bytes[0] === 0x4a || raw.bytes[0] === 0x44; // 'J' | 'D'
   }
 
   /** A `type_list` { size u4, list[size] of u2 type_idx }, resolved to descriptors. */

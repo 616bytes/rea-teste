@@ -13,7 +13,7 @@ CLI and MCP share one workflow and return artifact-bound Evidence inline.
 ## Answer an analyst question
 
 ```sh
-# Summarize debug readiness across every classes*.dex in an APK:
+# Summarize debug readiness across the DEX members an APK auto-loads:
 rea inspect-dex-debug-metadata /path/app.apk
 # A standalone .dex:
 rea inspect-dex-debug-metadata /path/classes.dex
@@ -28,8 +28,9 @@ rea inspect-dex-debug-metadata /path/classes.dex --class-descriptor 'Lcom/exampl
 Unlike a JVM `.class` (one class), a DEX holds thousands of classes, so the tool
 works at two granularities:
 
-- **Summary (default).** One entry per DEX member (for an APK, every root
-  `classes*.dex`). Each reports `dex_version`, `class_count`, method tallies
+- **Summary (default).** One entry per DEX member (for an APK, the members
+  Android auto-loads: `classes.dex`, `classes2.dex`, … up to the first missing
+  name; select any other `.dex` with `entry`). Each reports `dex_version`, `class_count`, method tallies
   (`methods_with_code`, `methods_with_debug_info`, `methods_with_parameter_names`),
   `line_positions`, `local_declarations`, `explicit_local_declarations`,
   `set_file_events`, `source_file_present`,

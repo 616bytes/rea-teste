@@ -460,6 +460,15 @@ export const parseCodeItem = (
   if (!debugInfoOff.ok) return debugInfoOff;
   const insnsSize = cursor.u4();
   if (!insnsSize.ok) return insnsSize;
+  // The instructions (2 bytes per code unit) must lie inside the member, or
+  // every position checked against insns_size would trust a fabricated size.
+  if (offset + 16 + 2 * insnsSize.value > bytes.length)
+    return err({
+      kind: "invalid-index",
+      offset,
+      index: offset + 16 + 2 * insnsSize.value,
+      bound: bytes.length,
+    });
   return ok({
     registersSize: registersSize.value,
     insSize: insSize.value,

@@ -81,7 +81,7 @@ execution or network acquisition is implied, and WAT is decoded representation.
 
 Use `inspect_dex_debug_metadata` for a selected local `.dex`, or a
 `classes*.dex` inside an APK/ZIP (`entry` selects one member; omitting it
-summarizes every root dex). Without `class_descriptor` it returns a whole-file
+summarizes the auto-loaded `classes.dex`, `classes2.dex`, … sequence). Without `class_descriptor` it returns a whole-file
 readiness summary per member (methods with code/debug_info/parameter names, line
 positions, local declarations, distinct source files, and a derived
 `present | partial | stripped`); with `class_descriptor` (e.g. `Lcom/example/Foo;`)

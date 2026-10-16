@@ -173,6 +173,22 @@ export const mapDexWorkError = (error: DexWorkError): AnalysisError => {
           message: `The selected class's class_data at byte ${String(error.classDataOff)} cannot be read; its methods' debug metadata is unknown.`,
         },
       ]);
+    case "unreadable-class-identity":
+      return new AnalysisInputError(OPERATION, undefined, [
+        {
+          path: ["class_descriptor"],
+          reason: "invalid_value",
+          message: `${String(error.count)} class_def entr${error.count === 1 ? "y has" : "ies have"} an unreadable type identity, so whether this DEX member defines the class (once) is unknown, not absent.`,
+        },
+      ]);
+    case "duplicate-class-definition":
+      return new AnalysisInputError(OPERATION, undefined, [
+        {
+          path: ["class_descriptor"],
+          reason: "invalid_value",
+          message: `${String(error.count)} class_def entries declare the class in one DEX member; the DEX is malformed and the definition is ambiguous.`,
+        },
+      ]);
     case "output-budget-exceeded":
       return new AnalysisResourceConstraintError(
         OPERATION,

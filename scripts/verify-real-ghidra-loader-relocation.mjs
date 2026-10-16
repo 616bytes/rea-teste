@@ -22,15 +22,16 @@ const expectedChecks = [
   "bridge_source_bound",
   "relocation_protection_precedes_decompiler",
   "program_relocations_are_loader_relocations",
-  "relocation_record_added",
+  "importer_relocation_present",
+  "relocation_targets_pointer_symbol",
   "reader_references_relocation",
   "destination_is_loaded_initialized",
   "destination_is_file_backed",
   "destination_is_non_writable",
+  "destination_not_volatile_before_protection",
   "destination_block_is_volatile",
   "destination_permissions_preserved",
-  "target_filebytes_original_unchanged",
-  "loader_bytes_differ_from_file_bytes",
+  "source_filebytes_unchanged",
   "evidence_limitation_represents_loader_uncertainty",
 ];
 
@@ -38,9 +39,9 @@ if (process.argv.length !== 2)
   throw new Error(
     "Usage: node scripts/verify-real-ghidra-loader-relocation.mjs",
   );
-if (!["linux", "darwin"].includes(process.platform))
+if (process.platform !== "linux")
   throw new Error(
-    "Loader-relocation verification requires a Linux or macOS Ghidra host.",
+    "Loader-relocation verification requires a Linux Ghidra host with an ELF linker.",
   );
 if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error(
@@ -66,12 +67,7 @@ const workspace = await mkdtemp(
   join(tmpdir(), "rea-ghidra-loader-relocation-"),
 );
 const project = join(workspace, "project");
-const target = join(
-  workspace,
-  process.platform === "darwin"
-    ? "rea-loader-relocation.macho"
-    : "rea-loader-relocation.elf",
-);
+const target = join(workspace, "rea-loader-relocation.elf");
 const fixture = fileURLToPath(
   new URL("../tests/conformance/ghidra/loader-relocation.c", import.meta.url),
 );
@@ -131,23 +127,36 @@ try {
     expectedChecks.every((check) => report.checks.includes(check)),
     true,
   );
-  assert.equal(report.source_bytes_unchanged, true);
+  assert.equal(report.source_filebytes_unchanged, true);
   assert.equal(report.permissions, "read=true,write=false,execute=false");
   assert.ok(
     report.limitations.some(
       (value) =>
-        value.includes("non-writable block REA_RELRO") &&
+        value.includes("non-writable block") &&
         value.includes("file-backed value may differ") &&
         value.includes("not authoritative"),
     ),
   );
+  if (report.decompiler_verified) {
+    assert.ok(
+      report.checks.includes("baseline_pseudocode_folds_file_constant"),
+    );
+    assert.ok(report.checks.includes("pseudocode_does_not_use_file_constant"));
+    assert.ok(
+      report.checks.includes("protected_pseudocode_is_not_baseline_constant"),
+    );
+  } else {
+    assert.ok(
+      report.checks.includes("native_decompiler_unavailable_is_explicit"),
+    );
+  }
   assert.equal(digest(await readFile(target)), targetDigest);
   report = {
     ...report,
     target_sha256: targetDigest,
     decompiler_scope: report.decompiler_verified
-      ? "native Ghidra decompiler limitation check passed"
-      : "native Ghidra decompiler unavailable; bridge limitation and volatile-block checks passed",
+      ? "native Ghidra baseline and protected pseudocode comparison passed"
+      : "native Ghidra decompiler unavailable; importer relocation, bridge limitation, and volatile-block checks passed",
   };
 } finally {
   if (supervisor !== undefined) {
@@ -168,24 +177,17 @@ console.log(
 );
 
 async function buildFixture(compiler, source, output) {
-  const arguments_ =
-    process.platform === "darwin"
-      ? [
-          "-Wl,-e,_rea_loader_start",
-          "-Wl,-undefined,dynamic_lookup",
-          source,
-          "-o",
-          output,
-        ]
-      : [
-          "-fPIE",
-          "-pie",
-          "-nostdlib",
-          "-Wl,-e,rea_loader_start",
-          source,
-          "-o",
-          output,
-        ];
+  const arguments_ = [
+    "-O0",
+    "-fPIE",
+    "-pie",
+    "-nostdlib",
+    "-Wl,-z,relro,-z,now",
+    "-Wl,-e,rea_loader_start",
+    source,
+    "-o",
+    output,
+  ];
   await exec(compiler, arguments_, { timeout: 60_000 });
 }
 

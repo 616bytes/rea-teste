@@ -34,16 +34,18 @@ binaries and Ghidra projects are never committed.
   artifact need separate verification. Fixture target code is never executed.
 
 - `loader-relocation.c` and `ReaLoaderRelocationProbe.java` exercise the
-  production `ReaGhidraBridge` against a real imported Ghidra Program. The
-  probe adds a deterministic relocation record to the ephemeral database so
-  the destination is a loaded, initialized, file-backed, non-writable block, then requires
-  the production protection method to mark that block volatile and emit the
-  loader-value limitation without changing source `FileBytes` or permissions.
-  `npm run verify:ghidra:loader-relocation` requires BYO Ghidra/JDK and a C
-  compiler; it is a bridge-level producer regression, not a claim that a
-  particular host linker naturally emitted this relocation. The native
-  decompiler assertion is reported as unavailable when the installed Ghidra
-  lacks its platform decompiler component.
+  production `ReaGhidraBridge` against a real imported Linux PIE ELF. The
+  fixture's `.data.rel.ro` pointer is populated by the ELF loader relocation;
+  the probe resolves that importer-created relocation, requires the real reader
+  instruction's read reference to target it, and requires the loaded block to
+  be non-writable. It compares an unprotected decompiler result that folds the
+  file-backed `0x11111111` value with a protected result that leaves the read
+  non-constant, while retaining the production loader-value limitation and
+  unchanged source `FileBytes` and permissions. `npm run
+  verify:ghidra:loader-relocation` requires a Linux host, BYO Ghidra/JDK, and a
+  C compiler; it never executes the fixture. The native decompiler comparison
+  is reported as unavailable when the installed Ghidra lacks its platform
+  decompiler component.
 
 `scripts/verify-real-ghidra.mjs` uses `cc`, `clang`, and `lld-link` by default;
 `REA_CC`, `REA_CLANG`, and `REA_LLD_LINK` can select alternate commands. The

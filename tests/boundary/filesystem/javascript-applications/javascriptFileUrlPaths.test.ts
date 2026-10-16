@@ -86,7 +86,7 @@ describe("JavaScript file URL paths", () => {
     },
   );
 
-  it("resolves a decoded literal file URL at the filesystem boundary", async () => {
+  it("keeps a decoded absolute file URL unmapped without host ownership", async () => {
     const root = await createTestTempDirectory("rea-literal-file-url-");
     await mkdir(join(root, "app"), { recursive: true });
     await writeFile(
@@ -110,10 +110,16 @@ describe("JavaScript file URL paths", () => {
     expect(preload?.observations).not.toHaveLength(0);
     for (const observation of preload?.observations ?? [])
       expect(observation.properties).toMatchObject({
-        resolved_path: "app/preload name.cjs",
-        resolution_status: "resolved",
+        resolved_path: null,
+        resolution_status: "unavailable",
         resolution_context: "filesystem-expression",
       });
+    expect(
+      graph.edges.filter(
+        ({ source_node_id, relation }) =>
+          source_node_id === preload?.node_id && relation === "maps_to",
+      ),
+    ).toEqual([]);
   });
 
   it.each(unknownExpressions)("leaves unsupported %s unknown", (expression) => {

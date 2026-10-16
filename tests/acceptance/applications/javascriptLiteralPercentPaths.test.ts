@@ -255,17 +255,26 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "a.asar/sub/package.json",
       "a.asar/external-app/package.json",
       "a.asar/sub/main.cjs",
+      "a.asar/shared/main.cjs",
     ]);
     const roles = graph.nodes.filter(
       ({ kind }) => kind === "electron-renderer",
     );
-    expect(roles).toHaveLength(3);
+    expect(roles).toHaveLength(6);
     for (const role of roles) {
+      const externalOwner = role.observations.some(
+        ({ evidence }) =>
+          evidence.location.available &&
+          evidence.location.value.kind === "source-range" &&
+          evidence.location.value.source === "a.asar/shared/main.cjs",
+      );
       const declaration = role.observations.find(
         ({ properties }) => properties.runtime_path_base === "application-root",
       )?.properties.declared_path;
       const expected =
-        declaration === "absent.html" ? null : `a.asar/${String(declaration)}`;
+        declaration === "absent.html"
+          ? null
+          : `a.asar/${externalOwner ? "external-app/" : ""}${String(declaration)}`;
       expect(role.observations).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

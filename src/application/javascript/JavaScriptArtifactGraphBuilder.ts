@@ -107,9 +107,11 @@ function* buildJavaScriptArtifactGraphInputSteps(
   for (const files of [fileSet.files, fileSet.unavailable_relevant_files]) {
     for (const file of files) {
       if (
-        file.kind === "package-json" &&
-        !dependencyManifest(file.path) &&
-        !parsedPackages.has(file.path)
+        (file.kind === "package-json" &&
+          !dependencyManifest(file.path) &&
+          !parsedPackages.has(file.path)) ||
+        (file.kind === "javascript" &&
+          (!("text" in file) || !file.text.included))
       )
         applicationOwnershipUnknownContainers.add(
           applicationContainerIdentity(fileSet, file),

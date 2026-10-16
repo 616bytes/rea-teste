@@ -52,7 +52,11 @@ import {
   normalizeJarEntryPath,
   resolveJarSelection,
 } from "./jarClassEntry.js";
-import { isJarManifestName, isMultiReleaseManifest } from "./jarManifest.js";
+import {
+  isJarManifestName,
+  isMultiReleaseManifest,
+  JDK_DEFAULT_MAX_MANIFEST_BYTES,
+} from "./jarManifest.js";
 import { JVM_LIMITS, JVM_PROVIDER_IDENTITY } from "./JvmClassFileRelease.js";
 import {
   jvmClassFileFailure,
@@ -346,16 +350,13 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       },
     );
     // The ZIP reader owns member-name interpretation; keep its notes (e.g.
-    // an omitted leading "./") so the archive's own name stays visible.
+    // a Unicode Path name) and the manifest decision's notes visible.
     const withMemberNotes =
-      selected.value.member.limitations.length === 0
+      selected.value.limitations.length === 0
         ? result
         : {
             ...result,
-            limitations: [
-              ...result.limitations,
-              ...selected.value.member.limitations,
-            ],
+            limitations: [...result.limitations, ...selected.value.limitations],
           };
     const tooLarge = this.#rejectIfOversized(withMemberNotes, jar);
     if (tooLarge) return err(tooLarge);
@@ -375,6 +376,8 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       {
         readonly member: ArtifactEntry;
         readonly release: number | null;
+        /** Reader notes on the member and any note on the manifest decision. */
+        readonly limitations: readonly string[];
       },
       AnalysisError
     >
@@ -418,11 +421,15 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
         ),
       );
     const multiRelease = manifest.kind === "multi-release";
+    const manifestNotes =
+      manifest.kind === "not-multi-release" && manifest.note !== undefined
+        ? [manifest.note]
+        : [];
     if (!multiRelease && requestedRelease !== undefined)
       return err(
         this.#inputError(
           "release",
-          `${jar} is not a multi-release JAR (no Multi-Release: true manifest attribute); META-INF/versions entries are inert, so only the base entry is selectable.`,
+          `${jar} is not a multi-release JAR (${manifestNotes[0] ?? "no Multi-Release: true manifest attribute"}); META-INF/versions entries are inert, so only the base entry is selectable.`,
         ),
       );
     // In a multi-release JAR a META-INF/versions/<N>/ member is the release-N
@@ -474,7 +481,11 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
           `The selected entry ${entry} is encrypted and cannot be read without a key; its debug metadata is unavailable, not absent.`,
         ),
       );
-    return ok({ member, release: selection.release });
+    return ok({
+      member,
+      release: selection.release,
+      limitations: [...member.limitations, ...manifestNotes],
+    });
   }
 
   /**
@@ -486,7 +497,8 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     manifest: ArtifactEntry | undefined,
     signal: AbortSignal | undefined,
   ): Promise<
-    | { readonly kind: "multi-release" | "not-multi-release" }
+    | { readonly kind: "multi-release" }
+    | { readonly kind: "not-multi-release"; readonly note?: string }
     | { readonly kind: "unknown"; readonly reason: string }
   > {
     if (manifest === undefined) return { kind: "not-multi-release" };
@@ -501,6 +513,14 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       return {
         kind: "unknown",
         reason: `The JAR manifest member ${name} is encrypted and cannot be read without a key (the JDK refuses to open a JAR holding an encrypted entry)`,
+      };
+    if (
+      manifest.declaredSize !== null &&
+      manifest.declaredSize > JDK_DEFAULT_MAX_MANIFEST_BYTES
+    )
+      return {
+        kind: "not-multi-release",
+        note: `the JAR manifest ${name} declares ${String(manifest.declaredSize)} bytes, over the JDK's default jdk.jar.maxSignatureFileSize of ${String(JDK_DEFAULT_MAX_MANIFEST_BYTES)} bytes, so JarFile.isMultiRelease() is false at default settings`,
       };
     return {
       kind: isMultiReleaseManifest(

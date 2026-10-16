@@ -462,3 +462,57 @@ describe("JvmClassFileProvider unreadable manifest", () => {
     expect(result.error.message).toContain("multi-release JAR is unknown");
   });
 });
+
+describe("JvmClassFileProvider manifest size", () => {
+  const VERSIONED = `META-INF/versions/17/${ENTRY}`;
+
+  /** A multi-release manifest padded, after its main section, to `size` bytes. */
+  const paddedManifest = (size: number): string => {
+    const head = `${MR_MANIFEST}Name: x\r\nX: `;
+    const tail = "\r\n\r\n";
+    return `${head}${"x".repeat(size - head.length - tail.length)}${tail}`;
+  };
+
+  // JarFile.getBytes refuses a manifest over jdk.jar.maxSignatureFileSize
+  // (default 16,000,000 bytes) and isMultiRelease() then returns false
+  // (audit z39 true at the limit, z40 false one byte over).
+  it.each([
+    [16_000_000, 17],
+    [16_000_001, null],
+  ])(
+    "decides multi-release as the JDK does for a %i-byte manifest",
+    async (size, release) => {
+      const path = await writeJar(
+        `manifest-${String(size)}.jar`,
+        await buildZip([
+          { name: "META-INF/MANIFEST.MF", text: paddedManifest(size) },
+          { name: ENTRY, bytes: minimalClass(52) },
+          { name: VERSIONED, bytes: minimalClass(61) },
+        ]),
+      );
+      const result = await provider.inspect({
+        path,
+        entry: ENTRY,
+        release: 17,
+      });
+      if (release !== null) {
+        if (!result.ok) throw result.error;
+        expect(
+          (result.value.result as { selected_entry: { release: number } })
+            .selected_entry.release,
+        ).toBe(release);
+        return;
+      }
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect((result.error as AnalysisInputError).issues).toEqual([
+        expect.objectContaining({
+          path: ["release"],
+          message: expect.stringContaining(
+            "over the JDK's default jdk.jar.maxSignatureFileSize of 16000000 bytes",
+          ),
+        }),
+      ]);
+    },
+  );
+});

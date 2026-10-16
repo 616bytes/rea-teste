@@ -14,6 +14,14 @@
  *    (`Boolean.parseBoolean`). A parse error makes the JAR not multi-release.
  */
 
+/**
+ * `JarFile.getBytes` refuses a manifest whose declared size exceeds
+ * `SignatureFileVerifier.MAX_SIG_FILE_SIZE` (the `jdk.jar.maxSignatureFileSize`
+ * system property, default 16,000,000 bytes); `isMultiRelease()` then catches
+ * that IOException and returns false, so a larger manifest is never honored.
+ */
+export const JDK_DEFAULT_MAX_MANIFEST_BYTES = 16_000_000;
+
 /** The JDK locates the manifest by its stored name, ignoring ASCII case. */
 const MANIFEST_NAME = "meta-inf/manifest.mf";
 

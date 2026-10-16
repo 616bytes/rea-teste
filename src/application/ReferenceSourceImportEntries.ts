@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
 import { logicalPathEscapesRoot } from "../domain/artifactIdentity.js";
+import { stripQueryAndFragment } from "../domain/artifactPathSyntax.js";
 import {
   createReferenceSourcePathLookup,
   isPortableAbsoluteReferenceTarget,
@@ -188,12 +189,13 @@ const nodeRequireIndexCandidates = (directory: string): string[] =>
 
 /** ESM specifiers identify URL pathnames; CommonJS requests use literal paths. */
 const decodeImportPathname = (specifier: string): string | undefined => {
+  const pathname = stripQueryAndFragment(specifier);
   // Node rejects encoded separators during module resolution, before converting
   // the URL to a filesystem path (which accepts %5c on POSIX).
-  if (/%(?:2f|5c)/iu.test(specifier) || specifier.includes("\\"))
+  if (/%(?:2f|5c)/iu.test(pathname) || pathname.includes("\\"))
     return undefined;
   try {
-    const decoded = decodeURIComponent(specifier);
+    const decoded = decodeURIComponent(pathname);
     return decoded.includes("\0") ? undefined : decoded;
   } catch {
     return undefined;

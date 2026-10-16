@@ -266,3 +266,82 @@ it("keeps TypeScript source imports as literal percent filenames", async () => {
       parse_state: "parsed",
     });
 });
+
+it("resolves ESM imports using the pathname before query and fragment suffixes", async () => {
+  const root = await createTestTempDirectory("rea-reference-esm-suffix-");
+  await Promise.all([
+    writeFile(
+      join(root, "main.mjs"),
+      [
+        'import "./dep.mjs?tag=%20";',
+        'import "./dep%20name.mjs?cache=1#v2";',
+        'import "./slash-query.mjs?tag=%2f";',
+        'import "./hash%23name.mjs?tag=x";',
+      ].join("\n"),
+    ),
+    ...[
+      "dep.mjs",
+      "dep name.mjs",
+      "slash-query.mjs",
+      "hash#name.mjs",
+      "hash%23name.mjs",
+    ].map((path) => writeFile(join(root, path), "export {};\n")),
+  ]);
+
+  const result = await importReferenceSource({
+    root,
+    caller: "reference-esm-suffix-test",
+    policy: { secretPatterns: [] },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.parse_failures).toEqual([]);
+  expect(result.value.relationships).toHaveLength(4);
+  for (const to of [
+    "dep.mjs",
+    "dep name.mjs",
+    "slash-query.mjs",
+    "hash#name.mjs",
+  ])
+    expect(result.value.relationships).toContainEqual({
+      from_path: "main.mjs",
+      to,
+      kind: "imports",
+      resolution: "internal",
+      parse_state: "parsed",
+    });
+});
+
+it.skipIf(process.platform === "win32")(
+  "does not select POSIX filenames that contain ESM URL suffixes",
+  async () => {
+    const root = await createTestTempDirectory(
+      "rea-reference-esm-suffix-decoy-",
+    );
+    await Promise.all([
+      writeFile(
+        join(root, "main.mjs"),
+        'import "./dep.mjs?tag=%20";\nimport "./fragment.mjs#rev";\n',
+      ),
+      ...["dep.mjs", "fragment.mjs", "dep.mjs?tag= ", "fragment.mjs#rev"].map(
+        (path) => writeFile(join(root, path), "export {};\n"),
+      ),
+    ]);
+
+    const result = await importReferenceSource({
+      root,
+      caller: "reference-esm-suffix-decoy-test",
+      policy: { secretPatterns: [] },
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.parse_failures).toEqual([]);
+    expect(result.value.relationships).toHaveLength(2);
+    for (const to of ["dep.mjs", "fragment.mjs"])
+      expect(result.value.relationships).toContainEqual({
+        from_path: "main.mjs",
+        to,
+        kind: "imports",
+        resolution: "internal",
+        parse_state: "parsed",
+      });
+  },
+);

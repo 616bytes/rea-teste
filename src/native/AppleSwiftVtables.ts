@@ -66,6 +66,8 @@ export const decodeSwiftClassVtables = (input: {
           "Swift vtable count or offset exceeds declared metadata bounds",
         );
       const owner = read.string(read.relative(descriptor + 8n));
+      if (owner.length === 0)
+        throw new TypeError("Swift class vtable has an empty owner name");
       for (let index = 0; index < count; index++) {
         const entry = header + 8n + BigInt(index * 8);
         if (!read.admit()) {

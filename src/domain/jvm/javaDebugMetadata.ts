@@ -407,7 +407,13 @@ export const decodeMethodDebugMetadata = (
     ? frameAttributes(seeked.cursor, pool, RETAINED_ATTRIBUTES.code)
     : null;
   const attributes = framed?.attributes ?? [];
-  const codeMalformed = seeked === null || (framed?.error ?? null) !== null;
+  // JVMS fixes attribute_length exactly: bytes left after the declared
+  // sub-attributes mean the Code attribute is malformed (as in decodeTable),
+  // and any sub-attribute they hide is unknown, so absent tables are unread.
+  const codeMalformed =
+    seeked === null ||
+    (framed?.error ?? null) !== null ||
+    seeked.cursor.remaining !== 0;
   const codeLength = seeked?.codeLength ?? 0;
   const orUnread = <T>(table: DebugTable<T>): DebugTable<T> =>
     codeMalformed && table.presence === "absent"

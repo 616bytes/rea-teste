@@ -98,8 +98,9 @@ attribute is `malformed`, with `max_locals` `null` and every table `unread`,
 because which body is meant is unknown.
 
 A table whose declared entry count exceeds its bytes is reported `malformed` with
-the entries recovered before the short read. When a later sibling inside the
-same `Code` attribute is malformed, tables framed before it are kept and tables
+the entries recovered before the short read. A `Code` attribute with bytes left after its declared
+sub-attributes is malformed too. When a later sibling inside the
+same `Code` attribute is malformed, or such stray bytes follow, tables framed before it are kept and tables
 that were never reached are `unread` (unknown), not `absent`; absent, malformed, partial, and
 ambiguous (reused-slot) cases stay distinct and are never collapsed into
 "absent".

@@ -594,3 +594,18 @@ describe("decodeClassDebugMetadata — repeated single attributes", () => {
     });
   });
 });
+
+describe("decodeClassDebugMetadata — Code attribute length", () => {
+  it("refuses trailing bytes after a Code attribute's sub-attributes", () => {
+    const code = codeAttrInfo([
+      ...subAttrs(1, new Blob().attr(4, lineNumberTable([[0, 1]]))).parts,
+      0xde,
+      0xad,
+    ]);
+    const method = decodeOnly(new Blob().u2(1).attr(3, code)).methods[0]!;
+    expect(method.state).toBe("malformed");
+    // The framed table is kept; tables the stray bytes may hide are unknown.
+    expect(method.lineNumbers.presence).toBe("present");
+    expect(method.localVariables.presence).toBe("unread");
+  });
+});

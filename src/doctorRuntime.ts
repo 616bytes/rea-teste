@@ -8,8 +8,11 @@ import { inspectJadxProvider } from "./android/JadxDoctor.js";
 import { inspectSystemGhidraProvider } from "./ghidra/GhidraDoctor.js";
 import { inspectRadare2Provider } from "./radare2/Radare2Doctor.js";
 import { inspectIdaRegistration } from "./ida/IdaDoctor.js";
+import { inspectKunaProvider } from "./kuna/KunaDoctor.js";
+import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { parseJebMcpEndpoint } from "./jeb/JebMcpEndpoint.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
+import { ok } from "./domain/result.js";
 
 /** Compose provider diagnostics at the outer CLI adapter boundary. */
 export const createSystemDoctorHost = (
@@ -25,10 +28,26 @@ export const createSystemDoctorHost = (
   return systemDoctorHost({
     environment,
     providerRegistrationEnvironment: () => selectedJebRegistrationEnvironment,
-    providerInspections: async () => [
+    resolveProviderRequestBudget: (
+      analysisProvider,
+      registrationEnvironment,
+    ) => {
+      if (analysisProvider !== "ida" && analysisProvider !== "auto")
+        return ok(undefined);
+      const path = registrationEnvironment.REA_IDA_MCP_CONFIG;
+      if (path === undefined) return ok(undefined);
+      const registration = readIdaConfiguration(path);
+      if (registration.ok) return ok(registration.value.timeoutMs);
+      // An invalid IDA registration cannot be selected automatically. Keep it
+      // out of recommendations for another available provider, but surface the
+      // parser-owned error when IDA itself was explicitly selected.
+      return analysisProvider === "ida" ? registration : ok(undefined);
+    },
+    providerInspections: async (adoptFileHandle) => [
       await inspectSystemGhidraProvider(environment),
       inspectIdaRegistration(environment.REA_IDA_MCP_CONFIG),
       await inspectJadxProvider(environment),
+      await inspectKunaProvider(environment, process.platform, adoptFileHandle),
       await inspectRadare2Provider(environment),
     ],
     linuxDemoRuntimeCheck: () => inspectLinuxPrivateDisplay(environment),

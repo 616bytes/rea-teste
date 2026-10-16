@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { stat } from "node:fs/promises";
-import { Transform } from "node:stream";
+import { Transform, type Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -54,7 +54,10 @@ export interface KunaCommandRequest {
   readonly timeoutMs: number;
   /** The deadline callers configured, reported when the run times out. */
   readonly reportedTimeoutMs: number;
+  /** Buffered stderr bytes, plus stdout bytes unless `stdout` consumes them. */
   readonly outputBytes: number;
+  /** Parses stdout as it arrives instead of buffering it; see `runOwnedCommand`. */
+  readonly stdout?: Writable | undefined;
   readonly signal: AbortSignal;
   readonly retainFailedFileClose: (
     owner: OwnedFileHandle,
@@ -220,6 +223,7 @@ export const runKunaCommand = async (
       {
         timeoutMs: Math.max(1, request.timeoutMs),
         diagnosticBytes: request.outputBytes,
+        ...(request.stdout === undefined ? {} : { stdout: request.stdout }),
       },
       {
         signal: request.signal,
@@ -342,7 +346,7 @@ const commandFailure = (
     kind: "failed",
     error: new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
       ...details,
-      userMessage: `kuna ${subcommand} failed${exitCode === undefined || exitCode === null ? "" : ` with exit code ${String(exitCode)}`}: ${capturedOutput?.stderr.trim().split("\n").at(-1) ?? cause.message}`,
+      userMessage: `kuna ${subcommand} failed${exitCode === undefined || exitCode === null ? "" : ` with exit code ${String(exitCode)}`}: ${capturedOutput?.stderr.trim().split("\n").at(-1) || cause.message}`,
     }),
   };
 };

@@ -13,11 +13,14 @@ import {
   CutterBridgeClient,
   type CutterBridgeDiscovery,
   type CutterBridgeExecution,
+  type CutterDiscoveryOptions,
 } from "./CutterBridgeClient.js";
 import { CUTTER_PROVIDER_IDENTITY } from "./CutterBridgeClient.js";
 
 interface CutterBridgePort {
-  listSessions(): Promise<CutterBridgeDiscovery>;
+  listSessions(
+    options?: CutterDiscoveryOptions,
+  ): Promise<CutterBridgeDiscovery>;
   confirmCommandCompletion?(
     sessionId: string,
     requestId: string,
@@ -74,8 +77,35 @@ export class CutterBridgeService {
     return ok(null);
   }
 
-  listSessions(): Promise<CutterBridgeDiscovery> {
-    return this.client.listSessions();
+  async listSessions(
+    options: CutterDiscoveryOptions = {},
+  ): Promise<Result<CutterBridgeDiscovery, AnalysisError>> {
+    const { signal } = options;
+    try {
+      signal?.throwIfAborted();
+      const discovery = await this.client.listSessions(options);
+      signal?.throwIfAborted();
+      return ok(discovery);
+    } catch (cause) {
+      if (signal?.aborted)
+        return err(
+          new AnalysisCancelledError("list_cutter_sessions", {
+            cause: signal.reason,
+          }),
+        );
+      return err(
+        cause instanceof AnalysisError
+          ? cause
+          : new AnalysisCapabilityUnavailableError(
+              "cutter",
+              "list_cutter_sessions",
+              cause instanceof Error
+                ? cause.message
+                : "Cutter discovery failed",
+              { cause },
+            ),
+      );
+    }
   }
 
   async execute(

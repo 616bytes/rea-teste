@@ -1381,7 +1381,9 @@ describe("CutterBridgeClient: scenario group 9", () => {
         throw new Error("unexpected command dispatch");
       },
     });
-    await expect(service.listSessions()).resolves.toBe(discovery);
+    const result = await service.listSessions();
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe(discovery);
   });
 
   it("accepts only the exact completed-command receipt from status", async () => {

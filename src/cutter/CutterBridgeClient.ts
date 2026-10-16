@@ -167,22 +167,39 @@ class CutterBridgeResponseFrames {
 const mapDiscovery = async <Input, Output>(
   inputs: readonly Input[],
   operation: (input: Input) => Promise<Output>,
+  signal?: AbortSignal,
 ): Promise<Output[]> => {
+  signal?.throwIfAborted();
   const results = new Array<Output>(inputs.length);
   let next = 0;
-  await Promise.all(
+  let stopped = false;
+  const workers = await Promise.allSettled(
     Array.from(
       { length: Math.min(inputs.length, DISCOVERY_CONCURRENCY) },
       async () => {
-        while (next < inputs.length) {
-          const index = next++;
-          results[index] = await operation(inputs[index]!);
+        try {
+          while (!stopped && next < inputs.length) {
+            signal?.throwIfAborted();
+            const index = next++;
+            results[index] = await operation(inputs[index]!);
+          }
+        } catch (cause) {
+          stopped = true;
+          throw cause;
         }
       },
     ),
   );
+  // Do not release this discovery's work until all admitted probes settle.
+  for (const worker of workers)
+    if (worker.status === "rejected") throw worker.reason;
+  signal?.throwIfAborted();
   return results;
 };
+
+export interface CutterDiscoveryOptions {
+  readonly signal?: AbortSignal;
+}
 export type CutterBridgeExecutionState =
   | "not_started"
   | "complete"
@@ -286,8 +303,13 @@ export class CutterBridgeClient {
     );
   }
 
-  async listSessions(): Promise<CutterBridgeDiscovery> {
+  async listSessions(
+    options: CutterDiscoveryOptions = {},
+  ): Promise<CutterBridgeDiscovery> {
+    const { signal } = options;
+    signal?.throwIfAborted();
     const loaded = await this.#readDescriptors();
+    signal?.throwIfAborted();
     if (loaded.error !== undefined)
       return {
         sessions: [],
@@ -306,6 +328,7 @@ export class CutterBridgeClient {
                 kind: "status",
                 session_id: descriptor.session_id,
               }),
+              signal,
             ),
           );
           if (
@@ -328,9 +351,11 @@ export class CutterBridgeClient {
             identity_status: "partial" as const,
           };
         } catch {
+          signal?.throwIfAborted();
           return undefined;
         }
       },
+      signal,
     );
     const sessions = descriptors.filter(
       (value): value is CutterBridgeSession => value !== undefined,

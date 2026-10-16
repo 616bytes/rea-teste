@@ -1089,7 +1089,7 @@ console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenar
   expect(hooked).toEqual(plain);
 });
 
-it.each(["on", "once"])(
+it.each(["on", "multiple-on", "once"])(
   "records %s invocations without consulting application Array species",
   async (kind) => {
     const root = await createTestTempDirectory(
@@ -1106,7 +1106,8 @@ const kind = ${JSON.stringify(kind)};
 let retainedUnderSpecies = 0;
 const scenario = (emitter) => {
   let calls = 0, reads = 0, failure = null;
-  emitter[kind]("ch", () => { calls++; });
+  emitter[kind === "once" ? "once" : "on"]("ch", () => { calls++; });
+  if (kind === "multiple-on") emitter.on("ch", () => { calls++; });
   const prior = Object.getOwnPropertyDescriptor(Array, Symbol.species);
   Object.defineProperty(Array, Symbol.species, { configurable: true, get() {
     reads++; throw new Error("application array species");
@@ -1138,10 +1139,11 @@ console.log(JSON.stringify({ plain, hooked, invocations, retainedUnderSpecies })
       invocations: number;
       retainedUnderSpecies: number;
     };
-    expect(plain).toEqual({ calls: 1, reads: 0, failure: null });
+    const expected = kind === "multiple-on" ? 2 : 1;
+    expect(plain).toEqual({ calls: expected, reads: 0, failure: null });
     expect(hooked).toEqual(plain);
-    expect(invocations).toBe(1);
-    expect(retainedUnderSpecies).toBe(1);
+    expect(invocations).toBe(expected);
+    expect(retainedUnderSpecies).toBe(expected);
   },
 );
 

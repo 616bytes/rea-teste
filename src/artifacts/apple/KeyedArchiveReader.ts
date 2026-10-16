@@ -11,7 +11,10 @@ import {
   unknownDateLimitation,
 } from "../../domain/apple/plistValue.js";
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
-import { binaryPlistNumberLiterals } from "./PlistNumberLiterals.js";
+import {
+  decodeBinaryPlistNumbers,
+  scanBinaryPlistNumberLiterals,
+} from "./PlistNumberLiterals.js";
 import {
   omittedPrototypeKeysLimitation,
   parseXmlPropertyList,
@@ -64,13 +67,19 @@ export const decodeKeyedArchiveBytes = (
               )
             : new RangeError(message),
         bounds: "decoder",
+        numberProjection: true,
       })
+    : undefined;
+  const binaryNumberMetadata = binary
+    ? scanBinaryPlistNumberLiterals(bytes)
     : undefined;
   const parsed =
     binaryExpansion !== undefined
       ? {
-          value: parseBinary(bytes),
-          numberLiterals: binaryPlistNumberLiterals(bytes),
+          value: parseBinary(
+            decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
+          ),
+          numberLiterals: binaryNumberMetadata!.literals,
           omittedPrototypeKeys: binaryExpansion.binaryPrototypeKeyObserved
             ? null
             : 0,

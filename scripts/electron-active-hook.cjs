@@ -343,86 +343,80 @@ const recordInvocation = (kind, channel, event, args) =>
     error: false,
   });
 
-// Maps each observed on/once wrapper to the caller's listener. The emitter's
-// own listener list stays the only registration record, so a wrapper becomes
-// collectable as soon as the emitter drops it.
-const wrapperOriginal = new WeakMap();
-
-// Return the newest registration for `listener` in the emitter's own list, in
-// the form EventEmitter#removeListener matches to remove exactly that entry.
-const registrationFor = (emitter, channel, listener) => {
-  if (typeof emitter.rawListeners !== "function") return listener;
-  const registrations = emitter.rawListeners(channel);
-  for (let index = registrations.length - 1; index >= 0; index -= 1) {
-    const registration = registrations[index];
-    // EventEmitter#once wrappers expose the registered function as .listener.
-    const candidate = registration?.listener ?? registration;
-    if (candidate === listener || wrapperOriginal.get(candidate) === listener)
-      return candidate;
+const invokeObservedEventListener = (thisArg, channel, listener, args) => {
+  const recorded = recordInvocation(
+    "main-event-invocation",
+    channel,
+    args[0],
+    args.slice(1),
+  );
+  try {
+    return listener.apply(thisArg, args);
+  } catch (cause) {
+    if (recorded !== null) recorded.error = true;
+    throw cause;
   }
-  return listener;
 };
 
-// EventEmitter#once registers its own wrapper around ours through this.on.
-const isOnceWrapperForObservedListener = (listener) =>
-  typeof listener.listener === "function" &&
-  wrapperOriginal.has(listener.listener);
-
+// Recording wrappers follow EventEmitter's own wrapper convention: `.listener`
+// names the caller's function. Native removeListener, listenerCount, listeners,
+// and the newListener/removeListener meta-events then resolve the wrapper to
+// the caller's function exactly as they resolve EventEmitter#once wrappers.
 const patchIpcMain = (ipcMain) => {
   if (ipcMain === null || ipcMain === undefined) return;
-  for (const method of ["removeListener", "off"]) {
-    const original = ipcMain[method];
-    if (typeof original !== "function") continue;
-    ipcMain[method] = function patchedIpcMainRemoval(channel, listener) {
-      return original.call(
+  const { handle, on, once, removeListener } = ipcMain;
+  if (typeof handle === "function")
+    ipcMain.handle = function patchedIpcMainHandle(channel, listener) {
+      if (typeof listener !== "function")
+        return handle.call(this, channel, listener);
+      return handle.call(
         this,
         channel,
-        typeof listener === "function"
-          ? registrationFor(this, channel, listener)
-          : listener,
+        async function wrappedHandler(event, ...args) {
+          const recorded = recordInvocation(
+            "main-handler-invocation",
+            channel,
+            event,
+            args,
+          );
+          try {
+            const result = await listener.call(this, event, ...args);
+            if (recorded !== null) recorded.result_shape = shape(result);
+            return result;
+          } catch (cause) {
+            if (recorded !== null) recorded.error = true;
+            throw cause;
+          }
+        },
       );
     };
-  }
-  for (const [method, kind] of [
-    ["handle", "main-handler-invocation"],
-    ["on", "main-event-invocation"],
-    ["once", "main-event-invocation"],
-  ]) {
-    const original = ipcMain[method];
-    if (typeof original !== "function") continue;
-    ipcMain[method] = function patchedIpcMain(channel, listener) {
-      if (
-        typeof listener !== "function" ||
-        isOnceWrapperForObservedListener(listener)
-      )
-        return original.call(this, channel, listener);
-      const wrapped =
-        kind === "main-handler-invocation"
-          ? async function wrappedHandler(event, ...args) {
-              const recorded = recordInvocation(kind, channel, event, args);
-              try {
-                const result = await listener.call(this, event, ...args);
-                if (recorded !== null) recorded.result_shape = shape(result);
-                return result;
-              } catch (cause) {
-                if (recorded !== null) recorded.error = true;
-                throw cause;
-              }
-            }
-          : function wrappedEventListener(event, ...args) {
-              const recorded = recordInvocation(kind, channel, event, args);
-              try {
-                return listener.call(this, event, ...args);
-              } catch (cause) {
-                if (recorded !== null) recorded.error = true;
-                throw cause;
-              }
-            };
-      if (kind === "main-event-invocation")
-        wrapperOriginal.set(wrapped, listener);
-      return original.call(this, channel, wrapped);
+  if (typeof on !== "function") return;
+  ipcMain.on = function patchedIpcMainOn(channel, listener) {
+    if (typeof listener !== "function") return on.call(this, channel, listener);
+    const wrapped = function wrappedEventListener(...args) {
+      return invokeObservedEventListener(this, channel, listener, args);
     };
-  }
+    wrapped.listener = listener;
+    return on.call(this, channel, wrapped);
+  };
+  if (typeof once !== "function" || typeof removeListener !== "function")
+    return;
+  // Mirror EventEmitter's _onceWrap: bind the registering emitter, remove this
+  // registration through the original removeListener, then call the listener.
+  ipcMain.once = function patchedIpcMainOnce(channel, listener) {
+    if (typeof listener !== "function")
+      return once.call(this, channel, listener);
+    const target = this;
+    let fired = false;
+    const wrapped = function wrappedOnceEventListener(...args) {
+      if (fired) return undefined;
+      removeListener.call(target, channel, wrapped);
+      fired = true;
+      return invokeObservedEventListener(target, channel, listener, args);
+    };
+    wrapped.listener = listener;
+    return on.call(this, channel, wrapped);
+  };
 };
 
 const patchNavigationMethods = (webContents, contentsId) => {

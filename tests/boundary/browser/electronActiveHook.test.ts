@@ -412,6 +412,159 @@ process.stdout.write(JSON.stringify({
   });
 });
 
+it("removes the newest registration of an ipcMain listener that has its own listener property", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-ipc-wrapped-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-wrapped.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const event = { sender: { id: 9 }, senderFrame: { routingId: 7 } };
+const order = [];
+const f = () => { order.push("f"); };
+f.listener = () => { order.push("inner"); };
+const g = () => { order.push("g"); };
+ipcMain.on("wrapped", f);
+ipcMain.on("wrapped", g);
+ipcMain.addListener("wrapped", f);
+ipcMain.removeListener("wrapped", f);
+ipcMain.emit("wrapped", event);
+process.stdout.write(JSON.stringify({
+  order,
+  listeners: ipcMain.listenerCount("wrapped"),
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  expect(JSON.parse(execution.stdout)).toEqual({
+    order: ["f", "g"],
+    listeners: 2,
+  });
+});
+
+it("reports original ipcMain listeners to newListener and removeListener observers", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-ipc-meta-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-meta.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const event = { sender: { id: 9 }, senderFrame: { routingId: 7 } };
+const channels = new Set(["on", "removed-once", "fired-once"]);
+const added = [];
+const removed = [];
+ipcMain.addListener("newListener", (channel, listener) => { if (channels.has(channel)) added.push([channel, listener]); });
+ipcMain.addListener("removeListener", (channel, listener) => { if (channels.has(channel)) removed.push([channel, listener]); });
+const onListener = () => undefined;
+const removedOnce = () => undefined;
+let firedCalls = 0;
+const firedOnce = () => { firedCalls += 1; };
+ipcMain.on("on", onListener);
+ipcMain.removeListener("on", onListener);
+ipcMain.once("removed-once", removedOnce);
+ipcMain.removeListener("removed-once", removedOnce);
+ipcMain.once("fired-once", firedOnce);
+ipcMain.emit("fired-once", event);
+ipcMain.emit("fired-once", event);
+const expected = [["on", onListener], ["removed-once", removedOnce], ["fired-once", firedOnce]];
+const same = (actual) => actual.length === expected.length &&
+  actual.every(([channel, listener], index) => channel === expected[index][0] && listener === expected[index][1]);
+const snapshot = globalThis.__reaElectronActiveSnapshot();
+process.stdout.write(JSON.stringify({
+  added_originals: same(added),
+  removed_originals: same(removed),
+  fired_calls: firedCalls,
+  invocations: snapshot.events.filter((item) => item.kind === "main-event-invocation").map((item) => item.channel),
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  expect(JSON.parse(execution.stdout)).toEqual({
+    added_originals: true,
+    removed_originals: true,
+    fired_calls: 1,
+    invocations: ["fired-once"],
+  });
+});
+
+it("keeps hooked ipcMain listener semantics identical to an unhooked EventEmitter", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-ipc-diff-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-differential.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const event = { sender: { id: 9 }, senderFrame: { routingId: 7 } };
+const scenario = (emitter) => {
+  const log = [];
+  const names = new Map();
+  const named = (name) => {
+    const listener = () => { log.push("call:" + name); };
+    names.set(listener, name);
+    return listener;
+  };
+  const label = (listener) => names.get(listener) ?? "unknown";
+  emitter.on("newListener", (channel, listener) => {
+    if (channel === "ch") log.push("new:" + label(listener));
+  });
+  emitter.on("removeListener", (channel, listener) => {
+    if (channel === "ch") log.push("remove:" + label(listener));
+  });
+  const [a, b, c, d] = ["a", "b", "c", "d"].map(named);
+  const state = () => {
+    log.push("count:" + emitter.listenerCount("ch") + ":" + [a, b, c, d].map((listener) => emitter.listenerCount("ch", listener)).join(","));
+    log.push("listeners:" + emitter.listeners("ch").map(label).join(","));
+    log.push("raw:" + emitter.rawListeners("ch").map((listener) => label(listener.listener ?? listener)).join(","));
+  };
+  emitter.on("ch", a);
+  emitter.once("ch", b);
+  emitter.on("ch", c);
+  emitter.addListener("ch", a);
+  emitter.once("ch", d);
+  emitter.prependListener("ch", c);
+  emitter.prependOnceListener("ch", d);
+  state();
+  emitter.removeListener("ch", a);
+  state();
+  emitter.emit("ch", event);
+  state();
+  emitter.off("ch", c);
+  emitter.once("ch", b);
+  emitter.removeListener("ch", b);
+  emitter.once("ch", d);
+  state();
+  emitter.emit("ch", event);
+  state();
+  emitter.off("ch", c);
+  // With several entries, removeAllListeners reports each raw entry to
+  // removeListener observers, so a hooked on() wrapper surfaces there.
+  // Compare the single-entry form, which unwraps .listener.
+  emitter.removeAllListeners("ch");
+  state();
+  return log;
+};
+process.stdout.write(JSON.stringify({
+  plain: scenario(new EventEmitter()),
+  hooked: scenario(ipcMain),
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const { plain, hooked } = JSON.parse(execution.stdout) as {
+    plain: string[];
+    hooked: string[];
+  };
+  expect(plain).not.toContain("new:unknown");
+  expect(hooked).toEqual(plain);
+});
+
 it("isolates hook and exercise from ancestor Electron packages", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ancestor-");
   temporary.push(root);

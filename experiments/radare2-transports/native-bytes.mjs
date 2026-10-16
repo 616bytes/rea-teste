@@ -152,6 +152,7 @@ async function hashHandle(handle, length, signal) {
     hash.update(buffer.subarray(0, bytesRead));
     position += BigInt(bytesRead);
   }
+  signal?.throwIfAborted();
   return hash.digest("hex");
 }
 
@@ -187,6 +188,30 @@ async function closeHandle(handle, path) {
   }
 }
 
+// Nonblocking open rejects FIFOs/devices before reading, and both digest phases
+// share the independent byte oracle's handle ownership and bounded read loop.
+async function withRegularFile(path, signal, operation) {
+  signal?.throwIfAborted();
+  const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  retainedHandles.set(handle, path);
+  try {
+    signal?.throwIfAborted();
+    const metadata = await handle.stat({ bigint: true });
+    if (!metadata.isFile())
+      throw error("Selected oracle is not a regular file");
+    const result = await operation(handle, metadata);
+    signal?.throwIfAborted();
+    return result;
+  } finally {
+    await closeHandle(handle, path);
+  }
+}
+
+export const digestTarget = (path, signal) =>
+  withRegularFile(path, signal, (handle, metadata) =>
+    hashHandle(handle, metadata.size, signal),
+  );
+
 /** Retry cleanup without forgetting any file handle whose close still fails. */
 export async function retryNativeByteCleanup() {
   for (const [handle, path] of retainedHandles) {
@@ -207,55 +232,44 @@ async function verifyFile({
   expectedDigest,
   signal,
 }) {
-  let handle;
   try {
-    signal?.throwIfAborted();
-    handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
-    retainedHandles.set(handle, path);
-    const before = await handle.stat({ bigint: true });
-    if (!before.isFile())
+    return await withRegularFile(path, signal, async (handle, before) => {
+      if (mapping.offset + BigInt(length) > before.size)
+        return {
+          status: "unavailable",
+          path,
+          reason: "Mapped request exceeds the independent file's actual extent",
+        };
+      const bytes = await fileBytes(handle, mapping.offset, length, signal);
+      const sha256 = await hashHandle(handle, before.size, signal);
+      const after = await handle.stat({ bigint: true });
+      const metadataStable = stableMetadata(before, after);
+      const digestMatches = sha256 === expectedDigest;
+      const bytesMatch =
+        nativeBytes.length === length && bytes.equals(nativeBytes);
       return {
-        status: "unavailable",
+        status:
+          metadataStable && digestMatches && bytesMatch
+            ? "matched"
+            : "unverified",
         path,
-        reason: "Selected oracle is not a regular file",
+        file_offset: mapping.file_offset,
+        returned_bytes: bytes.length,
+        bytes_hex: bytes.toString("hex"),
+        sha256,
+        reader_digest_matches: digestMatches,
+        metadata_stable: metadataStable,
+        native_bytes_match: bytesMatch,
       };
-    if (mapping.offset + BigInt(length) > before.size)
-      return {
-        status: "unavailable",
-        path,
-        reason: "Mapped request exceeds the independent file's actual extent",
-      };
-    const bytes = await fileBytes(handle, mapping.offset, length, signal);
-    const sha256 = await hashHandle(handle, before.size, signal);
-    const after = await handle.stat({ bigint: true });
-    const metadataStable = stableMetadata(before, after);
-    const digestMatches = sha256 === expectedDigest;
-    const bytesMatch =
-      nativeBytes.length === length && bytes.equals(nativeBytes);
-    return {
-      status:
-        metadataStable && digestMatches && bytesMatch
-          ? "matched"
-          : "unverified",
-      path,
-      file_offset: mapping.file_offset,
-      returned_bytes: bytes.length,
-      bytes_hex: bytes.toString("hex"),
-      sha256,
-      reader_digest_matches: digestMatches,
-      metadata_stable: metadataStable,
-      native_bytes_match: bytesMatch,
-    };
+    });
   } catch (cause) {
-    if (signal?.aborted) throw cause;
+    if (signal?.aborted || cause?.cleanup) throw cause;
     return {
       status: "unavailable",
       path,
       reason: cause?.message ?? "Independent file read failed",
       code: cause?.code ?? null,
     };
-  } finally {
-    if (handle) await closeHandle(handle, path);
   }
 }
 

@@ -1,6 +1,5 @@
 // Isolated analyst-capability prototype. Not a registered REA provider or Evidence writer.
-import { createHash, randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   AnalysisCancelledError,
@@ -24,7 +23,7 @@ import {
 } from "./analysis-values.mjs";
 import { decodeEsil, decodeHighPcode, traceFlow } from "./analysis-flow.mjs";
 import { sliceNativeEsil } from "./native-esil.mjs";
-import { readNativeBytes } from "./native-bytes.mjs";
+import { digestTarget, readNativeBytes } from "./native-bytes.mjs";
 
 export {
   addressSchema,
@@ -162,8 +161,10 @@ function serialOperations(options) {
   let tail = Promise.resolve();
   return (operation) =>
     (input, request = {}) => {
-      const signals = [options.signal, request.signal].filter(Boolean);
-      const signal = signals.length ? AbortSignal.any(signals) : undefined;
+      const signal = AbortSignal.any([
+        AbortSignal.timeout(options.timeoutMs ?? 120_000),
+        ...[options.signal, request.signal].filter(Boolean),
+      ]);
       return new Promise((resolve) => {
         let started = false;
         let cancelled = false;
@@ -197,10 +198,7 @@ function serialOperations(options) {
 function createObserver(connection, options) {
   async function digest(signal) {
     if (connection.transport === "http") return null;
-    const hash = createHash("sha256");
-    for await (const bytes of createReadStream(connection.path, { signal }))
-      hash.update(bytes);
-    return hash.digest("hex");
+    return digestTarget(connection.path, signal);
   }
 
   async function observe(commands, request) {

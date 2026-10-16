@@ -768,6 +768,81 @@ process.stdout.write(JSON.stringify({
   expect(invocations).toEqual(["decorated", "decorated"]);
 });
 
+it.each(["stable", "replaced", "readonly", "getter", "proxy"])(
+  "normalizes raw ipcMain on entries before %s removal decorators",
+  async (mode) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-hook-ipc-remove-decorator-",
+    );
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const script = join(root, "ipc-removal-decorator.cjs");
+    await writeFile(
+      script,
+      `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const scenario = (emitter) => {
+  const seen = [];
+  const onListener = () => undefined;
+  const onceListener = () => undefined;
+  const nativeRemove = emitter.removeListener;
+  const decorate = (name) => function removalDecorator(channel, listener) {
+    if (this !== emitter) throw new Error("decorator receiver changed");
+    if (channel === "ch") {
+      const label = listener === onListener ? "on" :
+        listener.listener === onceListener ? "once" : "unknown";
+      seen.push(name + ":" + label);
+      if (label === "unknown") throw new Error("unexpected recording wrapper");
+    }
+    return nativeRemove.call(this, channel, listener);
+  };
+  emitter.on("removeListener", (channel) => {
+    if (${JSON.stringify(mode)} === "replaced" && channel === "ch")
+      emitter.removeListener = decorate("replacement");
+  });
+  emitter.on("ch", onListener);
+  emitter.once("ch", onceListener);
+  emitter.removeListener = decorate("first");
+  if (${JSON.stringify(mode)} === "readonly") Object.defineProperty(emitter, "removeListener", {
+    value: emitter.removeListener, writable: false, configurable: false,
+  });
+  if (${JSON.stringify(mode)} === "getter") Object.defineProperty(emitter, "removeListener", {
+    get() {
+      if (this !== emitter) throw new Error("getter receiver changed");
+      return decorate("first");
+    },
+  });
+  if (${JSON.stringify(mode)} === "proxy") emitter.removeListener = new Proxy(emitter.removeListener, {
+    get() { throw new Error("decorator metadata must not be read"); },
+  });
+  let failure = null;
+  let returnsEmitter = false;
+  try { returnsEmitter = emitter.removeAllListeners("ch") === emitter; }
+  catch (cause) { failure = cause.message; }
+  return { seen, returns_emitter: returnsEmitter, remaining: emitter.listenerCount("ch"), failure };
+};
+process.stdout.write(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain) }) + "\\n");
+`,
+    );
+    const execution = await runNode(script, root);
+    expect(execution.code, execution.stderr).toBe(0);
+    const { plain, hooked } = JSON.parse(execution.stdout) as {
+      plain: Record<string, unknown>;
+      hooked: Record<string, unknown>;
+    };
+    expect(plain).toEqual({
+      seen: [
+        "first:once",
+        `${mode === "replaced" ? "replacement" : "first"}:on`,
+      ],
+      returns_emitter: true,
+      remaining: 0,
+      failure: null,
+    });
+    expect(hooked).toEqual(plain);
+  },
+);
+
 it("keeps native removal traversal when an ipcMain observer prepends a listener", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-prepend-");
   temporary.push(root);

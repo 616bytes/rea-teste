@@ -361,8 +361,8 @@ const invokeObservedEventListener = (thisArg, channel, listener, args) => {
 
 // Recording wrappers follow EventEmitter's own wrapper convention: `.listener`
 // names the caller's function so native removal can match it. Node retains
-// ownership of listener traversal and meta-events; only hook-created "on"
-// wrappers passed to removeListener need translating to the raw function.
+// ownership of listener traversal and meta-events; hook-created "on" entries
+// are translated before calling the application's removal method/decorators.
 // Only hook-created wrappers are tracked, by the registration they stand in
 // for: they already record, so patched on() registers them as is. An "on"
 // wrapper stands in for the caller's raw function and a "once" wrapper for
@@ -396,7 +396,7 @@ const reachesHookListenerWrapper = (listener) => {
 
 const patchIpcMain = (ipcMain) => {
   if (ipcMain === null || ipcMain === undefined) return;
-  const { handle, on, once, removeListener } = ipcMain;
+  const { handle, on, once, removeAllListeners } = ipcMain;
   if (typeof handle === "function")
     ipcMain.handle = function patchedIpcMainHandle(channel, listener) {
       if (typeof listener !== "function")
@@ -452,23 +452,40 @@ const patchIpcMain = (ipcMain) => {
       this.on(channel, wrapped);
       return this;
     };
-  if (typeof removeListener !== "function") return;
-  // Let native removeAllListeners retain its live-array traversal, including
-  // reentrant app registrations. Normalize only our raw "on" entries when it
-  // delegates to removeListener; native once entries remain unchanged.
-  ipcMain.removeListener = function patchedIpcMainRemoveListener(
-    channel,
-    listener,
+  if (typeof removeAllListeners !== "function") return;
+  // Node owns its live-array traversal. A forwarding receiver translates only
+  // our "on" entries before calling the current application removal method,
+  // including decorators installed/replaced during traversal. Application
+  // getters and methods always receive the real emitter; its public methods
+  // are never temporarily replaced. Native once entries remain unchanged.
+  ipcMain.removeAllListeners = function patchedIpcMainRemoveAllListeners(
+    ...args
   ) {
-    return removeListener.call(
-      this,
-      channel,
-      hookListenerWrappers.get(listener) === "on"
-        ? listener.listener
-        : listener,
-    );
+    const emitter = this;
+    // A separate empty target also permits forwarding a non-writable app
+    // method; a Proxy of the emitter itself would violate get invariants.
+    const receiver = new Proxy(Object.create(null), {
+      get(_target, key) {
+        const value = Reflect.get(emitter, key, emitter);
+        if (
+          (key !== "removeListener" && key !== "removeAllListeners") ||
+          typeof value !== "function"
+        )
+          return value;
+        return (...methodArgs) => {
+          if (
+            key === "removeListener" &&
+            hookListenerWrappers.get(methodArgs[1]) === "on"
+          )
+            methodArgs[1] = methodArgs[1].listener;
+          return Reflect.apply(value, emitter, methodArgs);
+        };
+      },
+      set: (_target, key, value) => Reflect.set(emitter, key, value, emitter),
+    });
+    const result = Reflect.apply(removeAllListeners, receiver, args);
+    return result === receiver ? emitter : result;
   };
-  if (ipcMain.off === removeListener) ipcMain.off = ipcMain.removeListener;
 };
 
 const patchNavigationMethods = (webContents, contentsId) => {

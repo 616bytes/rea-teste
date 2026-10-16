@@ -771,14 +771,16 @@ describe("CDP worker network metadata, attachment state and accepted hops", () =
   });
 });
 
+/** An observation with one admitted worker, `worker-0`. */
+const admitted = async (options: Parameters<typeof observation>[0] = {}) => {
+  const created = observation(options);
+  await created.workers.start();
+  created.workers.ingest(attached("worker-0"));
+  await created.workers.settle();
+  return created;
+};
+
 describe("CDP worker network retained strings", () => {
-  const admitted = async (options: Parameters<typeof observation>[0] = {}) => {
-    const created = observation(options);
-    await created.workers.start();
-    created.workers.ingest(attached("worker-0"));
-    await created.workers.settle();
-    return created;
-  };
   const sixtyPercent = Math.ceil(
     (CDP_WORKER_NETWORK_LIMITS.requestBytes * 3) / 5,
   );
@@ -890,6 +892,50 @@ describe("CDP worker network retained strings", () => {
     ).toHaveLength(1);
     expect(events.completeness.snapshot().dropped_events.websocket_frames).toBe(
       0,
+    );
+  });
+});
+
+describe("CDP worker network metadata and JSON shapes", () => {
+  it("reports a JSON response shape lost to the metadata budget", async () => {
+    const { events, workers } = await admitted({ includeJsonBodyShapes: true });
+    workers.ingest(requested("worker-0", "json"));
+    workers.ingest({
+      sessionId: "worker-0",
+      method: "Network.responseReceived",
+      params: {
+        requestId: "json",
+        response: {
+          url: `${origin}/data`,
+          status: 200,
+          mimeType: "application/json",
+          headers: {
+            Link: "x".repeat(CDP_WORKER_NETWORK_LIMITS.metadataBytes),
+          },
+        },
+      },
+    });
+    workers.ingest({
+      sessionId: "worker-0",
+      method: "Network.loadingFinished",
+      params: { requestId: "json", encodedDataLength: 2 },
+    });
+
+    expect(events.responseBodyRequests()).toEqual([]);
+    expect(events.network.get("json")?.body_shapes.response).toBeNull();
+    expect(events.completeness.snapshot().excluded).toEqual(
+      expect.arrayContaining([
+        {
+          section: "metadata",
+          reason: "resource_budget_exhausted",
+          count: 1,
+        },
+        {
+          section: "json_body_shapes",
+          reason: "resource_budget_exhausted",
+          count: 1,
+        },
+      ]),
     );
   });
 });

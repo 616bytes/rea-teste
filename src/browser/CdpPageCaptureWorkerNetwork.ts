@@ -6,10 +6,12 @@ import {
   admittedWebSocketUrl,
   webSocketFrameOpcode,
 } from "./CdpCaptureEventHandlers.js";
+import { updateResponseBodyShape } from "./CdpCaptureEventBodyShapes.js";
 import {
   decodeBase64,
   initiatorLocation,
   isJsonContentType,
+  isJsonMediaType,
 } from "./CdpCaptureEventHelpers.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
@@ -261,6 +263,14 @@ export class CdpWorkerNetworkObservation {
       this.#disown(requestId);
       return;
     }
+    // Without its MIME type the body is no longer eligible for a JSON shape.
+    if (forwarded.jsonShapeLost) {
+      this.events.completeness.exclude(
+        "json_body_shapes",
+        "resource_budget_exhausted",
+      );
+      updateResponseBodyShape(this.events, requestId, null);
+    }
     // The capture can also keep the earlier hop and reject this one.
     if (
       REQUEST_START_EVENTS.has(event.method) &&
@@ -289,9 +299,11 @@ export class CdpWorkerNetworkObservation {
   #withinMetadataBudget(event: CdpEvent): {
     readonly event: CdpEvent;
     readonly metadataBytes: number;
+    /** Whether a requested JSON response shape is lost with the MIME type. */
+    readonly jsonShapeLost: boolean;
   } {
     if (event.method !== "Network.responseReceived")
-      return { event, metadataBytes: 0 };
+      return { event, metadataBytes: 0, jsonShapeLost: false };
     const params = recordValue(event.params);
     const response = recordValue(params?.response);
     const bytes = retainedResponseBytes(response);
@@ -300,7 +312,7 @@ export class CdpWorkerNetworkObservation {
       CDP_WORKER_NETWORK_LIMITS.metadataBytes
     ) {
       this.#workerMetadataBytes += bytes;
-      return { event, metadataBytes: bytes };
+      return { event, metadataBytes: bytes, jsonShapeLost: false };
     }
     this.events.completeness.exclude("metadata", "resource_budget_exhausted");
     return {
@@ -312,6 +324,9 @@ export class CdpWorkerNetworkObservation {
         },
       },
       metadataBytes: 0,
+      jsonShapeLost:
+        this.events.input.include_json_body_shapes &&
+        isJsonMediaType(cdpStringValue(response?.mimeType)),
     };
   }
 

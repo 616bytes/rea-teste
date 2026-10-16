@@ -332,7 +332,7 @@ const verifyApplication = (
         observation.properties.terminal === "electron.ipcMain.addListener" &&
         observation.properties.channel === "test:copy",
     );
-  if (!candidate) expect(paths).toEqual([]);
+  if (!candidate || !guarded) expect(paths).toEqual([]);
   if (guarded) {
     expect(paths.map((observation) => observation.properties)).toContainEqual(
       expect.objectContaining({
@@ -412,4 +412,86 @@ cliTest(
     }
   },
   120_000,
+);
+
+cliTest(
+  "does not execute unadvanced generator calls through public CLI/MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-generator-call-");
+    const { call } = await connectLocalToolsMcp();
+    const contract = toolContract("analyze_javascript_application");
+    for (const [name, kind, expected, advance] of [
+      ["regular", "", 1, false],
+      ["generator", "*", 0, false],
+      ["async-generator", "async *", 0, false],
+      ["advanced-generator", "*", 1, true],
+    ] as const) {
+      const declaration =
+        kind === "async *" ? "async function*" : `function${kind}`;
+      const source = `const e=require("electron");
+      ${declaration} send(channel){e.ipcRenderer.send(channel);}
+      e.contextBridge.exposeInMainWorld("api",{start:()=>send("generator:test")${advance ? ".next()" : ""}});`;
+      const channels: string[] = [];
+      runInNewContext(
+        source,
+        {
+          require: () => ({
+            ipcRenderer: { send: (channel: string) => channels.push(channel) },
+            contextBridge: {
+              exposeInMainWorld: (
+                _key: string,
+                api: { start: () => unknown },
+              ) => api.start(),
+            },
+          }),
+        },
+        { timeout: 1_000 },
+      );
+      expect(channels.length, name).toBe(expected);
+      const directory = join(root, name);
+      await mkdir(directory);
+      await writeFile(join(directory, "main.js"), source);
+      const response = await call("analyze_javascript_application", {
+        input_path: directory,
+        format: "directory",
+      });
+      expect(response.isError, name).not.toBe(true);
+      const evidence = contract.outputSchema.parse(response.structuredContent);
+      const result = javascriptApplicationAnalysisResultSchema.parse(
+        evidence.normalized_result,
+      );
+      expect(result.summary.ipc.literal_channels, name).toBe(
+        advance ? 0 : expected,
+      );
+      if (advance) expect(result.graph.coverage.status).toBe("partial");
+      const paths = result.graph.nodes
+        .filter(
+          (node) =>
+            node.identity.strategy === "artifact-local-key" &&
+            node.identity.namespace === "electron-call-path-step",
+        )
+        .flatMap((node) => node.observations)
+        .filter(
+          (observation) =>
+            observation.properties.terminal === "electron.ipcRenderer.send" &&
+            observation.properties.entry === "api.start" &&
+            observation.properties.step_kind === "terminal",
+        );
+      expect(paths.length, name).toBe(advance ? 0 : expected);
+      const analyzed = await cli.run({
+        arguments: [
+          "analyze-javascript-application",
+          directory,
+          "--artifact-format",
+          "directory",
+          "--json",
+        ],
+      });
+      expect(analyzed.exitCode, analyzed.stderr).toBe(0);
+      expect(contract.outputSchema.parse(analyzed.json).evidence_id).toBe(
+        evidence.evidence_id,
+      );
+    }
+  },
+  30_000,
 );

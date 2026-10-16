@@ -97,6 +97,7 @@ export const collectElectronWrappedCallPaths = (
   const resolver = new JavaScriptSymbolicBindings(state, program, identity);
   const paths: ElectronCallPath[] = [];
   const seen = new Set<string>();
+  const unconditionalRegistrations = new Set<string>();
   const step = (
     node: t.Node,
     kind: ElectronCallPathStep["kind"],
@@ -288,7 +289,8 @@ export const collectElectronWrappedCallPaths = (
     invocationNode: t.Node,
     caller?: SymbolicEnvironment,
   ): void => {
-    if (context.active.has(fn.node)) return;
+    const body = resolver.callBody(fn);
+    if (body === undefined || context.active.has(fn.node)) return;
     if (fn.conditionUnresolved === true) {
       accumulator.unknownFindings += 1;
       return;
@@ -298,7 +300,7 @@ export const collectElectronWrappedCallPaths = (
       fn.node.id
         ? fn.node.id.name
         : "closure";
-    walk(fn.node.body, resolver.bind(fn, args, invocationNode, caller), {
+    walk(body, resolver.bind(fn, args, invocationNode, caller), {
       ...context,
       steps: [
         ...context.steps,
@@ -398,6 +400,23 @@ export const collectElectronWrappedCallPaths = (
         recorded.invocations.has(ipcInvocationKey(invocationLocation)));
     const findingGuarded =
       context.conditions.length > 0 || hasConditions(first) || guardedDispatch;
+    // Registry facts do not establish every bridge entry's reachability. Only
+    // this exact entry and provenance trace can discharge its guarded copy.
+    const registrationKey =
+      descriptor.side === "main"
+        ? JSON.stringify([
+            endpoint,
+            channel,
+            location,
+            range(context.entryNode),
+            context.entryKind,
+            context.entry,
+            context.entryPath,
+            context.steps,
+          ])
+        : undefined;
+    if (!findingGuarded && registrationKey !== undefined)
+      unconditionalRegistrations.add(registrationKey);
     if (!duplicate && !findingGuarded) {
       const value: ElectronIpcFinding = {
         ...finding,
@@ -407,7 +426,11 @@ export const collectElectronWrappedCallPaths = (
       indexIpcFinding(ipcAtEndpoint(), value);
       if (descriptor.mode !== "send" && descriptor.mode !== "invoke" && !fn)
         accumulator.unknownFindings += 1;
-    } else if (findingGuarded) {
+    } else if (
+      findingGuarded &&
+      (registrationKey === undefined ||
+        !unconditionalRegistrations.has(registrationKey))
+    ) {
       accumulator.unknownFindings += 1;
       // A guarded registration is a path candidate even when its callback has
       // no observable body. Keep its predicate instead of promoting it to an

@@ -404,6 +404,10 @@ export class JavaScriptSymbolicBindings {
       if (index !== null)
         return value.values[index] ?? symbolicUnknown("missing argument");
     }
+    if (value.kind === "iterator" || value.kind === "promise") {
+      this.unresolved = true;
+      return symbolicUnknown(`${value.kind} members are not modeled`);
+    }
     return symbolicUnknown("unresolved property");
   }
 
@@ -498,6 +502,11 @@ export class JavaScriptSymbolicBindings {
           : Number(semanticStaticPropertyKey(p.key, p.computed) === null)),
       0,
     );
+  }
+
+  /** Calling a generator creates an iterator; advancing it is not modeled. */
+  callBody(fn: SymbolicFunction): t.Function["body"] | undefined {
+    return fn.node.generator ? undefined : fn.node.body;
   }
 
   bind(
@@ -1062,7 +1071,7 @@ export class JavaScriptSymbolicBindings {
           this.#activeFunctions.has(value.node)
         ) {
           result = symbolicUnknown("unresolved or recursive call");
-        } else if (value.node.generator) {
+        } else if (this.callBody(value) === undefined) {
           // Calling a generator creates an iterator without running its body.
           result = { kind: "iterator" };
         } else {

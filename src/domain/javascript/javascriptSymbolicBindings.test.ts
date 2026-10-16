@@ -740,3 +740,20 @@ it("preserves captured initialization through async and forwarding returns", () 
   });
   expect(fn.origins.length).toBeGreaterThan(0);
 });
+
+it.each([
+  "function* value(){return false;}",
+  "async function value(){return false;}",
+])(
+  "keeps opaque call-result member access explicitly unresolved: %s",
+  (declaration) => {
+    const { resolver, values } = inspectFixture(
+      `${declaration}inspect(value().next);`,
+    );
+    expect(values[0]).toMatchObject({
+      kind: "unknown",
+      reason: expect.stringContaining("members are not modeled"),
+    });
+    expect(resolver.unresolved).toBe(true);
+  },
+);

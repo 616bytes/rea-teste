@@ -160,8 +160,7 @@ the same source byte limit and explicit truncation reporting.
 ### Map UI resource ids to code
 
 `trace_android_resource_references` connects a screen element to the code that
-handles it. Pass `resource-id` values exactly as `capture_adb_ui_state` (or
-`uiautomator dump`) reports them:
+handles it. Pass `resource-id` values exactly as `adb shell uiautomator dump` reports them:
 
 ```sh
 rea trace-android-resource-references /path/Example.apk "com.example:id/login,android:id/title" --max-sites 20

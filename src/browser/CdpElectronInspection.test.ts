@@ -68,7 +68,9 @@ describe("Electron frame capture", () => {
       expect(completeness.snapshot().conditions).toContain("attach_limited");
     },
   );
+});
 
+describe("Electron script frame scoping", () => {
   it("preserves script records across context teardown and ID reuse", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-electron-script-frame-"));
     temporary.push(root);
@@ -134,7 +136,7 @@ describe("Electron frame capture", () => {
       completeness,
     });
 
-    expect(capture.total).toBe(4);
+    expect(capture.total).toBe(3);
     const sharedScripts = capture.items.filter(
       (item) => item.cdp_hash === "shared",
     );
@@ -150,8 +152,87 @@ describe("Electron frame capture", () => {
       ),
     ).toEqual({
       unknown: null,
-      outside: null,
     });
+    expect(completeness.snapshot().excluded).toContainEqual({
+      section: "scripts",
+      reason: "out_of_target_scope",
+      count: 2,
+    });
+  });
+});
+
+describe("Electron unauthorized frame script exclusion", () => {
+  it("excludes scripts from unauthorized frames and never captures their source", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-electron-unauth-frame-"));
+    temporary.push(root);
+    const inScopeScript = join(root, "in-scope.js");
+    const outOfScopeScript = join(root, "out-of-scope.js");
+    await Promise.all([
+      writeFile(inScopeScript, "export const inScope = true;"),
+      writeFile(outOfScopeScript, "export const outOfScope = true;"),
+    ]);
+
+    const scripts: ElectronScriptDraft[] = [];
+    const executionContextFrames = new Map<string, string>();
+    const completeness = new CdpCaptureCompleteness();
+    const requestedScriptIds: string[] = [];
+
+    const ingest = (method: string, params: unknown): void =>
+      ingestElectronScriptEvent({
+        event: { method, params },
+        scripts,
+        executionContextFrames,
+        completeness,
+      });
+
+    ingest("Runtime.executionContextCreated", {
+      context: { id: 1, auxData: { frameId: "frame-main" } },
+    });
+    ingest("Runtime.executionContextCreated", {
+      context: { id: 2, auxData: { frameId: "frame-srcdoc" } },
+    });
+
+    ingest("Debugger.scriptParsed", {
+      scriptId: "script-main",
+      url: pathToFileURL(inScopeScript).href,
+      hash: "hash-main",
+      executionContextId: 1,
+    });
+    ingest("Debugger.scriptParsed", {
+      scriptId: "script-srcdoc",
+      url: pathToFileURL(outOfScopeScript).href,
+      hash: "hash-srcdoc",
+      executionContextId: 2,
+      hasSourceURL: true,
+    });
+
+    const capture = await captureElectronScripts({
+      connection: {
+        send: async (method: string, params?: unknown) => {
+          if (method === "Debugger.getScriptSource") {
+            const id = (params as { scriptId?: string } | undefined)?.scriptId;
+            if (id !== undefined) requestedScriptIds.push(id);
+            return { scriptSource: "source-content" };
+          }
+          throw new Error(`Unexpected CDP command: ${method}`);
+        },
+      } as unknown as CdpConnection,
+      sessionId: undefined,
+      request: inspectElectronPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "page-1",
+        observation_ms: 0,
+        include_script_sources: true,
+      }),
+      scripts,
+      frameIds: new Set(["frame-main"]),
+      completeness,
+    });
+
+    expect(capture.total).toBe(1);
+    expect(capture.items.map((item) => item.frame_id)).toEqual(["frame-main"]);
+    expect(requestedScriptIds).toEqual(["script-main"]);
+    expect(requestedScriptIds).not.toContain("script-srcdoc");
     expect(completeness.snapshot().excluded).toContainEqual({
       section: "scripts",
       reason: "out_of_target_scope",

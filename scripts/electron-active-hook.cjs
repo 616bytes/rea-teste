@@ -4,6 +4,12 @@ const applyFunction = Reflect.apply;
 const applyArguments = Function.prototype.apply;
 const bindFunction = Function.prototype.bind;
 const arrayFrom = Array.from;
+const defineProperty = Object.defineProperty;
+const ownPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const getProperty = Reflect.get;
+const setProperty = Reflect.set;
+const SetConstructor = Set;
+const ProxyConstructor = Proxy;
 const forEachMapEntry = applyFunction(bindFunction, Function.prototype.call, [
   Map.prototype.forEach,
 ]);
@@ -16,7 +22,7 @@ const {
   createElectronActiveBoundaryPatches,
 } = require("./electron-active-hook-boundaries.cjs");
 
-const ipcEventKinds = new Set([
+const ipcEventKinds = new SetConstructor([
   "main-handler-invocation",
   "main-event-invocation",
   "utility-process-fork",
@@ -416,7 +422,7 @@ const MAX_LISTENER_CHAIN_HOPS = 16;
 // native self-removal working: the once wrapper removes itself by identity, and
 // removeListener matches the decorator through its `.listener`.
 const reachesHookListenerWrapper = (listener) => {
-  const visited = new Set();
+  const visited = new SetConstructor();
   let candidate = listener;
   for (
     let hops = 0;
@@ -430,7 +436,7 @@ const reachesHookListenerWrapper = (listener) => {
     // Proxy reflection can run application traps; ordinary own descriptors
     // expose data links without evaluating application-owned accessors.
     if (isProxy(candidate)) return false;
-    candidate = Object.getOwnPropertyDescriptor(candidate, "listener")?.value;
+    candidate = ownPropertyDescriptor(candidate, "listener")?.value;
   }
   return false;
 };
@@ -473,7 +479,7 @@ const patchIpcMain = (ipcMain) => {
     // Native single-listener dispatch reads .apply; array dispatch invokes the
     // function directly. Let Node select that path without inspecting or
     // copying the emitter's listener storage, including during reentrant emits.
-    Object.defineProperty(wrapped, "apply", {
+    defineProperty(wrapped, "apply", {
       configurable: true,
       writable: true,
       value: function nativeApply(...methodArgs) {
@@ -508,7 +514,7 @@ const patchIpcMain = (ipcMain) => {
         return applyFunction(applyArguments, this, methodArgs);
       },
     });
-    Object.defineProperty(wrapped, "listener", {
+    defineProperty(wrapped, "listener", {
       configurable: true,
       enumerable: true,
       writable: true,
@@ -554,33 +560,36 @@ const patchIpcMain = (ipcMain) => {
     const emitter = this;
     // A separate empty target also permits forwarding a non-writable app
     // method; a Proxy of the emitter itself would violate get invariants.
-    const receiver = new Proxy(Object.create(null), {
-      get(_target, key) {
-        const value = Reflect.get(emitter, key, emitter);
-        if (
-          (key !== "removeListener" && key !== "removeAllListeners") ||
-          typeof value !== "function"
-        )
-          return value;
-        return (...methodArgs) => {
-          if (key === "removeListener") {
-            const entry = methodArgs[1];
-            const removalTarget = hookListenerRemovalTargets.get(entry);
-            // Translate only a still-valid data link. If app code changed it
-            // to an accessor, native removal owns when that getter executes.
-            if (
-              removalTarget !== undefined &&
-              removalTarget !== entry &&
-              Object.getOwnPropertyDescriptor(entry, "listener")?.value ===
-                removalTarget
-            )
-              methodArgs[1] = removalTarget;
-          }
-          return applyFunction(value, emitter, methodArgs);
-        };
+    const receiver = new ProxyConstructor(
+      { __proto__: null },
+      {
+        get(_target, key) {
+          const value = getProperty(emitter, key, emitter);
+          if (
+            (key !== "removeListener" && key !== "removeAllListeners") ||
+            typeof value !== "function"
+          )
+            return value;
+          return (...methodArgs) => {
+            if (key === "removeListener") {
+              const entry = methodArgs[1];
+              const removalTarget = hookListenerRemovalTargets.get(entry);
+              // Translate only a still-valid data link. If app code changed it
+              // to an accessor, native removal owns when that getter executes.
+              if (
+                removalTarget !== undefined &&
+                removalTarget !== entry &&
+                ownPropertyDescriptor(entry, "listener")?.value ===
+                  removalTarget
+              )
+                methodArgs[1] = removalTarget;
+            }
+            return applyFunction(value, emitter, methodArgs);
+          };
+        },
+        set: (_target, key, value) => setProperty(emitter, key, value, emitter),
       },
-      set: (_target, key, value) => Reflect.set(emitter, key, value, emitter),
-    });
+    );
     const result = applyFunction(removeAllListeners, receiver, args);
     return result === receiver ? emitter : result;
   };

@@ -1260,6 +1260,68 @@ console.log(JSON.stringify({ plain, hooked,
   },
 );
 
+it.each([
+  "defineProperty",
+  "getOwnPropertyDescriptor",
+  "create",
+  "get",
+  "set",
+  "Set",
+  "Proxy",
+])(
+  "keeps listener registration and removal independent of late %s replacement",
+  async (method) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-hook-late-intrinsic-",
+    );
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const script = join(root, "ipc-late-intrinsic.cjs");
+    await writeFile(
+      script,
+      `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const method = ${JSON.stringify(method)};
+const owner = method === "Set" || method === "Proxy" ? globalThis
+  : method === "get" || method === "set" ? Reflect : Object;
+const original = owner[method];
+const emitter = new EventEmitter();
+const scenario = (target) => {
+  const seen = [];
+  let failure = null;
+  try {
+    target.on("ch", () => seen.push("on"));
+    target.once("one", () => seen.push("once"));
+    target.on("removeListener", () => {});
+    target.emit("ch", null, 42);
+    target.emit("one", null, 43);
+    target.emit("one", null, 44);
+    target.removeAllListeners();
+  } catch (cause) { failure = cause.message; }
+  return { seen, failure, remaining: target.eventNames().length };
+};
+owner[method] = function() { throw new Error("late application intrinsic replacement"); };
+let plain, hooked;
+try { plain = scenario(emitter); hooked = scenario(ipcMain); }
+finally { owner[method] = original; }
+const snapshot = globalThis.__reaElectronActiveSnapshot();
+console.log(JSON.stringify({ plain, hooked,
+  invocations: snapshot.events.filter(e => e.kind === "main-event-invocation" && (e.channel === "ch" || e.channel === "one")).length }));
+`,
+    );
+    const execution = await runNode(script, root);
+    expect(execution.code, execution.stderr).toBe(0);
+    const { plain, hooked, invocations } = JSON.parse(execution.stdout);
+    expect(plain).toEqual({
+      seen: ["on", "once"],
+      failure: null,
+      remaining: 0,
+    });
+    expect(hooked).toEqual(plain);
+    expect(invocations).toBe(2);
+  },
+);
+
 it.each(["array", "map"])(
   "snapshots retained state without application %s iterators",
   async (kind) => {

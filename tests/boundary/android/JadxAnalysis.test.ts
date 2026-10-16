@@ -363,6 +363,15 @@ it.each([
   },
 );
 
+const fixtureApp = {
+  package: "fixture",
+  version_name: "1",
+  version_code: "1",
+  min_sdk: "26",
+  target_sdk: "33",
+  permissions: [],
+};
+
 it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
   const calls: unknown[] = [];
   const site = {
@@ -412,6 +421,18 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
         sites: [],
       },
       {
+        requested: "other.app:id/search",
+        package: "other.app",
+        type: "id",
+        name: "search",
+        table: "app",
+        ids: [0x7f0c0523],
+        total_r_fields: 1,
+        r_fields: [],
+        total_sites: 2,
+        sites: [site],
+      },
+      {
         requested: "id/missing",
         package: "",
         type: "id",
@@ -428,7 +449,7 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
   const tools: JadxToolPort = {
     json: (name, input) => {
       calls.push([name, input]);
-      return Promise.resolve(scan);
+      return Promise.resolve(name === "get_app_info" ? fixtureApp : scan);
     },
     text: () => Promise.reject(new Error("unexpected text call")),
   };
@@ -436,7 +457,12 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
     operation: "trace_android_resource_references" as const,
     input: androidInputSchemas.trace_android_resource_references.parse({
       path: "/fixture.apk",
-      resource_ids: ["fixture:id/search", "android:id/title", "id/missing"],
+      resource_ids: [
+        "fixture:id/search",
+        "android:id/title",
+        "other.app:id/search",
+        "id/missing",
+      ],
       max_sites_per_resource: 1,
     }),
   };
@@ -445,10 +471,16 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
     [
       "rea_resource_references",
       {
-        resources: ["fixture:id/search", "android:id/title", "id/missing"],
+        resources: [
+          "fixture:id/search",
+          "android:id/title",
+          "other.app:id/search",
+          "id/missing",
+        ],
         max_sites: 1,
       },
     ],
+    ["get_app_info", {}],
   ]);
   expect(result).toMatchObject({
     scan_unit: "dex_instruction",
@@ -463,6 +495,14 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
       },
       // A declaration dropped by the transport budget still makes coverage partial.
       { table: "framework", ids: ["0x01020016"], coverage: "partial" },
+      // Another app's qualifier never borrows this APK's code sites.
+      {
+        package_name: "other.app",
+        resolution: "unresolved",
+        ids: [],
+        total_sites: 0,
+        sites: [],
+      },
       { package_name: null, resolution: "unresolved", ids: [] },
     ],
   });

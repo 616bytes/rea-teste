@@ -1605,3 +1605,22 @@ exit 1`,
   expect(result.probes).toBeGreaterThan(1);
   expect(String(result.last_probe_error)).toContain("not found");
 });
+
+it("returns a non-transient probe failure instead of waiting it out", async () => {
+  const { binary } = await writeAdbStub(
+    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+printf "adb: insufficient permissions for device\n" >&2
+exit 1`,
+  );
+  const result = await providerOver(binary).execute({
+    operation: "wait_adb_boot",
+    input: {
+      serial: "emulator-5554",
+      timeout_ms: 5_000,
+      poll_interval_ms: 250,
+    },
+  });
+  expect(result.ok).toBe(false);
+  if (!result.ok)
+    expect(result.error.message).toContain("insufficient permissions");
+});

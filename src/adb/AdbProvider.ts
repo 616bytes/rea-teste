@@ -2245,9 +2245,14 @@ export class AdbProvider {
         signal,
       );
       if (!ran.ok) {
-        if (ran.error instanceof AnalysisCancelledError) return ran;
-        // An unauthorized device needs the caller; waiting cannot resolve it.
-        if (/unauthorized/iu.test(ran.error.message)) return ran;
+        // Only a device that is still appearing can boot by waiting; any other
+        // failure (unauthorized, permissions, missing adb) keeps its tagged error.
+        const transient =
+          ran.error instanceof AnalysisTimeoutError ||
+          /device[^\n]*not found|device offline|still authorizing|still connecting|no devices|error: closed/iu.test(
+            ran.error.message,
+          );
+        if (!transient) return ran;
         lastError = ran.error.message;
       } else {
         const line = ran.value.stdout.trim().split(/\r?\n/u).at(-1) ?? "";

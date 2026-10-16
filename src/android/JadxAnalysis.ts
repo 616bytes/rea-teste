@@ -428,29 +428,50 @@ const traceResourceReferences = async (
       request.operation,
       "JADX resource scan returned another request or inconsistent site counts",
     );
+  // The bridge resolves every non-framework qualifier against this APK's
+  // table, so an ID captured from another app must not borrow its code sites.
+  const { package: appPackage } = jadxAppSchema.parse(
+    await tools.json("get_app_info", {}),
+  );
+  const foreign = (resource: (typeof scan.resources)[number]) =>
+    resource.package !== "" &&
+    resource.package !== "android" &&
+    resource.package !== appPackage;
   return androidResultSchemas.trace_android_resource_references.parse({
     engine,
     classes_scanned: scan.classes_scanned,
     methods_scanned: scan.methods_scanned,
     app_resource_names: scan.app_resource_names,
-    resources: scan.resources.map((resource) => ({
-      requested: resource.requested,
-      package_name: resource.package === "" ? null : resource.package,
-      type: resource.type,
-      name: resource.name,
-      table: resource.table,
-      resolution: resource.ids.length === 0 ? "unresolved" : "resolved",
-      ids: resource.ids.map(resourceIdHex),
-      total_r_fields: resource.total_r_fields,
-      r_fields: resource.r_fields,
-      total_sites: resource.total_sites,
-      coverage:
-        resource.sites.length < resource.total_sites ||
-        resource.r_fields.length < resource.total_r_fields
-          ? "partial"
-          : "complete",
-      sites: resource.sites,
-    })),
+    resources: scan.resources.map((scanned) => {
+      const resource = foreign(scanned)
+        ? {
+            ...scanned,
+            ids: [],
+            total_r_fields: 0,
+            r_fields: [],
+            total_sites: 0,
+            sites: [],
+          }
+        : scanned;
+      return {
+        requested: resource.requested,
+        package_name: resource.package === "" ? null : resource.package,
+        type: resource.type,
+        name: resource.name,
+        table: resource.table,
+        resolution: resource.ids.length === 0 ? "unresolved" : "resolved",
+        ids: resource.ids.map(resourceIdHex),
+        total_r_fields: resource.total_r_fields,
+        r_fields: resource.r_fields,
+        total_sites: resource.total_sites,
+        coverage:
+          resource.sites.length < resource.total_sites ||
+          resource.r_fields.length < resource.total_r_fields
+            ? "partial"
+            : "complete",
+        sites: resource.sites,
+      };
+    }),
     scan_unit: "dex_instruction",
   });
 };

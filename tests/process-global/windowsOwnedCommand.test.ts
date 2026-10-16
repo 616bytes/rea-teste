@@ -11,9 +11,14 @@ import {
   loadWindowsOwnedProcessClass,
   superviseWindowsOwnedProcess,
 } from "../../scripts/lib/windows-owned-command.mjs";
+import { requireWindowsNativeAuthority } from "../../src/windows/WindowsNativeLoader.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const require = createRequire(import.meta.url);
+
+async function readOptional(path: string): Promise<string | undefined> {
+  return readFile(path, "utf8").catch(() => undefined);
+}
 
 it("imports the source Windows owner without dist using a fake native authority", async () => {
   const calls: string[] = [];
@@ -191,9 +196,13 @@ it.runIf(process.platform === "win32")(
     const directory = await createTestTempDirectory("rea-owned-tree-probe-");
     const activityPath = join(directory, "descendant-activity.log");
     const readyPath = join(directory, "descendant-ready");
+    const exitedPath = join(directory, "descendant-exited");
+    const errorPath = join(directory, "descendant-error");
     const stopPath = join(directory, "descendant-stop");
     const grandchild = `
       const fs = require("node:fs");
+      process.on("exit", (code) => fs.writeFileSync(${JSON.stringify(exitedPath)}, String(code)));
+      process.on("uncaughtExceptionMonitor", (error) => fs.writeFileSync(${JSON.stringify(errorPath)}, String(error)));
       fs.writeFileSync(${JSON.stringify(readyPath)}, "ready");
       const timer = setInterval(() => {
         if (fs.existsSync(${JSON.stringify(stopPath)})) {
@@ -208,7 +217,7 @@ it.runIf(process.platform === "win32")(
       const child = require("node:child_process").spawn(
         process.execPath,
         ["-e", ${JSON.stringify(grandchild)}],
-        { stdio: "ignore" },
+        { detached: true, stdio: "ignore" },
       );
       child.unref();
       const waitForDescendant = setInterval(() => {
@@ -218,12 +227,30 @@ it.runIf(process.platform === "win32")(
       }, 10);
     `;
     const WindowsOwnedProcess = await loadWindowsOwnedProcessClass();
+    const native = requireWindowsNativeAuthority();
+    const observedCounts: number[] = [];
+    const authority = {
+      inspection: native.inspection,
+      call(operation: string, arguments_: readonly unknown[]) {
+        const result = native.call(operation, arguments_);
+        if (
+          operation === "process_poll" &&
+          typeof result === "object" &&
+          result !== null &&
+          "activeProcesses" in result &&
+          typeof result.activeProcesses === "number"
+        )
+          observedCounts.push(result.activeProcesses);
+        return result;
+      },
+    };
     const child = new WindowsOwnedProcess(
       process.execPath,
       ["-e", leader],
       directory,
       process.env,
       false,
+      { authority },
     );
     child.stdout.resume();
     child.stderr.resume();
@@ -237,8 +264,21 @@ it.runIf(process.platform === "win32")(
     try {
       await exited;
       await expect(readFile(readyPath, "utf8")).resolves.toBe("ready");
-      await delay(150);
-      expect(hasClosed).toBe(false);
+      const before = await readOptional(activityPath);
+      await expect
+        .poll(async () => (await readFile(activityPath, "utf8")).length, {
+          timeout: 5_000,
+        })
+        .toBeGreaterThan(before?.length ?? 0);
+      expect(
+        hasClosed,
+        JSON.stringify({
+          activeProcessCounts: observedCounts,
+          descendantExitCode: await readOptional(exitedPath),
+          descendantError: await readOptional(errorPath),
+          activity: await readOptional(activityPath),
+        }),
+      ).toBe(false);
       await expect(child.cleanup()).resolves.toMatchObject({ cleaned: true });
       await closed;
       const activityAtCleanup = await readFile(activityPath, "utf8");

@@ -110,7 +110,7 @@ it.runIf(process.platform === "win32")(
     const runner = launchSupervisor(directory, gatedCommand(gate, started));
     onTestFinished(async () => {
       await writeFile(gate, "release");
-      await runner.closed;
+      await runner.closed();
     });
     try {
       await runner.ready;
@@ -129,7 +129,7 @@ it.runIf(process.platform === "win32")(
       ).resolves.toMatchObject({ code: 0, stdout: "released" });
     } finally {
       await writeFile(gate, "release");
-      await runner.closed;
+      await runner.closed();
     }
   },
 );
@@ -149,11 +149,17 @@ async function exerciseWindowsGrandchild(
   const activityPath = join(directory, "grandchild-activity.log");
   const readyPath = join(directory, "grandchild-ready");
   const leaderExitedPath = join(directory, "leader-exited");
+  const childExitedPath = join(directory, "child-exited");
+  const childErrorPath = join(directory, "child-error");
+  const grandchildExitedPath = join(directory, "grandchild-exited");
+  const grandchildErrorPath = join(directory, "grandchild-error");
   const gatePath = join(directory, "grandchild-stop");
   const grandchild = `
       const fs = require("node:fs");
       const activity = ${JSON.stringify(activityPath)};
       const gate = ${JSON.stringify(gatePath)};
+      process.on("exit", (code) => fs.writeFileSync(${JSON.stringify(grandchildExitedPath)}, String(code)));
+      process.on("uncaughtExceptionMonitor", (error) => fs.writeFileSync(${JSON.stringify(grandchildErrorPath)}, String(error)));
       fs.writeFileSync(${JSON.stringify(readyPath)}, "ready");
       const write = () => fs.appendFileSync(activity, "active\\n");
       write();
@@ -166,11 +172,15 @@ async function exerciseWindowsGrandchild(
       }, 20);
     `;
   const child = `
-      require("node:child_process").spawn(
+      const fs = require("node:fs");
+      const grandchildProcess = require("node:child_process").spawn(
         process.execPath,
         ["-e", ${JSON.stringify(grandchild)}],
-        { stdio: "ignore" },
+        { detached: true, stdio: "ignore" },
       );
+      grandchildProcess.once("error", (error) => fs.writeFileSync(${JSON.stringify(childErrorPath)}, String(error)));
+      grandchildProcess.unref();
+      process.on("exit", (code) => fs.writeFileSync(${JSON.stringify(childExitedPath)}, String(code)));
     `;
   const leader = `
       const fs = require("node:fs");
@@ -178,7 +188,7 @@ async function exerciseWindowsGrandchild(
       const child = require("node:child_process").spawn(
         process.execPath,
         ["-e", ${JSON.stringify(child)}],
-        { stdio: "ignore" },
+        { detached: true, stdio: "ignore" },
       );
       child.unref();
       const waitForGrandchild = setInterval(() => {
@@ -190,7 +200,7 @@ async function exerciseWindowsGrandchild(
   const runner = launchSupervisor(directory, leader);
   onTestFinished(async () => {
     await writeFile(gatePath, "stop");
-    await runner.closed;
+    await runner.closed();
   });
 
   try {
@@ -200,7 +210,11 @@ async function exerciseWindowsGrandchild(
       expect(await readFile(leaderExitedPath, "utf8")).toBe("exited"),
     );
     const activityBefore = await readFile(activityPath, "utf8");
-    await delay(100);
+    await expect
+      .poll(async () => (await readFile(activityPath, "utf8")).length, {
+        timeout: 5_000,
+      })
+      .toBeGreaterThan(activityBefore.length);
     const activityDuring = await readFile(activityPath, "utf8");
     const contender = await launch(
       directory,
@@ -212,6 +226,10 @@ async function exerciseWindowsGrandchild(
       leaderExited: await pathExists(leaderExitedPath),
       descendantReady: await pathExists(readyPath),
       descendantWroteDuringProbe: activityDuring.length > activityBefore.length,
+      descendantExited: await pathExists(grandchildExitedPath),
+      descendantError: await pathExists(grandchildErrorPath),
+      childExited: await pathExists(childExitedPath),
+      childError: await pathExists(childErrorPath),
       supervisorCode: runner.child.exitCode,
       supervisorStdout: runner.stdout,
       supervisorStderr: runner.stderr,
@@ -227,7 +245,7 @@ async function exerciseWindowsGrandchild(
 
     if (cancellation === "disconnect") runner.child.disconnect();
     else runner.child.send("SIGTERM");
-    await expect(runner.closed).resolves.toMatchObject({ code: 143 });
+    await expect(runner.closed()).resolves.toMatchObject({ code: 143 });
     const stopped = await readFile(activityPath, "utf8");
     await delay(100);
     expect(await readFile(activityPath, "utf8")).toBe(stopped);
@@ -236,7 +254,7 @@ async function exerciseWindowsGrandchild(
     ).resolves.toMatchObject({ code: 0, stdout: "released" });
   } finally {
     await writeFile(gatePath, "stop");
-    await runner.closed;
+    await runner.closed();
   }
 }
 
@@ -248,10 +266,25 @@ it.runIf(process.platform === "win32")(
     );
     const gate = join(directory, "release-child");
     const started = join(directory, "child-started");
-    const runner = launchSupervisor(directory, gatedCommand(gate, started));
+    const tracePath = join(directory, "supervisor-trace.log");
+    const preloadPath = join(directory, "trace-disconnect.cjs");
+    await writeFile(
+      preloadPath,
+      `
+        const fs = require("node:fs");
+        const trace = ${JSON.stringify(tracePath)};
+        const append = (entry) => fs.appendFileSync(trace, entry + "\\n");
+        process.on("disconnect", () => append("disconnect-event"));
+        process.on("beforeExit", (code) => append("before-exit:" + code));
+        process.on("exit", (code) => append("exit:" + code));
+      `,
+    );
+    const runner = launchSupervisor(directory, gatedCommand(gate, started), {
+      preloadPath,
+    });
     onTestFinished(async () => {
       await writeFile(gate, "release");
-      await runner.closed;
+      await runner.closed();
     });
     try {
       await runner.ready;
@@ -262,7 +295,14 @@ it.runIf(process.platform === "win32")(
           runner.closeEvent,
           "supervisor retained the child after disconnect",
           5_000,
-        ),
+        ).catch(async (cause: unknown) => {
+          throw new Error(
+            `${cause instanceof Error ? cause.message : String(cause)}; ` +
+              `trace=${JSON.stringify(await readFile(tracePath, "utf8").catch(() => undefined))}; ` +
+              `supervisorExitCode=${runner.child.exitCode}; ` +
+              `stderr=${JSON.stringify(runner.stderr)}`,
+          );
+        }),
       ).resolves.toMatchObject({ code: 143 });
       expect(await pathExists(gate)).toBe(false);
       await expect(
@@ -270,7 +310,7 @@ it.runIf(process.platform === "win32")(
       ).resolves.toMatchObject({ code: 0, stdout: "released" });
     } finally {
       await writeFile(gate, "release");
-      await runner.closed;
+      await runner.closed();
     }
   },
 );
@@ -486,10 +526,17 @@ function launch(directory: string, command: string) {
   return { child, ready, closed };
 }
 
-function launchSupervisor(directory: string, command: string) {
+function launchSupervisor(
+  directory: string,
+  command: string,
+  { preloadPath }: { preloadPath?: string } = {},
+) {
+  const nodeArguments =
+    preloadPath === undefined ? [] : ["--require", preloadPath];
   const child = spawn(
     process.execPath,
     [
+      ...nodeArguments,
       fileURLToPath(
         new URL("../../scripts/run-exclusive-command.mjs", import.meta.url),
       ),
@@ -529,12 +576,11 @@ function launchSupervisor(directory: string, command: string) {
       resolveClosed({ code, signal, stdout, stderr });
     });
   });
-  const closed = withTimeout(closeEvent, "runner supervisor did not finish");
   return {
     child,
     ready,
     closeEvent,
-    closed,
+    closed: () => withTimeout(closeEvent, "runner supervisor did not finish"),
     get stdout() {
       return stdout;
     },

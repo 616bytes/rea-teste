@@ -7,6 +7,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import {
   RegularFileCleanupFailure,
+  RegularFileCancelled,
   withOwnedRegularFile,
   type RegularFileOperationOutcome,
 } from "../filesystem/OwnedRegularFile.js";
@@ -95,6 +96,8 @@ export const withRegularFile = async <Value>(
         },
       );
     } catch (cause: unknown) {
+      if (signal?.aborted === true && cause === signal.reason) throw cause;
+      if (cause instanceof RegularFileCancelled) throw cause.reason;
       if (
         !(cause instanceof RegularFileCleanupFailure) ||
         resources === undefined

@@ -7,6 +7,25 @@ export type RegularFileOperationOutcome<Value> =
   | { readonly kind: "completed"; readonly value: Value }
   | { readonly kind: "failed"; readonly cause: unknown };
 
+/** Cancellation after confirmed close, retaining the completed physical read. */
+export class RegularFileCancelled<Value = unknown> extends Error {
+  readonly _tag = "RegularFileCancelled";
+
+  constructor(
+    readonly path: string,
+    readonly outcome: Extract<
+      RegularFileOperationOutcome<Value>,
+      { readonly kind: "completed" }
+    >,
+    readonly reason: unknown,
+  ) {
+    super(`Regular file operation cancelled after closing ${path}`, {
+      cause: reason,
+    });
+    this.name = this._tag;
+  }
+}
+
 /** A failed close transfers its exact descriptor owner and operation outcome. */
 export class RegularFileCleanupFailure<Value = unknown> extends Error {
   constructor(
@@ -82,7 +101,8 @@ export const withOwnedRegularFile = async <Value>(
     );
   }
   if (outcome.kind === "failed") throw outcome.cause;
-  options.signal?.throwIfAborted();
+  if (options.signal?.aborted === true)
+    throw new RegularFileCancelled(path, outcome, options.signal.reason);
   return outcome.value;
 };
 

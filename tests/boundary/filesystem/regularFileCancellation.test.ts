@@ -8,9 +8,34 @@ import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceSc
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import {
   RegularFileCleanupFailure,
+  RegularFileCancelled,
   withOwnedRegularFile,
 } from "../../../src/filesystem/OwnedRegularFile.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+it("keeps a caller-selected cancellation reason opaque", async () => {
+  const root = await createTestTempDirectory("rea-file-caller-reason-");
+  const path = join(root, "input.txt");
+  await writeFile(path, "fixture bytes");
+  const reason = new RegularFileCancelled(
+    "/caller-selected-path",
+    { kind: "completed", value: "caller-owned value" },
+    new Error("nested reason"),
+  );
+  const controller = new AbortController();
+  controller.abort(reason);
+  const resources = new ArtifactResourceScope();
+  const read = vi.fn(async () => "unexpected");
+  try {
+    await expect(
+      withRegularFile(path, read, { signal: controller.signal, resources }),
+    ).rejects.toBe(reason);
+    expect(read).not.toHaveBeenCalled();
+    expect(resources.hasPending).toBe(false);
+  } finally {
+    await resources.close();
+  }
+});
 
 it.each(
   (["metadata", "close"] as const).flatMap((stage) =>

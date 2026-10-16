@@ -4,7 +4,8 @@
 [#4389](https://github.com/morluto/rea/pull/4389), umbrella
 [#4027](https://github.com/morluto/rea/issues/4027).
 
-All 42 final IPC regressions pass, and real draw.io operation phases succeed.
+All 48 IPC boundary regressions pass, alongside shared projection/actions and
+converted MCP schema checks. Real draw.io operation phases succeed.
 Every real capture still **fails overall provider cleanup**. These are distinct
 results; neither completed-task acceleration nor token savings is established.
 
@@ -321,3 +322,69 @@ are different tasks, not a performance pair or a model-cell-count proof.
 Final 42-case source validation includes two uncached static tasks passing in
 94.234 s wall, 93.308800 family CPU s and 4,406,538,240 peak cgroup bytes,
 with no OOM. These are verification costs, not an application speedup.
+
+## Opaque apply inputs and iterator-free snapshots
+
+Fresh review of `84d9cf5db` found two producing-boundary regressions: native
+array-like conversion replaced the argument-list object before a custom
+listener `.apply` received it, and `Array.from` snapshots consulted application
+iterators on retained arrays/Maps. Four exact-input native controls and two
+snapshot controls fail before correction (42 passed, six failed of 48).
+
+Source `e442ca27f` forwards custom `.apply` the original receiver and method
+arguments without interpreting its opaque list. Custom apply may transform
+arguments or skip callback execution, so the hook emits a bounded
+`ipc-observation-gap` timeline record with the known registration channel. It
+does not fabricate a main-event invocation, argument shapes or callback result.
+The shared result projection retains explicit uncertainty and counts dropped
+gaps through existing retention. The canonical timeline enum adds that kind;
+the captured-IPC subset does not. Native apply still performs its own conversion
+before an actual callback frame is observed.
+
+Snapshots now copy arrays through private null-prototype indexed views and
+counters through captured native Map traversal. Neither retained buffers nor
+counter Maps are exposed to application iterators; returned records and shape
+arrays remain independent copies. No cache, tool or normal-dispatch metadata
+is added. The raw-wrapper metadata limitation in #4513 remains unfixed.
+
+The focused hook/projection/actions gate passes **68 cases** (48 + 4 + 16).
+The separate MCP/schema gate passes **23 cases**: an actual SDK client receives
+the gap alongside ordinary IPC Evidence, and Ajv2020 validates the advertised
+converted output; all canonical tool schemas also pass their existing checks.
+These tests use controlled providers and establish no real-provider success.
+The verifier and its five controlled exit/summary oracles are hash-identical to
+the earlier passing source and are reused without another redundant run.
+
+## Unrelated CI baseline failure
+
+CI run `38935598884` tested synthetic merge `eedae92d406015895a6d0eced5035da1b9ead07a`
+(head `84d9cf5db`, base `9d940c2f2`). Two firmware cleanup tests failed; another
+shard was cancelled by fail-fast. A fresh, unmodified detached checkout of that
+exact base reproduces the same failures: **33 passed, two failed** in
+`tests/boundary/firmware/firmwareIntegration.test.ts`. Evidence is posted on
+[the PR](https://github.com/morluto/rea/pull/4389#issuecomment-6221054273) and
+[existing #4475](https://github.com/morluto/rea/issues/4475#issuecomment-6221054775).
+This establishes that these failures predate the Electron changes; it does not
+resolve whether the firmware producer or its expectations need correction. No
+firmware code or assertions are changed here, and required CI is not bypassed.
+
+The first final-source real request fails before application launch because the
+previous `/tmp` runtime is absent. It is retained as an input-resolution failure,
+not a provider measurement. The cached Electron 44.7.0 archive is verified against
+the official release SHASUMS256 and extracted into a new owned task directory;
+its executable/archive digests are pinned before the next request. No target
+source, vendor fuse or scenario success requirement is changed.
+
+The recovered-runtime real operation completes all three declared actions:
+SVG elements **0 → 2**, unsaved changes true, seven IPC events, no deadline.
+Overall provider cleanup still fails. Current-source static validation passes
+two uncached tasks in **94.646 s wall, 93.878644 family CPU s and 4,300,570,624
+peak cgroup bytes**, no OOM. The initial static attempt's test-only SDK/Ajv type
+error is retained; parsing that boundary fixes it, and 12 affected client and
+projection cases pass again. `opaque_apply_and_iterator_followup` preserves all
+source pins, failures, resource receipts and independently checked scope states
+without replacing earlier measurements. Draw.io does not establish that real
+applications exercise the synthetic custom-apply/iterator cases.
+
+The final documentation gate also passes six tasks and five README consistency
+cases. Source and unchanged ASAR hashes are checked again after validation.

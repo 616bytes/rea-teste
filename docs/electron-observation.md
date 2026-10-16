@@ -152,7 +152,7 @@ execution cannot be established.
 If native wrapper creation or registration-method lookup could expose private
 instrumentation through an application getter, setter or Proxy, registration
 stays native and unwrapped. The `once-metadata` observation gap identifies that
-unobserved registration; it does not prove delivery. The original callback,
+unobserved registration attempt; it does not prove registration or delivery. The original callback,
 metadata writes and native method receivers are preserved, including when
 registration fails. Later registrations resume normal observation.
 

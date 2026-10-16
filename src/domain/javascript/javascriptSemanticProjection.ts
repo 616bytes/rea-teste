@@ -670,6 +670,7 @@ const isDeleteSite = (site: t.Node): boolean =>
   t.isUnaryExpression(site, { operator: "delete" });
 
 const isPatternOwnerDeclaration = (node: t.Node): boolean =>
+  t.isTSParameterProperty(node) ||
   (t.isVariableDeclarator(node) && t.isPattern(node.id)) ||
   (t.isFunction(node) &&
     node.params.some((value): value is t.Pattern => t.isPattern(value))) ||
@@ -699,6 +700,8 @@ const isDeclarationIdentifier = (
 ): boolean => {
   if (t.isTSImportEqualsDeclaration(parent)) return parent.id === node;
   return (
+    (t.isTSParameterProperty(parent) &&
+      patternContains(parent.parameter, node)) ||
     (t.isVariableDeclarator(parent) && patternContains(parent.id, node)) ||
     ((t.isFunctionDeclaration(parent) || t.isFunctionExpression(parent)) &&
       parent.id === node) ||

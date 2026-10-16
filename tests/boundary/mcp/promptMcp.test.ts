@@ -219,7 +219,6 @@ describe("native vulnerability MCP prompt", () => {
     expect(argumentShape).toEqual({
       review_focus: { required: true },
       target_path: { required: false },
-      document: { required: false, completion: "document" },
       procedure: { required: false, completion: "procedure" },
       provider_id: { required: false, completion: "provider" },
     });
@@ -239,6 +238,11 @@ describe("native vulnerability MCP prompt", () => {
       "canaries, NX, ASLR, and RELRO",
       "do not prove protection or its absence",
       "unavailable facts remain Unknown",
+      'detail: "summary"',
+      "normalized_result.parent_evidence_id",
+      'view: {kind: "facet", facet: "mitigations"}',
+      "Start with targeted search_procedures queries",
+      "Use list_names only as a fallback",
       "When procedure is omitted, select an entry point only when Evidence supports it; otherwise keep the entry point Unknown.",
       "no path found is not proof of unreachability",
       "remediation-oriented",
@@ -263,10 +267,11 @@ describe("native vulnerability MCP prompt", () => {
     expect(suggestedTools).toEqual([
       "open_binary",
       "inspect_binary_layout",
+      "inspect_analysis_view",
       "inspect_signature",
-      "list_names",
       "search_procedures",
       "find_xrefs_to_name",
+      "list_names",
       "analyze_function",
       "trace_native_values",
       "trace_call_path",

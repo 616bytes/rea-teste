@@ -330,7 +330,6 @@ export const PROMPT_CONTRACTS = [
       target_path: optional(
         "Absolute target path; omit when the intended target is already open",
       ),
-      document: optional("Open analysis document to inspect", "document"),
       procedure: optional(
         "Known procedure, parser, or entry-point name or address",
         "procedure",
@@ -347,14 +346,18 @@ export const PROMPT_CONTRACTS = [
           "Use the requested target and open it only when needed for static analysis. This workflow does not execute the target.",
       },
       {
-        tools: ["inspect_binary_layout", "inspect_signature"],
+        tools: [
+          "inspect_binary_layout",
+          "inspect_analysis_view",
+          "inspect_signature",
+        ],
         instruction:
-          "Collect available mitigation facts such as canaries, NX, ASLR, and RELRO. Report only static inferences returned by these tools; unavailable facts remain Unknown, and mitigations do not prove protection or its absence.",
+          'Collect static mitigation facts such as canaries, NX, ASLR, and RELRO. Request inspect_binary_layout with detail: "summary" so complete Evidence is retained while only its summary is returned. For mitigation facts, pass normalized_result.parent_evidence_id to inspect_analysis_view with view: {kind: "facet", facet: "mitigations"}; do not request complete layout solely for mitigations. Use inspect_signature only for relevant signature evidence. Report only static inferences; unavailable facts remain Unknown, and mitigations do not prove protection or its absence.',
       },
       {
-        tools: ["list_names", "search_procedures", "find_xrefs_to_name"],
+        tools: ["search_procedures", "find_xrefs_to_name", "list_names"],
         instruction:
-          "Find candidate imports, references, and entry-point procedures relevant to the requested focus. When procedure is omitted, select an entry point only when Evidence supports it; otherwise keep the entry point Unknown. Common sink starting points include strcpy, strcat, sprintf, gets, memcpy, alloca, system, popen, and exec-family names; this list is not exhaustive or a code catalog.",
+          "Start with targeted search_procedures queries for the requested focus or common sink names, and find_xrefs_to_name when an exact relevant symbol is known. Use list_names only as a fallback when targeted searches do not produce a useful seed; avoid carrying the complete symbol inventory unnecessarily. When procedure is omitted, select an entry point only when Evidence supports it; otherwise keep the entry point Unknown. Common sink starting points include strcpy, strcat, sprintf, gets, memcpy, alloca, system, popen, and exec-family names; this list is not exhaustive or a code catalog.",
       },
       {
         tools: ["analyze_function", "trace_native_values"],

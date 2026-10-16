@@ -12,7 +12,7 @@ invoke tools by themselves.
 | `compare_application_versions`    | Compare two shipped artifacts, with optional static and runtime follow-up.           |
 | `verify_reconstruction`           | Evaluate a finite reconstruction specification against retained comparison Evidence. |
 | `trace_crash`                     | Correlate a crash symptom with static paths and optional process capture evidence.   |
-| `review_native_vulnerabilities`   | Guide an evidence-based, defensive static review of native binary vulnerabilities.    |
+| `review_native_vulnerabilities`   | Guide an evidence-based, defensive static review of native binary vulnerabilities.   |
 | `audit_residual_unknowns`         | Audit current residual-unknown heads and evidence-qualified resolution.              |
 | `prepare_bounded_process_capture` | Design a bounded controlled process experiment before execution.                     |
 
@@ -47,7 +47,10 @@ is defensive and remediation-oriented: it does not execute the target or
 provide exploit construction details; a trigger condition or precondition is
 enough. CWE class and severity are inferences, not tool observations. The tools
 can add Evidence and Unknowns to the REA session while leaving the analyzed
-target unchanged.
+target unchanged. The prompt targets the active analysis document, switching
+targets through `open_binary`. It requests a retained layout summary and the
+`mitigations` view, then starts symbol discovery with focused procedure and
+cross-reference searches; a complete symbol inventory is a fallback.
 
 Use standard MCP discovery and retrieval:
 

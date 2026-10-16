@@ -281,12 +281,17 @@ profile's skills directory. It does not read `~/.hermes/sub/active_profile`.
 Without an outer named selection, this override uses `~/.hermes/sub/config.yaml`.
 Use a home outside the platform default tree for an independent sticky selection.
 
-If the platform default home or any existing prefix resolves to a different
-spelling — for example, a symlinked `HOME`/`USERPROFILE`, `LOCALAPPDATA`, or another
-ancestor — create a nested override directory before running setup. For a
-nonexistent nested directory, REA falls back to the lexical spelling and may miss
-that containment, planning the nested root's configuration instead of honoring
-the outer sticky selection.
+Before setup, create an override directory whose path includes a symlink,
+junction, or another prefix that resolves to a different spelling. When the
+override does not exist, REA falls back to its lexical spelling for containment.
+This can miss physical containment — for example, beneath a symlinked default
+home or `HOME`/`USERPROFILE`/`LOCALAPPDATA` ancestor — ignoring the outer selection
+and planning the override root's configuration. It can also falsely assume
+containment: if `~/.hermes/link` points outside the default home,
+`HERMES_HOME=~/.hermes/link/new` can read the outer `active_profile` and reject a
+missing selected profile until `new` exists. Once the override directory exists,
+REA checks its physical location. Inspect setup's previewed destinations before
+applying changes.
 
 An explicit `HERMES_HOME` pointing to `profiles/<name>` selects that named
 profile directly, bypassing sticky selection. An invalid, missing or deleted

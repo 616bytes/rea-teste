@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { z } from "zod";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,6 +25,16 @@ const firstText = (result: {
   }
   return undefined;
 };
+
+const activityRoots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    activityRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
+  );
+});
 
 describe("MCP request bookkeeping", () => {
   it("releases list, tool, and completion state when cancellation arrives", () => {
@@ -153,6 +163,7 @@ describe("SDK validation error delivery", () => {
 describe("MCP activity journal", () => {
   it("records tool completion without caller arguments", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-mcp-activity-"));
+    activityRoots.push(root);
     const journal = new ActivityJournal(join(root, "activity.jsonl"));
     const server = new EvidenceMcpServer(
       { name: "activity-test", version: "1" },
@@ -205,6 +216,7 @@ describe("MCP activity journal", () => {
 
   it("emits periodic progress updates with estimated duration during execution", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-mcp-activity-periodic-"));
+    activityRoots.push(root);
     const journal = new ActivityJournal(join(root, "activity.jsonl"));
     const server = new EvidenceMcpServer(
       { name: "activity-periodic-test", version: "1" },
@@ -248,6 +260,11 @@ describe("MCP activity journal", () => {
         progress: 1,
         total: 1,
       });
+      for (const [index, update] of updates.entries()) {
+        const previous = updates[index - 1];
+        if (previous !== undefined)
+          expect(update.progress).toBeGreaterThanOrEqual(previous.progress);
+      }
       const middle = updates.slice(1, -1);
       expect(
         middle.some((u) => u.message?.includes("long_running_tool running")),

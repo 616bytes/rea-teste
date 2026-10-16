@@ -41,6 +41,14 @@ const activityView = (
 
 const DEFAULT_ESTIMATE_MS = 30_000;
 
+const ANSI_ESCAPE_SEQUENCE =
+  /\u001B(?:\][^\u0007]*(?:\u0007|\u001B\\)|\[[0-?]*[ -/]*[@-~])/gu;
+
+export const sanitizeActivityText = (value: string): string =>
+  value
+    .replace(ANSI_ESCAPE_SEQUENCE, "")
+    .replace(/[\u0000-\u001F\u007F-\u009F]/gu, "");
+
 type ActivityLocale = "en" | "ko" | "ja";
 
 const activityLocale = (
@@ -95,9 +103,10 @@ const activityLine = (
   records: readonly ActivityRecord[],
 ): string => {
   const estimated = estimateActivity(record, records);
+  const tool = sanitizeActivityText(estimated.tool);
   if (estimated.status !== "running")
-    return `${estimated.status.padEnd(9)} ${estimated.elapsed_formatted.padStart(8)}  ${estimated.tool}`;
-  return `${"RUNNING".padEnd(9)} ${estimated.elapsed_formatted.padStart(8)}  ${estimated.tool}  ${String(estimated.progress_percent).padStart(3)}%  ETA ${estimated.eta_formatted}`;
+    return `${estimated.status.padEnd(9)} ${estimated.elapsed_formatted.padStart(8)}  ${tool}`;
+  return `${"RUNNING".padEnd(9)} ${estimated.elapsed_formatted.padStart(8)}  ${tool}  ${String(estimated.progress_percent).padStart(3)}%  ETA ${estimated.eta_formatted}`;
 };
 
 const watchActivity = async (

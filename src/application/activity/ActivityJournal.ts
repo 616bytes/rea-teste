@@ -245,7 +245,13 @@ export class ActivityJournal {
     await this.#write;
     try {
       const text = await readFile(this.#path, "utf8");
-      return projectRecords(parseEvents(text), isAlive).slice(0, limit);
+      const records = projectRecords(parseEvents(text), isAlive);
+      if (records.length <= limit) return records;
+      const active = records.filter((record) => record.status === "running");
+      const recent = records
+        .filter((record) => record.status !== "running")
+        .slice(0, Math.max(0, limit - active.length));
+      return [...active, ...recent];
     } catch (cause: unknown) {
       if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
       return [];
@@ -265,9 +271,29 @@ export class ActivityJournal {
             const lines = text
               .split(/\r?\n/u)
               .filter((line) => line.length > 0);
+            const retainedLines = lines.slice(-MAX_EVENTS * 2);
+            const retainedIds = new Set(
+              parseEvents(retainedLines.join("\n")).map(
+                (event) => event.activity_id,
+              ),
+            );
+            const finishedIds = new Set(
+              parseEvents(lines.join("\n"))
+                .filter((event) => event.kind === "finished")
+                .map((event) => event.activity_id),
+            );
+            const activeStarts = parseEvents(lines.join("\n")).filter(
+              (event) =>
+                event.kind === "started" &&
+                !finishedIds.has(event.activity_id) &&
+                !retainedIds.has(event.activity_id),
+            );
+            const activeLines = activeStarts.map((event) =>
+              JSON.stringify(event),
+            );
             await writeFile(
               this.#path,
-              `${lines.slice(-MAX_EVENTS * 2).join("\n")}\n`,
+              `${[...activeLines, ...retainedLines].join("\n")}\n`,
               "utf8",
             );
           });

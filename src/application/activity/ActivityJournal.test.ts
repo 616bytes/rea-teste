@@ -1,14 +1,23 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { ActivityJournal, activityLogPath } from "./ActivityJournal.js";
 
 describe("ActivityJournal", () => {
+  const roots: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    );
+  });
+
   it("projects started and terminal events without caller arguments", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-activity-"));
+    roots.push(root);
     const path = join(root, "activity.jsonl");
     const journal = new ActivityJournal(path);
     const startedAt = "2026-10-14T00:00:00.000Z";
@@ -38,6 +47,7 @@ describe("ActivityJournal", () => {
 
   it("keeps an unfinished operation explicitly running", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-activity-"));
+    roots.push(root);
     const journal = new ActivityJournal(join(root, "activity.jsonl"));
 
     journal.start("analyze_javascript_application", "2026-10-14T00:00:00.000Z");
@@ -49,6 +59,7 @@ describe("ActivityJournal", () => {
 
   it("marks abandoned operations as unknown when process is no longer alive", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-activity-dead-"));
+    roots.push(root);
     const journal = new ActivityJournal(join(root, "activity.jsonl"));
 
     // Start with a dead/nonexistent PID
@@ -80,6 +91,7 @@ describe("ActivityJournal", () => {
 
   it("safely serializes concurrent appends across journal instances", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-activity-concurrent-"));
+    roots.push(root);
     const path = join(root, "activity.jsonl");
     const journalA = new ActivityJournal(path);
     const journalB = new ActivityJournal(path);
@@ -105,5 +117,31 @@ describe("ActivityJournal", () => {
     expect(records).toHaveLength(2);
     expect(records.map((r) => r.tool)).toContain("binary_overview");
     expect(records.map((r) => r.tool)).toContain("analyze_function");
+  });
+
+  it("preserves active starts when compaction removes older completed events", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-activity-compaction-"));
+    roots.push(root);
+    const path = join(root, "activity.jsonl");
+    const journal = new ActivityJournal(path);
+
+    for (let index = 0; index < 5000; index += 1) {
+      const startedAt = new Date(1_000 + index * 2).toISOString();
+      const id = journal.start(`completed_${index}`, startedAt, process.pid);
+      journal.finish({
+        activityId: id,
+        status: "completed",
+        startedAt,
+        at: new Date(2_000 + index * 2).toISOString(),
+      });
+    }
+    journal.start("still_running", new Date(0).toISOString(), process.pid);
+
+    await journal.read();
+    await expect(journal.read()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ tool: "still_running", status: "running" }),
+      ]),
+    );
   });
 });

@@ -214,7 +214,9 @@ class ErrorEvidenceTransport implements Transport {
       readonly startedAt: string;
       readonly tool: string;
       readonly progressToken?: string | number;
-      readonly timer?: NodeJS.Timeout;
+      timer?: NodeJS.Timeout | undefined;
+      lastProgress: number;
+      progressInFlight?: Promise<void> | undefined;
     }
   >();
   private readonly pendingToolLists = new Set<RequestId>();
@@ -251,7 +253,23 @@ class ErrorEvidenceTransport implements Transport {
               : undefined;
           const activityId = this.activity.start(toolName, startedAt);
 
-          let timer: NodeJS.Timeout | undefined;
+          const activity: {
+            id: string;
+            startedAt: string;
+            tool: string;
+            progressToken?: string | number;
+            timer?: NodeJS.Timeout | undefined;
+            lastProgress: number;
+            progressInFlight?: Promise<void> | undefined;
+          } = {
+            id: activityId,
+            startedAt,
+            tool: toolName,
+            lastProgress: 0,
+            ...(progressToken === undefined ? {} : { progressToken }),
+          };
+          this.pendingActivities.set(message.id, activity);
+
           if (progressToken !== undefined) {
             void this.notifyProgress(
               progressToken,
@@ -260,33 +278,42 @@ class ErrorEvidenceTransport implements Transport {
               `Started REA tool: ${toolName}`,
             );
 
-            timer = setInterval(() => {
-              void (async () => {
-                if (!this.pendingActivities.has(message.id)) return;
+            const timer = setInterval(() => {
+              const current = this.pendingActivities.get(message.id);
+              if (
+                current === undefined ||
+                current.progressInFlight !== undefined
+              )
+                return;
+              let progressTask: Promise<void>;
+              progressTask = (async () => {
                 const records = await (this.activity?.read(50) ??
                   Promise.resolve([]));
+                if (this.pendingActivities.get(message.id) !== current) return;
                 const elapsed = Math.max(0, Date.now() - Date.parse(startedAt));
                 const estimate = estimateFor(toolName, records);
                 const { progressPercent, elapsedFormatted, etaFormatted } =
                   calculateProgress(elapsed, estimate);
+                const progress = Math.max(
+                  current.lastProgress,
+                  progressPercent / 100,
+                );
+                current.lastProgress = progress;
                 await this.notifyProgress(
                   progressToken,
-                  progressPercent / 100,
+                  progress,
                   1,
-                  `${toolName} running (${progressPercent}%, elapsed: ${elapsedFormatted}, ETA: ${etaFormatted})`,
+                  `${toolName} running (${Math.floor(progress * 100)}%, elapsed: ${elapsedFormatted}, ETA: ${etaFormatted})`,
                 );
-              })();
+              })().finally(() => {
+                if (current.progressInFlight === progressTask)
+                  current.progressInFlight = undefined;
+              });
+              current.progressInFlight = progressTask;
             }, 1000);
             if (typeof timer.unref === "function") timer.unref();
+            activity.timer = timer;
           }
-
-          this.pendingActivities.set(message.id, {
-            id: activityId,
-            startedAt,
-            tool: toolName,
-            ...(progressToken === undefined ? {} : { progressToken }),
-            ...(timer === undefined ? {} : { timer }),
-          });
         }
       }
       if (isJSONRPCRequest(message) && message.method === "tools/list")
@@ -456,6 +483,7 @@ class ErrorEvidenceTransport implements Transport {
       clearInterval(activity.timer);
     }
     this.pendingActivities.delete(id);
+    await activity.progressInFlight?.catch(() => undefined);
     const duration = Math.max(0, Date.now() - Date.parse(activity.startedAt));
     await this.notifyProgress(
       activity.progressToken,

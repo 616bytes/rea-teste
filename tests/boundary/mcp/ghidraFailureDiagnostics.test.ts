@@ -6,6 +6,7 @@ import { expect, it } from "vitest";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
 import { err, ok } from "../../../src/domain/result.js";
+import { ok } from "../../../src/domain/result.js";
 import { GhidraRequestQueue } from "../../../src/ghidra/GhidraRequestQueue.js";
 import {
   bindGhidraSessionFailure,
@@ -34,7 +35,7 @@ it("preserves queue failure diagnostics through the provider, CLI adapter and SD
       throw cause;
     },
     failure,
-    () => Promise.resolve(),
+    () => Promise.resolve(ok(null)),
   );
   const harness = await connectGhidraMcp(
     "ghidra-failure-diagnostics",

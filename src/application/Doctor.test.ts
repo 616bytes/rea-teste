@@ -4,6 +4,8 @@ import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
 import { runDoctor } from "./Doctor.js";
+import { err } from "../domain/result.js";
+import { HopperReleaseError } from "./HopperReleaseFeed.js";
 
 describe("doctor runtime check", () => {
   it("reports Node 25 as unsupported", async () => {
@@ -363,6 +365,38 @@ describe("doctor scoped readiness", () => {
     );
     expect(staleSelected.healthy).toBe(false);
   });
+
+  it("keeps a caller-selected short timeout healthy and reports its advisory as informational", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        clientRegistrations: () =>
+          Promise.resolve([
+            {
+              client: "kimi",
+              config_path: "/home/user/.kimi-code/mcp.json",
+              command: ["/current/rea", "mcp"],
+              state: "aligned",
+              remediation: null,
+              advisory: "The configured toolTimeoutMs is shorter than startup.",
+            },
+          ]),
+      }),
+      { clients: ["kimi"] },
+    );
+
+    expect(result.healthy).toBe(true);
+    expect(result.scope_checks).toContainEqual(
+      expect.objectContaining({ name: "registration:kimi", ok: true }),
+    );
+    expect(result.informational_checks).toContainEqual(
+      expect.objectContaining({
+        name: "registration_timeout:kimi",
+        ok: true,
+        detail: "The configured toolTimeoutMs is shorter than startup.",
+      }),
+    );
+  });
 });
 
 describe("Grok Bot readiness", () => {
@@ -585,12 +619,20 @@ describe("doctor Linux and Hopper discovery", () => {
             hopperSetupSupported: true,
           }),
         executable: (candidate) => Promise.resolve(candidate === path),
-        supportedLinuxHopper: () => Promise.resolve(false),
+        inspectLinuxHopper: () =>
+          Promise.resolve(
+            err(
+              new HopperReleaseError(
+                "unsupported_hopper_build",
+                "Unverified fixture build",
+              ),
+            ),
+          ),
       }),
     );
     expect(
       result.checks.find(({ name }) => name === "hopper-version")?.remediation,
-    ).toContain("Unset or update HOPPER_LAUNCHER_PATH");
+    ).toContain("Check HOPPER_LAUNCHER_PATH");
   });
 });
 

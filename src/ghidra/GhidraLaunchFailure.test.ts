@@ -171,4 +171,27 @@ describe("Ghidra launch failure diagnostics", () => {
       await rm(runtimeRoot, { recursive: true, force: true });
     }
   });
+
+  it("keeps a launcher command failure primary when cancellation arrives later", async () => {
+    const javaHome = await failingJavaHome(
+      "#!/bin/sh\nsleep 0.3\necho 'jvm probe exploded' >&2\nexit 3\n",
+    );
+    const runtimeRoot = await mkdtemp(join(tmpdir(), "rea-ghidra-launch-"));
+    try {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 100);
+      const result = await probeLauncher(javaHome, runtimeRoot).launch(
+        launchSession(runtimeRoot),
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected launch failure");
+      expect(result.error).toBeInstanceOf(GhidraLaunchError);
+      expect(result.error).not.toMatchObject({
+        _tag: "AnalysisCancelledError",
+      });
+    } finally {
+      await rm(javaHome, { recursive: true, force: true });
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
 });

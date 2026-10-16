@@ -104,10 +104,13 @@ export class GhidraLaunchError extends Error {
   readonly launchSupport: readonly GhidraLaunchSupportDiagnostic[];
   readonly rollbackFailure: GhidraLaunchRollbackFailure | undefined;
   readonly cleanupFailure: AnalysisError | undefined;
+  /** The launch stopped because the caller cancelled, not because it failed. */
+  readonly cancelled: boolean;
 
   constructor(
     message: string,
     options?: ErrorOptions & {
+      readonly cancelled?: boolean;
       readonly partialLaunch?: GhidraLaunch;
       readonly rollbackFailure?: GhidraLaunchRollbackFailure;
       readonly cleanupFailure?: AnalysisError;
@@ -116,6 +119,7 @@ export class GhidraLaunchError extends Error {
     },
   ) {
     const {
+      cancelled,
       partialLaunch,
       capturedOutput,
       launchSupport,
@@ -127,6 +131,7 @@ export class GhidraLaunchError extends Error {
     this.name = "GhidraLaunchError";
     this.#partialLaunch = partialLaunch;
     this.rollbackFailure = rollbackFailure;
+    this.cancelled = cancelled === true;
     const inherited =
       errorOptions.cause instanceof DarwinProcessOwnershipInspectionError ||
       errorOptions.cause instanceof GhidraLaunchError
@@ -459,7 +464,10 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           ...(capturedOutput === undefined ? {} : { capturedOutput }),
         },
       );
-      const primary = isAborted(options.signal)
+      // Only the launcher's own cancellation checkpoints are cancellations; a
+      // physical failure keeps its identity even if the caller aborted later.
+      const cancelled = cause instanceof AnalysisCancelledError;
+      const primary = cancelled
         ? new AnalysisCancelledError("open_binary", {
             cause: launchFailure,
             ...(launchFailure.cleanupFailure === undefined
@@ -495,7 +503,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           launchSupport,
           configuredMaxHeap,
         );
-        const primaryMessage = isAborted(options.signal)
+        const primaryMessage = cancelled
           ? primary.message
           : `Ghidra headless launch failed: ${cause instanceof Error ? cause.message : String(cause)}`;
         return err(
@@ -513,6 +521,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
                 { cause: primary },
               ),
               partialLaunch,
+              cancelled,
               rollbackFailure: rollback.error,
               ...(launchFailure.cleanupFailure === undefined
                 ? {}

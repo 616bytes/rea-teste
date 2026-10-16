@@ -5,6 +5,7 @@ import type { Socket } from "node:net";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
@@ -87,6 +88,11 @@ import { completeGhidraStartupHandshake } from "./GhidraClientStartup.js";
 import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
+
+/** Whether the launcher itself reported cancellation rather than a failure. */
+const launcherCancelled = (error: unknown): boolean =>
+  error instanceof AnalysisCancelledError ||
+  (error instanceof GhidraLaunchError && error.cancelled);
 const SESSION_ROOT = ghidraSessionRoot();
 
 type GhidraStartupAttempt = SharedStartupAttempt<GhidraStartResult>;
@@ -778,11 +784,13 @@ export class GhidraClient {
         });
         this.#startupOutputCheckpoint = this.#process.checkpointOutput();
       }
-      const failure = deadline.signal.aborted
-        ? this.#interruptionFailure(deadline, launched.error)
-        : launched.error instanceof GhidraSessionError
-          ? launched.error
-          : this.#failure("start", launched.error.message, launched.error);
+      // A launcher failure that preceded the abort stays the primary outcome.
+      const failure =
+        deadline.signal.aborted && launcherCancelled(launched.error)
+          ? this.#interruptionFailure(deadline, launched.error)
+          : launched.error instanceof GhidraSessionError
+            ? launched.error
+            : this.#failure("start", launched.error.message, launched.error);
       return this.#startupFailure(failure, deadline);
     }
     this.#launch = launched.value;

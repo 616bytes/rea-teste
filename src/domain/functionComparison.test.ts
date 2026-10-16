@@ -1396,3 +1396,75 @@ describe("function comparison unnamed reference endpoints", () => {
     ).toMatchObject({ status: "changed" });
   });
 });
+
+describe("function comparison multi-edge references", () => {
+  const withTargets = (targets: readonly (string | null)[]) =>
+    functionDossierSchema.parse({
+      ...dossier("mix();", "0x1000"),
+      outgoing_references: targets.map((target, index) => {
+        const edge = dossierWithReference("0x1000", "call")
+          .outgoing_references[0];
+        return {
+          ...edge,
+          target_address: index === 0 ? "0x1010" : "0x1020",
+          target_procedure:
+            target === null ? null : procedure("0x1020", target),
+        };
+      }),
+    });
+
+  it("matches edges by identity, not by sort position", () => {
+    // Sorting puts the unresolved target first, so positional pairing would
+    // compare beta with alpha and report a change no known target made.
+    expect(
+      compareFunctions(
+        observe("a", withTargets(["alpha", "beta"])),
+        observe("b", withTargets(["beta", "alpha"])),
+      ).dimensions.find(({ dimension }) => dimension === "references"),
+    ).toMatchObject({ status: "unchanged" });
+    expect(
+      compareFunctions(
+        observe("a", withTargets(["alpha", "beta"])),
+        observe("b", withTargets([null, "alpha"])),
+      ).dimensions.find(({ dimension }) => dimension === "references"),
+    ).toMatchObject({ status: "unknown" });
+    // A known target that really disappeared stays a change.
+    expect(
+      compareFunctions(
+        observe("a", withTargets(["alpha", "beta"])),
+        observe("b", withTargets(["alpha", "gamma"])),
+      ).dimensions.find(({ dimension }) => dimension === "references"),
+    ).toMatchObject({ status: "changed" });
+  });
+
+  it("keeps reference kinds attached to their endpoints", () => {
+    const edgeWith = (kind: "call" | "data", target: string, name: string) => {
+      const edge = dossierWithReference("0x1000", kind).outgoing_references[0];
+      return {
+        ...edge,
+        target_address: target,
+        target_procedure: procedure(target, name),
+      };
+    };
+    const withKinds = (first: "call" | "data", second: "call" | "data") =>
+      functionDossierSchema.parse({
+        ...dossier("mix();", "0x1000"),
+        outgoing_references: [
+          edgeWith(first, "0x1010", "alpha"),
+          edgeWith(second, "0x1020", "beta"),
+        ],
+      });
+    expect(
+      compareFunctions(
+        observe("a", withKinds("call", "data")),
+        observe("b", withKinds("data", "call")),
+      ).dimensions.find(({ dimension }) => dimension === "references"),
+    ).toMatchObject({ status: "changed" });
+    expect(
+      compareFunctions(
+        observe("a", withKinds("call", "data")),
+        observe("b", withKinds("call", "data")),
+      ).dimensions.find(({ dimension }) => dimension === "references"),
+    ).toMatchObject({ status: "unchanged" });
+  });
+});

@@ -143,8 +143,10 @@ export const referenceKindProjection = (
     })),
   ];
   if (edges.some(({ edge }) => !edge.kind.available)) return null;
-  // Endpoint identity is compared on its own; embedding it here would let a
-  // named-versus-unnamed asymmetry decide the edge-semantics comparison.
+  // Each kind stays attached to its edge identity: two edges that swap kinds
+  // between the same endpoints must still compare as changed. The comparison
+  // matches rows by endpoint identity, so an unresolved endpoint never turns
+  // its own asymmetry into kind evidence.
   return sorted(
     edges.map(({ direction, edge }) => {
       if (!edge.kind.available)
@@ -153,20 +155,32 @@ export const referenceKindProjection = (
         );
       return {
         direction,
-        type: edge.kind.type,
-        flow: edge.kind.flow,
-        call: edge.kind.call,
-        jump: edge.kind.jump,
-        data: edge.kind.data,
-        read: edge.kind.read,
-        write: edge.kind.write,
-        indirect: edge.kind.indirect,
-        computed: edge.kind.computed,
-        conditional: edge.kind.conditional,
-        terminal: edge.kind.terminal,
-        primary: edge.kind.primary,
-        operand_index: edge.kind.operand_index,
-        external: edge.kind.external,
+        source: referenceEndpoint(
+          edge.source_procedure,
+          edge.source_address,
+          sameArtifact,
+        ),
+        target: referenceEndpoint(
+          edge.target_procedure,
+          edge.target_address,
+          sameArtifact,
+        ),
+        kind: {
+          type: edge.kind.type,
+          flow: edge.kind.flow,
+          call: edge.kind.call,
+          jump: edge.kind.jump,
+          data: edge.kind.data,
+          read: edge.kind.read,
+          write: edge.kind.write,
+          indirect: edge.kind.indirect,
+          computed: edge.kind.computed,
+          conditional: edge.kind.conditional,
+          terminal: edge.kind.terminal,
+          primary: edge.kind.primary,
+          operand_index: edge.kind.operand_index,
+          external: edge.kind.external,
+        },
       };
     }),
   );

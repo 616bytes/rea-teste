@@ -339,18 +339,16 @@ const runScenario = async (
     }),
     completeness,
   });
-  if (
-    signalIsAborted(options.signal) &&
-    capture.steps.every(({ status }) => status === "completed")
-  )
+  if (signalIsAborted(options.signal))
     throw new AnalysisCancelledError(OPERATION, {
+      cause: options.signal?.reason,
       partialObservation: {
         kind: "browser-scenario-observation",
         capture: {
           ...capture,
           limitations: [
             ...capture.limitations,
-            "Scenario capture was cancelled after all steps completed; the completed capture and cleanup state are retained.",
+            "Scenario capture was cancelled; collected steps, observations, and cleanup state are retained.",
           ],
         },
       },

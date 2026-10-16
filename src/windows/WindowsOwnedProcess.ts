@@ -75,6 +75,7 @@ export class WindowsOwnedProcess extends EventEmitter {
   #memoryLimitReached = false;
   #peakJobMemoryBytes: number | undefined;
   #outputIncomplete = false;
+  #observedSettled = false;
 
   constructor(
     command: string,
@@ -247,6 +248,26 @@ export class WindowsOwnedProcess extends EventEmitter {
 
   async #stop(): Promise<ProcessCleanupResult> {
     if (this.#closed) return { cleaned: true, signaled: false };
+    if (this.#failure !== undefined) {
+      try {
+        if (!this.#observedSettled) this.#outputIncomplete = true;
+        const signaled = this.#observedSettled ? false : this.kill();
+        this.#discardBlockedOutput();
+        if (!(await this.#waitForProcessExit()))
+          return {
+            cleaned: false,
+            reason:
+              "Windows Job Object did not settle within the cleanup deadline",
+          };
+        this.#release();
+        return { cleaned: true, signaled };
+      } catch (cause: unknown) {
+        return {
+          cleaned: false,
+          reason: cause instanceof Error ? cause.message : String(cause),
+        };
+      }
+    }
     let timer: NodeJS.Timeout | undefined;
     try {
       const signaled = this.kill();
@@ -273,6 +294,21 @@ export class WindowsOwnedProcess extends EventEmitter {
       };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
+  async #waitForProcessExit(): Promise<boolean> {
+    if (this.#observedSettled) return true;
+    const deadline = Date.now() + 5_000;
+    while (true) {
+      const active = z
+        .number()
+        .int()
+        .nonnegative()
+        .parse(this.#authority.call("process_alive", [this.#handle]));
+      if (active === 0) return true;
+      if (Date.now() >= deadline) return false;
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
     }
   }
 
@@ -353,11 +389,13 @@ export class WindowsOwnedProcess extends EventEmitter {
         state.stderrEnded &&
         state.activeProcesses === 0
       ) {
+        this.#observedSettled = true;
         this.#release();
       } else this.#schedule(idle ? 25 : 0);
     } catch (cause: unknown) {
       const failure = cause instanceof Error ? cause : new Error(String(cause));
       this.#failure = failure.message;
+      if (!this.#observedSettled) this.#outputIncomplete = true;
       // Native lifecycle failures belong to the error/cleanup channels, never
       // the captured stderr observation produced by the child itself.
       if (this.listenerCount("error") > 0) this.emit("error", failure);

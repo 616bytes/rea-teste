@@ -37,6 +37,37 @@ const nativeFailure = (win32Code: number): Error =>
   });
 
 describe("Windows private runtime cleanup retry", () => {
+  it("releases a runtime child after its direct close fails", async () => {
+    const closeFailure = nativeFailure(5);
+    let runtimeCloses = 0;
+    nativeCall.mockImplementation((operation: string) => {
+      if (operation === "runtime_create") return observation;
+      if (operation === "runtime_open")
+        return {
+          requestedPath: "C:\\rea-private\\file",
+          finalPath: "C:\\rea-private\\file",
+          filesystem: "NTFS",
+          volumeSerial: "0123456789abcdef",
+          fileId: "0123456789abcdef0123456789abcdef",
+          size: 0,
+          directory: false,
+          handle: {},
+        };
+      if (operation === "close") throw closeFailure;
+      if (operation === "runtime_close") {
+        runtimeCloses++;
+        return null;
+      }
+      return null;
+    });
+    const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
+
+    expect(() => runtime.readFile("file")).toThrow(closeFailure);
+    await runtime.close();
+
+    expect(runtimeCloses).toBe(1);
+  });
+
   it("retries a transient sharing conflict through the same owned close", async () => {
     const conflict = nativeFailure(32);
     let closes = 0;

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   lstat,
   open,
@@ -7,7 +8,6 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
 import { expect, it, onTestFinished } from "vitest";
 import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
 import {

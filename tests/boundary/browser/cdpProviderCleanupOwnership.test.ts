@@ -116,6 +116,8 @@ it.each([
     }
 
     await retryProviderCleanup(provider);
+    if (result !== undefined && !result.ok)
+      expect(result.error.cleanupIncomplete).toBe(false);
     const methods = browser.commands.map(({ method }) => method);
     expect(methods).not.toContain("Target.closeTarget");
     expect(methods).not.toContain("Browser.close");

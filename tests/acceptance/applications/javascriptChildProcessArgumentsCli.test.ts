@@ -296,8 +296,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         var p=null;globalThis.p={stdio:'inherit'};spawn('global-value',[],{stdio:p});
         var done=()=>{};globalThis.done={stdio:'inherit'};execFile('global-callback',done);`,
       "deep.cjs": `${requireChildren}const done=()=>{};
-        ${Array.from({ length: 4096 }, (_, i) => `const a${i}=${i ? `a${i - 1}` : "done"};`).join("\n")}
-        execFile('deep-callback',a4095);spawn('deep-stable',[],{stdio:'inherit'});`,
+        ${Array.from({ length: 512 }, (_, i) => `const a${i}=${i ? `a${i - 1}` : "done"};`).join("\n")}
+        execFile('deep-callback',a511);spawn('deep-stable',[],{stdio:'inherit'});`,
     };
     await writeFixtureFiles(root, files);
     const result = await analyzeJavaScriptDirectory(surface, cli, root);

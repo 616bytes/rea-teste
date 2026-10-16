@@ -481,13 +481,12 @@ const createObservedOnceCallback = (target, channel, listener, receiver) => {
             recordIpcObservationGap(channel, `custom-${key}`, true);
           throw cause;
         }
-        if (
-          (key !== "call" && key !== "apply") ||
-          typeof value !== "function" ||
-          value === callFunction ||
-          value === applyArguments
-        )
+        if (key !== "call" && key !== "apply") return value;
+        if (typeof value !== "function") {
+          recordIpcObservationGap(channel, `custom-${key}`, true);
           return value;
+        }
+        if (value === callFunction || value === applyArguments) return value;
         // A runtime that selects an application method must preserve that
         // method's receiver and original argument-list object. Its body may
         // bypass the callable Proxy, so retain a gap rather than an invocation.
@@ -640,16 +639,18 @@ const patchIpcMain = (ipcMain) => {
         // app callback; registrations in this synchronous scope stay unwrapped.
         const previousScope = unobservedOnceScope;
         const scope = { channel, gapRecorded: false };
+        let failed = true;
         unobservedOnceScope = scope;
         try {
           const result = applyFunction(once, target, [channel, listener]);
-          // An app getter/decorator may choose a native alias that bypasses
-          // patched on entirely. The once owner still reports its limitation.
-          if (!scope.gapRecorded)
-            recordIpcObservationGap(channel, "once-metadata");
+          failed = false;
           return result;
         } finally {
           unobservedOnceScope = previousScope;
+          // An app decorator can register through an unhooked alias and then
+          // throw. Preserve a gap for either outcome, not proof of registration.
+          if (!scope.gapRecorded)
+            recordIpcObservationGap(channel, "once-metadata", failed);
         }
       }
       const receiver = new ProxyConstructor(

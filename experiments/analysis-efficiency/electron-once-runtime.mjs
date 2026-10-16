@@ -21,6 +21,8 @@ const modes = [
   "apply-getter",
   "call-throwing-getter",
   "apply-throwing-getter",
+  "call-non-callable",
+  "apply-non-callable",
 ];
 
 const execute = (emitter, channel, mode, argumentCount) => {
@@ -45,7 +47,7 @@ const execute = (emitter, channel, mode, argumentCount) => {
       });
     else if (mode.includes("readonly"))
       Object.defineProperty(listener, method, { value: opaque });
-    else listener[method] = opaque;
+    else listener[method] = mode.includes("non-callable") ? null : opaque;
   }
   emitter.once(channel, listener);
   let error = null;
@@ -218,6 +220,42 @@ additional("on-getter-native-alias", (emitter, channel) => {
   return {
     body_calls: bodyCalls,
     reads,
+    listeners_after: emitter.listenerCount(channel),
+  };
+});
+
+additional("on-getter-native-alias-throws", (emitter, channel) => {
+  const original = Object.getOwnPropertyDescriptor(emitter, "on");
+  const failure = new Error("registered-before-error");
+  let bodyCalls = 0,
+    sameError = false;
+  const listener = () => {
+    bodyCalls += 1;
+  };
+  Object.defineProperty(emitter, "on", {
+    configurable: true,
+    get() {
+      return function registerThenThrow(name, callback) {
+        EventEmitter.prototype.on.call(this, name, callback);
+        throw failure;
+      };
+    },
+  });
+  try {
+    emitter.once(channel, listener);
+  } catch (cause) {
+    sameError = cause === failure;
+  } finally {
+    if (original) Object.defineProperty(emitter, "on", original);
+    else delete emitter.on;
+  }
+  const publicIdentity =
+    emitter.rawListeners(channel)[0]?.listener === listener;
+  emitter.emit(channel);
+  return {
+    body_calls: bodyCalls,
+    same_error: sameError,
+    public_identity: publicIdentity,
     listeners_after: emitter.listenerCount(channel),
   };
 });

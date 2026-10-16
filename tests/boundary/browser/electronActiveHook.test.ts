@@ -966,7 +966,7 @@ it("matches native once dispatch and retains only established invocations", asyn
       observation: readonly { kind: string; event: string | null }[];
     }[];
   };
-  expect(result.cases).toBe(32);
+  expect(result.cases).toBe(39);
   expect(result.disagreements).toBe(0);
   for (const row of result.rows) {
     expect(row.hooked, row.mode).toEqual(row.native);
@@ -976,11 +976,15 @@ it("matches native once dispatch and retains only established invocations", asyn
     if (
       row.mode === "inherited-listener-setter" ||
       row.mode === "on-getter-listener-setter" ||
-      row.mode === "on-getter-native-alias"
+      row.mode.startsWith("on-getter-native-alias")
     ) {
       expect(invocations).toEqual([]);
       expect(row.observation).toEqual([
-        { kind: "ipc-observation-gap", event: "once-metadata", error: false },
+        {
+          kind: "ipc-observation-gap",
+          event: "once-metadata",
+          error: row.mode === "on-getter-native-alias-throws",
+        },
       ]);
     } else {
       expect(invocations.length, row.mode).toBe(row.hooked.body_calls);
@@ -989,6 +993,13 @@ it("matches native once dispatch and retains only established invocations", asyn
           row.observation.some((event) => event.kind === "ipc-observation-gap"),
           row.mode,
         ).toBe(true);
+      if (row.mode.includes("non-callable") && row.hooked.body_calls === 0)
+        expect(row.observation, row.mode).toEqual([
+          expect.objectContaining({
+            kind: "ipc-observation-gap",
+            error: true,
+          }),
+        ]);
     }
   }
 });

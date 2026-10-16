@@ -286,6 +286,37 @@ describe("Unresolved Swift contexts through MCP", () => {
 
 describe("Same-module Swift protocol witnesses through MCP", () => {
   it.each([
+    // Additional review regressions: grouped extension, static and nested witnesses.
+    ["$s1M1WVA2A1PRzlE1fyyF", "other"],
+    ["$s1M1SVAA1PA2aDP1gSiyFZTW", "structs"],
+    ["$s1N1SVAA9NamespaceO1PAaeFP1fyyFTW", "structs"],
+    // Identifier substitutions can also serve as module names.
+    ["$s1M1SVABE1fyyF", "other"],
+    // ABI-derived entity families; the classifier does not decode their bodies.
+    ["$s1M1SVAA1PA2aDP1xSivgTW", "structs"],
+    ["$s1M1SVAA1PA2aDP1xSivsTW", "structs"],
+    ["$s1M1SVAA1PA2aDP1xSivgZTW", "structs"],
+    ["$s1M1SVAA1PA2aDPyS2icigTW", "structs"],
+    ["$s1M1SVAA1PA2aDPxycfCTW", "structs"],
+    ["$s1M1SVAA1PA2aDPxycfcTW", "structs"],
+    ["$s1M1SVAA1PA2aDPTW", "other"],
+    ["$s1M1SVAA1PA2aDTW", "other"],
+    // Equivalent grouping, nested nominal paths, and malformed boundaries.
+    ["$s1M1WVAaA1PRzlE1fyyF", "other"],
+    ["$s1M1WVA999999999999999999999A1PRzlE1fyyF", "other"],
+    ["$s1M1SVA1A1PA2aDP1gSiyFZTW", "structs"],
+    ["$s1N1SVAA9NamespaceC1PAaeFP1fyyFTW", "structs"],
+    ["$s1N1SVAA9NamespaceO5InnerV1PAagHP1fyyFZTW", "structs"],
+    ["$s1N5OuterV1SVAA9NamespaceO1PAagHP1fyyFTW", "structs"],
+    ["$s1N1SVAA9NamespaceO1PAaeDP1fyyFTW", "other"],
+    ["$s1N1SVAA9NamespaceO1PAacFP1fyyFTW", "other"],
+    ["$s1N1SVAA9NamespaceO1PA2aeFP1fyyFTW", "other"],
+    ["$s1N1SVAA9NamespaceO1PAae2FP1fyyFTW", "other"],
+    ["$s1N1SVAA9NamespaceO1PAaefP1fyyFTW", "other"],
+    ["$s1N1SVAA99NamespaceO1PAaeFP1fyyFTW", "other"],
+    ["$s1N1SVAA9NamespaceO01PAaeFP1fyyFTW", "other"],
+    ["$s1M1SVAA1PA2aDP1gSiyFZTWjunk", "other"],
+    ["$s1M1SVAA1PA2aDP3ZTWSiyFZTW", "structs"],
     // Reported Scorer witness; remaining names are grammar-derived controls.
     ["_$s4main6ScorerVAA7ScoringA2aDP5scoreyS2iFTW", "structs"],
     ["_$s4main6ScorerCAA7ScoringA2aDP5scoreyS2iFTW", "classes"],
@@ -301,7 +332,7 @@ describe("Same-module Swift protocol witnesses through MCP", () => {
         .join("")}AA7ScoringA2a0_P5scoreyS2iFTW`,
       "structs",
     ],
-    // Unknown identities and malformed context/member/envelope boundaries.
+    // Unknown identities and malformed context/witness boundaries.
     ["_$s4main6ScorerVAA7ScoringA2aEP5scoreyS2iFTW", "other"],
     ["_$s4main6ScorerVAA7ScoringA2a_P5scoreyS2iFTW", "other"],
     ["_$s4main6ScorerVAA7ScoringA2a0_P5scoreyS2iFTW", "other"],
@@ -309,8 +340,6 @@ describe("Same-module Swift protocol witnesses through MCP", () => {
     ["_$s4main6ScorerVAA7ScoringA999999999999aDP5scoreyS2iFTW", "other"],
     ["_$s4main6ScorerVAA7ScoringA2adP5scoreyS2iFTW", "other"],
     ["_$s4main6ScorerVAA7ScoringA2aDE5scoreyS2iFTW", "other"],
-    ["_$s4main6ScorerVAA7ScoringA2aDP99scoreyS2iFTW", "other"],
-    ["_$s4main6ScorerVAA7ScoringA2aDP5scoreFTW", "other"],
     ["_$s4main6ScorerVAA7ScoringA2aDP5scoreyS2iFTWjunk", "other"],
     ["_$s4main6ScorerVAA7ScoringA2aDP5scoreyS2iF", "other"],
   ] as const)("classifies %s as %s", async (name, category) => {

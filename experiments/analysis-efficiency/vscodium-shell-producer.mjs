@@ -72,26 +72,40 @@ assert.equal(
   ),
 );
 const preload = join(trial, "shell-producer-preload.cjs");
+const observationPath = join(trial, "shell-producer-observation.json");
 await writeFile(
   preload,
   `const electron = require("electron");
+const fs = require("node:fs");
 const { createElectronActiveBoundaryPatches } = require(${JSON.stringify(boundary)});
 const events = []; let dropped = 0;
+const observation = ${JSON.stringify(observationPath)};
+let engine = null;
+const publish = () => {
+  fs.writeFileSync(observation + ".tmp", JSON.stringify({ engine, events, dropped }));
+  fs.renameSync(observation + ".tmp", observation);
+};
 const unused = () => { throw new Error("Unexpected non-shell observer path"); };
 if (typeof electron.shell.trashItem !== "function") throw new Error("Missing real shell.trashItem");
 createElectronActiveBoundaryPatches({
   identity: unused, patchEmitter: unused, processType: unused, recordIpc: unused, shape: unused,
   recordRuntime(kind, event, phase, meta) {
     if (kind !== "shell-attempt" || event !== "trashItem") return;
-    if (events.length >= 16) { dropped += 1; return; }
-    events.push({ kind, event, phase, error: meta.error,
+    if (events.length >= 16) dropped += 1;
+    else events.push({ kind, event, phase, error: meta.error,
       argument_count: meta.argument_shape_values.length,
       matches_owned_path: meta.argument_shape_values[0] === ${JSON.stringify(target)} });
+    publish();
   }
 }).patchShell(electron.shell);
-// Pin the native module for this test's lifetime; omit it from the snapshot.
-globalThis.__reaShellProducerElectron = electron;
-globalThis.__reaShellProducerSnapshot = () => ({ events: events.slice(), dropped });
+const ready = () => {
+  engine = { node: process.versions.node, electron: process.versions.electron,
+    application_path: electron.app.getAppPath(),
+    full_hook_installed: typeof globalThis.__reaElectronActiveSnapshot === "function" };
+  publish();
+};
+publish();
+if (electron.app.isReady()) ready(); else electron.app.once("ready", ready);
 `,
   { flag: "wx" },
 );
@@ -103,6 +117,8 @@ let engine;
 let closeStatus = "not-launched";
 let failure;
 const pageErrors = [];
+const readObservation = async () =>
+  JSON.parse(await readFile(observationPath, "utf8"));
 try {
   application = await _electron.launch({
     executablePath: resolve(values.executable),
@@ -123,44 +139,36 @@ try {
     ],
     timeout: 30_000,
   });
-  engine = await application.evaluate(({ app }) => ({
-    node: process.versions.node,
-    electron: process.versions.electron,
-    application_path: app.getAppPath(),
-    full_hook_installed:
-      typeof globalThis.__reaElectronActiveSnapshot === "function",
-    shell_probe_installed:
-      typeof globalThis.__reaShellProducerSnapshot === "function",
-  }));
-  assert.equal(engine.application_path, resolve(values.application));
-  assert.equal(engine.full_hook_installed, false);
-  assert.equal(engine.shell_probe_installed, true);
-  page = await application.firstWindow({ timeout: 20_000 });
+  // Browser pages and the atomic recorder do not depend on a cached main-process
+  // Inspector handle, which has failed during this application's startup.
+  const context = application.context();
+  page =
+    context.pages()[0] ??
+    (await context.waitForEvent("page", { timeout: 20_000 }));
   page.on("pageerror", (cause) => {
     if (pageErrors.length < 5) pageErrors.push(String(cause).slice(0, 600));
   });
   await page.locator(".monaco-workbench").waitFor({ timeout: 20_000 });
   const row = page.getByRole("treeitem", { name: /README-copy\.md/ }).first();
   await row.waitFor({ timeout: 15_000 });
-  const before = await application.evaluate(() =>
-    globalThis.__reaShellProducerSnapshot(),
-  );
-  assert.deepEqual(before, { events: [], dropped: 0 });
+  const before = await readObservation();
+  engine = before.engine;
+  assert.equal(engine.application_path, resolve(values.application));
+  assert.equal(engine.full_hook_installed, false);
+  assert.deepEqual(before.events, []);
+  assert.equal(before.dropped, 0);
   await row.click({ button: "right" });
   await page
     .getByRole("menuitem", { name: "Delete", exact: true })
     .click({ timeout: 5_000 });
-  let after = await application.evaluate(() =>
-    globalThis.__reaShellProducerSnapshot(),
-  );
+  let after = await readObservation();
   const expires = performance.now() + 5_000;
   while (after.events.length === 0 && performance.now() < expires) {
     await page.waitForTimeout(50);
-    after = await application.evaluate(() =>
-      globalThis.__reaShellProducerSnapshot(),
-    );
+    after = await readObservation();
   }
   assert.deepEqual(after, {
+    engine,
     events: [
       {
         kind: "shell-attempt",
@@ -209,10 +217,18 @@ try {
   if (application) {
     let timer;
     closeStatus = await Promise.race([
-      application.close().then(
-        () => "api-completed",
-        () => "api-failed",
-      ),
+      (async () => {
+        const closed = application
+          .waitForEvent("close", { timeout: 4_000 })
+          .then(
+            () => true,
+            () => false,
+          );
+        for (const window of application.context().pages())
+          await window.close();
+        assert.ok(await closed, "Application close remained unverified");
+        return "window-close-completed";
+      })().catch(() => "window-close-unverified"),
       new Promise((resolve) => {
         timer = setTimeout(() => resolve("deadline"), 5_000);
       }),
@@ -237,4 +253,4 @@ console.log(
     full_hook_provider_workflow: "NOT_EXECUTED",
   }),
 );
-process.exit(probe && closeStatus === "api-completed" ? 0 : 1);
+process.exit(probe && closeStatus === "window-close-completed" ? 0 : 1);

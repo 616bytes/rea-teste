@@ -48,8 +48,10 @@ a guarantee. Line positions may be R8-renumbered synthetic lines needing
 In an archive the requested member is selected explicitly by `entry`, or the
 members Android auto-loads are summarized (`classes.dex`, `classes2.dex`, … by
 exact stored name, up to the first missing one; canonical members after a gap
-are named in `limitations`); a duplicate member, or a `class_descriptor`
-present in more than one member, is refused as ambiguous rather than guessed.
+are named in `limitations`). Both match the raw stored name, as ART does, never
+an Info-ZIP Unicode Path name, and report the member under its stored name; a
+duplicate member, or a `class_descriptor` present in more than one member, is
+refused as ambiguous rather than guessed.
 
 ## Authority and overlap
 

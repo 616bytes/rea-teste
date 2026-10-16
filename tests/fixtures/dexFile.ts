@@ -4,6 +4,8 @@
  * workflow tests, and an in-memory APK/ZIP writer. Nothing here is committed
  * as a binary; every artifact is built by the test that uses it.
  */
+import { crc32 } from "node:zlib";
+
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 
 import type { DexParameterList } from "../../src/domain/dex/dexDebugInfo.js";
@@ -154,12 +156,48 @@ export const dexParameterList = (
   wide: Uint8Array.from(entries, (e) => (e.wide ? 1 : 0)),
 });
 
-/** An in-memory APK/ZIP holding `members` under their exact names, in order. */
+/** Info-ZIP Unicode Path extra field (0x7075) naming `unicode` for stored `raw`. */
+const unicodePathField = (raw: string, unicode: string): Uint8Array => {
+  const name = Buffer.from(unicode, "utf8");
+  const field = Buffer.alloc(5 + name.length);
+  field.writeUInt8(1, 0);
+  field.writeUInt32LE(crc32(Buffer.from(raw, "latin1")), 1);
+  name.copy(field, 5);
+  return field;
+};
+
+/**
+ * An in-memory APK/ZIP holding `members` under their exact stored names, in
+ * order; `unicodePath` adds an Info-ZIP Unicode Path field naming the member
+ * differently, and `externalFileAttributes` overrides its attributes.
+ */
 export const zipArchive = async (
-  members: readonly { readonly name: string; readonly bytes: Uint8Array }[],
+  members: readonly {
+    readonly name: string;
+    readonly bytes: Uint8Array;
+    readonly unicodePath?: string;
+    readonly externalFileAttributes?: number;
+  }[],
 ): Promise<Uint8Array> => {
-  const writer = new ZipWriter(new Uint8ArrayWriter());
+  // Unflagged stored names, as Info-ZIP writes beside a Unicode Path field.
+  const writer = new ZipWriter(
+    new Uint8ArrayWriter(),
+    members.some((member) => member.unicodePath !== undefined)
+      ? { useUnicodeFileNames: false }
+      : {},
+  );
   for (const member of members)
-    await writer.add(member.name, new Uint8ArrayReader(member.bytes));
+    await writer.add(member.name, new Uint8ArrayReader(member.bytes), {
+      ...(member.unicodePath === undefined
+        ? {}
+        : {
+            extraField: new Map([
+              [0x7075, unicodePathField(member.name, member.unicodePath)],
+            ]),
+          }),
+      ...(member.externalFileAttributes === undefined
+        ? {}
+        : { externalFileAttributes: member.externalFileAttributes }),
+    });
   return writer.close();
 };

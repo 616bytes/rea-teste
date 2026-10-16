@@ -1,8 +1,10 @@
 /**
  * Choose which DEX members of an APK/ZIP one inspection reads: the member the
  * caller selected with `entry`, or the multidex sequence Android auto-loads.
- * Canonical members Android would not load are named (never silently dropped)
- * on the summary and on every selection refusal.
+ * Both match the raw stored central-directory name, as ART's libziparchive
+ * does (a leading `./` is optional in `entry`); the Info-ZIP Unicode Path name
+ * is never consulted. Canonical members Android would not load are named
+ * (never silently dropped) on the summary and on every selection refusal.
  */
 import type { ArtifactEntry } from "../artifacts/ArtifactReader.js";
 import type { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
@@ -24,6 +26,7 @@ import { DEX_LIMITS } from "./DexFileRelease.js";
 const OPERATION = "inspect_dex_debug_metadata";
 
 interface Candidate {
+  /** The member's raw stored name, which ART also uses (never a Unicode Path name). */
   readonly entry: string;
   readonly member: ArtifactEntry;
 }
@@ -38,6 +41,7 @@ export interface DexMemberSelection {
 interface ArchiveListing {
   /** Openable members: the requested name, or canonical names within the cap. */
   readonly candidates: readonly Candidate[];
+  /** Occurrences by the requested name, or by exact stored canonical name. */
   readonly occurrences: ReadonlyMap<string, number>;
   /** Canonical names by stored spelling (bounded), and how many were not kept. */
   readonly canonical: ReadonlySet<string>;
@@ -82,30 +86,35 @@ const listArchive = async (
   let unnamedCanonical = 0;
   // Load positions of exactly stored canonical names, one bit each (~36 KiB).
   const exactPositions = new Uint8Array(Math.ceil(MAX_CANONICAL_RECORDS / 8));
-  const wanted = (member: ArtifactEntry): boolean => {
-    if (requested !== undefined) return member.path === requested;
-    const index = multidexIndex(member.path);
+  // ART (libziparchive) finds members by their raw central-directory name and
+  // ignores the Info-ZIP Unicode Path field, so the stored name, not the
+  // logical path, decides eligibility and is the member's reported identity.
+  const wanted = (stored: string): boolean => {
+    if (requested !== undefined)
+      return normalizeArchiveMemberPath(stored) === requested;
+    const index = multidexIndex(normalizeArchiveMemberPath(stored));
     if (index === null) return false;
-    const stored = member.storedPath ?? member.path;
     if (canonical.has(stored)) {
       // A repeat of a named member costs nothing more to remember.
     } else if (canonical.size < DEX_LIMITS.maxNamedCanonicalMembers)
       canonical.add(stored);
     else unnamedCanonical += 1;
-    // ART finds auto-loaded members by their exact stored name, so a member
-    // stored as `./classes.dex` is not auto-loaded (it stays selectable).
-    if (member.storedPath !== undefined) return false;
+    // Only an exactly stored canonical name is auto-loaded, so a member
+    // stored as `./classes.dex` is not (it stays selectable).
+    if (multidexIndex(stored) === null) return false;
     if (index < MAX_CANONICAL_RECORDS)
       exactPositions[index >>> 3]! |= 1 << (index & 7);
     return index <= DEX_LIMITS.maxDexMembers;
   };
   const keep = (member: ArtifactEntry): boolean => {
-    if (member.kind !== "file" || !wanted(member)) return false;
+    const stored = member.storedPath ?? member.path;
+    if (member.kind !== "file" || !wanted(stored)) return false;
     // Every occurrence is counted for the report; two are enough to keep.
-    const seen = (occurrences.get(member.path) ?? 0) + 1;
-    occurrences.set(member.path, seen);
+    const key = requested ?? stored;
+    const seen = (occurrences.get(key) ?? 0) + 1;
+    occurrences.set(key, seen);
     if (seen > 2) return false;
-    candidates.push({ entry: member.path, member });
+    candidates.push({ entry: stored, member });
     return true;
   };
   for await (const member of reader.entries(signal, { retain: keep }))

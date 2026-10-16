@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -289,5 +290,92 @@ describe("DexFileProvider members Android does not auto-load", () => {
     const note = result.value.limitations.join(" ");
     expect(note).toContain("also holds ./classes2.dex, classes3.dex");
     expect(note).toContain("present under its exact stored name");
+  });
+});
+
+describe("DexFileProvider stored member names", () => {
+  const first = debuggableDex();
+  const second = debuggableDex(3);
+  const digest = (bytes: Uint8Array): string =>
+    createHash("sha256").update(bytes).digest("hex");
+  type Members = { members: { entry: string; sha256: string }[] };
+  const members = async (path: string, entry?: string) => {
+    const result = await provider.inspect({
+      path,
+      ...(entry === undefined ? {} : { entry }),
+    });
+    if (!result.ok) return { error: result.error._tag };
+    return {
+      members: (result.value.result as Members).members.map(
+        (m) =>
+          `${m.entry}:${m.sha256 === digest(first) ? "first" : m.sha256 === digest(second) ? "second" : "other"}`,
+      ),
+      limitations: result.value.limitations,
+    };
+  };
+
+  it("loads and selects by the stored name, ignoring a Unicode Path name as ART does", async () => {
+    // Stored classes2.dex whose Unicode Path names foo.txt: ART loads it.
+    const hidden = await write(
+      "up-hides.apk",
+      await zipArchive([
+        { name: "classes.dex", bytes: first },
+        { name: "classes2.dex", bytes: second, unicodePath: "foo.txt" },
+      ]),
+    );
+    const auto = await members(hidden);
+    expect(auto.members).toEqual(["classes.dex:first", "classes2.dex:second"]);
+    expect((await members(hidden, "classes2.dex")).members).toEqual([
+      "classes2.dex:second",
+    ]);
+    expect(await members(hidden, "foo.txt")).toEqual({
+      error: "AnalysisInputError",
+    });
+
+    // A Unicode Path claiming classes.dex neither loads nor selects foo.dex as it.
+    const faked = await write(
+      "up-fakes.apk",
+      await zipArchive([
+        { name: "foo.dex", bytes: first, unicodePath: "classes.dex" },
+      ]),
+    );
+    expect(await members(faked)).toEqual({ error: "AnalysisInputError" });
+    expect(await members(faked, "classes.dex")).toEqual({
+      error: "AnalysisInputError",
+    });
+    expect((await members(faked, "foo.dex")).members).toEqual([
+      "foo.dex:first",
+    ]);
+
+    // Stored classes2.dex renamed classes.dex is not a second classes.dex.
+    const twin = await write(
+      "up-twin.apk",
+      await zipArchive([
+        { name: "classes.dex", bytes: first },
+        { name: "classes2.dex", bytes: second, unicodePath: "classes.dex" },
+      ]),
+    );
+    expect((await members(twin)).members).toEqual([
+      "classes.dex:first",
+      "classes2.dex:second",
+    ]);
+    expect((await members(twin, "classes.dex")).members).toEqual([
+      "classes.dex:first",
+    ]);
+  });
+
+  it("reports a ./-prefixed stored name as the selected member's identity", async () => {
+    const dotted = await write(
+      "dot-c2.apk",
+      await zipArchive([
+        { name: "classes.dex", bytes: first },
+        { name: "./classes2.dex", bytes: second, unicodePath: "classes2.dex" },
+      ]),
+    );
+    expect((await members(dotted)).members).toEqual(["classes.dex:first"]);
+    for (const entry of ["classes2.dex", "./classes2.dex"])
+      expect((await members(dotted, entry)).members).toEqual([
+        "./classes2.dex:second",
+      ]);
   });
 });

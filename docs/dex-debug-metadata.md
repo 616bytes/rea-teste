@@ -112,9 +112,12 @@ Limits and refusals a caller can meet:
   Android auto-loads, matched by their exact stored names: `classes.dex`,
   `classes2.dex`, … up to the first missing name. A member stored as
   `./classes.dex`, `classes1.dex`, a zero-padded name, or one after a gap is not
-  auto-loaded; select it with `entry`. Canonical members Android would not load
-  are named in `limitations` and on any selection refusal. More than 64
-  auto-loaded members is refused; select one with `entry`.
+  auto-loaded; select it with `entry`. As in ART, both read the raw stored
+  name and ignore an Info-ZIP Unicode Path name: `entry` matches the stored
+  name (a leading `./` is optional) and each member is reported under its
+  stored name. Canonical members Android would not load are named in
+  `limitations` and on any selection refusal. More than 64 auto-loaded members
+  is refused; select one with `entry`.
 - **`file_size` framing.** A header `file_size` larger than the bytes present,
   or smaller than the 0x70-byte header, is refused. When it is smaller than the
   member, analysis reads only the first `file_size` bytes (as ART on Android 15+

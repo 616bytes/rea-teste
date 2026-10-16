@@ -171,8 +171,10 @@ export const parseZipTail = (
   const candidates = eocdCandidates(bytes);
   // Two records that each end the archive exactly (one inside the other's
   // comment) leave the archive's directory undetermined: whichever a reader
-  // picks, the other is attacker-placed. Refused, as apksigner does, rather
-  // than reporting signatures from a directory that may not be the archive's.
+  // picks, the other may be attacker-placed. apksigner and Android take the
+  // one nearest the end; that choice can report a signed APK as unsigned, so
+  // REA deliberately refuses instead (stricter than apksigner: a crafted APK
+  // that apksigner verifies may be refused here, never misreported).
   if (candidates.length > 1)
     return err({
       kind: "malformed-zip",

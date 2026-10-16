@@ -270,3 +270,52 @@ describe("readProcmonExport review of 8d3d950", () => {
     ).toBeLessThan(400);
   });
 });
+
+describe("readProcmonExport review of f171915", () => {
+  const all = { ...selection, event_limit: null };
+
+  it.each([
+    ["UTF-32LE", [0xff, 0xfe, 0x00, 0x00]],
+    ["UTF-32BE", [0x00, 0x00, 0xfe, 0xff]],
+  ])("rejects a %s BOM as an unsupported encoding", async (_name, bom) => {
+    await expect(
+      readProcmonExport(Buffer.from([...bom, 0x3c, 0, 0, 0]), all),
+    ).rejects.toThrow("BOM-marked UTF-32");
+  });
+
+  it("stops at a blank line between rows but ignores trailing blank lines", async () => {
+    const between = await readProcmonExport(
+      Buffer.from(`${header}"a.exe","Read"\n\n"b.exe","Write"\n`),
+      all,
+    );
+    expect(between.events).toHaveLength(1);
+    expect(between.coverage).toMatchObject({
+      status: "partial",
+      reason: "malformed",
+      line: 3,
+    });
+    const trailing = await readProcmonExport(
+      Buffer.from(`${header}"a.exe","Read"\n\n\r\n`),
+      all,
+    );
+    expect(trailing.events).toHaveLength(1);
+    expect(trailing.coverage).toEqual({ status: "complete" });
+  });
+
+  it("counts nested field names against the distinct-field cap", async () => {
+    const nested = Array.from(
+      { length: 1025 },
+      (_, at) => `<n${at}><x/></n${at}>`,
+    ).join("");
+    const reading = await readProcmonExport(
+      Buffer.from(
+        `<procmon><eventlist><event><Operation>Read</Operation>${nested}</event></eventlist></procmon>`,
+      ),
+      all,
+    );
+    expect(reading.coverage).toMatchObject({
+      status: "partial",
+      reason: "malformed",
+    });
+  });
+});

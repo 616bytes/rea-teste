@@ -25,6 +25,7 @@ class ProcmonXmlEvents {
   rootSeen = false;
   eventLists = 0;
   #known = new Set<string>();
+  #columnSet = new Set<string>();
   #depth = 0;
   #inEventList = false;
   #event: Map<string, string> | undefined;
@@ -79,6 +80,14 @@ class ProcmonXmlEvents {
         `Event ${this.window.examined + 1} repeats field ${field.name.slice(0, 100)}.`,
       );
     this.#eventFields.add(field.name);
+    // Simple and nested names share one distinct-field cap.
+    if (!this.#known.has(field.name)) {
+      if (this.#known.size >= PROCMON_EXPORT_LIMITS.columns)
+        throw new XmlStop(
+          `Events name more than ${PROCMON_EXPORT_LIMITS.columns} distinct fields.`,
+        );
+      this.#known.add(field.name);
+    }
     if (field.nested) {
       // Reported in omitted_nested_fields and repeated in a limitation.
       if (!this.nested.has(field.name)) this.window.charge(field.name, 2);
@@ -86,13 +95,9 @@ class ProcmonXmlEvents {
       return;
     }
     event.set(field.name, field.text);
-    if (this.#known.has(field.name)) return;
-    if (this.#known.size >= PROCMON_EXPORT_LIMITS.columns)
-      throw new XmlStop(
-        `Events name more than ${PROCMON_EXPORT_LIMITS.columns} distinct fields.`,
-      );
+    if (this.#columnSet.has(field.name)) return;
     this.window.charge(field.name);
-    this.#known.add(field.name);
+    this.#columnSet.add(field.name);
     this.columns.push(field.name);
   }
 }

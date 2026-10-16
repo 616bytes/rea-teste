@@ -115,6 +115,18 @@ const detectEncoding = (
 ): { encoding: Encoding; byteOrderMark: boolean } => {
   if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf)
     return { encoding: "utf-8", byteOrderMark: true };
+  // UTF-32 BOMs start like UTF-16 ones; reject them before the UTF-16 check.
+  if (
+    (bytes[0] === 0xff &&
+      bytes[1] === 0xfe &&
+      bytes[2] === 0 &&
+      bytes[3] === 0) ||
+    (bytes[0] === 0 && bytes[1] === 0 && bytes[2] === 0xfe && bytes[3] === 0xff)
+  )
+    throw new ProcmonExportFormatFailure(
+      "unsupported",
+      "Export is BOM-marked UTF-32. Supported encodings are UTF-8 and BOM-marked UTF-16; re-save the export as UTF-8.",
+    );
   if (bytes[0] === 0xff && bytes[1] === 0xfe)
     return { encoding: "utf-16le", byteOrderMark: true };
   if (bytes[0] === 0xfe && bytes[1] === 0xff)

@@ -126,7 +126,7 @@ class CsvCursor {
 }
 
 /**
- * Records in source order; blank lines are skipped. A row stops before it
+ * Records in source order; leading and trailing blank lines are skipped. A row stops before it
  * holds more than `width.maximum` fields, so a comma-filled line cannot
  * allocate one field per comma.
  */
@@ -135,8 +135,23 @@ function* csvRecords(
   width: { maximum: number },
 ): Generator<CsvRecord> {
   const cursor = new CsvCursor(text);
+  let started = false;
   while (!cursor.done) {
-    if (cursor.lineEnding()) continue;
+    const blankLine = cursor.line;
+    if (cursor.lineEnding()) {
+      // Blank lines before the header or at the end are layout; a blank line
+      // between rows is an empty record and fails the width check.
+      if (!started) continue;
+      if (/^[\r\n]*$/u.test(text.slice(cursor.index))) return;
+      yield {
+        fields: [""],
+        line: blankLine,
+        terminated: true,
+        end: cursor.index,
+      };
+      continue;
+    }
+    started = true;
     const line = cursor.line;
     const fields: string[] = [];
     do {

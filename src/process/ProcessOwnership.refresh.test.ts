@@ -15,6 +15,33 @@ const launcher: ProcessTableEntry = {
   command: "fixture",
 };
 
+it("cleans verified peers while retaining a newly discovered missing-token candidate", async () => {
+  const child = { ...launcher, pid: 200, parentPid: 100, processGroupId: 200 };
+  const unknown = { ...launcher, pid: 300, processGroupId: 300 };
+  let joined = false;
+  const signalGroup = vi.fn((groupId: number) => {
+    if (groupId === launcher.processGroupId) joined = true;
+  });
+  const result = await cleanupOwnedProcessGroup(
+    { ...ownership, sweepTokenOwnedProcesses: true },
+    {
+      listProcesses: async () =>
+        joined ? [launcher, child, unknown] : [launcher, child],
+      environment: async (pid) =>
+        pid === unknown.pid ? {} : { REA_PROCESS_RUN_ID: ownership.runId },
+      signalGroup,
+    },
+  );
+  expect(result).toMatchObject({
+    cleaned: false,
+    failures: [{ pid: unknown.pid, reason: "environment-unreadable" }],
+  });
+  expect(signalGroup.mock.calls).toEqual([
+    [100, "SIGKILL"],
+    [200, "SIGKILL"],
+  ]);
+});
+
 describe("ownership validation refreshes complete group membership", () => {
   it.each([
     { phase: "planning", token: "owned" },
@@ -55,14 +82,13 @@ describe("ownership validation refreshes complete group membership", () => {
       };
       const swept = { ...ownership, sweepTokenOwnedProcesses: true };
       const first = await cleanupOwnedProcessGroup(swept, adapter);
-      expect(first).toMatchObject({ cleaned: token === "foreign" });
+      expect(first).toMatchObject({ cleaned: token !== "missing" });
       expect(environment).toHaveBeenCalledWith(child.pid);
-      expect(signalGroup).not.toHaveBeenCalled();
       if (token === "owned") {
         await expect(cleanupOwnedProcessGroup(swept, adapter)).resolves.toEqual(
           {
             cleaned: true,
-            signaled: true,
+            signaled: false,
           },
         );
         expect(signalGroup).toHaveBeenCalledExactlyOnceWith(200, "SIGKILL");
@@ -70,6 +96,7 @@ describe("ownership validation refreshes complete group membership", () => {
         expect(first).toMatchObject({
           failures: [{ pid: child.pid, reason: "environment-unreadable" }],
         });
+      if (token !== "owned") expect(signalGroup).not.toHaveBeenCalled();
     },
   );
 });

@@ -250,54 +250,76 @@ export const cleanupOwnedProcessGroup = async (
       cleaned: false,
       reason: `process table could not be inspected: ${processTable.reason}`,
     };
-  const plan = await createOwnedCleanupPlan(
-    ownership,
-    processTable.processes,
-    host,
-  );
-  if ("cleaned" in plan) return plan;
+  let processes = processTable.processes;
   let signaled = false;
-  for (const processGroupId of plan.signalOrder) {
-    const revalidation = await revalidateOwnedProcessGroup(
-      processGroupId,
-      ownership,
-      host,
-      plan,
-    );
-    if ("cleaned" in revalidation) {
-      if (!revalidation.cleaned)
-        return withUnverifiedObservations(revalidation, plan.unverified);
-      return {
-        ...revalidation,
-        ...(revalidation.unverified?.length || plan.unverified.length === 0
-          ? {}
-          : { unverified: plan.unverified }),
-      };
+  let pendingRefresh: OwnedCleanupRefresh | undefined;
+  for (let attempt = 0; attempt < TOKEN_READ_RETRY_ATTEMPTS; attempt++) {
+    const plan = await createOwnedCleanupPlan(ownership, processes, host);
+    if ("kind" in plan) {
+      pendingRefresh = plan;
+      processes = plan.processes;
+      continue;
     }
-    if (revalidation.empty) continue;
-    try {
-      host.signalGroup(processGroupId, "SIGKILL");
-      signaled = true;
-    } catch (cause: unknown) {
-      const code =
-        cause instanceof Error && "code" in cause ? cause.code : undefined;
-      if (code !== "ESRCH")
-        return withUnverifiedObservations(
-          {
-            cleaned: false,
-            reason: `owned process group signal failed: ${errorMessage(cause)}`,
-          },
-          plan.unverified,
-        );
+    if ("cleaned" in plan)
+      return plan.cleaned
+        ? { ...plan, signaled: signaled || plan.signaled }
+        : plan;
+    const unresolved = [...plan.unresolved];
+    pendingRefresh = undefined;
+    for (const processGroupId of plan.signalOrder) {
+      const revalidation = await revalidateOwnedProcessGroup(
+        processGroupId,
+        ownership,
+        host,
+        plan,
+      );
+      if ("kind" in revalidation) {
+        pendingRefresh = revalidation;
+        processes = revalidation.processes;
+        break;
+      }
+      if ("cleaned" in revalidation) {
+        if (!revalidation.cleaned)
+          return withUnverifiedObservations(revalidation, plan.unverified);
+        return {
+          ...revalidation,
+          ...(revalidation.unverified?.length || plan.unverified.length === 0
+            ? {}
+            : { unverified: plan.unverified }),
+        };
+      }
+      for (const failure of revalidation.unresolved)
+        mergeProcessOwnershipFailure(unresolved, failure);
+      if (revalidation.empty) continue;
+      try {
+        host.signalGroup(processGroupId, "SIGKILL");
+        signaled = true;
+      } catch (cause: unknown) {
+        const code =
+          cause instanceof Error && "code" in cause ? cause.code : undefined;
+        if (code !== "ESRCH")
+          return withUnverifiedObservations(
+            {
+              cleaned: false,
+              reason: `owned process group signal failed: ${errorMessage(cause)}`,
+            },
+            plan.unverified,
+          );
+      }
     }
+    if (pendingRefresh !== undefined) continue;
+    if (unresolved.length > 0)
+      return cleanupValidationFailure(unresolved, plan.unverified);
+    return {
+      cleaned: true,
+      signaled,
+      ...(plan.unverified.length === 0 ? {} : { unverified: plan.unverified }),
+    };
   }
-  if (plan.unresolved.length > 0)
-    return cleanupValidationFailure(plan.unresolved, plan.unverified);
-  return {
-    cleaned: true,
-    signaled,
-    ...(plan.unverified.length === 0 ? {} : { unverified: plan.unverified }),
-  };
+  return cleanupValidationFailure(
+    pendingRefresh?.failures ?? [],
+    pendingRefresh?.unverified ?? [],
+  );
 };
 
 /** Verify that no live process still carries an owned capture run token. */
@@ -363,6 +385,14 @@ interface OwnedCleanupPlan {
   readonly unverified: readonly OwnershipSweepUnverifiedProcess[];
 }
 
+/** Fresh token proof discovers groups outside the current bounded plan. */
+interface OwnedCleanupRefresh {
+  readonly kind: "refresh";
+  readonly processes: readonly ProcessTableEntry[];
+  readonly failures: readonly ProcessOwnershipValidationFailure[];
+  readonly unverified: readonly OwnershipSweepUnverifiedProcess[];
+}
+
 // A process-table read can race exit and retain the old state with an altered
 // command. Only a fresh table proving that PID is no longer live can settle
 // that mismatch; surviving group members still require normal token checks.
@@ -415,7 +445,7 @@ const createOwnedCleanupPlan = async (
   ownership: OwnedProcessGroup,
   initialProcesses: readonly ProcessTableEntry[],
   host: ProcessOwnershipHost,
-): Promise<OwnedCleanupPlan | ProcessCleanupResult> => {
+): Promise<OwnedCleanupPlan | ProcessCleanupResult | OwnedCleanupRefresh> => {
   const processes = await settleLauncherExit(ownership, initialProcesses, host);
   if ("cleaned" in processes) return processes;
   const sampledProcessGroupIds = new Set(
@@ -526,18 +556,21 @@ const createOwnedCleanupPlan = async (
       tokenOwned.identities,
     );
     const { failures, members: validatedMembers } = validation;
-    const refreshedFailure = await refreshedSweepFailure(
+    const refreshedFailure = await reconcileRefreshedSweep(
       validation.refreshedProcesses,
       ownership,
       processes,
       processGroupIds,
       host,
     );
-    if (refreshedFailure !== undefined)
-      return withUnverifiedObservations(
-        refreshedFailure,
-        tokenOwned.unverified,
-      );
+    if (refreshedFailure !== undefined) {
+      if ("kind" in refreshedFailure)
+        return failures.length === 0
+          ? refreshedFailure
+          : cleanupValidationFailure(failures, tokenOwned.unverified);
+      for (const failure of refreshedFailure.failures ?? [])
+        mergeProcessOwnershipFailure(unresolved, failure);
+    }
     const checkedPids = new Set(members.map(({ pid }) => pid));
     const refreshedLivePids =
       validation.refreshedProcesses === undefined
@@ -636,8 +669,17 @@ const revalidateOwnedProcessGroup = async (
   ownership: OwnedProcessGroup,
   host: ProcessOwnershipHost,
   plan: OwnedCleanupPlan,
-): Promise<{ readonly empty: boolean } | ProcessCleanupResult> => {
+): Promise<
+  | {
+      readonly empty: boolean;
+      readonly unresolved: readonly ProcessOwnershipValidationFailure[];
+    }
+  | ProcessCleanupResult
+  | OwnedCleanupRefresh
+> => {
   let members: readonly ProcessTableEntry[];
+  let observedProcesses: readonly ProcessTableEntry[];
+  const unresolved: ProcessOwnershipValidationFailure[] = [];
   try {
     const processes = await settleLauncherExit(
       ownership,
@@ -645,14 +687,7 @@ const revalidateOwnedProcessGroup = async (
       host,
     );
     if ("cleaned" in processes) return processes;
-    const refreshedFailure = await refreshedSweepFailure(
-      processes,
-      ownership,
-      plan.observedProcesses,
-      plan.processGroupIds,
-      host,
-    );
-    if (refreshedFailure !== undefined) return refreshedFailure;
+    observedProcesses = processes;
     members = processes.filter(
       ({ processGroupId: observedGroupId }) =>
         observedGroupId === processGroupId,
@@ -670,14 +705,21 @@ const revalidateOwnedProcessGroup = async (
     host,
     plan.tokenOwnedIdentities,
   );
-  const refreshedFailure = await refreshedSweepFailure(
-    validation.refreshedProcesses,
+  const refreshedFailure = await reconcileRefreshedSweep(
+    validation.refreshedProcesses ?? observedProcesses,
     ownership,
     plan.observedProcesses,
     plan.processGroupIds,
     host,
   );
-  if (refreshedFailure !== undefined) return refreshedFailure;
+  if (refreshedFailure !== undefined) {
+    if ("kind" in refreshedFailure)
+      return validation.failures.length === 0
+        ? refreshedFailure
+        : cleanupValidationFailure(validation.failures);
+    for (const failure of refreshedFailure.failures ?? [])
+      mergeProcessOwnershipFailure(unresolved, failure);
+  }
   if (validation.failures.length > 0)
     return cleanupValidationFailure(validation.failures);
   members = validation.members;
@@ -692,7 +734,7 @@ const revalidateOwnedProcessGroup = async (
       reason:
         "descendant process-group leader identity could not be revalidated",
     };
-  return { empty: members.length === 0 };
+  return { empty: members.length === 0, unresolved };
 };
 
 const cleanupValidationFailure = (
@@ -794,13 +836,13 @@ interface ProcessOwnershipValidation {
 }
 
 /** A fresh table may reveal another group after the bounded plan was built. */
-const refreshedSweepFailure = async (
+const reconcileRefreshedSweep = async (
   refreshed: readonly ProcessTableEntry[] | undefined,
   ownership: OwnedProcessGroup,
   observed: readonly ProcessTableEntry[],
   plannedGroups: ReadonlySet<number>,
   host: ProcessOwnershipHost,
-): Promise<ProcessCleanupFailure | undefined> => {
+): Promise<ProcessCleanupFailure | OwnedCleanupRefresh | undefined> => {
   if (refreshed === undefined || ownership.sweepTokenOwnedProcesses !== true)
     return undefined;
   const previousGroups = new Map(
@@ -824,15 +866,21 @@ const refreshedSweepFailure = async (
     ownership,
   );
   const failures = scan.failures.filter(({ pid }) => newCandidates.has(pid));
-  for (const process of scan.owned) {
-    if (plannedGroups.has(process.processGroupId)) continue;
-    mergeProcessOwnershipFailure(failures, {
-      pid: process.pid,
-      reason: "process-identity-unavailable",
-      diagnostic:
-        "token-owned process group appeared after cleanup planning; retry cleanup with a fresh plan",
-    });
-  }
+  const newOwned = scan.owned.filter(
+    ({ processGroupId }) => !plannedGroups.has(processGroupId),
+  );
+  if (newOwned.length > 0)
+    return {
+      kind: "refresh",
+      processes: refreshed,
+      unverified: scan.unverified,
+      failures: newOwned.map(({ pid }) => ({
+        pid,
+        reason: "process-identity-unavailable",
+        diagnostic:
+          "process-group membership kept changing during bounded cleanup planning",
+      })),
+    };
   return failures.length === 0
     ? undefined
     : cleanupValidationFailure(failures, scan.unverified);

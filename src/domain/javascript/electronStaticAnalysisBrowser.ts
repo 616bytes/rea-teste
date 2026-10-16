@@ -90,6 +90,11 @@ export function* finishElectronBrowserWindowsSteps(
     inspectBrowserWindow(node, context, index);
     yield;
   }
+  // Inline findings arrive during traversal; deferred findings join that same
+  // source-ordered collection before module attribution and public projection.
+  context.accumulator.browserWindows.sort(
+    (left, right) => left.offset - right.offset,
+  );
   pending.length = 0;
 }
 

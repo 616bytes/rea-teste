@@ -3,6 +3,36 @@ import { describe, expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 describe("Electron constant option evidence", () => {
+  it("keeps mixed constant, inline and unresolved windows in construction order", () => {
+    const analysis = analyzeJavaScriptStaticSource(
+      [
+        'const { BrowserWindow } = require("electron");',
+        "const options = { webPreferences: { sandbox: true } };",
+        "new BrowserWindow(options);",
+        "new BrowserWindow({ webPreferences: { sandbox: false } });",
+        "new BrowserWindow(dynamic);",
+        "new BrowserWindow(options);",
+      ].join("\n"),
+    );
+    expect(
+      analysis.electron.browser_windows.map(
+        ({ location }) => location.start.line,
+      ),
+    ).toEqual([3, 4, 5, 6]);
+    expect(
+      analysis.electron.browser_windows.map(
+        ({ options_status }) => options_status,
+      ),
+    ).toEqual([
+      "object-literal",
+      "object-literal",
+      "dynamic",
+      // The first constructor already received this object; later contents
+      // remain unknown even though the declarations retain their source order.
+      "dynamic",
+    ]);
+  });
+
   it("resolves local constant options despite an unrelated option write", () => {
     const analysis = analyzeJavaScriptStaticSource(`
       const { BrowserWindow } = require("electron");

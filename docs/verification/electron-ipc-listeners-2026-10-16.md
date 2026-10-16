@@ -58,7 +58,8 @@ corrected helper retains the original ChildProcess handle instead.
 The final scenario uses declared REA clicks to dismiss that actual error and
 insert a visible palette item, then waits for rendering. Independent DOM reads
 confirm SVG elements **0 → 2**, disappearance of the error and the real unsaved
-changes indicator. No IPC channels or app callbacks are fabricated or replaced.
+changes indicator. The verifier exercises the real app callbacks and channels;
+the production hook wraps their registration as described above.
 The source also registers `app-load-finished` through both `once` and `on`;
 recording its once callback twice adds a spurious event.
 

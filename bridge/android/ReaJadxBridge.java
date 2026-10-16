@@ -159,6 +159,10 @@ class ReaJadxBridge {
   // JSON-RPC/CallToolResult envelope and generated numeric request id, and
   // account for JSON text being escaped again inside TextContent.
   private static final int MAX_XREF_TEXT_BYTES = 8 * 1024 * 1024 - 1024;
+  // A resource scan reaches the client about four times over: raw_result keeps the
+  // escaped reply, the normalized result repeats every site, and MCP sends both
+  // structured content and text. 2 MiB keeps that frame under the 10 MiB default.
+  private static final int MAX_RESOURCE_SCAN_BYTES = 2 * 1024 * 1024;
   private static int escapedJsonBytes(Object value) {
     return JSON.toJson(JSON.toJson(value)).getBytes(StandardCharsets.UTF_8).length;
   }
@@ -221,7 +225,9 @@ class ReaJadxBridge {
       int offset, Opcode opcode) {
     Map<String, Object> site = new LinkedHashMap<>();
     site.put("kind", kind);
-    site.put("class_name", cls.getRawName());
+    // class_name is the lookup name inspect_android_method accepts; JADX may alias it.
+    site.put("class_name", cls.getFullName());
+    site.put("raw_class_name", cls.getRawName());
     site.put("top_class", cls.getTopParentClass().getFullName());
     site.put("method_name", method.getAlias());
     site.put("raw_method_id", method.getMethodInfo().getRawFullId());
@@ -284,7 +290,7 @@ class ReaJadxBridge {
     List<ClassNode> classNodes = root == null ? List.of() : root.getClasses();
     // Sites and declarations share the transport budget left after the fixed
     // response; matches past it are still counted so coverage stays partial.
-    InvokeBudget budget = new InvokeBudget(MAX_XREF_TEXT_BYTES
+    InvokeBudget budget = new InvokeBudget(MAX_RESOURCE_SCAN_BYTES
         - escapedJsonBytes(resourceResponse(requests, maxSites, Integer.MAX_VALUE,
             Integer.MAX_VALUE, Integer.MAX_VALUE, null, null, null, null)));
     for (ClassNode cls : classNodes) {

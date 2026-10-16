@@ -189,6 +189,7 @@ register("rea_resource_references", ({ resources, max_sites }) =>
         {
           kind: "const_literal",
           class_name: "fixture.Target",
+          raw_class_name: "fixture.Target",
           top_class: "fixture.Target",
           method_name: "onCreate",
           raw_method_id: "Lfixture/Target;->onCreate(Landroid/os/Bundle;)V",

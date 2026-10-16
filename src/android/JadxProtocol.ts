@@ -129,6 +129,7 @@ export const jadxResourceReferencesSchema = z.object({
         z.object({
           kind: z.enum(["const_literal", "switch_case", "r_field_read"]),
           class_name: z.string(),
+          raw_class_name: z.string(),
           top_class: z.string(),
           method_name: z.string(),
           raw_method_id: z.string(),

@@ -377,6 +377,7 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
   const site = {
     kind: "const_literal",
     class_name: "fixture.Home",
+    raw_class_name: "fixture.Home",
     top_class: "fixture.Home",
     method_name: "initSearch",
     raw_method_id: "Lfixture/Home;->initSearch()V",

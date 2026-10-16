@@ -977,6 +977,31 @@ it("bounds drops of refused transactions by the recorded reasons", () => {
   ).toEqual([["events", "omissions", "by_kind", 0, "count"]]);
 });
 
+it("keeps retained events and admitted transactions within their limits", () => {
+  const { fixture } = fixtureFacts();
+  const limits = (changes: Record<string, number>) =>
+    fixtureIssues((capture) => ({
+      ...capture,
+      scenario: {
+        ...capture.scenario,
+        limits: { ...capture.scenario.limits, ...changes },
+      },
+    }));
+  const transactions = new Set(
+    fixture.events.items.flatMap((event) =>
+      "transaction_id" in event ? [event.transaction_id] : [],
+    ),
+  ).size;
+  expect(limits({ max_events: fixture.events.retained })).toBeUndefined();
+  expect(limits({ max_events: fixture.events.retained - 1 })).toEqual([
+    ["events", "retained"],
+  ]);
+  expect(limits({ max_network_transactions: transactions })).toBeUndefined();
+  expect(limits({ max_network_transactions: transactions - 1 })).toEqual([
+    ["events", "items"],
+  ]);
+});
+
 it("counts only network drops toward refused transactions", () => {
   const range = {
     first_transaction_id: "request-9",

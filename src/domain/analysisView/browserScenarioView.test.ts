@@ -24,6 +24,7 @@ import {
 } from "../browserScenarioCaptureValues.js";
 import { UNAVAILABLE_SUBJECT_LIMITATION } from "../evidence.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
+import { jsonObjectSchema } from "../jsonValue.js";
 
 const PARENT_ID = `ev_${"c".repeat(64)}`;
 
@@ -45,6 +46,28 @@ const parent = (
   ],
   artifact: null,
 });
+
+/** A parent whose recorded scenario declares what the capture restates. */
+const declaredParent = (
+  capture: BrowserScenarioCapture,
+): AnalysisViewParent => {
+  const scenario = browserScenarioFixtureScenario();
+  const parameters = browserScenarioFixtureParameters({
+    ...scenario,
+    capture: {
+      ...scenario.capture,
+      events: [...capture.scenario.event_families],
+      network: capture.scenario.network_content,
+    },
+  });
+  return parent(capture, {
+    ...parameters,
+    browser: {
+      ...jsonObjectSchema.parse(parameters["browser"]),
+      mode: capture.browser.mode,
+    },
+  });
+};
 
 const project = (
   view: unknown,
@@ -310,7 +333,7 @@ it("treats network content selection as enabled network observation", () => {
   const contentOnly = stepPage(
     project(
       steps,
-      parent(
+      declaredParent(
         browserScenarioCaptureSchema.parse(
           selectingFamilies([], true, networkEvents),
         ),
@@ -323,7 +346,7 @@ it("treats network content selection as enabled network observation", () => {
   const nothingSelected = stepPage(
     project(
       steps,
-      parent(
+      declaredParent(
         browserScenarioCaptureSchema.parse(
           selectingFamilies([], false, () => false),
         ),
@@ -575,7 +598,9 @@ it("states connect-mode ownership and rejects views for other parents", () => {
     },
     completeness: scenarioFixtureCompleteness(fixture.steps, true),
   });
-  expect(project({ kind: "summary" }, parent(connected)).limitations).toEqual(
+  expect(
+    project({ kind: "summary" }, declaredParent(connected)).limitations,
+  ).toEqual(
     expect.arrayContaining([expect.stringContaining("Connect mode attached")]),
   );
   expect(
@@ -603,7 +628,7 @@ it("reports unobserved network as unknown instead of zero transactions", () => {
   });
   const result = project(
     { kind: "browser-scenario", collection: "steps" },
-    parent(consoleOnly),
+    declaredParent(consoleOnly),
   );
   const save = stepPage(result)[3];
   expect(save?.events_received).toMatchObject({
@@ -657,7 +682,7 @@ it("applies capture-wide event coverage to every step", () => {
   const connectedRows = stepPage(
     project(
       { kind: "browser-scenario", collection: "steps" },
-      parent(connected),
+      declaredParent(connected),
     ),
   );
   expect(connectedRows[0]?.events_received).toMatchObject({
@@ -994,6 +1019,58 @@ it("binds each step's artifacts to the recorded scenario's selection", () => {
     failure({ kind: "summary" }, parent(undefined, withoutCapture)),
   ).toMatchObject({
     issues: [{ path: ["source", "parameters", "capture"] }],
+  });
+});
+
+it("binds the capture's scenario fields to the recorded declaration", () => {
+  const scenario = browserScenarioFixtureScenario();
+  const parameters = browserScenarioFixtureParameters(scenario);
+  const declaring = (changes: Record<string, unknown>) =>
+    failure(
+      { kind: "summary" },
+      parent(undefined, { ...parameters, ...changes }),
+    );
+  const field = (...path: (string | number)[]) => [
+    "source",
+    "normalized_result",
+    ...path,
+  ];
+  const capture = jsonObjectSchema.parse(parameters["capture"]);
+  // A requested response body that the capture restates as unselected.
+  expect(
+    declaring({
+      capture: {
+        ...capture,
+        network: {
+          ...jsonObjectSchema.parse(capture["network"]),
+          response_body: true,
+        },
+      },
+    }),
+  ).toMatchObject({ issues: [{ path: field("scenario", "network_content") }] });
+  expect(
+    declaring({
+      capture: { ...capture, events: ["console", "network", "page-errors"] },
+    }),
+  ).toMatchObject({ issues: [{ path: field("scenario", "event_families") }] });
+  expect(
+    declaring({
+      capture: {
+        ...capture,
+        limits: { ...jsonObjectSchema.parse(capture["limits"]), max_events: 1 },
+      },
+    }),
+  ).toMatchObject({ issues: [{ path: field("scenario", "limits") }] });
+  expect(
+    declaring({
+      browser: {
+        ...jsonObjectSchema.parse(parameters["browser"]),
+        mode: "connect",
+      },
+    }),
+  ).toMatchObject({ issues: [{ path: field("browser", "mode") }] });
+  expect(declaring({ secrets: undefined })).toMatchObject({
+    issues: [{ path: ["source", "parameters", "secrets"] }],
   });
 });
 

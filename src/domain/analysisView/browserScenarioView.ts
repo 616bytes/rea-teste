@@ -31,7 +31,7 @@ import {
 } from "./analysisViewCoverage.js";
 import { analysisTextPage } from "./analysisViewText.js";
 import {
-  checkRecordedSelection,
+  checkRecordedScenario,
   recordedActions,
   type RecordedAction,
 } from "./browserScenarioViewDeclarations.js";
@@ -412,7 +412,7 @@ export const projectBrowserScenarioView = (
   const { capture, projection } = projected.value;
   const declarations = recordedActions(parent, capture);
   if (!declarations.ok) return declarations;
-  const selection = checkRecordedSelection(parent, capture);
+  const selection = checkRecordedScenario(parent, capture);
   if (!selection.ok) return selection;
   const shared = sharedFields(parent, projected.value);
   if (view.kind === "summary")

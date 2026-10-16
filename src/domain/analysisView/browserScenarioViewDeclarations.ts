@@ -10,6 +10,11 @@ import {
   browserScenarioSnapshotKindSchema,
   requestedScenarioArtifacts,
 } from "../browserScenarioValues.js";
+import { browserNetworkContentSelectionValuesSchema } from "../browserNetworkEvidence.js";
+import { capturedScenarioFields } from "../browserScenarioCaptureFields.js";
+import { browserScenarioCaptureLimitsValuesSchema } from "../browserScenarioCaptureLimits.js";
+import { browserScenarioEventFamilySchema } from "../browserScenarioCaptureValues.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import { jsonObjectSchema } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisViewParent } from "./analysisView.js";
@@ -83,19 +88,40 @@ export const recordedActions = (
   return ok(recorded);
 };
 
-const recordedSelectionSchema = z.looseObject({
+const recordedScenarioSchema = z.looseObject({
+  browser: z.looseObject({ mode: z.enum(["launch", "connect"]) }),
+  start_url: z.looseObject({ url: z.string().refine(URL.canParse) }),
+  actions: z.array(z.unknown()),
+  secrets: z.array(z.looseObject({ secret_id: z.string() })),
   capture: z.looseObject({
     after_each_step: z.array(browserScenarioSnapshotKindSchema),
     at_end: z.array(browserScenarioSnapshotKindSchema),
+    events: z.array(browserScenarioEventFamilySchema),
+    network: browserNetworkContentSelectionValuesSchema,
+    limits: browserScenarioCaptureLimitsValuesSchema,
   }),
 });
 
+const scenarioFields = [
+  "start_origin",
+  "action_count",
+  "secret_references",
+  "network_content",
+  "event_families",
+  "limits",
+] as const satisfies readonly (keyof BrowserScenarioCapture["scenario"])[];
+
+const sameValue = (left: unknown, right: unknown): boolean =>
+  digestCanonicalValue(left, "Browser scenario field") ===
+  digestCanonicalValue(right, "Browser scenario field");
+
 /**
- * The capture result records no artifact selection, so bind each step's
- * artifacts to the selection the recorded scenario made for that step: a
- * requested artifact is never not_requested, and an unrequested one always is.
+ * The capture restates its scenario from the declaration recorded in the
+ * parent parameters but records no artifact selection. Bind both: the browser
+ * mode and scenario fields equal the declaration's projection, and each step
+ * records exactly the artifacts the declaration requested there.
  */
-export const checkRecordedSelection = (
+export const checkRecordedScenario = (
   parent: AnalysisViewParent,
   capture: BrowserScenarioCapture,
 ): Result<void, AnalysisError> => {
@@ -105,16 +131,34 @@ export const checkRecordedSelection = (
         { path: ["source", ...path], reason: "invalid_value", message },
       ]),
     );
-  const parameters = recordedSelectionSchema.safeParse(parent.parameters);
+  const parameters = recordedScenarioSchema.safeParse(parent.parameters);
   if (!parameters.success)
     return issue(
-      ["parameters", "capture"],
-      "Browser scenario Evidence parameters must record the artifact selection.",
+      [
+        "parameters",
+        ...(parameters.error.issues[0]?.path ?? []).filter(
+          (key): key is string | number => typeof key !== "symbol",
+        ),
+      ],
+      "Browser scenario Evidence parameters must record the declared browser, start URL, secrets and capture selection.",
     );
+  const declared = parameters.data;
+  if (capture.browser.mode !== declared.browser.mode)
+    return issue(
+      ["normalized_result", "browser", "mode"],
+      `The capture records ${capture.browser.mode} mode, but the recorded scenario declared ${declared.browser.mode}.`,
+    );
+  const expected = capturedScenarioFields(declared);
+  for (const field of scenarioFields)
+    if (!sameValue(capture.scenario[field], expected[field]))
+      return issue(
+        ["normalized_result", "scenario", field],
+        `The capture's scenario ${field} does not restate the recorded scenario declaration.`,
+      );
   const actionCount = capture.steps.length - 1;
   for (const [index, step] of capture.steps.entries()) {
     const requested = requestedScenarioArtifacts(
-      parameters.data.capture,
+      declared.capture,
       index,
       actionCount,
     );

@@ -38,3 +38,27 @@ export const capturedFieldsSchema = z.strictObject({
   limitations: z.array(z.string().min(1)),
 });
 export type CapturedFields = z.infer<typeof capturedFieldsSchema>;
+
+/** The declared scenario parts that the capture's scenario fields restate. */
+export interface CapturedScenarioDeclaration {
+  readonly start_url: { readonly url: string };
+  readonly actions: readonly unknown[];
+  readonly secrets: readonly { readonly secret_id: string }[];
+  readonly capture: {
+    readonly network: CapturedFields["scenario"]["network_content"];
+    readonly events: readonly CapturedFields["scenario"]["event_families"][number][];
+    readonly limits: CapturedFields["scenario"]["limits"];
+  };
+}
+
+/** Project a declared scenario into the capture's scenario fields. */
+export const capturedScenarioFields = (
+  declaration: CapturedScenarioDeclaration,
+): CapturedFields["scenario"] => ({
+  start_origin: new URL(declaration.start_url.url).origin,
+  action_count: declaration.actions.length,
+  secret_references: declaration.secrets.map(({ secret_id: id }) => id).sort(),
+  network_content: declaration.capture.network,
+  event_families: [...new Set(declaration.capture.events)].sort(),
+  limits: declaration.capture.limits,
+});

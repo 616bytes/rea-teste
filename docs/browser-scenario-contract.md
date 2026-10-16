@@ -425,7 +425,9 @@ retained event sequence or step window end exceeds the retained and dropped
 events less the drops known to belong to refused transactions. Network content records headers exactly
 when `header_values` is selected and a body exactly when its phase's body is
 selected; a phase with neither selected neither records nor drops content.
-Each transaction records at most one request event. Launch captures record `provider-owned` and
+Each transaction records at most one request event. Retained events never
+exceed `max_events`, and admitted transactions never exceed
+`max_network_transactions`. Launch captures record `provider-owned` and
 `terminated-owned-process`; connect captures record `external` and
 `disconnected-external`. Comparisons and views reject inline captures that
 contradict any of these rules, the completeness rules above or their initial
@@ -470,9 +472,11 @@ needs. Event receipt does not establish causation, responses can arrive during
 later steps, and events received between windows or after the final capture
 fall in no step's receipt window, although the parent records them with the
 step then current: the last step that ran whose window had opened. Views
-reject captures whose events name another step, and captures whose step
-artifacts disagree with the recorded scenario's selection: `after_each_step`
-on every step and `at_end` on the final one.
+reject captures whose events name another step, and captures that do not
+restate the scenario recorded in their parameters: the browser mode, the
+`scenario` fields (start origin, action count, secret references, network
+content, event families and limits), and each step's artifacts, which follow
+`after_each_step` on every step and `at_end` on the final one.
 Selecting network content enables network events even when `capture.events`
 omits `network`. Cancelled steps have no post-action capture. The views do not
 inventory available controls; read the accessibility text for the elements a

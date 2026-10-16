@@ -359,6 +359,39 @@ const refineTransactionRequests = (
   }
 };
 
+/**
+ * The recorder stops retaining events at max_events, and the network collector
+ * admits at most max_network_transactions transactions; refused ones only
+ * appear in the omitted range.
+ */
+const refineEventLimits = (
+  { scenario, events }: CapturedFields,
+  context: z.RefinementCtx,
+): void => {
+  const { max_events: maxEvents, max_network_transactions: maxTransactions } =
+    scenario.limits;
+  if (events.retained > maxEvents)
+    context.addIssue({
+      code: "custom",
+      path: ["events", "retained"],
+      message: `${String(events.retained)} retained events exceed max_events ${String(maxEvents)}`,
+    });
+  const admitted = new Set([
+    ...events.items.flatMap((event) =>
+      "transaction_id" in event ? [event.transaction_id] : [],
+    ),
+    ...events.omissions.network_transactions.map(
+      ({ transaction_id: id }) => id,
+    ),
+  ]);
+  if (admitted.size > maxTransactions)
+    context.addIssue({
+      code: "custom",
+      path: ["events", "items"],
+      message: `${String(admitted.size)} admitted network transactions exceed max_network_transactions ${String(maxTransactions)}`,
+    });
+};
+
 /** Cross-field rules for retained events, their accounting and omissions. */
 export const refineScenarioEvents = (
   capture: CapturedFields,
@@ -371,4 +404,5 @@ export const refineScenarioEvents = (
   refineSequenceAccounting(capture, context);
   refineNetworkContentFacets(capture, context);
   refineTransactionRequests(capture, context);
+  refineEventLimits(capture, context);
 };

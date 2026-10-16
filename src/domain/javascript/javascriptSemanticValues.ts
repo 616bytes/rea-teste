@@ -75,7 +75,6 @@ type ReadSnapshotValues = WeakMap<
 
 /** Read/provenance memos live for one query; whole values follow state effects. */
 interface EvaluationMemo {
-  captureSensitiveBindings?: ReadonlySet<string>;
   snapshotValues?: ReadSnapshotValues;
   capturedSnapshotValues?: WeakMap<t.Node, ReadSnapshotValues>;
   readonly provenance: Map<
@@ -146,6 +145,12 @@ const primitiveBindingValuesByState = new WeakMap<
   Map<string, JavaScriptSemanticValue>
 >();
 
+/** Effect-derived membership is shared by every value query for this state. */
+const captureSensitiveBindingsByState = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  ReadonlySet<string>
+>();
+
 const primitiveExpressionValuesByState = new WeakMap<
   JavaScriptSemanticAnalysisState,
   WeakMap<t.Node, JavaScriptSemanticValue>
@@ -164,6 +169,7 @@ export const clearSemanticValueCaches = (
   capturedBindingValuesByState.delete(state);
   primitiveExpressionValuesByState.delete(state);
   callerIndependentBindingValuesByState.delete(state);
+  captureSensitiveBindingsByState.delete(state);
 };
 
 const callerIndependentBindingValuesFor = (
@@ -309,13 +315,13 @@ const collectEvaluationDependencies = <T>(
 const captureSensitiveBindingsFor = (
   context: EvaluationContext,
 ): ReadonlySet<string> => {
-  if (context.memo.captureSensitiveBindings !== undefined)
-    return context.memo.captureSensitiveBindings;
+  const existing = captureSensitiveBindingsByState.get(context.state);
+  if (existing !== undefined) return existing;
   const bindings = new Set<string>();
   for (const binding of context.state.bindingsById.values())
     if (binding.memberWrites.length > 0 || binding.escapedPaths.length > 0)
       bindings.add(binding.bindingId);
-  context.memo.captureSensitiveBindings = bindings;
+  captureSensitiveBindingsByState.set(context.state, bindings);
   return bindings;
 };
 

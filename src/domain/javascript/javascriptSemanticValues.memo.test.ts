@@ -26,6 +26,82 @@ const property = (
   return result;
 };
 
+it("indexes capture-sensitive bindings once across independent binding queries", () => {
+  const measure = (width: number) => {
+    const parsed = parseJavaScriptSource(
+      Array.from(
+        { length: width },
+        (_, index) =>
+          `const x${index}=${index + 1}; const y${index}=true ? x${index} : 0;`,
+      ).join("\n"),
+      "independent-branches.js",
+    );
+    if (parsed === null) throw new Error("Expected parsed source");
+    const steps = indexJavaScriptBindingsSteps(parsed.program);
+    let step = steps.next();
+    while (step.done !== true) step = steps.next();
+    const state = step.value;
+    const bindings = [...state.bindingsById.values()].filter(({ name }) =>
+      name.startsWith("y"),
+    );
+    const values = state.bindingsById.values.bind(state.bindingsById);
+    let visits = 0;
+    const scan = vi
+      .spyOn(state.bindingsById, "values")
+      .mockImplementation(function* () {
+        for (const binding of values()) {
+          visits++;
+          yield binding;
+        }
+        return undefined;
+      });
+    try {
+      for (const [index, binding] of bindings.entries())
+        expect(evaluateSemanticBinding(binding, state)).toEqual({
+          status: "literal",
+          value: index + 1,
+        });
+      return visits;
+    } finally {
+      scan.mockRestore();
+    }
+  };
+  const small = measure(32);
+  const large = measure(64);
+  expect(small).toBeGreaterThan(0);
+  expect(large).toBeLessThan(3 * small);
+});
+
+it("refreshes capture sensitivity when the effect producer invalidates values", () => {
+  const parsed = parseJavaScriptSource(
+    `
+    const source = { value: 1 };
+    const first = true ? source.value : 0;
+    mutate(source);
+    const second = true ? source.value : 0;
+    const root = { first, second };
+  `,
+    "capture-effect-invalidation.js",
+  );
+  if (parsed === null) throw new Error("Expected parsed source");
+  const steps = indexJavaScriptBindingsSteps(parsed.program);
+  let step = steps.next();
+  while (step.done !== true) step = steps.next();
+  const state = step.value;
+  const root = [...state.bindingsById.values()].find(
+    ({ name }) => name === "root",
+  );
+  if (root === undefined) throw new Error("Missing root binding");
+  const before = evaluateSemanticBinding(root, state);
+  expect(property(before, "second")).toEqual({ status: "literal", value: 1 });
+  const effects = collectSemanticMemberMutationsSteps(parsed.program, state);
+  let effect = effects.next();
+  while (effect.done !== true) effect = effects.next();
+  const after = evaluateSemanticBinding(root, state);
+  expect(property(after, "first")).toEqual({ status: "literal", value: 1 });
+  expect(property(after, "second").status).toBe("unknown");
+});
+
 it.each([
   "unchecked: +saved, checked: true ? saved : 0",
   "checked: true ? saved : 0, unchecked: +saved",

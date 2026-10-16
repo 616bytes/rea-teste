@@ -154,7 +154,9 @@ instrumentation through an application getter, setter or Proxy, registration
 stays native and unwrapped. The `once-metadata` observation gap identifies that
 unobserved registration attempt; it does not prove registration or delivery. The original callback,
 metadata writes and native method receivers are preserved, including when
-registration fails. Later registrations resume normal observation.
+registration fails. Later registrations resume normal observation. Non-callable
+`call`/`apply` properties produce failed observation gaps when native dispatch reads
+them; callback entry is not fabricated.
 
 An `on` listener's application-defined `.apply` receives the original argument-list
 object unchanged. Borrowing the exposed method preserves its dynamic receiver.

@@ -2,14 +2,14 @@
   "issue": 4593,
   "base": "709b5cbdc15aa757f89c38ecd12e5a47710747a6",
   "final_source_pins": {
-    "source": "7f05f476c52498adba41d943ead1a86e7216ca76",
+    "source": "4ebd0f60e860daa57a7033c6e77ea7f5f4b8ac97",
     "code_inputs_clean": true,
-    "worktree_status": "?? docs/verification/electron-native-once-2026-10-16.json\n?? docs/verification/electron-native-once-2026-10-16.md\n?? docs/verification/electron-native-once-2026-10-16.rows.jsonl",
+    "worktree_status": "",
     "files": {
-      "scripts/electron-active-hook.cjs": "ea47aad9f9f80aaf46d25a8e7689986613e7c6b83d1d3bcf1af010f077397418",
+      "scripts/electron-active-hook.cjs": "c18dd3a3fb374d75d0fe545ac425e86d177c11753c10c188ba844e81e4857fa6",
       "scripts/electron-active-hook-boundaries.cjs": "dae5ac52856a30566ec027cb15ddd46c2920c8defdec11512b6c1f189314d45c",
-      "tests/boundary/browser/electronActiveHook.test.ts": "ea41a9e3cfb1f74a62080b9840ce8538d8d7e7281d25834387b5e0211c7583f1",
-      "experiments/analysis-efficiency/electron-once-runtime.mjs": "a7ea444819b51e0b261b025b28fe8e0a0c25bcd66c2203c62fb2aec8c1e02117",
+      "tests/boundary/browser/electronActiveHook.test.ts": "0acff0ad34ef1e126dd10696e821316084509c1621898e4057a8ae488a97ea82",
+      "experiments/analysis-efficiency/electron-once-runtime.mjs": "f53295a2839f20ef708253280453a5e280b618531de388782876eb942462ae2f",
       "experiments/analysis-efficiency/electron-once-runtimes.py": "b2100f0b4435788601ebc0dd286d0ca4724a1129c7c955cea0b24b4d4321c84f",
       "experiments/analysis-efficiency/joplin-shell-boundary.mjs": "4cacf3a3accff4166f54119d1645eefd86099db0dd5982dfa34f2875a8bd1f47",
       "dist/browser/PlaywrightElectronActiveProvider.js": "1a0efd2c365d48d5f7c533351e3ad1f230e1f76ed1a754ee49e488908f73dc1c",
@@ -46,8 +46,8 @@
         "electron_run_as_node": false,
         "node": "24.18.0",
         "electron": null,
-        "cases": 32,
-        "baseline_disagreements": 1,
+        "cases": 39,
+        "baseline_disagreements": 4,
         "candidate_disagreements": 0
       },
       {
@@ -56,8 +56,8 @@
         "electron_run_as_node": false,
         "node": "24.21.0",
         "electron": null,
-        "cases": 32,
-        "baseline_disagreements": 13,
+        "cases": 39,
+        "baseline_disagreements": 16,
         "candidate_disagreements": 0
       },
       {
@@ -66,33 +66,32 @@
         "electron_run_as_node": true,
         "node": "24.21.0",
         "electron": "44.7.0",
-        "cases": 32,
-        "baseline_disagreements": 13,
+        "cases": 39,
+        "baseline_disagreements": 16,
         "candidate_disagreements": 0
       }
     ],
     "baseline_source_sha256": {
       "electron-active-hook.cjs": "6e39dfe414813b28faca734ceeca20b23f46b271e5f1b8ede943d462aa8ba01c",
       "electron-active-hook-boundaries.cjs": "dae5ac52856a30566ec027cb15ddd46c2920c8defdec11512b6c1f189314d45c",
-      "electron-once-runtime.mjs": "a7ea444819b51e0b261b025b28fe8e0a0c25bcd66c2203c62fb2aec8c1e02117",
+      "electron-once-runtime.mjs": "f53295a2839f20ef708253280453a5e280b618531de388782876eb942462ae2f",
       "electron-fixture": "744a22f060e04a588a124b361e5a58af4e4f7b1704250143d987a5d5e65df6ac"
     },
     "candidate_source_sha256": {
-      "electron-active-hook.cjs": "ea47aad9f9f80aaf46d25a8e7689986613e7c6b83d1d3bcf1af010f077397418",
+      "electron-active-hook.cjs": "c18dd3a3fb374d75d0fe545ac425e86d177c11753c10c188ba844e81e4857fa6",
       "electron-active-hook-boundaries.cjs": "dae5ac52856a30566ec027cb15ddd46c2920c8defdec11512b6c1f189314d45c",
-      "electron-once-runtime.mjs": "a7ea444819b51e0b261b025b28fe8e0a0c25bcd66c2203c62fb2aec8c1e02117",
+      "electron-once-runtime.mjs": "f53295a2839f20ef708253280453a5e280b618531de388782876eb942462ae2f",
       "electron-fixture": "744a22f060e04a588a124b361e5a58af4e4f7b1704250143d987a5d5e65df6ac"
     },
-    "rows_file": "electron-native-once-2026-10-16.rows.jsonl",
-    "rows_count": 96,
-    "rows_sha256": "82c7092894d5f49b7864eef216ab07f130db447895c3905a9b09db37efe95f11",
-    "first93_rows_verified_identical_to_initial_cohort": true,
+    "rows_file": "electron-native-once-2026-10-16.review.rows.jsonl",
+    "rows_count": 117,
+    "rows_sha256": "8b4e223cd251ceabd270aa888f81855375128c3dce3448c0aeac5723d4f8664f",
     "baseline_resources": {
-      "log_sha256": "b71d3387cc7b807e25acb8eb986e686101dc55a89cdee5a3bde4bd634fe7322e",
-      "wall_seconds": 0.962,
+      "log_sha256": "2efad8bd3db704aa7bc626d30fb09e39d3d0c692deeddd7663a8b117aae1f66f",
+      "wall_seconds": 1.425,
       "payload_exit_code": 0,
-      "cpu_usec": 735284,
-      "peak_cgroup_bytes": 36290560,
+      "cpu_usec": 1195383,
+      "peak_cgroup_bytes": 38170624,
       "complete_family_observation_verified": true,
       "abort": null,
       "memory_events": {
@@ -103,7 +102,7 @@
         "oom_kill": 0,
         "oom_group_kill": 0
       },
-      "scope": "rea-efficiency-9cc039a7f3ec4e1988938996b2ebf29f.scope",
+      "scope": "rea-efficiency-2f8746ac60cd440d982935e8901a03e2.scope",
       "scope_poststate": "ActiveState=inactive\nSubState=dead",
       "observer_sources_sha256": {
         "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
@@ -111,11 +110,11 @@
       }
     },
     "candidate_resources": {
-      "log_sha256": "5f329338c07e5663cd7c72c07a7b40fbb79a1596b298b066a8d3d7da92cb04c1",
-      "wall_seconds": 0.891,
+      "log_sha256": "d28540cbf8e48de3ab604b2b13e03b5cab03b0acd876ff5e7821b76ef343727a",
+      "wall_seconds": 1.311,
       "payload_exit_code": 0,
-      "cpu_usec": 683474,
-      "peak_cgroup_bytes": 36401152,
+      "cpu_usec": 1126079,
+      "peak_cgroup_bytes": 36945920,
       "complete_family_observation_verified": true,
       "abort": null,
       "memory_events": {
@@ -126,7 +125,7 @@
         "oom_kill": 0,
         "oom_group_kill": 0
       },
-      "scope": "rea-efficiency-4f44b580349f4987b2507341298d16c3.scope",
+      "scope": "rea-efficiency-8aa5a516d61946e894ff6ba9c8db8c29.scope",
       "scope_poststate": "ActiveState=inactive\nSubState=dead",
       "observer_sources_sha256": {
         "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
@@ -135,12 +134,12 @@
     }
   },
   "checks": {
-    "pinned_hook75": {
-      "log_sha256": "3474714f8ec6c3a31937481a35e0d6e6d9d2c8234f1f38163e20828281dad3ac",
-      "wall_seconds": 6.02,
+    "focused_hook75": {
+      "log_sha256": "7192c9016a0b195ec3a43b070ac1b8aba25f300f3f8cb7c68187f4da5300144f",
+      "wall_seconds": 11.771,
       "payload_exit_code": 0,
-      "cpu_usec": 5720548,
-      "peak_cgroup_bytes": 280649728,
+      "cpu_usec": 11434640,
+      "peak_cgroup_bytes": 322015232,
       "complete_family_observation_verified": true,
       "abort": null,
       "memory_events": {
@@ -151,19 +150,20 @@
         "oom_kill": 0,
         "oom_group_kill": 0
       },
-      "scope": "rea-efficiency-24c3cfa3395e4587b441729985bd4798.scope",
+      "scope": "rea-efficiency-7c4592b58e5e45e2b18a849d93c188ca.scope",
       "scope_poststate": "ActiveState=inactive\nSubState=dead",
       "observer_sources_sha256": {
         "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
         "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
-      }
+      },
+      "command": "npm run test:focused -- tests/boundary/browser/electronActiveHook.test.ts"
     },
     "node24_21_hook75": {
-      "log_sha256": "ebd2e84927d5aa0acaf0ae4e805ba130cf8dd2c9d81542542649e1258b32fcfb",
-      "wall_seconds": 5.909,
+      "log_sha256": "9eedc48f3083aeb977484aa380f2dbac392e208425e88957ca20ace7b121f7ce",
+      "wall_seconds": 10.783,
       "payload_exit_code": 0,
-      "cpu_usec": 5643565,
-      "peak_cgroup_bytes": 281411584,
+      "cpu_usec": 10421972,
+      "peak_cgroup_bytes": 284741632,
       "complete_family_observation_verified": true,
       "abort": null,
       "memory_events": {
@@ -174,19 +174,20 @@
         "oom_kill": 0,
         "oom_group_kill": 0
       },
-      "scope": "rea-efficiency-ec8d5e8c02114bfb8a36aaa0733596ce.scope",
+      "scope": "rea-efficiency-81bb56f7d82c42af877e926613a1a24e.scope",
       "scope_poststate": "ActiveState=inactive\nSubState=dead",
       "observer_sources_sha256": {
         "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
         "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
-      }
+      },
+      "command": "Explicit Node24.21 binary: node node_modules/vitest/vitest.mjs run --project boundary tests/boundary/browser/electronActiveHook.test.ts"
     },
     "static": {
-      "log_sha256": "e011b7cdd3970c40057c63b057766732f094d0e0c8b6f70159e553b9a4d0d5d9",
-      "wall_seconds": 95.645,
+      "log_sha256": "caf4a4578a62a9bce60de51d3c23942fe8140bcd04e3ef3c0ccd6e78831f9e07",
+      "wall_seconds": 118.946,
       "payload_exit_code": 0,
-      "cpu_usec": 94833028,
-      "peak_cgroup_bytes": 4484653056,
+      "cpu_usec": 117752622,
+      "peak_cgroup_bytes": 4282826752,
       "complete_family_observation_verified": true,
       "abort": null,
       "memory_events": {
@@ -197,7 +198,7 @@
         "oom_kill": 0,
         "oom_group_kill": 0
       },
-      "scope": "rea-efficiency-260bf0572cf743b6b18b1aa8a8c1b621.scope",
+      "scope": "rea-efficiency-8b50227dd214474b9e5f9a4a12a78c71.scope",
       "scope_poststate": "ActiveState=inactive\nSubState=dead",
       "observer_sources_sha256": {
         "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
@@ -205,12 +206,11 @@
       }
     },
     "docs": {
-      "command": "npm run docs:check",
-      "log_sha256": "1189c48d371378f7470eec7c2addd3f6e095cba6cfbf22a7deb9d1713e1c0e08",
-      "wall_seconds": 13.796,
+      "log_sha256": "26ed1585cb71e744b9a3d2b82c929596151f5b70a12a6c03567f22125b5da064",
+      "wall_seconds": 10.424,
       "payload_exit_code": 0,
-      "cpu_usec": 13426933,
-      "peak_cgroup_bytes": 516132864,
+      "cpu_usec": 9573676,
+      "peak_cgroup_bytes": 491094016,
       "complete_family_observation_verified": true,
       "abort": null,
       "memory_events": {
@@ -221,7 +221,7 @@
         "oom_kill": 0,
         "oom_group_kill": 0
       },
-      "scope": "rea-efficiency-b1f4056f9bae4bbfaa04cd1e58e2890d.scope",
+      "scope": "rea-efficiency-431fa65be8324104a4a38f7edd5f53d5.scope",
       "scope_poststate": "ActiveState=inactive\nSubState=dead",
       "observer_sources_sha256": {
         "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
@@ -258,11 +258,11 @@
   },
   "real_application": {
     "receipt": {
-      "log_sha256": "e505879f87fac88abaf824ab8f5fb7a51e1c71e5a49d2461fa429d0ba45ec900",
-      "wall_seconds": 18.074,
+      "log_sha256": "c5bbf7b1acf2d13d285ed36376e81a90534152ed587430f773e04d8bfe601f3a",
+      "wall_seconds": 18.353,
       "payload_exit_code": 1,
-      "cpu_usec": 17011774,
-      "peak_cgroup_bytes": 1422839808,
+      "cpu_usec": 17098599,
+      "peak_cgroup_bytes": 1387556864,
       "complete_family_observation_verified": false,
       "abort": null,
       "memory_events": {
@@ -273,7 +273,7 @@
         "oom_kill": 0,
         "oom_group_kill": 0
       },
-      "scope": "rea-efficiency-453f90f1ed1a4105ba56515f94b2d1a3.scope",
+      "scope": "rea-efficiency-b0eff6ec82054593b2b73ed7188c6936.scope",
       "scope_poststate": "ActiveState=inactive\nSubState=dead",
       "observer_sources_sha256": {
         "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
@@ -281,19 +281,19 @@
       }
     },
     "summary": {
-      "profile": "/tmp/rea-4593-native-once-20261016-y_540lpi/trials/joplin-final32/profiles/joplin-shell-p2SQVa",
+      "profile": "/tmp/rea-4593-native-once-20261016-y_540lpi/trials/joplin-review-gaps-xvfb/profiles/joplin-shell-9S4XHt",
       "runtime": "/home/yann/yann/rea-electron-native-once-4593-20261016",
       "staged_hook_sha256": {
-        "electron-active-hook.cjs": "ea47aad9f9f80aaf46d25a8e7689986613e7c6b83d1d3bcf1af010f077397418",
+        "electron-active-hook.cjs": "c18dd3a3fb374d75d0fe545ac425e86d177c11753c10c188ba844e81e4857fa6",
         "electron-active-hook-boundaries.cjs": "dae5ac52856a30566ec027cb15ddd46c2920c8defdec11512b6c1f189314d45c"
       },
-      "elapsed_ms": 17056.830471,
+      "elapsed_ms": 17322.284704,
       "launch_transport": "controlled-argv-shim",
       "probe": {
         "before_shell_count": 0,
         "note": "1. Welcome to Joplin!",
         "attachment": {
-          "src": "joplin-content://note-viewer//home/yann/.config/joplin-desktop/resources//3b19504020d34ef084f94e4632b69a6b.png?t=1792188662625",
+          "src": "joplin-content://note-viewer//home/yann/.config/joplin-desktop/resources//4e46be127ed6496ab52a183e3ef7a2ef.png?t=1792189852545",
           "alt": "",
           "width": 1075,
           "height": 666
@@ -302,8 +302,8 @@
         "image_visible": true,
         "shell": [
           {
-            "sequence": 7188,
-            "correlation_id": "capture:4075547:7188",
+            "sequence": 6161,
+            "correlation_id": "capture:4083186:6161",
             "event": "showItemInFolder",
             "phase": "blocked",
             "channel": null,
@@ -358,15 +358,15 @@
       },
       "retention": {
         "budget_bytes": 16777216,
-        "estimated_retained_bytes": 14359880,
-        "event_serialized_byte_upper_bound": 3427720,
-        "retained": 7274,
+        "estimated_retained_bytes": 12209775,
+        "event_serialized_byte_upper_bound": 2914581,
+        "retained": 6191,
         "dropped": 0,
         "dropped_event_families": [],
         "dropped_event_roles": [],
-        "observed_ipc": 2457,
+        "observed_ipc": 2096,
         "dropped_ipc": 0,
-        "observed_runtime": 4817,
+        "observed_runtime": 4095,
         "dropped_runtime": 0
       },
       "actions": [
@@ -375,7 +375,7 @@
           "kind": "wait",
           "window_index": 0,
           "target": "window:0",
-          "elapsed_ms": 103,
+          "elapsed_ms": 116,
           "status": "completed",
           "error": null
         }
@@ -1451,6 +1451,114 @@
           "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
         }
       }
+    },
+    {
+      "label": "review-gap-red",
+      "meaning": "Pinned regression catches missing non-callable dispatch gap.",
+      "receipt": {
+        "log_sha256": "7563128d918f000adccbd991d88f909be5ce2967f06ef93824714c1850a32c26",
+        "wall_seconds": 2.751,
+        "payload_exit_code": 1,
+        "cpu_usec": 2510546,
+        "peak_cgroup_bytes": 213495808,
+        "complete_family_observation_verified": true,
+        "abort": null,
+        "memory_events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "scope": "rea-efficiency-7fe6563edae74f908b4a90482d56d9fd.scope",
+        "scope_poststate": "ActiveState=inactive\nSubState=dead",
+        "observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
+    },
+    {
+      "label": "review-gap-node24-21-red",
+      "meaning": "Newer runtime regression catches registration-through-native-alias then throw with no gap.",
+      "receipt": {
+        "log_sha256": "cda0c1c2171df157e9c5f349c5f76a14bace3dc510520470b61018c1190563a4",
+        "wall_seconds": 2.84,
+        "payload_exit_code": 1,
+        "cpu_usec": 2625842,
+        "peak_cgroup_bytes": 217219072,
+        "complete_family_observation_verified": true,
+        "abort": null,
+        "memory_events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "scope": "rea-efficiency-2001c9020a924454ac7f3b3bf1639135.scope",
+        "scope_poststate": "ActiveState=inactive\nSubState=dead",
+        "observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
+    },
+    {
+      "label": "review-gap-pinned",
+      "meaning": "NOT_EXECUTED test:local rejects built boundary projects; corrected to test:focused.",
+      "receipt": {
+        "log_sha256": "4e57de0d683108e709418d69d3d12abd4b76fa82a9fe14207ffa1d108aa125a2",
+        "wall_seconds": 0.69,
+        "payload_exit_code": 1,
+        "cpu_usec": 451205,
+        "peak_cgroup_bytes": 44204032,
+        "complete_family_observation_verified": true,
+        "abort": null,
+        "memory_events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "scope": "rea-efficiency-c611888e704c475397d189aa19738300.scope",
+        "scope_poststate": "ActiveState=inactive\nSubState=dead",
+        "observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
+    },
+    {
+      "label": "review-display-launch-failed",
+      "meaning": "Actual Electron launch failed display initialization: provider launch environment omits XAUTHORITY. Preserved failed launch; fresh trial uses local Xvfb -nolisten tcp -ac, not a production change.",
+      "receipt": {
+        "log_sha256": "18025b01637cba31c4884fa067924ab19cbc9bf8763470691d8138cceb1930d2",
+        "wall_seconds": 4.701,
+        "payload_exit_code": 1,
+        "cpu_usec": 3693640,
+        "peak_cgroup_bytes": 549056512,
+        "complete_family_observation_verified": false,
+        "abort": null,
+        "memory_events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "scope": "rea-efficiency-0454da0dfd9145459041580198f94969.scope",
+        "scope_poststate": "ActiveState=inactive\nSubState=dead",
+        "observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
     }
   ],
   "limits": [
@@ -1461,5 +1569,362 @@
     "Standard launch#2974 and provider cleanup#4282 remain failed; raw-wrapper mutation#4513 remains unfixed.",
     "Historical helper versions not all source-frozen; failure logs are preserved and not relabeled as final-source results.",
     "Regenerable applications, Node binaries, profiles and multi-MB captures are excluded from Git."
-  ]
+  ],
+  "pre_review_cohort": {
+    "final_source_pins": {
+      "source": "7f05f476c52498adba41d943ead1a86e7216ca76",
+      "code_inputs_clean": true,
+      "worktree_status": "?? docs/verification/electron-native-once-2026-10-16.json\n?? docs/verification/electron-native-once-2026-10-16.md\n?? docs/verification/electron-native-once-2026-10-16.rows.jsonl",
+      "files": {
+        "scripts/electron-active-hook.cjs": "ea47aad9f9f80aaf46d25a8e7689986613e7c6b83d1d3bcf1af010f077397418",
+        "scripts/electron-active-hook-boundaries.cjs": "dae5ac52856a30566ec027cb15ddd46c2920c8defdec11512b6c1f189314d45c",
+        "tests/boundary/browser/electronActiveHook.test.ts": "ea41a9e3cfb1f74a62080b9840ce8538d8d7e7281d25834387b5e0211c7583f1",
+        "experiments/analysis-efficiency/electron-once-runtime.mjs": "a7ea444819b51e0b261b025b28fe8e0a0c25bcd66c2203c62fb2aec8c1e02117",
+        "experiments/analysis-efficiency/electron-once-runtimes.py": "b2100f0b4435788601ebc0dd286d0ca4724a1129c7c955cea0b24b4d4321c84f",
+        "experiments/analysis-efficiency/joplin-shell-boundary.mjs": "4cacf3a3accff4166f54119d1645eefd86099db0dd5982dfa34f2875a8bd1f47",
+        "dist/browser/PlaywrightElectronActiveProvider.js": "1a0efd2c365d48d5f7c533351e3ad1f230e1f76ed1a754ee49e488908f73dc1c",
+        "dist/browser/PlaywrightElectronActiveProjection.js": "9732f6422fff971b75a614225d4da69ca401552ce5a650308224ed897ce6f26c",
+        "dist/application/javascript/ElectronActiveObservationService.js": "438ad8c16239eb296ceef4ad3809377547bb4932c4c87df5d4ea3667c738bc6f"
+      }
+    },
+    "matrix": {
+      "scope": "Controlled canonical hook/minimal Electron module; actual embedded Node engine, not a real app natural bug reproduction. Same oracle/inputs, identical native controls in each pair.",
+      "engines": [
+        {
+          "selected_binary": "/home/yann/.cache/rea-2459/node-v24.18.0-linux-x64/bin/node",
+          "binary_sha256": "41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c",
+          "electron_run_as_node": false,
+          "node": "24.18.0",
+          "electron": null,
+          "cases": 32,
+          "baseline_disagreements": 1,
+          "candidate_disagreements": 0
+        },
+        {
+          "selected_binary": "/tmp/rea-4593-native-once-20261016-y_540lpi/node-v24.21.0-linux-x64/bin/node",
+          "binary_sha256": "7fde7b8afa198da66257f42ee2001d874c7355631e6d1579a5fb5ef1f246df4c",
+          "electron_run_as_node": false,
+          "node": "24.21.0",
+          "electron": null,
+          "cases": 32,
+          "baseline_disagreements": 13,
+          "candidate_disagreements": 0
+        },
+        {
+          "selected_binary": "/tmp/rea-4390-realapps-20261016/electron-44.7.0/electron",
+          "binary_sha256": "10a14d05c6ff4f94075cfb3eeb6ed6571be33ebcc08cbd675b5ce9ff84706564",
+          "electron_run_as_node": true,
+          "node": "24.21.0",
+          "electron": "44.7.0",
+          "cases": 32,
+          "baseline_disagreements": 13,
+          "candidate_disagreements": 0
+        }
+      ],
+      "baseline_source_sha256": {
+        "electron-active-hook.cjs": "6e39dfe414813b28faca734ceeca20b23f46b271e5f1b8ede943d462aa8ba01c",
+        "electron-active-hook-boundaries.cjs": "dae5ac52856a30566ec027cb15ddd46c2920c8defdec11512b6c1f189314d45c",
+        "electron-once-runtime.mjs": "a7ea444819b51e0b261b025b28fe8e0a0c25bcd66c2203c62fb2aec8c1e02117",
+        "electron-fixture": "744a22f060e04a588a124b361e5a58af4e4f7b1704250143d987a5d5e65df6ac"
+      },
+      "candidate_source_sha256": {
+        "electron-active-hook.cjs": "ea47aad9f9f80aaf46d25a8e7689986613e7c6b83d1d3bcf1af010f077397418",
+        "electron-active-hook-boundaries.cjs": "dae5ac52856a30566ec027cb15ddd46c2920c8defdec11512b6c1f189314d45c",
+        "electron-once-runtime.mjs": "a7ea444819b51e0b261b025b28fe8e0a0c25bcd66c2203c62fb2aec8c1e02117",
+        "electron-fixture": "744a22f060e04a588a124b361e5a58af4e4f7b1704250143d987a5d5e65df6ac"
+      },
+      "rows_file": "electron-native-once-2026-10-16.rows.jsonl",
+      "rows_count": 96,
+      "rows_sha256": "82c7092894d5f49b7864eef216ab07f130db447895c3905a9b09db37efe95f11",
+      "first93_rows_verified_identical_to_initial_cohort": true,
+      "baseline_resources": {
+        "log_sha256": "b71d3387cc7b807e25acb8eb986e686101dc55a89cdee5a3bde4bd634fe7322e",
+        "wall_seconds": 0.962,
+        "payload_exit_code": 0,
+        "cpu_usec": 735284,
+        "peak_cgroup_bytes": 36290560,
+        "complete_family_observation_verified": true,
+        "abort": null,
+        "memory_events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "scope": "rea-efficiency-9cc039a7f3ec4e1988938996b2ebf29f.scope",
+        "scope_poststate": "ActiveState=inactive\nSubState=dead",
+        "observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "candidate_resources": {
+        "log_sha256": "5f329338c07e5663cd7c72c07a7b40fbb79a1596b298b066a8d3d7da92cb04c1",
+        "wall_seconds": 0.891,
+        "payload_exit_code": 0,
+        "cpu_usec": 683474,
+        "peak_cgroup_bytes": 36401152,
+        "complete_family_observation_verified": true,
+        "abort": null,
+        "memory_events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "scope": "rea-efficiency-4f44b580349f4987b2507341298d16c3.scope",
+        "scope_poststate": "ActiveState=inactive\nSubState=dead",
+        "observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
+    },
+    "checks": {
+      "pinned_hook75": {
+        "log_sha256": "3474714f8ec6c3a31937481a35e0d6e6d9d2c8234f1f38163e20828281dad3ac",
+        "wall_seconds": 6.02,
+        "payload_exit_code": 0,
+        "cpu_usec": 5720548,
+        "peak_cgroup_bytes": 280649728,
+        "complete_family_observation_verified": true,
+        "abort": null,
+        "memory_events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "scope": "rea-efficiency-24c3cfa3395e4587b441729985bd4798.scope",
+        "scope_poststate": "ActiveState=inactive\nSubState=dead",
+        "observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "node24_21_hook75": {
+        "log_sha256": "ebd2e84927d5aa0acaf0ae4e805ba130cf8dd2c9d81542542649e1258b32fcfb",
+        "wall_seconds": 5.909,
+        "payload_exit_code": 0,
+        "cpu_usec": 5643565,
+        "peak_cgroup_bytes": 281411584,
+        "complete_family_observation_verified": true,
+        "abort": null,
+        "memory_events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "scope": "rea-efficiency-ec8d5e8c02114bfb8a36aaa0733596ce.scope",
+        "scope_poststate": "ActiveState=inactive\nSubState=dead",
+        "observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "static": {
+        "log_sha256": "e011b7cdd3970c40057c63b057766732f094d0e0c8b6f70159e553b9a4d0d5d9",
+        "wall_seconds": 95.645,
+        "payload_exit_code": 0,
+        "cpu_usec": 94833028,
+        "peak_cgroup_bytes": 4484653056,
+        "complete_family_observation_verified": true,
+        "abort": null,
+        "memory_events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "scope": "rea-efficiency-260bf0572cf743b6b18b1aa8a8c1b621.scope",
+        "scope_poststate": "ActiveState=inactive\nSubState=dead",
+        "observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "docs": {
+        "command": "npm run docs:check",
+        "log_sha256": "1189c48d371378f7470eec7c2addd3f6e095cba6cfbf22a7deb9d1713e1c0e08",
+        "wall_seconds": 13.796,
+        "payload_exit_code": 0,
+        "cpu_usec": 13426933,
+        "peak_cgroup_bytes": 516132864,
+        "complete_family_observation_verified": true,
+        "abort": null,
+        "memory_events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "scope": "rea-efficiency-b1f4056f9bae4bbfaa04cd1e58e2890d.scope",
+        "scope_poststate": "ActiveState=inactive\nSubState=dead",
+        "observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
+    },
+    "real_application": {
+      "receipt": {
+        "log_sha256": "e505879f87fac88abaf824ab8f5fb7a51e1c71e5a49d2461fa429d0ba45ec900",
+        "wall_seconds": 18.074,
+        "payload_exit_code": 1,
+        "cpu_usec": 17011774,
+        "peak_cgroup_bytes": 1422839808,
+        "complete_family_observation_verified": false,
+        "abort": null,
+        "memory_events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "scope": "rea-efficiency-453f90f1ed1a4105ba56515f94b2d1a3.scope",
+        "scope_poststate": "ActiveState=inactive\nSubState=dead",
+        "observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "summary": {
+        "profile": "/tmp/rea-4593-native-once-20261016-y_540lpi/trials/joplin-final32/profiles/joplin-shell-p2SQVa",
+        "runtime": "/home/yann/yann/rea-electron-native-once-4593-20261016",
+        "staged_hook_sha256": {
+          "electron-active-hook.cjs": "ea47aad9f9f80aaf46d25a8e7689986613e7c6b83d1d3bcf1af010f077397418",
+          "electron-active-hook-boundaries.cjs": "dae5ac52856a30566ec027cb15ddd46c2920c8defdec11512b6c1f189314d45c"
+        },
+        "elapsed_ms": 17056.830471,
+        "launch_transport": "controlled-argv-shim",
+        "probe": {
+          "before_shell_count": 0,
+          "note": "1. Welcome to Joplin!",
+          "attachment": {
+            "src": "joplin-content://note-viewer//home/yann/.config/joplin-desktop/resources//3b19504020d34ef084f94e4632b69a6b.png?t=1792188662625",
+            "alt": "",
+            "width": 1075,
+            "height": 666
+          },
+          "revealed": "Reveal file in folder",
+          "image_visible": true,
+          "shell": [
+            {
+              "sequence": 7188,
+              "correlation_id": "capture:4075547:7188",
+              "event": "showItemInFolder",
+              "phase": "blocked",
+              "channel": null,
+              "direction": null,
+              "sender": null,
+              "receiver": null,
+              "frame": null,
+              "target": null,
+              "argument_shapes": ["string"],
+              "result_shape": null,
+              "process_type": "browser",
+              "source": "electron-active-hook",
+              "capture_method": "api-wrapper",
+              "artifact_path": null,
+              "artifact_sha256": null,
+              "error": true,
+              "kind": "shell-attempt"
+            }
+          ],
+          "page_errors": []
+        },
+        "provider_ok": false,
+        "error": {
+          "tag": "BrowserObservationError",
+          "reason": "cleanup_failed"
+        },
+        "coverage": {
+          "status": "partial_attach",
+          "observed_event_families": [
+            "app-lifecycle",
+            "ipc",
+            "navigation",
+            "process-lifecycle",
+            "protocol",
+            "shell-attempt",
+            "web-contents-lifecycle",
+            "window-lifecycle"
+          ],
+          "unavailable_event_families": [
+            "download",
+            "error",
+            "native-addon",
+            "permission",
+            "popup-attempt",
+            "preload",
+            "preload-configuration",
+            "renderer-ipc",
+            "updater"
+          ],
+          "observed_roles": ["browser", "main", "web_contents", "window"],
+          "pre_capture_activity": "unavailable"
+        },
+        "retention": {
+          "budget_bytes": 16777216,
+          "estimated_retained_bytes": 14359880,
+          "event_serialized_byte_upper_bound": 3427720,
+          "retained": 7274,
+          "dropped": 0,
+          "dropped_event_families": [],
+          "dropped_event_roles": [],
+          "observed_ipc": 2457,
+          "dropped_ipc": 0,
+          "observed_runtime": 4817,
+          "dropped_runtime": 0
+        },
+        "actions": [
+          {
+            "step_id": "settle-after-reveal",
+            "kind": "wait",
+            "window_index": 0,
+            "target": "window:0",
+            "elapsed_ms": 103,
+            "status": "completed",
+            "error": null
+          }
+        ],
+        "deadline_triggered": false,
+        "workflow_status": "partial-or-failed"
+      },
+      "scope": "Unchanged Joplin shipped welcome PNG/reveal through actual menu and bridge; staged source hashes checked. Explicit test argv shim; overall provider cleanup failed. No synthetic app IPC channels.",
+      "baseline_reference": "PR4562 postmerge709b5cbd receipt /tmp/rea-4562-postmerge-identity.json; operation passed, cleanup failed, family observation unverified. Not an equivalent completed-task performance baseline."
+    }
+  },
+  "review_followup": {
+    "source": "4ebd0f60e860daa57a7033c6e77ea7f5f4b8ac97",
+    "findings": [
+      "https://github.com/morluto/rea/pull/4605#discussion_r4299895070",
+      "https://github.com/morluto/rea/pull/4605#discussion_r4299895076"
+    ],
+    "root_cause": "Success-only gap finalization and silent non-callable call/apply forwarding.",
+    "fix": "The once owner finalizes its missing gap in finally, after restoring scope; the callable metadata owner records failed non-callable dispatch reads without changing the returned value.",
+    "additional_cases": 7
+  },
+  "historical_ci": {
+    "head": "45473166e83f61e48c90732fb3f46ee8b4ad5cb7",
+    "run": 38974981554,
+    "failure": "Test shard1 binaryTargetAdmissionCancellation: retains the cleanup failure and its file owner when cancelled admission cannot close",
+    "scope": "Source-only attribution: binary admission test and producing process/application binary paths are unchanged by this Electron PR. No local reproduction or fix claimed.",
+    "job_log_sha256": "b903116753df0f481f32149ec26d25bb200a891649d46255e2f1d58bd97f3724"
+  }
 }

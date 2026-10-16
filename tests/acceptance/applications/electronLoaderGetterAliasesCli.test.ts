@@ -32,6 +32,30 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         "reassigned.cjs",
         `let alias = load; alias = {}; alias.n = ${replacement};`,
       ],
+      [
+        "unused-object-default.cjs",
+        `const { api: alias = load } = { api: {} }; alias.n = ${replacement};`,
+      ],
+      [
+        "unused-array-default.cjs",
+        `const [alias = load] = [{}]; alias.n = ${replacement};`,
+      ],
+      [
+        "used-object-default.cjs",
+        `const { api: alias = load } = {}; alias.n = ${replacement};`,
+      ],
+      [
+        "used-array-default.cjs",
+        `const [alias = load] = []; alias.n = ${replacement};`,
+      ],
+      [
+        "changed-object-default.cjs",
+        `const source = { api: {} }; source.api = undefined; const { api: alias = load } = source; alias.n = ${replacement};`,
+      ],
+      [
+        "changed-array-default.cjs",
+        `const source = [{}]; source[0] = undefined; const [alias = load] = source; alias.n = ${replacement};`,
+      ],
     ] as const;
     for (const [name, mutation] of cases)
       await writeFile(
@@ -44,18 +68,24 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       parsed_javascript_files: cases.length,
       parse_failures: 0,
     });
-    expect(result.summary.browser_windows).toBe(3);
+    expect(result.summary.browser_windows).toBe(5);
     const windows = result.graph.nodes.filter(
       ({ kind }) => kind === "browser-window",
     );
-    expect(windows).toHaveLength(3);
+    expect(windows).toHaveLength(5);
     expect(
       windows
         .flatMap(({ observations }) =>
           observations.map(({ properties }) => properties.source_path),
         )
         .sort(),
-    ).toEqual(["intact.cjs", "reassigned.cjs", "unrelated.cjs"]);
+    ).toEqual([
+      "intact.cjs",
+      "reassigned.cjs",
+      "unrelated.cjs",
+      "unused-array-default.cjs",
+      "unused-object-default.cjs",
+    ]);
     for (const [name] of cases)
       expect(
         result.graph.nodes.flatMap(({ observations }) => observations),

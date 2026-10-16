@@ -414,7 +414,9 @@ through namespace aliases; unrelated member writes do not discard observed API
 identity. The canonical Webpack default-export getter is also invalidated by
 visible writes through lexical aliases of its loader. Alias reads retain their
 captured value across later reassignments; writing an unrelated loader property
-or a different object does not invalidate the getter. These checks follow local
+or a different object does not invalidate the getter. An unused destructuring
+default is excluded when its source is self-contained literal data; defaults
+from mutable container references remain conservative. These checks follow local
 identifier chains and conditional alternatives, not arbitrary returned objects
 or runtime calls. This static check does
 not evaluate arbitrary call side effects or runtime registration. Missing findings

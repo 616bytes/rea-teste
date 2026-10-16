@@ -1,11 +1,45 @@
 import * as t from "@babel/types";
 
-import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import {
+  readExactJavaScriptLiteral,
+  semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
+
+/** Loader proof precedes member effects; only inline data has no stale mutable reads. */
+const literalDataSource = (
+  root: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const pending = [root];
+  for (let cursor = 0; cursor < pending.length; cursor++) {
+    const current = pending[cursor];
+    if (current === undefined) continue;
+    const node = unwrapJavaScriptExpression(current).node;
+    if (readExactJavaScriptLiteral(node).found) continue;
+    if (t.isArrayExpression(node)) {
+      if (state.ambientWrites.covers(["global", "Array", "prototype", null]))
+        return false;
+      for (const element of node.elements)
+        if (element !== null) pending.push(element);
+    } else if (t.isObjectExpression(node)) {
+      for (const property of node.properties) {
+        if (!t.isObjectProperty(property)) return false;
+        const key = semanticStaticPropertyKey(property.key, property.computed);
+        if (key === null || (key === "__proto__" && !property.computed))
+          return false;
+        pending.push(property.value);
+      }
+    } else return false;
+  }
+  return true;
+};
 
 /** Possible loader identities for writes, preserving each lexical alias's capture. */
 export const createBootstrapLoaderAliasLookup = (
@@ -41,7 +75,15 @@ export const createBootstrapLoaderAliasLookup = (
         for (const initializer of [
           ...selected.initializers,
           ...selected.referenceInitializers.filter(
-            (origin) => origin.copyKind === undefined,
+            (origin) =>
+              origin.copyKind === undefined &&
+              !(
+                [
+                  ...(origin.requiredSources ?? []),
+                  ...(origin.fallbackSources ?? []),
+                ].every(({ node }) => literalDataSource(node, state)) &&
+                semanticReferenceSourcesInactive(origin, state)
+              ),
           ),
         ])
           if (initializer.projection.length === 0)

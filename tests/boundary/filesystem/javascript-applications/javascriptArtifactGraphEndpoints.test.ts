@@ -682,6 +682,30 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "invocation-review-0.js",
+    source:
+      'new(class{constructor([x]){}})((function*(){new Socket("wss://example.test/review-latest");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "invocation-review-1.js",
+    source:
+      '(async()=>{try{throw 0;}catch{await 0;}new Socket("wss://example.test/review-latest");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "invocation-review-2.js",
+    source:
+      '(async()=>{const pending=(async()=>{await ready;new Socket("wss://example.test/review-latest");})();await(()=>pending)?.();const Socket=globalThis.WebSocket;})();',
+    present: false,
+  },
+  {
+    file: "invocation-review-3.js",
+    source:
+      '(async()=>{const [{[await 0]:x},next]=(function*(){yield null;new Socket("wss://example.test/review-latest");})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
     file: "iteration-review-0.js",
     source:
       'const holder={};(holder.run=()=>new Socket("wss://example.test/review-latest"))();const Socket=globalThis.WebSocket;',
@@ -906,7 +930,7 @@ it("retains reviewed completion endpoints with filesystem source provenance", as
     const observations = graph.nodes
       .filter((node) => node.kind === "endpoint")
       .flatMap((node) => node.observations);
-    expect(observations).toHaveLength(20);
+    expect(observations).toHaveLength(21);
     for (const { file, present } of completedWriteAndConsumerSources) {
       const matching = observations.filter(
         ({ evidence }) =>

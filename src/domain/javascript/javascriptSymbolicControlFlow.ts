@@ -282,6 +282,21 @@ const syntaxCompletion = (
 export const syntaxMayCompleteNormally = (node: t.Node): boolean =>
   syntaxCompletion(node, 0).normal;
 
+const alwaysThrowingCompletions = new WeakMap<t.Node, boolean>();
+
+/** Every completed exit enters the owning catch, rather than returning or jumping. */
+export const syntaxAlwaysThrows = (node: t.Node): boolean => {
+  const cached = alwaysThrowingCompletions.get(node);
+  if (cached !== undefined) return cached;
+  const completion = syntaxCompletion(node, 0);
+  const result =
+    !completion.normal &&
+    completion.abrupt.length > 0 &&
+    completion.abrupt.every(({ kind }) => kind === "throw");
+  alwaysThrowingCompletions.set(node, result);
+  return result;
+};
+
 /** Only outward jumps can skip a containing phase; nested owners consume theirs. */
 export const syntaxMayExitByJump = (node: t.Node): boolean =>
   syntaxCompletion(node, 0).abrupt.some(

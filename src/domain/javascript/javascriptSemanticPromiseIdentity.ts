@@ -23,7 +23,10 @@ const directLiteralReturn = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): t.Node | undefined => {
-  if (!t.isCallExpression(node) || node.arguments.length !== 0)
+  if (
+    (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) ||
+    node.arguments.length !== 0
+  )
     return undefined;
   let callee = unwrapJavaScriptExpression(node.callee).node;
   for (;;) {

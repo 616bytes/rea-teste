@@ -159,6 +159,8 @@ const patternArrayRest = (
     : { known: false };
 };
 
+type PatternCompletion = "completed" | "suspended" | "blocked";
+
 /** Work completed inside a consumed slot precedes the next generator resume. */
 const patternCompletedSuspension = (
   pattern: t.Node,
@@ -168,64 +170,70 @@ const patternCompletedSuspension = (
   depth = 0,
   target?: t.Node,
   targetPath?: ReadonlySet<t.Node>,
-): boolean => {
-  if (depth >= 128 || pattern === target) return false;
+): PatternCompletion => {
+  if (depth >= 128) return "blocked";
+  if (pattern === target) return "completed";
   if (t.isAssignmentPattern(pattern)) {
     const selectsDefault = undefinedPatternValue(value, state);
-    return (
-      (selectsDefault && suspended(pattern.right)) ||
-      patternCompletedSuspension(
-        pattern.left,
-        selectsDefault ? { known: true, node: pattern.right } : value,
+    return selectsDefault && suspended(pattern.right)
+      ? "suspended"
+      : patternCompletedSuspension(
+          pattern.left,
+          selectsDefault ? { known: true, node: pattern.right } : value,
+          state,
+          suspended,
+          depth + 1,
+          target,
+          targetPath,
+        );
+  }
+  if (t.isObjectPattern(pattern)) {
+    // RequireObjectCoercible precedes property keys and rest operations.
+    // A definite failure also blocks waits in later consumed slots.
+    if (
+      undefinedPatternValue(value, state) ||
+      (value.known &&
+        value.node !== undefined &&
+        t.isNullLiteral(unwrapJavaScriptExpression(value.node).node))
+    )
+      return "blocked";
+    for (const property of pattern.properties) {
+      if (t.isRestElement(property)) continue;
+      if (property.computed && suspended(property.key)) return "suspended";
+      const key = semanticStaticPropertyKey(property.key, property.computed);
+      const completion = patternCompletedSuspension(
+        property.value,
+        key === null
+          ? { known: false }
+          : patternPropertyValue(value, key, state, pattern),
         state,
         suspended,
         depth + 1,
         target,
         targetPath,
-      )
-    );
-  }
-  if (t.isObjectPattern(pattern))
-    for (const property of pattern.properties) {
-      if (t.isRestElement(property)) continue;
-      if (property.computed && suspended(property.key)) return true;
-      const key = semanticStaticPropertyKey(property.key, property.computed);
-      if (
-        patternCompletedSuspension(
-          property.value,
-          key === null
-            ? { known: false }
-            : patternPropertyValue(value, key, state, pattern),
-          state,
-          suspended,
-          depth + 1,
-          target,
-          targetPath,
-        )
-      )
-        return true;
-      if (targetPath?.has(property)) return false;
+      );
+      if (completion !== "completed") return completion;
+      if (targetPath?.has(property)) return "completed";
     }
+  }
   if (t.isArrayPattern(pattern))
     for (const [index, element] of pattern.elements.entries()) {
       if (element === null) continue;
-      if (
-        patternCompletedSuspension(
-          t.isRestElement(element) ? element.argument : element,
-          t.isRestElement(element)
-            ? patternArrayRest(value, index, state)
-            : patternPropertyValue(value, index, state, pattern),
-          state,
-          suspended,
-          depth + 1,
-          target,
-          targetPath,
-        )
-      )
-        return true;
-      if (targetPath?.has(element)) return false;
+      const completion = patternCompletedSuspension(
+        t.isRestElement(element) ? element.argument : element,
+        t.isRestElement(element)
+          ? patternArrayRest(value, index, state)
+          : patternPropertyValue(value, index, state, pattern),
+        state,
+        suspended,
+        depth + 1,
+        target,
+        targetPath,
+      );
+      if (completion !== "completed") return completion;
+      if (targetPath?.has(element)) return "completed";
     }
-  return false;
+  return "completed";
 };
 
 /** Selected defaults and keys before a particular destructuring write share slot semantics. */
@@ -241,14 +249,16 @@ export const semanticPatternSuspendsBeforeTarget = (
   while (current !== undefined) {
     path.add(current);
     if (current === pattern)
-      return patternCompletedSuspension(
-        pattern,
-        { known: true, node: value },
-        state,
-        completedSuspension,
-        0,
-        target,
-        path,
+      return (
+        patternCompletedSuspension(
+          pattern,
+          { known: true, node: value },
+          state,
+          completedSuspension,
+          0,
+          target,
+          path,
+        ) === "suspended"
       );
     current = state.parentsByNode.get(current);
   }
@@ -300,18 +310,18 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
     if (element == null) continue;
     const yielded = facts.yielded[index];
     if (yielded === undefined) break;
-    if (
-      patternCompletedSuspension(
-        element,
-        {
-          known: true,
-          ...(yielded.argument == null ? {} : { node: yielded.argument }),
-          ...(ownedResultEscape === undefined ? {} : { ownedResultEscape }),
-        },
-        state,
-        completedSuspension,
-      )
-    ) {
+    const completion = patternCompletedSuspension(
+      element,
+      {
+        known: true,
+        ...(yielded.argument == null ? {} : { node: yielded.argument }),
+        ...(ownedResultEscape === undefined ? {} : { ownedResultEscape }),
+      },
+      state,
+      completedSuspension,
+    );
+    if (completion === "blocked") break;
+    if (completion === "suspended") {
       cache(index);
       return index < count;
     }

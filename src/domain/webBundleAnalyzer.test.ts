@@ -4315,6 +4315,164 @@ const iterationReviewCases = [
     present: false,
   },
 ] as const;
+const invocationReviewCases = [
+  [
+    "mandatory branching catch wait",
+    "(async()=>{try{if(flag)throw 0;else throw 1;}catch{await 0;}new Socket(URL);})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "catch return skips unreachable wait",
+    "(async()=>{try{throw 0;}catch{return;await 0;}finally{new Socket(URL);}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "catch throw skips unreachable wait",
+    "(async()=>{try{throw 0;}catch{throw 1;await 0;}finally{new Socket(URL);}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing catch binding skips wait",
+    "(async()=>{try{throw null;}catch({}){await 0;}finally{new Socket(URL);}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "nullish object rest blocks later wait",
+    "(async()=>{const [{...x},y=await 0,next]=(function*(){yield null;yield undefined;new Socket(URL);})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "void object pattern key",
+    "(async()=>{const [{[await 0]:x},next]=(function*(){yield void 0;new Socket(URL);})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "wrapped class constructor parameter",
+    "new(0,class{constructor([x]){}})((function*(){new Socket(URL);yield 0;})());const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "optional fresh method parameter",
+    "({run([x]){}})?.run?.((function*(){new Socket(URL);yield 0;})());const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "class constructor parameter",
+    "new(class{constructor([x]){}})((function*(){new Socket(URL);yield 0;})());const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "object method parameter",
+    "({run([x]){}}).run((function*(){new Socket(URL);yield 0;})());const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "class static method parameter",
+    "(class{static run([x]){}}).run((function*(){new Socket(URL);yield 0;})());const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "fresh instance method parameter",
+    "(new(class{run([x]){}})()).run((function*(){new Socket(URL);yield 0;})());const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "method call parameter",
+    "({run([x]){}}).run.call(null,(function*(){new Socket(URL);yield 0;})());const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "method apply parameter",
+    "({run([x]){}}).run.apply(null,[(function*(){new Socket(URL);yield 0;})()]);const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "awaited constructor argument",
+    "(async()=>{new(class{constructor([x],y){}})((function*(){new Socket(URL);yield 0;})(),await ready);})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "non-consuming class parameter metadata",
+    "new(class{constructor(x){}})((function*(){new Socket(URL);yield 0;})());const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "mandatory catch wait",
+    "(async()=>{try{throw 0;}catch{await 0;}new Socket(URL);})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "return bypasses catch wait",
+    "(async()=>{try{return;}catch{await 0;}finally{new Socket(URL);}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "normal path bypasses catch wait",
+    "(async()=>{try{0;}catch{await 0;}new Socket(URL);})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "conditional throw bypasses catch wait",
+    "(async()=>{try{if(flag)throw 0;}catch{await 0;}new Socket(URL);})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "caught throw before finalizer",
+    "(async()=>{try{throw 0;}catch{await 0;}finally{new Socket(URL);}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "optional promise wrapper",
+    "(async()=>{const pending=(async()=>{await ready;new Socket(URL);})();await(()=>pending)?.();const Socket=globalThis.WebSocket;})();",
+    false,
+  ],
+  [
+    "optional function promise wrapper",
+    "(async()=>{const pending=(async()=>{await ready;new Socket(URL);})();await(function(){return pending;})?.();const Socket=globalThis.WebSocket;})();",
+    false,
+  ],
+  [
+    "nullish object pattern key",
+    "(async()=>{const [{[await 0]:x},next]=(function*(){yield null;new Socket(URL);})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "undefined object pattern key",
+    "(async()=>{const [{[await 0]:x},next]=(function*(){yield undefined;new Socket(URL);})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "nullish pattern blocks later slot wait",
+    "(async()=>{const [{},x=await 0,next]=(function*(){yield null;yield undefined;new Socket(URL);})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "defined object pattern key",
+    "(async()=>{const [{[await 0]:x},next]=(function*(){yield {};new Socket(URL);})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "object default selects non-null value",
+    "(async()=>{const [{[await 0]:x}={},next]=(function*(){yield undefined;new Socket(URL);})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+] as const;
+describe("web bundle reviewed invocation and pattern phases", () => {
+  it.each(invocationReviewCases)(
+    "preserves %s in both consumers",
+    (_name, input, present) => {
+      const source = input.replaceAll(
+        "URL",
+        '"wss://example.test/review-invocation"',
+      );
+      const expected = present ? ["wss://example.test/review-invocation"] : [];
+      expect(
+        socketEndpoints(source).map((items) => items.map((item) => item.value)),
+      ).toEqual([expected, expected]);
+    },
+  );
+});
+
 describe("web bundle literal consumers and iteration phases", () => {
   it.each(iterationReviewCases)(
     "preserves $name in both consumers",

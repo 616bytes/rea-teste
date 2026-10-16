@@ -31,6 +31,7 @@ import {
   syntaxEvaluationOperands,
   syntaxEvaluationCannotThrow,
   syntaxMayCompleteNormally,
+  syntaxAlwaysThrows,
 } from "./javascriptSymbolicControlFlow.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
 
@@ -318,8 +319,26 @@ const webSocketStaticInitializers = (member: t.Node): readonly t.Node[] =>
       ? [member.value]
       : [];
 
+/** A definite throw enters a simple catch binding before its handler can run. */
+const webSocketMandatoryHandler = (
+  node: t.TryStatement,
+): t.BlockStatement | undefined =>
+  node.handler != null &&
+  (node.handler.param == null || t.isIdentifier(node.handler.param)) &&
+  syntaxAlwaysThrows(node.block)
+    ? node.handler.body
+    : undefined;
+
 /** Children completed in order if this straight-line node completes normally. */
 const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
+  if (t.isBlockStatement(node)) {
+    const reachable: t.Node[] = [];
+    for (const statement of node.body) {
+      reachable.push(statement);
+      if (!syntaxMayCompleteNormally(statement)) break;
+    }
+    return reachable;
+  }
   const operands =
     syntaxUnconditionalOperands(node) ?? syntaxEvaluationOperands(node);
   if (operands !== undefined) return operands;
@@ -359,6 +378,7 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
       node.handler == null
         ? node.block
         : webSocketEveryExitSuspension(node.block),
+      webSocketMandatoryHandler(node),
       node.finalizer,
     ].filter((item) => item != null);
   if (t.isForOfStatement(node) || t.isForInStatement(node)) return [node.right];
@@ -451,8 +471,15 @@ const webSocketPrecedingSuspension = (
     child === parent.right
   )
     return webSocketCompletedSuspension(parent.left, state);
-  if (t.isTryStatement(parent) && child === parent.finalizer)
-    return webSocketEveryExitSuspension(parent.block);
+  if (t.isTryStatement(parent) && child === parent.finalizer) {
+    const handler = webSocketMandatoryHandler(parent);
+    return (
+      (handler === undefined
+        ? undefined
+        : webSocketEveryExitSuspension(handler)) ??
+      webSocketEveryExitSuspension(parent.block)
+    );
+  }
   if (
     t.isSwitchStatement(parent) &&
     parent.cases.includes(child as t.SwitchCase)
@@ -593,6 +620,47 @@ interface WebSocketParameterResume {
     | t.NewExpression;
 }
 
+/** Select a potential reached callee without imposing completed-write validity. */
+const webSocketSelectedCallee = (raw: t.Node): t.Node => {
+  let node = unwrapJavaScriptExpression(raw).node;
+  for (;;) {
+    const selected = javaScriptExactResultOperand(node, () => true);
+    if (selected === undefined) return node;
+    node = unwrapJavaScriptExpression(selected).node;
+  }
+};
+
+const immediateCallers = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  WeakMap<t.Node, t.Function>
+>();
+
+/** Invert the same literal activation owner used for body execution, once per AST. */
+const webSocketImmediateCaller = (
+  call: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.Function | undefined => {
+  let callers = immediateCallers.get(state);
+  if (callers === undefined) {
+    callers = new WeakMap();
+    immediateCallers.set(state, callers);
+    const pending: t.Node[] = [state.program];
+    while (pending.length > 0) {
+      const node = pending.pop();
+      if (node === undefined) continue;
+      if (t.isFunction(node)) {
+        const invocation =
+          t.isClassMethod(node) && node.kind === "constructor"
+            ? webSocketClassConstruction(node, state)
+            : webSocketImmediateInvocation(node, state);
+        if (invocation !== undefined) callers.set(invocation, node);
+      }
+      pending.push(...childNodes(node));
+    }
+  }
+  return callers.get(call);
+};
+
 /** Match a known literal invocation's positional argument, never an unknown spread offset. */
 const webSocketParameterResume = (
   result: t.Node,
@@ -607,17 +675,30 @@ const webSocketParameterResume = (
     !t.isNewExpression(call)
   )
     return undefined;
-  let callee = unwrapJavaScriptExpression(call.callee).node;
-  const select = (): void => {
-    for (;;) {
-      const next = javaScriptExactResultOperand(callee, () => true);
-      if (next === undefined) break;
-      callee = unwrapJavaScriptExpression(next).node;
-    }
-  };
-  select();
+  let callee = webSocketSelectedCallee(call.callee);
+  const owner = webSocketImmediateCaller(call, state);
+  if (owner === undefined) return undefined;
+  const classBody = state.parentsByNode.get(owner);
+  const literalClass = t.isClassBody(classBody)
+    ? state.parentsByNode.get(classBody)
+    : undefined;
+  const value =
+    t.isClassMethod(owner) &&
+    owner.kind === "constructor" &&
+    t.isClassExpression(literalClass)
+      ? webSocketOuterExpression(literalClass, state)
+      : webSocketOuterExpression(owner, state);
+  const selection = webSocketFreshMethodSelection(owner, value, state);
+  const callable = webSocketSelectedCallee(
+    selection === undefined
+      ? value
+      : webSocketOuterExpression(selection, state),
+  );
   let offset = 0;
-  if (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) {
+  if (
+    callee !== callable &&
+    (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee))
+  ) {
     const method = semanticStaticPropertyName(callee.property, callee.computed);
     if (method !== "call" && method !== "apply") return undefined;
     if (
@@ -627,11 +708,11 @@ const webSocketParameterResume = (
     )
       return undefined;
     offset = method === "call" ? 1 : 0;
-    callee = unwrapJavaScriptExpression(callee.object).node;
-    select();
+    callee = webSocketSelectedCallee(callee.object);
   } else if (array !== undefined) return undefined;
-  if (!t.isFunctionExpression(callee) && !t.isArrowFunctionExpression(callee))
-    return undefined;
+  // Bound argument lists need a separate positional proof; the activation alone
+  // does not say which parameter receives this generator.
+  if (callee !== callable) return undefined;
   const arguments_ = array?.elements ?? call.arguments;
   const index = arguments_.indexOf(result as t.Expression);
   if (
@@ -639,7 +720,7 @@ const webSocketParameterResume = (
     arguments_.slice(0, index).some((argument) => t.isSpreadElement(argument))
   )
     return undefined;
-  const parameter = runtimeFunctionParameters(callee)[index - offset];
+  const parameter = runtimeFunctionParameters(owner)[index - offset];
   const pattern = t.isAssignmentPattern(parameter) ? parameter.left : parameter;
   return t.isArrayPattern(pattern) && pattern.elements.length > 0
     ? { parameter: pattern, invocation: call }

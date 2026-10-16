@@ -117,58 +117,161 @@ it("retains Kotlin source identity and language across the inventory projection"
   expect(parsed.relationships).toEqual([]);
 });
 
-it("uses exact or unambiguous manifest identities when a package has no index", () => {
-  // These canonically equivalent names cannot coexist on every filesystem.
-  const files = new Map([
+it("resolves runtime require package mains without an index and before typed indexes", () => {
+  const files = [
+    ["main.cjs", 'require("./pkg");\nrequire("./dep");\n'],
     [
-      "main.cjs",
-      'require("./café"); require("./résumé"); require("./réservé");',
+      "main.ts",
+      'import dep = require("./typed");\n' +
+        'require("./typed");\n' +
+        'import data = require("./json-package");\n' +
+        'require("./emitted.js");\n',
     ],
-    ["cafe\u0301/package.json", '{"main":"entry.js"}'],
-    ["cafe\u0301/entry.js", "module.exports = 1;"],
-    ["résumé/package.json", '{"main":"exact.js"}'],
-    ["résumé/exact.js", "module.exports = 2;"],
-    ["re\u0301sume\u0301/package.json", '{"main":"equivalent.js"}'],
-    ["re\u0301sume\u0301/equivalent.js", "module.exports = 3;"],
-    ["re\u0301servé/package.json", '{"main":"entry.js"}'],
-    ["réserve\u0301/package.json", '{"main":"other.js"}'],
-    ["réserve\u0301/other.js", "module.exports = 5;"],
-    ["re\u0301servé/entry.js", "module.exports = 4;"],
-  ]);
+    ["pkg/package.json", '{"main":"actual.js"}\n'],
+    ["pkg/actual.js", 'module.exports = "package main";\n'],
+    ["dep.js", 'module.exports = "file";\n'],
+    ["dep/index.ts", 'export const value = "index";\n'],
+    ["typed.js", 'module.exports = "runtime file";\n'],
+    ["typed/index.ts", 'export const value = "source index";\n'],
+    ["json-package/package.json", '{"main":"data"}\n'],
+    ["json-package/data.json", '{"value":"package main"}\n'],
+    ["json-package/index.js", 'module.exports = "fallback index";\n'],
+    ["emitted.ts", 'export const value = "source counterpart";\n'],
+  ] as const;
   const read: ReferenceSourceRead = {
     root: "/selected/source",
-    entries: [...files].map(([path, content]) => ({
+    entries: files.map(([path, content]) => ({
       status: "read",
       kind: "file",
       path,
       bytes: Buffer.from(content),
       size: Buffer.byteLength(content),
     })),
-    bytesRead: [...files.values()].reduce(
-      (sum, content) => sum + Buffer.byteLength(content),
+    bytesRead: files.reduce(
+      (sum, [, content]) => sum + Buffer.byteLength(content),
       0,
     ),
     limitations: [],
   };
-  const parsed = parseReferenceSourceEntries(read, new Set(files.keys()));
+
+  const parsed = parseReferenceSourceEntries(
+    read,
+    new Set(files.map(([path]) => path)),
+  );
+
+  expect(parsed.relationships).toContainEqual({
+    from_path: "main.cjs",
+    to: "pkg/actual.js",
+    kind: "requires",
+    resolution: "internal",
+    parse_state: "parsed",
+  });
+  expect(parsed.relationships).toContainEqual({
+    from_path: "main.cjs",
+    to: "dep.js",
+    kind: "requires",
+    resolution: "internal",
+    parse_state: "parsed",
+  });
+  expect(parsed.relationships).toContainEqual({
+    from_path: "main.ts",
+    to: "typed/index.ts",
+    kind: "requires",
+    resolution: "internal",
+    parse_state: "parsed",
+  });
+  expect(parsed.relationships).toContainEqual({
+    from_path: "main.ts",
+    to: "typed.js",
+    kind: "requires",
+    resolution: "internal",
+    parse_state: "parsed",
+  });
+  expect(parsed.relationships).toContainEqual({
+    from_path: "main.ts",
+    to: "json-package/data.json",
+    kind: "requires",
+    resolution: "internal",
+    parse_state: "parsed",
+  });
+  expect(parsed.relationships).toContainEqual({
+    from_path: "main.ts",
+    to: "emitted.ts",
+    kind: "requires",
+    resolution: "internal",
+    parse_state: "parsed",
+  });
+});
+
+it("matches package manifests by exact or unique canonical directory identity", () => {
+  const composed = "caf\u00e9";
+  const decomposed = "cafe\u0301";
+  const composedTwin = "r\u00e9sum\u00e9";
+  const decomposedTwin = "re\u0301sume\u0301";
+  const ambiguous = "r\u00e9serv\u00e9";
+  const ambiguousFirst = "re\u0301serv\u00e9";
+  const ambiguousSecond = "r\u00e9serve\u0301";
+  const files = [
+    [
+      "main.cjs",
+      [composed, composedTwin, decomposedTwin, ambiguous]
+        .map((name) => `require(${JSON.stringify(`./${name}`)});`)
+        .join("\n"),
+    ],
+    [`${decomposed}/package.json`, '{"main":"unique.js"}\n'],
+    [`${decomposed}/unique.js`, 'module.exports = "unique";\n'],
+    [`${composed}/unique.js`, 'module.exports = "unrelated exact spelling";\n'],
+    [`${composedTwin}/package.json`, '{"main":"exact-composed.js"}\n'],
+    [`${composedTwin}/exact-composed.js`, 'module.exports = "composed";\n'],
+    [`${decomposedTwin}/package.json`, '{"main":"exact-decomposed.js"}\n'],
+    [
+      `${decomposedTwin}/exact-decomposed.js`,
+      'module.exports = "decomposed";\n',
+    ],
+    [`${ambiguousFirst}/package.json`, '{"main":"first.js"}\n'],
+    [`${ambiguousFirst}/first.js`, 'module.exports = "first";\n'],
+    [`${ambiguousSecond}/package.json`, '{"main":"second.js"}\n'],
+    [`${ambiguousSecond}/second.js`, 'module.exports = "second";\n'],
+  ] as const;
+  const read: ReferenceSourceRead = {
+    root: "/selected/source",
+    entries: files.map(([path, content]) => ({
+      status: "read",
+      kind: "file",
+      path,
+      bytes: Buffer.from(content),
+      size: Buffer.byteLength(content),
+    })),
+    bytesRead: files.reduce(
+      (sum, [, content]) => sum + Buffer.byteLength(content),
+      0,
+    ),
+    limitations: [],
+  };
+
+  const parsed = parseReferenceSourceEntries(
+    read,
+    new Set(files.map(([path]) => path)),
+  );
+
   expect(
     parsed.relationships.map(({ to, resolution }) => ({ to, resolution })),
   ).toEqual([
-    { to: "cafe\u0301/entry.js", resolution: "internal" },
-    { to: "résumé/exact.js", resolution: "internal" },
-    { to: "réservé", resolution: "unresolved" },
+    { to: `${decomposed}/unique.js`, resolution: "internal" },
+    { to: `${composedTwin}/exact-composed.js`, resolution: "internal" },
+    { to: `${decomposedTwin}/exact-decomposed.js`, resolution: "internal" },
+    { to: ambiguous, resolution: "unresolved" },
   ]);
-  expect(parsed.parseFailures).toEqual([]);
 });
 
 it.each([
-  ["exact unreadable", "résumé", "re\u0301sume\u0301"],
-  ["ambiguous observed", "re\u0301sumé", "résume\u0301"],
+  ["exact unreadable", "r\u00e9sum\u00e9", "re\u0301sume\u0301"],
+  ["ambiguous observed", "re\u0301sum\u00e9", "r\u00e9sume\u0301"],
 ] as const)(
   "keeps an %s manifest identity unknown",
   (_name, unreadable, readable) => {
     const files = new Map([
-      ["main.cjs", 'require("./résumé");'],
+      ["main.cjs", 'require("./r\u00e9sum\u00e9");'],
       [`${readable}/package.json`, '{"main":"entry.js"}'],
       [`${readable}/entry.js`, "module.exports = 1;"],
     ]);
@@ -200,7 +303,7 @@ it.each([
     expect(parsed.relationships).toEqual([
       {
         from_path: "main.cjs",
-        to: "résumé",
+        to: "r\u00e9sum\u00e9",
         kind: "requires",
         resolution: "unresolved",
         parse_state: "parsed",

@@ -1,7 +1,7 @@
 import * as t from "@babel/types";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import {
-  semanticBuiltinDataMethod,
+  semanticBuiltinDataProperty,
   semanticBuiltinSlotChanged,
 } from "./javascriptSemanticDataEffectHelpers.js";
 
@@ -888,7 +888,6 @@ export function* collectSemanticMemberMutationsSteps(
         if (
           invocation?.kind === "known" &&
           invocation.path.join(".") === "intrinsic.Reflect.set" &&
-          !state.ambientWrites.covers(["global", "Reflect", "set"]) &&
           args !== undefined &&
           args.length >= 3 &&
           !args.some(t.isSpreadElement)
@@ -911,10 +910,10 @@ export function* collectSemanticMemberMutationsSteps(
             path[0] !== null &&
             semanticBuiltinNamespace(origin) &&
             !semanticBuiltinSlotChanged(origin, path[0]!, node, state);
-          const dataMethod =
+          const dataProperty =
             builtinUnchanged &&
             origin !== undefined &&
-            semanticBuiltinDataMethod(origin, path[0]!);
+            semanticBuiltinDataProperty(origin, path[0]!);
           const targetInitializers =
             binding === undefined
               ? [{ node: target, projection: [] }]
@@ -948,12 +947,12 @@ export function* collectSemanticMemberMutationsSteps(
             markEscaped(target, node);
             if (args[3] !== undefined) markEscaped(args[3], node);
           } else {
-            if (args[3] === undefined || !dataMethod)
+            if (args[3] === undefined || !dataProperty)
               markValue(target, path, new Set(), "write", node);
             if (args[3] !== undefined)
               markValue(args[3], path, new Set(), "write", node);
             if (
-              !dataMethod &&
+              !dataProperty &&
               (!builtinUnchanged ||
                 state.ambientWrites.covers([
                   "global",

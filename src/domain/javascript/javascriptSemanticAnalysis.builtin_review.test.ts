@@ -2,6 +2,80 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
 it.each([
+  "const {id}=module; Object.assign=custom; Object.assign({},id);",
+  "const {filename:name}=module; const alias=name; Object.assign=custom; Object.assign({},alias);",
+  "const {id}=module; Reflect.set=custom; Reflect.set({},'x',id);",
+  "Reflect.set=custom; Reflect.set({},'x',1);",
+  "Reflect.set=custom; Reflect.set.call(null,{},'x',1);",
+  "Reflect.set=custom; Reflect.set.apply(null,[{},'x',1]);",
+  "Reflect.set=custom; const set=Reflect.set.bind(null,{},'x'); set(1);",
+  "const r=Object.create(null); Object.create=custom; Reflect.set(module,'require',replacement,r);",
+])(
+  "keeps module-free opaque arguments and prior allocations separate: %s",
+  (setup) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `${setup} require('fs').readFileSync('kept');`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(["kept"]);
+  },
+);
+
+it.each([
+  "module.id=module; const {id}=module; Object.assign=custom; Object.assign({},id);",
+  "Object.assign=custom; const box={id:'text',owner:module}; const {id,owner}=box; Object.assign({},owner,id);",
+  "Object.assign=custom; const {owner}={owner:module}; Object.assign({},owner);",
+  "Object.assign=custom; const [owner]=[module]; Object.assign({},owner);",
+  "Object.assign=custom; const {box:{owner}}={box:{owner:module}}; Object.assign({},owner);",
+  "Reflect.set=custom; Reflect.set(module,'require',replacement);",
+  "Reflect.set=custom; Reflect.set({},'x',{owner:module});",
+  "Reflect.set=custom; const set=Reflect.set.bind(null,module); set('require',replacement);",
+  "Object.create=custom; const r=Object.create(null); Reflect.set(module,'require',replacement,r);",
+])(
+  "retains wrapper exposure through projected and opaque arguments: %s",
+  (setup) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `${setup} require('fs').readFileSync('wrong');`,
+      ).configurationOperations,
+    ).toEqual([]);
+  },
+);
+
+it.each([
+  "const fs=require('fs'); Reflect.set(fs,'readFileSync',custom,{}); fs.readFileSync('kept'); Reflect.set=other;",
+  "const fs=require('fs'); Reflect.set(fs,'readFileSync',custom,{}); Reflect.set=other; fs.readFileSync('kept');",
+])("orders the Reflect intrinsic proof at invocation: %s", (source) => {
+  expect(
+    analyzeJavaScriptSemantics(source).configurationOperations.map(
+      ({ key }) => key,
+    ),
+  ).toEqual(["kept"]);
+});
+
+it.each([
+  "const proc=require('process'); Reflect.set(proc,'env',{},{}); const mode=proc.env.MODE;",
+  "const proc=require('node:process'); Reflect.set(proc,'argv',[],{}); const mode=proc.env.MODE;",
+])("honors explicit receivers for native process data slots: %s", (source) => {
+  expect(
+    analyzeJavaScriptSemantics(source).configurationOperations.map(
+      ({ key }) => key,
+    ),
+  ).toEqual(["MODE"]);
+});
+
+it.each([
+  "Reflect.set(proc,'env',{});",
+  "Object.defineProperty(proc,'env',{set(value){this.proc.env={};}}); Reflect.set(proc,'env',{}, {proc});",
+])("retains changed process descriptor effects: %s", (setup) => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `const proc=require('process'); ${setup} const mode=proc.env.MODE;`,
+    ).configurationOperations,
+  ).toEqual([]);
+});
+
+it.each([
   "const {promises:fsp}=require('fs'); patch(require('fs/promises'));",
   "const fsp=require('fs').promises; patch(require('fs/promises'));",
   "const {promises:fsp}=require('fs'); patch(require('fs'));",

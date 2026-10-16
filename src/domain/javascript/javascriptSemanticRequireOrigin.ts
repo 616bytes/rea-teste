@@ -17,7 +17,12 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
+import {
+  semanticPropertyPathKeyMatches,
+  SemanticPropertyPathCoverage,
+  type JavaScriptSemanticPropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
+import { semanticObjectPropertyReferences } from "./javascriptSemanticObjectReferences.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticBindingAtRead,
@@ -354,13 +359,27 @@ const writesModuleRequire = (
       return key === null || key === "require";
     });
   const exposesModule = (nodes: readonly t.Node[]): boolean => {
-    const pending = [...nodes];
-    const visited = new Set<t.Node>();
+    const pending: { node: t.Node; path: JavaScriptSemanticPropertyPath }[] =
+      nodes.map((node) => ({ node, path: [] }));
+    const visited = new WeakMap<t.Node, SemanticPropertyPathCoverage>();
     while (pending.length > 0) {
-      const value = unwrapJavaScriptExpression(pending.pop()!).node;
-      if (visited.has(value)) continue;
-      visited.add(value);
-      if (semanticCommonJsModuleObjectAt(value, state)) return true;
+      const { node: source, path } = pending.pop()!;
+      const value = unwrapJavaScriptExpression(source).node;
+      const coverage = visited.get(value) ?? new SemanticPropertyPathCoverage();
+      if (coverage.covers(path)) continue;
+      coverage.retain(path);
+      visited.set(value, coverage);
+      if (semanticCommonJsModuleObjectAt(value, state)) {
+        if (path.length === 0) return true;
+        const first = path[0];
+        if (
+          typeof first === "string" &&
+          ["id", "filename", "loaded"].includes(first) &&
+          !state.ambientWrites.covers(["commonjs-module", first])
+        )
+          continue;
+        return true;
+      }
       if (t.isIdentifier(value)) {
         const binding = resolveSemanticBindingState(state, value, value.name);
         if (binding !== undefined)
@@ -369,21 +388,50 @@ const writesModuleRequire = (
             value,
             state.parentsByNode,
           ).binding.initializers)
-            pending.push(initializer.node);
-      } else if (t.isSpreadElement(value)) pending.push(value.argument);
-      else if (t.isArrayExpression(value))
-        pending.push(
-          ...value.elements.filter(
-            (element): element is t.Expression | t.SpreadElement =>
-              element !== null,
-          ),
-        );
-      else if (t.isObjectExpression(value)) {
-        for (const property of value.properties)
-          if (t.isObjectProperty(property)) pending.push(property.value);
-          else if (t.isSpreadElement(property)) pending.push(property.argument);
+            pending.push({
+              node: initializer.node,
+              path: [
+                ...initializer.projection.map((key) =>
+                  key === null ? null : String(key),
+                ),
+                ...path,
+              ],
+            });
+      } else if (t.isSpreadElement(value))
+        pending.push({ node: value.argument, path });
+      else if (t.isArrayExpression(value)) {
+        const [key, ...remaining] = path;
+        const shifted = value.elements.some(t.isSpreadElement);
+        for (let index = 0; index < value.elements.length; index++) {
+          const element = value.elements[index];
+          if (
+            element !== null &&
+            element !== undefined &&
+            (key === undefined ||
+              shifted ||
+              semanticPropertyPathKeyMatches(key, String(index)) ||
+              t.isSpreadElement(element))
+          )
+            pending.push({
+              node: element,
+              path: key === undefined ? [] : remaining,
+            });
+        }
+      } else if (t.isObjectExpression(value)) {
+        pending.push(...semanticObjectPropertyReferences(value, path, state));
+      } else if (
+        t.isMemberExpression(value) ||
+        t.isOptionalMemberExpression(value)
+      ) {
+        pending.push({
+          node: value.object,
+          path: [
+            semanticStaticPropertyKey(value.property, value.computed),
+            ...path,
+          ],
+        });
       } else if (t.isCallExpression(value) || t.isOptionalCallExpression(value))
-        pending.push(...value.arguments);
+        pending.push(...value.arguments.map((node) => ({ node, path: [] })));
     }
     return false;
   };
@@ -429,10 +477,12 @@ const writesModuleRequire = (
         const invocation = interop.intrinsicInvocation(node);
         if (
           invocation?.kind === "opaque" &&
-          invocation.path[1] === "Object" &&
-          ["assign", "defineProperty", "defineProperties"].includes(
-            invocation.path[2] ?? "",
-          ) &&
+          ((invocation.path[1] === "Object" &&
+            ["assign", "defineProperty", "defineProperties"].includes(
+              invocation.path[2] ?? "",
+            )) ||
+            (invocation.path[1] === "Reflect" &&
+              invocation.path[2] === "set")) &&
           invocation.path.at(-1) !== "bind"
         ) {
           // An overwritten callable does not retain native mutator argument

@@ -414,8 +414,7 @@ export const createSemanticModuleInterop = (
         );
         if (
           invocation?.kind === "known" &&
-          invocation.path.join(".") === "intrinsic.Object.create" &&
-          !state.ambientWrites.covers(["global", "Object", "create"])
+          invocation.path.join(".") === "intrinsic.Object.create"
         )
           return true;
       }

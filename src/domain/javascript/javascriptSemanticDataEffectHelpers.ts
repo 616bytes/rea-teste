@@ -957,8 +957,20 @@ const computeOriginalBuiltinReceiver = (
   });
 };
 
-/** Known native method slots are data properties, not setter dispatch. */
-export const semanticBuiltinDataMethod = (
+/** Known native data slots do not dispatch inherited setters. */
+export const semanticBuiltinDataProperty = (
+  source: JavaScriptModuleOrigin,
+  method: string,
+): boolean => {
+  const origin = builtinNamespaceOrigin(source);
+  return (
+    origin.importedPath.length === 0 &&
+    ((BUILTIN_RECEIVER_METHODS[origin.specifier]?.has(method) ?? false) ||
+      (origin.specifier === "process" && ["env", "argv"].includes(method)))
+  );
+};
+
+const semanticBuiltinDataMethod = (
   source: JavaScriptModuleOrigin,
   method: string,
 ): boolean => {

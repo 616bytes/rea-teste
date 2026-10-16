@@ -29,6 +29,11 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
     "const fs=require('fs'); Reflect.set(Object.create(null),'hook',1,{fs}); fs.readFileSync('null-prototype-kept.json');",
     "const fs=require('fs'); delete fs.statSync; Object.defineProperty(Object.prototype,'statSync',{set(){this.readFileSync=custom;}}); Reflect.set(fs,'statSync',custom); fs.readFileSync('wrong-removed-descriptor');",
     "let fs=require('fs'); fs.readFileSync('outer-before-nested.json'); {fs={};}",
+    "const {id}=module; Object.assign=custom; Object.assign({},id); require('fs').readFileSync('projected-scalar.json');",
+    "Reflect.set=custom; Reflect.set({},'x',1); require('fs').readFileSync('opaque-unrelated.json');",
+    "const r=Object.create(null); Object.create=custom; Reflect.set(module,'require',replacement,r); require('fs').readFileSync('allocated-before.json');",
+    "const fs=require('fs'); Reflect.set(fs,'readFileSync',custom,{}); fs.readFileSync('reflect-before.json'); Reflect.set=other;",
+    "const proc=require('process'); Reflect.set(proc,'env',{},{}); const mode=proc.env.SEPARATE_MODE;",
   ];
   for (const [index, source] of sources.entries())
     await writeFile(join(root, `receiver-review-${index}.ts`), source);
@@ -158,6 +163,8 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
       .sort(),
   ).toEqual([
     "REVIEW_MODE",
+    "SEPARATE_MODE",
+    "allocated-before.json",
     "before-write.json",
     "before.json",
     "direct.json",
@@ -169,10 +176,13 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "nested-kept.json",
     "nested-timeline.json",
     "null-prototype-kept.json",
+    "opaque-unrelated.json",
     "ordered-kept.json",
     "outer-before-nested.json",
+    "projected-scalar.json",
     "receiver-data.json",
     "receiver-primitive.json",
+    "reflect-before.json",
     "reflect-independent-kept.json",
     "reflect-receiver-kept.json",
     "replacement-kept.json",

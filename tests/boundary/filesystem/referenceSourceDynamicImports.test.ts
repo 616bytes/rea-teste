@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -345,3 +345,64 @@ it.skipIf(process.platform === "win32")(
       });
   },
 );
+
+it("resolves ESM dot segments before collapsing repeated URL separators", async () => {
+  const root = await createTestTempDirectory("rea-reference-esm-segments-");
+  await Promise.all(
+    ["assets", "double"].map((path) => mkdir(join(root, path))),
+  );
+  await Promise.all([
+    writeFile(
+      join(root, "main.mjs"),
+      [
+        'import "./assets//%2e%2e/app.mjs";',
+        'import "./missing//%2e%2e/ghost.mjs";',
+        'import "./double//direct.mjs";',
+      ].join("\n"),
+    ),
+    writeFile(join(root, "main.cjs"), 'require("./assets//../app.mjs");\n'),
+    ...["app.mjs", "assets/app.mjs", "ghost.mjs", "double/direct.mjs"].map(
+      (path) => writeFile(join(root, path), "export {};\n"),
+    ),
+  ]);
+
+  const result = await importReferenceSource({
+    root,
+    caller: "reference-esm-segments-test",
+    policy: { secretPatterns: [] },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.parse_failures).toEqual([]);
+  expect(result.value.relationships).toHaveLength(4);
+  for (const relationship of [
+    {
+      from_path: "main.cjs",
+      to: "app.mjs",
+      kind: "requires",
+      resolution: "internal",
+      parse_state: "parsed",
+    },
+    {
+      from_path: "main.mjs",
+      to: "assets/app.mjs",
+      kind: "imports",
+      resolution: "internal",
+      parse_state: "parsed",
+    },
+    {
+      from_path: "main.mjs",
+      to: "missing/ghost.mjs",
+      kind: "imports",
+      resolution: "unresolved",
+      parse_state: "parsed",
+    },
+    {
+      from_path: "main.mjs",
+      to: "./double//direct.mjs",
+      kind: "imports",
+      resolution: "unresolved",
+      parse_state: "parsed",
+    },
+  ])
+    expect(result.value.relationships).toContainEqual(relationship);
+});

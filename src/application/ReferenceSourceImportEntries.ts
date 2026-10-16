@@ -3,6 +3,7 @@ import { posix } from "node:path";
 
 import { logicalPathEscapesRoot } from "../domain/artifactIdentity.js";
 import { stripQueryAndFragment } from "../domain/artifactPathSyntax.js";
+import { urlRelativePath } from "../domain/urlPathSegments.js";
 import {
   createReferenceSourcePathLookup,
   isPortableAbsoluteReferenceTarget,
@@ -290,15 +291,14 @@ const resolveInternalSpecifier = (
     return { to: specifier, resolution: "unresolved" };
   // TypeScript resolves source specifiers literally, even when emitted JS
   // would later use URL semantics for the same text.
-  const pathname =
-    mode === "source-import" && /\.(?:c|m)?js$/u.test(fromPath)
-      ? decodeImportPathname(specifier)
-      : specifier;
+  const esmImport = mode === "source-import" && /\.(?:c|m)?js$/u.test(fromPath);
+  const pathname = esmImport ? decodeImportPathname(specifier) : specifier;
   if (pathname === undefined)
     return { to: specifier, resolution: "unresolved" };
-  const normalized = posix.normalize(
-    posix.join(posix.dirname(fromPath), pathname),
-  );
+  const normalized = esmImport
+    ? urlRelativePath(posix.dirname(fromPath), pathname)
+    : posix.normalize(posix.join(posix.dirname(fromPath), pathname));
+  if (normalized === null) return { to: specifier, resolution: "unresolved" };
   if (logicalPathEscapesRoot(normalized))
     return { to: normalized, resolution: "unresolved" };
   // Preserve directory intent before normalization removes terminal dot segments.

@@ -852,30 +852,37 @@ portableTar(
   },
 );
 
-linux(
-  "retains and retries a launcher hash descriptor after close failure",
-  async () => {
-    const f = await fixture();
-    admitFixturePublisher(f.fingerprint);
-    const closeCause = new Error("Fixture hash descriptor close unavailable");
-    const close = vi
-      .spyOn(OwnedFileHandle.prototype, "close")
-      .mockImplementationOnce(async () => {
-        throw closeCause;
-      });
-    try {
-      expect(await f.publisher.inspectLauncher(f.launcher)).toMatchObject({
-        ok: false,
-        error: { reason: "verification_unavailable" },
-      });
-      await f.publisher.close();
-      expect(close).toHaveBeenCalledTimes(2);
-    } finally {
-      close.mockRestore();
-      await f.publisher.close();
-    }
-  },
-);
+it("retries a launcher hash descriptor after a transient close failure", async () => {
+  const launcher = join(
+    await createTestTempDirectory("rea-linux-publisher-hash-"),
+    "Hopper",
+  );
+  const bytes = Buffer.from("fixture launcher bytes");
+  await writeFile(launcher, bytes);
+  const publisher = new LinuxHopperPublisher({}, async () => undefined);
+  const closeCause = new Error("Fixture hash descriptor close unavailable");
+  const owners: OwnedFileHandle[] = [];
+  const originalClose = OwnedFileHandle.prototype.close;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      owners.push(this);
+      if (owners.length === 1) throw closeCause;
+      return originalClose.call(this);
+    });
+  try {
+    await expect(publisher.hashLauncher(launcher)).resolves.toBe(sha256(bytes));
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(owners).toHaveLength(2);
+    expect(owners[1]).toBe(owners[0]);
+    expect(owners[0]?.handle.fd).toBe(-1);
+    await publisher.close();
+    expect(close).toHaveBeenCalledTimes(2);
+  } finally {
+    close.mockRestore();
+    await publisher.close();
+  }
+});
 
 portableTar(
   "lets overlapping verification and descriptor cleanup settle without re-entering publisher admission",

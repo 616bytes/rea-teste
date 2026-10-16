@@ -85,6 +85,7 @@ import {
   GHIDRA_PROVIDER_IDENTITY,
   healthLimitations,
   loopbackTransportLimitations,
+  LOOPBACK_TRANSPORT_EXTENSION_REASON,
   windowsP0Limitations,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
@@ -92,7 +93,10 @@ import {
   GHIDRA_STARTUP_DEADLINE_ELAPSED,
   type GhidraSessionError,
 } from "./GhidraSessionError.js";
-import type { GhidraTransportKind } from "./GhidraTransport.js";
+import {
+  resolveGhidraTransport,
+  transportAdmitsAnalysisExtensions,
+} from "./GhidraTransport.js";
 import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
 import { ghidraExtensionFailure } from "./extensions/GhidraExtensionFailures.js";
 import {
@@ -134,20 +138,12 @@ export const createGhidraProviderClient = (input: {
 }): Result<AnalysisClient, AnalysisError> => {
   const { config, logger, clientFactory, context, installation } = input;
   const { target, profile } = input.admission;
-  // Node path-based IPC cannot reach a Java AF_UNIX listener on Windows, so
-  // the selection is refused before any installation or native readiness check.
-  if (
-    installation.platform === "win32" &&
-    config.ghidraBridgeTransport === "unix-socket"
-  )
-    return err(
-      new ProviderAdapterError("ghidra", "open_binary", {
-        diagnostics: {
-          reason:
-            "Windows Ghidra P0 serves only the authenticated-loopback-tcp bridge transport; unset REA_GHIDRA_BRIDGE_TRANSPORT or select authenticated-loopback-tcp.",
-        },
-      }),
-    );
+  // Windows P0 has only the loopback transport; POSIX keeps the Unix socket
+  // unless the environment selects loopback for hosts that refuse AF_UNIX.
+  const transport = resolveGhidraTransport(
+    installation.platform,
+    config.ghidraBridgeTransport,
+  );
   const prerequisites = ghidraClientPrerequisites(profile, installation);
   if (!prerequisites.ok) return err(prerequisites.error);
   const committedProfile = prerequisites.value.profile;
@@ -191,7 +187,8 @@ export const createGhidraProviderClient = (input: {
   if (
     !extensionProfile.success ||
     (config.ghidraNativeAotJar !== undefined &&
-      extensionProfile.data.length === 0)
+      extensionProfile.data.length === 0 &&
+      transportAdmitsAnalysisExtensions(transport))
   )
     return err(
       new ProviderAdapterError("ghidra", "open_binary", {
@@ -287,6 +284,7 @@ export const createGhidraProviderClient = (input: {
     config,
     target,
     installation.platform,
+    transport,
   );
   if (invalidProfile !== null)
     return err(
@@ -332,12 +330,6 @@ export const createGhidraProviderClient = (input: {
     ...ghidraMipsSharedLimitations(target),
     ...ghidraRiscvLimitations(target),
   ];
-  // Windows P0 has only the loopback transport; POSIX keeps the Unix socket
-  // unless the environment selects loopback for hosts that refuse AF_UNIX.
-  const transport: GhidraTransportKind =
-    installation.platform === "win32"
-      ? "authenticated-loopback-tcp"
-      : (config.ghidraBridgeTransport ?? "unix-socket");
   const providerLimitations = [
     ...(installation.platform === "win32"
       ? windowsP0Limitations
@@ -349,6 +341,12 @@ export const createGhidraProviderClient = (input: {
     ...(installation.platform !== "win32" &&
     transport === "authenticated-loopback-tcp"
       ? loopbackTransportLimitations
+      : []),
+    // A configured extension the loopback transport cannot load is withheld at
+    // profile resolution; name that here so the omission is explicit.
+    ...(config.ghidraNativeAotJar !== undefined &&
+    !transportAdmitsAnalysisExtensions(transport)
+      ? [LOOPBACK_TRANSPORT_EXTENSION_REASON]
       : []),
   ];
   if (input.signal.aborted)
@@ -810,6 +808,7 @@ export const admitGhidraClient = (
   target: BinaryTarget,
   profile: AnalysisProfileCommitment | undefined,
   platform: NodeJS.Platform,
+  config: AppConfig,
 ): Result<GhidraClientAdmission, AnalysisError> => {
   if (target.kind !== "executable")
     return err(
@@ -818,6 +817,17 @@ export const admitGhidraClient = (
         "health",
         `Ghidra cannot import ${target.kind} targets through this adapter.`,
       ),
+    );
+  // Node path-based IPC cannot reach a Java AF_UNIX listener on Windows, so the
+  // selection is refused before any installation or native readiness check.
+  if (platform === "win32" && config.ghidraBridgeTransport === "unix-socket")
+    return err(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: {
+          reason:
+            "Windows Ghidra P0 serves only the authenticated-loopback-tcp bridge transport; unset REA_GHIDRA_BRIDGE_TRANSPORT or select authenticated-loopback-tcp.",
+        },
+      }),
     );
   if (platform === "win32") {
     const readiness = inspectWindowsNativeReadiness(platform);

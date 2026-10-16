@@ -104,6 +104,16 @@ it("bounds long callback aliases without invoking the shared callable resolver",
 it.each([
   ["fixture.cjs", "const argv=[];const done=()=>{};", ["inherit", "default"]],
   ["fixture.cts", "const argv=[];const done=()=>{};", ["inherit", "default"]],
+  [
+    "fixture.cjs",
+    "var argv=[];{function argv(){}}const done=()=>{};",
+    ["dynamic", "default"],
+  ],
+  [
+    "fixture.mjs",
+    "var argv=[];{function argv(){}}const done=()=>{};",
+    ["inherit", "default"],
+  ],
   ["fixture.js", "const argv=[];const done=()=>{};", ["dynamic", "dynamic"]],
   [
     "fixture.cjs",

@@ -136,6 +136,19 @@ const cases = [
   ],
 ] as const;
 
+const annexBSource = `
+  const {execFile}=require("node:child_process");
+  var argv=[]; {function argv(){}}
+  execFile("annex-b-argv",argv,{stdio:"inherit"});
+  function run(){
+    var args=[]; switch(input){case 0:function args(){}}
+    execFile("annex-b-local",args,{stdio:"inherit"});
+  }
+  var stable=[]; function done(){}
+  execFile("cjs-var-argv",stable,{stdio:"inherit"});
+  execFile("cjs-hoisted-callback",done);
+`;
+
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "preserves effective stdio, overloads and explicit unknowns through %s",
   async (surface, { cli }) => {
@@ -175,6 +188,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         const argv: string[]=[]; const done=()=>{};
         spawn("cts-argv",argv,{stdio:"inherit"});exec("cts-callback",done);
       `,
+      "annex-b.cjs": annexBSource,
       "parameters.cjs": `
         const {exec}=require("node:child_process");
         function mapped(cb){cb=()=>{};arguments[0]={stdio:'inherit'};exec("mapped-callback",cb)}
@@ -199,6 +213,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       expected.set(`${extension}-argv`, ["inherit", null]);
       expected.set(`${extension}-callback`, ["default", null]);
     }
+    expected.set("cjs-var-argv", ["inherit", null]);
+    expected.set("cjs-hoisted-callback", ["default", null]);
     for (const [command, count] of [
       ["Function-global", 0],
       ["frames-global", 0],
@@ -210,6 +226,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       ["mapped-callback", null],
       ["cjs-wrapper-argv", null],
       ["cjs-wrapper-callback", null],
+      ["annex-b-argv", null],
+      ["annex-b-local", null],
     ] as const)
       expected.set(command, ["dynamic", count]);
     const children = graph.nodes.filter(

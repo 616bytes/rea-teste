@@ -34,9 +34,19 @@ export const createSemanticExpressionShapeResolver = (
   state: JavaScriptSemanticAnalysisState,
   references: readonly JavaScriptSemanticReference[],
 ) => {
+  const hoistedFunction = (node: t.Node): boolean => {
+    const parent = state.parentsByNode.get(node);
+    return (
+      t.isFunctionDeclaration(node) &&
+      (t.isProgram(parent) ||
+        (t.isBlockStatement(parent) &&
+          t.isFunction(state.parentsByNode.get(parent))))
+    );
+  };
   // Most modules have no named child arguments. Collect source-wide blockers
   // only when a query actually needs a named binding or ambient undefined.
   let blocked: boolean | undefined;
+  const blockFunctionNames = new Set<string>();
   const namedProofBlocked = (): boolean => {
     if (blocked !== undefined) return blocked;
     blocked = references.some(({ name }) => name === "eval");
@@ -46,6 +56,13 @@ export const createSemanticExpressionShapeResolver = (
           blocked ||=
             isErasedJavaScriptDeclaration(node) ||
             isUnmodeledJavaScriptRuntimeScope(node);
+          if (
+            javaScriptRuntimeContext(state.program) !== "module" &&
+            t.isFunctionDeclaration(node) &&
+            node.id != null &&
+            !hoistedFunction(node)
+          )
+            blockFunctionNames.add(node.id.name);
         },
       });
     return blocked;
@@ -82,20 +99,21 @@ export const createSemanticExpressionShapeResolver = (
         )
           return "unknown";
       }
-      if (namedProofBlocked()) return "unknown";
+      // Annex B may copy a block function into an outer var without an indexed
+      // assignment. Keep same-named vars unknown rather than model that copy.
+      if (
+        namedProofBlocked() ||
+        (binding.declarationKinds.has("var") &&
+          blockFunctionNames.has(binding.name))
+      )
+        return "unknown";
       const initializer = semanticStableInitializer(binding, state);
       if (initializer === undefined || initializer.projection.length > 0)
         return "unknown";
       const read = semanticBindingAtRead(binding, node, state.parentsByNode);
       // Hoisted function declarations are the only accepted unordered source.
-      const parent = state.parentsByNode.get(initializer.node);
-      const hoisted =
-        t.isFunctionDeclaration(initializer.node) &&
-        (t.isProgram(parent) ||
-          (t.isBlockStatement(parent) &&
-            t.isFunction(state.parentsByNode.get(parent))));
       if (
-        !hoisted &&
+        !hoistedFunction(initializer.node) &&
         (read.status !== "ordered" || !read.hasDefiniteInitializer)
       )
         return "unknown";

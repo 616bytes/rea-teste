@@ -52,6 +52,8 @@ pkgs.mkShell {
       nodejs
       python3
       git
+    ]
+    ++ lib.optionals stdenv.isLinux [
       procps
       util-linux
     ]
@@ -66,6 +68,8 @@ pkgs.mkShell {
     export REA_JADX_MCP_JAR="${jadxHeadlessMcpJar}"
     export REA_BINWALK_COMMAND="${lib.getExe pkgs.binwalk}"
     export REA_UNBLOB_COMMAND="${lib.getExe pkgs.unblob}"
+  ''
+  + lib.optionalString (withProviders && pkgs.stdenv.isLinux) ''
     export REA_FIRMWARE_PRLIMIT_COMMAND="${pkgs.util-linux}/bin/prlimit"
   ''
   + ''

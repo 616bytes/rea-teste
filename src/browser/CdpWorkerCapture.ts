@@ -433,6 +433,11 @@ export class CdpWorkerCapture {
           this.context.operation,
           "protocol_error",
         );
+      if (info === undefined) {
+        this.pageEvents.completeness.unavailable("workers");
+        this.#invalidTarget(params.targetInfo);
+        return;
+      }
       if (info?.type === "iframe") {
         if (parent !== undefined) return;
         const targetId = cdpStringValue(info.targetId);
@@ -481,7 +486,7 @@ export class CdpWorkerCapture {
         });
         return;
       }
-      const worker = info === undefined ? undefined : this.#admit(info);
+      const worker = this.#admit(info);
       if (worker === undefined) return;
       if (
         worker.item.type === "worker" &&
@@ -679,6 +684,13 @@ export class CdpWorkerCapture {
         version.controlledClients.every((client) => typeof client === "string")
           ? version.controlledClients
           : null;
+      if (version.controlledClients !== undefined && clients === null) {
+        this.pageEvents.completeness.unavailable("workers");
+        this.pageEvents.completeness.exclude(
+          "workers",
+          "invalid_protocol_value",
+        );
+      }
       const lifecycle: Observation["lifecycle"][number] = {
         event: "version",
         observed_at: new Date().toISOString(),

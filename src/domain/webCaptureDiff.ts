@@ -872,6 +872,20 @@ const scriptsDimension = (
       sectionsComplete(inspection, ["scripts"]) &&
       inspection.completeness.dropped_events.scripts === 0,
   );
+  const workerScriptIdentity = (targetId: string, scriptId: string) =>
+    `worker:${compositeKey([targetId, scriptId])}`;
+  const includedSources = (inspection: WebPageInspection) =>
+    new Set(
+      selectedWorkers(inspection).flatMap((worker) =>
+        (worker.observation?.scripts ?? [])
+          .filter((script) => script.source.included)
+          .map((script) =>
+            workerScriptIdentity(worker.target_id, script.script_id),
+          ),
+      ),
+    );
+  const beforeSources = includedSources(before),
+    afterSources = includedSources(after);
   const fingerprints = (inspection: WebPageInspection) => {
     const result = new Map(
       keyed(
@@ -882,13 +896,22 @@ const scriptsDimension = (
     for (const worker of selectedWorkers(inspection))
       for (const script of worker.observation?.scripts ?? [])
         result.set(
-          `worker:${compositeKey([worker.target_id, script.script_id])}`,
+          workerScriptIdentity(worker.target_id, script.script_id),
           digestCanonicalValue({
             url: script.url,
             cdp_hash: script.cdp_hash,
             is_module: script.is_module,
             language: script.language,
             source_map_url: script.source_map_url,
+            ...(script.source.included &&
+            beforeSources.has(
+              workerScriptIdentity(worker.target_id, script.script_id),
+            ) &&
+            afterSources.has(
+              workerScriptIdentity(worker.target_id, script.script_id),
+            )
+              ? { source_sha256: script.source.artifact.sha256 }
+              : {}),
           }),
         );
     return result;

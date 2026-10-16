@@ -22,6 +22,7 @@ import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import type { CdpEvent } from "../../../src/browser/CdpConnection.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { compareWebCaptures } from "../../../src/domain/webCaptureDiff.js";
+import { createWebTextArtifact } from "../../../src/domain/webContentArtifact.js";
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 import {
   startFakeCdpBrowser,
@@ -29,6 +30,152 @@ import {
 } from "../../fixtures/fakeCdpBrowser.js";
 
 const source = 'postMessage("worker 🧪");';
+
+it.each(["missing", "observation"] as const)(
+  "rejects an explicitly selected worker without retained %s",
+  async (kind) => {
+    const { provider, input } = await fixture();
+    const selected = { ...input, worker_target_ids: ["shared"] };
+    const captured = await provider.inspectPage(selected);
+    if (!captured.ok) throw captured.error;
+    if (kind === "missing")
+      captured.value.workers = captured.value.workers.filter(
+        (w) => w.target_id !== "shared",
+      );
+    else
+      delete captured.value.workers.find((w) => w.target_id === "shared")!
+        .observation;
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      selected,
+      captured.value,
+      provider.identity(),
+    );
+    expect(() => parseRuntimeCaptures([evidence])).toThrow(/selection/u);
+    expect(() => selectScriptCapture(evidence)).toThrow(/selection/u);
+  },
+);
+
+it.each(
+  [null, [42], "malformed"].map((controlledClients) => ({ controlledClients })),
+)(
+  "marks malformed controlled clients incomplete: %j",
+  async ({ controlledClients }) => {
+    const { provider, input } = await fixture({
+      commandEvents: (command) =>
+        command.method === "ServiceWorker.enable"
+          ? [
+              {
+                method: "ServiceWorker.workerVersionUpdated",
+                sessionId: "session-1",
+                params: {
+                  versions: [
+                    {
+                      targetId: "service",
+                      controlledClients,
+                      status: "activated",
+                    },
+                  ],
+                },
+              },
+            ]
+          : undefined,
+    });
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    expect(captured.value.completeness.unavailable_sections).toContain(
+      "workers",
+    );
+    expect(JSON.stringify(captured.value.completeness)).toContain(
+      "invalid_protocol_value",
+    );
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      input,
+      captured.value,
+      provider.identity(),
+    );
+    expect(
+      parseRuntimeCaptures([evidence])[0]?.scriptsCompleteWithinScope,
+    ).toBe(false);
+  },
+);
+
+it.each([undefined, null, 42, []].map((targetInfo) => ({ targetInfo })))(
+  "records malformed auto-attachment target info: %j",
+  async ({ targetInfo }) => {
+    const { provider, input, browser } = await fixture({
+      commandEvents: (command) =>
+        command.method === "Target.setAutoAttach" &&
+        command.params.autoAttach === true &&
+        command.sessionId === "session-1"
+          ? [
+              {
+                method: "Target.attachedToTarget",
+                sessionId: "session-1",
+                params: { sessionId: "malformed-worker", targetInfo },
+              },
+            ]
+          : undefined,
+    });
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    expect(captured.value.completeness.unavailable_sections).toContain(
+      "workers",
+    );
+    expect(JSON.stringify(captured.value.completeness)).toContain(
+      "invalid_protocol_value",
+    );
+    expect(
+      parseRuntimeCaptures([
+        createBrowserEvidence(
+          "inspect_web_page",
+          input,
+          captured.value,
+          provider.identity(),
+        ),
+      ])[0]?.scriptsCompleteWithinScope,
+    ).toBe(false);
+    expect(
+      browser.commands.some((c) => c.sessionId === "malformed-worker"),
+    ).toBe(false);
+  },
+);
+
+it.each(["changed", "same", "before-only", "after-only", "neither"] as const)(
+  "compares mutually retained worker bytes: %s",
+  async (kind) => {
+    const { provider, input } = await fixture();
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    const before = captured.value,
+      after = structuredClone(before);
+    const left = before.workers.find((w) => w.target_id === "own")!.observation!
+      .scripts[0]!;
+    const right = after.workers.find((w) => w.target_id === "own")!.observation!
+      .scripts[0]!;
+    left.cdp_hash = null;
+    right.cdp_hash = null;
+    if (kind === "changed")
+      right.source = {
+        included: true,
+        artifact: createWebTextArtifact(
+          'postMessage("changed");',
+          "text/javascript",
+        ),
+      };
+    if (kind === "before-only" || kind === "neither")
+      right.source = { included: false, reason: "not approved" };
+    if (kind === "after-only" || kind === "neither")
+      left.source = { included: false, reason: "source unavailable" };
+    const result = compareWebCaptures({
+      before: { inspection: before, webmcp: null },
+      after: { inspection: after, webmcp: null },
+    }).dimensions.scripts;
+    expect(result.total_changes).toBe(kind === "changed" ? 1 : 0);
+    if (kind === "changed") expect(result.status).toBe("changed");
+  },
+);
 
 it("retains selected worker metadata with explicit coverage limits on direct page transports", async () => {
   const { provider, input, browser } = await fixture({
@@ -1999,21 +2146,33 @@ it.each(["own", "shared"])(
   },
 );
 
-it("rejects inconsistent worker Evidence through CLI and MCP without publishing", async () => {
-  const { provider, input } = await fixture();
-  const selected = { ...input, worker_target_ids: ["shared"] };
-  const captured = await provider.inspectPage(selected);
-  if (!captured.ok) throw captured.error;
-  const root = await createTestTempDirectory("rea-worker-selection-boundary-");
-  const { call, client } = await connectLocalToolsMcp();
-  for (const mismatch of [
-    "selection",
-    "origin",
-    "ownership",
-    "source-selection",
-    "unsanitized",
-  ] as const) {
+it.each([
+  "selection",
+  "origin",
+  "ownership",
+  "source-selection",
+  "unsanitized",
+  "missing-selection",
+  "missing-observation",
+] as const)(
+  "rejects inconsistent worker Evidence through CLI and MCP without publishing: %s",
+  async (mismatch) => {
+    const { provider, input } = await fixture();
+    const selected = { ...input, worker_target_ids: ["shared"] };
+    const captured = await provider.inspectPage(selected);
+    if (!captured.ok) throw captured.error;
+    const root = await createTestTempDirectory(
+      "rea-worker-selection-boundary-",
+    );
+    const { call, client } = await connectLocalToolsMcp();
     const inspection = structuredClone(captured.value);
+    if (mismatch === "missing-selection")
+      inspection.workers = inspection.workers.filter(
+        (w) => w.target_id !== "shared",
+      );
+    if (mismatch === "missing-observation")
+      delete inspection.workers.find((w) => w.target_id === "shared")!
+        .observation;
     if (mismatch === "unsanitized") {
       const script = inspection.workers.find((w) => w.target_id === "shared")!
         .observation!.scripts[0]!;
@@ -2038,7 +2197,10 @@ it("rejects inconsistent worker Evidence through CLI and MCP without publishing"
       "inspect_web_page",
       mismatch === "source-selection"
         ? { ...selected, include_script_sources: false }
-        : mismatch === "origin" || mismatch === "unsanitized"
+        : mismatch === "origin" ||
+            mismatch === "unsanitized" ||
+            mismatch === "missing-selection" ||
+            mismatch === "missing-observation"
           ? selected
           : input,
       inspection,
@@ -2069,9 +2231,10 @@ it("rejects inconsistent worker Evidence through CLI and MCP without publishing"
     for (const output of [cliOutput, mcpOutput])
       await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(capture, "utf8")).toBe(bytes);
-  }
-  await client.ping();
-}, 30000);
+    await client.ping();
+  },
+  30000,
+);
 
 it("retains attach-limited worker node and containment coverage", async () => {
   const { provider, input } = await fixture();

@@ -20,6 +20,18 @@ export const browserWorkerEvidenceScopeSchema = z
   })
   .superRefine(({ parameters, normalized_result }, context) => {
     const allowed = new Set(parameters.allowed_origins);
+    const retained = new Set(
+      normalized_result.workers
+        .filter((worker) => worker.observation !== undefined)
+        .map((worker) => worker.target_id),
+    );
+    for (const id of parameters.worker_target_ids ?? [])
+      if (!retained.has(id))
+        context.addIssue({
+          code: "custom",
+          path: ["normalized_result", "workers"],
+          message: "Worker Evidence selection has no retained observation",
+        });
     for (const [index, worker] of normalized_result.workers.entries()) {
       const path = ["normalized_result", "workers", index];
       const sanitized = sanitizeBrowserUrl(worker.url);

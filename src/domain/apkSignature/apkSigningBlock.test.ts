@@ -125,6 +125,42 @@ describe("APK signing block locator", () => {
     expect(result.error.kind).toBe("malformed-zip");
   });
 
+  it("refuses a block footer smaller than its own 24 bytes", () => {
+    const bytes = apkWithBlock([
+      { id: APK_BLOCK_ID.signatureV2, value: [1, 2, 3, 4] },
+    ]);
+    const tail = parseZipTail(bytes);
+    expect(tail.ok).toBe(true);
+    if (!tail.ok) return;
+    // Trailing size sits 24 bytes before the central directory.
+    const at = tail.value.centralDirectoryOffset - 24;
+    bytes.set([16, 0, 0, 0, 0, 0, 0, 0], at);
+    const block = locateApkSigningBlock(bytes, tail.value);
+    expect(block.ok).toBe(false);
+    if (block.ok) return;
+    expect(block.error).toMatchObject({
+      kind: "malformed-block",
+      detail: "bad trailing size",
+    });
+  });
+
+  it("flags a leading/trailing size mismatch as malformed", () => {
+    const bytes = apkWithBlock([
+      { id: APK_BLOCK_ID.signatureV2, value: [1, 2, 3, 4] },
+    ]);
+    // Corrupt the leading size (first byte of the block, after 10 filler bytes).
+    bytes[10] = 0xff;
+    const tail = parseZipTail(bytes);
+    expect(tail.ok).toBe(true);
+    if (!tail.ok) return;
+    const block = locateApkSigningBlock(bytes, tail.value);
+    expect(block.ok).toBe(false);
+    if (block.ok) return;
+    expect(block.error.kind).toBe("malformed-block");
+  });
+});
+
+describe("Zip64 end-of-central-directory", () => {
   it("follows a Zip64 EOCD locator to the central-directory offset", () => {
     const body = new Bytes().raw(Array.from({ length: 40 }, () => 0));
     const cdOffset = body.b.length;
@@ -168,37 +204,61 @@ describe("APK signing block locator", () => {
     expect(tail.value.totalEntries).toBe(1);
   });
 
-  it("refuses a block footer smaller than its own 24 bytes", () => {
-    const bytes = apkWithBlock([
-      { id: APK_BLOCK_ID.signatureV2, value: [1, 2, 3, 4] },
-    ]);
-    const tail = parseZipTail(bytes);
+  it("takes the Zip64 entry count when only the 16-bit count saturates", () => {
+    const body = new Bytes().raw(Array.from({ length: 40 }, () => 0));
+    const cdOffset = body.b.length;
+    const cd = new Bytes().raw([0xca, 0xfe, 0xca, 0xfe]);
+    const recordOffset = cdOffset + cd.b.length;
+    const record = new Bytes()
+      .u32(0x06064b50)
+      .u64(44)
+      .u16(45)
+      .u16(45)
+      .u32(0)
+      .u32(0)
+      .u64(70000)
+      .u64(70000)
+      .u64(cd.b.length)
+      .u64(cdOffset);
+    const locator = new Bytes().u32(0x07064b50).u32(0).u64(recordOffset).u32(1);
+    // Real 32-bit offset and size; only the entry count is saturated.
+    const eocd = new Bytes()
+      .u32(0x06054b50)
+      .u16(0)
+      .u16(0)
+      .u16(0xffff)
+      .u16(0xffff)
+      .u32(cd.b.length)
+      .u32(cdOffset)
+      .u16(0);
+    const tail = parseZipTail(
+      Uint8Array.from([
+        ...body.b,
+        ...cd.b,
+        ...record.b,
+        ...locator.b,
+        ...eocd.b,
+      ]),
+    );
     expect(tail.ok).toBe(true);
     if (!tail.ok) return;
-    // Trailing size sits 24 bytes before the central directory.
-    const at = tail.value.centralDirectoryOffset - 24;
-    bytes.set([16, 0, 0, 0, 0, 0, 0, 0], at);
-    const block = locateApkSigningBlock(bytes, tail.value);
-    expect(block.ok).toBe(false);
-    if (block.ok) return;
-    expect(block.error).toMatchObject({
-      kind: "malformed-block",
-      detail: "bad trailing size",
-    });
+    expect(tail.value.totalEntries).toBe(70000);
   });
 
-  it("flags a leading/trailing size mismatch as malformed", () => {
-    const bytes = apkWithBlock([
-      { id: APK_BLOCK_ID.signatureV2, value: [1, 2, 3, 4] },
-    ]);
-    // Corrupt the leading size (first byte of the block, after 10 filler bytes).
-    bytes[10] = 0xff;
-    const tail = parseZipTail(bytes);
+  it("keeps exactly 65,535 entries when no Zip64 record exists", () => {
+    const cd = new Bytes().raw([0xca, 0xfe, 0xca, 0xfe]);
+    const eocd = new Bytes()
+      .u32(0x06054b50)
+      .u16(0)
+      .u16(0)
+      .u16(0xffff)
+      .u16(0xffff)
+      .u32(cd.b.length)
+      .u32(0)
+      .u16(0);
+    const tail = parseZipTail(Uint8Array.from([...cd.b, ...eocd.b]));
     expect(tail.ok).toBe(true);
     if (!tail.ok) return;
-    const block = locateApkSigningBlock(bytes, tail.value);
-    expect(block.ok).toBe(false);
-    if (block.ok) return;
-    expect(block.error.kind).toBe("malformed-block");
+    expect(tail.value.totalEntries).toBe(0xffff);
   });
 });

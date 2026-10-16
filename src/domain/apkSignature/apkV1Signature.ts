@@ -7,17 +7,50 @@
  *
  * Dependency-free and bounded: central-directory records are walked within the
  * declared directory extent and entry count; a record running past it is a
- * tagged error rather than a silently shorter list.
+ * tagged error rather than a silently shorter list. Only top-level `META-INF/`
+ * names are decoded and retained (selected by comparing raw bytes), capped at a
+ * format-justified count, so memory does not grow with the archive's total
+ * entry count (up to ~11M records in a 512 MiB Zip64 file).
  */
 import { type Result, err, ok } from "../result.js";
 
 const CD_SIGNATURE = 0x02014b50;
 const CD_FIXED_SIZE = 46;
 
-export type ApkCentralDirectoryError = {
-  readonly kind: "malformed-central-directory";
-  readonly offset: number;
-  readonly detail: string;
+export type ApkCentralDirectoryError =
+  | {
+      readonly kind: "malformed-central-directory";
+      readonly offset: number;
+      readonly detail: string;
+    }
+  | {
+      readonly kind: "budget-exceeded";
+      readonly resource: "meta-inf-entries";
+      readonly limit: number;
+    };
+
+/**
+ * Top-level `META-INF/` entries retained. A signed APK holds a manifest plus
+ * one `.SF` and one block per v1 signer; thousands is already pathological.
+ */
+export const MAX_META_INF_ENTRIES = 4096;
+
+const META_INF_BYTES = Uint8Array.from(
+  [..."META-INF/"].map((c) => c.charCodeAt(0)),
+);
+
+/** True when the raw name is `META-INF/<name>` with no further `/`. */
+const isTopLevelMetaInf = (
+  bytes: Uint8Array,
+  start: number,
+  length: number,
+): boolean => {
+  if (length <= META_INF_BYTES.length) return false;
+  for (let i = 0; i < META_INF_BYTES.length; i += 1)
+    if (bytes[start + i] !== META_INF_BYTES[i]) return false;
+  for (let i = start + META_INF_BYTES.length; i < start + length; i += 1)
+    if (bytes[i] === 0x2f) return false;
+  return true;
 };
 
 export interface ApkV1Signature {
@@ -32,11 +65,12 @@ export interface ApkV1Signature {
 const NAME_DECODER = new TextDecoder("utf-8", { fatal: false });
 
 /**
- * Read every central-directory file name, bounded by the declared extent and
- * count. A record that runs past the declared extent is an error, not a
- * silently shorter list: a partial walk would turn "unknown" into "absent".
+ * Walk every central-directory record within the declared extent and count,
+ * returning only the top-level `META-INF/` names. A record that runs past the
+ * declared extent is an error, not a silently shorter list: a partial walk
+ * would turn "unknown" into "absent".
  */
-export const centralDirectoryNames = (
+export const centralDirectoryMetaInfNames = (
   bytes: Uint8Array,
   centralDirectoryOffset: number,
   centralDirectorySize: number,
@@ -72,9 +106,17 @@ export const centralDirectoryNames = (
         offset: nameStart,
         detail: "central-directory file name runs past the directory",
       });
-    names.push(
-      NAME_DECODER.decode(bytes.subarray(nameStart, nameStart + nameLength)),
-    );
+    if (isTopLevelMetaInf(bytes, nameStart, nameLength)) {
+      if (names.length >= MAX_META_INF_ENTRIES)
+        return err({
+          kind: "budget-exceeded",
+          resource: "meta-inf-entries",
+          limit: MAX_META_INF_ENTRIES,
+        });
+      names.push(
+        NAME_DECODER.decode(bytes.subarray(nameStart, nameStart + nameLength)),
+      );
+    }
     at = nameStart + nameLength + extraLength + commentLength;
   }
   // An under-declared record count would silently hide entries (and so v1

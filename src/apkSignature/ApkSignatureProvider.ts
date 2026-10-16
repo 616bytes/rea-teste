@@ -36,7 +36,7 @@ import {
   type HashFactory,
 } from "../domain/apkSignature/apkContentDigest.js";
 import {
-  centralDirectoryNames,
+  centralDirectoryMetaInfNames,
   detectV1Signature,
 } from "../domain/apkSignature/apkV1Signature.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -311,7 +311,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     const block = locateApkSigningBlock(bytes, tail.value);
     if (!block.ok) return err(mapApkBlockError(block.error, artifact.path));
 
-    const names = centralDirectoryNames(
+    const names = centralDirectoryMetaInfNames(
       bytes,
       tail.value.centralDirectoryOffset,
       tail.value.centralDirectorySize,

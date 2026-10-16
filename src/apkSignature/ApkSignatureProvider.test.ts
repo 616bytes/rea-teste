@@ -201,6 +201,16 @@ describe("ApkSignatureProvider without the Android SDK", () => {
 });
 
 describe("ApkSignatureProvider failure surfaces", () => {
+  it("reports a missing file without leaking the raw errno text", async () => {
+    const result = await provider.inspect({ path: join(dir, "absent.apk") });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisInputError");
+    const text = JSON.stringify(result.error);
+    expect(text).toContain("No regular file can be read");
+    expect(text).not.toContain("no such file or directory, lstat");
+  });
+
   it("refuses a non-ZIP file as an unsupported target", async () => {
     const result = await provider.inspect({
       path: await write("plain.bin", "not an archive at all"),

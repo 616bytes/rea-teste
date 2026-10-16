@@ -11,7 +11,11 @@ import {
 import type { ApkSchemeError } from "../domain/apkSignature/apkSignatureSchemes.js";
 import type { ApkSigningBlockError } from "../domain/apkSignature/apkSigningBlock.js";
 import type { ApkCentralDirectoryError } from "../domain/apkSignature/apkV1Signature.js";
-import { APK_SIGNATURE_LIMITS } from "./ApkSignatureRelease.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import {
+  APK_SIGNATURE_LIMITS,
+  APK_SIGNATURE_PROVIDER_IDENTITY,
+} from "./ApkSignatureRelease.js";
 
 const OPERATION = "inspect_apk_signature";
 
@@ -77,9 +81,16 @@ export const mapApkSchemeError = (
 export const mapCentralDirectoryError = (
   error: ApkCentralDirectoryError,
 ): AnalysisError =>
-  inputError(
-    `Malformed ZIP central directory at byte ${String(error.offset)}: ${error.detail}.`,
-  );
+  error.kind === "budget-exceeded"
+    ? new AnalysisResourceConstraintError(
+        OPERATION,
+        "capacity",
+        `The central directory holds more than ${String(error.limit)} top-level META-INF entries.`,
+        { max_meta_inf_entries: error.limit },
+      )
+    : inputError(
+        `Malformed ZIP central directory at byte ${String(error.offset)}: ${error.detail}.`,
+      );
 
 /** The decoded result would exceed the inline output budget. */
 export const apkOutputBudgetError = (projectedBytes: number): AnalysisError =>
@@ -124,7 +135,27 @@ export const apkSignatureFailure = (
     return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
       cause,
     });
-  return new AnalysisInputError(OPERATION, { cause }, [
-    { path: ["path"], reason: "invalid_value", message: reason },
-  ]);
+  if (
+    cause instanceof Error &&
+    "code" in cause &&
+    (cause.code === "ENOENT" ||
+      cause.code === "ENOTDIR" ||
+      cause.code === "ELOOP")
+  )
+    return new AnalysisInputError(OPERATION, { cause }, [
+      {
+        path: ["path"],
+        reason: "invalid_value",
+        message: `No regular file can be read at the selected path (${String(cause.code)}): ${path}.`,
+      },
+    ]);
+  // Anything else is an adapter defect, not a caller input problem.
+  return new ProviderAdapterError(
+    APK_SIGNATURE_PROVIDER_IDENTITY.id,
+    OPERATION,
+    {
+      cause,
+      diagnostics: { path, reason },
+    },
+  );
 };

@@ -20,6 +20,8 @@ const ZIP64_EOCD_SIGNATURE = 0x06064b50;
 const EOCD_MIN_SIZE = 22;
 const MAX_COMMENT = 0xffff;
 const ZIP64_SENTINEL = 0xffffffff;
+/** The 16-bit EOCD entry count saturates here when Zip64 carries the real count. */
+const ZIP64_ENTRIES_SENTINEL = 0xffff;
 /** "APK Sig Block 42" — the 16-byte block magic (JAR/APK signing block spec). */
 const BLOCK_MAGIC = "APK Sig Block 42";
 /** A single pair is at least 12 bytes (uint64 length + uint32 id); cap the count. */
@@ -106,18 +108,26 @@ const centralDirectoryOffset = (
   const entries = dv.getUint16(eocdOffset + 10, true);
   const size = dv.getUint32(eocdOffset + 12, true);
   const offset = dv.getUint32(eocdOffset + 16, true);
-  if (offset !== ZIP64_SENTINEL && size !== ZIP64_SENTINEL)
-    return ok({ offset, size, entries });
+  const saturated =
+    offset === ZIP64_SENTINEL ||
+    size === ZIP64_SENTINEL ||
+    entries === ZIP64_ENTRIES_SENTINEL;
+  if (!saturated) return ok({ offset, size, entries });
   // Zip64: a locator precedes the EOCD, pointing at the Zip64 EOCD record.
   const locator = eocdOffset - 20;
   if (
     locator < 0 ||
     dv.getUint32(locator, true) !== ZIP64_EOCD_LOCATOR_SIGNATURE
-  )
+  ) {
+    // Exactly 65,535 entries saturates the count without Zip64; that archive
+    // is still described completely by its 32-bit EOCD fields.
+    if (offset !== ZIP64_SENTINEL && size !== ZIP64_SENTINEL)
+      return ok({ offset, size, entries });
     return err({
       kind: "zip64-unsupported",
       detail: "missing Zip64 EOCD locator",
     });
+  }
   const recordOffset = u64(dv, locator + 8);
   if (
     recordOffset === null ||

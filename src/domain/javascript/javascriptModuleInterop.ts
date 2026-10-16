@@ -453,11 +453,46 @@ export const createSemanticModuleInterop = (
     }
   };
 
+  // A sequence evaluates to its tail — `(0, change).call` reads `call` on
+  // `change` with `change` as the receiver.
+  const peelValueSequence = (node: t.Node): t.Node => {
+    let current = unwrapJavaScriptExpression(node).node;
+    while (t.isSequenceExpression(current)) {
+      const tail = current.expressions.at(-1);
+      if (tail === undefined) return current;
+      current = unwrapJavaScriptExpression(tail).node;
+    }
+    return current;
+  };
+
+  // The projected pattern leaf marks when the property was read — an earlier
+  // property's default can write the owner slot first:
+  // `const {missing: x = (change.call = noop), call: invoke} = change`.
+  const projectedCaptureAt = (node: t.Node, key: string): t.Node => {
+    const declarator = state.parentsByNode.get(node);
+    if (
+      declarator === undefined ||
+      !t.isVariableDeclarator(declarator) ||
+      !t.isObjectPattern(declarator.id)
+    )
+      return node;
+    for (const property of declarator.id.properties) {
+      if (!t.isObjectProperty(property)) continue;
+      if (semanticStaticPropertyKey(property.key, property.computed) !== key)
+        continue;
+      let leaf = property.value;
+      while (t.isAssignmentPattern(leaf)) leaf = leaf.left;
+      return leaf;
+    }
+    return node;
+  };
+
   // An alias initializer can hold a captured invocation member read, as in
   // `const invoke = bound.call`. The initializer stores the member's function
   // value at read time; follow it so the alias remains a usable callable.
   // Zero-projection identifier aliases (`const copy = invoke`) are followed
-  // transitively with a cycle guard.
+  // transitively with a cycle guard. A direct member expression names the
+  // same shape — `change.call.call` reads `.call` on the member value.
   const capturedInvocationMember = (
     node: t.Node,
     depth = 0,
@@ -465,55 +500,82 @@ export const createSemanticModuleInterop = (
     const visited = new Set<string>();
     let current = unwrapJavaScriptExpression(node).node;
     for (;;) {
-      if (!t.isIdentifier(current)) return undefined;
-      const binding = resolveSemanticBindingState(state, current, current.name);
-      const initializer = semanticStableInitializer(binding, state);
-      if (
-        binding === undefined ||
-        initializer === undefined ||
-        (initializer.node.end ?? Infinity) >= (current.start ?? -1) ||
-        visited.has(binding.bindingId)
-      )
-        return undefined;
-      visited.add(binding.bindingId);
-      let next = unwrapJavaScriptExpression(initializer.node).node;
-      // A comma initializer stores its tail: `const invoke = (0, change.call)`
-      // captures the member read. Follow the last expression as the
-      // invocation resolver does for direct callee sequences.
-      while (t.isSequenceExpression(next)) {
-        const tail = next.expressions.at(-1);
-        if (tail === undefined) return undefined;
-        next = unwrapJavaScriptExpression(tail).node;
-      }
-      if (t.isIdentifier(next) && initializer.projection.length === 0) {
-        current = next;
-        continue;
-      }
-      // A destructured capture stores the projected member directly:
-      // `const {call: invoke} = change` binds invoke to change.call.
+      current = peelValueSequence(current);
       let owner: t.Node;
       let key: "call" | "apply" | "bind" | null;
       let at: t.Node;
-      if (initializer.projection.length === 0) {
-        if (!t.isMemberExpression(next) && !t.isOptionalMemberExpression(next))
-          return undefined;
-        const rawKey = semanticStaticPropertyKey(next.property, next.computed);
+      let directOffset = false;
+      if (
+        t.isMemberExpression(current) ||
+        t.isOptionalMemberExpression(current)
+      ) {
+        const rawKey = semanticStaticPropertyKey(
+          current.property,
+          current.computed,
+        );
         key =
           rawKey === "call" || rawKey === "apply" || rawKey === "bind"
             ? rawKey
             : null;
-        owner = next.object;
-        at = next;
-      } else {
-        if (initializer.projection.length !== 1) return undefined;
-        const [projected] = initializer.projection;
-        key =
-          projected === "call" || projected === "apply" || projected === "bind"
-            ? projected
-            : null;
-        owner = next;
-        at = initializer.node;
-      }
+        owner = peelValueSequence(current.object);
+        at = current;
+      } else if (t.isIdentifier(current)) {
+        const binding = resolveSemanticBindingState(
+          state,
+          current,
+          current.name,
+        );
+        const initializer = semanticStableInitializer(binding, state);
+        if (
+          binding === undefined ||
+          initializer === undefined ||
+          (initializer.node.end ?? Infinity) >= (current.start ?? -1) ||
+          visited.has(binding.bindingId)
+        )
+          return undefined;
+        visited.add(binding.bindingId);
+        const next = peelValueSequence(initializer.node);
+        // A comma initializer stores its tail: `const invoke = (0, change.call)`
+        // captures the member read; peelValueSequence above already followed it.
+        if (t.isIdentifier(next) && initializer.projection.length === 0) {
+          current = next;
+          continue;
+        }
+        // A destructured capture stores the projected member directly:
+        // `const {call: invoke} = change` binds invoke to change.call.
+        if (initializer.projection.length === 0) {
+          if (
+            !t.isMemberExpression(next) &&
+            !t.isOptionalMemberExpression(next)
+          )
+            return undefined;
+          const rawKey = semanticStaticPropertyKey(
+            next.property,
+            next.computed,
+          );
+          key =
+            rawKey === "call" || rawKey === "apply" || rawKey === "bind"
+              ? rawKey
+              : null;
+          owner = peelValueSequence(next.object);
+          at = next;
+        } else {
+          if (initializer.projection.length !== 1) return undefined;
+          const [projected] = initializer.projection;
+          key =
+            projected === "call" ||
+            projected === "apply" ||
+            projected === "bind"
+              ? projected
+              : null;
+          owner = peelValueSequence(next);
+          at =
+            key === null
+              ? initializer.node
+              : projectedCaptureAt(initializer.node, key);
+          directOffset = true;
+        }
+      } else return undefined;
       if (key === null) return undefined;
       // The canonical Function.prototype member identity holds only while
       // the owner is a provable callable: an alias of `custom.call` on
@@ -531,7 +593,7 @@ export const createSemanticModuleInterop = (
       // unknown replacement in `invoke` — recognized member shape, unknown
       // callable. The call must stay opaque rather than effect-free.
       const ownerMemberPath = [...ownerPath, key];
-      if (initializer.projection.length === 0) {
+      if (!directOffset) {
         if (intrinsicReadChanged(at, ownerMemberPath))
           return { replaced: true, path: ownerMemberPath };
       } else {
@@ -872,6 +934,7 @@ export const createSemanticModuleInterop = (
         capturedInvocationMember,
       ),
     boundIntrinsic,
+    capturedInvocationMember,
     capturedInvocationMemberPath,
     staticString,
     isFreshObject,

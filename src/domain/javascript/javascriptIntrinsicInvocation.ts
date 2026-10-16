@@ -94,7 +94,16 @@ export const resolveJavaScriptIntrinsicInvocation = (
   intrinsicReadChanged: (node: t.Node, path: readonly string[]) => boolean,
   memberRead?: (node: t.Node) => CapturedInvocationMember | undefined,
 ): JavaScriptIntrinsicInvocation | undefined => {
-  const visited = new Set<t.Node>();
+  const visited = new Set<string>();
+  const nodeIds = new Map<t.Node, number>();
+  const idOf = (node: t.Node): number => {
+    let id = nodeIds.get(node);
+    if (id === undefined) {
+      id = nodeIds.size;
+      nodeIds.set(node, id);
+    }
+    return id;
+  };
   let callee: t.Node = node.callee;
   // A captured member substituted in as the callee behaves like a member
   // read `callee.<key>` — e.g. `invoke` aliasing `change.call` names
@@ -119,20 +128,49 @@ export const resolveJavaScriptIntrinsicInvocation = (
       callee = finalExpression;
       continue;
     }
-    if (visited.has(callee)) return undefined;
-    visited.add(callee);
+    // Re-entering the same node with a different receiver/argument state is
+    // legitimate — `invoke.call(invoke, change, …)` passes through
+    // Function.prototype.call repeatedly. Cycle detection keys on the full
+    // invocation state, not the AST node alone.
+    const stateKey = [
+      idOf(callee),
+      receiver === undefined ? -1 : idOf(receiver),
+      explicitReceiver ? 1 : 0,
+      arguments_ === undefined ? -1 : arguments_.length,
+      virtualMember === undefined
+        ? ""
+        : `${virtualMember.key}@${idOf(virtualMember.at)}`,
+    ].join("|");
+    if (visited.has(stateKey)) return undefined;
+    visited.add(stateKey);
     const virtual = virtualMember;
     virtualMember = undefined;
     let path = intrinsicPath(callee);
     if (path !== undefined && intrinsicReadChanged(callee, path))
       return { kind: "opaque", path, arguments: undefined };
     if (path === undefined) {
-      const memberObject: t.Node | undefined =
+      const memberObjectRaw: t.Node | undefined =
         virtual !== undefined
           ? callee
           : t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
             ? callee.object
             : undefined;
+      // A sequence in object position evaluates to its tail — `(0, change).call`
+      // still reads `call` on `change` with `change` as the receiver.
+      let memberObject: t.Node | undefined = memberObjectRaw;
+      while (memberObject !== undefined) {
+        const unwrapped = unwrapJavaScriptExpression(memberObject).node;
+        if (!t.isSequenceExpression(unwrapped)) {
+          memberObject = unwrapped;
+          break;
+        }
+        const tail = unwrapped.expressions.at(-1);
+        if (tail === undefined) {
+          memberObject = undefined;
+          break;
+        }
+        memberObject = tail;
+      }
       const method =
         virtual !== undefined
           ? virtual.key
@@ -140,7 +178,66 @@ export const resolveJavaScriptIntrinsicInvocation = (
             ? semanticStaticPropertyKey(callee.property, callee.computed)
             : undefined;
       const memberAt = virtual === undefined ? callee : virtual.at;
-      if (virtual !== undefined && method === "bind") return undefined;
+      if (method === "bind") {
+        // `x.bind(…)` invokes Function.prototype.bind with `x` as its
+        // receiver. A captured `bind` member is Function.prototype.bind
+        // itself — `rebinder.call(target, …)` binds the explicit receiver
+        // instead. Both produce a bound callable the caller continues
+        // through boundIntrinsic.
+        const bindPath = intrinsicInvocationMemberPath("bind");
+        const bound: JavaScriptIntrinsicInvocation | undefined =
+          memberObject === undefined ? undefined : boundIntrinsic(memberObject);
+        const captured: CapturedInvocationMember | undefined =
+          bound === undefined && memberObject !== undefined
+            ? memberRead?.(memberObject)
+            : undefined;
+        if (captured !== undefined && captured.replaced === true)
+          return {
+            kind: "opaque",
+            path: captured.path,
+            arguments: undefined,
+          };
+        const memberPath: readonly string[] | undefined =
+          captured === undefined
+            ? undefined
+            : intrinsicInvocationMemberPath(captured.key);
+        // Reading `.bind` re-reads the slot on the owner — a replaced slot
+        // executes an unknown function, and a replaced Function.prototype
+        // member cannot be assumed intact either.
+        if (
+          (bound !== undefined &&
+            intrinsicReadChanged(memberAt, [...bound.path, "bind"])) ||
+          (captured !== undefined &&
+            memberPath !== undefined &&
+            intrinsicReadChanged(captured.at, [...memberPath, "bind"])) ||
+          intrinsicReadChanged(memberAt, bindPath)
+        )
+          return { kind: "opaque", path: bindPath, arguments: undefined };
+        const bindTarget: t.Node | undefined =
+          virtual !== undefined
+            ? explicitReceiver && t.isExpression(receiver)
+              ? receiver
+              : undefined
+            : memberObject;
+        if (bindTarget === undefined || !t.isExpression(bindTarget))
+          return { kind: "opaque", path: bindPath, arguments: undefined };
+        // A direct `.bind` on an unprovable owner produces an unprovable
+        // bound value; keep the old unresolved classification.
+        if (
+          virtual === undefined &&
+          bound === undefined &&
+          captured === undefined &&
+          (memberObject === undefined ||
+            intrinsicPath(memberObject) === undefined)
+        )
+          return undefined;
+        return {
+          kind: "known",
+          path: bindPath,
+          receiver: bindTarget,
+          arguments: arguments_,
+        };
+      }
       if (method === "call" || method === "apply") {
         const bound: JavaScriptIntrinsicInvocation | undefined =
           memberObject === undefined ? undefined : boundIntrinsic(memberObject);

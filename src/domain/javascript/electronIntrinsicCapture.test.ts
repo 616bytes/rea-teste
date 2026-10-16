@@ -69,6 +69,20 @@ const collectedWrites = (source: string) => {
       parsed.program,
       (node, kind) => {
         if (kind === "opaque-call") return [interop.opaqueMutationPath(node)];
+        // Mirrors the production origin: a member expression naming a
+        // captured invocation member resolves to its canonical
+        // Function.prototype value identity.
+        if (
+          kind === "member" &&
+          (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
+        ) {
+          const capturedValue = interop.capturedInvocationMember(node);
+          if (capturedValue !== undefined) {
+            return capturedValue.replaced === true
+              ? []
+              : [["intrinsic", "Function", "prototype", capturedValue.key]];
+          }
+        }
         const { root, members } = electronMemberPath(node);
         const path =
           interop.intrinsicPath(root) ??
@@ -596,6 +610,116 @@ describe("extended captured invocation member resolution", () => {
       }),
     );
     expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+});
+
+describe("captured member canonicalization and timing", () => {
+  it("canonicalizes a write through a captured invocation member", () => {
+    // `change.call` reads Function.prototype.call, so writing `.call` on it
+    // lands on `intrinsic.Function.prototype.call.call` — the same slot the
+    // call-site member re-read checks. The later call must see the replace.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      change.call.call = () => {};
+      const invoke = change.call;
+      invoke.call(change, null, {value: customCreate});`,
+    );
+    expect(writes).toContainEqual([
+      "intrinsic",
+      "Function",
+      "prototype",
+      "call",
+      "call",
+    ]);
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({ kind: "opaque" }),
+    );
+    expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("resolves a captured bind member to a bound invocation", () => {
+    // `rebinder = change.bind` stores Function.prototype.bind; calling it on
+    // `change` produces the same bound callable `change` already is, so the
+    // follow-up call still writes Object.create.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const rebinder = change.bind;
+      const changed = rebinder.call(change, null);
+      changed({value: customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("unwraps a sequence supplying a member owner", () => {
+    // `(0, change)` evaluates to `change`, so the member call still invokes
+    // the bound defineProperty.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      (0, change).call(null, {value: customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("re-enters a captured alias with a different invocation state", () => {
+    // `invoke.call(invoke, change, …)` visits `invoke` twice with distinct
+    // receiver/argument states — both transitions are legitimate and the
+    // bound write must still resolve.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const invoke = change.call;
+      invoke.call(invoke, change, null, {value: customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("resolves a nested invocation member of a bound callable", () => {
+    // `change.call.call` reads `.call` on Function.prototype.call itself —
+    // Function.prototype.call again — so the call reaches defineProperty.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      change.call.call(change, null, {value: customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("times a destructured capture at the projected property read", () => {
+    // The `missing` property's default runs before `call` is read and
+    // overwrites `change.call` — `invoke` stores the replacement, so the
+    // call is opaque, not the bound defineProperty.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const noop = () => {};
+      const {missing: x = (change.call = noop), call: invoke} = change;
+      invoke.call(change, null, {value: customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({ kind: "opaque" }),
+    );
+    expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
   });
 });
 

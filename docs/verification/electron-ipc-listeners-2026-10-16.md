@@ -4,7 +4,7 @@
 [#4389](https://github.com/morluto/rea/pull/4389), umbrella
 [#4027](https://github.com/morluto/rea/issues/4027).
 
-All 67 IPC boundary regressions pass, alongside shared projection/actions and
+All 73 IPC boundary regressions pass, alongside shared projection/actions and
 converted MCP schema checks. Real draw.io operation phases succeed.
 Every real capture still **fails overall provider cleanup**. These are distinct
 results; neither completed-task acceleration nor token savings is established.
@@ -550,6 +550,43 @@ Final static checks pass two uncached tasks in **88.383 s wall, 87.726306 family
 CPU s and 4,399,632,384 peak cgroup bytes**, no OOM. All source identities, failed
 controls, corrected fixture-only lint failure and resource caveats are appended
 under `chain_ownership_followup`; historical fields are unchanged.
+
+Final docs validation passes six tasks and five README consistency cases;
+current source digests are verified again afterward.
+
+## Inherited listener-link coverage
+
+Fresh review of `ae2cd8d4` found that a missing own descriptor is not absence:
+an app decorator can inherit its data link to an owned once wrapper. Native
+removal follows that link and removes the decorator; the hook hid it under
+another recorder, left a listener installed and produced three invocation
+records for one callback. Five native inherited-link cases fail before correction
+(68 passed, five failed of 73): data/getter/Proxy prototypes and prototype
+depths16/17. A late Object.getPrototypeOf replacement control already passes.
+
+Source `e22ce9aaf` completes bounded native prototype lookup at the descriptor
+owner, capturing getPrototypeOf before startup. Data links retain their actual
+source value. A setter-only property has a known undefined read that shadows
+ancestors; a getter, Proxy or incomplete walk remains unknown. Missing metadata becomes absent only after the prototype chain ends; found
+properties retain native read/shadowing semantics. Registration and removal consume
+the same parsed descriptor, and redundant outer Proxy interpretation is removed.
+Neither existing resource bound is raised. All **102** hook/projection/actions/
+MCP cases pass (73 + 5 + 16 + 8). Projection/client are freshly tested unchanged
+sources; canonical schema and verifier/oracles retain prior checks by hash.
+
+Prior CI run38955237255 tests confirmed merge9c0ceb152c902c1339806608f8b4a010c3d22fc6
+(ae2c + main8116dc06). All36 jobs succeed; current-head CI/review remain required.
+
+Frozen-source unchanged draw.io recovery/insertion again completes with seven
+IPC events, SVG **0 → 2**, unsaved true and failed overall provider cleanup.
+Pipeline: **11.264 s wall /6.376574 family CPU s /557,068,288 peak cgroup bytes**.
+Payload-exit observation is verified at that phase while the observer lives;
+these are not final whole-scope counters or provider cleanup proof.
+
+Final static checks pass two uncached tasks in **90.797 s wall, 90.096799 family
+CPU s and 4,335,267,840 peak cgroup bytes**, no OOM. All source identities, native
+failures and current results are appended under `inherited_listener_links_followup`;
+previous fields and earlier resource caveats remain unchanged.
 
 Final docs validation passes six tasks and five README consistency cases;
 current source digests are verified again afterward.

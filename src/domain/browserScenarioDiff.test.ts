@@ -12,7 +12,10 @@ import {
   type BrowserScenarioCapture,
 } from "./browserScenarioCapture.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "./browserScenarioCaptureLimits.js";
-import { browserScenarioFixtureCapture } from "./browserScenarioCapture.fixture.js";
+import {
+  browserScenarioFixtureCapture,
+  scenarioFixtureCompleteness,
+} from "./browserScenarioCapture.fixture.js";
 
 const noEventOmissions = {
   by_kind: [],
@@ -359,56 +362,58 @@ const redirectChainCapture = (swapLeaves = false, reverseReceipt = false) => {
 it("keeps every incomparable artifact's states, captured-side digest and reason", () => {
   const before = browserScenarioFixtureCapture();
   const screenshotBytes = Buffer.from("iVBORw==", "base64");
+  const afterSteps = before.steps.map((step) => {
+    if (step.step_index === 1)
+      return {
+        ...step,
+        artifacts: {
+          ...step.artifacts,
+          accessibility: {
+            state: "truncated",
+            observed: 900,
+            retained: 0,
+            reason: "accessibility text exceeded its budget",
+          },
+        },
+        completeness: {
+          status: "truncated",
+          equality_eligible: false,
+          missing_sections: [],
+          truncated_sections: ["accessibility"],
+        },
+      };
+    // A URL captured before but missing after stays unknown.
+    if (step.step_index === 2)
+      return {
+        ...step,
+        artifacts: {
+          ...step.artifacts,
+          url: { state: "missing", reason: "URL capture failed" },
+          screenshot: {
+            state: "captured",
+            value: {
+              sha256: createHash("sha256")
+                .update(screenshotBytes)
+                .digest("hex"),
+              bytes: screenshotBytes.byteLength,
+              media_type: "image/png",
+              data_base64: "iVBORw==",
+            },
+          },
+        },
+        completeness: {
+          status: "incomplete",
+          equality_eligible: false,
+          missing_sections: ["url"],
+          truncated_sections: [],
+        },
+      };
+    return step;
+  });
   const after = browserScenarioCaptureSchema.parse({
     ...structuredClone(before),
-    steps: before.steps.map((step) => {
-      if (step.step_index === 1)
-        return {
-          ...step,
-          artifacts: {
-            ...step.artifacts,
-            accessibility: {
-              state: "truncated",
-              observed: 900,
-              retained: 0,
-              reason: "accessibility text exceeded its budget",
-            },
-          },
-          completeness: {
-            status: "truncated",
-            equality_eligible: false,
-            missing_sections: [],
-            truncated_sections: ["accessibility"],
-          },
-        };
-      // A URL captured before but missing after stays unknown.
-      if (step.step_index === 2)
-        return {
-          ...step,
-          artifacts: {
-            ...step.artifacts,
-            url: { state: "missing", reason: "URL capture failed" },
-            screenshot: {
-              state: "captured",
-              value: {
-                sha256: createHash("sha256")
-                  .update(screenshotBytes)
-                  .digest("hex"),
-                bytes: screenshotBytes.byteLength,
-                media_type: "image/png",
-                data_base64: "iVBORw==",
-              },
-            },
-          },
-          completeness: {
-            status: "incomplete",
-            equality_eligible: false,
-            missing_sections: ["url"],
-            truncated_sections: [],
-          },
-        };
-      return step;
-    }),
+    steps: afterSteps,
+    completeness: scenarioFixtureCompleteness(afterSteps),
   });
   const digest = expect.stringMatching(/^[a-f0-9]{64}$/u);
   const unknown = (

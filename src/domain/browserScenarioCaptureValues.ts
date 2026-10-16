@@ -135,6 +135,17 @@ export type BrowserScenarioEventFamily = z.infer<
 >;
 
 /**
+ * Selected families whose events from a popup page before its discovery are
+ * unavailable, so a retained popup-opened record leaves their coverage incomplete.
+ */
+export const BROWSER_SCENARIO_POPUP_GAP_FAMILIES = [
+  "frames",
+  "workers",
+  "websockets",
+  "downloads",
+] as const satisfies readonly BrowserScenarioEventFamily[];
+
+/**
  * Families a capture observes. Selecting any network content also enables
  * network metadata, while captures record only the declared families.
  */
@@ -491,33 +502,31 @@ const browserScenarioStepShape = {
   artifacts: browserStepArtifactsSchema,
   completeness: browserScenarioCompletenessSchema,
 };
-const sameSections = (
+/** Whether a recorded ledger lists exactly the expected sections, each once. */
+export const sameCompletenessSections = (
   recorded: readonly BrowserScenarioCompletenessSection[],
   expected: readonly BrowserScenarioCompletenessSection[],
 ): boolean => {
   const sorted = [...new Set(recorded)].sort();
+  const wanted = [...new Set(expected)].sort();
   return (
     sorted.length === recorded.length &&
-    sorted.length === expected.length &&
-    sorted.every((section, index) => section === expected[index])
+    sorted.length === wanted.length &&
+    sorted.every((section, index) => section === wanted[index])
   );
 };
 
 /**
- * Step completeness restates the step's own facts: each missing or truncated
- * artifact names its section, and an action that did not complete names the
- * action section. It records nothing else.
+ * A step's completeness as its own facts determine it: each missing or
+ * truncated artifact names its section, and an action that did not complete
+ * names the action section.
  */
-const refineStepCompleteness = (
-  step: {
-    readonly status: "completed" | "failed" | "cancelled";
-    readonly artifacts: BrowserStepArtifacts;
-    readonly completeness: BrowserScenarioCompleteness;
-  },
-  context: z.RefinementCtx,
-): void => {
+export const deriveStepCompleteness = (step: {
+  readonly status: "completed" | "failed" | "cancelled";
+  readonly artifacts: BrowserStepArtifacts;
+}): BrowserScenarioCompleteness => {
   const sections = browserStepArtifactsSchema.keyof().options;
-  const expected = classifyBrowserScenarioCompleteness(
+  return classifyBrowserScenarioCompleteness(
     [
       ...sections.filter(
         (section) => step.artifacts[section].state === "missing",
@@ -526,12 +535,22 @@ const refineStepCompleteness = (
     ],
     sections.filter((section) => step.artifacts[section].state === "truncated"),
   );
+};
+
+/** Step completeness restates the step's own facts and records nothing else. */
+const refineStepCompleteness = (
+  step: Parameters<typeof deriveStepCompleteness>[0] & {
+    readonly completeness: BrowserScenarioCompleteness;
+  },
+  context: z.RefinementCtx,
+): void => {
+  const expected = deriveStepCompleteness(step);
   if (
-    !sameSections(
+    !sameCompletenessSections(
       step.completeness.missing_sections,
       expected.missing_sections,
     ) ||
-    !sameSections(
+    !sameCompletenessSections(
       step.completeness.truncated_sections,
       expected.truncated_sections,
     )

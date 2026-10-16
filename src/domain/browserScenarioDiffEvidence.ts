@@ -1,5 +1,4 @@
 import type {
-  BrowserScenarioCompleteness,
   BrowserScenarioCompletenessSection,
   BrowserScenarioStep,
   BrowserStepArtifacts,
@@ -28,16 +27,6 @@ export type CaptureState<Value> =
       readonly retained: number;
       readonly reason: string;
     };
-
-const includesCompletenessSection = (
-  completeness: BrowserScenarioCompleteness,
-  collection: "missing_sections" | "truncated_sections",
-  section: BrowserScenarioCompletenessSection,
-): boolean => {
-  const sections: readonly BrowserScenarioCompletenessSection[] =
-    completeness[collection];
-  return sections.includes(section);
-};
 
 /**
  * Project one recorded artifact through its step outcome. The capture schema
@@ -153,41 +142,19 @@ export const observeScenarioStepState = (
   };
 };
 
-const EVENT_SECTIONS = [
-  "events",
-  "frames",
-  "workers",
-  "popups",
-  "websockets",
-] as const;
-
-const eventCoverage = (
-  capture: BrowserScenarioCapture,
-  ledgers: readonly BrowserScenarioCompleteness[],
-): BrowserScenarioEvidenceState => {
-  const listed = (collection: "missing_sections" | "truncated_sections") =>
-    EVENT_SECTIONS.some((section) =>
-      ledgers.some((ledger) =>
-        includesCompletenessSection(ledger, collection, section),
-      ),
-    );
-  if (capture.events.dropped > 0 || listed("truncated_sections"))
-    return "truncated";
-  return listed("missing_sections") ? "missing" : "captured";
-};
-
-/** Project event evidence through capture- and step-level completeness. */
-export const eventEvidenceState = (
-  capture: BrowserScenarioCapture,
-  step: BrowserScenarioStep,
-): BrowserScenarioEvidenceState =>
-  eventCoverage(capture, [capture.completeness, step.completeness]);
-
-/** Project event evidence through capture-level completeness alone. */
+/**
+ * Event coverage for the whole capture. The capture schema keeps missing
+ * "events" the only event section in any completeness ledger and requires it
+ * whenever events were dropped, so one rule covers every step.
+ */
 export const captureEventEvidenceState = (
   capture: BrowserScenarioCapture,
-): BrowserScenarioEvidenceState =>
-  eventCoverage(capture, [capture.completeness]);
+): BrowserScenarioEvidenceState => {
+  const missing: readonly BrowserScenarioCompletenessSection[] =
+    capture.completeness.missing_sections;
+  if (capture.events.dropped > 0) return "truncated";
+  return missing.includes("events") ? "missing" : "captured";
+};
 
 /** Select stable action fields for normalized comparison. */
 export const actionState = (step: BrowserScenarioStep) => ({

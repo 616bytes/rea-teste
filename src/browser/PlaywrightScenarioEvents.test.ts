@@ -3,7 +3,10 @@ import type { BrowserContext, Page, Request, Response } from "playwright-core";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { browserScenarioCaptureSchema } from "../domain/browserScenarioCapture.js";
-import { browserScenarioFixtureCapture } from "../domain/browserScenarioCapture.fixture.js";
+import {
+  browserScenarioFixtureCapture,
+  scenarioFixtureCompleteness,
+} from "../domain/browserScenarioCapture.fixture.js";
 import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
 
@@ -330,6 +333,8 @@ it("accounts an unadmitted popup page as an omission its capture accepts", () =>
         limits: scenario.capture.limits,
       },
       events: recorded,
+      // Dropped events make event coverage incomplete.
+      completeness: scenarioFixtureCompleteness(fixture.steps, true),
     }).success,
   ).toBe(true);
 });

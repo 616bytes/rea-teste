@@ -71,9 +71,9 @@ const scenarioArtifacts = {
 };
 const exampleScenarioCapture = () => ({
   browser: {
-    mode: "connect",
-    process_ownership: "external",
-    cleanup: "disconnected-external",
+    mode: "launch",
+    process_ownership: "provider-owned",
+    cleanup: "terminated-owned-process",
     product: "Chromium",
     version: "149",
   },

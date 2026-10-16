@@ -12,6 +12,7 @@ import {
 } from "../browserScenarioCapture.js";
 import {
   SCENARIO_FIXTURE_OPEN_TREE,
+  scenarioFixtureCompleteness,
   browserScenarioFixtureCapture,
   browserScenarioFixtureParameters,
   browserScenarioFixtureScenario,
@@ -361,7 +362,10 @@ it("rejects a step 0 that is not the completed implicit start navigation", () =>
         start.completeness.truncated_sections,
       ),
     },
-  ])
+  ]) {
+    const steps = fixture.steps.map((step) =>
+      step.step_index === 0 ? { ...step, ...replacement } : step,
+    );
     expect(
       failure(
         { kind: "browser-scenario", collection: "steps" },
@@ -369,15 +373,15 @@ it("rejects a step 0 that is not the completed implicit start navigation", () =>
           ...parent(),
           normalizedResult: {
             ...fixture,
-            steps: fixture.steps.map((step) =>
-              step.step_index === 0 ? { ...step, ...replacement } : step,
-            ),
+            steps,
+            completeness: scenarioFixtureCompleteness(steps),
           },
         },
       ),
     ).toMatchObject({
       issues: [{ path: ["source", "normalized_result", "steps", 0] }],
     });
+  }
 });
 
 it("rejects step completeness that contradicts the retained artifacts", () => {
@@ -414,6 +418,56 @@ it("rejects step completeness that contradicts the retained artifacts", () => {
     issues: [
       { path: ["source", "normalized_result", "steps", 1, "completeness"] },
     ],
+  });
+});
+
+it("rejects capture accounting that contradicts its steps or omissions", () => {
+  const fixture = browserScenarioFixtureCapture();
+  const rejected = (normalizedResult: unknown) =>
+    failure({ kind: "summary" }, { ...parent(), normalizedResult });
+  // A transaction-limited range without any dropped transaction event.
+  expect(
+    rejected({
+      ...fixture,
+      events: {
+        ...fixture.events,
+        omissions: {
+          ...fixture.events.omissions,
+          network_transaction_range: {
+            first_transaction_id: "request-9",
+            last_transaction_id: "request-9",
+            count: 1,
+            reason: "max-network-transactions",
+          },
+        },
+      },
+    }),
+  ).toMatchObject({
+    issues: [
+      {
+        path: [
+          "source",
+          "normalized_result",
+          "events",
+          "omissions",
+          "network_transaction_range",
+        ],
+      },
+    ],
+  });
+  // A complete capture ledger beside a failed and a cancelled step.
+  expect(
+    rejected({
+      ...fixture,
+      completeness: {
+        status: "complete",
+        equality_eligible: true,
+        missing_sections: [],
+        truncated_sections: [],
+      },
+    }),
+  ).toMatchObject({
+    issues: [{ path: ["source", "normalized_result", "completeness"] }],
   });
 });
 
@@ -479,6 +533,7 @@ it("states connect-mode ownership and rejects views for other parents", () => {
       process_ownership: "external",
       cleanup: "disconnected-external",
     },
+    completeness: scenarioFixtureCompleteness(fixture.steps, true),
   });
   expect(project({ kind: "summary" }, parent(connected)).limitations).toEqual(
     expect.arrayContaining([expect.stringContaining("Connect mode attached")]),
@@ -536,6 +591,7 @@ it("applies capture-wide event coverage to every step", () => {
         by_kind: [{ kind: "console", count: 1, reasons: ["max-events"] }],
       },
     },
+    completeness: scenarioFixtureCompleteness(capture.steps, true),
   }));
   const truncatedRows = stepPage(
     project({ kind: "browser-scenario", collection: "steps" }, parent(dropped)),
@@ -574,9 +630,8 @@ it("applies capture-wide event coverage to every step", () => {
 });
 
 it("keeps truncated artifacts and events between windows explicit", () => {
-  const capture = reparsed((fixture) => ({
-    ...fixture,
-    steps: fixture.steps.map((step) =>
+  const capture = reparsed((fixture) => {
+    const steps = fixture.steps.map((step) =>
       step.step_index === 1
         ? {
             ...step,
@@ -599,8 +654,13 @@ it("keeps truncated artifacts and events between windows explicit", () => {
         : step.step_index === 3
           ? { ...step, event_sequence_start: 6 }
           : step,
-    ),
-  }));
+    );
+    return {
+      ...fixture,
+      steps,
+      completeness: scenarioFixtureCompleteness(steps),
+    };
+  });
   const source = parent(capture);
   const rows = stepPage(
     project({ kind: "browser-scenario", collection: "steps" }, source),

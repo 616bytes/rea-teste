@@ -9,8 +9,9 @@ import {
   type BrowserScenarioCapture,
 } from "./browserScenarioCapture.js";
 import {
+  browserScenarioCompletenessSchema,
   classifyBrowserScenarioCompleteness,
-  type BrowserScenarioCompletenessSection,
+  deriveStepCompleteness,
   type BrowserScenarioEvent,
   type BrowserScenarioStep,
   type BrowserStepArtifacts,
@@ -55,31 +56,6 @@ const stepArtifacts = (
   ...overrides,
 });
 
-const SNAPSHOT_SECTIONS = [
-  "screenshot",
-  "dom",
-  "accessibility",
-  "url",
-  "history",
-  "storage",
-] as const;
-
-/** Classify a step the way the provider does: missing artifacts, plus action unless completed. */
-const stepCompleteness = (
-  artifacts: BrowserStepArtifacts,
-  status: BrowserScenarioStep["status"],
-) => {
-  const missing: BrowserScenarioCompletenessSection[] =
-    SNAPSHOT_SECTIONS.filter(
-      (section) => artifacts[section].state === "missing",
-    );
-  const truncated = SNAPSHOT_SECTIONS.filter(
-    (section) => artifacts[section].state === "truncated",
-  );
-  if (status !== "completed") missing.push("action");
-  return classifyBrowserScenarioCompleteness(missing, truncated);
-};
-
 const step = (
   input: Omit<BrowserScenarioStep, "completeness" | "status" | "error"> & {
     readonly status?: BrowserScenarioStep["status"];
@@ -94,7 +70,10 @@ const step = (
   return {
     ...input,
     ...outcome,
-    completeness: stepCompleteness(input.artifacts, status),
+    completeness: deriveStepCompleteness({
+      status,
+      artifacts: input.artifacts,
+    }),
   } as BrowserScenarioStep;
 };
 
@@ -317,6 +296,23 @@ const fixtureEvents = (): BrowserScenarioEvent[] => [
   }),
 ];
 
+/** Capture completeness aggregated from step ledgers, as the producer records it. */
+export const scenarioFixtureCompleteness = (
+  steps: readonly { readonly completeness: unknown }[],
+  eventsMissing = false,
+) => {
+  const ledgers = steps.map(({ completeness }) =>
+    browserScenarioCompletenessSchema.parse(completeness),
+  );
+  return classifyBrowserScenarioCompleteness(
+    [
+      ...ledgers.flatMap(({ missing_sections: missing }) => missing),
+      ...(eventsMissing ? (["events"] as const) : []),
+    ],
+    ledgers.flatMap(({ truncated_sections: truncated }) => truncated),
+  );
+};
+
 /**
  * One run of the fixture scenario: the dialog opens and closes, the save click
  * fails after sending a request, the final wait is cancelled, and the save
@@ -357,10 +353,7 @@ export const browserScenarioFixtureCapture = (): BrowserScenarioCapture => {
         network_transaction_range: null,
       },
     },
-    completeness: classifyBrowserScenarioCompleteness(
-      steps.flatMap(({ completeness }) => completeness.missing_sections),
-      steps.flatMap(({ completeness }) => completeness.truncated_sections),
-    ),
+    completeness: scenarioFixtureCompleteness(steps),
     limitations: [
       "Scenario events are ordered by receipt; receipt order does not prove causality.",
     ],

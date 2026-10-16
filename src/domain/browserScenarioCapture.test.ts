@@ -10,9 +10,17 @@ import {
   browserScenarioStepSchema,
   browserStepArtifactsSchema,
   classifyBrowserScenarioCompleteness,
+  deriveStepCompleteness,
 } from "./browserScenarioCaptureValues.js";
-import { browserScenarioFixtureCapture } from "./browserScenarioCapture.fixture.js";
-import { browserScenarioCaptureSchema } from "./browserScenarioCapture.js";
+import {
+  browserScenarioFixtureCapture,
+  scenarioFixtureCompleteness,
+  scenarioFixtureUrl,
+} from "./browserScenarioCapture.fixture.js";
+import {
+  browserScenarioCaptureSchema,
+  type BrowserScenarioCapture,
+} from "./browserScenarioCapture.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "./browserScenarioCaptureLimits.js";
 
 const networkEvent = {
@@ -503,6 +511,306 @@ it("keeps step completeness equal to the step's artifacts and outcome", () => {
   expect(issues({ completeness: failedCompleteness })).toEqual([
     ["completeness"],
   ]);
+});
+
+const fixtureIssues = (
+  edit: (capture: BrowserScenarioCapture) => unknown,
+): unknown[] | undefined =>
+  browserScenarioCaptureSchema
+    .safeParse(edit(structuredClone(browserScenarioFixtureCapture())))
+    .error?.issues.map(({ path }) => path);
+
+const withItems = (
+  capture: BrowserScenarioCapture,
+  items: readonly unknown[],
+) => ({
+  ...capture,
+  events: { ...capture.events, retained: items.length, items },
+});
+
+/** The shared fixture with the next free event sequence and its first request. */
+const fixtureFacts = () => {
+  const fixture = browserScenarioFixtureCapture();
+  const next =
+    Math.max(...fixture.events.items.map(({ sequence }) => sequence)) + 1;
+  const request = fixture.events.items.find(({ kind }) => kind === "request");
+  if (request?.kind !== "request")
+    throw new Error("Expected a fixture request");
+  return { fixture, next, request };
+};
+
+it("keeps browser ownership and transaction omissions consistent", () => {
+  const { request } = fixtureFacts();
+  const range = ["events", "omissions", "network_transaction_range"];
+  const transactionDrop = {
+    kind: "request",
+    count: 1,
+    reasons: ["max-network-transactions"],
+  };
+
+  expect(fixtureIssues((capture) => capture)).toBeUndefined();
+  expect(
+    fixtureIssues((capture) => ({
+      ...capture,
+      browser: { ...capture.browser, cleanup: "disconnected-external" },
+    })),
+  ).toEqual([["browser"]]);
+  // Transaction-limit drops and the omitted transaction range imply each other.
+  expect(
+    fixtureIssues((capture) => ({
+      ...capture,
+      events: {
+        ...capture.events,
+        omissions: {
+          ...capture.events.omissions,
+          network_transaction_range: {
+            first_transaction_id: "request-9",
+            last_transaction_id: "request-9",
+            count: 1,
+            reason: "max-network-transactions",
+          },
+        },
+      },
+    })),
+  ).toEqual([range]);
+  expect(
+    fixtureIssues((capture) => ({
+      ...capture,
+      events: {
+        ...capture.events,
+        dropped: 1,
+        omissions: { ...capture.events.omissions, by_kind: [transactionDrop] },
+      },
+      completeness: scenarioFixtureCompleteness(capture.steps, true),
+    })),
+  ).toEqual([range]);
+  expect(
+    fixtureIssues((capture) => ({
+      ...capture,
+      events: {
+        ...capture.events,
+        dropped: 1,
+        omissions: {
+          ...capture.events.omissions,
+          by_kind: [transactionDrop],
+          network_transaction_range: {
+            first_transaction_id: "request-8",
+            last_transaction_id: "request-9",
+            count: 2,
+            reason: "max-network-transactions",
+          },
+        },
+      },
+      completeness: scenarioFixtureCompleteness(capture.steps, true),
+    })),
+  ).toEqual([range]);
+  expect(
+    fixtureIssues((capture) => ({
+      ...capture,
+      events: {
+        ...capture.events,
+        omissions: {
+          ...capture.events.omissions,
+          network_transactions: [
+            {
+              transaction_id: request.transaction_id,
+              omitted_kinds: ["response"],
+              reasons: ["max-events"],
+            },
+          ],
+        },
+      },
+    })),
+  ).toEqual([["events", "omissions", "network_transactions"]]);
+});
+
+it("keeps capture completeness equal to the aggregated step ledgers", () => {
+  const { fixture } = fixtureFacts();
+  // Capture completeness aggregates the step ledgers, and only events add to it.
+  expect(
+    fixtureIssues((capture) => ({
+      ...capture,
+      completeness: scenarioFixtureCompleteness(capture.steps.slice(0, 1)),
+    })),
+  ).toEqual([["completeness"]]);
+  expect(
+    fixtureIssues((capture) => ({
+      ...capture,
+      completeness: classifyBrowserScenarioCompleteness(
+        [...capture.completeness.missing_sections, "frames"],
+        capture.completeness.truncated_sections,
+      ),
+    })),
+  ).toEqual([["completeness"]]);
+  for (const completeness of [
+    classifyBrowserScenarioCompleteness(fixture.completeness.missing_sections, [
+      "dom",
+    ]),
+    {
+      ...fixture.completeness,
+      missing_sections: [...fixture.completeness.missing_sections, "action"],
+    },
+  ])
+    expect(fixtureIssues((capture) => ({ ...capture, completeness }))).toEqual([
+      ["completeness"],
+    ]);
+});
+
+it("requires missing events whenever the capture shows an event gap", () => {
+  const { fixture, next, request } = fixtureFacts();
+  const eventsMissing = ["completeness", "missing_sections"];
+  // Connect mode, dropped events and retained event gaps make events missing.
+  for (const gap of [
+    (capture: BrowserScenarioCapture) => ({
+      ...capture,
+      browser: {
+        ...capture.browser,
+        mode: "connect",
+        process_ownership: "external",
+        cleanup: "disconnected-external",
+      },
+    }),
+    (capture: BrowserScenarioCapture) => ({
+      ...capture,
+      events: {
+        ...capture.events,
+        dropped: 1,
+        omissions: {
+          ...capture.events.omissions,
+          by_kind: [{ kind: "console", count: 1, reasons: ["max-events"] }],
+        },
+      },
+    }),
+    (capture: BrowserScenarioCapture) =>
+      withItems(capture, [
+        ...capture.events.items,
+        {
+          ...request,
+          sequence: next,
+          kind: "request-unfinished",
+          reason: "capture-ended",
+        },
+      ]),
+    (capture: BrowserScenarioCapture) =>
+      withItems(capture, [
+        ...capture.events.items,
+        {
+          sequence: next,
+          step_index: request.step_index,
+          kind: "network-content",
+          transaction_id: request.transaction_id,
+          source_event_sequence: request.sequence,
+          phase: "request",
+          headers: {
+            state: "unavailable",
+            message: "headers were not exposed",
+          },
+          body: { state: "not_requested" },
+        },
+      ]),
+    (capture: BrowserScenarioCapture) =>
+      withItems(
+        {
+          ...capture,
+          scenario: {
+            ...capture.scenario,
+            event_families: ["console", "frames", "network", "popups"],
+          },
+        },
+        [
+          ...capture.events.items,
+          {
+            sequence: next,
+            step_index: 1,
+            kind: "popup-opened",
+            url: null,
+            name: null,
+          },
+        ],
+      ),
+  ])
+    expect(fixtureIssues(gap)).toEqual([eventsMissing]);
+  expect(
+    browserScenarioCaptureSchema.safeParse({
+      ...fixture,
+      browser: {
+        ...fixture.browser,
+        mode: "connect",
+        process_ownership: "external",
+        cleanup: "disconnected-external",
+      },
+    }).error?.issues[0]?.message,
+  ).toBe(
+    "Connect mode leaves event coverage incomplete, so events must be missing",
+  );
+  // Without a gap family, a retained popup-opened leaves coverage complete.
+  expect(
+    fixtureIssues((capture) =>
+      withItems(
+        {
+          ...capture,
+          scenario: {
+            ...capture.scenario,
+            event_families: ["console", "network", "popups"],
+          },
+        },
+        [
+          ...capture.events.items,
+          {
+            sequence: next,
+            step_index: 1,
+            kind: "popup-opened",
+            url: null,
+            name: null,
+          },
+        ],
+      ),
+    ),
+  ).toBeUndefined();
+});
+
+it("keeps steps after a failure as cancellations that never ran", () => {
+  const fixture = browserScenarioFixtureCapture();
+  const capturedUrl = fixture.steps[3]?.artifacts.url;
+  expect(fixture.steps.map(({ status }) => status).slice(3)).toEqual([
+    "failed",
+    "cancelled",
+  ]);
+  const editLast = (changes: Record<string, unknown>) =>
+    fixtureIssues((capture) => {
+      const steps = capture.steps.map((step) =>
+        step.step_index === 4 ? { ...step, ...changes } : step,
+      );
+      return {
+        ...capture,
+        steps,
+        completeness: scenarioFixtureCompleteness(steps),
+      };
+    });
+
+  expect(
+    editLast({
+      artifacts: { ...fixture.steps[4]?.artifacts, url: capturedUrl },
+      completeness: classifyBrowserScenarioCompleteness(
+        ["screenshot", "accessibility", "action"],
+        [],
+      ),
+    }),
+  ).toEqual([["steps", 4, "artifacts"]]);
+  for (const changes of [
+    {
+      status: "completed",
+      error: null,
+      completeness: deriveStepCompleteness({
+        status: "completed",
+        artifacts: fixture.steps[4]!.artifacts,
+      }),
+    },
+    { elapsed_ms: 5 },
+    { after_url: scenarioFixtureUrl("/elsewhere") },
+    { event_sequence_end: 7 },
+  ])
+    expect(editLast(changes)).toEqual([["steps", 4]]);
 });
 
 it("derives equality eligibility from exact completeness state", () => {

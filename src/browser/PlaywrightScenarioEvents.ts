@@ -12,6 +12,7 @@ import type {
 
 import type { SanitizedBrowserUrl } from "../domain/browserObservation.js";
 import {
+  BROWSER_SCENARIO_POPUP_GAP_FAMILIES,
   browserScenarioEventSchema,
   enabledScenarioEventFamilies,
   type BrowserScenarioEvent,
@@ -596,12 +597,7 @@ export class PlaywrightScenarioEvents {
     )
       return;
     this.pages.add(page);
-    for (const family of [
-      "frames",
-      "workers",
-      "websockets",
-      "downloads",
-    ] as const)
+    for (const family of BROWSER_SCENARIO_POPUP_GAP_FAMILIES)
       if (this.enabled.has(family)) this.incompleteFamilies.add(family);
     const opened = {
       url: page.url() === "" ? null : this.safeUrl(page.url()),

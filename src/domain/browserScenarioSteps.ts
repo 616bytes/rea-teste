@@ -8,7 +8,6 @@ import {
 import type { BrowserScenarioAction } from "./browserScenarioValues.js";
 import {
   captureEventEvidenceState,
-  eventEvidenceState,
   observeScenarioStepState,
   type BrowserScenarioStateArtifact,
   type ScenarioArtifactObservation,
@@ -229,16 +228,16 @@ export const projectBrowserScenarioSteps = (
   const transactionsByStep = new Map<number, number>();
   for (const { step_index: index } of transactions)
     transactionsByStep.set(index, (transactionsByStep.get(index) ?? 0) + 1);
+  const eventCoverage =
+    enabledEventFamilies.length === 0
+      ? "not_requested"
+      : captureEventEvidenceState(capture);
   let previous: StepState | undefined;
   const steps = capture.steps.map((step, index): BrowserScenarioStepFacts => {
     const state = observeScenarioStepState(step, []);
     const changes =
       previous === undefined ? undefined : compareWithPrevious(previous, state);
     previous = state;
-    const eventCoverage =
-      enabledEventFamilies.length === 0
-        ? "not_requested"
-        : eventEvidenceState(capture, step);
     return {
       step,
       state,

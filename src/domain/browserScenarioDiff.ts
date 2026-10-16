@@ -5,8 +5,8 @@ import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
   BROWSER_SCENARIO_STATE_ARTIFACTS,
   actionState,
+  captureEventEvidenceState,
   captured,
-  eventEvidenceState,
   eventFamilyCoverageReason,
   observeScenarioArtifact,
   observeScenarioStepState,
@@ -326,8 +326,8 @@ const compareStepArtifacts = (
       rules: input.rules,
       before: captured(input.beforeEvents.forStep(input.beforeStep.step_index)),
       after: captured(input.afterEvents.forStep(input.afterStep.step_index)),
-      beforeState: eventEvidenceState(input.beforeCapture, input.beforeStep),
-      afterState: eventEvidenceState(input.afterCapture, input.afterStep),
+      beforeState: captureEventEvidenceState(input.beforeCapture),
+      afterState: captureEventEvidenceState(input.afterCapture),
       incomparableReason: eventCoverageReason(
         input.beforeCapture,
         input.afterCapture,

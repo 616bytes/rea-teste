@@ -13,10 +13,10 @@ import {
 import {
   BROWSER_SCENARIO_START_STEP,
   classifyBrowserScenarioCompleteness,
+  deriveStepCompleteness,
   browserScenarioStepSchema,
   browserStepArtifactsSchema,
   type BrowserScenarioCompleteness,
-  type BrowserScenarioCompletenessSection,
   type BrowserScenarioStep,
   type BrowserScenarioStepOutcome,
   type BrowserStepArtifacts,
@@ -43,15 +43,6 @@ const signalIsAborted = (signal: AbortSignal | undefined): boolean =>
   signal?.aborted === true;
 
 type SnapshotKind = BrowserScenario["capture"]["after_each_step"][number];
-const SNAPSHOT_KINDS = [
-  "screenshot",
-  "dom",
-  "accessibility",
-  "url",
-  "history",
-  "storage",
-] as const satisfies readonly SnapshotKind[];
-
 const requestedForStep = (
   scenario: BrowserScenario,
   stepIndex: number,
@@ -79,20 +70,6 @@ const unavailableArtifacts = (
   });
 };
 
-const stepCompleteness = (
-  artifacts: BrowserStepArtifacts,
-  status: BrowserScenarioStep["status"],
-): BrowserScenarioCompleteness => {
-  const missing: BrowserScenarioCompletenessSection[] = SNAPSHOT_KINDS.filter(
-    (section) => artifacts[section].state === "missing",
-  );
-  const truncated = SNAPSHOT_KINDS.filter(
-    (section) => artifacts[section].state === "truncated",
-  );
-  if (status !== "completed") missing.push("action");
-  return classifyBrowserScenarioCompleteness(missing, truncated);
-};
-
 const createStep = (
   input: {
     readonly stepIndex: number;
@@ -118,7 +95,7 @@ const createStep = (
     event_sequence_start: input.eventStart,
     event_sequence_end: input.eventEnd,
     artifacts: input.artifacts,
-    completeness: stepCompleteness(input.artifacts, input.status),
+    completeness: deriveStepCompleteness(input),
   });
 
 const initialStep = async (input: {

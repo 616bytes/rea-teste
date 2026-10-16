@@ -417,22 +417,43 @@ it("bounds a final state read that is still pending after cancellation", async (
     evaluate: vi.fn(() => new Promise<never>(() => undefined)),
   } as unknown as ElectronApplication;
 
+  const reason = new Error("caller-reason");
+
   const state = readFinalApplicationState(application, controller.signal);
   const outcome = state.then(
     () => null,
     (cause: unknown) => cause,
   );
-  controller.abort();
+  controller.abort(reason);
   await vi.advanceTimersByTimeAsync(4_000);
   expect(await Promise.race([outcome, Promise.resolve("pending")])).toBe(
     "pending",
   );
   await vi.advanceTimersByTimeAsync(1_000);
 
-  expect(await outcome).toMatchObject({
+  const cause = await outcome;
+  expect(cause).toMatchObject({
     _tag: "BrowserObservationError",
-    reason: "timeout",
+    reason: "cancelled",
+    diagnostics: {
+      final_state_read: "cancellation_grace_expired",
+      cancellation_grace_ms: 5_000,
+    },
   });
+  expect((cause as Error).cause).toBe(reason);
+});
+
+it("keeps a final state read failure inside the cancellation grace period primary", async () => {
+  const controller = new AbortController();
+  controller.abort(new Error("caller-reason"));
+  const failure = new Error("renderer state unavailable");
+  const application = {
+    evaluate: vi.fn(() => Promise.reject(failure)),
+  } as unknown as ElectronApplication;
+
+  await expect(
+    readFinalApplicationState(application, controller.signal),
+  ).rejects.toBe(failure);
 });
 
 const finalState = {

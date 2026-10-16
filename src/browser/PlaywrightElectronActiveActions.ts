@@ -11,6 +11,7 @@ import {
 
 const OPERATION = "capture_electron_scenario" as const;
 const CANCELLED_STATE_READ_TIMEOUT_MS = 5_000;
+const GRACE_EXPIRED = Symbol("cancellation grace expired");
 
 const hookSnapshotSchema = z.strictObject({
   events: z.array(electronActiveTimelineEventSchema),
@@ -364,7 +365,9 @@ export const readApplicationState = async (
 
 /**
  * Read the post-action state. Cancellation before or during the read leaves the
- * same bounded grace period so a responsive app still yields its final state.
+ * same bounded grace period so a responsive app still yields its final state;
+ * expiry of that period is the caller's cancellation, with the expiry kept in
+ * the error diagnostics.
  */
 export const readFinalApplicationState = async (
   application: ElectronApplication,
@@ -381,11 +384,28 @@ export const readFinalApplicationState = async (
       )
         throw cause;
     }
-  return runWithExecutionLimits(
-    state,
-    undefined,
-    performance.now() + CANCELLED_STATE_READ_TIMEOUT_MS,
-  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const graceExpired = new Promise<typeof GRACE_EXPIRED>((resolve) => {
+    timer = setTimeout(
+      () => resolve(GRACE_EXPIRED),
+      CANCELLED_STATE_READ_TIMEOUT_MS,
+    );
+  });
+  try {
+    const settled = await Promise.race([state, graceExpired]);
+    if (settled !== GRACE_EXPIRED) return settled;
+  } finally {
+    clearTimeout(timer);
+  }
+  // The grace period exists only because of cancellation, so its expiry is
+  // reported as that cancellation; a read failure inside it stays primary.
+  throw new BrowserObservationError(OPERATION, "cancelled", {
+    cause: signal?.reason,
+    diagnostics: {
+      final_state_read: "cancellation_grace_expired",
+      cancellation_grace_ms: CANCELLED_STATE_READ_TIMEOUT_MS,
+    },
+  });
 };
 
 /** Apply an optional lifecycle deadline and caller cancellation to an operation. */

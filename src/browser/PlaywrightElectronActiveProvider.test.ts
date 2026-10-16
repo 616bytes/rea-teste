@@ -580,6 +580,59 @@ it("keeps a failure observed with cancellation as the cancellation cause", async
   expect(result.error.cause).toBe(failure);
 });
 
+it("reports an expired final state grace period as the caller's cancellation", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    stubVerifiedElectronCleanup();
+    const controller = new AbortController();
+    const reason = new Error("caller-reason");
+    vi.spyOn(electronActions, "readApplicationState").mockResolvedValueOnce({
+      windows: [],
+      metrics: [],
+      electronVersion: "44.0.0",
+      hookSnapshot: emptyHookSnapshot(),
+    });
+    // The real final read reaches these evaluations, which never settle.
+    const evaluate = vi.fn(() => {
+      queueMicrotask(() => controller.abort(reason));
+      return new Promise<never>(() => undefined);
+    });
+    const application = {
+      process: () => ({ pid: 424242 }),
+      evaluate,
+      close: vi.fn(async () => undefined),
+      windows: () => [],
+    };
+
+    const capture = captureWithController(controller, application, []);
+    await vi.waitFor(() => expect(evaluate).toHaveBeenCalled());
+    await vi.advanceTimersByTimeAsync(5_000);
+    const result = await capture;
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected the capture to be cancelled");
+    expect(result.error).toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "cancelled",
+      diagnostics: {
+        final_state_read: "cancellation_grace_expired",
+        cancellation_grace_ms: 5_000,
+      },
+      partialObservation: {
+        kind: "electron-active-observation",
+        capture: {
+          limitations: expect.arrayContaining([
+            expect.stringContaining("initial pre-action snapshot"),
+          ]),
+        },
+      },
+    });
+    expect(result.error.cause).toBe(reason);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 const stubCompletedCapture = () => {
   const state = {
     windows: [],

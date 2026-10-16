@@ -170,7 +170,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       if (options.signal?.aborted === true)
         outcome = err(
           new BrowserObservationError(OPERATION, "cancelled", {
-            cause: cancellationCause(cause, options.signal),
+            ...cancellationCause(cause, options.signal),
             ...(capture === undefined
               ? {}
               : {
@@ -290,14 +290,26 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
 }
 
 /**
- * A cancellation wrapper stands in for the caller's abort reason; any other
- * failure observed with cancellation stays the primary cause.
+ * A cancellation wrapper stands in for the caller's abort reason and keeps its
+ * producer diagnostics; any other failure observed with cancellation stays the
+ * primary cause.
  */
-const cancellationCause = (cause: unknown, signal: AbortSignal): unknown =>
+const cancellationCause = (
+  cause: unknown,
+  signal: AbortSignal,
+): {
+  readonly cause: unknown;
+  readonly diagnostics?: AnalysisError["diagnostics"];
+} =>
   cause instanceof AnalysisCancelledError ||
   (cause instanceof AnalysisError && cause.userCategory === "cancelled")
-    ? signal.reason
-    : cause;
+    ? {
+        cause: signal.reason,
+        ...(cause.diagnostics === undefined
+          ? {}
+          : { diagnostics: cause.diagnostics }),
+      }
+    : { cause };
 
 /** Clean up an Electron launch. Windows signals a process only after lineage is verified. */
 export const cleanupElectronProcesses = async (

@@ -7,8 +7,11 @@ import {
   BROWSER_SCENARIO_START_STEP,
   browserScenarioCompletenessSchema,
   browserScenarioEventSchema,
+  browserScenarioStepSchema,
   browserStepArtifactsSchema,
+  classifyBrowserScenarioCompleteness,
 } from "./browserScenarioCaptureValues.js";
+import { browserScenarioFixtureCapture } from "./browserScenarioCapture.fixture.js";
 import { browserScenarioCaptureSchema } from "./browserScenarioCapture.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "./browserScenarioCaptureLimits.js";
 
@@ -459,6 +462,47 @@ it("limits event omission accounting to selected families", () => {
     }).success;
   expect(popupDiscovery(["console"])).toBe(true);
   expect(popupDiscovery([])).toBe(false);
+});
+
+it("keeps step completeness equal to the step's artifacts and outcome", () => {
+  const step = browserScenarioFixtureCapture().steps[1];
+  if (step === undefined) throw new Error("Expected a fixture step");
+  const issues = (changes: Record<string, unknown>) =>
+    browserScenarioStepSchema
+      .safeParse({ ...step, ...changes })
+      .error?.issues.map(({ path }) => path);
+  const failedCompleteness = classifyBrowserScenarioCompleteness(
+    [...step.completeness.missing_sections, "action"],
+    step.completeness.truncated_sections,
+  );
+
+  expect(issues({})).toBeUndefined();
+  expect(
+    issues({
+      completeness: classifyBrowserScenarioCompleteness([], ["accessibility"]),
+    }),
+  ).toEqual([["completeness"]]);
+  expect(
+    issues({
+      artifacts: {
+        ...step.artifacts,
+        dom: { state: "missing", reason: "DOM capture failed" },
+      },
+    }),
+  ).toEqual([["completeness"]]);
+  expect(issues({ status: "failed", error: "click failed" })).toEqual([
+    ["completeness"],
+  ]);
+  expect(
+    issues({
+      status: "failed",
+      error: "click failed",
+      completeness: failedCompleteness,
+    }),
+  ).toBeUndefined();
+  expect(issues({ completeness: failedCompleteness })).toEqual([
+    ["completeness"],
+  ]);
 });
 
 it("derives equality eligibility from exact completeness state", () => {

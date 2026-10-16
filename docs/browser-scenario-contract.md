@@ -130,8 +130,10 @@ Choose captures by the question being asked:
 
 Capture states are reported per artifact. An artifact you did not request is
 `not_requested`, which means REA did not look, not that the page had nothing
-to show. A step's `completeness` of `complete` covers only the sections that
-were requested. A URL-only capture can be `complete` and still be unable to
+to show. A step's `completeness` restates its artifact states: it lists exactly
+the missing and truncated artifacts, plus the action when the action did not
+complete. A `complete` step covers only the sections that were requested. A
+URL-only capture can be `complete` and still be unable to
 answer a question about rendered content, so add the relevant artifact and run
 the scenario again rather than inferring from its absence. Capture completeness
 also does not assert that the page's background work has finished.
@@ -402,8 +404,8 @@ content selection also selects network events. Omission accounting names only
 selected families, except that a popup page refused by an event budget is an
 omitted `popup-opened` record whenever any family is selected, because popup
 discovery serves every selected family. Comparisons and views reject inline
-captures that contradict their selection or their initial state as malformed
-input. Captures with different selections report event evidence as unknown
+captures that contradict their selection, their initial state or their step
+completeness as malformed input. Captures with different selections report event evidence as unknown
 with a recovery instruction, even when no selected family emitted an event.
 
 Network normalization also commits the removal of capture-local transaction IDs,

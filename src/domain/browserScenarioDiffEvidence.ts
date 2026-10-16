@@ -39,27 +39,18 @@ const includesCompletenessSection = (
   return sections.includes(section);
 };
 
-/** Project one captured artifact through its step-level completeness ledger. */
+/**
+ * Project one recorded artifact through its step outcome. The capture schema
+ * keeps step completeness equal to the artifact states and outcome, so only an
+ * action that did not complete makes a captured value missing.
+ */
 export const artifactEvidenceState = <Value>(
   artifact: BrowserScenarioArtifactKind,
   state: CaptureState<Value>,
   step: BrowserScenarioStep,
 ): BrowserScenarioEvidenceState => {
   if (state.state !== "captured") return state.state;
-  const section = artifact === "action_state" ? "action" : artifact;
-  if (
-    includesCompletenessSection(
-      step.completeness,
-      "truncated_sections",
-      section,
-    )
-  )
-    return "truncated";
-  return includesCompletenessSection(
-    step.completeness,
-    "missing_sections",
-    section,
-  )
+  return artifact === "action_state" && step.status !== "completed"
     ? "missing"
     : "captured";
 };

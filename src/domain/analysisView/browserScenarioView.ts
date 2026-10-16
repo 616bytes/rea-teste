@@ -344,16 +344,13 @@ const textItem = (
   },
   AnalysisError
 > => {
-  const observed = facts.state[artifact];
+  // The capture schema keeps step completeness equal to these artifact states.
   const recorded = facts.step.artifacts[artifact];
-  if (observed.state !== "captured" || recorded.state !== "captured")
+  if (recorded.state !== "captured")
     return ok({
       item: {
-        coverage: observed.state === "captured" ? "missing" : observed.state,
-        reason:
-          recorded.state === "missing" || recorded.state === "truncated"
-            ? recorded.reason
-            : null,
+        coverage: recorded.state,
+        reason: recorded.state === "not_requested" ? null : recorded.reason,
       },
       coverage: pageViewCoverage(offset, 0, 0),
     });

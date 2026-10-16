@@ -491,18 +491,73 @@ const browserScenarioStepShape = {
   artifacts: browserStepArtifactsSchema,
   completeness: browserScenarioCompletenessSchema,
 };
-export const browserScenarioStepSchema = z.union([
-  z.strictObject({
-    ...browserScenarioStepShape,
-    status: z.literal("completed"),
-    error: z.null(),
-  }),
-  z.strictObject({
-    ...browserScenarioStepShape,
-    status: z.enum(["failed", "cancelled"]),
-    error: z.string(),
-  }),
-]);
+const sameSections = (
+  recorded: readonly BrowserScenarioCompletenessSection[],
+  expected: readonly BrowserScenarioCompletenessSection[],
+): boolean => {
+  const sorted = [...new Set(recorded)].sort();
+  return (
+    sorted.length === recorded.length &&
+    sorted.length === expected.length &&
+    sorted.every((section, index) => section === expected[index])
+  );
+};
+
+/**
+ * Step completeness restates the step's own facts: each missing or truncated
+ * artifact names its section, and an action that did not complete names the
+ * action section. It records nothing else.
+ */
+const refineStepCompleteness = (
+  step: {
+    readonly status: "completed" | "failed" | "cancelled";
+    readonly artifacts: BrowserStepArtifacts;
+    readonly completeness: BrowserScenarioCompleteness;
+  },
+  context: z.RefinementCtx,
+): void => {
+  const sections = browserStepArtifactsSchema.keyof().options;
+  const expected = classifyBrowserScenarioCompleteness(
+    [
+      ...sections.filter(
+        (section) => step.artifacts[section].state === "missing",
+      ),
+      ...(step.status === "completed" ? [] : (["action"] as const)),
+    ],
+    sections.filter((section) => step.artifacts[section].state === "truncated"),
+  );
+  if (
+    !sameSections(
+      step.completeness.missing_sections,
+      expected.missing_sections,
+    ) ||
+    !sameSections(
+      step.completeness.truncated_sections,
+      expected.truncated_sections,
+    )
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["completeness"],
+      message:
+        "Step completeness must list exactly the missing and truncated artifacts, plus the action section when the action did not complete",
+    });
+};
+
+export const browserScenarioStepSchema = z
+  .union([
+    z.strictObject({
+      ...browserScenarioStepShape,
+      status: z.literal("completed"),
+      error: z.null(),
+    }),
+    z.strictObject({
+      ...browserScenarioStepShape,
+      status: z.enum(["failed", "cancelled"]),
+      error: z.string(),
+    }),
+  ])
+  .superRefine(refineStepCompleteness);
 export type BrowserScenarioStep = z.infer<typeof browserScenarioStepSchema>;
 type StepOutcome<Step> = Step extends BrowserScenarioStep
   ? Pick<Step, "status" | "error">

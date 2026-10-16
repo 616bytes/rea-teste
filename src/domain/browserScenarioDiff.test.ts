@@ -381,12 +381,13 @@ it("keeps every incomparable artifact's states, captured-side digest and reason"
             truncated_sections: ["accessibility"],
           },
         };
-      // A captured URL that the step ledger lists as missing stays unknown.
+      // A URL captured before but missing after stays unknown.
       if (step.step_index === 2)
         return {
           ...step,
           artifacts: {
             ...step.artifacts,
+            url: { state: "missing", reason: "URL capture failed" },
             screenshot: {
               state: "captured",
               value: {

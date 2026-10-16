@@ -16,7 +16,10 @@ import {
   browserScenarioFixtureParameters,
   browserScenarioFixtureScenario,
 } from "../browserScenarioCapture.fixture.js";
-import { browserScenarioEventKindFamily } from "../browserScenarioCaptureValues.js";
+import {
+  browserScenarioEventKindFamily,
+  classifyBrowserScenarioCompleteness,
+} from "../browserScenarioCaptureValues.js";
 import { UNAVAILABLE_SUBJECT_LIMITATION } from "../evidence.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 
@@ -346,9 +349,18 @@ it("rejects retained events from families the scenario did not select", () => {
 
 it("rejects a step 0 that is not the completed implicit start navigation", () => {
   const fixture = browserScenarioFixtureCapture();
-  for (const start of [
+  const start = fixture.steps[0];
+  if (start === undefined) throw new Error("Expected the start step");
+  for (const replacement of [
     { step_id: "open-settings", action: "click" },
-    { status: "failed", error: "navigation failed" },
+    {
+      status: "failed",
+      error: "navigation failed",
+      completeness: classifyBrowserScenarioCompleteness(
+        [...start.completeness.missing_sections, "action"],
+        start.completeness.truncated_sections,
+      ),
+    },
   ])
     expect(
       failure(
@@ -358,7 +370,7 @@ it("rejects a step 0 that is not the completed implicit start navigation", () =>
           normalizedResult: {
             ...fixture,
             steps: fixture.steps.map((step) =>
-              step.step_index === 0 ? { ...step, ...start } : step,
+              step.step_index === 0 ? { ...step, ...replacement } : step,
             ),
           },
         },
@@ -366,6 +378,43 @@ it("rejects a step 0 that is not the completed implicit start navigation", () =>
     ).toMatchObject({
       issues: [{ path: ["source", "normalized_result", "steps", 0] }],
     });
+});
+
+it("rejects step completeness that contradicts the retained artifacts", () => {
+  const fixture = browserScenarioFixtureCapture();
+  expect(fixture.steps[1]?.artifacts.accessibility.state).toBe("captured");
+  expect(
+    failure(
+      {
+        kind: "browser-scenario",
+        collection: "text",
+        step_index: 1,
+        artifact: "accessibility",
+        limit: 10,
+      },
+      {
+        ...parent(),
+        normalizedResult: {
+          ...fixture,
+          steps: fixture.steps.map((step) =>
+            step.step_index === 1
+              ? {
+                  ...step,
+                  completeness: classifyBrowserScenarioCompleteness(
+                    [],
+                    ["accessibility"],
+                  ),
+                }
+              : step,
+          ),
+        },
+      },
+    ),
+  ).toMatchObject({
+    issues: [
+      { path: ["source", "normalized_result", "steps", 1, "completeness"] },
+    ],
+  });
 });
 
 it("fails closed when recorded actions do not describe the capture steps", () => {

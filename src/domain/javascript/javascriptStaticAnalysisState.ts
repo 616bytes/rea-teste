@@ -55,6 +55,7 @@ export interface JavaScriptAnalysisAccumulator {
   readonly sourceMaps: JavaScriptStaticAnalysis["source_map_urls"][number][];
   readonly registrations: JavaScriptBundlerRegistration[];
   readonly browserWindows: LocatedJavaScriptFinding<ElectronBrowserWindowFinding>[];
+  readonly pendingBrowserWindows: t.NewExpression[];
   readonly contextBridgeApis: LocatedJavaScriptFinding<ElectronContextBridgeFinding>[];
   readonly ipc: LocatedJavaScriptFinding<ElectronIpcFinding>[];
   readonly senderValidations: LocatedJavaScriptFinding<ElectronSenderValidationFinding>[];
@@ -121,6 +122,7 @@ export const createJavaScriptAnalysisAccumulator = (
   sourceMaps: [],
   registrations: [],
   browserWindows: [],
+  pendingBrowserWindows: [],
   contextBridgeApis: [],
   ipc: [],
   senderValidations: [],

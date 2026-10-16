@@ -170,7 +170,7 @@ export class SemanticGetterQuery {
   ): readonly Reference[] {
     this.#collect(root, expand);
     if (this.#limited) {
-      this.state.resourceLimits.add("getter-expansion");
+      this.state.getterResourceLimits.add("getter-expansion");
       // Escaping each selected getter's result covers every omitted suffix.
       // Canonical empty suffixes make the retry finite in receiver/getter pairs.
       this.#fallback = true;

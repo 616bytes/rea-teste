@@ -34,9 +34,11 @@ import {
 import { projectSemanticResources } from "./JavaScriptSemanticGraphResourceProjection.js";
 import { projectSemanticObjects } from "./JavaScriptSemanticGraphObjectProjection.js";
 import { projectSemanticValues } from "./JavaScriptSemanticGraphValueProjection.js";
-import { inferredSemanticEvidenceAt } from "./JavaScriptSemanticGraphEvidence.js";
-import { observedSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
-import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
+import {
+  inferredSemanticEvidenceAt,
+  observedSemanticEvidence,
+  unknownSemanticEvidence,
+} from "./JavaScriptSemanticGraphEvidence.js";
 import {
   semanticCoverageResourceLimits,
   semanticResourceLimitCoverage,
@@ -169,7 +171,7 @@ export interface JavaScriptSemanticGraphProjection {
   readonly adoptFileProjection: (
     projection: JavaScriptSemanticFileProjection,
   ) => void;
-  /** Preserve source-bound unknowns for an execution or result-retention failure. */
+  /** Preserve JavaScript-source unknowns; other file kinds have no semantic module. */
   readonly recordUnavailableFile: (
     file: JavaScriptArtifactFile,
     reason: string,
@@ -352,6 +354,9 @@ export const createJavaScriptSemanticGraphProjection = (
       if (projection.truncated) truncatedFiles += 1;
     },
     recordUnavailableFile: (file, reason, limits, unknownReason) => {
+      // Both full and incremental construction enter here. Metadata/native
+      // processing gaps belong to the application graph, never JavaScript IR.
+      if (file.kind !== "javascript") return;
       const retainedLimits = javaScriptAnalysisCoverageLimits(limits);
       for (const limit of retainedLimits) {
         executionLimits.set(

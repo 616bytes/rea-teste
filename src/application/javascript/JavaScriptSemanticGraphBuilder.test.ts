@@ -168,6 +168,27 @@ it("keeps dynamic calls explicit and returns complete deterministic results", ()
   expect(repeated).toEqual(first);
 });
 
+it("preserves primitive candidate budget unknowns in semantic graph coverage", () => {
+  const term = '(true ? "a" : "b")';
+  const source = `const answer = ${Array.from({ length: 20 }, () => term).join(" + ")};`;
+  const ir = analyzeJavaScriptSemantics(source);
+  const graph = graphFor(source, ir);
+
+  expect(ir.coverage).toMatchObject({
+    status: "partial",
+    resourceLimits: ["primitive-candidates"],
+  });
+  expect(
+    graph.unknowns.filter(({ reason }) => reason === "resource-limit"),
+  ).toEqual([
+    expect.objectContaining({
+      family: "data-flow",
+      reason: "resource-limit",
+      detail: expect.stringMatching(/primitive candidate budget exceeded/i),
+    }),
+  ]);
+});
+
 it("preserves derived string-byte limit reasons in semantic graph unknowns", () => {
   const source = primitiveByteExpansionSource();
   const ir = analyzeJavaScriptSemantics(source);
@@ -203,6 +224,35 @@ it("retains resource-limit reasons at nested object property slots", () => {
       ),
     }),
   );
+});
+
+it("preserves deep expression resource reasons through graph projection", () => {
+  const source = "const answer = true;";
+  const parsed = parseJavaScriptSource(source);
+  const declaration = parsed?.program.body[0];
+  const declarator = t.isVariableDeclaration(declaration)
+    ? declaration.declarations[0]
+    : undefined;
+  if (parsed === null || !t.isVariableDeclarator(declarator))
+    throw new Error("Expected parsed binding initializer");
+  let expression: t.Expression = t.booleanLiteral(true);
+  for (let index = 0; index < 5_000; index += 1)
+    expression = t.unaryExpression("!", expression, true);
+  declarator.init = expression;
+  const ir = analyzeParsedJavaScriptSemantics(parsed);
+  const graph = graphFor(source, ir);
+
+  expect(semanticCoverageResourceLimits(ir.coverage)).toEqual([
+    "expression-depth",
+  ]);
+  expect(
+    graph.unknowns.filter(({ reason }) => reason === "resource-limit"),
+  ).toEqual([
+    expect.objectContaining({
+      reason: "resource-limit",
+      detail: expect.stringMatching(/expression depth budget exceeded/i),
+    }),
+  ]);
 });
 
 it("keeps ambiguous interprocedural flow out of the default traversal", () => {
@@ -427,56 +477,6 @@ const semanticNodeFor = (roleKey: string) => {
     state,
   );
 };
-
-it("preserves primitive candidate budget unknowns in semantic graph coverage", () => {
-  const term = '(true ? "a" : "b")';
-  const source = `const answer = ${Array.from({ length: 20 }, () => term).join(" + ")};`;
-  const ir = analyzeJavaScriptSemantics(source);
-  const graph = graphFor(source, ir);
-
-  expect(ir.coverage).toMatchObject({
-    status: "partial",
-    resourceLimits: ["primitive-candidates"],
-  });
-  expect(
-    graph.unknowns.filter(({ reason }) => reason === "resource-limit"),
-  ).toEqual([
-    expect.objectContaining({
-      family: "data-flow",
-      reason: "resource-limit",
-      detail: expect.stringMatching(/primitive candidate budget exceeded/i),
-    }),
-  ]);
-});
-
-it("preserves deep expression resource reasons through graph projection", () => {
-  const source = "const answer = true;";
-  const parsed = parseJavaScriptSource(source);
-  const declaration = parsed?.program.body[0];
-  const declarator = t.isVariableDeclaration(declaration)
-    ? declaration.declarations[0]
-    : undefined;
-  if (parsed === null || !t.isVariableDeclarator(declarator))
-    throw new Error("Expected parsed binding initializer");
-  let expression: t.Expression = t.booleanLiteral(true);
-  for (let index = 0; index < 5_000; index += 1)
-    expression = t.unaryExpression("!", expression, true);
-  declarator.init = expression;
-  const ir = analyzeParsedJavaScriptSemantics(parsed);
-  const graph = graphFor(source, ir);
-
-  expect(semanticCoverageResourceLimits(ir.coverage)).toEqual([
-    "expression-depth",
-  ]);
-  expect(
-    graph.unknowns.filter(({ reason }) => reason === "resource-limit"),
-  ).toEqual([
-    expect.objectContaining({
-      reason: "resource-limit",
-      detail: expect.stringMatching(/expression depth budget exceeded/i),
-    }),
-  ]);
-});
 
 it("preserves getter expansion limits in semantic graph coverage", () => {
   const source = getterExpansionSource();

@@ -4,7 +4,7 @@ import {
   semanticStaticPropertyKey,
 } from "./javascriptAstValues.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
-import { semanticReadInitializers } from "./javascriptSemanticMutationInitializers.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import {
   resolveSemanticBindingState,
@@ -179,7 +179,7 @@ class GetterResultWalker {
     identity: string,
   ): void {
     const state = this.query.state;
-    const origins = semanticReadInitializers(
+    const { binding: origins } = semanticBindingAtRead(
       binding,
       expression,
       state.parentsByNode,

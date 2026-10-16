@@ -36,7 +36,7 @@ it("memoizes convergent getter states before spending another visit", () => {
     state,
   );
   expect(references).toHaveLength(1);
-  expect(state.resourceLimits.size).toBe(0);
+  expect(state.getterResourceLimits.size).toBe(0);
 });
 
 it("keeps distinct remaining paths when getter expansions converge", () => {
@@ -54,7 +54,7 @@ it("keeps distinct remaining paths when getter expansions converge", () => {
     state,
   );
   expect(references.map(({ path }) => path)).toEqual([[], ["x"], ["y"]]);
-  expect(state.resourceLimits.size).toBe(0);
+  expect(state.getterResourceLimits.size).toBe(0);
 });
 
 it("collapses dynamic getter permutations to distinct escaped references", () => {
@@ -70,7 +70,7 @@ it("collapses dynamic getter permutations to distinct escaped references", () =>
     path: [],
     escapes: true,
   });
-  expect([...state.resourceLimits]).toEqual(["getter-expansion"]);
+  expect([...state.getterResourceLimits]).toEqual(["getter-expansion"]);
 });
 
 const objectAndState = (source: string) => {
@@ -160,4 +160,68 @@ it("retains large instance field reference lists without argument spreading", ()
   );
   expect(references).toHaveLength(count);
   expect(references[0]).toMatchObject({ path: ["value"] });
+});
+
+it("preserves references through a small static getter permutation", () => {
+  const getters = Array.from(
+    { length: 5 },
+    (_, index) =>
+      `static get field${index}() { return this[key].field${index}; }`,
+  ).join("\n");
+  const source = `const key = getKey(); const shared = {}; class Request {
+    ${getters}
+    static get state() { return shared; }
+  }`;
+  const parsed = parseJavaScriptSource(source, "getters.js");
+  if (parsed === null) throw new Error("Expected a parsed fixture");
+  const klass = parsed.program.body.find((node): node is t.ClassDeclaration =>
+    t.isClassDeclaration(node),
+  );
+  if (klass === undefined) throw new Error("Expected a class declaration");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const references = semanticClassPropertyReferences(
+    { owner: klass, kind: "static" },
+    ["field0"],
+    state,
+  );
+
+  expect(
+    references.some(
+      ({ node }) => source.slice(node.start ?? 0, node.end ?? 0) === "shared",
+    ),
+  ).toBe(true);
+  const distinctReferences = new Set(
+    references.map(({ node, path, escapes }) =>
+      JSON.stringify([node.start, node.end, path, escapes]),
+    ),
+  );
+  expect(references).toHaveLength(distinctReferences.size);
+});
+
+it("widens a large static getter permutation to one escaped reference", () => {
+  const source = getterExpansionSource(30).replaceAll("get ", "static get ");
+  const parsed = parseJavaScriptSource(source, "getters.js");
+  if (parsed === null) throw new Error("Expected a parsed fixture");
+  const klass = parsed.program.body.find((node): node is t.ClassDeclaration =>
+    t.isClassDeclaration(node),
+  );
+  if (klass === undefined) throw new Error("Expected a class declaration");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const references = semanticClassPropertyReferences(
+    { owner: klass, kind: "static" },
+    ["field0"],
+    state,
+  );
+
+  expect(references).toHaveLength(1);
+  expect(references[0]).toMatchObject({
+    node: { type: "Identifier", name: "shared" },
+    path: [],
+    escapes: true,
+  });
+  expect([...state.getterResourceLimits]).toEqual(["getter-expansion"]);
 });

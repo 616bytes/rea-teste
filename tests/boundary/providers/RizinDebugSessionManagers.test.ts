@@ -73,6 +73,8 @@ process.stdin.on("data", (chunk) => {
       expect(JSON.parse(providerArgs)).toEqual([
         "-N",
         "-0",
+        "-e",
+        "scr.color=0",
         "-d",
         "-R",
         `stdout=${await rizinTestInferiorTty()}`,

@@ -436,15 +436,36 @@ has no MCP client:
 
 ```bash
 future mcp tools rea --query binary
-future mcp call rea binary_overview --args '{"path":"/absolute/path/to/app"}'
+future mcp call rea inspect_go_binary --args '{"path":"/absolute/path/to/app"}'
+```
+
+Every `future mcp call` starts the server, invokes one tool and stops it, so each
+call is a fresh REA connection: a target opened by one call is unavailable to the
+next, and neither the target binding nor retained Evidence survives between
+calls. An operation therefore has to carry the `path` it needs — an artifact
+reader such as `inspect_go_binary` or `inspect_sqlite_database`, for example.
+`open_binary` reports its target identity, but that binding dies with the
+connection, so the `binary_overview`, `analyze_function` and provider operations
+of a later call answer `target_unavailable`; `binary_overview` also takes no
+arguments at all and describes only the target of the current connection. Use
+REA's own CLI when a task spans several operations on one target, because each
+command takes the path it needs and keeps no cross-call state:
+
+```bash
+rea analyze /absolute/path/to/app --provider ghidra
+rea decompile /absolute/path/to/app _main --provider ghidra
 ```
 
 A registration written by this setup was read back with the real CLI: `future mcp
 list` named the entry from the file setup wrote, `future mcp tools rea` returned
-REA's advertised 207-tool catalog, and `future mcp call rea list_documents`
-reached REA and returned its own `target_unavailable` payload. That establishes
-the file contract and that FutureOS loads the entry. A full FutureOS agent
-session driving REA tools through the `shell` tool, `future mcp status`, and
+REA's advertised 207-tool catalog, `future mcp call rea list_documents` reached
+REA and returned its own `target_unavailable` payload, and one-shot calls to
+`inspect_go_binary` and `inspect_sqlite_database` returned their Evidence, while
+`binary_overview` in a later call answered `target_unavailable` after an
+`open_binary` had reported that same target. That establishes the file contract,
+that FutureOS loads the entry, and that a caller-path call reaches analysis — not
+target-bound sessions, which the CLI group's per-call connection cannot keep. A
+full FutureOS agent session driving REA tools through the `shell` tool and
 Windows remain unverified.
 
 ## Other client settings

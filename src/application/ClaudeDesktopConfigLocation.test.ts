@@ -8,11 +8,13 @@ import {
   type ClaudeDesktopLocationFileSystem,
 } from "./ClaudeDesktopConfigLocation.js";
 import {
+  packageReadTargetChanged,
   packagePrivateLauncherBlocker,
   packagePrivateStorageFamily,
   redirectedWriteBlocker,
   type MsixPackageView,
 } from "./MsixPackageStorage.js";
+import { failedConfigurationMessage } from "./SetupClients.js";
 
 const home = join("/profile", "a");
 const env = {
@@ -337,5 +339,68 @@ describe("writes from a redirected AppData view", () => {
     expect(
       redirectedWriteBlocker(undefined, [vscode], "setup"),
     ).toBeUndefined();
+  });
+});
+
+describe("read-target recheck before writing AppData", () => {
+  const view: MsixPackageView = {
+    packageFamilyName: CLAUDE_DESKTOP_PACKAGE_FAMILY,
+    privateConfigPath: privateConfig,
+    appDataConfigPath: appDataConfig,
+    virtualizedRoots: [env.APPDATA, env.LOCALAPPDATA],
+    processView: "direct",
+  };
+  const inspecting =
+    (outcome: string | undefined) =>
+    async (path: string): Promise<unknown> => {
+      expect(path).toBe(privateConfig);
+      if (outcome !== undefined) throw failure(outcome);
+      return file;
+    };
+
+  it("reports a private copy that appeared after AppData was chosen", async () => {
+    await expect(
+      packageReadTargetChanged(view, appDataConfig, inspecting(undefined)),
+    ).resolves.toEqual({ ok: true, value: true });
+  });
+
+  it.each(["ENOENT", "ENOTDIR"])(
+    "keeps AppData while the private copy is absent (%s)",
+    async (code) => {
+      await expect(
+        packageReadTargetChanged(view, appDataConfig, inspecting(code)),
+      ).resolves.toEqual({ ok: true, value: false });
+    },
+  );
+
+  it.each(["EACCES", "EPERM"])(
+    "reports an uninspectable private copy instead of a changed target (%s)",
+    async (code) => {
+      await expect(
+        packageReadTargetChanged(view, appDataConfig, inspecting(code)),
+      ).resolves.toEqual({
+        ok: false,
+        error: { path: privateConfig, detail: `${code}: injected` },
+      });
+    },
+  );
+
+  it("does not recheck a plan that already chose the private copy", async () => {
+    await expect(
+      packageReadTargetChanged(view, privateConfig, inspecting("EACCES")),
+    ).resolves.toEqual({ ok: true, value: false });
+  });
+
+  it("names the uninspectable path and keeps access-repair guidance", () => {
+    const message = failedConfigurationMessage({
+      status: "failed",
+      reason: "target_unknown",
+      failure: { path: privateConfig, detail: "EACCES: injected" },
+    });
+    expect(message).toContain(`${privateConfig} could not be inspected`);
+    expect(message).toContain("EACCES: injected");
+    expect(message).toContain("No change was made");
+    expect(message).toContain("Repair access to that path, then rerun setup");
+    expect(message).not.toContain("began reading a different");
   });
 });

@@ -167,21 +167,30 @@ export const redirectedWriteBlocker = (
 
 /**
  * Whether the package began reading its private copy after the AppData file
- * was chosen, for example by saving its settings when it quit.
+ * was chosen, for example by saving its settings when it quit. A private copy
+ * that cannot be inspected leaves the read target unknown, not changed.
  */
 export const packageReadTargetChanged = async (
   view: MsixPackageView,
   configPath: string,
-): Promise<boolean> => {
-  if (configPath !== view.appDataConfigPath) return false;
+  inspect: (path: string) => Promise<unknown> = lstat,
+): Promise<
+  Result<boolean, { readonly path: string; readonly detail: string }>
+> => {
+  if (configPath !== view.appDataConfigPath) return ok(false);
   try {
-    await lstat(view.privateConfigPath);
-    return true;
+    await inspect(view.privateConfigPath);
+    return ok(true);
   } catch (cause: unknown) {
-    return !(
+    if (
       cause instanceof Error &&
       "code" in cause &&
       (cause.code === "ENOENT" || cause.code === "ENOTDIR")
-    );
+    )
+      return ok(false);
+    return err({
+      path: view.privateConfigPath,
+      detail: cause instanceof Error ? cause.message : String(cause),
+    });
   }
 };

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import type { CdpConnection } from "./CdpConnection.js";
@@ -14,6 +15,10 @@ const observation = (
   options: {
     readonly includeWebSocketShapes?: boolean;
     readonly includeJsonBodyShapes?: boolean;
+    readonly reply?: (
+      sessionId: string | undefined,
+      signal: AbortSignal | undefined,
+    ) => Promise<unknown>;
   } = {},
 ) => {
   const input = inspectWebPageInputSchema.parse({
@@ -31,9 +36,14 @@ const observation = (
     sessionId: string | undefined;
   }[] = [];
   const connection = {
-    async send(method: string, params: unknown, sessionId?: string) {
+    async send(
+      method: string,
+      params: unknown,
+      sessionId?: string,
+      signal?: AbortSignal,
+    ) {
       sent.push({ method, params, sessionId });
-      return {};
+      return (await options.reply?.(sessionId, signal)) ?? {};
     },
   } as unknown as CdpConnection;
   const workers = new CdpWorkerNetworkObservation(
@@ -515,5 +525,116 @@ describe("CDP worker network request bytes", () => {
       reason: "resource_budget_exhausted",
       count: 1,
     });
+  });
+});
+
+describe("CDP worker network refunds, JSON eligibility and nesting", () => {
+  const post = (
+    requestId: string,
+    url: string,
+    headers: Record<string, string> = {},
+    postData?: string,
+    redirectFrom?: string,
+  ) => ({
+    sessionId: "worker-0",
+    method: "Network.requestWillBeSent",
+    params: {
+      requestId,
+      type: "Fetch",
+      request: {
+        url,
+        method: "POST",
+        headers,
+        ...(postData === undefined ? {} : { postData }),
+      },
+      initiator: { type: "script" },
+      ...(redirectFrom === undefined
+        ? {}
+        : { redirectResponse: { url: redirectFrom, status: 302 } }),
+    },
+  });
+
+  it("refunds every hop of a worker request the origin policy later drops", async () => {
+    const { events, workers } = observation();
+    await workers.start();
+    workers.ingest(attached("worker-0"));
+    await workers.settle();
+    const firstHop = `${origin}/${"x".repeat(CDP_WORKER_NETWORK_LIMITS.requestBytes / 4)}`;
+    for (let index = 0; index < 6; index += 1) {
+      const requestId = `bounced-${String(index)}`;
+      workers.ingest(post(requestId, firstHop));
+      workers.ingest(
+        post(
+          requestId,
+          "https://foreign.example.test/away",
+          {},
+          undefined,
+          firstHop,
+        ),
+      );
+    }
+    workers.ingest(requested("worker-0", "after"));
+
+    expect(events.network.has("after")).toBe(true);
+    expect(events.completeness.snapshot().excluded).not.toContainEqual(
+      expect.objectContaining({ reason: "resource_budget_exhausted" }),
+    );
+  });
+
+  it("does not charge worker request bodies that get no JSON shape", async () => {
+    const { events, workers } = observation({ includeJsonBodyShapes: true });
+    await workers.start();
+    workers.ingest(attached("worker-0"));
+    await workers.settle();
+    workers.ingest(
+      post(
+        "upload",
+        `${origin}/upload`,
+        { "Content-Type": "text/plain" },
+        "x".repeat(CDP_WORKER_NETWORK_LIMITS.requestBytes),
+      ),
+    );
+
+    expect(events.network.has("upload")).toBe(true);
+    expect(events.completeness.snapshot().excluded).not.toContainEqual(
+      expect.objectContaining({ reason: "resource_budget_exhausted" }),
+    );
+  });
+
+  it("abandons a nested worker's commands when its parent worker detaches", async () => {
+    const { workers } = observation({
+      reply: async (sessionId, signal) =>
+        sessionId !== "nested"
+          ? {}
+          : await new Promise((_resolve, reject) =>
+              signal?.addEventListener(
+                "abort",
+                () => reject(new AnalysisCancelledError("inspect_web_page")),
+                { once: true },
+              ),
+            ),
+    });
+    await workers.start();
+    workers.ingest(attached("parent"));
+    workers.ingest({
+      sessionId: "parent",
+      method: "Target.attachedToTarget",
+      params: {
+        sessionId: "nested",
+        targetInfo: {
+          targetId: "nested",
+          type: "worker",
+          url: `${origin}/n.js`,
+        },
+        waitingForDebugger: false,
+      },
+    });
+    workers.ingest({
+      sessionId: "page-session",
+      method: "Target.detachedFromTarget",
+      params: { sessionId: "parent" },
+    });
+
+    await expect(workers.settle()).resolves.toBeUndefined();
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
+import { CDP_WORKER_NETWORK_LIMITS } from "../../../src/browser/CdpPageCaptureWorkerNetwork.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import {
   startFakeCdpBrowser,
@@ -1501,5 +1502,51 @@ describe("dedicated worker response bodies and worker exit", () => {
     expect(result.value.limitations).toContain(
       "Response body unavailable for request worker-session-request: its worker detached before REA read the body.",
     );
+  });
+});
+
+describe("dedicated worker response body budget", () => {
+  it("omits worker JSON response shapes past the byte budget", async () => {
+    const browser = await startFakeCdpBrowser({
+      commandEvents: workerEvents,
+      commandResult({ method, params }) {
+        if (method !== "Network.getResponseBody") return undefined;
+        return params.requestId === "worker-session-request"
+          ? {
+              body: JSON.stringify({
+                value: "x".repeat(CDP_WORKER_NETWORK_LIMITS.responseBytes),
+              }),
+              base64Encoded: false,
+            }
+          : { body: '{"small":true}', base64Encoded: false };
+      },
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 20,
+        include_json_body_shapes: true,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    const byId = new Map(
+      result.value.network.requests.map((request) => [
+        request.request_id,
+        request,
+      ]),
+    );
+    expect(byId.get("worker-session-request")?.body_shapes.response).toBeNull();
+    expect(
+      byId.get("nested-session-request")?.body_shapes.response,
+    ).not.toBeNull();
+    expect(result.value.completeness.excluded).toContainEqual({
+      section: "json_body_shapes",
+      reason: "resource_budget_exhausted",
+      count: 1,
+    });
   });
 });

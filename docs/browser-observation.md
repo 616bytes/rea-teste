@@ -337,9 +337,10 @@ the same origin policy as page requests, and workers on other origins are not
 enabled. Requests a worker sends before REA reaches it are unavailable, so
 short-lived workers can be partially observed. One capture attaches at most
 256 workers. It tracks at most 50,000 worker requests and WebSockets, holding
-8 MiB of their URLs plus request bodies when JSON body shapes are captured, and
-50,000 worker WebSocket frames, holding 8 MiB of frame payload when WebSocket
-shapes are captured. A worker REA does not observe, because of its origin,
+8 MiB of their URLs plus JSON request bodies when JSON body shapes are
+captured, 8 MiB of worker JSON response bodies read for shapes, and 50,000
+worker WebSocket frames, holding 8 MiB of frame payload when WebSocket shapes
+are captured. A worker REA does not observe, because of its origin,
 this limit, or a rejected command, is recorded under `network_requests`,
 `websocket_connections`, and `websocket_frames` with an unknown count, and up
 to 256 such workers per capture are detached without stopping them; any other

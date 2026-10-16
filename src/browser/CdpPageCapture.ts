@@ -278,7 +278,13 @@ const captureJsonResponseBodies = async (
       continue;
     }
     if (result !== undefined) {
-      state.events.ingestResponseBody(candidate, result);
+      if (state.workerNetwork.admitsResponseBody(candidate.requestId, result))
+        state.events.ingestResponseBody(candidate, result);
+      else
+        state.events.responseBodyUnavailable(
+          candidate,
+          "resource_budget_exhausted",
+        );
       continue;
     }
     for (const remaining of requests.slice(index))

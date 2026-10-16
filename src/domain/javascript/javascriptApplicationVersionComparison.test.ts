@@ -300,16 +300,17 @@ describe("application version comparison relocation", () => {
       "Exact content is identical on both sides; only the recorded byte location differs (bundle relocation).",
     );
     expect(result.summary).toMatchObject({ unchanged: 1, changed: 0 });
-    expect(
-      result.graph.edges.some(({ relation }) => relation === "changed_from"),
-    ).toBe(false);
+    // Content-digest pairs share one node_id by construction, so
+    // changedFromEdge skips them on identity alone; edge coverage for
+    // relocation lives in the module-source test below with distinct IDs.
   });
 
   it("classifies an exact module-source location-only move as unchanged", () => {
-    const moduleShaFallback = "e".repeat(64);
+    const leftBundle = "e".repeat(64);
+    const rightBundle = "f".repeat(64);
     const source = "d".repeat(64);
-    const evidenceAt = (start: number, end: number) => ({
-      ...artifactEvidence(moduleShaFallback, "bundle.js"),
+    const evidenceAt = (bundle: string, start: number, end: number) => ({
+      ...artifactEvidence(bundle, "bundle.js"),
       location: {
         available: true as const,
         value: {
@@ -319,13 +320,13 @@ describe("application version comparison relocation", () => {
         },
       },
     });
-    const nodeAt = (start: number, end: number) =>
+    const nodeAt = (bundle: string, start: number, end: number) =>
       createJavaScriptApplicationNode({
         kind: "javascript-module",
         identity: {
           strategy: "artifact-local-key",
           stability: "artifact-version",
-          artifact_sha256: moduleShaFallback,
+          artifact_sha256: bundle,
           namespace: "webpack",
           key: "same-module",
         },
@@ -333,12 +334,12 @@ describe("application version comparison relocation", () => {
           {
             label: "same-module",
             properties: { source_sha256: source },
-            evidence: evidenceAt(start, end),
+            evidence: evidenceAt(bundle, start, end),
           },
         ],
       });
-    const leftModule = nodeAt(0, 100);
-    const rightModule = nodeAt(500, 600);
+    const leftModule = nodeAt(leftBundle, 0, 100);
+    const rightModule = nodeAt(rightBundle, 500, 600);
     const graphForModule = (node: typeof leftModule) =>
       createJavaScriptApplicationGraph({
         schema: "JavaScriptApplicationGraph",
@@ -372,6 +373,10 @@ describe("application version comparison relocation", () => {
       match: { status: "matched", basis: "exact-module-source-digest" },
     });
     expect(result.summary).toMatchObject({ unchanged: 1, changed: 0 });
+    expect(leftModule.node_id).not.toBe(rightModule.node_id);
+    expect(
+      result.graph.edges.some(({ relation }) => relation === "changed_from"),
+    ).toBe(false);
   });
 });
 

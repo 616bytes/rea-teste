@@ -88,6 +88,7 @@ const hasPriorMemberMutation = (
   const facts = index.effectsForReferenceAt(site, identifier, [property]);
   return (
     !facts.memberEffectsIndexed ||
+    facts.proofExposure !== undefined ||
     facts.effects.some(
       ({ kind, timing }) =>
         (kind === "member-write" || kind === "escape") && timing !== "after",

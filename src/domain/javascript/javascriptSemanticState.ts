@@ -58,6 +58,8 @@ export interface JavaScriptSemanticReferenceEffect {
 export interface JavaScriptSemanticReferenceEffectsAtSite {
   readonly bindingId: string | null;
   readonly resolution: JavaScriptSemanticReference["resolution"];
+  /** Opaque access can invalidate value/content proofs without changing lexical ownership. */
+  readonly proofExposure?: string;
   /** Whether alias-aware member and escape effects were collected for this source. */
   readonly memberEffectsIndexed: boolean;
   readonly effects: readonly JavaScriptSemanticReferenceEffect[];

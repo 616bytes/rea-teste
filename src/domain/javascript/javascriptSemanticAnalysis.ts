@@ -56,6 +56,7 @@ import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { semanticBundledRequireOrigin } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
+import { semanticBindingProofExposure } from "./javascriptSemanticBindingProof.js";
 import {
   indexJavaScriptAmbientWritesSteps,
   isUnmodifiedGlobalReference,
@@ -199,10 +200,12 @@ const visitSemanticReferenceEffectsAtSite = (
   const resolution =
     lookup.kind === "binding" ? "resolved" : blocked ? "unknown" : "unbound";
   const path = requestedPath ?? inferredPath;
+  const proofExposure = semanticBindingProofExposure(state, binding);
   const metadata: Omit<JavaScriptSemanticReferenceEffectsAtSite, "effects"> = {
     bindingId: binding?.bindingId ?? null,
     resolution,
     memberEffectsIndexed,
+    ...(proofExposure === undefined ? {} : { proofExposure }),
   };
   const retain = (
     kind: JavaScriptSemanticReferenceEffectsAtSite["effects"][number]["kind"],
@@ -470,7 +473,11 @@ export function* indexJavaScriptBindingsWithReceiversSteps(
         },
         propertyPath,
       );
-      return metadata.resolution !== "resolved" || changed;
+      return (
+        metadata.resolution !== "resolved" ||
+        metadata.proofExposure !== undefined ||
+        changed
+      );
     },
     *referencesSteps() {
       references ??= yield* collectSemanticReferencesSteps(program, state);

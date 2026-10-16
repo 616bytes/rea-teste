@@ -263,3 +263,21 @@ it("keeps exact literal targets exact", () => {
     },
   ]);
 });
+
+it.each([
+  [
+    'const config = {url: "/safe"}; eval("config.url = changed"); fetch(config.url);',
+    "config.url",
+  ],
+  [
+    'const target = new URL("https://safe.example/"); eval("target.pathname = changed"); fetch(target);',
+    "target",
+  ],
+])("keeps eval-exposed request contents partial: %s", (source, expression) => {
+  expect(endpoints(source)).toContainEqual({
+    kind: "network",
+    value: expression,
+    mechanism: "call:fetch",
+    resolution: "partial",
+  });
+});

@@ -273,3 +273,36 @@ conditionalAlias.handle("conditional-alias:ping", () => "local");
     [text.indexOf('require("electron")["ipcMain.handle"]'), []],
   ]);
 });
+
+it.each([false, true])(
+  "preserves ownership while reporting exposed reference contents (eval: %s)",
+  (exposed) => {
+    const parsed = parseJavaScriptSource(`
+      const config = {url: "/safe"};
+      ${exposed ? 'config.url = "/explicit"; eval("config.url = changed");' : ""}
+      fetch(config.url);
+    `);
+    if (parsed === null) throw new Error("Expected parsed source");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    completeSemanticSteps(index.indexMemberMutationFactsSteps());
+    const last = parsed.program.body.at(-1);
+    if (!t.isExpressionStatement(last) || !t.isCallExpression(last.expression))
+      throw new Error("Expected request");
+    const site = last.expression;
+    const reference = site.arguments[0];
+    if (!t.isMemberExpression(reference)) throw new Error("Expected member");
+    const effects = index.effectsForReferenceAt(site, reference);
+    expect(effects.bindingId).not.toBeNull();
+    expect(effects.resolution).toBe("resolved");
+    expect("proofExposure" in effects).toBe(exposed);
+    if (exposed)
+      expect(effects.effects).toContainEqual({
+        kind: "member-write",
+        path: ["url"],
+        timing: "before",
+      });
+    expect(index.referenceMayHaveChangedAt(site, reference)).toBe(exposed);
+  },
+);

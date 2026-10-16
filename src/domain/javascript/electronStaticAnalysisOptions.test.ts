@@ -396,3 +396,66 @@ describe("Electron empty option keys", () => {
     },
   );
 });
+
+const contentCases = (["options", "preferences"] as const).flatMap((owner) =>
+  ["", ", ...null", ", ...undefined"].map((spread) => ({ owner, spread })),
+);
+
+describe("Electron option contents exposed to dynamic code", () => {
+  it.each(contentCases)(
+    "keeps $owner contents unknown after eval with spread $spread",
+    ({ owner, spread }) => {
+      const options = owner === "options";
+      const analysis = analyzeJavaScriptStaticSource(`
+          const { BrowserWindow } = require("electron");
+          function open() {
+            const ${owner} = ${options ? `{webPreferences: {preload: "./safe.js"}${spread}}` : `{preload: "./safe.js"${spread}}`};
+            eval('${owner}${options ? ".webPreferences" : ""}.preload = "./changed.js"');
+            new BrowserWindow(${options ? owner : "{webPreferences: preferences}"});
+          }
+        `);
+      expect(analysis.electron.browser_windows).toHaveLength(1);
+      expect(analysis.electron.browser_windows[0]?.preload_path).toBeNull();
+      expect(
+        analysis.electron.browser_windows[0]?.resolution_sources,
+      ).toBeUndefined();
+    },
+  );
+
+  it.each(contentCases)(
+    "preserves stable $owner contents and provenance with spread $spread",
+    ({ owner, spread }) => {
+      const options = owner === "options";
+      const analysis = analyzeJavaScriptStaticSource(`
+          const { BrowserWindow } = require("electron");
+          function open() {
+            const ${owner} = ${options ? `{webPreferences: {preload: "./safe.js"}${spread}}` : `{preload: "./safe.js"${spread}}`};
+            new BrowserWindow(${options ? owner : "{webPreferences: preferences}"});
+          }
+        `);
+      expect(analysis.electron.browser_windows).toHaveLength(1);
+      expect(analysis.electron.browser_windows[0]?.preload_path).toBe(
+        "./safe.js",
+      );
+      expect(
+        analysis.electron.browser_windows[0]?.resolution_sources,
+      ).toHaveLength(1);
+    },
+  );
+
+  it("retains fresh inline options despite an unrelated eval reference", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron");
+      function open() {
+        eval("void 0");
+        new BrowserWindow({webPreferences: {preload: "./safe.js", ...null}, ...null});
+      }
+    `);
+    expect(analysis.electron.browser_windows[0]?.preload_path).toBe(
+      "./safe.js",
+    );
+    expect(
+      analysis.electron.browser_windows[0]?.resolution_sources,
+    ).toBeUndefined();
+  });
+});

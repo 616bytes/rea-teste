@@ -122,3 +122,95 @@ cliTest(
     });
   },
 );
+
+cliTest(
+  "keeps eval-exposed constant preload contents unknown across CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-window-content-");
+    await writeFixtureFiles(root, {
+      "mutated.cjs": [
+        'throw new Error("Static input must never execute");',
+        'const {BrowserWindow} = require("electron");',
+        "function open() {",
+        '  const options = {webPreferences: {preload: "./safe.js"}, ...null};',
+        '  eval("options.webPreferences.preload = changed");',
+        "  new BrowserWindow(options);",
+        '  const preferences = {preload: "./safe.js", ...null};',
+        '  eval("preferences.preload = changed");',
+        "  new BrowserWindow({webPreferences: preferences});",
+        '  new BrowserWindow({webPreferences: {preload: "./safe.js", ...null}});',
+        "}",
+      ].join("\n"),
+      "stable.cjs": [
+        'throw new Error("Static input must never execute");',
+        'const {BrowserWindow} = require("electron");',
+        "function open() {",
+        '  const options = {webPreferences: {preload: "./safe.js"}, ...null};',
+        "  new BrowserWindow(options);",
+        '  const preferences = {preload: "./other.js", ...undefined};',
+        "  new BrowserWindow({webPreferences: preferences});",
+        "}",
+      ].join("\n"),
+      "safe.js": "// Inert preload source",
+      "other.js": "// Inert second preload source",
+    });
+    const response = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--format", "json"],
+    });
+    expect(response.exitCode).toBe(0);
+    const cliEvidence = parseEvidence(response.json);
+    const { call } = await connectLocalToolsMcp();
+    const mcp = await call("analyze_javascript_application", {
+      input_path: root,
+      format: "directory",
+    });
+    expect(mcp.isError).not.toBe(true);
+    const mcpEvidence = parseEvidence(mcp.structuredContent);
+    expect(mcpEvidence).toEqual(cliEvidence);
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      mcpEvidence.normalized_result,
+    );
+    expect(result.summary).toMatchObject({
+      browser_windows: 5,
+      preload_entrypoints: 3,
+    });
+    const windows = result.graph.nodes.filter(
+      (node) => node.kind === "browser-window",
+    );
+    const sourceLine = (node: (typeof windows)[number]): number => {
+      const location = node.observations[0]?.evidence.location;
+      if (!location?.available || location.value.kind !== "source-range")
+        throw new Error("Expected window source range");
+      return location.value.start.line;
+    };
+    windows.sort((left, right) => sourceLine(left) - sourceLine(right));
+    const mutated = windows.filter(
+      (node) => node.observations[0]?.properties.source_path === "mutated.cjs",
+    );
+    expect(
+      mutated.map((node) => node.observations[0]?.properties.preload_path),
+    ).toEqual([null, null, "./safe.js"]);
+    const stable = windows.filter(
+      (node) => node.observations[0]?.properties.source_path === "stable.cjs",
+    );
+    expect(
+      stable.map((node) => node.observations[0]?.properties.preload_path),
+    ).toEqual(["./safe.js", "./other.js"]);
+    expect(
+      stable.map((node) => node.observations[0]?.properties.resolution_sources),
+    ).toEqual([[expect.any(Object)], [expect.any(Object)]]);
+    const associations = result.graph.edges.filter(
+      (edge) =>
+        edge.evidence.extractor.operation ===
+        "associate-browser-window-preload",
+    );
+    expect(associations).toHaveLength(3);
+    expect(
+      associations.some((edge) =>
+        mutated
+          .slice(0, 2)
+          .some((node) => node.node_id === edge.source_node_id),
+      ),
+    ).toBe(false);
+  },
+);

@@ -285,6 +285,12 @@ it("does not attribute overwritten require members to Node's resolver", async ()
       "Object.defineProperty(require, 'resolve', { value: () => 'custom' });\nconsole.log(require.resolve('./loaded.cjs'));",
     "computed.cjs":
       "const key = 'resolve';\nrequire[key] = () => 'custom';\nconsole.log(require.resolve('./loaded.cjs'));",
+    "eval-resolve.cjs":
+      'eval("require.resolve = () => \'custom\'"); console.log(require.resolve("./loaded.cjs"));',
+    "eval-main.cjs":
+      'eval("require.main = () => \'custom\'"); console.log(require.main("./loaded.cjs"));',
+    "bare-after-eval.cjs":
+      'eval("require.resolve = () => \'custom\'"); console.log(require("./loaded.cjs"));',
     "control.cjs": "console.log(typeof require.resolve('./loaded.cjs'));",
     // A member overwrite does not change bare loader calls.
     "bare-after-overwrite.cjs":
@@ -307,6 +313,9 @@ it("does not attribute overwritten require members to Node's resolver", async ()
     ["assigned.cjs", "custom\n"],
     ["defined.cjs", "custom\n"],
     ["computed.cjs", "custom\n"],
+    ["eval-resolve.cjs", "custom\n"],
+    ["eval-main.cjs", "custom\n"],
+    ["bare-after-eval.cjs", "real\n"],
     ["control.cjs", "string\n"],
     ["bare-after-overwrite.cjs", "real\n"],
     ["local-loader.cjs", "string\n"],
@@ -333,6 +342,7 @@ it("does not attribute overwritten require members to Node's resolver", async ()
       .map(({ from_path, to }) => [from_path, to])
       .sort((left, right) => (left[0] ?? "").localeCompare(right[0] ?? "")),
   ).toEqual([
+    ["bare-after-eval.cjs", "loaded.cjs"],
     ["bare-after-overwrite.cjs", "loaded.cjs"],
     ["control.cjs", "loaded.cjs"],
     ["local-loader.cjs", "loaded.cjs"],

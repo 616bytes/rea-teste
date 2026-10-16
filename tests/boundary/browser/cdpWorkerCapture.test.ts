@@ -1671,6 +1671,74 @@ it.each(["page", "worker", "service", "inventory", "legacy", "none"] as const)(
   },
 );
 
+it.each(
+  [undefined, null, {}, [null], [5], [{ status: "stopped" }, null]].map(
+    (versions) => ({ versions }),
+  ),
+)(
+  "retains unknown worker coverage after a malformed version update: %j",
+  async ({ versions }) => {
+    const { provider, input } = await fixture({
+      commandEvents: (command) =>
+        command.method === "ServiceWorker.enable"
+          ? [
+              {
+                method: "ServiceWorker.workerVersionUpdated",
+                sessionId: "session-1",
+                params: { versions },
+              },
+            ]
+          : undefined,
+    });
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    expect(captured.value.completeness.unavailable_sections).toContain(
+      "workers",
+    );
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      input,
+      captured.value,
+      provider.identity(),
+    );
+    expect(
+      parseRuntimeCaptures([evidence])[0]?.scriptsCompleteWithinScope,
+    ).toBe(false);
+    const root = await applicationFixture();
+    const reconciled = reconcileJavaScriptRuntimeEvidence({
+      static_layers: [
+        {
+          role: "application",
+          analysis: await analyzeFixture(root),
+          runtime_mappings: [
+            {
+              kind: "url-prefix",
+              prefix: captured.value.target.origin + "/",
+              artifact_prefix: "",
+            },
+          ],
+        },
+      ],
+      runtime_observations: [evidence],
+    });
+    if (!reconciled.ok) throw reconciled.error;
+    const result = javascriptRuntimeReconciliationResultSchema.parse(
+      reconciled.value.normalized_result,
+    );
+    expect(
+      result.static_load_states.some(
+        (state) => state.status === "not-observed-in-capture",
+      ),
+    ).toBe(false);
+    expect(result.static_load_states).toContainEqual(
+      expect.objectContaining({
+        status: "unknown",
+        reason: "static-or-runtime-coverage-incomplete",
+      }),
+    );
+  },
+);
+
 it("keeps unselected unknown-owner workers out of runtime matching", async () => {
   const { provider, input } = await fixture();
   const captured = await provider.inspectPage(input);

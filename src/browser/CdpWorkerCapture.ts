@@ -14,7 +14,6 @@ import {
   cdpStringValue,
   numberValue,
   recordValue,
-  recordsValue,
   requiredScriptSource,
   sourceExcluded,
   sourceResult,
@@ -649,7 +648,22 @@ export class CdpWorkerCapture {
   }
 
   #versions(params: Readonly<Record<string, unknown>>): void {
-    for (const version of recordsValue(params.versions)) {
+    const versions = admitRecords(params.versions);
+    if (versions === undefined) {
+      this.pageEvents.completeness.unavailable("workers");
+      this.pageEvents.completeness.exclude("workers", "invalid_protocol_value");
+      return;
+    }
+    for (const value of versions) {
+      const version = recordValue(value);
+      if (version === undefined) {
+        this.pageEvents.completeness.unavailable("workers");
+        this.pageEvents.completeness.exclude(
+          "workers",
+          "invalid_protocol_value",
+        );
+        continue;
+      }
       // Installed/stopped versions need not have a running Target.
       if (version.targetId === undefined) continue;
       const id = cdpStringValue(version.targetId);

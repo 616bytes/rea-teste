@@ -2,7 +2,6 @@ import { z } from "zod";
 
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { NonCanonicalEvidenceBundleError } from "../domain/evidenceBundle.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { jsonObjectSchema, jsonValueSchema } from "../domain/jsonValue.js";
 import {
@@ -46,9 +45,7 @@ export const buildReconstructionObligationLedgerEvidenceValidated = (
     });
     return ok(createLedgerEvidence(input, ledger));
   } catch (cause: unknown) {
-    if (cause instanceof NonCanonicalEvidenceBundleError)
-      return err(workflowInputError(OPERATION, cause));
-    if (cause instanceof z.ZodError)
+    if (cause instanceof TypeError || cause instanceof z.ZodError)
       return err(workflowInputError(OPERATION, cause));
     return err(
       new AnalysisProtocolError(

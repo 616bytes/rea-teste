@@ -11,8 +11,10 @@ import {
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   NonRegularFileReadError,
+  RegularFileAdmissionFailure,
   openRegularFile,
 } from "../filesystem/RegularFile.js";
 import {
@@ -146,6 +148,8 @@ export class NativeDmgArtifactReader implements ArtifactReader {
   #attachOutputReturned = false;
   #attachMayHaveMounted = false;
   #ownershipUncertainty: string | undefined;
+  /** Verify-probe descriptors whose close failed; close retries them. */
+  readonly #probeOwners = new Set<OwnedFileHandle>();
   #closed = false;
   #closePromise: Promise<void> | undefined;
   readonly #activeDirectoryOperations = new Set<Promise<unknown>>();
@@ -222,6 +226,8 @@ export class NativeDmgArtifactReader implements ArtifactReader {
     await Promise.allSettled(this.#activeDirectoryOperations);
     await this.#closeMountedDirectory();
     let detachFailure = await this.#detachOwnedDevices();
+    const probeFailure = await this.#closeProbeOwners();
+    detachFailure ??= probeFailure;
     if (
       this.#devices.length === 0 &&
       this.#mountRoot !== undefined &&
@@ -260,10 +266,29 @@ export class NativeDmgArtifactReader implements ArtifactReader {
               ...(this.#mountRoot === undefined
                 ? []
                 : [`DMG mount root ${this.#mountRoot}`]),
+              ...[...this.#probeOwners].map(() => this.#probeResource()),
             ],
           },
         },
       );
+  }
+
+  /** Retry verify-probe descriptors whose earlier close failed. */
+  async #closeProbeOwners(): Promise<unknown> {
+    let failure: unknown;
+    for (const owner of this.#probeOwners) {
+      try {
+        await owner.close();
+        this.#probeOwners.delete(owner);
+      } catch (cause: unknown) {
+        failure ??= cause;
+      }
+    }
+    return failure;
+  }
+
+  #probeResource(): string {
+    return `DMG verify probe descriptor ${this.path}`;
   }
 
   async #detachOwnedDevices(): Promise<unknown> {
@@ -468,13 +493,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
     const arguments_ = ["verify", this.path];
     const deadline = performance.now() + HDIUTIL_COMMAND_TIMEOUT_MS;
     for (let attempt = 0; ; attempt += 1) {
-      if (signal?.aborted === true)
-        throw new NativeDmgCommandFailure(
-          { reason: "cancelled" },
-          "DMG operation cancelled",
-          "",
-          { cause: signal.reason },
-        );
+      if (signal?.aborted === true) throw cancelledFailure(signal);
       try {
         await runChecked(this.host, arguments_, signal, {
           timeoutMs: Math.max(1, Math.ceil(deadline - performance.now())),
@@ -484,10 +503,13 @@ export class NativeDmgArtifactReader implements ArtifactReader {
       } catch (cause: unknown) {
         if (!(cause instanceof NativeDmgCommandFailure)) throw cause;
         this.#provenance.push(command(arguments_, ["read"], cause.exitCode));
-        if (
+        const unreadable =
           cause.unrecognizedImage &&
-          (await isUnreadableTarget(this.path, signal))
-        )
+          (await this.#isUnreadableTarget(cause, signal));
+        // The probe swallows its own abort; cancellation outranks the refusal.
+        if (signal !== undefined && isAborted(signal))
+          throw cancelledFailure(signal);
+        if (unreadable)
           throw new NativeDmgCommandFailure(
             { reason: "io" },
             cause.message,
@@ -511,6 +533,53 @@ export class NativeDmgArtifactReader implements ArtifactReader {
         if (performance.now() >= deadline) throw cause;
       }
     }
+  }
+
+  /**
+   * Establish an I/O cause for an unrecognized target that cannot be opened.
+   * A successful open does not establish that the image is malformed. A probe
+   * descriptor whose close fails stays owned for close() to retry.
+   */
+  async #isUnreadableTarget(
+    primary: NativeDmgCommandFailure,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    let handle: FileHandle;
+    try {
+      handle = await openRegularFile(this.path, {
+        symlinks: "follow",
+        ...(signal === undefined ? {} : { signal }),
+      });
+    } catch (cause: unknown) {
+      if (cause instanceof RegularFileAdmissionFailure)
+        this.#retainProbe(primary, cause.owner, cause.cleanupCause);
+      // A directory or special file may still be an image format hdiutil reads.
+      if (cause instanceof NonRegularFileReadError) return false;
+      return classifyCommandFailure(cause, undefined).reason === "io";
+    }
+    const owner = new OwnedFileHandle(handle);
+    try {
+      await owner.close();
+    } catch (cleanupCause: unknown) {
+      this.#retainProbe(primary, owner, cleanupCause);
+    }
+    return false;
+  }
+
+  /** Keep an unclosed probe descriptor and fail with the original refusal. */
+  #retainProbe(
+    primary: NativeDmgCommandFailure,
+    owner: OwnedFileHandle,
+    cleanupCause: unknown,
+  ): never {
+    this.#probeOwners.add(owner);
+    throw ArtifactReaderFailure.withCleanup(
+      primary,
+      ArtifactReaderFailure.cleanupObservation(
+        cleanupCause,
+        this.#probeResource(),
+      ),
+    );
   }
 
   async #readInfo(): Promise<NativeDmgInfo> {
@@ -779,28 +848,16 @@ const untranslatedVerifyFailure = (
 const outputLines = (stdout: string, stderr: string): string[] =>
   `${stdout}\n${stderr}`.split(/\r?\n/u).map((line) => line.trim());
 
-/**
- * Establish an I/O cause for an unrecognized target that cannot be opened.
- * A successful open does not establish that the image is malformed.
- */
-const isUnreadableTarget = async (
-  path: string,
-  signal?: AbortSignal,
-): Promise<boolean> => {
-  let handle: FileHandle;
-  try {
-    handle = await openRegularFile(path, {
-      symlinks: "follow",
-      ...(signal === undefined ? {} : { signal }),
-    });
-  } catch (cause: unknown) {
-    // A directory or special file may still be an image format hdiutil reads.
-    if (cause instanceof NonRegularFileReadError) return false;
-    return classifyCommandFailure(cause, undefined).reason === "io";
-  }
-  await handle.close();
-  return false;
-};
+// Read through a call: an awaited probe can abort a signal that was already checked.
+const isAborted = (signal: AbortSignal): boolean => signal.aborted;
+
+const cancelledFailure = (signal: AbortSignal): NativeDmgCommandFailure =>
+  new NativeDmgCommandFailure(
+    { reason: "cancelled" },
+    "DMG operation cancelled",
+    "",
+    { cause: signal.reason },
+  );
 
 const command = (
   arguments_: readonly string[],

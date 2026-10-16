@@ -1422,6 +1422,27 @@ describe("native DMG localized verification diagnostics", () => {
     expect(state.attached).toBe(false);
   });
 
+  it("reports cancellation that arrives with the last localized refusal", async () => {
+    const root = await createTestTempDirectory("rea-localized-dmg-cancel-");
+    const path = join(root, "image.dmg");
+    await writeFile(path, "This may or may not be a disk image.\n");
+    const controller = new AbortController();
+    const run = vi.fn(async () => {
+      if (run.mock.calls.length === 3)
+        controller.abort(new Error("cancel verification"));
+      return unrecognized(path, "imagen no reconocida");
+    });
+    const delay = vi.fn(async () => {});
+    await expect(
+      createAttachedReader(path, process.env, controller.signal, {
+        run,
+        delay,
+      }),
+    ).rejects.toMatchObject({ reason: "cancelled" });
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(delay.mock.calls).toEqual([[250], [500]]);
+  });
+
   it("classifies a localized refusal of a missing target as an I/O failure", async () => {
     const root = await createTestTempDirectory("rea-localized-dmg-io-");
     const path = join(root, "missing.dmg");

@@ -66,9 +66,16 @@ are not counted. `dexdump` additionally stops printing at the start of a
 method's last instruction, so on R8 output that ends in a multi-unit
 instruction or a data payload it lists slightly fewer rows (0.2–0.7% on the
 members of a real release APK); on debug builds and d8 output the counts are
-equal. Zero-length local scopes (a register re-declared at the address where its
-scope began, as kotlinc does for generic parameters) cover no instruction and
-are not counted, matching `dexdump`.
+equal. Local scopes of zero length cover no instruction and are not counted. This
+matches `dexdump` on compiler output, where they arise when kotlinc re-declares
+a generic parameter's register at address 0 (verified exact on 15 real members).
+On hand-crafted streams with zero-length scopes elsewhere, `dexdump` may list
+rows REA omits.
+
+Cancellation is honoured between DEX members. One member is analysed in a
+single synchronous pass, bounded by its per-member work budget (a few seconds
+for a maximal 64 MiB member), so cancelling mid-member takes effect when that
+member finishes.
 
 ## What the facts do and do not mean
 

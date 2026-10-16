@@ -18,12 +18,13 @@ export const DEX_LIMITS = {
   maxDexMembers: 64,
   /**
    * Work units (debug opcodes, parameter-name reads, class_data entries walked)
-   * allowed per member, per byte of that member. Every unit of legitimate work
-   * is backed by at least half a byte of the member (each opcode, encoded_field
-   * and encoded_method is at least one byte; class_data is walked twice, and
-   * identical debug streams are decoded once), so a real DEX never exhausts it,
-   * while work stays linear in the bytes actually read rather than multiplied
-   * by classes or methods sharing one structure.
+   * allowed per member, per byte of that member. Each opcode, encoded_field and
+   * encoded_method is at least one byte, class_data is walked twice, and a debug
+   * stream is decoded once per distinct (stream, register layout, proto)
+   * combination. Compiler output shares a stream only across identical layouts,
+   * so real DEX members measure at most ~0.45 units per byte (R8 release) while
+   * work stays bounded by the member's size; a crafted file that re-decodes one
+   * long stream under many layouts is refused rather than run unbounded.
    */
   workUnitsPerByte: 2,
   /** Floor for the per-member budget, so a tiny member is not over-constrained. */

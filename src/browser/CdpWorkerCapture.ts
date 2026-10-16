@@ -270,6 +270,15 @@ export class CdpWorkerCapture {
     this.pageEvents.completeness.exclude("workers", "invalid_protocol_value");
   }
 
+  #excludeUrl(value: string | undefined, count: number | null = 1): void {
+    const reason = exclusionReasonForUrl(value);
+    // Only a known foreign HTTP origin proves exclusion from this scope.
+    // An unattributed worker or frame may still contain page-related workers.
+    if (reason !== "disallowed_origin")
+      this.pageEvents.completeness.unavailable("workers");
+    this.pageEvents.completeness.exclude("workers", reason, count);
+  }
+
   #admit(value: unknown): WorkerState | undefined {
     const target = recordValue(value);
     if (target === undefined) {
@@ -314,10 +323,7 @@ export class CdpWorkerCapture {
     if (url === undefined) {
       if (!this.#invalidTargets.has(id)) {
         this.#invalidTargets.add(id);
-        this.pageEvents.completeness.exclude(
-          "workers",
-          exclusionReasonForUrl(target.url),
-        );
+        this.#excludeUrl(target.url);
       }
       return;
     }
@@ -447,11 +453,7 @@ export class CdpWorkerCapture {
             "protocol_error",
           );
         if (allowedSanitizedUrl(info.url, this.allowedOrigins) === undefined) {
-          this.pageEvents.completeness.exclude(
-            "workers",
-            exclusionReasonForUrl(cdpStringValue(info.url)),
-            null,
-          );
+          this.#excludeUrl(cdpStringValue(info.url), null);
           return;
         }
         const existing = this.#frames.get(sessionId);
@@ -681,7 +683,9 @@ export class CdpWorkerCapture {
       }
       const clients =
         Array.isArray(version.controlledClients) &&
-        version.controlledClients.every((client) => typeof client === "string")
+        version.controlledClients.every(
+          (client) => typeof client === "string" && client.length > 0,
+        )
           ? version.controlledClients
           : null;
       if (version.controlledClients !== undefined && clients === null) {

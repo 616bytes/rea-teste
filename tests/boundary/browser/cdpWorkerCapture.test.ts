@@ -57,7 +57,9 @@ it.each(["missing", "observation"] as const)(
 );
 
 it.each(
-  [null, [42], "malformed"].map((controlledClients) => ({ controlledClients })),
+  [null, [42], "malformed", [""], ["allowed-page", ""]].map(
+    (controlledClients) => ({ controlledClients }),
+  ),
 )(
   "marks malformed controlled clients incomplete: %j",
   async ({ controlledClients }) => {
@@ -280,6 +282,59 @@ it.each([
     });
   },
 );
+
+it.each(
+  ["worker", "iframe"].flatMap((type) =>
+    ["", "file:///worker.js", "https://foreign.example/a.js"].map((url) => ({
+      type,
+      url,
+    })),
+  ),
+)("preserves coverage for a transient target: %j", async ({ type, url }) => {
+  const { provider, input, browser } = await fixture({
+    commandResult: (command) =>
+      command.method === "Target.getTargets" ? { targetInfos: [] } : undefined,
+    commandEvents: (command) =>
+      command.method === "Target.setAutoAttach" &&
+      command.params.autoAttach === true &&
+      command.sessionId === "session-1"
+        ? [
+            {
+              method: "Target.attachedToTarget",
+              sessionId: "session-1",
+              params: {
+                sessionId: "transient-session",
+                targetInfo: {
+                  targetId: "transient",
+                  type,
+                  url,
+                  attached: true,
+                },
+              },
+            },
+          ]
+        : [],
+  });
+  const result = await provider.inspectPage(input);
+  if (!result.ok) throw result.error;
+  const excludedByOrigin = url.startsWith("https:");
+  expect(result.value.workers).toEqual([]);
+  expect(
+    result.value.completeness.unavailable_sections.includes("workers"),
+  ).toBe(!excludedByOrigin);
+  const evidence = createBrowserEvidence(
+    "inspect_web_page",
+    input,
+    result.value,
+    provider.identity(),
+  );
+  expect(parseRuntimeCaptures([evidence])[0]?.scriptsCompleteWithinScope).toBe(
+    excludedByOrigin,
+  );
+  expect(
+    browser.commands.some((c) => c.sessionId === "transient-session"),
+  ).toBe(false);
+});
 
 it("preserves worker coverage and warnings through CLI export even without worker scripts", async () => {
   const { provider, input } = await fixture({

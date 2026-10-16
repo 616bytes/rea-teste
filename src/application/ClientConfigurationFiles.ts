@@ -6,6 +6,7 @@ import {
 import {
   effectiveClientServer,
   parseClientConfiguration,
+  preservedClientRegistrationMembers,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
@@ -18,13 +19,14 @@ export interface ClientConfigurationSource extends ClientConfigurationDocument {
   readonly sourcePath: string;
 }
 
-const invalidEnvironment = (
+const invalidRegistration = (
   path: string,
   error: ConfigurationError,
+  subject: "an invalid REA server environment" | "invalid REA server settings",
 ): ClientConfigurationFileError => ({
   kind: "malformed",
   path,
-  detail: `Configuration ${path} has an invalid REA server environment: ${error.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}. Repair it before rerunning setup.`,
+  detail: `Configuration ${path} has ${subject}: ${error.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}. Repair it before rerunning setup.`,
 });
 
 /** A named source failure that setup can explain without losing the bad path. */
@@ -106,7 +108,23 @@ export const readClientConfigurationFiles = async (
         "fragment",
       );
       if (!environment.ok)
-        return err(invalidEnvironment(path, environment.error));
+        return err(
+          invalidRegistration(
+            path,
+            environment.error,
+            "an invalid REA server environment",
+          ),
+        );
+      // Identity does not matter here: an unloadable member blocks the file.
+      const members = preservedClientRegistrationMembers(document.value, true);
+      if (!members.ok)
+        return err(
+          invalidRegistration(
+            path,
+            members.error,
+            "invalid REA server settings",
+          ),
+        );
       documents.push({ ...document.value, sourcePath: path });
     }
   }
@@ -114,7 +132,13 @@ export const readClientConfigurationFiles = async (
     effectiveClientConfiguration(documents),
   );
   if (!environment.ok)
-    return err(invalidEnvironment(client.configPath, environment.error));
+    return err(
+      invalidRegistration(
+        client.configPath,
+        environment.error,
+        "an invalid REA server environment",
+      ),
+    );
   return ok(documents);
 };
 

@@ -47,6 +47,7 @@ type UnresolvedArtifactPathStatus =
 interface ArtifactPathResolutionBase {
   readonly declared_path: string;
   readonly runtime_path_base?: "application-root";
+  readonly runtime_path_base_proven?: true;
   readonly resolution_context: ArtifactPathResolutionContext;
   readonly limitations: readonly string[];
   readonly conditional_resolutions?: readonly ConditionalModuleResolution[];
@@ -95,6 +96,7 @@ export interface ResolveArtifactPathInput {
     | "url-resource";
   /** Logical root of an inventoried nested application container. */
   readonly applicationRootPath?: string | null;
+  readonly applicationRootIsProven?: boolean;
 }
 
 /** Preserve an explicitly retained loader mode on graph relationships. */
@@ -203,6 +205,11 @@ export const resolveArtifactPathByContext = (
     ...(input.runtimePathKind === "application-file"
       ? { runtime_path_base: "application-root" as const }
       : {}),
+    ...(input.runtimePathKind === "application-file" &&
+    input.applicationRootIsProven === true &&
+    input.applicationRootPath !== null
+      ? { runtime_path_base_proven: true as const }
+      : {}),
     resolution_context: input.context,
     limitations: resolution.limitations,
     ...(resolution.candidatePath === undefined
@@ -225,6 +232,9 @@ export const resolveArtifactPathByContext = (
 export const artifactPathResolutionProperties = (
   resolution: ArtifactPathResolution | undefined,
 ): Readonly<Record<string, JsonValue>> => ({
+  ...(resolution?.runtime_path_base_proven === undefined
+    ? {}
+    : { runtime_path_base_proven: resolution.runtime_path_base_proven }),
   ...(resolution?.runtime_path_base === undefined
     ? {}
     : { runtime_path_base: resolution.runtime_path_base }),

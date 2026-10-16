@@ -141,6 +141,9 @@ function* buildJavaScriptArtifactGraphInputSteps(
     )
       recordModuleGap(analyzed.file);
   }
+  const unavailableFilesByPath = new Map(
+    fileSet.unavailable_relevant_files.map((file) => [file.path, file]),
+  );
   const context: JavaScriptArtifactGraphContext = {
     accumulator,
     snapshot,
@@ -153,7 +156,12 @@ function* buildJavaScriptArtifactGraphInputSteps(
     ),
     root,
     filesByPath: new Map(fileSet.files.map((file) => [file.path, file])),
-    unanalyzedFiles: fileSet.unanalyzed_files,
+    unanalyzedFiles: {
+      get: (path) =>
+        unavailableFilesByPath.get(path) ?? fileSet.unanalyzed_files?.get(path),
+      hasDirectory: (path, container) =>
+        fileSet.unanalyzed_files?.hasDirectory(path, container) ?? false,
+    },
     fileNodes: new Map(),
     assetNodes: new Map(),
     sourceModuleNodes: new Map(),

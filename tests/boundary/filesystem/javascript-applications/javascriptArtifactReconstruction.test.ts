@@ -52,6 +52,42 @@ import { parseJavaScriptSemanticGraph } from "../../../../src/domain/javascript/
 import { writeJavaScriptArtifactFixture } from "../../../fixtures/javascriptArtifactApplication.js";
 import { writeFixtureFiles } from "../../../support/javascriptApplicationFixture.js";
 
+it("does not let a known-absent optional import erase another application's page", async () => {
+  const root = await createTestTempDirectory("rea-absent-optional-owner-");
+  await writeFixtureFiles(root, {
+    "a/package.json": JSON.stringify({ main: "main.cjs" }),
+    "b/package.json": JSON.stringify({ main: "main.cjs" }),
+    "a/main.cjs":
+      'const {BrowserWindow} = require("electron"); const w = new BrowserWindow(); w.loadFile("index.html");',
+    "b/main.cjs": 'try { require("./optional.cjs"); } catch {}',
+    "a/index.html": "valid page",
+    "index.html": "root decoy",
+  });
+  const result = await reconstructJavaScriptArtifact({
+    input_path: root,
+    format: "directory",
+  });
+  const role = result.graph.nodes.find(
+    ({ kind }) => kind === "electron-renderer",
+  );
+  expect(role?.observations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          resolved_path: "a/index.html",
+          resolution_status: "resolved",
+        }),
+      }),
+    ]),
+  );
+  expect(
+    result.graph.edges.filter(
+      ({ source_node_id, relation }) =>
+        source_node_id === role?.node_id && relation === "maps_to",
+    ),
+  ).toHaveLength(1);
+});
+
 it.each(["unselected", "unavailable", "dynamic"] as const)(
   "retains hidden competing ownership through an %s bridge",
   async (omission) => {

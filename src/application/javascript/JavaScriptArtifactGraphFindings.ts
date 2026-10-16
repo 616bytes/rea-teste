@@ -150,8 +150,7 @@ const addReference = (
       input.value.kind === "require") &&
     (input.value.specifier === null ||
       resolved === null ||
-      resolved.resolutionStatus === "unavailable" ||
-      resolved.resolutionStatus === "not-found")
+      resolved.resolutionStatus === "unavailable")
   ) {
     const container = applicationContainerIdentity(context.fileSet, input.file);
     const gaps =
@@ -417,6 +416,9 @@ const addDiscoveredRole = (
             // Raw loadFile literals belong to the application, not its caller.
             runtimePathKind: "application-file" as const,
             applicationRootPath: applicationRootPath(context, input.file),
+            applicationRootIsProven: context.applicationRootsBySource.has(
+              input.file.path,
+            ),
           }
         : input.value.role === "renderer" &&
             input.value.resolution_context === "module-specifier"

@@ -309,6 +309,63 @@ it("names signed slices when codesign's default slice is unsigned", async () => 
   ]);
 });
 
+it("falls back to the target's CPU families when lipo is unavailable", async () => {
+  const unsignedText = await fixture("dyld-inventory/codesign-unsigned.txt");
+  const armDisplay = await fixture("codesign-universal-signed/slice-arm64.txt");
+  const runner: NativeCommandRunner = {
+    run(tool: string, arguments_: readonly string[], options) {
+      if (tool === "lipo")
+        return Promise.resolve(
+          err(new NativeCommandFailure(tool, "unavailable", null)),
+        );
+      const architecture = arguments_[arguments_.indexOf("-a") + 1];
+      const signedSlice = arguments_.includes("-a") && architecture === "arm64";
+      const stderr = signedSlice ? armDisplay : unsignedText;
+      const exitCode = signedSlice ? 0 : 1;
+      const capture: NativeCommandCapture = {
+        tool,
+        executable: `/usr/bin/${tool}`,
+        executableSha256: "a".repeat(64),
+        toolVersion: null,
+        versionReason: "fixture",
+        arguments: [...arguments_],
+        stdout: "",
+        stderr,
+        stdoutBytes: 0,
+        stderrBytes: Buffer.byteLength(stderr),
+        exitCode,
+        signal: null,
+      };
+      return Promise.resolve(
+        exitCode === 0 || options.acceptNonZero === true
+          ? ok(capture)
+          : err(new NativeCommandFailure(tool, "nonzero-exit", exitCode)),
+      );
+    },
+  };
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+    await signatureTarget("arm64"),
+  );
+
+  const execution = await client.execute("inspect_signature", {});
+
+  if (!execution.ok) throw execution.error;
+  const { signed, limitations } = execution.value.result as {
+    signed: boolean;
+    limitations: string[];
+  };
+  expect(signed).toBe(false);
+  expect(limitations).toEqual(
+    expect.arrayContaining([
+      "lipo is unavailable, so slice names come from the target's CPU families; variants such as arm64e.x1 are not distinguished.",
+      "Unsigned Mach-O slices: x86_64.",
+      expect.stringMatching(
+        /^Mach-O slices signed although codesign's default slice is unsigned: arm64 /u,
+      ),
+    ]),
+  );
+});
+
 it("keeps a non-default slice's undecodable entitlements unobserved", async () => {
   const load = (name: string) => fixture(`codesign-universal-signed/${name}`);
   const client = new NativeMacOSProvider(

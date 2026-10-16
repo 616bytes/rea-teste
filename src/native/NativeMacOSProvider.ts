@@ -654,7 +654,10 @@ class NativeMacOSClient implements AnalysisClient {
       ? await this.#unsignedSliceNames(binding, signal)
       : null;
     if (sliceNames !== null && !sliceNames.ok) return sliceNames;
-    if (sliceNames !== null) captures.push(...sliceNames.value.captures);
+    if (sliceNames !== null) {
+      captures.push(...sliceNames.value.captures);
+      limitations.push(...sliceNames.value.limitations);
+    }
     const provenance = captures.map((capture) =>
       invocation(capture, binding.snapshotPath),
     );
@@ -855,6 +858,7 @@ class NativeMacOSClient implements AnalysisClient {
       {
         readonly names: readonly string[];
         readonly captures: NativeCommandCapture[];
+        readonly limitations: readonly string[];
       },
       AnalysisError
     >
@@ -865,6 +869,16 @@ class NativeMacOSClient implements AnalysisClient {
       signal,
       "lipo",
     );
+    // A missing lipo must not fail the signature facts already collected;
+    // cancellation, target changes and cleanup failures still propagate.
+    if (!archs.ok && archs.error instanceof AnalysisCapabilityUnavailableError)
+      return ok({
+        names: codeSignArchitectures(null, this.target),
+        captures: [],
+        limitations: [
+          "lipo is unavailable, so slice names come from the target's CPU families; variants such as arm64e.x1 are not distinguished.",
+        ],
+      });
     if (!archs.ok) return archs;
     const names =
       archs.value.exitCode === 0
@@ -883,6 +897,12 @@ class NativeMacOSClient implements AnalysisClient {
       names:
         names.length > 0 ? names : codeSignArchitectures(null, this.target),
       captures: [archs.value],
+      limitations:
+        names.length > 0
+          ? []
+          : [
+              "lipo did not name the slices, so slice names come from the target's CPU families; variants such as arm64e.x1 are not distinguished.",
+            ],
     });
   }
 

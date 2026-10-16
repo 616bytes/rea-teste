@@ -298,6 +298,61 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
 );
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
+  "retains a selected entry owner and confines loadFile after applying its root through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-proven-partial-owner-");
+    await writeFixtureFiles(root, {
+      "app/package.json": JSON.stringify({ main: "main.cjs" }),
+      "app/main.cjs":
+        'const { BrowserWindow } = require("electron"); const win = new BrowserWindow(); win.loadFile("index.html"); win.loadFile("../shared/index.html"); win.loadFile("../../escape.html");',
+      "app/helper.cjs": 'module.exports = "unrelated omitted module";',
+      "index.html": "artifact-root decoy",
+      "app/index.html": "proven application page",
+      "shared/index.html": "valid sibling page",
+      "escape.html": "escape decoy",
+    });
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root, [
+      "app/package.json",
+      "app/main.cjs",
+    ]);
+    const roles = graph.nodes.filter(
+      ({ kind }) => kind === "electron-renderer",
+    );
+    expect(roles).toHaveLength(3);
+    for (const [declaration, target, status] of [
+      ["index.html", "app/index.html", "resolved"],
+      ["../shared/index.html", "shared/index.html", "resolved"],
+      ["../../escape.html", null, "rejected"],
+    ] as const) {
+      const role = roles.find(({ observations }) =>
+        observations.some(
+          ({ properties }) => properties.declared_path === declaration,
+        ),
+      );
+      expect(role).toBeDefined();
+      expect(role?.observations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              resolved_path: target,
+              resolution_status: status,
+            }),
+          }),
+        ]),
+      );
+      expect(
+        graph.edges
+          .filter(
+            ({ source_node_id, relation }) =>
+              source_node_id === role?.node_id && relation === "maps_to",
+          )
+          .map(({ properties }) => properties.resolved_path),
+      ).toEqual(target === null ? [] : [target]);
+    }
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
   "keeps absolute loadFile host paths unknown through %s",
   async (surface, { cli }) => {
     const root = await createTestTempDirectory("rea-loadfile-absolute-");

@@ -431,17 +431,10 @@ const resolveRuntimeEntrypoint = (
     return unresolvedCandidate("unavailable", [
       "Inventoried package metadata does not establish one application root for this source; the loadFile base is unknown.",
     ]);
-  const relative = confineCandidate(
-    relativeCandidate(
-      input.runtimePathKind === "application-file" ? "" : input.sourcePath,
-      input.declaredPath,
-    ),
-  );
-  if (typeof relative !== "string") return relative;
   const candidate = confineCandidate(
     input.runtimePathKind === "application-file"
-      ? posix.join(input.applicationRootPath ?? "", relative)
-      : relative,
+      ? posix.join(input.applicationRootPath ?? "", input.declaredPath)
+      : relativeCandidate(input.sourcePath, input.declaredPath),
   );
   if (typeof candidate !== "string") return candidate;
   return (

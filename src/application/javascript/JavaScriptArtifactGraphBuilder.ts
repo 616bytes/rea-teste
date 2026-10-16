@@ -104,16 +104,22 @@ function* buildJavaScriptArtifactGraphInputSteps(
       .map(({ path }) => path),
   );
   const applicationOwnershipUnknownContainers = new Set<string>();
+  const applicationModuleUnknownContainers = new Set<string>();
   for (const files of [fileSet.files, fileSet.unavailable_relevant_files]) {
     for (const file of files) {
       if (
-        (file.kind === "package-json" &&
-          !dependencyManifest(file.path) &&
-          !parsedPackages.has(file.path)) ||
-        (file.kind === "javascript" &&
-          (!("text" in file) || !file.text.included))
+        file.kind === "package-json" &&
+        !dependencyManifest(file.path) &&
+        !parsedPackages.has(file.path)
       )
         applicationOwnershipUnknownContainers.add(
+          applicationContainerIdentity(fileSet, file),
+        );
+      if (
+        file.kind === "javascript" &&
+        (!("text" in file) || !file.text.included)
+      )
+        applicationModuleUnknownContainers.add(
           applicationContainerIdentity(fileSet, file),
         );
     }
@@ -125,7 +131,7 @@ function* buildJavaScriptArtifactGraphInputSteps(
       analyzed.application_projection_failure !== undefined ||
       analyzed.analysis_failure !== undefined
     )
-      applicationOwnershipUnknownContainers.add(
+      applicationModuleUnknownContainers.add(
         applicationContainerIdentity(fileSet, analyzed.file),
       );
   }
@@ -150,6 +156,7 @@ function* buildJavaScriptArtifactGraphInputSteps(
     containerNodes: new Map([[snapshot.manifest.root_sha256, root]]),
     applicationRootsBySource: new Map(),
     applicationOwnershipUnknownContainers,
+    applicationModuleUnknownContainers,
   };
   addJavaScriptArtifactContainers(context);
   yield;

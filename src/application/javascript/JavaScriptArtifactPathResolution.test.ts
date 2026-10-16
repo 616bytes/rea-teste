@@ -2966,6 +2966,24 @@ describe("literal-percent runtime path resolution", () => {
 });
 
 describe("application-root Electron loadFile resolution", () => {
+  it("confines a sibling path after applying a nested application root", () => {
+    expect(
+      resolve({
+        declaredPath: "../shared/index.html",
+        sourcePath: "app/main.cjs",
+        context: "filesystem-expression",
+        runtimePathKind: "application-file",
+        applicationRootPath: "app",
+        files: fileMap([
+          file("app/main.cjs", "root"),
+          file("shared/index.html", "root"),
+        ]),
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "shared/index.html",
+    });
+  });
   it.each(["", "resources/app.asar"])(
     "resolves loadFile within application root %j instead of the calling script",
     (applicationRootPath) => {
@@ -3003,7 +3021,7 @@ describe("application-root Electron loadFile resolution", () => {
           resolved_path: null,
           resolution_status: "not-found",
         });
-      expect(loadFile("../outside.html")).toMatchObject({
+      expect(loadFile("../../../../outside.html")).toMatchObject({
         resolved_path: null,
         resolution_status: "rejected",
       });

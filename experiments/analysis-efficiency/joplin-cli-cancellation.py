@@ -100,7 +100,8 @@ def run(arguments):
         "stdout_bytes": stdout_path.stat().st_size,
         "stderr_bytes": stderr_path.stat().st_size,
         "stdout_path": str(stdout_path), "stderr_path": str(stderr_path),
-        "cleanup_verified": capture.get("application", {}).get("cleanup") == "terminated-owned-process",
+        "cleanup_verified": error.get("code") == "cancelled" and
+                            capture.get("application", {}).get("cleanup") == "terminated-owned-process",
     }
     print(json.dumps(receipt))
     if failure is not None:
@@ -108,7 +109,8 @@ def run(arguments):
     assert process.returncode == 143, "CLI must retain its SIGTERM exit convention"
     assert partial.get("kind") == "electron-active-observation"
     assert cancelled_action, "Startup alone does not establish action cancellation"
-    assert error.get("code") in ("cancelled", "cleanup_incomplete")
+    assert error.get("category") == "cancelled"
+    assert receipt["cleanup_verified"], "Cancellation alone does not establish complete provider cleanup"
 
 
 if __name__ == "__main__":

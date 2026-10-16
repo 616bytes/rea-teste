@@ -226,6 +226,11 @@ try {
   record.workflow_status =
     record.cleanup_phase === "verified" ? "verified" : "partial";
   console.log(JSON.stringify(record));
+  assert.equal(
+    record.cleanup_phase,
+    "verified",
+    "Provider cleanup remains unverified; cancellation alone is a partial result",
+  );
 } catch (cause) {
   console.log(
     JSON.stringify({

@@ -6,6 +6,7 @@ import {
   type AnalysisExecution,
   type AnalysisOperation,
   type ExecutionOptions,
+  type FileCloseResourceOwner,
 } from "../application/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -34,9 +35,11 @@ import { err, ok, type Result } from "../domain/result.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import {
   KUNA_INVENTORY_OUTPUT_BYTES,
+  kunaFileCleanupError,
   type KunaProcessLauncher,
 } from "./KunaCommand.js";
 import {
+  createKunaFileCloseScope,
   inspectKunaInstallation,
   type KunaInstallation,
 } from "./KunaInstallation.js";
@@ -70,6 +73,9 @@ import {
   type KunaProjectFileSpan,
 } from "./KunaProjectReader.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 
 /** How often a request waiting on the project export reports that it still waits. */
 const WAIT_PROGRESS_INTERVAL_MS = 10_000;
@@ -98,6 +104,20 @@ interface SingleFunctionRun {
   /** Stops the run once every waiter has left. */
   readonly controller: AbortController;
   waiters: number;
+}
+
+/**
+ * Completed single-function texts a session keeps while it has no export
+ * reader. Each repeat would otherwise analyze the whole image again; after a
+ * failed export that holds for the rest of the session.
+ */
+const SINGLE_FUNCTION_TEXT_CACHE_BYTES = 16 * 1024 * 1024;
+/** Charged per kept text beside its UTF-8 bytes. */
+const SINGLE_FUNCTION_TEXT_ENTRY_BYTES = 256;
+
+interface SingleFunctionText {
+  readonly text: string;
+  readonly bytes: number;
 }
 
 interface Answer {
@@ -211,8 +231,12 @@ export class KunaSessionClient implements AnalysisClient {
   readonly #cache: KunaProjectCache;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
   readonly #runSlots: KunaRunSlots;
+  readonly #fileCloseResources = new ArtifactResourceScope();
   /** Single-function runs in flight, by entry address. */
   readonly #singleFunctionRuns = new Map<string, SingleFunctionRun>();
+  /** Completed single-function texts by address, least recently used first. */
+  readonly #singleFunctionTexts = new Map<string, SingleFunctionText>();
+  #singleFunctionTextBytes = 0;
   /** Owns background work: aborting it cancels this session's export interest. */
   readonly #session = new AbortController();
   /** Requests and shared readers retain their resources until their work settles. */
@@ -394,6 +418,7 @@ export class KunaSessionClient implements AnalysisClient {
     while (this.#active.size > 0) await Promise.allSettled(this.#active);
     this.#references.clear();
     this.#strings.clear();
+    this.#dropSingleFunctionTexts();
     await this.#project;
     await this.#inventory;
     const failures: ProviderCleanupError[] = [];
@@ -405,6 +430,22 @@ export class KunaSessionClient implements AnalysisClient {
     }
     const commands = await this.#commands.close();
     if (!commands.ok) failures.push(commands.error);
+    try {
+      await this.#fileCloseResources.close();
+    } catch (cause: unknown) {
+      const observation = ArtifactReaderFailure.cleanupObservation(
+        cause,
+        "Kuna provider file descriptor",
+      );
+      failures.push(
+        new ProviderCleanupError(
+          KUNA_PROVIDER_ID,
+          observation.resources,
+          { reason: observation.reason },
+          { cause, operation: "close_binary" },
+        ),
+      );
+    }
     if (failures.length > 0)
       return err(
         new ProviderCleanupError(
@@ -416,6 +457,13 @@ export class KunaSessionClient implements AnalysisClient {
                 String(failed.diagnostics?.["reason"] ?? failed.message),
               )
               .join("; "),
+          },
+          {
+            cause: new AggregateError(
+              failures,
+              "Kuna session cleanup remains incomplete",
+            ),
+            operation: "close_binary",
           },
         ),
       );
@@ -933,7 +981,8 @@ export class KunaSessionClient implements AnalysisClient {
    * Wait for this address's shared single-function run, starting it when none
    * is in flight. A caller's cancellation stops only its own wait while others
    * still wait; the last waiter stops the run and receives how it ended,
-   * including cleanup it could not prove.
+   * including cleanup it could not prove. A completed text answers repeats
+   * until the export can.
    */
   #joinSingleFunction(
     operation: string,
@@ -943,6 +992,12 @@ export class KunaSessionClient implements AnalysisClient {
   ): Promise<SingleFunctionOutcome> {
     if (cancelled(signal))
       return Promise.resolve(err(new AnalysisCancelledError(operation)));
+    const kept = this.#singleFunctionTexts.get(address);
+    if (kept !== undefined) {
+      this.#singleFunctionTexts.delete(address);
+      this.#singleFunctionTexts.set(address, kept);
+      return Promise.resolve(ok(kept.text));
+    }
     let run = this.#singleFunctionRuns.get(address);
     if (run === undefined) {
       const controller = new AbortController();
@@ -959,9 +1014,12 @@ export class KunaSessionClient implements AnalysisClient {
         ),
       };
       this.#singleFunctionRuns.set(address, created);
-      void created.outcome.then(() => {
-        if (this.#singleFunctionRuns.get(address) === created)
-          this.#singleFunctionRuns.delete(address);
+      void created.outcome.then((outcome) => {
+        // A run whose waiters all left was already replaced or removed.
+        if (this.#singleFunctionRuns.get(address) !== created) return;
+        this.#singleFunctionRuns.delete(address);
+        if (outcome !== EXPORT_READY && outcome.ok)
+          this.#keepSingleFunctionText(address, outcome.value);
       });
       run = created;
     }
@@ -992,6 +1050,27 @@ export class KunaSessionClient implements AnalysisClient {
         resolve(outcome);
       });
     });
+  }
+
+  /** Keep a completed text within budget, dropping the least recently used. */
+  #keepSingleFunctionText(address: string, text: string): void {
+    // The export's text supersedes it; a closing session keeps nothing.
+    if (this.#reader !== undefined || this.#closing) return;
+    const bytes = Buffer.byteLength(text) + SINGLE_FUNCTION_TEXT_ENTRY_BYTES;
+    if (bytes > SINGLE_FUNCTION_TEXT_CACHE_BYTES) return;
+    this.#singleFunctionTexts.set(address, { text, bytes });
+    this.#singleFunctionTextBytes += bytes;
+    while (this.#singleFunctionTextBytes > SINGLE_FUNCTION_TEXT_CACHE_BYTES) {
+      const oldest = this.#singleFunctionTexts.entries().next().value;
+      if (oldest === undefined) break;
+      this.#singleFunctionTexts.delete(oldest[0]);
+      this.#singleFunctionTextBytes -= oldest[1].bytes;
+    }
+  }
+
+  #dropSingleFunctionTexts(): void {
+    this.#singleFunctionTexts.clear();
+    this.#singleFunctionTextBytes = 0;
   }
 
   /** One `kuna decompile --addr` run, admitted by the provider's run slots. */
@@ -1220,8 +1299,22 @@ export class KunaSessionClient implements AnalysisClient {
   async #ensureInstallation(): Promise<
     Result<KunaInstallation, AnalysisError>
   > {
-    this.#installation ??= inspectKunaInstallation(this.#environment).then(
-      (inspected): Result<KunaInstallation, AnalysisError> => {
+    this.#installation ??= (async () => {
+      const parentFileCloseResources: FileCloseResourceOwner = {
+        retain: (owner, resource) =>
+          this.#fileCloseResources.retain({
+            kind: "lease",
+            resource,
+            lease: { release: () => owner.close() },
+          }),
+        run: <T>(operation: () => Promise<T>) =>
+          this.#fileCloseResources.run(operation),
+      };
+      const fileCloseScope = createKunaFileCloseScope(parentFileCloseResources);
+      try {
+        const inspected = await inspectKunaInstallation(this.#environment, {
+          fileCloseResources: fileCloseScope.owner,
+        });
         if (!inspected.ok)
           return err(kunaUnavailable("health", inspected.error.reason));
         const committed = this.#profile?.parameters["kuna_sha256"];
@@ -1237,8 +1330,17 @@ export class KunaSessionClient implements AnalysisClient {
             }),
           );
         return ok(inspected.value);
-      },
-    );
+      } catch (cause: unknown) {
+        if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
+        const error = kunaFileCleanupError(
+          cause,
+          "health",
+          this.#session.signal,
+        );
+        fileCloseScope.bindFailure(cause, error);
+        return err(error);
+      }
+    })();
     return this.#installation;
   }
 
@@ -1327,6 +1429,7 @@ export class KunaSessionClient implements AnalysisClient {
 
   #adopt(project: KunaProject): void {
     this.#reader = this.#readerFor(project);
+    this.#dropSingleFunctionTexts();
     this.#releasePin ??= this.#cache.pin(project.key);
   }
 

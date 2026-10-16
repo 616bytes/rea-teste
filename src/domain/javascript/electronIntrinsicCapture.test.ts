@@ -498,6 +498,23 @@ describe("captured invocation member identity", () => {
     expect(writes).toContainEqual(["intrinsic"]);
   });
 
+  it("follows a sequence tail in a captured-member alias", () => {
+    // `(0, change.call)` stores the tail member read, so `invoke` holds
+    // Function.prototype.call and the call writes `Object.create`.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const invoke = (0, change.call);
+      invoke.call(change,null,{value:customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
   it("follows a copied captured-member alias", () => {
     // `copy` is a second stable alias of the captured member; the call still
     // reaches the bound defineProperty and must keep its write.

@@ -476,7 +476,15 @@ export const createSemanticModuleInterop = (
       )
         return undefined;
       visited.add(binding.bindingId);
-      const next = unwrapJavaScriptExpression(initializer.node).node;
+      let next = unwrapJavaScriptExpression(initializer.node).node;
+      // A comma initializer stores its tail: `const invoke = (0, change.call)`
+      // captures the member read. Follow the last expression as the
+      // invocation resolver does for direct callee sequences.
+      while (t.isSequenceExpression(next)) {
+        const tail = next.expressions.at(-1);
+        if (tail === undefined) return undefined;
+        next = unwrapJavaScriptExpression(tail).node;
+      }
       if (t.isIdentifier(next)) {
         current = next;
         continue;

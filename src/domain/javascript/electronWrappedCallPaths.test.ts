@@ -789,6 +789,149 @@ it.each([
     ).toEqual([{ channel: "rhs", conditions: [condition] }]);
   },
 );
+it.each([
+  ["null", "||=", ["rhs"]],
+  ["0", "||=", ["rhs"]],
+  ["false", "??=", []],
+  ["null", "??=", ["rhs"]],
+  ["void 0", "??=", ["rhs"]],
+  ["true", "&&=", ["rhs"]],
+  ["null", "&&=", []],
+  ["({action: () => electron.ipcRenderer.send('prior')})", "||=", ["prior"]],
+  ["({action: () => electron.ipcRenderer.send('prior')})", "??=", ["prior"]],
+  ["({action: () => electron.ipcRenderer.send('prior')})", "&&=", ["rhs"]],
+] as const)(
+  "reads the prior module.exports value %s for %s",
+  (prior, operator, channels) => {
+    const source = bundle(`
+      electron.contextBridge.exposeInMainWorld("desktop", helper);
+    `).replace(
+      "exports.sender =",
+      `
+      module.exports = ${prior};
+      module.exports ${operator} {action: () => electron.ipcRenderer.send("rhs")};
+      exports.sender =`,
+    );
+    const result = analyzeJavaScriptStaticSource(source);
+    expect(
+      result.electron.call_paths
+        ?.filter(({ entry }) => entry === "desktop.action")
+        .map(({ channel, conditions }) => ({ channel, conditions })) ?? [],
+    ).toEqual(channels.map((channel) => ({ channel, conditions: [] })));
+  },
+);
+it.each(["||=", "??="])(
+  "keeps the initial namespace for %s without an earlier root write",
+  (operator) => {
+    const source = bundle(
+      `electron.contextBridge.exposeInMainWorld("desktop", helper);`,
+    ).replace(
+      "exports.sender =",
+      `module.exports ${operator} {action: () => electron.ipcRenderer.send("rhs")}; exports.sender =`,
+    );
+    const result = analyzeJavaScriptStaticSource(source);
+    expect(
+      result.electron.call_paths?.filter(
+        ({ entry }) => entry === "desktop.action",
+      ) ?? [],
+    ).toEqual([]);
+  },
+);
+it.each([
+  ["||=", "!(module.exports)"],
+  ["??=", "(module.exports) === null || (module.exports) === undefined"],
+  ["&&=", "module.exports"],
+])("keeps unknown prior root replacement guarded for %s", (operator, guard) => {
+  const source = bundle(
+    `electron.contextBridge.exposeInMainWorld("desktop", helper);`,
+  ).replace(
+    "exports.sender =",
+    `module.exports = unknownValue; module.exports ${operator} {action: () => electron.ipcRenderer.send("rhs")}; exports.sender =`,
+  );
+  const result = analyzeJavaScriptStaticSource(source);
+  expect(
+    result.electron.call_paths
+      ?.filter(({ entry }) => entry === "desktop.action")
+      .map(({ channel, conditions }) => ({
+        channel,
+        conditions: conditions.map(({ expression }) => expression),
+      })),
+  ).toEqual([{ channel: "rhs", conditions: [guard] }]);
+});
+it.each(["||=", "??="])(
+  "preserves a prior callable root for %s",
+  (operator) => {
+    const source = bundle("").replace(
+      "exports.sender =",
+      `module.exports = () => electron.ipcRenderer.send("prior");
+       const selected = (module.exports ${operator} () => electron.ipcRenderer.send("rhs"));
+       electron.contextBridge.exposeInMainWorld("desktop", {action: selected});
+       exports.sender =`,
+    );
+    const result = analyzeJavaScriptStaticSource(source);
+    expect(
+      result.electron.call_paths
+        ?.filter(({ entry }) => entry === "desktop.action")
+        .map(({ channel }) => channel) ?? [],
+    ).toEqual(["prior"]);
+  },
+);
+it.each(["||=", "??="])(
+  "does not borrow a later root write when evaluating %s",
+  (operator) => {
+    const source = bundle("").replace(
+      "exports.sender =",
+      `
+    module.exports = null;
+    const selected = (module.exports ${operator} {action: () => electron.ipcRenderer.send("selected")});
+    module.exports = {action: () => electron.ipcRenderer.send("later")};
+    electron.contextBridge.exposeInMainWorld("desktop", selected);
+    exports.sender =`,
+    );
+    const result = analyzeJavaScriptStaticSource(source);
+    expect(
+      result.electron.call_paths
+        ?.filter(({ entry }) => entry === "desktop.action")
+        .map(({ channel, conditions }) => ({ channel, conditions })) ?? [],
+    ).toEqual([{ channel: "selected", conditions: [] }]);
+  },
+);
+it("uses the initial truthy namespace for a logical AND root assignment", () => {
+  const source = bundle(
+    `electron.contextBridge.exposeInMainWorld("desktop", helper);`,
+  ).replace(
+    "exports.sender =",
+    `module.exports &&= {action: () => electron.ipcRenderer.send("rhs")}; exports.sender =`,
+  );
+  const result = analyzeJavaScriptStaticSource(source);
+  expect(
+    result.electron.call_paths
+      ?.filter(({ entry }) => entry === "desktop.action")
+      .map(({ channel, conditions }) => ({ channel, conditions })) ?? [],
+  ).toEqual([{ channel: "rhs", conditions: [] }]);
+});
+it.each(["if (flag) module.exports = null;", "module[key] = null;"])(
+  "retains uncertainty for ambiguous earlier module writes: %s",
+  (prior) => {
+    const source = bundle("").replace(
+      "exports.sender =",
+      `
+    ${prior}
+    const selected = (module.exports ||= () => electron.ipcRenderer.send("rhs"));
+    electron.contextBridge.exposeInMainWorld("desktop", {action: selected});
+    exports.sender =`,
+    );
+    const result = analyzeJavaScriptStaticSource(source);
+    expect(
+      result.electron.call_paths
+        ?.filter(({ entry }) => entry === "desktop.action")
+        .map(({ channel, conditions }) => ({
+          channel,
+          conditions: conditions.map(({ expression }) => expression),
+        })) ?? [],
+    ).toEqual([{ channel: "rhs", conditions: ["!(module.exports)"] }]);
+  },
+);
 it("does not follow a statically false callback branch", () => {
   const result = analyzeJavaScriptStaticSource(
     bundle(

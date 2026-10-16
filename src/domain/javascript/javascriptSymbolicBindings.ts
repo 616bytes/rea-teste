@@ -599,6 +599,7 @@ export class JavaScriptSymbolicBindings {
           node.left,
           node.right,
           env,
+          this.#assignmentLeft(node.left, env),
         );
       return symbolicUnknown("compound assignment result");
     }
@@ -634,13 +635,45 @@ export class JavaScriptSymbolicBindings {
     return symbolicUnknown(`unsupported ${node.type}`);
   }
 
+  #assignmentLeft(node: t.Node, env: SymbolicEnvironment): SymbolicValue {
+    if (
+      !t.isMemberExpression(node) ||
+      semanticStaticPropertyKey(node.property, node.computed) !== "exports" ||
+      !t.isIdentifier(node.object)
+    )
+      return this.evaluate(node, env);
+    const binding = resolveSemanticBindingState(
+      this.state,
+      node.object,
+      node.object.name,
+    );
+    if (binding === undefined || !this.#moduleBindings.has(binding.bindingId))
+      return this.evaluate(node, env);
+    const module = this.evaluate(node.object, env);
+    const namespace =
+      module.kind === "record" ? module.values.get("exports") : undefined;
+    if (namespace?.kind !== "namespace")
+      return symbolicUnknown("unresolved module exports");
+    if (this.#mutated.has(namespace.bindingId))
+      return symbolicUnknown("ambiguous export writes");
+    // The synthetic module record retains its namespace identity. Read its
+    // prior root replacement at the assignment boundary, not the current write.
+    const writes = this.#namespaceWrites(namespace, { node, environment: env });
+    if (writes === undefined)
+      return symbolicUnknown("module export read boundary is unavailable");
+    const replacement = writes.findLast((write) => write.path.length === 0);
+    return replacement === undefined
+      ? namespace
+      : this.evaluate(replacement.value, namespace.environment);
+  }
+
   #logicalValue(
     operator: t.LogicalExpression["operator"],
     leftNode: t.Node,
     rightNode: t.Node,
     env: SymbolicEnvironment,
+    left: SymbolicValue = this.evaluate(leftNode, env),
   ): SymbolicValue {
-    const left = this.evaluate(leftNode, env);
     const right = symbolicLogicalRight(operator, left);
     if (right !== undefined)
       return right ? this.evaluate(rightNode, env) : left;

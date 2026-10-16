@@ -9,6 +9,9 @@ export const SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT = 256;
 export const SEMANTIC_EXPRESSION_DEPTH_LIMIT = 256;
 /** Distinct getter, receiver and path states retained in one precise query. */
 export const SEMANTIC_GETTER_EXPANSION_LIMIT = 512;
+/** Distinct expression/path states expanded while resolving one call target's
+ * returned references. */
+export const SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT = 16384;
 /** Bound normalized strings and transient keys independently of transport limits. */
 export const SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT = 1_048_576;
 
@@ -21,6 +24,8 @@ const RESOURCE_LIMIT_REASON: Record<JavaScriptSemanticResourceLimit, string> = {
     "Semantic expression depth budget exceeded (maximum 256 nested expressions).",
   "getter-expansion":
     "Getter expansion was conservatively bounded (maximum 512 distinct states or a growing receiver cycle).",
+  "returned-reference-expansion":
+    "Returned-reference expansion was conservatively bounded (maximum 16384 distinct expression/path states for one call target).",
 };
 
 /** Check UTF-16 length against worst-case JSON escaping without flattening. */

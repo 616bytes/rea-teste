@@ -6,6 +6,7 @@ import {
 } from "./javascriptAstValues.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   semanticArrayIndex,
   type JavaScriptSemanticPropertyPath,
@@ -129,12 +130,23 @@ export const createSemanticReturnedReferences = (
     // cycle blockers affect reuse; branch history is not a dependency. An
     // acyclic expression/path is consequently expanded once across a diamond.
     const expanded: CompletedExpansions = new WeakMap();
+    let expansions = 0;
     while (work.length > 0) {
       const task = work.pop();
       if (task === undefined) break;
       if (task.kind === "complete") {
         completeExpansion(task.frame, expanded);
         continue;
+      }
+      // Recursive reassignment webs (for example fiber locals reassigned
+      // across switch arms) enumerate every simple initializer chain as a
+      // distinct path. Bound the states examined for one call target and
+      // keep the references proven so far; the limit is disclosed through
+      // coverage instead of claiming completeness.
+      expansions += 1;
+      if (expansions > SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT) {
+        state.valueResourceLimits.add("returned-reference-expansion");
+        break;
       }
       const { item, parent } = task;
       const node = unwrapJavaScriptExpression(item.node).node;

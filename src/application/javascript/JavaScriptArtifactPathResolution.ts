@@ -46,6 +46,7 @@ type UnresolvedArtifactPathStatus =
 
 interface ArtifactPathResolutionBase {
   readonly declared_path: string;
+  readonly runtime_path_base?: "application-root";
   readonly resolution_context: ArtifactPathResolutionContext;
   readonly limitations: readonly string[];
   readonly conditional_resolutions?: readonly ConditionalModuleResolution[];
@@ -87,7 +88,13 @@ export interface ResolveArtifactPathInput {
   /** Import/require semantics; runtime resource paths omit this provenance. */
   readonly moduleKind?: JavaScriptModuleResolutionMode;
   /** Runtime paths retain their loader owner independently of source imports. */
-  readonly runtimePathKind?: "exact-file" | "node-entrypoint" | "url-resource";
+  readonly runtimePathKind?:
+    | "exact-file"
+    | "application-file"
+    | "node-entrypoint"
+    | "url-resource";
+  /** Logical root of an inventoried nested application container. */
+  readonly applicationRootPath?: string;
 }
 
 /** Preserve an explicitly retained loader mode on graph relationships. */
@@ -193,6 +200,9 @@ export const resolveArtifactPathByContext = (
   const resolution = resolvePath(input);
   const facts = {
     declared_path: input.declaredPath,
+    ...(input.runtimePathKind === "application-file"
+      ? { runtime_path_base: "application-root" as const }
+      : {}),
     resolution_context: input.context,
     limitations: resolution.limitations,
     ...(resolution.candidatePath === undefined
@@ -215,6 +225,9 @@ export const resolveArtifactPathByContext = (
 export const artifactPathResolutionProperties = (
   resolution: ArtifactPathResolution | undefined,
 ): Readonly<Record<string, JsonValue>> => ({
+  ...(resolution?.runtime_path_base === undefined
+    ? {}
+    : { runtime_path_base: resolution.runtime_path_base }),
   ...(resolution?.candidate_path === undefined
     ? {}
     : { candidate_path: resolution.candidate_path }),
@@ -286,7 +299,11 @@ const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
   }
   if (input.runtimePathKind === "url-resource")
     return resolveExactUrlResource(input);
-  if (input.runtimePathKind === "exact-file" && isRuntimePathDeclaration(input))
+  if (
+    (input.runtimePathKind === "exact-file" ||
+      input.runtimePathKind === "application-file") &&
+    isRuntimePathDeclaration(input)
+  )
     return resolveRuntimeEntrypoint(input);
   // Package import keys are literal lookup identities, not artifact paths.
   // The selected target is admitted separately by resolveExportTarget.
@@ -395,8 +412,17 @@ const resolveRuntimeEntrypoint = (
     return unresolvedCandidate("external", [
       "Electron runtime entrypoints must identify local paths, not external URLs.",
     ]);
+  const relative = confineCandidate(
+    relativeCandidate(
+      input.runtimePathKind === "application-file" ? "" : input.sourcePath,
+      input.declaredPath,
+    ),
+  );
+  if (typeof relative !== "string") return relative;
   const candidate = confineCandidate(
-    relativeCandidate(input.sourcePath, input.declaredPath),
+    input.runtimePathKind === "application-file"
+      ? posix.join(input.applicationRootPath ?? "", relative)
+      : relative,
   );
   if (typeof candidate !== "string") return candidate;
   return (

@@ -2965,6 +2965,48 @@ describe("literal-percent runtime path resolution", () => {
   );
 });
 
+describe("application-root Electron loadFile resolution", () => {
+  it.each(["", "resources/app.asar"])(
+    "resolves loadFile within application root %j instead of the calling script",
+    (applicationRootPath) => {
+      const prefix =
+        applicationRootPath === "" ? "" : `${applicationRootPath}/`;
+      const files = fileMap([
+        file(`${prefix}sub/main.cjs`, "app"),
+        file(`${prefix}dist%2Findex.html`, "app"),
+        file(`${prefix}sub/dist%2Findex.html`, "app"),
+        file(`${prefix}sub/absent.html`, "app"),
+        file(`${prefix}fallback/index.html`, "app"),
+        file(`${prefix}foreign.html`, "other-container"),
+        file("outside.html", "other-container"),
+      ]);
+      const loadFile = (declaredPath: string) =>
+        resolve({
+          declaredPath,
+          sourcePath: `${prefix}sub/main.cjs`,
+          context: "filesystem-expression",
+          runtimePathKind: "application-file",
+          applicationRootPath,
+          files,
+        });
+      expect(loadFile("dist%2Findex.html")).toMatchObject({
+        runtime_path_base: "application-root",
+        resolved_path: `${prefix}dist%2Findex.html`,
+        resolution_status: "resolved",
+      });
+      for (const path of ["absent.html", "fallback", "foreign.html"])
+        expect(loadFile(path)).toMatchObject({
+          resolved_path: null,
+          resolution_status: "not-found",
+        });
+      expect(loadFile("../outside.html")).toMatchObject({
+        resolved_path: null,
+        resolution_status: "rejected",
+      });
+    },
+  );
+});
+
 describe("exact Electron runtime entrypoint resolution", () => {
   it("requires a protocol for Electron URL resources", () => {
     const files = fileMap([

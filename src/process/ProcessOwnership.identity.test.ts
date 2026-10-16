@@ -265,12 +265,14 @@ describe("capture-local process identity baselines", () => {
       ]),
     ).resolves.toEqual({
       cleaned: false,
-      reason: "process identity could not be revalidated",
+      reason:
+        "process identity could not be revalidated; live candidates 902=process identity was unavailable during token scan: fixture",
       failures: [
         {
           pid: 902,
           reason: "process-identity-unavailable",
-          diagnostic: "process identity was unavailable during token scan",
+          diagnostic:
+            "process identity was unavailable during token scan: fixture",
         },
       ],
     });
@@ -318,7 +320,7 @@ describe("capture-local process identity baselines", () => {
       ),
     ).resolves.toMatchObject({
       cleaned: false,
-      reason: "process identity could not be revalidated",
+      reason: expect.stringContaining("910=process identity changed"),
     });
     expect(signalGroup).not.toHaveBeenCalled();
     expect(identityReads).toBeGreaterThanOrEqual(3);
@@ -371,7 +373,7 @@ describe("process identity during token validation", () => {
       ),
     ).resolves.toMatchObject({
       cleaned: false,
-      reason: "process identity could not be revalidated",
+      reason: expect.stringContaining("912=process identity changed"),
     });
     expect(signalGroup).not.toHaveBeenCalled();
     expect(reusedDuringFinalRead).toBe(true);
@@ -423,7 +425,8 @@ describe("process identity during token validation", () => {
       ),
     ).resolves.toEqual({
       cleaned: false,
-      reason: "process identity could not be revalidated",
+      reason:
+        "process identity could not be revalidated; live candidates 911=process identity changed or became unavailable during token validation, 912=process identity changed or became unavailable during token validation",
       failures: processes.map(({ pid }) => ({
         pid,
         reason: "process-identity-unavailable",
@@ -488,7 +491,7 @@ describe("process identity before signaling", () => {
       ),
     ).resolves.toMatchObject({
       cleaned: false,
-      reason: "process identity could not be revalidated",
+      reason: expect.stringContaining("903=process identity changed"),
     });
     expect(signalGroup).not.toHaveBeenCalled();
     expect(identityReads).toBeGreaterThanOrEqual(3);

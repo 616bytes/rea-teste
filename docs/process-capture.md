@@ -461,6 +461,18 @@ remains unresolved. Independently verified groups can still be cleaned while an
 uncertain group and its temporary root stay owned for retry. Unrelated withheld
 environment observations are retained through refreshed scans and partial cleanup.
 
+Generic owned-command cleanup also retains descendant groups found in a fresh
+liveness table. It validates those groups without scanning unrelated host
+processes. Pre-signal discovery precedes the final group ownership check;
+newer scan failures cannot be erased by an earlier successful check. Captured
+start identities remain pinned across bounded replanning, including when a
+process recovers its run token.
+
+Identity-inspection failures preserve the affected PIDs and native inspection
+reasons in the cleanup diagnostic. Completed capture observations remain
+available, and unresolved process cleanup keeps the temporary root owned for
+retry.
+
 The process-table producer excludes only its own collector invocation from the
 snapshot that invocation produced. It does not exclude processes by command name
 or infer current ownership from a collector PID after exit. This prevents the

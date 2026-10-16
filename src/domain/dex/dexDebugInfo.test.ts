@@ -179,25 +179,6 @@ describe("decodeDebugInfo bounds and semantics", () => {
     expect(d.malformed).toBe(true);
     expect(d.parameterNames).toEqual([]);
   });
-
-  it("stops a long stream when the caller cancels", () => {
-    const body = Array.from({ length: 70_000 }, () => EMIT_HERE);
-    let polls = 0;
-    const d = decodeDebugInfo(
-      stream(...uleb(1), ...uleb(0), ...body, END_SEQUENCE),
-      1,
-      4,
-      undefined,
-      {
-        cancelled: () => {
-          polls += 1;
-          return true;
-        },
-      },
-    );
-    expect(polls).toBe(1);
-    expect(d.positionCount).toBeLessThan(70_000);
-  });
 });
 
 describe("decodeDebugInfo register bound", () => {

@@ -120,8 +120,6 @@ export interface DexDecodeOptions {
   readonly budget?: DexWorkBudget;
   readonly collectLocals?: boolean;
   readonly maxLocals?: number;
-  /** Polled every {@link CANCEL_POLL_INTERVAL} opcodes within one stream. */
-  readonly cancelled?: () => boolean;
 }
 
 /** A method with no `debug_info_item` (debug_info_off == 0). */
@@ -152,16 +150,14 @@ interface LiveLocal {
  */
 export const DEX_MAX_PARAMETERS = 255;
 
-/** Opcodes between cancellation polls inside one long stream. */
-const CANCEL_POLL_INTERVAL = 65_536;
-
 /** `true` keeps the walk going; `false` records a fault and stops it. */
 type Step = boolean;
 
 /**
- * Debug opcodes a caller is willing to decode, shared and decremented across
- * every method (and DEX member) of one call. The per-method guard bounds one
- * stream; this bounds the whole call, so many methods cannot multiply it.
+ * Work units (debug opcodes, parameter-name reads, class_data entries) a caller
+ * allows for one DEX member, shared and decremented across all of its methods.
+ * The per-method guard bounds one stream; this bounds the member, so many
+ * methods cannot multiply it.
  */
 export interface DexWorkBudget {
   remaining: number;
@@ -195,8 +191,6 @@ class DebugInfoWalk {
   private positionCount = 0;
   private localCount = 0;
   private explicitLocalCount = 0;
-  private opcodes = 0;
-  private readonly cancelled: (() => boolean) | undefined;
   private localLimitExceeded = false;
   private readonly budget: DexWorkBudget | undefined;
   private readonly collectLocals: boolean;
@@ -213,7 +207,6 @@ class DebugInfoWalk {
     this.budget = options.budget;
     this.collectLocals = options.collectLocals ?? true;
     this.maxLocals = options.maxLocals ?? Number.POSITIVE_INFINITY;
-    this.cancelled = options.cancelled;
   }
 
   /** Charge one unit of call-wide work; false once the budget is spent. */
@@ -420,13 +413,6 @@ class DebugInfoWalk {
     for (let guard = 0; guard < 2_000_000; guard += 1) {
       // Out of call-wide work: stop; the caller sees remaining <= 0 and refuses.
       if (!this.charge() || this.localLimitExceeded) break;
-      this.opcodes += 1;
-      if (
-        this.cancelled !== undefined &&
-        this.opcodes % CANCEL_POLL_INTERVAL === 0 &&
-        this.cancelled()
-      )
-        break;
       const op = this.cursor.u1();
       if (!op.ok) break;
       if (op.value === DBG_END_SEQUENCE) {

@@ -372,18 +372,21 @@ const workSpent = (cursor: DexCursor): Result<never, DexFileParseError> =>
   });
 
 /**
- * Walk a `class_data_item`: skip its encoded_field lists and visit each
+ * Walk a `class_data_item`: skip its encoded_field lists and yield each
  * encoded_method in order (direct, then virtual), holding one method at a time.
- * Counts that could not fit are refused up front, every field and method is
- * charged to the caller's work, and a visitor returning `false` stops the walk.
- * Without a visitor the walk only validates the framing, allocating nothing.
+ * Counts that could not fit are refused up front and every field and method is
+ * charged to the caller's work. A consumer may stop early (or pause between
+ * methods) because the walk is pull-driven; the return value is the framing
+ * outcome once the walk is exhausted.
  */
-export const walkClassData = (
+export function* classDataMethods(
   bytes: Uint8Array,
   offset: number,
   charge: DexWorkCharge,
-  visit?: (method: DexEncodedMethod) => boolean,
-): Result<{ readonly methodCount: number }, DexFileParseError> => {
+): Generator<
+  DexEncodedMethod,
+  Result<{ readonly methodCount: number }, DexFileParseError>
+> {
   if (offset <= 0 || offset >= bytes.length)
     return err({
       kind: "invalid-index",
@@ -444,18 +447,21 @@ export const walkClassData = (
       if (!codeOff.ok) return codeOff;
       methodIdx += diff.value;
       methodCount += 1;
-      if (
-        visit !== undefined &&
-        !visit({
-          methodIdx,
-          accessFlags: access.value,
-          codeOff: codeOff.value,
-        })
-      )
-        return ok({ methodCount });
+      yield { methodIdx, accessFlags: access.value, codeOff: codeOff.value };
     }
   }
   return ok({ methodCount });
+}
+
+/** Validate a `class_data_item`'s framing without materialising its methods. */
+export const walkClassData = (
+  bytes: Uint8Array,
+  offset: number,
+  charge: DexWorkCharge,
+): Result<{ readonly methodCount: number }, DexFileParseError> => {
+  const walk = classDataMethods(bytes, offset, charge);
+  for (let step = walk.next(); ; step = walk.next())
+    if (step.done === true) return step.value;
 };
 
 /** Read a `code_item` header at `offset`, exposing its `debug_info_off`. */

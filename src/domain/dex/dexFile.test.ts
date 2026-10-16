@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEX_NO_INDEX,
   readClassDef,
+  classDataMethods,
   walkClassData,
   parseCodeItem,
   parseDexFile,
@@ -79,16 +80,10 @@ describe("parseDexFile framing", () => {
   it("decodes the class_data method list and reaches the code item's debug_info_off", () => {
     const bytes = minimalDex();
     const methods: { codeOff: number }[] = [];
-    const data = walkClassData(
-      bytes,
-      CLASS_DATA_OFF,
-      () => true,
-      (m) => {
-        methods.push(m);
-        return true;
-      },
-    );
-    expect(data).toEqual({ ok: true, value: { methodCount: 1 } });
+    const walk = classDataMethods(bytes, CLASS_DATA_OFF, () => true);
+    let step = walk.next();
+    for (; step.done !== true; step = walk.next()) methods.push(step.value);
+    expect(step.value).toEqual({ ok: true, value: { methodCount: 1 } });
     expect(methods).toHaveLength(1);
     const method = methods[0]!;
     expect(method.codeOff).toBe(CODE_ITEM_OFF);
@@ -218,7 +213,7 @@ describe("parseClassData bounds", () => {
 });
 
 describe("walkClassData streaming", () => {
-  it("validates without a visitor and lets a visitor stop early", () => {
+  it("validates without materialising methods and lets a consumer stop early", () => {
     const methods = 5;
     const data = Uint8Array.from([
       0xff,
@@ -237,13 +232,10 @@ describe("walkClassData streaming", () => {
       value: { methodCount: methods },
     });
     let seen = 0;
-    const stopped = walkClassData(
-      data,
-      1,
-      () => true,
-      () => ++seen < 2,
-    );
-    expect(stopped.ok).toBe(true);
+    for (const method of classDataMethods(data, 1, () => true)) {
+      void method;
+      if (++seen === 2) break;
+    }
     expect(seen).toBe(2);
   });
 });

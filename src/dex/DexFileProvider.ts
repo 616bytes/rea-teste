@@ -60,6 +60,10 @@ import { DEX_LIMITS, DEX_PROVIDER_IDENTITY } from "./DexFileRelease.js";
 
 const OPERATION = "inspect_dex_debug_metadata";
 
+/** Let the event loop serve I/O and deliver aborts between decode slices. */
+const yieldNow = (): Promise<void> =>
+  new Promise((resolve) => setImmediate(resolve));
+
 const sha256 = (bytes: Uint8Array): string =>
   createHash("sha256").update(bytes).digest("hex");
 
@@ -495,9 +499,11 @@ export class DexFileProvider implements DexDebugMetadataPort {
           ),
         ),
         cancelled,
+        yieldNow,
+        sliceUnits: DEX_LIMITS.workUnitsPerSlice,
       };
       if (input.class_descriptor === undefined) {
-        const summary = summarizeDex(parsed.value, buffer, work);
+        const summary = await summarizeDex(parsed.value, buffer, work);
         if (!summary.ok)
           return err(mapDexWorkError(summary.error, source.label, limitations));
         summaries.push({
@@ -508,7 +514,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
         });
         continue;
       }
-      const detail = assembleClassDetail(
+      const detail = await assembleClassDetail(
         parsed.value,
         buffer,
         input.class_descriptor,

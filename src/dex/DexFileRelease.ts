@@ -29,4 +29,10 @@ export const DEX_LIMITS = {
   workUnitsPerByte: 2,
   /** Floor for the per-member budget, so a tiny member is not over-constrained. */
   minWorkUnits: 1024 * 1024,
+  /**
+   * Work units decoded between event-loop yields. Decoding is synchronous; a
+   * slice this size takes a few milliseconds, so a 64 MiB member no longer
+   * blocks other requests (or cancellation) for its whole decode.
+   */
+  workUnitsPerSlice: 1 << 18,
 } as const;

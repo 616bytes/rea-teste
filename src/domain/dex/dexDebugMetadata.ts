@@ -4,13 +4,15 @@
  * class, full per-method detail with names/types/scopes resolved from the string
  * and type pools.
  *
- * Every decode is charged to one call-wide {@link DexWorkBudget} and polls a
- * cancellation callback, so neither many methods nor many DEX members can
- * multiply the per-method guard. The summary only counts (no per-position or
- * per-local allocation) and decodes each distinct debug stream + parameter
- * layout once. The class detail projects its serialized size from memoised
- * per-string bounds while it decodes, and refuses before materialising a report
- * past the caller's output limit.
+ * Every decode of one DEX member is charged to that member's
+ * {@link DexWorkBudget}, so many methods cannot multiply the per-method guard.
+ * Decoding is synchronous, so the walk hands the event loop back to the host
+ * after each slice of work ({@link DexWork.yieldNow}) and observes cancellation
+ * there. The summary only counts (no per-position or per-local allocation) and
+ * decodes each distinct debug stream + parameter layout once. The class detail
+ * projects its serialized size from memoised per-string bounds while it
+ * decodes, and refuses before materialising a report past the caller's output
+ * limit.
  */
 import { encodeModifiedUtf8 } from "../modifiedUtf8.js";
 import {
@@ -18,6 +20,7 @@ import {
   type DexEncodedMethod,
   type DexFile,
   readClassDef,
+  classDataMethods,
   walkClassData,
   parseCodeItem,
 } from "./dexFile.js";
@@ -115,10 +118,37 @@ export type DexWorkError =
       readonly limit: number;
     };
 
-/** Call-wide work accounting shared by every member of one inspection. */
+/** One member's work accounting and the host's cooperative-scheduling hooks. */
 export interface DexWork {
   readonly budget: DexWorkBudget;
+  /** Observed after each yield; a synchronous slice cannot see a new abort. */
   readonly cancelled: () => boolean;
+  /** Hand control back to the host's event loop (supplied by the adapter). */
+  readonly yieldNow: () => Promise<void>;
+  /** Work units decoded between yields. */
+  readonly sliceUnits: number;
+}
+
+/**
+ * Pauses a synchronous walk after each slice of work so the host can serve
+ * other requests and deliver cancellation, then reports whether to stop.
+ */
+class DexPacer {
+  #mark: number;
+  constructor(private readonly work: DexWork) {
+    this.#mark = work.budget.remaining;
+  }
+
+  /** A slice of work has been spent since the last pause. */
+  get due(): boolean {
+    return this.#mark - this.work.budget.remaining >= this.work.sliceUnits;
+  }
+
+  async pause(): Promise<DexWorkError | null> {
+    await this.work.yieldNow();
+    this.#mark = this.work.budget.remaining;
+    return outOfWork(this.work);
+  }
 }
 
 const methodState = (
@@ -211,34 +241,28 @@ const decodeMethodDebug = (
   );
 };
 
-/** Methods between cancellation/budget polls inside one class. */
-const METHOD_POLL_INTERVAL = 4096;
-
 /**
- * Visit a class's methods one at a time, never materialising them. The
+ * A class's methods, pulled one at a time and never materialised. The
  * class_data is validated first with an allocation-free pass, so a malformed
- * class contributes nothing (not a partial list), then walked again with the
- * visitor; both passes are charged to the call-wide budget, because many
- * class_defs may share one (or overlapping) class_data. The visitor returns
- * `false` to stop.
+ * class contributes nothing (not a partial list); both passes are charged to
+ * the member's budget, because many class_defs may share one (or overlapping)
+ * class_data.
  */
-const forEachMethod = (
+const classMethods = (
   bytes: Uint8Array,
   classDef: DexClassDef,
   work: DexWork,
-  visit: (method: DexEncodedMethod) => boolean,
-): "visited" | "no-class-data" | "unreadable" => {
+): Iterable<DexEncodedMethod> | "no-class-data" | "unreadable" => {
   if (classDef.classDataOff === 0) return "no-class-data";
   const charge = (): boolean => chargeWork(work.budget);
   const valid = walkClassData(bytes, classDef.classDataOff, charge);
-  if (!valid.ok) {
+  if (!valid.ok)
     // A spent budget is reported by the caller's budget check, not as damage.
-    const spent =
-      valid.error.kind === "budget-exceeded" && valid.error.resource === "work";
-    return spent ? "visited" : "unreadable";
-  }
-  walkClassData(bytes, classDef.classDataOff, charge, visit);
-  return "visited";
+    return valid.error.kind === "budget-exceeded" &&
+      valid.error.resource === "work"
+      ? []
+      : "unreadable";
+  return classDataMethods(bytes, classDef.classDataOff, charge);
 };
 
 const outOfWork = (work: DexWork): DexWorkError | null =>
@@ -257,19 +281,21 @@ const LOCAL_OVERHEAD = 192;
 
 /**
  * Find the class_def whose type descriptor matches, scanning the whole table in
- * place. Every descriptor read is charged by the resolver, and the scan polls
- * the work budget and cancellation, so an absent class in a crafted table
- * cannot cost unbounded work before the answer. A definition whose identity
- * cannot be read might be the requested class, so absence or uniqueness is then
- * unknown, never asserted; a second matching definition is malformed.
+ * place. Every descriptor read is charged by the resolver, and the scan checks
+ * the work budget per class and pauses after each slice, so an absent class in
+ * a crafted table cannot cost unbounded work before the answer. A definition
+ * whose identity cannot be read might be the requested class, so absence or
+ * uniqueness is then unknown, never asserted; a second matching definition is
+ * malformed.
  */
-const findClassDef = (
+const findClassDef = async (
   dex: DexFile,
   bytes: Uint8Array,
   resolver: DexStringResolver,
   classDescriptor: string,
   work: DexWork,
-): Result<DexClassDef | undefined, DexWorkError> => {
+  pacer: DexPacer,
+): Promise<Result<DexClassDef | undefined, DexWorkError>> => {
   // Compared as raw modified-UTF-8 bytes: no class name is decoded.
   const wanted = encodeModifiedUtf8(classDescriptor);
   let match: DexClassDef | undefined;
@@ -277,7 +303,7 @@ const findClassDef = (
   let unreadable = 0;
   for (let i = 0; i < dex.header.classDefsSize; i += 1) {
     // Checked per class: one descriptor read can cost as much as its string.
-    const stop = outOfWork(work);
+    const stop = pacer.due ? await pacer.pause() : outOfWork(work);
     if (stop !== null) return err(stop);
     const def = readClassDef(bytes, dex.header, i);
     const identity = resolver.typeIdentity(def.classIdx, wanted);
@@ -296,6 +322,20 @@ const findClassDef = (
   return ok(match);
 };
 
+const resolverFor = (
+  dex: DexFile,
+  bytes: Uint8Array,
+  work: DexWork,
+): DexStringResolver =>
+  new DexStringResolver(
+    bytes,
+    dex.header,
+    (units) => {
+      work.budget.remaining -= units;
+    },
+    () => work.budget.remaining <= 0,
+  );
+
 /**
  * Full per-method detail for the one class whose descriptor matches (`null`
  * when absent). Methods are visited one at a time; locals are collected under
@@ -304,22 +344,23 @@ const findClassDef = (
  * memoised JSON bound, so an oversized class is refused before its report is
  * built.
  */
-export const assembleClassDetail = (
+export const assembleClassDetail = async (
   dex: DexFile,
   bytes: Uint8Array,
   classDescriptor: string,
   work: DexWork,
   outputLimit: number,
-): Result<DexClassDetail | null, DexWorkError> => {
-  const resolver = new DexStringResolver(
+): Promise<Result<DexClassDetail | null, DexWorkError>> => {
+  const resolver = resolverFor(dex, bytes, work);
+  const pacer = new DexPacer(work);
+  const found = await findClassDef(
+    dex,
     bytes,
-    dex.header,
-    (units) => {
-      work.budget.remaining -= units;
-    },
-    () => work.budget.remaining <= 0,
+    resolver,
+    classDescriptor,
+    work,
+    pacer,
   );
-  const found = findClassDef(dex, bytes, resolver, classDescriptor, work);
   // An absent class is only an answer when the lookup stayed within budget.
   if (!found.ok) return found;
   const classDef = found.value;
@@ -328,22 +369,25 @@ export const assembleClassDetail = (
     1024 +
     resolver.typeJsonBound(classDef.classIdx) +
     resolver.jsonBound(classDef.sourceFileIdx);
+  const overBudget = (): DexWorkError => ({
+    kind: "output-budget-exceeded",
+    projectedBytes: projected,
+    limit: outputLimit,
+  });
   // Checked before any method is visited: a methodless class never reaches the
   // per-method check, and its source_file must not be decoded past the limit.
-  if (projected > outputLimit)
-    return err({
-      kind: "output-budget-exceeded",
-      projectedBytes: projected,
-      limit: outputLimit,
-    });
-  let failure: DexWorkError | null = null;
+  if (projected > outputLimit) return err(overBudget());
   const methods: DexMethodDetail[] = [];
-  const walked = forEachMethod(bytes, classDef, work, (method) => {
-    const stop = outOfWork(work);
-    if (stop !== null) {
-      failure = stop;
-      return false;
-    }
+  const walk = classMethods(bytes, classDef, work);
+  // The class exists but its member list is unreadable: unknown, not empty.
+  if (walk === "unreadable")
+    return err({
+      kind: "malformed-class-data",
+      classDataOff: classDef.classDataOff,
+    });
+  for (const method of walk === "no-class-data" ? [] : walk) {
+    const stop = pacer.due ? await pacer.pause() : outOfWork(work);
+    if (stop !== null) return err(stop);
     const debug = decodeMethodDebug(
       bytes,
       method,
@@ -352,7 +396,6 @@ export const assembleClassDetail = (
       resolver,
       {
         budget: work.budget,
-        cancelled: work.cancelled,
         collectLocals: true,
         maxLocals: Math.max(
           0,
@@ -361,20 +404,10 @@ export const assembleClassDetail = (
       },
     );
     const after = outOfWork(work);
-    if (after !== null) {
-      failure = after;
-      return false;
-    }
+    if (after !== null) return err(after);
     // Bound the name and descriptor from type ids before building them.
     projected += METHOD_OVERHEAD + resolver.methodJsonBound(method.methodIdx);
-    if (projected > outputLimit) {
-      failure = {
-        kind: "output-budget-exceeded",
-        projectedBytes: projected,
-        limit: outputLimit,
-      };
-      return false;
-    }
+    if (projected > outputLimit) return err(overBudget());
     const name = resolver.methodName(method.methodIdx);
     const descriptor = resolver.methodDescriptor(method.methodIdx);
     // Each name plus its array separator.
@@ -391,14 +424,8 @@ export const assembleClassDetail = (
             : resolver.jsonBound(local.nameIdx)) +
           resolver.typeJsonBound(local.typeIdx) +
           resolver.jsonBound(local.signatureIdx);
-    if (debug.localLimitExceeded || projected > outputLimit) {
-      failure = {
-        kind: "output-budget-exceeded",
-        projectedBytes: projected,
-        limit: outputLimit,
-      };
-      return false;
-    }
+    if (debug.localLimitExceeded || projected > outputLimit)
+      return err(overBudget());
     const hasCode = method.codeOff !== 0;
     methods.push({
       name,
@@ -421,15 +448,7 @@ export const assembleClassDetail = (
       })),
       setFileEvents: debug.setFileEvents,
     });
-    return true;
-  });
-  // The class exists but its member list is unreadable: unknown, not empty.
-  if (walked === "unreadable" && failure === null)
-    failure = {
-      kind: "malformed-class-data",
-      classDataOff: classDef.classDataOff,
-    };
-  if (failure !== null) return err(failure);
+  }
   const spent = outOfWork(work);
   if (spent !== null) return err(spent);
   return ok({
@@ -440,21 +459,22 @@ export const assembleClassDetail = (
 };
 
 /**
- * Conservative readiness from what the streams themselves carry: declared
- * locals or named parameters are local-variable evidence (implicit `this` and
- * unnamed parameter locals are synthesised from the layout, so they are not).
+ * Whole-member readiness with the same vocabulary as a method's state: line
+ * positions and local-variable evidence both observed is `present`, exactly
+ * one is `partial`, neither is `stripped`. Declared locals or named parameters
+ * are local evidence (implicit `this` and unnamed parameter locals are
+ * synthesised from the layout, so they are not). When something could not be
+ * read and the observed evidence does not already settle the label, it stays
+ * `unknown`.
  */
 const classifyReadiness = (
-  explicitLocalDeclarations: number,
-  methodsWithParameterNames: number,
-  linePositions: number,
+  hasLines: boolean,
+  hasLocals: boolean,
   unreadable: number,
 ): DexReadiness => {
-  const hasLocals =
-    explicitLocalDeclarations > 0 || methodsWithParameterNames > 0;
-  // No evidence found is only "stripped" when nothing was unreadable.
-  if (!hasLocals) return unreadable > 0 ? "unknown" : "stripped";
-  return linePositions > 0 ? "present" : "partial";
+  if (hasLines && hasLocals) return "present";
+  if (unreadable > 0) return "unknown";
+  return hasLines || hasLocals ? "partial" : "stripped";
 };
 
 /** What the summary keeps from one decoded method. */
@@ -474,19 +494,13 @@ interface MethodTally {
  * parameter layout (d8/R8 share streams) reuse one decode: the result depends
  * only on that key.
  */
-export const summarizeDex = (
+export const summarizeDex = async (
   dex: DexFile,
   bytes: Uint8Array,
   work: DexWork,
-): Result<DexSummary, DexWorkError> => {
-  const resolver = new DexStringResolver(
-    bytes,
-    dex.header,
-    (units) => {
-      work.budget.remaining -= units;
-    },
-    () => work.budget.remaining <= 0,
-  );
+): Promise<Result<DexSummary, DexWorkError>> => {
+  const resolver = resolverFor(dex, bytes, work);
+  const pacer = new DexPacer(work);
   const tallies = new Map<string, MethodTally>();
   let methodsWithCode = 0;
   let methodsWithDebugInfo = 0;
@@ -508,13 +522,11 @@ export const summarizeDex = (
   let distinctSources = 0;
   const sourceSample: string[] = [];
 
-  let failure: DexWorkError | null = null;
-  let visited = 0;
   let unreadableClassData = 0;
   let unreadableCodeItems = 0;
   let malformedDebugInfo = 0;
   for (let c = 0; c < dex.header.classDefsSize; c += 1) {
-    const stop = outOfWork(work);
+    const stop = pacer.due ? await pacer.pause() : outOfWork(work);
     if (stop !== null) return err(stop);
     const classDef = readClassDef(bytes, dex.header, c);
     const idx = classDef.sourceFileIdx;
@@ -541,19 +553,23 @@ export const summarizeDex = (
       }
       if ((validSource[at]! & bit) !== 0) sourceFilePresent += 1;
     }
-    const walked = forEachMethod(bytes, classDef, work, (method) => {
-      visited += 1;
-      if (visited % METHOD_POLL_INTERVAL === 0) {
-        failure = outOfWork(work);
-        if (failure !== null) return false;
+    const walk = classMethods(bytes, classDef, work);
+    if (walk === "unreadable") {
+      unreadableClassData += 1;
+      continue;
+    }
+    for (const method of walk === "no-class-data" ? [] : walk) {
+      if (pacer.due) {
+        const paused = await pacer.pause();
+        if (paused !== null) return err(paused);
       }
-      if (method.codeOff === 0) return true;
+      if (method.codeOff === 0) continue;
       methodsWithCode += 1;
       const code = methodCode(bytes, method);
-      if (code === null) return true;
+      if (code === null) continue;
       if (code === "unreadable") {
         unreadableCodeItems += 1;
-        return true;
+        continue;
       }
       // O(1) key: the implicit parameter layout is fixed by the proto, so its
       // index stands in for the (up to 255) parameter types.
@@ -567,14 +583,10 @@ export const summarizeDex = (
           code,
           classDef.classIdx,
           resolver,
-          {
-            budget: work.budget,
-            cancelled: work.cancelled,
-            collectLocals: false,
-          },
+          { budget: work.budget, collectLocals: false },
         );
-        failure = outOfWork(work);
-        if (failure !== null) return false;
+        const spent = outOfWork(work);
+        if (spent !== null) return err(spent);
         tally = {
           present: debug.present,
           positions: debug.positionCount,
@@ -589,17 +601,14 @@ export const summarizeDex = (
         if (tallies.size < MEMO_LIMIT) tallies.set(key, tally);
       }
       if (tally.malformed) malformedDebugInfo += 1;
-      if (!tally.present) return true;
+      if (!tally.present) continue;
       methodsWithDebugInfo += 1;
       linePositions += tally.positions;
       localDeclarations += tally.locals;
       explicitLocalDeclarations += tally.explicitLocals;
       setFileEvents += tally.setFileEvents;
       if (tally.hasParameterNames) methodsWithParameterNames += 1;
-      return true;
-    });
-    if (walked === "unreadable") unreadableClassData += 1;
-    if (failure !== null) return err(failure);
+    }
   }
   const spent = outOfWork(work);
   if (spent !== null) return err(spent);
@@ -625,9 +634,8 @@ export const summarizeDex = (
       debugInfo: malformedDebugInfo,
     },
     readiness: classifyReadiness(
-      explicitLocalDeclarations,
-      methodsWithParameterNames,
-      linePositions,
+      linePositions > 0,
+      explicitLocalDeclarations > 0 || methodsWithParameterNames > 0,
       unreadableClassData + unreadableCodeItems + malformedDebugInfo,
     ),
   });

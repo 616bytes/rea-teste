@@ -442,3 +442,185 @@ it.each([
     expect(calls).toBe(phase === "before" ? 0 : 1);
   },
 );
+
+it("blocks a new command while a retained descriptor cleanup is unconfirmed", async () => {
+  let cleanupReady = false;
+  let dispatches = 0;
+  const service = new CutterBridgeService({
+    listSessions: async () => ({
+      sessions: [],
+      bridge_directory: "/private/bridge",
+      discovery_status: "no_live_bridge_found",
+      bridge_directory_security: "private_verified",
+    }),
+    retryCleanup: async () => cleanupReady,
+    execute: async () => {
+      dispatches += 1;
+      return {
+        requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",
+        output: "complete",
+        currentFile: "/fixtures/sample.bin",
+        documentGeneration: 7,
+        identityStatus: "partial" as const,
+        cutterVersion: null,
+        executionState: "complete" as const,
+        error: null,
+        message: null,
+        outputTruncated: false,
+      };
+    },
+  });
+
+  const blocked = await service.execute({
+    session_id: "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a",
+    expected_generation: 7,
+    command: "pd 4",
+  });
+  expect(blocked.ok).toBe(false);
+  if (!blocked.ok) {
+    expect(blocked.error).toMatchObject({
+      cleanupResources: ["cutter-descriptor-handle"],
+      cleanupIncomplete: true,
+    });
+    // The retained error keeps its cleanup status until the handle is released.
+    const stillBlocked = await service.retryCleanup();
+    expect(stillBlocked.ok).toBe(false);
+    expect(blocked.error.cleanupIncomplete).toBe(true);
+  }
+  expect(dispatches).toBe(0);
+
+  cleanupReady = true;
+  const released = await service.execute({
+    session_id: "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a",
+    expected_generation: 7,
+    command: "pd 4",
+  });
+  expect(released.ok).toBe(true);
+  expect(dispatches).toBe(1);
+});
+
+it("reports a later descriptor cleanup failure as incomplete again", async () => {
+  let cleanupReady = false;
+  const service = new CutterBridgeService({
+    listSessions: async () => ({
+      sessions: [],
+      bridge_directory: "/private/bridge",
+      discovery_status: "no_live_bridge_found",
+      bridge_directory_security: "private_verified",
+    }),
+    retryCleanup: async () => cleanupReady,
+    execute: async () => {
+      throw new Error("Unexpected command dispatch");
+    },
+  });
+  const command = {
+    session_id: "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a",
+    expected_generation: 7,
+    command: "pd 4",
+  };
+
+  const first = await service.execute(command);
+  expect(first.ok).toBe(false);
+  if (first.ok) throw new Error("Expected a retained cleanup failure");
+
+  // Releasing the handle resolves and drops the retained error.
+  cleanupReady = true;
+  expect((await service.retryCleanup()).ok).toBe(true);
+
+  // A new close failure must surface as a fresh, still-incomplete error rather
+  // than reusing the resolved one (which reports cleanup complete).
+  cleanupReady = false;
+  const second = await service.execute(command);
+  expect(second.ok).toBe(false);
+  if (second.ok) throw new Error("Expected a retained cleanup failure");
+  expect(second.error).not.toBe(first.error);
+  expect(second.error).toMatchObject({
+    cleanupResources: ["cutter-descriptor-handle"],
+    cleanupIncomplete: true,
+  });
+});
+
+it("resolves a descriptor cleanup error raised by the client after discovery", async () => {
+  const { AnalysisCapabilityUnavailableError } =
+    await import("../../../src/domain/analysisErrorCore.js");
+  // The client rechecks descriptor cleanup after its own discovery and raises
+  // the failure itself; the service never created it. The pre-check sees no
+  // retained handle yet, so `client.execute` is reached and throws.
+  const fromClient = () =>
+    new AnalysisCapabilityUnavailableError(
+      "cutter",
+      "cutter_command",
+      "Cutter descriptor cleanup is incomplete; a retained handle blocks a new command until it is released.",
+      {
+        cleanup: {
+          reason:
+            "A descriptor handle opened during discovery could not be confirmed closed.",
+          resources: ["cutter-descriptor-handle"],
+        },
+      },
+    );
+  // Call 1: service pre-check. Call 2: the pre-check again. Both pass with no
+  // retained handle, so `client.execute` is reached and raises the failure.
+  // Call 3: still retained (blocked). Call 4: released (resolves).
+  const retryResults = [true, true, false, true];
+  let retries = 0;
+  const service = new CutterBridgeService({
+    listSessions: async () => ({
+      sessions: [],
+      bridge_directory: "/private/bridge",
+      discovery_status: "no_live_bridge_found",
+      bridge_directory_security: "private_verified",
+    }),
+    retryCleanup: async () => retryResults[retries++] ?? true,
+    execute: async () => {
+      throw fromClient();
+    },
+  });
+  const command = {
+    session_id: "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a",
+    expected_generation: 7,
+    command: "pd 4",
+  };
+
+  const blocked = await service.execute(command);
+  expect(blocked.ok).toBe(false);
+  if (blocked.ok) throw new Error("Expected a retained cleanup failure");
+  expect(blocked.error).toMatchObject({
+    cleanupResources: ["cutter-descriptor-handle"],
+    cleanupIncomplete: true,
+  });
+
+  // While the handle is retained, retryCleanup stays blocked and reports the
+  // same error the caller holds.
+  const stillBlocked = await service.retryCleanup();
+  expect(stillBlocked.ok).toBe(false);
+  expect(blocked.error.cleanupIncomplete).toBe(true);
+
+  // Once the handle is released, retryCleanup must resolve the error the client
+  // raised, so a later MCP/CLI command is no longer blocked.
+  const released = await service.retryCleanup();
+  expect(released.ok).toBe(true);
+  expect(blocked.error.cleanupIncomplete).toBe(false);
+});
+
+it("forwards the discovery signal to the bridge port", async () => {
+  const controller = new AbortController();
+  let observed: AbortSignal | undefined;
+  const service = new CutterBridgeService({
+    listSessions: async (options) => {
+      observed = options?.signal;
+      return {
+        sessions: [],
+        bridge_directory: "/private/bridge",
+        discovery_status: "no_live_bridge_found",
+        bridge_directory_security: "private_verified",
+      };
+    },
+    execute: async () => {
+      throw new Error("not used");
+    },
+  });
+
+  await service.listSessions({ signal: controller.signal });
+  expect(observed).toBe(controller.signal);
+});

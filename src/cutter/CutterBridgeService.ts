@@ -8,7 +8,10 @@ import {
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { cutterCommandInputSchema } from "../contracts/cutterToolContracts.js";
+import {
+  cutterCommandInputSchema,
+  type CutterCommandInput,
+} from "../contracts/cutterToolContracts.js";
 import {
   CutterBridgeClient,
   type CutterBridgeDiscovery,
@@ -26,6 +29,7 @@ interface CutterBridgePort {
     requestId: string,
     completionToken?: string,
   ): Promise<Result<boolean, AnalysisError>>;
+  retryCleanup?(): Promise<boolean>;
   execute(input: {
     readonly sessionId: string;
     readonly expectedGeneration: number;
@@ -46,6 +50,12 @@ export class CutterBridgeService {
       readonly failure: AnalysisOutputError;
     }
   >();
+  /**
+   * The last descriptor-cleanup error reported to a caller. It stays retained
+   * (and keeps `cleanupIncomplete`) until the retained handles are confirmed
+   * closed, so a later retry can resolve the exact error a caller holds.
+   */
+  #descriptorCleanupFailure: AnalysisCapabilityUnavailableError | undefined;
 
   constructor(readonly client: CutterBridgePort = new CutterBridgeClient()) {}
 
@@ -74,7 +84,45 @@ export class CutterBridgeService {
       failure.resolveCleanup();
       this.#pendingCleanup.delete(requestId);
     }
+    // Retry descriptor handles retained by a failed close. When every owner is
+    // released, drop the retained error so a later close failure produces a
+    // fresh error instead of reusing an already-resolved one.
+    const retry = this.client.retryCleanup;
+    if (retry !== undefined) {
+      const released = await retry.call(this.client);
+      if (released) {
+        this.#descriptorCleanupFailure?.resolveCleanup();
+        this.#descriptorCleanupFailure = undefined;
+      } else if (this.#descriptorCleanupFailure !== undefined)
+        return err(this.#descriptorCleanupFailure);
+    }
     return ok(null);
+  }
+
+  /**
+   * Confirm descriptor handles left by failed discovery closes are released.
+   * A retained descriptor blocks a new command until its owner confirms close.
+   */
+  async #descriptorCleanupReady(): Promise<boolean> {
+    const retry = this.client.retryCleanup;
+    return retry === undefined ? true : retry.call(this.client);
+  }
+
+  /** Retain one descriptor-cleanup error so a later retry can resolve it. */
+  #descriptorCleanupError(): AnalysisCapabilityUnavailableError {
+    this.#descriptorCleanupFailure ??= new AnalysisCapabilityUnavailableError(
+      "cutter",
+      "cutter_command",
+      "Cutter descriptor cleanup is incomplete; a retained handle blocks a new command until it is released.",
+      {
+        cleanup: {
+          reason:
+            "A descriptor handle opened during discovery could not be confirmed closed.",
+          resources: ["cutter-descriptor-handle"],
+        },
+      },
+    );
+    return this.#descriptorCleanupFailure;
   }
 
   async listSessions(
@@ -121,8 +169,15 @@ export class CutterBridgeService {
         }),
       );
     const input = parsed.data;
+    // Release timed-out command receipts and retained descriptor handles. A
+    // retained descriptor keeps its error until every owner confirms close.
     const cleanup = await this.retryCleanup();
     if (!cleanup.ok) return err(cleanup.error);
+    // A descriptor whose close was never confirmed keeps its ownership; do not
+    // start a new command until that handle is released. `client.execute` also
+    // rechecks after its own discovery, which can retain a new handle.
+    if (!(await this.#descriptorCleanupReady()))
+      return err(this.#descriptorCleanupError());
     try {
       const output = await this.client.execute({
         sessionId: input.session_id,
@@ -131,54 +186,7 @@ export class CutterBridgeService {
         json: input.json,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
-      const normalizedOutput = jsonValueSchema.parse(output.output);
-      const evidence = createEvidence(
-        undefined,
-        {
-          ...CUTTER_PROVIDER_IDENTITY,
-          version: output.cutterVersion,
-        },
-        {
-          predicateType: "rea.cutter.command-observation",
-          operation: "cutter_command",
-          parameters: {
-            session_id: input.session_id,
-            expected_generation: input.expected_generation,
-            command: input.command,
-            json: input.json,
-          },
-          result: {
-            command: input.command,
-            output: normalizedOutput,
-            execution_state: output.executionState,
-            error: output.error,
-            message: output.message,
-            output_truncated: output.outputTruncated,
-            cutter_version: output.cutterVersion,
-            current_file: output.currentFile,
-            document_generation: output.documentGeneration,
-            identity_status: output.identityStatus,
-          },
-          rawResult: normalizedOutput,
-          subjectUnavailableReason:
-            "Cutter exposes no verified stable identity for the active unsaved document or tab.",
-          limitations: [
-            "Document identity is partial: the bridge uses a plugin instance UUID and observed generation; a same-path tab switch or reload may not be distinguishable.",
-            "Cutter command effects depend on the Rizin command and active plugins.",
-            "The local IPC protocol is implemented by REA and is not an upstream Cutter API.",
-            ...(output.executionState === "unknown"
-              ? [
-                  "Command completion or its output could not be confirmed; do not retry automatically because the command may have produced partial or persistent effects.",
-                ]
-              : []),
-            ...(output.outputTruncated
-              ? [
-                  "The command completed or may have completed, but output exceeded the bridge transport limit and was omitted.",
-                ]
-              : []),
-          ],
-        },
-      );
+      const evidence = this.#commandEvidence(input, output);
       if (output.executionState === "unknown") {
         const failure = new AnalysisOutputError(
           "cutter_command",
@@ -210,7 +218,19 @@ export class CutterBridgeService {
         );
       return ok(evidence);
     } catch (cause) {
-      if (cause instanceof AnalysisError) return err(cause);
+      if (cause instanceof AnalysisError) {
+        // The client rechecks descriptor cleanup after its own discovery and
+        // can raise a cleanup failure the service never created. Retain it so a
+        // later retry resolves the exact error the caller holds; otherwise the
+        // error stays `cleanupIncomplete` with no owner able to clear it.
+        if (
+          cause instanceof AnalysisCapabilityUnavailableError &&
+          cause.cleanupIncomplete &&
+          cause.cleanupResources.includes("cutter-descriptor-handle")
+        )
+          this.#descriptorCleanupFailure = cause;
+        return err(cause);
+      }
       const message =
         cause instanceof Error
           ? cause.message
@@ -229,5 +249,60 @@ export class CutterBridgeService {
             ),
       );
     }
+  }
+
+  /** Build the command Evidence shared by success and unknown-completion paths. */
+  #commandEvidence(
+    input: CutterCommandInput,
+    output: CutterBridgeExecution,
+  ): Evidence {
+    const normalizedOutput = jsonValueSchema.parse(output.output);
+    return createEvidence(
+      undefined,
+      {
+        ...CUTTER_PROVIDER_IDENTITY,
+        version: output.cutterVersion,
+      },
+      {
+        predicateType: "rea.cutter.command-observation",
+        operation: "cutter_command",
+        parameters: {
+          session_id: input.session_id,
+          expected_generation: input.expected_generation,
+          command: input.command,
+          json: input.json,
+        },
+        result: {
+          command: input.command,
+          output: normalizedOutput,
+          execution_state: output.executionState,
+          error: output.error,
+          message: output.message,
+          output_truncated: output.outputTruncated,
+          cutter_version: output.cutterVersion,
+          current_file: output.currentFile,
+          document_generation: output.documentGeneration,
+          identity_status: output.identityStatus,
+        },
+        rawResult: normalizedOutput,
+        subjectUnavailableReason:
+          "Cutter exposes no verified stable identity for the active unsaved document or tab.",
+        limitations: [
+          "Document identity is partial: the bridge uses a plugin instance UUID and observed generation; a same-path tab switch or reload may not be distinguishable.",
+          "Cutter command effects depend on the Rizin command and active plugins.",
+          "The local IPC protocol is implemented by REA and is not an upstream Cutter API.",
+          ...(output.executionState === "unknown"
+            ? [
+                "Command completion or its output could not be confirmed; do not retry automatically because the command may have produced partial or persistent effects.",
+              ]
+            : []),
+          ...(output.outputTruncated
+            ? [
+                "The command completed or may have completed, but output exceeded the bridge transport limit and was omitted.",
+              ]
+            : []),
+        ],
+      },
+    );
   }
 }

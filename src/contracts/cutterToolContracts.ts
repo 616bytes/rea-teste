@@ -21,6 +21,9 @@ export const cutterCommandInputSchema = z.strictObject({
   json: z.boolean().default(false),
 });
 
+/** Parsed Cutter command request, shared by the bridge service and its evidence builder. */
+export type CutterCommandInput = z.output<typeof cutterCommandInputSchema>;
+
 export const cutterSessionSchema = z.strictObject({
   session_id: z.string().uuid(),
   pid: z.number().int().positive(),

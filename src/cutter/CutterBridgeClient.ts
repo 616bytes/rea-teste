@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createConnection } from "node:net";
-import { lstat, open, opendir } from "node:fs/promises";
+import { lstat, opendir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -16,6 +15,12 @@ import { err, ok, type Result } from "../domain/result.js";
 import { requireWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import {
+  NonRegularFileReadError,
+  openRegularFile,
+  RegularFileAdmissionFailure,
+} from "../filesystem/RegularFile.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 
 const descriptorSchema = z.object({
   session_id: z.string().uuid(),
@@ -257,12 +262,30 @@ export interface CutterBridgeDiscovery {
     | "not_checked";
 }
 
+type DescriptorDirectorySecurity =
+  CutterBridgeDiscovery["bridge_directory_security"];
+
+interface DescriptorReadResult {
+  readonly descriptors: readonly z.infer<typeof descriptorSchema>[];
+  readonly security: DescriptorDirectorySecurity;
+  readonly error?:
+    | "bridge_directory_unavailable"
+    | "bridge_directory_insecure"
+    | "bridge_directory_capacity_exceeded";
+}
+
 /** Discovers and communicates with REA Python bridge plugins in live Cutter processes. */
 export class CutterBridgeClient {
   readonly #directory: string;
   readonly #platform: NodeJS.Platform;
   readonly #windowsPrivateReader: WindowsCutterDescriptorReader | undefined;
   readonly #pendingAcknowledgements = new Map<string, Set<string>>();
+  /**
+   * Descriptor handles whose close could not be confirmed. Ownership is
+   * retained so a later cleanup can retry the close instead of discarding a
+   * failure; a new command is withheld until every retained owner is released.
+   */
+  readonly #descriptorOwners = new Set<OwnedFileHandle>();
 
   constructor(
     environment: Readonly<NodeJS.ProcessEnv> = process.env,
@@ -308,7 +331,7 @@ export class CutterBridgeClient {
   ): Promise<CutterBridgeDiscovery> {
     const { signal } = options;
     signal?.throwIfAborted();
-    const loaded = await this.#readDescriptors();
+    const loaded = await this.#readDescriptors(signal);
     signal?.throwIfAborted();
     if (loaded.error !== undefined)
       return {
@@ -377,8 +400,12 @@ export class CutterBridgeClient {
     readonly signal?: AbortSignal;
   }): Promise<CutterBridgeExecution> {
     input.signal?.throwIfAborted();
-    const descriptor = await this.#find(input.sessionId);
+    const descriptor = await this.#find(input.sessionId, input.signal);
     input.signal?.throwIfAborted();
+    // `#find` just opened and closed descriptors. If any of those closes was
+    // not confirmed, its owner is retained here; do not send a command while a
+    // retained descriptor cleanup is outstanding.
+    await this.#assertDescriptorCleanupReady();
     const requestId = randomUUID();
     const commandRequest = serializeRequest(descriptor, {
       kind: "command",
@@ -617,8 +644,12 @@ export class CutterBridgeClient {
     }
   }
 
-  async #find(sessionId: string): Promise<z.infer<typeof descriptorSchema>> {
-    const loaded = await this.#readDescriptors();
+  async #find(
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<z.infer<typeof descriptorSchema>> {
+    const loaded = await this.#readDescriptors(signal);
+    signal?.throwIfAborted();
     if (loaded.error === "bridge_directory_capacity_exceeded")
       throw new AnalysisResourceConstraintError(
         "cutter_command",
@@ -650,79 +681,12 @@ export class CutterBridgeClient {
     return loaded.descriptors;
   }
 
-  async #readDescriptors(): Promise<{
-    readonly descriptors: readonly z.infer<typeof descriptorSchema>[];
-    readonly security:
-      | "private_verified"
-      | "not_private"
-      | "unverified_platform_acl"
-      | "not_checked";
-    readonly error?:
-      | "bridge_directory_unavailable"
-      | "bridge_directory_insecure"
-      | "bridge_directory_capacity_exceeded";
-  }> {
-    let directoryInfo;
-    try {
-      directoryInfo = await lstat(this.#directory);
-    } catch (cause) {
-      const code = (cause as NodeJS.ErrnoException).code;
-      if (code === "ENOENT")
-        return { descriptors: [], security: "not_checked" };
-      return {
-        descriptors: [],
-        security: "not_checked",
-        error: "bridge_directory_unavailable",
-      };
-    }
-    if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink())
-      return {
-        descriptors: [],
-        security: "not_private",
-        error: "bridge_directory_insecure",
-      };
-    const currentUid =
-      this.#platform !== "win32" ? process.getuid?.() : undefined;
-    const posix = currentUid !== undefined;
-    if (
-      posix &&
-      (directoryInfo.uid !== currentUid || (directoryInfo.mode & 0o077) !== 0)
-    )
-      return {
-        descriptors: [],
-        security: "not_private",
-        error: "bridge_directory_insecure",
-      };
-    let security:
-      | "private_verified"
-      | "not_private"
-      | "unverified_platform_acl" = posix
-      ? "private_verified"
-      : "unverified_platform_acl";
+  async #readDescriptors(signal?: AbortSignal): Promise<DescriptorReadResult> {
+    signal?.throwIfAborted();
+    const admission = await this.#admitDescriptorDirectory();
+    if (!admission.admitted) return admission.result;
+    const { currentUid, security } = admission;
     const windowsPrivateReader = this.#windowsPrivateReader;
-    if (!posix) {
-      if (this.#platform !== "win32" || windowsPrivateReader === undefined)
-        return {
-          descriptors: [],
-          security,
-          error: "bridge_directory_insecure",
-        };
-      try {
-        if (!windowsPrivateReader.verifyDirectory(this.#directory))
-          return {
-            descriptors: [],
-            security: "not_private",
-            error: "bridge_directory_insecure",
-          };
-        security = "private_verified";
-      } catch {
-        return {
-          descriptors: [],
-          security,
-          error: "bridge_directory_insecure",
-        };
-      }
-    }
     const entries: string[] = [];
     try {
       const directory = await opendir(this.#directory);
@@ -743,50 +707,17 @@ export class CutterBridgeClient {
         error: "bridge_directory_unavailable",
       };
     }
-    const loaded = await mapDiscovery(entries, async (entry) => {
-      let file;
-      try {
-        let bytes: Buffer;
-        if (this.#platform === "win32") {
-          bytes = windowsPrivateReader!.readDescriptor(
-            this.#directory,
-            entry,
-            MAX_DESCRIPTOR_BYTES,
-          );
-        } else {
-          const flags = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
-          file = await open(join(this.#directory, entry), flags);
-          const info = await file.stat();
-          if (
-            !info.isFile() ||
-            info.size > MAX_DESCRIPTOR_BYTES ||
-            info.uid !== currentUid ||
-            (info.mode & 0o077) !== 0
-          )
-            return undefined;
-          const boundedBytes = await readBoundedFileBytes(
-            file,
-            MAX_DESCRIPTOR_BYTES,
-          );
-          if (boundedBytes === undefined) return undefined;
-          bytes = boundedBytes;
-        }
-        if (bytes.byteLength > MAX_DESCRIPTOR_BYTES) return undefined;
-        const parsed = descriptorSchema.safeParse(
-          JSON.parse(bytes.toString("utf8")) as unknown,
-        );
-        if (
-          !parsed.success ||
-          entry !== `cutter-${parsed.data.pid}-${parsed.data.session_id}.json`
-        )
-          return undefined;
-        return parsed.data;
-      } catch {
-        return undefined;
-      } finally {
-        await file?.close().catch(() => undefined);
-      }
-    });
+    const loaded = await mapDiscovery(
+      entries,
+      (entry) =>
+        this.#readDescriptorCandidate(
+          entry,
+          currentUid,
+          windowsPrivateReader,
+          signal,
+        ),
+      signal,
+    );
     return {
       descriptors: loaded.filter(
         (value): value is z.infer<typeof descriptorSchema> =>
@@ -794,6 +725,229 @@ export class CutterBridgeClient {
       ),
       security,
     };
+  }
+
+  /**
+   * Validate the bridge directory before reading candidates. Returns the
+   * resolved platform uid and security classification, or a terminal discovery
+   * result when the directory is unavailable, not private, or cannot be
+   * verified on this platform.
+   */
+  async #admitDescriptorDirectory(): Promise<
+    | {
+        readonly admitted: true;
+        readonly currentUid: number | undefined;
+        readonly security: DescriptorDirectorySecurity;
+      }
+    | { readonly admitted: false; readonly result: DescriptorReadResult }
+  > {
+    let directoryInfo;
+    try {
+      directoryInfo = await lstat(this.#directory);
+    } catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code;
+      if (code === "ENOENT")
+        return {
+          admitted: false,
+          result: { descriptors: [], security: "not_checked" },
+        };
+      return {
+        admitted: false,
+        result: {
+          descriptors: [],
+          security: "not_checked",
+          error: "bridge_directory_unavailable",
+        },
+      };
+    }
+    if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink())
+      return {
+        admitted: false,
+        result: {
+          descriptors: [],
+          security: "not_private",
+          error: "bridge_directory_insecure",
+        },
+      };
+    const currentUid =
+      this.#platform !== "win32" ? process.getuid?.() : undefined;
+    const posix = currentUid !== undefined;
+    if (
+      posix &&
+      (directoryInfo.uid !== currentUid || (directoryInfo.mode & 0o077) !== 0)
+    )
+      return {
+        admitted: false,
+        result: {
+          descriptors: [],
+          security: "not_private",
+          error: "bridge_directory_insecure",
+        },
+      };
+    let security: DescriptorDirectorySecurity = posix
+      ? "private_verified"
+      : "unverified_platform_acl";
+    const windowsPrivateReader = this.#windowsPrivateReader;
+    if (!posix) {
+      if (this.#platform !== "win32" || windowsPrivateReader === undefined)
+        return {
+          admitted: false,
+          result: {
+            descriptors: [],
+            security,
+            error: "bridge_directory_insecure",
+          },
+        };
+      try {
+        if (!windowsPrivateReader.verifyDirectory(this.#directory))
+          return {
+            admitted: false,
+            result: {
+              descriptors: [],
+              security: "not_private",
+              error: "bridge_directory_insecure",
+            },
+          };
+        security = "private_verified";
+      } catch {
+        return {
+          admitted: false,
+          result: {
+            descriptors: [],
+            security,
+            error: "bridge_directory_insecure",
+          },
+        };
+      }
+    }
+    return { admitted: true, currentUid, security };
+  }
+
+  /**
+   * Admit one candidate descriptor file. Returns the parsed descriptor, or
+   * `undefined` when the candidate is not a valid descriptor. A non-regular
+   * candidate (FIFO, socket, directory) is skipped without blocking, and a
+   * handle whose close could not be confirmed is retained for a later retry.
+   * A cancellation is rethrown so a truncated discovery never looks successful.
+   */
+  async #readDescriptorCandidate(
+    entry: string,
+    currentUid: number | undefined,
+    windowsPrivateReader: WindowsCutterDescriptorReader | undefined,
+    signal?: AbortSignal,
+  ): Promise<z.infer<typeof descriptorSchema> | undefined> {
+    let owner: OwnedFileHandle | undefined;
+    try {
+      signal?.throwIfAborted();
+      let bytes: Buffer;
+      if (this.#platform === "win32") {
+        bytes = windowsPrivateReader!.readDescriptor(
+          this.#directory,
+          entry,
+          MAX_DESCRIPTOR_BYTES,
+        );
+      } else {
+        // Admit the descriptor through the canonical nonblocking primitive: a
+        // candidate that is a FIFO without a writer must be skipped instead of
+        // blocking discovery on a pipe open. Admission keeps the symlink,
+        // ownership, mode and byte checks and retains a failed close.
+        const handle = await openRegularFile(join(this.#directory, entry), {
+          symlinks: "reject",
+          signal,
+        });
+        owner = new OwnedFileHandle(handle);
+        const info = await handle.stat();
+        if (
+          info.size > MAX_DESCRIPTOR_BYTES ||
+          info.uid !== currentUid ||
+          (info.mode & 0o077) !== 0
+        )
+          return undefined;
+        const boundedBytes = await readBoundedFileBytes(
+          handle,
+          MAX_DESCRIPTOR_BYTES,
+          signal,
+        );
+        if (boundedBytes === undefined) return undefined;
+        bytes = boundedBytes;
+      }
+      if (bytes.byteLength > MAX_DESCRIPTOR_BYTES) return undefined;
+      const parsed = descriptorSchema.safeParse(
+        JSON.parse(bytes.toString("utf8")) as unknown,
+      );
+      if (
+        !parsed.success ||
+        entry !== `cutter-${parsed.data.pid}-${parsed.data.session_id}.json`
+      )
+        return undefined;
+      return parsed.data;
+    } catch (cause: unknown) {
+      // A non-regular candidate (FIFO, socket, directory) is not a descriptor.
+      if (cause instanceof NonRegularFileReadError) return undefined;
+      // Admission opened an owned descriptor whose close could not be
+      // confirmed; retain that owner so a later cleanup retries the close
+      // instead of discarding the failure.
+      if (cause instanceof RegularFileAdmissionFailure) {
+        this.#descriptorOwners.add(cause.owner);
+        return undefined;
+      }
+      // Cancellation is not a skipped candidate: finish cleanup and reject so a
+      // caller never sees a truncated discovery as a successful result. Other
+      // failures (for example a malformed descriptor) remain skips.
+      signal?.throwIfAborted();
+      return undefined;
+    } finally {
+      if (owner !== undefined) {
+        try {
+          await owner.close();
+        } catch {
+          // Retain ownership; the handle must not be reported as closed.
+          this.#descriptorOwners.add(owner);
+        }
+      }
+    }
+  }
+
+  /**
+   * Fail closed when a descriptor handle opened during discovery still has an
+   * unconfirmed close. A retained owner means a file descriptor was left open,
+   * so a new command must not start until it is released.
+   */
+  async #assertDescriptorCleanupReady(): Promise<void> {
+    if (this.#descriptorOwners.size === 0) return;
+    if (await this.retryCleanup()) return;
+    throw new AnalysisCapabilityUnavailableError(
+      "cutter",
+      "cutter_command",
+      "Cutter descriptor cleanup is incomplete; a retained handle blocks a new command until it is released.",
+      {
+        cleanup: {
+          reason:
+            "A descriptor handle opened during discovery could not be confirmed closed.",
+          resources: ["cutter-descriptor-handle"],
+        },
+      },
+    );
+  }
+
+  /**
+   * Retry closing descriptor handles whose earlier close was not confirmed.
+   * Returns true only when no retained owner remains; a handle that still fails
+   * stays owned for a later attempt. The live set is rechecked after the loop
+   * because a concurrent discovery can retain a new owner while a close is
+   * awaited.
+   */
+  async retryCleanup(): Promise<boolean> {
+    let complete = true;
+    for (const owner of [...this.#descriptorOwners]) {
+      try {
+        await owner.close();
+        this.#descriptorOwners.delete(owner);
+      } catch {
+        complete = false;
+      }
+    }
+    return complete && this.#descriptorOwners.size === 0;
   }
 
   #request(

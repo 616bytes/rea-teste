@@ -666,6 +666,19 @@ it("backs each transaction omission with its per-kind drop", () => {
   expect(
     omitting([responseDrop], [transaction("response", "max-events")]),
   ).toBeUndefined();
+  // Metadata over its own budget is a per-transaction omission too.
+  expect(
+    omitting(
+      [
+        {
+          kind: "request",
+          count: 1,
+          reasons: ["max-network-metadata-allocation-bytes"],
+        },
+      ],
+      [transaction("request", "max-network-metadata-allocation-bytes")],
+    ),
+  ).toBeUndefined();
   // A dropped console event cannot stand behind an omitted response.
   expect(
     omitting(

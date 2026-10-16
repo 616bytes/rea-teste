@@ -190,12 +190,10 @@ const refineTransactionRange = (
     });
 };
 
-const TRANSACTION_OMISSION_REASONS: ReadonlySet<BrowserScenarioEventBudgetReason> =
-  new Set([
-    "max-events",
-    "max-event-allocation-bytes",
-    "max-total-event-allocation-bytes",
-  ]);
+/** Admitted transactions are omitted for any budget except the range's own. */
+const transactionOmissionReason = (
+  reason: BrowserScenarioEventBudgetReason,
+): boolean => reason !== "max-network-transactions";
 
 /**
  * An admitted transaction names an omitted kind and reason only after that
@@ -226,7 +224,7 @@ const refineTransactionOmissions = (
       omission.omitted_kinds.every((kind) => dropped.has(kind)) &&
       omission.reasons.every(
         (reason) =>
-          TRANSACTION_OMISSION_REASONS.has(reason) &&
+          transactionOmissionReason(reason) &&
           omission.omitted_kinds.some((kind) =>
             dropped.get(kind)?.reasons.includes(reason),
           ),
@@ -243,7 +241,7 @@ const refineTransactionOmissions = (
     if (browserScenarioEventKindFamily(omission.kind) !== "network") continue;
     const unnamed = omission.reasons.filter(
       (reason) =>
-        TRANSACTION_OMISSION_REASONS.has(reason) &&
+        transactionOmissionReason(reason) &&
         !transactions.some(
           (transaction) =>
             transaction.omitted_kinds.includes(omission.kind) &&

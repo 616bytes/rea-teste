@@ -27,6 +27,24 @@ it("does not infer runtime module isolation from an erased default signature", (
   ).toBeNull();
 });
 
+it("keeps lowered enum arguments ownership unproved despite an outer rest parameter", () => {
+  const source = `
+    const {BrowserWindow} = require("electron");
+    function open(...inputs) {
+      const options = {webPreferences: {preload: "./safe.js"}, ...null};
+      enum Holder {A = (Holder = options, arguments[0].webPreferences.preload = "./changed.js", 0)}
+      new BrowserWindow(options);
+    }
+  `;
+  const parsed = parseJavaScriptSource(source, "fixture.ts");
+  if (parsed === null) throw new Error("Expected parsed source");
+  expect(parsed.errors ?? []).toEqual([]);
+  expect(
+    analyzeParsedJavaScriptStaticSource(source, parsed).electron
+      .browser_windows[0]?.preload_path,
+  ).toBeNull();
+});
+
 it("keeps named content proofs unknown when namespace runtime scope is unmodeled", () => {
   const analysis = analyzeJavaScriptStaticSource(`
     const {BrowserWindow} = require("electron");

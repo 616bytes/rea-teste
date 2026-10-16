@@ -113,10 +113,9 @@ if [ "$1" = version ]; then
   exit 0
 fi
 if [ "$1" = -s ] && [ "$3" = install ]; then
-  input=$4
-  if [ "$4" = -r ]; then input=$5; fi
-  cat "$input" >> "$root/consumed" || exit 1
-  printf '%s\\n' "$input" >> "$root/inputs"
+  if [ "$4" = -r ]; then selected="$5"; else selected="$4"; fi
+  cmp "$selected" "$root/app with spaces.apk" || exit 1
+  printf '%s\\n' "$selected" >> "$root/snapshots"
   if [ -f "$root/installed" ]; then
     if [ "$4" != -r ]; then
       printf 'Failure [INSTALL_FAILED_ALREADY_EXISTS]\\n'
@@ -190,21 +189,18 @@ exit 1
     expect(await readFile(workspace.path("events"), "utf8")).toBe(
       "fresh-install\nreplacement\nfresh-install\n",
     );
-    const inputs = (await readFile(workspace.path("inputs"), "utf8"))
-      .split("\n")
-      .filter((line) => line !== "");
-    expect(inputs).toHaveLength(3);
-    expect(new Set(inputs).size).toBe(3);
-    for (const input of inputs) {
-      expect(input).not.toBe(apk);
-      expect(basename(input)).toBe(basename(apk));
-      await expect(lstat(dirname(input))).rejects.toMatchObject({
+    const snapshots = (await readFile(workspace.path("snapshots"), "utf8"))
+      .trim()
+      .split("\n");
+    expect(snapshots).toHaveLength(3);
+    expect(new Set(snapshots).size).toBe(3);
+    for (const snapshot of snapshots) {
+      expect(snapshot).not.toBe(apk);
+      expect(basename(snapshot)).toBe(basename(apk));
+      await expect(lstat(dirname(snapshot))).rejects.toMatchObject({
         code: "ENOENT",
       });
     }
-    expect(await readFile(workspace.path("consumed"), "utf8")).toBe(
-      "apkapkapk",
-    );
     expect(await readFile(apk, "utf8")).toBe("apk");
     for (const receipt of [freshReplace, existingReplace, freshDefault])
       expect(receipt.data.normalized_result).toMatchObject({
@@ -215,11 +211,11 @@ exit 1
     const calls = await readFile(workspace.path("calls"), "utf8");
     expect(calls.split("\n").filter((line) => line !== "")).toEqual([
       "version",
-      `-s emulator-5554 install -r ${inputs[0]}`,
+      `-s emulator-5554 install -r ${snapshots[0]}`,
       "version",
-      `-s emulator-5554 install -r ${inputs[1]}`,
+      `-s emulator-5554 install -r ${snapshots[1]}`,
       "version",
-      `-s emulator-5554 install ${inputs[2]}`,
+      `-s emulator-5554 install ${snapshots[2]}`,
     ]);
   },
 );

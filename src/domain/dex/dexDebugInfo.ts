@@ -101,9 +101,10 @@ export interface DexMethodDebug {
   /** Locals decoded (including implicit `this`/parameters), collected or not. */
   readonly localCount: number;
   /**
-   * Locals the stream itself declares (DBG_START_LOCAL[_EXTENDED]), excluding
-   * the implicit `this`/parameter locals seeded from the method's layout —
-   * the evidence that local-variable debug info survived.
+   * Locals the stream itself declares (DBG_START_LOCAL[_EXTENDED]) whose scope
+   * covers at least one instruction of the method, excluding the implicit
+   * `this`/parameter locals seeded from the method's layout — the evidence that
+   * local-variable debug info survived. Always at most `localCount`.
    */
   readonly explicitLocalCount: number;
   /** Collection stopped because the caller's `maxLocals` was exceeded. */
@@ -141,6 +142,11 @@ interface LiveLocal {
   readonly typeIdx: number;
   readonly signatureIdx: number;
   readonly startAddress: number;
+  /**
+   * The DBG_START_LOCAL* event that declared it (shared by its restarts), or
+   * null for an implicit `this`/parameter local seeded from the layout.
+   */
+  readonly declaration: { counted: boolean } | null;
 }
 
 /**
@@ -228,6 +234,7 @@ class DebugInfoWalk {
         typeIdx,
         signatureIdx: -1,
         startAddress: 0,
+        declaration: null,
       };
       this.live.set(reg, local);
       this.lastByRegister.set(reg, local);
@@ -249,6 +256,16 @@ class DebugInfoWalk {
     // address 0) covers no instruction; dexdump/ART skip it, and so do we.
     if (end <= local.startAddress) return;
     this.localCount += 1;
+    // A declaration is evidence only once one of its scopes covers an
+    // instruction of this method, so explicit locals stay a subset of locals.
+    if (
+      local.declaration !== null &&
+      !local.declaration.counted &&
+      local.startAddress < this.insnsSize
+    ) {
+      local.declaration.counted = true;
+      this.explicitLocalCount += 1;
+    }
     if (!this.collectLocals) return;
     if (this.locals.length >= this.maxLocals) {
       this.localLimitExceeded = true;
@@ -306,8 +323,6 @@ class DebugInfoWalk {
     // the live-register maps at registers_size (<= 65,535).
     const registersSize = this.layout?.registersSize;
     if (registersSize !== undefined && reg.value >= registersSize) return false;
-    // Counted only once the event parsed and validated completely.
-    this.explicitLocalCount += 1;
     const existing = this.live.get(reg.value);
     if (existing) this.pushLocal(reg.value, existing, this.address); // implicit end
     const local: LiveLocal = {
@@ -315,6 +330,7 @@ class DebugInfoWalk {
       typeIdx: typeIdx.value,
       signatureIdx,
       startAddress: this.address,
+      declaration: { counted: false },
     };
     this.live.set(reg.value, local);
     this.lastByRegister.set(reg.value, local);

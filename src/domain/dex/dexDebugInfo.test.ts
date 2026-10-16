@@ -69,7 +69,43 @@ describe("decodeDebugInfo", () => {
     );
     const d = decodeDebugInfo(bytes, 1, 10);
     expect(d.localCount).toBe(0);
+    expect(d.explicitLocalCount).toBe(0);
+  });
+
+  it("counts a declaration only when a scope covers an in-code instruction", () => {
+    const zeroLength = Array.from({ length: 50 }, () => [
+      START_LOCAL,
+      ...uleb(1),
+      ...ulebp1(10),
+      ...ulebp1(11),
+      END_LOCAL,
+      ...uleb(1),
+    ]).flat();
+    const bytes = stream(
+      ...uleb(1),
+      ...uleb(0),
+      ...zeroLength,
+      START_LOCAL, // a real scope over addresses 0-1, ended and restarted
+      ...uleb(2),
+      ...ulebp1(10),
+      ...ulebp1(11),
+      ADVANCE_PC,
+      ...uleb(2),
+      END_LOCAL,
+      ...uleb(2),
+      0x06, // DBG_RESTART_LOCAL: the same declaration, not a new one
+      ...uleb(2),
+      ADVANCE_PC,
+      ...uleb(10), // past insns_size
+      START_LOCAL, // declared past the code: covers no instruction
+      ...uleb(3),
+      ...ulebp1(10),
+      ...ulebp1(11),
+      END_SEQUENCE,
+    );
+    const d = decodeDebugInfo(bytes, 1, 4);
     expect(d.explicitLocalCount).toBe(1);
+    expect(d.explicitLocalCount).toBeLessThanOrEqual(d.localCount);
   });
 
   it("runs an unterminated local scope to insns_size", () => {

@@ -390,7 +390,30 @@ export const createSemanticModuleInterop = (
         current = initializer.node;
         continue;
       }
-      if (!t.isCallExpression(current)) return undefined;
+      if (!t.isCallExpression(current)) {
+        // A bound captured member carries the canonical member's value:
+        // `changed = invoke.bind(change, …)` where `invoke = change.call`
+        // binds Function.prototype.call itself. Only a bind chain reaches
+        // here — a bare member value stays for the invocation resolver's
+        // own captured-member handling.
+        if (argumentGroups.length === 0) return undefined;
+        const capturedMember = capturedInvocationMember(current);
+        if (capturedMember === undefined) return undefined;
+        if (capturedMember.replaced === true)
+          return {
+            kind: "opaque",
+            path: capturedMember.path,
+            arguments: undefined,
+          };
+        return {
+          kind: opaqueArguments ? "opaque" : "known",
+          path: intrinsicInvocationMemberPath(capturedMember.key),
+          ...(receiver === undefined ? {} : { receiver }),
+          arguments: opaqueArguments
+            ? undefined
+            : argumentGroups.toReversed().flat(),
+        };
+      }
       const { root, members } = electronMemberPath(current.callee);
       let bindTarget = root;
       let bindingArguments: JavaScriptIntrinsicInvocation["arguments"] =
@@ -473,7 +496,7 @@ export const createSemanticModuleInterop = (
   // captures the second read.
   const projectedCaptureAt = (
     node: t.Node,
-    key: string,
+    keys: readonly (string | number | null)[],
     binding: JavaScriptSemanticBindingState,
   ): t.Node => {
     const declarator = state.parentsByNode.get(node);
@@ -483,20 +506,43 @@ export const createSemanticModuleInterop = (
       !t.isObjectPattern(declarator.id)
     )
       return node;
-    let firstMatch: t.Node | undefined;
-    let namedMatch: t.Node | undefined;
-    for (const property of declarator.id.properties) {
-      if (!t.isObjectProperty(property)) continue;
-      if (semanticStaticPropertyKey(property.key, property.computed) !== key)
-        continue;
-      let leaf = property.value;
-      while (t.isAssignmentPattern(leaf)) leaf = leaf.left;
-      firstMatch ??= leaf;
-      // A later duplicate key re-reads and rebinds the slot; the leaf
-      // carrying this binding's name is the read that produced the value.
-      if (t.isIdentifier(leaf, { name: binding.name })) namedMatch = leaf;
-    }
-    return namedMatch ?? firstMatch ?? node;
+    // Walk one projection level at a time — `{call: {call: invoke}}` reads
+    // `call` on the outer value, then `call` again inside the nested pattern.
+    const search = (
+      pattern: t.ObjectPattern,
+      path: readonly (string | number | null)[],
+      requireName = false,
+    ): t.Node | undefined => {
+      const [key, ...rest] = path;
+      let firstMatch: t.Node | undefined;
+      let namedMatch: t.Node | undefined;
+      for (const property of pattern.properties) {
+        if (!t.isObjectProperty(property)) continue;
+        if (semanticStaticPropertyKey(property.key, property.computed) !== key)
+          continue;
+        let leaf = property.value;
+        while (t.isAssignmentPattern(leaf)) leaf = leaf.left;
+        if (rest.length > 0) {
+          if (t.isObjectPattern(leaf)) {
+            // Only a nested subtree declaring this binding's name can be
+            // the read that produced the value; otherwise keep scanning
+            // sibling properties (duplicate outer keys).
+            const inner = search(leaf, rest, true);
+            if (inner !== undefined) return inner;
+            firstMatch ??= search(leaf, rest, false);
+          }
+          continue;
+        }
+        firstMatch ??= leaf;
+        // A later duplicate key re-reads and rebinds the slot; the leaf
+        // carrying this binding's name is the read that produced the value.
+        if (t.isIdentifier(leaf, { name: binding.name })) namedMatch = leaf;
+      }
+      return namedMatch ?? (requireName ? undefined : firstMatch);
+    };
+    return (
+      search(declarator.id, keys, true) ?? search(declarator.id, keys) ?? node
+    );
   };
 
   // An alias initializer can hold a captured invocation member read, as in
@@ -517,6 +563,7 @@ export const createSemanticModuleInterop = (
       let key: "call" | "apply" | "bind" | null;
       let at: t.Node;
       let directOffset = false;
+      let projection: readonly (string | null)[] = [];
       if (
         t.isMemberExpression(current) ||
         t.isOptionalMemberExpression(current)
@@ -572,19 +619,31 @@ export const createSemanticModuleInterop = (
           owner = peelValueSequence(next.object);
           at = next;
         } else {
-          if (initializer.projection.length !== 1) return undefined;
-          const [projected] = initializer.projection;
-          key =
-            projected === "call" ||
-            projected === "apply" ||
-            projected === "bind"
-              ? projected
-              : null;
+          // Every projected segment must be an invocation member: each read
+          // lands on a Function.prototype member value, whose own
+          // call/apply/bind members resolve to the same canonical members —
+          // `{call: {call: invoke}}` captures Function.prototype.call.
+          const projected = initializer.projection;
+          if (
+            projected.length === 0 ||
+            projected.some(
+              (segment) =>
+                segment !== "call" && segment !== "apply" && segment !== "bind",
+            )
+          )
+            return undefined;
+          const memberProjection = projected as readonly (
+            | "call"
+            | "apply"
+            | "bind"
+          )[];
+          key = memberProjection.at(-1) ?? null;
+          projection = memberProjection;
           owner = peelValueSequence(next);
           at =
             key === null
               ? initializer.node
-              : projectedCaptureAt(initializer.node, key, binding);
+              : projectedCaptureAt(initializer.node, memberProjection, binding);
           directOffset = true;
         }
       } else return undefined;
@@ -610,7 +669,10 @@ export const createSemanticModuleInterop = (
       // A provable owner whose slot was overwritten before the read stores an
       // unknown replacement in `invoke` — recognized member shape, unknown
       // callable. The call must stay opaque rather than effect-free.
-      const ownerMemberPath = [...ownerPath, key];
+      const ownerMemberPath = [
+        ...ownerPath,
+        projection.length > 1 ? (projection[0] ?? key) : key,
+      ];
       if (!directOffset) {
         if (intrinsicReadChanged(at, ownerMemberPath))
           return { replaced: true, path: ownerMemberPath };
@@ -626,20 +688,32 @@ export const createSemanticModuleInterop = (
           previous === "call" || previous === "apply" || previous === "bind"
             ? ["intrinsic", "Function", "prototype", previous, key]
             : undefined;
+        // A multi-segment projection reads each level in turn: the first
+        // on the owner, each later one on the previous canonical member —
+        // `{call: {call: invoke}}` checks `[ownerPath,call]` and
+        // `[i,F,p,call,call]`. A write to any level replaces the value.
+        const slots: (readonly string[])[] = [
+          ownerMemberPath,
+          ["intrinsic", "Function", "prototype", key],
+          ...(nestedRead === undefined ? [] : [nestedRead]),
+        ];
+        for (let level = 1; level < projection.length; level += 1) {
+          const prior = projection[level - 1];
+          const current = projection[level];
+          if (
+            prior !== null &&
+            current !== null &&
+            (prior === "call" || prior === "apply" || prior === "bind") &&
+            (current === "call" || current === "apply" || current === "bind")
+          )
+            slots.push(["intrinsic", "Function", "prototype", prior, current]);
+        }
         if (
           writes.some(
             (write) =>
               (write.scope === scope || write.scope === "intrinsic") &&
               write.offset < offset &&
-              (invocationMemberWriteCovers(write, ownerMemberPath) ||
-                invocationMemberWriteCovers(write, [
-                  "intrinsic",
-                  "Function",
-                  "prototype",
-                  key,
-                ]) ||
-                (nestedRead !== undefined &&
-                  invocationMemberWriteCovers(write, nestedRead))),
+              slots.some((slot) => invocationMemberWriteCovers(write, slot)),
           )
         )
           return { replaced: true, path: ownerMemberPath };

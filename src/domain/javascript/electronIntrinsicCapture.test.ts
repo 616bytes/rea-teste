@@ -741,7 +741,9 @@ describe("captured member canonicalization and timing", () => {
     );
     expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
   });
+});
 
+describe("captured member nested owners and projections", () => {
   it("propagates replaced state through a nested captured owner", () => {
     // `invoke` stores the replaced `{call: poison}` object, so `outer =
     // invoke.call` captures `poison` — `outer()` executes it and must stay
@@ -760,6 +762,43 @@ describe("captured member canonicalization and timing", () => {
     expect(writes).toContainEqual(["intrinsic"]);
     // The poison body's own write is a static fact — opaque means unknown,
     // not absent.
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("carries a captured member value through a direct bind", () => {
+    // `invoke.bind(change, null)` binds Function.prototype.call itself —
+    // `changed(x)` is `change(x)` with this null, still reaching the bound
+    // defineProperty write.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const invoke = change.call;
+      const changed = invoke.bind(change, null);
+      changed({value: customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("follows a multi-segment destructured member capture", () => {
+    // `{call: {call: invoke}}` reads `call` on `change`, then `call` on the
+    // result — Function.prototype.call both times — so the call reaches
+    // the bound defineProperty.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const {call: {call: invoke}} = change;
+      invoke.call(change, null, {value: customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
     expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
   });
 

@@ -115,7 +115,11 @@ export class CutterBridgeService {
     const parsed = cutterCommandInputSchema.safeParse(rawInput);
     if (!parsed.success) return err(new AnalysisInputError("cutter_command"));
     if (options.signal?.aborted)
-      return err(new AnalysisCancelledError("cutter_command"));
+      return err(
+        new AnalysisCancelledError("cutter_command", {
+          cause: options.signal.reason,
+        }),
+      );
     const input = parsed.data;
     const cleanup = await this.retryCleanup();
     if (!cleanup.ok) return err(cleanup.error);
@@ -197,6 +201,13 @@ export class CutterBridgeService {
         });
         return err(failure);
       }
+      if (options.signal?.aborted)
+        return err(
+          new AnalysisCancelledError("cutter_command", {
+            cause: options.signal.reason,
+            partialObservation: evidence,
+          }),
+        );
       return ok(evidence);
     } catch (cause) {
       if (cause instanceof AnalysisError) return err(cause);

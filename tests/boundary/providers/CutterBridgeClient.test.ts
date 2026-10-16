@@ -274,19 +274,37 @@ const verifyCutterCancellationAfterDispatch = async (): Promise<void> => {
   }
 };
 
-it.skipIf(process.platform === "win32")(
-  "awaits the probe socket close before returning typed discovery cancellation",
-  async () => {
+it.skipIf(process.platform === "win32").each(["discovery", "command"] as const)(
+  "retains closed sockets and completed facts when %s is cancelled",
+  async (operation) => {
     const directory = await mkdtemp(join(tmpdir(), "rea-cutter-close-order-"));
     const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
+    const token = "close-order-test-token";
+    const controller = new AbortController();
+    const reason = new Error("opaque caller cancellation after response");
+    let commandReplied = false;
     let accepted!: () => void;
     const connected = new Promise<void>((resolve) => {
       accepted = resolve;
     });
-    const peer = createServer((socket) => {
-      socket.resume();
-      accepted();
-    });
+    const peer =
+      operation === "discovery"
+        ? createServer((socket) => {
+            socket.resume();
+            accepted();
+          })
+        : authenticatedServer(token, sessionId, (request, respond) => {
+            if (request.kind === "ack") {
+              respond({ ok: true, acknowledged: true });
+              return;
+            }
+            if (request.kind === "command") commandReplied = true;
+            respond({
+              ok: true,
+              output: "completed command output",
+              execution_state: "complete",
+            });
+          });
     let closed = false;
     await vi.resetModules();
     vi.doMock("node:net", async (importOriginal) => {
@@ -297,32 +315,53 @@ it.skipIf(process.platform === "win32")(
           const socket = net.createConnection(options);
           socket.once("close", () => {
             closed = true;
+            if (commandReplied) controller.abort(reason);
           });
           return socket;
         },
       };
     });
-    const controller = new AbortController();
     try {
       const port = await listen(peer);
-      await writeDescriptor(
-        directory,
-        sessionId,
-        port,
-        "close-order-test-token",
-      );
+      await writeDescriptor(directory, sessionId, port, token);
       const { CutterBridgeClient: ObservedClient } =
         await import("../../../src/cutter/CutterBridgeClient.js");
       const service = new CutterBridgeService(
         new ObservedClient({ REA_CUTTER_BRIDGE_DIR: directory }),
       );
-      const discovery = service.listSessions({ signal: controller.signal });
-      await connected;
-      controller.abort();
-      expect(await discovery).toMatchObject({
-        ok: false,
-        error: { _tag: "AnalysisCancelledError" },
-      });
+      if (operation === "discovery") {
+        const discovery = service.listSessions({ signal: controller.signal });
+        await connected;
+        controller.abort();
+        expect(await discovery).toMatchObject({
+          ok: false,
+          error: { _tag: "AnalysisCancelledError" },
+        });
+      } else {
+        const result = await service.execute(
+          {
+            session_id: sessionId,
+            expected_generation: 0,
+            command: "pd 4",
+          },
+          { signal: controller.signal },
+        );
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "AnalysisCancelledError",
+            cause: reason,
+            cleanupIncomplete: false,
+            partialObservation: {
+              normalized_result: {
+                execution_state: "complete",
+                output: "completed command output",
+              },
+            },
+          },
+        });
+        expect(await service.retryCleanup()).toEqual({ ok: true, value: null });
+      }
       expect(closed).toBe(true);
     } finally {
       controller.abort();

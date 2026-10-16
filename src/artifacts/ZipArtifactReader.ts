@@ -275,11 +275,18 @@ const projectZipEntry = (
 ): ArtifactEntry | undefined => {
   const storedName = zipStoredName(entry);
   const sourcePath = zipEntryPath(entry, storedName);
-  // Only a trailing "/" makes a ZIP name a directory, as for the JDK's
-  // ZipEntry.isDirectory and Python's zipfile. Unix-mode or MS-DOS directory
+  // Only a trailing "/" on the raw stored central-directory name makes a ZIP
+  // member a directory, as for the JDK's ZipEntry.isDirectory, Python's
+  // zipfile and ART's libziparchive, none of which read the Info-ZIP Unicode
+  // Path field; a Unicode Path name cannot turn a stored file into a directory
+  // or a stored directory into a file. Unix-mode or MS-DOS directory
   // attributes on any other name are reported, and the member stays readable.
-  const directoryName = sourcePath.endsWith("/");
-  const attributeDirectory = entry.directory && !directoryName;
+  // Because such a member is a file, inventory validation then fails closed
+  // where a file cannot stand: an attribute-only directory `foo` beside a
+  // child `foo/bar` is a prefix conflict, and one named `.` or the empty name
+  // is a path that is not normalized.
+  const directoryName = storedName.endsWith("/");
+  const attributeDirectory = !directoryName && hasDirectoryAttributes(entry);
   const kind = isSymlink(entry)
     ? "symlink"
     : directoryName
@@ -303,7 +310,7 @@ const projectZipEntry = (
       ...(kind === "symlink" ? ["Archive symlink target was not read."] : []),
       ...(kind === "file" && attributeDirectory
         ? [
-            `ZIP member ${JSON.stringify(sourcePath)} has directory external attributes (0x${(entry.externalFileAttributes >>> 0).toString(16).padStart(8, "0")}) but no trailing "/" in its name; it is read as a regular file, as the JDK and Python's zipfile read it.`,
+            `ZIP member ${JSON.stringify(storedName)} has directory external attributes (0x${(entry.externalFileAttributes >>> 0).toString(16).padStart(8, "0")}) but no trailing "/" in its stored name; it is read as a regular file, as the JDK and Python's zipfile read it.`,
           ]
         : []),
       ...(sourcePath === storedName
@@ -477,6 +484,15 @@ async function* typedZipFailures<T>(
     throw typedZipFailure(cause);
   }
 }
+
+/**
+ * Directory external attributes, as zip.js reads them, without zip.js's
+ * `directory` flag, which also counts a trailing "/" on the Unicode Path name.
+ */
+const hasDirectoryAttributes = (entry: Entry): boolean =>
+  ((entry.unixMode ?? 0) & 0o170000) === 0o040000 ||
+  ((entry.unixExternalUpper ?? 0) & 0o170000) === 0o040000 ||
+  (entry.msDosCompatible && entry.msdosAttributes?.directory === true);
 
 const isSymlink = (entry: Entry): boolean =>
   entry.unixMode !== undefined && (entry.unixMode & 0o170000) === 0o120000;

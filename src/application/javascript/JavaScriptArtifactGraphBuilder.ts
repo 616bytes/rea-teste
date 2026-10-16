@@ -12,6 +12,8 @@ import {
   HTML_INLINE_SCRIPT_LOCATION_COVERAGE_LIMIT,
   omittedHtmlInlineScriptLocations,
   selfReferenceOmissions,
+  dependencyManifest,
+  applicationContainerIdentity,
   type JavaScriptArtifactGraphContext,
 } from "./JavaScriptArtifactGraphContext.js";
 import {
@@ -93,6 +95,24 @@ function* buildJavaScriptArtifactGraphInputSteps(
 ): Generator<void, unknown> {
   const accumulator = new JavaScriptArtifactGraphAccumulator();
   const root = createJavaScriptArtifactRootNode(accumulator, snapshot);
+  const parsedPackages = new Set(
+    analysis.packages
+      .filter(({ status }) => status === "included")
+      .map(({ path }) => path),
+  );
+  const applicationOwnershipUnknownContainers = new Set<string>();
+  for (const files of [fileSet.files, fileSet.unavailable_relevant_files]) {
+    for (const file of files) {
+      if (
+        file.kind === "package-json" &&
+        !dependencyManifest(file.path) &&
+        !parsedPackages.has(file.path)
+      )
+        applicationOwnershipUnknownContainers.add(
+          applicationContainerIdentity(fileSet, file),
+        );
+    }
+  }
   const context: JavaScriptArtifactGraphContext = {
     accumulator,
     snapshot,
@@ -112,7 +132,8 @@ function* buildJavaScriptArtifactGraphInputSteps(
     chunkNodes: new Map(),
     moduleNodes: new Map(),
     containerNodes: new Map([[snapshot.manifest.root_sha256, root]]),
-    applicationRootsByEntrypoint: new Map(),
+    applicationRootsBySource: new Map(),
+    applicationOwnershipUnknownContainers,
   };
   addJavaScriptArtifactContainers(context);
   yield;

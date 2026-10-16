@@ -80,12 +80,30 @@ const writeRuntimeFixture = async (root: string): Promise<void> => {
     "shared/main.cjs": loadFileSource,
     "external-app/dist%2Findex.html": "external-main application target",
     "external-app/plain.html": "external-main application target",
+    "competition/package.json": JSON.stringify({ main: "main.cjs" }),
+    "competition/main.cjs": 'require("./bridge.cjs");',
+    "competition/bridge.cjs": 'require("./nested/main.cjs");',
+    "competition/nested/package.json": JSON.stringify({ main: "main.cjs" }),
+    "competition/nested/main.cjs": `${loadFileSource}\nrequire("../main.cjs");`,
+    "competition/dist%2Findex.html": "running application page",
+    "competition/nested/dist%2Findex.html": "competing application page",
+    "import-owner/package.json": JSON.stringify({
+      main: "../imported/start.cjs",
+    }),
+    "imported/start.cjs": 'require("./child.cjs");',
+    "imported/child.cjs": loadFileSource,
+    "import-owner/dist%2Findex.html": "imported application target",
+    "import-owner/plain.html": "imported application target",
     "default-app/package.json": JSON.stringify({ name: "default-entry-app" }),
-    "default-app/index.js": loadFileSource,
+    "default-app/index.js": `${loadFileSource}\nrequire("./nested/main.cjs");`,
+    "default-app/nested/package.json": JSON.stringify({ main: "main.cjs" }),
+    "default-app/nested/main.cjs": loadFileSource,
+    "default-app/nested/dist%2Findex.html": "competing default-entry page",
     "default-app/dist%2Findex.html": "default-entry application target",
     "default-app/plain.html": "default-entry application target",
     "ambiguous/package.json": JSON.stringify({ main: "sub/main.cjs" }),
     "ambiguous/sub/package.json": JSON.stringify({ main: "main.cjs" }),
+    "ambiguous/third/package.json": JSON.stringify({ main: "../sub/main.cjs" }),
     "ambiguous/sub/main.cjs": loadFileSource,
     "ambiguous/dist%2Findex.html": "unproven application target",
     "ambiguous/sub/dist%2Findex.html": "unproven nested application target",
@@ -112,16 +130,25 @@ const writeRuntimeFixture = async (root: string): Promise<void> => {
 
 cliTest.for(
   (["CLI", "stdio MCP"] as const).flatMap((surface) => [
-    { surface, source: "app/sub/main.cjs" },
-    { surface, source: "shared/main.cjs" },
+    { surface, source: "app/sub/main.cjs", selectedOwner: false },
+    { surface, source: "shared/main.cjs", selectedOwner: false },
+    { surface, source: "shared/main.cjs", selectedOwner: true },
   ]),
 )(
-  "keeps unselected package ownership unknown through $surface for $source",
-  async ({ surface, source }, { cli }) => {
+  "keeps unselected package ownership unknown through $surface for $source (selected owner: $selectedOwner)",
+  async ({ surface, source, selectedOwner }, { cli }) => {
     const root = await createTestTempDirectory("rea-selected-loadfile-");
     await writeRuntimeFixture(root);
+    if (selectedOwner)
+      await writeFixtureFiles(root, {
+        "other-owner/package.json": JSON.stringify({
+          main: "../shared/main.cjs",
+        }),
+        "other-owner/dist%2Findex.html": "unselected competing page",
+      });
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root, [
       "package.json",
+      ...(selectedOwner ? ["external-app/package.json"] : []),
       source,
     ]);
     const roles = graph.nodes.filter(
@@ -155,6 +182,87 @@ cliTest.for(
 );
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps omitted manifests in an identical ASAR occurrence separate through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-selected-asar-owner-");
+    await writeRuntimeFixture(root);
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root, [
+      "a.asar/package.json",
+      "a.asar/sub/package.json",
+      "a.asar/external-app/package.json",
+      "a.asar/sub/main.cjs",
+    ]);
+    const roles = graph.nodes.filter(
+      ({ kind }) => kind === "electron-renderer",
+    );
+    expect(roles).toHaveLength(3);
+    for (const role of roles) {
+      const declaration = role.observations.find(
+        ({ properties }) => properties.runtime_path_base === "application-root",
+      )?.properties.declared_path;
+      const expected =
+        declaration === "absent.html" ? null : `a.asar/${String(declaration)}`;
+      expect(role.observations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              resolved_path: expected,
+              resolution_status: expected === null ? "not-found" : "resolved",
+            }),
+          }),
+        ]),
+      );
+      expect(
+        graph.edges
+          .filter(
+            ({ source_node_id, relation }) =>
+              source_node_id === role.node_id && relation === "maps_to",
+          )
+          .map(({ properties }) => properties.resolved_path),
+      ).toEqual(expected === null ? [] : [expected]);
+    }
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps absolute loadFile host paths unknown through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-loadfile-absolute-");
+    await writeFixtureFiles(root, {
+      "app/package.json": JSON.stringify({ main: "main.cjs" }),
+      "app/main.cjs":
+        'const { BrowserWindow } = require("electron"); new BrowserWindow().loadFile("/dist/index.html");',
+      "app/dist/index.html": "application-relative decoy",
+      "dist/index.html": "artifact-root decoy",
+    });
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    const roles = graph.nodes.filter(
+      ({ kind }) => kind === "electron-renderer",
+    );
+    expect(roles).toHaveLength(1);
+    const role = roles[0];
+    if (role === undefined) throw new Error("Missing renderer declaration");
+    expect(role.observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            declared_path: "/dist/index.html",
+            resolved_path: null,
+            resolution_status: "unavailable",
+          }),
+        }),
+      ]),
+    );
+    expect(
+      graph.edges.filter(
+        ({ source_node_id, relation }) =>
+          source_node_id === role.node_id && relation === "maps_to",
+      ),
+    ).toEqual([]);
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
   "preserves literal-percent runtime paths through %s without executing source",
   async (surface, { cli }) => {
     const root = await createTestTempDirectory("rea-runtime-percent-");
@@ -166,7 +274,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         ["app/sub/main.cjs", "app/"],
         ["shared/main.cjs", "external-app/"],
         ["default-app/index.js", "default-app/"],
+        ["default-app/nested/main.cjs", null],
         ["ambiguous/sub/main.cjs", null],
+        ["competition/nested/main.cjs", null],
+        ["imported/child.cjs", "import-owner/"],
         ["a.asar/sub/main.cjs", "a.asar/"],
         ["b.asar/sub/main.cjs", "b.asar/"],
         ["a.asar/shared/main.cjs", "a.asar/external-app/"],

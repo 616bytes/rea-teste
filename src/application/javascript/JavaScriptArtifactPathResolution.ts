@@ -414,6 +414,13 @@ const resolveRuntimeEntrypoint = (
     ]);
   if (
     input.runtimePathKind === "application-file" &&
+    posix.isAbsolute(input.declaredPath)
+  )
+    return unresolvedCandidate("unavailable", [
+      "An absolute loadFile host path has no established mapping to the selected logical artifact root.",
+    ]);
+  if (
+    input.runtimePathKind === "application-file" &&
     input.applicationRootPath === null
   )
     return unresolvedCandidate("unavailable", [

@@ -54,13 +54,42 @@ export interface JavaScriptArtifactGraphContext {
   readonly chunkNodes: Map<string, ApplicationNode>;
   readonly moduleNodes: Map<string, ApplicationNode>;
   readonly containerNodes: Map<string, ApplicationNode>;
-  /** Package-entrypoint resolution owns the source occurrence's application base. */
-  readonly applicationRootsByEntrypoint: Map<string, Set<string>>;
+  /** Resolved entrypoints/imports retain unique or competing application owners. */
+  readonly applicationRootsBySource: Map<string, Set<string>>;
+  /** Unparsed package metadata prevents proving a unique launch owner. */
+  readonly applicationOwnershipUnknownContainers: ReadonlySet<string>;
 }
 
 /** Application manifests exclude dependency packages but retain nested app roots. */
 export const dependencyManifest = (path: string): boolean =>
   path.split("/").slice(0, -1).includes("node_modules");
+
+/** Two distinct roots prove ambiguity; further roots cannot restore uniqueness. */
+export const addApplicationRootCandidate = (
+  roots: Set<string>,
+  root: string,
+): void => {
+  if (roots.size < 2) roots.add(root);
+};
+
+const applicationContainerRoot = (
+  fileSet: JavaScriptArtifactFileSet,
+  source: Pick<JavaScriptArtifactFile, "path" | "container_sha256">,
+): string =>
+  fileSet.containers.find(
+    ({ sha256, path }) =>
+      sha256 === source.container_sha256 && source.path.startsWith(`${path}/`),
+  )?.path ?? "";
+
+/** Equal archive bytes at different logical paths are distinct ownership scopes. */
+export const applicationContainerIdentity = (
+  fileSet: JavaScriptArtifactFileSet,
+  source: Pick<JavaScriptArtifactFile, "path" | "container_sha256">,
+): string =>
+  compositeKey([
+    source.container_sha256,
+    applicationContainerRoot(fileSet, source),
+  ]);
 
 /** Select the inventory's display root; this does not establish runtime ownership. */
 export const applicationManifestPath = (
@@ -85,7 +114,13 @@ export const applicationRootPath = (
   context: JavaScriptArtifactGraphContext,
   source: JavaScriptArtifactFile,
 ): string | null => {
-  const entryRoots = context.applicationRootsByEntrypoint.get(source.path);
+  if (
+    context.applicationOwnershipUnknownContainers.has(
+      applicationContainerIdentity(context.fileSet, source),
+    )
+  )
+    return null;
+  const entryRoots = context.applicationRootsBySource.get(source.path);
   const roots = new Set<string>(entryRoots);
   const directories = source.path.split("/").slice(0, -1);
   for (let depth = directories.length; depth >= 0; depth -= 1) {
@@ -107,32 +142,11 @@ export const applicationRootPath = (
         metadata.renderer !== null ||
         defaultEntry?.container_sha256 === source.container_sha256)
     )
-      roots.add(root);
+      addApplicationRootCandidate(roots, root);
   }
   if (roots.size > 1) return null;
   for (const root of roots) return root;
-  // An unparsed sibling package may own an entry outside its own directory.
-  // Inventory presence must not become an absent-owner fallback.
-  if (
-    context.fileSet.files.some(
-      (file) =>
-        file.kind === "package-json" &&
-        file.container_sha256 === source.container_sha256 &&
-        !dependencyManifest(file.path) &&
-        !context.analysis.packages.some(
-          (metadata) =>
-            metadata.path === file.path && metadata.status === "included",
-        ),
-    )
-  )
-    return null;
-  return (
-    context.fileSet.containers.find(
-      ({ sha256, path }) =>
-        sha256 === source.container_sha256 &&
-        source.path.startsWith(`${path}/`),
-    )?.path ?? ""
-  );
+  return applicationContainerRoot(context.fileSet, source);
 };
 
 /** Evidence coverage shape shared by reconstruction graph helpers. */

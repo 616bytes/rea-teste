@@ -18,6 +18,7 @@ import type { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGra
 import {
   addArtifactContainsEdge,
   applicationManifestPath,
+  addApplicationRootCandidate,
   dependencyManifest,
   addUnavailableStaticParseScope,
   artifactFileNodeKind,
@@ -515,6 +516,12 @@ export const addJavaScriptPackageNodes = (
         operation: "inventory-package",
       });
     if (dependencyManifest(file.path)) continue;
+    if (packageValue.status === "included" && packageValue.main === null) {
+      const defaultPath = `${file.path.slice(0, -"package.json".length)}index.js`;
+      const defaultEntry = context.filesByPath.get(defaultPath);
+      if (defaultEntry?.container_sha256 === file.container_sha256)
+        registerPackageEntrypointOwner(context, file, defaultPath);
+    }
     addPackageRole(context, {
       packageNode: node,
       packageFile: file,
@@ -628,17 +635,12 @@ const addPackageRole = (
     directoryPaths: context.directoryPaths,
     unanalyzedFiles: context.unanalyzedFiles,
   });
-  if (resolution.resolution_status === "resolved") {
-    const roots =
-      context.applicationRootsByEntrypoint.get(resolution.resolved_path) ??
-      new Set<string>();
-    roots.add(
-      input.packageFile.path
-        .slice(0, -"package.json".length)
-        .replace(/\/$/u, ""),
+  if (resolution.resolution_status === "resolved")
+    registerPackageEntrypointOwner(
+      context,
+      input.packageFile,
+      resolution.resolved_path,
     );
-    context.applicationRootsByEntrypoint.set(resolution.resolved_path, roots);
-  }
   const role = createElectronRoleNode(context, {
     kind: input.kind,
     anchor: input.packageFile,
@@ -673,6 +675,20 @@ const addPackageRole = (
     anchor: input.packageFile,
     resolution,
   });
+};
+
+const registerPackageEntrypointOwner = (
+  context: JavaScriptArtifactGraphContext,
+  packageFile: JavaScriptArtifactFile,
+  sourcePath: string,
+): void => {
+  const roots =
+    context.applicationRootsBySource.get(sourcePath) ?? new Set<string>();
+  addApplicationRootCandidate(
+    roots,
+    packageFile.path.slice(0, -"package.json".length).replace(/\/$/u, ""),
+  );
+  context.applicationRootsBySource.set(sourcePath, roots);
 };
 
 const containerProperties = (container: JavaScriptArtifactContainer) => ({

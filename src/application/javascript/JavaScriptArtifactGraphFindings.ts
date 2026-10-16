@@ -7,6 +7,7 @@ import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptA
 import {
   addStaticInferenceEdge,
   applicationRootPath,
+  addApplicationRootCandidate,
   artifactLocalIdentity,
   chunkLookupKey,
   createElectronRoleNode,
@@ -55,7 +56,10 @@ interface ResolvedReference {
 export function* addJavaScriptStaticFindingsSteps(
   context: JavaScriptArtifactGraphContext,
 ): Generator<void, readonly string[]> {
-  const omissions = { selfReferences: 0 };
+  const omissions = {
+    selfReferences: 0,
+    imports: new Map<string, Set<string>>(),
+  };
   for (const analyzed of context.analysis.files) {
     yield;
     const { file, javascript } = analyzed;
@@ -68,10 +72,17 @@ export function* addJavaScriptStaticFindingsSteps(
       addEndpoint(context, { file, asset, value, coverage });
     for (const value of javascript.storage)
       addStorage(context, { file, asset, value, coverage });
-    for (const value of javascript.role_paths)
-      addDiscoveredRole(context, { file, asset, value, coverage });
     for (const value of javascript.source_map_urls)
       addSourceMapEdge(context, { file, asset, value, coverage });
+  }
+  yield* propagateApplicationOwners(context, omissions.imports);
+  for (const { file, javascript } of context.analysis.files) {
+    yield;
+    const asset = context.assetNodes.get(file.path);
+    if (javascript === null || asset === undefined) continue;
+    const coverage = javascriptAnalysisCoverage(javascript);
+    for (const value of javascript.role_paths)
+      addDiscoveredRole(context, { file, asset, value, coverage });
   }
   return selfReferenceOmissions(
     omissions.selfReferences,
@@ -80,10 +91,37 @@ export function* addJavaScriptStaticFindingsSteps(
   );
 }
 
+/** Carry every entrypoint owner through already-resolved imports before roles.
+ * Sets and change-driven traversal retain competition and terminate on cycles.
+ */
+function* propagateApplicationOwners(
+  context: JavaScriptArtifactGraphContext,
+  imports: ReadonlyMap<string, ReadonlySet<string>>,
+): Generator<void> {
+  const pending = [...context.applicationRootsBySource.keys()];
+  while (pending.length > 0) {
+    yield;
+    const source = pending.pop();
+    if (source === undefined) break;
+    const roots = context.applicationRootsBySource.get(source);
+    if (roots === undefined) continue;
+    for (const target of imports.get(source) ?? []) {
+      yield;
+      const candidates =
+        context.applicationRootsBySource.get(target) ?? new Set<string>();
+      const previousSize = candidates.size;
+      for (const root of roots) addApplicationRootCandidate(candidates, root);
+      if (candidates.size === previousSize) continue;
+      context.applicationRootsBySource.set(target, candidates);
+      pending.push(target);
+    }
+  }
+}
+
 const addReference = (
   context: JavaScriptArtifactGraphContext,
   input: FindingInput<StaticReference>,
-  omissions: { selfReferences: number },
+  omissions: { selfReferences: number; imports: Map<string, Set<string>> },
 ): void => {
   const source =
     sourceNodeFor(
@@ -96,6 +134,19 @@ const addReference = (
     input.value.specifier === null
       ? null
       : resolveReference(context, input.file.path, input.value, input.coverage);
+  if (
+    resolved !== null &&
+    resolved.path !== null &&
+    resolved.file !== null &&
+    resolved.file.container_sha256 === input.file.container_sha256 &&
+    (input.value.kind === "static-import" ||
+      input.value.kind === "dynamic-import" ||
+      input.value.kind === "require")
+  ) {
+    const targets = omissions.imports.get(input.file.path) ?? new Set<string>();
+    targets.add(resolved.path);
+    omissions.imports.set(input.file.path, targets);
+  }
   if (input.value.kind === "worker" || input.value.kind === "service-worker") {
     const worker = context.accumulator.addNode({
       kind: input.value.kind === "worker" ? "worker" : "service-worker",

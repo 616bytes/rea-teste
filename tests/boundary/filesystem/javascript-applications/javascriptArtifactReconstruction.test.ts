@@ -50,6 +50,73 @@ import {
 } from "../../../../src/domain/javascript/javascriptSemanticGraph.js";
 import { parseJavaScriptSemanticGraph } from "../../../../src/domain/javascript/javascriptSemanticGraphSerialization.js";
 import { writeJavaScriptArtifactFixture } from "../../../fixtures/javascriptArtifactApplication.js";
+import { writeFixtureFiles } from "../../../support/javascriptApplicationFixture.js";
+
+it("keeps a loadFile owner unknown when a sibling manifest is unavailable in the inventory projection", async () => {
+  const root = await createTestTempDirectory("rea-unavailable-app-owner-");
+  await writeFixtureFiles(root, {
+    "app/package.json": JSON.stringify({ main: "../shared/main.cjs" }),
+    "shared/main.cjs":
+      'const { BrowserWindow } = require("electron"); const win = new BrowserWindow(); win.loadFile("index.html");',
+    "index.html": "artifact-root decoy",
+    "app/index.html": "unproven app page",
+  });
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const manifest = files.files.find(
+      ({ path }) => path === "app/package.json",
+    );
+    if (manifest === undefined) throw new Error("Missing inventoried manifest");
+    // Inject the reader boundary's unavailable projection, not a fabricated graph.
+    const partial = {
+      ...files,
+      files: files.files.filter(({ path }) => path !== manifest.path),
+      unavailable_relevant_files: [
+        ...files.unavailable_relevant_files,
+        {
+          path: manifest.path,
+          container_sha256: manifest.container_sha256,
+          sha256: null,
+          bytes: null,
+          inventory_artifact_id: manifest.inventory_artifact_id,
+          kind: manifest.kind,
+          hash_status: "unavailable" as const,
+        },
+      ],
+    };
+    const graph = buildJavaScriptArtifactGraph(
+      snapshot,
+      partial,
+      analyzeJavaScriptArtifactFiles(partial),
+    );
+    const roles = graph.nodes.filter(
+      ({ kind }) => kind === "electron-renderer",
+    );
+    expect(roles).toHaveLength(1);
+    const role = roles[0];
+    if (role === undefined) throw new Error("Missing renderer");
+    expect(role.observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            resolved_path: null,
+            resolution_status: "unavailable",
+          }),
+        }),
+      ]),
+    );
+    expect(
+      graph.edges.filter(
+        ({ source_node_id, relation }) =>
+          source_node_id === role.node_id && relation === "maps_to",
+      ),
+    ).toEqual([]);
+  } finally {
+    await reader.close();
+  }
+});
 
 it("keeps excluded non-JavaScript files out of both semantic construction paths", async () => {
   const root = await createTestTempDirectory("rea-js-semantic-applicability-");

@@ -2994,6 +2994,10 @@ describe("application-root Electron loadFile resolution", () => {
         resolved_path: `${prefix}dist%2Findex.html`,
         resolution_status: "resolved",
       });
+      expect(loadFile("/dist%2Findex.html")).toMatchObject({
+        resolved_path: null,
+        resolution_status: "unavailable",
+      });
       for (const path of ["absent.html", "fallback", "foreign.html"])
         expect(loadFile(path)).toMatchObject({
           resolved_path: null,

@@ -1,7 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import type {
   Browser,
   BrowserContext,
@@ -86,26 +87,28 @@ it("passes the selected environment to the actual browser launch boundary", asyn
   });
 });
 
-it("keeps Termux execution support when launching Chromium on Android", async () => {
-  Object.defineProperty(process, "platform", { value: "android" });
-  const prefix = await mkdtemp(join(tmpdir(), "rea-termux-prefix-"));
-  vi.stubEnv("PREFIX", prefix);
-  const selected = { LANG: "selected-language", PREFIX: prefix };
-  let launchedProfile: string | undefined;
-  let launchOptions: Parameters<
-    typeof import("playwright-core").chromium.launchPersistentContext
-  >[1];
-  const scenario = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: process.execPath },
+const androidLaunchScenario = (executablePath: string) =>
+  browserScenarioSchema.parse({
+    browser: { mode: "launch", executable_path: executablePath },
     start_url: { url: "https://example.test" },
     actions: [
       { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
     ],
   });
 
-  try {
-    await expect(
-      openPlaywrightScenarioBrowser(scenario, selected, {
+const captureAndroidLaunch = async (
+  environment: Readonly<Record<string, string | undefined>>,
+) => {
+  Object.defineProperty(process, "platform", { value: "android" });
+  let launchedProfile: string | undefined;
+  let launchOptions: Parameters<
+    typeof import("playwright-core").chromium.launchPersistentContext
+  >[1];
+  await expect(
+    openPlaywrightScenarioBrowser(
+      androidLaunchScenario(process.execPath),
+      environment,
+      {
         launcher: {
           connectOverCDP: async () => {
             throw new Error("Unexpected connection");
@@ -116,70 +119,133 @@ it("keeps Termux execution support when launching Chromium on Android", async ()
             throw new Error("launch boundary reached");
           },
         },
-      }),
-    ).rejects.toThrow("launch boundary reached");
-  } finally {
-    await rm(prefix, { recursive: true, force: true });
-  }
+      },
+    ),
+  ).rejects.toThrow("launch boundary reached");
+  return { launchedProfile, launchOptions };
+};
 
-  const temporaryDirectory = join(prefix, "tmp");
-  expect(launchedProfile?.startsWith(temporaryDirectory)).toBe(true);
-  expect(launchOptions?.args).toEqual([
-    "--no-sandbox",
-    "--disable-dev-shm-usage",
-    "--single-process",
-  ]);
-  expect(launchOptions?.env).toEqual({
-    LANG: "selected-language",
-    LD_PRELOAD: `${prefix}/lib/libtermux-exec.so`,
-    TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
-    TMPDIR: temporaryDirectory,
-  });
-});
+it.each([
+  {
+    name: "uses the Termux prefix when no temp directory is selected",
+    variables: {},
+    parent: "prefix" as const,
+    forwarded: { TMPDIR: "prefix" as const },
+  },
+  {
+    name: "keeps a caller-selected TMPDIR",
+    variables: { TMPDIR: "explicit" as const },
+    parent: "explicit" as const,
+    forwarded: { TMPDIR: "explicit" as const },
+  },
+  {
+    name: "uses TMP when TMPDIR is absent",
+    variables: { TMP: "explicit" as const },
+    parent: "explicit" as const,
+    forwarded: { TMP: "explicit" as const, TMPDIR: "explicit" as const },
+  },
+  {
+    name: "uses TEMP when TMPDIR and TMP are absent",
+    variables: { TEMP: "explicit" as const },
+    parent: "explicit" as const,
+    forwarded: { TEMP: "explicit" as const, TMPDIR: "explicit" as const },
+  },
+  {
+    name: "prefers TMPDIR over TMP and TEMP",
+    variables: {
+      TMPDIR: "explicit" as const,
+      TMP: "other" as const,
+      TEMP: "other" as const,
+    },
+    parent: "explicit" as const,
+    forwarded: {
+      TMPDIR: "explicit" as const,
+      TMP: "other" as const,
+      TEMP: "other" as const,
+    },
+  },
+  {
+    name: "treats an empty TMPDIR as unset and uses TMP",
+    variables: { TMPDIR: "" as const, TMP: "explicit" as const },
+    parent: "explicit" as const,
+    forwarded: { TMPDIR: "explicit" as const, TMP: "explicit" as const },
+  },
+  {
+    name: "treats empty temp variables as unset and uses the Termux prefix",
+    variables: { TMPDIR: "" as const, TMP: "" as const, TEMP: "" as const },
+    parent: "prefix" as const,
+    forwarded: {
+      TMPDIR: "prefix" as const,
+      TMP: "" as const,
+      TEMP: "" as const,
+    },
+  },
+])(
+  "keeps Termux Chromium on a writable temp directory: $name",
+  async ({ variables, parent, forwarded }) => {
+    const root = await createTestTempDirectory("rea-termux-temp-");
+    const prefix = join(root, "usr");
+    const paths = {
+      explicit: join(root, "explicit-tmp"),
+      other: join(root, "other-tmp"),
+      prefix: join(prefix, "tmp"),
+    };
+    const resolvePath = (
+      token: "" | "explicit" | "other" | "prefix",
+    ): string => (token === "" ? "" : paths[token]);
+    const selected = {
+      LANG: "selected-language",
+      PREFIX: prefix,
+      ...Object.fromEntries(
+        Object.entries(variables).map(([name, token]) => [
+          name,
+          resolvePath(token),
+        ]),
+      ),
+    };
+    const { launchedProfile, launchOptions } =
+      await captureAndroidLaunch(selected);
+    expect(launchedProfile?.startsWith(paths[parent])).toBe(true);
+    expect(launchOptions?.args).toEqual([
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
+      "--single-process",
+    ]);
+    expect(launchOptions?.env).toEqual({
+      LANG: "selected-language",
+      LD_PRELOAD: `${prefix}/lib/libtermux-exec.so`,
+      TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
+      ...Object.fromEntries(
+        Object.entries(forwarded).map(([name, token]) => [
+          name,
+          resolvePath(token),
+        ]),
+      ),
+    });
+  },
+);
 
-it("keeps a caller-selected Termux temp directory for the Chromium profile", async () => {
+it("places Playwright's host artifact directory on the Termux temp directory", async () => {
+  await import("playwright-core");
+  const prefix = await createTestTempDirectory("rea-termux-host-");
+  vi.stubEnv("TMPDIR", "");
+  vi.stubEnv("TMP", "");
+  vi.stubEnv("TEMP", "");
   Object.defineProperty(process, "platform", { value: "android" });
-  const root = await mkdtemp(join(tmpdir(), "rea-termux-temp-"));
-  const prefix = join(root, "usr");
-  const temporaryDirectory = join(root, "explicit-tmp");
-  const selected = { PREFIX: prefix, TMPDIR: temporaryDirectory };
-  let launchedProfile: string | undefined;
-  let launchOptions: Parameters<
-    typeof import("playwright-core").chromium.launchPersistentContext
-  >[1];
-  const scenario = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: process.execPath },
-    start_url: { url: "https://example.test" },
-    actions: [
-      { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
-    ],
-  });
-
-  try {
-    await expect(
-      openPlaywrightScenarioBrowser(scenario, selected, {
-        launcher: {
-          connectOverCDP: async () => {
-            throw new Error("Unexpected connection");
-          },
-          launchPersistentContext: async (profile, options) => {
-            launchedProfile = profile;
-            launchOptions = options;
-            throw new Error("launch boundary reached");
-          },
-        },
-      }),
-    ).rejects.toThrow("launch boundary reached");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-
-  expect(launchedProfile?.startsWith(temporaryDirectory)).toBe(true);
-  expect(launchOptions?.env).toEqual({
-    LD_PRELOAD: `${prefix}/lib/libtermux-exec.so`,
-    TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
-    TMPDIR: temporaryDirectory,
-  });
+  await expect(
+    openPlaywrightScenarioBrowser(
+      androidLaunchScenario(join(prefix, "missing-chromium")),
+      { PREFIX: prefix, TMPDIR: "", TMP: "", TEMP: "" },
+    ),
+  ).rejects.toThrow(/executable doesn't exist/);
+  expect(
+    (await readdir(join(prefix, "tmp"))).some((name) =>
+      name.startsWith("playwright-artifacts-"),
+    ),
+  ).toBe(true);
+  expect(process.env.TMPDIR).toBe("");
+  expect(process.env.TMP).toBe("");
+  expect(process.env.TEMP).toBe("");
 });
 
 it("keeps attached-target ownership after the cleanup response timeout", async () => {

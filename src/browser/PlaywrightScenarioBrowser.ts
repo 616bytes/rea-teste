@@ -285,6 +285,59 @@ const androidScenarioTempDirectory = (
   return prefix === undefined ? undefined : join(prefix, "tmp");
 };
 
+const HOST_TEMP_NAMES = ["TMPDIR", "TMP", "TEMP"] as const;
+
+let androidHostTempUsers = 0;
+let androidHostTempPrevious:
+  | Readonly<Record<(typeof HOST_TEMP_NAMES)[number], string | undefined>>
+  | undefined;
+
+const restoreHostTempValue = (
+  name: string,
+  value: string | undefined,
+): void => {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+};
+
+/**
+ * Playwright creates `playwright-artifacts-*` with the host `os.tmpdir()`
+ * before Chromium starts. Android reads `TMPDIR` for that call, so the
+ * scenario's writable directory has to be visible on the host until launch
+ * finishes. `TMP` and `TEMP` are published for the same window because some
+ * hosts resolve `os.tmpdir()` from those names instead.
+ */
+const retainAndroidHostTempDirectory = (
+  directory: string | undefined,
+): (() => void) => {
+  if (
+    process.platform !== "android" ||
+    directory === undefined ||
+    (androidHostTempUsers === 0 && tmpdir() === directory)
+  )
+    return () => undefined;
+  if (androidHostTempUsers === 0) {
+    androidHostTempPrevious = {
+      TMPDIR: process.env.TMPDIR,
+      TMP: process.env.TMP,
+      TEMP: process.env.TEMP,
+    };
+    for (const name of HOST_TEMP_NAMES) process.env[name] = directory;
+  }
+  androidHostTempUsers += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    androidHostTempUsers -= 1;
+    if (androidHostTempUsers > 0 || androidHostTempPrevious === undefined)
+      return;
+    for (const name of HOST_TEMP_NAMES)
+      restoreHostTempValue(name, androidHostTempPrevious[name]);
+    androidHostTempPrevious = undefined;
+  };
+};
+
 const allowedBrowserEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
 ): Record<string, string | undefined> => {
@@ -678,8 +731,10 @@ export const openPlaywrightScenarioBrowser = async (
     join(preferredTemp ?? tmpdir(), "rea-browser-scenario-"),
   );
   let context: BrowserContext;
+  let releaseHostTemp = (): void => undefined;
   try {
     await chmod(profilePath, 0o700);
+    releaseHostTemp = retainAndroidHostTempDirectory(preferredTemp);
     context = await launcher.launchPersistentContext(profilePath, {
       executablePath: resolve(scenario.browser.executable_path),
       headless: scenario.browser.headless,
@@ -710,6 +765,7 @@ export const openPlaywrightScenarioBrowser = async (
           : [],
     });
   } catch (cause: unknown) {
+    releaseHostTemp();
     const cleanup = () =>
       rm(profilePath, { recursive: true, force: true, maxRetries: 3 });
     try {
@@ -722,7 +778,13 @@ export const openPlaywrightScenarioBrowser = async (
     }
   }
   const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
-    closeBrowser: () => context.close(),
+    closeBrowser: async () => {
+      try {
+        await context.close();
+      } finally {
+        releaseHostTemp();
+      }
+    },
     removeProfile: () =>
       rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
   });

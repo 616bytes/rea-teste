@@ -189,3 +189,77 @@ describe("artifactDecompressionBudgetBytes", () => {
     );
   });
 });
+
+describe("ZipArtifactReader traversal options", () => {
+  const writeZip = async (names: readonly string[]): Promise<string> => {
+    const path = join(
+      await createTestTempDirectory("rea-zip-retain-"),
+      "fixture.zip",
+    );
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    for (const name of names)
+      await writer.add(name, new Uint8ArrayReader(Buffer.from(name)));
+    await writeFile(path, await writer.close());
+    return path;
+  };
+
+  it("keeps only retained entries openable", async () => {
+    const reader = new ZipArtifactReader(
+      await writeZip(["kept.txt", "dropped.txt"]),
+      "zip",
+    );
+    try {
+      const entries = [];
+      for await (const entry of reader.entries(undefined, {
+        retain: (entry) => entry.path === "kept.txt",
+      }))
+        entries.push(entry);
+      expect(entries.map((entry) => entry.path)).toEqual([
+        "kept.txt",
+        "dropped.txt",
+      ]);
+      const kept = await reader.open(entries[0]!);
+      kept.destroy();
+      await expect(reader.open(entries[1]!)).rejects.toMatchObject({
+        reason: "integrity",
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+
+  it("reports the exact stored name only when it differs from the logical path", async () => {
+    const reader = new ZipArtifactReader(
+      await writeZip(["./classes.dex", "classes2.dex"]),
+      "zip",
+    );
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      expect(
+        entries.map(({ path, storedPath }) => ({ path, storedPath })),
+      ).toEqual([
+        { path: "classes.dex", storedPath: "./classes.dex" },
+        { path: "classes2.dex", storedPath: undefined },
+      ]);
+    } finally {
+      await reader.close();
+    }
+  });
+
+  it("names the bound a refused archive exceeded", async () => {
+    const directory = await createTestTempDirectory("rea-zip-boundary-");
+    const path = await writeZipWithDeclaredSize(directory, [
+      MINIMUM_ARTIFACT_DECOMPRESSION_BYTES + 1,
+    ]);
+    const reader = new ZipArtifactReader(path, "zip");
+    try {
+      await expect(enumerate(reader)).rejects.toMatchObject({
+        reason: "limit",
+        boundary: "capacity",
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+});

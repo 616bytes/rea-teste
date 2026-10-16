@@ -34,6 +34,9 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
     "const r=Object.create(null); Object.create=custom; Reflect.set(module,'require',replacement,r); require('fs').readFileSync('allocated-before.json');",
     "const fs=require('fs'); Reflect.set(fs,'readFileSync',custom,{}); fs.readFileSync('reflect-before.json'); Reflect.set=other;",
     "const proc=require('process'); Reflect.set(proc,'env',{},{}); const mode=proc.env.SEPARATE_MODE;",
+    "let fs={}; outer:{if(flag)break outer; fs=require('fs');} fs.readFileSync('wrong-skipped-write');",
+    "function run(){const r=Object.create(null); Reflect.set(r,'require',replacement); require('fs').readFileSync('wrong-deferred-loader');} Object.create=()=>module; run();",
+    "function run(){const fs=require('fs'); Reflect.set(fs,'readFileSync',custom,{}); fs.readFileSync('wrong-deferred-set');} Reflect.set=(target,key,value)=>{target[key]=value}; run();",
   ];
   for (const [index, source] of sources.entries())
     await writeFile(join(root, `receiver-review-${index}.ts`), source);

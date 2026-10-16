@@ -207,6 +207,12 @@ const effectAncestry = (
   return cache.get(start) ?? null;
 };
 
+/** Source order can prove timing only within one top-level activation. */
+export const semanticTopLevelEffectIsOrderable = (
+  node: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => effectAncestry(node, parents) !== null;
+
 /** Order effects only in a non-repeating top-level activation. */
 export const semanticTopLevelEffectFollowsCapture = (
   capture: t.Node,
@@ -677,6 +683,8 @@ const initializerInBody = (
       parent === undefined ||
       t.isFunction(parent) ||
       t.isLoop(parent) ||
+      // A labeled break can skip this write while the later read still runs.
+      t.isLabeledStatement(parent) ||
       semanticBranchMayBeSkipped(parent, current)
     )
       break;

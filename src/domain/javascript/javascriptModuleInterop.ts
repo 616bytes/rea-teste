@@ -11,6 +11,7 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { semanticTopLevelEffectIsOrderable } from "./javascriptSemanticMutationInitializers.js";
 import {
   childNodes,
   javaScriptAstChildKeys,
@@ -120,7 +121,12 @@ export const createSemanticModuleInterop = (
   };
   const changedBefore = (capture: t.Node, path: readonly string[]): boolean => {
     const scope = opaqueMutationPath(capture).join(".");
-    const offset = capture.start ?? -1;
+    const offset = semanticTopLevelEffectIsOrderable(
+      capture,
+      state.parentsByNode,
+    )
+      ? (capture.start ?? -1)
+      : Infinity;
     return (
       writes.get("intrinsic")?.precedes(path, offset) === true ||
       (scope !== "intrinsic" &&

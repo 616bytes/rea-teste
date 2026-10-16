@@ -2,6 +2,38 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
 it.each([
+  "let fs={}; outer:{ if(flag) break outer; fs=require('fs'); } fs.readFileSync('wrong');",
+  "let fs={}; outer:{{ if(flag) break outer; fs=require('fs'); }} fs.readFileSync('wrong');",
+  "let fs={}; outer:{ inner:{if(flag) break outer;} fs=require('fs');} fs.readFileSync('wrong');",
+  "function run(){const r=Object.create(null); Reflect.set(r,'require',replacement); require('fs').readFileSync('wrong');} Object.create=()=>module; run();",
+  "const run=()=>{const r=Object.create(null); Reflect.set(r,'require',replacement); require('fs').readFileSync('wrong');}; Object.create=()=>module; run();",
+  "class C{value=(()=>{const r=Object.create(null); Reflect.set(r,'require',replacement); require('fs').readFileSync('wrong');})();} Object.create=()=>module; new C();",
+  "while(flag){const r=Object.create(null); Reflect.set(r,'require',replacement); require('fs').readFileSync('wrong'); Object.create=()=>module;}",
+  "function run(){const fs=require('fs'); Reflect.set(fs,'readFileSync',custom,{}); fs.readFileSync('wrong');} Reflect.set=(target,key,value)=>{target[key]=value}; run();",
+])(
+  "does not order skipped or repeated/deferred writes as definite: %s",
+  (source) => {
+    expect(analyzeJavaScriptSemantics(source).configurationOperations).toEqual(
+      [],
+    );
+  },
+);
+
+it.each([
+  "let fs=require('fs'); fs.readFileSync('kept'); outer:{if(flag)break outer; fs={};}",
+  "function run(){const r=Object.create(null); Reflect.set(r,'require',replacement); require('fs').readFileSync('kept');} run();",
+])(
+  "keeps independently proven reads across control-flow barriers: %s",
+  (source) => {
+    expect(
+      analyzeJavaScriptSemantics(source).configurationOperations.map(
+        ({ key }) => key,
+      ),
+    ).toEqual(["kept"]);
+  },
+);
+
+it.each([
   "const {id}=module; Object.assign=custom; Object.assign({},id);",
   "const {filename:name}=module; const alias=name; Object.assign=custom; Object.assign({},alias);",
   "const {id}=module; Reflect.set=custom; Reflect.set({},'x',id);",

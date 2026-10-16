@@ -312,8 +312,18 @@ export class JavaScriptSymbolicBindings {
       }
       return { kind: "external", path };
     }
-    if (value.kind === "record")
-      return value.values.get(key) ?? symbolicUnknown("missing property");
+    if (value.kind === "record") {
+      const property = value.values.get(key);
+      if (
+        key === "exports" &&
+        property?.kind === "namespace" &&
+        this.#namespaceOwners.has(property.bindingId)
+      ) {
+        // Preserve namespace identity for members, not a known runtime value.
+        return { ...property, runtimeValueUnknown: true };
+      }
+      return property ?? symbolicUnknown("missing property");
+    }
     if (value.kind === "namespace") {
       if (
         this.#mutated.has(value.bindingId) ||
@@ -599,7 +609,7 @@ export class JavaScriptSymbolicBindings {
           node.left,
           node.right,
           env,
-          this.#assignmentLeft(node.left, env),
+          true,
         );
       return symbolicUnknown("compound assignment result");
     }
@@ -635,49 +645,33 @@ export class JavaScriptSymbolicBindings {
     return symbolicUnknown(`unsupported ${node.type}`);
   }
 
-  #assignmentLeft(node: t.Node, env: SymbolicEnvironment): SymbolicValue {
-    const target = unwrapJavaScriptExpression(node).node;
-    if (
-      t.isMemberExpression(target) &&
-      semanticStaticPropertyKey(target.property, target.computed) === "exports"
-    ) {
-      const receiver = this.evaluate(target.object, env);
-      const variants = symbolicVariants(receiver);
-      const isModuleRecord = (variant: SymbolicValue): boolean => {
-        const namespace =
-          variant.kind === "record" ? variant.values.get("exports") : undefined;
-        return (
-          namespace?.kind === "namespace" &&
-          this.#namespaceOwners.has(namespace.bindingId)
-        );
-      };
-      if (variants.some(isModuleRecord)) {
-        const result = symbolicUnion(
-          variants.map((variant) =>
-            isModuleRecord(variant)
-              ? // This slot preserves module identity, not its mutable value.
-                this.#withConditions(
-                  symbolicUnknown("mutable module exports value"),
-                  variant,
-                )
-              : this.property(variant, "exports", { node, environment: env }),
-          ),
-        );
-        return receiver.kind === "union"
-          ? this.#withConditions(result, receiver)
-          : result;
-      }
-    }
-    return this.evaluate(node, env);
-  }
-
   #logicalValue(
     operator: t.LogicalExpression["operator"],
     leftNode: t.Node,
     rightNode: t.Node,
     env: SymbolicEnvironment,
-    left: SymbolicValue = this.evaluate(leftNode, env),
+    assignment = false,
   ): SymbolicValue {
+    const value = this.evaluate(leftNode, env);
+    let left = value;
+    if (assignment) {
+      // A mutable namespace supplies member identity, not a callable root value.
+      // Assignment results must not resolve their own write through that identity.
+      const alternatives = symbolicUnion(
+        symbolicVariants(value).map((variant) =>
+          variant.kind === "namespace" && variant.runtimeValueUnknown
+            ? this.#withConditions(
+                symbolicUnknown("mutable module exports value"),
+                variant,
+              )
+            : variant,
+        ),
+      );
+      left =
+        value.kind === "union"
+          ? this.#withConditions(alternatives, value)
+          : alternatives;
+    }
     const right = symbolicLogicalRight(operator, left);
     if (right !== undefined)
       return right ? this.evaluate(rightNode, env) : left;

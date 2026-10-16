@@ -1091,6 +1091,114 @@ it.each(["(module)", "(module as any)", "(module!)"])(
   },
 );
 it.each(["||=", "??=", "&&="])(
+  "preserves uncertainty through module exports snapshots for %s",
+  (operator) => {
+    for (const [setup, target] of [
+      ["", "({exports: module.exports}).exports"],
+      ["const snapshot = module.exports;", "({exports: snapshot}).exports"],
+      ["", "[module.exports][0]"],
+    ]) {
+      expectGuardedRoot(
+        rootFixture(
+          `module.exports = null; ${setup}
+          const selected = (${target} ${operator} {action: () => electron.ipcRenderer.send("rhs")});
+          electron.contextBridge.exposeInMainWorld("desktop", selected);`,
+          false,
+        ),
+        operator,
+        target,
+      );
+    }
+  },
+);
+it.each(["saved", "!saved"])(
+  "keeps primitive root snapshot branch uncertainty for %s",
+  (test) => {
+    const result = analyzeJavaScriptStaticSource(
+      rootFixture(
+        `module.exports = null; const saved = module.exports;
+      electron.contextBridge.exposeInMainWorld("desktop", {action() {
+        if (${test}) electron.ipcRenderer.send("then");
+        else electron.ipcRenderer.send("else");
+      }});`,
+        false,
+      ),
+    );
+    expect(
+      result.electron.call_paths
+        ?.map(({ channel, conditions }) => ({
+          channel,
+          conditions: conditions.map((c) => c.expression),
+        }))
+        .sort((a, b) => String(a.channel).localeCompare(String(b.channel))),
+    ).toEqual([
+      { channel: "else", conditions: [`!(${test})`] },
+      { channel: "then", conditions: [test] },
+    ]);
+  },
+);
+it.each(["||", "??", "&&"])(
+  "keeps primitive root logical snapshots uncertain for %s",
+  (operator) => {
+    expectGuardedRoot(
+      rootFixture(
+        `module.exports = null; const saved = module.exports;
+      const selected = saved ${operator} {action: () => electron.ipcRenderer.send("rhs")};
+      electron.contextBridge.exposeInMainWorld("desktop", selected);`,
+        false,
+      ),
+      `${operator}=`,
+      "saved",
+    );
+  },
+);
+it.each(["module.exports", "({saved: module.exports}).saved"])(
+  "preserves namespace members through plain logical selection of %s",
+  (target) => {
+    for (const operator of ["||", "??"]) {
+      const result = analyzeJavaScriptStaticSource(
+        rootFixture(
+          `exports.action = () => electron.ipcRenderer.send("left");
+        const selected = ${target} ${operator} {};
+        electron.contextBridge.exposeInMainWorld("desktop", selected);`,
+          false,
+        ),
+      );
+      expect(
+        result.electron.call_paths?.map(({ channel, conditions }) => ({
+          channel,
+          conditions: conditions.map((c) => c.expression),
+        })),
+      ).toEqual([
+        {
+          channel: "left",
+          conditions: [
+            operator === "||"
+              ? target
+              : `(${target}) !== null && (${target}) !== undefined`,
+          ],
+        },
+      ]);
+    }
+  },
+);
+it("preserves later member writes through a saved module exports reference", () => {
+  const result = analyzeJavaScriptStaticSource(
+    rootFixture(
+      `const saved = module.exports;
+    exports.action = () => electron.ipcRenderer.send("later-member");
+    electron.contextBridge.exposeInMainWorld("desktop", saved);`,
+      false,
+    ),
+  );
+  expect(
+    result.electron.call_paths?.map(({ channel, conditions }) => ({
+      channel,
+      conditions,
+    })),
+  ).toEqual([{ channel: "later-member", conditions: [] }]);
+});
+it.each(["||=", "??=", "&&="])(
   "recognizes whole-target wrappers for %s",
   (operator) => {
     for (const target of [

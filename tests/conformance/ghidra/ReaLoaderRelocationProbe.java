@@ -148,6 +148,13 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
         return null;
     }
 
+    private Address pointerValue(Memory memory, Address pointer) throws Exception {
+        long value = currentProgram.getDefaultPointerSize() == 8
+            ? memory.getLong(pointer, memory.isBigEndian())
+            : Integer.toUnsignedLong(memory.getInt(pointer, memory.isBigEndian()));
+        return pointer.getAddressSpace().getAddress(value);
+    }
+
     private static List<FileSnapshot> snapshotFileBytes(List<FileBytes> sources) throws Exception {
         List<FileSnapshot> snapshots = new java.util.ArrayList<>();
         for (FileBytes source : sources)
@@ -214,7 +221,8 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
             currentProgram.getRelocationTable().hasRelocation(pointer));
         if (relocation == null) throw new IllegalStateException("Importer did not create pointer relocation");
 
-        require("relocation_targets_pointer_symbol", pointer.equals(symbolAddress("rea_loader_pointer")));
+        require("relocation_targets_pointer_symbol",
+            pointerValue(memory, pointer).equals(symbolAddress("rea_loader_value")));
         Reference reference = readerReference(reader, pointer);
         require("reader_references_relocation", reference != null);
 

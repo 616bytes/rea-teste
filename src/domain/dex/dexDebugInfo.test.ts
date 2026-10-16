@@ -35,6 +35,7 @@ const ADVANCE_LINE = 0x02;
 const START_LOCAL = 0x03;
 const END_LOCAL = 0x05;
 const SET_FILE = 0x09;
+const ADVANCE_PC = 0x01;
 const EMIT_HERE = 0x0e; // special opcode: line += 0, address += 0, emit a position
 
 /** Assemble a debug_info_item at offset 1 (offset 0 is reserved for "absent"). */
@@ -52,6 +53,8 @@ describe("decodeDebugInfo", () => {
       ...ulebp1(10), // name_idx
       ...ulebp1(11), // type_idx
       EMIT_HERE, // position @ address 0, line 1
+      ADVANCE_PC,
+      ...uleb(2), // the scope covers addresses 0-1
       END_LOCAL,
       ...uleb(1), // register
       END_SEQUENCE,
@@ -68,9 +71,26 @@ describe("decodeDebugInfo", () => {
       typeIdx: 11,
       signatureIdx: -1,
       startAddress: 0,
-      endAddress: 0,
+      endAddress: 2,
       outOfRange: false,
     });
+  });
+
+  it("skips a zero-length scope, as dexdump does", () => {
+    const bytes = stream(
+      ...uleb(1),
+      ...uleb(0),
+      START_LOCAL,
+      ...uleb(1),
+      ...ulebp1(10),
+      ...ulebp1(11),
+      END_LOCAL, // ends at its own start address
+      ...uleb(1),
+      END_SEQUENCE,
+    );
+    const d = decodeDebugInfo(bytes, 1, 10);
+    expect(d.localCount).toBe(0);
+    expect(d.explicitLocalCount).toBe(1);
   });
 
   it("runs an unterminated local scope to insns_size", () => {
@@ -160,7 +180,7 @@ describe("decodeDebugInfo bounds and semantics", () => {
       ...uleb(1),
       ...ulebp1(-1 + 0), // one unnamed parameter (name index NO_INDEX)
       START_LOCAL,
-      ...uleb(0),
+      ...uleb(1), // a register other than the seeded parameter's
       ...ulebp1(10),
       ...ulebp1(11),
       END_SEQUENCE,

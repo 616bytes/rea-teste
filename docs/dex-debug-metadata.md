@@ -64,8 +64,11 @@ insns_size`). R8 shares one debug stream across many methods, so a stream can
 run past a method's code; those rows belong to no instruction of that method and
 are not counted. `dexdump` additionally stops printing at the start of a
 method's last instruction, so on R8 output that ends in a multi-unit
-instruction or a data payload it lists slightly fewer rows (about 0.3% on a real
-release APK); on d8 debug and release builds the counts are equal.
+instruction or a data payload it lists slightly fewer rows (0.2–0.7% on the
+members of a real release APK); on debug builds and d8 output the counts are
+equal. Zero-length local scopes (a register re-declared at the address where its
+scope began, as kotlinc does for generic parameters) cover no instruction and
+are not counted, matching `dexdump`.
 
 ## What the facts do and do not mean
 

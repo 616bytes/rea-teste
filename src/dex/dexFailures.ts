@@ -162,12 +162,8 @@ export const mapDexWorkError = (error: DexWorkError): AnalysisError => {
       return new AnalysisResourceConstraintError(
         OPERATION,
         "cpu",
-        `Decoding the selected DEX debug metadata needs more than ${String(error.limit)} debug opcodes; refused rather than run unbounded.`,
-        { max_debug_opcodes: error.limit },
-        {
-          remediationAction:
-            "Select one member with entry, or one class with class_descriptor.",
-        },
+        `Decoding a DEX member's debug metadata needs more than ${String(error.limit)} work units (proportional to its size); a well-formed DEX never does, so it was refused rather than run unbounded.`,
+        { max_work_units: error.limit },
       );
     case "output-budget-exceeded":
       return new AnalysisResourceConstraintError(

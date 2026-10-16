@@ -17,11 +17,15 @@ export const DEX_LIMITS = {
   /** Cap on root `classes*.dex` members summarized for an archive; refuse past it. */
   maxDexMembers: 64,
   /**
-   * Debug opcodes (and parameter-name reads) decoded per call, across every
-   * method and member. Each opcode is at least one byte, and identical streams
-   * are decoded once, so one maximal `.dex` cannot need more than
-   * `inputBytes`; the bound stops many members or many methods sharing one
-   * stream from multiplying the per-method guard.
+   * Work units (debug opcodes, parameter-name reads, class_data entries walked)
+   * allowed per member, per byte of that member. Every unit of legitimate work
+   * is backed by at least half a byte of the member (each opcode, encoded_field
+   * and encoded_method is at least one byte; class_data is walked twice, and
+   * identical debug streams are decoded once), so a real DEX never exhausts it,
+   * while work stays linear in the bytes actually read rather than multiplied
+   * by classes or methods sharing one structure.
    */
-  maxDebugOpcodes: 64 * 1024 * 1024,
+  workUnitsPerByte: 2,
+  /** Floor for the per-member budget, so a tiny member is not over-constrained. */
+  minWorkUnits: 1024 * 1024,
 } as const;

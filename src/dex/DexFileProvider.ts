@@ -294,19 +294,16 @@ export class DexFileProvider implements DexDebugMetadataPort {
   }
 
   /**
-   * Load, frame and analyse each member in turn under one call-wide work
-   * budget, keeping only its summary or matching class detail before the next
-   * member is read.
+   * Load, frame and analyse each member in turn, each under a work budget
+   * proportional to its own bytes, keeping only its summary or matching class
+   * detail before the next member is read.
    */
   async #analyse(
     sources: readonly MemberSource[],
     input: InspectDexDebugMetadataInput,
     signal: AbortSignal | undefined,
   ): Promise<Result<MemberFindings, AnalysisError>> {
-    const work: DexWork = {
-      budget: dexWorkBudget(DEX_LIMITS.maxDebugOpcodes),
-      cancelled: () => signal?.aborted === true,
-    };
+    const cancelled = (): boolean => signal?.aborted === true;
     const summaries: DexSummaryMember[] = [];
     const found: { entry: string | null; detail: DexClassDetail }[] = [];
     for (const source of sources) {
@@ -314,6 +311,15 @@ export class DexFileProvider implements DexDebugMetadataPort {
       const buffer = await source.load();
       const parsed = parseDexFile(buffer);
       if (!parsed.ok) return err(mapDexParseError(parsed.error, source.label));
+      const work: DexWork = {
+        budget: dexWorkBudget(
+          Math.max(
+            DEX_LIMITS.minWorkUnits,
+            DEX_LIMITS.workUnitsPerByte * buffer.length,
+          ),
+        ),
+        cancelled,
+      };
       if (input.class_descriptor === undefined) {
         const summary = summarizeDex(parsed.value, buffer, work);
         if (!summary.ok) return err(mapDexWorkError(summary.error));

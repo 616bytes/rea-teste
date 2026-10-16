@@ -254,6 +254,9 @@ class DebugInfoWalk {
   }
 
   private pushLocal(register: number, local: LiveLocal, end: number): void {
+    // A zero-length scope (e.g. kotlinc re-declaring a generic parameter at
+    // address 0) covers no instruction; dexdump/ART skip it, and so do we.
+    if (end <= local.startAddress) return;
     this.localCount += 1;
     if (!this.collectLocals) return;
     if (this.locals.length >= this.maxLocals) {

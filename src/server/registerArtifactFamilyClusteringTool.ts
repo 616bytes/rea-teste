@@ -4,6 +4,7 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import { toolContract } from "../contracts/toolContracts.js";
 import {
   clusterArtifactFamilies,
+  withholdArtifactFamilyClusteringIndex,
   type ArtifactFamilyClusteringResult,
 } from "../domain/artifactFamilyClustering.js";
 import {
@@ -130,10 +131,10 @@ export const registerArtifactFamilyClusteringTool = (
                 memberRoster,
               );
               // Measure the complete repeated wire form before anything is
-              // recorded: when it cannot ship, retry once with the member
-              // index withheld so the caller still receives families and
-              // coverage.member_index_withheld instead of a transport error
-              // carrying no clustering result at all.
+              // recorded: when it cannot ship, withhold the member index this
+              // call already computed so the caller still receives families
+              // and coverage.member_index_withheld instead of a transport
+              // error carrying no clustering result at all.
               const shipped = encodeToolResult(
                 evidence,
                 server.delivery.resultBudgetBytes,
@@ -141,11 +142,13 @@ export const registerArtifactFamilyClusteringTool = (
                 contract.returnsTargetContent,
               );
               if (!shipped.ok && !clustering.coverage.member_index_withheld) {
+                // Withholding is a presentation change to a result this call
+                // already computed: re-clustering with a zero index budget
+                // would reparse and revalidate every nested inventory and
+                // rebuild the examined-node map only to discard the rows it
+                // produced, on exactly the largest responses.
                 evidence = buildClusteringEvidence(
-                  clusterArtifactFamilies(members, {
-                    ...clusteringOptions,
-                    indexBudgetBytes: 0,
-                  }),
+                  withholdArtifactFamilyClusteringIndex(clustering),
                   contract,
                   memberRoster,
                   [

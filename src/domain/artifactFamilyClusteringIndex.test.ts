@@ -65,8 +65,11 @@ const member = (label: string, inventory: InventorySet): MemberIndexMember => ({
 it("counts omitted nodes when the node cap withholds the index", () => {
   const directory = artifactNode("art_directory", "directory");
   const nodes = Array.from({ length: MAX_EXAMINED_NODES + 1 }, () => directory);
+  const complete = [member("first", inventorySet({ nodes }))];
   const index = buildMemberIndex({
-    complete: [member("first", inventorySet({ nodes }))],
+    complete,
+    // One settled scope, so the complete set is also what is counted.
+    counted: complete,
     minimum: 2,
     scope: "root",
     budgetBytes: DEFAULT_MEMBER_INDEX_JSON_BYTES,
@@ -83,13 +86,17 @@ it("counts omitted nodes when the node cap withholds the index", () => {
 });
 
 it("counts omitted nodes when no coverage scope settled", () => {
+  const counted = [
+    member(
+      "first",
+      inventorySet({ nodes: [artifactNode("art_directory", "directory")] }),
+    ),
+  ];
   const index = buildMemberIndex({
-    complete: [
-      member(
-        "first",
-        inventorySet({ nodes: [artifactNode("art_directory", "directory")] }),
-      ),
-    ],
+    // No scope settled, so the caller has no row domain at all and still
+    // counts what the complete members it read omitted.
+    complete: [],
+    counted,
     minimum: 1,
     scope: null,
     budgetBytes: DEFAULT_MEMBER_INDEX_JSON_BYTES,
@@ -102,17 +109,19 @@ it("counts omitted nodes when no coverage scope settled", () => {
 
 it("keeps a manifest-declared directory root out of the index while counting it", () => {
   const root = artifactNode("art_root", "file");
-  const index = buildMemberIndex({
-    complete: ["first", "second"].map((label) =>
-      member(
-        label,
-        inventorySet({
-          nodes: [root],
-          rootArtifactId: root.artifact_id,
-          rootFormat: "directory",
-        }),
-      ),
+  const complete = ["first", "second"].map((label) =>
+    member(
+      label,
+      inventorySet({
+        nodes: [root],
+        rootArtifactId: root.artifact_id,
+        rootFormat: "directory",
+      }),
     ),
+  );
+  const index = buildMemberIndex({
+    complete,
+    counted: complete,
     minimum: 2,
     scope: "root",
     budgetBytes: DEFAULT_MEMBER_INDEX_JSON_BYTES,

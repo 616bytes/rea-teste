@@ -8,7 +8,6 @@ import type {
 import { evidenceSchema, type Evidence } from "./evidence.js";
 import {
   declaresCompleteInventory,
-  hasCompleteInventoryCoverage,
   parseArtifactInventoryEvidence,
   type InventorySet,
 } from "./artifactInventoryEvidence.js";
@@ -141,8 +140,13 @@ export const artifactFamilyClusteringResultSchema = z.strictObject({
      * `members_with_unknown_inventory` and keep their own scope in their row.
      */
     members_outside_member_scope: z.number().int().nonnegative(),
-    /** Complete members whose root digest is derived from their graph, not root bytes. */
+    /**
+     * Complete members whose root digest is derived from their graph, not root
+     * bytes. Counted over every complete inventory the call read, whether or
+     * not a scope settled, so an unmeasured count never publishes as zero.
+     */
     members_without_byte_root_digest: z.number().int().nonnegative(),
+    /** Graph nodes in those complete members, whether or not rows were built. */
     nodes_examined: z.number().int().nonnegative(),
     /** Directory nodes, whose identity is graph-derived, left out of the index. */
     nodes_without_byte_identity: z.number().int().nonnegative(),
@@ -394,7 +398,7 @@ const clusteringLimitations = (input: {
     ...(input.withoutByteRootDigest === 0
       ? []
       : [
-          `${input.withoutByteRootDigest} of ${input.memberCount} members have a root digest derived from their inventory graph rather than the root's own bytes; they are indexed but never placed in a root-sha256 family.`,
+          `${input.withoutByteRootDigest} of ${input.memberCount} members have a root digest derived from their inventory graph rather than the root's own bytes; that digest cannot support a byte-identity claim, so none of them is ever placed in a root-sha256 family.`,
         ]),
     ...(input.nodesWithoutByteIdentity === 0
       ? []
@@ -435,12 +439,18 @@ export const clusterArtifactFamilies = (
   const parsed = parseMembers(members);
   const { clustered, scopes, majorityScope } = comparableScope(parsed);
   const placed = clustered.filter((entry) => entry.reason === null);
-  const complete =
-    majorityScope === null
-      ? []
-      : placed.filter((entry) =>
-          hasCompleteInventoryCoverage(entry.inventory, majorityScope),
-        );
+  // Family placement and the member index need one settled scope, and `placed`
+  // is exactly the members that have one: a tie leaves every member unplaced.
+  const complete = placed;
+  // Omissions are a separate axis from scope. Whether a root digest covers the
+  // root's own bytes, and whether a node's identity is graph-derived, are facts
+  // about every complete inventory this call read; counting them over the
+  // settled scope instead publishes exact-looking zeros whenever a tie settles
+  // no scope, so the producer-complete set carries that accounting while family
+  // and index claims stay scope-gated.
+  const counted = parsed.filter((entry) =>
+    declaresCompleteInventory(entry.inventory),
+  );
   const unplaced = clustered
     .filter(
       (entry): entry is MemberInventory & { readonly reason: UnknownReason } =>
@@ -450,11 +460,13 @@ export const clusterArtifactFamilies = (
   // Only a producer digest of the root's own bytes can support a byte-identity
   // claim; the rest stay indexed and counted instead of being called identical.
   const familyEligible = complete.filter(hasByteRootDigest);
-  const withoutByteRootDigest = complete.length - familyEligible.length;
+  const withoutByteRootDigest =
+    counted.length - counted.filter(hasByteRootDigest).length;
   const families = buildFamilies(familyEligible, unplaced);
 
   const index = buildMemberIndex({
     complete,
+    counted,
     minimum,
     scope: majorityScope,
     budgetBytes: indexBudgetBytes,
@@ -527,3 +539,29 @@ export const clusterArtifactFamilies = (
     limitations,
   };
 };
+
+/**
+ * Withhold a computed member index without deriving it again. A caller that
+ * measured this result against its own transport has every family and every
+ * coverage fact it can still ship, and dropping the rows here is the whole
+ * change: re-clustering with a smaller index budget would reparse and revalidate
+ * every nested inventory, recompute its graph commitments and rebuild the
+ * examined-node map only to discard the rows it produced. The index is withheld
+ * as a whole, so the rows and their group counts go together, and the caller
+ * states the reason it measured in `limitations`.
+ */
+export const withholdArtifactFamilyClusteringIndex = (
+  result: ArtifactFamilyClusteringResult,
+): ArtifactFamilyClusteringResult => ({
+  ...result,
+  summary: {
+    ...result.summary,
+    shared_member_groups: 0,
+    partially_shared_member_groups: 0,
+    unique_members: 0,
+  },
+  shared_members: [],
+  partially_shared_members: [],
+  unique_members: [],
+  coverage: { ...result.coverage, member_index_withheld: true },
+});

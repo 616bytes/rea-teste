@@ -76,12 +76,20 @@ const supportsByteIdentity = (
  * rows are reported complete or withheld together.
  */
 export const buildMemberIndex = (input: {
+  /** Members whose rows this index may build: complete and inside a settled scope. */
   readonly complete: readonly MemberIndexMember[];
+  /**
+   * Members whose omissions are counted whether or not rows can be built. A
+   * caller passes the producer-complete set here, which is a superset of
+   * `complete`, so a tie that settles no scope or an exhausted node budget
+   * still measures what this call examined instead of reporting zero.
+   */
+  readonly counted: readonly MemberIndexMember[];
   readonly minimum: number;
   readonly scope: ArtifactInventoryCoverage["scope"] | null;
   readonly budgetBytes: number;
 }): MemberIndex => {
-  const nodesExamined = input.complete.reduce(
+  const nodesExamined = input.counted.reduce(
     (total, entry) => total + entry.inventory.nodes.length,
     0,
   );
@@ -98,7 +106,7 @@ export const buildMemberIndex = (input: {
   // count must never publish as an exact zero when the node cap fires or no
   // scope is settled.
   let nodesWithoutByteIdentity = 0;
-  for (const entry of input.complete)
+  for (const entry of input.counted)
     for (const node of entry.inventory.nodes)
       if (!supportsByteIdentity(node, entry.inventory))
         nodesWithoutByteIdentity += 1;

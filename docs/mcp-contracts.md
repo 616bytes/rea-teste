@@ -66,20 +66,24 @@ budget is a third of the response budget less the envelope headroom, because
 delivery repeats the result as structured content and as an escaped text copy
 that escaping can push past the structured copy; after the Evidence is built
 the complete repeated form is measured against the response budget, and an
-index whose call cannot ship is re-clustered behind `coverage.member_index_withheld`
-instead of becoming a delivery error with no clustering result.
+index whose call cannot ship is withheld behind `coverage.member_index_withheld`
+instead of becoming a delivery error with no clustering result: the families and
+coverage the call already computed still ship, no inventory is parsed a second
+time to drop rows, and the measured reason appears in `limitations`.
 A family asserts byte identity at the inspected root, so it needs a producer
 digest of that root's own bytes. A root whose digest is derived from its
 inventory graph instead (a directory root, whose digest covers member names and
 child identities, with unread entries such as symlink targets uncommitted) is
 compared and counted but excluded from the member index, and never placed in a
 family;
-`coverage.members_without_byte_root_digest` reports how many, and the reason
+`coverage.members_without_byte_root_digest` reports how many, counted over every
+complete inventory the call read whether or not a scope settled, and the reason
 appears in `limitations`. Both producer facts are required: a `manifest.root_format`
 that disagrees with the root node's own format stays unresolved rather than
 aligned. Directory nodes are likewise left out of the member
 index because their identity is graph-derived;
-`coverage.nodes_without_byte_identity` counts them. Each index row carries
+`coverage.nodes_without_byte_identity` counts them on the same complete-member set,
+so a tie that settles no scope reports the omissions instead of zeros. Each index row carries
 `observations` of `{ label, evidence_id }` and a `member_count` counted per
 member, so repeated caller labels never merge two members and a row keeps its
 source Evidence even when no family row exists. Its `formats` array lists every

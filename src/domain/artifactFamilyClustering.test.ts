@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   artifactFamilyClusteringResultSchema,
   clusterArtifactFamilies,
+  withholdArtifactFamilyClusteringIndex,
 } from "./artifactFamilyClustering.js";
 import {
   artifactEdgeId,
@@ -570,6 +571,38 @@ describe("clusterArtifactFamilies coverage and paging", () => {
     expect(result.summary.members_outside_member_scope).toBe(2);
   });
 
+  it("counts producer omissions when a tie settles no scope", () => {
+    const result = cluster([
+      member("alpha", { rootSha: sha("a"), rootFormat: "directory" }),
+      member("beta", {
+        rootSha: sha("a"),
+        rootFormat: "directory",
+        coverageScope: "container-entries",
+      }),
+    ]);
+
+    // Nothing is clustered here either, but a graph-derived root digest is a
+    // producer fact about an inventory this call read: it is counted and stated
+    // rather than published as an exact zero or dropped with the
+    // scope-dependent claims.
+    expect(result.coverage.member_scope).toBeNull();
+    expect(result.status).toBe("unknown");
+    expect(result.summary.members_without_byte_root_digest).toBe(2);
+    expect(result.coverage.members_without_byte_root_digest).toBe(2);
+    expect(result.coverage.nodes_examined).toBe(2);
+    expect(result.coverage.nodes_without_byte_identity).toBe(2);
+    expect(
+      result.limitations.some((item) =>
+        item.includes("derived from their inventory graph"),
+      ),
+    ).toBe(true);
+    expect(
+      result.limitations.some((item) =>
+        item.includes("excluded from the member index"),
+      ),
+    ).toBe(true);
+  });
+
   it("clusters the strict majority scope and leaves the minority unplaced", () => {
     const result = cluster([
       member("alpha", { rootSha: sha("a") }),
@@ -679,5 +712,42 @@ describe("clusterArtifactFamilies coverage and paging", () => {
         observations.map(({ label }) => label),
       ),
     ).toEqual([["alpha"], ["beta"]]);
+  });
+});
+
+describe("withholdArtifactFamilyClusteringIndex", () => {
+  it("drops the member index and keeps what the call already measured", () => {
+    const result = cluster([
+      member("alpha", { rootSha: sha("a") }),
+      member("beta", { rootSha: sha("a") }),
+    ]);
+    const withheld = withholdArtifactFamilyClusteringIndex(result);
+
+    // The rows and their group counts go together, as they do when a budget
+    // withholds the index, and the flag states which representation shipped.
+    expect(withheld.coverage.member_index_withheld).toBe(true);
+    expect(withheld.shared_members).toHaveLength(0);
+    expect(withheld.partially_shared_members).toHaveLength(0);
+    expect(withheld.unique_members).toHaveLength(0);
+    expect(withheld.summary.shared_member_groups).toBe(0);
+    expect(withheld.summary.partially_shared_member_groups).toBe(0);
+    expect(withheld.summary.unique_members).toBe(0);
+    // Everything this call already measured still ships, so a caller that
+    // measured its own transport loses only the rows.
+    expect(withheld.families).toEqual(result.families);
+    expect(withheld.summary.families).toBe(result.summary.families);
+    expect(withheld.summary.families_returned).toBe(
+      result.summary.families_returned,
+    );
+    expect(withheld.coverage.nodes_examined).toBe(
+      result.coverage.nodes_examined,
+    );
+    expect(withheld.coverage.members_without_byte_root_digest).toBe(
+      result.coverage.members_without_byte_root_digest,
+    );
+    expect(withheld.limitations).toEqual(result.limitations);
+    expect(artifactFamilyClusteringResultSchema.parse(withheld)).toEqual(
+      withheld,
+    );
   });
 });

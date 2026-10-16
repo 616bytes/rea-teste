@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { crc32 } from "node:zlib";
 
 import {
   TextReader,
@@ -208,6 +209,59 @@ describe("ZipArtifactReader cancellation", () => {
     } finally {
       await reader.close();
     }
+  });
+});
+
+/** Info-ZIP Unicode Path extra field (0x7075) naming `unicode` for `raw`. */
+const unicodePathField = (raw: string, unicode: string): Uint8Array => {
+  const name = Buffer.from(unicode, "utf8");
+  const field = Buffer.alloc(5 + name.length);
+  field.writeUInt8(1, 0);
+  field.writeUInt32LE(crc32(Buffer.from(raw, "latin1")), 1);
+  name.copy(field, 5);
+  return field;
+};
+
+const listEntries = async (path: string) => {
+  const reader = new ZipArtifactReader(path, "zip");
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    return entries;
+  } finally {
+    await reader.close();
+  }
+};
+
+describe("ZipArtifactReader member names", () => {
+  it("keeps the raw central-directory name as storedPath when a Unicode Path field renames the member", async () => {
+    const directory = await createTestTempDirectory("rea-zip-unicode-path-");
+    const path = join(directory, "unicode-path.zip");
+    const writer = new ZipWriter(new Uint8ArrayWriter(), {
+      useUnicodeFileNames: false,
+    });
+    await writer.add("META-INF/MANIFEST.MF", new TextReader("stored"), {
+      extraField: new Map([
+        [0x7075, unicodePathField("META-INF/MANIFEST.MF", "META-INF/OTHER.MF")],
+      ]),
+    });
+    await writer.add("./plain.txt", new TextReader("plain"));
+    await writeFile(path, await writer.close());
+
+    const [renamed, prefixed] = await listEntries(path);
+    // The logical path follows the Unicode Path name; a runtime that looks the
+    // member up by its stored name (the JDK) still finds the manifest.
+    expect(renamed).toMatchObject({
+      path: "META-INF/OTHER.MF",
+      storedPath: "META-INF/MANIFEST.MF",
+    });
+    expect(renamed?.limitations.join("\n")).toContain(
+      'stored name "META-INF/MANIFEST.MF" differs from its Info-ZIP Unicode Path extra field name "META-INF/OTHER.MF"',
+    );
+    expect(prefixed).toMatchObject({
+      path: "plain.txt",
+      storedPath: "./plain.txt",
+    });
   });
 });
 

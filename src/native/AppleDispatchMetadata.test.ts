@@ -502,6 +502,70 @@ describe("malformed Objective-C property records", () => {
 });
 
 describe("malformed Apple dispatch metadata", () => {
+  it.each(["", "second"])(
+    "retains valid facts when the second ivar name is %j",
+    (secondName) => {
+      const bytes = partialSiblingsFixture();
+      bytes.writeBigUInt64LE(base + 0x700n, 0x570);
+      bytes.writeUInt32LE(32, 0x700);
+      bytes.writeUInt32LE(2, 0x704);
+      for (const [entry, name, offset] of [
+        [0x708, 0x800, 0x850],
+        [0x728, 0x820, 0x854],
+      ] as const) {
+        bytes.writeBigUInt64LE(base + BigInt(offset), entry);
+        bytes.writeBigUInt64LE(base + BigInt(name), entry + 8);
+        bytes.writeBigUInt64LE(base + 0x840n, entry + 16);
+        bytes.writeUInt32LE(2, entry + 24);
+        bytes.writeUInt32LE(4, entry + 28);
+      }
+      bytes.write("first\0", 0x800);
+      bytes.write(`${secondName}\0`, 0x820);
+      bytes.write("i\0", 0x840);
+      bytes.writeUInt32LE(8, 0x850);
+      bytes.writeUInt32LE(12, 0x854);
+
+      const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+      const empty = secondName.length === 0;
+      expect(result.objc_classes.map(({ name }) => name)).toEqual(
+        empty
+          ? ["KeptClass", "LaterClass"]
+          : ["KeptClass", "OtherClass", "LaterClass"],
+      );
+      expect(result.objc_ivars.map(({ name }) => name)).toEqual(
+        empty ? ["first"] : ["first", "second"],
+      );
+      expect(result.objc_ivars[0]).toMatchObject({
+        class_name: "OtherClass",
+        name: "first",
+        type_encoding: "i",
+        offset: 8,
+        size: 4,
+        alignment: 4,
+        location: { address: "0x100000708", file_offset: 0x708 },
+        decode: { status: "decoded", reason: null },
+        evidence: [
+          {
+            artifact_path: provenance.path,
+            artifact_sha256: provenance.sha256,
+          },
+        ],
+      });
+      expect(
+        result.coverage.find(
+          ({ facet }) => facet === "objc_class_method_ivar_metadata",
+        ),
+      ).toMatchObject({
+        status: empty ? "partial" : "complete",
+        examined: 3,
+        decoded: empty ? 2 : 3,
+        reason: empty
+          ? "0x100000208: Objective-C ivar at 0x100000728 has an empty name"
+          : null,
+      });
+    },
+  );
+
   it("retains valid class siblings when one class has an empty name", () => {
     const result = decodeAppleDispatchMetadata(
       partialSiblingsFixture({ emptyMiddleClass: true }),

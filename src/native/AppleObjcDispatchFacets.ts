@@ -283,6 +283,11 @@ export const decodeObjcDispatchFacets = (input: {
       for (let index = 0; index < count; index++) {
         if (!budget.admit()) break;
         const entry = ivarList + 8n + BigInt(index * stride);
+        const ivarName = read.string(read.pointer(entry + 8n));
+        if (ivarName.length === 0)
+          throw new TypeError(
+            `Objective-C ivar at ${hex(entry)} has an empty name`,
+          );
         const encodedOffset = read.pointer(entry);
         let value: number | null = null;
         try {
@@ -295,7 +300,7 @@ export const decodeObjcDispatchFacets = (input: {
         const alignment = read.u32(entry + 24n);
         result.objc_ivars.push({
           class_name: name,
-          name: read.string(read.pointer(entry + 8n)),
+          name: ivarName,
           type_encoding: read.string(read.pointer(entry + 16n)),
           offset: value,
           size: read.u32(entry + 28n),

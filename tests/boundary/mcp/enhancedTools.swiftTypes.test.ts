@@ -199,8 +199,17 @@ describe("Unresolved Swift contexts through MCP", () => {
       reason: "category_not_decoded",
     }));
     const client = await connect({
-      execute: async (operation) =>
-        ok(operation === "list_procedures" ? procedures : []),
+      execute: async (operation) => {
+        if (operation === "list_procedures") return ok(procedures);
+        if (operation === "list_names") return ok([]);
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            "fixture",
+            operation,
+            "unmodeled operation",
+          ),
+        );
+      },
     });
     for (const category of [undefined, "structs"] as const) {
       const result = await client.callTool({
@@ -235,12 +244,19 @@ describe("Unresolved Swift contexts through MCP", () => {
       const names = ["_$s1M7ServiceCMa", "_$s1M7WrapperVAASQRzlE4sameySbxF"];
       if (reversed) names.reverse();
       const client = await connect({
-        execute: async (operation) =>
-          ok(
-            operation === "list_procedures"
-              ? [{ address: "0x1", value: "provider::shared" }]
-              : names.map((value) => ({ address: "0x1", value })),
-          ),
+        execute: async (operation) => {
+          if (operation === "list_procedures")
+            return ok([{ address: "0x1", value: "provider::shared" }]);
+          if (operation === "list_names")
+            return ok(names.map((value) => ({ address: "0x1", value })));
+          return err(
+            new AnalysisCapabilityUnavailableError(
+              "fixture",
+              operation,
+              "unmodeled operation",
+            ),
+          );
+        },
       });
       const result = await client.callTool({
         name: "analyze_swift_types",
@@ -266,4 +282,65 @@ describe("Unresolved Swift contexts through MCP", () => {
       });
     },
   );
+});
+
+describe("Same-module Swift protocol witnesses through MCP", () => {
+  it.each([
+    // Reported Scorer witness; remaining names are grammar-derived controls.
+    ["_$s4main6ScorerVAA7ScoringA2aDP5scoreyS2iFTW", "structs"],
+    ["_$s4main6ScorerCAA7ScoringA2aDP5scoreyS2iFTW", "classes"],
+    ["_$s4main6ScorerOAA7ScoringA2aDP5scoreyS2iFTW", "enums"],
+    ["_$s4main5OuterV6ScorerVAA7ScoringA2aFP5scoreyS2iFTW", "structs"],
+    ["_$s4main6ScorerVAA7ScoringAaaDP5scoreyS2iFTW", "structs"],
+    ["_$s4main6ScorerVAA7ScoringAAAAADP5scoreyS2iFTW", "structs"],
+    ["_$s4main6ScorerVAA7ScoringA2aDP4ETWWyS2iFTW", "structs"],
+    [
+      `_$s4main${"ABCDEFGHIJKLM"
+        .split("")
+        .map((name) => `1${name}V`)
+        .join("")}AA7ScoringA2a0_P5scoreyS2iFTW`,
+      "structs",
+    ],
+    // Unknown identities and malformed context/member/envelope boundaries.
+    ["_$s4main6ScorerVAA7ScoringA2aEP5scoreyS2iFTW", "other"],
+    ["_$s4main6ScorerVAA7ScoringA2a_P5scoreyS2iFTW", "other"],
+    ["_$s4main6ScorerVAA7ScoringA2a0_P5scoreyS2iFTW", "other"],
+    ["_$s4main5OuterV6ScorerVAA7ScoringA2aDP5scoreyS2iFTW", "other"],
+    ["_$s4main6ScorerVAA7ScoringA999999999999aDP5scoreyS2iFTW", "other"],
+    ["_$s4main6ScorerVAA7ScoringA2adP5scoreyS2iFTW", "other"],
+    ["_$s4main6ScorerVAA7ScoringA2aDE5scoreyS2iFTW", "other"],
+    ["_$s4main6ScorerVAA7ScoringA2aDP99scoreyS2iFTW", "other"],
+    ["_$s4main6ScorerVAA7ScoringA2aDP5scoreFTW", "other"],
+    ["_$s4main6ScorerVAA7ScoringA2aDP5scoreyS2iFTWjunk", "other"],
+    ["_$s4main6ScorerVAA7ScoringA2aDP5scoreyS2iF", "other"],
+  ] as const)("classifies %s as %s", async (name, category) => {
+    const client = await connect({
+      execute: async (operation) => {
+        if (operation === "list_procedures")
+          return ok([{ address: "0x1", value: name }]);
+        if (operation === "list_names") return ok([]);
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            "fixture",
+            operation,
+            "unmodeled operation",
+          ),
+        );
+      },
+    });
+    const result = await client.callTool({
+      name: "analyze_swift_types",
+      arguments: {},
+    });
+    expect(result.isError).not.toBe(true);
+    const item = { address: "0x1", name, mangled_names: [name] };
+    expect(jsonResult(result)).toMatchObject({
+      total: 1,
+      categories: { [category]: { count: 1, items: [item] } },
+      unclassified:
+        category === "other"
+          ? [{ ...item, reason: "category_not_decoded" }]
+          : [],
+    });
+  });
 });

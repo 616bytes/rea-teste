@@ -36,14 +36,19 @@ export const classifySwiftSymbol = (
   let offset = identifierEnd(mangling, 0);
   if (offset === undefined) return { category: null };
   let category: SwiftTypeCategory | null = null;
+  // Swift registers each literal identifier and each constructed nominal type.
+  let substitutionCount = 1;
   for (;;) {
     const end = identifierEnd(mangling, offset);
     if (end === undefined) {
-      // The literal module is the first substitution (`AA`). Reusing it here
-      // can continue an extension context with an undecoded generic signature.
-      // Do not keep the nominal category or guess from a later `E`. Other
-      // substitutions may be constructor result types, not declaration contexts.
-      if (mangling.startsWith("AA", offset)) category = null;
+      // `AA` can introduce an extension module or a protocol's module. Keep
+      // the nominal only for a decoded witness context; other continuations
+      // remain unknown. Other substitutions may be constructor result types.
+      if (
+        mangling.startsWith("AA", offset) &&
+        !isSameModuleWitness(mangling, offset, substitutionCount)
+      )
+        category = null;
       break;
     }
     const kind = mangling.charAt(end);
@@ -57,9 +62,71 @@ export const classifySwiftSymbol = (
       break;
     }
     category = nominal;
+    substitutionCount += 2;
     offset = end + 1;
   }
   return { category };
+};
+
+/** Decode a same-module conformance and its literal protocol requirement. */
+const isSameModuleWitness = (
+  mangling: string,
+  offset: number,
+  protocolNameIndex: number,
+): boolean => {
+  const protocolEnd = identifierEnd(mangling, offset + 2);
+  if (protocolEnd === undefined) return false;
+  // After the literal protocol name: conformance module, requirement module,
+  // then the same protocol name. Grouped/repeated substitutions must resolve
+  // to those identities, including when the conforming type is nested.
+  const contextEnd = substitutionSequenceEnd(mangling, protocolEnd, [
+    0,
+    0,
+    protocolNameIndex,
+  ]);
+  if (contextEnd === undefined || mangling.charAt(contextEnd) !== "P")
+    return false;
+  const memberEnd = identifierEnd(mangling, contextEnd + 1);
+  // Like literal nominal members, function signatures are opaque here. Decode
+  // the context and exact function-witness envelope, not arbitrary suffix text.
+  return (
+    memberEnd !== undefined &&
+    memberEnd < mangling.length - 3 &&
+    mangling.endsWith("FTW")
+  );
+};
+
+/** Consume only the expected substitution references, without expanding runs. */
+const substitutionSequenceEnd = (
+  mangling: string,
+  offset: number,
+  expected: readonly number[],
+): number | undefined => {
+  let matched = 0;
+  while (matched < expected.length) {
+    if (mangling.charAt(offset++) !== "A") return undefined;
+    for (;;) {
+      const token = /^(?:([1-9][0-9]*)?([a-zA-Z])|([0-9]+)?_)/u.exec(
+        mangling.slice(offset),
+      );
+      if (token === null) return undefined;
+      const letter = token[2];
+      const index =
+        letter === undefined
+          ? token[3] === undefined
+            ? 26
+            : Number(token[3]) + 27
+          : letter.toUpperCase().charCodeAt(0) - 65;
+      const repeat = letter === undefined ? 1 : Number(token[1] ?? 1);
+      if (repeat > expected.length - matched) return undefined;
+      for (let count = 0; count < repeat; count++) {
+        if (expected[matched++] !== index) return undefined;
+      }
+      offset += token[0].length;
+      if (letter === undefined || letter === letter.toUpperCase()) break;
+    }
+  }
+  return offset;
 };
 
 /**

@@ -72,6 +72,10 @@ let child;
 let probe;
 let stagedHookHashes;
 let engine;
+const processOutput = {
+  stdout: { observed_bytes: 0, tail: "" },
+  stderr: { observed_bytes: 0, tail: "" },
+};
 const controller = new AbortController();
 const deadline = setTimeout(
   () => controller.abort(new Error("Verifier deadline")),
@@ -90,8 +94,24 @@ const launch = async (options) => {
     runtime,
     options.args[index + 1],
   );
-  application = await _electron.launch(options);
+  let launchOptions = options;
+  if (values["inspector-hook-transport"]) {
+    // A packaged executable already chooses its bundled app. Remove only the
+    // provider's exact require pair and redundant app argument for this adapter.
+    assert.equal(options.args[index + 2], resolve(values.application));
+    const args = [...options.args];
+    args.splice(index, 3);
+    launchOptions = { ...options, args };
+  }
+  application = await _electron.launch(launchOptions);
   child = application.process();
+  for (const name of ["stdout", "stderr"]) {
+    child[name]?.on("data", (chunk) => {
+      const output = processOutput[name];
+      output.observed_bytes += chunk.length;
+      output.tail = (output.tail + chunk.toString()).slice(-8_192);
+    });
+  }
   engine = await application.evaluate(({ app }) => ({
     node: process.versions.node,
     electron: process.versions.electron,
@@ -238,6 +258,7 @@ try {
       runtime,
       staged_hook_sha256: stagedHookHashes,
       engine,
+      process_output_prefix_tails: processOutput,
       settings,
       elapsed_ms: performance.now() - started,
       launch_transport: values["inspector-hook-transport"]

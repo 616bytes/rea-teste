@@ -8,12 +8,21 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
 
 const execute = promisify(execFile);
 const MARKER = "REA_TEST_RESOLVED ";
 // Dependencies and composition modules used by one command family; startup
 // must not resolve them just to register the complete command catalog.
 const DEFERRED_IMPORTS = [
+  {
+    name: "managed-provider",
+    path: "/dist/dotnet/ManagedStaticProvider.js",
+  },
+  {
+    name: "managed-member-inspector",
+    path: "/dist/dotnet/ManagedMemberInspector.js",
+  },
   {
     name: "direct-analysis",
     path: "/dist/application/DirectAnalysis.js",
@@ -122,11 +131,12 @@ const imports = ${JSON.stringify(DEFERRED_IMPORTS)};
 registerHooks({
   resolve(specifier, context, next) {
     const resolved = next(specifier, context);
-    const name = imports.find((item) =>
-      resolved.url.includes(item.path) ||
-      (item.path.startsWith("/dist/") && item.path.endsWith(".js") &&
-       resolved.url.includes("/dist/cli-runtime/" + item.path.slice(6, -3).split("/").join("__") + "-")),
-    );
+    const name = imports.find((item) => {
+      if (resolved.url.includes(item.path)) return true;
+      if (!item.path.startsWith("/dist/") || !item.path.endsWith(".js")) return false;
+      return resolved.url.includes("/dist/cli-runtime/" + item.path.slice(6, -3).split("/").join("__") + "-") ||
+        resolved.url.includes("/dist/mcp/" + item.path.split("/").at(-1).slice(0, -3) + "-");
+    });
     if (name !== undefined)
       process.stderr.write(${JSON.stringify(MARKER)} + name.name + "\\n");
     return resolved;
@@ -236,6 +246,11 @@ describe("CLI startup imports", () => {
 
 describe("MCP startup imports", () => {
   it("does not load command-specific dependencies to initialize and list tools", async () => {
+    const path = join(
+      await createTestTempDirectory("rea-mcp-managed-startup-"),
+      "fixture.dll",
+    );
+    await writeFile(path, buildManagedPeFixture());
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [`--import=${RESOLUTION_HOOK}`, "scripts/rea.mjs", "mcp"],
@@ -254,11 +269,19 @@ describe("MCP startup imports", () => {
       expect(tools.map((tool) => tool.name)).toContain(
         "capture_browser_scenario",
       );
+      expect(resolvedMarkers(stderr)).not.toContain("managed-provider");
+      expect(resolvedMarkers(stderr)).not.toContain("managed-member-inspector");
+      const result = await client.callTool({
+        name: "inspect_managed_artifact",
+        arguments: { path },
+      });
+      expect(result.isError).not.toBe(true);
     } finally {
       await client.close();
     }
     const resolved = resolvedMarkers(stderr);
     expect(resolved).not.toContain("playwright-core");
     expect(resolved).not.toContain("isomorphic-git");
+    expect(resolved).toContain("managed-provider");
   });
 });

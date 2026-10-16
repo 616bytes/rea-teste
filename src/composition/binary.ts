@@ -10,7 +10,6 @@ import { auxiliaryAnalysisProviderDeclarations } from "./auxiliaryAnalysisProvid
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
 import { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
-import { ManagedStaticProvider } from "../dotnet/ManagedStaticProvider.js";
 
 /**
  * Compose the target-switching runtime shared directly by CLI and MCP adapters.
@@ -39,10 +38,13 @@ export const createBinarySession = (
 };
 
 /** Compose an execution-free managed session without native provider selection. */
-export const createManagedBinarySession = (): BinarySession =>
-  composeBinarySession(new AnalysisProviderRegistry([]), [
+export const createManagedBinarySession = async (): Promise<BinarySession> => {
+  const { ManagedStaticProvider } =
+    await import("../dotnet/ManagedStaticProvider.js");
+  return composeBinarySession(new AnalysisProviderRegistry([]), [
     new ManagedStaticProvider(),
   ]);
+};
 
 /** Compose the artifact operations without candidates for deep analysis engines. */
 export const createArtifactBinarySession = (

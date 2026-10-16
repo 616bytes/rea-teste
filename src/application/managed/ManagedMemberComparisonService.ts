@@ -18,7 +18,6 @@ import {
   parseBinaryTarget,
 } from "../BinaryTargetResolver.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { inspectManagedMembersBytes } from "../../dotnet/ManagedMemberInspector.js";
 import { readManagedSnapshot } from "../../dotnet/ManagedSnapshot.js";
 import {
   MANAGED_STATIC_PROVIDER,
@@ -71,6 +70,8 @@ export const compareManagedMemberPaths = async (
     // with the failed path and constraint, rather than a bare input error.
     if (!leftTarget.ok) return err(leftTarget.error);
     if (!rightTarget.ok) return err(rightTarget.error);
+    const { inspectManagedMembersBytes } =
+      await import("../../dotnet/ManagedMemberInspector.js");
     const inspectTarget = async (
       target: BinaryTarget,
       selectedPath: string,

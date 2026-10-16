@@ -49,7 +49,7 @@ it("keeps shutdown output stable while logging the rejected cause at debug level
     closeAndroid: async () => {
       androidClosed = true;
     },
-    session: createManagedBinarySession(),
+    session: await createManagedBinarySession(),
     dependencies,
     serverLogger: logger,
   });

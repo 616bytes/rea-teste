@@ -73,7 +73,7 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         return root;
       },
     );
-    const session = createManagedBinarySession();
+    const session = await createManagedBinarySession();
     const server = createServer(
       { kind: "session", session },
       { sqliteDatabase: new SqliteDatabaseService(provider) },
@@ -158,7 +158,7 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         };
       },
     );
-    const session = createManagedBinarySession();
+    const session = await createManagedBinarySession();
     const server = createServer(
       { kind: "session", session },
       { sqliteDatabase: new SqliteDatabaseService(provider) },
@@ -239,7 +239,7 @@ it.each(["handle", "stdin"] as const)(
     const stdin = new PassThrough();
     const stdout = new PassThrough();
     const logger = pino({ enabled: false });
-    const session = createManagedBinarySession();
+    const session = await createManagedBinarySession();
     const started = await startMcpTransport(
       {
         env: {},

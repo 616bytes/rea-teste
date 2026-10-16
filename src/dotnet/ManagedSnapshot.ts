@@ -87,18 +87,21 @@ export const hashManagedSource = async (
         throw managedSnapshotCapacityError(operation);
       const digest = createHash("sha256");
       let byteLength = 0;
-      const stream = handle.createReadStream({
-        autoClose: false,
-        ...(signal === undefined ? {} : { signal }),
-      });
-      for await (const chunk of stream) {
+      const chunk = Buffer.allocUnsafe(64 * 1024);
+      for (;;) {
         signal?.throwIfAborted();
-        if (!Buffer.isBuffer(chunk))
-          throw new TypeError("Managed source stream returned non-buffer data");
-        if (chunk.length > MAX_MANAGED_SNAPSHOT_BYTES - byteLength)
+        const { bytesRead } = await handle.read(
+          chunk,
+          0,
+          Math.min(chunk.length, MAX_MANAGED_SNAPSHOT_BYTES - byteLength + 1),
+          null,
+        );
+        signal?.throwIfAborted();
+        if (bytesRead === 0) break;
+        if (bytesRead > MAX_MANAGED_SNAPSHOT_BYTES - byteLength)
           throw managedSnapshotCapacityError(operation);
-        byteLength += chunk.length;
-        digest.update(chunk);
+        byteLength += bytesRead;
+        digest.update(chunk.subarray(0, bytesRead));
       }
       return { byteLength, sha256: digest.digest("hex") };
     },

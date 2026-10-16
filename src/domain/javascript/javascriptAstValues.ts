@@ -96,6 +96,7 @@ export const semanticStaticPropertyKey = (
     return String(property.value);
   if (t.isNullLiteral(property)) return "null";
   if (t.isBigIntLiteral(property)) return String(property.value);
+  if (t.isUnaryExpression(property, { operator: "void" })) return "undefined";
   if (t.isUnaryExpression(property, { operator: "-" })) {
     const argument = unwrapJavaScriptExpression(property.argument).node;
     if (t.isNumericLiteral(argument)) return String(-argument.value);
@@ -132,7 +133,15 @@ export const staticObjectProperty = (
   if (!t.isObjectExpression(object)) return { status: "dynamic" };
   for (const property of object.properties.toReversed()) {
     if (t.isSpreadElement(property)) {
-      if (isNullish?.(property.argument) === true) continue;
+      const spread = unwrapJavaScriptExpression(property.argument).node;
+      // These primitive boxes have no own keys; strings can own index keys.
+      if (
+        t.isBooleanLiteral(spread) ||
+        t.isNumericLiteral(spread) ||
+        t.isBigIntLiteral(spread) ||
+        isNullish?.(property.argument) === true
+      )
+        continue;
       return { status: "dynamic" };
     }
     const key = semanticStaticPropertyKey(property.key, property.computed);

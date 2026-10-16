@@ -47,6 +47,18 @@ const cases = [
     0,
   ],
   [
+    'spawn("void-key", [], {stdio:"inherit",[void effect()]:1})',
+    "void-key",
+    "inherit",
+    0,
+  ],
+  [
+    'spawn("primitive-spreads", [], {stdio:"inherit",...false,...42,...1n})',
+    "primitive-spreads",
+    "inherit",
+    0,
+  ],
+  [
     'spawn("getter", [], {stdio:"inherit",get stdio(){return input}})',
     "getter",
     "dynamic",
@@ -156,6 +168,14 @@ const importEqualsSource = `
   cp.exec("import-equals-callback",done);
 `;
 
+const exportAssignmentSource = `
+  const {spawn,execFile}=require("node:child_process");
+  const argv=[]; spawn("export-assignment-argv",argv,{stdio:"inherit"});
+  var args=[]; {function args(){}}
+  execFile("export-assignment-annex",args,{stdio:"inherit"});
+  export = argv;
+`;
+
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "preserves effective stdio, overloads and explicit unknowns through %s",
   async (surface, { cli }) => {
@@ -197,6 +217,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       `,
       "annex-b.cjs": annexBSource,
       "import-equals.ts": importEqualsSource,
+      "export-assignment.ts": exportAssignmentSource,
       "parameters.cjs": `
         const {exec}=require("node:child_process");
         function mapped(cb){cb=()=>{};arguments[0]={stdio:'inherit'};exec("mapped-callback",cb)}
@@ -225,6 +246,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     expected.set("cjs-hoisted-callback", ["default", null]);
     expected.set("import-equals-argv", ["inherit", null]);
     expected.set("import-equals-callback", ["default", null]);
+    expected.set("export-assignment-argv", ["inherit", null]);
     for (const [command, count] of [
       ["Function-global", 0],
       ["frames-global", 0],
@@ -238,6 +260,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       ["cjs-wrapper-callback", null],
       ["annex-b-argv", null],
       ["annex-b-local", null],
+      ["export-assignment-annex", null],
     ] as const)
       expected.set(command, ["dynamic", count]);
     const children = graph.nodes.filter(

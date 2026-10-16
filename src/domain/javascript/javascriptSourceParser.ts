@@ -61,11 +61,15 @@ const parseWithRuntimeContext = (
       ? /\.d\.cts$/iu.test(sourcePath ?? "")
         ? "unknown"
         : "commonjs"
-      : isExplicitModuleSourcePath(sourcePath) ||
-          (file.program.sourceType === "module" &&
-            hasRuntimeModuleDeclaration(file.program))
+      : isExplicitModuleSourcePath(sourcePath)
         ? "module"
-        : "unknown",
+        : file.program.body.some((node) => t.isTSExportAssignment(node))
+          ? // CommonJS isolation does not establish strict ESM semantics.
+            "commonjs"
+          : file.program.sourceType === "module" &&
+              hasRuntimeModuleDeclaration(file.program)
+            ? "module"
+            : "unknown",
   );
   return file;
 };

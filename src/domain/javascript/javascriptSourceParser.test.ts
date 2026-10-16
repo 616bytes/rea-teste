@@ -15,6 +15,7 @@ it.each([
   ['import type {T} from "example";', "fixture.ts", "unknown"],
   ['import cp = require("node:child_process");', "fixture.ts", "module"],
   ['import type cp = require("node:child_process");', "fixture.ts", "unknown"],
+  ["const value=[]; export = value;", "fixture.ts", "commonjs"],
   ['export type {T} from "example";', "fixture.ts", "unknown"],
   ['import {type T} from "example";', "fixture.ts", "unknown"],
   ['export {type T} from "example";', "fixture.ts", "unknown"],

@@ -750,3 +750,15 @@ it("keeps named spreads unknown without proving nullish aliases", () => {
     root.p={url:"/changed"};httpLink({url:"/safe",...p});`),
   ).toEqual([]);
 });
+
+it("skips propertyless literal spreads while retaining string and unknown spreads", () => {
+  expect(
+    rpcEndpoints(`
+      httpLink({url:"/primitives",...false,...42,...1n,[void effect()]:0});
+      httpLink({url:"/string",..."ab"});
+      httpLink({url:"/unknown",...options});
+    `),
+  ).toEqual([
+    { kind: "network", value: "/primitives", mechanism: "trpc:link:httpLink" },
+  ]);
+});

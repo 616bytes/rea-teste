@@ -263,6 +263,50 @@ describe("ZipArtifactReader member names", () => {
       storedPath: "./plain.txt",
     });
   });
+
+  it("classifies a directory only by a trailing slash and reads attribute-marked members as files", async () => {
+    const directory = await createTestTempDirectory("rea-zip-dir-attributes-");
+    const path = join(directory, "dir-attributes.zip");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    // Unix mode 040755 and the MS-DOS directory bit (host 0) on names without
+    // a trailing "/": the JDK and Python's zipfile read both as files.
+    await writer.add("unix-mode", new TextReader("unix bytes"), {
+      externalFileAttributes: 0o040755 * 0x10000,
+    });
+    await writer.add("msdos-attribute", new TextReader("msdos bytes"), {
+      msDosCompatible: true,
+      externalFileAttributes: 0x10,
+    });
+    await writer.add("real/", undefined, { directory: true });
+    await writeFile(path, await writer.close());
+
+    const reader = new ZipArtifactReader(path, "zip");
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      expect(entries.map(({ path, kind }) => ({ path, kind }))).toEqual([
+        { path: "unix-mode", kind: "file" },
+        { path: "msdos-attribute", kind: "file" },
+        { path: "real/", kind: "directory" },
+      ]);
+      for (const [index, expected] of [
+        [0, "unix bytes"],
+        [1, "msdos bytes"],
+      ] as const) {
+        const entry = entries[index];
+        if (entry === undefined) throw new Error("Expected a ZIP member");
+        expect(entry.limitations.join("\n")).toContain(
+          "has directory external attributes",
+        );
+        const chunks: Buffer[] = [];
+        for await (const chunk of await reader.open(entry))
+          chunks.push(Buffer.from(chunk));
+        expect(Buffer.concat(chunks).toString()).toBe(expected);
+      }
+    } finally {
+      await reader.close();
+    }
+  });
 });
 
 describe("artifactDecompressionBudgetBytes", () => {

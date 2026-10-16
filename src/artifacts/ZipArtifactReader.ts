@@ -251,7 +251,9 @@ export class ZipArtifactReader implements ArtifactReader {
         ),
       );
     const source = stored.source;
-    if (source.directory || isSymlink(source))
+    // zip.js types attribute-marked directories without `getData`, but attaches
+    // it to every member; the projected kind decides what is a regular file.
+    if (stored.metadata.kind !== "file" || !("getData" in source))
       return Promise.reject(
         new ArtifactReaderFailure("format", "ZIP entry is not a regular file"),
       );
@@ -280,13 +282,18 @@ const projectZipEntry = (
   entry: Entry,
   index: number,
 ): ArtifactEntry | undefined => {
-  const kind = isSymlink(entry)
-    ? "symlink"
-    : entry.directory
-      ? "directory"
-      : "file";
   const storedName = zipStoredName(entry);
   const sourcePath = zipEntryPath(entry, storedName);
+  // Only a trailing "/" makes a ZIP name a directory, as for the JDK's
+  // ZipEntry.isDirectory and Python's zipfile. Unix-mode or MS-DOS directory
+  // attributes on any other name are reported, and the member stays readable.
+  const directoryName = sourcePath.endsWith("/");
+  const attributeDirectory = entry.directory && !directoryName;
+  const kind = isSymlink(entry)
+    ? "symlink"
+    : directoryName
+      ? "directory"
+      : "file";
   const path = normalizeArchiveMemberPath(sourcePath);
   // Root directory markers carry no inventory occurrence. A file with this
   // spelling is still passed to the shared path validator and rejected there.
@@ -303,6 +310,11 @@ const projectZipEntry = (
     unpacked: false,
     limitations: [
       ...(kind === "symlink" ? ["Archive symlink target was not read."] : []),
+      ...(kind === "file" && attributeDirectory
+        ? [
+            `ZIP member ${JSON.stringify(sourcePath)} has directory external attributes (0x${(entry.externalFileAttributes >>> 0).toString(16).padStart(8, "0")}) but no trailing "/" in its name; it is read as a regular file, as the JDK and Python's zipfile read it.`,
+          ]
+        : []),
       ...(sourcePath === storedName
         ? []
         : [

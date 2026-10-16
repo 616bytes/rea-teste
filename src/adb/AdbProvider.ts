@@ -2545,10 +2545,13 @@ export class AdbProvider {
           { timeoutMs: SETTINGS_TIMEOUT_MS, maxOutputBytes: 1024 },
           signal,
         );
-        if (
+        // `test -e` exits nonzero with no adb diagnosis when the path is cleanly absent.
+        // Any nonzero exit that produced adb stderr output is an ambiguous failure and must be returned.
+        const isCleanAbsence =
           !existsProbe.ok &&
-          !(existsProbe.error instanceof AnalysisProtocolError)
-        )
+          existsProbe.error instanceof AnalysisProtocolError &&
+          existsProbe.error.message.startsWith("adb exited with code");
+        if (!existsProbe.ok && !isCleanAbsence)
           return existsProbe;
         const deviceExists = existsProbe.ok;
         if (deviceExists && !input.overwrite)

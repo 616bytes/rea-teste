@@ -4,7 +4,7 @@
 [#4389](https://github.com/morluto/rea/pull/4389), umbrella
 [#4027](https://github.com/morluto/rea/issues/4027).
 
-All 57 IPC boundary regressions pass, alongside shared projection/actions and
+All 62 IPC boundary regressions pass, alongside shared projection/actions and
 converted MCP schema checks. Real draw.io operation phases succeed.
 Every real capture still **fails overall provider cleanup**. These are distinct
 results; neither completed-task acceleration nor token savings is established.
@@ -470,3 +470,36 @@ without replacing any previous measurements.
 
 The final docs gate passes six tasks and five README consistency cases; source
 digests are checked again after validation.
+
+## Private collection method lifetime
+
+Fresh review of `e6c373d0` found that replacing `WeakMap.prototype.has` after
+hook initialization still intercepts its private wrapper registry. Inspecting
+the same owner found analogous get/set and visited-Set has/add lookups. All five
+independent native controls fail before correction (57 passed, five failed of
+62); plain EventEmitter registration, on/once calls and complete removal succeed.
+
+Source `774ed6aa6` binds these private WeakMap/Set methods before application
+startup and reuses captured Set membership for event-family classification.
+One initialization-only binding helper replaces duplicated binding construction
+for existing Map traversal/argument slicing too. It adds no helper argument
+arrays per invocation, cache, schema, tool or target authority. Application-owned
+callback methods/receivers remain dynamic. All **82** hook/projection/actions
+cases pass (62 + 4 + 16). The previous seven global-binding controls also remain
+green, and unchanged schema/client/projection/verifier/oracle checks are reused
+by verified source hashes. Arbitrary introspection and #4513 remain unsupported.
+
+Frozen-source unchanged draw.io actions complete again with seven IPC events,
+SVG **0 → 2**, unsaved changes true and failed overall provider cleanup. Pipeline
+wall **11.238 s**; observed payload-exit cgroup CPU **6.285321 s**, peak
+**556,285,952 bytes**. Another scope descendant remains at payload exit, so complete-family resource observation is unverified. Later external scope teardown does not prove provider cleanup.
+
+Final static checks pass two uncached tasks in **92.999 s wall, 92.227652 family
+CPU s and 4,371,951,616 peak cgroup bytes**, no OOM. Preceding CI38949129899 checks
+confirmed e6c3 + main4838, repeats the same two firmware failures and finishes
+31 successful /3 failed jobs including summaries /2 fail-fast cancellations.
+Sources, failures and resource limitations are appended under
+`private_collection_methods_followup`; prior fields remain unchanged.
+
+The final docs gate passes six tasks and five README consistency cases; source
+digests are verified again afterward.

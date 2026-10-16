@@ -6,6 +6,7 @@ import {
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import type { GoBinary } from "../../domain/go/goBinary.js";
+import { parseEvidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
 
 const identity = {
@@ -166,8 +167,13 @@ it("honors cancellation before reading and after a completed observation", async
     { signal: controller.signal },
   );
   expect(completed.ok).toBe(false);
-  if (!completed.ok)
+  if (!completed.ok) {
     expect(completed.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(parseEvidence(completed.error.partialObservation)).toMatchObject({
+      operation: "inspect_go_binary",
+      normalized_result: report,
+    });
+  }
   const before = await service.inspect(
     { path: report.artifact.path },
     { signal: controller.signal },
@@ -192,4 +198,21 @@ it("maps the local ppc alias to the canonical powerpc subject", async () => {
       normalized_result: { architecture },
     });
   }
+});
+
+it("keeps malformed provider output ahead of a late cancellation", async () => {
+  const controller = new AbortController();
+  const malformed = {
+    ...report,
+    artifact: { ...report.artifact, path: "/other" },
+  };
+  const result = await new GoBinaryService({
+    identity,
+    inspect: () => {
+      controller.abort();
+      return Promise.resolve(ok(malformed));
+    },
+  }).inspect({ path: report.artifact.path }, { signal: controller.signal });
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });

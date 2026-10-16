@@ -74,7 +74,7 @@ pkgs.mkShell {
   ''
   + ''
     if [ -f package-lock.json ]; then
-      if [ ! -f node_modules/.package-lock.json ]; then
+      if [ ! -d node_modules ]; then
         echo "rea: installing locked npm dependencies (npm ci)..."
         npm ci
       elif ! node scripts/check-dependency-install.mjs >/dev/null 2>&1; then

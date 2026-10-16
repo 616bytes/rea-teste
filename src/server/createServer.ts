@@ -181,6 +181,8 @@ export interface CreateServerOptions {
   readonly fridaInstrumentation?: FridaInstrumentationPort;
   readonly availabilityPolicy?: () => AvailabilityPolicy;
   readonly optionalProviderLoadFailures?: OptionalProviderLoadFailures;
+  /** Shared SDK probes borrow optional providers from the transport owner. */
+  readonly optionalObservationProviderOwner?: "server" | "caller";
 }
 
 const installSessionToolAvailability = (
@@ -388,9 +390,13 @@ export const createServer = (
       peResources.close(),
       webNetworkCapture.close(),
       javascriptRecovery.close?.() ?? Promise.resolve(),
-      options.browserObservation?.close?.() ?? Promise.resolve(),
-      options.browserScenarioCapture?.close?.() ?? Promise.resolve(),
-      options.electronObservation?.close?.() ?? Promise.resolve(),
+      ...(options.optionalObservationProviderOwner === "caller"
+        ? []
+        : [
+            options.browserObservation?.close?.() ?? Promise.resolve(),
+            options.browserScenarioCapture?.close?.() ?? Promise.resolve(),
+            options.electronObservation?.close?.() ?? Promise.resolve(),
+          ]),
       webRuntime.provider.close?.() ?? Promise.resolve(),
       artifactResources.close(),
       reverseEngineering.close(),

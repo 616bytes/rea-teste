@@ -2,6 +2,7 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
 
 import type { BrowserScenarioCapturePort } from "../../../src/application/BrowserScenarioCapturePort.js";
+import type { ElectronObservationPort } from "../../../src/application/javascript/ElectronObservationPort.js";
 import { silentLogger } from "../../../src/logger.js";
 import { startMcpTransport } from "../../../src/main/transport.js";
 import type { RuntimeDependencies } from "../../../src/main/types.js";
@@ -24,6 +25,20 @@ it("keeps the shared browser scenario provider open when the SDK discards its di
     },
     close,
   };
+  let electronCleanupAllowed = false;
+  const electronClose = vi.fn(async () => {
+    if (!electronCleanupAllowed) throw new Error("Electron cleanup denied");
+  });
+  const electronObservation: ElectronObservationPort = {
+    identity: browserScenarioCapture.identity,
+    listTargets: async () => {
+      throw new Error("Unexpected Electron discovery");
+    },
+    inspectPage: async () => {
+      throw new Error("Unexpected Electron inspection");
+    },
+    close: electronClose,
+  };
   const factories: Parameters<RuntimeDependencies["serve"]>[0][] = [];
   const runtime: RuntimeDependencies = {
     env: {},
@@ -40,7 +55,10 @@ it("keeps the shared browser scenario provider open when the SDK discards its di
     serverLogger: silentLogger,
     environment: runtime.env,
     delivery: new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
-    loadOptionalProviders: async () => ({ browserScenarioCapture }),
+    loadOptionalProviders: async () => ({
+      browserScenarioCapture,
+      electronObservation,
+    }),
   });
   if (!transport.ok) throw new Error("Transport failed");
   const factory = factories[0];
@@ -51,10 +69,22 @@ it("keeps the shared browser scenario provider open when the SDK discards its di
     const replacement = await factory({ era: "legacy" });
     await replacement.close();
     expect(close).not.toHaveBeenCalled();
+    expect(electronClose).not.toHaveBeenCalled();
 
+    const first = transport.closeOptionalProviders();
+    const concurrent = transport.closeOptionalProviders();
+    await expect(first).rejects.toBeInstanceOf(AggregateError);
+    await expect(concurrent).rejects.toBeInstanceOf(AggregateError);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(electronClose).toHaveBeenCalledTimes(1);
+    electronCleanupAllowed = true;
+    await transport.closeOptionalProviders();
     await transport.closeOptionalProviders();
     expect(close).toHaveBeenCalledTimes(1);
+    expect(electronClose).toHaveBeenCalledTimes(2);
   } finally {
+    electronCleanupAllowed = true;
+    await transport.closeOptionalProviders();
     await transport.closeAndroid();
     await session.close();
   }

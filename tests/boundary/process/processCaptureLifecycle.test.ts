@@ -194,9 +194,8 @@ itWithCaptureCapability(
         }),
         controller.signal,
       );
-      expect(result.ok).toBe(true);
-      if (!result.ok) throw result.error;
-      expect(result.value.exit.reason).toBe("timeout");
+      const { capture } = captureObservations(result);
+      expect(capture.exit.reason).toBe("timeout");
     } finally {
       clearTimeout(fallback);
       now.mockRestore();

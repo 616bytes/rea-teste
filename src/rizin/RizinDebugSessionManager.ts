@@ -91,6 +91,11 @@ const createRizinCommandEvidence = ({
       "The current debugger target identity is not established by the Rizin session identifier.",
     limitations: [
       ...limitations,
+      ...(result.completion_status === "unknown"
+        ? [
+            "Interrupted output may include an incomplete completion-marker prefix; it is retained because it cannot be distinguished from command diagnostics.",
+          ]
+        : []),
       ...(result.output_invalid_utf8
         ? [
             "Collected command frames contained invalid UTF-8 bytes; decoded text may contain replacement characters.",
@@ -1499,11 +1504,17 @@ const waitForCommandFrames = async (
         );
       }
       if (cause instanceof RizinProcessExitError) {
+        // `exit` observes the leader, not its pipe lifetime. Keep the bounded
+        // receiver active until the supervisor observes output closure, using
+        // the same settlement interval as owned-debugger cleanup.
+        const drained = await session.supervisor.waitForOutputClose(
+          CLEANUP_COMMAND_TIMEOUT_MS,
+        );
         const captured = interrupted();
         throw new RizinProcessExitError(
           captured.output,
           captured.outputInvalidUtf8,
-          captured.outputTruncated,
+          captured.outputTruncated || !drained,
         );
       }
       throw cause;

@@ -14,14 +14,30 @@ import {
 
 const test = it.skipIf(process.platform === "win32");
 
-test.each(["exit", "deadline", "framed-exit"] as const)(
+test.each([
+  "exit",
+  "deadline",
+  "framed-exit",
+  "drained-exit",
+  "drained-framed-exit",
+] as const)(
   "retains received command bytes through MCP after %s",
   async (mode) => {
     const injected = createInjectedProcess({
       onWrite: (text, control) => {
         if (!text.includes("!echo __REA_COMMAND_COMPLETE_")) return;
         setImmediate(() => {
-          control.output("complete prefix\0unfinished diagnostic Ω");
+          control.output("complete prefix\0");
+          if (mode.startsWith("drained-")) {
+            control.exitLeader();
+            setImmediate(() => {
+              control.output("unfinished diagnostic Ω");
+              if (mode === "drained-framed-exit") control.output("\0");
+              control.closeOutput();
+            });
+            return;
+          }
+          control.output("unfinished diagnostic Ω");
           if (mode === "framed-exit") control.output("\0");
           if (mode !== "deadline") control.exit();
         });
@@ -178,6 +194,80 @@ test("rejects an unfinished unsolicited frame before command dispatch", async ()
     expect(dispatched).toBe(false);
   } finally {
     injected.control.exit();
+    await manager.closeAll();
+  }
+});
+
+test.each(["_", "__REA_", "marker-prefix"])(
+  "preserves ambiguous diagnostic suffix %s on interruption",
+  async (suffix) => {
+    let expected = "";
+    const injected = createInjectedProcess({
+      onWrite: (text, control) => {
+        const marker = /!echo (__REA_COMMAND_COMPLETE_\w+)/u.exec(text)?.[1];
+        if (marker === undefined) return;
+        expected = `literal diagnostic ${suffix === "marker-prefix" ? marker.slice(0, -5) : suffix}`;
+        control.output(expected);
+        control.exit();
+      },
+    });
+    const manager = createRizinTestManager(
+      {},
+      { spawnProcess: injected.spawnProcess },
+    );
+    try {
+      const started = await manager.start({
+        path: "fixture.bin",
+        inferior_tty: await rizinTestInferiorTty(),
+      });
+      if (!started.ok) throw started.error;
+      const result = await manager.execute(started.value.session_id, "dr");
+      if (!result.ok) throw result.error;
+      expect(result.value.evidence).toMatchObject({
+        normalized_result: { output: expected, completion_status: "unknown" },
+        raw_result: { output: expected },
+      });
+      expect(result.value.evidence.limitations).toContain(
+        "Interrupted output may include an incomplete completion-marker prefix; it is retained because it cannot be distinguished from command diagnostics.",
+      );
+    } finally {
+      injected.control.exit();
+      await manager.closeAll();
+    }
+  },
+);
+
+test("retains partial bytes and uncertainty when exited output never closes", async () => {
+  const injected = createInjectedProcess({
+    onWrite: (text, control) => {
+      if (!text.includes("!echo __REA_COMMAND_COMPLETE_")) return;
+      control.output("retained before exit");
+      control.exitLeader();
+    },
+  });
+  const manager = createRizinTestManager(
+    {},
+    { spawnProcess: injected.spawnProcess },
+  );
+  try {
+    const started = await manager.start({
+      path: "fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    if (!started.ok) throw started.error;
+    const result = await manager.execute(started.value.session_id, "dr");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected retained cleanup uncertainty");
+    expect(result.error.partialObservation).toMatchObject({
+      normalized_result: {
+        output: "retained before exit",
+        output_truncated: true,
+        completion_status: "unknown",
+      },
+    });
+    expect(manager.status(started.value.session_id)?.state).toBe("closed");
+  } finally {
+    injected.control.closeOutput();
     await manager.closeAll();
   }
 });

@@ -502,6 +502,17 @@ debugged; `inspect_signature` reports the signature's `hardened_runtime` value
 and its `entitlements`, including `com.apple.security.get-task-allow` when it
 is present. A denied trace reports the `debugger-attach-denied` reason.
 
+Each slice of a universal Mach-O is signed on its own. The `inspect_signature`
+identity fields (`identifier`, `cdhashes`, `hardened_runtime`, `entitlements`,
+authorities) describe the slice codesign selects by default for the host, and a
+limitation names that slice. REA queries every other slice; one signed with
+another identifier, team, authorities, hardened-runtime state or entitlements is
+named in a `Mach-O slices signed differently` limitation with its differing
+values, an unsigned slice in `Unsigned Mach-O slices`. `designated_requirement`
+comes from the whole file; when it names CDHashes that `cdhashes` does not
+list, a limitation says so. Per-slice queries appear in `provenance` as
+`codesign -d -a <slice>` commands.
+
 ## Provider and verification boundaries
 
 Install a Ghidra 12.1.x release and the 64-bit full JDK it declares, then configure REA to

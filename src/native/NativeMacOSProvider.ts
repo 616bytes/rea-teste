@@ -73,6 +73,11 @@ import {
   type SignatureTargetBinding,
 } from "./SignatureTargetBinding.js";
 import { parseCodeSignature } from "./parsers/codesign.js";
+import {
+  describeSignatureSlices,
+  sameCdhashes,
+  type SliceSignature,
+} from "./signatureSlices.js";
 import { parseDemangledSymbols } from "./parsers/demangle.js";
 import { parseLipoOutput } from "./parsers/lipo.js";
 import {
@@ -640,11 +645,19 @@ class NativeMacOSClient implements AnalysisClient {
       !unsigned &&
       (isNonzeroUnsignedObservation(requirements.value) ||
         isNonzeroUnsignedObservation(entitlements.value));
-    if (mixedSigning) {
-      const slices = await this.#inspectMixedSignatureSlices(
+    // Without -a, codesign describes one slice of a universal file, so every
+    // slice of a signed universal file is queried: an unsigned slice stays
+    // hidden behind an identity requirement, and a slice signed with another
+    // identifier, runtime flag or entitlements is otherwise never reported.
+    const universal =
+      !unsigned && universalCodeSignArchitectures(parsed.format).length > 1;
+    if (mixedSigning || universal) {
+      const slices = await this.#inspectSignatureSlices(
         binding,
         parsed.format,
         {
+          mixed: mixedSigning,
+          cdhashes: parsed.cdhashes,
           requirements: requirements.value.exitCode,
           entitlements: entitlements.value.exitCode,
         },
@@ -653,6 +666,20 @@ class NativeMacOSClient implements AnalysisClient {
       if (!slices.ok) return slices;
       captures.push(...slices.value.captures);
       limitations.push(...slices.value.limitations);
+      limitations.push(
+        ...describeSignatureSlices(
+          {
+            identifier: parsed.identifier,
+            team_identifier: parsed.team_identifier,
+            cdhashes: parsed.cdhashes,
+            authorities: parsed.authorities,
+            hardened_runtime: parsed.hardened_runtime,
+            entitlements: entitlementValue.value,
+            designated_requirement: requirementText,
+          },
+          slices.value.signed,
+        ),
+      );
     }
     const provenance = captures.map((capture) =>
       invocation(capture, binding.snapshotPath),
@@ -673,18 +700,34 @@ class NativeMacOSClient implements AnalysisClient {
     });
   }
 
-  async #inspectMixedSignatureSlices(
+  /**
+   * Query each slice of a universal file. Signed slices are parsed so the
+   * caller can compare them with the aggregate fields; a slice whose CDHash
+   * differs from the aggregate is also asked for its entitlements when the
+   * aggregate entitlements query succeeded, since they are signed per slice.
+   */
+  async #inspectSignatureSlices(
     binding: SignatureTargetBinding,
     format: string | null,
-    aggregateExits: Readonly<{
+    aggregate: Readonly<{
+      /** The aggregate queries already observed an unsigned slice. */
+      mixed: boolean;
+      /** CDHashes of the slice the aggregate display described. */
+      cdhashes: readonly string[];
       requirements: number | null;
       entitlements: number | null;
     }>,
     signal?: AbortSignal,
-  ): Promise<Result<MixedSignatureSlices, AnalysisError>> {
+  ): Promise<Result<SignatureSlices, AnalysisError>> {
     const captures: NativeCommandCapture[] = [];
+    const signed: SliceSignature[] = [];
     const unsigned: string[] = [];
     const unclassified: string[] = [];
+    const entitlementsUnavailable: string[] = [];
+    const executablePaths = [
+      binding.snapshotPath,
+      ...(await canonicalPath(binding.snapshotPath)),
+    ];
     for (const architecture of codeSignArchitectures(format, this.target)) {
       const slice = await this.#captureSignature(
         binding,
@@ -693,29 +736,75 @@ class NativeMacOSClient implements AnalysisClient {
       );
       if (!slice.ok) return slice;
       captures.push(slice.value);
-      if (slice.value.exitCode === 0) continue;
-      if (isNonzeroUnsignedObservation(slice.value))
-        unsigned.push(architecture);
-      else unclassified.push(architecture);
+      if (slice.value.exitCode !== 0) {
+        if (isNonzeroUnsignedObservation(slice.value))
+          unsigned.push(architecture);
+        else unclassified.push(architecture);
+        continue;
+      }
+      const parsed = parseCodeSignature(
+        slice.value.stderr,
+        false,
+        executablePaths,
+      );
+      const facts: SliceSignature = {
+        architecture,
+        identifier: parsed.identifier,
+        team_identifier: parsed.team_identifier,
+        cdhashes: parsed.cdhashes,
+        authorities: parsed.authorities,
+        hardened_runtime: parsed.hardened_runtime,
+      };
+      // The aggregate entitlements belong to the described slice; another
+      // slice's entitlements are hashed into its own code directory.
+      if (
+        aggregate.entitlements !== 0 ||
+        sameCdhashes(parsed.cdhashes, aggregate.cdhashes)
+      ) {
+        signed.push(facts);
+        continue;
+      }
+      const sliceEntitlements = await this.#captureSignature(
+        binding,
+        ["-d", "-a", architecture, "--entitlements", ":-"],
+        signal,
+      );
+      if (!sliceEntitlements.ok) return sliceEntitlements;
+      captures.push(sliceEntitlements.value);
+      if (sliceEntitlements.value.exitCode === 0) {
+        signed.push({
+          ...facts,
+          entitlements: parseEntitlements(sliceEntitlements.value.stdout).value,
+        });
+        continue;
+      }
+      signed.push(facts);
+      entitlementsUnavailable.push(architecture);
     }
-    const limitations = [
-      unsigned.length > 0
-        ? `Unsigned Mach-O slices: ${unsigned.join(", ")}.`
-        : "One or more Mach-O slices are unsigned, but their architectures could not be classified.",
-    ];
+    const limitations: string[] = [];
+    if (entitlementsUnavailable.length > 0)
+      limitations.push(
+        `Entitlements could not be read for Mach-O slices: ${entitlementsUnavailable.join(", ")}.`,
+      );
+    if (unsigned.length > 0)
+      limitations.push(`Unsigned Mach-O slices: ${unsigned.join(", ")}.`);
+    else if (aggregate.mixed)
+      limitations.push(
+        "One or more Mach-O slices are unsigned, but their architectures could not be classified.",
+      );
     if (unclassified.length > 0)
       limitations.push(
         `Signature state could not be classified for Mach-O slices: ${unclassified.join(", ")}.`,
       );
-    if (aggregateExits.requirements !== 0)
+    if (aggregate.requirements !== 0)
       limitations.push(
         "The aggregate designated requirement is unavailable because Mach-O slices have mixed signing states.",
       );
-    if (aggregateExits.entitlements !== 0)
+    if (aggregate.entitlements !== 0)
       limitations.push(
         "The aggregate entitlements are unavailable because Mach-O slices have mixed signing states.",
       );
-    return ok({ captures, limitations });
+    return ok({ captures, signed, limitations });
   }
 
   async #captureSignature(
@@ -911,8 +1000,10 @@ interface NativeObservation {
   readonly locations: readonly EvidenceLocation[];
 }
 
-interface MixedSignatureSlices {
+interface SignatureSlices {
   readonly captures: readonly NativeCommandCapture[];
+  /** Slices codesign reported as signed, in query order. */
+  readonly signed: readonly SliceSignature[];
   readonly limitations: readonly string[];
 }
 
@@ -1030,21 +1121,31 @@ const codeSignCaptureFailure = (
     ? null
     : translateCodeSignExitFailure(capture);
 
+/** Slice names codesign printed for a universal file, as its `-a` accepts them. */
+const universalCodeSignArchitectures = (format: string | null): string[] => {
+  const universal = /^Mach-O universal \(([^)\r\n]+)\)$/u.exec(
+    format ?? "",
+  )?.[1];
+  if (universal === undefined) return [];
+  // Accept every slice name codesign prints; macOS 27 system binaries also
+  // carry variant names such as arm64e.x1.
+  return [
+    ...new Set(
+      universal
+        .split(/\s+/u)
+        .filter((architecture) =>
+          /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)?$/u.test(architecture),
+        ),
+    ),
+  ];
+};
+
 const codeSignArchitectures = (
   format: string | null,
   target: BinaryTarget,
 ): string[] => {
-  const universal = /^Mach-O universal \(([^)\r\n]+)\)$/u.exec(
-    format ?? "",
-  )?.[1];
-  if (universal !== undefined) {
-    const architectures = universal
-      .split(/\s+/u)
-      .filter((architecture) =>
-        /^(?:i386|x86_64|armv7|arm64|arm64e)$/u.test(architecture),
-      );
-    if (architectures.length > 0) return [...new Set(architectures)];
-  }
+  const universal = universalCodeSignArchitectures(format);
+  if (universal.length > 0) return universal;
   if (target.kind !== "executable" || !isMachOFormat(target.format)) return [];
   return target.availableArchitectures.map((architecture) =>
     architecture === "x86" ? "i386" : architecture,

@@ -453,6 +453,19 @@ Repeated membership churn retains uncertainty after bounded validation attempts.
 Token sweeps apply the same missing-token classification and bounded liveness
 settlement, while unchanged prelaunch start identities remain outside the scan.
 
+Sweep exit and identity checks retain their complete refreshed process tables.
+New candidates, including a reused prelaunch PID in the same process group,
+must be examined before cleanup or final verification can report success.
+Discovery retries share one budget across the cleanup call; exhausted coverage
+remains unresolved. Independently verified groups can still be cleaned while an
+uncertain group and its temporary root stay owned for retry. Unrelated withheld
+environment observations are retained through refreshed scans and partial cleanup.
+
+The process-table producer excludes only its own collector invocation from the
+snapshot that invocation produced. It does not exclude processes by command name
+or infer current ownership from a collector PID after exit. This prevents the
+inspection itself from creating an endless chain of unexamined `ps` candidates.
+
 On macOS, changing a Node process's `process.title` can make its run token
 unreadable. Node documents that [setting the title overwrites argv memory](https://nodejs.org/download/release/v24.18.0/docs/api/process.html#processtitle).
 With the pinned toolchain, a live child retained a readable start identity

@@ -1,7 +1,7 @@
 import { access, open, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -13,6 +13,7 @@ import {
   observeOwnedProcessLineage,
   parseProcessEnvironment,
   systemProcessOwnershipHost,
+  createSystemProcessOwnershipHost,
 } from "../../../src/process/ProcessOwnershipObservation.js";
 import {
   ProviderProcessSupervisor,
@@ -26,6 +27,7 @@ import {
   waitForDetachedProviderChild,
   waitForProviderProcessReady,
 } from "../../fixtures/providerProcess.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const processFixturePath = fileURLToPath(
   new URL("../../fixtures/providerProcess.mjs", import.meta.url),
@@ -52,6 +54,32 @@ const waitForPidExit = async (
 afterEach(() => {
   vi.useRealTimers();
 });
+
+it.skipIf(process.platform !== "linux")(
+  "excludes only the exact process-table collector and preserves a matching-command neighbor",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-table-collector-");
+    await writeFile(
+      join(root, "ps"),
+      `#!${process.execPath}
+if (process.argv.slice(2).join(' ') !== '-axo pid=,ppid=,pgid=,uid=,stat=,command=') throw new Error('unexpected inspection arguments');
+const command = 'ps -axo pid=,ppid=,pgid=,uid=,stat=,command=';
+console.log(process.pid + ' ' + process.ppid + ' 100 0 R ' + command);
+console.log('999999 ' + process.ppid + ' 999999 0 S ' + command);
+console.log(process.ppid + ' ${process.ppid} 100 0 S caller');
+`,
+      { mode: 0o755 },
+    );
+    const host = createSystemProcessOwnershipHost("linux", {
+      PATH: `${root}:${dirname(process.execPath)}`,
+    });
+    const rows = await host.listProcesses();
+    expect(rows.map(({ pid }) => pid)).toEqual([999999, process.pid]);
+    expect(rows[0]?.command).toBe(
+      "ps -axo pid=,ppid=,pgid=,uid=,stat=,command=",
+    );
+  },
+);
 
 describe("provider process runtime and wait primitives", () => {
   it("allocates a private runtime root and removes it idempotently", async () => {

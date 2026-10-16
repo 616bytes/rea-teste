@@ -258,7 +258,10 @@ try {
       evidence.location.available &&
       evidence.location.value.kind === "artifact-path"
         ? evidence.location.value.path
-        : null,
+        : evidence.location.available &&
+            evidence.location.value.kind === "source-range"
+          ? evidence.location.value.source
+          : null,
     ),
   );
   for (const path of query.where?.paths ?? [])

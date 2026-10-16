@@ -471,6 +471,12 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           request.operation,
           signal,
         );
+        // The inventory can finish after its deadline expired; an expired
+        // extraction must not publish under the fresh publication budget.
+        if (signal.aborted)
+          throw new AnalysisCancelledError(request.operation, {
+            cause: signal.reason,
+          });
         deadline = startFirmwareDeadline(
           firmwarePublicationTimeoutMs(entries.length),
         );

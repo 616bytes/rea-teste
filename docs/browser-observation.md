@@ -329,6 +329,14 @@ Retained workers include validated opener-target and parent-frame IDs when CDP
 provides them; these relationships do not expand the exact-origin boundary or
 prove static module ownership.
 
+`inspect_web_page` and `analyze_web_bundle` also observe the network requests of
+the page's own dedicated workers. REA auto-attaches those workers without
+pausing their startup and enables only their Network domain; worker requests
+pass the same origin policy as page requests, and workers on other origins are
+not enabled. Requests a worker sends before REA reaches it are unavailable, so
+short-lived workers can be partially observed. Service and shared worker
+requests are not observed.
+
 ## Completeness and limits
 
 The default inspection window is 500 ms; callers choose its duration. The

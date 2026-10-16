@@ -129,6 +129,14 @@ it("retains constructor captures, ws imports and template keys with their graph 
 });
 
 const socketExecutionPhaseSources = {
+  "blocking-wrapper.mjs":
+    'const pending = (async () => { await 0; new Socket("wss://example.test/invalid-blocking-wrapper"); })(); await (async () => { await pending; })(); const Socket = globalThis.WebSocket;',
+  "suspended-blocking-wrapper.mjs":
+    'const pending = (async () => { await 0; new Socket("wss://example.test/invalid-suspended-wrapper"); })(); await (async () => { await 0; await pending; })(); const Socket = globalThis.WebSocket;',
+  "unawaited-wrapper.js":
+    'const pending = (async () => { await 0; new Socket("wss://example.test/unawaited-wrapper"); })(); (async () => { await pending; })(); const Socket = globalThis.WebSocket;',
+  "optional-wrapper.mjs":
+    'const pending = (async () => { await ready; new Socket("wss://example.test/optional-wrapper"); })(); await (async () => { if (condition) await pending; })(); const Socket = globalThis.WebSocket;',
   "caught-alias.mjs":
     'const pending = (async () => { await 0; new Socket("wss://example.test/caught-alias"); })(); try { await alias; } catch {} const alias = pending; const Socket = globalThis.WebSocket;',
   "dead-wait.js":
@@ -332,6 +340,7 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/optional-argument",
       "wss://example.test/optional-call",
       "wss://example.test/optional-capture",
+      "wss://example.test/optional-wrapper",
       "wss://example.test/pattern-await",
       "wss://example.test/pending-initialized",
       "wss://example.test/rebound-import",
@@ -342,12 +351,15 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/tag-generator",
       "wss://example.test/template-continuation",
       "wss://example.test/try-await",
+      "wss://example.test/unawaited-wrapper",
       "wss://example.test/update-await",
       "wss://example.test/update-operand",
       "wss://example.test/wrapped-array",
       "wss://example.test/ws-self",
     ]);
     for (const [path, source, line] of [
+      ["unawaited-wrapper", "unawaited-wrapper.js", 1],
+      ["optional-wrapper", "optional-wrapper.mjs", 1],
       ["caught-alias", "caught-alias.mjs", 1],
       ["dead-wait", "dead-wait.js", 1],
       ["logical-assignment", "logical-rhs.js", 1],

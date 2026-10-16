@@ -941,6 +941,39 @@ describe("web bundle promise aliases and object evaluation", () => {
 
 describe("web bundle selected bindings and reachable waits", () => {
   it.each([
+    'const pending = (async () => { await 0; new Socket("wss://example.test/invalid"); })(); await (async () => { await pending; })(); const Socket = globalThis.WebSocket;',
+    'const pending = (async () => { await 0; new Socket("wss://example.test/invalid"); })(); await (async () => { await 0; await pending; })(); const Socket = globalThis.WebSocket;',
+    'const pending = (async () => { await 0; new Socket("wss://example.test/invalid"); })(); const alias = pending; await (async () => { await alias; })(); const Socket = globalThis.WebSocket;',
+    'const pending = (async () => { await 0; new Socket("wss://example.test/invalid"); })(); await (async () => { await (async () => { await pending; })(); })(); const Socket = globalThis.WebSocket;',
+    '(async () => { if (condition) { const pending = (async () => { await 0; new Socket("wss://example.test/invalid"); })(); await (async () => { await pending; })(); } const Socket = globalThis.WebSocket; })();',
+  ])(
+    "retains initialized blocking aliases through literal callers: %s",
+    (source) => {
+      // Declare module mode: await(f)() can also be an ordinary script call.
+      expect(socketEndpoints(`export {}; ${source}`)).toEqual([[], []]);
+    },
+  );
+
+  it.each([
+    'const pending = (async () => { await ready; new Socket("wss://example.test/selected"); })(); await (async () => { if (condition) await pending; })(); const Socket = globalThis.WebSocket;',
+    'const pending = (async () => { await ready; new Socket("wss://example.test/selected"); })(); try { await (async () => { await alias; })(); } catch {} const alias = pending; const Socket = globalThis.WebSocket;',
+    'const pending = (async () => { await 0; new Socket("wss://example.test/selected"); })(); (async () => { await pending; })(); const Socket = globalThis.WebSocket;',
+    '(async () => { const pending = (async () => { await 0; new Socket("wss://example.test/selected"); })(); if (condition) await (async () => { await pending; })(); const Socket = globalThis.WebSocket; })();',
+  ])(
+    "does not promote optional or uninitialized cross-caller waits: %s",
+    (source) => {
+      expect(
+        socketEndpoints(`export {}; ${source}`).map((items) =>
+          items.map((item) => item.value),
+        ),
+      ).toEqual([
+        ["wss://example.test/selected"],
+        ["wss://example.test/selected"],
+      ]);
+    },
+  );
+
+  it.each([
     'const pending = (async () => { await 0; new Socket("wss://example.test/selected"); })(); try { await alias; } catch {} const alias = pending; const Socket = globalThis.WebSocket;',
     'const pending = (async () => { await 0; new Socket("wss://example.test/selected"); })(); try { await second; } catch {} const first = pending; const second = first; const Socket = globalThis.WebSocket;',
     '(async () => { const pending = (async () => { await ready; new Socket("wss://example.test/selected"); })(); while (true) { break; await pending; } const Socket = globalThis.WebSocket; })();',

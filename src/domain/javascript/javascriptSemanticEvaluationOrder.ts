@@ -8,6 +8,62 @@ import {
 
 const preserveGrouping = { stopAtParentheses: true } as const;
 
+/** One lexical activation and the evaluation point it contributes to a read. */
+export interface SemanticExecutionFrame {
+  readonly owner: t.Node;
+  readonly point: t.Node;
+}
+
+/** Compare initialization only in the nearest shared, proven activation. */
+export const semanticInitializerPrecedesRead = ({
+  initializer,
+  read,
+  bindingNode,
+  parents,
+  initializerContexts,
+  readContexts,
+}: {
+  readonly initializer: t.Node;
+  readonly read: t.Node;
+  readonly bindingNode?: t.Node;
+  readonly parents: WeakMap<t.Node, t.Node>;
+  readonly initializerContexts: readonly SemanticExecutionFrame[];
+  readonly readContexts: readonly SemanticExecutionFrame[];
+}): boolean | undefined => {
+  let current: t.Node | undefined = initializer;
+  while (
+    current !== undefined &&
+    !t.isFunction(current) &&
+    !t.isProgram(current)
+  ) {
+    if (t.isSwitchCase(current)) {
+      let ancestor: t.Node | undefined = read;
+      while (ancestor !== undefined && ancestor !== current)
+        ancestor = parents.get(ancestor);
+      if (ancestor === undefined) return false;
+    }
+    current = parents.get(current);
+  }
+  const shared = readContexts.find(({ owner }) =>
+    initializerContexts.some((frame) => frame.owner === owner),
+  );
+  if (shared === undefined) return undefined;
+  const patternOrder =
+    bindingNode === undefined
+      ? undefined
+      : semanticPatternInitializationPrecedesRead(bindingNode, read, parents);
+  if (patternOrder !== undefined) return patternOrder;
+  return !initializerContexts.some(
+    (before) =>
+      before.owner === shared.owner &&
+      readContexts.some(
+        (after) =>
+          after.owner === shared.owner &&
+          (before.point.end ?? Infinity) >= (after.point.start ?? -1),
+      ),
+  );
+};
+
 /** Order a binding event against evaluation in the same declaration pattern. */
 export const semanticPatternInitializationPrecedesRead = (
   binding: t.Node,

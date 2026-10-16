@@ -8,18 +8,13 @@ import {
 } from "./javascriptAstValues.js";
 import {
   javaScriptOptionalOperandsMayBeSkipped,
-  semanticPatternInitializationPrecedesRead,
+  semanticInitializerPrecedesRead,
+  type SemanticExecutionFrame,
 } from "./javascriptSemanticEvaluationOrder.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { semanticAwaitedResultSites } from "./javascriptSemanticPromiseIdentity.js";
 import { syntaxUnconditionalOperands } from "./javascriptSymbolicControlFlow.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
-
-interface WebSocketExecutionFrame {
-  readonly owner: t.Node;
-  /** Actual evaluation/wait point in this frame, not a nested body's spelling. */
-  readonly point: t.Node;
-}
 
 /** Outward syntax wrappers preserve the expression's runtime identity. */
 const webSocketOuterExpression = (
@@ -456,15 +451,17 @@ const webSocketSuspensionOwner = (
 const webSocketWaitingContexts = (
   invocation: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): readonly WebSocketExecutionFrame[] => {
-  const contexts: WebSocketExecutionFrame[] = [];
+): readonly SemanticExecutionFrame[] => {
+  const contexts: SemanticExecutionFrame[] = [];
   const pending = [invocation];
   const seen = new Set<t.Node>();
   while (pending.length > 0) {
     const current = pending.pop();
     if (current === undefined || seen.has(current)) continue;
     seen.add(current);
-    for (const awaited of semanticAwaitedResultSites(current, state)) {
+    for (const awaited of semanticAwaitedResultSites(current, state, (node) =>
+      webSocketExecutionContexts(node, state, true),
+    )) {
       const owner = webSocketSuspensionOwner(awaited, state);
       contexts.push({ owner, point: awaited });
       if (t.isFunction(owner)) {
@@ -483,45 +480,15 @@ export const webSocketInitializerDominatesRead = (
   state: JavaScriptSemanticAnalysisState,
   bindingNode?: t.Node,
 ): boolean => {
-  let current: t.Node | undefined = initializer;
-  while (
-    current !== undefined &&
-    !t.isFunction(current) &&
-    !t.isProgram(current)
-  ) {
-    if (t.isSwitchCase(current)) {
-      let ancestor: t.Node | undefined = read;
-      while (ancestor !== undefined && ancestor !== current)
-        ancestor = state.parentsByNode.get(ancestor);
-      if (ancestor === undefined) return false;
-    }
-    current = state.parentsByNode.get(current);
-  }
-  const readContexts = webSocketExecutionContexts(read, state);
-  const initializerContexts = webSocketExecutionContexts(initializer, state);
-  // The nearest shared activation owns local ordering. An outer caller can
-  // await the whole activation, but that wait cannot reorder its own locals.
-  const shared = readContexts.find(({ owner }) =>
-    initializerContexts.some((frame) => frame.owner === owner),
-  );
-  if (shared === undefined) return true;
-  const patternOrder =
-    bindingNode === undefined
-      ? undefined
-      : semanticPatternInitializationPrecedesRead(
-          bindingNode,
-          read,
-          state.parentsByNode,
-        );
-  if (patternOrder !== undefined) return patternOrder;
-  return !initializerContexts.some(
-    (before) =>
-      before.owner === shared.owner &&
-      readContexts.some(
-        (after) =>
-          after.owner === shared.owner &&
-          (before.point.end ?? Infinity) >= (after.point.start ?? -1),
-      ),
+  return (
+    semanticInitializerPrecedesRead({
+      initializer,
+      read,
+      ...(bindingNode === undefined ? {} : { bindingNode }),
+      parents: state.parentsByNode,
+      initializerContexts: webSocketExecutionContexts(initializer, state),
+      readContexts: webSocketExecutionContexts(read, state),
+    }) ?? true
   );
 };
 
@@ -586,8 +553,9 @@ const webSocketClassPrefix = (
 export const webSocketExecutionContexts = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): readonly WebSocketExecutionFrame[] => {
-  const contexts: WebSocketExecutionFrame[] = [];
+  directOnly = false,
+): readonly SemanticExecutionFrame[] => {
+  const contexts: SemanticExecutionFrame[] = [];
   let point = node;
   let suspendedOwner: t.Node | undefined;
   const suspendedAt = (suspension: WebSocketSuspension | undefined): void => {
@@ -651,7 +619,9 @@ export const webSocketExecutionContexts = (
         if (continuation !== undefined)
           suspendedOwner = webSocketSuspensionOwner(continuation, state);
       }
-      if (suspendedOwner === parent)
+      // Direct frames are an earlier invocation bound for alias initialization.
+      // They do not consult the waiting index that is currently being built.
+      if (suspendedOwner === parent && !directOnly)
         return [...contexts, ...webSocketWaitingContexts(invocation, state)];
       point = invocation;
     }

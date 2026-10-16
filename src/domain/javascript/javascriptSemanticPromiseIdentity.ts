@@ -5,8 +5,8 @@ import {
   javaScriptExactResultOperand,
 } from "./javascriptAstValues.js";
 import {
-  delayedInstanceFieldValue,
-  semanticPatternInitializationPrecedesRead,
+  semanticInitializerPrecedesRead,
+  type SemanticExecutionFrame,
 } from "./javascriptSemanticEvaluationOrder.js";
 import {
   resolveSemanticBindingState,
@@ -61,55 +61,31 @@ const awaitedResults = new WeakMap<
   WeakMap<t.Node, t.AwaitExpression[]>
 >();
 
-/** Syntax-local alias order; deferred activations require a separate proof. */
+/** Alias identity needs initialization proof through directly owned callers. */
 const promiseAliasInitializedBeforeRead = (
   initializer: t.Node,
   read: t.Identifier,
   state: JavaScriptSemanticAnalysisState,
+  executionFrames: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): boolean => {
-  const parents = state.parentsByNode;
-  const owner = (node: t.Node): t.Node => {
-    let child = node;
-    for (;;) {
-      const parent = parents.get(child);
-      if (parent === undefined) return child;
-      if (
-        delayedInstanceFieldValue(parent, child) ||
-        (t.isFunction(parent) &&
-          !(
-            (t.isObjectMethod(parent) || t.isClassMethod(parent)) &&
-            parent.computed &&
-            parent.key === child
-          ))
-      )
-        return parent;
-      child = parent;
-    }
-  };
-  if (owner(initializer) !== owner(read)) return false;
-  let ancestor: t.Node | undefined = initializer;
-  while (ancestor !== undefined && !t.isFunction(ancestor)) {
-    if (t.isSwitchCase(ancestor)) {
-      let readAncestor: t.Node | undefined = read;
-      while (readAncestor !== undefined && readAncestor !== ancestor)
-        readAncestor = parents.get(readAncestor);
-      if (readAncestor === undefined) return false;
-    }
-    ancestor = parents.get(ancestor);
-  }
   const binding = resolveSemanticBindingState(state, read, read.name);
   const bindingNode = semanticStableInitializer(binding, state)?.bindingNode;
-  const patternOrder =
-    bindingNode === undefined
-      ? undefined
-      : semanticPatternInitializationPrecedesRead(bindingNode, read, parents);
-  return patternOrder ?? (initializer.end ?? Infinity) < (read.start ?? -1);
+  return (
+    semanticInitializerPrecedesRead({
+      initializer,
+      read,
+      ...(bindingNode === undefined ? {} : { bindingNode }),
+      parents: state.parentsByNode,
+      initializerContexts: executionFrames(initializer),
+      readContexts: executionFrames(read),
+    }) === true
+  );
 };
 
 /** The shared activation block owns conditional producer/wait coupling. */
 const promiseWaitBoundary = (
   producer: t.Node,
-  awaited: t.AwaitExpression,
+  wait: t.Node,
   parents: WeakMap<t.Node, t.Node>,
 ): t.Program | t.BlockStatement | undefined => {
   const blocks = new Set<t.Node>();
@@ -119,7 +95,7 @@ const promiseWaitBoundary = (
       blocks.add(current);
     current = parents.get(current);
   }
-  current = awaited;
+  current = wait;
   while (current !== undefined && !t.isFunction(current)) {
     if (
       (t.isBlockStatement(current) || t.isProgram(current)) &&
@@ -131,10 +107,47 @@ const promiseWaitBoundary = (
   return undefined;
 };
 
-/** Index owned await facts once, including stable aliases of the exact result. */
+/** Every directly invoked activation between a producer and wait must wait. */
+const promiseWaitCoupledToProducer = ({
+  producer,
+  awaited,
+  parents,
+  executionFrames,
+  reached,
+}: {
+  readonly producer: t.Node;
+  readonly awaited: t.AwaitExpression;
+  readonly parents: WeakMap<t.Node, t.Node>;
+  readonly executionFrames: (node: t.Node) => readonly SemanticExecutionFrame[];
+  readonly reached: ReturnType<typeof createUnconditionalEvaluationProof>;
+}): boolean => {
+  const producerFrames = executionFrames(producer);
+  for (const waitFrame of executionFrames(awaited)) {
+    const producerFrame = producerFrames.find(
+      ({ owner }) => owner === waitFrame.owner,
+    );
+    if (producerFrame !== undefined) {
+      const boundary = promiseWaitBoundary(
+        producerFrame.point,
+        waitFrame.point,
+        parents,
+      );
+      return boundary !== undefined && reached(waitFrame.point, boundary);
+    }
+    if (
+      !t.isFunction(waitFrame.owner) ||
+      !reached(waitFrame.point, waitFrame.owner.body)
+    )
+      return false;
+  }
+  return false;
+};
+
+/** Index waits using non-recursive direct frames, including initialized aliases. */
 export const semanticAwaitedResultSites = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  executionFrames: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): readonly t.AwaitExpression[] => {
   let index = awaitedResults.get(state);
   if (index === undefined) {
@@ -150,16 +163,25 @@ export const semanticAwaitedResultSites = (
         if (
           result.aliases.some(
             ({ initializer, read }) =>
-              !promiseAliasInitializedBeforeRead(initializer, read, state),
+              !promiseAliasInitializedBeforeRead(
+                initializer,
+                read,
+                state,
+                executionFrames,
+              ),
           )
         )
           continue;
-        const boundary = promiseWaitBoundary(
-          result.node,
-          awaited,
-          state.parentsByNode,
-        );
-        if (boundary === undefined || !reached(awaited, boundary)) continue;
+        if (
+          !promiseWaitCoupledToProducer({
+            producer: result.node,
+            awaited,
+            parents: state.parentsByNode,
+            executionFrames,
+            reached,
+          })
+        )
+          continue;
       }
       const sites = index.get(result.node) ?? [];
       sites.push(awaited);

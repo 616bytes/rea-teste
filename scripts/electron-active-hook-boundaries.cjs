@@ -223,9 +223,11 @@ const createElectronActiveBoundaryPatches = ({
       if (typeof original !== "function") continue;
       app[method] = function blockedApplicationEffect(...args) {
         recordRuntime(
-          method === "relaunch" || method === "moveToApplicationsFolder"
+          method === "relaunch"
             ? "updater"
-            : "protocol",
+            : method === "moveToApplicationsFolder"
+              ? "app-lifecycle"
+              : "protocol",
           method,
           "blocked",
           { argument_shape_values: args, error: true },
@@ -341,9 +343,22 @@ const createElectronActiveBoundaryPatches = ({
     };
   };
 
+  // Each blocked method keeps the return contract of the Electron API it
+  // replaces, so a target that checks the result sees an ordinary refusal.
+  const blockedShellResults = {
+    openExternal: () =>
+      Promise.reject(new Error("External shell effects are blocked")),
+    openPath: () =>
+      Promise.reject(new Error("External shell effects are blocked")),
+    // Synchronous `void`: reveals a path in the host file manager.
+    showItemInFolder: () => undefined,
+    // Synchronous `boolean`: creates or replaces a Windows shortcut file.
+    writeShortcutLink: () => false,
+  };
+
   const patchShell = (shell) => {
     if (shell === null || shell === undefined) return;
-    for (const method of ["openExternal", "openPath"]) {
+    for (const [method, blockedResult] of Object.entries(blockedShellResults)) {
       const original = shell[method];
       if (typeof original !== "function") continue;
       shell[method] = function blockedShellCall(...args) {
@@ -351,7 +366,7 @@ const createElectronActiveBoundaryPatches = ({
           argument_shape_values: args,
           error: true,
         });
-        return Promise.reject(new Error("External shell effects are blocked"));
+        return blockedResult();
       };
     }
   };

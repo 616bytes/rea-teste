@@ -1040,9 +1040,14 @@ When a Ghidra session fails and Ghidra's retained output shows a JVM
 `resource: "memory"` instead of a generic execution failure or timeout.
 `details.reported_limits.jvm_max_heap` holds the selected maximum heap, such as
 `4G`, or `null` when it is unknown. On Windows it is known only when one of the
-settings above is set. The error does not identify the allocation that failed.
-`rea doctor` does not check heap size, so raise the heap or disable heavy
-analyzers with `REA_GHIDRA_DISABLED_ANALYZERS`, then open the target again.
+settings above is set. `details.reported_limits.jvm_memory_area` is `heap` for
+`Java heap space` and `GC overhead limit exceeded`, `metaspace`, `native` (for
+example `unable to create native thread`), or `unknown`. Only a `heap` failure
+is addressed by a larger `GHIDRA_HEADLESS_MAXMEM`; the others depend on host
+memory or process limits. The error does not identify the allocation that
+failed. `rea doctor` does not check memory limits; disabling heavy analyzers
+with `REA_GHIDRA_DISABLED_ANALYZERS` reduces memory use in every case. Open the
+target again after changing a setting.
 
 REA clears `_JAVA_OPTIONS`, `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, and
 `GHIDRA_JAVA_OPTIONS` inherited from the caller, and owns

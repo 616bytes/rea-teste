@@ -2797,7 +2797,7 @@ describe("Ghidra JVM memory exhaustion", () => {
       retryable: false,
       details: {
         resource: "memory",
-        reported_limits: { jvm_max_heap: "4G" },
+        reported_limits: { jvm_max_heap: "4G", jvm_memory_area: "heap" },
       },
     });
     expect(projected.message).toContain(
@@ -2820,10 +2820,36 @@ describe("Ghidra JVM memory exhaustion", () => {
     });
     expect(projected).toMatchObject({
       code: "resource_constraint",
-      details: { reported_limits: { jvm_max_heap: null } },
+      details: {
+        reported_limits: { jvm_max_heap: null, jvm_memory_area: "heap" },
+      },
     });
     expect(projected.message).toContain("GC overhead limit exceeded");
     expect(projected.message).toContain("an unknown maximum heap");
+    expect(projected.remediation.action).toContain(
+      "Set GHIDRA_HEADLESS_MAXMEM",
+    );
+  });
+
+  it("does not offer a larger heap for memory outside the Java heap", async () => {
+    const projected = await failingSession("process", {
+      stderr: headlessOutput(
+        "java.lang.OutOfMemoryError: unable to create native thread: possibly out of memory or process/resource limits reached",
+      ),
+      jvm_max_heap: "4G",
+    });
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "memory",
+        reported_limits: { jvm_max_heap: "4G", jvm_memory_area: "native" },
+      },
+    });
+    expect(projected.remediation.action).not.toContain("above 4G");
+    expect(projected.remediation.action).toContain(
+      "only sets the Java heap (-Xmx) and may not help",
+    );
+    expect(projected.remediation.action).toContain("thread limits");
   });
 
   it("leaves failures without a JVM memory error unchanged", async () => {

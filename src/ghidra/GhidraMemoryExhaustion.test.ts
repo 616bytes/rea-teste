@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { selectedJvmMaxHeap } from "./GhidraLauncher.js";
-import { ghidraJavaOutOfMemory } from "./GhidraMemoryExhaustion.js";
+import {
+  ghidraJavaOutOfMemory,
+  ghidraJvmMemoryArea,
+} from "./GhidraMemoryExhaustion.js";
 
 const output = (text: string) => ({ text, bytes: 0, retained_bytes: 0 });
 
@@ -62,5 +65,26 @@ describe("selected Ghidra JVM heap", () => {
       "3G",
     );
     expect(heap({})).toBe(undefined);
+  });
+});
+
+describe("Ghidra JVM memory area", () => {
+  it.each([
+    ["java.lang.OutOfMemoryError: Java heap space", "heap"],
+    ["java.lang.OutOfMemoryError: GC overhead limit exceeded", "heap"],
+    ["java.lang.OutOfMemoryError: Metaspace", "metaspace"],
+    ["java.lang.OutOfMemoryError: Compressed class space", "metaspace"],
+    [
+      "java.lang.OutOfMemoryError: unable to create native thread: possibly out of memory or process/resource limits reached",
+      "native",
+    ],
+    ["java.lang.OutOfMemoryError: Direct buffer memory", "native"],
+    [
+      "java.lang.OutOfMemoryError: Requested array size exceeds VM limit",
+      "unknown",
+    ],
+    ["java.lang.OutOfMemoryError", "unknown"],
+  ])("classifies %j as %s", (observed, area) => {
+    expect(ghidraJvmMemoryArea(observed)).toBe(area);
   });
 });

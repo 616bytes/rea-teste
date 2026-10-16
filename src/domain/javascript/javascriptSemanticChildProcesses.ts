@@ -20,10 +20,7 @@ import {
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
-import {
-  semanticInitializerPrecedesRead,
-  semanticReadInitializers,
-} from "./javascriptSemanticMutationInitializers.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   builtinDataEffectMethod,
   dataEffectLiteralString,
@@ -328,11 +325,12 @@ const resolveChildCandidates = (
     // An alias captures its source at its initializer read, not at the later
     // interaction. The shared selector retains all sources across uncertain
     // control flow, loops and writes in other activations.
-    const selected = semanticReadInitializers(
+    const snapshot = semanticBindingAtRead(
       binding,
       current,
       state.parentsByNode,
     );
+    const selected = snapshot.binding;
     const initializers = [
       ...selected.initializers,
       ...selected.referenceInitializers,
@@ -354,11 +352,7 @@ const resolveChildCandidates = (
       // without a same-body ordering proof.
       if (
         !(stable === initializer && !binding.declarationKinds.has("var")) &&
-        !semanticInitializerPrecedesRead(
-          initializer.node,
-          current,
-          state.parentsByNode,
-        )
+        snapshot.status !== "ordered"
       )
         complete = false;
       pending.push(initializer.node);

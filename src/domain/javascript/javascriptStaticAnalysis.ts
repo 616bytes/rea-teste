@@ -21,10 +21,12 @@ import {
 import {
   addReference,
   addSourceMapDirectives,
+  finishPartialNetworkEndpoints,
   inspectCall,
   inspectRouteProperty,
   inspectRoleProperty,
   inspectRpcNode,
+  finishRpcScanSteps,
   indexVitePreloadDependencyTable,
 } from "./javascriptStaticAnalysisCalls.js";
 import {
@@ -50,11 +52,11 @@ import {
 } from "./javascriptSourceParser.js";
 
 import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
-import { semanticImportEqualsSpecifier } from "./javascriptSemanticProjection.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
   isTypeOnlyExportDeclaration,
   isTypeOnlyImportDeclaration,
+  semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
 
 /** Parse one JavaScript artifact and recover static structure only. */
@@ -81,24 +83,26 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
 ): Generator<void, JavaScriptStaticAnalysis> {
   const accumulator = createJavaScriptAnalysisAccumulator(source.length);
   // One definitions pass serves receiver classification and binding lookup.
-  const { bindings, receivers } =
-    yield* indexJavaScriptBindingsWithReceiversSteps(file.program);
+  const index = yield* indexJavaScriptBindingsWithReceiversSteps(file.program);
+  const { bindings, receivers } = index;
+  yield* index.indexAmbientWritesSteps();
   const electronIdentity = yield* indexJavaScriptElectronIdentitySteps(
     file.program,
     bindings,
   );
-  yield* traverseStaticSourceSteps(
-    file,
-    {
-      source,
-      accumulator,
-      vitePreloadDependencyTable: indexVitePreloadDependencyTable(file.program),
-      openReceiverFacts: receivers.openReceivers,
-      electronBindings: electronIdentity.bindings,
-      rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots),
-    },
-    bindings,
-  );
+  const findings: JavaScriptFindingContext = {
+    source,
+    accumulator,
+    vitePreloadDependencyTable: indexVitePreloadDependencyTable(file.program),
+    openReceiverFacts: receivers.openReceivers,
+    electronBindings: electronIdentity.bindings,
+    rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
+  };
+  yield* traverseStaticSourceSteps(file, findings, bindings);
+  if (accumulator.pendingNetworkCalls.length > 0) {
+    yield* index.indexMemberMutationFactsSteps();
+    finishPartialNetworkEndpoints(findings, bindings, index);
+  }
   accumulator.electronCallPaths = collectElectronWrappedCallPaths(
     file.program,
     bindings,
@@ -122,6 +126,7 @@ function* traverseStaticSourceSteps(
       return undefined;
     },
   });
+  yield* finishRpcScanSteps(findings);
 }
 
 const finalizeStaticAnalysis = (

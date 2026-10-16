@@ -2,7 +2,7 @@ import * as t from "@babel/types";
 import { describe, expect, it } from "vitest";
 
 import {
-  semanticInitializerPrecedesRead,
+  semanticBindingAtRead,
   semanticMutationInitializers,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
@@ -45,8 +45,23 @@ it.each([
         if (parent !== null) parents.set(node, parent);
       },
     });
-    expect(semanticInitializerPrecedesRead(initializer, read, parents)).toBe(
-      ordered,
+    const binding: JavaScriptSemanticBindingState = {
+      bindingId: "program:child",
+      scopeId: "program",
+      name: "child",
+      kind: "variable",
+      declarationKinds: new Set(["let"]),
+      mutable: true,
+      memberWrites: [],
+      escapedPaths: [],
+      definitions: [],
+      initializers: [{ node: initializer, projection: [] }],
+      referenceInitializers: [],
+      directOrigins: [],
+      runtimeImport: false,
+    };
+    expect(semanticBindingAtRead(binding, read, parents).status).toBe(
+      ordered ? "ordered" : "unresolved",
     );
     expect(
       semanticTopLevelEffectFollowsCapture(initializer, read, parents),

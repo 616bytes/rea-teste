@@ -38,6 +38,20 @@ it("selects a new spawned child at each straight-line receiver read", () => {
   ]);
 });
 
+it("selects child ownership before and after a replacement in one expression", () => {
+  const ir = analyze(`
+    let child = spawn('old');
+    (child.kill(), child = spawn('new'));
+    child.kill();
+  `);
+  expect(ir.childProcessInteractions).toMatchObject(
+    ir.childProcessSpawns.map(({ processId }) => ({
+      linkedProcessIds: [processId],
+      resolution: "complete",
+    })),
+  );
+});
+
 it.each([
   "class Stop { field = child.kill(); }",
   "class Stop { #field = child.kill(); }",

@@ -380,13 +380,7 @@ const recordInvocation = (kind, channel, event, args) =>
     error: false,
   });
 
-const invokeObservedEventListener = (
-  thisArg,
-  channel,
-  listener,
-  args,
-  nativeMethod,
-) => {
+const invokeObservedEventListener = (thisArg, channel, listener, args) => {
   // Recording slices an actual invocation frame, avoiding Array species;
   // callback dispatch keeps its native Array/Arguments representation.
   const recorded = recordInvocation(
@@ -396,8 +390,6 @@ const invokeObservedEventListener = (
     sliceArguments(args, 1),
   );
   try {
-    if (nativeMethod === "call") return listener.call(thisArg);
-    if (nativeMethod === "apply") return listener.apply(thisArg, args);
     return applyFunction(listener, thisArg, args);
   } catch (cause) {
     if (recorded !== null) recorded.error = true;

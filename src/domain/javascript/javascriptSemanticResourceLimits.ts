@@ -36,6 +36,10 @@ const RESOURCE_LIMIT_REASON: Record<JavaScriptSemanticResourceLimit, string> = {
     "Getter expansion was conservatively bounded (maximum 512 distinct states or a growing receiver cycle).",
   "returned-reference-expansion":
     "Returned-reference expansion was conservatively bounded (maximum 16384 distinct expression/path states for one call target).",
+  "returned-reference-path-links":
+    "Returned-reference expansion was conservatively bounded (maximum 262144 distinct projection-path links for one call target).",
+  "returned-reference-blockers":
+    "Returned-reference expansion was conservatively bounded (maximum 262144 cycle-blocker entries for one call target).",
 };
 
 /** Check UTF-16 length against worst-case JSON escaping without flattening. */

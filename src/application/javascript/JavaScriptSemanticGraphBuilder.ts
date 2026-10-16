@@ -571,7 +571,9 @@ const projectFileResourceLimits = (
   for (const limit of semanticCoverageResourceLimits(context.ir.coverage)) {
     if (
       limit !== "getter-expansion" &&
-      limit !== "returned-reference-expansion"
+      limit !== "returned-reference-expansion" &&
+      limit !== "returned-reference-path-links" &&
+      limit !== "returned-reference-blockers"
     )
       continue;
     const unknown = createJavaScriptSemanticGraphUnknown(

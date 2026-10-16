@@ -193,7 +193,7 @@ it("bounds path links created when one long member chain meets many suffixes", (
     throw new Error("Missing x() call");
   createSemanticReturnedReferences(state)(call.expression.callee);
   expect([...state.valueResourceLimits]).toEqual([
-    "returned-reference-expansion",
+    "returned-reference-path-links",
   ]);
 });
 
@@ -229,7 +229,7 @@ it("bounds blocker propagation when a chain ends in a literal of aliases", () =>
     throw new Error("Missing chain call");
   createSemanticReturnedReferences(state)(call.expression.callee);
   expect([...state.valueResourceLimits]).toEqual([
-    "returned-reference-expansion",
+    "returned-reference-blockers",
   ]);
 });
 

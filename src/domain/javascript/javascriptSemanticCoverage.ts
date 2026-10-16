@@ -5,7 +5,9 @@ import {
   SEMANTIC_GETTER_EXPANSION_LIMIT,
   SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
   SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT,
+  SEMANTIC_RETURNED_REFERENCE_BLOCKER_LIMIT,
   SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT,
+  SEMANTIC_RETURNED_REFERENCE_PATH_LINK_LIMIT,
 } from "./javascriptSemanticResourceLimits.js";
 
 /** Exact retention state for one callable's direct returns. */
@@ -70,6 +72,14 @@ const semanticResourceBounds: Record<
   },
   "returned-reference-expansion": {
     value: SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT,
+    unit: "items",
+  },
+  "returned-reference-path-links": {
+    value: SEMANTIC_RETURNED_REFERENCE_PATH_LINK_LIMIT,
+    unit: "items",
+  },
+  "returned-reference-blockers": {
+    value: SEMANTIC_RETURNED_REFERENCE_BLOCKER_LIMIT,
     unit: "items",
   },
 };

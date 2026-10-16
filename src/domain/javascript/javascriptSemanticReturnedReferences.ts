@@ -21,6 +21,7 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
+import type { JavaScriptSemanticResourceLimit } from "./javascriptSemanticValueTypes.js";
 
 /** A reference potentially handed to a caller or generator consumer. */
 export interface SemanticReturnedReference {
@@ -227,10 +228,10 @@ export const createSemanticReturnedReferences = (
     // completeness.
     let remaining = SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT;
     let remainingLinks = SEMANTIC_RETURNED_REFERENCE_PATH_LINK_LIMIT;
+    let remainingBlockers = SEMANTIC_RETURNED_REFERENCE_BLOCKER_LIMIT;
     let budgeted = false;
-    const recordLimit = (): void => {
-      if (budgeted) return;
-      state.valueResourceLimits.add("returned-reference-expansion");
+    const recordLimit = (limit: JavaScriptSemanticResourceLimit): void => {
+      state.valueResourceLimits.add(limit);
       budgeted = true;
     };
     const reserve = (): boolean => {
@@ -238,7 +239,7 @@ export const createSemanticReturnedReferences = (
         remaining -= 1;
         return true;
       }
-      recordLimit();
+      recordLimit("returned-reference-expansion");
       return false;
     };
     const chargeLink = (): boolean => {
@@ -246,16 +247,15 @@ export const createSemanticReturnedReferences = (
         remainingLinks -= 1;
         return true;
       }
-      recordLimit();
+      recordLimit("returned-reference-path-links");
       return false;
     };
-    let remainingBlockers = SEMANTIC_RETURNED_REFERENCE_BLOCKER_LIMIT;
     const chargeBlocker = (): boolean => {
       if (remainingBlockers > 0) {
         remainingBlockers -= 1;
         return true;
       }
-      recordLimit();
+      recordLimit("returned-reference-blockers");
       return false;
     };
     const paths = createPathInterner(chargeLink);

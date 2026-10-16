@@ -209,9 +209,11 @@ const scriptDimension = (
   before: WebPageInspection,
   after: WebPageInspection,
 ): Dimension => {
-  const inventoryComplete =
-    sectionsComplete(before, ["scripts"]) &&
-    sectionsComplete(after, ["scripts"]);
+  const inventoryComplete = [before, after].every(
+    (inspection) =>
+      sectionsComplete(inspection, ["scripts"]) &&
+      inspection.scripts.total === inspection.scripts.items.length,
+  );
   return compareWebCaptureScripts(
     before.scripts.items,
     after.scripts.items,

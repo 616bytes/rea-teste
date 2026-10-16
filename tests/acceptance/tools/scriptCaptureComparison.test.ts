@@ -303,6 +303,71 @@ cliTest(
   },
 );
 
+cliTest.for([0, 2])(
+  "CLI keeps mismatched script total %i unknown before source matching",
+  async (total, { cli }) => {
+    const captures = [
+      scriptCapture("export let x = 1;\n"),
+      scriptCapture("export let x = 2;\n"),
+    ];
+    for (const capture of captures) capture.inspection.scripts.total = total;
+    captures.push(scriptCapture("export let x = 2;\n"));
+    const paths = await writeCaptures(captures);
+    for (const [left, right] of [
+      [0, 1],
+      [1, 0],
+      [0, 2],
+      [2, 0],
+      [0, 0],
+    ] as const) {
+      expect(
+        await compareScripts(cli, paths[left]!, paths[right]!),
+      ).toMatchObject({ status: "unknown", total_changes: 0, changes: [] });
+    }
+  },
+);
+
+cliTest(
+  "CLI keeps missing script membership unknown while preserving known metadata changes",
+  async ({ cli }) => {
+    const complete = scriptCapture(null, "producer-hash");
+    const missing = structuredClone(complete);
+    missing.inspection.scripts.items = [];
+    const excess = structuredClone(complete);
+    excess.inspection.scripts.total = 0;
+    const modified = structuredClone(excess);
+    modified.inspection.scripts.items[0]!.url += "?revision=2";
+    const paths = await writeCaptures([complete, missing, excess, modified]);
+    for (const [left, right] of [
+      [0, 1],
+      [1, 0],
+      [0, 2],
+      [2, 0],
+    ] as const) {
+      expect(
+        await compareScripts(cli, paths[left]!, paths[right]!),
+      ).toMatchObject({ status: "unknown", total_changes: 0, changes: [] });
+    }
+    for (const [left, right] of [
+      [0, 3],
+      [3, 0],
+    ] as const) {
+      expect(
+        await compareScripts(cli, paths[left]!, paths[right]!),
+      ).toMatchObject({
+        status: "changed",
+        total_changes: 1,
+        changes: [
+          {
+            identity: complete.inspection.scripts.items[0]!.script_key,
+            change: "modified",
+          },
+        ],
+      });
+    }
+  },
+);
+
 cliTest(
   "CLI keeps bare source keys unknown when omissions can hide duplicate members",
   async ({ cli }) => {

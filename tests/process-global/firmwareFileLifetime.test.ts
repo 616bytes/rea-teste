@@ -424,12 +424,10 @@ it("classifies a deadline before composing failed descriptor cleanup", async () 
   const raw = await files
     .report(path, "inspect_firmware_regions", deadline.signal)
     .catch((cause: unknown) => cause);
-  const error = firmwareFailure(
-    raw,
-    "binwalk",
-    "inspect_firmware_regions",
-    deadline.signal,
-  );
+  const error = firmwareFailure(raw, "binwalk", "inspect_firmware_regions", {
+    signal: deadline.signal,
+    timeoutMs: 120_000,
+  });
   expect(error.diagnostics?.primary_error).toMatchObject({
     code: "provider_timeout",
   });
@@ -440,7 +438,7 @@ it("classifies a deadline before composing failed descriptor cleanup", async () 
 
 const publication = async (
   signal: AbortSignal,
-  deadline = new AbortController().signal,
+  deadline = { signal: new AbortController().signal, timeoutMs: 120_000 },
 ) => {
   const root = await createTestTempDirectory(
     "rea-firmware-publication-lifetime-",
@@ -546,7 +544,9 @@ it.each(["caller", "deadline"])(
         : new DOMException("controlled deadline", "TimeoutError");
     const fixture = await publication(
       controller.signal,
-      kind === "deadline" ? controller.signal : undefined,
+      kind === "deadline"
+        ? { signal: controller.signal, timeoutMs: 120_000 }
+        : undefined,
     );
     const create = SafeOutputTree.create;
     vi.spyOn(SafeOutputTree, "create").mockImplementation(async (...args) => {

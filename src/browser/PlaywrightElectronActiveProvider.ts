@@ -42,6 +42,7 @@ import {
 import { projectElectronActiveCapture } from "./PlaywrightElectronActiveProjection.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
 import { assertNodeCliInspectArgumentsSupported } from "./PlaywrightElectronActiveFuses.js";
+import { isPathWithinRoot } from "../domain/localPath.js";
 
 const OPERATION = "capture_electron_scenario" as const;
 const STARTUP_TIMEOUT_MS = 60_000;
@@ -83,12 +84,14 @@ export const executableContainsApplication = async (
     return false;
   }
 
-  const candidateEntryPoints: string[] = [
+  const candidateRoots: string[] = [
     join(exeDir, "resources", "app.asar"),
     join(exeDir, "resources", "app"),
     join(exeDir, "Resources", "app.asar"),
     join(exeDir, "Resources", "app"),
   ];
+
+  let bundleRoot: string | undefined;
 
   // macOS app bundle: <App>.app/Contents/MacOS/<exec>
   const parent = dirname(exeDir);
@@ -102,8 +105,8 @@ export const executableContainsApplication = async (
     if (basename(grandparent).toLowerCase() === "electron.app") {
       return false;
     }
-    candidateEntryPoints.push(
-      grandparent, // The .app bundle root itself
+    bundleRoot = grandparent;
+    candidateRoots.push(
       join(parent, "Resources", "app.asar"),
       join(parent, "Resources", "app"),
       join(parent, "resources", "app.asar"),
@@ -111,13 +114,31 @@ export const executableContainsApplication = async (
     );
   }
 
-  const matches = (candidate: string) =>
-    process.platform === "win32" || process.platform === "darwin"
-      ? normalize(candidate).toLowerCase() ===
-        normalizedApplication.toLowerCase()
-      : normalize(candidate) === normalizedApplication;
+  const isDarwinOrWin =
+    process.platform === "win32" || process.platform === "darwin";
 
-  return candidateEntryPoints.some(matches);
+  // 1. Matches macOS .app bundle root
+  if (bundleRoot !== undefined) {
+    const bundleMatches = isDarwinOrWin
+      ? normalize(bundleRoot).toLowerCase() ===
+        normalizedApplication.toLowerCase()
+      : normalize(bundleRoot) === normalizedApplication;
+    if (bundleMatches) return true;
+  }
+
+  // 2. Matches bundled app archive/directory or its entry file inside
+  return candidateRoots.some((root) => {
+    const normRoot = normalize(root);
+    if (isDarwinOrWin) {
+      const lowerRoot = normRoot.toLowerCase();
+      const lowerApp = normalizedApplication.toLowerCase();
+      return lowerRoot === lowerApp || isPathWithinRoot(lowerRoot, lowerApp);
+    }
+    return (
+      normRoot === normalizedApplication ||
+      isPathWithinRoot(normRoot, normalizedApplication)
+    );
+  });
 };
 
 /** Launch an owned Electron application through the official Playwright API. */

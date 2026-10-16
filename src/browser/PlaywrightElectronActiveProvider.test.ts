@@ -180,6 +180,18 @@ it("identifies packaged executables correctly in executableContainsApplication",
   expect(
     await executableContainsApplication(
       "/usr/lib/drawio/drawio",
+      "/usr/lib/drawio/resources/app/main.js",
+    ),
+  ).toBe(true);
+  expect(
+    await executableContainsApplication(
+      "/opt/example/example",
+      "/opt/example/resources/app/main.js",
+    ),
+  ).toBe(true);
+  expect(
+    await executableContainsApplication(
+      "/usr/lib/drawio/drawio",
       "/usr/lib/drawio/resources/other-tool/index.js",
     ),
   ).toBe(false);

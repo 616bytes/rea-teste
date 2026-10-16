@@ -146,6 +146,28 @@ it("bounds a reassignment chain deeper than the admission reserve", () => {
   ]);
 });
 
+it("bounds a projection chain deeper than a copied-path representation", () => {
+  const depth = 4096;
+  const chain = Array.from(
+    { length: depth },
+    (_, index) => `const a${depth - index - 1} = a${depth - index}.x;`,
+  ).join("\n");
+  const { program, state } = indexed(`
+    function fn() { return { x: 1 }; }
+    const a${depth} = fn;
+    ${chain}
+    a0();
+  `);
+  const call = program.body.at(-1);
+  if (!t.isExpressionStatement(call) || !t.isCallExpression(call.expression))
+    throw new Error("Missing chain call");
+  const references = createSemanticReturnedReferences(state)(
+    call.expression.callee,
+  );
+  expect([...state.valueResourceLimits]).toEqual([]);
+  expect(references).toEqual([]);
+});
+
 it("keeps references proven before the budget cuts off a reassignment web", () => {
   const bindings = ["t", "e", "a", "n", "r"];
   const keys = [

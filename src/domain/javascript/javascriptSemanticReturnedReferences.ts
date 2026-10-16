@@ -25,7 +25,7 @@ export interface SemanticReturnedReference {
 
 interface Candidate {
   readonly node: t.Node;
-  readonly path: readonly (string | number | null)[];
+  readonly path: PathLink;
   readonly initializers: InitializerChain | null;
 }
 
@@ -34,6 +34,58 @@ interface InitializerChain {
   readonly parent: InitializerChain | null;
   readonly value: JavaScriptSemanticInitializer;
 }
+
+/**
+ * A projection path as an interned chain: the head key is consumed first.
+ * Identical paths share one link, so extending, consuming, and keying on a
+ * path are all O(1) and no per-candidate copy or serialization is retained.
+ */
+interface PathLink {
+  readonly rest: PathLink | null;
+  readonly key: string | number | null;
+  readonly length: number;
+  readonly id: number;
+}
+
+interface PathInterner {
+  readonly root: PathLink;
+  readonly prepend: (
+    base: PathLink,
+    keys: readonly (string | number | null)[],
+  ) => PathLink;
+}
+
+const createPathInterner = (): PathInterner => {
+  const interned = new Map<string, PathLink>();
+  let nextId = 1;
+  const root: PathLink = { rest: null, key: null, length: 0, id: 0 };
+  const prependOne = (
+    base: PathLink,
+    key: string | number | null,
+  ): PathLink => {
+    const internKey = JSON.stringify([base.id, key]);
+    const existing = interned.get(internKey);
+    if (existing !== undefined) return existing;
+    const link: PathLink = {
+      rest: base,
+      key,
+      length: base.length + 1,
+      id: nextId,
+    };
+    nextId += 1;
+    interned.set(internKey, link);
+    return link;
+  };
+  return {
+    root,
+    prepend: (base, keys) => {
+      let link = base;
+      for (let index = keys.length - 1; index >= 0; index--)
+        link = prependOne(link, keys[index] ?? null);
+      return link;
+    },
+  };
+};
 
 const initializerChainHas = (
   chain: InitializerChain | null,
@@ -143,10 +195,11 @@ export const createSemanticReturnedReferences = (
     const existing = results.get(callee);
     if (existing !== undefined) return existing;
     const functions = new Set<t.Node>();
+    const paths = createPathInterner();
     const work: ExpansionTask[] = [
       {
         kind: "visit",
-        item: { node: callee, path: [], initializers: null },
+        item: { node: callee, path: paths.root, initializers: null },
         parent: null,
       },
     ];
@@ -183,7 +236,7 @@ export const createSemanticReturnedReferences = (
       if (budgeted) break;
       const { item, parent } = task;
       const node = unwrapJavaScriptExpression(item.node).node;
-      const pathKey = JSON.stringify(item.path);
+      const pathKey = String(item.path.id);
       const covered = expanded
         .get(node)
         ?.get(pathKey)
@@ -221,7 +274,7 @@ export const createSemanticReturnedReferences = (
           if (!reserve()) break;
           pending.push({
             node: initializer.node,
-            path: [...initializer.projection, ...item.path],
+            path: paths.prepend(item.path, initializer.projection),
             initializers: { parent: item.initializers, value: initializer },
           });
         }
@@ -244,7 +297,7 @@ export const createSemanticReturnedReferences = (
           pending.push({
             ...item,
             node: receiver,
-            path: [...path.reverse(), ...item.path],
+            path: paths.prepend(item.path, path.reverse()),
           });
       } else if (
         t.isConditionalExpression(node) ||
@@ -264,7 +317,8 @@ export const createSemanticReturnedReferences = (
       else if (t.isObjectExpression(node))
         selectObjectTargets(node, item, pending, objectTargets, reserve);
       else if (t.isArrayExpression(node)) {
-        const [key, ...path] = item.path;
+        const key = item.path.length === 0 ? undefined : item.path.key;
+        const rest = item.path.rest ?? item.path;
         const index =
           key === undefined || key === null ? null : semanticArrayIndex(key);
         let uncertainOffset = false;
@@ -276,18 +330,19 @@ export const createSemanticReturnedReferences = (
               pending.push({
                 ...item,
                 node: element.argument,
-                path: [null, ...path],
+                path: paths.prepend(rest, [null]),
               });
           } else if (
             (index === null || uncertainOffset || index === offset) &&
             reserve()
           )
-            pending.push({ ...item, node: element, path });
+            pending.push({ ...item, node: element, path: rest });
         });
       } else if (t.isNewExpression(node)) {
         if (reserve()) pending.push({ ...item, node: node.callee });
       } else if (t.isClass(node)) {
-        const [key, ...path] = item.path;
+        const key = item.path.length === 0 ? undefined : item.path.key;
+        const rest = item.path.rest ?? item.path;
         for (const member of node.body.body) {
           if (t.isClassMethod(member)) {
             if (
@@ -298,7 +353,7 @@ export const createSemanticReturnedReferences = (
                     String(key)))
             ) {
               if (!reserve()) break;
-              pending.push({ ...item, node: member, path });
+              pending.push({ ...item, node: member, path: rest });
             }
           } else if (
             t.isClassProperty(member) &&
@@ -310,7 +365,7 @@ export const createSemanticReturnedReferences = (
                 String(key))
           ) {
             if (!reserve()) break;
-            pending.push({ ...item, node: member.value, path });
+            pending.push({ ...item, node: member.value, path: rest });
           }
         }
         if (
@@ -354,7 +409,8 @@ const selectObjectTargets = (
   indexes: WeakMap<t.ObjectExpression, ObjectTargetIndex>,
   reserve: () => boolean,
 ): void => {
-  const [key, ...path] = item.path;
+  const key = item.path.length === 0 ? undefined : item.path.key;
+  const rest = item.path.rest ?? item.path;
   if (key !== null && key !== undefined) {
     const index = objectTargetIndex(node, indexes);
     const property = index.propertyByName.get(String(key));
@@ -375,14 +431,14 @@ const selectObjectTargets = (
             : t.isObjectProperty(unknown)
               ? unknown.value
               : unknown,
-          ...(t.isSpreadElement(unknown) ? {} : { path }),
+          ...(t.isSpreadElement(unknown) ? {} : { path: rest }),
         });
       }
       if (reserve())
         pending.push({
           ...item,
           node: t.isObjectProperty(property) ? property.value : property,
-          path,
+          path: rest,
         });
       return;
     }
@@ -405,8 +461,8 @@ const selectObjectTargets = (
       continue;
     if (!reserve()) return;
     if (t.isObjectProperty(property))
-      pending.push({ ...item, node: property.value, path });
-    else pending.push({ ...item, node: property, path });
+      pending.push({ ...item, node: property.value, path: rest });
+    else pending.push({ ...item, node: property, path: rest });
     if (key !== null && key !== undefined && name === String(key))
       replaced = true;
   }

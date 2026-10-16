@@ -79,6 +79,7 @@ export const peekArtifactMagic = async (
   byteCount: number,
   signal?: AbortSignal,
   fileSystem: StableArtifactFileSystem = FILE_SYSTEM,
+  resourceScope?: ArtifactResourceScope,
 ): Promise<Buffer> => {
   assertReadActive(signal);
   const before = await fileSystem.lstat(path);
@@ -93,13 +94,33 @@ export const peekArtifactMagic = async (
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     ),
   );
+  // With a caller scope, a failed close is retained there for retry instead
+  // of being lost with this stack frame.
+  const owner =
+    resourceScope === undefined ? undefined : new OwnedFileHandle(file);
+  let failure: unknown;
   try {
     await openedIdentity(file, before, path);
     const buffer = Buffer.alloc(byteCount);
     const { bytesRead } = await file.read(buffer, 0, byteCount, 0);
     return buffer.subarray(0, bytesRead);
+  } catch (cause: unknown) {
+    failure = cause;
+    throw cause;
   } finally {
-    await file.close();
+    if (owner === undefined || resourceScope === undefined) await file.close();
+    else {
+      const cleanup = await resourceScope.release({
+        kind: "file-handle",
+        resource: path,
+        handle: owner,
+      });
+      if (cleanup.kind === "failed")
+        throw ArtifactReaderFailure.withCleanup(
+          failure ?? cleanup.cause,
+          ArtifactReaderFailure.cleanupObservation(cleanup.cause, path),
+        );
+    }
   }
 };
 

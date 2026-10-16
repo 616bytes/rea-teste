@@ -56,6 +56,8 @@ export class DexStringResolver {
     private readonly bytes: Uint8Array,
     private readonly header: DexHeader,
     private readonly charge: DexStringCharge = () => undefined,
+    /** True once the caller's budget is spent: no new scan or decode starts. */
+    private readonly spent: () => boolean = () => false,
   ) {
     this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   }
@@ -71,6 +73,7 @@ export class DexStringResolver {
     const cached = this.#strings.get(raw.dataOffset);
     if (cached !== undefined || this.#strings.has(raw.dataOffset))
       return cached ?? null;
+    if (this.spent()) return null;
     this.charge(raw.bytes.length);
     const decoded = this.#decode(raw);
     const size = decoded?.length ?? 0;
@@ -139,6 +142,9 @@ export class DexStringResolver {
   readonly #rawMemo = new Map<number, RawString | null>();
 
   #locate(index: number): RawString | null {
+    // A spent budget means the caller will refuse the whole call; starting
+    // another (possibly member-sized) scan would only waste the time.
+    if (this.spent()) return null;
     if (
       index < 0 ||
       index === DEX_NO_INDEX ||

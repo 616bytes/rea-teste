@@ -274,9 +274,14 @@ export const assembleClassDetail = (
   work: DexWork,
   outputLimit: number,
 ): Result<DexClassDetail | null, DexWorkError> => {
-  const resolver = new DexStringResolver(bytes, dex.header, (units) => {
-    work.budget.remaining -= units;
-  });
+  const resolver = new DexStringResolver(
+    bytes,
+    dex.header,
+    (units) => {
+      work.budget.remaining -= units;
+    },
+    () => work.budget.remaining <= 0,
+  );
   const found = findClassDef(dex, bytes, resolver, classDescriptor, work);
   // An absent class is only an answer when the lookup stayed within budget.
   if (!found.ok) return found;
@@ -430,9 +435,14 @@ export const summarizeDex = (
   bytes: Uint8Array,
   work: DexWork,
 ): Result<DexSummary, DexWorkError> => {
-  const resolver = new DexStringResolver(bytes, dex.header, (units) => {
-    work.budget.remaining -= units;
-  });
+  const resolver = new DexStringResolver(
+    bytes,
+    dex.header,
+    (units) => {
+      work.budget.remaining -= units;
+    },
+    () => work.budget.remaining <= 0,
+  );
   const tallies = new Map<string, MethodTally>();
   let methodsWithCode = 0;
   let methodsWithDebugInfo = 0;

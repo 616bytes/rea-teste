@@ -140,7 +140,13 @@ export class DexFileProvider implements DexDebugMetadataPort {
       return await this.#resources.run(async () => {
         if (input.entry !== undefined)
           return this.#inspectArchive(input.path, input, options);
-        const magic = await peekArtifactMagic(input.path, 8, options?.signal);
+        const magic = await peekArtifactMagic(
+          input.path,
+          8,
+          options?.signal,
+          undefined,
+          this.#resources,
+        );
         return looksLikeZip(magic)
           ? this.#inspectArchive(input.path, input, options)
           : this.#inspectLooseDex(input.path, input, options);

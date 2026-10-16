@@ -510,7 +510,7 @@ it("runs active Electron scenarios with selected paths and inferred working dire
   const validateOutput = new Ajv2020({
     strict: false,
     validateFormats: false,
-  }).compile(advertised.outputSchema);
+  }).compile(z.record(z.string(), z.unknown()).parse(advertised.outputSchema));
   const captured = await client.callTool({
     name: "capture_electron_scenario",
     arguments: {

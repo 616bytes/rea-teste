@@ -808,18 +808,19 @@ export class CutterBridgeClient {
         port: descriptor.port,
       });
       const frames = new CutterBridgeResponseFrames();
-      let settled = false;
+      let completion: (() => void) | undefined;
       let requestSent = false;
       let authenticated = false;
       const clientNonce = randomBytes(32).toString("hex");
       let serverNonce = "";
       let connectionOrdinal: string | undefined;
       const finish = (complete: () => void): void => {
-        if (settled) return;
-        settled = true;
+        if (completion !== undefined) return;
+        completion = complete;
         clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
-        complete();
+        // Retain this request until its owned socket has actually closed.
+        connection.destroy();
       };
       const rejectRequest = (message: string): void =>
         finish(() =>
@@ -827,20 +828,20 @@ export class CutterBridgeClient {
         );
       const timer = setTimeout(() => {
         rejectRequest("Cutter bridge request timed out");
-        connection.destroy();
       }, 25_000);
       const onAbort = (): void => {
         rejectRequest("Cutter bridge request was cancelled");
-        connection.destroy();
       };
       signal?.addEventListener("abort", onAbort, { once: true });
       if (signal?.aborted) onAbort();
       connection.once("connect", () => {
+        if (completion !== undefined) return;
         connection.write(
           `${JSON.stringify({ kind: "rea-auth-v2", nonce: clientNonce })}\n`,
         );
       });
       connection.on("data", (chunk: Buffer) => {
+        if (completion !== undefined) return;
         try {
           frames.push(chunk, (line) => {
             const frame: unknown = JSON.parse(line.toString("utf8"));
@@ -894,24 +895,23 @@ export class CutterBridgeClient {
               )
                 throw new Error("response proof failed");
               const response: unknown = JSON.parse(envelope.response);
-              connection.end();
               finish(() => resolve(response));
               return false;
             }
           });
         } catch {
           rejectRequest("Cutter bridge peer authentication or response failed");
-          connection.destroy();
         }
       });
       connection.once("error", (cause) =>
         rejectRequest(`Cutter bridge is unavailable: ${cause.message}`),
       );
-      connection.once("close", () =>
+      connection.once("close", () => {
         rejectRequest(
           "Cutter bridge closed before returning a complete response",
-        ),
-      );
+        );
+        completion?.();
+      });
     });
   }
 }

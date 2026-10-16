@@ -29,31 +29,7 @@ it.skipIf(process.platform === "win32")(
       // Drain authentication bytes so a paused readable cannot hide peer EOF.
       socket.resume();
     });
-    await new Promise<void>((resolve) => peer.listen(0, "127.0.0.1", resolve));
-    const address = peer.address();
-    if (address === null || typeof address === "string")
-      throw new Error("Expected private loopback listener");
     const descriptors: string[] = [];
-    for (let index = 0; index < 9; index += 1) {
-      const sessionId = randomUUID();
-      const path = join(directory, `cutter-${process.pid}-${sessionId}.json`);
-      descriptors.push(path);
-      await writeFile(
-        path,
-        JSON.stringify({
-          session_id: sessionId,
-          pid: process.pid,
-          host: "127.0.0.1",
-          port: address.port,
-          token: "discovery-test-transport-token",
-          document_generation: 0,
-          current_file: null,
-          cutter_version: null,
-          identity_status: "partial",
-        }),
-        { mode: 0o600 },
-      );
-    }
     const service = new CutterBridgeService(
       new CutterBridgeClient({ REA_CUTTER_BRIDGE_DIR: directory }),
     );
@@ -69,6 +45,32 @@ it.skipIf(process.platform === "win32")(
       InMemoryTransport.createLinkedPair();
     const controller = new AbortController();
     try {
+      await new Promise<void>((resolve) =>
+        peer.listen(0, "127.0.0.1", resolve),
+      );
+      const address = peer.address();
+      if (address === null || typeof address === "string")
+        throw new Error("Expected private loopback listener");
+      for (let index = 0; index < 9; index += 1) {
+        const sessionId = randomUUID();
+        const path = join(directory, `cutter-${process.pid}-${sessionId}.json`);
+        descriptors.push(path);
+        await writeFile(
+          path,
+          JSON.stringify({
+            session_id: sessionId,
+            pid: process.pid,
+            host: "127.0.0.1",
+            port: address.port,
+            token: "discovery-test-transport-token",
+            document_generation: 0,
+            current_file: null,
+            cutter_version: null,
+            identity_status: "partial",
+          }),
+          { mode: 0o600 },
+        );
+      }
       await server.connect(serverTransport);
       await client.connect(clientTransport);
       const request = client.callTool(

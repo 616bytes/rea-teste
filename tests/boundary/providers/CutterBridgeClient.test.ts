@@ -274,6 +274,66 @@ const verifyCutterCancellationAfterDispatch = async (): Promise<void> => {
   }
 };
 
+it.skipIf(process.platform === "win32")(
+  "awaits the probe socket close before returning typed discovery cancellation",
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-cutter-close-order-"));
+    const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
+    let accepted!: () => void;
+    const connected = new Promise<void>((resolve) => {
+      accepted = resolve;
+    });
+    const peer = createServer((socket) => {
+      socket.resume();
+      accepted();
+    });
+    let closed = false;
+    await vi.resetModules();
+    vi.doMock("node:net", async (importOriginal) => {
+      const net = await importOriginal<typeof import("node:net")>();
+      return {
+        ...net,
+        createConnection: (options: import("node:net").NetConnectOpts) => {
+          const socket = net.createConnection(options);
+          socket.once("close", () => {
+            closed = true;
+          });
+          return socket;
+        },
+      };
+    });
+    const controller = new AbortController();
+    try {
+      const port = await listen(peer);
+      await writeDescriptor(
+        directory,
+        sessionId,
+        port,
+        "close-order-test-token",
+      );
+      const { CutterBridgeClient: ObservedClient } =
+        await import("../../../src/cutter/CutterBridgeClient.js");
+      const service = new CutterBridgeService(
+        new ObservedClient({ REA_CUTTER_BRIDGE_DIR: directory }),
+      );
+      const discovery = service.listSessions({ signal: controller.signal });
+      await connected;
+      controller.abort();
+      expect(await discovery).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisCancelledError" },
+      });
+      expect(closed).toBe(true);
+    } finally {
+      controller.abort();
+      vi.doUnmock("node:net");
+      await vi.resetModules();
+      await new Promise<void>((resolve) => peer.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
 describe("CutterBridgeClient: scenario group 1", () => {
   let directory: string | undefined;
   let server: ReturnType<typeof createServer> | undefined;

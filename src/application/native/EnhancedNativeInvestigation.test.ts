@@ -806,3 +806,113 @@ describe("native UI trace boundaries", () => {
     });
   });
 });
+
+describe("node-bounded native UI call relations", () => {
+  it("preserves provider and indirect call relations when the node budget omits a callee", async () => {
+    const unavailableUi = () =>
+      err(
+        new AnalysisCapabilityUnavailableError(
+          "fixture",
+          "decode_interface_builder",
+          "Unavailable in fixture",
+        ),
+      );
+    const providerBounded = await new EnhancedTools(
+      testAnalysis({
+        decode_interface_builder: unavailableUi,
+        list_names: () => execution("list_names", []),
+        procedure_address: () => execution("procedure_address", "0x1000"),
+        procedure_callees: (parameters) =>
+          execution(
+            "procedure_callees",
+            parameters.procedure === "0x1000" ? ["0x2000", "0x3000"] : [],
+          ),
+      }),
+    ).execute("trace_native_ui_action", { action: "0x1000", max_nodes: 2 });
+    if (!providerBounded.ok) throw providerBounded.error;
+    expect(
+      nativeInvestigationTraceSchema.parse(providerBounded.value),
+    ).toMatchObject({
+      edges: [
+        {
+          to: "native:function:0x2000",
+          relation: "provider_call",
+          resolution: "inferred",
+        },
+      ],
+      unresolved: [
+        {
+          to: null,
+          relation: "provider_call",
+          resolution: "unresolved",
+          reason: "native_trace_node_bound_reached",
+        },
+      ],
+    });
+
+    const referenceKind = (indirect: boolean) => ({
+      available: true as const,
+      provenance: "ghidra-reference-manager",
+      type: indirect ? "COMPUTED_CALL" : "UNCONDITIONAL_CALL",
+      flow: true,
+      call: true,
+      jump: false,
+      data: false,
+      read: false,
+      write: false,
+      indirect,
+      computed: indirect,
+      conditional: false,
+      terminal: false,
+      primary: true,
+      operand_index: 0,
+      external: false,
+    });
+    for (const [indirect, expectedRelation, expectedResolution] of [
+      [true, "indirect_call", "resolved"],
+      [false, "direct_call", "observed"],
+    ] as const) {
+      const typedBounded = await new EnhancedTools(
+        testAnalysis({
+          decode_interface_builder: unavailableUi,
+          list_names: () => execution("list_names", []),
+          procedure_address: () => execution("procedure_address", "0x1000"),
+          procedure_references: (parameters) =>
+            execution("procedure_references", {
+              reference_kinds_available: true,
+              references:
+                parameters.procedure === "0x1000"
+                  ? ["0x2000", "0x3000"].map((address, index) => ({
+                      source_address: index === 0 ? "0x1004" : "0x1008",
+                      target_address: address,
+                      target_procedure: { address },
+                      kind: referenceKind(indirect),
+                    }))
+                  : [],
+              unresolved_calls: [],
+            }),
+        }),
+      ).execute("trace_native_ui_action", { action: "0x1000", max_nodes: 2 });
+      if (!typedBounded.ok) throw typedBounded.error;
+      expect(
+        nativeInvestigationTraceSchema.parse(typedBounded.value),
+      ).toMatchObject({
+        edges: [
+          {
+            to: "native:function:0x2000",
+            relation: expectedRelation,
+            resolution: expectedResolution,
+          },
+        ],
+        unresolved: [
+          {
+            to: null,
+            relation: expectedRelation,
+            resolution: "unresolved",
+            reason: "native_trace_node_bound_reached",
+          },
+        ],
+      });
+    }
+  });
+});

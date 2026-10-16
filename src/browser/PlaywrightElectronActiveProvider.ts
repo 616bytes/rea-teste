@@ -138,7 +138,12 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       };
       lineage = await observeOwnedProcessLineage(ownership);
       initialState = await readApplicationState(application);
-      actions = await runElectronActions(application, input, options);
+      actions = await runElectronActions(
+        application,
+        input,
+        options,
+        initialState.windows,
+      );
       const state = await runWithExecutionLimits(
         readApplicationState(application),
         undefined,

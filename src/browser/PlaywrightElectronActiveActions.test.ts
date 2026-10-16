@@ -367,3 +367,55 @@ it("rejects action outcomes that disagree with their error state", () => {
     }).success,
   ).toBe(false);
 });
+
+it("reports capture-scoped window identities for completed and failed window-targeted actions", async () => {
+  const clicked: number[] = [];
+  const ids = [1, 3];
+  const pages = ids.map((id) => ({
+    locator: (selector: string) => ({
+      click: async () => {
+        if (selector === "#fail") throw new Error("simulated click failure");
+        clicked.push(id);
+      },
+    }),
+    waitForTimeout: async () => undefined,
+  }));
+  const windows = ids.map((id) => ({ window_id: `window:${String(id)}` }));
+  const input = electronActiveObservationInputSchema.parse({
+    executable_path: "/opt/electron",
+    application_path: "/opt/app/main.js",
+    application_root: "/opt/app",
+    actions: [
+      { step_id: "first", kind: "click", window_index: 0, selector: "#ok" },
+      { step_id: "second", kind: "click", window_index: 1, selector: "#ok" },
+      { step_id: "untargeted", kind: "wait", duration_ms: 0 },
+      { step_id: "failed", kind: "click", window_index: 1, selector: "#fail" },
+    ],
+  });
+  const application = {
+    windows: () => pages,
+    firstWindow: async () => pages[0],
+  };
+
+  const result = await runElectronActions(
+    application as never,
+    input,
+    {},
+    windows,
+  );
+
+  expect(clicked).toEqual([1, 3]);
+  expect(result.map((action) => action.window_index)).toEqual([0, 1, null, 1]);
+  expect(result.map((action) => action.target)).toEqual([
+    "window:1",
+    "window:3",
+    null,
+    "window:3",
+  ]);
+  expect(result.map((action) => action.status)).toEqual([
+    "completed",
+    "completed",
+    "completed",
+    "failed",
+  ]);
+});

@@ -511,7 +511,7 @@ const addDirectCallees = async (input: {
             id,
             from: current.node.id,
             to: null,
-            relation: "direct_call",
+            relation: route.relation,
             resolution: "unresolved",
             reason: "native_trace_node_bound_reached",
             evidence,

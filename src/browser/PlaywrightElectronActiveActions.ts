@@ -69,12 +69,14 @@ export const runElectronActions = async (
   application: ElectronApplication,
   input: ElectronActiveObservationInput,
   options: ExecutionOptions,
+  windows: ReadonlyArray<Pick<ElectronWindowMetadata, "window_id">> = [],
 ): Promise<ElectronActions> => {
   const actions: ElectronActions = [];
   for (const action of input.actions) {
     const actionStartedAt = performance.now();
     const windowIndex = actionWindowIndex(action);
     let selectedWindow: Page | undefined;
+    let selectedTarget: string | null = null;
     try {
       if (options.signal?.aborted === true)
         throw new BrowserObservationError(OPERATION, "cancelled");
@@ -86,6 +88,12 @@ export const runElectronActions = async (
               windowIndex,
               signal: options.signal,
             });
+      selectedTarget = await resolveSelectedWindowTarget({
+        application,
+        selectedWindow,
+        windowIndex,
+        windows,
+      });
       if (
         (action.kind === "click" ||
           action.kind === "renderer-reload" ||
@@ -104,8 +112,7 @@ export const runElectronActions = async (
         step_id: action.step_id,
         kind: action.kind,
         window_index: windowIndex,
-        target:
-          selectedWindow === undefined ? null : `window:${String(windowIndex)}`,
+        target: selectedTarget,
         status: "completed",
         elapsed_ms: Math.max(
           0,
@@ -118,8 +125,7 @@ export const runElectronActions = async (
         step_id: action.step_id,
         kind: action.kind,
         window_index: windowIndex,
-        target:
-          selectedWindow === undefined ? null : `window:${String(windowIndex)}`,
+        target: selectedTarget,
         status: options.signal?.aborted ? "cancelled" : "failed",
         elapsed_ms: Math.max(
           0,
@@ -131,6 +137,43 @@ export const runElectronActions = async (
     }
   }
   return actions;
+};
+
+const resolveSelectedWindowTarget = async ({
+  application,
+  selectedWindow,
+  windowIndex,
+  windows,
+}: {
+  readonly application: ElectronApplication;
+  readonly selectedWindow: Page | undefined;
+  readonly windowIndex: number | null;
+  readonly windows: ReadonlyArray<Pick<ElectronWindowMetadata, "window_id">>;
+}): Promise<string | null> => {
+  if (selectedWindow === undefined || windowIndex === null) return null;
+  const knownWindowId = windows[windowIndex]?.window_id;
+  if (knownWindowId !== undefined) return knownWindowId;
+  if (typeof application.evaluate === "function") {
+    try {
+      const windowId: unknown = await application.evaluate(
+        (electron, index) => {
+          const candidate = (
+            electron as {
+              readonly BrowserWindow?: {
+                getAllWindows?: () => ReadonlyArray<{ readonly id?: unknown }>;
+              };
+            }
+          )?.BrowserWindow?.getAllWindows?.()[index];
+          return typeof candidate?.id === "number" ? candidate.id : null;
+        },
+        windowIndex,
+      );
+      if (typeof windowId === "number") return `window:${String(windowId)}`;
+    } catch {
+      // Partial test doubles may not expose BrowserWindow metadata.
+    }
+  }
+  return `window:${String(windowIndex)}`;
 };
 
 type RunActionContext = {

@@ -253,6 +253,12 @@ function run(){ let x = root; x = ({value: x.next}).value; return x.make(); }`),
     references(`function make(){ return {v:1}; } const root = {next:{next:{make}}};
 function run(){ let x = root; x = ({value: x.next}).value; x = ({value: x.next}).value; return x.make(); }`),
   ).toHaveLength(0);
+  // Only the selected property is scanned; an unrelated one that reads the
+  // chain does not hide it.
+  expect(
+    references(`function make(){ return {v:1}; } const root = {next:{make}};
+function run(){ let x; x = ({value: root, unused: x}).value; x = x.next; return x.make(); }`),
+  ).toHaveLength(1);
   // A second self-walk on the same binding is the bound: the chain leaves
   // through writes that do not read its own bindings (x = root) and stops.
   expect(

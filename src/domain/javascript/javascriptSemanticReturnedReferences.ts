@@ -404,8 +404,12 @@ const splitChainReads = (
   if (branches === null) {
     // A container (object, array, class, `new`) is expanded by the main loop
     // and can hold a chain read inside it: `({value: x.next}).value` would
-    // otherwise bypass the cut and reopen the exponential search.
-    const read = containedChainRead(current, chain, state);
+    // otherwise bypass the cut and reopen the exponential search. Only the
+    // members the first key can select are scanned, so an unrelated
+    // property that reads the chain does not hide the selected one.
+    const read = selectedMembers(current, allKeys[0])
+      .map((member) => containedChainRead(member, chain, state))
+      .find((found) => found !== undefined);
     return read === undefined
       ? { cut: [], followable: [{ node: current, keys: allKeys }] }
       : { cut: [read], followable: [] };
@@ -443,6 +447,50 @@ const containedChainRead = (
       if (child !== literalName(node)) stack.push(child);
   }
   return undefined;
+};
+
+/**
+ * The parts of a container that a projection's first key can select: for an
+ * object literal, the last property with that static name and any later
+ * spread or computed-key property that could replace it; for an array, the
+ * element at that index unless a spread makes offsets uncertain. Without a
+ * usable key, or for other containers, the whole expression.
+ */
+const selectedMembers = (
+  node: t.Node,
+  key: string | number | null | undefined,
+): readonly t.Node[] => {
+  if (key === null || key === undefined) return [node];
+  if (t.isObjectExpression(node)) {
+    const selected: t.Node[] = [];
+    for (const property of [...node.properties].reverse()) {
+      if (t.isSpreadElement(property)) {
+        selected.push(property.argument);
+        continue;
+      }
+      const name = semanticStaticPropertyKey(property.key, property.computed);
+      if (name === null) {
+        selected.push(property);
+        continue;
+      }
+      if (name !== String(key)) continue;
+      selected.push(t.isObjectProperty(property) ? property.value : property);
+      return selected;
+    }
+    return selected;
+  }
+  if (t.isArrayExpression(node)) {
+    const index = semanticArrayIndex(key);
+    if (index === null) return [node];
+    const prefix = node.elements.slice(0, index + 1);
+    if (
+      prefix.some((element) => element !== null && t.isSpreadElement(element))
+    )
+      return [node];
+    const element = node.elements[index];
+    return element === null || element === undefined ? [] : [element];
+  }
+  return [node];
 };
 
 /** The child that names a property or member without being a read. */

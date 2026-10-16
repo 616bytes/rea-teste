@@ -36,6 +36,12 @@ export const JADX_JVM_OPTIONS_REMEDIATION =
 export const JADX_HEAP_EXHAUSTION_REMEDIATION =
   "Raise the JADX worker heap in the environment that starts REA: set REA_JADX_HEAP_MIB to a larger size in MiB (for example 8192). REA passes that value as an explicit -Xmx on the worker command line, so JAVA_TOOL_OPTIONS and JDK_JAVA_OPTIONS govern the worker heap only while REA_JADX_HEAP_MIB is unset; _JAVA_OPTIONS overrides the command line, so clear or raise it as well. REA supplies no default heap, and a reported heap is the limit that run had, not what the APK requires.";
 
+/** Whole-operation deadline used when REA_JADX_OPERATION_TIMEOUT_MS is unset. */
+export const DEFAULT_JADX_OPERATION_TIMEOUT_MS = 120_000;
+
+/** Remediation when the JADX operation deadline override is malformed. */
+export const JADX_OPERATION_TIMEOUT_REMEDIATION = `Set REA_JADX_OPERATION_TIMEOUT_MS to a decimal millisecond count from 1 to 2147483647, or unset it to keep the ${String(DEFAULT_JADX_OPERATION_TIMEOUT_MS)} ms default.`;
+
 /** Remediation when the host cannot run the Android JADX subprocess. */
 export const JADX_UNSUPPORTED_HOST_REMEDIATION =
   "Use Linux, macOS, or Windows x64 with its bundled native controls for Android JADX analysis.";

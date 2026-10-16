@@ -49,6 +49,10 @@ export const inspectJadxProvider = async (
               "REA_JADX_ACTIVE_PROCESSOR_COUNT",
               environment.REA_JADX_ACTIVE_PROCESSOR_COUNT,
             ),
+            ...optionalEntry(
+              "REA_JADX_OPERATION_TIMEOUT_MS",
+              environment.REA_JADX_OPERATION_TIMEOUT_MS,
+            ),
           },
     checks: [
       configurationCheck(configured, availability, jarPath),
@@ -94,6 +98,7 @@ const configurationCheck = (
 ): DoctorProviderCheck => {
   const code = availability.status === "unavailable" ? availability.code : null;
   if (availability.status === "available" && jarPath !== undefined) {
+    const operationTimeout = availability.diagnostics["operation_timeout_ms"];
     return {
       name: "configuration",
       ok: true,
@@ -101,6 +106,9 @@ const configurationCheck = (
       detail: `JADX MCP bridge JAR validated at ${jarPath}; its path is recorded for agent registrations.`,
       remediation: null,
       classification: "config_drift",
+      ...(typeof operationTimeout === "number"
+        ? { details: { operation_timeout_ms: operationTimeout } }
+        : {}),
     };
   }
   // The failure kind is tagged at the configuration boundary; project its

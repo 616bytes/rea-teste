@@ -428,6 +428,107 @@ describe("Ghidra disabled analyzers", () => {
   });
 });
 
+describe("Ghidra persistent project", () => {
+  const base = {
+    platform: "linux" as const,
+    projectRoot: "/tmp/project",
+    targetPath: "/tmp/target",
+    bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+    descriptorPath: "/tmp/session.json",
+    ghidraLogPath: "/tmp/ghidra.log",
+    scriptLogPath: "/tmp/script.log",
+  };
+  const project = {
+    projectLocation: "/bench/projects",
+    projectName: "Game",
+    folderPath: "/",
+    programName: "Game.exe",
+  };
+
+  it("opens one Program read-only without import, analysis, deletion, or repair", () => {
+    expect(
+      ghidraHeadlessArguments({ ...base, persistentProject: project }),
+    ).toEqual([
+      "/bench/projects",
+      "Game",
+      "-process",
+      "Game.exe",
+      "-noanalysis",
+      "-readOnly",
+      "-log",
+      "/tmp/ghidra.log",
+      "-scriptlog",
+      "/tmp/script.log",
+      "-scriptPath",
+      "/package/bridge",
+      "-postScript",
+      "/package/bridge/ReaGhidraBridge.java",
+      "/tmp/session.json",
+    ]);
+  });
+
+  it("selects a Program inside a project folder through the project argument", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      ...base,
+      persistentProject: { ...project, folderPath: "/bin/x64" },
+    });
+    expect(arguments_.slice(0, 4)).toEqual([
+      "/bench/projects",
+      "Game/bin/x64",
+      "-process",
+      "Game.exe",
+    ]);
+    expect(arguments_).not.toContain("-import");
+    expect(arguments_).not.toContain("-deleteProject");
+  });
+
+  it("uses the target platform's script path on Windows", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      ...base,
+      platform: "win32",
+      bridgeScriptPath: win32.join("C:\\rea", "bridge", "ReaGhidraBridge.java"),
+      persistentProject: { ...project, projectLocation: "D:\\Bench" },
+    });
+    expectOptions(arguments_, [
+      ["-scriptPath", win32.join("C:\\rea", "bridge")],
+    ]);
+    expect(arguments_[0]).toBe("D:\\Bench");
+  });
+
+  it.each([
+    ["seeds", { seedPath: "/tmp/runtime/seeds/seeds.tsv" }],
+    ["disabled analyzers", { disabledAnalyzers: ["Stack"] }],
+    [
+      "a language override",
+      { languageOverride: { languageId: "x86:LE:64:default" } },
+    ],
+    ["DOS MZ", { dosMz: true as const }],
+    ["DOS COM", { dosCom: true as const }],
+    ["PSP", { psp: true as const }],
+    ["MIPS soft-float", { mipsSoftFloat: true as const }],
+    [
+      "a raw-binary import",
+      {
+        rawBinary: {
+          languageId: "x86:LE:32:default",
+          compilerSpecId: "default",
+          baseAddr: "0x1000",
+        },
+      },
+    ],
+  ])("refuses to combine the project with %s", (_label, conflict) => {
+    expect(() =>
+      ghidraHeadlessArguments({
+        ...base,
+        persistentProject: project,
+        ...conflict,
+      }),
+    ).toThrow(
+      /persistent Ghidra project is opened without import|cannot be combined/u,
+    );
+  });
+});
+
 describe("Ghidra Windows launcher", () => {
   it("keeps analysis repair outside Windows P0 authority", () => {
     const args = ghidraHeadlessArguments({

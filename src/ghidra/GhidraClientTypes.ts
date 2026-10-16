@@ -43,6 +43,8 @@ export interface GhidraClientOptions {
   readonly profileDigest: string;
   readonly expectedLanguageId?: string;
   readonly expectedCompilerSpecId?: string;
+  /** The launcher opens a caller project read-only instead of importing. */
+  readonly persistentProject?: true;
   readonly startupTimeoutMs?: number;
   readonly onDiagnostic?: (event: GhidraDiagnostic) => void;
   readonly logger?: Logger;

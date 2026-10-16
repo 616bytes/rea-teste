@@ -10,6 +10,7 @@ import {
 import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
 import { ghidraExtensionResultSchema } from "./extensions/GhidraExtensions.js";
 import { GHIDRA_MIPS_SOFT_FLOAT_STORAGE } from "./GhidraMipsProfile.js";
+import { ghidraPersistentProjectReportSchema } from "./GhidraPersistentProject.js";
 
 /** Exact methods proved by the bridge handshake after auto-analysis. */
 export const GHIDRA_SESSION_CAPABILITIES = [
@@ -83,6 +84,8 @@ const sessionInfoSchema = z
       .optional(),
     analysis_extensions: z.array(ghidraExtensionResultSchema).optional(),
     analysis_seeds: ghidraSeedReportSchema.optional(),
+    /** Present exactly when the session opened a caller-selected project. */
+    project: ghidraPersistentProjectReportSchema.optional(),
     mips_soft_float_storage: z
       .object({
         policy: z.literal(GHIDRA_MIPS_SOFT_FLOAT_STORAGE),
@@ -153,6 +156,7 @@ export const parseGhidraSessionInfo = (
     readonly profileDigest: string;
     readonly targetSha256: string;
     readonly expectedReadOnly?: boolean;
+    readonly persistentProject?: boolean;
     readonly expectedLanguageId?: string;
     readonly expectedCompilerSpecId?: string;
   },
@@ -166,6 +170,8 @@ export const parseGhidraSessionInfo = (
     !parsed.success ||
     parsed.data.run_id !== expected.runId ||
     parsed.data.read_only !== readOnly ||
+    (parsed.data.project !== undefined) !==
+      (expected.persistentProject ?? false) ||
     parsed.data.capabilities.length !== expectedCapabilities.length ||
     parsed.data.provider.version !== expected.providerVersion ||
     parsed.data.profile_digest !== expected.profileDigest ||
@@ -186,9 +192,12 @@ export const parseGhidraSessionInfo = (
 };
 
 /** Require acknowledgement that the private bridge loop has ended. */
-export const isGhidraShutdownAcknowledgement = (value: JsonValue): boolean =>
+export const isGhidraShutdownAcknowledgement = (
+  value: JsonValue,
+  persistentProject = false,
+): boolean =>
   typeof value === "object" &&
   value !== null &&
   !Array.isArray(value) &&
   value.shutdown === true &&
-  value.project_ephemeral === true;
+  value.project_ephemeral === !persistentProject;

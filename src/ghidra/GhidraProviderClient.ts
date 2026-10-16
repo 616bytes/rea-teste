@@ -22,6 +22,12 @@ import {
   sameGhidraLanguageOverride,
 } from "./GhidraAnalysisProfile.js";
 import { ghidraPinnedMipsLanguage } from "./GhidraMipsProfile.js";
+import {
+  ghidraPersistentProjectCommitmentSchema,
+  ghidraPersistentProjectFailure,
+  ghidraPersistentProjectLimitations,
+  sameGhidraPersistentProject,
+} from "./GhidraPersistentProject.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
@@ -89,7 +95,7 @@ import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import { nativeLoadImageObservationSchema } from "../domain/native/nativeLoadImage.js";
 import {
   GHIDRA_PROVIDER_IDENTITY,
-  healthLimitations,
+  ghidraHealthLimitations,
   windowsP0Limitations,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
@@ -450,6 +456,26 @@ export const createGhidraProviderClient = (input: {
       }),
     );
   const seeds = seedProfile.data;
+  const projectProfile = ghidraPersistentProjectCommitmentSchema
+    .optional()
+    .safeParse(committedProfile.parameters.persistent_project);
+  if (
+    !projectProfile.success ||
+    !sameGhidraPersistentProject(
+      projectProfile.data,
+      config.ghidraPersistentProject,
+    )
+  )
+    return unavailableClient(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: {
+          reason:
+            "Resolve REA_GHIDRA_PROJECT and REA_GHIDRA_PROGRAM into an analysis profile before opening the session.",
+        },
+      }),
+    );
+  const persistentProject = projectProfile.data;
+  const persistent = persistentProject !== undefined;
   const parameterLanguage = ghidraProfileLanguageOverride(
     committedProfile.parameters,
   );
@@ -529,6 +555,8 @@ export const createGhidraProviderClient = (input: {
   let extensionFailure: AnalysisError | undefined;
   // Replaced by the reported outcome once the session handshake is checked.
   const seedLimitations: string[] = [...ghidraSeedLimitations(seeds)];
+  const projectLimitations =
+    ghidraPersistentProjectLimitations(persistentProject);
   const pdbLimitations: string[] = [];
   // Replaced by the reported storage outcome once the handshake is checked.
   const softFloatLimitations: string[] = [
@@ -612,6 +640,14 @@ export const createGhidraProviderClient = (input: {
         ? {}
         : { disabledAnalyzers: config.ghidraDisabledAnalyzers }),
       ...(seeds === undefined ? {} : { analysisSeeds: seeds }),
+      ...(persistentProject === undefined
+        ? {}
+        : {
+            persistentProject: {
+              projectFile: persistentProject.project_file,
+              program: persistentProject.program,
+            },
+          }),
       platform: installation.platform,
       ...(extensions.length === 0 ? {} : { analysisExtensions: extensions }),
     }),
@@ -650,6 +686,7 @@ export const createGhidraProviderClient = (input: {
           expectedCompilerSpecId: "default",
         }
       : {}),
+    ...(persistent ? { persistentProject: true as const } : {}),
     ...(context === undefined ? {} : { runId: context.runId }),
     logger: logger.child({ layer: "ghidra-bridge" }),
   });
@@ -674,6 +711,12 @@ export const createGhidraProviderClient = (input: {
       info.mips_soft_float_storage,
     );
     extensionFailure =
+      ghidraPersistentProjectFailure(
+        persistentProject,
+        info.project,
+        target,
+        operation,
+      ) ??
       ghidraExtensionFailure(
         extensions,
         info.analysis_extensions ?? [],
@@ -719,6 +762,7 @@ export const createGhidraProviderClient = (input: {
     ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
     ...softFloatLimitations,
     ...ghidraExtensionLimitations(extensions),
+    ...projectLimitations,
     ...seedLimitations,
     ...pdbLimitations,
     ...(releaseLimitation === undefined ? [] : [releaseLimitation]),
@@ -745,7 +789,7 @@ export const createGhidraProviderClient = (input: {
       analysisProfile: committedProfile,
       ...(relationshipCoverage === undefined ? {} : { relationshipCoverage }),
       limitations: [
-        ...limitationsFor(operation),
+        ...limitationsFor(operation, persistent),
         ...observationLimitations,
         ...sessionLimitations(),
       ],
@@ -800,7 +844,10 @@ export const createGhidraProviderClient = (input: {
         return ok(
           createAnalysisExecution(started.value, committedProfile.provider, {
             analysisProfile: committedProfile,
-            limitations: [...healthLimitations, ...sessionLimitations()],
+            limitations: [
+              ...ghidraHealthLimitations(persistent),
+              ...sessionLimitations(),
+            ],
           }),
         );
       }
@@ -812,6 +859,7 @@ export const createGhidraProviderClient = (input: {
         target.format === "pe" ||
         extensions.length > 0 ||
         seeds !== undefined ||
+        persistent ||
         softFloat
       ) {
         const started = await client.start(options?.signal, options?.progress);

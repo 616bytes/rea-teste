@@ -10,6 +10,10 @@ import {
 } from "./ghidraLanguageOverride.js";
 import { ghidraDisabledAnalyzersSchema } from "./ghidraDisabledAnalyzers.js";
 import {
+  ghidraProgramPathSchema,
+  ghidraProjectFileSchema,
+} from "./ghidraPersistentProject.js";
+import {
   DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
   DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
@@ -63,6 +67,8 @@ const environmentSchema = z.object({
     .min(1)
     .refine(isAbsolute, "REA_GHIDRA_SEED_FILE must be absolute")
     .optional(),
+  REA_GHIDRA_PROJECT: ghidraProjectFileSchema.optional(),
+  REA_GHIDRA_PROGRAM: ghidraProgramPathSchema.optional(),
   REA_ILSPY_CMD_PATH: z
     .string()
     .min(1)
@@ -169,5 +175,57 @@ export const parseEnvironment = (
         ],
       }),
     );
+  const persistent = persistentProjectConflict(env, unresolvedSettings);
+  if (persistent !== undefined)
+    return err(
+      new ConfigurationError("Invalid REA environment configuration", {
+        settings: [persistent],
+      }),
+    );
   return parsed;
+};
+
+/**
+ * A persistent project is opened with `-process -noanalysis`: no import runs,
+ * so import-time settings would be silently ignored. Refuse them instead.
+ */
+const PERSISTENT_PROJECT_IMPORT_SETTINGS = [
+  "REA_GHIDRA_LANGUAGE_ID",
+  "REA_GHIDRA_COMPILER_SPEC_ID",
+  "REA_GHIDRA_DISABLED_ANALYZERS",
+  "REA_GHIDRA_SEED_FILE",
+  "REA_GHIDRA_NATIVEAOT_JAR",
+] as const;
+
+const persistentProjectConflict = (
+  env: Environment,
+  unresolvedSettings: ReadonlySet<string>,
+): { readonly setting: string; readonly constraint: string } | undefined => {
+  const project =
+    env.REA_GHIDRA_PROJECT !== undefined ||
+    unresolvedSettings.has("REA_GHIDRA_PROJECT");
+  const program =
+    env.REA_GHIDRA_PROGRAM !== undefined ||
+    unresolvedSettings.has("REA_GHIDRA_PROGRAM");
+  if (env.REA_GHIDRA_PROJECT !== undefined && !program)
+    return {
+      setting: "REA_GHIDRA_PROJECT",
+      constraint: "requires REA_GHIDRA_PROGRAM",
+    };
+  if (env.REA_GHIDRA_PROGRAM !== undefined && !project)
+    return {
+      setting: "REA_GHIDRA_PROGRAM",
+      constraint: "requires REA_GHIDRA_PROJECT",
+    };
+  if (env.REA_GHIDRA_PROJECT === undefined) return undefined;
+  const conflict = PERSISTENT_PROJECT_IMPORT_SETTINGS.find(
+    (setting) => env[setting] !== undefined,
+  );
+  return conflict === undefined
+    ? undefined
+    : {
+        setting: conflict,
+        constraint:
+          "cannot be combined with REA_GHIDRA_PROJECT; a persistent project is opened without import or analysis",
+      };
 };

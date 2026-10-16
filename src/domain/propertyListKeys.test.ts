@@ -335,4 +335,134 @@ describe("binary property list parsing", () => {
       UID: 1,
     });
   });
+
+  it("preserves leading U+FEFF in UTF-16BE string values", () => {
+    // bplist00 containing a single UTF-16BE string "\uFEFFa"
+    // Object 0 (offset 8): marker 0x62 (2 chars), 4 bytes FE FF 00 61
+    // Offset table (offset 13): 1 entry with value 8 (0x08)
+    // Trailer: offSize=1, intSize=1, numObj=1, topObj=0, offsetTableOffset=13
+    const bytes = new Uint8Array([
+      0x62,
+      0x70,
+      0x6c,
+      0x69,
+      0x73,
+      0x74,
+      0x30,
+      0x30, // magic "bplist00" (8 bytes, offsets 0..7)
+      0x62, // offset 8: string, 2 UTF-16BE chars
+      0xfe,
+      0xff,
+      0x00,
+      0x61, // offsets 9..12: U+FEFF U+0061 ("a")
+      0x08, // offset 13: offset table: object 0 is at offset 8
+      // trailer (32 bytes, offsets 14..45)
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x01, // offsetIntSize = 1
+      0x01, // objectRefSize = 1
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x01, // numObjects = 1
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00, // topObject = 0
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x0d, // offsetTableOffset = 13 (0x0d)
+    ]);
+    expect(parseBinaryPropertyList(Buffer.from(bytes))).toEqual("\uFEFFa");
+  });
+
+  it("preserves leading U+FEFF in UTF-16BE dictionary keys", () => {
+    // bplist00 with a dict { "\uFEFFkey": 1 }
+    // Objects:
+    //   Object 0 @ 8:  dict, 1 pair: key-ref=1, val-ref=2 → 0xd1, 0x01, 0x02
+    //   Object 1 @ 11: string, 4 UTF-16BE chars           → 0x64, FE FF 00 6B 00 65 00 79
+    //   Object 2 @ 20: int (1 byte) = 1                   → 0x10, 0x01
+    // Offset table @ 22: 0x08, 0x0b, 0x14
+    // Trailer @ 25: offsetTableOffset = 22 (0x16)
+    const bytes = new Uint8Array([
+      0x62,
+      0x70,
+      0x6c,
+      0x69,
+      0x73,
+      0x74,
+      0x30,
+      0x30, // "bplist00" (0..7)
+      0xd1,
+      0x01,
+      0x02, // offset 8: dict, 1 pair; key-ref=1, val-ref=2
+      0x64, // offset 11: string, 4 UTF-16BE chars
+      0xfe,
+      0xff,
+      0x00,
+      0x6b,
+      0x00,
+      0x65,
+      0x00,
+      0x79, // U+FEFF k e y (12..19)
+      0x10,
+      0x01, // offset 20: int8 = 1 (20..21)
+      0x08,
+      0x0b,
+      0x14, // offset 22: offset table: offsets 8, 11, 20
+      // trailer (32 bytes, offsets 25..56)
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x01, // offsetIntSize = 1
+      0x01, // objectRefSize = 1
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x03, // numObjects = 3
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00, // topObject = 0
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x16, // offsetTableOffset = 22 (0x16)
+    ]);
+    expect(parseBinaryPropertyList(Buffer.from(bytes))).toEqual({
+      "\uFEFFkey": 1,
+    });
+  });
 });

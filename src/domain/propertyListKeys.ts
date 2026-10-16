@@ -361,7 +361,7 @@ const substitutePrototypeKeys = (text: string, document: Document) => {
 
 const EPOCH_2001 = 978307200000;
 const UTF8_DECODER = new TextDecoder("utf-8");
-const UTF16BE_DECODER = new TextDecoder("utf-16be");
+const UTF16BE_DECODER = new TextDecoder("utf-16be", { ignoreBOM: true });
 
 const readSizedUint = (
   view: DataView,

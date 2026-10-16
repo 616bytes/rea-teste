@@ -8,6 +8,7 @@ import { androidResultSchemas } from "../../../src/domain/android/androidAnalysi
 import { snapshotAndroidEngine } from "../../../src/android/AndroidTargetSnapshot.js";
 import { hashStableFile } from "../../../src/filesystem/StableFileHash.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
+import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import {
   createJadxProtocolFixture as setup,
@@ -136,24 +137,79 @@ it("drains hash descriptors even when session shutdown fails and retains its wor
 });
 
 it("cancels Android admission while hashing the selected APK", async () => {
-  const { service, apk, launches, provider } = await setup();
+  const { apk, launches, provider } = await setup();
+  const target = await parseBinaryTarget(apk);
+  if (!target.ok) throw target.error;
   await writeFile(apk, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
   await truncate(apk, 1024 * 1024 * 1024);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 100);
+  const abortCause = new Error("fixture caller cancelled JADX hashing");
+  const timer = setTimeout(() => controller.abort(abortCause), 100);
   try {
-    const result = await service.execute(
-      "inspect_android_package",
-      { path: apk },
+    const result = await provider.execute(
+      target.value,
+      { operation: "inspect_android_package", input: { path: apk } },
       { signal: controller.signal },
     );
     expect(result).toMatchObject({
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
     });
+    if (result.ok) throw new Error("Expected Android admission cancellation");
+    expect(result.error.cause).toBe(abortCause);
     expect(launches).toHaveLength(0);
   } finally {
     clearTimeout(timer);
+    await provider.close();
+    await verifyCleanup(launches);
+  }
+});
+
+it("preserves cancellation cause when hashing succeeded but descriptor close failed", async () => {
+  const { apk, launches, provider } = await setup();
+  const target = await parseBinaryTarget(apk);
+  if (!target.ok) throw target.error;
+  const controller = new AbortController();
+  const abortCause = new Error("fixture caller cancelled after hash read");
+  const closeCause = new Error("fixture hash descriptor close failed");
+  const owners: OwnedFileHandle[] = [];
+  const originalClose = OwnedFileHandle.prototype.close;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementationOnce(async function (this: OwnedFileHandle) {
+      owners.push(this);
+      controller.abort(abortCause);
+      throw closeCause;
+    })
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      owners.push(this);
+      return originalClose.call(this);
+    });
+  try {
+    const result = await provider.execute(
+      target.value,
+      { operation: "inspect_android_package", input: { path: apk } },
+      { signal: controller.signal },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: false },
+    });
+    if (result.ok) throw new Error("Expected the descriptor close failure");
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(result.error.cause).toBeInstanceOf(AggregateError);
+    const causes = (result.error.cause as AggregateError).errors;
+    expect(causes[0]).toMatchObject({ _tag: "AnalysisCancelledError" });
+    expect((causes[0] as Error).cause).toBe(abortCause);
+    const cleanupFailure = (causes[1] as Error).cause;
+    if (!(cleanupFailure instanceof RegularFileCleanupFailure))
+      throw new Error("Expected the retained hash cleanup failure");
+    expect(cleanupFailure.cleanupCause).toBe(closeCause);
+    expect(owners[1]).toBe(owners[0]);
+    expect(owners[0]?.handle.fd).toBe(-1);
+    expect(launches).toHaveLength(0);
+  } finally {
+    close.mockRestore();
     await provider.close();
     await verifyCleanup(launches);
   }

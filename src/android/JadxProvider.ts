@@ -71,7 +71,13 @@ const executionError = (context: {
   const { cause, request, timeout, signal, session } = context;
   if (cause instanceof RegularFileCleanupFailure) {
     const primaryCause =
-      cause.outcome.kind === "failed" ? cause.outcome.cause : undefined;
+      cause.outcome.kind === "failed"
+        ? cause.outcome.cause
+        : signal?.aborted
+          ? signal.reason
+          : timeout.aborted
+            ? timeout.reason
+            : undefined;
     const primaryOptions =
       primaryCause === undefined ? {} : { cause: primaryCause };
     const primary =
@@ -106,7 +112,7 @@ const executionError = (context: {
     return analysisErrorWithCleanupFailure(primary, cleanup, request.operation);
   }
   if (signal?.aborted === true)
-    return new AnalysisCancelledError(request.operation);
+    return new AnalysisCancelledError(request.operation, { cause });
   if (timeout.aborted)
     return new AnalysisTimeoutError(request.operation, OPERATION_TIMEOUT_MS);
   if (cause instanceof AnalysisError) return cause;

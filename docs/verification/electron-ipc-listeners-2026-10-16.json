@@ -5925,5 +5925,591 @@
       },
       "scope_poststate": "ActiveState=inactive\nSubState=dead"
     }
+  },
+  "owned_metadata_and_verifier_followup": {
+    "reviewed_head": "41a513d993c50d8db91535047a1bd3fcb580d3b9",
+    "review_threads": ["PRRT_kwDOSB6hVc6tR5kn", "PRRT_kwDOSB6hVc6tR5kr"],
+    "source_pins": {
+      "candidate_revision": "4a9a01f7a4aab420eb645f7e06841d6ec1db28bd",
+      "baseline_revision": "180ba03bfddd5916251e81e97a500b1ede7a9eea",
+      "source_sha256": {
+        "scripts/electron-active-hook.cjs": "e06de9e141212187c01743b5c1029061830d4235daf75f7eef08796591bc8559",
+        "tests/boundary/browser/electronActiveHook.test.ts": "432d69e92707f373153d903f5a193d3dd674cd2d6dfb5be234a51260549b1961",
+        "experiments/analysis-efficiency/drawio-electron-lifecycle.mjs": "1423a472f58fc81383061bf695059550276b898c780e91bb47052797b25e0ce6",
+        "experiments/analysis-efficiency/drawio-electron-lifecycle-oracles.py": "c98dd2abf16703744aa32edc5dd12b0f4eec121d40a4aaa387ef580b046032e2"
+      }
+    },
+    "root_causes": [
+      "Ordinary on registration does not assign .listener metadata, but the recording wrapper used strict assignment, exposing hook-owned identity to inherited application setters or readonly prototype fields.",
+      "Successful capture returns an Evidence envelope; the verifier read observation fields from the envelope rather than normalized_result. Real cleanup failures only exercised the separate raw-partial path."
+    ],
+    "structural_fixes": [
+      "5dcf79f29 defines the on-wrapper own writable/configurable/enumerable data property directly. once retains its native assignment convention.",
+      "4a9a01f7a reads success.value.normalized_result, retaining error.partialObservation.capture on failure. New standalone controlled oracles exercise the actual verifier in an isolated stub runtime."
+    ],
+    "native_red": {
+      "log_name": "rea-4390-inherited-metadata-red.log",
+      "log_sha256": "afd919f233c239f6393362cf64ce519a93e5d7ac0fb5876e18d21e3a4a187919",
+      "resource": {
+        "resource_scope": "rea-efficiency-fa6ca7cff41e4b009c73d38899ce9e6e.scope",
+        "elapsed_seconds": 4.919,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-fa6ca7cff41e4b009c73d38899ce9e6e.scope",
+          "payload_exit_code": 1,
+          "observer_pid": 3870349,
+          "remaining_processes": [3870349],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 4250529,
+            "user_usec": 2956701,
+            "system_usec": 1293828,
+            "nr_periods": 47,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 353755136,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-fa6ca7cff41e4b009c73d38899ce9e6e.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "scope_poststate": "ActiveState=inactive\nSubState=dead",
+      "status": "35 passed /4 failed of39: Function/Object prototype setters and readonly fields."
+    },
+    "native_green": {
+      "log_name": "rea-4390-inherited-metadata-green.log",
+      "log_sha256": "614e5d0bae651dce139f510946d5c2fd51047240310fe87e9a58aa4606369375",
+      "resource": {
+        "resource_scope": "rea-efficiency-59821aae0a8747358570563c08f02964.scope",
+        "elapsed_seconds": 6.156,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-59821aae0a8747358570563c08f02964.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3872909,
+          "remaining_processes": [3872909],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 5438514,
+            "user_usec": 2844035,
+            "system_usec": 2594479,
+            "nr_periods": 60,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 248344576,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-59821aae0a8747358570563c08f02964.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "scope_poststate": "ActiveState=inactive\nSubState=dead",
+      "status": "39 passed /39."
+    },
+    "verifier_red": {
+      "log_name": "rea-4390-verifier-evidence-red.log",
+      "log_sha256": "aad53929f64adc37adaee7bd557afaa119519bfd74cefb426267526ce730209e",
+      "resource": {
+        "resource_scope": "rea-efficiency-ead3f8109c8446f191bd50029f7a6591.scope",
+        "elapsed_seconds": 0.488,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-ead3f8109c8446f191bd50029f7a6591.scope",
+          "payload_exit_code": 1,
+          "observer_pid": 3872641,
+          "remaining_processes": [3872641],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 336957,
+            "user_usec": 231427,
+            "system_usec": 105529,
+            "nr_periods": 4,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 25305088,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-ead3f8109c8446f191bd50029f7a6591.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "scope_poststate": "ActiveState=inactive\nSubState=dead",
+      "oracle_result": {
+        "oracle_cases": [
+          {
+            "case": "complete",
+            "exit_code": 1,
+            "expected_success": true,
+            "summary_present": false,
+            "matched_expected": false
+          },
+          {
+            "case": "partial",
+            "exit_code": 1,
+            "expected_success": false,
+            "summary_present": true,
+            "matched_expected": true
+          },
+          {
+            "case": "action-failure",
+            "exit_code": 1,
+            "expected_success": false,
+            "summary_present": false,
+            "matched_expected": false
+          },
+          {
+            "case": "insertion-failure",
+            "exit_code": 1,
+            "expected_success": false,
+            "summary_present": false,
+            "matched_expected": false
+          },
+          {
+            "case": "no-capture",
+            "exit_code": 1,
+            "expected_success": false,
+            "summary_present": true,
+            "matched_expected": true
+          }
+        ],
+        "real_provider_verified": false
+      },
+      "status": "Old verifier rejected valid successful Evidence without a summary; success-envelope action/insertion failures also crashed before producing their diagnostic summary. Partial and no-capture controls already matched."
+    },
+    "verifier_green": {
+      "log_name": "rea-4390-verifier-evidence-green.log",
+      "log_sha256": "d63ab9d48a0e91019460bf16734839ff6b513a21ec64709b0d5ff5b1dd368a36",
+      "resource": {
+        "resource_scope": "rea-efficiency-0a9fd24c169c430cbc86df5d9cfc1e84.scope",
+        "elapsed_seconds": 0.921,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-0a9fd24c169c430cbc86df5d9cfc1e84.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3872995,
+          "remaining_processes": [3872995],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 353242,
+            "user_usec": 239440,
+            "system_usec": 113801,
+            "nr_periods": 8,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 25276416,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-0a9fd24c169c430cbc86df5d9cfc1e84.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "scope_poststate": "ActiveState=inactive\nSubState=dead",
+      "oracle_result": {
+        "oracle_cases": [
+          {
+            "case": "complete",
+            "exit_code": 0,
+            "expected_success": true,
+            "summary_present": true,
+            "matched_expected": true
+          },
+          {
+            "case": "partial",
+            "exit_code": 1,
+            "expected_success": false,
+            "summary_present": true,
+            "matched_expected": true
+          },
+          {
+            "case": "action-failure",
+            "exit_code": 1,
+            "expected_success": false,
+            "summary_present": true,
+            "matched_expected": true
+          },
+          {
+            "case": "insertion-failure",
+            "exit_code": 1,
+            "expected_success": false,
+            "summary_present": true,
+            "matched_expected": true
+          },
+          {
+            "case": "no-capture",
+            "exit_code": 1,
+            "expected_success": false,
+            "summary_present": true,
+            "matched_expected": true
+          }
+        ],
+        "real_provider_verified": false
+      },
+      "status": "All5 controlled exit/summary oracles match expected results; NOT real-provider verification."
+    },
+    "real_app": {
+      "log_name": "rea-4390-drawio-owned-metadata-final.log",
+      "log_sha256": "016646c990c3442ac3c983114a218e302ff9ca3701666260bb1961794aa1a0f0",
+      "resource": {
+        "resource_scope": "rea-efficiency-f6fd5130f25b449da0370394a2595fb9.scope",
+        "elapsed_seconds": 12.777,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-f6fd5130f25b449da0370394a2595fb9.scope",
+          "payload_exit_code": 1,
+          "observer_pid": 3877417,
+          "remaining_processes": [3877417, 3877429, 3877689, 3877690],
+          "payload_cleanup_verified": false,
+          "cpu_stat": {
+            "usage_usec": 6968048,
+            "user_usec": 5135210,
+            "system_usec": 1832837,
+            "nr_periods": 126,
+            "nr_throttled": 1,
+            "throttled_usec": 1995,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 698638336,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-f6fd5130f25b449da0370394a2595fb9.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": false,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "scope_poststate": "ActiveState=inactive\nSubState=dead",
+      "selected_result": {
+        "elapsed_ms": 11278.940224,
+        "deadline_triggered": false,
+        "selected_shape": ".geSidebar a.geItem:visible >> nth=0",
+        "before": {
+          "title": "Untitled Diagram - draw.io",
+          "invalid_file_dialog": true,
+          "unsaved_changes": false,
+          "diagram_svg_elements": 0,
+          "cells": 0
+        },
+        "after": {
+          "title": "Untitled Diagram - draw.io",
+          "invalid_file_dialog": false,
+          "unsaved_changes": true,
+          "diagram_svg_elements": 2,
+          "cells": 0
+        },
+        "actions_completed": true,
+        "shape_inserted": true,
+        "provider_ok": false,
+        "cleanup_verified": false,
+        "reason": "cleanup_failed",
+        "actions": [
+          {
+            "step_id": "dismiss-invalid-file",
+            "kind": "click",
+            "window_index": 0,
+            "target": "window:0",
+            "elapsed_ms": 97,
+            "status": "completed",
+            "error": null
+          },
+          {
+            "step_id": "insert-shape",
+            "kind": "click",
+            "window_index": 0,
+            "target": "window:0",
+            "elapsed_ms": 135,
+            "status": "completed",
+            "error": null
+          },
+          {
+            "step_id": "settle-renderer",
+            "kind": "wait",
+            "window_index": 0,
+            "target": "window:0",
+            "elapsed_ms": 501,
+            "status": "completed",
+            "error": null
+          }
+        ],
+        "workflow_status": "partial-or-failed"
+      },
+      "ipc_observed": 7,
+      "coverage": {
+        "status": "partial_attach",
+        "observed_event_families": [
+          "app-lifecycle",
+          "ipc",
+          "navigation",
+          "preload-configuration",
+          "web-contents-lifecycle",
+          "window-lifecycle"
+        ],
+        "unavailable_event_families": [
+          "download",
+          "error",
+          "native-addon",
+          "permission",
+          "popup-attempt",
+          "preload",
+          "process-lifecycle",
+          "protocol",
+          "renderer-ipc",
+          "shell-attempt",
+          "updater"
+        ],
+        "observed_roles": ["browser", "main", "web_contents", "window"],
+        "pre_capture_activity": "unavailable"
+      },
+      "retention": {
+        "budget_bytes": 16777216,
+        "estimated_retained_bytes": 202114,
+        "event_serialized_byte_upper_bound": 48214,
+        "retained": 109,
+        "dropped": 0,
+        "dropped_event_families": [],
+        "dropped_event_roles": [],
+        "observed_ipc": 7,
+        "dropped_ipc": 0,
+        "observed_runtime": 102,
+        "dropped_runtime": 0
+      }
+    },
+    "limits": [
+      "Latest real run uses corrected verifier hash; earlier ABBA and follow-ups retain their original verifier identities. Do not retroactively assign the new hash.",
+      "No real provider cleanup success, packaged runtime compatibility, MCP-wire pass or completed-task/token/context performance claim.",
+      "Raw metadata mutation4513 remains explicit and unfixed.",
+      "Compact resource receipts retain actual payload-exit counters, bounds, observer hashes and post-scope states; counters are not final whole-scope counters."
+    ],
+    "static": {
+      "command": "npm run check:fast",
+      "status": "passed; two uncached tasks",
+      "log_sha256": "3ac9479dc4abb1205f6dc3c5ea3519cb7bb648c6a51cc142188c147e0c26e868",
+      "resource": {
+        "resource_scope": "rea-efficiency-b67d2b674f00447095cf3003ae4d15f0.scope",
+        "elapsed_seconds": 99.992,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-b67d2b674f00447095cf3003ae4d15f0.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3878266,
+          "remaining_processes": [3878266],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 98956939,
+            "user_usec": 90005456,
+            "system_usec": 8951483,
+            "nr_periods": 999,
+            "nr_throttled": 32,
+            "throttled_usec": 12931,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 4237795328,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-b67d2b674f00447095cf3003ae4d15f0.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "scope_poststate": "ActiveState=inactive\nSubState=dead"
+    },
+    "docs_check": {
+      "command": "npm run docs:check",
+      "status": "passed; six tasks and five README consistency cases",
+      "log_sha256": "bf720204a1a83d664efbb51b83dda4cc62a65223f2f89c861d4772e8117d53ef",
+      "resource": {
+        "resource_scope": "rea-efficiency-9993431bac424a8194845b1ebae5ed80.scope",
+        "elapsed_seconds": 10.855,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-9993431bac424a8194845b1ebae5ed80.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3880317,
+          "remaining_processes": [3880317],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 10387008,
+            "user_usec": 7896610,
+            "system_usec": 2490397,
+            "nr_periods": 107,
+            "nr_throttled": 2,
+            "throttled_usec": 22,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 429584384,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-9993431bac424a8194845b1ebae5ed80.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "scope_poststate": "ActiveState=inactive\nSubState=dead"
+    }
   }
 }

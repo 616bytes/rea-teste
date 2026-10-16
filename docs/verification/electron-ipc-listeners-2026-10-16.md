@@ -4,7 +4,7 @@
 [#4389](https://github.com/morluto/rea/pull/4389), umbrella
 [#4027](https://github.com/morluto/rea/issues/4027).
 
-All 35 final IPC regressions pass, and real draw.io operation phases succeed.
+All 39 final IPC regressions pass, and real draw.io operation phases succeed.
 Every real capture still **fails overall provider cleanup**. These are distinct
 results; neither completed-task acceleration nor token savings is established.
 
@@ -248,3 +248,33 @@ appended under `argument_list_followup`; previous records remain unchanged.
 Current-source static checks pass: two uncached tasks, 122.454 s wall,
 121.287057 family CPU s and 4,185,915,392 peak cgroup bytes, no OOM.
 The unchanged ASAR digest was checked again after the real-app trial.
+
+## Owned metadata and successful-Evidence verifier follow-up
+
+Fresh review of `41a513d99` found that `on` wrapper metadata used strict
+assignment. Native on does not write such metadata, so inherited Function or
+Object prototype setters/read-only fields could prevent registration only under
+capture. Four native controls fail before `5dcf79f29` (35 passed, four failed).
+The recording wrapper now defines its own data property directly; native once
+assignment behavior is retained. All **39 cases** pass.
+
+The verifier also incorrectly treated a successful Evidence envelope as a raw
+capture. Real cleanup failures had exercised only the separate partial path.
+`4a9a01f7a` reads successful `value.normalized_result` and preserves failed
+`error.partialObservation.capture`. The new
+`experiments/analysis-efficiency/drawio-electron-lifecycle-oracles.py` exercises
+the actual verifier with controlled success, partial cleanup, action failure,
+insertion failure and absent capture. The old verifier rejects valid successful
+Evidence before producing a summary; all five corrected controls pass.
+**These are controlled reply/exit checks, not real-provider evidence.**
+
+The corrected verifier was separately frozen before a real unchanged draw.io
+trial. Actual dialog recovery and shape insertion again complete with seven IPC
+events, no deadline and failed overall provider cleanup (pipeline 12.777 s).
+Success with real provider cleanup remains unverified. Earlier trials retain
+their earlier verifier hashes; the corrected hash is not assigned to them.
+Exact source pins, failed controls, resource costs and post-scope states are
+appended under `owned_metadata_and_verifier_followup` without replacing history.
+
+Final-source static checks pass: two uncached tasks, 99.992 s wall,
+98.956939 family CPU s and 4,237,795,328 peak cgroup bytes, no OOM.

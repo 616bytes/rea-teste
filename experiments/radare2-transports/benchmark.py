@@ -12,18 +12,18 @@ import psutil
 
 
 class CleanupIncomplete(RuntimeError):
-    """The retained ownership manifest must be settled before another trial."""
+    """The retained process owner must be settled before another trial."""
 
-    def __init__(self, message, child):
+    def __init__(self, message, child, ownership):
         super().__init__(message)
         self.child = child  # Retain the direct-child handle for reaping after retry.
+        self.ownership = ownership  # Persistence failure cannot release ownership.
 
 
-def ownership_command(node, operation, manifest=None):
+def ownership_command(node, operation, ownership=None):
     command = [node, str(Path(__file__).with_name("benchmark-ownership.mjs")), operation]
-    if manifest is not None:
-        command.append(str(manifest))
-    result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=True)
+    result = subprocess.run(command, input=json.dumps(ownership) if ownership is not None else None,
+                            capture_output=True, text=True, timeout=60, check=True)
     return json.loads(result.stdout)
 
 
@@ -81,7 +81,7 @@ def measure(command, directory, prompt=None, timeout=600, *, node="node", memory
         finally:
             cleanup_began = time.monotonic()
             try:
-                cleanup = ownership_command(node, "cleanup", manifest)
+                cleanup = ownership_command(node, "cleanup", ownership)
                 if cleanup["cleaned"]:
                     child.wait(timeout=5)
             except Exception as cause:
@@ -116,9 +116,15 @@ def measure(command, directory, prompt=None, timeout=600, *, node="node", memory
         "cleanup": cleanup, "cleanup_seconds": cleanup_seconds,
         "ownership_manifest": str(manifest),
     }
-    (directory / "resources.json").write_text(json.dumps(result, indent=2) + "\n")
+    try:
+        (directory / "resources.json").write_text(json.dumps(result, indent=2) + "\n")
+    except OSError as cause:
+        if failure is None:
+            failure = cause
     if not cleanup["cleaned"]:
-        raise CleanupIncomplete(f"Owned cleanup is unverified; stopping trials. Retry using {manifest}: {cleanup}", child)
+        raise CleanupIncomplete(
+            f"Owned cleanup is unverified; stopping trials. Retry with the retained ownership record "
+            f"(manifest may be unavailable at {manifest}): {cleanup}", child, ownership) from failure
     if failure is not None:
         raise failure
     return result

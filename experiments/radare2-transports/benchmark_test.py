@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -42,10 +43,10 @@ class BenchmarkCleanupTest(unittest.TestCase):
             first = Path(root) / "first"
             second = Path(root) / "second"
 
-            def deny_cleanup(node, operation, manifest=None):
+            def deny_cleanup(node, operation, ownership=None):
                 if operation == "cleanup":
                     return {"cleaned": False, "reason": "injected identity inspection denial"}
-                return ownership_command(node, operation, manifest)
+                return ownership_command(node, operation, ownership)
 
             try:
                 with patch("benchmark.ownership_command", side_effect=deny_cleanup):
@@ -55,8 +56,77 @@ class BenchmarkCleanupTest(unittest.TestCase):
                 self.assertFalse(second.exists())
                 self.assertFalse(json.loads((first / "resources.json").read_text())["cleanup"]["cleaned"])
             finally:
-                self.assertTrue(ownership_command("node", "cleanup", first / "ownership.json")["cleaned"])
+                self.assertEqual(raised.exception.ownership, json.loads((first / "ownership.json").read_text()))
+                self.assertTrue(ownership_command("node", "cleanup", raised.exception.ownership)["cleaned"])
                 raised.exception.child.wait(timeout=5)
+
+    def test_failed_manifest_writes_preserve_cleanup_and_retry_without_files(self):
+        for partial in (False, True):
+            for denied in (False, True):
+                with self.subTest(partial=partial, denied=denied), tempfile.TemporaryDirectory(prefix="rea-benchmark-write-") as root:
+                    first, second = Path(root) / "first", Path(root) / "second"
+                    write_text = Path.write_text
+                    owner = None
+                    cleanup_results = []
+                    children = []
+                    raised = None
+
+                    def failed_write(path, data, *args, **kwargs):
+                        if path.name == "ownership.json":
+                            # Wait for acknowledged children before injecting the disk failure.
+                            deadline = time.monotonic() + 5
+                            while not children:
+                                output = (first / "stdout.log").read_text()
+                                if output.endswith("\n"):
+                                    children.extend(json.loads(output))
+                                elif time.monotonic() >= deadline:
+                                    raise AssertionError("Synthetic process tree did not start")
+                                else:
+                                    time.sleep(.01)
+                            if partial:
+                                write_text(path, "{\"runId\":")
+                            raise OSError("injected manifest write failure")
+                        if path.name == "resources.json" and denied:
+                            raise OSError("injected diagnostics write failure")
+                        return write_text(path, data, *args, **kwargs)
+
+                    def inspect_cleanup(node, operation, ownership=None):
+                        nonlocal owner
+                        if operation == "prepare":
+                            owner = ownership_command(node, operation)
+                            return owner
+                        self.assertIs(ownership, owner)
+                        result = ({"cleaned": False, "reason": "injected inspection denial"}
+                                  if denied else ownership_command(node, operation, ownership))
+                        cleanup_results.append(result)
+                        return result
+
+                    try:
+                        with patch.object(Path, "write_text", failed_write), patch("benchmark.ownership_command", side_effect=inspect_cleanup):
+                            with self.assertRaises(CleanupIncomplete if denied else OSError) as raised:
+                                for directory in (first, second):
+                                    measure([sys.executable, "-c", TREE, "timeout"], directory)
+                        self.assertFalse(second.exists())
+                        self.assertEqual(cleanup_results[0]["cleaned"], not denied)
+                        if denied:
+                            self.assertIs(raised.exception.ownership, owner)
+                            self.assertRegex(str(raised.exception.__cause__), "manifest write failure")
+                            self.assertIsNone(raised.exception.child.poll())
+                        else:
+                            self.assertRegex(str(raised.exception), "manifest write failure")
+                            for pid in [owner["leaderPid"], *children]:
+                                self.assertFalse(psutil.pid_exists(pid) and psutil.Process(pid).status() != psutil.STATUS_ZOMBIE)
+                        if partial:
+                            with self.assertRaises(json.JSONDecodeError):
+                                json.loads((first / "ownership.json").read_text())
+                        else:
+                            self.assertFalse((first / "ownership.json").exists())
+                    finally:
+                        # No manifest is needed for retry, even after both writes failed.
+                        if owner is not None and "leaderPid" in owner:
+                            self.assertTrue(ownership_command("node", "cleanup", owner)["cleaned"])
+                        if denied and isinstance(getattr(raised, "exception", None), CleanupIncomplete):
+                            raised.exception.child.wait(timeout=5)
 
     def test_large_prompt_does_not_block_limit_monitoring(self):
         with tempfile.TemporaryDirectory(prefix="rea-benchmark-stdin-") as root:

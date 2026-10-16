@@ -262,9 +262,14 @@ requires `psutil`. REA setup does not install these engines.
 The review cleanup fix gives each trial a run token and retains `ownership.json`
 beside its output. `benchmark-ownership.mjs` reuses REA's process identity and
 cleanup primitives to stop and verify owned groups, including detached children,
-after limits, normal exit or measurement failure. Unverified cleanup writes its
-reason to `resources.json` and raises an error, stopping subsequent trials.
-The manifest remains available for an explicit retry with
+after limits, normal exit or measurement failure. The live in-memory ownership
+record is passed over stdin; cleanup does not depend on saving or rereading the
+manifest. Unverified cleanup attempts to write its reason to `resources.json`
+and raises `CleanupIncomplete`, stopping subsequent trials. That error retains
+`ownership` and `child` even when manifest or diagnostic writes fail. Python
+callers can retry `ownership_command(node, "cleanup", error.ownership)`, then
+reap `error.child` after verified cleanup. A successfully saved manifest also
+supports an explicit retry with
 `node experiments/radare2-transports/benchmark-ownership.mjs cleanup /absolute/path/ownership.json`;
 inspect the returned `cleaned` status before continuing. PID reuse or unreadable
 identity does not authorize signaling. Prompts use retained file-backed stdin
@@ -295,6 +300,25 @@ tasks completed successfully; the after runs verified cleanup. These two trials
 measure harness overhead, not engine or agent performance. Raw measurements are
 retained locally at `/private/tmp/rea-pr4148-review/comparison-v2.json`; the first
 attempt in `comparison.json` had an interrupted RSS sampler and is not used here.
+
+The 2026-10-17 follow-up measured the same 8 MiB/250 ms task against `561466bd5`
+and the in-memory ownership fix on macOS arm64, Node 24.18.0. Total elapsed/CPU
+includes ownership preparation, cleanup and the 10 ms RSS sampler:
+
+| Revision | Run    | Elapsed (s) | CPU (s) | Sampled family peak RSS (MiB) | Agent tokens |
+| -------- | ------ | ----------: | ------: | ----------------------------: | -----------: |
+| Before   | First  |       2.567 |   4.246 |                        ≥279.6 |            0 |
+| After    | First  |       2.609 |   4.368 |                        ≥277.6 |            0 |
+| Before   | Repeat |       2.570 |   4.215 |                        ≥283.5 |            0 |
+| After    | Repeat |       2.568 |   4.215 |                        ≥276.5 |            0 |
+
+All four tasks completed with verified cleanup. RSS is a lower bound because
+9–11 observations per run were denied. Every run starts fresh processes; host
+caches were not flushed, so these are first/repeat observations, not controlled
+cold/warm measurements. Two trials do not establish a performance difference.
+Raw measurements are retained at
+`/private/tmp/rea-pr4148-followup-b_2e63g3/comparison.json`. No new engine/agent
+investigation benchmark or error-response token measurement was performed.
 
 The configuration keys are `node`, `sdk_driver`, `rea3521`, `r2`, `r2mcp`,
 `ghidra`, `java`, `codex`, `model`, `reasoning`, `output`, `warm_repeats`, `lanes`

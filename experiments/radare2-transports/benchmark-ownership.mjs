@@ -1,6 +1,7 @@
 // Python's benchmark delegates identity and signaling to REA's process owner.
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { text } from "node:stream/consumers";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   cleanupOwnedProcessGroup,
@@ -23,7 +24,11 @@ try {
       }),
     );
   } else if (process.argv[2] === "cleanup") {
-    const ownership = JSON.parse(await readFile(process.argv[3], "utf8"));
+    const ownership = JSON.parse(
+      process.argv[3]
+        ? await readFile(process.argv[3], "utf8")
+        : await text(process.stdin),
+    );
     let result = await cleanupOwnedProcessGroup(ownership);
     if (result.cleaned) {
       for (let attempt = 0; attempt < 20; attempt++) {
@@ -38,7 +43,10 @@ try {
       }
     }
     console.log(JSON.stringify(result));
-  } else throw new Error("Expected prepare or cleanup <ownership.json>");
+  } else
+    throw new Error(
+      "Expected prepare or cleanup [ownership.json]; defaults to JSON stdin",
+    );
 } finally {
   await host.close?.();
 }

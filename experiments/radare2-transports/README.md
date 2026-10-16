@@ -105,6 +105,12 @@ ownership; FIFOs/devices are rejected with a nonblocking open. Cancellation is
 checked between bounded reads. An OS filesystem call already in progress and
 owned cleanup can extend beyond the deadline.
 
+Completed transport replies, command status, stderr and cleanup remain in the
+error's partial observation if final target hashing is cancelled or fails.
+The initial digest remains available; `sha256_after` stays `null` until that
+verification completes. Target mismatch and prelude failures use the same
+observation shape, and interpretation cancellation also preserves captured facts.
+
 Focused fault checks (C compiler required for the synthetic transport fixture):
 
 ```sh
@@ -114,4 +120,7 @@ python3 experiments/radare2-transports/benchmark_test.py
 ```
 
 The Python checks require `psutil` and the pinned `node` on `PATH`. They exercise
-synthetic process trees and injected inspection failure, not engine behavior.
+synthetic process trees, failed/partial manifest writes, failed diagnostic writes
+and injected inspection failure, not engine behavior. Cleanup consumes the live
+ownership record over stdin. If cleanup remains unverified, `CleanupIncomplete`
+retains that record and the child handle even when neither output file was saved.

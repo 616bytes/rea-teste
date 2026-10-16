@@ -15,6 +15,15 @@ int main(void) {
   if (!ready) return 1;
   fprintf(ready, "%d", getpid());
   fclose(ready);
+  if (!strncmp(mode, "final-hash-", 11)) {
+    const char *target = getenv("REA_FAULT_TARGET");
+    if (!strcmp(mode, "final-hash-timeout")) {
+      if (truncate(target, (off_t)4 * 1024 * 1024 * 1024)) return 2;
+    } else if (unlink(target)) return 3;
+    fputs("{\"error\":false,\"code\":0,\"res\":\"completed-native-reply\"}", stdout);
+    fputs("completed-native-stderr\n", stderr);
+    return 0;
+  }
   if (!strcmp(mode, "blocked")) {
     for (;;) pause();
   }

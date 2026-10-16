@@ -36,7 +36,8 @@ const OPERATION = "radare2_analysis_experiment";
 
 function failure(cause, message, partialObservation) {
   const details = { cause, partialObservation };
-  if (cause instanceof AnalysisCancelledError) return err(cause);
+  if (cause instanceof AnalysisCancelledError)
+    return err(cancellation(cause, partialObservation));
   if (cause instanceof AnalysisResourceConstraintError)
     return err(
       new AnalysisResourceConstraintError(
@@ -50,10 +51,10 @@ function failure(cause, message, partialObservation) {
   return err(new AnalysisOutputError(OPERATION, message, details));
 }
 
-function cancellation(cause) {
+function cancellation(cause, partialObservation = cause?.partialObservation) {
   return new AnalysisCancelledError(OPERATION, {
     cause,
-    partialObservation: cause?.partialObservation,
+    partialObservation,
     diagnostics: cause?.diagnostics,
     capturedOutput: cause?.capturedOutput,
     cleanup: cause?.cleanup,
@@ -203,6 +204,7 @@ function createObserver(connection, options) {
 
   async function observe(commands, request) {
     const { signal } = request;
+    let observation;
     try {
       signal?.throwIfAborted();
       const before = await digest(signal);
@@ -220,22 +222,10 @@ function createObserver(connection, options) {
       );
       if (!result.ok)
         return signal?.aborted ? err(cancellation(result.error)) : result;
-      const after = await digest(signal);
-      if (before !== after)
-        return failure(null, "Target changed during observation", result.value);
       const replies = result.value.transcript
         .filter((entry) => entry.r2pipe2)
         .map((entry) => entry.r2pipe2);
-      if (
-        connection.transport !== "exec" &&
-        replies
-          .slice(0, prefix.length)
-          .some((reply) => reply.command_outcome !== "no_error_reported")
-      )
-        return failure(null, "Caller-selected analysis prelude failed", {
-          raw: result.value,
-        });
-      return ok({
+      observation = {
         raw: result.value,
         replies:
           connection.transport === "exec"
@@ -245,17 +235,32 @@ function createObserver(connection, options) {
           path: connection.path ?? null,
           endpoint: connection.endpoint ?? null,
           sha256_before: before,
-          sha256_after: after,
+          sha256_after: null,
           core_binding:
             connection.transport === "http"
               ? "unverified-external-core"
               : "owned-process-opened-selected-path",
         },
-      });
+      };
+      observation.target.sha256_after = await digest(signal);
+      if (before !== observation.target.sha256_after)
+        return failure(null, "Target changed during observation", observation);
+      if (
+        connection.transport !== "exec" &&
+        replies
+          .slice(0, prefix.length)
+          .some((reply) => reply.command_outcome !== "no_error_reported")
+      )
+        return failure(
+          null,
+          "Caller-selected analysis prelude failed",
+          observation,
+        );
+      return ok(observation);
     } catch (cause) {
       return signal?.aborted
-        ? err(cancellation(cause))
-        : failure(cause, "Observation failed");
+        ? err(cancellation(cause, observation))
+        : failure(cause, "Observation failed", observation);
     }
   }
 
@@ -336,7 +341,7 @@ export function createAnalysisExperiment(inputConnection, options = {}) {
       });
     } catch (cause) {
       return request.signal?.aborted
-        ? err(cancellation(cause))
+        ? err(cancellation(cause, observed.value))
         : failure(cause, "Cannot interpret native function result", {
             ...observed.value,
             interpretation_failure: cause?.message ?? "unknown",

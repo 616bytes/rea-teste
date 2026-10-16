@@ -1,7 +1,7 @@
 // Synthetic fault injection through the actual transports and process owner.
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,8 +9,10 @@ import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { runOwnedCommand } from "../../dist/process/OwnedCommand.js";
+import { projectAnalysisError } from "../../dist/domain/analysisErrorProjection.js";
 import { probe, retryCleanup } from "./probe.mjs";
 import { createAnalysisExperiment } from "./analysis.mjs";
+import { retryNativeByteCleanup } from "./native-bytes.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "rea-transport-faults-"));
 const executable = join(root, "fault-provider");
@@ -126,6 +128,60 @@ test("blocked pipe write observes the batch deadline", async () => {
   cleaned(result);
   assert.ok(performance.now() - began < 5_000);
 });
+
+for (const mode of ["timeout", "missing"]) {
+  test(`final hash ${mode} preserves completed replies and leaves verification unknown`, async () => {
+    const { connection, options, ready } = fixture(
+      "exec",
+      `final-hash-${mode}`,
+    );
+    const path = join(root, randomUUID());
+    const source = "selected target";
+    await writeFile(path, source);
+    const experiment = createAnalysisExperiment(
+      { ...connection, path },
+      {
+        ...options,
+        timeoutMs: mode === "timeout" ? 1_500 : 5_000,
+        environment: { ...options.environment, REA_FAULT_TARGET: path },
+      },
+    );
+    const result = await experiment.inspectType({ type: "T" });
+    assert.equal(result.ok, false);
+    assert.equal(
+      result.error._tag,
+      mode === "timeout" ? "AnalysisCancelledError" : "AnalysisOutputError",
+    );
+    if (mode === "timeout")
+      assert.equal(result.error.cause.name, "TimeoutError");
+    else assert.equal(result.error.cause.code, "ENOENT");
+    // Exercise the same serializable error projection used by CLI and MCP.
+    const projected = JSON.parse(
+      JSON.stringify(projectAnalysisError(result.error)),
+    );
+    const partial = projected.details.partial_observation;
+    assert.equal(partial.raw.cleanup, "complete");
+    assert.equal(partial.replies[0].res, "completed-native-reply");
+    assert.equal(partial.replies[0].command_outcome, "no_error_reported");
+    assert.equal(partial.target.path, path);
+    assert.equal(
+      partial.target.sha256_before,
+      createHash("sha256").update(source).digest("hex"),
+    );
+    assert.equal(partial.target.sha256_after, null);
+    assert.match(
+      JSON.stringify(partial.raw.transcript),
+      /completed-native-stderr/u,
+    );
+    const pid = await waitReady(ready);
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+    assert.equal(await retryNativeByteCleanup(), 0);
+    assert.equal(
+      (await experiment.inspectType({ type: "invalid;command" })).error._tag,
+      "AnalysisInputError",
+    );
+  });
+}
 
 for (const transport of ["exec", "r2pipe", "r2mcp", "http"]) {
   test(`${transport}: invalid UTF-8 JSON cannot become normalized facts`, async () => {

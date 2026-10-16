@@ -707,6 +707,88 @@ it.each([
     ]);
   },
 );
+it.each([
+  ["cb ||=", ["!(cb)"]],
+  ["cb &&=", ["cb"]],
+  ["cb ??=", ["(cb) === null || (cb) === undefined"]],
+  ["({cb: false}).cb ||=", []],
+  ["({cb: true}).cb &&=", []],
+  ["({cb: null}).cb ??=", []],
+] as const)(
+  "retains the reachable callable RHS of %s",
+  (assignment, conditions) => {
+    const result = analyzeJavaScriptStaticSource(`
+      const {contextBridge, ipcRenderer} = require("electron");
+      contextBridge.exposeInMainWorld("desktop", {action(cb) {
+        (${assignment} () => ipcRenderer.send("rhs"))();
+      }});
+    `);
+    expect(
+      result.electron.call_paths?.map(
+        ({ channel, conditions, resolution }) => ({
+          channel,
+          conditions: conditions.map(({ expression }) => expression),
+          resolution,
+        }),
+      ),
+    ).toEqual([{ channel: "rhs", conditions, resolution: "candidate" }]);
+  },
+);
+it.each([
+  "({cb: true}).cb ||=",
+  "({cb: false}).cb &&=",
+  "({cb: false}).cb ??=",
+])("does not invoke the skipped callable RHS of %s", (assignment) => {
+  const result = analyzeJavaScriptStaticSource(`
+    const {contextBridge, ipcRenderer} = require("electron");
+    contextBridge.exposeInMainWorld("desktop", {action() {
+      (${assignment} () => ipcRenderer.send("skipped"))();
+    }});
+  `);
+  expect(result.electron.call_paths ?? []).toEqual([]);
+  expect(result.electron.ipc).toContainEqual(
+    expect.objectContaining({ channel: "skipped" }),
+  );
+});
+it.each(["||=", "??="])(
+  "retains the selected left callable of %s",
+  (operator) => {
+    const result = analyzeJavaScriptStaticSource(`
+    const {contextBridge, ipcRenderer} = require("electron");
+    contextBridge.exposeInMainWorld("desktop", {action() {
+      (({cb: () => ipcRenderer.send("left")}).cb ${operator} () => ipcRenderer.send("right"))();
+    }});
+  `);
+    expect(
+      result.electron.call_paths?.map(({ channel, conditions }) => ({
+        channel,
+        conditions,
+      })),
+    ).toEqual([{ channel: "left", conditions: [] }]);
+  },
+);
+it.each([
+  ["||=", "!(exports.action)"],
+  ["&&=", "exports.action"],
+  ["??=", "(exports.action) === null || (exports.action) === undefined"],
+])(
+  "retains a guarded namespace callable assigned with %s",
+  (operator, condition) => {
+    const source = bundle(`
+    electron.contextBridge.exposeInMainWorld("desktop", {action: helper.action});
+  `).replace(
+      "exports.sender =",
+      `exports.action ${operator} () => electron.ipcRenderer.send("rhs"); exports.sender =`,
+    );
+    const result = analyzeJavaScriptStaticSource(source);
+    expect(
+      result.electron.call_paths?.map(({ channel, conditions }) => ({
+        channel,
+        conditions: conditions.map(({ expression }) => expression),
+      })),
+    ).toEqual([{ channel: "rhs", conditions: [condition] }]);
+  },
+);
 it("does not follow a statically false callback branch", () => {
   const result = analyzeJavaScriptStaticSource(
     bundle(

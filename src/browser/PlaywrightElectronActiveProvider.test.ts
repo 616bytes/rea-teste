@@ -213,6 +213,15 @@ it("identifies packaged executables correctly in executableContainsApplication",
       "/usr/lib/drawio/resources/other-tool/index.js",
     ),
   ).toBe(false);
+  const abortedController = new AbortController();
+  abortedController.abort();
+  expect(
+    await executableContainsApplication(
+      "/opt/example/example",
+      "/opt/example/resources/app/worker.js",
+      abortedController.signal,
+    ),
+  ).toBe(false);
   expect(
     await executableContainsApplication(
       "/Applications/draw.io.app/Contents/MacOS/draw.io",

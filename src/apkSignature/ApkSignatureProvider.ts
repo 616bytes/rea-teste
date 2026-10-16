@@ -8,11 +8,13 @@ import type {
 } from "../application/apkSignature/ApkSignaturePort.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import {
+  assertArtifactReadActive,
+  bindArtifactFileCleanup,
+} from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   APK_BLOCK_ID,
   locateApkSigningBlock,
@@ -306,23 +308,22 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     options?: ExecutionOptions,
   ): Promise<Result<ApkSignatureExecution, AnalysisError>> {
     try {
-      if (options?.signal?.aborted)
-        return err(new AnalysisCancelledError(OPERATION));
-      const selected = await this.#resources.run(() =>
-        readStableArtifact(
+      return await this.#resources.run(async () => {
+        const selected = await readStableArtifact(
           input.path,
           APK_SIGNATURE_LIMITS.inputBytes,
           options?.signal,
           undefined,
           this.#resources,
-        ),
-      );
-      if (options?.signal?.aborted)
-        return err(new AnalysisCancelledError(OPERATION));
-      return this.#analyze(selected.bytes, {
-        path: input.path,
-        sha256: selected.sha256,
-        bytes: selected.bytes.length,
+        );
+        assertArtifactReadActive(options?.signal);
+        const analyzed = this.#analyze(selected.bytes, {
+          path: input.path,
+          sha256: selected.sha256,
+          bytes: selected.bytes.length,
+        });
+        assertArtifactReadActive(options?.signal);
+        return analyzed;
       });
     } catch (cause: unknown) {
       return err(apkSignatureFailure(cause, input.path, options?.signal));

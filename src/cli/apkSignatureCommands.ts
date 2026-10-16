@@ -1,12 +1,13 @@
 import { z } from "incur";
-import { resolve } from "node:path";
 import type { Logger } from "pino";
 
+import { APK_SIGNATURE_PROVIDER_IDENTITY } from "../apkSignature/ApkSignatureRelease.js";
 import { apkSignatureModule } from "../composition/apkSignature.js";
 import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
 /** Resolve the caller-selected APK through the shared workflow. */
 export const registerApkSignatureCommands = (
@@ -14,7 +15,6 @@ export const registerApkSignatureCommands = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  const service = apkSignatureModule.create(environment);
   cli.command(apkSignatureModule.cliCommand, {
     description:
       "Inspect the signature schemes (v1/v2/v3/v3.1) of a selected local APK/ZIP/AAB",
@@ -23,24 +23,22 @@ export const registerApkSignatureCommands = (
     }),
     options: z.object({}),
     run: ({ args }) =>
-      withCommandCancellation(async (signal) => {
-        try {
-          return await logCliCommand(
-            logger,
-            apkSignatureModule.cliCommand,
-            async () => {
-              const result = await service.inspect(
-                { path: resolve(args.path) },
+      withCommandCancellation((signal) => {
+        const service = apkSignatureModule.create(environment);
+        return logCliCommand(logger, apkSignatureModule.cliCommand, () =>
+          finishAnalysisCommand(
+            () =>
+              service.inspect(
+                { path: absoluteCallerPath(args.path) },
                 { signal },
-              );
-              return result.ok
-                ? result.value
-                : projectAnalysisError(result.error);
-            },
-          );
-        } finally {
-          await service.close();
-        }
+              ),
+            service,
+            APK_SIGNATURE_PROVIDER_IDENTITY.id,
+            apkSignatureModule.contract.name,
+            undefined,
+            signal,
+          ),
+        );
       }),
   });
 };

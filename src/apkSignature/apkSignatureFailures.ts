@@ -140,61 +140,71 @@ export const apkSignatureFailure = (
 /** Distinguish cancellation, access, integrity and limits for the primary failure. */
 const primaryFailure = (cause: unknown, path: string): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  const reason = cause instanceof Error ? cause.message : String(cause);
-  if (
-    (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled") ||
-    (cause instanceof Error && cause.name === "AbortError")
-  )
-    return new AnalysisCancelledError(OPERATION, { cause });
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "file-size",
-      reason,
-      { max_input_bytes: APK_SIGNATURE_LIMITS.inputBytes },
-      {
-        cause,
-        remediationAction:
-          "The size budget is fixed; select a smaller archive.",
-      },
-    );
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-    return new AnalysisArtifactChangedError(OPERATION, path, reason, { cause });
-  if (
-    cause instanceof Error &&
-    "code" in cause &&
-    (cause.code === "EACCES" || cause.code === "EPERM")
-  )
-    return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-      cause,
-    });
-  if (
-    cause instanceof Error &&
-    "code" in cause &&
-    (cause.code === "ENOENT" ||
-      cause.code === "ENOTDIR" ||
-      cause.code === "ELOOP")
-  )
-    return new AnalysisInputError(OPERATION, { cause }, [
-      {
-        path: ["path"],
-        reason: "invalid_value",
-        message: `No regular file can be read at the selected path (${String(cause.code)}): ${path}.`,
-      },
-    ]);
-  // A typed reader failure (format, path, io, unavailable) describes the
-  // selected artifact, so it stays a caller-facing input error.
   if (cause instanceof ArtifactReaderFailure)
-    return new AnalysisInputError(OPERATION, { cause }, [
-      { path: ["path"], reason: "invalid_value", message: reason },
-    ]);
-  // Anything else is an adapter defect, not a caller input problem.
-  return new ProviderAdapterError(
-    APK_SIGNATURE_PROVIDER_IDENTITY.id,
-    OPERATION,
-    {
-      cause,
-      diagnostics: { path, reason },
-    },
-  );
+    return artifactReaderFailure(cause, path);
+  if (cause instanceof Error && "code" in cause) {
+    if (cause.code === "EACCES" || cause.code === "EPERM")
+      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
+        cause,
+      });
+    if (
+      ["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"].includes(
+        String(cause.code),
+      )
+    )
+      return new AnalysisInputError(OPERATION, { cause }, [
+        {
+          path: ["path"],
+          reason: "invalid_value",
+          message: `No regular file can be read at the selected path (${String(cause.code)}): ${path}.`,
+        },
+      ]);
+  }
+  return adapterFailure(cause, path);
 };
+
+/**
+ * The reader owns the meaning of its tagged failures: only a path that is not
+ * a regular file describes the caller's selection. I/O, an unavailable or
+ * closed resource scope, and a non-byte stream are execution failures.
+ */
+const artifactReaderFailure = (
+  cause: ArtifactReaderFailure,
+  path: string,
+): AnalysisError => {
+  switch (cause.reason) {
+    case "integrity":
+      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
+        cause,
+      });
+    case "cancelled":
+      return new AnalysisCancelledError(OPERATION, { cause: cause.cause });
+    case "limit":
+      return new AnalysisResourceConstraintError(
+        OPERATION,
+        "file-size",
+        cause.message,
+        { max_input_bytes: APK_SIGNATURE_LIMITS.inputBytes },
+        {
+          cause,
+          remediationAction:
+            "The size budget is fixed; select a smaller archive.",
+        },
+      );
+    case "path":
+      return new AnalysisInputError(OPERATION, { cause }, [
+        { path: ["path"], reason: "invalid_format", message: cause.message },
+      ]);
+    default:
+      return adapterFailure(cause, path);
+  }
+};
+
+const adapterFailure = (cause: unknown, path: string): AnalysisError =>
+  new ProviderAdapterError(APK_SIGNATURE_PROVIDER_IDENTITY.id, OPERATION, {
+    cause,
+    diagnostics: {
+      path,
+      reason: cause instanceof Error ? cause.message : String(cause),
+    },
+  });

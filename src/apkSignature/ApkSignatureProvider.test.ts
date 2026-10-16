@@ -203,19 +203,17 @@ describe("ApkSignatureProvider without the Android SDK", () => {
 });
 
 describe("ApkSignatureProvider failure surfaces", () => {
-  it("keeps typed reader failures as input errors and defects as adapter errors", () => {
+  it("keeps only a non-regular path as input; reader I/O and defects are adapter errors", () => {
+    const tagOf = (cause: unknown): string =>
+      apkSignatureFailure(cause, "/x.apk")._tag;
     expect(
-      apkSignatureFailure(
-        new ArtifactReaderFailure(
-          "format",
-          "archive entry did not yield bytes",
-        ),
-        "/x.apk",
-      )._tag,
+      tagOf(new ArtifactReaderFailure("path", "Expected a regular file")),
     ).toBe("AnalysisInputError");
-    expect(apkSignatureFailure(new RangeError("boom"), "/x.apk")._tag).toBe(
-      "ProviderAdapterError",
-    );
+    for (const reason of ["io", "unavailable", "format"] as const)
+      expect(tagOf(new ArtifactReaderFailure(reason, "reader failed"))).toBe(
+        "ProviderAdapterError",
+      );
+    expect(tagOf(new RangeError("boom"))).toBe("ProviderAdapterError");
   });
 
   it("reports a missing file without leaking the raw errno text", async () => {

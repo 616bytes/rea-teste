@@ -15,7 +15,8 @@ import {
 } from "../../domain/apkSignature/apkSignatureReport.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
+import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 const OPERATION = "inspect_apk_signature";
 
@@ -53,8 +54,6 @@ export class ApkSignatureService {
       );
     const inspected = await this.provider.inspect(input.data, options);
     if (!inspected.ok) return inspected;
-    if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
     const execution = inspected.value;
     const report = apkSignatureResultSchema.safeParse(execution.result);
     if (
@@ -68,7 +67,7 @@ export class ApkSignatureService {
           "APK signature reader returned malformed data or changed the selected artifact identity.",
         ),
       );
-    return ok(
+    return completeProviderEvidence(
       createEvidence(execution.subject, execution.provider, {
         operation: OPERATION,
         parameters: { path: input.data.path },
@@ -80,6 +79,7 @@ export class ApkSignatureService {
         locations: execution.locations,
         limitations: execution.limitations,
       }),
+      options?.signal,
     );
   }
 }

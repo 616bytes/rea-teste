@@ -278,6 +278,8 @@ describe("artifact Mach-O arm64e variant slices", () => {
   it.each([
     ["a plain arm64 slice", CPU.arm64, "8192"],
     ["a different offset", ARM64E_V1, "8193"],
+    // arm64e.x1 (CPU_SUBTYPE_ARM64E_X1) must still reject a wrong offset
+    ["a different offset (arm64e.x1)", ARM64E_X1, "8193"],
   ])(
     "still rejects an arm64e variant name for %s",
     async (_label, cpu, offset) => {
@@ -290,6 +292,22 @@ describe("artifact Mach-O arm64e variant slices", () => {
       ).rejects.toMatchObject({ reason: "integrity" });
     },
   );
+
+  it("accepts lipo's arm64e.x1 name when the FAT table resolves the slice as arm64 (macOS 27+ stock binaries, issue #4280)", async () => {
+    // CPU_SUBTYPE_ARM64E_X1 (subtype=12): the Mach-O parser resolves this as
+    // "arm64" (unknown subtype), while lipo reports "arm64e.x1". This combination
+    // was triggering a false integrity_mismatch on every stock macOS 27 binary.
+    expect(
+      await variantSlices(
+        ARM64E_X1,
+        (size) =>
+          `architecture arm64e.x1\n cputype CPU_TYPE_ARM64\n cpusubtype unknown arm64 cpusubtype\n offset 8192\n size ${String(size)}\n align 2^12 (4096)\n`,
+      ),
+    ).toEqual([
+      ["slices/x86_64", 4096],
+      ["slices/arm64e.x1", 8192],
+    ]);
+  });
 });
 
 // macOS 26 lipo leaves capabilities blank, even for a LIB64 x86_64 slice.

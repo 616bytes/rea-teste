@@ -533,6 +533,36 @@ describe("JavaScript semantic analysis: write references", () => {
       "read", // const observed = total
     ]);
   });
+
+  it("treats TypeScript parameter-property declarations as bindings rather than reads", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const seed = 1;
+      class Service {
+        constructor(
+          public x: number,
+          public y = 1,
+          public z = seed,
+        ) {
+          console.log(this.x);
+        }
+      }
+    `);
+    const referencesFor = (name: string) =>
+      ir.references.filter((reference) => reference.name === name);
+
+    // Parameter properties are definitions, not source identifier reads.
+    expect(referencesFor("x")).toEqual([]);
+    expect(referencesFor("y")).toEqual([]);
+    expect(referencesFor("z")).toEqual([]);
+
+    // Actual reads in parameter default values remain references.
+    expect(referencesFor("seed")).toEqual([
+      expect.objectContaining({
+        name: "seed",
+        role: "read",
+      }),
+    ]);
+  });
 });
 
 describe("JavaScript semantic analysis: dynamic and case scopes", () => {

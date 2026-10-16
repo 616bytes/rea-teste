@@ -12,7 +12,11 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
-import type { InspectPeResourcesInput } from "../../domain/native/peResources.js";
+import {
+  MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+  MAX_INSPECT_PE_FILE_BYTES,
+  type InspectPeResourcesInput,
+} from "../../domain/native/peResources.js";
 import { err, ok } from "../../domain/result.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { PE_RESOURCES_PROVIDER } from "../../application/InvestigationProviders.js";
@@ -56,6 +60,23 @@ export class PeResourcesProvider implements PeResourcesPort {
   }
 }
 
+/**
+ * Remediation for a caller-selected budget refusal. At the schema ceiling
+ * there is no value left to raise the bound to, so the advice names the
+ * ceiling instead of an impossible raise.
+ */
+export const inputBudgetRemediation = (
+  boundary: "file-size" | "capacity",
+  input: InspectPeResourcesInput,
+): string =>
+  boundary === "file-size"
+    ? input.max_file_bytes >= MAX_INSPECT_PE_FILE_BYTES
+      ? `The image exceeds the ${String(MAX_INSPECT_PE_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
+      : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`
+    : input.max_entries >= MAX_INSPECT_PE_DIRECTORY_ENTRIES
+      ? `The image exceeds the ${String(MAX_INSPECT_PE_DIRECTORY_ENTRIES)}-entry resource-directory ceiling this operation accepts; select a smaller artifact.`
+      : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected resource directory entry budget.`;
+
 const peResourcesFailurePrimary = (
   cause: unknown,
   input: InspectPeResourcesInput,
@@ -93,10 +114,10 @@ const peResourcesFailurePrimary = (
             ? {}
             : {
                 retryable: false,
-                remediationAction:
-                  cause.boundary === "file-size"
-                    ? `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`
-                    : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected resource directory entry budget.`,
+                remediationAction: inputBudgetRemediation(
+                  cause.boundary,
+                  input,
+                ),
               }),
         },
       );

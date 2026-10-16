@@ -3,10 +3,19 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { inspectPeResourcesInputSchema } from "../../domain/native/peResources.js";
+import {
+  MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+  MAX_INSPECT_PE_FILE_BYTES,
+  inspectPeResourcesInputSchema,
+} from "../../domain/native/peResources.js";
+import { kunaQueryFailureForCaller } from "../../kuna/KunaQueryErrors.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { PeResourcesProvider } from "./PeResourcesProvider.js";
+import {
+  inputBudgetRemediation,
+  PeResourcesProvider,
+} from "./PeResourcesProvider.js";
 import { peResourceFixture } from "./PeResources.fixture.js";
 
 const inspect = async (
@@ -103,5 +112,63 @@ describe("PE resource provider budget reporting", () => {
       { reason: "close failed", resources: ["handle"] },
     );
     expect(wrapped.boundary).toBe("file-size");
+  });
+
+  it("names the ceiling instead of an impossible bound at the schema maxima", () => {
+    const base = { path: "/artifacts/application.exe" };
+    expect(
+      inputBudgetRemediation("file-size", {
+        ...base,
+        max_file_bytes: MAX_INSPECT_PE_FILE_BYTES,
+        max_entries: 16384,
+      }),
+    ).toContain("input ceiling");
+    expect(
+      inputBudgetRemediation("capacity", {
+        ...base,
+        max_file_bytes: 67108864,
+        max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+      }),
+    ).toContain("resource-directory ceiling");
+    // Below the ceiling the advice still names the bound the caller raises.
+    expect(
+      inputBudgetRemediation("file-size", {
+        ...base,
+        max_file_bytes: 64,
+        max_entries: 16384,
+      }),
+    ).toContain("Raise max_file_bytes above 64");
+    expect(
+      inputBudgetRemediation("capacity", {
+        ...base,
+        max_file_bytes: 67108864,
+        max_entries: 1,
+      }),
+    ).toContain("Raise max_entries above 1");
+  });
+
+  it("preserves retryability through failure redaction and caller copies", async () => {
+    const source = new AnalysisResourceConstraintError(
+      "inspect_pe_resources",
+      "file-size",
+      "Selected artifact exceeds 64 bytes",
+      { max_file_bytes: 64 },
+      { retryable: false },
+    );
+    const redacted = redactExplicitFailure(source, ["secret"]);
+    expect(redacted).toMatchObject({ retryable: false });
+    const copied = kunaQueryFailureForCaller(source, "other_operation");
+    expect(copied).toMatchObject({ retryable: false });
+    // An undeclared retryability stays undeclared, so the shared projection
+    // keeps its resource-kind default.
+    const undeclared = new AnalysisResourceConstraintError(
+      "inspect_pe_resources",
+      "memory",
+      "Result allocation exceeded the budget",
+      null,
+    );
+    expect(redactExplicitFailure(undeclared, ["secret"])).toMatchObject({
+      retryable: undefined,
+    });
   });
 });

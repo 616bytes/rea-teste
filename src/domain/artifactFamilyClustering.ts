@@ -84,10 +84,6 @@ export const artifactFamilyClusteringInputSchema = z.strictObject({
     ),
 });
 
-export type ArtifactFamilyClusteringInput = z.infer<
-  typeof artifactFamilyClusteringInputSchema
->;
-
 const memberRowSchema = z.strictObject({
   label: z.string(),
   evidence_id: z.string(),

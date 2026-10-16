@@ -998,7 +998,8 @@ describe("redirect origin policy", () => {
  * Announce a worker script on the page session as Chrome does, report one
  * allowed and one foreign worker, then one request per enabled worker. The
  * worker session completes the page-announced script with Chrome's unknown
- * length, which must not rewrite the page-owned record.
+ * length, which must not rewrite the page-owned record. The allowed worker
+ * starts one nested worker once REA auto-attaches inside it.
  */
 const workerEvents: NonNullable<FakeOptions["commandEvents"]> = (
   command,
@@ -1006,6 +1007,31 @@ const workerEvents: NonNullable<FakeOptions["commandEvents"]> = (
 ) => {
   const session =
     command.sessionId === undefined ? {} : { sessionId: command.sessionId };
+  if (
+    command.method === "Target.setAutoAttach" &&
+    command.sessionId === "worker-session"
+  )
+    return [
+      {
+        ...session,
+        method: "Target.attachedToTarget",
+        params: {
+          sessionId: "nested-session",
+          targetInfo: {
+            targetId: "worker-3",
+            type: "worker",
+            url: `${origin}/nested.js`,
+            attached: true,
+          },
+          waitingForDebugger: false,
+        },
+      },
+    ];
+  if (
+    command.method === "Target.setAutoAttach" &&
+    command.sessionId !== "session-1"
+  )
+    return [];
   if (command.method === "Target.setAutoAttach")
     return [
       {
@@ -1115,6 +1141,9 @@ describe("dedicated worker network", () => {
         encoded_data_length: 17,
       }),
     );
+    expect(result.value.network.requests).toContainEqual(
+      expect.objectContaining({ request_id: "nested-session-request" }),
+    );
     expect(
       result.value.network.requests.map(({ request_id }) => request_id),
     ).not.toContain("foreign-session-request");
@@ -1148,7 +1177,12 @@ describe("dedicated worker network", () => {
       .filter(({ sessionId }) => sessionId !== "session-1");
     expect(
       workerCommands.map(({ method, sessionId }) => [method, sessionId]),
-    ).toEqual([["Network.enable", "worker-session"]]);
+    ).toEqual([
+      ["Network.enable", "worker-session"],
+      ["Target.setAutoAttach", "worker-session"],
+      ["Network.enable", "nested-session"],
+      ["Target.setAutoAttach", "nested-session"],
+    ]);
     expect(JSON.stringify(result.value)).not.toContain("foreign.example.test");
   });
 
@@ -1251,5 +1285,94 @@ describe("dedicated worker network and target changes", () => {
       ok: false,
       error: { _tag: "BrowserObservationError", reason: "target_changed" },
     });
+  });
+});
+
+describe("dedicated worker network command rejections", () => {
+  it.each([
+    {
+      name: "a live worker rejects Network.enable",
+      error: { code: -32_601, message: "'Network.enable' wasn't found" },
+      unavailable: true,
+    },
+    {
+      name: "the worker session is already gone",
+      error: { code: -32_001, message: "Session with given id not found." },
+      unavailable: false,
+    },
+  ])("keeps the page capture when $name", async ({ error, unavailable }) => {
+    const browser = await startFakeCdpBrowser({
+      commandEvents: workerEvents,
+      commandError: ({ method, sessionId }) =>
+        method === "Network.enable" && sessionId === "worker-session"
+          ? error
+          : undefined,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 20,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(
+      result.value.network.requests.map(({ request_id }) => request_id),
+    ).not.toContain("worker-session-request");
+    const rejection = {
+      section: "network_requests",
+      reason: "provider_unavailable",
+      count: 1,
+    };
+    if (unavailable)
+      expect(result.value.completeness.excluded).toContainEqual(rejection);
+    else
+      expect(result.value.completeness.excluded).not.toContainEqual(rejection);
+  });
+});
+
+describe("dedicated worker network and worker exit", () => {
+  it("abandons a worker command that Chrome leaves unanswered when the worker detaches", async () => {
+    const isWorkerAutoAttach = ({
+      method,
+      sessionId,
+    }: FakeCdpBrowser["commands"][number]) =>
+      method === "Target.setAutoAttach" && sessionId === "worker-session";
+    const browser = await startFakeCdpBrowser({
+      commandEvents: workerEvents,
+      holdReplyFor: isWorkerAutoAttach,
+    });
+    trackBrowser(browser);
+    const started = Date.now();
+    const inspection = new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    await heldCommandOnceQuiet(browser, isWorkerAutoAttach);
+    browser.emitEvent({
+      sessionId: "session-1",
+      method: "Target.detachedFromTarget",
+      params: { sessionId: "worker-session", targetId: "worker-1" },
+    });
+
+    const result = await inspection;
+    if (!result.ok) throw result.error;
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(result.value.network.requests).toContainEqual(
+      expect.objectContaining({ request_id: "worker-session-request" }),
+    );
+    expect(result.value.completeness.excluded).not.toContainEqual(
+      expect.objectContaining({
+        section: "network_requests",
+        reason: "provider_unavailable",
+      }),
+    );
   });
 });

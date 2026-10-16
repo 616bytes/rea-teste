@@ -1,0 +1,109 @@
+import { describe, expect, it } from "vitest";
+
+import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
+import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
+import type { CdpConnection } from "./CdpConnection.js";
+import {
+  CDP_WORKER_NETWORK_LIMITS,
+  CdpWorkerNetworkObservation,
+} from "./CdpPageCaptureWorkerNetwork.js";
+
+const origin = "http://127.0.0.1:43127";
+
+const observation = () => {
+  const input = inspectWebPageInputSchema.parse({
+    cdp_endpoint: origin,
+    allowed_origins: [origin],
+    target_id: "page",
+  });
+  const events = new CdpCaptureEvents(input, new Set([origin]));
+  events.beginAuthorizedFrame("frame-main");
+  const sent: { method: string; sessionId: string | undefined }[] = [];
+  const connection = {
+    async send(method: string, _params: unknown, sessionId?: string) {
+      sent.push({ method, sessionId });
+      return {};
+    },
+  } as unknown as CdpConnection;
+  const workers = new CdpWorkerNetworkObservation(
+    { connection, sessionId: "page-session" },
+    events,
+    new Set([origin]),
+    [],
+  );
+  return { events, sent, workers };
+};
+
+const attached = (sessionId: string) => ({
+  sessionId: "page-session",
+  method: "Target.attachedToTarget",
+  params: {
+    sessionId,
+    targetInfo: { targetId: sessionId, type: "worker", url: `${origin}/w.js` },
+    waitingForDebugger: false,
+  },
+});
+
+const requested = (sessionId: string, requestId: string) => ({
+  sessionId,
+  method: "Network.requestWillBeSent",
+  params: {
+    requestId,
+    type: "Fetch",
+    request: { url: `${origin}/data`, method: "GET" },
+    initiator: { type: "script" },
+  },
+});
+
+const budgetExclusion = (events: CdpCaptureEvents) =>
+  events.completeness
+    .snapshot()
+    .excluded.find(
+      ({ section, reason }) =>
+        section === "network_requests" &&
+        reason === "resource_budget_exhausted",
+    );
+
+describe("CDP worker network admission", () => {
+  it("admits at most the worker budget and counts omitted workers", async () => {
+    const { events, sent, workers } = observation();
+    for (
+      let index = 0;
+      index < CDP_WORKER_NETWORK_LIMITS.workers + 3;
+      index += 1
+    )
+      workers.ingest(attached(`worker-${String(index)}`));
+    await workers.settle();
+
+    expect(
+      sent.filter(({ method }) => method === "Network.enable"),
+    ).toHaveLength(CDP_WORKER_NETWORK_LIMITS.workers);
+    expect(budgetExclusion(events)).toEqual({
+      section: "network_requests",
+      reason: "resource_budget_exhausted",
+      count: 3,
+    });
+    expect(events.completeness.snapshot().truncated_sections).toContain(
+      "network_requests",
+    );
+  });
+
+  it("stops retaining worker requests past the request budget", async () => {
+    const { events, workers } = observation();
+    workers.ingest(attached("worker-0"));
+    await workers.settle();
+    for (
+      let index = 0;
+      index < CDP_WORKER_NETWORK_LIMITS.requests + 2;
+      index += 1
+    )
+      workers.ingest(requested("worker-0", `request-${String(index)}`));
+
+    expect(events.network.size).toBe(CDP_WORKER_NETWORK_LIMITS.requests);
+    expect(budgetExclusion(events)).toEqual({
+      section: "network_requests",
+      reason: "resource_budget_exhausted",
+      count: 2,
+    });
+  });
+});

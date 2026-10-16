@@ -293,7 +293,7 @@ it("flags pseudocode that omits decompiler-removed blocks", () => {
   expect(view("pseudocode", withRemoval).unknowns).toEqual(
     expect.arrayContaining([
       "pseudocode omits 1 block(s) the decompiler removed as unreachable; see decompiler_removed_blocks",
-      "pseudocode omits 1 further removed block(s) whose addresses could not be mapped: overlay,0x10",
+      "pseudocode omits 1 further removed block(s) whose addresses could not be mapped; the analyze_function dossier lists them in decompiler_completeness.unmapped_warnings",
     ]),
   );
   expect(view("decompiler_removed_blocks", withRemoval)).toMatchObject({
@@ -316,6 +316,10 @@ it("flags pseudocode that omits decompiler-removed blocks", () => {
   expect(view("decompiler_removed_blocks", original)).toMatchObject({
     item: { available: false, reason: "not recorded" },
   });
+  const notRecorded =
+    "decompiler_completeness was not recorded; blocks the decompiler may have removed from this pseudocode are unknown";
+  expect(view("pseudocode", original).unknowns).toContain(notRecorded);
+  expect(view("pseudocode", inspected).unknowns).not.toContain(notRecorded);
 });
 
 it("reports the malformed native dossier field", () => {

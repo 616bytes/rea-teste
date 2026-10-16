@@ -587,7 +587,7 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
         : null;
     const probes =
       variant === "removed-block"
-        ? await verifyDecompilerRemovedBlock(client)
+        ? await verifyDecompilerRemovedBlock(client, expectedTarget.format)
         : variant.startsWith("relative-signed-")
           ? await verifyRelativeSignedSwitch(
               client,

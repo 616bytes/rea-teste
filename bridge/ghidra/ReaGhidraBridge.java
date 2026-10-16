@@ -3377,7 +3377,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Address start = decompilerWarningAddress(
                 matcher.group(1), matcher.group(2), matcher.group(3));
             if (start == null || !function.getBody().contains(start)) {
-                String warning = matcher.group(1) + ",0x" + matcher.group(2);
+                // Keep the word-offset cut so distinct sub-word warnings stay distinct.
+                String warning = matcher.group(1) + ",0x" + matcher.group(2) +
+                    (matcher.group(3) == null ? "" : "+" + matcher.group(3));
                 if (!unmapped.contains(warning)) unmapped.add(warning);
                 continue;
             }

@@ -62,9 +62,10 @@ address cannot be mapped into the analyzed function is kept as
 `"<space>,<offset>"` in `unmapped_warnings` instead of being dropped. Empty
 arrays mean the decompiler reported no removals; an absent field means the
 provider produced no pseudocode or does not report removals. Ghidra also adds a
-limitation when blocks were removed, and native `pseudocode` views list both
-kinds in `unknowns`. The `decompiler_removed_blocks` native view pages the
-mapped entries.
+limitation when blocks were removed. Native `pseudocode` views report counts of
+both kinds in `unknowns`, and an unknown when the dossier has no
+`decompiler_completeness` record. The `decompiler_removed_blocks` native view
+pages the mapped entries.
 
 `compare_functions` keeps a dimension `unknown` with null counts when either
 side declares a required facet unavailable. An empty legacy facet without a

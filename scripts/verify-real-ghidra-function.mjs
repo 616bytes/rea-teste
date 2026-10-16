@@ -679,7 +679,7 @@ export async function verifyRelativeSwitch(client, procedures, entrySize) {
  * branch target of rea_removed_block, and the dossier must name that block's
  * range and instructions instead of leaving only a pseudocode comment.
  */
-export async function verifyDecompilerRemovedBlock(client) {
+export async function verifyDecompilerRemovedBlock(client, format) {
   const names = await inventoryCall(client, "list_names", {
     document: null,
     address: null,
@@ -742,6 +742,13 @@ export async function verifyDecompilerRemovedBlock(client) {
   const decoy = await functionCall(client, "analyze_function", {
     procedure: decoyProcedure.address,
   });
+  // Ghidra renders the decoy literal for the ELF object; for the unlinked
+  // Mach-O object it shows the string's address, so only ELF must render it.
+  const decoyRendered = decoy.pseudocode.includes("Removing unreachable block");
+  if (format === "elf" && !decoyRendered)
+    throw new Error(
+      `Decoy string is no longer rendered, so the parser check is not exercised: ${decoy.pseudocode}`,
+    );
   if (!noRemovals(decoy))
     throw new Error(
       `Warning text in a string was reported as a removed block: ${JSON.stringify(decoy.decompiler_completeness)}`,
@@ -750,9 +757,7 @@ export async function verifyDecompilerRemovedBlock(client) {
     removed_block: blocks[0],
     control_removed_blocks: 0,
     decoy_removed_blocks: 0,
-    decoy_rendered_in_pseudocode: decoy.pseudocode.includes(
-      "Removing unreachable block",
-    ),
+    decoy_rendered_in_pseudocode: decoyRendered,
   };
 }
 

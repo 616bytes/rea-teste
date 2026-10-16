@@ -1728,6 +1728,179 @@ describe("legacy subpath separator and backslash refusals", () => {
   });
 });
 
+const separatorAdmissionFiles = (): ReturnType<typeof fileMap> =>
+  fileMap([
+    file("src/importer.mjs", "root"),
+    file("src/importer.cjs", "root"),
+    file(
+      "node_modules/gp/package.json",
+      "root",
+      JSON.stringify({
+        name: "gp",
+        exports: { "./a%2fb": "./safe.js", "./x%5cy": "./safe.js" },
+      }),
+    ),
+    file("node_modules/gp/safe.js", "root"),
+    file(
+      "node_modules/fixture-app8/package.json",
+      "root",
+      JSON.stringify({
+        name: "fixture-app8",
+        exports: { "./plain/*": "./safe.js" },
+      }),
+    ),
+    file("node_modules/fixture-app8/safe.js", "root"),
+    file(
+      "node_modules/fixture-app/package.json",
+      "root",
+      JSON.stringify({
+        name: "fixture-app",
+        exports: { "./bs/*": "./src/bs/*.js" },
+      }),
+    ),
+    file("node_modules/fixture-app/src/bs/a/ok.js", "root"),
+  ]);
+
+describe("bare specifier separator and backslash admissions", () => {
+  // Node only refuses encoded separators on legacy subpaths. An exports key
+  // may hold the encoded separator verbatim, a pattern capture may carry one
+  // when the target never interpolates it, and a raw backslash follows the
+  // file URL's special-scheme rule as a separator — Node 22, 24, and 26
+  // resolve all of those, so none may lose their edge.
+  it.each(["import", "require"] as const)(
+    "admits %s specifiers whose separators belong to exports lookup",
+    (moduleKind) => {
+      const files = separatorAdmissionFiles();
+      for (const declaredPath of [
+        "gp/a%2fb",
+        "gp/x%5cy",
+        "fixture-app8/plain/a%2fb",
+        "fixture-app8/plain/..%2fx",
+        `fixture-app/bs/a\\ok`,
+      ])
+        expect(
+          resolve({
+            declaredPath,
+            sourcePath:
+              moduleKind === "import" ? "src/importer.mjs" : "src/importer.cjs",
+            context: "module-specifier",
+            moduleKind,
+            files,
+          }),
+        ).toMatchObject({
+          resolution_status: "resolved",
+          resolved_path: declaredPath.startsWith("gp/")
+            ? "node_modules/gp/safe.js"
+            : declaredPath.startsWith("fixture-app8/")
+              ? "node_modules/fixture-app8/safe.js"
+              : "node_modules/fixture-app/src/bs/a/ok.js",
+        });
+    },
+  );
+
+  it("still refuses encoded separators substituted into a star target, like Node", () => {
+    // Substituting an encoded separator into a star target still refuses,
+    // like Node's ERR_INVALID_MODULE_SPECIFIER for the rewritten URL, while
+    // an ordinary escape decodes to its file.
+    const files = fileMap([
+      file("src/importer.mjs", "root"),
+      file(
+        "node_modules/star/package.json",
+        "root",
+        JSON.stringify({ name: "star", exports: { "./x/*": "./src/*.js" } }),
+      ),
+      file("node_modules/star/src/a%5cb.js", "root"),
+      file("node_modules/star/src/today.js", "root"),
+    ]);
+    expect(
+      resolve({
+        declaredPath: "star/x/a%5cb",
+        sourcePath: "src/importer.mjs",
+        context: "module-specifier",
+        moduleKind: "import",
+        files,
+      }),
+    ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+    expect(
+      resolve({
+        declaredPath: "star/x/to%64ay",
+        sourcePath: "src/importer.mjs",
+        context: "module-specifier",
+        moduleKind: "import",
+        files,
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "node_modules/star/src/today.js",
+    });
+  });
+
+  // Node 22, 24, and 26 resolve a raw backslash in a legacy ESM subpath as a
+  // file-URL separator and resolve a CommonJS self-reference whose own name
+  // carries one; the import side of the name keeps refusing.
+  it("follows Node on raw backslashes in legacy subpaths and self names", () => {
+    const files = fileMap([
+      file("src/importer.mjs", "root"),
+      file("src/importer.cjs", "root"),
+      file(
+        "node_modules/legacy/package.json",
+        "root",
+        '{"name":"legacy","main":"lib.js"}',
+      ),
+      file("node_modules/legacy/lib.js", "root"),
+      file("node_modules/legacy/sub/y.js", "root"),
+      file(
+        "package.json",
+        "root",
+        JSON.stringify({ name: "bad\\name", exports: "./safe.js" }),
+      ),
+      file("safe.js", "root"),
+    ]);
+    expect(
+      resolve({
+        declaredPath: "legacy/sub\\y.js",
+        sourcePath: "src/importer.mjs",
+        context: "module-specifier",
+        moduleKind: "import",
+        files,
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "node_modules/legacy/sub/y.js",
+    });
+    expect(
+      resolve({
+        declaredPath: "legacy/sub\\y.js",
+        sourcePath: "src/importer.cjs",
+        context: "module-specifier",
+        moduleKind: "require",
+        files,
+      }),
+    ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+    expect(
+      resolve({
+        declaredPath: "bad\\name",
+        sourcePath: "src/importer.cjs",
+        context: "module-specifier",
+        moduleKind: "require",
+        files,
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "safe.js",
+    });
+    expect(
+      resolve({
+        declaredPath: "bad\\name",
+        sourcePath: "src/importer.mjs",
+        context: "module-specifier",
+        moduleKind: "import",
+        files,
+      }),
+    ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+  });
+});
+
 describe("generic package entry heuristics", () => {
   it.each([
     ['{"main":"actual.cjs","module":"bundler.mjs"}', "actual.cjs"],

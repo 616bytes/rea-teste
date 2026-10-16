@@ -503,10 +503,21 @@ const contextualCandidate = (
   const hasUrlPathSemantics =
     context === "module-specifier" && input.moduleKind === "import";
   if (hasUrlPathSemantics) declared = htmlUrlText(declared);
-  const rejected = rejectDeclaration(
-    declared,
-    declaresLiteralPercent(input) || hasUrlPathSemantics,
-  );
+  // Bare package specifiers carry loader-specific capture rules: exports keys
+  // hold encoded separators and control characters verbatim, and pattern
+  // captures hold raw backslashes, so canonical path-syntax gates wait until
+  // a legacy lookup actually builds a filesystem candidate.
+  const isBareModuleSpecifier =
+    context === "module-specifier" &&
+    !hasScheme(declared) &&
+    !isRelativeJavaScriptModuleSpecifier(declared) &&
+    !declared.startsWith("/");
+  const rejected = isBareModuleSpecifier
+    ? null
+    : rejectDeclaration(
+        declared,
+        declaresLiteralPercent(input) || hasUrlPathSemantics,
+      );
   if (rejected !== null) return rejected;
   if (context === "module-specifier") {
     if (hasScheme(declared))
@@ -591,24 +602,6 @@ const decodeModuleUrlPath = (
         "The decoded module URL path contains NUL.",
       ])
     : decoded;
-};
-
-// Node rejects a bare ES module specifier whose subpath percent-decodes to a
-// path separator before any package lookup; encoded dots within one segment
-// stay loadable. CommonJS never percent-decodes, so this check is ESM-only.
-// Malformed escapes fall through so the decoder reports them with its own
-// reason.
-const encodedSubpathSeparator = (subpath: string): string | null => {
-  for (const segment of subpath.slice(2).split("/")) {
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(segment);
-    } catch {
-      return null;
-    }
-    if (decoded.includes("/") || decoded.includes("\\")) return segment;
-  }
-  return null;
 };
 
 // True when one path segment carries percent escapes and decodes, as a whole
@@ -721,13 +714,6 @@ const bareModuleCandidate = (
   )
     return unresolvedCandidate("rejected", [
       "ES module package names cannot start with a dot or contain percent signs or backslashes.",
-    ]);
-  if (
-    input.moduleKind === "import" &&
-    encodedSubpathSeparator(request.packageSubpath) !== null
-  )
-    return unresolvedCandidate("rejected", [
-      `The ES module subpath of ${JSON.stringify(input.declaredPath)} percent-decodes to a path separator; Node rejects such specifiers before any package lookup.`,
     ]);
   const self = packageSelfCandidate(input, request);
   if (self !== null) return self;
@@ -963,6 +949,14 @@ const resolvePackageDependency = (
       );
     if (input.moduleKind === "import")
       return resolveLegacyEsmSubpath(input, directory, subpath);
+    // CommonJS treats a backslash as a literal filename byte, and inventoried
+    // logical paths cannot contain one, so a subpath that carries it can never
+    // name a file. Resolving it through the joined-path normalizer would
+    // launder the backslash into a directory boundary.
+    if (subpath.slice(2).includes("\\"))
+      return unresolvedCandidate("rejected", [
+        "NUL and backslash path syntax are not admitted for canonical artifact paths.",
+      ]);
     const candidate = confineCandidate(`${directory}/${subpath.slice(2)}`);
     return typeof candidate === "string"
       ? resolveCandidate(input, candidate, new Set())
@@ -983,18 +977,28 @@ const resolveLegacyEsmSubpath = (
   subpath: string,
 ): CandidateResolution => {
   const declaredSubpath = stripQueryAndFragment(htmlUrlText(subpath));
+  // Node refuses a legacy ESM subpath whose percent escapes decode to a path
+  // separator with ERR_INVALID_MODULE_SPECIFIER before any file lookup. A raw
+  // backslash instead follows the file URL's special-scheme rule and resolves
+  // as a separator, so only the encoded spellings refuse here.
+  if (/%(?:2f|5c)/iu.test(declaredSubpath))
+    return unresolvedCandidate("rejected", [
+      "Encoded dot or separator bytes are rejected before artifact path resolution.",
+    ]);
   // A whole-segment percent-encoded dot names a file only after URL
   // dot-segment rewriting, including the control-character spellings that
   // become %2e once HTML/URL stripping removes the tab. Refuse those with
-  // the canonical-syntax message like every other encoded boundary; raw dot
+  // the canonical-syntax message like the acceptance suite pins; raw dot
   // segments keep flowing to the URL's directory-form answer, and partial
   // escapes inside an ordinary filename stay loadable.
   if (encodedWholeDotSegment(declaredSubpath) !== null)
     return unresolvedCandidate("rejected", [
       "Encoded dot or separator bytes are rejected before artifact path resolution.",
     ]);
-  const declarationRejection = rejectDeclaration(declaredSubpath, true);
-  if (declarationRejection !== null) return declarationRejection;
+  if (declaredSubpath.includes("\0"))
+    return unresolvedCandidate("rejected", [
+      "The decoded module URL path contains NUL.",
+    ]);
   const metadataUrl = packageMetadataUrl(
     posix.join(directory, "package.json"),
     subpath,
@@ -1847,6 +1851,9 @@ const expandPatternString = (
     value: selected.value,
     expanded_value: selected.value.replaceAll("*", () => capture),
     url: new URL(selected.url.href.replaceAll("*", () => capture)),
+    ...(selected.lookupLimitation === undefined
+      ? {}
+      : { lookupLimitation: selected.lookupLimitation }),
   };
 };
 

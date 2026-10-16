@@ -442,3 +442,23 @@ describe("JvmClassFileProvider manifest member attributes", () => {
     expect(result.error.message).toContain("unavailable, not absent");
   });
 });
+
+describe("JvmClassFileProvider unreadable manifest", () => {
+  it("reports an encrypted manifest's multi-release status as unknown", async () => {
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("META-INF/MANIFEST.MF", new TextReader(MR_MANIFEST), {
+      password: "secret",
+    });
+    await writer.add(ENTRY, new Uint8ArrayReader(minimalClass(52)));
+    const result = await provider.inspect({
+      path: await writeJar("encrypted-manifest.jar", await writer.close()),
+      entry: ENTRY,
+      release: 17,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+    expect(result.error.message).toContain("is encrypted");
+    expect(result.error.message).toContain("multi-release JAR is unknown");
+  });
+});

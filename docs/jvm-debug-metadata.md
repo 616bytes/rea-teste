@@ -55,7 +55,8 @@ attribute name, a byte-order mark, or a line longer than the JDK's line buffer,
 makes the JAR not multi-release. Like the JDK, REA ignores ZIP external
 attributes: only a trailing `/` makes a member a directory, so a manifest or
 class member marked as a directory by Unix-mode or MS-DOS attributes is read as
-a file. A manifest REA cannot read, such as one stored as a symlink, leaves the
+a file. A manifest REA cannot read, such as an encrypted one or one stored as a
+symlink, leaves the
 multi-release status unknown: a call that needs it is refused as unsupported
 rather than treating the JAR as not multi-release. A release is a
 `META-INF/versions/<N>/` directory whose `<N>` is a decimal number from 9 to

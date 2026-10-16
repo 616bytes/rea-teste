@@ -496,6 +496,12 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
         kind: "unknown",
         reason: `The JAR manifest member ${name} is stored as a ZIP ${manifest.kind}, which the JDK reads as a file but REA does not read`,
       };
+    // The JDK refuses to open a JAR with an encrypted entry at all.
+    if (manifest.encrypted)
+      return {
+        kind: "unknown",
+        reason: `The JAR manifest member ${name} is encrypted and cannot be read without a key (the JDK refuses to open a JAR holding an encrypted entry)`,
+      };
     return {
       kind: isMultiReleaseManifest(
         await this.#readEntryBytes(reader, manifest, signal),

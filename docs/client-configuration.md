@@ -399,6 +399,54 @@ Harness integration, with live DeepSeek API compatibility remaining unverified.
 See the [Harness MCP guide](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/mcp/mcp-client/README.md)
 for its native configuration contract.
 
+## FutureOS
+
+[FutureOS](https://github.com/futuregene/future-os) keeps its MCP server list in
+`~/.future/mcp.json`, beside `agent/`, so `FUTURE_HOME` (or
+`future agent --home DIR`) moves the file with the instance. FutureOS ignores an
+empty or relative `FUTURE_HOME`, and setup mirrors that rule rather than
+resolving the value against its own working directory, which would write a file
+FutureOS never reads.
+
+The document is `{"servers": {...}}` and each entry accepts exactly `command`,
+`args`, `env`, `cwd` and `enabled` (`enabled` defaults to true; `false` keeps
+the entry but refuses the server by name). FutureOS denies unknown fields at
+both levels, so an entry carrying a `type` discriminator copied from another
+client's format — or any other stray key — makes it reject the whole file
+instead of that entry. Setup refuses such a file with a repair instruction
+rather than certifying a registration FutureOS will not load. Setup also refuses
+comments, trailing commas and a BOM for the same reason; an empty file is the
+state before the first server. FutureOS is the only writer of this file (`future
+mcp add` / `remove`); setup does not need the client quit first, because nothing
+holds the server list in memory and every `future mcp` call starts the server on
+demand.
+
+`cwd`, a caller-owned working directory for the server process, is preserved when
+setup refreshes the launcher. An `enabled: false` on the REA entry is not: like
+ZCode's `enable: false`, doctor reports that registration as stale and rerunning
+setup re-enables it.
+
+FutureOS discovers skills in `~/.future/agent/skills` first and then in the
+shared `~/.agents/skills`, which stays on the real user home when `FUTURE_HOME`
+moves. Setup installs the bundled skill into the shared root, so a skill with
+the same name in the app root takes precedence over REA's copy.
+
+Reach REA from a FutureOS session through the CLI group, since the agent itself
+has no MCP client:
+
+```bash
+future mcp tools rea --query binary
+future mcp call rea binary_overview --args '{"path":"/absolute/path/to/app"}'
+```
+
+A registration written by this setup was read back with the real CLI: `future mcp
+list` named the entry from the file setup wrote, `future mcp tools rea` returned
+REA's advertised 207-tool catalog, and `future mcp call rea list_documents`
+reached REA and returned its own `target_unavailable` payload. That establishes
+the file contract and that FutureOS loads the entry. A full FutureOS agent
+session driving REA tools through the `shell` tool, `future mcp status`, and
+Windows remain unverified.
+
 ## Other client settings
 
 For OpenCode, setup writes the V1 `mcp.rea` entry, which OpenCode V1 and V2

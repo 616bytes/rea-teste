@@ -10,11 +10,14 @@ import {
 
 const origin = "http://127.0.0.1:43127";
 
-const observation = () => {
+const observation = (
+  options: { readonly includeWebSocketShapes?: boolean } = {},
+) => {
   const input = inspectWebPageInputSchema.parse({
     cdp_endpoint: origin,
     allowed_origins: [origin],
     target_id: "page",
+    include_websocket_shapes: options.includeWebSocketShapes ?? false,
   });
   const events = new CdpCaptureEvents(input, new Set([origin]));
   events.beginAuthorizedFrame("frame-main");
@@ -284,6 +287,111 @@ describe("CDP worker network request ownership", () => {
     expect(dropped_events.websocket_frames).toBe(0);
     expect(excluded).not.toContainEqual(
       expect.objectContaining({ reason: "resource_budget_exhausted" }),
+    );
+  });
+});
+
+describe("CDP worker network shapes, page ownership and malformed attachments", () => {
+  it("bounds retained worker frame payload bytes when shapes are captured", async () => {
+    const { events, workers } = observation({ includeWebSocketShapes: true });
+    await workers.start();
+    workers.ingest(attached("worker-0"));
+    await workers.settle();
+    workers.ingest({
+      sessionId: "worker-0",
+      method: "Network.webSocketCreated",
+      params: { requestId: "socket-0", url: "ws://127.0.0.1:43127/live" },
+    });
+    const payloadData = JSON.stringify({ value: "x".repeat(1024 * 1024) });
+    const payloadBytes = Buffer.byteLength(payloadData);
+    const retained = Math.floor(
+      CDP_WORKER_NETWORK_LIMITS.frameBytes / payloadBytes,
+    );
+    for (let index = 0; index < retained + 2; index += 1)
+      workers.ingest({
+        sessionId: "worker-0",
+        method: "Network.webSocketFrameReceived",
+        params: {
+          requestId: "socket-0",
+          timestamp: index,
+          response: { opcode: 1, mask: false, payloadData },
+        },
+      });
+
+    expect(
+      events.webSocketConnectionsById.get("socket-0")?.events,
+    ).toHaveLength(retained);
+    const { dropped_events, truncated_sections } =
+      events.completeness.snapshot();
+    expect(dropped_events.websocket_frames).toBe(2);
+    expect(truncated_sections).toContain("websocket_frames");
+  });
+
+  it("keeps page Network events off a record a worker owns", async () => {
+    const { events, workers } = observation();
+    await workers.start();
+    workers.ingest(attached("worker-0"));
+    await workers.settle();
+    workers.ingest(requested("worker-0", "shared-id"));
+    const page = (method: string, params: Record<string, unknown>) => {
+      const event = { sessionId: "page-session", method, params };
+      if (workers.admitsPageEvent(event)) events.ingest(event);
+    };
+    page("Network.requestWillBeSent", {
+      requestId: "shared-id",
+      type: "Fetch",
+      request: { url: `${origin}/page-data`, method: "POST" },
+      initiator: { type: "script" },
+    });
+    page("Network.responseReceived", {
+      requestId: "shared-id",
+      response: {
+        url: `${origin}/page-data`,
+        status: 500,
+        mimeType: "text/html",
+      },
+    });
+
+    expect(events.network.get("shared-id")).toMatchObject({
+      url: `${origin}/data`,
+      method: "GET",
+      status: null,
+    });
+    expect(workers.responseBodySession("shared-id")?.sessionId).toBe(
+      "worker-0",
+    );
+    expect(events.completeness.snapshot().excluded).toContainEqual({
+      section: "network_requests",
+      reason: "invalid_protocol_value",
+      count: 1,
+    });
+  });
+
+  it("releases a malformed attachment that still names a session", async () => {
+    const { events, sent, workers } = observation();
+    await workers.start();
+    workers.ingest({
+      sessionId: "page-session",
+      method: "Target.attachedToTarget",
+      params: { sessionId: "malformed-session", waitingForDebugger: false },
+    });
+    await workers.settle();
+
+    expect(sent).toContainEqual({
+      method: "Target.detachFromTarget",
+      params: { sessionId: "malformed-session" },
+      sessionId: "page-session",
+    });
+    expect(events.completeness.snapshot().excluded).toEqual(
+      expect.arrayContaining(
+        ["network_requests", "websocket_connections", "websocket_frames"].map(
+          (section) => ({
+            section,
+            reason: "invalid_protocol_value",
+            count: null,
+          }),
+        ),
+      ),
     );
   });
 });

@@ -97,7 +97,11 @@ export const capturePage = async (
     limitations,
   );
   const removeListener = context.connection.onEvent((event) => {
-    if (event.sessionId === context.sessionId) events.ingest(event);
+    if (
+      event.sessionId === context.sessionId &&
+      workerNetwork.admitsPageEvent(event)
+    )
+      events.ingest(event);
     workerNetwork.ingest(event);
   });
   const state: CaptureState = {

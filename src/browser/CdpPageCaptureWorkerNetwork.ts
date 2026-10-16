@@ -15,13 +15,16 @@ import {
  * Bounds one capture's worker attachments, the detach commands that release
  * refused workers, and retained worker request identities and WebSocket
  * frames. Each admitted worker holds a browser session and two commands; the
- * request and frame bounds match the script metadata record bound.
+ * request and frame bounds match the script metadata record bound, and the
+ * frame payload bound, applied when WebSocket shapes are inferred, matches the
+ * script metadata byte bound.
  */
 export const CDP_WORKER_NETWORK_LIMITS = {
   workers: 256,
   releases: 256,
   requests: 50_000,
   frames: 50_000,
+  frameBytes: 8 * 1024 * 1024,
 } as const;
 
 /** Auto-attach dedicated workers on a session without pausing their start. */
@@ -78,6 +81,7 @@ export class CdpWorkerNetworkObservation {
   #admittedWorkers = 0;
   #releases = 0;
   #workerFrames = 0;
+  #workerFrameBytes = 0;
   #failure: { readonly cause: unknown } | undefined;
   /** Workers are admitted only from `start()` until `settle()` or `close()`. */
   #admitting = false;
@@ -160,11 +164,24 @@ export class CdpWorkerNetworkObservation {
       } else if (WEBSOCKET_FRAME_EVENTS.has(event.method)) {
         // Only frames of a connection the origin policy kept are retained.
         if (!this.events.webSocketConnectionsById.has(requestId)) return;
-        if (this.#workerFrames >= CDP_WORKER_NETWORK_LIMITS.frames) {
+        // Shape inference retains names from the payload, so bound its bytes.
+        const payloadBytes = this.events.input.include_websocket_shapes
+          ? Buffer.byteLength(
+              cdpStringValue(
+                recordValue(recordValue(event.params)?.response)?.payloadData,
+              ) ?? "",
+            )
+          : 0;
+        if (
+          this.#workerFrames >= CDP_WORKER_NETWORK_LIMITS.frames ||
+          this.#workerFrameBytes + payloadBytes >
+            CDP_WORKER_NETWORK_LIMITS.frameBytes
+        ) {
           this.events.completeness.drop("websocket_frames");
           return;
         }
         this.#workerFrames += 1;
+        this.#workerFrameBytes += payloadBytes;
       }
     }
     this.events.ingest(event);
@@ -176,6 +193,22 @@ export class CdpWorkerNetworkObservation {
       !this.events.webSocketConnectionsById.has(requestId)
     )
       this.#requestSessions.delete(requestId);
+  }
+
+  /**
+   * Whether a page-session event may reach the shared capture state. Network
+   * events for an ID a worker session owns would merge two producers, so a
+   * page start on such an ID is reported and the page's events are kept off
+   * the worker's record.
+   */
+  admitsPageEvent(event: CdpEvent): boolean {
+    if (!event.method.startsWith("Network.")) return true;
+    const requestId = cdpStringValue(recordValue(event.params)?.requestId);
+    if (requestId === undefined || !this.#requestSessions.has(requestId))
+      return true;
+    if (REQUEST_START_EVENTS.has(event.method))
+      this.#requestOmitted(event.method, "invalid_protocol_value");
+    return false;
   }
 
   /** Report an omitted request or WebSocket in the section callers read for it. */
@@ -239,6 +272,9 @@ export class CdpWorkerNetworkObservation {
       type === undefined
     ) {
       this.#workerTrafficOmitted("invalid_protocol_value");
+      // Chrome created the child session even if it described it badly.
+      if (sessionId !== undefined && sessionId.length > 0)
+        this.#release(parentSessionId, sessionId);
       return;
     }
     // Browsers that ignore the auto-attach filter may still report frames.

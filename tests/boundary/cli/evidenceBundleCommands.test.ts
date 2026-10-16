@@ -93,7 +93,7 @@ cliTest.skipIf(process.platform === "win32")(
     expect(await readFile(join(root, "actual", "output.json"), "utf8")).toBe(
       "selected output",
     );
-    for (const output of [selectedOutput, "alias/../output.json"]) {
+    for (const output of [selectedOutput, "./alias//../output.json"]) {
       const exported = await cli.run({
         arguments: [
           "evidence-export",
@@ -133,7 +133,11 @@ cliTest.skipIf(process.platform === "win32")(
     const recordPath = `${root}/alias/../record.json`;
     await writeFile(recordPath, JSON.stringify(value.records[0]));
     const wrongKind = await cli.run({
-      arguments: ["evidence-import", recordPath, "--json"],
+      arguments: [
+        "evidence-import",
+        `${root}/./alias//../record.json`,
+        "--json",
+      ],
     });
     expect(wrongKind.exitCode).toBe(1);
     expect(wrongKind.json).toMatchObject({

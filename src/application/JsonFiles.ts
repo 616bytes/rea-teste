@@ -7,7 +7,7 @@ import {
   rename,
   type FileHandle,
 } from "node:fs/promises";
-import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
+import { basename, dirname, resolve, sep } from "node:path";
 
 import {
   EvidenceFileError,
@@ -23,6 +23,7 @@ import {
   readJsonObjectFile,
   type JsonObjectMemberReader,
 } from "./JsonInputFile.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { RegularFileCleanupFailure } from "./RegularFileRead.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -38,15 +39,6 @@ export interface TextWriteCancellation {
 
 type TextWriteResult<Failure = EvidenceFileError | AnalysisCancelledError> =
   Result<{ readonly path: string; readonly bytes: number }, Failure>;
-
-/** Anchor a JSON file selection without removing filesystem traversal requirements. */
-export const absoluteJsonFilePath = (path: string): string => {
-  // Win32 resolves dot components before directory links, including drive-relative paths.
-  if (sep === "\\") return resolve(path);
-  if (isAbsolute(path)) return path;
-  const base = process.cwd();
-  return `${base}${base.endsWith(sep) ? "" : sep}${path}`;
-};
 
 /** Read JSON data from a regular file at the caller-supplied path. */
 export const readJsonFile = async (
@@ -103,7 +95,7 @@ const readJsonFileInput = async <Value>(
 ): Promise<
   Result<Value, EvidenceFileError | AnalysisResourceConstraintError>
 > => {
-  const requestedPath = absoluteJsonFilePath(path);
+  const requestedPath = absoluteCallerPath(path);
   try {
     const decoded = await read(requestedPath);
     if (!decoded.ok) {
@@ -182,7 +174,7 @@ export function writeTextParts(
       return err(
         new EvidenceFileError("write", "io", {
           cause,
-          path: absoluteJsonFilePath(path),
+          path: absoluteCallerPath(path),
           ...(cleanup === undefined ? {} : { cleanup }),
         }),
       );
@@ -196,14 +188,14 @@ const writeTextPartsOwned = async (
   resources: ArtifactResourceScope,
   cancellation?: TextWriteCancellation,
 ): Promise<TextWriteResult> => {
-  const requestedPath = absoluteJsonFilePath(path);
+  const requestedPath = absoluteCallerPath(path);
   try {
     assertWriteActive(cancellation);
     const name = basename(requestedPath);
-    // Splitting a POSIX path must not turn a requested directory into a file.
-    // In particular realpath("file") succeeds, so a trailing "/." needs this
-    // check before canonicalizing the parent and publishing the leaf name.
-    if (requestedPath.endsWith(sep) || name === "." || name === "..")
+    // The shared path owner retains a trailing separator for "/" and "/.".
+    // Reject directory selections before splitting: realpath("file") succeeds,
+    // so dropping that separator could publish over the selected regular file.
+    if (requestedPath.endsWith(sep) || name === "..")
       return err(
         new EvidenceFileError("write", "not-file", { path: requestedPath }),
       );

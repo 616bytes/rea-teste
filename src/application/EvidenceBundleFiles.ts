@@ -19,11 +19,8 @@ import {
   bufferedJsonParts,
   canonicalJsonParts,
 } from "../domain/jsonSerialization.js";
-import {
-  absoluteJsonFilePath,
-  readJsonFile,
-  writeTextParts,
-} from "./JsonFiles.js";
+import { readJsonFile, writeTextParts } from "./JsonFiles.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { RegularFileCleanupFailure } from "./RegularFileRead.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
@@ -85,7 +82,7 @@ const readBundle = async (
     if (failure.kind === "single-record")
       return err(
         new EvidenceFileError("read", "wrong-kind", {
-          path: absoluteJsonFilePath(path),
+          path: absoluteCallerPath(path),
           cause,
           userMessage: failure.message,
         }),

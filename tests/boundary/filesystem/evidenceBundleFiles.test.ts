@@ -241,16 +241,16 @@ describe("evidence bundle publication", () => {
           error: { reason: "missing", path },
         });
       }
-      for (const path of [
-        `${destination}/`,
-        `${destination}/.`,
-        `${root}/new.json/`,
-        `${root}/directory/.`,
-        `${root}/directory/..`,
-      ]) {
+      for (const [path, reportedPath] of [
+        [`${destination}/`, `${destination}/`],
+        [`${destination}/.`, `${destination}/`],
+        [`${root}/new.json/`, `${root}/new.json/`],
+        [`${root}/directory/.`, `${root}/directory/`],
+        [`${root}/directory/..`, `${root}/directory/..`],
+      ] as const) {
         expect(await writeBundle(bundle(false), path, true)).toMatchObject({
           ok: false,
-          error: { reason: "not-file", path },
+          error: { reason: "not-file", path: reportedPath },
         });
       }
       expect(await readFile(destination, "utf8")).toBe(encoded);

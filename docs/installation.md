@@ -833,6 +833,16 @@ rea doctor --json
 rea setup
 ```
 
+On macOS, [Homebrew OpenJDK is keg-only](https://formulae.brew.sh/formula/openjdk)
+and may be unavailable to the system `java` wrapper. Set `JAVA_HOME` to the
+selected formula's `libexec/openjdk.jdk/Contents/Home`, for example
+`/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home` or
+`/usr/local/opt/openjdk/libexec/openjdk.jdk/Contents/Home`. Use a JDK inside the
+Java version bounds declared by your Ghidra installation; REA does not select
+another installed JDK automatically. Doctor distinguishes an absent Java
+command from a command that runs and fails, and retains bounded probe output
+and any parsed properties when the selected runtime cannot be admitted.
+
 On Windows, configure the existing installation in PowerShell:
 
 ```powershell
@@ -869,6 +879,21 @@ When Java is found through `PATH`, setup records its observed JDK home so GUI
 MCP clients do not depend on an incidental shell path. Setup shows every exact
 environment entry in its plan, writes only after approval, and never downloads,
 installs, upgrades, or modifies Ghidra or Java.
+
+Installation inspection derives the private configuration directory identity from
+`application.version` and `application.release.name` in
+`Ghidra/application.properties`. The directory's version spelling follows Ghidra
+(for example, `12.1.0` becomes
+`12.1`), while the reported provider version preserves the original value.
+The launcher uses that inspected coordinate; it does not reread the properties
+or guess from the extracted folder's name.
+If the identity is missing, malformed, or unsafe as a single path component,
+the launcher fails before preparing its home/cache/config/temp directories or
+starting Java. The client may already have allocated private runtime/endpoint
+resources and a target snapshot; existing startup-failure cleanup still applies.
+Restore the selected release's properties instead of renaming its installation folder.
+This coordinate selects only REA's session-private configuration directory, not
+the installation or an existing user configuration directory.
 
 Each verified session uses an ephemeral temporary project and isolated
 home/cache/config/temp paths. REA passes `-readOnly`, `-deleteProject`, uses

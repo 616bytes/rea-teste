@@ -60,13 +60,21 @@ export interface AnalysisErrorOptions extends ErrorOptions {
   readonly partialObservation?: AnalysisPartialObservation | undefined;
 }
 
+/** Exact cleanup owner that can attribute its currently unresolved resources. */
+export interface AnalysisCleanupResourceOwner {
+  readonly cleanupResources: readonly string[] | undefined;
+}
+
 /** Base class for expected analysis, provider, and session failures. */
 export abstract class AnalysisError extends Error {
+  readonly #cleanupDependencies = new Set<AnalysisError>();
+  #cleanupDependents: WeakRef<AnalysisError>[] = [];
   readonly diagnostics: Readonly<Record<string, JsonValue>> | undefined;
   readonly capturedOutput: AnalysisCapturedOutput | undefined;
   readonly cleanup: AnalysisCleanupObservation | undefined;
   cleanupIncomplete: boolean;
-  readonly cleanupResources: readonly string[];
+  #ownedCleanupResources: readonly string[];
+  #cleanupResourceOwner: AnalysisCleanupResourceOwner | undefined;
   constructor(message: string, options?: AnalysisErrorOptions) {
     super(message, options);
     this.diagnostics =
@@ -79,7 +87,7 @@ export abstract class AnalysisError extends Error {
         : { ...options.capturedOutput };
     this.cleanup = options?.cleanup;
     this.cleanupIncomplete = options?.cleanup !== undefined;
-    this.cleanupResources = options?.cleanup?.resources ?? [];
+    this.#ownedCleanupResources = [...(options?.cleanup?.resources ?? [])];
     this.partialObservation = options?.partialObservation;
   }
   abstract readonly _tag: AnalysisErrorTag;
@@ -88,6 +96,33 @@ export abstract class AnalysisError extends Error {
   readonly executionFailure: string | undefined = undefined;
   partialObservation: AnalysisPartialObservation | undefined;
   readonly cleanupReport: ProcessCaptureCleanupReport | undefined = undefined;
+
+  /** Live dependencies own current resource attribution; cleanup keeps history. */
+  get cleanupResources(): readonly string[] {
+    if (this.#cleanupDependencies.size === 0)
+      return (
+        this.#cleanupResourceOwner?.cleanupResources ??
+        this.#ownedCleanupResources
+      );
+    return [
+      ...new Set(
+        [...this.#cleanupDependencies]
+          .filter((dependency) => dependency.cleanupIncomplete)
+          .flatMap((dependency) => dependency.cleanupResources),
+      ),
+    ];
+  }
+
+  /** Bind attribution only to the producer that owns the complete cleanup set. */
+  bindCleanupResourceOwner(owner: AnalysisCleanupResourceOwner): this {
+    this.#cleanupResourceOwner = owner;
+    return this;
+  }
+
+  /** Initialize resource facts supplied by a more specific error producer. */
+  protected setCleanupResources(resources: readonly string[]): void {
+    this.#ownedCleanupResources = [...resources];
+  }
 
   /** Retain a later lifecycle failure without replacing the original typed error. */
   retainSecondaryFailure(
@@ -107,9 +142,39 @@ export abstract class AnalysisError extends Error {
     return this;
   }
 
+  /** Keep a composed error incomplete until all explicitly owned source errors resolve. */
+  bindCleanupDependencies(dependencies: readonly AnalysisError[]): this {
+    for (const dependency of dependencies) {
+      if (
+        !dependency.cleanupIncomplete ||
+        this.#cleanupDependencies.has(dependency)
+      )
+        continue;
+      this.#cleanupDependencies.add(dependency);
+      dependency.#cleanupDependents = [
+        ...dependency.#cleanupDependents.filter(
+          (reference) => reference.deref() !== undefined,
+        ),
+        new WeakRef(this),
+      ];
+    }
+    if (this.#cleanupDependencies.size === 0) this.resolveCleanup();
+    return this;
+  }
+
   /** Clear live cleanup status only after its owning resource confirms retry success. */
   resolveCleanup(): this {
+    if (
+      [...this.#cleanupDependencies].some(
+        (dependency) => dependency.cleanupIncomplete,
+      )
+    )
+      return this;
+    this.#cleanupDependencies.clear();
     this.cleanupIncomplete = false;
+    for (const reference of this.#cleanupDependents)
+      reference.deref()?.resolveCleanup();
+    this.#cleanupDependents = [];
     return this;
   }
 
@@ -126,7 +191,6 @@ import type {
 import type { FileOffsetPartialObservation } from "./native/fileOffsetPartialObservation.js";
 import type { NativeCallPartialObservation } from "./native/nativeCallPartialObservation.js";
 import type { ElectronActivePartialObservation } from "./javascript/electronActiveObservation.js";
-import type { ElectronPageInspection } from "./javascript/electronObservation.js";
 import type { JavaScriptRuntimeObservation } from "./javascript/javascriptRuntimeObservation.js";
 import type {
   ArtifactInventoryPartialObservation,
@@ -136,6 +200,7 @@ import type { WebScriptExportPartialObservation } from "./webScriptExport.js";
 import type { JavaScriptRecoveryPartialObservation } from "./javascript/javascriptRecovery.js";
 import type { BrowserScenarioPartialObservation } from "./browserScenarioCapture.js";
 import type { Evidence } from "./evidence.js";
+import type { ElectronPagePartialObservation } from "./javascript/electronObservation.js";
 import type { AndroidPartialObservation } from "./android/androidPartialObservation.js";
 import type { FirmwarePartialObservation } from "./firmware/firmwareAnalysis.js";
 import type {
@@ -159,7 +224,6 @@ export type AnalysisPartialObservation =
   | NativeCallPartialObservation
   | FileOffsetPartialObservation
   | ElectronActivePartialObservation
-  | ElectronPageInspection
   | BrowserScenarioPartialObservation
   | WebPageInspection
   | WebExecution
@@ -176,6 +240,7 @@ export type AnalysisPartialObservation =
   | AndroidPartialObservation
   | FirmwarePartialObservation
   | NativeUiObservationResult
+  | ElectronPagePartialObservation
   | AdbActivityStartPartialObservation
   | AdbAcquiredFilePartialObservation
   | AdbPackagePullPartialObservation;

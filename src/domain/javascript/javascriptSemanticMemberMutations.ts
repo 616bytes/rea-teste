@@ -3,6 +3,8 @@ import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { semanticBuiltinDataMethod } from "./javascriptSemanticDataEffectHelpers.js";
 
 import {
+  semanticCommonJsModuleObjectAt,
+  semanticBuiltinNamespace,
   semanticGlobalProcessOrigin,
   semanticGlobalProcessPathOrigin,
   semanticOriginalGlobalProcessAt,
@@ -131,6 +133,37 @@ const localSetterReceiver = (
   }
   return undefined;
 };
+
+/** An own data descriptor prevents Reflect.set from consulting a prototype setter. */
+const ownLiteralDataProperty = (
+  initializers: readonly {
+    readonly node: t.Node;
+    readonly projection: readonly unknown[];
+  }[],
+  key: string,
+): boolean =>
+  initializers.length > 0 &&
+  initializers.every(({ node, projection }) => {
+    const object = unwrapJavaScriptExpression(node).node;
+    if (projection.length !== 0 || !t.isObjectExpression(object)) return false;
+    for (let index = object.properties.length - 1; index >= 0; index -= 1) {
+      const property = object.properties[index]!;
+      // Object spread creates data properties, so it cannot turn an earlier
+      // own data property into an accessor.
+      if (t.isSpreadElement(property)) continue;
+      const name = semanticStaticPropertyKey(property.key, property.computed);
+      if (name === null) {
+        if (t.isObjectMethod(property) && property.kind !== "method")
+          return false;
+        continue;
+      }
+      if (name !== key) continue;
+      return t.isObjectMethod(property)
+        ? property.kind === "method"
+        : key !== "__proto__" || property.computed || property.shorthand;
+    }
+    return false;
+  });
 
 export function* collectSemanticMemberMutationsSteps(
   program: t.Program,
@@ -807,6 +840,24 @@ export function* collectSemanticMemberMutationsSteps(
                   .initializers;
           const invokesSetter =
             localSetterReceiver(targetInitializers, path) !== undefined;
+          const ownData =
+            path[0] !== null &&
+            (binding === undefined ||
+              (binding.memberWrites.length === 0 &&
+                binding.escapedPaths.length === 0)) &&
+            ownLiteralDataProperty(targetInitializers, path[0]!);
+          const wrapperRequireData =
+            path[0] === "require" &&
+            semanticCommonJsModuleObjectAt(target, state) &&
+            !state.ambientWriteEffects.some(
+              ({ path: write, node: effect }) =>
+                effect !== node &&
+                write[0] === "commonjs-module" &&
+                write.length <= 2 &&
+                (write.length === 1 ||
+                  semanticPropertyPathKeyMatches(write[1]!, "require")),
+            ) &&
+            (state.ambientBindingWrites.get("module")?.length ?? 0) === 0;
           if (invokesSetter || path[0] === null) {
             // A setter can mutate shared children of its `this` receiver.
             markEscaped(target, node);
@@ -816,6 +867,16 @@ export function* collectSemanticMemberMutationsSteps(
               markValue(target, path, new Set(), "write", node);
             if (args[3] !== undefined)
               markValue(args[3], path, new Set(), "write", node);
+            if (
+              !dataMethod &&
+              (origin === undefined || !semanticBuiltinNamespace(origin)) &&
+              !ownData &&
+              !wrapperRequireData
+            ) {
+              // Unknown and inherited descriptors may invoke a setter with
+              // the effective receiver, exposing all of its shared children.
+              markEscaped(args[3] ?? target, node);
+            }
           }
           markEscaped(args[1]!, node);
           markEscaped(args[2]!, node);

@@ -22,6 +22,8 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
     "let fs; fs=require('fs'),fs.readFileSync('sequence-one.json'),fs={},fs=require('fs'),fs.readFileSync('sequence-two.json');",
     "const fs=require('fs'); fs.globSync('*'); fs.readFileSync('glob-kept.json');",
     "let fs=require('fs'); {{fs.readFileSync('nested-timeline.json');}} fs={};",
+    "const fs=require('fs'); const target={__proto__:{set hook(v){this.fs.readFileSync=custom;}}}; Reflect.set(target,'hook',1,{fs}); fs.readFileSync('wrong-inherited-setter');",
+    "const {promises:fsp}=require('fs'); delete require('fs').promises; const handle=fsp.open('saved-promises'); handle.close();",
   ];
   for (const [index, source] of sources.entries())
     await writeFile(join(root, `receiver-review-${index}.ts`), source);
@@ -178,12 +180,12 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
   ]);
   expect(
     result.semantic_graph.nodes.filter(({ kind }) => kind === "resource"),
-  ).toHaveLength(2);
+  ).toHaveLength(3);
   expect(
     result.semantic_graph.relations.filter(
       ({ relation }) => relation === "releases",
     ),
-  ).toHaveLength(1);
+  ).toHaveLength(2);
   const { client, call } = await connectLocalToolsMcp();
   const response = await call("analyze_javascript_application", {
     input_path: root,

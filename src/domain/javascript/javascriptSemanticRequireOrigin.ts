@@ -267,6 +267,36 @@ const moduleRequireWrites = new WeakMap<
   readonly t.Node[]
 >();
 
+/** Resolve the CommonJS wrapper module identity through ordered aliases. */
+export const semanticCommonJsModuleObjectAt = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  visited = new Set<string>(),
+): boolean => {
+  const value = unwrapJavaScriptExpression(node).node;
+  if (!t.isIdentifier(value)) return false;
+  if (value.name === "module")
+    return resolveSemanticBindingState(state, value, "module") === undefined
+      ? !semanticResolutionBlocked(state, value, "module")
+      : isUnmodifiedCommonJsWrapperBinding(value, "module", state);
+  const binding = resolveSemanticBindingState(state, value, value.name);
+  if (binding === undefined || visited.has(binding.bindingId)) return false;
+  const next = new Set(visited).add(binding.bindingId);
+  const { initializers } = semanticBindingAtRead(
+    binding,
+    value,
+    state.parentsByNode,
+  ).binding;
+  return (
+    initializers.length > 0 &&
+    initializers.every(
+      ({ node: init, projection }) =>
+        projection.length === 0 &&
+        semanticCommonJsModuleObjectAt(init, state, next),
+    )
+  );
+};
+
 const writesModuleRequire = (
   state: JavaScriptSemanticAnalysisState,
 ): readonly t.Node[] => {
@@ -277,32 +307,6 @@ const writesModuleRequire = (
   moduleRequireWrites.set(state, []);
   const writes: t.Node[] = [];
   const interop = createSemanticModuleInterop(state);
-  const isModuleObject = (
-    node: t.Node,
-    visited = new Set<string>(),
-  ): boolean => {
-    const value = unwrapJavaScriptExpression(node).node;
-    if (!t.isIdentifier(value)) return false;
-    if (value.name === "module")
-      return resolveSemanticBindingState(state, value, "module") === undefined
-        ? !semanticResolutionBlocked(state, value, "module")
-        : isUnmodifiedCommonJsWrapperBinding(value, "module", state);
-    const binding = resolveSemanticBindingState(state, value, value.name);
-    if (binding === undefined || visited.has(binding.bindingId)) return false;
-    const next = new Set(visited).add(binding.bindingId);
-    const { initializers } = semanticBindingAtRead(
-      binding,
-      value,
-      state.parentsByNode,
-    ).binding;
-    return (
-      initializers.length > 0 &&
-      initializers.every(
-        ({ node: init, projection }) =>
-          projection.length === 0 && isModuleObject(init, next),
-      )
-    );
-  };
   const isSeparateReceiver = (
     node: t.Node,
     visited = new Set<string>(),
@@ -372,7 +376,7 @@ const writesModuleRequire = (
         if (
           members.length === 1 &&
           members[0] === "require" &&
-          isModuleObject(root)
+          semanticCommonJsModuleObjectAt(root, state)
         )
           writes.push(node);
         else if (
@@ -381,7 +385,7 @@ const writesModuleRequire = (
             t.isOptionalMemberExpression(target)) &&
           target.computed &&
           semanticStaticPropertyKey(target.property, true) === null &&
-          isModuleObject(target.object)
+          semanticCommonJsModuleObjectAt(target.object, state)
         )
           // An unknown computed key may be "require"; retain uncertainty rather
           // than treating this direct delegate write as a proven unrelated slot.
@@ -396,7 +400,7 @@ const writesModuleRequire = (
         if (
           (owner === "Object" || owner === "Reflect") &&
           method === "defineProperty" &&
-          isModuleObject(args?.[0] ?? t.nullLiteral())
+          semanticCommonJsModuleObjectAt(args?.[0] ?? t.nullLiteral(), state)
         ) {
           const key = interop.staticPropertyKey(args?.[1]);
           if (key === "require" || key === undefined) writes.push(node);
@@ -420,14 +424,14 @@ const writesModuleRequire = (
         } else if (
           owner === "Object" &&
           method === "defineProperties" &&
-          isModuleObject(args?.[0] ?? t.nullLiteral())
+          semanticCommonJsModuleObjectAt(args?.[0] ?? t.nullLiteral(), state)
         ) {
           const descriptors = args?.[1];
           if (mayContainRequire(descriptors)) writes.push(node);
         } else if (
           owner === "Object" &&
           method === "assign" &&
-          isModuleObject(args?.[0] ?? t.nullLiteral())
+          semanticCommonJsModuleObjectAt(args?.[0] ?? t.nullLiteral(), state)
         ) {
           if (args?.slice(1).some(mayContainRequire)) writes.push(node);
         }
@@ -616,6 +620,20 @@ const MUTABLE_BUILTIN_DEFAULTS = new Set([
   "timers",
   "process",
 ]);
+
+/** Known Node namespaces have native descriptors; external exports do not. */
+export const semanticBuiltinNamespace = (
+  origin: JavaScriptModuleOrigin,
+): boolean => {
+  const path =
+    origin.resolutionMode !== "require" && origin.importedPath[0] === "default"
+      ? origin.importedPath.slice(1)
+      : origin.importedPath;
+  const shared = semanticRequireExportsIdentity(origin.specifier, path);
+  return (
+    shared.path.length === 0 && MUTABLE_BUILTIN_DEFAULTS.has(shared.specifier)
+  );
+};
 
 /** Mutable default/object selections share CommonJS identity; namespace slots do not. */
 export const semanticMutableBuiltinOrigin = <Key = never>(

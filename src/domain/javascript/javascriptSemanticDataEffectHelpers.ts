@@ -488,7 +488,8 @@ const computeBuiltinBindingPath = (
         path: [...initializer.projection.map(String), ...selectedPath],
         savedObjectCapture:
           selectedPath.length > 0 &&
-          (t.isMemberExpression(initializer.node) ||
+          (initializer.projection.length > 0 ||
+            t.isMemberExpression(initializer.node) ||
             t.isOptionalMemberExpression(initializer.node))
             ? initializer.node
             : savedObjectCapture,

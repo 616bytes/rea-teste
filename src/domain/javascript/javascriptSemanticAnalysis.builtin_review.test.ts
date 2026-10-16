@@ -292,6 +292,71 @@ it("checks the parent promises slot for fresh require chains", () => {
 });
 
 it.each([
+  "const target={__proto__:{set hook(v){this.fs.readFileSync=custom;}}}; Reflect.set(target,'hook',1,{fs});",
+  "const target={fs,__proto__:{set hook(v){this.fs.readFileSync=custom;}}}; Reflect.set(target,'hook',1);",
+  "const proto={set hook(v){this.fs.readFileSync=custom;}}; const target=Object.create(proto); Reflect.set(target,'hook',1,{fs});",
+  "const target=getTarget(); Reflect.set(target,'hook',1,{fs});",
+  "const target=require('./custom'); Reflect.set(target,'hook',1,{fs});",
+  "const target={hook:0}; const alias=target; Object.defineProperty(alias,'hook',{set(v){this.fs.readFileSync=custom;}}); Reflect.set(target,'hook',1,{fs});",
+  "const target={hook:0,set [key](v){this.fs.readFileSync=custom;}}; Reflect.set(target,'hook',1,{fs});",
+  "const target={__proto__:{set __proto__(v){this.fs.readFileSync=custom;}}}; Reflect.set(target,'__proto__',1,{fs});",
+])("preserves inherited or unknown Reflect setter effects: %s", (setup) => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `const fs=require('fs'); ${setup} fs.readFileSync('wrong');`,
+    ).configurationOperations,
+  ).toEqual([]);
+});
+
+it.each([
+  "const target={hook:0,__proto__:{set hook(v){this.fs.readFileSync=custom;}}}; Reflect.set(target,'hook',1,{fs});",
+  "Reflect.set({hook:0},'hook',1,{fs});",
+  "const owner=module; Reflect.set(owner,'require',custom,fs);",
+  "const target={hook:0,...props}; Reflect.set(target,'hook',1,{fs});",
+])(
+  "keeps a proven own data property separate from inherited setters: %s",
+  (setup) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `const fs=require('fs'); ${setup} fs.readFileSync('kept');`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(["kept"]);
+  },
+);
+
+it.each([
+  "const {promises:fsp}=require('fs'); delete require('fs').promises;",
+  "const fs=require('fs'); const {promises:fsp}=fs; delete fs.promises;",
+  "const fs=require('fs'); let {promises:fsp}=fs; delete fs.promises;",
+  "const {promises:fsp}=require('node:fs'); require('fs').promises={};",
+])(
+  "retains destructured objects after replacing their parent slot: %s",
+  (setup) => {
+    const ir = analyzeJavaScriptSemantics(
+      `${setup} const h=fsp.open('kept'); h.close();`,
+    );
+    expect(ir.resourceOperations.map(({ method }) => method)).toEqual([
+      "open",
+      "close",
+    ]);
+  },
+);
+
+it.each([
+  "delete require('fs').promises; const {promises:fsp}=require('fs');",
+  "const {promises:fsp}=require('fs'); fsp.open=custom;",
+  "const {promises:fsp}=require('fs'); require('fs/promises').open=custom;",
+])(
+  "keeps capture-before-write distinct from changed child methods: %s",
+  (setup) => {
+    expect(
+      analyzeJavaScriptSemantics(`${setup} fsp.open('wrong');`)
+        .resourceOperations,
+    ).toEqual([]);
+  },
+);
+
+it.each([
   "const tls=require('tls'); const net=require('net');",
   "const tls=require('node:tls'); const net=require('node:net');",
   "import * as tls from 'node:tls'; import * as net from 'node:net';",

@@ -9,7 +9,7 @@ import {
   isUnmodeledJavaScriptRuntimeScope,
 } from "./javascriptModuleDeclaration.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { collectSemanticReferences } from "./javascriptSemanticProjection.js";
+import type { JavaScriptSemanticReference } from "./javascriptSemanticIr.js";
 import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   isUnshadowedGlobal,
@@ -25,15 +25,14 @@ type Shape = "array" | "callback" | "unknown";
 /** Bounded child-argument identity only; never recover named object contents. */
 export const createSemanticExpressionShapeResolver = (
   state: JavaScriptSemanticAnalysisState,
+  references: readonly JavaScriptSemanticReference[],
 ) => {
   // Most modules have no named child arguments. Collect source-wide blockers
   // only when a query actually needs a named binding or ambient undefined.
   let blocked: boolean | undefined;
   const namedProofBlocked = (): boolean => {
     if (blocked !== undefined) return blocked;
-    blocked = collectSemanticReferences(state.program, state).some(
-      ({ name }) => name === "eval",
-    );
+    blocked = references.some(({ name }) => name === "eval");
     if (!blocked)
       traverseJavaScriptAst(state.program, {
         enter(node) {

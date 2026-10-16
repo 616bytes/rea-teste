@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 
 import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
+import { collectSemanticReferences } from "./javascriptSemanticProjection.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import {
   completeSemanticSteps,
@@ -41,7 +42,10 @@ it.each([
     const state = completeSemanticSteps(
       indexJavaScriptBindingsSteps(file.program),
     );
-    const resolver = createSemanticExpressionShapeResolver(state);
+    const resolver = createSemanticExpressionShapeResolver(
+      state,
+      collectSemanticReferences(state.program, state),
+    );
     const shapes: string[] = [];
     traverseJavaScriptAst(file.program, {
       enter(node) {
@@ -76,7 +80,10 @@ it("bounds long callback aliases without invoking the shared callable resolver",
   const state = completeSemanticSteps(
     indexJavaScriptBindingsSteps(file.program),
   );
-  const resolver = createSemanticExpressionShapeResolver(state);
+  const resolver = createSemanticExpressionShapeResolver(
+    state,
+    collectSemanticReferences(state.program, state),
+  );
   const results: boolean[] = [];
   traverseJavaScriptAst(file.program, {
     enter(node) {

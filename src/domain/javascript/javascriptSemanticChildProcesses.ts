@@ -4,6 +4,7 @@ import type {
   JavaScriptSemanticCallable,
   JavaScriptSemanticChildProcessInteraction,
   JavaScriptSemanticChildProcessSpawn,
+  JavaScriptSemanticReference,
 } from "./javascriptSemanticIr.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
@@ -65,9 +66,10 @@ export const collectJavaScriptSemanticChildProcesses = (
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
   callables: readonly JavaScriptSemanticCallable[],
+  references: readonly JavaScriptSemanticReference[],
 ): ChildProcessAnalysis => {
   const candidates = collectSpawns(program, state, callables);
-  const context = createSemanticExpressionShapeResolver(state);
+  const context = createSemanticExpressionShapeResolver(state, references);
   const childProcessSpawns = candidates.map((candidate) =>
     immutableSpawn(candidate, context),
   );

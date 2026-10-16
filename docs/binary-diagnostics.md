@@ -241,6 +241,11 @@ count and SHA-256 and reports, each with its original file offset and length:
 - referenced module names, in module-reference order;
 - entries: ordinal, fixed or movable, segment and offset.
 
+Inventory classifies an observed NE header as `ne`, and `inspect_artifact`
+proposes this operation as its next probe. NE images resolve as artifacts, not
+session targets: no session provider loads them, so `open_binary` reports the
+provider rejections.
+
 Names are 8-bit strings decoded byte for byte as latin1; the image does not
 record its code page. Segment data, relocation records and resource payloads are
 not decoded, so imported function names, which only relocation records

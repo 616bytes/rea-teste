@@ -8,6 +8,7 @@ import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../../../src/artifacts/Art
 import { scanCanonicalArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { neFixture } from "../../../src/native/ne/NeExecutable.fixture.js";
 
 describe("MZ artifact classification", () => {
   it("rejects a Windows header pointer overlapping the DOS header", () => {
@@ -49,6 +50,36 @@ describe("MZ artifact classification", () => {
         distantRelocations.length,
       ).format,
     ).toBe("unknown");
+  });
+
+  it("classifies an observed NE header and keeps LE/LX and unobserved headers unknown", () => {
+    const { bytes, ne } = neFixture();
+    expect(classifyArtifactContent("LEGACY.EXE", bytes)).toEqual({
+      kind: "executable",
+      format: "ne",
+    });
+    expect(
+      classifyArtifactContent(
+        "LEGACY.EXE",
+        bytes.subarray(0, ne),
+        bytes.length,
+      ),
+    ).toEqual({ kind: "unknown", format: "unknown" });
+    for (const signature of ["LE", "LX"]) {
+      const other = Buffer.from(bytes);
+      other.write(signature, ne, "latin1");
+      expect(classifyArtifactContent("VXD.386", other).format).toBe("unknown");
+    }
+  });
+
+  it("keeps an NE identity through inventory", async () => {
+    const directory = await createTestTempDirectory("rea-ne-inventory-");
+    const path = join(directory, "LEGACY.DLL");
+    await writeFile(path, neFixture().bytes);
+    const inventory = artifactInventoryResultSchema.parse(
+      await scanCanonicalArtifactInventory(path),
+    );
+    expect(inventory.manifest.root_format).toBe("ne");
   });
 
   it("keeps standalone and embedded DOS identities through inventory", async () => {

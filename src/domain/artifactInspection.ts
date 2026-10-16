@@ -353,6 +353,15 @@ const probesForFormat = (
         authority: "native-analysis-provider",
       },
     ];
+  if (format === "ne")
+    return [
+      {
+        operation: "inspect_ne_executable",
+        rationale:
+          "Read the NE header, segments, resources, exported names and module references without a session provider.",
+        authority: "artifact-bytes",
+      },
+    ];
   if (["mach-o", "mach-o-universal", "elf"].includes(format))
     return [
       {

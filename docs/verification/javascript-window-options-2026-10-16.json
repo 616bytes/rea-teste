@@ -1914,5 +1914,731 @@
       "unknowns"
     ],
     "serialization": "RFC 8785 canonical JSON; arrays and all remaining fields retained"
+  },
+  "ordering_review_followup": {
+    "source_revision": "3fd71cba256f0b5d0902e17a66f458bacd3fa985",
+    "review_thread": "PRRT_kwDOSB6hVc6tFEKG",
+    "root_cause": "Inline findings were appended during traversal, deferred findings afterward; final module attribution preserves order.",
+    "structural_fix": "Restore source order in the owned browser-window finding collection before module attribution and graph consumers. Existing inline collection remains immediate; no downstream repair.",
+    "regression": {
+      "before_order": [4, 3, 5, 6],
+      "after_order": [3, 4, 5, 6],
+      "unknowns": "The last reuse remains dynamic after the first constructor receives the same object. The initial post-fix run exposed an incorrect literal expectation for that last reuse; only the test expectation was corrected, without weakening mutation/escape handling.",
+      "focused_files": 5,
+      "focused_cases_passed": 49,
+      "focused_observer": {
+        "resource_scope": "rea-efficiency-e1b3a18ab72b48ce80472de2fdf9b889.scope",
+        "peak_cgroup_bytes_sampled": 1271529472,
+        "elapsed_seconds": 17.769,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 66,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 17427767,
+          "user_usec": 14664638,
+          "system_usec": 2763128,
+          "nr_periods": 177,
+          "nr_throttled": 6,
+          "throttled_usec": 5066,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-e1b3a18ab72b48ce80472de2fdf9b889.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3325302,
+          "remaining_processes": [3325302],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 17426579,
+            "user_usec": 14664638,
+            "system_usec": 2761940,
+            "nr_periods": 177,
+            "nr_throttled": 6,
+            "throttled_usec": 5066,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 1274527744,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-e1b3a18ab72b48ce80472de2fdf9b889.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "red_observer": {
+        "resource_scope": "rea-efficiency-502ccd919f0142d795f68a67155b5c08.scope",
+        "peak_cgroup_bytes_sampled": 260825088,
+        "elapsed_seconds": 2.173,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 25,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 1929647,
+          "user_usec": 1641979,
+          "system_usec": 287668,
+          "nr_periods": 21,
+          "nr_throttled": 0,
+          "throttled_usec": 0,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-502ccd919f0142d795f68a67155b5c08.scope",
+          "payload_exit_code": 1,
+          "observer_pid": 3323357,
+          "remaining_processes": [3323357],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 1928544,
+            "user_usec": 1641039,
+            "system_usec": 287504,
+            "nr_periods": 20,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 264232960,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-502ccd919f0142d795f68a67155b5c08.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "initial_post_fix_observer": {
+        "resource_scope": "rea-efficiency-d56b2979f55346399934327d7757c52d.scope",
+        "peak_cgroup_bytes_sampled": 3324022784,
+        "elapsed_seconds": 54.396,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 77,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 53725207,
+          "user_usec": 47411450,
+          "system_usec": 6313756,
+          "nr_periods": 543,
+          "nr_throttled": 23,
+          "throttled_usec": 17968,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-d56b2979f55346399934327d7757c52d.scope",
+          "payload_exit_code": 1,
+          "observer_pid": 3323481,
+          "remaining_processes": [3323481],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 53724126,
+            "user_usec": 47410496,
+            "system_usec": 6313629,
+            "nr_periods": 543,
+            "nr_throttled": 23,
+            "throttled_usec": 17968,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 3324547072,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-d56b2979f55346399934327d7757c52d.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
+    },
+    "profile": {
+      "artifact_sha256": "767df409b18effe60421fbefcca873de237c7e813eac744ecdeebbc5e825a33a",
+      "mode": "view",
+      "source_paths": ["ElectronAppWrapper.js", "package.json"],
+      "query": {
+        "kind": "javascript-facts",
+        "where": {
+          "paths": ["ElectronAppWrapper.js"],
+          "kinds": ["browser-window"]
+        },
+        "property_keys": [
+          "options_status",
+          "web_preferences_status",
+          "web_preferences",
+          "preload_path",
+          "resolution_sources"
+        ],
+        "offset": 0,
+        "limit": 64
+      },
+      "analysis_timeout_ms": null,
+      "parent_evidence_id": "ev_9004efcb0dec2f5553dde0a284a8526617e0056511a993badb75c66816f1caa2",
+      "preparation_ms": 40129.307919,
+      "samples": [
+        {
+          "round": 0,
+          "elapsed_ms": 117.41607599999406,
+          "answer_bytes": 2559
+        },
+        {
+          "round": 1,
+          "elapsed_ms": 25.095541000002413,
+          "answer_bytes": 2559
+        },
+        {
+          "round": 2,
+          "elapsed_ms": 24.27936100000079,
+          "answer_bytes": 2559
+        }
+      ],
+      "answer_elapsed_ms": 44027.744397,
+      "resources_at_first_answer": {
+        "control_group": "/user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-4f30177ce8d645a99d9ee9fb7f703801.scope",
+        "cpu_seconds_since_scope_start": 43.959938,
+        "peak_cgroup_bytes": 1524555776
+      },
+      "answer": {
+        "parent_evidence_id": "ev_9004efcb0dec2f5553dde0a284a8526617e0056511a993badb75c66816f1caa2",
+        "source_coverage": {
+          "source_selection": {
+            "requested_paths": ["ElectronAppWrapper.js", "package.json"],
+            "unselected_files": 5348
+          },
+          "application": {
+            "status": "partial",
+            "truncated": false,
+            "omitted_count": null,
+            "limits": []
+          },
+          "semantic": {
+            "status": "partial",
+            "truncated": false,
+            "omitted_nodes": null,
+            "omitted_relations": null,
+            "limits": []
+          },
+          "application_unknown_count": 5345,
+          "semantic_unknown_count": 41162
+        },
+        "total": 1,
+        "rows": [
+          {
+            "node_id": "jag_node_44bab6a3674a5ee36c91e8c0812247a0a9c6c1138ee0b14b6cbf3593c7f4c9f4",
+            "kind": "browser-window",
+            "identity": {
+              "strategy": "artifact-local-key",
+              "stability": "artifact-version",
+              "artifact_sha256": "dcd2260e46dd1b4922449090e268773b052d58ba24ff977b08b978bee6cc9da1",
+              "namespace": "electron-browser-window",
+              "key": "268:20-268:63"
+            },
+            "observation_id": "jag_observation_9bfa09563097b5a00ec12dd3e43f90fa345466dd4849ea7806c02ceac8f75d95",
+            "source_map_reference": null,
+            "properties": {
+              "options_status": "object-literal",
+              "web_preferences_status": "object-literal",
+              "web_preferences": [
+                {
+                  "name": "contextIsolation",
+                  "value": {
+                    "status": "literal",
+                    "value": false,
+                    "expression": null
+                  }
+                },
+                {
+                  "name": "enableRemoteModule",
+                  "value": {
+                    "status": "literal",
+                    "value": true,
+                    "expression": null
+                  }
+                },
+                {
+                  "name": "nodeIntegration",
+                  "value": {
+                    "status": "literal",
+                    "value": true,
+                    "expression": null
+                  }
+                },
+                {
+                  "name": "session",
+                  "value": {
+                    "status": "dynamic",
+                    "value": null,
+                    "expression": "this.joplinSession_"
+                  }
+                },
+                {
+                  "name": "spellcheck",
+                  "value": {
+                    "status": "literal",
+                    "value": true,
+                    "expression": null
+                  }
+                }
+              ],
+              "preload_path": null,
+              "resolution_sources": [
+                {
+                  "source": "ElectronAppWrapper.js",
+                  "start": {
+                    "line": 238,
+                    "column": 30
+                  },
+                  "end": {
+                    "line": 263,
+                    "column": 9
+                  }
+                }
+              ]
+            },
+            "evidence": {
+              "authority": "static-relationship-inference",
+              "state": "inferred",
+              "confidence": "high",
+              "artifact": {
+                "available": true,
+                "artifact_id": "art_dcd2260e46dd1b4922449090e268773b052d58ba24ff977b08b978bee6cc9da1",
+                "sha256": "dcd2260e46dd1b4922449090e268773b052d58ba24ff977b08b978bee6cc9da1"
+              },
+              "location": {
+                "available": true,
+                "value": {
+                  "kind": "source-range",
+                  "source": "ElectronAppWrapper.js",
+                  "start": {
+                    "line": 268,
+                    "column": 20
+                  },
+                  "end": {
+                    "line": 268,
+                    "column": 63
+                  }
+                }
+              },
+              "extractor": {
+                "name": "rea-javascript-artifact-reconstruction",
+                "version": "1",
+                "operation": "resolve-browser-window-constant-options",
+                "executable_sha256": null
+              },
+              "coverage": {
+                "status": "partial",
+                "truncated": false,
+                "omitted_count": null,
+                "limits": []
+              },
+              "limitations": [
+                "Only explicitly present webPreferences are reported; omitted properties are not interpreted as Electron defaults.",
+                "Static syntax does not prove that this relationship executes at runtime."
+              ],
+              "evidence_ids": []
+            }
+          }
+        ]
+      },
+      "answer_sha256": "d6e786200c44bfdf6c478bb551394915f04854c3869735c58afe0379b9c5f743",
+      "export_ms": 1567.3645560000004,
+      "cli_parity": {
+        "exact_evidence_parity": true,
+        "evidence_id": "ev_3ac65442ed99a274ae2e41ea32085074527d2807249fecb96fee8bea62db6150"
+      },
+      "analysis_fingerprints": {
+        "semantic_graph_sha256": "29114b27e23063dcc8719ce443be5615add535734aef94e333e9e535fa29f087",
+        "summary": {
+          "browser_windows": 1,
+          "context_bridge_apis": 0,
+          "explicit_web_preferences": 5,
+          "exposed_api_members": 0,
+          "ipc": {
+            "ambiguous_renderer_transmissions": 0,
+            "dynamic_channel_operations": 0,
+            "literal_channels": 5,
+            "main_handlers": 5,
+            "operations": 5,
+            "paired_renderer_transmissions": 0,
+            "renderer_listeners": 0,
+            "renderer_transmissions": 0,
+            "unpaired_literal_renderer_transmissions": 0
+          },
+          "native_addon_bindings": 0,
+          "preload_entrypoints": 0,
+          "resolved_native_addon_bindings": 0,
+          "resolved_utility_entrypoints": 0,
+          "sender_validation_observations": 0,
+          "utility_processes": 0
+        }
+      },
+      "token_costs": {
+        "selected_catalog": 8069,
+        "full_catalog": 180734,
+        "requests": 160,
+        "structured_replies": 5203,
+        "full_tool_replies": 10849,
+        "tokenizer": "cl100k_base",
+        "tiktoken_version": "0.12.0",
+        "structured_task": 13432,
+        "complete_reply_task": 19078,
+        "full_catalog_structured_task": 186097
+      },
+      "conditions": "Fresh MCP and input hashing (file cache warmed); build/OS caches uncontrolled. First export sample includes export plus caller projection code, later samples reuse that immutable export. View samples precede diagnostic export. Task token projections include preparation, first answer, selected/full name/description/inputSchema catalog and the exact baseline program; exec tool schema, host rendering, output schemas, reasoning and billing unmeasured. At-answer cgroup counters include observer/startup overhead, before repeats/export diagnostics/parity/tokenization; final external observer measures all validation work. No application or native provider executes."
+    },
+    "external_resource_observer": {
+      "resource_scope": "rea-efficiency-4f30177ce8d645a99d9ee9fb7f703801.scope",
+      "peak_cgroup_bytes_sampled": 2709639168,
+      "elapsed_seconds": 63.527,
+      "abort": null,
+      "hard_memory_bytes": 8589934592,
+      "early_stop_bytes": 6442450944,
+      "cpu_quota_percent": 100,
+      "cpu_affinity": [10],
+      "task_ceiling": 192,
+      "peak_tasks_sampled": 28,
+      "resource_events_last_observed": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      },
+      "resource_events_final": null,
+      "resource_counters_verified": false,
+      "cpu_stat_last_observed": {
+        "usage_usec": 62680973,
+        "user_usec": 55598936,
+        "system_usec": 7082036,
+        "nr_periods": 635,
+        "nr_throttled": 15,
+        "throttled_usec": 6274,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "payload_resource_observation": {
+        "phase": "payload-exited-observer-alive",
+        "ownership_token": "rea-efficiency-4f30177ce8d645a99d9ee9fb7f703801.scope",
+        "payload_exit_code": 0,
+        "observer_pid": 3326354,
+        "remaining_processes": [3326354],
+        "payload_cleanup_verified": true,
+        "cpu_stat": {
+          "usage_usec": 62679649,
+          "user_usec": 55598059,
+          "system_usec": 7081589,
+          "nr_periods": 634,
+          "nr_throttled": 15,
+          "throttled_usec": 6274,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "memory_peak_bytes": 2711998464,
+        "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-4f30177ce8d645a99d9ee9fb7f703801.scope",
+        "resource_events": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        }
+      },
+      "payload_resource_observation_verified": true,
+      "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+      "payload_observer_sources_sha256": {
+        "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+        "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+      }
+    },
+    "runtime": {
+      "files": 1647,
+      "tree_sha256": "b8c5cc85012f36fd89ebb51f1a32ff2e2edd2301a0c9cb13e809fd3218f0faff",
+      "algorithm": "SHA256 compact UTF8 JSON sorted [dist-relative JavaScript path, SHA256] pairs"
+    },
+    "whole_real_answer_unchanged": true,
+    "complete_semantic_fingerprint_unchanged": true,
+    "historical_receipts": "All original trial reports, raw digests and original source pins remain unchanged; this follow-up records the current code separately.",
+    "authored_source_sha256": {
+      "experiments/analysis-efficiency/compare-javascript-semantic-content.mjs": "8904375e62a612fa4a88364929682f8b91d83292e60657cb52452f8f4f93038b",
+      "experiments/analysis-efficiency/joplin-window-options-check.py": "d99e7a03bea89d1c69d2d460dc86a5a23a7f6ddeb93135c89f3691507d73dd7c",
+      "scripts/verify/javascript/retained-facts.mjs": "9aac28cff06a1edd84b0173abc41e3cafa9761cd50b6d8e4023e98c406720c44",
+      "src/application/javascript/ElectronBoundaryGraphWindows.ts": "89944e933ce00dd36777fe826423bfb7f5eb556f2e272f816d220ac7a90154ad",
+      "src/domain/javascript/electronStaticAnalysisBrowser.ts": "d0b40384de8a862d4756dcadb8132d917ca352297c1bbe6646af230c01d39dfc",
+      "src/domain/javascript/electronStaticAnalysisOptions.test.ts": "e452a3a56c13764f5b7a19a6846ebd342789d4503f8aa1da675acaed6e2c65e8",
+      "src/domain/javascript/electronStaticAnalysisTypes.ts": "d01b3fc4e9aadd88e72cf4b2be3e2302ff98ae1c2f748f5080a909fb157c6bf4",
+      "src/domain/javascript/electronStaticOptionObjects.ts": "56f39767405adcfce69359281f3613b95de347c0fb149fe49604bc8a13cbad6b",
+      "src/domain/javascript/javascriptStaticAnalysis.ts": "2b0ed0569b445ddda61719f72ce7572dd3e48ba7c8abe21c1670cba218d66fba",
+      "src/domain/javascript/javascriptStaticAnalysisState.ts": "569881a51f0af83c23865416ac6ec1361a4dd014b1a1f3d0d8b1acf7d8b4319c",
+      "src/javascript/analysis/JavaScriptAnalysisWorkerSchemas.ts": "6de4f09f2c0ee51237ea3104563adc88fd03dea8836b73576450dc2678867ca5",
+      "tests/acceptance/applications/javascriptWindowOptionsCli.test.ts": "d5b3c548f219c5daf5ac612ca96b99ad946e5d0595a30ad7cd215cec35e9ad91"
+    },
+    "check_fast_observer": {
+      "resource_scope": "rea-efficiency-b972a9c5ac7040669243cd33890a982b.scope",
+      "peak_cgroup_bytes_sampled": 4264390656,
+      "elapsed_seconds": 107.049,
+      "abort": null,
+      "hard_memory_bytes": 8589934592,
+      "early_stop_bytes": 6442450944,
+      "cpu_quota_percent": 100,
+      "cpu_affinity": [10],
+      "task_ceiling": 192,
+      "peak_tasks_sampled": 66,
+      "resource_events_last_observed": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      },
+      "resource_events_final": null,
+      "resource_counters_verified": false,
+      "cpu_stat_last_observed": {
+        "usage_usec": 106089299,
+        "user_usec": 101655848,
+        "system_usec": 4433450,
+        "nr_periods": 1070,
+        "nr_throttled": 67,
+        "throttled_usec": 34835,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "payload_resource_observation": {
+        "phase": "payload-exited-observer-alive",
+        "ownership_token": "rea-efficiency-b972a9c5ac7040669243cd33890a982b.scope",
+        "payload_exit_code": 0,
+        "observer_pid": 3327171,
+        "remaining_processes": [3327171],
+        "payload_cleanup_verified": true,
+        "cpu_stat": {
+          "usage_usec": 106087523,
+          "user_usec": 101654073,
+          "system_usec": 4433450,
+          "nr_periods": 1069,
+          "nr_throttled": 67,
+          "throttled_usec": 34835,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "memory_peak_bytes": 4279070720,
+        "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-b972a9c5ac7040669243cd33890a982b.scope",
+        "resource_events": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        }
+      },
+      "payload_resource_observation_verified": true,
+      "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+      "payload_observer_sources_sha256": {
+        "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+        "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+      }
+    },
+    "docs_and_oracle_observer": {
+      "resource_scope": "rea-efficiency-2fed0001526a4ef3bec70e6c53625e1f.scope",
+      "peak_cgroup_bytes_sampled": 461262848,
+      "elapsed_seconds": 26.599,
+      "abort": null,
+      "hard_memory_bytes": 8589934592,
+      "early_stop_bytes": 6442450944,
+      "cpu_quota_percent": 100,
+      "cpu_affinity": [10],
+      "task_ceiling": 192,
+      "peak_tasks_sampled": 80,
+      "resource_events_last_observed": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      },
+      "resource_events_final": null,
+      "resource_counters_verified": false,
+      "cpu_stat_last_observed": {
+        "usage_usec": 26077281,
+        "user_usec": 20171654,
+        "system_usec": 5905627,
+        "nr_periods": 265,
+        "nr_throttled": 8,
+        "throttled_usec": 6198,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "payload_resource_observation": {
+        "phase": "payload-exited-observer-alive",
+        "ownership_token": "rea-efficiency-2fed0001526a4ef3bec70e6c53625e1f.scope",
+        "payload_exit_code": 0,
+        "observer_pid": 3328280,
+        "remaining_processes": [3328280],
+        "payload_cleanup_verified": true,
+        "cpu_stat": {
+          "usage_usec": 26075595,
+          "user_usec": 20170890,
+          "system_usec": 5904705,
+          "nr_periods": 264,
+          "nr_throttled": 8,
+          "throttled_usec": 6198,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "memory_peak_bytes": 468353024,
+        "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-2fed0001526a4ef3bec70e6c53625e1f.scope",
+        "resource_events": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        }
+      },
+      "payload_resource_observation_verified": true,
+      "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+      "payload_observer_sources_sha256": {
+        "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+        "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+      }
+    },
+    "source_and_runtime_pins_verified": true
   }
 }

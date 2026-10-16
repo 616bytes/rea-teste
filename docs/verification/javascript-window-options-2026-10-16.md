@@ -25,7 +25,7 @@ The baseline tool workflow cannot supply these settings; additional manual sourc
 
 All costly jobs run serially with one CPU 10, an 8 GiB hard limit, 6 GiB early stop, no swap and 192 tasks, pinned Node 24.18.0/npm 11.16.0. Cgroup memory includes file cache and is not RSS. At-answer counters precede repeated reads, diagnostic export, full-graph hashing, CLI parity and tokenization. Whole-verifier observer receipts measure that extra work separately. The observer reported no OOM and verified payload cleanup in each scoped run.
 
-Each task starts a fresh MCP process; the input hash warms file cache, and build/OS caches are uncontrolled. Three retrieval samples are not three cold analyses. `cl100k_base`/tiktoken 0.12.0 projections include preparation, first answer and selected schemas; actual billing, reasoning, peak agent context, host rendering and system-cold behavior were not measured. No live-model or Electron runtime claim is made.
+Each task starts a fresh MCP process; the input hash warms file cache, and build/OS caches are uncontrolled. Three retrieval samples are not three cold analyses. `cl100k_base`/tiktoken 0.12.0 projections include preparation, first answer and selected input schemas; output schemas, actual billing, reasoning, peak agent context, host rendering and system-cold behavior were not measured. No live-model or Electron runtime claim is made.
 
 ## Validation and reproducibility
 
@@ -46,3 +46,9 @@ python3 experiments/analysis-efficiency/joplin-window-options-check.py \
 ```
 
 Apply the linked resource observer from the earlier Joplin record to each costly command. Complete CLI observations use the same source selection through `analyze-javascript-application --format json`. The preserved [content comparator](../../experiments/analysis-efficiency/compare-javascript-semantic-content.mjs) takes the baseline CLI JSON, candidate CLI JSON and this measurement record, then emits the semantic proof while retaining both original graph identifiers and raw digests. It reads sequentially and reports a concise failure rather than printing full graphs. The baseline backend is unchanged main `2c7583599b9ac1c847bd77b1940930fd8d4594c7`; only the matching verification harness is applied there. Source and runtime pins distinguish measurement versions from later documentation changes.
+
+## Ordering review follow-up
+
+Codex review identified an introduced producer-ordering regression: inline windows were appended during traversal while deferred constants were appended afterward. The new mixed constant/inline/unresolved regression reproduced `[4, 3, 5, 6]` instead of source order `[3, 4, 5, 6]`. The producing collection now restores order from retained source offsets before module attribution and public graph consumers; no downstream adapter repair was added. A reused options object remains dynamic after it escapes to the first constructor.
+
+After the fix, all 49 targeted cases across five files passed, including the public CLI/MCP/fact-view workflow and capacity/identity cases. One additional real Joplin run at source revision `3fd71cba2` returned exactly the same complete answer and semantic fingerprint as the original candidate, with complete CLI/MCP view Evidence parity. It took 44.028 s at answer / 43.960 CPU s / 1,524,555,776 peak cgroup bytes, with the same 13,432 projected task tokens. This is a follow-up validation, not an additional paired latency comparison. The JSON stores its runtime and current source pins separately; the original trial receipts and historical source pins remain unchanged.

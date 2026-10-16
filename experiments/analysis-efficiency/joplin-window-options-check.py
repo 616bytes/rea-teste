@@ -95,5 +95,11 @@ if __name__ == "__main__":
     fingerprinted = record["trials"][-1]
     for label in ("baseline", "candidate"):
         assert proof[label + "_raw_sha256"] == fingerprinted[label]["profile"]["analysis_fingerprints"]["semantic_graph_sha256"]
+    followup = record.get("ordering_review_followup")
+    if followup is not None:
+        current = followup["profile"]
+        assert current["answer"] == record["trials"][0]["candidate"]["profile"]["answer"]
+        assert current["analysis_fingerprints"] == fingerprinted["candidate"]["profile"]["analysis_fingerprints"]
+        assert current["cli_parity"]["exact_evidence_parity"] is True
     print(json.dumps({"trials": len(receipts), "semantic_content_unchanged": True,
                       "checks": receipts}, sort_keys=True))

@@ -213,19 +213,57 @@ describe("JvmClassFileProvider JAR safety and format", () => {
     expect(r.selected_entry.entry).toBe(ENTRY);
   });
 
-  it("selects a './'-prefixed member by either spelling and keeps its archive name visible", async () => {
+  // The JDK looks members up by stored name, so a `./`-prefixed member is an
+  // inert resource (audit z21/z37/z38): it neither shadows the real entry,
+  // makes it ambiguous, nor supplies a release.
+  it("treats './'-prefixed members as inert resources and reads the stored entry", async () => {
     const path = await writeJar(
       "dotslash.jar",
-      await buildZip([{ name: `./${ENTRY}`, bytes: minimalClass(52) }]),
+      await buildZip([
+        { name: "META-INF/MANIFEST.MF", text: MR_MANIFEST },
+        { name: `./${ENTRY}`, bytes: minimalClass(50) },
+        { name: ENTRY, bytes: minimalClass(52) },
+        {
+          name: `./META-INF/versions/17/${ENTRY}`,
+          bytes: minimalClass(61),
+        },
+      ]),
     );
     for (const entry of [ENTRY, `./${ENTRY}`]) {
       const result = await provider.inspect({ path, entry });
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      expect(result.value.limitations.join("\n")).toContain(
-        JSON.stringify(`./${ENTRY}`),
-      );
+      if (!result.ok) throw result.error;
+      const r = result.value.result as {
+        selected_entry: { entry: string; release: number | null };
+        class: { major_version: number };
+      };
+      expect(r.selected_entry).toMatchObject({ entry: ENTRY, release: null });
+      expect(r.class.major_version).toBe(52);
     }
+    const versioned = await provider.inspect({
+      path,
+      entry: ENTRY,
+      release: 17,
+    });
+    expect(versioned.ok).toBe(false);
+    if (versioned.ok) return;
+    expect((versioned.error as AnalysisInputError).issues).toEqual([
+      expect.objectContaining({
+        path: ["release"],
+        message: expect.stringContaining("not available for release 17"),
+      }),
+    ]);
+    const onlyPrefixed = await provider.inspect({
+      path: await writeJar(
+        "dotslash-only.jar",
+        await buildZip([{ name: `./${ENTRY}`, bytes: minimalClass(52) }]),
+      ),
+      entry: ENTRY,
+    });
+    expect(onlyPrefixed.ok).toBe(false);
+    if (onlyPrefixed.ok) return;
+    expect((onlyPrefixed.error as AnalysisInputError).issues).toEqual([
+      expect.objectContaining({ path: ["entry"] }),
+    ]);
   });
 
   it("reports an encrypted matching member as unavailable, not absent", async () => {

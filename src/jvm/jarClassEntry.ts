@@ -30,10 +30,11 @@ const VERSIONS_PREFIX = "META-INF/versions/";
 /**
  * Normalize a caller-supplied entry once, before any match: backslashes become
  * `/`, then leading `/` characters and leading `./` segments are removed.
- * Interior segments (`a/./b`, `..`) are left unchanged. ZIP member paths come
- * from the reader, which strips only leading `./`; this request-side rule
- * additionally accepts Windows separators and a leading `/`, so a member stored
- * as `./Foo.class` is selectable as either `Foo.class` or `./Foo.class`.
+ * Interior segments (`a/./b`, `..`) are left unchanged. This rule applies only
+ * to the caller's spelling: members are matched on their stored ZIP names, as
+ * the JDK's `JarFile.getEntry` does, so `./Foo.class` and `Foo.class` both
+ * select the member stored as `Foo.class`, while a member stored as
+ * `./Foo.class` is an inert resource that never matches.
  */
 export const normalizeJarEntryPath = (entry: string): string =>
   entry
@@ -68,17 +69,17 @@ export const parseVersionedJarEntry = (
 };
 
 /**
- * Classify an archive member path for the requested class entry: the base entry,
- * a versioned override, or unrelated (`undefined`).
+ * Classify an archive member's stored name for the requested class entry: the
+ * base entry, a versioned override, or unrelated (`undefined`).
  */
 export const classifyJarEntry = (
-  memberPath: string,
+  storedName: string,
   entry: string,
 ): JarEntryCandidate | undefined => {
-  if (memberPath === entry) return { release: null, path: memberPath };
-  const versioned = parseVersionedJarEntry(memberPath);
+  if (storedName === entry) return { release: null, path: storedName };
+  const versioned = parseVersionedJarEntry(storedName);
   return versioned?.entry === entry
-    ? { release: versioned.release, path: memberPath }
+    ? { release: versioned.release, path: storedName }
     : undefined;
 };
 

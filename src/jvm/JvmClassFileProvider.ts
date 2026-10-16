@@ -395,7 +395,12 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
         manifestEntry = member;
         continue;
       }
-      const candidate = classifyJarEntry(member.path, entry);
+      // Class entries match on the stored name too: a `./`-prefixed member is
+      // an inert resource for the JDK, never the entry or its override.
+      const candidate = classifyJarEntry(
+        member.storedPath ?? member.path,
+        entry,
+      );
       if (candidate === undefined) continue;
       const members = byRelease.get(candidate.release) ?? [];
       members.push(member);
@@ -451,7 +456,7 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     }
     const candidates = [...effective.entries()].map(([release, members]) => ({
       release,
-      path: members[0]!.path,
+      path: members[0]!.storedPath ?? members[0]!.path,
     }));
     const selection = resolveJarSelection(candidates, requestedRelease);
     if (!selection.ok)

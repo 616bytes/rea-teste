@@ -42,7 +42,10 @@ requiring one. In a multi-release JAR, an `entry` spelled as
 `META-INF/versions/<N>/<path>` is refused with the equivalent `entry` plus
 `release`, so `selected_entry.release` always names the version read; in a JAR
 that is not multi-release such a member is an inert resource and is read as
-itself.
+itself. Members are matched by their stored ZIP names, as the JDK's
+`JarFile.getEntry` matches them: the requested `entry` may use `\` separators
+or a leading `/` or `./`, but a member stored with a leading `./` is an inert
+resource that never supplies the entry, an override, or an ambiguity.
 
 A JAR is multi-release exactly when the JDK's `JarFile.isMultiRelease()` would
 say so (OpenJDK 25, default settings): the manifest is the member stored as

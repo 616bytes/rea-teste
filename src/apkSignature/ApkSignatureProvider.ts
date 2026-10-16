@@ -7,6 +7,10 @@ import type {
   ApkSignaturePort,
 } from "../application/apkSignature/ApkSignaturePort.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
@@ -274,8 +278,27 @@ const LAYOUT_LIMITATION =
 
 /** Read exactly the selected APK bytes and report its signature schemes. */
 export class ApkSignatureProvider implements ApkSignaturePort {
-  close(): Promise<void> {
-    return Promise.resolve();
+  /** Owns the selected file's descriptor, retaining it when closing fails. */
+  readonly #resources = new ArtifactResourceScope();
+
+  async close(): Promise<void> {
+    try {
+      await this.#resources.close();
+    } catch (cause: unknown) {
+      if (
+        !(cause instanceof ArtifactReaderFailure) ||
+        cause.cleanup === undefined
+      )
+        throw cause;
+      const error = new ProviderCleanupError(
+        APK_SIGNATURE_PROVIDER_IDENTITY.id,
+        cause.cleanup.resources,
+        { reason: cause.cleanup.reason },
+        { cause, operation: OPERATION },
+      );
+      bindArtifactFileCleanup(cause, error);
+      throw error;
+    }
   }
 
   async inspect(
@@ -285,10 +308,14 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     try {
       if (options?.signal?.aborted)
         return err(new AnalysisCancelledError(OPERATION));
-      const selected = await readStableArtifact(
-        input.path,
-        APK_SIGNATURE_LIMITS.inputBytes,
-        options?.signal,
+      const selected = await this.#resources.run(() =>
+        readStableArtifact(
+          input.path,
+          APK_SIGNATURE_LIMITS.inputBytes,
+          options?.signal,
+          undefined,
+          this.#resources,
+        ),
       );
       if (options?.signal?.aborted)
         return err(new AnalysisCancelledError(OPERATION));
@@ -298,7 +325,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
         bytes: selected.bytes.length,
       });
     } catch (cause: unknown) {
-      return err(apkSignatureFailure(cause, input.path));
+      return err(apkSignatureFailure(cause, input.path, options?.signal));
     }
   }
 

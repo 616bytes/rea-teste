@@ -1,4 +1,10 @@
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactFileCleanupFailure,
+  bindArtifactFileCleanup,
+} from "../artifacts/ArtifactFileOperation.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
@@ -101,11 +107,38 @@ export const apkOutputBudgetError = (projectedBytes: number): AnalysisError =>
     { max_output_bytes: APK_SIGNATURE_LIMITS.outputBytes },
   );
 
-/** Preserve lifecycle failures and distinguish cancellation, access, integrity and limits. */
+/**
+ * Map a read or analysis failure, keeping a failed descriptor close as a
+ * cleanup fact bound to the error (its lease retried by the provider's
+ * close()), as the other stable-read providers do.
+ */
 export const apkSignatureFailure = (
   cause: unknown,
   path: string,
+  signal?: AbortSignal,
 ): AnalysisError => {
+  const primary =
+    cause instanceof ArtifactFileCleanupFailure &&
+    cause.fileCleanupFailure.outcome.kind === "failed"
+      ? primaryFailure(cause.fileCleanupFailure.outcome.cause, path)
+      : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
+        ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
+        : primaryFailure(cause, path);
+  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
+    return primary;
+  const cleanup = new ProviderCleanupError(
+    APK_SIGNATURE_PROVIDER_IDENTITY.id,
+    cause.cleanup.resources,
+    { reason: cause.cleanup.reason },
+    { cause, operation: OPERATION },
+  );
+  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
+  bindArtifactFileCleanup(cause, error);
+  return error;
+};
+
+/** Distinguish cancellation, access, integrity and limits for the primary failure. */
+const primaryFailure = (cause: unknown, path: string): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   const reason = cause instanceof Error ? cause.message : String(cause);
   if (

@@ -3656,3 +3656,359 @@ describe("web bundle consumed prefixes and settlement dependencies", () => {
     },
   );
 });
+
+const phaseReviewCases = [
+  {
+    name: "inherited object value does not select a default",
+    source:
+      'Object.prototype.x=1;(async()=>{const [{x=await 0},next]=(function*(){yield {};new Socket("wss://example.test/review-phases");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "inherited array hole value does not select a default",
+    source:
+      'Array.prototype[0]=1;(async()=>{const [[x=await 0],next]=(function*(){yield [,];new Socket("wss://example.test/review-phases");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "setter for-of target",
+    source:
+      'for(({set run(value){new Socket("wss://example.test/review-phases");}}).run of [0]){}const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "setter for-await target",
+    source:
+      '(async()=>{for await(({set run(value){new Socket("wss://example.test/review-phases");}}).run of [0]){}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "shadowed class setter metadata",
+    source:
+      '(class{static set run(value){new Socket("wss://example.test/review-phases");}static run=0;}).run=1;const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "immediate sequence with a call prefix",
+    source:
+      '((()=>0)(),()=>new Socket("wss://example.test/review-phases"))();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "nested computed pattern wait",
+    source:
+      '(async()=>{const [{[await 0]:value},next]=(function*(){yield {};new Socket("wss://example.test/review-phases");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "fresh setter write",
+    source:
+      '({set run(value){new Socket("wss://example.test/review-phases");}}).run=0;const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "disposal before finalizer",
+    source:
+      '(async()=>{try{await using resource=null;}finally{new Socket("wss://example.test/review-phases");}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "hoisted function prefix",
+    source:
+      'function marker(){};new(marker,globalThis.WebSocket)("wss://example.test/review-phases");',
+    present: true,
+  },
+  {
+    name: "safe try await before catch completion",
+    source:
+      '(async()=>{try{await 0;}catch{}new Socket("wss://example.test/review-phases");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "do await before break",
+    source:
+      '(async()=>{do{await 0;break;}while(false);new Socket("wss://example.test/review-phases");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "disposal before consumed label break",
+    source:
+      '(async()=>{exit:{await using r=null;break exit;}new Socket("wss://example.test/review-phases");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "computed setter write",
+    source:
+      '({set ["run"](value){new Socket("wss://example.test/review-phases");}})["run"]=0;const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "paired setter after getter",
+    source:
+      '({get run(){return 0;},set run(value){new Socket("wss://example.test/review-phases");}}).run=0;const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "paired setter before getter",
+    source:
+      '({set run(value){new Socket("wss://example.test/review-phases");},get run(){return 0;}}).run=0;const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "static class setter",
+    source:
+      '(class{static set run(value){new Socket("wss://example.test/review-phases");}}).run=0;const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "instance class setter",
+    source:
+      '(new(class{set run(value){new Socket("wss://example.test/review-phases");}})).run=0;const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "class paired setter",
+    source:
+      '(class{static set run(value){new Socket("wss://example.test/review-phases");}static get run(){return 0;}}).run=0;const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "compound setter write",
+    source:
+      '({get run(){return 0;},set run(value){new Socket("wss://example.test/review-phases");}}).run+=1;const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "update setter write",
+    source:
+      '({get run(){return 0;},set run(value){new Socket("wss://example.test/review-phases");}}).run++;const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "destructuring setter write",
+    source:
+      '[({set run(value){new Socket("wss://example.test/review-phases");}}).run]=[0];const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "setter after awaited RHS",
+    source:
+      '(async()=>{({set run(value){new Socket("wss://example.test/review-phases");}}).run=await 0;})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "setter before later pattern wait",
+    source:
+      '(async()=>{let b;[({set run(value){new Socket("wss://example.test/review-phases");}}).run,b=await 0]=[0,undefined];})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "setter after earlier pattern wait",
+    source:
+      '(async()=>{let a;[a=await 0,({set run(value){new Socket("wss://example.test/review-phases");}}).run]=[undefined,0];})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "setter-only read metadata",
+    source:
+      '({set run(value){new Socket("wss://example.test/review-phases");}}).run;const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "setter delete metadata",
+    source:
+      'delete({set run(value){new Socket("wss://example.test/review-phases");}}).run;const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "selected nested property default",
+    source:
+      '(async()=>{const [{x=await 0},next]=(function*(){yield {x:undefined};new Socket("wss://example.test/review-phases");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "unselected nested property default",
+    source:
+      '(async()=>{const [{x=await 0},next]=(function*(){yield {x:1};new Socket("wss://example.test/review-phases");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "selected nested array default",
+    source:
+      '(async()=>{const [[x=await 0],next]=(function*(){yield [undefined];new Socket("wss://example.test/review-phases");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "unselected nested array default",
+    source:
+      '(async()=>{const [[x=await 0],next]=(function*(){yield [1];new Socket("wss://example.test/review-phases");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "nested computed key after selected default",
+    source:
+      '(async()=>{const [{[await 0]:x}={},next]=(function*(){yield;new Socket("wss://example.test/review-phases");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "pattern wait after first generator read",
+    source:
+      '(async()=>{const [{[await 0]:x},next]=(function*(){new Socket("wss://example.test/review-phases");yield {};yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "later nested pattern does not defer earlier resume",
+    source:
+      '(async()=>{const [a,{[await 0]:x}]=(function*(){yield 0;new Socket("wss://example.test/review-phases");yield {};})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "nested computed wait in inner pattern",
+    source:
+      '(async()=>{const [{a:{[await 0]:x}},next]=(function*(){yield {a:{}};new Socket("wss://example.test/review-phases");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "forward hoisted function prefix",
+    source:
+      'new(marker,globalThis.WebSocket)("wss://example.test/review-phases");function marker(){}',
+    present: true,
+  },
+  {
+    name: "lexical function expression prefix TDZ",
+    source:
+      'new(marker,globalThis.WebSocket)("wss://example.test/review-phases");const marker=()=>0;',
+    present: false,
+  },
+  {
+    name: "hoisted function prefix in invocation",
+    source:
+      '(()=>{new(marker,globalThis.WebSocket)("wss://example.test/review-phases");function marker(){}})();',
+    present: true,
+  },
+  {
+    name: "immediate call prefix followed by await",
+    source:
+      '(async()=>{((()=>0)(),()=>new Socket("wss://example.test/review-phases"))(await 0);})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "immediate call prefix with bind",
+    source:
+      '((()=>0)(),()=>new Socket("wss://example.test/review-phases")).bind(null)();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "safe try await before caught throw",
+    source:
+      '(async()=>{try{await 0;throw 1;}catch{}new Socket("wss://example.test/review-phases");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "throw before caught dead await",
+    source:
+      '(async()=>{try{throw 1;await 0;}catch{}new Socket("wss://example.test/review-phases");})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "throwing operand before caught await",
+    source:
+      '(async()=>{try{null.value;await 0;}catch{}new Socket("wss://example.test/review-phases");})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "safe declaration before try await",
+    source:
+      '(async()=>{try{const value=0;await 0;}catch{}new Socket("wss://example.test/review-phases");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "do break skips test wait",
+    source:
+      '(async()=>{do{break;}while(await 0);new Socket("wss://example.test/review-phases");})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "do break before dead await",
+    source:
+      '(async()=>{do{break;await 0;}while(false);new Socket("wss://example.test/review-phases");})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "do conditional break before await",
+    source:
+      '(async()=>{do{if(skip)break;await 0;}while(false);new Socket("wss://example.test/review-phases");})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "do await before continue",
+    source:
+      '(async()=>{do{await 0;continue;}while(false);new Socket("wss://example.test/review-phases");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "disposal before do break",
+    source:
+      '(async()=>{do{await using r=null;break;}while(false);new Socket("wss://example.test/review-phases");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "label break before disposal",
+    source:
+      '(async()=>{exit:{break exit;await using r=null;}new Socket("wss://example.test/review-phases");})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "synchronous disposal before label break",
+    source:
+      '(async()=>{exit:{using r=null;break exit;}new Socket("wss://example.test/review-phases");})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "nested disposal before label break",
+    source:
+      '(async()=>{exit:{{await using r=null;}break exit;}new Socket("wss://example.test/review-phases");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "throwing prefix before finalizer disposal",
+    source:
+      '(async()=>{try{null.value;await using r=null;}finally{new Socket("wss://example.test/review-phases");}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "throwing acquisition before finalizer",
+    source:
+      '(async()=>{try{await using r=null.value;}finally{new Socket("wss://example.test/review-phases");}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "synchronous disposal before finalizer",
+    source:
+      '(async()=>{try{using r=null;}finally{new Socket("wss://example.test/review-phases");}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "nested asynchronous disposal before finalizer",
+    source:
+      '(async()=>{try{{await using r=null;}}finally{new Socket("wss://example.test/review-phases");}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "disposal before catch completion",
+    source:
+      '(async()=>{try{await using r=null;}catch{}new Socket("wss://example.test/review-phases");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+] as const;
+describe("web bundle executed phases and scope exits", () => {
+  it.each(phaseReviewCases)(
+    "preserves $name in both consumers",
+    ({ source, present }) => {
+      const expected = present ? ["wss://example.test/review-phases"] : [];
+      expect(
+        socketEndpoints(source).map((items) => items.map((item) => item.value)),
+      ).toEqual([expected, expected]);
+    },
+  );
+});

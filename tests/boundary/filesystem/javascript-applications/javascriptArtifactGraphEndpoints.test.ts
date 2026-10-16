@@ -682,6 +682,54 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "phase-review-0.js",
+    source:
+      '((()=>0)(),()=>new Socket("wss://example.test/review-latest"))();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "phase-review-1.js",
+    source:
+      '(async()=>{const [{[await 0]:value},next]=(function*(){yield {};new Socket("wss://example.test/review-latest");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "phase-review-2.js",
+    source:
+      '({set run(value){new Socket("wss://example.test/review-latest");}}).run=0;const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "phase-review-3.js",
+    source:
+      '(async()=>{try{await using resource=null;}finally{new Socket("wss://example.test/review-latest");}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "phase-review-4.js",
+    source:
+      'function marker(){};new(marker,globalThis.WebSocket)("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "phase-review-5.js",
+    source:
+      '(async()=>{try{await 0;}catch{}new Socket("wss://example.test/review-latest");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "phase-review-6.js",
+    source:
+      '(async()=>{do{await 0;break;}while(false);new Socket("wss://example.test/review-latest");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "phase-review-7.js",
+    source:
+      '(async()=>{exit:{await using r=null;break exit;}new Socket("wss://example.test/review-latest");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
     file: "review-0.js",
     source:
       'const holder = 0; new (holder = globalThis.WebSocket)("wss://example.test/review-latest");',
@@ -822,7 +870,7 @@ it("retains reviewed completion endpoints with filesystem source provenance", as
     const observations = graph.nodes
       .filter((node) => node.kind === "endpoint")
       .flatMap((node) => node.observations);
-    expect(observations).toHaveLength(11);
+    expect(observations).toHaveLength(17);
     for (const { file, present } of completedWriteAndConsumerSources) {
       const matching = observations.filter(
         ({ evidence }) =>

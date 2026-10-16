@@ -173,19 +173,23 @@ export const semanticStaticPropertyKey = (
 export const semanticFinalObjectMember = (
   node: t.ObjectExpression,
   key: string,
+  access: "get" | "set" = "get",
 ): t.ObjectProperty | t.ObjectMethod | undefined => {
-  let setter = false;
+  let accessor = false;
   for (let index = node.properties.length - 1; index >= 0; index -= 1) {
     const property = node.properties[index];
     if (property === undefined || t.isSpreadElement(property)) return undefined;
     const name = semanticStaticPropertyKey(property.key, property.computed);
     if (name === null) return undefined;
     if (name !== key) continue;
-    if (t.isObjectMethod(property) && property.kind === "set") {
-      setter = true;
+    if (
+      t.isObjectMethod(property) &&
+      property.kind === (access === "get" ? "set" : "get")
+    ) {
+      accessor = true;
       continue;
     }
-    return !setter || (t.isObjectMethod(property) && property.kind === "get")
+    return !accessor || (t.isObjectMethod(property) && property.kind === access)
       ? property
       : undefined;
   }
@@ -206,6 +210,7 @@ export const semanticFinalClassMember = (
   node: t.ClassExpression,
   key: string,
   isStatic = true,
+  access: "get" | "set" = "get",
 ): t.ClassMethod | t.ClassProperty | undefined => {
   if (!isStatic && node.superClass != null) return undefined;
   if (node.decorators != null && node.decorators.length !== 0) return undefined;
@@ -241,10 +246,10 @@ export const semanticFinalClassMember = (
         return undefined;
       if (name === key) field = member;
     } else if (name === key) {
-      // A setter updates only the setter half of an accessor descriptor.
+      // Accessor definitions update only their own descriptor half.
       method =
-        member.kind === "set"
-          ? method?.kind === "get"
+        member.kind === (access === "get" ? "set" : "get")
+          ? method?.kind === access
             ? method
             : undefined
           : member;
@@ -383,19 +388,19 @@ export const javascriptDisplayText = (value: string): string =>
   value === "" ? '""' : value;
 
 /** A target leaf writes without a value read unless its owning operation reads first. */
-export const semanticValueIsRead = (
+const semanticValueTargetSite = (
   node: t.Node,
   parents: WeakMap<t.Node, t.Node>,
-): boolean => {
+): t.Node | undefined => {
   let current = node;
   for (;;) {
     const parent = parents.get(current);
-    if (parent === undefined) return true;
+    if (parent === undefined) return undefined;
     const target = semanticWriteSiteTarget(parent);
     if (target !== null) {
       for (const leaf of semanticWriteTargets(target))
-        if (leaf === node) return semanticWriteSiteReadsFirst(parent);
-      return true;
+        if (leaf === node) return parent;
+      return undefined;
     }
     if (
       !(
@@ -410,7 +415,25 @@ export const semanticValueIsRead = (
         t.isObjectPattern(parent)
       )
     )
-      return true;
+      return undefined;
     current = parent;
   }
+};
+
+/** Getter reads and setter writes share one target-role interpretation. */
+export const semanticValueIsRead = (
+  node: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  const site = semanticValueTargetSite(node, parents);
+  return site === undefined || semanticWriteSiteReadsFirst(site);
+};
+
+/** Delete removes a descriptor; it does not call its setter. */
+export const semanticValueWriteSite = (
+  node: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): t.Node | undefined => {
+  const site = semanticValueTargetSite(node, parents);
+  return t.isUnaryExpression(site, { operator: "delete" }) ? undefined : site;
 };

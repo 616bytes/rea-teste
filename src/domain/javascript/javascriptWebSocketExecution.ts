@@ -1,6 +1,9 @@
 import { semanticExactResultOperand } from "./javascriptSemanticExpressionResults.js";
 import * as t from "@babel/types";
-import { semanticPatternSuspendsBeforeGeneratorRead } from "./javascriptGeneratorConsumerPhases.js";
+import {
+  semanticPatternSuspendsBeforeGeneratorRead,
+  semanticPatternSuspendsBeforeTarget,
+} from "./javascriptGeneratorConsumerPhases.js";
 
 import {
   unwrapJavaScriptExpression,
@@ -12,6 +15,8 @@ import {
   javaScriptClassField,
   semanticDirectFunctionReturn,
   semanticValueIsRead,
+  semanticValueWriteSite,
+  javaScriptExactResultOperand,
 } from "./javascriptAstValues.js";
 import {
   javaScriptOptionalOperandsMayBeSkipped,
@@ -58,9 +63,14 @@ const webSocketOuterExpression = (
     const parent = state.parentsByNode.get(current);
     if (
       parent !== undefined &&
-      semanticExactResultOperand(parent, state, (point) =>
-        webSocketExecutionContexts(point, state, true),
-      ) === current
+      // Invocation order is conditional on reaching the body, not on proving
+      // that every earlier sequence operand can finish. Value resolution keeps
+      // its separate completion guard.
+      (t.isSequenceExpression(parent)
+        ? javaScriptExactResultOperand(parent)
+        : semanticExactResultOperand(parent, state, (point) =>
+            webSocketExecutionContexts(point, state, true),
+          )) === current
     ) {
       current = parent;
       identity = parent;
@@ -93,7 +103,7 @@ const webSocketFreshMethodSelection = (
   const parent = state.parentsByNode.get(value);
   const property =
     (t.isObjectMethod(node) || t.isClassMethod(node)) &&
-    (node.kind === "method" || node.kind === "get")
+    (node.kind === "method" || node.kind === "get" || node.kind === "set")
       ? node
       : (t.isObjectProperty(parent) || javaScriptClassField(parent)) &&
           parent.value === value
@@ -126,8 +136,17 @@ const webSocketFreshMethodSelection = (
   const key = semanticStaticPropertyKey(member.property, member.computed);
   return key !== null &&
     (t.isObjectExpression(literal)
-      ? semanticFinalObjectMember(literal, key)
-      : semanticFinalClassMember(literal, key, isStatic)) === property
+      ? semanticFinalObjectMember(
+          literal,
+          key,
+          t.isObjectMethod(property) && property.kind === "set" ? "set" : "get",
+        )
+      : semanticFinalClassMember(
+          literal,
+          key,
+          isStatic,
+          t.isClassMethod(property) && property.kind === "set" ? "set" : "get",
+        )) === property
     ? member
     : undefined;
 };
@@ -154,6 +173,14 @@ const webSocketImmediateInvocation = (
     node.kind === "get"
   )
     return semanticValueIsRead(selection, state.parentsByNode)
+      ? selection
+      : undefined;
+  if (
+    selection !== undefined &&
+    (t.isObjectMethod(node) || t.isClassMethod(node)) &&
+    node.kind === "set"
+  )
+    return semanticValueWriteSite(selection, state.parentsByNode) !== undefined
       ? selection
       : undefined;
   let callee =
@@ -210,15 +237,15 @@ const webSocketBodyMayJump = (body: t.Node): boolean => {
   return mayJump;
 };
 
-const finalizerEntries = new WeakMap<
+const scopeExitSuspensions = new WeakMap<
   t.BlockStatement,
-  t.AwaitExpression | null
+  t.AwaitExpression | t.BlockStatement | null
 >();
-/** A finally entry can precede a wait if any earlier evaluation can throw. */
-const webSocketFinalizerEntrySuspension = (
+/** A wait precedes every scope exit only if no earlier throw/jump can bypass it. */
+const webSocketEveryExitSuspension = (
   block: t.BlockStatement,
-): t.AwaitExpression | undefined => {
-  const known = finalizerEntries.get(block);
+): t.AwaitExpression | t.BlockStatement | undefined => {
+  const known = scopeExitSuspensions.get(block);
   if (known !== undefined) return known ?? undefined;
   const pending: t.Node[] = [block];
   while (pending.length > 0) {
@@ -229,10 +256,22 @@ const webSocketFinalizerEntrySuspension = (
       t.isAwaitExpression(node) &&
       readExactJavaScriptLiteral(node.argument).found
     ) {
-      finalizerEntries.set(block, node);
+      scopeExitSuspensions.set(block, node);
       return node;
     }
     if (syntaxEvaluationCannotThrow(node)) continue;
+    // A successfully acquired null async resource still schedules a disposal
+    // await on every exit, including throw/return/break. The declaration itself
+    // does not suspend, and a possibly throwing initializer cannot prove this.
+    if (
+      t.isVariableDeclaration(node) &&
+      node.kind === "await using" &&
+      t.isIdentifier(node.declarations[0]?.id) &&
+      t.isNullLiteral(node.declarations[0]?.init)
+    ) {
+      scopeExitSuspensions.set(block, block);
+      return block;
+    }
     if (t.isExpressionStatement(node)) pending.push(node.expression);
     else if (t.isThrowStatement(node) || t.isReturnStatement(node)) {
       // Abrupt completion discards every later statement, but evaluates its
@@ -252,7 +291,7 @@ const webSocketFinalizerEntrySuspension = (
         if (item.init != null) pending.push(item.init);
     } else break;
   }
-  finalizerEntries.set(block, null);
+  scopeExitSuspensions.set(block, null);
   return undefined;
 };
 
@@ -288,7 +327,10 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
       if (webSocketBodyMayJump(statement)) break;
       prefix.push(statement);
     }
-    return prefix;
+    const exit = t.isBlockStatement(node.body)
+      ? webSocketEveryExitSuspension(node.body)
+      : undefined;
+    return exit === undefined ? prefix : [...prefix, exit];
   }
   if (t.isWithStatement(node)) return [node.object, node.body];
   if (t.isClass(node))
@@ -301,10 +343,18 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   // and updates may never execute. A do/while body precedes its first test.
   if (t.isWhileStatement(node)) return [node.test];
   if (t.isDoWhileStatement(node))
-    return webSocketBodyMayJump(node.body) ? [] : [node.body, node.test];
+    return webSocketBodyMayJump(node.body)
+      ? t.isBlockStatement(node.body)
+        ? [webSocketEveryExitSuspension(node.body)].filter(
+            (item) => item !== undefined,
+          )
+        : []
+      : [node.body, node.test];
   if (t.isTryStatement(node))
     return [
-      node.handler == null ? node.block : undefined,
+      node.handler == null
+        ? node.block
+        : webSocketEveryExitSuspension(node.block),
       node.finalizer,
     ].filter((item) => item != null);
   if (t.isForOfStatement(node) || t.isForInStatement(node)) return [node.right];
@@ -398,7 +448,7 @@ const webSocketPrecedingSuspension = (
   )
     return webSocketCompletedSuspension(parent.left, state);
   if (t.isTryStatement(parent) && child === parent.finalizer)
-    return webSocketFinalizerEntrySuspension(parent.block);
+    return webSocketEveryExitSuspension(parent.block);
   if (
     t.isSwitchStatement(parent) &&
     parent.cases.includes(child as t.SwitchCase)
@@ -669,7 +719,7 @@ const webSocketGeneratorConsumerStaysInTurn = (
 
 /** The lexical body that actually suspends owns the continuation boundary. */
 const webSocketSuspensionOwner = (
-  node: WebSocketSuspension,
+  node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): t.Node => {
   let current: t.Node = node;
@@ -869,6 +919,32 @@ export const webSocketExecutionContexts = (
         // Its argument evaluation therefore precedes body entry.
         for (const operand of [invocation.callee, ...invocation.arguments])
           suspendedAfter(operand);
+      } else if (
+        (t.isObjectMethod(parent) || t.isClassMethod(parent)) &&
+        parent.kind === "set"
+      ) {
+        const site = semanticValueWriteSite(invocation, state.parentsByNode);
+        if (site !== undefined) {
+          // RHS and preceding pattern slots finish before the selected write,
+          // whereas later slots must not defer this setter activation.
+          suspendedAt(webSocketContinuation(invocation, site, state));
+          if (t.isAssignmentExpression(site)) {
+            suspendedAfter(site.right);
+            if (
+              semanticPatternSuspendsBeforeTarget(
+                site.left,
+                site.right,
+                invocation,
+                state,
+                (operand) =>
+                  webSocketCompletedSuspension(operand, state) !== undefined,
+              )
+            )
+              suspendedOwner = webSocketSuspensionOwner(site, state);
+          }
+          if (t.isForOfStatement(site) && site.await) suspendedAt(site);
+        }
+        suspendedAfter(invocation);
       } else if (!t.isArrayPattern(invocation)) {
         suspendedAfter(
           t.isForOfStatement(invocation)

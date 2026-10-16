@@ -39,6 +39,13 @@ const bindingInitializedBeforeRead = (
   if (binding.runtimeImport) return false;
   if (binding.declarationKinds.has("var")) return true;
   if (
+    binding.definitionNodes.some((definition) => {
+      const owner = state.parentsByNode.get(definition);
+      return t.isFunctionDeclaration(owner) && owner.id === definition;
+    })
+  )
+    return true;
+  if (
     ![...binding.declarationKinds].some((kind) =>
       ["let", "const", "using", "await using"].includes(kind),
     )

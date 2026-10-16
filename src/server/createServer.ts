@@ -180,6 +180,8 @@ export interface CreateServerOptions {
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
   readonly electronObservation?: ElectronObservationPort;
+  /** Selects who closes the shared optional observation providers. */
+  readonly optionalObservationProviderOwner?: "server" | "caller";
   readonly electronActiveObservation?: ElectronActiveObservationPort;
   readonly javascriptRuntimeObservation?: JavaScriptRuntimeObservationPort;
   readonly fridaInstrumentation?: FridaInstrumentationPort;
@@ -366,6 +368,7 @@ export const createServer = (
     options.packetCapture ?? createPacketCaptureService(environment);
   const signalRecording =
     options.signalRecording ?? createSignalRecordingService(environment);
+  const webRuntime = options.webRuntime ?? createWebRuntimeService();
   const apktool =
     options.apktoolAnalysis ??
     createApktoolResourceAnalysisProvider(environment);
@@ -396,6 +399,14 @@ export const createServer = (
       peResources.close(),
       webNetworkCapture.close(),
       javascriptRecovery.close?.() ?? Promise.resolve(),
+      ...(options.optionalObservationProviderOwner === "caller"
+        ? []
+        : [
+            options.browserObservation?.close?.() ?? Promise.resolve(),
+            options.browserScenarioCapture?.close?.() ?? Promise.resolve(),
+            options.electronObservation?.close?.() ?? Promise.resolve(),
+          ]),
+      webRuntime.provider.close?.() ?? Promise.resolve(),
       artifactResources.close(),
       reverseEngineering.close(),
       firmwareAnalysis.close(),
@@ -545,6 +556,7 @@ export const createServer = (
     evmInterface,
     jeb,
     firmwareAnalysis,
+    webRuntime,
   );
   registerAdbTools(
     server,
@@ -649,6 +661,7 @@ const registerConfiguredAnalysisTools = (
   evmInterface: EvmInterfaceService,
   jeb: JebAnalysisPort,
   firmwareAnalysis: FirmwareAnalysisService,
+  webRuntime: WebRuntimeService,
 ): void => {
   registerAndroidTools(
     server,
@@ -761,7 +774,7 @@ const registerConfiguredAnalysisTools = (
   );
   registerWebRuntimeTools(
     server,
-    options.webRuntime ?? createWebRuntimeService(),
+    webRuntime,
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,

@@ -1,5 +1,6 @@
 import { basename, join } from "node:path";
 import { realpath } from "node:fs/promises";
+import type { Writable } from "node:stream";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -24,6 +25,10 @@ import {
 import type { KunaInstallation } from "./KunaInstallation.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
 import type { KunaRunRelease } from "./KunaRunSlots.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 
 interface Workspace {
   readonly root: PrivateRuntimeRoot;
@@ -40,6 +45,8 @@ export interface KunaTargetCommandRequest {
   readonly operation: string;
   readonly arguments: (input: string) => readonly string[];
   readonly outputBytes: number;
+  /** Parses stdout as it arrives instead of buffering it in the snapshot. */
+  readonly stdout?: Writable;
   readonly timeoutMs: number;
   readonly signal: AbortSignal;
   /** Admission remains owned until the native process is proven stopped. */
@@ -48,7 +55,7 @@ export interface KunaTargetCommandRequest {
 
 /** Own the digest-checked target copy and every command that can still use it. */
 export class KunaTargetCommands {
-  readonly #active = new Set<Promise<unknown>>();
+  readonly #resources = new ArtifactResourceScope();
   readonly #retained: {
     readonly error: ProviderCleanupError;
     readonly owner: ProviderProcessSupervisor | undefined;
@@ -75,21 +82,14 @@ export class KunaTargetCommands {
         err(new AnalysisCancelledError(request.operation)),
       );
     }
-    return this.#own(this.#run(request));
-  }
-
-  #own<T>(work: Promise<T>): Promise<T> {
-    this.#active.add(work);
-    const release = () => this.#active.delete(work);
-    void work.then(release, release);
-    return work;
+    return this.#run(request);
   }
 
   /** Establish the immutable input before waiting for a foreground run slot. */
   prepare(): Promise<Result<null, AnalysisError>> {
     if (this.#closing || this.lifetime.signal.aborted)
       return Promise.resolve(err(new AnalysisCancelledError("kuna:workspace")));
-    return this.#own(
+    return this.#admit("kuna:workspace", () =>
       this.#ensureWorkspace().then((workspace) =>
         workspace.ok ? ok(null) : workspace,
       ),
@@ -102,27 +102,47 @@ export class KunaTargetCommands {
     const { releaseRun, ...options } = request;
     let retained = false;
     try {
-      const workspace = await this.#ensureWorkspace();
-      if (!workspace.ok) return workspace;
-      const outcome = await runKunaCommand({
-        ...options,
-        arguments: request.arguments(workspace.value.input),
-        workspace: workspace.value.root.path,
-        reportedTimeoutMs: request.timeoutMs,
-        launcher: this.lifetime.launcher,
-      });
-      if (outcome.kind === "retained") {
-        this.#retained.push({
-          error: outcome.error,
-          owner: outcome.owner,
-          releaseRun,
+      return await this.#admit(request.operation, async () => {
+        const workspace = await this.#ensureWorkspace();
+        if (!workspace.ok) return workspace;
+        let failedHashClose:
+          | {
+              readonly owner: OwnedFileHandle;
+              readonly lease: AnalysisCleanupLease;
+            }
+          | undefined;
+        const outcome = await runKunaCommand({
+          ...options,
+          arguments: request.arguments(workspace.value.input),
+          workspace: workspace.value.root.path,
+          reportedTimeoutMs: request.timeoutMs,
+          launcher: this.lifetime.launcher,
+          retainFailedFileClose: (owner, resource) => {
+            const lease = new AnalysisCleanupLease(() => owner.close());
+            this.#resources.retain({ kind: "lease", resource, lease });
+            failedHashClose = { owner, lease };
+          },
         });
-        retained = true;
+        if (outcome.kind === "retained") {
+          this.#retained.push({
+            error: outcome.error,
+            owner: outcome.owner,
+            releaseRun,
+          });
+          retained = true;
+          return err(outcome.error);
+        }
+        const fileFailure =
+          outcome.kind === "failed" ? outcome.fileCleanupFailure : undefined;
+        if (outcome.kind === "ok")
+          return ok({ ...outcome.snapshot, input: workspace.value.input });
+        if (
+          fileFailure !== undefined &&
+          fileFailure.owner === failedHashClose?.owner
+        )
+          failedHashClose.lease.bindCleanupError(outcome.error);
         return err(outcome.error);
-      }
-      return outcome.kind === "ok"
-        ? ok({ ...outcome.snapshot, input: workspace.value.input })
-        : err(outcome.error);
+      });
     } finally {
       if (!retained) releaseRun?.();
     }
@@ -131,7 +151,23 @@ export class KunaTargetCommands {
   /** Called after the session signal aborts; failures keep their retry owners. */
   async close(): Promise<Result<null, ProviderCleanupError>> {
     this.#closing = true;
-    while (this.#active.size > 0) await Promise.allSettled(this.#active);
+    const failures: ProviderCleanupError[] = [];
+    try {
+      await this.#resources.close();
+    } catch (cause: unknown) {
+      const observation = ArtifactReaderFailure.cleanupObservation(
+        cause,
+        "Kuna command file descriptor",
+      );
+      failures.push(
+        new ProviderCleanupError(
+          KUNA_PROVIDER_ID,
+          observation.resources,
+          { reason: observation.reason },
+          { cause },
+        ),
+      );
+    }
     for (const retained of [...this.#retained]) {
       const stopped = await retained.owner?.stop();
       if (stopped !== undefined && stopped.status !== "incomplete") {
@@ -139,7 +175,7 @@ export class KunaTargetCommands {
         this.#retained.splice(this.#retained.indexOf(retained), 1);
       }
     }
-    const failures = this.#retained.map(({ error }) => error);
+    failures.push(...this.#retained.map(({ error }) => error));
     const workspace = await this.#workspace;
     if (this.#retained.length === 0) {
       if (workspace?.ok === true) {
@@ -176,8 +212,36 @@ export class KunaTargetCommands {
                 )
                 .join("; "),
             },
+            {
+              cause: new AggregateError(
+                failures,
+                "Kuna command cleanup remains incomplete",
+              ),
+            },
           ),
         );
+  }
+
+  async #admit<T>(
+    operation: string,
+    work: () => Promise<Result<T, AnalysisError>>,
+  ): Promise<Result<T, AnalysisError>> {
+    try {
+      return await this.#resources.run(work);
+    } catch (cause: unknown) {
+      if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
+        return err(
+          new ProviderCleanupError(
+            KUNA_PROVIDER_ID,
+            cause.cleanup.resources,
+            { reason: cause.cleanup.reason },
+            { cause, operation },
+          ),
+        );
+      if (this.#closing && cause instanceof ArtifactReaderFailure)
+        return err(new AnalysisCancelledError(operation, { cause }));
+      throw cause;
+    }
   }
 
   async #ensureWorkspace(): Promise<Result<Workspace, AnalysisError>> {

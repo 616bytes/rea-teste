@@ -18,6 +18,7 @@ import {
   HopperStartError,
   HopperTimeoutError,
 } from "./hopperErrors.js";
+import type { HopperStartupFailureDiagnostic } from "./hopperStartupFailure.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
@@ -569,6 +570,49 @@ describe("analysis error projection: Hopper startup failures", () => {
       expect(projected.message).toMatch(/\S/u);
       expect(JSON.stringify(projected)).not.toContain("/proc/");
     }
+  });
+
+  it("retains startup and generic diagnostics together", () => {
+    const diagnostic = {
+      component: "hopper_private_display",
+      operation: "launch",
+      reason: "synthetic_failure",
+      socket_directory: "/tmp/.X11-unix",
+      socket_directory_mode: null,
+      mount_read_only: null,
+      effective_socket_directory_mode: null,
+      effective_mount_read_only: null,
+      wsl: false,
+      strategy: "unavailable",
+      fallback_reason: null,
+      xvfb_stderr_bytes: 0,
+      status: "error",
+      failure_code: "private_display_unavailable",
+    } satisfies HopperStartupFailureDiagnostic;
+
+    expect(
+      projectAnalysisError(new HopperProcessError(70, { diagnostic })).details
+        ?.diagnostics,
+    ).toEqual(diagnostic);
+
+    expect(
+      projectAnalysisError(
+        new HopperProcessError(70, {
+          diagnostic,
+          diagnostics: { caller_context: "retained" },
+        }),
+      ).details?.diagnostics,
+    ).toEqual({ ...diagnostic, caller_context: "retained" });
+
+    const enriched = new HopperProcessError(70, {
+      diagnostic,
+    }).retainSecondaryFailure(new HopperProcessError(null), {
+      retirement_error: "synthetic_secondary_failure",
+    });
+    expect(projectAnalysisError(enriched).details?.diagnostics).toEqual({
+      ...diagnostic,
+      retirement_error: "synthetic_secondary_failure",
+    });
   });
 });
 

@@ -50,11 +50,19 @@ export const projectAnalysisError = (
   const underlyingCode = underlyingErrorCode(error);
   const code = error.cleanupIncomplete ? "cleanup_incomplete" : underlyingCode;
   const primaryDetails = errorDetails(error);
+  const primaryDiagnostics = primaryDetails?.diagnostics;
   const details = {
     ...primaryDetails,
     ...(error.diagnostics === undefined
       ? {}
-      : { diagnostics: error.diagnostics }),
+      : {
+          diagnostics:
+            typeof primaryDiagnostics === "object" &&
+            primaryDiagnostics !== null &&
+            !Array.isArray(primaryDiagnostics)
+              ? { ...primaryDiagnostics, ...error.diagnostics }
+              : error.diagnostics,
+        }),
     ...(error.cleanupIncomplete
       ? {
           cleanup: "incomplete",

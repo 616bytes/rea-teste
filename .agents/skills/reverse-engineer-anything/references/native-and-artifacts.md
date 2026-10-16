@@ -82,12 +82,14 @@ execution or network acquisition is implied, and WAT is decoded representation.
 Use `inspect_apk_signature` for a selected local APK/ZIP/AAB. It reads the APK
 Signing Block (v2/v3/v3.1) and v1 `META-INF` signing without executing anything,
 and reports each signer's certificate facts, the declared v3 rotation lineage,
-source-stamp presence and, for SHA-256/SHA-512 digests, whether the signed
-content digest matches the current bytes. `posture` summarises v1-only
-(strippable) signing, observed signer agreement across schemes, whether a
-declared (unverified) rotation lineage covers a signer change, and the strongest
-scheme.
-It never claims authenticity: signatures and lineage are not cryptographically
+the declared source-stamp certificate and, for SHA-256/SHA-512 digests, whether
+the declared content digest matches the current bytes. That match is not a
+signature verification: anyone who changes the bytes can recompute the digest.
+`posture` summarises v1-only signing (which cannot tell a v1-only APK from one
+whose v2/v3 block was removed), observed signer agreement across schemes,
+whether every differing signer appears in a declared (unverified) rotation
+lineage, and the strongest scheme.
+It never claims authenticity: no signature or lineage is cryptographically
 verified.
 
 ## Native targets

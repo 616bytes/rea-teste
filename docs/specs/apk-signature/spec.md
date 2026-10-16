@@ -3,7 +3,7 @@
 ## Outcome and scope
 
 Answer, statically, **who signed a selected local APK, under which schemes, and
-whether the signature covers the current bytes**. This closes a gap REA's own
+whether the declared content digests match the current bytes**. This closes a gap REA's own
 Android inventory documents: "ZIP inventory cannot see the APK Signing Block, so
 an empty signing array does not mean the APK is unsigned"
 (`src/domain/android/androidApplication.ts`).
@@ -13,7 +13,9 @@ code executes, no device or `adb`, no acquisition, no mutation.
 
 ## Inspection contract
 
-- v1 (JAR) signing detected from `META-INF` names in the central directory.
+- v1 (JAR) signing detected from the central directory as apksig selects it:
+  `META-INF/` entries at any depth ending in `.SF` or `.RSA`/`.DSA`/`.EC`
+  (case-sensitive), present only when a block has its matching `.SF`.
 - The APK Signing Block located from the ZIP end-of-central-directory (Zip64
   followed) and framed into id-value pairs; v2, v3 and v3.1 signers decoded:
   digests by signature-algorithm id, X.509 certificate DER, v3 min/max SDK,
@@ -25,15 +27,20 @@ code executes, no device or `adb`, no acquisition, no mutation.
   certificate and the capability flags retained by that node's certificate.
   Node signatures are not verified: the lineage is what the APK declares. A
   lineage that cannot be decoded is reported with `decode_error`.
-- Source-stamp block presence.
-- Self-consistency: the v2/v3 content digest is recomputed for SHA-256/SHA-512
-  and compared with each signed digest (`matches_apk`), rolled up into
-  `posture.self_consistent`. Verity digests are not recomputed (`null`).
-- A derived tamper-surface posture that keeps observation and declaration
-  apart: `schemes_agree_on_signer` compares each block scheme's signer
-  certificate _set_; `signer_change_declared_by_rotation` says whether a
-  declared lineage covers a difference. Also `v1_only`, strongest scheme,
-  rotation and source-stamp presence.
+- Source-stamp presence and the declared stamp certificate (V2 block
+  preferred), or a `decode_error` when it cannot be read.
+- Declared digest consistency: the v2/v3 content digest is recomputed for
+  SHA-256/SHA-512 and compared with each declared digest (`matches_apk`),
+  rolled up into `posture.self_consistent`. This is not a signature
+  verification: an attacker who changes the bytes can recompute and replace
+  the declared digest. Verity digests are not recomputed (`null`).
+- A derived posture that keeps observation and declaration apart:
+  `schemes_agree_on_signer` compares each block scheme's signer certificate
+  _set_; `signer_change_declared_by_rotation` says whether every differing
+  signer appears in a declared lineage (`null` when identity or a needed
+  lineage is unknown). Also `v1_only` (which cannot distinguish a v1-only APK
+  from one whose v2/v3 block was removed, since `X-Android-APK-Signed` is not
+  read), strongest scheme, rotation and source-stamp presence.
 - Unknown is never reported as absent: a central directory that cannot be
   walked, or whose record count does not consume its declared extent, is an
   input error (v1 presence would otherwise be guessed); a signer without a
@@ -41,7 +48,7 @@ code executes, no device or `adb`, no acquisition, no mutation.
 
 ## Authority
 
-Identity and self-consistency, never trust: no cryptographic signature
+Declared identity and digest consistency, never trust: no cryptographic signature
 verification, no certificate-chain or revocation evaluation, no authenticity
 claim. A full verifier would be a separate scope decision.
 
@@ -56,15 +63,16 @@ materialisation (an estimate), and the exact serialized size is checked against
 the 8 MiB output budget (authoritative); over-budget is a capacity refusal, not
 truncation. The content digest is
 computed at most once per algorithm in 1 MiB chunks. Peak memory is about
-twice the file size (the shared stable read concatenates its chunks) plus
-bounded decoding overhead; the digest passes run synchronously (a streamed positioned-read design is
+2.5 times the file size (the shared stable read keeps its chunks and then
+concatenates them; 1.25 GiB measured for a 500 MiB APK, about 1.3 GB at the
+cap) plus bounded decoding overhead; the digest passes run synchronously (a streamed positioned-read design is
 a follow-up).
 
 ## Verification
 
 `npm run verify:apk-signature` (Android SDK `apksigner` + `aapt2`, JDK
 `keytool`): builds a real minimal APK, signs default v2+v3, v1-only, a rotated
-lineage, rotation carried by v3.1, a source stamp and a tampered copy, and cross-checks REA against `apksigner verify` and
+lineage, rotation carried by v3.1, a source stamp and a copy with one changed byte, and cross-checks REA against `apksigner verify` and
 `apksigner lineage` through CLI and MCP in Evidence parity, with the advertised
 schema validated. SDK-free unit and adapter tests cover framing (including Zip64
 and damaged archives), signer and lineage decoding with caps, the digest

@@ -38,10 +38,14 @@ const isFieldEnd = (character: string | undefined): boolean =>
   character === "\n" ||
   character === "\r";
 
-const countLineFeeds = (text: string): number => {
+/** CRLF, CR and LF each end one line, as they do between rows. */
+const countLineBreaks = (text: string): number => {
   let count = 0;
-  for (let at = text.indexOf("\n"); at >= 0; at = text.indexOf("\n", at + 1))
-    count += 1;
+  for (let at = 0; at < text.length; at += 1) {
+    const code = text.charCodeAt(at);
+    if (code === 0x0a || (code === 0x0d && text.charCodeAt(at + 1) !== 0x0a))
+      count += 1;
+  }
   return count;
 };
 
@@ -93,7 +97,7 @@ class CsvCursor {
         );
       const chunk = this.text.slice(this.index, close);
       value += chunk;
-      this.line += countLineFeeds(chunk);
+      this.line += countLineBreaks(chunk);
       this.index = close + 1;
       if (this.text[this.index] !== '"') break;
       value += '"';

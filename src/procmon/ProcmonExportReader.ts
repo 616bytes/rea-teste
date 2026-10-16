@@ -42,7 +42,7 @@ export const readProcmonExport = async (
   const { encoding, byteOrderMark } = detectEncoding(bytes);
   const format =
     selection.format === "auto"
-      ? detectFormat(bytes, encoding)
+      ? detectFormat(bytes, encoding, byteOrderMark)
       : selection.format;
   const window = new ProcmonEventWindow(
     format,
@@ -135,9 +135,13 @@ const detectEncoding = (
 };
 
 /** The first non-whitespace character selects the format; parsing validates it. */
-const detectFormat = (bytes: Uint8Array, encoding: Encoding): "xml" | "csv" => {
+const detectFormat = (
+  bytes: Uint8Array,
+  encoding: Encoding,
+  byteOrderMark: boolean,
+): "xml" | "csv" => {
   const unit = encoding === "utf-8" ? 1 : 2;
-  const bom = encoding === "utf-8" ? (bytes[0] === 0xef ? 3 : 0) : 2;
+  const bom = byteOrderMark ? (encoding === "utf-8" ? 3 : 2) : 0;
   for (let at = bom; at + unit <= bytes.length; at += unit) {
     const code =
       encoding === "utf-8"

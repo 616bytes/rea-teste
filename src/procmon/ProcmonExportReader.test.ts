@@ -334,3 +334,28 @@ describe("readProcmonExport review of 75016b0", () => {
     expect(reading.coverage).toEqual({ status: "complete" });
   });
 });
+
+describe("readProcmonExport review of 262a1da", () => {
+  const all = { ...selection, event_limit: null };
+
+  it("detects CSV when the first character only starts like a UTF-8 BOM", async () => {
+    // U+FF30 encodes as EF BC B0, which is not a byte order mark.
+    const reading = await readProcmonExport(
+      Buffer.from("\uFF30<x,Operation\nfoo,Read\n"),
+      all,
+    );
+    expect(reading.source).toMatchObject({
+      format: "csv",
+      byte_order_mark: false,
+    });
+    expect(reading.events).toHaveLength(1);
+  });
+
+  it("counts a bare CR inside a quoted field as a line break", async () => {
+    const reading = await readProcmonExport(
+      Buffer.from(`${header.trimEnd()}\r"a.exe","Re\rad"\r"b.exe"\r`),
+      all,
+    );
+    expect(reading.coverage).toMatchObject({ status: "partial", line: 4 });
+  });
+});

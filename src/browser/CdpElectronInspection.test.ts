@@ -130,7 +130,11 @@ describe("Electron frame capture", () => {
         include_script_sources: false,
       }),
       scripts,
-      frameIds: new Set(["frame-old", "frame-new"]),
+      frameForScript: (script) =>
+        script.frameId !== null &&
+        new Set(["frame-old", "frame-new"]).has(script.frameId)
+          ? script.frameId
+          : null,
       completeness,
     });
 

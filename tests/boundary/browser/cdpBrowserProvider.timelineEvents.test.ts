@@ -5,6 +5,107 @@ import { observeWebSessionInputSchema } from "../../../src/domain/browserSession
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
+it.each([
+  "malformed-event",
+  "missing-same-document",
+  "missing-redirect",
+  "foreign-event",
+  "malformed-final",
+  "normal",
+])("distinguishes protocol uncertainty in committed URLs: %s", async (kind) => {
+  const browser = await startFakeCdpBrowser({
+    eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
+    commandResult: ({ method }, origin, reads) =>
+      method === "Page.getFrameTree" && kind === "malformed-final" && reads > 1
+        ? {
+            frameTree: {
+              frame: {
+                id: "frame-main",
+                url: `${origin}/app`,
+                urlFragment: 7,
+              },
+            },
+          }
+        : undefined,
+    commandEvents: ({ method, sessionId }, origin) => {
+      if (method !== "Page.setLifecycleEventsEnabled") return undefined;
+      const scope = sessionId === undefined ? {} : { sessionId };
+      if (kind === "missing-same-document")
+        return [
+          {
+            method: "Page.navigatedWithinDocument",
+            ...scope,
+            params: { frameId: "frame-main" },
+          },
+        ];
+      if (kind === "missing-redirect")
+        return [
+          {
+            method: "Network.requestWillBeSent",
+            ...scope,
+            params: {
+              frameId: "frame-main",
+              requestId: "redirect",
+              type: "Document",
+              redirectResponse: { status: 302 },
+              request: {},
+            },
+          },
+        ];
+      return method === "Page.setLifecycleEventsEnabled"
+        ? [
+            {
+              method: "Page.frameNavigated",
+              ...(sessionId === undefined ? {} : { sessionId }),
+              params: {
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-main",
+                  url:
+                    kind === "foreign-event"
+                      ? "https://foreign.test/"
+                      : `${origin}/app`,
+                  ...(kind === "malformed-event" ? { urlFragment: 7 } : {}),
+                },
+              },
+            },
+          ]
+        : undefined;
+    },
+  });
+  trackBrowser(browser);
+  const result = await new CdpBrowserProvider().observeSession(
+    observeWebSessionInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 1,
+    }),
+  );
+  if (!result.ok) throw result.error;
+  if (
+    kind === "malformed-event" ||
+    kind.startsWith("missing-") ||
+    kind === "malformed-final"
+  ) {
+    expect(result.value.completeness.excluded).toContainEqual({
+      section: "timeline",
+      reason: "invalid_protocol_value",
+      count: 1,
+    });
+    expect(result.value.completeness.policy_filtered_sections).toEqual([]);
+  }
+  if (kind === "malformed-event" || kind.startsWith("missing-"))
+    expect(result.value.window.end_reason).toBe("window_elapsed");
+  if (kind === "foreign-event")
+    expect(result.value.completeness.excluded).toContainEqual({
+      section: "timeline",
+      reason: "out_of_target_scope",
+      count: 1,
+    });
+  if (kind === "normal")
+    expect(result.value.window.end_reason).toBe("window_elapsed");
+});
 describe("CdpBrowserProvider navigation timeline", () => {
   it.each(["outside_policy", "target_detached"] as const)(
     "settles and releases a long wait after %s",

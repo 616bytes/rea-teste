@@ -197,6 +197,136 @@ it.each(["reordered", "parent-changed", "path-changed"])(
   },
 );
 
+it.each(["detached", "foreign-reuse", "reparented", "unvalidated-context"])(
+  "retains authorized historical script owners after %s",
+  async (kind) => {
+    const root = await electronFixture();
+    const main = pathToFileURL(join(root, "index.html")).href;
+    const child = pathToFileURL(join(root, "child.html")).href;
+    const script = pathToFileURL(join(root, "app.js")).href;
+    const browser = await startFakeCdpBrowser({
+      electronFileUrl: main,
+      eventsBeforeReply: ["Debugger.enable"],
+      commandResult: ({ method }, _origin, reads) =>
+        method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: { id: "frame-main", url: main },
+                childFrames:
+                  reads === 1
+                    ? ["first", "second"].map((id) => ({
+                        frame: { id, parentId: "frame-main", url: child },
+                      }))
+                    : [],
+              },
+            }
+          : undefined,
+      commandEvents: ({ method, sessionId }) => {
+        if (method !== "Debugger.enable")
+          return method === "Runtime.enable" ? [] : undefined;
+        const scope = sessionId === undefined ? {} : { sessionId };
+        const events = ["first", "second"].flatMap((id, index) => [
+          {
+            method: "Runtime.executionContextCreated",
+            ...scope,
+            params: { context: { id: index + 7, auxData: { frameId: id } } },
+          },
+          {
+            method: "Debugger.scriptParsed",
+            ...scope,
+            params: {
+              scriptId: id,
+              url: script,
+              executionContextId: index + 7,
+              hash: "same",
+              length: 7,
+              scriptLanguage: "JavaScript",
+            },
+          },
+          ...(kind === "detached"
+            ? [
+                {
+                  method: "Page.frameDetached",
+                  ...scope,
+                  params: { frameId: id, reason: "remove" },
+                },
+              ]
+            : []),
+        ]);
+        return kind !== "detached"
+          ? [
+              ...events,
+              {
+                method:
+                  kind === "reparented"
+                    ? "Page.frameAttached"
+                    : "Page.frameNavigated",
+                ...scope,
+                params: (kind === "reparented"
+                    ? { frameId: "first", parentFrameId: "unknown-parent" }
+                    : {
+                        frame: {
+                          id: "first",
+                          parentId: "frame-main",
+                          url: "https://foreign.test/",
+                        },
+                      }),
+              },
+              ...(kind === "unvalidated-context"
+                ? [
+                    {
+                      method: "Runtime.executionContextCreated",
+                      ...scope,
+                      params: {
+                        context: {
+                          id: 7,
+                          auxData: { frameId: "not-authorized" },
+                        },
+                      },
+                    },
+                  ]
+                : []),
+              {
+                method: "Debugger.scriptParsed",
+                ...scope,
+                params: {
+                  scriptId: "foreign-reused",
+                  url: script,
+                  executionContextId: 7,
+                  hash: "foreign",
+                },
+              },
+            ]
+          : events;
+      },
+    });
+    browsers.push(browser);
+    const result = await new CdpElectronProvider().inspectPage(
+      inspectElectronPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "electron-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.frames.map(({ frame_id }) => frame_id)).toEqual([
+      "frame-main",
+    ]);
+    expect(
+      result.value.scripts.items
+        .filter(({ cdp_hash }) => cdp_hash === "same")
+        .map(({ frame_id }) => frame_id)
+        .sort(),
+    ).toEqual(["first", "second"]);
+    if (kind !== "detached")
+      expect(
+        result.value.scripts.items.find(
+          ({ cdp_hash }) => cdp_hash === "foreign",
+        )?.frame_id,
+      ).toBeNull();
+  },
+);
+
 describe("CdpElectronProvider target access", () => {
   it("retains a completed page observation when cancellation arrives during final detach", async () => {
     const root = await electronFixture();

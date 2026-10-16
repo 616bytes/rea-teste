@@ -254,6 +254,7 @@ class TimelineCapture {
       detail: safeDetail(frame?.transitionType),
     });
     this.#pendingReload = false;
+    if (!this.#hasObservedUrl(rawUrl)) return;
     if (destination.scope === "approved") this.finalUrl = destination.url;
     else {
       this.excludeTargetScope("out_of_target_scope");
@@ -272,6 +273,7 @@ class TimelineCapture {
       requestId: null,
       detail: null,
     });
+    if (!this.#hasObservedUrl(rawUrl)) return;
     if (destination.scope === "approved") this.finalUrl = destination.url;
     else {
       this.excludeTargetScope("out_of_target_scope");
@@ -297,10 +299,19 @@ class TimelineCapture {
       requestId: cdpStringValue(params.requestId) ?? null,
       detail: null,
     });
+    if (!this.#hasObservedUrl(rawUrl)) return;
     if (destination.scope !== "approved") {
       this.excludeTargetScope("out_of_target_scope");
       this.end("target_left_scope");
     }
+  }
+
+  /** Missing protocol identity cannot establish that the target left policy. */
+  #hasObservedUrl(rawUrl: string | undefined): boolean {
+    if (rawUrl !== undefined) return true;
+    this.completeness.exclude("timeline", "invalid_protocol_value");
+    this.finalUrl = null;
+    return false;
   }
 
   #loadingFailed(params: UnknownRecord): void {

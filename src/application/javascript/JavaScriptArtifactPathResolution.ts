@@ -94,7 +94,7 @@ export interface ResolveArtifactPathInput {
     | "node-entrypoint"
     | "url-resource";
   /** Logical root of an inventoried nested application container. */
-  readonly applicationRootPath?: string;
+  readonly applicationRootPath?: string | null;
 }
 
 /** Preserve an explicitly retained loader mode on graph relationships. */
@@ -411,6 +411,13 @@ const resolveRuntimeEntrypoint = (
   if (hasScheme(input.declaredPath) || looksExternal(input.declaredPath))
     return unresolvedCandidate("external", [
       "Electron runtime entrypoints must identify local paths, not external URLs.",
+    ]);
+  if (
+    input.runtimePathKind === "application-file" &&
+    input.applicationRootPath === null
+  )
+    return unresolvedCandidate("unavailable", [
+      "Inventoried package metadata does not establish one application root for this source; the loadFile base is unknown.",
     ]);
   const relative = confineCandidate(
     relativeCandidate(

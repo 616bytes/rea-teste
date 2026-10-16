@@ -60,24 +60,15 @@ export interface JavaScriptArtifactGraphContext {
 export const dependencyManifest = (path: string): boolean =>
   path.split("/").slice(0, -1).includes("node_modules");
 
-/** Select the outer application manifest, optionally within a source occurrence.
- * Nested package scopes (for example, a type-only manifest) do not change the app.
- */
+/** Select the inventory's display root; this does not establish runtime ownership. */
 export const applicationManifestPath = (
   context: JavaScriptArtifactGraphContext,
-  source?: JavaScriptArtifactFile,
 ): string | undefined =>
   context.analysis.packages
     .map(({ path }) => path)
     .filter((path) => {
       const file = context.filesByPath.get(path);
-      if (file === undefined || dependencyManifest(path)) return false;
-      if (source === undefined) return true;
-      const root = path.slice(0, -"package.json".length);
-      return (
-        file.container_sha256 === source.container_sha256 &&
-        source.path.startsWith(root)
-      );
+      return file !== undefined && !dependencyManifest(path);
     })
     .sort(
       (left, right) =>
@@ -85,14 +76,37 @@ export const applicationManifestPath = (
         compareUnicodeCodePoints(left, right),
     )[0];
 
-/** Resolve application-relative declarations from their owning package/container. */
+/** Inspect inventoried ancestor packages; absent parsing is not absent ownership.
+ * Entry-bearing packages are candidates; multiple candidates stay unknown.
+ */
 export const applicationRootPath = (
   context: JavaScriptArtifactGraphContext,
   source: JavaScriptArtifactFile,
-): string => {
-  const manifest = applicationManifestPath(context, source);
-  if (manifest !== undefined)
-    return manifest.slice(0, -"package.json".length).replace(/\/$/u, "");
+): string | null => {
+  const roots: string[] = [];
+  const directories = source.path.split("/").slice(0, -1);
+  for (let depth = directories.length; depth >= 0; depth -= 1) {
+    const root = directories.slice(0, depth).join("/");
+    const prefix = root === "" ? "" : `${root}/`;
+    const path = `${prefix}package.json`;
+    if (dependencyManifest(path)) continue;
+    const file =
+      context.filesByPath.get(path) ?? context.unanalyzedFiles?.get(path);
+    if (file?.container_sha256 !== source.container_sha256) continue;
+    const metadata = context.analysis.packages.find(
+      (value) => value.path === path,
+    );
+    if (metadata?.status !== "included") return null;
+    const defaultEntry = context.filesByPath.get(`${prefix}index.js`);
+    if (
+      metadata.main !== null ||
+      metadata.renderer !== null ||
+      defaultEntry?.container_sha256 === source.container_sha256
+    )
+      roots.push(root);
+  }
+  if (roots.length > 1) return null;
+  if (roots[0] !== undefined) return roots[0];
   return (
     context.fileSet.containers.find(
       ({ sha256, path }) =>

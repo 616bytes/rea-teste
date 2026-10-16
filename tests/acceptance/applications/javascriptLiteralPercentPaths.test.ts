@@ -37,69 +37,126 @@ const cases = [
   },
 ] as const;
 
-cliTest.for(["CLI", "stdio MCP"] as const)(
-  "preserves literal-percent runtime paths through %s without executing source",
-  async (surface, { cli }) => {
-    const root = await createTestTempDirectory("rea-runtime-percent-");
-    const inert = 'throw new Error("fixture source must never execute");';
-    const loadFileSource = `const { BrowserWindow } = require("electron");
+const writeRuntimeFixture = async (root: string): Promise<void> => {
+  const inert = 'throw new Error("fixture source must never execute");';
+  const loadFileSource = `const { BrowserWindow } = require("electron");
       const win = new BrowserWindow();
       win.loadFile("dist%2Findex.html");
       win.loadFile("plain.html");
       win.loadFile("absent.html");`;
-    await writeFixtureFiles(root, {
-      ...Object.fromEntries(
-        cases.map(({ directory, expression }) => [
-          `${directory}/main.mjs`,
-          `import { BrowserWindow, utilityProcess } from "electron";
+  await writeFixtureFiles(root, {
+    "package.json": JSON.stringify({ private: true, workspaces: ["app"] }),
+    ...Object.fromEntries(
+      cases.map(({ directory, expression }) => [
+        `${directory}/main.mjs`,
+        `import { BrowserWindow, utilityProcess } from "electron";
          import path from "node:path";
          import { fileURLToPath } from "node:url";
          new BrowserWindow({ webPreferences: { preload: ${expression} } });
          utilityProcess.fork(${expression});`,
-        ]),
-      ),
-      "literal/preload%2F%5C%2E.cjs": inert,
-      "converted/preload%2Fname.cjs": inert,
-      "converted/preload%252Fname.cjs": inert,
-      "converted/preload/name.cjs": inert,
-      "outside%2Fname.cjs": inert,
-      "ignored-prefix/preload%2Fname.cjs": inert,
-      "sub/main.cjs": loadFileSource,
-      "dist%2Findex.html": "application target",
-      "plain.html": "application target",
-      "sub/dist%2Findex.html": "nested decoy",
-      "sub/plain.html": "nested decoy",
-      "sub/absent.html": "nested-only decoy",
-      "app/package.json": JSON.stringify({ main: "sub/main.cjs" }),
-      "app/sub/package.json": JSON.stringify({ type: "commonjs" }),
-      "app/sub/main.cjs": loadFileSource,
-      "app/dist%2Findex.html": "wrapped application target",
-      "app/plain.html": "wrapped application target",
-      "app/sub/dist%2Findex.html": "wrapped source decoy",
-      "app/sub/plain.html": "wrapped source decoy",
-      "app/sub/absent.html": "wrapped missing-target decoy",
-    });
-    const archiveSource = await createTestTempDirectory("rea-loadfile-asar-");
-    await writeFixtureFiles(archiveSource, {
-      "package.json": JSON.stringify({ main: "sub/main.cjs" }),
-      "sub/package.json": JSON.stringify({ type: "commonjs" }),
-      "sub/main.cjs": loadFileSource,
-      "dist%2Findex.html": "application target",
-      "plain.html": "application target",
-      "sub/dist%2Findex.html": "nested decoy",
-      "sub/plain.html": "nested decoy",
-      "sub/absent.html": "nested-only decoy",
-    });
-    await createPackageWithOptions(archiveSource, join(root, "a.asar"), {});
-    // Equal container digests must not select the other archive occurrence.
-    await copyFile(join(root, "a.asar"), join(root, "b.asar"));
+      ]),
+    ),
+    "literal/preload%2F%5C%2E.cjs": inert,
+    "converted/preload%2Fname.cjs": inert,
+    "converted/preload%252Fname.cjs": inert,
+    "converted/preload/name.cjs": inert,
+    "outside%2Fname.cjs": inert,
+    "ignored-prefix/preload%2Fname.cjs": inert,
+    "sub/main.cjs": loadFileSource,
+    "dist%2Findex.html": "application target",
+    "plain.html": "application target",
+    "sub/dist%2Findex.html": "nested decoy",
+    "sub/plain.html": "nested decoy",
+    "sub/absent.html": "nested-only decoy",
+    "app/package.json": JSON.stringify({ main: "sub/main.cjs" }),
+    "app/sub/package.json": JSON.stringify({ type: "commonjs" }),
+    "app/sub/main.cjs": loadFileSource,
+    "app/dist%2Findex.html": "wrapped application target",
+    "app/plain.html": "wrapped application target",
+    "app/sub/dist%2Findex.html": "wrapped source decoy",
+    "app/sub/plain.html": "wrapped source decoy",
+    "app/sub/absent.html": "wrapped missing-target decoy",
+    "default-app/package.json": JSON.stringify({ name: "default-entry-app" }),
+    "default-app/index.js": loadFileSource,
+    "default-app/dist%2Findex.html": "default-entry application target",
+    "default-app/plain.html": "default-entry application target",
+    "ambiguous/package.json": JSON.stringify({ main: "sub/main.cjs" }),
+    "ambiguous/sub/package.json": JSON.stringify({ main: "main.cjs" }),
+    "ambiguous/sub/main.cjs": loadFileSource,
+    "ambiguous/dist%2Findex.html": "unproven application target",
+    "ambiguous/sub/dist%2Findex.html": "unproven nested application target",
+  });
+  const archiveSource = await createTestTempDirectory("rea-loadfile-asar-");
+  await writeFixtureFiles(archiveSource, {
+    "package.json": JSON.stringify({ main: "sub/main.cjs" }),
+    "sub/package.json": JSON.stringify({ type: "commonjs" }),
+    "sub/main.cjs": loadFileSource,
+    "dist%2Findex.html": "application target",
+    "plain.html": "application target",
+    "sub/dist%2Findex.html": "nested decoy",
+    "sub/plain.html": "nested decoy",
+    "sub/absent.html": "nested-only decoy",
+  });
+  await createPackageWithOptions(archiveSource, join(root, "a.asar"), {});
+  // Equal container digests must not select the other archive occurrence.
+  await copyFile(join(root, "a.asar"), join(root, "b.asar"));
+};
 
-    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
-    for (const [prefix, declared] of ["", "app/", "a.asar/", "b.asar/"].flatMap(
-      (prefix) =>
-        ["dist%2Findex.html", "plain.html", "absent.html"].map(
-          (declared) => [prefix, declared] as const,
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps unselected package ownership unknown through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-selected-loadfile-");
+    await writeRuntimeFixture(root);
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root, [
+      "app/sub/main.cjs",
+    ]);
+    const roles = graph.nodes.filter(
+      ({ kind, observations }) =>
+        kind === "electron-renderer" &&
+        observations.some(
+          ({ properties }) =>
+            properties.runtime_path_base === "application-root",
         ),
+    );
+    expect(roles).toHaveLength(3);
+    for (const role of roles) {
+      expect(role.observations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              resolved_path: null,
+              resolution_status: "unavailable",
+            }),
+          }),
+        ]),
+      );
+      expect(
+        graph.edges.filter(
+          ({ source_node_id, relation }) =>
+            source_node_id === role.node_id && relation === "maps_to",
+        ),
+      ).toEqual([]);
+    }
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "preserves literal-percent runtime paths through %s without executing source",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-runtime-percent-");
+    await writeRuntimeFixture(root);
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    for (const [prefix, declared] of [
+      "",
+      "app/",
+      "default-app/",
+      "ambiguous/",
+      "a.asar/",
+      "b.asar/",
+    ].flatMap((prefix) =>
+      ["dist%2Findex.html", "plain.html", "absent.html"].map(
+        (declared) => [prefix, declared] as const,
+      ),
     )) {
       const role = graph.nodes.find(
         ({ kind, observations }) =>
@@ -109,13 +166,16 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
               properties.declared_path === declared &&
               evidence.location.available &&
               evidence.location.value.kind === "source-range" &&
-              evidence.location.value.source === `${prefix}sub/main.cjs`,
+              evidence.location.value.source ===
+                `${prefix}${prefix === "default-app/" ? "index.js" : "sub/main.cjs"}`,
           ),
       );
       expect(role).toBeDefined();
       if (role === undefined) throw new Error(`Missing loadFile ${declared}`);
       const expected =
-        declared === "absent.html" ? null : `${prefix}${declared}`;
+        declared === "absent.html" || prefix === "ambiguous/"
+          ? null
+          : `${prefix}${declared}`;
       expect(role.observations).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -123,7 +183,12 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
               declared_path: declared,
               runtime_path_base: "application-root",
               resolved_path: expected,
-              resolution_status: expected === null ? "not-found" : "resolved",
+              resolution_status:
+                prefix === "ambiguous/"
+                  ? "unavailable"
+                  : expected === null
+                    ? "not-found"
+                    : "resolved",
             }),
           }),
         ]),

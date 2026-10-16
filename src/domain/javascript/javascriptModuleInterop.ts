@@ -17,6 +17,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import {
   electronMemberPath,
+  intrinsicInvocationMemberPath,
   javaScriptIdentityWriteOffset,
   type JavaScriptIdentityWriteKind,
   type JavaScriptIntrinsicInvocation,
@@ -523,15 +524,46 @@ export const createSemanticModuleInterop = (
       if (ownerPath === undefined && depth < 4) {
         const capturedOwner = capturedInvocationMember(owner, depth + 1);
         if (capturedOwner !== undefined && capturedOwner.replaced !== true)
-          ownerPath = ["intrinsic", "Function", "prototype", capturedOwner.key];
+          ownerPath = intrinsicInvocationMemberPath(capturedOwner.key);
       }
       if (ownerPath === undefined) return undefined;
       // A provable owner whose slot was overwritten before the read stores an
       // unknown replacement in `invoke` — recognized member shape, unknown
       // callable. The call must stay opaque rather than effect-free.
       const ownerMemberPath = [...ownerPath, key];
-      if (intrinsicReadChanged(at, ownerMemberPath))
-        return { replaced: true, path: ownerMemberPath };
+      if (initializer.projection.length === 0) {
+        if (intrinsicReadChanged(at, ownerMemberPath))
+          return { replaced: true, path: ownerMemberPath };
+      } else {
+        // A destructured read captures the member at the destructuring, but
+        // `at` is the RHS identifier — intrinsicReadChanged would follow its
+        // binding back to the owner's initializer and miss writes between
+        // them. Check the slot at the destructuring offset directly.
+        const scope = opaqueMutationPath(at).join(".");
+        const offset = evaluationOffset(at);
+        const previous = ownerPath.at(-1);
+        const nestedRead =
+          previous === "call" || previous === "apply" || previous === "bind"
+            ? ["intrinsic", "Function", "prototype", previous, key]
+            : undefined;
+        if (
+          writes.some(
+            (write) =>
+              (write.scope === scope || write.scope === "intrinsic") &&
+              write.offset < offset &&
+              (invocationMemberWriteCovers(write, ownerMemberPath) ||
+                invocationMemberWriteCovers(write, [
+                  "intrinsic",
+                  "Function",
+                  "prototype",
+                  key,
+                ]) ||
+                (nestedRead !== undefined &&
+                  invocationMemberWriteCovers(write, nestedRead))),
+          )
+        )
+          return { replaced: true, path: ownerMemberPath };
+      }
       return { owner, key, at };
     }
   };
@@ -545,7 +577,7 @@ export const createSemanticModuleInterop = (
   ): readonly string[] | undefined => {
     const captured = capturedInvocationMember(node);
     return captured !== undefined && captured.replaced !== true
-      ? ["intrinsic", "Function", "prototype", captured.key]
+      ? intrinsicInvocationMemberPath(captured.key)
       : undefined;
   };
 

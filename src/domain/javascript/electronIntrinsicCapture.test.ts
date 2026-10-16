@@ -549,6 +549,37 @@ describe("extended captured invocation member resolution", () => {
     expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
   });
 
+  it("preserves the explicit receiver of a captured member call", () => {
+    // `invoke.call` resolves to Function.prototype.call, so
+    // `Reflect.apply(invoke.call, noop, [change, …])` calls noop — the
+    // captured owner must not replace the explicit receiver as callable.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const invoke = change.call;
+      const noop = () => {};
+      Reflect.apply(invoke.call, noop, [change, null, {value: customCreate}]);`,
+    );
+    expect(invocations.at(-1)).not.toEqual(
+      expect.objectContaining({ kind: "known" }),
+    );
+    expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("detects a member replaced before a destructured capture", () => {
+    // `change.call` is overwritten before `const {call: invoke} = change`
+    // reads it — invoke stores the replacement, so the call is opaque.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      change.call = () => {};
+      const {call: invoke} = change;
+      invoke.call(change, null, {value: customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({ kind: "opaque" }),
+    );
+    expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
   it("follows a captured member through a nested owner read", () => {
     // `outer = invoke.call` reads .call off the captured FP.call — the
     // chain still resolves to the bound defineProperty write.

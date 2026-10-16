@@ -51,13 +51,8 @@ export const electronMemberPath = (
  * function object, so reads and writes through the alias share this path.
  */
 export const intrinsicInvocationMemberPath = (
-  member: t.MemberExpression | t.OptionalMemberExpression,
-): readonly string[] => [
-  "intrinsic",
-  "Function",
-  "prototype",
-  semanticStaticPropertyKey(member.property, member.computed) ?? "call",
-];
+  key: "call" | "apply" | "bind",
+): readonly string[] => ["intrinsic", "Function", "prototype", key];
 
 /** A known intrinsic callable and its examined positional arguments. */
 export interface JavaScriptIntrinsicInvocation {

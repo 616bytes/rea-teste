@@ -1,6 +1,9 @@
 import * as t from "@babel/types";
 
-import type { JavaScriptIntrinsicInvocation } from "./javascriptElectronMemberWrites.js";
+import {
+  intrinsicInvocationMemberPath,
+  type JavaScriptIntrinsicInvocation,
+} from "./javascriptElectronMemberWrites.js";
 import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
@@ -161,7 +164,7 @@ export const resolveJavaScriptIntrinsicInvocation = (
         const memberPath: readonly string[] | undefined =
           captured === undefined
             ? undefined
-            : ["intrinsic", "Function", "prototype", captured.key];
+            : intrinsicInvocationMemberPath(captured.key);
         if (explicitReceiver && !t.isExpression(receiver))
           return {
             kind: "opaque",
@@ -193,13 +196,13 @@ export const resolveJavaScriptIntrinsicInvocation = (
           return { kind: "opaque", path: callSitePath, arguments: undefined };
         // Function.prototype.call/apply uses the outer explicit receiver
         // as its callable, even when the member was read from a bound value.
-        // A captured alias substitutes the member itself — `invoke.call`
-        // names `owner.call.call` — modeled by viewing the owner as a
-        // virtual member for one more call level.
+        // A captured member is itself that callable: `invoke.call` under an
+        // explicit receiver calls the receiver, so substituting the captured
+        // owner would erase `Reflect.apply(invoke.call, noop, …)`.
         const callable: t.Node | undefined = explicitReceiver
           ? receiver
           : memberObject;
-        if (captured !== undefined) {
+        if (captured !== undefined && !explicitReceiver) {
           callee = captured.owner;
           virtualMember = { key: captured.key, at: captured.at };
         } else {
@@ -226,7 +229,7 @@ export const resolveJavaScriptIntrinsicInvocation = (
         if (!explicitReceiver)
           return {
             kind: "opaque",
-            path: ["intrinsic", "Function", "prototype", captured.key],
+            path: intrinsicInvocationMemberPath(captured.key),
             arguments: undefined,
           };
         callee = captured.owner;

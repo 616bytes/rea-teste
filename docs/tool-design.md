@@ -111,6 +111,9 @@ providers need not expose identical state machines.
   report only resources whose cleanup remains unresolved. Carry cleanup
   capabilities explicitly in typed outcomes so consumers can bind returned errors
   to exact owners without reparsing diagnostic cause chains.
+  Bind every caller-visible retry error and aggregate, including an error already
+  produced by the provider. An aggregate remains incomplete until all owners it
+  reports are released; releasing one child cannot clear another child's status.
 - Await one-shot cleanup without discarding the completed result or primary
   diagnostic. Preserve partial observations, remaining resources, and the cleanup
   owner's recovery instructions. CLI adapters should reuse

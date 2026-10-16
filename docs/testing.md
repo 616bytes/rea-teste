@@ -245,7 +245,11 @@ remains owned, both failures survive, and a later close retries it. Repeat
 admission attempts while close still fails: no additional descriptor or
 native command should start. Restore close and verify that the exact owner
 resolves the originating cleanup marker and allows later work, while the earlier
-failure remains available as a diagnostic. Cover recovery before the
+failure remains available as a diagnostic. Retain errors returned by multiple
+failed retries, including admission and shutdown aggregates, and assert that
+each becomes complete after recovery. For an aggregate with multiple owners,
+release one owner while another still fails and assert that it remains incomplete.
+Cover recovery before the
 caller-specific error is bound to its retained owner, as
 another request can retry cleanup concurrently. Confirm that an already released
 owner resolves a later binding too. Include

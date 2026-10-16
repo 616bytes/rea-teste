@@ -262,3 +262,28 @@ describe("Zip64 end-of-central-directory", () => {
     expect(tail.value.totalEntries).toBe(0xffff);
   });
 });
+
+describe("EOCD that cannot describe the archive", () => {
+  it("refuses a fake empty EOCD planted in the real EOCD's comment", () => {
+    const real = apkWithBlock([
+      { id: APK_BLOCK_ID.signatureV2, value: [1, 2, 3, 4] },
+    ]);
+    real.set([0x50, 0x4b, 0x03, 0x04], 0); // the archive holds a local entry
+    // The real EOCD's comment (22 bytes) is itself an EOCD declaring nothing.
+    real[real.length - 2] = 22;
+    const fake = new Bytes()
+      .u32(0x06054b50)
+      .u16(0)
+      .u16(0)
+      .u16(0)
+      .u16(0)
+      .u32(0)
+      .u32(0)
+      .u16(0);
+    const bytes = Uint8Array.from([...real, ...fake.b]);
+    const tail = parseZipTail(bytes);
+    expect(tail.ok).toBe(false);
+    if (tail.ok) return;
+    expect(tail.error.kind).toBe("malformed-zip");
+  });
+});

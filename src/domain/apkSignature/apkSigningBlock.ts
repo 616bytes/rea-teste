@@ -84,6 +84,14 @@ const u64 = (dv: DataView, at: number): number | null => {
   return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
 };
 
+/** The archive starts with a ZIP local file header (`PK\x03\x04`). */
+const hasLocalFileHeader = (bytes: Uint8Array): boolean =>
+  bytes.length >= 4 &&
+  bytes[0] === 0x50 &&
+  bytes[1] === 0x4b &&
+  bytes[2] === 0x03 &&
+  bytes[3] === 0x04;
+
 /** Find the EOCD by scanning backward from the end over the permitted comment window. */
 const findEocd = (bytes: Uint8Array): number | null => {
   const dv = view(bytes);
@@ -160,10 +168,7 @@ export const parseZipTail = (
   if (eocdOffset === null)
     // A local-file header without an EOCD is a damaged/truncated archive, not
     // a different file type.
-    return bytes[0] === 0x50 &&
-      bytes[1] === 0x4b &&
-      bytes[2] === 0x03 &&
-      bytes[3] === 0x04
+    return hasLocalFileHeader(bytes)
       ? err({
           kind: "malformed-zip",
           offset: bytes.length,
@@ -181,6 +186,19 @@ export const parseZipTail = (
       kind: "malformed-zip",
       offset: eocdOffset,
       detail: "central-directory offset is past the end-of-central-directory",
+    });
+  // An EOCD declaring no entries cannot describe an archive that holds a
+  // local file entry (e.g. a fake EOCD planted in the real one's comment);
+  // reading on would report a signed APK as confidently unsigned.
+  if (
+    (cd.value.entries === 0 || cd.value.size === 0) &&
+    hasLocalFileHeader(bytes)
+  )
+    return err({
+      kind: "malformed-zip",
+      offset: eocdOffset,
+      detail:
+        "end-of-central-directory declares no entries, but the archive holds local file entries",
     });
   return ok({
     eocdOffset,

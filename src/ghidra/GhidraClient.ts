@@ -75,8 +75,10 @@ import {
 import { GhidraWire } from "./GhidraClientWire.js";
 import { completeGhidraStartupHandshake } from "./GhidraClientStartup.js";
 import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
+import { GhidraStartupProgressObserver } from "./GhidraAnalysisProgress.js";
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
+const ANALYSIS_SNAPSHOT_TIMEOUT_MS = 5_000;
 const SESSION_ROOT = ghidraSessionRoot();
 
 /** Closed Java-bridge operation union callable after the exact handshake. */
@@ -237,34 +239,35 @@ export class GhidraClient {
     signal: AbortSignal | undefined,
     progress: ProgressReporter,
   ): Promise<GhidraStartResult> {
-    const startedAt = performance.now();
-    let active = true;
-    let reporting = false;
-    const timer = setInterval(() => {
-      if (!active || reporting || signal?.aborted) return;
-      reporting = true;
-      void Promise.resolve()
-        .then(() => {
-          if (!active || signal?.aborted) return;
-          return progress.report({
-            phase: "ghidra_startup",
-            completed: 0,
-            total: null,
-            message: `Waiting for Ghidra startup (${String(Math.floor((performance.now() - startedAt) / 1000))}s elapsed); import, auto-analysis and bridge readiness may still be pending`,
-          });
-        })
-        // Notification failure does not release the owned startup process.
-        .catch(() => {})
-        .finally(() => {
-          reporting = false;
-        });
-    }, 10_000);
+    const observer = new GhidraStartupProgressObserver({
+      connected: () => this.#socket !== undefined,
+      requestSnapshot: () => this.#requestAnalysisSnapshot(signal),
+      progress,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    observer.start();
+
     try {
       return await started;
     } finally {
-      active = false;
-      clearInterval(timer);
+      observer.stop();
     }
+  }
+
+  async #requestAnalysisSnapshot(
+    signal: AbortSignal | undefined,
+  ): Promise<JsonValue | undefined> {
+    if (this.#socket === undefined) return undefined;
+
+    const result = await this.#wire.request(
+      "analysis_snapshot",
+      {},
+      {
+        ...(signal === undefined ? {} : { signal }),
+        timeoutMs: ANALYSIS_SNAPSHOT_TIMEOUT_MS,
+      },
+    );
+    return result.ok ? result.value : undefined;
   }
 
   /** Revalidate live bridge, provider, run, and profile metadata. */

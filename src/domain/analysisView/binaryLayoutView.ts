@@ -232,10 +232,14 @@ export const projectBinaryLayoutView = (
         "Layout views require summary, facet, item or page selections.",
       ),
     );
-  if (view.collection === "modules")
+  if (
+    view.collection === "modules" ||
+    view.collection === "procedures" ||
+    view.collection === "strings"
+  )
     return err(
       layoutIncompatible(
-        "modules collection applies to analyze_javascript_application Evidence.",
+        "modules collection applies to analyze_javascript_application Evidence; procedures and strings apply to their matching list operation Evidence.",
       ),
     );
   const rows =

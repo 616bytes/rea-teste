@@ -9,6 +9,8 @@ import type {
 } from "./GhidraSessionError.js";
 import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
 
+const ANALYSIS_POLL_INTERVAL_MS = 250;
+
 /** Inputs needed to complete the post-connection bridge handshake. */
 export interface GhidraStartupHandshakeOptions {
   readonly deadline: ProviderStartupDeadline;
@@ -29,8 +31,31 @@ export interface GhidraStartupHandshakeOptions {
   readonly startupTimeoutMs: number;
 }
 
-/** Ping and validate the bridge after its socket is attached. */
+/** Poll the authenticated bridge until its owned analysis lifecycle is ready. */
 export async function completeGhidraStartupHandshake(
+  options: GhidraStartupHandshakeOptions,
+): Promise<Result<GhidraSessionInfo, GhidraSessionError>> {
+  while (!options.deadline.signal.aborted) {
+    const ping = await requestSessionInfo(options);
+    if (!ping.ok) return ping;
+
+    if (ping.value.analysis_timed_out)
+      return err(
+        options.failure(
+          "analysis_timeout",
+          "Ghidra auto-analysis reached its per-file deadline",
+        ),
+      );
+    if (ping.value.analysis_complete) return ping;
+
+    const waited = await options.deadline.wait(ANALYSIS_POLL_INTERVAL_MS);
+    if (waited === "aborted") break;
+  }
+
+  return err(interruptionFailure(options));
+}
+
+async function requestSessionInfo(
   options: GhidraStartupHandshakeOptions,
 ): Promise<Result<GhidraSessionInfo, GhidraSessionError>> {
   const ping = await options.request(
@@ -42,22 +67,14 @@ export async function completeGhidraStartupHandshake(
     },
   );
   if (!ping.ok) {
-    const failure = options.deadline.signal.aborted
-      ? interruptionFailure(options)
-      : ping.error;
-    return err(failure);
+    return err(
+      options.deadline.signal.aborted
+        ? interruptionFailure(options)
+        : ping.error,
+    );
   }
-  const parsed = options.parseSessionInfo(ping.value);
-  if (!parsed.ok || parsed.value.analysis_timed_out) {
-    const failure = parsed.ok
-      ? options.failure(
-          "analysis_timeout",
-          "Ghidra auto-analysis reached its per-file deadline",
-        )
-      : parsed.error;
-    return err(failure);
-  }
-  return parsed;
+
+  return options.parseSessionInfo(ping.value);
 }
 
 const interruptionFailure = (

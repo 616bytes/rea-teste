@@ -174,7 +174,7 @@ export const parseGhidraSessionInfo = (
     expectedCapabilities.some(
       (capability) => !parsed.data.capabilities.includes(capability),
     ) ||
-    parsed.data.analysis_complete === parsed.data.analysis_timed_out
+    (parsed.data.analysis_complete && parsed.data.analysis_timed_out)
   )
     return err(new Error("Ghidra bridge handshake identity is invalid"));
   return ok(parsed.data);

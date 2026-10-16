@@ -176,8 +176,7 @@ export const ghidraJavaLaunch = async (options: {
       ...vmArguments,
       ...(options.platform === "darwin" ? ["-Xdock:name=Ghidra-Headless"] : []),
       `-Xmx${environment.GHIDRA_HEADLESS_MAXMEM || environment.GHIDRA_MAXMEM || "2G"}`,
-      "-XX:ParallelGCThreads=2",
-      "-XX:CICompilerCount=2",
+      // Let the inspected JVM size GC and compilation workers for this host.
       "-Djava.awt.headless=true",
       ...isolatedProperties,
       "-showversion",

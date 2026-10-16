@@ -109,6 +109,7 @@ import {
   dartAotViewRequestSchema,
   dartAotViewContextSchema,
 } from "./dartAotView.js";
+import { projectAddressedInventoryView } from "./addressedInventoryView.js";
 
 const summaryViewSchema = z.strictObject({ kind: z.literal("summary") });
 const facetViewSchema = z.strictObject({
@@ -153,7 +154,13 @@ const itemViewSchema = z.discriminatedUnion("collection", [
 ]);
 const pageViewSchema = z.strictObject({
   kind: z.literal("page"),
-  collection: z.enum(["sections", "symbols", "modules"]),
+  collection: z.enum([
+    "sections",
+    "symbols",
+    "modules",
+    "procedures",
+    "strings",
+  ]),
   offset: z.number().int().nonnegative(),
   limit: z.number().int().positive(),
 });
@@ -338,6 +345,8 @@ const viewResultBase = {
     "inspect_binary_layout",
     "analyze_javascript_application",
     "analyze_function",
+    "list_procedures",
+    "list_strings",
     "inspect_artifact",
     "inventory_artifact",
     "inspect_wasm_artifact",
@@ -728,7 +737,7 @@ const unsupportedParent = (
   new AnalysisUnsupportedTargetError(
     INSPECT_ANALYSIS_VIEW_OPERATION,
     parentArtifactPath(parent),
-    `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed binary layout, JavaScript application, native function, artifact inventory/inspection, WASM, Mach-O, Interface Builder, EVM, managed artifact or member, Android package, Dart AOT, or web network capture Evidence.`,
+    `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed binary layout, JavaScript application, native function, procedure inventory, artifact inventory/inspection, WASM, Mach-O, Interface Builder, EVM, managed artifact or member, Android package, Dart AOT, or web network capture Evidence.`,
   );
 
 const parentArtifactPath = (parent: AnalysisViewParent): string => {
@@ -840,6 +849,20 @@ export const projectAnalysisView = (
         ),
       );
     const projected = projectNativeFunctionView(parent, native.data, view);
+    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+  }
+  if (parent.operation === "list_procedures") {
+    const projected = projectAddressedInventoryView(parent, view, {
+      operation: "list_procedures",
+      collection: "procedures",
+    });
+    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+  }
+  if (parent.operation === "list_strings") {
+    const projected = projectAddressedInventoryView(parent, view, {
+      operation: "list_strings",
+      collection: "strings",
+    });
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   const project = retainedViewProjectors.get(parent.operation);

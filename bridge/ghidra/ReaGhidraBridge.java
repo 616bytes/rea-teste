@@ -52,6 +52,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import ghidra.app.util.headless.HeadlessScript;
+import ghidra.app.plugin.core.analysis.AutoAnalysisManager;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileOptions;
 import ghidra.app.decompiler.DecompileResults;
@@ -114,13 +115,18 @@ import ghidra.program.model.pcode.VarnodeAST;
 import ghidra.program.util.ContextEvaluatorAdapter;
 import ghidra.program.util.SymbolicPropogator;
 import ghidra.program.util.VarnodeContext;
+import ghidra.util.task.TaskMonitorAdapter;
 
 public final class ReaGhidraBridge extends HeadlessScript {
+    private static final int DECOMPILATION_TIMEOUT_SECONDS = 30;
     // At most 24 KiB after worst-case JSON escaping (six bytes per UTF-16 unit).
     private static final int PDB_ATTRIBUTE_UTF16_BUDGET = 4096;
     private static final int MAX_HIGH_PCODE_OPS = 3000;
     private static final int MAX_HIGH_PCODE_INPUTS_PER_OP = 64;
     private static final int MAX_HIGH_PCODE_DEF_USE_EDGES = 12000;
+    private static final int MAX_ANALYSIS_SNAPSHOT_PROCEDURES = 512;
+    // Analysis progress is a preview; the complete inventory is collected after analysis.
+    private static final int MAX_TRACKED_ANALYSIS_PROCEDURES = 8192;
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private final Map<FileBytes, Boolean> targetSourceIdentity = new IdentityHashMap<>();
     private String admittedTargetSha256;
@@ -131,7 +137,21 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "run_id",
         "target_sha256",
         "provider_version",
-        "profile_digest"
+        "profile_digest",
+        "analysis"
+    );
+    private static final Set<String> ANALYSIS_KEYS = Set.of(
+        "required",
+        "post_scripts"
+    );
+    private static final Set<String> POST_ANALYSIS_SCRIPT_KEYS = Set.of(
+        "name",
+        "arguments"
+    );
+    private static final Set<String> POST_ANALYSIS_SCRIPTS = Set.of(
+        "ReaGhidraNoReturnFix.java",
+        "ReaGhidraMipsSoftFloat.java",
+        "ReaGhidraAnalysisCache.java"
     );
     private static final Set<String> REQUEST_KEYS = Set.of(
         "id",
@@ -177,7 +197,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private List<FunctionEntry> procedureInventory;
     private List<InventoryItem> stringInventory;
     private DecompInterface decompiler;
+    private final Map<String, String> streamedProcedureState = new HashMap<>();
+    private Address procedureProgressCursor;
     private final ReaGhidraExtensions analysisExtensions = new ReaGhidraExtensions();
+    private AnalysisLifecycle analysisLifecycle;
     private static AddressSpace sessionDefaultAddressSpace;
 
     @Override
@@ -230,20 +253,109 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // GhidraScript wraps run() in a transaction. End it before serving so
         // each edit owns a real outer transaction and can roll back immediately.
         end(true);
+        validateAnalysisEnvironment(descriptor);
+        runAnalysisSession(descriptor);
+    }
+
+    private void validateAnalysisEnvironment(SessionDescriptor descriptor) throws IOException {
+        if (!descriptor.transport.equals("unix-socket") && descriptor.analysisExtensions.size() > 0) {
+            throw new IOException(
+                "Windows Ghidra P0 does not admit metadata recovery or database mutation."
+            );
+        }
+    }
+
+    private void runAnalysisSession(SessionDescriptor descriptor) throws Exception {
+        AnalysisLifecycle lifecycle = new AnalysisLifecycle(descriptor);
+        analysisLifecycle = lifecycle;
+        Throwable primaryFailure = null;
+
         try {
-            if (!descriptor.transport.equals("unix-socket") && descriptor.analysisExtensions.size() > 0)
-                throw new IOException("Windows Ghidra P0 does not admit metadata recovery or database mutation.");
-            analysisExtensions.analyze(descriptor.analysisExtensions, currentProgram, monitor);
-            initializeDecompiler();
+            lifecycle.start();
             serve(descriptor);
         }
+        catch (Throwable failure) {
+            primaryFailure = failure;
+            rethrow(failure);
+        }
         finally {
+            try {
+                cleanupAnalysisSession(lifecycle, primaryFailure);
+            }
+            finally {
+                analysisLifecycle = null;
+            }
+        }
+    }
+
+    private void cleanupAnalysisSession(
+            AnalysisLifecycle lifecycle,
+            Throwable primaryFailure) throws Exception {
+        List<Throwable> cleanupFailures = new ArrayList<>();
+
+        collectCleanupFailure(cleanupFailures, lifecycle::close);
+        if (lifecycle.isWorkerStopped()) {
+            collectCleanupFailure(cleanupFailures, this::disposeDecompiler);
+            collectCleanupFailure(cleanupFailures, analysisExtensions::close);
+        }
+
+        if (primaryFailure != null) {
+            for (Throwable cleanupFailure : cleanupFailures) {
+                if (cleanupFailure != primaryFailure) {
+                    primaryFailure.addSuppressed(cleanupFailure);
+                }
+            }
+            return;
+        }
+
+        throwCleanupFailures(cleanupFailures);
+    }
+
+    private void disposeDecompiler() {
+        try {
             if (decompiler != null) {
                 decompiler.dispose();
-                decompiler = null;
             }
-            analysisExtensions.close();
         }
+        finally {
+            decompiler = null;
+        }
+    }
+
+    private static void collectCleanupFailure(
+            List<Throwable> failures,
+            CleanupOperation operation) {
+        try {
+            operation.run();
+        }
+        catch (Throwable failure) {
+            failures.add(failure);
+        }
+    }
+
+    private static void throwCleanupFailures(List<Throwable> failures) throws Exception {
+        if (failures.isEmpty()) {
+            return;
+        }
+
+        Throwable primary = failures.get(0);
+        for (int index = 1; index < failures.size(); index++) {
+            Throwable failure = failures.get(index);
+            if (failure != primary) {
+                primary.addSuppressed(failure);
+            }
+        }
+        rethrow(primary);
+    }
+
+    private static void rethrow(Throwable failure) throws Exception {
+        if (failure instanceof Exception exception) {
+            throw exception;
+        }
+        if (failure instanceof Error error) {
+            throw error;
+        }
+        throw new AssertionError("Unknown throwable type", failure);
     }
 
     private void serve(SessionDescriptor descriptor) throws Exception {
@@ -420,12 +532,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
             requireKeys(request.params, Set.of());
             return sessionInfo(descriptor);
         }
-        if (analysisTimeoutOccurred()) {
-            throw new RequestFailure(
-                "analysis_incomplete",
-                "Ghidra auto-analysis did not complete for this Program"
-            );
+        if (request.method.equals("analysis_snapshot")) {
+            requireKeys(request.params, Set.of());
+            return analysisSnapshot();
         }
+        requireCompletedAnalysis();
+
         return switch (request.method) {
             case "inspect_native_load_image" -> inspectNativeLoadImage(request.params);
             case "read_bytes" -> readMemoryBytes(request.params);
@@ -477,7 +589,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private JsonObject sessionInfo(SessionDescriptor descriptor) throws Exception {
-        boolean timedOut = analysisTimeoutOccurred();
+        AnalysisLifecycle lifecycle = requireAnalysisLifecycle();
+        lifecycle.throwIfFailed();
+
         JsonObject provider = new JsonObject();
         provider.addProperty("id", "ghidra");
         provider.addProperty("version", Application.getApplicationVersion());
@@ -503,8 +617,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("provider", provider);
         boolean readOnly = !descriptor.transport.equals("unix-socket");
         result.addProperty("read_only", readOnly);
-        result.addProperty("analysis_complete", !timedOut);
-        result.addProperty("analysis_timed_out", timedOut);
+        result.addProperty("analysis_complete", lifecycle.isComplete());
+        result.addProperty("analysis_timed_out", false);
         result.add("capabilities", GSON.toJsonTree(
             java.util.Arrays.stream(CAPABILITIES)
                 .filter(value -> !readOnly || !(value.equals("annotate_native_function")
@@ -512,6 +626,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 .toArray(String[]::new)
         ));
         result.add("target", target);
+        if (!lifecycle.isComplete()) {
+            return result;
+        }
+
         result.add("pdb", pdbObservation());
         JsonArray extensions = analysisExtensions.reports();
         if (extensions.size() > 0) result.add("analysis_extensions", extensions);
@@ -526,6 +644,39 @@ public final class ReaGhidraBridge extends HeadlessScript {
             .getString("REA MIPS soft-float storage", null);
         if (softFloat != null) result.add("mips_soft_float_storage", JsonParser.parseString(softFloat));
         return result;
+    }
+
+    private JsonObject analysisSnapshot() throws Exception {
+        AnalysisLifecycle lifecycle = requireAnalysisLifecycle();
+        lifecycle.throwIfFailed();
+        ProcedureProgressSnapshot snapshot = procedureProgressSnapshot();
+
+        JsonObject result = new JsonObject();
+        result.addProperty("status", lifecycle.wireStatus());
+        result.addProperty("observed", snapshot.observed());
+        result.add("procedures", snapshot.updates());
+        return result;
+    }
+
+    private AnalysisLifecycle requireAnalysisLifecycle() {
+        if (analysisLifecycle == null) {
+            throw new RequestFailure(
+                "analysis_unavailable",
+                "Ghidra analysis lifecycle is unavailable"
+            );
+        }
+        return analysisLifecycle;
+    }
+
+    private void requireCompletedAnalysis() {
+        AnalysisLifecycle lifecycle = requireAnalysisLifecycle();
+        lifecycle.throwIfFailed();
+        if (!lifecycle.isComplete()) {
+            throw new RequestFailure(
+                "analysis_incomplete",
+                "Ghidra auto-analysis is still running for this Program"
+            );
+        }
     }
 
     /** Read loader/analyzer-owned facts without searching for or applying companions. */
@@ -2116,43 +2267,116 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (procedureInventory != null) {
             return procedureInventory;
         }
+        procedureInventory = List.copyOf(currentProcedures(true));
+        return procedureInventory;
+    }
+
+    private ProcedureProgressSnapshot procedureProgressSnapshot() throws Exception {
+        var manager = currentProgram.getFunctionManager();
+        FunctionIterator batch = procedureProgressCursor == null
+            ? manager.getFunctions(true)
+            : manager.getFunctions(procedureProgressCursor, true);
+        JsonArray updates = observeProcedureBatch(batch);
+
+        return new ProcedureProgressSnapshot(
+            manager.getFunctionCount(),
+            updates
+        );
+    }
+
+    private JsonArray observeProcedureBatch(FunctionIterator functions) {
+        JsonArray updates = new JsonArray();
+        Address startingAfter = procedureProgressCursor;
+        Address lastObserved = null;
+        int observed = 0;
+
+        while (functions.hasNext() && observed < MAX_ANALYSIS_SNAPSHOT_PROCEDURES) {
+            Function function = functions.next();
+            Address entryPoint = function.getEntryPoint();
+            if (startingAfter != null && entryPoint.equals(startingAfter)) {
+                continue;
+            }
+
+            JsonObject update = resultItem(functionEntry(function).item, "procedure");
+            String address = update.get("address").getAsString();
+            String signature = GSON.toJson(update);
+            String previous = streamedProcedureState.get(address);
+            if (previous == null) {
+                if (streamedProcedureState.size() < MAX_TRACKED_ANALYSIS_PROCEDURES) {
+                    updates.add(update);
+                    streamedProcedureState.put(address, signature);
+                }
+            }
+            else if (!signature.equals(previous)) {
+                updates.add(update);
+                streamedProcedureState.put(address, signature);
+            }
+            lastObserved = function.getEntryPoint();
+            observed++;
+        }
+
+        procedureProgressCursor = lastObserved != null && functions.hasNext()
+            ? lastObserved
+            : null;
+        return updates;
+    }
+
+    private List<FunctionEntry> currentProcedures(boolean checkCancellation)
+            throws Exception {
         List<FunctionEntry> result = new ArrayList<>();
         Set<Address> seen = new HashSet<>();
-        appendFunctions(result, seen, currentProgram.getFunctionManager().getFunctions(true));
-        appendFunctions(result, seen, currentProgram.getFunctionManager().getExternalFunctions());
+        appendFunctions(
+            result,
+            seen,
+            currentProgram.getFunctionManager().getFunctions(true),
+            checkCancellation
+        );
+        appendFunctions(
+            result,
+            seen,
+            currentProgram.getFunctionManager().getExternalFunctions(),
+            checkCancellation
+        );
         result.sort((left, right) -> INVENTORY_ORDER.compare(left.item, right.item));
-        procedureInventory = List.copyOf(result);
-        return procedureInventory;
+        return result;
     }
 
     private void appendFunctions(
             List<FunctionEntry> destination,
             Set<Address> seen,
-            FunctionIterator functions) throws Exception {
+            FunctionIterator functions,
+            boolean checkCancellation) throws Exception {
         while (functions.hasNext()) {
-            monitor.checkCancelled();
+            if (checkCancellation) {
+                monitor.checkCancelled();
+            }
             Function function = functions.next();
             if (!seen.add(function.getEntryPoint())) {
                 continue;
             }
-            JsonObject facts = new JsonObject();
-            facts.addProperty("external", function.isExternal());
-            facts.addProperty("thunk", function.isThunk());
-            Function target = function.isThunk() ? function.getThunkedFunction(false) : null;
-            if (target == null) {
-                facts.add("thunk_target", JsonNull.INSTANCE);
-            }
-            else {
-                facts.addProperty("thunk_target", canonicalAddress(target.getEntryPoint()));
-            }
-            Symbol symbol = function.getSymbol();
-            InventoryItem item = new InventoryItem(
-                function.getEntryPoint(),
-                symbol == null ? function.getName() : symbol.getName(true),
-                facts
-            );
-            destination.add(new FunctionEntry(function, item));
+            destination.add(functionEntry(function));
         }
+    }
+
+    private FunctionEntry functionEntry(Function function) {
+        JsonObject facts = new JsonObject();
+        facts.addProperty("external", function.isExternal());
+        facts.addProperty("thunk", function.isThunk());
+        Function target = function.isThunk() ? function.getThunkedFunction(false) : null;
+        if (target == null) {
+            facts.add("thunk_target", JsonNull.INSTANCE);
+        }
+        else {
+            facts.addProperty("thunk_target", canonicalAddress(target.getEntryPoint()));
+        }
+
+        Symbol symbol = function.getSymbol();
+        InventoryItem item = new InventoryItem(
+            function.getEntryPoint(),
+            symbol == null ? function.getName() : symbol.getName(true),
+            facts
+        );
+        return new FunctionEntry(function, item);
     }
 
     private List<InventoryItem> strings() throws Exception {
@@ -3310,11 +3534,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         DecompileResults results = decompiler.decompileFunction(
             function,
-            0,
+            DECOMPILATION_TIMEOUT_SECONDS,
             monitor
         );
         if (results.isCancelled()) {
             throw new RequestFailure("decompile_cancelled", "Ghidra decompilation was cancelled");
+        }
+        if (results.isTimedOut()) {
+            throw new RequestFailure(
+                "decompile_timeout",
+                "Ghidra decompilation exceeded " + DECOMPILATION_TIMEOUT_SECONDS + " seconds"
+            );
         }
         if (!results.decompileCompleted()) {
             throw new RequestFailure(
@@ -4657,8 +4887,58 @@ public final class ReaGhidraBridge extends HeadlessScript {
             requireSha256(object, "target_sha256"),
             requireString(object, "provider_version"),
             requireString(object, "profile_digest"),
+            readAnalysisPlan(object.get("analysis")),
             object.has("analysis_extensions") ? object.getAsJsonArray("analysis_extensions") : new JsonArray()
         );
+    }
+
+    private static AnalysisPlan readAnalysisPlan(JsonElement value) {
+        JsonObject object = requireObject(value, ANALYSIS_KEYS);
+        JsonElement scriptsValue = object.get("post_scripts");
+        if (scriptsValue == null || !scriptsValue.isJsonArray()) {
+            throw new IllegalArgumentException("analysis post_scripts must be an array");
+        }
+
+        List<PostAnalysisScript> scripts = new ArrayList<>();
+        Set<String> names = new HashSet<>();
+        for (JsonElement scriptValue : scriptsValue.getAsJsonArray()) {
+            JsonObject script = requireObject(scriptValue, POST_ANALYSIS_SCRIPT_KEYS);
+            String name = requireString(script, "name");
+            if (!POST_ANALYSIS_SCRIPTS.contains(name) || !names.add(name)) {
+                throw new IllegalArgumentException("analysis post-script is invalid");
+            }
+
+            List<String> arguments = requireStringArray(script, "arguments");
+            int expectedArguments = name.equals("ReaGhidraAnalysisCache.java") ? 1 : 0;
+            if (arguments.size() != expectedArguments) {
+                throw new IllegalArgumentException("analysis post-script arguments are invalid");
+            }
+            scripts.add(new PostAnalysisScript(name, List.copyOf(arguments)));
+        }
+        return new AnalysisPlan(
+            requireBoolean(object, "required"),
+            List.copyOf(scripts)
+        );
+    }
+
+    private static List<String> requireStringArray(JsonObject object, String name) {
+        JsonElement value = object.get(name);
+        if (value == null || !value.isJsonArray()) {
+            throw new IllegalArgumentException(name + " must be an array");
+        }
+
+        List<String> result = new ArrayList<>();
+        for (JsonElement element : value.getAsJsonArray()) {
+            if (!element.isJsonPrimitive() || !element.getAsJsonPrimitive().isString()) {
+                throw new IllegalArgumentException(name + " must contain strings");
+            }
+            String item = element.getAsString();
+            if (item.isEmpty()) {
+                throw new IllegalArgumentException(name + " cannot contain empty strings");
+            }
+            result.add(item);
+        }
+        return result;
     }
 
     private static Request parseRequest(String line, String expectedToken) {
@@ -4825,6 +5105,233 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return message == null || message.isBlank() ? "operation failed" : message;
     }
 
+    private static String safeMessage(Throwable failure) {
+        String message = failure.getMessage();
+        return message == null || message.isBlank() ? "operation failed" : message;
+    }
+
+    private final class AnalysisLifecycle implements AutoCloseable {
+        private static final long SHUTDOWN_WAIT_MILLIS = 10_000;
+
+        private final SessionDescriptor descriptor;
+        private final TaskMonitorAdapter analysisMonitor = new TaskMonitorAdapter(true);
+        private volatile AnalysisStatus status;
+        private volatile Throwable failure;
+        private volatile AutoAnalysisManager manager;
+        private Thread worker;
+
+        AnalysisLifecycle(SessionDescriptor descriptor) {
+            this.descriptor = descriptor;
+            status = descriptor.analysis.required
+                ? AnalysisStatus.ANALYZING
+                : AnalysisStatus.FINALIZING;
+        }
+
+        synchronized void start() {
+            if (worker != null) {
+                throw new IllegalStateException("Ghidra analysis lifecycle already started");
+            }
+
+            worker = new Thread(this::runOwnedAnalysis, "rea-ghidra-analysis");
+            worker.setDaemon(true);
+            worker.start();
+        }
+
+        boolean isComplete() {
+            return status == AnalysisStatus.COMPLETE;
+        }
+
+        boolean isWorkerStopped() {
+            Thread running = worker;
+            return running == null || !running.isAlive();
+        }
+
+        String wireStatus() {
+            return switch (status) {
+                case ANALYZING -> "analyzing";
+                case FINALIZING -> "finalizing";
+                case COMPLETE -> "complete";
+                case FAILED, CANCELLED -> "failed";
+            };
+        }
+
+        void throwIfFailed() {
+            Throwable cause = failure;
+            if (cause != null) {
+                throw new RequestFailure(
+                    "analysis_failed",
+                    cause.getClass().getSimpleName() + ": " + safeMessage(cause)
+                );
+            }
+            if (status == AnalysisStatus.CANCELLED) {
+                throw new RequestFailure(
+                    "analysis_cancelled",
+                    "Ghidra analysis was cancelled"
+                );
+            }
+        }
+
+        private void runOwnedAnalysis() {
+            try {
+                runAutoAnalysis();
+                runFinalization();
+                status = AnalysisStatus.COMPLETE;
+            }
+            catch (Throwable cause) {
+                if (analysisMonitor.isCancelled()) {
+                    status = AnalysisStatus.CANCELLED;
+                }
+                else {
+                    failure = cause;
+                    status = AnalysisStatus.FAILED;
+                }
+            }
+        }
+
+        private void runAutoAnalysis() throws Exception {
+            if (!descriptor.analysis.required) {
+                return;
+            }
+
+            int transaction = currentProgram.startTransaction("REA Ghidra auto-analysis");
+            Throwable analysisFailure = null;
+
+            try {
+                runAutoAnalysisInCurrentTransaction();
+            }
+            catch (Throwable failure) {
+                analysisFailure = failure;
+                rethrow(failure);
+            }
+            finally {
+                finishAutoAnalysisTransaction(transaction, analysisFailure);
+            }
+        }
+
+        private void runAutoAnalysisInCurrentTransaction() throws Exception {
+            AutoAnalysisManager ownedManager =
+                AutoAnalysisManager.getAnalysisManager(currentProgram);
+            manager = ownedManager;
+            // -noanalysis prevents headless import from scheduling the initial
+            // program analysis. Mirror FlatProgramAPI.analyzeAll before
+            // starting the queue on this owned worker.
+            ownedManager.initializeOptions();
+            ownedManager.reAnalyzeAll(null);
+            ownedManager.startAnalysis(analysisMonitor);
+            analysisMonitor.checkCancelled();
+            status = AnalysisStatus.FINALIZING;
+        }
+
+        private void finishAutoAnalysisTransaction(
+                int transaction,
+                Throwable analysisFailure) throws Exception {
+            try {
+                currentProgram.endTransaction(transaction, analysisFailure == null);
+            }
+            catch (Throwable transactionFailure) {
+                if (analysisFailure == null) {
+                    rethrow(transactionFailure);
+                }
+                if (transactionFailure != analysisFailure) {
+                    analysisFailure.addSuppressed(transactionFailure);
+                }
+            }
+        }
+
+        private void runFinalization() throws Exception {
+            runPostAnalysisScripts();
+            runAnalysisExtensions();
+            prepareDecompiler();
+        }
+
+        private void runPostAnalysisScripts() throws Exception {
+            for (PostAnalysisScript script : descriptor.analysis.postScripts) {
+                analysisMonitor.checkCancelled();
+                runScript(
+                    script.name,
+                    script.arguments.toArray(String[]::new),
+                    getState()
+                );
+            }
+        }
+
+        private void runAnalysisExtensions() throws Exception {
+            analysisMonitor.checkCancelled();
+            analysisExtensions.analyze(
+                descriptor.analysisExtensions,
+                currentProgram,
+                analysisMonitor
+            );
+        }
+
+        private void prepareDecompiler() throws Exception {
+            analysisMonitor.checkCancelled();
+            initializeDecompiler();
+        }
+
+        @Override
+        public void close() throws Exception {
+            Thread running = worker;
+            if (running == null || !running.isAlive()) {
+                return;
+            }
+
+            List<Throwable> shutdownFailures = new ArrayList<>();
+            collectCleanupFailure(shutdownFailures, analysisMonitor::cancel);
+            collectCleanupFailure(shutdownFailures, monitor::cancel);
+
+            AutoAnalysisManager activeManager = manager;
+            if (activeManager != null) {
+                collectCleanupFailure(shutdownFailures, activeManager::cancelQueuedTasks);
+            }
+
+            collectCleanupFailure(shutdownFailures, () -> waitForWorker(running));
+            throwCleanupFailures(shutdownFailures);
+        }
+
+        private void waitForWorker(Thread running) throws Exception {
+            long deadline = System.nanoTime() + SHUTDOWN_WAIT_MILLIS * 1_000_000L;
+            boolean interrupted = false;
+
+            while (running.isAlive()) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    break;
+                }
+                try {
+                    long waitMillis = Math.max(1, Math.min(
+                        SHUTDOWN_WAIT_MILLIS,
+                        (remaining + 999_999L) / 1_000_000L
+                    ));
+                    running.join(waitMillis);
+                }
+                catch (InterruptedException interruption) {
+                    interrupted = true;
+                }
+            }
+
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            if (running.isAlive()) {
+                throw new IOException("Ghidra analysis worker did not stop");
+            }
+        }
+    }
+
+    @FunctionalInterface
+    private interface CleanupOperation {
+        void run() throws Exception;
+    }
+
+    private enum AnalysisStatus {
+        ANALYZING,
+        FINALIZING,
+        COMPLETE,
+        FAILED,
+        CANCELLED
+    }
+
     private interface ValueMatcher {
         boolean matches(String value);
     }
@@ -4843,6 +5350,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private record InventoryItem(Address address, String value, JsonObject facts) {}
     private record AddressNameRequest(String inputAddress, Address address, String name) {}
     private record FunctionEntry(Function function, InventoryItem item) {}
+    private record ProcedureProgressSnapshot(int observed, JsonArray updates) {}
     private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations, JsonObject relationshipCoverage) {}
     private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls) {}
     private record SwiftStringLiteralDecode(JsonArray literals, JsonArray omissions) {}
@@ -4862,8 +5370,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String targetSha256,
         String providerVersion,
         String profileDigest,
+        AnalysisPlan analysis,
         JsonArray analysisExtensions
     ) {}
+    private record AnalysisPlan(
+        boolean required,
+        List<PostAnalysisScript> postScripts
+    ) {}
+    private record PostAnalysisScript(String name, List<String> arguments) {}
     private record Request(int id, String method, JsonObject params) {}
 
     private static final class RequestFailure extends RuntimeException {

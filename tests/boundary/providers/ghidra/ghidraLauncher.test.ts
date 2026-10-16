@@ -21,6 +21,7 @@ import {
   ghidraHeadlessCommand,
   GhidraHeadlessLauncher,
 } from "../../../../src/ghidra/GhidraLauncher.js";
+import { ghidraAnalysisPlan } from "../../../../src/ghidra/GhidraHeadlessArguments.js";
 
 const fixturePath = fileURLToPath(
   new URL(
@@ -188,17 +189,35 @@ describe("Ghidra headless launcher", () => {
       ["-log", "/tmp/ghidra.log"],
       ["-scriptlog", "/tmp/script.log"],
       ["-scriptPath", "/package/bridge"],
-      ["-postScript", "/package/bridge/ReaGhidraNoReturnFix.java"],
+      ["-postScript", "/package/bridge/ReaGhidraBridge.java"],
     ]);
-    // The no-return repair must finish before the bridge starts serving.
-    const fix = arguments_.indexOf("/package/bridge/ReaGhidraNoReturnFix.java");
+    expect(arguments_).toContain("-noanalysis");
+    expect(arguments_).not.toContain(
+      "/package/bridge/ReaGhidraNoReturnFix.java",
+    );
     const bridge = arguments_.indexOf("/package/bridge/ReaGhidraBridge.java");
-    expect(fix).toBeLessThan(bridge);
     expect(arguments_[bridge + 1]).toBe("/tmp/session.json");
     expect(arguments_).toContain("-readOnly");
     expect(arguments_).toContain("-deleteProject");
+
+    expect(
+      ghidraAnalysisPlan({
+        platform: "linux",
+        projectRoot: "/tmp/project",
+        targetPath: "/tmp/target",
+        bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+        descriptorPath: "/tmp/session.json",
+        ghidraLogPath: "/tmp/ghidra.log",
+        scriptLogPath: "/tmp/script.log",
+      }),
+    ).toEqual({
+      required: true,
+      postAnalysisScripts: [
+        { name: "ReaGhidraNoReturnFix.java", arguments: [] },
+      ],
+    });
   });
-  it("remaps soft-float storage after the no-return fix and before the bridge", () => {
+  it("remaps soft-float storage after the no-return repair", () => {
     const base = {
       platform: "linux" as const,
       projectRoot: "/tmp/project",
@@ -208,18 +227,19 @@ describe("Ghidra headless launcher", () => {
       ghidraLogPath: "/tmp/ghidra.log",
       scriptLogPath: "/tmp/script.log",
     };
-    const soft = "/package/bridge/ReaGhidraMipsSoftFloat.java";
-    expect(ghidraHeadlessArguments(base)).not.toContain(soft);
-    const arguments_ = ghidraHeadlessArguments({
+    const softFloat = {
       ...base,
-      mipsSoftFloat: true,
-    });
-    expect(arguments_[arguments_.indexOf(soft) - 1]).toBe("-postScript");
-    expect(
-      arguments_.indexOf("/package/bridge/ReaGhidraNoReturnFix.java"),
-    ).toBeLessThan(arguments_.indexOf(soft));
-    expect(arguments_.indexOf(soft)).toBeLessThan(
-      arguments_.indexOf("/package/bridge/ReaGhidraBridge.java"),
+      mipsSoftFloat: true as const,
+    };
+    expect(ghidraAnalysisPlan(base).postAnalysisScripts).toEqual([
+      { name: "ReaGhidraNoReturnFix.java", arguments: [] },
+    ]);
+    expect(ghidraAnalysisPlan(softFloat).postAnalysisScripts).toEqual([
+      { name: "ReaGhidraNoReturnFix.java", arguments: [] },
+      { name: "ReaGhidraMipsSoftFloat.java", arguments: [] },
+    ]);
+    expect(ghidraHeadlessArguments(softFloat)).not.toContain(
+      "/package/bridge/ReaGhidraMipsSoftFloat.java",
     );
     for (const conflict of [
       { psp: true as const },
@@ -405,14 +425,13 @@ describe("Ghidra disabled analyzers", () => {
       "/tmp/target",
       "-readOnly",
       "-deleteProject",
+      "-noanalysis",
       "-log",
       "/tmp/ghidra.log",
       "-scriptlog",
       "/tmp/script.log",
       "-scriptPath",
       "/package/bridge",
-      "-postScript",
-      "/package/bridge/ReaGhidraNoReturnFix.java",
       "-postScript",
       "/package/bridge/ReaGhidraBridge.java",
       "/tmp/session.json",

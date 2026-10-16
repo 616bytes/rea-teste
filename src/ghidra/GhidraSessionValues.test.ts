@@ -52,6 +52,20 @@ describe("Ghidra DOS import commitment", () => {
   });
 });
 
+describe("Ghidra analysis lifecycle handshake", () => {
+  it("admits in-progress analysis and rejects contradictory terminal state", () => {
+    const analyzing = { ...session(), analysis_complete: false };
+    expect(parseGhidraSessionInfo(analyzing, expected).ok).toBe(true);
+
+    expect(
+      parseGhidraSessionInfo(
+        { ...analyzing, analysis_complete: true, analysis_timed_out: true },
+        expected,
+      ).ok,
+    ).toBe(false);
+  });
+});
+
 describe("Ghidra PDB observations", () => {
   const pdb = {
     file: "C:\\build\\fixture.pdb",

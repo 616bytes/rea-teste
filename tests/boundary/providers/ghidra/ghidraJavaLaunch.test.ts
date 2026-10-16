@@ -111,6 +111,22 @@ if (mode === "env-failure" || (probe === "-vmargs" && mode === "vm-failure")) {
 describe.skipIf(process.platform === "win32")(
   "Ghidra LaunchSupport JVM compatibility",
   () => {
+    it("leaves GC and JIT worker sizing to JVM ergonomics", async () => {
+      const { session, launcher, analysisArguments } = await fixture("quiet");
+      const launched = await launcher.launch(session);
+      if (!launched.ok) throw launched.error;
+      expect(
+        analysisArguments[0]?.some((arg) =>
+          arg.startsWith("-XX:ParallelGCThreads="),
+        ),
+      ).toBe(false);
+      expect(
+        analysisArguments[0]?.some((arg) =>
+          arg.startsWith("-XX:CICompilerCount="),
+        ),
+      ).toBe(false);
+    });
+
     it.each(["Eclipse OpenJ9 VM", "unrecognized VM", ""])(
       "keeps HotSpot-only flags off a VM identified as %s",
       async (javaVmName) => {

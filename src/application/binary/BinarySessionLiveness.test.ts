@@ -154,6 +154,33 @@ describe("BinarySession open liveness", () => {
     expect(deep.created).toEqual([]);
   });
 
+  it("does not admit a Ghidra source through a retained health probe", async () => {
+    const identity: VersionedProviderIdentity = {
+      id: "ghidra",
+      name: "Ghidra",
+      version: "12.1.4",
+    };
+    const { session, deep } = openSession({
+      identity,
+      operationHealth: false,
+      failOperationInitially: true,
+    });
+    expect((await session.open(process.execPath)).ok).toBe(true);
+
+    const failed = await session.execute("address_name", {});
+    expect(failed.ok).toBe(false);
+    expect(deep.created).toHaveLength(1);
+
+    const first = deep.created[0];
+    expect((await session.open(process.execPath)).ok).toBe(true);
+    expect(first?.healthCalls).toBe(0);
+    expect(first?.closeCalled).toBe(true);
+    expect(deep.created).toHaveLength(1);
+
+    expect((await session.execute("address_name", {})).ok).toBe(true);
+    expect(deep.created).toHaveLength(2);
+  });
+
   it("reports cancellation without touching the session when aborted mid-probe", async () => {
     const { session, deep, onProbe } = openSession();
     expect((await session.open(process.execPath)).ok).toBe(true);
@@ -284,7 +311,11 @@ interface KillableChild extends AnalysisClient {
   healthCalls: number;
 }
 
-const deepIdentity: ProviderIdentity = {
+type VersionedProviderIdentity = ProviderIdentity & {
+  readonly version: string;
+};
+
+const deepIdentity: VersionedProviderIdentity = {
   id: "liveness-deep",
   name: "Liveness deep provider",
   version: "1",
@@ -318,6 +349,7 @@ const capability = (
 
 const openSession = (
   options: {
+    identity?: VersionedProviderIdentity;
     operationHealth?: boolean;
     failOperationInitially?: boolean;
     beforeFirstClose?: () => Promise<void>;
@@ -352,6 +384,7 @@ const openSession = (
 };
 
 const killableDeepProvider = (options: {
+  identity?: VersionedProviderIdentity;
   operationHealth?: boolean;
   failOperationInitially?: boolean;
   beforeFirstClose?: () => Promise<void>;
@@ -363,9 +396,10 @@ const killableDeepProvider = (options: {
   const created: KillableChild[] = [];
   let probeHook: (() => void) | undefined;
   const withOperationHealth = options.operationHealth !== false;
+  const identity = options.identity ?? deepIdentity;
   const provider: AnalysisProviderCandidate = {
-    identity: () => deepIdentity,
-    capabilities: () => [capability(deepIdentity, "address_name")],
+    identity: () => identity,
+    capabilities: () => [capability(identity, "address_name")],
     inspectAvailability: (): ProviderAvailability => ({
       status: "available",
       code: null,
@@ -381,10 +415,7 @@ const killableDeepProvider = (options: {
     resolveAnalysisProfile: () =>
       Promise.resolve(
         ok({
-          profile: createAnalysisProfile(
-            { id: deepIdentity.id, name: deepIdentity.name, version: "1" },
-            { fixture: "liveness" },
-          ),
+          profile: createAnalysisProfile(identity, { fixture: "liveness" }),
         }),
       ),
     createClient: (): KillableChild => {
@@ -404,13 +435,13 @@ const killableDeepProvider = (options: {
                 ok(
                   createAnalysisExecution(
                     operation === "health" ? null : `liveness:${operation}`,
-                    deepIdentity,
+                    identity,
                   ),
                 ),
               )
             : Promise.resolve(
                 err(
-                  new ProviderAdapterError(deepIdentity.id, operation, {
+                  new ProviderAdapterError(identity.id, operation, {
                     diagnostics: { reason: "process_killed" },
                   }),
                 ),

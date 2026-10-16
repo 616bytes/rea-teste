@@ -231,6 +231,13 @@ application and semantic coverage. The result carries a digest of the selected
 facts. Actual serialized size determines MCP transport admission: reduce the
 page size or export retained Evidence if the view is too large.
 
+When a `list_procedures` or `list_strings` MCP response exceeds the transport
+budget, REA retains the complete inventory and returns a ready
+`inspect_analysis_view` continuation. Use its page view with collection
+`procedures` or `strings`, then follow `coverage.next_offset` until coverage is
+exhausted. Smaller limits help when individual names or string values make a
+page too large.
+
 Completed `inspect_artifact` and atomic `inventory_artifact` Evidence also
 support summary and inventory views. A summary reports the manifest's expected
 counts separately from available record counts, observed entry kinds, inventory

@@ -64,6 +64,12 @@ interface SessionBinding {
   nativeSourceAdmitted: boolean;
 }
 
+const requiresFreshGhidraAdmission = (binding: SessionBinding): boolean =>
+  !binding.nativeSourceAdmitted &&
+  [...binding.route.capabilities.values()].some(
+    ({ available, provider }) => available && provider.id === "ghidra",
+  );
+
 /**
  * Owns the single active target shared by CLI and MCP adapters.
  *
@@ -117,6 +123,12 @@ export class BinarySession
     target: BinaryTarget,
     options: Pick<BinarySessionOpenOptions, "signal" | "snapshot">,
   ): Promise<Result<BinaryTarget, AnalysisError> | undefined> {
+    // A failed first Ghidra operation leaves an instantiated child in the
+    // composite. Probing that child through health would create its private
+    // source snapshot during open_binary, before the caller invokes another
+    // analysis operation. Retire it so the next operation owns admission.
+    if (requiresFreshGhidraAdmission(retained)) return undefined;
+
     const live = await this.#retainedClientLive(retained.client, options);
     if (isAborted(options.signal))
       return err(new AnalysisCancelledError("open_binary"));
@@ -232,7 +244,10 @@ export class BinarySession
   /** Open a previewed target without repeating parsing or provider profile discovery. */
   openResolvedTarget(
     resolved: Pick<ResolvedSessionOpen, "target" | "route">,
-    options: Pick<BinarySessionOpenOptions, "signal" | "snapshot"> = {},
+    options: Pick<
+      BinarySessionOpenOptions,
+      "signal" | "progress" | "snapshot"
+    > = {},
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     return this.#open(
       () =>
@@ -251,7 +266,7 @@ export class BinarySession
 
   #open(
     resolve: () => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
-    options: Pick<BinarySessionOpenOptions, "signal" | "snapshot">,
+    options: Pick<BinarySessionOpenOptions, "signal" | "progress" | "snapshot">,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     return this.#serialize((admittedThrough) =>
       this.#openWithinTransition(admittedThrough, resolve, options),
@@ -261,7 +276,7 @@ export class BinarySession
   async #openWithinTransition(
     admittedThrough: number,
     resolve: () => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
-    options: Pick<BinarySessionOpenOptions, "signal" | "snapshot">,
+    options: Pick<BinarySessionOpenOptions, "signal" | "progress" | "snapshot">,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
       return err(this.#externalMutationCleanupFailure);

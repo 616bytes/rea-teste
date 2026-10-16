@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   loadWindowsNativeAuthority,
+  loadWindowsWindowCaptureAuthority,
+  loadWindowsWindowCaptureWorkerAuthority,
   type WindowsNativeLoadHost,
 } from "./WindowsNativeLoader.js";
 
@@ -12,6 +14,7 @@ const fixture = (
     protocolStdin?: boolean;
     jobMemoryLimit?: unknown;
     privateBridgeDescriptorAccess?: unknown;
+    windowCapture?: unknown;
   } = {},
 ) => {
   const bytes = Buffer.alloc(128);
@@ -49,24 +52,130 @@ const fixture = (
     loadArtifact: () => {
       loads++;
       return {
-        call: () => ({
-          abiVersion: 1,
-          nodeApiVersion: 8,
-          architecture: "x64",
-          filesystem: identity,
-          privateDacl: true,
-          privateBridgeDescriptorAccess: true,
-          atomicJobAssignment: true,
-          killOnOwnerClose: true,
-          ...capabilities,
-        }),
+        call: (operation: string) =>
+          operation === "inspect_window_capture"
+            ? {
+                abiVersion: 1,
+                nodeApiVersion: 8,
+                architecture: "x64",
+                ...(capabilities.windowCapture === undefined
+                  ? {}
+                  : { windowCapture: capabilities.windowCapture }),
+              }
+            : {
+                abiVersion: 1,
+                nodeApiVersion: 8,
+                architecture: "x64",
+                filesystem: identity,
+                privateDacl: true,
+                privateBridgeDescriptorAccess: true,
+                atomicJobAssignment: true,
+                killOnOwnerClose: true,
+                ...capabilities,
+              },
       };
     },
   };
   return { host, manifest, bytes, loads: () => loads };
 };
 
+describe("selected-window native admission", () => {
+  it("admits the worker's capture facet without repeating filesystem or process admission", () => {
+    const value = fixture({ windowCapture: true });
+    const host = {
+      ...value.host,
+      loadArtifact: () => ({
+        call: (operation: string) => {
+          expect(operation).toBe("inspect_window_capture");
+          return {
+            abiVersion: 1,
+            nodeApiVersion: 8,
+            architecture: "x64",
+            windowCapture: true,
+          };
+        },
+      }),
+    };
+    expect(loadWindowsWindowCaptureWorkerAuthority(host)).toMatchObject({
+      available: true,
+    });
+    expect(
+      loadWindowsWindowCaptureWorkerAuthority(fixture().host),
+    ).toMatchObject({
+      available: false,
+    });
+    expect(loadWindowsWindowCaptureAuthority(value.host)).toMatchObject({
+      available: false,
+    });
+  });
+  it("refuses capture when owned helper controls fail admission", () => {
+    const value = fixture({ windowCapture: true });
+    const result = loadWindowsWindowCaptureAuthority({
+      ...value.host,
+      loadArtifact: () => ({
+        call: (operation: string) => {
+          if (operation === "inspect")
+            throw new Error("private runtime self-test failed");
+          return {
+            abiVersion: 1,
+            nodeApiVersion: 8,
+            architecture: "x64",
+            windowCapture: true,
+          };
+        },
+      }),
+    });
+    expect(result).toMatchObject({ available: false, retryable: true });
+  });
+
+  it("refuses an addon that does not expose selected-window inspection", () => {
+    const value = fixture({ jobMemoryLimit: true, protocolStdin: true });
+    expect(loadWindowsWindowCaptureAuthority(value.host)).toMatchObject({
+      available: false,
+      failureStage: "inspection",
+    });
+  });
+  it("requires capture support and the helper's enforced memory control", () => {
+    expect(
+      loadWindowsWindowCaptureAuthority(
+        fixture({
+          windowCapture: true,
+          jobMemoryLimit: true,
+          protocolStdin: true,
+        }).host,
+      ),
+    ).toMatchObject({ available: true });
+    expect(
+      loadWindowsWindowCaptureAuthority(fixture({ windowCapture: true }).host),
+    ).toMatchObject({ available: false, failureStage: "inspection" });
+    expect(
+      loadWindowsWindowCaptureAuthority(
+        fixture({ windowCapture: true, jobMemoryLimit: true }).host,
+      ),
+    ).toMatchObject({
+      available: false,
+      reason: expect.stringContaining("protocol stdin"),
+    });
+  });
+});
+
 describe("packaged Windows native compatibility", () => {
+  it("retains capture support as an affirmative artifact observation", () => {
+    expect(
+      loadWindowsNativeAuthority(fixture({ windowCapture: true }).host),
+    ).toMatchObject({
+      available: true,
+      authority: { inspection: { windowCapture: true } },
+    });
+    const earlier = loadWindowsNativeAuthority(fixture().host);
+    if (!earlier.available) throw new Error(earlier.reason);
+    expect(earlier.authority.inspection.windowCapture).toBeUndefined();
+    expect(
+      loadWindowsNativeAuthority(fixture({ windowCapture: false }).host)
+        .available,
+    ).toBe(false);
+  });
+
   it.each([true, false])(
     "preserves protocol stdin capability %s alongside existing job controls",
     (protocolStdin) => {

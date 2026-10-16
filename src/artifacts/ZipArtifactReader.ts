@@ -299,6 +299,7 @@ const projectZipEntry = (
           ]),
     ],
     adapterKey: `zip-entry:${index}`,
+    ...(path === sourcePath ? {} : { storedPath: sourcePath }),
   };
 };
 

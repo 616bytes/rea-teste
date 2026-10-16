@@ -319,4 +319,55 @@ describe("JvmClassFileProvider multi-release identity", () => {
       }),
     ]);
   });
+
+  // The JDK finds the manifest by its stored name in any ASCII case (audit
+  // m4: OpenJDK 25 multi-release true) and never through a `./` prefix (m17:
+  // multi-release false), so REA must not match on the reader's logical path.
+  const jarWithManifestAt = async (file: string, manifestName: string) =>
+    writeJar(
+      file,
+      await buildZip([
+        { name: manifestName, text: MR_MANIFEST },
+        { name: ENTRY, bytes: minimalClass(52) },
+        { name: VERSIONED, bytes: minimalClass(61) },
+      ]),
+    );
+
+  it("honors a manifest stored under a different ASCII case", async () => {
+    const result = await provider.inspect({
+      path: await jarWithManifestAt(
+        "lower-manifest.jar",
+        "meta-inf/manifest.mf",
+      ),
+      entry: ENTRY,
+      release: 17,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const r = result.value.result as {
+      selected_entry: { release: number | null };
+      class: { major_version: number };
+    };
+    expect(r.selected_entry.release).toBe(17);
+    expect(r.class.major_version).toBe(61);
+  });
+
+  it("ignores a manifest stored with a ./ prefix", async () => {
+    const result = await provider.inspect({
+      path: await jarWithManifestAt(
+        "dot-manifest.jar",
+        "./META-INF/MANIFEST.MF",
+      ),
+      entry: ENTRY,
+      release: 17,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect((result.error as AnalysisInputError).issues).toEqual([
+      expect.objectContaining({
+        path: ["release"],
+        message: expect.stringContaining("is not a multi-release JAR"),
+      }),
+    ]);
+  });
 });

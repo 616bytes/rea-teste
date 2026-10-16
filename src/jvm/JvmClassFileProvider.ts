@@ -48,11 +48,11 @@ import {
 } from "../artifacts/ArtifactFileOperation.js";
 import {
   classifyJarEntry,
-  isMultiReleaseManifest,
   parseVersionedJarEntry,
   normalizeJarEntryPath,
   resolveJarSelection,
 } from "./jarClassEntry.js";
+import { isJarManifestName, isMultiReleaseManifest } from "./jarManifest.js";
 import { JVM_LIMITS, JVM_PROVIDER_IDENTITY } from "./JvmClassFileRelease.js";
 import {
   jvmClassFileFailure,
@@ -383,7 +383,9 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       // Encrypted members are kept as candidates: the entry exists but is
       // unreadable, which must be reported as such, not as "not found".
       if (member.kind !== "file") continue;
-      if (member.path === "META-INF/MANIFEST.MF") {
+      // The JDK finds the manifest by its stored name in any ASCII case; the
+      // last such member wins, and a `./`-prefixed name is not the manifest.
+      if (isJarManifestName(member.storedPath ?? member.path)) {
         manifestEntry = member;
         continue;
       }

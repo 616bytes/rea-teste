@@ -98,37 +98,3 @@ export const resolveJarSelection = (
   // The caller named a release that is not present; never silently fall back.
   return { ok: false, reason: "release-absent", available };
 };
-
-/**
- * A JAR is multi-release only when its main manifest section carries
- * `Multi-Release: true` (JAR File Specification). Otherwise META-INF/versions
- * entries are inert resources the runtime never loads. Parses only the main
- * section (up to the first blank line), honoring line continuations.
- */
-export const isMultiReleaseManifest = (bytes: Uint8Array): boolean => {
-  let text: string;
-  try {
-    text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  } catch {
-    return false;
-  }
-  const logical: string[] = [];
-  for (const line of text.split(/\r\n|\r|\n/)) {
-    if (line === "") break; // end of the main section
-    if (line.startsWith(" ") && logical.length > 0)
-      logical[logical.length - 1] += line.slice(1); // value continuation
-    else logical.push(line);
-  }
-  for (const attribute of logical) {
-    const colon = attribute.indexOf(":");
-    if (colon < 0) continue;
-    if (attribute.slice(0, colon).trim().toLowerCase() === "multi-release")
-      return (
-        attribute
-          .slice(colon + 1)
-          .trim()
-          .toLowerCase() === "true"
-      );
-  }
-  return false;
-};

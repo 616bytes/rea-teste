@@ -100,6 +100,26 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
+  "bounds oversized non-ASCII recent frames by UTF-8 bytes",
+  async () => {
+    // 6000 three-byte characters: 18000 UTF-8 bytes, but only 6000 UTF-16 units.
+    const provider = await makeProvider(
+      'process.stdout.write("\\0"); process.stdin.resume(); setTimeout(() => process.stdout.write("\u754c".repeat(6000) + "\\0"), 20);',
+    );
+    const { manager, sessionId } = await start(provider);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const status = manager.status(sessionId);
+    const marker = "[recent frame truncated]";
+    const frame = status?.recent_output.at(-1);
+    expect(status?.recent_output_truncated).toBe(true);
+    expect(frame?.endsWith(marker)).toBe(true);
+    const retained = frame?.slice(0, -marker.length) ?? "";
+    expect(Buffer.byteLength(retained)).toBeLessThanOrEqual(16 * 1024);
+    expect(retained).toBe("\u754c".repeat(Math.floor((16 * 1024) / 3)));
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "bounds recent history after many unsolicited frames",
   async () => {
     const provider = await makeProvider(

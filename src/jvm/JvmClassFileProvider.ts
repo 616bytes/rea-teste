@@ -161,7 +161,7 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
             ),
       );
     } catch (cause: unknown) {
-      return err(jvmClassFileFailure(cause, input.path));
+      return err(jvmClassFileFailure(cause, input.path, options?.signal));
     }
   }
 
@@ -173,7 +173,13 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     // byte budget: an archive (most APKs/JARs exceed that budget) must be
     // steered to `entry` selection, not rejected as oversized or "not a class
     // file". The peek reads only the leading bytes, regardless of total size.
-    const magic = await peekArtifactMagic(input.path, 8, options?.signal);
+    const magic = await peekArtifactMagic(
+      input.path,
+      8,
+      options?.signal,
+      undefined,
+      this.#resources,
+    );
     if (looksLikeZip(magic))
       return err(
         new AnalysisUnsupportedTargetError(
@@ -202,6 +208,8 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       input.path,
       JVM_LIMITS.inputBytes,
       options?.signal,
+      undefined,
+      this.#resources,
     );
     if (options?.signal?.aborted)
       return err(new AnalysisCancelledError(OPERATION));

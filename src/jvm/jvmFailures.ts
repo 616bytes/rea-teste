@@ -1,4 +1,10 @@
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactFileCleanupFailure,
+  bindArtifactFileCleanup,
+} from "../artifacts/ArtifactFileOperation.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
@@ -9,7 +15,7 @@ import {
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import type { JavaClassFileParseError } from "../domain/jvm/javaClassFile.js";
-import { JVM_LIMITS } from "./JvmClassFileRelease.js";
+import { JVM_LIMITS, JVM_PROVIDER_IDENTITY } from "./JvmClassFileRelease.js";
 
 const OPERATION = "inspect_jvm_debug_metadata";
 
@@ -71,11 +77,53 @@ export const mapParseError = (
   }
 };
 
-/** Preserve lifecycle failures and distinguish cancellation, access, integrity and limits. */
+/**
+ * Map a read or analysis failure. A failed descriptor close keeps the read's
+ * primary failure (or cancellation) and binds its cleanup lease to the error,
+ * so the provider's close() retries the retained handle.
+ */
 export const jvmClassFileFailure = (
   cause: unknown,
   path: string,
+  signal?: AbortSignal,
 ): AnalysisError => {
+  const error =
+    cause instanceof ArtifactFileCleanupFailure &&
+    cause.fileCleanupFailure.outcome.kind === "failed"
+      ? withCleanupFacts(
+          primaryFailure(cause.fileCleanupFailure.outcome.cause, path),
+          cause,
+        )
+      : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
+        ? withCleanupFacts(
+            new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+            cause,
+          )
+        : primaryFailure(cause, path);
+  bindArtifactFileCleanup(cause, error);
+  return error;
+};
+
+/** Attach a failed close as a cleanup fact to a primary failure. */
+const withCleanupFacts = (
+  primary: AnalysisError,
+  cause: ArtifactReaderFailure,
+): AnalysisError =>
+  cause.cleanup === undefined
+    ? primary
+    : analysisErrorWithCleanupFailure(
+        primary,
+        new ProviderCleanupError(
+          JVM_PROVIDER_IDENTITY.id,
+          cause.cleanup.resources,
+          { reason: cause.cleanup.reason },
+          { cause, operation: OPERATION },
+        ),
+        OPERATION,
+      );
+
+/** Distinguish cancellation, access, integrity and limits for the primary failure. */
+const primaryFailure = (cause: unknown, path: string): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   const cleanup =
     cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined

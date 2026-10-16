@@ -673,6 +673,28 @@ it("reports a failed export with Kuna's diagnostics and retains nothing", async 
   expect(await entries(cacheRoot, "staging")).toEqual([]);
 });
 
+it("falls back to the retained cause when a failed export wrote nothing to stderr", async () => {
+  const { installation, cache, target } = await fixture(
+    "rea-kuna-silent-failure-",
+    { project: "silent-exit-failure" },
+  );
+
+  const result = await cache.build({
+    installation,
+    ...(await target("program")),
+  });
+
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ProviderAdapterError",
+      userMessage:
+        "kuna decompile-project failed with exit code 1: Command failed; inspect its exit status and diagnostics.",
+      capturedOutput: { exit_code: 1 },
+    },
+  });
+});
+
 it.each([
   [
     "an inventory that is not Kuna's JSON document",

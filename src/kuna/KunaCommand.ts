@@ -342,6 +342,7 @@ const commandFailure = (
       ),
     };
   const exitCode = capturedOutput?.exit_code;
+  // An empty stderr's last line is "", so fall back on falsiness, not nullishness.
   return {
     kind: "failed",
     error: new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {

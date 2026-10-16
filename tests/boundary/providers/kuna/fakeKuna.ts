@@ -27,6 +27,8 @@ export interface FakeKunaBehavior {
   readonly project?:
     | "ok"
     | "exit-failure"
+    /** Exits 1 without writing to stderr. */
+    | "silent-exit-failure"
     | "hang"
     | "miscounted"
     | "silent"
@@ -148,6 +150,7 @@ if (args[0] === "--version") {
   const mode = behavior.project ?? "ok";
   if (mode === "hang") hang();
   else if (mode === "exit-failure") { process.stderr.write("error: not in recognized object file format\n"); process.exit(1); }
+  else if (mode === "silent-exit-failure") process.exit(1);
   else setTimeout(() => {
     fs.mkdirSync(output, { recursive: true });
     let c = '#include "' + stem + '.h"\n\n';

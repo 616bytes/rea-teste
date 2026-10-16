@@ -4,6 +4,7 @@ import type {
   RecordedCrashArchitecture,
 } from "../../../src/domain/native/recordedCrash.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
@@ -77,6 +78,21 @@ const spawnDebuggerFixture = (
         ]
       : ["-e", script],
   });
+};
+
+const expectForeignDebuggerPreserved = async (
+  child: SpawnedOwnedProviderProcess["process"] | undefined,
+): Promise<void> => {
+  if (child === undefined || child.pid === undefined)
+    throw new Error("Expected an owned fixture PID");
+  const environment = await readFile(`/proc/${child.pid}/environ`);
+  expect(
+    environment.includes(
+      Buffer.from("REA_PROCESS_RUN_ID=source-owned-foreign\0"),
+    ),
+  ).toBe(true);
+  expect(child.exitCode).toBeNull();
+  expect(child.signalCode).toBeNull();
 };
 
 it
@@ -294,20 +310,9 @@ it
       });
     } else {
       if (result.ok) throw new Error("Expected optional debugger failure");
-      if (scenario === "cancelled-exec-foreign") {
-        const projected = projectAnalysisError(result.error);
-        expect(projected.code).toBe("cleanup_incomplete");
-        const pid = debuggerProcess?.pid;
-        if (pid === undefined) throw new Error("Expected an owned fixture PID");
-        const environment = await readFile(`/proc/${pid}/environ`);
-        expect(
-          environment.includes(
-            Buffer.from("REA_PROCESS_RUN_ID=source-owned-foreign\0"),
-          ),
-        ).toBe(true);
-        expect(debuggerProcess?.exitCode).toBeNull();
-        expect(debuggerProcess?.signalCode).toBeNull();
-      } else expectOptionalContextFailure(scenario, result.error);
+      expectOptionalContextFailure(scenario, result.error, value);
+      if (scenario === "cancelled-exec-foreign")
+        await expectForeignDebuggerPreserved(debuggerProcess);
     }
     if (scenario === "cancelled" || scenario === "cancelled-exec") {
       if (debuggerProcess === undefined)
@@ -352,8 +357,11 @@ it
 const expectOptionalContextFailure = (
   scenario: string,
   error: AnalysisError,
+  value: RecordedCrash,
 ) => {
   const projected = projectAnalysisError(error);
+  if (scenario === "cancelled-exec-foreign")
+    expect(projected.code).toBe("cleanup_incomplete");
   if (scenario === "unconfigured")
     expect(projected).toMatchObject({
       details: { captured_output: { stdout: "basic stage diagnostic" } },
@@ -375,10 +383,21 @@ const expectOptionalContextFailure = (
     expect(serialized).toContain(
       scenario.startsWith("cancelled") ? "ready" : "debugger stage diagnostic",
     );
+    expect(error.partialObservation).toMatchObject({
+      artifact: {
+        ...value.artifact,
+        sha256: createHash("sha256")
+          .update(recordedCrashFixtureBytes(value))
+          .digest("hex"),
+      },
+      threads: value.threads,
+      notes: value.notes,
+    });
     expect(error._tag).toBe(
       scenario === "invalid-context"
         ? "AnalysisOutputError"
-        : scenario.startsWith("cancelled")
+        : scenario.startsWith("cancelled") &&
+            scenario !== "cancelled-exec-foreign"
           ? "AnalysisCancelledError"
           : "ProviderAdapterError",
     );

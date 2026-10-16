@@ -218,7 +218,7 @@ export const createSemanticReturnedReferences = (
           // keeps its `root` branch.
           const parts = grown
             ? splitChainReads(initializer.node, item.chain, state)
-            : { cut: [], followable: [initializer.node] };
+            : { cut: [], followable: [{ node: initializer.node, keys: [] }] };
           if (parts.cut.length > 0 && entered !== undefined) {
             frame.blockers.set(binding, entered);
             for (const read of parts.cut)
@@ -230,8 +230,8 @@ export const createSemanticReturnedReferences = (
           chain.set(initializer, 0);
           for (const part of parts.followable)
             pending.push({
-              node: part,
-              path: [...initializer.projection, ...item.path],
+              node: part.node,
+              path: [...part.keys, ...initializer.projection, ...item.path],
               chain,
             });
         }
@@ -351,29 +351,47 @@ export const createSemanticReturnedReferences = (
 interface ChainReadSplit {
   /** Chain bindings the write reads directly or through a member chain. */
   readonly cut: readonly JavaScriptSemanticBindingState[];
-  /** Value expressions of the write that do not read a chain binding. */
-  readonly followable: readonly t.Node[];
+  /**
+   * Value expressions of the write that do not read a chain binding, each
+   * with the member keys that wrapped it, so `(flag ? root : x.next).child`
+   * still follows `root.child`.
+   */
+  readonly followable: readonly {
+    readonly node: t.Node;
+    readonly keys: readonly (string | number | null)[];
+  }[];
 }
 
 /**
  * Split a write's value into the parts that read a binding the chain already
  * holds (the binding itself or a member chain on it) and the parts that do
  * not. Conditional, logical and sequence expressions are split per branch so
- * a branch that leaves the chain is still followed.
+ * a branch that leaves the chain is still followed, keeping the member keys
+ * around it.
  */
 const splitChainReads = (
   node: t.Node,
   chain: Chain,
   state: JavaScriptSemanticAnalysisState,
+  outerKeys: readonly (string | number | null)[] = [],
 ): ChainReadSplit => {
   let current = unwrapJavaScriptExpression(node).node;
-  while (t.isMemberExpression(current) || t.isOptionalMemberExpression(current))
+  const keys: (string | number | null)[] = [];
+  while (
+    t.isMemberExpression(current) ||
+    t.isOptionalMemberExpression(current)
+  ) {
+    keys.push(semanticStaticPropertyKey(current.property, current.computed));
     current = unwrapJavaScriptExpression(current.object).node;
+  }
+  // Walking outward reads the outermost key first; the path lists keys from
+  // the receiver outward, followed by the keys that wrap this expression.
+  const allKeys = [...keys.reverse(), ...outerKeys];
   if (t.isIdentifier(current)) {
     const binding = resolveSemanticBindingState(state, current, current.name);
     return binding !== undefined && chain.has(binding)
       ? { cut: [binding], followable: [] }
-      : { cut: [], followable: [node] };
+      : { cut: [], followable: [{ node: current, keys: allKeys }] };
   }
   const branches = t.isConditionalExpression(current)
     ? [current.consequent, current.alternate]
@@ -382,9 +400,10 @@ const splitChainReads = (
       : t.isSequenceExpression(current)
         ? current.expressions.slice(-1)
         : null;
-  if (branches === null) return { cut: [], followable: [node] };
+  if (branches === null)
+    return { cut: [], followable: [{ node: current, keys: allKeys }] };
   const splits = branches.map((branch) =>
-    splitChainReads(branch, chain, state),
+    splitChainReads(branch, chain, state, allKeys),
   );
   return {
     cut: splits.flatMap((split) => split.cut),

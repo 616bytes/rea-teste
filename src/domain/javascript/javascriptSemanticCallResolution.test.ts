@@ -234,6 +234,15 @@ function run(flag){ let x = root, y = x; if (flag) { x = y; y = x; } x = y.next;
     references(`function make(){ return {v:1}; } const root = {next:{make}};
 function run(flag){ let x; x = flag ? root : x.next; x = x.next; return x.make(); }`),
   ).toHaveLength(1);
+  // Member keys around a split expression stay with each followed branch.
+  expect(
+    references(`function make(){ return {v:1}; } const root = {child:{next:{make}}};
+function run(flag){ let x = (flag ? root : root).child; x = x.next; return x.make(); }`),
+  ).toHaveLength(1);
+  expect(
+    references(`function make(){ return {v:1}; } const root = {next:{next:{make}}}; const fallback = {};
+function run(flag){ let x; x = (flag ? root : fallback).next; x = x.next; return x.make(); }`),
+  ).toHaveLength(1);
   // A second self-walk on the same binding is the bound: the chain leaves
   // through writes that do not read its own bindings (x = root) and stops.
   expect(

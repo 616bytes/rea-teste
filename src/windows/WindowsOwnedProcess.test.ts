@@ -42,6 +42,7 @@ const authority = (
     readonly appliedLimit?: (requested: unknown) => unknown;
     readonly failClose?: () => boolean;
     readonly failPoll?: () => boolean;
+    readonly activeProcesses?: () => number;
   } = {},
 ) => {
   const calls: { operation: string; arguments_: readonly unknown[] }[] = [];
@@ -87,6 +88,8 @@ const authority = (
         if (options.failPoll?.()) throw new Error("native poll failed");
         return polls.shift();
       }
+      if (operation === "process_alive")
+        return options.activeProcesses?.() ?? 0;
       if (operation === "process_terminate") return true;
       if (operation === "process_close") {
         if (options.failClose?.()) throw new Error("native close failed");
@@ -118,9 +121,11 @@ describe("Windows native release retry", () => {
   it("releases directly after polling fails", async () => {
     vi.useFakeTimers();
     let failPoll = true;
+    let activeProcesses = 1;
     try {
       const { native, calls } = authority({
         failPoll: () => failPoll,
+        activeProcesses: () => activeProcesses,
       });
       const child = launch(native);
       const failures: string[] = [];
@@ -135,7 +140,14 @@ describe("Windows native release retry", () => {
       });
       await vi.advanceTimersByTimeAsync(0);
 
+      expect(cleaned).toBe(false);
+      expect(
+        calls.filter(({ operation }) => operation === "process_close"),
+      ).toHaveLength(0);
+      activeProcesses = 0;
+      await vi.advanceTimersByTimeAsync(25);
       expect(cleaned).toBe(true);
+      expect(child.outputIncomplete).toBe(true);
       await cleanup;
       expect(
         calls.filter(({ operation }) => operation === "process_close"),

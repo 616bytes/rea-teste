@@ -431,6 +431,18 @@ static void retainPendingHandle(Runtime& root, const std::wstring& path, Handle&
   root.pendingFiles.push_back(std::move(file));
 }
 
+static void retainFailedRuntimeFile(File& file) {
+  auto* root = file.cleanupOwner;
+  if (root == nullptr) return;
+  file.cleanupOwner = nullptr;
+  if (!file.handles.empty()) {
+    auto pending = std::make_unique<File>(file.path);
+    pending->handles = std::move(file.handles);
+    root->pendingFiles.push_back(std::move(pending));
+  }
+  file.closed = true;
+}
+
 static std::unique_ptr<File> runtimeDirectory(Runtime& root, const std::wstring& path) {
   auto result = std::make_unique<File>(path);
   try {
@@ -850,7 +862,11 @@ napi_value filesystemCall(napi_env env, const std::wstring& operation,
   }
   if (operation == L"close") {
     auto& file = static_cast<File&>(resource(env, args[0], Kind::File));
-    file.close();
+    try { file.close(); }
+    catch (...) {
+      retainFailedRuntimeFile(file);
+      throw;
+    }
     return null(env);
   }
   if (operation == L"read") {
@@ -897,26 +913,32 @@ napi_value filesystemCall(napi_env env, const std::wstring& operation,
   if (operation == L"runtime_open") {
     const auto path = relativePath(root, wide(env, args[1]));
     auto file = runtimeDirectory(root, path.substr(0, path.find_last_of(L'\\')));
-    file->path = path;
-    file->requestedPath = path;
-    // Retained output handles have write and DELETE access, so this read open
-    // must share both to pass Windows' symmetric share check. Those retained
-    // handles still omit FILE_SHARE_WRITE and FILE_SHARE_DELETE, blocking
-    // competing writes and delete opens.
-    auto child = openRelative(file->get(), path.substr(path.find_last_of(L'\\') + 1),
-                              GENERIC_READ | FILE_READ_ATTRIBUTES | READ_CONTROL,
-                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                              FILE_NON_DIRECTORY_FILE, path);
-    FILE_ATTRIBUTE_TAG_INFO info{};
-    require(GetFileInformationByHandleEx(child.get(), FileAttributeTagInfo, &info, sizeof(info)),
-            "Read private file tag failed", path);
-    require((info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0,
-            "Reparse private file is unsupported", path, ERROR_NOT_SUPPORTED);
-    file->handles.push_back(std::move(child));
-    verifyPrivate(file->get(), path, false);
-    auto result = identity(env, file->get(), path);
-    set(env, result, "handle", wrap(env, std::move(file)));
-    return result;
+    file->cleanupOwner = &root;
+    try {
+      file->path = path;
+      file->requestedPath = path;
+      // Retained output handles have write and DELETE access, so this read open
+      // must share both to pass Windows' symmetric share check. Those retained
+      // handles still omit FILE_SHARE_WRITE and FILE_SHARE_DELETE, blocking
+      // competing writes and delete opens.
+      auto child = openRelative(file->get(), path.substr(path.find_last_of(L'\\') + 1),
+                                GENERIC_READ | FILE_READ_ATTRIBUTES | READ_CONTROL,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                FILE_NON_DIRECTORY_FILE, path);
+      FILE_ATTRIBUTE_TAG_INFO info{};
+      require(GetFileInformationByHandleEx(child.get(), FileAttributeTagInfo, &info, sizeof(info)),
+              "Read private file tag failed", path);
+      require((info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0,
+              "Reparse private file is unsupported", path, ERROR_NOT_SUPPORTED);
+      file->handles.push_back(std::move(child));
+      verifyPrivate(file->get(), path, false);
+      auto result = identity(env, file->get(), path);
+      set(env, result, "handle", wrap(env, std::move(file)));
+      return result;
+    } catch (...) {
+      retainPendingFile(root, file);
+      throw;
+    }
   }
   if (operation == L"runtime_write") {
     bool isBuffer; check(napi_is_buffer(env, args[2], &isBuffer));

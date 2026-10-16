@@ -30,7 +30,10 @@ static BOOL fixtureDisposition(HANDLE handle, FILE_INFO_BY_HANDLE_CLASS kind,
   // disposition so the verifier can observe the owner after post-create
   // validation fails, independent of host filesystem behavior.
   static std::atomic_flag failed = ATOMIC_FLAG_INIT;
-  if (kind == FileDispositionInfo && !failed.test_and_set()) {
+  wchar_t snapshotProbe[2];
+  const bool snapshotCloseProbe =
+      GetEnvironmentVariableW(L"REA_SNAPSHOT_CLOSE_PROBE", snapshotProbe, 2) > 0;
+  if (kind == FileDispositionInfo && !snapshotCloseProbe && !failed.test_and_set()) {
     SetLastError(ERROR_ACCESS_DENIED);
     return FALSE;
   }

@@ -145,7 +145,9 @@ console.log(JSON.stringify({mode,firstFailed:true,retainedOwner:true,name,rename
         TMP: temp,
         ...(mode.startsWith("create-")
           ? { REA_NATIVE_CREATION_FAILURE: "1" }
-          : {}),
+          : mode === "snapshot-close"
+            ? { REA_SNAPSHOT_CLOSE_PROBE: "1" }
+            : {}),
       },
     });
     if (child.error !== undefined) throw child.error;

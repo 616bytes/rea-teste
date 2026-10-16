@@ -97,10 +97,13 @@ struct Resource {
   explicit Resource(Kind value) : kind(value) {}
   virtual ~Resource() = default;
 };
+struct Runtime;
 struct File : Resource {
   std::wstring requestedPath;
   std::wstring path;
   std::vector<Handle> handles;
+  // Runtime-owned child files transfer unresolved close ownership here.
+  Runtime* cleanupOwner = nullptr;
   explicit File(std::wstring path) : Resource(Kind::File), requestedPath(path), path(std::move(path)) {}
   HANDLE get() const { return handles.back().get(); }
   void close() {

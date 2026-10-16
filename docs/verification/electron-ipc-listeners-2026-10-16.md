@@ -4,7 +4,7 @@
 [#4389](https://github.com/morluto/rea/pull/4389), umbrella
 [#4027](https://github.com/morluto/rea/issues/4027).
 
-All 23 final listener regressions pass, and real draw.io operation phases succeed.
+All 24 final IPC regressions pass, and real draw.io operation phases succeed.
 Every real capture still **fails overall provider cleanup**. These are distinct
 results; neither completed-task acceleration nor token savings is established.
 
@@ -157,3 +157,37 @@ Final static checks passed: two uncached tasks, 135.173 s wall, 133.786166 famil
 CPU s and 4,274,634,752 peak cgroup bytes, no OOM. The JSON record appends exact
 source pins, denial logs, final real-app/public cleanup diagnostics and checks
 under `review_followup`; the initial records were not overwritten.
+
+## Callback invocation and remaining raw-metadata limitation
+
+Source `514b73b78` invokes `handle` callbacks through captured `Reflect.apply`,
+preserving the receiver and actual arguments without reading an app-defined
+`.call` property. The added direct-call control and hook case pass; all **24
+IPC regressions** pass (3.661 s wall, 3.404 family CPU s, 318,291,968 peak cgroup
+bytes, no OOM). This is a Node boundary check, not a real Electron handle claim.
+
+An initial three-case experiment incorrectly assumed native EventEmitter avoided
+callable method-property reads. Its `on` and `once` controls themselves failed;
+they do not demonstrate hook regressions. The attempted intrinsic event-call
+change was reverted and those invalid cases removed. Both failed runs remain
+in `callable_followup`; no successful result is assigned to them.
+
+The same unchanged draw.io verifier at this source completes actual dialog
+recovery and shape insertion, with seven IPC events, SVG elements 0 → 2 and an
+unsaved-changes indicator. Overall provider cleanup still fails. Pipeline wall
+time is 12.610 s, family CPU 7.062834 s and peak cgroup memory 634,187,776 bytes;
+there is no paired performance or token claim. All recorded scopes were later
+independently inactive/dead, which does not establish provider cleanup.
+
+Fresh review also found a distinct remaining metadata case: changing a raw
+recording wrapper's writable `.listener` property can make an app decorator
+reject removal. A production-hook/native-Node probe reproduces this (plain:
+removed; hook: decorator throws and one listener remains). Exact reproduction
+and the ownership conflict are tracked in [#4513](https://github.com/morluto/rea/issues/4513).
+No affected real app has been identified. Removing the descriptor guard alone
+does not make native removal match the mutated wrapper; temporarily rewriting
+public app metadata would add further visible mutations. This limitation is
+explicit in the observation guide and is not represented as fixed by this PR.
+
+Current-source static checks also pass: two uncached tasks, 92.912 s wall,
+92.031383 family CPU s and 4,340,375,552 peak cgroup bytes, no OOM.

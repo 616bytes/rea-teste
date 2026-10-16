@@ -138,6 +138,9 @@ Caller-defined `.listener` properties can change the identity exposed by
 `listeners()` and meta-events; accessors and Proxy metadata are not followed for
 wrapper recognition. Re-registering a raw recording wrapper on another channel
 retains the original registration's channel attribution.
+Mutating `.listener` on a raw recording wrapper can also prevent removal through
+application decorators; the reproduced identity conflict is tracked in
+[#4513](https://github.com/morluto/rea/issues/4513).
 
 ### Target fuse prerequisites
 

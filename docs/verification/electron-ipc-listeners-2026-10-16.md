@@ -4,7 +4,7 @@
 [#4389](https://github.com/morluto/rea/pull/4389), umbrella
 [#4027](https://github.com/morluto/rea/issues/4027).
 
-All 28 final IPC regressions pass, and real draw.io operation phases succeed.
+All 35 final IPC regressions pass, and real draw.io operation phases succeed.
 Every real capture still **fails overall provider cleanup**. These are distinct
 results; neither completed-task acceleration nor token savings is established.
 
@@ -221,3 +221,30 @@ remains open and is not represented as fixed.
 
 Final-source static checks pass: two uncached tasks, 171.430 s wall,
 169.139239 family CPU s and 4,091,392,000 peak cgroup bytes, no OOM.
+
+## Argument-list ownership follow-up
+
+Review of `23700fd2c` found two related representation errors. A raw callback's
+`.apply` accepts Arguments objects, other array-like objects, null or omitted
+argument lists; the recording helper assumed an Array. Native once also passes
+its actual Arguments object to a callback-defined `.apply`, whereas the hook
+passed a rest Array. Seven explicit native controls reproduce six failures
+(29 passed, six failed of 35).
+
+Source `a82d935ba` binds captured native Function apply to the method-forwarding
+function. JavaScript itself converts argument lists, treats null/undefined as
+empty and rejects invalid primitives before recording reads values. The
+array-like getter control is read exactly once. Once retains its actual
+Arguments object for invocation; recording alone takes an array slice. The
+captured slice helper is bound once, avoiding an extra helper-argument array
+on each invocation. No custom array-like parser or exception repair is added.
+
+All **35 cases** pass. The same frozen real draw.io verifier again completes
+dialog recovery and shape insertion with seven IPC events; no deadline fires,
+and overall provider cleanup still fails. Exact source identities, both failed
+boundaries, intermediate/final tests, resource costs and post-scope states are
+appended under `argument_list_followup`; previous records remain unchanged.
+
+Current-source static checks pass: two uncached tasks, 122.454 s wall,
+121.287057 family CPU s and 4,185,915,392 peak cgroup bytes, no OOM.
+The unchanged ASAR digest was checked again after the real-app trial.

@@ -20,6 +20,7 @@ import {
 import { PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION } from "../domain/browserNetworkEvidence.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { compareBrowserScenarios } from "../domain/browserScenarioDiff.js";
+import { browserScenarioCaptureSchema } from "../domain/browserScenarioCapture.js";
 import { compareBrowserScenariosInputSchema } from "../domain/browserScenarioDiffValues.js";
 import {
   AnalysisCancelledError,
@@ -722,6 +723,15 @@ describe("PlaywrightBrowserScenarioProvider request cancellation", () => {
       },
     });
     expect(session.performCalls).toBe(1);
+    const partial = result.error.partialObservation;
+    const capture = browserScenarioCaptureSchema.parse(
+      partial !== undefined &&
+        "kind" in partial &&
+        partial.kind === "browser-scenario-observation"
+        ? partial.capture
+        : undefined,
+    );
+    expect(capture.completeness.status).toBe("incomplete");
     expect(session.closeCalls).toBe(1);
   });
 });

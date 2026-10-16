@@ -554,24 +554,9 @@ export const handleWebSocketCreated = (
     );
     return;
   }
-  const sourceUrl = sanitizeBrowserUrl(rawUrl).url;
-  let parsed: URL;
-  try {
-    parsed = new URL(sourceUrl);
-  } catch (cause: unknown) {
-    // Unparseable URLs are recorded as unsupported, not as failures.
-    void cause;
-    state.completeness.exclude("websocket_connections", "unsupported_url");
-    return;
-  }
-  if (parsed.protocol === "ws:") parsed.protocol = "http:";
-  else if (parsed.protocol === "wss:") parsed.protocol = "https:";
-  else {
-    state.completeness.exclude("websocket_connections", "unsupported_url");
-    return;
-  }
-  if (!state.allowedOrigins.has(parsed.origin)) {
-    state.completeness.exclude("websocket_connections", "disallowed_origin");
+  const admitted = admittedWebSocketUrl(rawUrl, state.allowedOrigins);
+  if ("excluded" in admitted) {
+    state.completeness.exclude("websocket_connections", admitted.excluded);
     return;
   }
   if (state.webSocketConnectionsById.has(requestId)) {
@@ -583,9 +568,36 @@ export const handleWebSocketCreated = (
   }
   state.webSocketConnectionsById.set(requestId, {
     request_id: requestId,
-    url: sourceUrl,
+    url: admitted.url,
     events: [],
   });
+};
+
+/**
+ * Admit a WebSocket URL by the origin of its HTTP equivalent, returning the
+ * sanitized URL that is retained or the reason it is excluded.
+ */
+export const admittedWebSocketUrl = (
+  rawUrl: string,
+  allowedOrigins: ReadonlySet<string>,
+):
+  | { readonly url: string }
+  | { readonly excluded: "unsupported_url" | "disallowed_origin" } => {
+  const sourceUrl = sanitizeBrowserUrl(rawUrl).url;
+  let parsed: URL;
+  try {
+    parsed = new URL(sourceUrl);
+  } catch (cause: unknown) {
+    // Unparseable URLs are recorded as unsupported, not as failures.
+    void cause;
+    return { excluded: "unsupported_url" };
+  }
+  if (parsed.protocol === "ws:") parsed.protocol = "http:";
+  else if (parsed.protocol === "wss:") parsed.protocol = "https:";
+  else return { excluded: "unsupported_url" };
+  if (!allowedOrigins.has(parsed.origin))
+    return { excluded: "disallowed_origin" };
+  return { url: sourceUrl };
 };
 
 export const handleFrameNavigated = (

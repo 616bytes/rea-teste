@@ -2,6 +2,7 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { BrowserExclusionReason } from "../domain/browserCompleteness.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import type { CdpCaptureEvents } from "./CdpCaptureEvents.js";
+import { admittedWebSocketUrl } from "./CdpCaptureEventHandlers.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import {
@@ -79,6 +80,8 @@ export class CdpWorkerNetworkObservation {
   /** Admitted worker sessions; each signal aborts when its session detaches. */
   readonly #workerSessions = new Map<string, AbortController>();
   readonly #requestSessions = new Map<string, string>();
+  /** Worker requests whose next hop was over budget; later events would mix hops. */
+  readonly #frozenRequests = new Set<string>();
   readonly #pending = new Set<Promise<void>>();
   #admittedWorkers = 0;
   #releases = 0;
@@ -164,6 +167,8 @@ export class CdpWorkerNetworkObservation {
         if (starts)
           this.#requestOmitted(event.method, "invalid_protocol_value");
         return;
+      } else if (this.#frozenRequests.has(requestId)) {
+        return;
       } else if (WEBSOCKET_FRAME_EVENTS.has(event.method)) {
         // Only frames of a connection the origin policy kept are retained.
         if (!this.events.webSocketConnectionsById.has(requestId)) return;
@@ -193,8 +198,12 @@ export class CdpWorkerNetworkObservation {
       CDP_WORKER_NETWORK_LIMITS.requestBytes
     ) {
       this.#requestOmitted(event.method, "resource_budget_exhausted");
-      if (requestId !== undefined && !this.#retains(requestId))
-        this.#requestSessions.delete(requestId);
+      if (requestId !== undefined) {
+        // An omitted redirect hop would let the next response describe the
+        // earlier hop, so stop updating that record.
+        if (this.#retains(requestId)) this.#frozenRequests.add(requestId);
+        else this.#requestSessions.delete(requestId);
+      }
       return;
     }
     this.#workerRequestBytes += requestBytes;
@@ -224,23 +233,19 @@ export class CdpWorkerNetworkObservation {
    */
   #retainedRequestBytes(event: CdpEvent): number {
     const params = recordValue(event.params);
+    if (event.method === "Network.webSocketCreated") {
+      const url = cdpStringValue(params?.url);
+      if (url === undefined) return 0;
+      const admitted = admittedWebSocketUrl(url, this.allowedOrigins);
+      return "url" in admitted ? Buffer.byteLength(admitted.url) : 0;
+    }
+    if (event.method !== "Network.requestWillBeSent") return 0;
     const request = recordValue(params?.request);
-    const url =
-      event.method === "Network.webSocketCreated"
-        ? cdpStringValue(params?.url)
-        : event.method === "Network.requestWillBeSent"
-          ? cdpStringValue(request?.url)
-          : undefined;
-    if (
-      url === undefined ||
-      allowedSanitizedUrl(url, this.allowedOrigins) === undefined
-    )
-      return 0;
-    const body =
-      event.method === "Network.requestWillBeSent" &&
-      this.events.input.include_json_body_shapes
-        ? (cdpStringValue(request?.postData) ?? "")
-        : "";
+    const url = allowedSanitizedUrl(request?.url, this.allowedOrigins)?.url;
+    if (url === undefined) return 0;
+    const body = this.events.input.include_json_body_shapes
+      ? (cdpStringValue(request?.postData) ?? "")
+      : "";
     return Buffer.byteLength(url) + Buffer.byteLength(body);
   }
 

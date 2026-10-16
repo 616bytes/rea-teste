@@ -449,4 +449,71 @@ describe("CDP worker network request bytes", () => {
       ]),
     );
   });
+
+  it("stops updating a worker request once a redirect hop is over budget", async () => {
+    const { events, workers } = observation();
+    await workers.start();
+    workers.ingest(attached("worker-0"));
+    await workers.settle();
+    workers.ingest(requested("worker-0", "redirected"));
+    const longUrl = `${origin}/${"x".repeat(CDP_WORKER_NETWORK_LIMITS.requestBytes)}`;
+    workers.ingest({
+      sessionId: "worker-0",
+      method: "Network.requestWillBeSent",
+      params: {
+        requestId: "redirected",
+        type: "Fetch",
+        request: { url: longUrl, method: "GET" },
+        initiator: { type: "script" },
+        redirectResponse: { url: `${origin}/data`, status: 302 },
+      },
+    });
+    workers.ingest({
+      sessionId: "worker-0",
+      method: "Network.responseReceived",
+      params: {
+        requestId: "redirected",
+        response: { url: longUrl, status: 200, mimeType: "application/json" },
+      },
+    });
+
+    expect(events.network.get("redirected")).toMatchObject({
+      url: `${origin}/data`,
+      status: null,
+      mime_type: null,
+      redirects: [],
+    });
+    expect(events.completeness.snapshot().excluded).toContainEqual({
+      section: "network_requests",
+      reason: "resource_budget_exhausted",
+      count: 1,
+    });
+  });
+
+  it("counts allowed worker WebSocket URLs against the byte budget", async () => {
+    const { events, workers } = observation();
+    await workers.start();
+    workers.ingest(attached("worker-0"));
+    await workers.settle();
+    const socket = (requestId: string, url: string) => ({
+      sessionId: "worker-0",
+      method: "Network.webSocketCreated",
+      params: { requestId, url },
+    });
+    workers.ingest(
+      socket(
+        "oversized",
+        `ws://127.0.0.1:43127/${"x".repeat(CDP_WORKER_NETWORK_LIMITS.requestBytes)}`,
+      ),
+    );
+    workers.ingest(socket("small", "ws://127.0.0.1:43127/live"));
+
+    expect(events.webSocketConnectionsById.has("oversized")).toBe(false);
+    expect(events.webSocketConnectionsById.has("small")).toBe(true);
+    expect(events.completeness.snapshot().excluded).toContainEqual({
+      section: "websocket_connections",
+      reason: "resource_budget_exhausted",
+      count: 1,
+    });
+  });
 });

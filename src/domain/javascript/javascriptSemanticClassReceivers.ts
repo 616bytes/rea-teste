@@ -39,6 +39,16 @@ export interface ClassRegistry {
   readonly computedMethodSeen: boolean;
   readonly dynamicMemberWriteSeen: boolean;
   readonly mixinSeen: boolean;
+  readonly fieldMap: ReadonlyMap<t.Node, ReadonlyMap<string, ClassFieldInfo>>;
+}
+
+/** Single-constructor field writes; multiple or unknown writes never prove exact. */
+export interface ClassFieldInfo {
+  readonly classes: readonly (t.ClassDeclaration | t.ClassExpression)[];
+  /** Exactly one known write; false forces candidate or unknown downstream. */
+  readonly single: boolean;
+  /** True when no single class can be proven (unknown right-hand side). */
+  readonly unknown: boolean;
 }
 
 /** Proven receiver classes or a fail-closed unknown reason. */
@@ -136,6 +146,28 @@ const buildClassMethodRegistry = (
   const reassignedKeys = new Set<string>();
   let dynamicMemberWriteSeen = false;
   let mixinSeen = false;
+  const fieldWrites: {
+    readonly owner: t.ClassDeclaration | t.ClassExpression;
+    readonly field: string;
+    readonly classes: readonly (t.ClassDeclaration | t.ClassExpression)[];
+    readonly unknown: boolean;
+  }[] = [];
+  // Constructor field initializers read as single writes (`f = new C()`).
+  for (const klass of classes) {
+    for (const member of klass.body.body) {
+      if (!t.isClassProperty(member) || member.static || member.value == null)
+        continue;
+      const field = semanticStaticPropertyKey(member.key, member.computed);
+      if (field === null) continue;
+      const resolved = classesForNewValue(member.value, state);
+      fieldWrites.push({
+        owner: klass,
+        field,
+        classes: resolved.classes,
+        unknown: resolved.unknown,
+      });
+    }
+  }
   traverseJavaScriptAst(state.program, {
     enter: (node) => {
       if (t.isAssignmentExpression(node) && node.operator === "=") {
@@ -150,6 +182,24 @@ const buildClassMethodRegistry = (
           );
           if (key === null) dynamicMemberWriteSeen = true;
           else reassignedKeys.add(key);
+          // Single `this.f = new C()` writes prove the field receiver.
+          const object = unwrapJavaScriptExpression(target.object).node;
+          if (
+            key !== null &&
+            t.isThisExpression(object) &&
+            !t.isPrivateName(target.property)
+          ) {
+            const owner = enclosingInstanceClass(node, state);
+            if (owner !== null) {
+              const resolved = classesForNewValue(node.right, state);
+              fieldWrites.push({
+                owner,
+                field: key,
+                classes: resolved.classes,
+                unknown: resolved.unknown,
+              });
+            }
+          }
         }
       }
       if (
@@ -171,7 +221,63 @@ const buildClassMethodRegistry = (
     computedMethodSeen,
     dynamicMemberWriteSeen,
     mixinSeen,
+    fieldMap: indexFieldMap(fieldWrites),
   };
+};
+
+const classesForNewValue = (
+  value: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): {
+  readonly classes: readonly (t.ClassDeclaration | t.ClassExpression)[];
+  readonly unknown: boolean;
+} => {
+  const unwrapped = unwrapJavaScriptExpression(value).node;
+  if (!t.isNewExpression(unwrapped)) return { classes: [], unknown: true };
+  const callee = unwrapJavaScriptExpression(unwrapped.callee).node;
+  const classes = semanticClassCandidates(callee, state);
+  return classes.length === 0
+    ? { classes: [], unknown: true }
+    : { classes, unknown: false };
+};
+
+interface FieldWrite {
+  readonly owner: t.ClassDeclaration | t.ClassExpression;
+  readonly field: string;
+  readonly classes: readonly (t.ClassDeclaration | t.ClassExpression)[];
+  readonly unknown: boolean;
+}
+
+const indexFieldMap = (
+  writes: readonly FieldWrite[],
+): ReadonlyMap<t.Node, ReadonlyMap<string, ClassFieldInfo>> => {
+  const grouped = new Map<t.Node, Map<string, FieldWrite[]>>();
+  for (const write of writes) {
+    const table = grouped.get(write.owner) ?? new Map<string, FieldWrite[]>();
+    const list = table.get(write.field) ?? [];
+    list.push(write);
+    table.set(write.field, list);
+    grouped.set(write.owner, table);
+  }
+  const output = new Map<t.Node, Map<string, ClassFieldInfo>>();
+  for (const [owner, table] of grouped) {
+    const indexed = new Map<string, ClassFieldInfo>();
+    for (const [field, list] of table) {
+      const single = list.length === 1 && list[0]?.unknown === false;
+      const unknown = list.some((entry) => entry.unknown);
+      const classes: (t.ClassDeclaration | t.ClassExpression)[] = [];
+      for (const entry of list)
+        for (const klass of entry.classes)
+          if (!classes.includes(klass)) classes.push(klass);
+      indexed.set(field, {
+        classes,
+        single,
+        unknown: unknown || classes.length === 0,
+      });
+    }
+    output.set(owner, indexed);
+  }
+  return output;
 };
 
 /** Find the enclosing instance class for a `this` receiver, if any. */
@@ -306,7 +412,69 @@ const hasHierarchyOverride = (
   return false;
 };
 
-/** Lookup one method key for Unit 1 proven classes (exact or fail-closed). */
+/** Prove `this.f` single-constructor field receivers alongside Unit 1 shapes. */
+export const proveUnitTwoReceiver = (
+  object: t.Node,
+  site: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  seenInitializers: ReadonlySet<JavaScriptSemanticInitializer>,
+  registry: ClassRegistry,
+): ReceiverProof => {
+  const direct = proveUnitOneReceiver(object, site, state, seenInitializers);
+  if (direct.status === "proven") return direct;
+  const expression = unwrapJavaScriptExpression(object).node;
+  if (
+    !t.isMemberExpression(expression) &&
+    !t.isOptionalMemberExpression(expression)
+  )
+    return direct;
+  const holder = unwrapJavaScriptExpression(expression.object).node;
+  const field = semanticStaticPropertyKey(
+    expression.property,
+    expression.computed,
+  );
+  if (
+    !t.isThisExpression(holder) ||
+    field === null ||
+    t.isPrivateName(expression.property)
+  )
+    return direct;
+  const owner = enclosingInstanceClass(site, state);
+  if (owner === null) return direct;
+  const info = registry.fieldMap.get(owner)?.get(field);
+  if (info === undefined || info.unknown || info.classes.length === 0)
+    return {
+      status: "unknown",
+      reason: `Member receiver this.${field} has no single constructed class.`,
+    };
+  return { status: "proven", classes: info.classes };
+};
+
+/** Whether a field proof came from exactly one known write. */
+export const fieldProofIsSingle = (
+  object: t.Node,
+  site: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  registry: ClassRegistry,
+): boolean => {
+  const expression = unwrapJavaScriptExpression(object).node;
+  if (
+    !t.isMemberExpression(expression) &&
+    !t.isOptionalMemberExpression(expression)
+  )
+    return true;
+  const holder = unwrapJavaScriptExpression(expression.object).node;
+  const field = semanticStaticPropertyKey(
+    expression.property,
+    expression.computed,
+  );
+  if (!t.isThisExpression(holder) || field === null) return true;
+  const owner = enclosingInstanceClass(site, state);
+  if (owner === null) return true;
+  return registry.fieldMap.get(owner)?.get(field)?.single !== false;
+};
+
+/** Lookup one method key for proven classes (exact or fail-closed). */
 export const lookupUnitOneMethod = (
   proven: readonly (t.ClassDeclaration | t.ClassExpression)[],
   key: string,
@@ -329,18 +497,38 @@ export const lookupUnitOneMethod = (
         complete: false,
         reason: `Class method ${key} may have been reassigned or mixed in.`,
       };
+    if (ids.length > MAX_CLASS_CANDIDATES)
+      return {
+        callableIds: [],
+        complete: false,
+        reason: `Class method ${key} exceeds the per-site candidate cap.`,
+      };
     return {
-      callableIds: capCandidates(ids),
+      callableIds: [...ids],
       complete: false,
       reason: `Class method ${key} may have been reassigned or mixed in.`,
     };
   }
-  if (proven.length !== 1 || proven[0] === undefined)
+  if (proven.length !== 1 || proven[0] === undefined) {
+    const ids = collectOwnIds(proven, key, registry);
+    if (ids.length === 0)
+      return {
+        callableIds: [],
+        complete: false,
+        reason: `Class method ${key} has no single receiver class.`,
+      };
+    if (ids.length > MAX_CLASS_CANDIDATES)
+      return {
+        callableIds: [],
+        complete: false,
+        reason: `Class method ${key} exceeds the per-site candidate cap.`,
+      };
     return {
-      callableIds: [],
+      callableIds: [...ids],
       complete: false,
-      reason: `Class method ${key} has no single receiver class.`,
+      reason: `Class method ${key} has multiple receiver classes.`,
     };
+  }
   const owner = proven[0];
   const table = registry.methodsByClass.get(owner);
   const own = table?.get(key) ?? [];

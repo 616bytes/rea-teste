@@ -14,9 +14,10 @@ import {
 } from "./javascriptAstValues.js";
 import {
   MAX_CLASS_CANDIDATES,
+  fieldProofIsSingle,
   getClassRegistry,
   lookupUnitOneMethod,
-  proveUnitOneReceiver,
+  proveUnitTwoReceiver,
 } from "./javascriptSemanticClassReceivers.js";
 import {
   resolveSemanticBindingState,
@@ -165,11 +166,13 @@ const resolveMemberCall = (
       complete: false,
       reason: `Unsupported computed class method call target.`,
     };
-  const proof = proveUnitOneReceiver(
+  const registry = getClassRegistry(context.state);
+  const proof = proveUnitTwoReceiver(
     node.object,
     node,
     context.state,
     context.seenInitializers,
+    registry,
   );
   if (proof.status === "unknown")
     return {
@@ -177,7 +180,6 @@ const resolveMemberCall = (
       complete: false,
       reason: proof.reason,
     };
-  const registry = getClassRegistry(context.state);
   const lookup = lookupUnitOneMethod(proof.classes, key, registry);
   if (lookup.callableIds.length > MAX_CLASS_CANDIDATES)
     return {
@@ -191,10 +193,14 @@ const resolveMemberCall = (
       complete: false,
       reason: lookup.reason,
     };
+  // A repeated field write keeps the target ambiguous even for one class.
+  const single = fieldProofIsSingle(node.object, node, context.state, registry);
   return {
     callableIds: [...lookup.callableIds],
-    complete: lookup.complete,
-    reason: lookup.reason,
+    complete: lookup.complete && single,
+    reason: single
+      ? lookup.reason
+      : `Class method ${key} has multiple field writes.`,
   };
 };
 

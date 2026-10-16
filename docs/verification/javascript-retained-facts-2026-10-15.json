@@ -50,18 +50,18 @@
     "runtime_tree_sha256": "0b039bb2008b68e952fe482a0ef4f1745bf4a381d5d94ff4d858b22fd8038f2b"
   },
   "current_runtime": {
-    "runtime_files": 1633,
+    "runtime_files": 1645,
     "algorithm": "sha256 of compact JSON sorted [dist-relative JS path, sha256] pairs, UTF-8",
-    "runtime_tree_sha256": "6a5763452c1522a782e531e6dda227ea10140f9f9d52148fc1602a6ecf3cea5a"
+    "runtime_tree_sha256": "311fd78c7ca4717e56253413bc2725097929e0d6656efca69c9b3646a65ca348"
   },
   "current_source_sha256": {
     ".agents/skills/reverse-engineer-anything/references/javascript-applications.md": "aaa78502a3e95268f6269e75f373908045291fedf6ddd106001555ed06bb2bf6",
-    "docs/javascript-application-workflows.md": "dfc09de543015c0b24288d5b78dee5057122ae5e476a9512cb2c5f28006eb1a9",
+    "docs/javascript-application-workflows.md": "421b1aae8bf7830783f5c42b461dd10ae0b8e6ef7ca1e10fb3180fec15c19aad",
     "experiments/analysis-efficiency/javascript-facts-agent-history.json": "ac4d03088d17788b96eb0855850083bd0c22a54684d634f94f020a0491583b45",
     "experiments/analysis-efficiency/javascript-facts-agent.mjs": "9a6b4fc87fed586a2c64cdf6f483332872b1445911d644528bb2fc81b600c9e7",
     "experiments/analysis-efficiency/javascript-facts-grade.py": "0e47b7f909419187a254899e2d1e96c16ccba8d61ab7ec9f141f9df85a93ab66",
     "experiments/analysis-efficiency/test_javascript_facts_agent.py": "c84c524e34032c94f9b9a6f4ca7394fd4f08ea4b76293260673faa3681d20508",
-    "package.json": "32bed7e549e010ba128b9a20531c5c9e8b9d9428d6c49ece5ea55334e7b1c549",
+    "package.json": "884a564e4476ea14efdda3db41428a29ce1946f3235d0c40d22d7342180dbe8d",
     "scripts/lib/javascript-facts-reference.mjs": "6d0c7885f7819bc0778861d17f8c39775e48d6428150d291a48ae17bdfd2d7c8",
     "scripts/verify/javascript/retained-facts.mjs": "3731af8bf557a03ac50da98d1c97a5dd65d4c0b1e6f942304033f728ca3397b3",
     "src/contracts/analysisViewToolContracts.ts": "d7facdc03e3945f57cfba8c42c8c505c944cb77e78505cb63d1d5c9bf86c8fec",
@@ -1341,6 +1341,806 @@
           },
           "memory_peak_bytes": 1253982208,
           "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-d0105f8a517244129d30a00e90ec58a2.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
+    },
+    {
+      "name": "lifecycle-gates",
+      "log_sha256": "aaa1805443ef22bd567350dd3ee7cf6d1e29bf42fce70bd986eb4152249292e5",
+      "resources": {
+        "resource_scope": "rea-efficiency-5212c74b3cb14042a78e6056cbdc3a3c.scope",
+        "peak_cgroup_bytes_sampled": 5169971200,
+        "elapsed_seconds": 483.978,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [15],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 148,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 386556739,
+          "user_usec": 348200694,
+          "system_usec": 38356044,
+          "nr_periods": 4839,
+          "nr_throttled": 310,
+          "throttled_usec": 156670,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-5212c74b3cb14042a78e6056cbdc3a3c.scope",
+          "payload_exit_code": 1,
+          "observer_pid": 3198275,
+          "remaining_processes": [3198275],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 386555153,
+            "user_usec": 348199265,
+            "system_usec": 38355887,
+            "nr_periods": 4838,
+            "nr_throttled": 310,
+            "throttled_usec": 156670,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 5169971200,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-5212c74b3cb14042a78e6056cbdc3a3c.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
+    },
+    {
+      "name": "lifecycle-contract-cpu10",
+      "log_sha256": "30fd7f433fea6844a372efbd793656e35de5b981c55426a1cd866c2e00eafe83",
+      "resources": {
+        "resource_scope": "rea-efficiency-925333b58b0948bbac6c2f161b9b5591.scope",
+        "peak_cgroup_bytes_sampled": 903847936,
+        "elapsed_seconds": 13.545,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 50,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 13273927,
+          "user_usec": 12006504,
+          "system_usec": 1267423,
+          "nr_periods": 134,
+          "nr_throttled": 9,
+          "throttled_usec": 1309,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-925333b58b0948bbac6c2f161b9b5591.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3217130,
+          "remaining_processes": [3217130],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 13272853,
+            "user_usec": 12005532,
+            "system_usec": 1267321,
+            "nr_periods": 134,
+            "nr_throttled": 9,
+            "throttled_usec": 1309,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 920023040,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-925333b58b0948bbac6c2f161b9b5591.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
+    },
+    {
+      "name": "lifecycle-contract-isolated",
+      "log_sha256": "aac2bd176fb63aa6cf0ae3dd67ea911b5607e3389c2f1178082b12d730796e13",
+      "resources": {
+        "resource_scope": "rea-efficiency-51881ef86f194561bd2bf850f2e63464.scope",
+        "peak_cgroup_bytes_sampled": 825516032,
+        "elapsed_seconds": 24.191,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [15],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 50,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 12003949,
+          "user_usec": 10494419,
+          "system_usec": 1509530,
+          "nr_periods": 241,
+          "nr_throttled": 0,
+          "throttled_usec": 0,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-51881ef86f194561bd2bf850f2e63464.scope",
+          "payload_exit_code": 1,
+          "observer_pid": 3207987,
+          "remaining_processes": [3207987],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 12002529,
+            "user_usec": 10493177,
+            "system_usec": 1509351,
+            "nr_periods": 241,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 825778176,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-51881ef86f194561bd2bf850f2e63464.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
+    },
+    {
+      "name": "contract-diagnostic-loader-resource",
+      "log_sha256": "d0895701b42499d8c58ee4ac495f0c0c2ce0c3bd8c154ea9b08cf6258cb4a21c",
+      "resources": {
+        "resource_scope": "rea-efficiency-af0e671cf2ff4a85bc2836eefb563ad2.scope",
+        "peak_cgroup_bytes_sampled": 7352320,
+        "elapsed_seconds": 0.323,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [15],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 4,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 78988,
+          "user_usec": 43443,
+          "system_usec": 35545,
+          "nr_periods": 2,
+          "nr_throttled": 0,
+          "throttled_usec": 0,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-af0e671cf2ff4a85bc2836eefb563ad2.scope",
+          "payload_exit_code": 1,
+          "observer_pid": 3209198,
+          "remaining_processes": [3209198],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 78085,
+            "user_usec": 42947,
+            "system_usec": 35138,
+            "nr_periods": 2,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 18542592,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-af0e671cf2ff4a85bc2836eefb563ad2.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
+    },
+    {
+      "name": "contract-diagnostic-resource",
+      "log_sha256": "05eaf3930922ee895cb51d7db507be362d71ecb4c613ccf9a364080c3208d881",
+      "resources": {
+        "resource_scope": "rea-efficiency-fcc2e442f47d4511b61bd78ff1f9f733.scope",
+        "peak_cgroup_bytes_sampled": 684871680,
+        "elapsed_seconds": 24.899,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [15],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 11,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 12364980,
+          "user_usec": 11291397,
+          "system_usec": 1073583,
+          "nr_periods": 248,
+          "nr_throttled": 0,
+          "throttled_usec": 0,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-fcc2e442f47d4511b61bd78ff1f9f733.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3209464,
+          "remaining_processes": [3209464],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 12364085,
+            "user_usec": 11290579,
+            "system_usec": 1073505,
+            "nr_periods": 248,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 696930304,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-fcc2e442f47d4511b61bd78ff1f9f733.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
+    },
+    {
+      "name": "contract-profile-resource",
+      "log_sha256": "4c0f7a02d7b5433612abcb46fd728128842f946044c608193a6bd76bf42f92c6",
+      "resources": {
+        "resource_scope": "rea-efficiency-ce6bab3ff0334a47a51656919de9ab90.scope",
+        "peak_cgroup_bytes_sampled": 820961280,
+        "elapsed_seconds": 29.633,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [15],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 12,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 14696916,
+          "user_usec": 12985411,
+          "system_usec": 1711504,
+          "nr_periods": 296,
+          "nr_throttled": 0,
+          "throttled_usec": 0,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-ce6bab3ff0334a47a51656919de9ab90.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3210995,
+          "remaining_processes": [3210995],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 14695504,
+            "user_usec": 12985411,
+            "system_usec": 1710092,
+            "nr_periods": 295,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 845762560,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-ce6bab3ff0334a47a51656919de9ab90.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
+    },
+    {
+      "name": "main-control-build",
+      "log_sha256": "dd096ae707e0b9d9944988d0d98ded9bf61a3a8c787098b204b0357d9369eb92",
+      "resources": {
+        "resource_scope": "rea-efficiency-17d6d9d7a07e4122b5c559b6ca08a910.scope",
+        "peak_cgroup_bytes_sampled": 3625951232,
+        "elapsed_seconds": 174.87,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [15],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 70,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 86988252,
+          "user_usec": 65103698,
+          "system_usec": 21884554,
+          "nr_periods": 1748,
+          "nr_throttled": 48,
+          "throttled_usec": 12119,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-17d6d9d7a07e4122b5c559b6ca08a910.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3212372,
+          "remaining_processes": [3212372],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 86987018,
+            "user_usec": 65103698,
+            "system_usec": 21883319,
+            "nr_periods": 1748,
+            "nr_throttled": 48,
+            "throttled_usec": 12119,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 3638272000,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-17d6d9d7a07e4122b5c559b6ca08a910.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
+    },
+    {
+      "name": "contract-main-resource",
+      "log_sha256": "cb94d1a5348afd195b8f6a422b6b10fcbbf1f6ef8209b9e4300a2501cf35dcff",
+      "resources": {
+        "resource_scope": "rea-efficiency-5888631dcb0b4a11a52be16a8ad9a419.scope",
+        "peak_cgroup_bytes_sampled": 682610688,
+        "elapsed_seconds": 11.598,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [15],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 11,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 11263936,
+          "user_usec": 10224631,
+          "system_usec": 1039304,
+          "nr_periods": 115,
+          "nr_throttled": 35,
+          "throttled_usec": 4416,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-5888631dcb0b4a11a52be16a8ad9a419.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3215200,
+          "remaining_processes": [3215200],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 11262708,
+            "user_usec": 10223516,
+            "system_usec": 1039191,
+            "nr_periods": 115,
+            "nr_throttled": 35,
+            "throttled_usec": 4416,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 698077184,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-5888631dcb0b4a11a52be16a8ad9a419.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
+    },
+    {
+      "name": "contract-compile-resource",
+      "log_sha256": "c302bb852116b723d087780f50c7e6fe4b3d5c4b6694bec609418c074102f788",
+      "resources": {
+        "resource_scope": "rea-efficiency-34b68c397e2548d5b63cf78cf0fcfabf.scope",
+        "peak_cgroup_bytes_sampled": 701603840,
+        "elapsed_seconds": 25.196,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [15],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 11,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 12475254,
+          "user_usec": 11211891,
+          "system_usec": 1263363,
+          "nr_periods": 251,
+          "nr_throttled": 0,
+          "throttled_usec": 0,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-34b68c397e2548d5b63cf78cf0fcfabf.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3216112,
+          "remaining_processes": [3216112],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 12473798,
+            "user_usec": 11210582,
+            "system_usec": 1263215,
+            "nr_periods": 250,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 701603840,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-34b68c397e2548d5b63cf78cf0fcfabf.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      }
+    },
+    {
+      "name": "lifecycle-final-docs",
+      "log_sha256": "6c75424fab773ada5a286a7196d854640d9935dc245e498dd71453fe9a4156dd",
+      "resources": {
+        "resource_scope": "rea-efficiency-f0bcf5a71d6645f787f1a9a8bb10ae0c.scope",
+        "peak_cgroup_bytes_sampled": 809205760,
+        "elapsed_seconds": 43.728,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 63,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 41875326,
+          "user_usec": 28201011,
+          "system_usec": 13674315,
+          "nr_periods": 436,
+          "nr_throttled": 28,
+          "throttled_usec": 18711,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-f0bcf5a71d6645f787f1a9a8bb10ae0c.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3228972,
+          "remaining_processes": [3228972],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 41873577,
+            "user_usec": 28199262,
+            "system_usec": 13674315,
+            "nr_periods": 436,
+            "nr_throttled": 28,
+            "throttled_usec": 18711,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 814235648,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-f0bcf5a71d6645f787f1a9a8bb10ae0c.scope",
           "resource_events": {
             "memory.events": {
               "low": 0,
@@ -4117,6 +4917,832 @@
           "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
         }
       }
+    },
+    {
+      "name": "lifecycle-export-control",
+      "version": "lifecycle-integrated",
+      "log_sha256": "57100fa813338a6b618cc0c9d3aa54bcfd5ebeb57d85d99c5e319f889636c4da",
+      "task": {
+        "artifact_sha256": "767df409b18effe60421fbefcca873de237c7e813eac744ecdeebbc5e825a33a",
+        "mode": "export",
+        "source_paths": [
+          "ElectronAppWrapper.js",
+          "ElectronAppWrapper.js.map",
+          "index.html",
+          "package.json",
+          "node_modules/keytar/build/Release/keytar.node"
+        ],
+        "query": {
+          "kind": "javascript-facts",
+          "where": {
+            "paths": [
+              "ElectronAppWrapper.js.map",
+              "index.html",
+              "package.json",
+              "node_modules/keytar/build/Release/keytar.node"
+            ]
+          },
+          "property_keys": [
+            "path",
+            "bytes",
+            "file_kind",
+            "text_status",
+            "parse_status",
+            "json_parse_status",
+            "availability",
+            "operation",
+            "analysis_status",
+            "limitation",
+            "name",
+            "version",
+            "main",
+            "renderer"
+          ],
+          "offset": 0,
+          "limit": 64
+        },
+        "analysis_timeout_ms": null,
+        "parent_evidence_id": "ev_467e93c8e67571738dfcebe5d96bb01afa51f813b4a48ccebe2bd42c59f05e97",
+        "preparation_ms": 40732.051203999996,
+        "samples": [
+          {
+            "round": 0,
+            "elapsed_ms": 4241.377122000005,
+            "answer_bytes": 14426
+          },
+          {
+            "round": 1,
+            "elapsed_ms": 2195.294431000002,
+            "answer_bytes": 14426
+          },
+          {
+            "round": 2,
+            "elapsed_ms": 1405.1208249999981,
+            "answer_bytes": 14426
+          }
+        ],
+        "answer_elapsed_ms": 49403.817384,
+        "resources_at_first_answer": {
+          "control_group": "/user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-34afefc99ad247ffa7f1676bfe654e76.scope",
+          "cpu_seconds_since_scope_start": 48.700591,
+          "peak_cgroup_bytes": 2240831488
+        },
+        "answer_sha256": "0cdafb4f795d51e1ac31dce678244a38cc9a11f3c14441c0c43511cab43bb067",
+        "export_ms": 1680.707276000001,
+        "cli_parity": null,
+        "token_costs": {
+          "selected_catalog": 857,
+          "full_catalog": 180734,
+          "requests": 936,
+          "structured_replies": 7154,
+          "full_tool_replies": 10217,
+          "tokenizer": "cl100k_base",
+          "tiktoken_version": "0.12.0",
+          "structured_task": 8947,
+          "complete_reply_task": 12010,
+          "full_catalog_structured_task": 188824
+        },
+        "conditions": "Fresh MCP and input hashing (file cache warmed); build/OS caches uncontrolled. First export sample includes export plus caller projection code, later samples reuse that immutable export. View samples precede diagnostic export. Task token projections include preparation, first answer, selected/full name/description/inputSchema catalog and the exact baseline program; exec tool schema, host rendering, output schemas, reasoning and billing unmeasured. At-answer cgroup counters include observer/startup overhead, before repeats/export diagnostics/parity/tokenization; final external observer measures all validation work. No application or native provider executes.",
+        "canonical_answer_sha256": "d18d7650b39311a04aa14e06c4f368e5fcc84a7b35894e61ee4b8eab930d08e0",
+        "row_count": 12,
+        "source_coverage": {
+          "source_selection": {
+            "requested_paths": [
+              "ElectronAppWrapper.js",
+              "ElectronAppWrapper.js.map",
+              "index.html",
+              "package.json",
+              "node_modules/keytar/build/Release/keytar.node"
+            ],
+            "unselected_files": 5345
+          },
+          "application": {
+            "limits": [],
+            "omitted_count": null,
+            "status": "partial",
+            "truncated": false
+          },
+          "semantic": {
+            "limits": [],
+            "omitted_nodes": null,
+            "omitted_relations": null,
+            "status": "partial",
+            "truncated": false
+          },
+          "application_unknown_count": 5343,
+          "semantic_unknown_count": 41162
+        }
+      },
+      "resources": {
+        "resource_scope": "rea-efficiency-34afefc99ad247ffa7f1676bfe654e76.scope",
+        "peak_cgroup_bytes_sampled": 2238525440,
+        "elapsed_seconds": 55.22,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 29,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 53901277,
+          "user_usec": 45832963,
+          "system_usec": 8068314,
+          "nr_periods": 552,
+          "nr_throttled": 37,
+          "throttled_usec": 26957,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-34afefc99ad247ffa7f1676bfe654e76.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3217783,
+          "remaining_processes": [3217783],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 53899650,
+            "user_usec": 45831335,
+            "system_usec": 8068314,
+            "nr_periods": 551,
+            "nr_throttled": 37,
+            "throttled_usec": 26957,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 2240884736,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-34afefc99ad247ffa7f1676bfe654e76.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "comparison_to_prior_integration": {
+        "previous_run": "integrated-export-control",
+        "complete_answer_equal": false,
+        "rows_equal": true,
+        "source_coverage_equal": false,
+        "parent_evidence_id_equal": false
+      }
+    },
+    {
+      "name": "lifecycle-view-control",
+      "version": "lifecycle-integrated",
+      "log_sha256": "ff84d4430361f5728189220eef7e49907dc54129bbfb076a87e44895bb6a766a",
+      "task": {
+        "artifact_sha256": "767df409b18effe60421fbefcca873de237c7e813eac744ecdeebbc5e825a33a",
+        "mode": "view",
+        "source_paths": [
+          "ElectronAppWrapper.js",
+          "ElectronAppWrapper.js.map",
+          "index.html",
+          "package.json",
+          "node_modules/keytar/build/Release/keytar.node"
+        ],
+        "query": {
+          "kind": "javascript-facts",
+          "where": {
+            "paths": [
+              "ElectronAppWrapper.js.map",
+              "index.html",
+              "package.json",
+              "node_modules/keytar/build/Release/keytar.node"
+            ]
+          },
+          "property_keys": [
+            "path",
+            "bytes",
+            "file_kind",
+            "text_status",
+            "parse_status",
+            "json_parse_status",
+            "availability",
+            "operation",
+            "analysis_status",
+            "limitation",
+            "name",
+            "version",
+            "main",
+            "renderer"
+          ],
+          "offset": 0,
+          "limit": 64
+        },
+        "analysis_timeout_ms": null,
+        "parent_evidence_id": "ev_467e93c8e67571738dfcebe5d96bb01afa51f813b4a48ccebe2bd42c59f05e97",
+        "preparation_ms": 40692.607756,
+        "samples": [
+          {
+            "round": 0,
+            "elapsed_ms": 152.86150900000212,
+            "answer_bytes": 14426
+          },
+          {
+            "round": 1,
+            "elapsed_ms": 47.47426599999744,
+            "answer_bytes": 14426
+          },
+          {
+            "round": 2,
+            "elapsed_ms": 40.374886999998125,
+            "answer_bytes": 14426
+          }
+        ],
+        "answer_elapsed_ms": 44714.789253999996,
+        "resources_at_first_answer": {
+          "control_group": "/user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-f61c2acc303548ba8034f28924767a7a.scope",
+          "cpu_seconds_since_scope_start": 44.709653,
+          "peak_cgroup_bytes": 1540792320
+        },
+        "answer_sha256": "ff8dcf63fb42d3169696ab54e564c309852d98c2d535224b487498af988d834f",
+        "export_ms": 1575.6786719999945,
+        "cli_parity": {
+          "exact_evidence_parity": true,
+          "evidence_id": "ev_bfb22a2cc7e4034c96419658c0efaf319dc11ca1017e3991bcee9a517932eee7"
+        },
+        "token_costs": {
+          "selected_catalog": 8069,
+          "full_catalog": 180734,
+          "requests": 214,
+          "structured_replies": 9138,
+          "full_tool_replies": 18819,
+          "tokenizer": "cl100k_base",
+          "tiktoken_version": "0.12.0",
+          "structured_task": 17421,
+          "complete_reply_task": 27102,
+          "full_catalog_structured_task": 190086
+        },
+        "conditions": "Fresh MCP and input hashing (file cache warmed); build/OS caches uncontrolled. First export sample includes export plus caller projection code, later samples reuse that immutable export. View samples precede diagnostic export. Task token projections include preparation, first answer, selected/full name/description/inputSchema catalog and the exact baseline program; exec tool schema, host rendering, output schemas, reasoning and billing unmeasured. At-answer cgroup counters include observer/startup overhead, before repeats/export diagnostics/parity/tokenization; final external observer measures all validation work. No application or native provider executes.",
+        "canonical_answer_sha256": "d18d7650b39311a04aa14e06c4f368e5fcc84a7b35894e61ee4b8eab930d08e0",
+        "row_count": 12,
+        "source_coverage": {
+          "source_selection": {
+            "requested_paths": [
+              "ElectronAppWrapper.js",
+              "ElectronAppWrapper.js.map",
+              "index.html",
+              "package.json",
+              "node_modules/keytar/build/Release/keytar.node"
+            ],
+            "unselected_files": 5345
+          },
+          "application": {
+            "status": "partial",
+            "truncated": false,
+            "omitted_count": null,
+            "limits": []
+          },
+          "semantic": {
+            "status": "partial",
+            "truncated": false,
+            "omitted_nodes": null,
+            "omitted_relations": null,
+            "limits": []
+          },
+          "application_unknown_count": 5343,
+          "semantic_unknown_count": 41162
+        }
+      },
+      "resources": {
+        "resource_scope": "rea-efficiency-f61c2acc303548ba8034f28924767a7a.scope",
+        "peak_cgroup_bytes_sampled": 2720776192,
+        "elapsed_seconds": 63.143,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 28,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 62372780,
+          "user_usec": 56174756,
+          "system_usec": 6198023,
+          "nr_periods": 631,
+          "nr_throttled": 20,
+          "throttled_usec": 8675,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-f61c2acc303548ba8034f28924767a7a.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3218696,
+          "remaining_processes": [3218696],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 62371664,
+            "user_usec": 56173751,
+            "system_usec": 6197912,
+            "nr_periods": 630,
+            "nr_throttled": 20,
+            "throttled_usec": 8675,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 2721017856,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-f61c2acc303548ba8034f28924767a7a.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "comparison_to_prior_integration": {
+        "previous_run": "integrated-view-control",
+        "complete_answer_equal": false,
+        "rows_equal": true,
+        "source_coverage_equal": false,
+        "parent_evidence_id_equal": false
+      }
+    },
+    {
+      "name": "lifecycle-export-timeout",
+      "version": "lifecycle-integrated",
+      "log_sha256": "5b87f35113e37701fb7d40ff3758957cc0734f84868f94bb5d2cc961e8ef52c4",
+      "task": {
+        "artifact_sha256": "767df409b18effe60421fbefcca873de237c7e813eac744ecdeebbc5e825a33a",
+        "mode": "export",
+        "source_paths": [
+          "ElectronAppWrapper.js",
+          "ElectronAppWrapper.js.map",
+          "index.html",
+          "package.json",
+          "node_modules/keytar/build/Release/keytar.node"
+        ],
+        "query": {
+          "kind": "javascript-facts",
+          "where": {
+            "paths": [
+              "ElectronAppWrapper.js.map",
+              "index.html",
+              "package.json",
+              "node_modules/keytar/build/Release/keytar.node"
+            ]
+          },
+          "property_keys": [
+            "path",
+            "bytes",
+            "file_kind",
+            "text_status",
+            "parse_status",
+            "json_parse_status",
+            "availability",
+            "operation",
+            "analysis_status",
+            "limitation",
+            "name",
+            "version",
+            "main",
+            "renderer"
+          ],
+          "offset": 0,
+          "limit": 64
+        },
+        "analysis_timeout_ms": 1,
+        "parent_evidence_id": "ev_ba7919ad7d538a41c183dfb5e27bb9dff6058a01b83fb583beebf4205c7c9939",
+        "preparation_ms": 39318.371679,
+        "samples": [
+          {
+            "round": 0,
+            "elapsed_ms": 2543.698286999992,
+            "answer_bytes": 14225
+          },
+          {
+            "round": 1,
+            "elapsed_ms": 1243.0626159999956,
+            "answer_bytes": 14225
+          },
+          {
+            "round": 2,
+            "elapsed_ms": 1074.3659860000043,
+            "answer_bytes": 14225
+          }
+        ],
+        "answer_elapsed_ms": 45964.400578,
+        "resources_at_first_answer": {
+          "control_group": "/user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-a36395272a3a47ebbe63bb2b974b308b.scope",
+          "cpu_seconds_since_scope_start": 45.802632,
+          "peak_cgroup_bytes": 1986072576
+        },
+        "answer_sha256": "041d9b644c5830fd8c9984a2fe4583c2c85c9b9a079649b432c7441cff86127a",
+        "export_ms": 1426.576602999994,
+        "cli_parity": null,
+        "token_costs": {
+          "selected_catalog": 857,
+          "full_catalog": 180734,
+          "requests": 943,
+          "structured_replies": 4541,
+          "full_tool_replies": 4853,
+          "tokenizer": "cl100k_base",
+          "tiktoken_version": "0.12.0",
+          "structured_task": 6341,
+          "complete_reply_task": 6653,
+          "full_catalog_structured_task": 186218
+        },
+        "conditions": "Fresh MCP and input hashing (file cache warmed); build/OS caches uncontrolled. First export sample includes export plus caller projection code, later samples reuse that immutable export. View samples precede diagnostic export. Task token projections include preparation, first answer, selected/full name/description/inputSchema catalog and the exact baseline program; exec tool schema, host rendering, output schemas, reasoning and billing unmeasured. At-answer cgroup counters include observer/startup overhead, before repeats/export diagnostics/parity/tokenization; final external observer measures all validation work. No application or native provider executes.",
+        "canonical_answer_sha256": "3bc0e00eed778abcd6ff6b021cc1f1e67245727f0c85793fbcd158fe499d763b",
+        "row_count": 11,
+        "source_coverage": {
+          "source_selection": {
+            "requested_paths": [
+              "ElectronAppWrapper.js",
+              "ElectronAppWrapper.js.map",
+              "index.html",
+              "package.json",
+              "node_modules/keytar/build/Release/keytar.node"
+            ],
+            "unselected_files": 5345
+          },
+          "application": {
+            "limits": [
+              {
+                "name": "javascript_analysis_worker_timeout_ms",
+                "unit": "milliseconds",
+                "value": 1
+              }
+            ],
+            "omitted_count": null,
+            "status": "partial",
+            "truncated": false
+          },
+          "semantic": {
+            "limits": [
+              {
+                "name": "javascript_analysis_worker_timeout_ms",
+                "unit": "milliseconds",
+                "value": 1
+              }
+            ],
+            "omitted_nodes": null,
+            "omitted_relations": null,
+            "status": "partial",
+            "truncated": true
+          },
+          "application_unknown_count": 5347,
+          "semantic_unknown_count": 40164
+        }
+      },
+      "resources": {
+        "resource_scope": "rea-efficiency-a36395272a3a47ebbe63bb2b974b308b.scope",
+        "peak_cgroup_bytes_sampled": 1985810432,
+        "elapsed_seconds": 50.442,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 29,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 49758814,
+          "user_usec": 43394327,
+          "system_usec": 6364486,
+          "nr_periods": 504,
+          "nr_throttled": 41,
+          "throttled_usec": 21421,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-a36395272a3a47ebbe63bb2b974b308b.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3219474,
+          "remaining_processes": [3219474],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 49757638,
+            "user_usec": 43393301,
+            "system_usec": 6364336,
+            "nr_periods": 503,
+            "nr_throttled": 41,
+            "throttled_usec": 21421,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 1986072576,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-a36395272a3a47ebbe63bb2b974b308b.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "comparison_to_prior_integration": {
+        "previous_run": "integrated-export-timeout",
+        "complete_answer_equal": true,
+        "rows_equal": true,
+        "source_coverage_equal": true,
+        "parent_evidence_id_equal": true
+      }
+    },
+    {
+      "name": "lifecycle-view-timeout",
+      "version": "lifecycle-integrated",
+      "log_sha256": "b170c9ee83021f495fd533e322f775924480441413131e4eed694f76656efe9d",
+      "task": {
+        "artifact_sha256": "767df409b18effe60421fbefcca873de237c7e813eac744ecdeebbc5e825a33a",
+        "mode": "view",
+        "source_paths": [
+          "ElectronAppWrapper.js",
+          "ElectronAppWrapper.js.map",
+          "index.html",
+          "package.json",
+          "node_modules/keytar/build/Release/keytar.node"
+        ],
+        "query": {
+          "kind": "javascript-facts",
+          "where": {
+            "paths": [
+              "ElectronAppWrapper.js.map",
+              "index.html",
+              "package.json",
+              "node_modules/keytar/build/Release/keytar.node"
+            ]
+          },
+          "property_keys": [
+            "path",
+            "bytes",
+            "file_kind",
+            "text_status",
+            "parse_status",
+            "json_parse_status",
+            "availability",
+            "operation",
+            "analysis_status",
+            "limitation",
+            "name",
+            "version",
+            "main",
+            "renderer"
+          ],
+          "offset": 0,
+          "limit": 64
+        },
+        "analysis_timeout_ms": 1,
+        "parent_evidence_id": "ev_ba7919ad7d538a41c183dfb5e27bb9dff6058a01b83fb583beebf4205c7c9939",
+        "preparation_ms": 39107.241615,
+        "samples": [
+          {
+            "round": 0,
+            "elapsed_ms": 151.24217900000076,
+            "answer_bytes": 14225
+          },
+          {
+            "round": 1,
+            "elapsed_ms": 89.23402300000453,
+            "answer_bytes": 14225
+          },
+          {
+            "round": 2,
+            "elapsed_ms": 35.574908000002324,
+            "answer_bytes": 14225
+          }
+        ],
+        "answer_elapsed_ms": 43032.595738,
+        "resources_at_first_answer": {
+          "control_group": "/user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-e8c00e56c120422e953f12b10db69146.scope",
+          "cpu_seconds_since_scope_start": 42.952115,
+          "peak_cgroup_bytes": 1498869760
+        },
+        "answer_sha256": "a4804015295d4d8a321848f88b751071440f09079cf8e7c86d1704bdda4bc257",
+        "export_ms": 1662.5776570000016,
+        "cli_parity": {
+          "exact_evidence_parity": true,
+          "evidence_id": "ev_f7102dc375d1f40f086cb6c83f3bf4854f3321fd1b19d1616bff7fdb4b873571"
+        },
+        "token_costs": {
+          "selected_catalog": 8069,
+          "full_catalog": 180734,
+          "requests": 221,
+          "structured_replies": 6417,
+          "full_tool_replies": 13042,
+          "tokenizer": "cl100k_base",
+          "tiktoken_version": "0.12.0",
+          "structured_task": 14707,
+          "complete_reply_task": 21332,
+          "full_catalog_structured_task": 187372
+        },
+        "conditions": "Fresh MCP and input hashing (file cache warmed); build/OS caches uncontrolled. First export sample includes export plus caller projection code, later samples reuse that immutable export. View samples precede diagnostic export. Task token projections include preparation, first answer, selected/full name/description/inputSchema catalog and the exact baseline program; exec tool schema, host rendering, output schemas, reasoning and billing unmeasured. At-answer cgroup counters include observer/startup overhead, before repeats/export diagnostics/parity/tokenization; final external observer measures all validation work. No application or native provider executes.",
+        "canonical_answer_sha256": "3bc0e00eed778abcd6ff6b021cc1f1e67245727f0c85793fbcd158fe499d763b",
+        "row_count": 11,
+        "source_coverage": {
+          "source_selection": {
+            "requested_paths": [
+              "ElectronAppWrapper.js",
+              "ElectronAppWrapper.js.map",
+              "index.html",
+              "package.json",
+              "node_modules/keytar/build/Release/keytar.node"
+            ],
+            "unselected_files": 5345
+          },
+          "application": {
+            "status": "partial",
+            "truncated": false,
+            "omitted_count": null,
+            "limits": [
+              {
+                "name": "javascript_analysis_worker_timeout_ms",
+                "value": 1,
+                "unit": "milliseconds"
+              }
+            ]
+          },
+          "semantic": {
+            "status": "partial",
+            "truncated": true,
+            "omitted_nodes": null,
+            "omitted_relations": null,
+            "limits": [
+              {
+                "name": "javascript_analysis_worker_timeout_ms",
+                "value": 1,
+                "unit": "milliseconds"
+              }
+            ]
+          },
+          "application_unknown_count": 5347,
+          "semantic_unknown_count": 40164
+        }
+      },
+      "resources": {
+        "resource_scope": "rea-efficiency-e8c00e56c120422e953f12b10db69146.scope",
+        "peak_cgroup_bytes_sampled": 3028766720,
+        "elapsed_seconds": 64.651,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 28,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 63804918,
+          "user_usec": 56952026,
+          "system_usec": 6852892,
+          "nr_periods": 646,
+          "nr_throttled": 54,
+          "throttled_usec": 37902,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-e8c00e56c120422e953f12b10db69146.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3220272,
+          "remaining_processes": [3220272],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 63803240,
+            "user_usec": 56950347,
+            "system_usec": 6852892,
+            "nr_periods": 645,
+            "nr_throttled": 54,
+            "throttled_usec": 37902,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 3030863872,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-e8c00e56c120422e953f12b10db69146.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "comparison_to_prior_integration": {
+        "previous_run": "integrated-view-timeout",
+        "complete_answer_equal": true,
+        "rows_equal": true,
+        "source_coverage_equal": true,
+        "parent_evidence_id_equal": true
+      }
     }
   ],
   "actual_agent_trials": [
@@ -6317,5 +7943,121 @@
     "distinct_focused_cases": 101,
     "focused_files": 6,
     "documentation_consistency_cases": 5
+  },
+  "pre_lifecycle_integration_runtime": {
+    "runtime_files": 1633,
+    "algorithm": "sha256 of compact JSON sorted [dist-relative JS path, sha256] pairs, UTF-8",
+    "runtime_tree_sha256": "6a5763452c1522a782e531e6dda227ea10140f9f9d52148fc1602a6ecf3cea5a"
+  },
+  "pre_lifecycle_integration_source_sha256": {
+    ".agents/skills/reverse-engineer-anything/references/javascript-applications.md": "aaa78502a3e95268f6269e75f373908045291fedf6ddd106001555ed06bb2bf6",
+    "docs/javascript-application-workflows.md": "dfc09de543015c0b24288d5b78dee5057122ae5e476a9512cb2c5f28006eb1a9",
+    "experiments/analysis-efficiency/javascript-facts-agent-history.json": "ac4d03088d17788b96eb0855850083bd0c22a54684d634f94f020a0491583b45",
+    "experiments/analysis-efficiency/javascript-facts-agent.mjs": "9a6b4fc87fed586a2c64cdf6f483332872b1445911d644528bb2fc81b600c9e7",
+    "experiments/analysis-efficiency/javascript-facts-grade.py": "0e47b7f909419187a254899e2d1e96c16ccba8d61ab7ec9f141f9df85a93ab66",
+    "experiments/analysis-efficiency/test_javascript_facts_agent.py": "c84c524e34032c94f9b9a6f4ca7394fd4f08ea4b76293260673faa3681d20508",
+    "package.json": "32bed7e549e010ba128b9a20531c5c9e8b9d9428d6c49ece5ea55334e7b1c549",
+    "scripts/lib/javascript-facts-reference.mjs": "6d0c7885f7819bc0778861d17f8c39775e48d6428150d291a48ae17bdfd2d7c8",
+    "scripts/verify/javascript/retained-facts.mjs": "3731af8bf557a03ac50da98d1c97a5dd65d4c0b1e6f942304033f728ca3397b3",
+    "src/contracts/analysisViewToolContracts.ts": "d7facdc03e3945f57cfba8c42c8c505c944cb77e78505cb63d1d5c9bf86c8fec",
+    "src/domain/analysisView/analysisView.ts": "983219c143347d3ecfe0536e9ca3c97ad9a678de29aba1316bf81b31d4fc92e3",
+    "src/domain/analysisView/javascriptApplicationCoverage.ts": "1601b4f04062eb49e16fd8de817a45fd3962dae56bc619f0516a887a3b8f4089",
+    "src/domain/analysisView/javascriptApplicationView.ts": "2f248e5e02522d83457b16188bb57936655650f1226ce2897615f1ba3a7ed8d2",
+    "src/domain/analysisView/javascriptFactsView.ts": "8d793aa63b4462de5f933dffad0c24ad53700af0acd87c0e5f8d4ee181585a5d",
+    "src/domain/analysisView/javascriptModuleReferences.ts": "934f502d14e68676f2c8189452ba8be801f4c5312138ddd5d75a03047d930cf4",
+    "tests/boundary/mcp/javascriptFactsViewMcp.test.ts": "46826fb64779f135ae5b22b7e85417a1f68a3631555d9f2c0e5a6781d5a4fba9"
+  },
+  "lifecycle_integration": {
+    "main_revision": "1b97b0f3707b1cf78ac98bd4ae81638b33cc286f",
+    "merge_revision": "2ca63f4d9f2e489ce3b5cbccdc204ad0be39551c",
+    "prior_feature_head": "7ae159bfce56bf82e49e47bc7c8e867b2389d78e",
+    "upstream_pr": 4274,
+    "focused_cases": 114,
+    "focused_files": 7,
+    "combined_gate_exit_code": 1,
+    "focused_initial_passed": 113,
+    "focused_initial_failed": 1,
+    "isolated_retry_passed": 1,
+    "retry_scope": "Original test and20-second deadline unchanged. Both CPU15 attempts failed. Completed default-SDK fixture and original assertions passed outside that deadline; client eagerly compiles all207 output schemas. CPU15 measured100percent busy while this task idle. Final unchanged test executed on one CPU10 with same8GiB cap; prior failures retained. Runs across cores/host scheduling do not establish causal performance equivalence.",
+    "python_suite_counts": [35, 71],
+    "python_total": 106,
+    "command": "set -euo pipefail\nnpm ci\nnpm run docs:generate\nnpm run check\nnpm run docs:check\nnpm run verify:test-discovery\nnpm run test:python\nnpm run test:focused -- tests/boundary/mcp/javascriptFactsViewMcp.test.ts tests/boundary/mcp/analysisViewMcp.test.ts src/domain/analysisView/analysisView.test.ts src/application/analysisView/AnalysisViewService.test.ts tests/boundary/mcp/toolSchemaValidity.test.ts tests/boundary/mcp/contractPresentation.test.ts tests/boundary/cli/adbCli.test.ts",
+    "actual_model_retrials": 0,
+    "scope": "Latest shared lifecycle/static backend; four fresh real Joplin export/view normal/interrupted controls. Historical model trials and fourteen earlier manual workflows retain their original versions.",
+    "retry_command": "taskset -c 10 <same 8GiB resource wrapper> npm run test:focused -- tests/boundary/mcp/contractPresentation.test.ts",
+    "manual_cpu_affinity": [10],
+    "semantic_coverage_note": "Normal selected rows and their complete Evidence match the previous integration. Parent Evidence changes with semantic_unknown_count41161→41162. The specific extra unknown was not individually isolated; both current export/view workflows must agree with current complete Evidence. Do not claim equality of full normal parent or source coverage."
+  },
+  "client_compilation_diagnostic": {
+    "sdk_client_version": "2.3.1",
+    "current_revision": "2ca63f4d9f2e489ce3b5cbccdc204ad0be39551c",
+    "main_control_revision": "1b97b0f3707b1cf78ac98bd4ae81638b33cc286f",
+    "catalog_tools": 207,
+    "fixture_named_responses": 16,
+    "baseline_named_responses": 16,
+    "output_schema_bytes": {
+      "main": 128229,
+      "candidate": 137174,
+      "encoding": "compact JSON UTF-8"
+    },
+    "changed_output_schema_names": ["inspect_analysis_view"],
+    "largest_observed_compilations": [
+      {
+        "stage": "compile",
+        "ms": 15799.467217,
+        "name": "inspect_analysis_view",
+        "compile_ms": 1533.2879049999992,
+        "output_bytes": 137174
+      },
+      {
+        "stage": "compile",
+        "ms": 7504.2275309999995,
+        "name": "annotate_native_function",
+        "compile_ms": 431.31602099999964,
+        "output_bytes": 28495
+      },
+      {
+        "stage": "compile",
+        "ms": 19872.406321,
+        "name": "capture_browser_scenario",
+        "compile_ms": 239.93621300000086,
+        "output_bytes": 36125
+      },
+      {
+        "stage": "compile",
+        "ms": 7728.668936,
+        "name": "inspect_native_load_image",
+        "compile_ms": 224.1101549999994,
+        "output_bytes": 18141
+      },
+      {
+        "stage": "compile",
+        "ms": 11532.473517,
+        "name": "inspect_artifact",
+        "compile_ms": 221.63715500000035,
+        "output_bytes": 22688
+      },
+      {
+        "stage": "compile",
+        "ms": 20310.856451,
+        "name": "analyze_javascript_application",
+        "compile_ms": 218.23588500000187,
+        "output_bytes": 38149
+      }
+    ],
+    "original_assertion_replay": {
+      "verified_catalog_tools": 207,
+      "verified_named_responses": 16,
+      "scope": "Original contractPresentation assertions replayed over completed unmodified fixture output; does not turn the timed-out Vitest run into a pass."
+    },
+    "actual_fixture_stdout_sha256": "863a8285c95bb0017bf376d991d8cc21d88592a9c7f478d1b0e57ae3d7edbc9c",
+    "main_fixture_stdout_sha256": "7a58af0e5399c1e59f11c3e4656802d7f13bccbc806595ac7d928aa1a7486586",
+    "profile_sha256": "27a2a45858610afb9a6e7b0a098e619595ef46b0fc52479229e400080e66ed98",
+    "scope": "Read-only diagnostic instrumentation; default SDK eagerly compiles every cached output schema on first call. CPU15 was externally saturated; original two20-second fixture failures retained. Unchanged original test passed11.446s on one CPU10, with20-second deadline retained. Main/candidate runs on different transient host scheduling are not a causal latency comparison. No SDK or production source changed.",
+    "main_control_runtime": {
+      "runtime_files": 1643,
+      "algorithm": "sha256 of compact JSON sorted [dist-relative JS path, sha256] pairs, UTF-8",
+      "runtime_tree_sha256": "8d0c5ed17623ee6ef600dc5218c02dc4c05e3adcf1d9491f4344112e3ed6a100"
+    }
   }
 }

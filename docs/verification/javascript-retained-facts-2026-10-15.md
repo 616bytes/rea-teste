@@ -260,7 +260,7 @@ harness reconstructions were verified against their recorded SHA-256 values.
 No tech-debt markers were introduced. These final audit receipts are retained
 separately from backend task performance.
 
-## Current-main integration
+## Main integration on 2026-10-15
 
 The measured V2 checkpoint is
 `d32547f9ac7769049a8ee6fbc8a27abcb2285a54`. Main advanced during the trials;
@@ -323,13 +323,128 @@ to check the original class/message independently. All attempts remain in JSON.
 The final eight cases passed, followed by the complete Python suite (35 bridge
 plus71 experiment cases:106 total, including the eight new cases). Full static,
 docs/five consistency and test-discovery checks passed again; all four historical
-harness patches reconstruct their recorded hashes. The backend runtime remains
-exactly the integrated 1,633-file tree above; no model trial or real-app analysis
-was rerun for these runner-only corrections. Existing fourteen real-app answers
-and their original source/harness versions remain unchanged.
+harness patches reconstruct their recorded hashes. At that review-fix checkpoint, the backend remained the integrated 1,633-file
+tree above; no model trial or real-app analysis was rerun for those runner-only
+corrections. The following lifecycle integration is a separate backend version.
+The fourteen historical real-app answers retain their original versions.
 
 ```sh
 python3 -m unittest discover -s experiments/analysis-efficiency \
   -p test_javascript_facts_agent.py -v
 npm run test:python
 ```
+
+## Lifecycle-main integration on 2026-10-16
+
+Upstream #4274 merged as `1b97b0f3707b1cf78ac98bd4ae81638b33cc286f`.
+Merge `2ca63f4d9f2e489ce3b5cbccdc204ad0be39551c` integrates it without
+changing the retained-facts implementation. Locked dependencies were reinstalled.
+The current runtime contains **1,645 JS files**, compact sorted path/hash tree
+`311fd78c7ca4717e56253413bc2725097929e0d6656efca69c9b3646a65ca348`.
+The JSON preserves both earlier runtime/source manifests and all historical
+trials. No model trials were rerun.
+
+Full static, generated docs/metadata, five documentation-consistency cases,
+test discovery and all **106 Python cases** passed. The initial combined command
+returned exit 1: **113 focused cases passed and one contract-order fixture hit its
+20-second subprocess budget**. It took 483.978 s wall / 386.555153 s CPU /
+5,169,971,200 B peak cgroup memory, with no OOM and verified cleanup. An isolated
+CPU-15 retry also failed at that deadline. These attempts remain failures in JSON.
+The original unmodified test then passed on one CPU 10 in 11.446 s, retaining its
+20-second deadline; its complete wrapper took 13.545 s wall / 13.272853 s CPU /
+920,023,040 B peak. Thus **114 distinct focused cases across seven files passed
+across the documented invocations**, including the previously failing ADB case.
+This does not describe the initial combined command as successful.
+
+Four fresh controls use the same one-CPU/8-GiB wrapper, explicitly selecting CPU
+10 because CPU 15 was observed fully busy while this task was idle. Memory
+includes file cache. First-answer counters precede diagnostic exports, repeated
+queries, CLI parity and tokenization; external scope receipts include that extra
+verification. Caches and host scheduling remain uncontrolled.
+
+| Lifecycle run            | First retrieval ms |             Warm ms | First-answer wall s | CPU s at answer | Peak B at answer | Structured selected / full-catalog BPE |
+| ------------------------ | -----------------: | ------------------: | ------------------: | --------------: | ---------------: | -------------------------------------: |
+| lifecycle-export-control |           4241.377 | 2195.294 / 1405.121 |              49.404 |       48.700591 |    2,240,831,488 |                        8,947 / 188,824 |
+| lifecycle-view-control   |            152.862 |     47.474 / 40.375 |              44.715 |       44.709653 |    1,540,792,320 |                       17,421 / 190,086 |
+| lifecycle-export-timeout |           2543.698 | 1243.063 / 1074.366 |              45.964 |       45.802632 |    1,986,072,576 |                        6,341 / 186,218 |
+| lifecycle-view-timeout   |            151.242 |     89.234 / 35.575 |              43.033 |       42.952115 |    1,498,869,760 |                       14,707 / 187,372 |
+
+All four passed the independent current-runtime export oracle. Both view cases
+passed exact complete CLI/MCP Evidence parity. Normal results retain the same
+12 original observations and their complete per-row Evidence. Their parent
+Evidence changes with `semantic_unknown_count` 41,161 → 41,162; the additional
+unknown was not individually isolated. Both current workflows report the same
+current coverage, rather than projecting the historical count. Interrupted
+results retain the same complete 11-row answer, parent and coverage as before.
+There are now 18 version-labelled manual workflows and nine complete view
+CLI/MCP parity controls. Historical agent measurements do not become claims
+about this newer backend.
+
+The normal selected structured task still costs more BPE for the view
+(17,421 versus 8,947), while its first retrieval is smaller in this cohort
+(152.862 versus 4,241.377 ms). No causal speedup, portable equivalence or universal
+token benefit follows from these single-cohort measurements.
+
+Final `check:fast`, `docs:check` and five consistency cases passed again:
+43.728 s wall / 41.873577 s CPU / 814,235,648 B peak. All 16 authored source
+hashes and the measured runtime tree still match.
+
+### Default-client compilation diagnostic
+
+The pinned SDK client 2.3.1 builds its output-validator index by compiling every
+cached `tools/list` output schema on the first `callTool`. A CPU profile and
+read-only instrumentation located the fixture delay there; PNG comparison and
+cleanup were not the expensive stages. The completed default-client fixture
+passed the original catalog and response assertions: 207 tool schemas and 16
+named responses. This replay does not turn either timed-out Vitest run into a
+pass. No SDK, production code, fixture, or test deadline was changed.
+
+A separately built main-only worktree at `1b97b0f37` also compiles the complete
+catalog. Its fixture took 11.598 s wall / 11.262708 s CPU; the candidate diagnostic
+took 24.899 s wall / 12.364085 s CPU. CPU-15 saturation, different transient
+scheduling and warm caches prevent a causal wall-time comparison. The
+`inspect_analysis_view` output schema grows from 128229 to 137174 compact UTF-8
+bytes; that additional client work remains a cost of the additive contract.
+The sampled profile attributes substantial wall samples to SDK AJV compilation
+and GC; these samples are not CPU-time attribution. Raw catalogs and CPU profiles
+are reproducible diagnostics and are not archived. Their hashes and compact
+results remain in JSON.
+
+Reproduce the profile against either pinned checkout after its locked install
+and runtime build, within the resource wrapper above:
+
+```sh
+node --cpu-prof --cpu-prof-dir=/tmp/rea-contract-profile \
+  tests/fixtures/contractPresentation.mjs reversed > /tmp/rea-contract-result.json
+```
+
+To identify individual compilations on the pinned SDK, preload this diagnostic
+from an ignored checkout-local `.cache/contract-compile-probe.mjs`:
+
+```javascript
+import { Client } from "@modelcontextprotocol/client";
+const compile = Client.prototype._compileOutputValidator;
+Client.prototype._compileOutputValidator = function (tool) {
+  const started = performance.now();
+  try {
+    return compile.call(this, tool);
+  } finally {
+    console.error(
+      JSON.stringify({
+        name: tool.name,
+        compile_ms: performance.now() - started,
+      }),
+    );
+  }
+};
+```
+
+```sh
+node --import ./.cache/contract-compile-probe.mjs \
+  tests/fixtures/contractPresentation.mjs reversed > /tmp/rea-contract-result.json
+```
+
+This private SDK hook is diagnostic-only and version-specific. It is not a REA
+execution surface or a proposed SDK fork. A client can separately evaluate the
+public per-call `toolDefinition` option without reducing catalog completeness
+or changing backend authority; no such client change was made here.

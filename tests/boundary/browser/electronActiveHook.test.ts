@@ -259,6 +259,50 @@ process.stdout.write(JSON.stringify(snapshot) + "\\n");
   });
 });
 
+it("removes observed ipcMain listeners through their original function", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-ipc-removal-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-removal.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const event = { sender: { id: 9 }, senderFrame: { routingId: 7 } };
+let calls = 0;
+const listener = () => { calls += 1; };
+ipcMain.on("repeated", listener);
+ipcMain.on("repeated", listener);
+ipcMain.removeListener("repeated", listener);
+const repeatedAfterFirstRemoval = ipcMain.listenerCount("repeated");
+ipcMain.off("repeated", listener);
+ipcMain.once("pending-once", listener);
+ipcMain.removeListener("pending-once", listener);
+ipcMain.on("fired-once", listener);
+ipcMain.once("fired-once", listener);
+ipcMain.emit("fired-once", event);
+ipcMain.removeListener("fired-once", listener);
+ipcMain.emit("repeated", event);
+ipcMain.emit("pending-once", event);
+ipcMain.emit("fired-once", event);
+const snapshot = globalThis.__reaElectronActiveSnapshot();
+process.stdout.write(JSON.stringify({
+  calls,
+  repeated_after_first_removal: repeatedAfterFirstRemoval,
+  listeners: ["repeated", "pending-once", "fired-once"].map((channel) => ipcMain.listenerCount(channel)),
+  invocations: snapshot.events.filter((item) => item.kind === "main-event-invocation").map((item) => item.channel),
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  expect(JSON.parse(execution.stdout)).toEqual({
+    calls: 2,
+    repeated_after_first_removal: 1,
+    listeners: [0, 0, 0],
+    invocations: ["fired-once", "fired-once"],
+  });
+});
+
 it("isolates hook and exercise from ancestor Electron packages", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ancestor-");
   temporary.push(root);

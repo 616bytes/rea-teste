@@ -343,8 +343,55 @@ const recordInvocation = (kind, channel, event, args) =>
     error: false,
   });
 
+// Each on/once registration gets its own wrapper; removal must find the most
+// recent wrapper that is still registered for the caller's original listener.
+const isRegisteredListener = (emitter, channel, wrapper) =>
+  typeof emitter.rawListeners !== "function" ||
+  emitter
+    .rawListeners(channel)
+    .some((listener) => listener === wrapper || listener?.listener === wrapper);
+
 const patchIpcMain = (ipcMain) => {
   if (ipcMain === null || ipcMain === undefined) return;
+  const eventWrappers = new Map();
+  let registeringOnce = 0;
+  const rememberWrapper = (channel, listener, wrapper) => {
+    let channelWrappers = eventWrappers.get(channel);
+    if (channelWrappers === undefined) {
+      channelWrappers = new WeakMap();
+      eventWrappers.set(channel, channelWrappers);
+    }
+    const wrappers = channelWrappers.get(listener) ?? [];
+    wrappers.push(wrapper);
+    channelWrappers.set(listener, wrappers);
+  };
+  const takeWrapper = (emitter, channel, listener) => {
+    const channelWrappers = eventWrappers.get(channel);
+    const wrappers = channelWrappers?.get(listener);
+    if (wrappers === undefined) return listener;
+    while (wrappers.length > 0) {
+      const wrapper = wrappers.pop();
+      if (isRegisteredListener(emitter, channel, wrapper)) {
+        if (wrappers.length === 0) channelWrappers.delete(listener);
+        return wrapper;
+      }
+    }
+    channelWrappers.delete(listener);
+    return listener;
+  };
+  for (const method of ["removeListener", "off"]) {
+    const original = ipcMain[method];
+    if (typeof original !== "function") continue;
+    ipcMain[method] = function patchedIpcMainRemoval(channel, listener) {
+      return original.call(
+        this,
+        channel,
+        typeof listener === "function"
+          ? takeWrapper(this, channel, listener)
+          : listener,
+      );
+    };
+  }
   for (const [method, kind] of [
     ["handle", "main-handler-invocation"],
     ["on", "main-event-invocation"],
@@ -353,7 +400,8 @@ const patchIpcMain = (ipcMain) => {
     const original = ipcMain[method];
     if (typeof original !== "function") continue;
     ipcMain[method] = function patchedIpcMain(channel, listener) {
-      if (typeof listener !== "function")
+      // EventEmitter#once registers its own wrapper through this.on.
+      if (typeof listener !== "function" || registeringOnce > 0)
         return original.call(this, channel, listener);
       const wrapped =
         kind === "main-handler-invocation"
@@ -377,7 +425,15 @@ const patchIpcMain = (ipcMain) => {
                 throw cause;
               }
             };
-      return original.call(this, channel, wrapped);
+      if (kind === "main-event-invocation")
+        rememberWrapper(channel, listener, wrapped);
+      if (method !== "once") return original.call(this, channel, wrapped);
+      registeringOnce += 1;
+      try {
+        return original.call(this, channel, wrapped);
+      } finally {
+        registeringOnce -= 1;
+      }
     };
   }
 };

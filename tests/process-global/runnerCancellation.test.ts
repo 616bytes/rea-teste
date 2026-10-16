@@ -116,20 +116,13 @@ it.runIf(process.platform === "win32")(
       await runner.ready;
       await expect(readFile(started, "utf8")).resolves.toBe("started");
       runner.child.send("SIGTERM");
-      await expect(
-        withTimeout(
-          runner.closeEvent,
-          "supervisor retained the child after cancellation",
-          1_000,
-        ),
-      ).resolves.toMatchObject({ code: 143 });
+      await expect(runner.closed()).resolves.toMatchObject({ code: 143 });
       expect(await pathExists(gate)).toBe(false);
       await expect(
         launch(directory, 'process.stdout.write("released");').closed,
       ).resolves.toMatchObject({ code: 0, stdout: "released" });
     } finally {
       await writeFile(gate, "release");
-      await runner.closed();
     }
   },
 );
@@ -254,7 +247,6 @@ async function exerciseWindowsGrandchild(
     ).resolves.toMatchObject({ code: 0, stdout: "released" });
   } finally {
     await writeFile(gatePath, "stop");
-    await runner.closed();
   }
 }
 
@@ -266,22 +258,7 @@ it.runIf(process.platform === "win32")(
     );
     const gate = join(directory, "release-child");
     const started = join(directory, "child-started");
-    const tracePath = join(directory, "supervisor-trace.log");
-    const preloadPath = join(directory, "trace-disconnect.cjs");
-    await writeFile(
-      preloadPath,
-      `
-        const fs = require("node:fs");
-        const trace = ${JSON.stringify(tracePath)};
-        const append = (entry) => fs.appendFileSync(trace, entry + "\\n");
-        process.on("disconnect", () => append("disconnect-event"));
-        process.on("beforeExit", (code) => append("before-exit:" + code));
-        process.on("exit", (code) => append("exit:" + code));
-      `,
-    );
-    const runner = launchSupervisor(directory, gatedCommand(gate, started), {
-      preloadPath,
-    });
+    const runner = launchSupervisor(directory, gatedCommand(gate, started));
     onTestFinished(async () => {
       await writeFile(gate, "release");
       await runner.closed();
@@ -290,27 +267,13 @@ it.runIf(process.platform === "win32")(
       await runner.ready;
       await expect(readFile(started, "utf8")).resolves.toBe("started");
       runner.child.disconnect();
-      await expect(
-        withTimeout(
-          runner.closeEvent,
-          "supervisor retained the child after disconnect",
-          5_000,
-        ).catch(async (cause: unknown) => {
-          throw new Error(
-            `${cause instanceof Error ? cause.message : String(cause)}; ` +
-              `trace=${JSON.stringify(await readFile(tracePath, "utf8").catch(() => undefined))}; ` +
-              `supervisorExitCode=${runner.child.exitCode}; ` +
-              `stderr=${JSON.stringify(runner.stderr)}`,
-          );
-        }),
-      ).resolves.toMatchObject({ code: 143 });
+      await expect(runner.closed()).resolves.toMatchObject({ code: 143 });
       expect(await pathExists(gate)).toBe(false);
       await expect(
         launch(directory, 'process.stdout.write("released");').closed,
       ).resolves.toMatchObject({ code: 0, stdout: "released" });
     } finally {
       await writeFile(gate, "release");
-      await runner.closed();
     }
   },
 );
@@ -526,17 +489,10 @@ function launch(directory: string, command: string) {
   return { child, ready, closed };
 }
 
-function launchSupervisor(
-  directory: string,
-  command: string,
-  { preloadPath }: { preloadPath?: string } = {},
-) {
-  const nodeArguments =
-    preloadPath === undefined ? [] : ["--require", preloadPath];
+function launchSupervisor(directory: string, command: string) {
   const child = spawn(
     process.execPath,
     [
-      ...nodeArguments,
       fileURLToPath(
         new URL("../../scripts/run-exclusive-command.mjs", import.meta.url),
       ),
@@ -549,6 +505,8 @@ function launchSupervisor(
   );
   if (child.stdout === null || child.stderr === null)
     throw new Error("runner supervisor streams were not piped");
+  const stdoutStream = child.stdout;
+  const stderrStream = child.stderr;
   let stdout = "";
   let stderr = "";
   let notifyReady: (() => void) | undefined;
@@ -559,28 +517,40 @@ function launchSupervisor(
     "runner supervisor child did not start",
   );
   void ready.catch(() => {});
-  child.stdout.on("data", (chunk) => {
+  stdoutStream.on("data", (chunk) => {
     stdout += chunk.toString();
     if (stdout.includes("ready")) notifyReady?.();
   });
-  child.stderr.on("data", (chunk) => (stderr += chunk.toString()));
-  const closeEvent = new Promise<{
+  stderrStream.on("data", (chunk) => (stderr += chunk.toString()));
+  const exited = new Promise<{
     code: number | null;
     signal: NodeJS.Signals | null;
-    stdout: string;
-    stderr: string;
-  }>((resolveClosed, reject) => {
+  }>((resolveExit, reject) => {
     child.once("error", reject);
-    child.once("close", (code, signal) => {
+    child.once("exit", (code, signal) => {
       notifyReady?.();
-      resolveClosed({ code, signal, stdout, stderr });
+      resolveExit({ code, signal });
     });
   });
+  const stdoutClosed = new Promise<void>((resolveClose) => {
+    stdoutStream.once("close", resolveClose);
+  });
+  const stderrClosed = new Promise<void>((resolveClose) => {
+    stderrStream.once("close", resolveClose);
+  });
+  const ipcDisconnected = new Promise<void>((resolveDisconnect) => {
+    child.once("disconnect", resolveDisconnect);
+  });
+  const finished = Promise.all([
+    exited,
+    stdoutClosed,
+    stderrClosed,
+    ipcDisconnected,
+  ]).then(([{ code, signal }]) => ({ code, signal, stdout, stderr }));
   return {
     child,
     ready,
-    closeEvent,
-    closed: () => withTimeout(closeEvent, "runner supervisor did not finish"),
+    closed: () => withTimeout(finished, "runner supervisor did not finish"),
     get stdout() {
       return stdout;
     },

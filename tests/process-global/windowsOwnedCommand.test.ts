@@ -191,6 +191,56 @@ it("supervises protocol stdin errors until the owned job and stream close", asyn
 });
 
 it.runIf(process.platform === "win32")(
+  "supervises native protocol stdin through Job Object close",
+  async () => {
+    const directory = await createTestTempDirectory("rea-owned-stdin-probe-");
+    const WindowsOwnedProcess = await loadWindowsOwnedProcessClass();
+    const child = new WindowsOwnedProcess(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)"],
+      directory,
+      process.env,
+      false,
+      {
+        protocolStdin: true,
+        authority: requireWindowsNativeAuthority(),
+      },
+    );
+    child.stdout.resume();
+    child.stderr.resume();
+    const lifecycle = superviseWindowsOwnedProcess(child);
+    const stdin = child.stdin;
+    if (stdin === null) throw new Error("fixture protocol stdin missing");
+    let stdinClosed = false;
+    stdin.once("close", () => {
+      stdinClosed = true;
+    });
+    process.stdin.pipe(stdin);
+
+    try {
+      lifecycle.requestCleanup();
+      let settled = false;
+      void lifecycle.finished.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await vi.waitFor(() => expect(settled).toBe(true), { timeout: 15_000 });
+      await expect(lifecycle.finished).resolves.toMatchObject({
+        code: expect.any(Number),
+      });
+      expect(stdinClosed).toBe(true);
+    } finally {
+      process.stdin.unpipe(stdin);
+      lifecycle.requestCleanup();
+    }
+  },
+);
+
+it.runIf(process.platform === "win32")(
   "keeps native Job Object ownership after the leader exits",
   async () => {
     const directory = await createTestTempDirectory("rea-owned-tree-probe-");

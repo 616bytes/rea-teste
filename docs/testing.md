@@ -270,6 +270,12 @@ leader exits, deny cleanup observation, and verify a competing writer remains
 excluded until the exact Job Object closes. Portable doubles cover retry logic;
 the native Windows lane must establish actual process-tree behavior.
 
+Supervisor tests must observe process exit, output-pipe closure, and IPC
+disconnection separately. In the pinned Node runtime, a parent-initiated IPC
+disconnect can omit the aggregate `ChildProcess` close event. Join the actual
+resource observations before reporting completion; process exit alone does not
+establish pipe or process-tree release.
+
 When changing an internal helper contract, check its JavaScript verifier and
 subprocess-script consumers alongside TypeScript references. Source typecheck
 does not check those calls; run their orchestration tests against the built

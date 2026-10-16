@@ -149,16 +149,8 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         options.signal,
       );
       capture = projectElectronActiveCapture(paths, actions, state);
-      outcome = options.signal?.aborted
-        ? err(
-            new BrowserObservationError(OPERATION, "cancelled", {
-              partialObservation: {
-                kind: "electron-active-observation",
-                capture,
-              },
-            }),
-          )
-        : ok(capture);
+      // Cancellation after this read is decided once finalization has settled.
+      outcome = ok(capture);
     } catch (cause: unknown) {
       if (paths !== undefined && initialState !== undefined) {
         const retainedCapture = projectElectronActiveCapture(
@@ -280,6 +272,18 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
           ],
         });
     }
+    // Cleanup failures returned above keep precedence; a completed capture
+    // observed under late cancellation is retained as partial Evidence.
+    if (outcome.ok && options.signal?.aborted === true)
+      return err(
+        new BrowserObservationError(OPERATION, "cancelled", {
+          cause: options.signal.reason,
+          partialObservation: {
+            kind: "electron-active-observation",
+            capture: outcome.value,
+          },
+        }),
+      );
     return outcome;
   }
 }

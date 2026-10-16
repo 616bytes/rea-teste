@@ -538,3 +538,123 @@ it("observes an initial state read started after cancellation and rejected by cl
     process.off("unhandledRejection", recordUnhandled);
   }
 });
+
+const stubCompletedCapture = () => {
+  const state = {
+    windows: [],
+    metrics: [],
+    electronVersion: "44.0.0",
+    hookSnapshot: emptyHookSnapshot(),
+  };
+  vi.spyOn(electronActions, "readApplicationState").mockResolvedValue(state);
+  vi.spyOn(electronActions, "readFinalApplicationState").mockResolvedValue(
+    state,
+  );
+};
+
+it("cancels a completed capture when cancellation arrives during application close", async () => {
+  stubVerifiedElectronCleanup();
+  stubCompletedCapture();
+  const controller = new AbortController();
+  const reason = new Error("SIGTERM during close");
+  const application = {
+    process: () => ({ pid: 424242 }),
+    close: vi.fn(async () => {
+      controller.abort(reason);
+    }),
+    windows: () => [],
+  };
+
+  const result = await captureWithController(controller, application, []);
+
+  expect(application.close).toHaveBeenCalledOnce();
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected the capture to be cancelled");
+  expect(result.error).toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "cancelled",
+    partialObservation: {
+      kind: "electron-active-observation",
+      capture: { application: { electron_version: "44.0.0" } },
+    },
+  });
+  expect(result.error.cause).toBe(reason);
+});
+
+it("cancels a completed capture when cancellation arrives during process cleanup", async () => {
+  stubVerifiedElectronCleanup();
+  stubCompletedCapture();
+  const controller = new AbortController();
+  const reason = new Error("SIGTERM during process cleanup");
+  // The POSIX path ends with the token sweep; Windows ends with tree termination.
+  vi.spyOn(processOwnership, "verifyNoTokenOwnedProcesses").mockImplementation(
+    async () => {
+      controller.abort(reason);
+      return {
+        cleaned: true,
+        signaled: false,
+        unverified: [{ pid: 777, diagnostic: "command line unavailable" }],
+      };
+    },
+  );
+  vi.spyOn(processOwnership, "cleanupWindowsProcessTree").mockImplementation(
+    async () => {
+      controller.abort(reason);
+      return { cleaned: true, signaled: true };
+    },
+  );
+  const application = {
+    process: () => ({ pid: 424242 }),
+    close: vi.fn(async () => undefined),
+    windows: () => [],
+  };
+
+  const result = await captureWithController(controller, application, []);
+
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected the capture to be cancelled");
+  expect(result.error).toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "cancelled",
+    partialObservation: {
+      kind: "electron-active-observation",
+      capture: { application: { electron_version: "44.0.0" } },
+    },
+  });
+  expect(result.error.cause).toBe(reason);
+});
+
+it("keeps cleanup failure precedence over cancellation observed during cleanup", async () => {
+  stubVerifiedElectronCleanup();
+  stubCompletedCapture();
+  const controller = new AbortController();
+  const failed = async () => {
+    controller.abort(new Error("SIGTERM during process cleanup"));
+    return { cleaned: false as const, reason: "process group still alive" };
+  };
+  vi.spyOn(processOwnership, "cleanupOwnedProcessGroup").mockImplementation(
+    failed,
+  );
+  vi.spyOn(processOwnership, "cleanupWindowsProcessTree").mockImplementation(
+    failed,
+  );
+  const application = {
+    process: () => ({ pid: 424242 }),
+    close: vi.fn(async () => undefined),
+    windows: () => [],
+  };
+
+  const result = await captureWithController(controller, application, []);
+
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected cleanup to fail");
+  expect(result.error).toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "cleanup_failed",
+    cleanup: { reason: "process group still alive" },
+    partialObservation: {
+      kind: "electron-active-observation",
+      capture: { application: { cleanup: "unverified" } },
+    },
+  });
+});

@@ -43,10 +43,12 @@ Current inventory Evidence requires scoped `coverage` with a `complete` or
 without it; limitations are explanatory and do not supply or infer coverage.
 Pages from one inventory must carry the same coverage declaration.
 `cluster_artifacts` extends this to many artifacts at once. Pass two or more
-`inspect_artifact` inventories inline as `{ "label": ..., "evidence": ... }`
-and it partitions them by exact root content digest (`root-sha256` is the only
-family tier) and indexes every graph member as shared, partially shared or
-unique. Labels are caller text and are never parsed as identity. A member whose
+`inspect_artifact` inventories inline as `{ "label": ..., "evidence": ... }`, or
+as `{ "label": ..., "evidence_id": ... }` naming retained Evidence in the session
+(or an `inspect_analysis_view` summary record), and it partitions them by exact
+root content digest (`root-sha256` is the only family tier) and indexes every graph
+member as shared, partially shared or unique. Labels are caller text and are never
+parsed as identity. A member whose
 inventory is incomplete, carries integrity contradictions, or declares a
 different `coverage.scope` than the strict majority is reported in
 `unknown_members` with its reason, never as different from the others. A

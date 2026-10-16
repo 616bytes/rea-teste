@@ -359,6 +359,106 @@ it("clusters three inspected archives through MCP by family and shared members",
   }
 }, 60_000);
 
+it("clusters inspected archives using retained Evidence IDs and summary views", async () => {
+  const root = await createTestTempDirectory("rea-cluster-artifacts-retained-");
+  const alpha = join(root, "alpha.zip");
+  const beta = join(root, "beta.zip");
+  const gamma = join(root, "gamma.zip");
+  await writeArchive(alpha, [
+    ["one.txt", "shared-entry"],
+    ["two.txt", "alpha-entry"],
+  ]);
+  await writeArchive(beta, [
+    ["one.txt", "shared-entry"],
+    ["two.txt", "beta-entry"],
+  ]);
+  await copyFile(alpha, gamma);
+
+  const session = createTestBinarySession(new ArtifactProvider(process.env));
+  const server = createServer({ kind: "session", session });
+  const client = new Client({
+    name: "cluster-artifacts-retained-test",
+    version: "1",
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const ids: Record<string, string> = {};
+    for (const [label, path] of [
+      ["alpha", alpha],
+      ["beta", beta],
+      ["gamma", gamma],
+    ] as const) {
+      expect(
+        (await client.callTool({ name: "open_binary", arguments: { path } }))
+          .isError,
+      ).not.toBe(true);
+      const inspected = await client.callTool({
+        name: "inspect_artifact",
+        arguments: {},
+      });
+      ids[label] = (
+        inspected.structuredContent as { evidence_id: string }
+      ).evidence_id;
+    }
+
+    const betaSummary = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: { kind: "retained-evidence", evidence_id: ids.beta! },
+        view: { kind: "summary" },
+      },
+    });
+    expect(betaSummary.isError).not.toBe(true);
+    const betaSummaryEvidence = retainedEvidence(betaSummary, session);
+
+    const clustered = await client.callTool({
+      name: "cluster_artifacts",
+      arguments: {
+        members: [
+          { label: "alpha", evidence_id: ids.alpha! },
+          { label: "beta", evidence: betaSummaryEvidence },
+          { label: "gamma", evidence: ids.gamma! },
+        ],
+      },
+    });
+    const result = resultOf(clustered) as unknown as {
+      readonly status: string;
+      readonly summary: Record<string, number>;
+      readonly families: readonly {
+        readonly tier: string | null;
+        readonly members: readonly { readonly label: string }[];
+      }[];
+      readonly shared_members: readonly unknown[];
+    };
+
+    expect(result.status).toBe("partitioned");
+    expect(result.families).toHaveLength(1);
+    expect(result.families[0]?.members.map(({ label }) => label)).toEqual([
+      "alpha",
+      "gamma",
+    ]);
+    expect(result.shared_members).toHaveLength(1);
+    expect(result.summary.members_without_family).toBe(1);
+
+    const missingRef = await client.callTool({
+      name: "cluster_artifacts",
+      arguments: {
+        members: [
+          { label: "alpha", evidence_id: ids.alpha! },
+          { label: "missing", evidence_id: `ev_${"0".repeat(64)}` },
+        ],
+      },
+    });
+    expect(missingRef.isError).toBe(true);
+  } finally {
+    await Promise.allSettled([client.close(), server.close(), session.close()]);
+  }
+}, 60_000);
+
 /**
  * The real truncated-inventory case: a universal Mach-O whose slices no
  * adapter on this host can read. The producer observes the root and every node

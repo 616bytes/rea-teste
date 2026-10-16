@@ -6,6 +6,7 @@ import type {
   ArtifactNode,
 } from "./artifactGraph.js";
 import { evidenceSchema, type Evidence } from "./evidence.js";
+import { prefixedDigestSchema } from "./digests.js";
 import {
   declaresCompleteInventory,
   parseArtifactInventoryEvidence,
@@ -37,17 +38,37 @@ const unknownReasonSchema = z.enum([
   "contradictory-integrity",
 ]);
 
-/** One labelled inventory observation supplied by the caller. */
-export const artifactFamilyMemberSchema = z.strictObject({
-  label: z
-    .string()
-    .min(1)
-    .max(200)
-    .describe(
-      "Caller label for this member, reported verbatim; it is never parsed as identity.",
+const evidenceIdSchema = prefixedDigestSchema("ev");
+
+/** One labelled inventory observation supplied by the caller: inline Evidence or retained reference. */
+export const artifactFamilyMemberSchema = z.union([
+  z.strictObject({
+    label: z
+      .string()
+      .min(1)
+      .max(200)
+      .describe(
+        "Caller label for this member, reported verbatim; it is never parsed as identity.",
+      ),
+    evidence: z
+      .union([evidenceSchema, evidenceIdSchema])
+      .describe(
+        "Authenticated artifact inventory Evidence, inspect_analysis_view summary, or retained Evidence ID.",
+      ),
+  }),
+  z.strictObject({
+    label: z
+      .string()
+      .min(1)
+      .max(200)
+      .describe(
+        "Caller label for this member, reported verbatim; it is never parsed as identity.",
+      ),
+    evidence_id: evidenceIdSchema.describe(
+      "Retained artifact inventory Evidence ID in this session.",
     ),
-  evidence: evidenceSchema,
-});
+  }),
+]);
 
 /** Strict input boundary for deterministic artifact family clustering. */
 export const artifactFamilyClusteringInputSchema = z.strictObject({
@@ -56,7 +77,7 @@ export const artifactFamilyClusteringInputSchema = z.strictObject({
     .min(2)
     .max(ARTIFACT_FAMILY_MEMBER_LIMIT)
     .describe(
-      "Two or more authenticated artifact inventory Evidence records, supplied inline from inspect_artifact.",
+      "Two or more authenticated artifact inventory Evidence records or retained Evidence references.",
     ),
   shared_member_minimum: z
     .number()

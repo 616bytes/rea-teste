@@ -106,13 +106,16 @@ export const registerArtifactFamilyClusteringTool = (
             contract.name,
             () => {
               const members = input.members.map((member) => {
-                // Seal the admitted record so the domain's authentication pass
-                // hits the immutable snapshot instead of re-hashing the whole
-                // nested inventory a second time.
-                const supplied = immutableEvidence(member.evidence);
+                const supplied =
+                  "evidence_id" in member
+                    ? member.evidence_id
+                    : typeof member.evidence === "string"
+                      ? member.evidence
+                      : immutableEvidence(member.evidence);
                 const resolved = resolveArtifactFamilyClusteringEvidence(
                   supplied,
                   evidenceById,
+                  member.label,
                 );
                 if (!resolved.ok) throw resolved.error;
                 return { label: member.label, evidence: resolved.value };

@@ -16,6 +16,7 @@ const { values } = parseArgs({
     executable: { type: "string" },
     application: { type: "string" },
     "trial-root": { type: "string" },
+    "inspector-hook-transport": { type: "boolean", default: false },
   },
 });
 for (const key of ["runtime-root", "executable", "application", "trial-root"])
@@ -97,6 +98,17 @@ const launch = async (options) => {
     application_path: app.getAppPath(),
   }));
   assert.equal(engine.application_path, resolve(values.application));
+  if (values["inspector-hook-transport"]) {
+    // Explicit test adapter for packaged startup #2974. Earlier app activity
+    // is unobserved; production transport and the vendor artifact are unchanged.
+    await application.evaluate(
+      async (_electron, hook) => {
+        const { createRequire } = await import("node:module");
+        createRequire(`${process.resourcesPath}/app/package.json`)(hook);
+      },
+      options.args[index + 1],
+    );
+  }
   assert.equal(
     await application.evaluate(
       () => typeof globalThis.__reaElectronActiveSnapshot,
@@ -228,7 +240,9 @@ try {
       engine,
       settings,
       elapsed_ms: performance.now() - started,
-      launch_transport: "standard-staged-argv",
+      launch_transport: values["inspector-hook-transport"]
+        ? "explicit-inspector-hook-after-start"
+        : "standard-staged-argv",
       probe: probe ?? null,
       provider_ok: result.ok,
       deadline_triggered: controller.signal.aborted,

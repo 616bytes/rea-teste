@@ -63,6 +63,8 @@ import {
 } from "./javascriptSemanticAmbientWrites.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
+  isErasedJavaScriptDeclaration,
+  isUnmodeledJavaScriptRuntimeScope,
   semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
 import {
@@ -1826,9 +1828,8 @@ const declarationEstablishesRuntimeBinding = (
     }
     pending.push(node);
     if (
-      ((t.isVariableDeclaration(node) || t.isClassDeclaration(node)) &&
-        node.declare === true) ||
-      t.isTSModuleDeclaration(node)
+      isErasedJavaScriptDeclaration(node) ||
+      isUnmodeledJavaScriptRuntimeScope(node)
     ) {
       runtime = false;
       break;

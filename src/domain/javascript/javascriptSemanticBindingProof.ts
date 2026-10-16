@@ -10,8 +10,10 @@ import {
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { hasProvenJavaScriptModuleContext } from "./javascriptSourceParser.js";
+import { isUnmodeledJavaScriptRuntimeScope } from "./javascriptModuleDeclaration.js";
 
 interface BindingProofExposure {
+  readonly unmodeledRuntimeScope: boolean;
   readonly lexicalEval: boolean;
   readonly globalObject: boolean;
   readonly mappedArgumentScopes: ReadonlySet<string>;
@@ -37,6 +39,8 @@ export const semanticBindingProofExposure = (
   proof: "binding" | "contents" = "binding",
 ): string | undefined => {
   const exposure = sourceBindingProofExposure(state);
+  if (exposure.unmodeledRuntimeScope)
+    return "Source contains an unmodeled transformed runtime scope.";
   if (exposure.lexicalEval)
     return "A lexical eval reference may replace source bindings.";
   // A parameter can receive an object through aliases, containers or captures.
@@ -83,8 +87,10 @@ const sourceBindingProofExposure = (
   );
   const mappedOwners = new WeakMap<t.Function | t.Program, string | null>();
   let globalObject = false;
+  let unmodeledRuntimeScope = false;
   traverseJavaScriptAst(state.program, {
     enter(node, parent) {
+      unmodeledRuntimeScope ||= isUnmodeledJavaScriptRuntimeScope(node);
       callableStack.enter(node, parent);
       if (
         !hasProvenJavaScriptModuleContext(state.program) &&
@@ -126,7 +132,12 @@ const sourceBindingProofExposure = (
       callableStack.exit(node);
     },
   });
-  const exposure = { lexicalEval, globalObject, mappedArgumentScopes };
+  const exposure = {
+    lexicalEval,
+    globalObject,
+    mappedArgumentScopes,
+    unmodeledRuntimeScope,
+  };
   exposureByState.set(state, exposure);
   return exposure;
 };

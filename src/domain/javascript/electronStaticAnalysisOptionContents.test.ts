@@ -9,6 +9,34 @@ const contentCases = (["options", "preferences"] as const).flatMap((owner) =>
   ["", ", ...null", ", ...undefined"].map((spread) => ({ owner, spread })),
 );
 
+it("does not infer runtime module isolation from an erased default signature", () => {
+  const source = `
+    export default function f(): void;
+    const {BrowserWindow} = require("electron");
+    const options = {webPreferences: {preload: "./safe.js"}, ...null};
+    exports = options;
+    arguments[0].webPreferences.preload = "./changed.js";
+    new BrowserWindow(options);
+  `;
+  const parsed = parseJavaScriptSource(source, "fixture.ts");
+  if (parsed === null) throw new Error("Expected parsed source");
+  expect(parsed.errors ?? []).toEqual([]);
+  expect(
+    analyzeParsedJavaScriptStaticSource(source, parsed).electron
+      .browser_windows[0]?.preload_path,
+  ).toBeNull();
+});
+
+it("keeps named content proofs unknown when namespace runtime scope is unmodeled", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    const {BrowserWindow} = require("electron");
+    namespace Own { export const value = 1; }
+    const options = {webPreferences: {preload: "./safe.js"}, ...null};
+    new BrowserWindow(options);
+  `);
+  expect(analysis.electron.browser_windows[0]?.preload_path).toBeNull();
+});
+
 it.each([
   "declare const arguments: any;",
   "declare let arguments: any;",

@@ -8,6 +8,15 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 
 const runtimeShadowFixtures = {
+  "default.ts": [
+    'throw new Error("Static input must never execute");',
+    "export default function f(): void;",
+    'const {BrowserWindow} = require("electron");',
+    'const options = {webPreferences: {preload: "./safe.js"}, ...null};',
+    "exports = options;",
+    'arguments[0].webPreferences.preload = "./changed.js";',
+    "new BrowserWindow(options);",
+  ].join("\n"),
   ...Object.fromEntries(
     [
       ["const", "declare const arguments: any;"],
@@ -243,7 +252,7 @@ cliTest(
       mcpEvidence.normalized_result,
     );
     expect(result.summary).toMatchObject({
-      browser_windows: 15,
+      browser_windows: 16,
       preload_entrypoints: 7,
     });
     const windows = result.graph.nodes.filter(
@@ -254,6 +263,7 @@ cliTest(
       "ambient-let.cts",
       "ambient-import.cts",
       "ambient-export.cts",
+      "default.ts",
       "shadow.cjs",
     ]) {
       const window = windows.find(

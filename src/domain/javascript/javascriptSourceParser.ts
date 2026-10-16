@@ -5,6 +5,7 @@ import {
   hasOnlyInlineTypeImportSpecifiers,
   isTypeOnlyExportDeclaration,
   isTypeOnlyImportDeclaration,
+  isErasedJavaScriptDeclaration,
 } from "./javascriptModuleDeclaration.js";
 
 /** Babel AST produced by REA's inert JavaScript parser boundary. */
@@ -29,16 +30,11 @@ const hasRuntimeModuleDeclaration = (program: t.Program): boolean =>
       return (
         !isTypeOnlyExportDeclaration(node) &&
         (!t.isExportNamedDeclaration(node) ||
-          (!hasOnlyInlineTypeExportSpecifiers(node) &&
-            !(
-              node.declaration != null &&
-              "declare" in node.declaration &&
-              node.declaration.declare === true
-            )))
+          !hasOnlyInlineTypeExportSpecifiers(node))
       );
     return (
       t.isExportDefaultDeclaration(node) &&
-      !t.isTSInterfaceDeclaration(node.declaration)
+      !isErasedJavaScriptDeclaration(node.declaration)
     );
   });
 

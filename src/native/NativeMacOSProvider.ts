@@ -648,25 +648,40 @@ class NativeMacOSClient implements AnalysisClient {
     // runtime flag or entitlements is otherwise never reported, and an
     // unsigned default slice hides every signed one. An unsigned display has
     // no Format line, so the bound target's architectures stand in for it.
-    const universal =
-      (unsigned
-        ? codeSignArchitectures(null, this.target)
-        : universalCodeSignArchitectures(parsed.format)
-      ).length > 1;
-    if (mixedSigning || universal) {
+    // The bound target names slices by CPU family, which merges arm64, arm64e
+    // and arm64e.x1; lipo names each slice as codesign -a accepts it.
+    const sliceNames = unsigned
+      ? await this.#unsignedSliceNames(binding, signal)
+      : null;
+    if (sliceNames !== null && !sliceNames.ok) return sliceNames;
+    if (sliceNames !== null) captures.push(...sliceNames.value.captures);
+    const provenance = captures.map((capture) =>
+      invocation(capture, binding.snapshotPath),
+    );
+    const architectures =
+      sliceNames === null
+        ? mixedSigning
+          ? codeSignArchitectures(parsed.format, this.target)
+          : universalCodeSignArchitectures(parsed.format)
+        : sliceNames.value.names;
+    if (mixedSigning || architectures.length > 1) {
       const slices = await this.#inspectSignatureSlices(
         binding,
-        parsed.format,
+        architectures,
         {
           mixed: mixedSigning,
           cdhashes: parsed.cdhashes,
           requirements: requirements.value.exitCode,
+          // Compare slice entitlements only with aggregate entitlements that
+          // were read and decoded; an undecodable aggregate proves nothing.
+          entitlementsComparable:
+            entitlements.value.exitCode === 0 && entitlementValue.decoded,
           entitlements: entitlements.value.exitCode,
         },
         signal,
       );
       if (!slices.ok) return slices;
-      captures.push(...slices.value.captures);
+      provenance.push(...slices.value.provenance);
       limitations.push(...slices.value.limitations);
       limitations.push(
         ...(unsigned
@@ -685,9 +700,6 @@ class NativeMacOSClient implements AnalysisClient {
             )),
       );
     }
-    const provenance = captures.map((capture) =>
-      invocation(capture, binding.snapshotPath),
-    );
     const version = await verifySignatureTarget(this.target, binding, signal);
     if (!version.ok) return version;
     const result = inspectSignatureSchema.parse({
@@ -712,18 +724,23 @@ class NativeMacOSClient implements AnalysisClient {
    */
   async #inspectSignatureSlices(
     binding: SignatureTargetBinding,
-    format: string | null,
+    architectures: readonly string[],
     aggregate: Readonly<{
       /** The aggregate queries already observed an unsigned slice. */
       mixed: boolean;
       /** CDHashes of the slice the aggregate display described. */
       cdhashes: readonly string[];
       requirements: number | null;
+      /** The aggregate entitlements were read and decoded. */
+      entitlementsComparable: boolean;
       entitlements: number | null;
     }>,
     signal?: AbortSignal,
   ): Promise<Result<SignatureSlices, AnalysisError>> {
-    const captures: NativeCommandCapture[] = [];
+    // Captures are projected to provenance as they arrive. A FAT file admits
+    // up to 128 slices and each command may return up to its own output
+    // budget, so retaining raw outputs until the end would multiply them.
+    const provenance: NativeCommandInvocation[] = [];
     const limitations: string[] = [];
     const signed: SliceSignature[] = [];
     const unsigned: string[] = [];
@@ -733,14 +750,14 @@ class NativeMacOSClient implements AnalysisClient {
       binding.snapshotPath,
       ...(await canonicalPath(binding.snapshotPath)),
     ];
-    for (const architecture of codeSignArchitectures(format, this.target)) {
+    for (const architecture of architectures) {
       const slice = await this.#captureSignature(
         binding,
         ["-d", "-a", architecture, "--verbose=4"],
         signal,
       );
       if (!slice.ok) return slice;
-      captures.push(slice.value);
+      provenance.push(invocation(slice.value, binding.snapshotPath));
       if (slice.value.exitCode !== 0) {
         if (isNonzeroUnsignedObservation(slice.value))
           unsigned.push(architecture);
@@ -763,7 +780,7 @@ class NativeMacOSClient implements AnalysisClient {
       // The aggregate entitlements belong to the described slice; another
       // slice's entitlements are hashed into its own code directory.
       if (
-        aggregate.entitlements !== 0 ||
+        !aggregate.entitlementsComparable ||
         sameCdhashes(parsed.cdhashes, aggregate.cdhashes)
       ) {
         signed.push(facts);
@@ -775,19 +792,27 @@ class NativeMacOSClient implements AnalysisClient {
         signal,
       );
       if (!sliceEntitlements.ok) return sliceEntitlements;
-      captures.push(sliceEntitlements.value);
-      if (sliceEntitlements.value.exitCode === 0) {
-        const decoded = parseEntitlements(sliceEntitlements.value.stdout);
-        signed.push({ ...facts, entitlements: decoded.value });
+      provenance.push(
+        invocation(sliceEntitlements.value, binding.snapshotPath),
+      );
+      const decoded =
+        sliceEntitlements.value.exitCode === 0
+          ? parseEntitlements(sliceEntitlements.value.stdout)
+          : null;
+      if (decoded !== null)
         limitations.push(
           ...decoded.limitations.map(
             (text) => `Entitlements of the ${architecture} slice: ${text}`,
           ),
         );
+      // Entitlements that could not be read or decoded stay unobserved, so
+      // the comparison never reports them as absent.
+      if (decoded === null || !decoded.decoded) {
+        signed.push(facts);
+        entitlementsUnavailable.push(architecture);
         continue;
       }
-      signed.push(facts);
-      entitlementsUnavailable.push(architecture);
+      signed.push({ ...facts, entitlements: decoded.value });
     }
     if (entitlementsUnavailable.length > 0)
       limitations.push(
@@ -814,13 +839,58 @@ class NativeMacOSClient implements AnalysisClient {
       limitations.push(
         "The aggregate entitlements are unavailable because Mach-O slices have mixed signing states.",
       );
-    return ok({ captures, signed, limitations });
+    return ok({ provenance, signed, limitations });
+  }
+
+  /**
+   * Name the slices of a universal file whose default slice is unsigned.
+   * codesign's unsigned display has no Format line, so ask lipo; when lipo
+   * cannot answer, fall back to the bound target's CPU families.
+   */
+  async #unsignedSliceNames(
+    binding: SignatureTargetBinding,
+    signal?: AbortSignal,
+  ): Promise<
+    Result<
+      {
+        readonly names: readonly string[];
+        readonly captures: NativeCommandCapture[];
+      },
+      AnalysisError
+    >
+  > {
+    const archs = await this.#captureSignature(
+      binding,
+      ["-archs"],
+      signal,
+      "lipo",
+    );
+    if (!archs.ok) return archs;
+    const names =
+      archs.value.exitCode === 0
+        ? [
+            ...new Set(
+              archs.value.stdout
+                .trim()
+                .split(/\s+/u)
+                .filter((name) =>
+                  /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)?$/u.test(name),
+                ),
+            ),
+          ]
+        : [];
+    return ok({
+      names:
+        names.length > 0 ? names : codeSignArchitectures(null, this.target),
+      captures: [archs.value],
+    });
   }
 
   async #captureSignature(
     binding: SignatureTargetBinding,
     args: readonly string[],
     signal?: AbortSignal,
+    tool: "codesign" | "lipo" = "codesign",
   ): Promise<Result<NativeCommandCapture, AnalysisError>> {
     const before = await verifySignatureTarget(this.target, binding, signal);
     if (!before.ok) return before;
@@ -828,7 +898,7 @@ class NativeMacOSClient implements AnalysisClient {
     try {
       capture = await this.#run(
         "inspect_signature",
-        "codesign",
+        tool,
         [...args, binding.snapshotPath],
         {
           signal,
@@ -1011,7 +1081,7 @@ interface NativeObservation {
 }
 
 interface SignatureSlices {
-  readonly captures: readonly NativeCommandCapture[];
+  readonly provenance: readonly NativeCommandInvocation[];
   /** Slices codesign reported as signed, in query order. */
   readonly signed: readonly SliceSignature[];
   readonly limitations: readonly string[];
@@ -1190,10 +1260,16 @@ const invocation = (
  */
 const parseEntitlements = (
   output: string,
-): { readonly value: JsonValue; readonly limitations: readonly string[] } => {
+): {
+  readonly value: JsonValue;
+  readonly limitations: readonly string[];
+  /** False when the plist was present but could not be decoded. */
+  readonly decoded: boolean;
+} => {
   const start = output.indexOf("<?xml");
   const end = output.lastIndexOf("</plist>");
-  if (start < 0 || end < start) return { value: null, limitations: [] };
+  if (start < 0 || end < start)
+    return { value: null, limitations: [], decoded: true };
   const xml = output.slice(start, end + "</plist>".length);
   let decoded: ReturnType<typeof parseXmlPropertyList>;
   try {
@@ -1201,8 +1277,9 @@ const parseEntitlements = (
   } catch (cause: unknown) {
     return {
       value: null,
+      decoded: false,
       limitations: [
-        `the entitlements plist could not be decoded (${cause instanceof Error ? cause.message : String(cause)}); entitlements are reported as null.`,
+        `the entitlements plist could not be decoded (${cause instanceof Error ? cause.message : String(cause)}); entitlements are unavailable.`,
       ],
     };
   }
@@ -1211,24 +1288,33 @@ const parseEntitlements = (
       ? []
       : [omittedPrototypeKeysLimitation(decoded.omittedPrototypeKeys)];
   const json = jsonValueSchema.safeParse(decoded.value);
-  if (json.success) return { value: json.data, limitations };
+  if (json.success) return { value: json.data, limitations, decoded: true };
   const projected = parsePlistXml(xml);
-  if (!projected.ok)
+  const typed = projected.ok
+    ? jsonValueSchema.safeParse(projected.value.value)
+    : null;
+  if (!projected.ok || typed === null || !typed.success)
     return {
       value: null,
+      decoded: false,
       limitations: [
         ...limitations,
-        "the entitlements plist holds values JSON cannot carry and could not be projected; entitlements are reported as null.",
+        "the entitlements plist holds values JSON cannot carry and could not be projected; entitlements are unavailable.",
       ],
     };
-  const typed = jsonValueSchema.safeParse(projected.value.value);
+  // Keep the projection's own notes (non-finite reals, unknown dates, exact
+  // integers); its plutil framing and __proto__ count are replaced above.
+  const projectionNotes = projected.value.limitations.filter(
+    (text) =>
+      !text.startsWith("plutil cannot express") && !text.includes("__proto__"),
+  );
   return {
-    value: typed.success ? typed.data : null,
+    value: typed.data,
+    decoded: true,
     limitations: [
       ...limitations,
-      typed.success
-        ? 'data and date values are reported as typed objects such as { "$plist_type": "data", "base64": ... }.'
-        : "the entitlements plist holds values JSON cannot carry and could not be projected; entitlements are reported as null.",
+      'data and date values are reported as typed objects such as { "$plist_type": "data", "base64": ... }.',
+      ...projectionNotes,
     ],
   };
 };

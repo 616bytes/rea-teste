@@ -511,8 +511,10 @@ named in a `Mach-O slices signed differently` limitation with its differing
 values, an unsigned slice in `Unsigned Mach-O slices`. `designated_requirement`
 comes from the whole file; when it names CDHashes that `cdhashes` does not
 list, a limitation says which slice each belongs to, or that none matched.
-When the default slice is unsigned, `signed` is false for that slice and a
-limitation names the slices that are signed. Per-slice queries appear in
+When the default slice is unsigned, `signed` is false for that slice, the
+slice names come from `lipo -archs`, and a limitation names the slices that
+are signed. Slice entitlements that cannot be read or decoded stay out of the
+comparison and are named in a limitation. Per-slice queries appear in
 `provenance` as `codesign -d -a <slice>` commands.
 
 ## Provider and verification boundaries

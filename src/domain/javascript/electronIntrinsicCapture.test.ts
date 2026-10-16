@@ -116,6 +116,7 @@ describe("captured intrinsic invocation reads", () => {
     '[change.call, ignored = change.call(null,metadata,"x",{value:1})] = [replacement];',
     '({first: change.call, [change.call(null,metadata,"x",{value:1})]: ignored} = values);',
     'for ([change.call, ignored = change.call(null,metadata,"x",{value:1})] of values) {}',
+    '([change.call, ignored = change.call(null,metadata,"x",{value:1})] as any) = [replacement, undefined];',
   ])(
     "retains destructuring writes before later defaults and keys: %s",
     (mutation) => {
@@ -744,6 +745,24 @@ describe("captured member canonicalization and timing", () => {
 });
 
 describe("captured member nested owners and projections", () => {
+  it("follows a captured-member owner chain without a depth cap", () => {
+    // Six nested member captures — each stores Function.prototype.call —
+    // must resolve through the shared cycle guard, not a fixed depth.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const a = change.call; const b = a.call; const c = b.call;
+      const d = c.call; const e = d.call; const f = e.call;
+      f.call(change, null, {value: customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
   it("propagates replaced state through a nested captured owner", () => {
     // `invoke` stores the replaced `{call: poison}` object, so `outer =
     // invoke.call` captures `poison` — `outer()` executes it and must stay

@@ -564,9 +564,8 @@ export const createSemanticModuleInterop = (
   // same shape — `change.call.call` reads `.call` on the member value.
   const capturedInvocationMember = (
     node: t.Node,
-    depth = 0,
+    visited = new Set<string>(),
   ): CapturedInvocationMember | undefined => {
-    const visited = new Set<string>();
     let current = unwrapJavaScriptExpression(node).node;
     for (;;) {
       current = peelValueSequence(current);
@@ -671,8 +670,10 @@ export const createSemanticModuleInterop = (
       // captured member is itself provable — `outer = invoke.call` reads the
       // member from the function `invoke` already stores.
       let ownerPath = intrinsicPath(owner) ?? boundIntrinsic(owner)?.path;
-      if (ownerPath === undefined && depth < 4) {
-        const capturedOwner = capturedInvocationMember(owner, depth + 1);
+      if (ownerPath === undefined) {
+        // Recurse without a fixed depth cap — the shared binding-visited
+        // set terminates cyclic owner chains (`a = b.call; b = a.call`).
+        const capturedOwner = capturedInvocationMember(owner, visited);
         // A replaced owner stores an unknown value — a member read on it is
         // unknown too. Propagate the replaced marker instead of discarding
         // the capture, or `outer = invoke.call; outer()` loses its effect.

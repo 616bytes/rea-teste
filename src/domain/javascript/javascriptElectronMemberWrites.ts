@@ -230,7 +230,10 @@ export function* collectJavaScriptIdentityWritesSteps(
       // Assignment patterns are lexically before their RHS, but execute after it.
       // A simple default target evaluates its reference before its initializer;
       // a nested pattern starts destructuring only after that initializer.
-      if (t.isAssignmentExpression(node) && isPattern(node.left))
+      if (
+        t.isAssignmentExpression(node) &&
+        isPattern(unwrapJavaScriptExpression(node.left).node)
+      )
         return ["right", "left"];
       if (t.isForOfStatement(node) || t.isForInStatement(node))
         return ["right", "left", "body"];
@@ -245,15 +248,22 @@ export function* collectJavaScriptIdentityWritesSteps(
     },
     enter: (node) => {
       const target = targetOf(node);
-      if (isPattern(target) && target !== undefined)
-        for (const leaf of semanticWriteTargets(target)) {
+      const pattern =
+        target === undefined
+          ? undefined
+          : unwrapJavaScriptExpression(target).node;
+      if (pattern !== undefined && isPattern(pattern))
+        for (const leaf of semanticWriteTargets(pattern)) {
           patternLeaves.add(leaf);
           patternLeafContexts.set(leaf, node);
         }
       if (t.isForOfStatement(node) || t.isForInStatement(node))
         loopBodies.set(node.body, node);
       const loop = loopBodies.get(node);
-      if (loop !== undefined && !isPattern(loop.left)) {
+      if (
+        loop !== undefined &&
+        !isPattern(unwrapJavaScriptExpression(loop.left).node)
+      ) {
         observeEvaluation?.(loop);
         retainTargets(loop);
       }
@@ -290,14 +300,16 @@ export function* collectJavaScriptIdentityWritesSteps(
           patternLeafContexts.get(unwrapJavaScriptExpression(node.left).node) ??
             node,
         );
-      if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
+      if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         retainCallEffects(node);
-      else if (
-        !t.isForOfStatement(node) &&
-        !t.isForInStatement(node) &&
-        !isPattern(targetOf(node))
-      )
-        retainTargets(node);
+      } else if (!t.isForOfStatement(node) && !t.isForInStatement(node)) {
+        const target = targetOf(node);
+        if (
+          target === undefined ||
+          !isPattern(unwrapJavaScriptExpression(target).node)
+        )
+          retainTargets(node);
+      }
     },
   });
 }

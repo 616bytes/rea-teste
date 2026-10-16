@@ -219,6 +219,20 @@ it("leaves runtime-provided methods out of unresolved native bodies", () => {
   expect(result.managed_boundary.native_implementations_total).toBe(2);
 });
 
+it("treats a Mach-O ABI-prefixed export as an exact declared import", () => {
+  const result = verifyManagedNativeBoundaries({
+    ...exampleInput(),
+    native_observations: [nativeEvidenceWithExports(["_open_native"])],
+  });
+
+  expect(result.summary).toMatchObject({ verified: 1, inferred: 0 });
+  expect(result.pinvoke_imports[0]).toMatchObject({
+    status: "verified",
+    basis: "exact-export-name",
+    matched_native: { name: "_open_native" },
+  });
+});
+
 it("reports module mismatch as a contradiction within supplied Evidence", () => {
   const input = exampleInput();
   const native = input.native_observations[0];

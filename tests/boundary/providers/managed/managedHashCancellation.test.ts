@@ -7,11 +7,20 @@ import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResol
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { buildManagedPeFixture } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { ManagedStaticProvider } from "../../../../src/dotnet/ManagedStaticProvider.js";
+import { RegularFileCleanupFailure } from "../../../../src/application/RegularFileRead.js";
+import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
-it.each([false, true])(
-  "cancels a cached managed source hash and recovers its exact owner (close denied: %s)",
-  async (denyClose) => {
+it.each([
+  { denyClose: false, reasonKind: "plain" },
+  { denyClose: true, reasonKind: "plain" },
+  { denyClose: false, reasonKind: "filesystem" },
+  { denyClose: true, reasonKind: "filesystem" },
+  { denyClose: false, reasonKind: "cleanup" },
+  { denyClose: true, reasonKind: "cleanup" },
+])(
+  "cancels a cached managed source hash and recovers its exact owner (close denied: $denyClose, reason: $reasonKind)",
+  async ({ denyClose, reasonKind }) => {
     const directory = await createTestTempDirectory("rea-managed-hash-cancel-");
     const path = join(directory, "fixture.exe");
     await writeFile(
@@ -29,8 +38,20 @@ it.each([false, true])(
     await admitted.close();
     const originalRead = prototype.read;
     const controller = new AbortController();
-    const reason = new Error("cancel after actual managed source bytes arrive");
+    const reason =
+      reasonKind === "cleanup"
+        ? new RegularFileCleanupFailure(
+            join(directory, "other-input.dll"),
+            new OwnedFileHandle(admitted),
+            { kind: "completed", value: null },
+            new Error("opaque caller reason, not this operation's cleanup"),
+          )
+        : Object.assign(
+            new Error("cancel after actual managed source bytes arrive"),
+            reasonKind === "filesystem" ? { code: "EACCES" } : {},
+          );
     let cancelledHandle: FileHandle | undefined;
+    let readCount = 0;
     let permitClose = !denyClose;
     const deniedHandles: FileHandle[] = [];
     let restoreClose: (() => void) | undefined;
@@ -38,6 +59,7 @@ it.each([false, true])(
       this: FileHandle,
       ...args
     ) {
+      readCount += 1;
       const result: Awaited<ReturnType<FileHandle["read"]>> =
         await Reflect.apply(originalRead, this, args);
       if (result.bytesRead > 0 && cancelledHandle === undefined) {
@@ -71,6 +93,14 @@ it.each([false, true])(
           details: { diagnostics: { primary_error: { code: "cancelled" } } },
         });
         expect(cancelledHandle?.fd).toBeGreaterThanOrEqual(0);
+        const readsBeforeRetry = readCount;
+        const blocked = await client.execute("inspect_managed_members", {});
+        if (blocked.ok)
+          throw new Error("Unreleased managed source admitted a read");
+        expect(projectAnalysisError(blocked.error).code).toBe(
+          "cleanup_incomplete",
+        );
+        expect(readCount).toBe(readsBeforeRetry);
         expect(deniedHandles.length).toBeGreaterThan(0);
         expect(
           deniedHandles.every((handle) => handle === cancelledHandle),
@@ -98,3 +128,52 @@ it.each([false, true])(
     }
   },
 );
+
+it("preserves an independent read failure when cancellation races with it", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-managed-hash-read-failure-",
+  );
+  const path = join(directory, "fixture.exe");
+  await writeFile(path, buildManagedPeFixture());
+  const parsed = await parseBinaryTarget(path);
+  if (!parsed.ok) throw parsed.error;
+  const client = new ManagedStaticProvider().createClient(parsed.value);
+  const initial = await client.execute("inspect_managed_artifact", {});
+  if (!initial.ok) throw initial.error;
+  const admitted = await open(path, "r");
+  const prototype = Object.getPrototypeOf(admitted) as FileHandle;
+  await admitted.close();
+  const originalRead = prototype.read;
+  const controller = new AbortController();
+  const failure = Object.assign(new Error("fixture source read failure"), {
+    code: "EACCES",
+  });
+  let failedHandle: FileHandle | undefined;
+  const read = vi.spyOn(prototype, "read").mockImplementation(async function (
+    this: FileHandle,
+    ...args
+  ) {
+    await Reflect.apply(originalRead, this, args);
+    failedHandle = this;
+    controller.abort(new Error("independent cancellation"));
+    throw failure;
+  });
+  try {
+    const result = await client.execute(
+      "inspect_managed_members",
+      {},
+      {
+        signal: controller.signal,
+      },
+    );
+    if (result.ok) throw new Error("Failed managed hashing succeeded");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "access_denied",
+    });
+    expect(result.error.cause).toBe(failure);
+    expect(failedHandle?.fd).toBe(-1);
+  } finally {
+    read.mockRestore();
+    expect(await client.close()).toMatchObject({ ok: true });
+  }
+});

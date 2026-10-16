@@ -119,8 +119,8 @@ export type DelphiFormObject = {
   } | null;
 };
 
-/** Whether the code page came from the resource or from the Delphi 7 default. */
-export type DelphiFormCodePageSource = "resource" | "default";
+/** Where the code page came from: the resource, a default, or neither. */
+export type DelphiFormCodePageSource = "resource" | "default" | "unsupported";
 
 /** One RT_RCDATA payload decoded as a binary form. */
 export type DelphiFormResource = {
@@ -133,6 +133,8 @@ export type DelphiFormResource = {
     readonly bytes_hex: string;
     readonly note: string;
   } | null;
+  /** The resource's declared code page id; zero means none was declared. */
+  readonly declared_code_page: number;
   readonly code_page: string;
   readonly code_page_source: DelphiFormCodePageSource;
   readonly root: DelphiFormObject | null;
@@ -266,7 +268,8 @@ export const delphiFormResourceSchema: z.ZodType<DelphiFormResource> =
         note: z.string(),
       })
       .nullable(),
+    declared_code_page: uint,
     code_page: z.string(),
-    code_page_source: z.enum(["resource", "default"]),
+    code_page_source: z.enum(["resource", "default", "unsupported"]),
     root: objectSchema.nullable(),
   });

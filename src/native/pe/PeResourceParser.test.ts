@@ -4,7 +4,13 @@ import {
   inspectPeResourcesInputSchema,
   peResourcesSchema,
 } from "../../domain/native/peResources.js";
-import { delphiFormFixture } from "./DelphiForm.fixture.js";
+import {
+  delphiBinary,
+  delphiComponent,
+  delphiForm,
+  delphiFormFixture,
+  delphiProperty,
+} from "./DelphiForm.fixture.js";
 import { parsePeResources } from "./PeResourceParser.js";
 import { peResourceFixture } from "./PeResources.fixture.js";
 
@@ -185,6 +191,41 @@ describe("Delphi forms inside PE resources", () => {
     expect(result.delphi_forms[0]).toMatchObject({
       code_page: "windows-1252",
       code_page_source: "default",
+      declared_code_page: 0,
+    });
+  });
+
+  it("reports a declared code page this host cannot label as unsupported", async () => {
+    // 866 is a declared page, not an absent one, so it must not be decoded as
+    // the Delphi 7 default without saying so.
+    const result = peResourcesSchema.parse(await parse(formFixture(866).bytes));
+    expect(result.delphi_forms[0]).toMatchObject({
+      code_page: "latin1",
+      code_page_source: "unsupported",
+      declared_code_page: 866,
+    });
+  });
+
+  it("decodes a form whose binary value dwarfs its decoded output", async () => {
+    // A large vaBinary property emits capped hex and a byte count, so the raw
+    // payload size must not be charged against the metadata budget.
+    const fixture = peResourceFixture(false, [
+      {
+        type: 10,
+        name: 7,
+        language: 1033,
+        payload: delphiForm(
+          delphiComponent("TForm1", "Form1", [
+            delphiProperty("Blob", delphiBinary(262144)),
+          ]),
+        ),
+      },
+    ]);
+    const result = peResourcesSchema.parse(await parse(fixture.bytes));
+    expect(result.delphi_forms).toHaveLength(1);
+    expect(result.delphi_forms[0]?.root?.properties[0]).toMatchObject({
+      name: { text: "Blob" },
+      value: { kind: "binary", declared_bytes: 262144, truncated: true },
     });
   });
 

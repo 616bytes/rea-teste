@@ -88,6 +88,8 @@ const HEX_LIMIT_BYTES = 128;
 const MAX_OBJECTS = 1024;
 const MAX_PROPERTIES = 8192;
 const MAX_VALUES = 32768;
+/** Bounds recursion so a deeply nested value cannot exhaust the call stack. */
+const MAX_DEPTH = 32;
 
 /** Reported once per inventory; the decoder itself stays free of policy text. */
 export const DELPHI_FORM_LIMITATIONS: readonly string[] = [
@@ -98,6 +100,17 @@ export const DELPHI_FORM_LIMITATIONS: readonly string[] = [
 
 /** A read that leaves the payload, or exceeds a decode budget. */
 class StreamEnd extends Error {}
+
+/**
+ * Decoding cannot continue past this point. The object built so far travels
+ * with the error so every ancestor keeps what it parsed and stops with it,
+ * instead of reading the undecodable bytes as invented components.
+ */
+class StoppedForm extends Error {
+  constructor(readonly object: DelphiFormObject) {
+    super("Delphi form decoding stopped");
+  }
+}
 
 /** Bounded cursor over the payload; every read is range checked. */
 class Stream {
@@ -338,10 +351,16 @@ function readNumericValue(
     }
     case 16: {
       const raw = stream.take(8);
-      const scaled = Number(raw.readBigInt64LE(0)) / 10000;
+      // Currency is a signed 64-bit value scaled by 10000. Format it straight
+      // from the integer: converting to a number first rounds the quotient.
+      const scaled = raw.readBigInt64LE(0);
+      const sign = scaled < 0n ? "-" : "";
+      const digits = (scaled < 0n ? -scaled : scaled)
+        .toString()
+        .padStart(5, "0");
       return {
         kind: "float",
-        text: Number.isFinite(scaled) ? scaled.toFixed(4) : null,
+        text: `${sign}${digits.slice(0, -4)}.${digits.slice(-4)}`,
         bytes_hex: raw.toString("hex"),
         note: "Currency: signed 64-bit value scaled by 10000.",
         location: range(at, stream.position),
@@ -368,9 +387,16 @@ function readValue(
   ordinal: number,
   budget: Budget,
   codePage: string,
+  depth: number,
 ): DelphiFormValue {
   spend(budget, "values");
   const at = stream.position;
+  // Nested lists and collections recurse; bound the depth before the call
+  // stack does, so a crafted payload reports an unknown instead of failing.
+  if (depth > MAX_DEPTH)
+    throw new StreamEnd(
+      `Delphi form value nesting exceeds ${String(MAX_DEPTH)} levels.`,
+    );
   const numeric = readNumericValue(stream, ordinal);
   if (numeric !== null) return numeric;
   switch (ordinal) {
@@ -442,7 +468,7 @@ function readValue(
         const next = stream.peek();
         if (next === 0) break;
         stream.byte();
-        items.push(readValue(stream, next, budget, codePage));
+        items.push(readValue(stream, next, budget, codePage, depth + 1));
       }
       stream.byte();
       return { kind: "list", items, location: range(at, stream.position) };
@@ -450,6 +476,9 @@ function readValue(
     case 11: {
       const names: DelphiFormText[] = [];
       for (;;) {
+        // A set name is a retained object even though it costs one input byte,
+        // so charge it against the shared budget before allocating it.
+        spend(budget, "values");
         const name = readShortString(stream, codePage);
         if (name.location.bytes <= 1) break;
         names.push(name);
@@ -460,6 +489,9 @@ function readValue(
       const items: DelphiFormCollectionItem[] = [];
       for (;;) {
         if (stream.peek() === 0) break;
+        // An empty collection item costs two input bytes, so charge every item
+        // before it is retained rather than measuring the whole form afterwards.
+        spend(budget, "values");
         const itemAt = stream.position;
         let position: string | null = null;
         const next = stream.peek();
@@ -476,7 +508,7 @@ function readValue(
         const properties: DelphiFormProperty[] = [];
         for (;;) {
           if (stream.peek() === 0) break;
-          properties.push(readProperty(stream, budget, codePage));
+          properties.push(readProperty(stream, budget, codePage, depth));
         }
         stream.byte();
         items.push({
@@ -505,12 +537,13 @@ function readProperty(
   stream: Stream,
   budget: Budget,
   codePage: string,
+  depth: number,
 ): DelphiFormProperty {
   spend(budget, "properties");
   const at = stream.position;
   const name = readShortString(stream, codePage);
   const ordinal = stream.byte();
-  const value = readValue(stream, ordinal, budget, codePage);
+  const value = readValue(stream, ordinal, budget, codePage, depth);
   return {
     name,
     value_type: valueTypeName(ordinal),
@@ -524,6 +557,7 @@ function readObject(
   stream: Stream,
   budget: Budget,
   codePage: string,
+  depth: number,
 ): DelphiFormObject {
   spend(budget, "objects");
   const at = stream.position;
@@ -548,33 +582,51 @@ function readObject(
   const componentName = readShortString(stream, codePage);
   const properties: DelphiFormProperty[] = [];
   const children: DelphiFormObject[] = [];
+  const partial = (reason: string): DelphiFormObject => ({
+    location: range(at, stream.position),
+    flags,
+    child_position: childPosition,
+    class_name: className,
+    component_name: componentName,
+    properties,
+    children,
+    unknown: {
+      reason,
+      bytes_hex: hexOf(stream.bytes.subarray(at, stream.position)).bytes_hex,
+    },
+  });
   try {
     for (;;) {
       if (stream.peek() === 0) break;
       const propertyAt = stream.position;
+      const name = readShortString(stream, codePage);
+      const ordinal = stream.byte();
       try {
-        properties.push(readProperty(stream, budget, codePage));
-      } catch (error) {
-        if (!(error instanceof StreamEnd)) throw error;
-        // Record the property that could not be decoded, then stop: anything
-        // read after it would be a guess rather than evidence.
+        const value = readValue(stream, ordinal, budget, codePage, depth);
         properties.push({
-          name: {
-            text: "",
-            bytes_hex: "",
-            code_page: codePage,
-            location: range(propertyAt, propertyAt),
-          },
-          value_type: "unknown",
+          name,
+          value_type: valueTypeName(ordinal),
+          value,
+          location: range(propertyAt, stream.position),
+        });
+      } catch (error) {
+        if (error instanceof StoppedForm) throw error;
+        if (!(error instanceof StreamEnd)) throw error;
+        // Record the property that could not be decoded with the name and type
+        // that were already parsed, then stop: anything read after it would be a
+        // guess rather than evidence.
+        properties.push({
+          name,
+          value_type: valueTypeName(ordinal),
           value: {
             kind: "unknown",
             reason: error.message,
-            ...hexOf(stream.bytes.subarray(propertyAt, stream.end)),
-            location: range(propertyAt, stream.end),
+            ...hexOf(stream.bytes.subarray(stream.position, stream.end)),
+            location: range(stream.position, stream.end),
           },
           location: range(propertyAt, stream.end),
         });
-        throw error;
+        throw new StoppedForm(partial(error.message));
       }
     }
     stream.byte();
@@ -582,10 +634,19 @@ function readObject(
       if (stream.peek() === 0) break;
       const childAt = stream.position;
       try {
-        children.push(readObject(stream, budget, codePage));
+        children.push(readObject(stream, budget, codePage, depth + 1));
       } catch (error) {
-        // Keep an undecodable child visible next to its siblings instead of
-        // discarding it; continuing past it would desynchronise the stream.
+        // A stopped child keeps its place next to its siblings, and every
+        // ancestor stops with it: continuing would read the undecodable bytes as
+        // invented components.
+        if (error instanceof StoppedForm) {
+          children.push(error.object);
+          throw new StoppedForm(
+            partial(
+              error.object.unknown?.reason ?? "Delphi form decoding stopped",
+            ),
+          );
+        }
         if (!(error instanceof StreamEnd)) throw error;
         children.push({
           location: range(childAt, stream.position),
@@ -601,25 +662,14 @@ function readObject(
               .bytes_hex,
           },
         });
-        break;
+        throw new StoppedForm(partial(error.message));
       }
     }
     stream.byte();
   } catch (error) {
+    if (error instanceof StoppedForm) throw error;
     if (!(error instanceof StreamEnd)) throw error;
-    return {
-      location: range(at, stream.position),
-      flags,
-      child_position: childPosition,
-      class_name: className,
-      component_name: componentName,
-      properties,
-      children,
-      unknown: {
-        reason: error.message,
-        bytes_hex: hexOf(stream.bytes.subarray(at, stream.position)).bytes_hex,
-      },
-    };
+    return partial(error.message);
   }
   return {
     location: range(at, stream.position),
@@ -662,19 +712,22 @@ export const decodeDelphiFormStream = (
   );
   let root: DelphiFormObject | null = null;
   try {
-    if (stream.remaining > 0) root = readObject(stream, budget, codePage);
+    if (stream.remaining > 0) root = readObject(stream, budget, codePage, 0);
   } catch (error) {
-    if (!(error instanceof StreamEnd)) throw error;
-    root = {
-      location: range(stream.position, end),
-      flags: [],
-      child_position: null,
-      class_name: null,
-      component_name: null,
-      properties: [],
-      children: [],
-      unknown: { reason: error.message, bytes_hex: "" },
-    };
+    // A stopped form still carries everything decoded before the stop.
+    if (error instanceof StoppedForm) root = error.object;
+    else if (error instanceof StreamEnd)
+      root = {
+        location: range(stream.position, end),
+        flags: [],
+        child_position: null,
+        class_name: null,
+        component_name: null,
+        properties: [],
+        children: [],
+        unknown: { reason: error.message, bytes_hex: "" },
+      };
+    else throw error;
   }
   return { signature, code_page: codePage, root };
 };

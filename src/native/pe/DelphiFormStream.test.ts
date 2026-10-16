@@ -250,6 +250,22 @@ describe("Delphi form property values", () => {
       note: expect.stringContaining("not converted to a calendar date"),
     });
   });
+
+  it("formats currency from the integer without rounding the quotient", () => {
+    const currency = Buffer.alloc(8);
+    currency.writeBigInt64LE(9223372036854775807n, 0);
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [
+          property_("Price", Buffer.concat([bytes(16), currency])),
+        ]),
+      ),
+    );
+    expect(propertyOf(root, "Price").value).toMatchObject({
+      kind: "float",
+      text: "922337203685477.5807",
+    });
+  });
 });
 
 describe("Delphi form string and structural values", () => {
@@ -398,6 +414,70 @@ describe("Delphi form failure surface", () => {
     expect(root.unknown?.reason).toContain("Unsupported value type");
     // A sibling read after an unsupported type would be invented, not decoded.
     expect(root.properties.map(({ name }) => name.text)).not.toContain("After");
+  });
+
+  it("keeps the parsed name on a property whose value cannot be decoded", () => {
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [property_("Future", bytes(24, 1, 2, 3))]),
+      ),
+    );
+    expect(root.properties[0]).toMatchObject({
+      name: { text: "Future" },
+      value_type: "unknown_value_type(24)",
+    });
+    expect(root.properties[0]?.value).toMatchObject({ kind: "unknown" });
+  });
+
+  it("stops every ancestor when a child property cannot be decoded", () => {
+    // The unsupported type leaves its payload bytes in the stream. Reading them
+    // as further components would invent siblings from unknown bytes.
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [], {
+          children: [
+            component("TButton", "Button1", [
+              property_("Future", bytes(24, 1, 2, 3)),
+            ]),
+            component("TPanel", "Panel1"),
+          ],
+        }),
+      ),
+    );
+    expect(root.children).toHaveLength(1);
+    const [child] = root.children;
+    expect(child?.class_name?.text).toBe("TButton");
+    expect(child?.properties[0]).toMatchObject({ name: { text: "Future" } });
+    expect(child?.unknown?.reason).toContain("Unsupported value type");
+    expect(root.unknown?.reason).toContain("Unsupported value type");
+    // Nothing after the stop is decoded, so no byte pattern becomes a component.
+    expect(
+      root.children.flatMap((item) => item.class_name?.text ?? []),
+    ).not.toContain("TPanel");
+  });
+
+  it("bounds value nesting instead of exhausting the call stack", () => {
+    let nested = int32(1);
+    for (let level = 0; level < 64; level += 1) nested = list(nested);
+    const root = rootOf(
+      form(component("TForm1", "Form1", [property_("Deep", nested)])),
+    );
+    expect(root.unknown?.reason).toContain("nesting exceeds");
+  });
+
+  it("charges every retained item against the decode budget", () => {
+    // An empty collection item costs two input bytes, so a small payload can
+    // otherwise produce unbounded retained objects.
+    const items = Array.from({ length: 40000 }, () => bytes(1, 0));
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Columns", collection(...items)),
+      ]),
+    );
+    const root = rootOf(payload);
+    expect(root.unknown?.reason).toContain("budget exhausted");
+    const column = propertyOf(root, "Columns").value;
+    expect(column.kind).toBe("unknown");
   });
 
   it("reports a truncated stream as an unknown on the object", () => {

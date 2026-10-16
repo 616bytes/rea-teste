@@ -209,11 +209,13 @@ filer flags with the child position, and properties with their declared value
 type and decoded value, each carrying byte offsets into the resource payload
 alongside the original value bytes. Nested components are decoded recursively.
 Strings keep their raw bytes and are decoded with the resource's declared code
-page; when the resource declares none, the Delphi 7 ANSI default is used and
-recorded as `code_page_source: "default"`. Undecodable value types and
-truncated streams are reported as explicit unknowns rather than failing the
-inventory, and a value type whose length cannot be derived stops decoding of
-that object instead of resynchronising on a guess.
+page, recorded beside the declared code page id; when the resource declares
+none, the Delphi 7 ANSI default is used and recorded as
+`code_page_source: "default"`, and a declared page this host cannot label is
+recorded as `"unsupported"` rather than decoded as that default. Undecodable
+value types and truncated streams are reported as explicit unknowns rather than
+failing the inventory, and decoding stops at the first value it cannot position
+instead of reading the remaining bytes as further components.
 
 `max_file_bytes` defaults to 64 MiB (maximum 512 MiB); `max_entries` defaults to
 16384, the largest stock Windows resource image measured with headroom

@@ -1,9 +1,62 @@
 import { describe, expect, it } from "vitest";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import {
+  analyzeJavaScriptStaticSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "./javascriptStaticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 const contentCases = (["options", "preferences"] as const).flatMap((owner) =>
   ["", ", ...null", ", ...undefined"].map((spread) => ({ owner, spread })),
 );
+
+it.each([
+  "declare const arguments: any;",
+  "declare let arguments: any;",
+  "declare var arguments: any;",
+  "declare class arguments {}",
+  "declare namespace ambient { const arguments: any; }",
+])(
+  "does not treat erased declarations as runtime arguments shadows: %s",
+  (declaration) => {
+    const source = `
+      const {BrowserWindow} = require("electron");
+      ${declaration}
+      const options = {webPreferences: {preload: "./safe.js"}, ...null};
+      exports = options;
+      arguments[0].webPreferences.preload = "./changed.js";
+      new BrowserWindow(options);
+    `;
+    const parsed = parseJavaScriptSource(source, "fixture.cts");
+    expect(parsed).not.toBeNull();
+    if (parsed === null) return;
+    expect(parsed.errors ?? []).toEqual([]);
+    const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+    expect(analysis.electron.browser_windows[0]?.preload_path).toBeNull();
+    expect(
+      analysis.electron.browser_windows[0]?.resolution_sources,
+    ).toBeUndefined();
+  },
+);
+
+it.each([
+  "const arguments = [];",
+  "let arguments = [];",
+  "function arguments() {}",
+])("retains actual runtime arguments shadows: %s", (declaration) => {
+  const source = `
+    const {BrowserWindow} = require("electron");
+    ${declaration}
+    const options = {webPreferences: {preload: "./safe.js"}, ...null};
+    exports = options;
+    void arguments;
+    new BrowserWindow(options);
+  `;
+  const parsed = parseJavaScriptSource(source, "fixture.cjs");
+  if (parsed === null) throw new Error("Expected parsed source");
+  expect(parsed.errors ?? []).toEqual([]);
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+  expect(analysis.electron.browser_windows[0]?.preload_path).toBe("./safe.js");
+});
 
 describe("Electron option contents exposed to dynamic code", () => {
   it.each(contentCases)(

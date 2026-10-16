@@ -17,6 +17,40 @@ import {
   traverseJavaScriptAstSteps,
 } from "./javascriptSemanticTraversal.js";
 
+it.each([
+  ["declare const value: any;", false],
+  ["declare class value {}", false],
+  ['import type {value} from "example";', false],
+  ["const value = {};", true],
+] as const)(
+  "preserves source ownership without inventing runtime declarations: %s",
+  (declaration, runtime) => {
+    const parsed = parseJavaScriptSource(
+      `${declaration} inspect(value);`,
+      "fixture.cts",
+    );
+    if (parsed === null) throw new Error("Expected parsed source");
+    expect(parsed.errors ?? []).toEqual([]);
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    const statement = parsed.program.body.at(-1);
+    if (
+      !t.isExpressionStatement(statement) ||
+      !t.isCallExpression(statement.expression)
+    )
+      throw new Error("Expected reference site");
+    const binding = index.bindingForReferenceAt(
+      statement.expression.arguments[0]!,
+    );
+    expect(binding?.definitions).toHaveLength(1);
+    expect(binding?.bindingId).toEqual(expect.any(String));
+    expect(
+      semanticBindingProofExposure(index.bindings, binding) === undefined,
+    ).toBe(runtime);
+  },
+);
+
 it("bounds repeated capture checks while preserving unindexed and escaped unknowns", () => {
   const count = 128;
   const parsed = parseJavaScriptSource(

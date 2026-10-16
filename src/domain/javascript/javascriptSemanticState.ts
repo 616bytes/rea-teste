@@ -81,6 +81,17 @@ export interface JavaScriptSemanticBindingState {
   readonly memberWrites: JavaScriptSemanticMemberEffect[];
   readonly escapedPaths: JavaScriptSemanticMemberEffect[];
   readonly definitions: JavaScriptSemanticDefinition[];
+  /** Runtime declarations alone can prove shadowing; erased source definitions remain above. */
+  readonly runtimeDeclarations: {
+    readonly kind: JavaScriptSemanticDefinition["kind"];
+    readonly declarationKind?:
+      | "var"
+      | "let"
+      | "const"
+      | "using"
+      | "await using";
+    readonly initializer: t.Node | null;
+  }[];
   readonly initializers: JavaScriptSemanticInitializer[];
   readonly referenceInitializers: JavaScriptSemanticReferenceInitializer[];
   readonly directOrigins: JavaScriptModuleOrigin[];
@@ -103,6 +114,8 @@ export interface JavaScriptSemanticScopeState {
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
   readonly program: t.Program;
+  /** Immutable declaration context, populated while collecting definitions. */
+  readonly runtimeDeclarationByNode: WeakMap<t.Node, boolean>;
   /** Effective loader for static imports in this source artifact. */
   readonly staticImportResolutionMode: JavaScriptModuleResolutionMode;
   /** Bounds encountered during this analysis, independent of later projections. */

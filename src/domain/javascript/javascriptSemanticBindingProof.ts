@@ -43,6 +43,8 @@ export const semanticBindingProofExposure = (
   if (proof === "contents" && exposure.mappedArgumentScopes.size > 0)
     return "A mapped arguments object may expose referenced contents.";
   if (binding === undefined) return undefined;
+  if (binding.runtimeDeclarations.length === 0)
+    return `Binding ${binding.name} has no established runtime declaration.`;
   if (
     exposure.mappedArgumentScopes.has(binding.scopeId) &&
     binding.definitions.some(({ kind }) => kind === "parameter")
@@ -103,7 +105,10 @@ const sourceBindingProofExposure = (
           state.program.sourceType === "script" &&
           // A `with` lookup may still select the ambient global object.
           (lookup.kind !== "binding" ||
-            (lookup.binding.declarationKinds.has("var") &&
+            lookup.binding.runtimeDeclarations.length === 0 ||
+            (lookup.binding.runtimeDeclarations.some(
+              ({ declarationKind }) => declarationKind === "var",
+            ) &&
               state.scopesById.get(lookup.binding.scopeId)?.kind === "program"))
         )
           globalObject = true;
@@ -150,20 +155,18 @@ const mappedArgumentsScope = (
   const shadow = "binding" in lookup ? lookup.binding : undefined;
   if (
     shadow !== undefined &&
+    shadow.runtimeDeclarations.length > 0 &&
     bindingWithinScope(shadow, scopeId, state) &&
     (shadow.scopeId !== scopeId ||
-      shadow.definitions.some(
-        ({ kind }) =>
-          kind !== "variable" && kind !== "assignment" && kind !== "function",
-      ) ||
-      [...shadow.declarationKinds].some((kind) => kind !== "var") ||
-      shadow.initializers.some(
-        ({ node }) =>
-          t.isFunctionDeclaration(node) &&
-          state.parentsByNode.get(node) ===
-            (t.isProgram(executionOwner)
-              ? executionOwner
-              : executionOwner.body),
+      shadow.runtimeDeclarations.some(
+        ({ kind, declarationKind, initializer }) =>
+          (kind !== "variable" && kind !== "function") ||
+          (declarationKind !== undefined && declarationKind !== "var") ||
+          (t.isFunctionDeclaration(initializer) &&
+            state.parentsByNode.get(initializer) ===
+              (t.isProgram(executionOwner)
+                ? executionOwner
+                : executionOwner.body)),
       ))
   )
     return null;

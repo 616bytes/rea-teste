@@ -7,6 +7,32 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 
+const runtimeShadowFixtures = {
+  ...Object.fromEntries(
+    ["const", "let"].map((kind) => [
+      `ambient-${kind}.cts`,
+      [
+        'throw new Error("Static input must never execute");',
+        'const {BrowserWindow} = require("electron");',
+        `declare ${kind} arguments: any;`,
+        'const options = {webPreferences: {preload: "./safe.js"}, ...null};',
+        "exports = options;",
+        'arguments[0].webPreferences.preload = "./changed.js";',
+        "new BrowserWindow(options);",
+      ].join("\n"),
+    ]),
+  ),
+  "shadow.cjs": [
+    'throw new Error("Static input must never execute");',
+    'const {BrowserWindow} = require("electron");',
+    "const arguments = [];",
+    'const options = {webPreferences: {preload: "./safe.js"}, ...null};',
+    "exports = options;",
+    "void arguments;",
+    "new BrowserWindow(options);",
+  ].join("\n"),
+};
+
 cliTest(
   "retains constant window preferences and inferred source provenance through CLI, MCP and fact views",
   async ({ cli }) => {
@@ -124,7 +150,7 @@ cliTest(
 );
 
 cliTest(
-  "keeps eval-exposed constant preload contents unknown across CLI and MCP",
+  "keeps opaque constant preload contents unknown across CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-window-content-");
     await writeFixtureFiles(root, {
@@ -182,6 +208,7 @@ cliTest(
       ].join("\n"),
       "safe.js": "// Inert preload source",
       "other.js": "// Inert second preload source",
+      ...runtimeShadowFixtures,
     });
     const response = await cli.run({
       arguments: ["analyze-javascript-application", root, "--format", "json"],
@@ -191,7 +218,7 @@ cliTest(
     const { call } = await connectLocalToolsMcp();
     const mcp = await call("analyze_javascript_application", {
       input_path: root,
-      format: "directory",
+      format: "auto",
     });
     expect(mcp.isError).not.toBe(true);
     const mcpEvidence = parseEvidence(mcp.structuredContent);
@@ -200,12 +227,24 @@ cliTest(
       mcpEvidence.normalized_result,
     );
     expect(result.summary).toMatchObject({
-      browser_windows: 9,
-      preload_entrypoints: 5,
+      browser_windows: 12,
+      preload_entrypoints: 6,
     });
     const windows = result.graph.nodes.filter(
       (node) => node.kind === "browser-window",
     );
+    for (const source of [
+      "ambient-const.cts",
+      "ambient-let.cts",
+      "shadow.cjs",
+    ]) {
+      const window = windows.find(
+        (node) => node.observations[0]?.properties.source_path === source,
+      );
+      expect(window?.observations[0]?.properties.preload_path).toBe(
+        source === "shadow.cjs" ? "./safe.js" : null,
+      );
+    }
     const sourceLine = (node: (typeof windows)[number]): number => {
       const location = node.observations[0]?.evidence.location;
       if (!location?.available || location.value.kind !== "source-range")
@@ -245,11 +284,13 @@ cliTest(
         edge.evidence.extractor.operation ===
         "associate-browser-window-preload",
     );
-    expect(associations).toHaveLength(5);
+    expect(associations).toHaveLength(6);
     expect(
       associations.some((edge) =>
-        mutated
-          .slice(0, 2)
+        windows
+          .filter(
+            (node) => node.observations[0]?.properties.preload_path === null,
+          )
           .some((node) => node.node_id === edge.source_node_id),
       ),
     ).toBe(false);

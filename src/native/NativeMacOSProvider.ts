@@ -75,6 +75,7 @@ import {
 import { parseCodeSignature } from "./parsers/codesign.js";
 import {
   describeSignatureSlices,
+  describeSignedSlicesOfUnsignedDefault,
   sameCdhashes,
   type SliceSignature,
 } from "./signatureSlices.js";
@@ -635,22 +636,23 @@ class NativeMacOSClient implements AnalysisClient {
     const limitations = [
       ...parsed.limitations,
       "Inspected a digest-verified Mach-O byte snapshot; filesystem-bound signing context and trust validation are not examined.",
-      ...(entitlementValue.omittedPrototypeKeys === 0
-        ? []
-        : [
-            `Entitlements: ${omittedPrototypeKeysLimitation(entitlementValue.omittedPrototypeKeys)}`,
-          ]),
+      ...entitlementValue.limitations.map((text) => `Entitlements: ${text}`),
     ];
     const mixedSigning =
       !unsigned &&
       (isNonzeroUnsignedObservation(requirements.value) ||
         isNonzeroUnsignedObservation(entitlements.value));
     // Without -a, codesign describes one slice of a universal file, so every
-    // slice of a signed universal file is queried: an unsigned slice stays
-    // hidden behind an identity requirement, and a slice signed with another
-    // identifier, runtime flag or entitlements is otherwise never reported.
+    // slice of a universal file is queried: an unsigned slice stays hidden
+    // behind an identity requirement, a slice signed with another identifier,
+    // runtime flag or entitlements is otherwise never reported, and an
+    // unsigned default slice hides every signed one. An unsigned display has
+    // no Format line, so the bound target's architectures stand in for it.
     const universal =
-      !unsigned && universalCodeSignArchitectures(parsed.format).length > 1;
+      (unsigned
+        ? codeSignArchitectures(null, this.target)
+        : universalCodeSignArchitectures(parsed.format)
+      ).length > 1;
     if (mixedSigning || universal) {
       const slices = await this.#inspectSignatureSlices(
         binding,
@@ -667,18 +669,20 @@ class NativeMacOSClient implements AnalysisClient {
       captures.push(...slices.value.captures);
       limitations.push(...slices.value.limitations);
       limitations.push(
-        ...describeSignatureSlices(
-          {
-            identifier: parsed.identifier,
-            team_identifier: parsed.team_identifier,
-            cdhashes: parsed.cdhashes,
-            authorities: parsed.authorities,
-            hardened_runtime: parsed.hardened_runtime,
-            entitlements: entitlementValue.value,
-            designated_requirement: requirementText,
-          },
-          slices.value.signed,
-        ),
+        ...(unsigned
+          ? describeSignedSlicesOfUnsignedDefault(slices.value.signed)
+          : describeSignatureSlices(
+              {
+                identifier: parsed.identifier,
+                team_identifier: parsed.team_identifier,
+                cdhashes: parsed.cdhashes,
+                authorities: parsed.authorities,
+                hardened_runtime: parsed.hardened_runtime,
+                entitlements: entitlementValue.value,
+                designated_requirement: requirementText,
+              },
+              slices.value.signed,
+            )),
       );
     }
     const provenance = captures.map((capture) =>
@@ -720,6 +724,7 @@ class NativeMacOSClient implements AnalysisClient {
     signal?: AbortSignal,
   ): Promise<Result<SignatureSlices, AnalysisError>> {
     const captures: NativeCommandCapture[] = [];
+    const limitations: string[] = [];
     const signed: SliceSignature[] = [];
     const unsigned: string[] = [];
     const unclassified: string[] = [];
@@ -772,16 +777,18 @@ class NativeMacOSClient implements AnalysisClient {
       if (!sliceEntitlements.ok) return sliceEntitlements;
       captures.push(sliceEntitlements.value);
       if (sliceEntitlements.value.exitCode === 0) {
-        signed.push({
-          ...facts,
-          entitlements: parseEntitlements(sliceEntitlements.value.stdout).value,
-        });
+        const decoded = parseEntitlements(sliceEntitlements.value.stdout);
+        signed.push({ ...facts, entitlements: decoded.value });
+        limitations.push(
+          ...decoded.limitations.map(
+            (text) => `Entitlements of the ${architecture} slice: ${text}`,
+          ),
+        );
         continue;
       }
       signed.push(facts);
       entitlementsUnavailable.push(architecture);
     }
-    const limitations: string[] = [];
     if (entitlementsUnavailable.length > 0)
       limitations.push(
         `Entitlements could not be read for Mach-O slices: ${entitlementsUnavailable.join(", ")}.`,
@@ -796,11 +803,14 @@ class NativeMacOSClient implements AnalysisClient {
       limitations.push(
         `Signature state could not be classified for Mach-O slices: ${unclassified.join(", ")}.`,
       );
-    if (aggregate.requirements !== 0)
+    // These aggregate queries fail for a fully unsigned file too; only name
+    // mixed signing states when a signed slice was actually observed.
+    const mixed = aggregate.mixed || (unsigned.length > 0 && signed.length > 0);
+    if (aggregate.requirements !== 0 && mixed)
       limitations.push(
         "The aggregate designated requirement is unavailable because Mach-O slices have mixed signing states.",
       );
-    if (aggregate.entitlements !== 0)
+    if (aggregate.entitlements !== 0 && mixed)
       limitations.push(
         "The aggregate entitlements are unavailable because Mach-O slices have mixed signing states.",
       );
@@ -1172,16 +1182,55 @@ const invocation = (
   stderr_bytes: capture.stderrBytes,
 });
 
+/**
+ * Decode the entitlements plist codesign prints. Data and date values, which
+ * JSON cannot carry, become the typed objects inspect_plist uses; a plist
+ * that cannot be decoded at all is reported rather than failing the result.
+ * Limitation sentences come back unprefixed so callers can name the slice.
+ */
 const parseEntitlements = (
   output: string,
-): { readonly value: JsonValue; readonly omittedPrototypeKeys: number } => {
+): { readonly value: JsonValue; readonly limitations: readonly string[] } => {
   const start = output.indexOf("<?xml");
   const end = output.lastIndexOf("</plist>");
-  if (start < 0 || end < start) return { value: null, omittedPrototypeKeys: 0 };
-  const { value, omittedPrototypeKeys } = parseXmlPropertyList(
-    output.slice(start, end + "</plist>".length),
-  );
-  return { value: jsonValueSchema.parse(value), omittedPrototypeKeys };
+  if (start < 0 || end < start) return { value: null, limitations: [] };
+  const xml = output.slice(start, end + "</plist>".length);
+  let decoded: ReturnType<typeof parseXmlPropertyList>;
+  try {
+    decoded = parseXmlPropertyList(xml);
+  } catch (cause: unknown) {
+    return {
+      value: null,
+      limitations: [
+        `the entitlements plist could not be decoded (${cause instanceof Error ? cause.message : String(cause)}); entitlements are reported as null.`,
+      ],
+    };
+  }
+  const limitations =
+    decoded.omittedPrototypeKeys === 0
+      ? []
+      : [omittedPrototypeKeysLimitation(decoded.omittedPrototypeKeys)];
+  const json = jsonValueSchema.safeParse(decoded.value);
+  if (json.success) return { value: json.data, limitations };
+  const projected = parsePlistXml(xml);
+  if (!projected.ok)
+    return {
+      value: null,
+      limitations: [
+        ...limitations,
+        "the entitlements plist holds values JSON cannot carry and could not be projected; entitlements are reported as null.",
+      ],
+    };
+  const typed = jsonValueSchema.safeParse(projected.value.value);
+  return {
+    value: typed.success ? typed.data : null,
+    limitations: [
+      ...limitations,
+      typed.success
+        ? 'data and date values are reported as typed objects such as { "$plist_type": "data", "base64": ... }.'
+        : "the entitlements plist holds values JSON cannot carry and could not be projected; entitlements are reported as null.",
+    ],
+  };
 };
 
 /**

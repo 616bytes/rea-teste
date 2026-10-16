@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   describeSignatureSlices,
+  describeSignedSlicesOfUnsignedDefault,
   type AggregateSignature,
   type SliceSignature,
 } from "./signatureSlices.js";
@@ -46,7 +47,35 @@ describe("describeSignatureSlices", () => {
     expect(describeSignatureSlices(aggregate, [x86Slice, armSlice])).toEqual([
       `Signature fields describe the arm64 slice that codesign displayed by default; other signed slices: x86_64 (CDHash ${X86}).`,
       "Mach-O slices signed differently from the arm64 slice: x86_64 (identifier com.example.x86slice; hardened runtime off; entitlements com.apple.security.get-task-allow).",
-      `designated_requirement covers the whole file and names CDHashes of other slices (${X86}); cdhashes lists only the described slice.`,
+      `designated_requirement covers the whole file and names CDHashes of other slices (x86_64 ${X86}); cdhashes lists only the described slice.`,
+    ]);
+  });
+
+  it("does not attribute a requirement hash that matches no queried slice", () => {
+    const stale = "ab".repeat(20);
+    const limitations = describeSignatureSlices(
+      {
+        ...aggregate,
+        designated_requirement: `cdhash H"${ARM}" or cdhash H"${X86}" or cdhash H"${stale}"`,
+      },
+      [x86Slice, armSlice],
+    );
+    expect(limitations.at(-1)).toBe(
+      `designated_requirement covers the whole file and names CDHashes of other slices (x86_64 ${X86}) and names CDHashes matching no queried slice (${stale}); cdhashes lists only the described slice.`,
+    );
+    const onlyStale = describeSignatureSlices(
+      { ...aggregate, designated_requirement: `cdhash H"${stale}"` },
+      [armSlice],
+    );
+    expect(onlyStale.at(-1)).toBe(
+      `designated_requirement covers the whole file and names CDHashes matching no queried slice (${stale}); cdhashes lists only the described slice.`,
+    );
+  });
+
+  it("names signed slices when codesign's default slice is unsigned", () => {
+    expect(describeSignedSlicesOfUnsignedDefault([])).toEqual([]);
+    expect(describeSignedSlicesOfUnsignedDefault([armSlice])).toEqual([
+      `Mach-O slices signed although codesign's default slice is unsigned: arm64 (identifier com.example.armslice; CDHash ${ARM}; hardened runtime on); signed is false for the default slice and their entitlements were not reported.`,
     ]);
   });
 

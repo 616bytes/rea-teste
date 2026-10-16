@@ -73,16 +73,72 @@ export const describeSignatureSlices = (
     limitations.push(
       `Mach-O slices signed differently from the ${described?.architecture ?? "described"} slice: ${differing.join(", ")}.`,
     );
-  const foreignHashes = requirementCdhashes(
-    aggregate.designated_requirement,
-  ).filter(
-    (hash) => !aggregate.cdhashes.some((own) => own.toLowerCase() === hash),
+  limitations.push(
+    ...describeRequirementHashes(aggregate.designated_requirement, {
+      own: aggregate.cdhashes,
+      slices: others,
+    }),
   );
-  if (foreignHashes.length > 0)
-    limitations.push(
-      `designated_requirement covers the whole file and names CDHashes of other slices (${foreignHashes.join(", ")}); cdhashes lists only the described slice.`,
-    );
   return limitations;
+};
+
+/**
+ * Name the signed slices of a universal file whose default slice is unsigned.
+ * codesign then reports the whole file as unsigned, so the result's `signed`
+ * field describes that default slice and these facts live in limitations.
+ */
+export const describeSignedSlicesOfUnsignedDefault = (
+  slices: readonly SliceSignature[],
+): string[] =>
+  slices.length === 0
+    ? []
+    : [
+        `Mach-O slices signed although codesign's default slice is unsigned: ${slices
+          .map(
+            (slice) =>
+              `${slice.architecture} (identifier ${slice.identifier ?? "unavailable"}; CDHash ${listOrNone(slice.cdhashes)}; hardened runtime ${runtimeState(slice.hardened_runtime)})`,
+          )
+          .join(
+            ", ",
+          )}; signed is false for the default slice and their entitlements were not reported.`,
+      ];
+
+/**
+ * A requirement from `codesign -d -r-` covers the whole file. Say which of
+ * its CDHashes belong to other queried slices, and which match no slice at
+ * all (a custom requirement can name a previous build), without guessing.
+ */
+const describeRequirementHashes = (
+  requirement: string | null,
+  known: {
+    readonly own: readonly string[];
+    readonly slices: readonly SliceSignature[];
+  },
+): string[] => {
+  const own = new Set(known.own.map((hash) => hash.toLowerCase()));
+  const foreign = requirementCdhashes(requirement).filter(
+    (hash) => !own.has(hash),
+  );
+  if (foreign.length === 0) return [];
+  const sliceOf = (hash: string) =>
+    known.slices.find((slice) =>
+      slice.cdhashes.some((candidate) => candidate.toLowerCase() === hash),
+    );
+  const bySlice = foreign.flatMap((hash) => {
+    const slice = sliceOf(hash);
+    return slice === undefined ? [] : [`${slice.architecture} ${hash}`];
+  });
+  const unmatched = foreign.filter((hash) => sliceOf(hash) === undefined);
+  const parts: string[] = [];
+  if (bySlice.length > 0)
+    parts.push(`names CDHashes of other slices (${bySlice.join(", ")})`);
+  if (unmatched.length > 0)
+    parts.push(
+      `names CDHashes matching no queried slice (${unmatched.join(", ")})`,
+    );
+  return [
+    `designated_requirement covers the whole file and ${parts.join(" and ")}; cdhashes lists only the described slice.`,
+  ];
 };
 
 /** Name the fields of one slice that differ from the aggregate, or null. */

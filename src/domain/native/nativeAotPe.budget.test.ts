@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { NativeAotParserLimits } from "./nativeAotPe.js";
 import {
+  NATIVE_AOT_BASE_WORK_UNITS,
   NATIVE_AOT_MAX_REPORT_BYTES,
+  NATIVE_AOT_MAX_SOURCE_BYTES,
+  DEFAULT_NATIVE_AOT_PARSER_LIMITS,
+  nativeAotParserLimitsFor,
   parseNativeAotPe,
 } from "./nativeAotPe.js";
 import {
@@ -38,6 +42,42 @@ describe("NativeAOT parser resource budgets", () => {
       },
     });
     expect(report.coverage.source_bytes_omitted).toBeUndefined();
+  });
+});
+
+describe("NativeAOT work budget scaling", () => {
+  it("grows with the admitted image and stops at the source-byte ceiling", () => {
+    const small = nativeAotParserLimitsFor(1024);
+    const large = nativeAotParserLimitsFor(26_180_096);
+    expect(small.workUnits).toBeGreaterThan(NATIVE_AOT_BASE_WORK_UNITS);
+    expect(large.workUnits).toBeGreaterThan(small.workUnits);
+    // A real 26 MB NativeAOT image needs more than the 64 MiB base to finish scanning.
+    expect(large.workUnits).toBeGreaterThan(87_585_929);
+    expect(nativeAotParserLimitsFor(Number.MAX_SAFE_INTEGER)).toEqual(
+      DEFAULT_NATIVE_AOT_PARSER_LIMITS,
+    );
+    expect(DEFAULT_NATIVE_AOT_PARSER_LIMITS.sourceBytes).toBe(
+      NATIVE_AOT_MAX_SOURCE_BYTES,
+    );
+  });
+
+  it("resolves many descendants of one base without rescanning every candidate per base", () => {
+    const bytes = nativeAotPeFixture(9, 1, 1500);
+    const report = parseNativeAotPe(
+      bytes,
+      nativeAotPeDigest(bytes),
+      REPORT_BUDGET,
+      undefined,
+      {
+        sourceBytes: bytes.length,
+        // Rescanning 1500 candidates per included base would need about 18M units.
+        workUnits: 2_000_000,
+        workingMemoryBytes: 1024 * 1024,
+      },
+    ).summary;
+    expect(report.status).toBe("complete");
+    expect(report.method_tables).toBe(1503);
+    expect(report.truncated).toBeFalsy();
   });
 });
 

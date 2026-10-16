@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { access, readdir, stat } from "node:fs/promises";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { join } from "node:path";
 
@@ -19,11 +20,14 @@ import {
   macHopperRenamedLauncherCandidates,
 } from "./MacHopperPaths.js";
 import {
-  linuxHopperBinarySupported,
+  inspectLinuxHopperLauncher,
   linuxSharedLibrariesAvailable,
   readLinuxDistribution,
   type LinuxDistribution,
 } from "./LinuxHopper.js";
+import type { Result } from "../domain/result.js";
+import type { HopperReleaseError } from "./HopperReleaseFeed.js";
+import type { VerifiedLinuxHopperLauncher } from "./LinuxHopperPublisher.js";
 import {
   readInstalledSkillIdentity,
   type InstalledSkillIdentity,
@@ -101,7 +105,9 @@ export interface DoctorHost {
   /** Route-specific target admission details, when supplied by the host. */
   inspectTarget?(path: string): Promise<DoctorCheck>;
   executable(path: string): Promise<boolean>;
-  supportedLinuxHopper(path: string): Promise<boolean>;
+  inspectLinuxHopper(
+    path: string,
+  ): Promise<Result<VerifiedLinuxHopperLauncher, HopperReleaseError>>;
   linuxDemoRuntimeCheck(): Promise<DoctorCheck>;
   brewHopperPath(): Promise<string | undefined>;
   manualHopperPaths(): Promise<readonly string[]>;
@@ -428,9 +434,12 @@ export interface SystemDoctorHostOptions {
   readonly architecture?: NodeJS.Architecture;
   readonly environment?: NodeJS.ProcessEnv;
   readonly execFileOutput?: typeof execFileOutput;
-  readonly providerInspections?: () => Promise<
-    readonly DoctorProviderInspection[]
-  >;
+  readonly providerInspections?: (
+    adoptFileHandle: (
+      resource: string,
+      handle: OwnedFileHandle,
+    ) => Promise<boolean>,
+  ) => Promise<readonly DoctorProviderInspection[]>;
   readonly providerRegistrationEnvironment?: () => Readonly<
     Record<string, string>
   >;
@@ -512,7 +521,7 @@ export const systemDoctorHost = (
       ),
     linuxDemoRuntimeCheck:
       options.linuxDemoRuntimeCheck ?? uncomposedLinuxDemoRuntimeCheck,
-    supportedLinuxHopper: linuxHopperBinarySupported,
+    inspectLinuxHopper: (path) => inspectLinuxHopperLauncher(path, environment),
     async brewHopperPath() {
       return probeHomebrew(async (command) => {
         let caskroom: string;
@@ -544,7 +553,19 @@ export const systemDoctorHost = (
     manualHopperPaths: () => manualHopperPaths(homeDirectory),
     ...(options.providerInspections === undefined
       ? {}
-      : { providerInspections: options.providerInspections }),
+      : {
+          providerInspections: () =>
+            options.providerInspections!(
+              async (resource, handle) =>
+                (
+                  await resources.release({
+                    kind: "file-handle",
+                    resource,
+                    handle,
+                  })
+                ).kind === "released",
+            ),
+        }),
     ...(options.providerRegistrationEnvironment === undefined
       ? {}
       : {

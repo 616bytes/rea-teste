@@ -169,3 +169,28 @@ suggested `extract_artifact`; extracted DLL/resource SHA-256 values matched
 the producer files, and each host's SHA-256 remained unchanged. Generated
 hosts were not executed. These local checks do not replace upstream CI on the
 resulting commit.
+
+## Upstream main integration (2026-10-16)
+
+Locally merged upstream main `1bd5c5c87e81b27bfb16140f71ffa03563e58477`
+into PR head `d4ac1c750670e006333336b20e77cc97938c697b`. The only textual
+conflict was in `ArtifactExtraction.ts`: retain upstream's normalized logical
+path collision rejection before reader/output acquisition, then select the
+bundle reader using the inventoried root format and verify the complete host
+digest before creating an output directory. The automatically merged source-map
+edge classification in `ArtifactGraphConstruction.ts` was reviewed with the
+bundle metadata projection.
+
+Windows x64, Node 24.18.0/npm 11.16.0, with process-local temporary and npm
+cache directories on E:, after `npm ci` for the merged lockfile:
+
+- `npm run test:focused -- src/artifacts/ArtifactPaths.test.ts src/artifacts/inventory/ArtifactGraphConstruction.test.ts tests/boundary/filesystem/dotnetBundleArtifacts.test.ts tests/boundary/filesystem/ownedArtifactReaderCleanup.test.ts tests/acceptance/dotnetBundleJourney.test.ts tests/acceptance/artifactZipExtractionPaths.test.ts`: 69 passed in six files.
+- `npm run check:ci`: passed typecheck, lint, formatting, dependency metadata,
+  duplication, TODO, module-boundary and architecture checks.
+- `npm run docs:check`: passed generated documentation and five README
+  consistency tests.
+- The compiled public CLI and stdio MCP inspected and extracted four existing
+  Microsoft HostModel-generated Windows x64 hosts (v1, v2, plain v6 and
+  compressed v6). The extracted DLL and resource bytes matched the producer
+  files, and each source host's SHA-256 remained unchanged. These hosts were
+  not executed.

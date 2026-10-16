@@ -90,6 +90,25 @@ visible. When a requested goal is not reached but an expansion is unresolved,
 `goal_status` is `unknown`; `not_reached` means traversal exhausted without
 unresolved relationship reads. Cancellation remains a tool error.
 
+Pass either `goal` or a nonempty `goals` array of procedure symbols or addresses.
+`goal` preserves its existing early stop and top-level `goal_status` /
+`traversal_path`. With `goals`, one breadth-first traversal exhausts the observed
+graph, including when every goal has already been reached. `goal_results` retains
+request order (including duplicate selectors), with each canonical `goal`, its
+`goal_status`, and a shortest `traversal_path` from `start`. The legacy top-level
+fields are `goal: null`, `goal_status: "not_requested"`, and `traversal_path: []`
+for a batch. Selector resolution failures remain typed tool errors.
+
+`roots` lists only backward-trace nodes whose caller read completed with
+`relationship_coverage.status: "complete"` and returned no callers. Partial,
+unknown, unreadable, failed, and unexpanded nodes are not roots; forward traces
+return an empty list. Roots describe the expansions actually read, so an early
+single-goal stop need not find any. Static direct-call absence never proves
+runtime unreachability: unresolved indirect calls remain a limitation.
+
+For example, `{"start":"sink","goals":["export_a","export_b"],"direction":"backward"}`
+answers both selected exports with one traversal and reports any confirmed roots.
+
 REA prepares complete MCP results within the pinned stdio client's 10 MiB
 receive-buffer budget, including both text and structured representations and
 room for the JSON-RPC envelope. Tool errors carry only their text

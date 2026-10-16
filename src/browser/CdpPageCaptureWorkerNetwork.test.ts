@@ -146,4 +146,96 @@ describe("CDP worker network admission", () => {
       expect.arrayContaining(["websocket_connections", "websocket_frames"]),
     );
   });
+
+  it("bounds releases of refused workers and stops them after admission closes", async () => {
+    const { sent, workers } = observation();
+    await workers.start();
+    const excess = CDP_WORKER_NETWORK_LIMITS.releases + 5;
+    for (
+      let index = 0;
+      index < CDP_WORKER_NETWORK_LIMITS.workers + excess;
+      index += 1
+    )
+      workers.ingest(attached(`worker-${String(index)}`));
+    await workers.settle();
+    workers.ingest(attached("after-settle"));
+    await workers.close();
+
+    const released = sent.filter(
+      ({ method }) => method === "Target.detachFromTarget",
+    );
+    expect(released).toHaveLength(CDP_WORKER_NETWORK_LIMITS.releases);
+    expect(released.map(({ params }) => params)).not.toContainEqual({
+      sessionId: "after-settle",
+    });
+  });
+});
+
+describe("CDP worker network request ownership", () => {
+  it("drops worker WebSocket frames past the frame budget", async () => {
+    const { events, workers } = observation();
+    await workers.start();
+    workers.ingest(attached("worker-0"));
+    await workers.settle();
+    workers.ingest({
+      sessionId: "worker-0",
+      method: "Network.webSocketCreated",
+      params: { requestId: "socket-0", url: "ws://127.0.0.1:43127/live" },
+    });
+    for (
+      let index = 0;
+      index < CDP_WORKER_NETWORK_LIMITS.frames + 3;
+      index += 1
+    )
+      workers.ingest({
+        sessionId: "worker-0",
+        method: "Network.webSocketFrameReceived",
+        params: {
+          requestId: "socket-0",
+          timestamp: index,
+          response: { opcode: 1, mask: false, payloadData: "x" },
+        },
+      });
+
+    expect(
+      events.webSocketConnectionsById.get("socket-0")?.events,
+    ).toHaveLength(CDP_WORKER_NETWORK_LIMITS.frames);
+    const { dropped_events, truncated_sections } =
+      events.completeness.snapshot();
+    expect(dropped_events.websocket_frames).toBe(3);
+    expect(truncated_sections).toContain("websocket_frames");
+  });
+
+  it("reports a worker request whose ID another session already owns", async () => {
+    const { events, workers } = observation();
+    await workers.start();
+    workers.ingest(attached("worker-0"));
+    workers.ingest(attached("worker-1"));
+    await workers.settle();
+    events.ingest(requested("page-session", "page-owned"));
+    workers.ingest(requested("worker-0", "page-owned"));
+    workers.ingest(requested("worker-0", "worker-owned"));
+    workers.ingest(requested("worker-1", "worker-owned"));
+    workers.ingest({
+      sessionId: "worker-1",
+      method: "Network.webSocketCreated",
+      params: { requestId: "worker-owned", url: "ws://127.0.0.1:43127/live" },
+    });
+
+    expect(events.network.size).toBe(2);
+    expect(events.completeness.snapshot().excluded).toEqual(
+      expect.arrayContaining([
+        {
+          section: "network_requests",
+          reason: "invalid_protocol_value",
+          count: 2,
+        },
+        {
+          section: "websocket_connections",
+          reason: "invalid_protocol_value",
+          count: 1,
+        },
+      ]),
+    );
+  });
 });

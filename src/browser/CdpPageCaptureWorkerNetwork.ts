@@ -12,13 +12,16 @@ import {
 } from "./CdpCaptureValues.js";
 
 /**
- * Bounds one capture's worker attachments and retained worker request
- * identities. Each admitted worker holds a browser session and two commands;
- * the request bound matches the script metadata record bound.
+ * Bounds one capture's worker attachments, the detach commands that release
+ * refused workers, and retained worker request identities and WebSocket
+ * frames. Each admitted worker holds a browser session and two commands; the
+ * request and frame bounds match the script metadata record bound.
  */
 export const CDP_WORKER_NETWORK_LIMITS = {
   workers: 256,
+  releases: 256,
   requests: 50_000,
+  frames: 50_000,
 } as const;
 
 /** Auto-attach dedicated workers on a session without pausing their start. */
@@ -45,6 +48,12 @@ const REQUEST_START_EVENTS: ReadonlySet<string> = new Set([
   "Network.webSocketCreated",
 ]);
 
+/** Events that each retain one WebSocket frame. */
+const WEBSOCKET_FRAME_EVENTS: ReadonlySet<string> = new Set([
+  "Network.webSocketFrameSent",
+  "Network.webSocketFrameReceived",
+]);
+
 interface WorkerNetworkContext {
   readonly connection: CdpConnection;
   readonly sessionId: string | undefined;
@@ -67,6 +76,8 @@ export class CdpWorkerNetworkObservation {
   readonly #requestSessions = new Map<string, string>();
   readonly #pending = new Set<Promise<void>>();
   #admittedWorkers = 0;
+  #releases = 0;
+  #workerFrames = 0;
   #failure: { readonly cause: unknown } | undefined;
   /** Workers are admitted only from `start()` until `settle()` or `close()`. */
   #admitting = false;
@@ -122,36 +133,51 @@ export class CdpWorkerNetworkObservation {
     const requestId = cdpStringValue(recordValue(event.params)?.requestId);
     if (requestId !== undefined) {
       const owner = this.#requestSessions.get(requestId);
+      const starts = REQUEST_START_EVENTS.has(event.method);
       if (owner === undefined) {
         // Chrome announces a worker's own script on the page session and
         // completes it on the worker session. Keep page-owned records and
         // requests that began before attachment out of the worker lifecycle.
+        if (!starts) return;
         if (
-          !REQUEST_START_EVENTS.has(event.method) ||
           this.events.network.has(requestId) ||
           this.events.webSocketConnectionsById.has(requestId)
-        )
+        ) {
+          this.#requestOmitted(event.method, "invalid_protocol_value");
           return;
+        }
         if (this.#requestSessions.size >= CDP_WORKER_NETWORK_LIMITS.requests) {
-          this.#requestBudgetExhausted(event.method);
+          this.#requestOmitted(event.method, "resource_budget_exhausted");
           return;
         }
         this.#requestSessions.set(requestId, event.sessionId);
-      } else if (owner !== event.sessionId) return;
+      } else if (owner !== event.sessionId) {
+        // Each session has its own Network domain, so an ID another session
+        // already owns cannot be attributed; report it instead of merging.
+        if (starts)
+          this.#requestOmitted(event.method, "invalid_protocol_value");
+        return;
+      } else if (WEBSOCKET_FRAME_EVENTS.has(event.method)) {
+        if (this.#workerFrames >= CDP_WORKER_NETWORK_LIMITS.frames) {
+          this.events.completeness.drop("websocket_frames");
+          return;
+        }
+        this.#workerFrames += 1;
+      }
     }
     this.events.ingest(event);
   }
 
   /** Report an omitted request or WebSocket in the section callers read for it. */
-  #requestBudgetExhausted(method: string): void {
+  #requestOmitted(method: string, reason: BrowserExclusionReason): void {
     const { completeness } = this.events;
     if (method !== "Network.webSocketCreated") {
-      completeness.exclude("network_requests", "resource_budget_exhausted");
+      completeness.exclude("network_requests", reason);
       return;
     }
-    completeness.exclude("websocket_connections", "resource_budget_exhausted");
+    completeness.exclude("websocket_connections", reason);
     // The omitted connection's frames are never observed, so their count is unknown.
-    completeness.exclude("websocket_frames", "resource_budget_exhausted", null);
+    completeness.exclude("websocket_frames", reason, null);
   }
 
   /**
@@ -240,9 +266,18 @@ export class CdpWorkerNetworkObservation {
 
   /**
    * Detach an auto-attached session REA does not observe; Chrome keeps the
-   * worker running. Best effort: detaching the page session releases it too.
+   * worker running. Best effort and bounded: at most `releases` per capture
+   * and none once admission closes, so `settle()` always finishes. Turning
+   * auto-attach off instead would also detach admitted workers. Any session
+   * left attached is released with the page session.
    */
   #release(parentSessionId: string | undefined, sessionId: string): void {
+    if (
+      !this.#admitting ||
+      this.#releases >= CDP_WORKER_NETWORK_LIMITS.releases
+    )
+      return;
+    this.#releases += 1;
     const signals = [
       this.context.signal,
       parentSessionId === undefined

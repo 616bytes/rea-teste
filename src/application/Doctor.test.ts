@@ -6,6 +6,7 @@ import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
 import { runDoctor } from "./Doctor.js";
 import { err } from "../domain/result.js";
 import { HopperReleaseError } from "./HopperReleaseFeed.js";
+import { parseLinuxDistribution } from "./LinuxHopper.js";
 
 describe("doctor runtime check", () => {
   it("reports Node 25 as unsupported", async () => {
@@ -76,8 +77,9 @@ describe("doctor", () => {
       ),
     ).toEqual({
       node: `Install ${SUPPORTED_NODE_VERSION_PROSE}.`,
-      host: "REA supports macOS 12+, Linux distributions with a recognized apt, dnf, or pacman package family, and the experimental Windows x64 Ghidra P0 boundary; automated Hopper setup additionally requires Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, or Omarchy.",
-      hopper: "Run rea setup to install Hopper, or set HOPPER_LAUNCHER_PATH.",
+      host: "REA supports macOS 12+, NixOS and Linux distributions with a recognized apt, dnf, or pacman package family, and the experimental Windows x64 Ghidra P0 boundary. Provider readiness is checked separately; automated Hopper setup requires Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, or Omarchy.",
+      hopper:
+        "Set HOPPER_LAUNCHER_PATH, or run rea setup to install Hopper on a host with automated Hopper setup support.",
       target: "Supply a readable local app or program path.",
     });
   });
@@ -449,14 +451,14 @@ describe("Grok Bot readiness", () => {
 });
 
 describe("doctor scoped readiness", () => {
-  it("keeps agent readiness independent of Hopper host requirements", async () => {
+  it("keeps agent readiness independent of unsupported host diagnostics", async () => {
     const result = await runDoctor(
       undefined,
       host({
         platform: "linux",
         linuxDistribution: () =>
           Promise.resolve({
-            id: "nixos",
+            id: "unknown",
             packageFamily: undefined,
             hopperSetupSupported: false,
           }),
@@ -551,6 +553,72 @@ describe("doctor scoped readiness", () => {
   });
 });
 
+describe("doctor NixOS host diagnostics", () => {
+  it.each([false, true])(
+    "keeps NixOS host support independent of provider readiness (%s)",
+    async (available) => {
+      const result = await runDoctor(
+        undefined,
+        host({
+          platform: "linux",
+          linuxDistribution: () =>
+            Promise.resolve(
+              parseLinuxDistribution('ID=nixos\nVERSION_ID="26.05"\n'),
+            ),
+          executable: () => Promise.resolve(false),
+          providerInspections: () =>
+            Promise.resolve([
+              {
+                id: "ghidra",
+                configured: true,
+                available,
+                providerVersion: null,
+                registrationEnvironment: {
+                  GHIDRA_INSTALL_DIR: "/tools/ghidra",
+                },
+                checks: [
+                  {
+                    name: "configuration",
+                    ok: available,
+                    code: null,
+                    detail: "/tools/ghidra",
+                    remediation: available
+                      ? null
+                      : "Configure a runnable Ghidra installation.",
+                    classification: "missing_analysis_engine",
+                  },
+                ],
+              },
+            ]),
+        }),
+      );
+
+      expect(result.healthy).toBe(available);
+      expect(result.environment_healthy).toBe(available);
+      expect(result.checks).toContainEqual({
+        name: "host",
+        ok: true,
+        classification: "healthy",
+        detail: "nixos 26.05",
+      });
+      expect(result.checks).toContainEqual(
+        expect.objectContaining({
+          name: "ghidra",
+          ok: available,
+          classification: available ? "healthy" : "missing_analysis_engine",
+        }),
+      );
+      expect(result.checks).toContainEqual({
+        name: "hopper",
+        ok: false,
+        classification: "missing_analysis_engine",
+        remediation:
+          "Set HOPPER_LAUNCHER_PATH, or run rea setup to install Hopper on a host with automated Hopper setup support.",
+      });
+    },
+  );
+});
+
 describe("doctor Linux and Hopper discovery", () => {
   it("accepts an officially supported Linux distribution", async () => {
     const path = "/home/user/.local/share/rea/hopper/bin/Hopper";
@@ -604,36 +672,49 @@ describe("doctor Linux and Hopper discovery", () => {
       remediation: expect.stringContaining("xauth"),
     });
   });
-  it("explains how to recover from an unsupported configured launcher", async () => {
-    const path = "/custom/Hopper";
-    const result = await runDoctor(
-      undefined,
-      host({
-        platform: "linux",
-        configuredHopperPath: path,
-        linuxDistribution: () =>
-          Promise.resolve({
-            id: "ubuntu",
-            versionId: "24.04",
-            packageFamily: "deb",
-            hopperSetupSupported: true,
-          }),
-        executable: (candidate) => Promise.resolve(candidate === path),
-        inspectLinuxHopper: () =>
-          Promise.resolve(
-            err(
-              new HopperReleaseError(
-                "unsupported_hopper_build",
-                "Unverified fixture build",
+  it.each([
+    ["ubuntu", "24.04"],
+    ["nixos", "26.05"],
+  ])(
+    "explains how to recover from an unsupported configured launcher on %s",
+    async (id, version) => {
+      const path = "/custom/Hopper";
+      const result = await runDoctor(
+        undefined,
+        host({
+          platform: "linux",
+          configuredHopperPath: path,
+          linuxDistribution: () =>
+            Promise.resolve(
+              parseLinuxDistribution(`ID=${id}\nVERSION_ID="${version}"\n`),
+            ),
+          executable: (candidate) => Promise.resolve(candidate === path),
+          inspectLinuxHopper: () =>
+            Promise.resolve(
+              err(
+                new HopperReleaseError(
+                  "unsupported_hopper_build",
+                  "Unverified fixture build",
+                ),
               ),
             ),
-          ),
-      }),
-    );
-    expect(
-      result.checks.find(({ name }) => name === "hopper-version")?.remediation,
-    ).toContain("Check HOPPER_LAUNCHER_PATH");
-  });
+        }),
+      );
+      expect(
+        result.checks.find(({ name }) => name === "hopper-version")
+          ?.remediation,
+      ).toContain("Check HOPPER_LAUNCHER_PATH");
+      expect(
+        result.checks.find(({ name }) => name === "hopper-version"),
+      ).toMatchObject({
+        ok: false,
+        classification: "config_drift",
+        remediation: expect.stringContaining("automated Hopper setup support"),
+      });
+      expect(result.checks.find(({ name }) => name === "host")?.ok).toBe(true);
+      expect(result.healthy).toBe(false);
+    },
+  );
 });
 
 describe("doctor installed Hopper discovery", () => {

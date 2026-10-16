@@ -22,18 +22,14 @@ export const createPlistNumberCollector = () => {
         incompleteMetadata = true;
         return;
       }
-      const exact = BigInt(literal);
-      if (
-        exact >= BigInt(Number.MIN_SAFE_INTEGER) &&
-        exact <= BigInt(Number.MAX_SAFE_INTEGER)
-      )
-        return;
+      const rounded = Number(literal);
+      if (Number.isSafeInteger(rounded)) return;
       unsafeIntegerLiterals += 1;
-      const rounded = Number(exact);
-      integers.set(
-        rounded,
-        (integers.get(rounded) ?? new Set()).add(exact.toString()),
-      );
+      // Exact decimal metadata needs only sign/zero normalization. A BigInt
+      // round trip adds costly arbitrary-precision work for long source integers.
+      const digits = literal.replace(/^[+-]?0*/u, "");
+      const decimal = literal.startsWith("-") ? `-${digits}` : digits;
+      integers.set(rounded, (integers.get(rounded) ?? new Set()).add(decimal));
     },
     real: (value: number) => {
       reals.add(value);

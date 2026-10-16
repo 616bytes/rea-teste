@@ -54,6 +54,48 @@ it("retains ambiguity when a CDATA real collides with a rounded integer", () => 
   );
 });
 
+it.each([
+  ["9007199254740993", "9007199254740993", 9007199254740992],
+  ["+0009007199254740993", "9007199254740993", 9007199254740992],
+  ["-0009007199254740993", "-9007199254740993", -9007199254740992],
+  ["+0009007199254740991", undefined, 9007199254740991],
+  ["-0009007199254740991", undefined, -9007199254740991],
+  ["-0000", undefined, -0],
+] as const)(
+  "preserves canonical integer metadata for %s",
+  (literal, decimal, rounded) => {
+    const { numberLiterals } = parseXmlPropertyList(
+      plist(`<integer>${literal}</integer>`),
+    );
+    expect(numberLiterals.incomplete).toBe(false);
+    expect(numberLiterals.unsafeIntegerLiterals).toBe(
+      decimal === undefined ? 0 : 1,
+    );
+    expect(numberLiterals.integers).toEqual(
+      decimal === undefined
+        ? new Map()
+        : new Map([[rounded, new Set([decimal])]]),
+    );
+  },
+);
+
+it("retains exact decimal text beyond the finite Number range", () => {
+  const digits = "9".repeat(400);
+  const { numberLiterals } = parseXmlPropertyList(
+    plist(
+      `<array><integer>+000${digits}</integer><integer>-000${digits}</integer></array>`,
+    ),
+  );
+  expect(numberLiterals.incomplete).toBe(false);
+  expect(numberLiterals.unsafeIntegerLiterals).toBe(2);
+  expect(numberLiterals.integers).toEqual(
+    new Map([
+      [Infinity, new Set([digits])],
+      [-Infinity, new Set([`-${digits}`])],
+    ]),
+  );
+});
+
 it("does not interpret markup inside opaque text or normalize nested real elements", () => {
   const parsed = parseXmlPropertyList(
     plist(

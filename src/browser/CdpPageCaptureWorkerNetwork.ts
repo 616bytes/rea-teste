@@ -158,6 +158,8 @@ export class CdpWorkerNetworkObservation {
           this.#requestOmitted(event.method, "invalid_protocol_value");
         return;
       } else if (WEBSOCKET_FRAME_EVENTS.has(event.method)) {
+        // Only frames of a connection the origin policy kept are retained.
+        if (!this.events.webSocketConnectionsById.has(requestId)) return;
         if (this.#workerFrames >= CDP_WORKER_NETWORK_LIMITS.frames) {
           this.events.completeness.drop("websocket_frames");
           return;
@@ -166,6 +168,14 @@ export class CdpWorkerNetworkObservation {
       }
     }
     this.events.ingest(event);
+    // A start the origin policy rejected keeps no record; free its budget slot.
+    if (
+      requestId !== undefined &&
+      REQUEST_START_EVENTS.has(event.method) &&
+      !this.events.network.has(requestId) &&
+      !this.events.webSocketConnectionsById.has(requestId)
+    )
+      this.#requestSessions.delete(requestId);
   }
 
   /** Report an omitted request or WebSocket in the section callers read for it. */

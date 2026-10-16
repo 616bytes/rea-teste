@@ -238,4 +238,52 @@ describe("CDP worker network request ownership", () => {
       ]),
     );
   });
+
+  it("does not spend worker budgets on traffic the origin policy excludes", async () => {
+    const { events, workers } = observation();
+    await workers.start();
+    workers.ingest(attached("worker-0"));
+    await workers.settle();
+    const socket = (requestId: string, url: string) => ({
+      sessionId: "worker-0",
+      method: "Network.webSocketCreated",
+      params: { requestId, url },
+    });
+    const frame = (requestId: string, timestamp: number) => ({
+      sessionId: "worker-0",
+      method: "Network.webSocketFrameReceived",
+      params: {
+        requestId,
+        timestamp,
+        response: { opcode: 1, mask: false, payloadData: "x" },
+      },
+    });
+    workers.ingest(socket("foreign-socket", "ws://foreign.example.test/live"));
+    for (let index = 0; index < CDP_WORKER_NETWORK_LIMITS.frames; index += 1)
+      workers.ingest(frame("foreign-socket", index));
+    for (let index = 0; index < CDP_WORKER_NETWORK_LIMITS.requests; index += 1)
+      workers.ingest({
+        sessionId: "worker-0",
+        method: "Network.requestWillBeSent",
+        params: {
+          requestId: `foreign-${String(index)}`,
+          type: "Fetch",
+          request: { url: "https://foreign.example.test/data", method: "GET" },
+          initiator: { type: "script" },
+        },
+      });
+    workers.ingest(socket("allowed-socket", "ws://127.0.0.1:43127/live"));
+    workers.ingest(frame("allowed-socket", 0));
+    workers.ingest(requested("worker-0", "allowed-request"));
+
+    expect(
+      events.webSocketConnectionsById.get("allowed-socket")?.events,
+    ).toHaveLength(1);
+    expect(events.network.has("allowed-request")).toBe(true);
+    const { dropped_events, excluded } = events.completeness.snapshot();
+    expect(dropped_events.websocket_frames).toBe(0);
+    expect(excluded).not.toContainEqual(
+      expect.objectContaining({ reason: "resource_budget_exhausted" }),
+    );
+  });
 });

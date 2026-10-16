@@ -1,5 +1,7 @@
 "use strict";
 
+const applyFunction = Reflect.apply;
+
 const { isProxy } = require("node:util").types;
 const {
   createElectronActiveBoundaryPatches,
@@ -415,7 +417,7 @@ const patchIpcMain = (ipcMain) => {
             args,
           );
           try {
-            const result = await listener.call(this, event, ...args);
+            const result = await applyFunction(listener, this, arguments);
             if (recorded !== null) recorded.result_shape = shape(result);
             return result;
           } catch (cause) {
@@ -489,12 +491,12 @@ const patchIpcMain = (ipcMain) => {
             )
               methodArgs[1] = removalTarget;
           }
-          return Reflect.apply(value, emitter, methodArgs);
+          return applyFunction(value, emitter, methodArgs);
         };
       },
       set: (_target, key, value) => Reflect.set(emitter, key, value, emitter),
     });
-    const result = Reflect.apply(removeAllListeners, receiver, args);
+    const result = applyFunction(removeAllListeners, receiver, args);
     return result === receiver ? emitter : result;
   };
 };

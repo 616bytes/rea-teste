@@ -880,6 +880,67 @@ process.stdout.write(JSON.stringify({ plain: scenario(new EventEmitter()), hooke
   expect(hooked).toEqual(plain);
 });
 
+it("invokes handle callbacks without reading callable method properties", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-ipc-callable-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-callable-properties.cjs");
+  await writeFile(
+    script,
+    `"use strict";
+const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const scenario = async (emitter, observed) => {
+  let calls = 0;
+  let reads = 0;
+  let correctReceiver = false;
+  let arity = null;
+  const listener = new Proxy(function(...args) {
+    calls += 1;
+    correctReceiver = this === undefined;
+    arity = args.length;
+  }, { get(target, key, receiver) {
+    if (key === "call" || key === "apply") {
+      reads += 1;
+      throw new Error("callable metadata must not be read");
+    }
+    return Reflect.get(target, key, receiver);
+  }});
+  const event = { sender: { id: 9 } };
+  let failure = null;
+  try {
+    if (observed) {
+      emitter.handle("ch", listener);
+      const handler = emitter.handlers.get("ch");
+      await handler(event, 42);
+    } else {
+      await listener(event, 42);
+    }
+  } catch (cause) { failure = cause.message; }
+  return { calls, reads, correct_receiver: correctReceiver, arity, failure };
+};
+(async () => {
+  process.stdout.write(JSON.stringify({ plain: await scenario(new EventEmitter(), false),
+    hooked: await scenario(ipcMain, true) }) + "\\n");
+})();
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const { plain, hooked } = JSON.parse(execution.stdout) as {
+    plain: Record<string, unknown>;
+    hooked: Record<string, unknown>;
+  };
+  expect(plain).toEqual({
+    calls: 1,
+    reads: 0,
+    correct_receiver: true,
+    arity: 2,
+    failure: null,
+  });
+  expect(hooked).toEqual(plain);
+});
+
 it("keeps native removal traversal when an ipcMain observer prepends a listener", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-prepend-");
   temporary.push(root);

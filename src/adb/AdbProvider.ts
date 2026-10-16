@@ -377,7 +377,7 @@ const runAdbCapture = async (
   signal: AbortSignal | undefined,
 ): Promise<Result<{ stdout: Buffer; stderr: Buffer }, AnalysisError>> => {
   if (signal?.aborted === true)
-    return err(new AnalysisCancelledError(operation));
+    return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
   try {
     return ok(
       await execFileBytes(binary, arguments_, {
@@ -598,7 +598,8 @@ const publishScreenExclusively = async (
   operation: string,
   signal: AbortSignal | undefined,
 ): Promise<ScreenPublicationCloseFailure | undefined> => {
-  if (signal?.aborted === true) throw new AnalysisCancelledError(operation);
+  if (signal?.aborted === true)
+    throw new AnalysisCancelledError(operation, { cause: signal.reason });
   const output = await open(outputPath, "wx", 0o600);
   // Successful exclusive creation is this fallback's cutoff. Finish and sync
   // the visible file despite later cancellation so its receipt remains known.
@@ -1186,6 +1187,25 @@ export class AdbProvider {
       resource: root.path,
       lease: rootLease,
     });
+    if (primary === undefined && result?.ok && signal?.aborted === true) {
+      const completed = result.value;
+      primary = new AnalysisCancelledError(operation, {
+        cause: signal.reason,
+        partialObservation: createEvidence(
+          completed.subject ?? undefined,
+          completed.provider,
+          {
+            operation,
+            parameters,
+            result: completed.result,
+            rawResult: completed.rawResult,
+            limitations: completed.limitations,
+            locations: completed.locations,
+            confidence: "observed",
+          },
+        ),
+      });
+    }
     if (released.kind === "failed") {
       const cleanupResources = [
         root.path,
@@ -1228,30 +1248,6 @@ export class AdbProvider {
           analysisErrorWithCleanupFailure(result.error, cleanup, operation),
         );
       }
-      if (result?.ok && signal?.aborted === true) {
-        const completed = result.value;
-        return returnCleanupError(
-          new AnalysisCancelledError(operation, {
-            cleanup: {
-              reason: cleanup.message,
-              resources: cleanupResources,
-            },
-            partialObservation: createEvidence(
-              completed.subject ?? undefined,
-              completed.provider,
-              {
-                operation,
-                parameters,
-                result: completed.result,
-                rawResult: completed.rawResult,
-                limitations: completed.limitations,
-                locations: completed.locations,
-                confidence: "observed",
-              },
-            ),
-          }),
-        );
-      }
       return returnCleanupError(cleanup);
     }
     if (primary !== undefined) return err(primary);
@@ -1259,26 +1255,6 @@ export class AdbProvider {
       return err(
         new AnalysisProtocolError(`ADB ${operation} returned no result`),
       );
-    if (result.ok && signal?.aborted === true) {
-      const completed = result.value;
-      return err(
-        new AnalysisCancelledError(operation, {
-          partialObservation: createEvidence(
-            completed.subject ?? undefined,
-            completed.provider,
-            {
-              operation,
-              parameters,
-              result: completed.result,
-              rawResult: completed.rawResult,
-              limitations: completed.limitations,
-              locations: completed.locations,
-              confidence: "observed",
-            },
-          ),
-        }),
-      );
-    }
     return result;
   }
 
@@ -1436,7 +1412,9 @@ export class AdbProvider {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const signal = options?.signal;
     if (signal?.aborted === true)
-      return err(new AnalysisCancelledError(request.operation));
+      return err(
+        new AnalysisCancelledError(request.operation, { cause: signal.reason }),
+      );
     let selection: AdbBinarySelection;
     let identity: AdbClientIdentity;
     try {
@@ -3081,7 +3059,9 @@ export class AdbProvider {
     );
     if (!captured.ok) return captured;
     if (signal?.aborted === true)
-      return err(new AnalysisCancelledError(operation));
+      return err(
+        new AnalysisCancelledError(operation, { cause: signal.reason }),
+      );
     const dimensions = parsePngDimensions(captured.value.stdout);
     if (dimensions.width === null)
       return err(
@@ -3102,7 +3082,9 @@ export class AdbProvider {
           await writeFile(stagedPath, captured.value.stdout, { flag: "wx" });
           await syncStagedAdbFile(stagedPath, resources, operation);
           if (signal?.aborted === true)
-            return err(new AnalysisCancelledError(operation));
+            return err(
+              new AnalysisCancelledError(operation, { cause: signal.reason }),
+            );
           try {
             // A same-filesystem hard link atomically publishes without replacing
             // caller output. Its success is the publication cutoff.

@@ -591,13 +591,14 @@ test.each([false, true])(
   async (failCleanup) => {
     const f = await fixture();
     const controller = new AbortController();
+    const abortReason = new Error("caller stopped after snapshot cleanup");
     const actualFs =
       await vi.importActual<typeof import("node:fs/promises")>(
         "node:fs/promises",
       );
     vi.mocked(rm).mockImplementationOnce(async (path, options) => {
       if (basename(String(path)).startsWith("rea-adb-input-")) {
-        controller.abort();
+        controller.abort(abortReason);
         if (failCleanup) throw new Error("snapshot cleanup denied");
       }
       return actualFs.rm(path, options);
@@ -609,6 +610,15 @@ test.each([false, true])(
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
+    if (failCleanup) {
+      expect(result.error.cause).toBeInstanceOf(AggregateError);
+      const causes = (result.error.cause as AggregateError).errors as [
+        { readonly cause: unknown },
+        { readonly cleanupIncomplete: boolean },
+      ];
+      expect(causes[0].cause).toBe(abortReason);
+      expect(causes[1].cleanupIncomplete).toBe(true);
+    } else expect(result.error.cause).toBe(abortReason);
     const evidence = parseEvidence(result.error.partialObservation);
     expect(evidence).toMatchObject({
       provider: { id: "adb" },

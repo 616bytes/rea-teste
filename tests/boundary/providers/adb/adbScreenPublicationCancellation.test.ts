@@ -59,8 +59,9 @@ const fixture = async () => {
 test("does not publish a screen capture cancelled before the commit point", async () => {
   const f = await fixture();
   const controller = new AbortController();
+  const abortReason = new Error("caller stopped after screencap");
   vi.mocked(execFileBytes).mockImplementationOnce(async () => {
-    controller.abort();
+    controller.abort(abortReason);
     return { stdout: f.png, stderr: Buffer.alloc(0) };
   });
   const output = join(f.root, "captures");
@@ -74,6 +75,7 @@ test("does not publish a screen capture cancelled before the commit point", asyn
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(result.error.cause).toBe(abortReason);
   await expect(readFile(join(output, "screen.png"))).rejects.toMatchObject({
     code: "ENOENT",
   });
@@ -83,6 +85,7 @@ test("does not publish a screen capture cancelled before the commit point", asyn
 test("retains a committed screen capture receipt when cancellation arrives after commit", async () => {
   const f = await fixture();
   const controller = new AbortController();
+  const abortReason = new Error("caller stopped after screen commit");
   vi.mocked(execFileBytes).mockResolvedValueOnce({
     stdout: f.png,
     stderr: Buffer.alloc(0),
@@ -93,7 +96,7 @@ test("retains a committed screen capture receipt when cancellation arrives after
     );
   vi.mocked(link).mockImplementationOnce(async (...args) => {
     await actualFs.link(...args);
-    controller.abort();
+    controller.abort(abortReason);
   });
   const output = join(f.root, "captures");
   const result = await f.provider.execute(
@@ -106,6 +109,7 @@ test("retains a committed screen capture receipt when cancellation arrives after
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(result.error.cause).toBe(abortReason);
   const evidence = parseEvidence(result.error.partialObservation);
   expect(evidence).toMatchObject({
     provider: { id: "adb" },
@@ -224,6 +228,7 @@ test("retains the committed receipt and cleanup observation when cancellation ra
     prefix: "rea-adb-receipt-",
   });
   const controller = new AbortController();
+  const abortReason = new Error("caller stopped after screen commit");
   let closeAttempts = 0;
   const provider = new AdbProvider({
     environment: { REA_ADB_PATH: join(f.root, "adb") },
@@ -246,7 +251,7 @@ test("retains the committed receipt and cleanup observation when cancellation ra
   });
   vi.mocked(link).mockImplementationOnce(async (...args) => {
     await actualFs.link(...args);
-    controller.abort();
+    controller.abort(abortReason);
   });
   const output = join(f.root, "captures");
   const destination = join(output, "screen.png");
@@ -261,6 +266,13 @@ test("retains the committed receipt and cleanup observation when cancellation ra
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cause).toBeInstanceOf(AggregateError);
+  const causes = (result.error.cause as AggregateError).errors as [
+    { readonly cause: unknown },
+    { readonly cleanupIncomplete: boolean },
+  ];
+  expect(causes[0].cause).toBe(abortReason);
+  expect(causes[1].cleanupIncomplete).toBe(true);
   expect(result.error.cleanupResources).toContain(runtime.path);
   expect(parseEvidence(result.error.partialObservation)).toMatchObject({
     operation: "capture_adb_screen",
@@ -270,6 +282,7 @@ test("retains the committed receipt and cleanup observation when cancellation ra
   expect(await readFile(destination)).toEqual(f.png);
   await provider.close();
   expect(closeAttempts).toBe(2);
+  expect(result.error.cleanupIncomplete).toBe(false);
 });
 
 test("publishes screen captures when the output filesystem does not support hard links", async () => {
@@ -321,12 +334,13 @@ test("does not replace a destination created after the initial existence check",
 test("cancellation after a failed hard link but before exclusive creation does not publish", async () => {
   const f = await fixture();
   const controller = new AbortController();
+  const abortReason = new Error("caller stopped before exclusive creation");
   vi.mocked(execFileBytes).mockResolvedValueOnce({
     stdout: f.png,
     stderr: Buffer.alloc(0),
   });
   vi.mocked(link).mockImplementationOnce(async () => {
-    controller.abort();
+    controller.abort(abortReason);
     throw Object.assign(new Error("hard links are unsupported"), {
       code: "EPERM",
     });
@@ -342,6 +356,7 @@ test("cancellation after a failed hard link but before exclusive creation does n
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(result.error.cause).toBe(abortReason);
   await expect(readFile(join(output, "screen.png"))).rejects.toMatchObject({
     code: "ENOENT",
   });
@@ -351,6 +366,7 @@ test("cancellation after a failed hard link but before exclusive creation does n
 test("retains a receipt when cancellation arrives after exclusive output creation", async () => {
   const f = await fixture();
   const controller = new AbortController();
+  const abortReason = new Error("caller stopped after exclusive creation");
   const actualFs =
     await vi.importActual<typeof import("node:fs/promises")>(
       "node:fs/promises",
@@ -366,7 +382,7 @@ test("retains a receipt when cancellation arrives after exclusive output creatio
   );
   vi.mocked(open).mockImplementation(async (...args) => {
     const handle = await actualFs.open(...args);
-    if (String(args[0]) === destination) controller.abort();
+    if (String(args[0]) === destination) controller.abort(abortReason);
     return handle;
   });
   const result = await f.provider.execute(
@@ -379,6 +395,7 @@ test("retains a receipt when cancellation arrives after exclusive output creatio
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(result.error.cause).toBe(abortReason);
   expect(parseEvidence(result.error.partialObservation)).toMatchObject({
     operation: "capture_adb_screen",
     confidence: "observed",

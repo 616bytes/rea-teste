@@ -3,10 +3,15 @@ import type { BrowserExclusionReason } from "../domain/browserCompleteness.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import type { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import { admittedWebSocketUrl } from "./CdpCaptureEventHandlers.js";
-import { isJsonContentType } from "./CdpCaptureEventHelpers.js";
+import { decodeBase64, isJsonContentType } from "./CdpCaptureEventHelpers.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import {
+  expandingMetadataBytes,
+  withoutExpandingMetadata,
+} from "./CdpSafeMetadata.js";
+import {
+  admitRecords,
   allowedSanitizedUrl,
   cdpStringValue,
   isHttpUrl,
@@ -20,8 +25,9 @@ import {
  * request and frame bounds match the script metadata record bound, and the
  * byte bounds match the script metadata byte bound. Request bytes count each
  * retained URL plus, when a JSON request shape is inferred, its body; response
- * bytes count JSON response bodies read for shapes; frame bytes count payloads
- * when WebSocket shapes are inferred.
+ * bytes count JSON response bodies read for shapes; metadata bytes count the
+ * response headers whose parsed metadata grows with their size; frame bytes
+ * count payloads when WebSocket shapes are inferred.
  */
 export const CDP_WORKER_NETWORK_LIMITS = {
   workers: 256,
@@ -30,6 +36,7 @@ export const CDP_WORKER_NETWORK_LIMITS = {
   frames: 50_000,
   requestBytes: 8 * 1024 * 1024,
   responseBytes: 8 * 1024 * 1024,
+  metadataBytes: 8 * 1024 * 1024,
   frameBytes: 8 * 1024 * 1024,
 } as const;
 
@@ -92,6 +99,12 @@ export class CdpWorkerNetworkObservation {
   #workerFrameBytes = 0;
   #workerRequestBytes = 0;
   #workerResponseBytes = 0;
+  #workerMetadataBytes = 0;
+  /** Worker attachment state Chrome reported before REA auto-attached. */
+  readonly #preAttachState = new Map<string, boolean>();
+  /** Target ID of each admitted worker session. */
+  readonly #targetsBySession = new Map<string, string>();
+  #attachmentUnknownReported = false;
   /** Request bytes charged per worker request ID, refunded if its record goes. */
   readonly #requestCharges = new Map<string, number>();
   /** Parent worker session of each admitted nested worker session. */
@@ -109,6 +122,7 @@ export class CdpWorkerNetworkObservation {
 
   /** Auto-attach existing and new dedicated workers without pausing them. */
   async start(): Promise<void> {
+    await this.#snapshotWorkerAttachment();
     // Chrome can report existing workers before it answers this command.
     this.#admitting = true;
     const result = await optionalCdpCommand(
@@ -200,12 +214,22 @@ export class CdpWorkerNetworkObservation {
         this.#workerFrameBytes += payloadBytes;
       }
     }
-    const requestBytes =
-      requestId === undefined ? 0 : this.#retainedRequestBytes(event);
+    this.#forward(event, requestId);
+  }
+
+  /**
+   * Charge the request and metadata budgets, forward the event, then settle
+   * the charges from what the capture actually kept.
+   */
+  #forward(event: CdpEvent, requestId: string | undefined): void {
+    if (requestId === undefined) {
+      this.events.ingest(event);
+      return;
+    }
+    const requestBytes = this.#retainedRequestBytes(event);
     if (
-      requestId !== undefined &&
       this.#workerRequestBytes + requestBytes >
-        CDP_WORKER_NETWORK_LIMITS.requestBytes
+      CDP_WORKER_NETWORK_LIMITS.requestBytes
     ) {
       this.#requestOmitted(event.method, "resource_budget_exhausted");
       // An omitted redirect hop would let the next response describe the
@@ -214,22 +238,78 @@ export class CdpWorkerNetworkObservation {
       else this.#disown(requestId);
       return;
     }
-    if (requestId !== undefined && requestBytes > 0) {
+    if (requestBytes > 0) {
       this.#workerRequestBytes += requestBytes;
       this.#requestCharges.set(
         requestId,
         (this.#requestCharges.get(requestId) ?? 0) + requestBytes,
       );
     }
-    this.events.ingest(event);
+    const forwarded = this.#withinMetadataBudget(event);
+    const before = this.#record(requestId);
+    this.events.ingest(forwarded.event);
     // The origin policy can reject a start or drop a whole redirect chain;
-    // either way no record remains, so refund every hop it was charged.
-    if (
-      requestId !== undefined &&
-      REQUEST_START_EVENTS.has(event.method) &&
-      !this.#retains(requestId)
-    )
+    // either way no record remains, so refund everything it was charged.
+    if (!this.#retains(requestId)) {
+      this.#workerMetadataBytes -= forwarded.metadataBytes;
       this.#disown(requestId);
+      return;
+    }
+    // The capture can also keep the earlier hop and reject this one.
+    if (
+      REQUEST_START_EVENTS.has(event.method) &&
+      before !== undefined &&
+      this.#record(requestId) === before
+    ) {
+      this.#workerRequestBytes -= requestBytes;
+      this.#requestCharges.set(
+        requestId,
+        (this.#requestCharges.get(requestId) ?? 0) - requestBytes,
+      );
+    }
+  }
+
+  #record(requestId: string): object | undefined {
+    return (
+      this.events.network.get(requestId) ??
+      this.events.webSocketConnectionsById.get(requestId)
+    );
+  }
+
+  /**
+   * Charge a response's expanding metadata headers. Past the budget, forward
+   * the response without them so its status and type are still recorded.
+   */
+  #withinMetadataBudget(event: CdpEvent): {
+    readonly event: CdpEvent;
+    readonly metadataBytes: number;
+  } {
+    if (event.method !== "Network.responseReceived")
+      return { event, metadataBytes: 0 };
+    const params = recordValue(event.params);
+    const response = recordValue(params?.response);
+    const bytes = expandingMetadataBytes(response?.headers);
+    if (
+      this.#workerMetadataBytes + bytes <=
+      CDP_WORKER_NETWORK_LIMITS.metadataBytes
+    ) {
+      this.#workerMetadataBytes += bytes;
+      return { event, metadataBytes: bytes };
+    }
+    this.events.completeness.exclude("metadata", "resource_budget_exhausted");
+    return {
+      event: {
+        ...event,
+        params: {
+          ...params,
+          response: {
+            ...response,
+            headers: withoutExpandingMetadata(response?.headers),
+          },
+        },
+      },
+      metadataBytes: 0,
+    };
   }
 
   /** Forget a worker request that kept no record and refund its charged bytes. */
@@ -246,11 +326,14 @@ export class CdpWorkerNetworkObservation {
   admitsResponseBody(requestId: string, result: unknown): boolean {
     if (!this.#requestSessions.has(requestId)) return true;
     const response = recordValue(result);
-    const body = cdpStringValue(response?.body) ?? "";
-    const bytes =
-      response?.base64Encoded === true
-        ? Math.floor((body.length * 3) / 4)
-        : Buffer.byteLength(body);
+    const body = cdpStringValue(response?.body);
+    const base64Encoded = response?.base64Encoded;
+    // A malformed envelope retains no shape; the body parser classifies it.
+    if (body === undefined || typeof base64Encoded !== "boolean") return true;
+    const bytes = base64Encoded
+      ? decodeBase64(body)?.byteLength
+      : Buffer.byteLength(body);
+    if (bytes === undefined) return true;
     if (
       this.#workerResponseBytes + bytes >
       CDP_WORKER_NETWORK_LIMITS.responseBytes
@@ -399,12 +482,62 @@ export class CdpWorkerNetworkObservation {
     this.#admittedWorkers += 1;
     const detach = new AbortController();
     this.#workerSessions.set(sessionId, detach);
+    const targetId = cdpStringValue(targetInfo.targetId);
+    if (targetId !== undefined) this.#targetsBySession.set(sessionId, targetId);
     if (
       parentSessionId !== undefined &&
       this.#workerSessions.has(parentSessionId)
     )
       this.#parents.set(sessionId, parentSessionId);
     this.#track(this.#observeWorker(parentSessionId, sessionId, detach.signal));
+  }
+
+  /**
+   * The attachment state to report for a worker. REA's own auto-attachment
+   * makes every observed worker look attached, so a worker that existed
+   * before REA attached reports that earlier state. A worker that started
+   * later has no earlier state, so its reported value is kept with a
+   * limitation.
+   */
+  workerAttachment(targetId: string, reported: boolean): boolean {
+    if (![...this.#targetsBySession.values()].includes(targetId))
+      return reported;
+    const before = this.#preAttachState.get(targetId);
+    if (before !== undefined) return before;
+    if (!this.#attachmentUnknownReported) {
+      this.#attachmentUnknownReported = true;
+      this.limitations.push(
+        "Workers that started after REA attached report attached as true because of REA's own attachment; whether another client was attached is unknown.",
+      );
+    }
+    return reported;
+  }
+
+  /** Record each existing worker's attachment state before REA attaches. */
+  async #snapshotWorkerAttachment(): Promise<void> {
+    let result: unknown;
+    try {
+      result = await this.context.connection.send(
+        "Target.getTargets",
+        {},
+        undefined,
+        this.context.signal,
+      );
+    } catch (cause: unknown) {
+      // Without a snapshot, later workers keep their reported state.
+      if (cause instanceof CdpCommandRejection) return;
+      throw cause;
+    }
+    for (const entry of admitRecords(recordValue(result)?.targetInfos) ?? []) {
+      const target = recordValue(entry);
+      const targetId = cdpStringValue(target?.targetId);
+      if (
+        targetId !== undefined &&
+        typeof target?.attached === "boolean" &&
+        cdpStringValue(target.type)?.includes("worker") === true
+      )
+        this.#preAttachState.set(targetId, target.attached);
+    }
   }
 
   /** Record that one whole worker's requests and WebSockets are unobserved. */
@@ -461,6 +594,7 @@ export class CdpWorkerNetworkObservation {
   #forget(sessionId: string): void {
     this.#workerSessions.get(sessionId)?.abort();
     this.#workerSessions.delete(sessionId);
+    this.#targetsBySession.delete(sessionId);
     this.#parents.delete(sessionId);
     for (const [child, parent] of this.#parents)
       if (parent === sessionId) this.#forget(child);

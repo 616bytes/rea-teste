@@ -164,7 +164,14 @@ const captureAuthorizedPage = async (
     frameIds: new Set(frames.map((frame) => frame.frame_id)),
   });
   const workers = await captureWorkers(
-    { context, allowedOrigins, limitations, events: state.events },
+    {
+      context,
+      allowedOrigins,
+      limitations,
+      events: state.events,
+      attachment: (targetId, reported) =>
+        state.workerNetwork.workerAttachment(targetId, reported),
+    },
     new Set(frames.map((frame) => frame.frame_id)),
   );
   const storageCapture = await captureStorage(

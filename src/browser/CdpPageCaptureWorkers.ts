@@ -15,6 +15,8 @@ interface CaptureWorkersInput {
   readonly allowedOrigins: ReadonlySet<string>;
   readonly limitations: string[];
   readonly events: CdpCaptureEvents;
+  /** Attachment state to report, given the state Chrome reports now. */
+  readonly attachment?: (targetId: string, reported: boolean) => boolean;
 }
 
 export const captureWorkers = async (
@@ -99,7 +101,8 @@ export const captureWorkers = async (
       type,
       url: url.url,
       origin: url.origin,
-      attached: target.attached,
+      attached:
+        input.attachment?.(targetId, target.attached) ?? target.attached,
       opener_target_id: openerId ?? null,
       parent_frame_id: parentFrameId ?? null,
     });

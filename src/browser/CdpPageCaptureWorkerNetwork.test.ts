@@ -18,6 +18,7 @@ const observation = (
     readonly reply?: (
       sessionId: string | undefined,
       signal: AbortSignal | undefined,
+      method: string,
     ) => Promise<unknown>;
   } = {},
 ) => {
@@ -43,16 +44,17 @@ const observation = (
       signal?: AbortSignal,
     ) {
       sent.push({ method, params, sessionId });
-      return (await options.reply?.(sessionId, signal)) ?? {};
+      return (await options.reply?.(sessionId, signal, method)) ?? {};
     },
   } as unknown as CdpConnection;
+  const limitations: string[] = [];
   const workers = new CdpWorkerNetworkObservation(
     { connection, sessionId: "page-session" },
     events,
     new Set([origin]),
-    [],
+    limitations,
   );
-  return { events, sent, workers };
+  return { events, limitations, sent, workers };
 };
 
 const attached = (sessionId: string) => ({
@@ -636,5 +638,135 @@ describe("CDP worker network refunds, JSON eligibility and nesting", () => {
     });
 
     await expect(workers.settle()).resolves.toBeUndefined();
+  });
+});
+
+describe("CDP worker network metadata, attachment state and accepted hops", () => {
+  it("bounds expanding worker response metadata and keeps the response", async () => {
+    const { events, workers } = observation();
+    await workers.start();
+    workers.ingest(attached("worker-0"));
+    await workers.settle();
+    const respond = (requestId: string, link: string) => {
+      workers.ingest(requested("worker-0", requestId));
+      workers.ingest({
+        sessionId: "worker-0",
+        method: "Network.responseReceived",
+        params: {
+          requestId,
+          response: {
+            url: `${origin}/data`,
+            status: 200,
+            mimeType: "text/plain",
+            headers: { Link: link },
+          },
+        },
+      });
+    };
+    const oneLink = `<${origin}/a.js>; rel=preload`;
+    respond(
+      "oversized",
+      `${oneLink}, `.repeat(
+        Math.ceil(CDP_WORKER_NETWORK_LIMITS.metadataBytes / oneLink.length),
+      ),
+    );
+    respond("small", oneLink);
+
+    expect(events.network.get("oversized")?.status).toBe(200);
+    const metadata = new Map(
+      events.responseMetadata.map((entry) => [entry.request_id, entry]),
+    );
+    expect(metadata.get("oversized")?.links).toEqual([]);
+    expect(metadata.get("small")?.links).toHaveLength(1);
+    expect(events.completeness.snapshot().excluded).toContainEqual({
+      section: "metadata",
+      reason: "resource_budget_exhausted",
+      count: 1,
+    });
+  });
+
+  it("reports pre-attachment worker state instead of REA's own attachment", async () => {
+    const { limitations, workers } = observation({
+      reply: async (_sessionId, _signal, method) =>
+        method === "Target.getTargets"
+          ? {
+              targetInfos: [
+                {
+                  targetId: "worker-0",
+                  type: "worker",
+                  url: `${origin}/w.js`,
+                  attached: false,
+                },
+              ],
+            }
+          : {},
+    });
+    await workers.start();
+    workers.ingest(attached("worker-0"));
+    workers.ingest(attached("late"));
+    await workers.settle();
+
+    expect(workers.workerAttachment("worker-0", true)).toBe(false);
+    expect(workers.workerAttachment("unrelated", true)).toBe(true);
+    expect(workers.workerAttachment("late", true)).toBe(true);
+    expect(limitations).toContainEqual(
+      expect.stringContaining("started after REA attached"),
+    );
+  });
+
+  it("refunds a worker request hop the capture rejects", async () => {
+    const { events, workers } = observation();
+    await workers.start();
+    workers.ingest(attached("worker-0"));
+    await workers.settle();
+    const third = `${origin}/${"x".repeat(CDP_WORKER_NETWORK_LIMITS.requestBytes / 3)}`;
+    workers.ingest(requested("worker-0", "reused"));
+    for (let index = 0; index < 2; index += 1)
+      workers.ingest({
+        sessionId: "worker-0",
+        method: "Network.requestWillBeSent",
+        params: {
+          requestId: "reused",
+          type: "Fetch",
+          request: { url: third, method: "GET" },
+          initiator: { type: "script" },
+        },
+      });
+    workers.ingest({
+      sessionId: "worker-0",
+      method: "Network.requestWillBeSent",
+      params: {
+        requestId: "after",
+        type: "Fetch",
+        request: { url: third, method: "GET" },
+        initiator: { type: "script" },
+      },
+    });
+
+    expect(events.network.has("after")).toBe(true);
+    expect(events.completeness.snapshot().excluded).not.toContainEqual(
+      expect.objectContaining({ reason: "resource_budget_exhausted" }),
+    );
+  });
+
+  it("leaves malformed body envelopes to the body parser without charging", async () => {
+    const { workers } = observation({ includeJsonBodyShapes: true });
+    await workers.start();
+    workers.ingest(attached("worker-0"));
+    await workers.settle();
+    workers.ingest(requested("worker-0", "malformed"));
+    workers.ingest(requested("worker-0", "valid"));
+
+    expect(
+      workers.admitsResponseBody("malformed", {
+        body: "x".repeat(CDP_WORKER_NETWORK_LIMITS.responseBytes + 1),
+      }),
+    ).toBe(true);
+    expect(
+      workers.admitsResponseBody("valid", {
+        body: "x".repeat(CDP_WORKER_NETWORK_LIMITS.responseBytes),
+        base64Encoded: false,
+      }),
+    ).toBe(true);
   });
 });

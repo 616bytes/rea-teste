@@ -60,6 +60,33 @@ export const safeResponseMetadata = (
   };
 };
 
+/** Response headers whose parsed metadata grows with their value size. */
+const EXPANDING_METADATA_HEADERS: ReadonlySet<string> = new Set([
+  "link",
+  "content-security-policy",
+  "permissions-policy",
+]);
+
+/** Bytes of the response headers whose parsed metadata grows with their size. */
+export const expandingMetadataBytes = (headers: unknown): number => {
+  let total = 0;
+  for (const [name, value] of normalizedHeaders(headers))
+    if (EXPANDING_METADATA_HEADERS.has(name)) total += Buffer.byteLength(value);
+  return total;
+};
+
+/** Response headers without those whose parsed metadata grows with their size. */
+export const withoutExpandingMetadata = (
+  headers: unknown,
+): Readonly<Record<string, unknown>> =>
+  typeof headers !== "object" || headers === null || Array.isArray(headers)
+    ? {}
+    : Object.fromEntries(
+        Object.entries(headers).filter(
+          ([name]) => !EXPANDING_METADATA_HEADERS.has(name.toLowerCase()),
+        ),
+      );
+
 const normalizedHeaders = (value: unknown): ReadonlyMap<string, string> => {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     return new Map();

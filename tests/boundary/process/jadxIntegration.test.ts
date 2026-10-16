@@ -698,7 +698,7 @@ it("retains an uncertain workspace and blocks later launches after cleanup canno
   expect(launches).toHaveLength(1);
 });
 
-it("retries shutdown cleanup after ownership verification recovers", async () => {
+it("resolves every reported shutdown cleanup failure after ownership recovers", async () => {
   let cleanupFails = true;
   const { service, apk, launches, provider } = await setup(
     "normal",
@@ -719,11 +719,30 @@ it("retries shutdown cleanup after ownership verification recovers", async () =>
     if (!outcome.ok) throw outcome.error;
     const firstClose = provider.close();
     expect(provider.close()).toBe(firstClose);
-    await expect(firstClose).rejects.toMatchObject({ cleanupIncomplete: true });
+    const firstFailure = await firstClose.then(
+      () => {
+        throw new Error("Expected shutdown cleanup to remain incomplete");
+      },
+      (cause: unknown) => cause,
+    );
+    expect(firstFailure).toMatchObject({ cleanupIncomplete: true });
+    expect(firstFailure).toHaveProperty("cause", expect.any(AggregateError));
+    const secondFailure = await provider.close().then(
+      () => {
+        throw new Error(
+          "Expected the second cleanup retry to remain incomplete",
+        );
+      },
+      (cause: unknown) => cause,
+    );
+    expect(secondFailure).toMatchObject({ cleanupIncomplete: true });
+    expect(secondFailure).toHaveProperty("cause", expect.any(AggregateError));
     const workspace = launches[0]?.cwd;
     if (workspace === undefined) throw new Error("Expected acquired workspace");
     await expect(access(workspace)).resolves.toBeUndefined();
     await closeAfterRecovery();
+    expect(firstFailure).toMatchObject({ cleanupIncomplete: false });
+    expect(secondFailure).toMatchObject({ cleanupIncomplete: false });
     await verifyCleanup(launches);
     expect(launches).toHaveLength(1);
   } finally {

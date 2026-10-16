@@ -199,7 +199,7 @@ interface PendingCleanup {
   readonly fileHandles: Map<OwnedFileHandle, string>;
   readonly previousError: AnalysisError | undefined;
   readonly operationCause: unknown;
-  reportedError?: AnalysisError;
+  reportedErrors: WeakRef<AnalysisError>[];
 }
 
 const cleanup = async (
@@ -397,6 +397,7 @@ export class JadxProvider implements AndroidAnalysisPort {
         fileHandles: new Map(),
         previousError: undefined,
         operationCause: undefined,
+        reportedErrors: [],
       };
       this.#retained = undefined;
     }
@@ -404,9 +405,18 @@ export class JadxProvider implements AndroidAnalysisPort {
     const pending = this.#pendingCleanup;
     const result = await cleanup(pending);
     if (result.ok) {
-      pending.reportedError?.resolveCleanup();
+      for (const reportedError of pending.reportedErrors)
+        reportedError.deref()?.resolveCleanup();
+      pending.reportedErrors = [];
       this.#pendingCleanup = undefined;
-    } else pending.reportedError ??= result.error;
+    } else {
+      pending.reportedErrors = [
+        ...pending.reportedErrors.filter(
+          (reportedError) => reportedError.deref() !== undefined,
+        ),
+        new WeakRef(result.error),
+      ];
+    }
     return result;
   }
 
@@ -606,6 +616,7 @@ export class JadxProvider implements AndroidAnalysisPort {
         fileHandles,
         previousError,
         operationCause: cause,
+        reportedErrors: [],
       };
       const retired = await this.#retire();
       return retired.ok ? err(previousError) : retired;

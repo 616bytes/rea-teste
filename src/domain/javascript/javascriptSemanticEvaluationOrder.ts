@@ -144,17 +144,32 @@ export const javaScriptOptionalOperandsMayBeSkipped = (
     | t.OptionalMemberExpression,
 ): boolean =>
   ((t.isOptionalCallExpression(node) || t.isOptionalMemberExpression(node)) &&
-    node.optional &&
-    !(
-      t.isOptionalCallExpression(node) &&
-      (t.isFunctionExpression(unwrapJavaScriptExpression(node.callee).node) ||
-        t.isArrowFunctionExpression(
-          unwrapJavaScriptExpression(node.callee).node,
-        ))
-    )) ||
+    optionalOperationMaySkip(node)) ||
   optionalChainMayShortCircuit(
     t.isOptionalMemberExpression(node) ? node.object : node.callee,
   );
+
+/** Normal completion of these syntax forms cannot produce a nullish receiver. */
+const optionalOperationMaySkip = (
+  node: t.OptionalCallExpression | t.OptionalMemberExpression,
+): boolean => {
+  if (!node.optional) return false;
+  const receiver = unwrapJavaScriptExpression(
+    t.isOptionalCallExpression(node) ? node.callee : node.object,
+  ).node;
+  const literal = readExactJavaScriptLiteral(receiver);
+  return (
+    !(literal.found && literal.value !== null) &&
+    !t.isObjectExpression(receiver) &&
+    !t.isArrayExpression(receiver) &&
+    !t.isFunctionExpression(receiver) &&
+    !t.isArrowFunctionExpression(receiver) &&
+    !t.isClassExpression(receiver) &&
+    !t.isRegExpLiteral(receiver) &&
+    !t.isBigIntLiteral(receiver) &&
+    !t.isNewExpression(receiver)
+  );
+};
 
 export type JavaScriptSemanticIterationCardinality =
   | "empty"
@@ -274,11 +289,11 @@ const optionalChainMayShortCircuit = (expression: t.Node): boolean => {
       continue;
     }
     if (t.isOptionalMemberExpression(current)) {
-      if (current.optional) return true;
+      if (optionalOperationMaySkip(current)) return true;
       current = current.object;
     } else if (t.isMemberExpression(current)) current = current.object;
     else if (t.isOptionalCallExpression(current)) {
-      if (current.optional) return true;
+      if (optionalOperationMaySkip(current)) return true;
       current = current.callee;
     } else if (t.isCallExpression(current)) current = current.callee;
     else return false;

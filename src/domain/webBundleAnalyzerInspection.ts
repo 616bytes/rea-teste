@@ -75,7 +75,7 @@ export const analyzeScript = (
   const { bindings, receivers } = index;
   if (receivers.hasWebSocketEndpointCandidate)
     completeSemanticSteps(index.indexAmbientWritesSteps());
-  if (receivers.hasWebSocketLiteralProjection)
+  if (receivers.requiresWebSocketValueEffects)
     completeSemanticSteps(index.indexMemberMutationFactsSteps());
   const openReceiverFacts = receivers.openReceivers;
   const rpc = createJavaScriptRpcScan(

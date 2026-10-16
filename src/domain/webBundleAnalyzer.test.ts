@@ -4012,3 +4012,317 @@ describe("web bundle executed phases and scope exits", () => {
     },
   );
 });
+
+const iterationReviewCases = [
+  {
+    name: "identifier assignment immediate call",
+    source:
+      'let target;(target=()=>new Socket("wss://example.test/review-iteration"))();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "member assignment bound call",
+    source:
+      'const holder={};(holder.run=()=>new Socket("wss://example.test/review-iteration")).bind(null)();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "member assignment call member",
+    source:
+      'const holder={};(holder.run=()=>new Socket("wss://example.test/review-iteration")).call(null);const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "assignment constructor call",
+    source:
+      'const holder={};new(holder.run=function(){new Socket("wss://example.test/review-iteration");})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "assignment after awaited target key",
+    source:
+      'const holder={};(async()=>{(holder[await ready]=()=>new Socket("wss://example.test/review-iteration"))();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "stored assignment callable metadata",
+    source:
+      'const holder={};holder.run=()=>new Socket("wss://example.test/review-iteration");const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "aliased prototype iterator skips default",
+    source:
+      'const proto=Array.prototype;proto[Symbol.iterator]=function*(){yield 1;};(async()=>{const [[x=await 0],next]=(function*(){yield [undefined];new Socket("wss://example.test/review-iteration");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "defined prototype iterator skips default",
+    source:
+      'Object.defineProperty(Array.prototype,Symbol.iterator,{value:function*(){yield 1;}});(async()=>{const [[x=await 0],next]=(function*(){yield [undefined];new Socket("wss://example.test/review-iteration");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "local Array lookalike does not taint iteration",
+    source:
+      'const Array={prototype:{}};Array.prototype[Symbol.iterator]=function*(){yield 1;};(async()=>{const [[x=await 0],next]=(function*(){yield [undefined];new Socket("wss://example.test/review-iteration");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "custom own iterator remains unknown",
+    source:
+      '(async()=>{const [[x=await 0],next]=(function*(){yield Object.assign([undefined],{[Symbol.iterator]:function*(){yield 1;}});new Socket("wss://example.test/review-iteration");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "mutated nested array remains unknown",
+    source:
+      '(async()=>{const [[x=await 0],next]=(function*(){yield ((a)=>{a[0]=1;return a;})([undefined]);new Socket("wss://example.test/review-iteration");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "exhausted second nested slot",
+    source:
+      '(async()=>{const [[x,y=await 0],next]=(function*(){yield [0];new Socket("wss://example.test/review-iteration");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "exhausted default after own undefined",
+    source:
+      '(async()=>{const [[x,y=await 0],next]=(function*(){yield [undefined];new Socket("wss://example.test/review-iteration");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "selected explicit nested default",
+    source:
+      '(async()=>{const [[x=await 0],next]=(function*(){yield [undefined];new Socket("wss://example.test/review-iteration");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "unselected explicit nested default",
+    source:
+      '(async()=>{const [[x=await 0],next]=(function*(){yield [1];new Socket("wss://example.test/review-iteration");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "rest default skipped",
+    source:
+      '(async()=>{let x;[...[x=await 0,({set run(v){new Socket("wss://example.test/review-iteration");}}).run]]=[1,0];})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "rest suffix preserves source offset",
+    source:
+      '(async()=>{let x,y;[y,...[x=await 0,({set run(v){new Socket("wss://example.test/review-iteration");}}).run]]=[99,undefined,0];})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "rest suffix does not use earlier slot",
+    source:
+      '(async()=>{let x,y;[y,...[x=await 0,({set run(v){new Socket("wss://example.test/review-iteration");}}).run]]=[undefined,99,0];})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "exhausted rest default before setter",
+    source:
+      '(async()=>{let x;[...[x=await 0,({set run(v){new Socket("wss://example.test/review-iteration");}}).run]]=[];})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "rest setter precedes later wait",
+    source:
+      '(async()=>{let x;[...[({set run(v){new Socket("wss://example.test/review-iteration");}}).run,x=await 0]]=[0,undefined];})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "nested rest pattern before setter",
+    source:
+      '(async()=>{let x;[...[[x=await 0],({set run(v){new Socket("wss://example.test/review-iteration");}}).run]]=[[undefined],0];})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "custom iterator skips rest default",
+    source:
+      'Array.prototype[Symbol.iterator]=function*(){yield 1;yield 0;};(async()=>{let x;[...[x=await 0,({set run(v){new Socket("wss://example.test/review-iteration");}}).run]]=[undefined,0];})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "rest drain precedes nested pattern wait",
+    source:
+      '(async()=>{const [...[x=await 0]]=(function*(){yield undefined;new Socket("wss://example.test/review-iteration");})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "arrow parameter consumes generator",
+    source:
+      '(([x])=>{})((function*(){new Socket("wss://example.test/review-iteration");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "constructor parameter consumes generator",
+    source:
+      'new(function([x]){})((function*(){new Socket("wss://example.test/review-iteration");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "async parameter consumes generator eagerly",
+    source:
+      '(async function([x]){})((function*(){new Socket("wss://example.test/review-iteration");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "generator parameter initializes on call",
+    source:
+      '(function*([x]){})((function*(){new Socket("wss://example.test/review-iteration");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "default parameter consumes supplied generator",
+    source:
+      '(function([x]=[]){} )((function*(){new Socket("wss://example.test/review-iteration");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "second positional parameter consumes generator",
+    source:
+      '(function(ignore,[x]){})(0,(function*(){new Socket("wss://example.test/review-iteration");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "later awaited argument precedes parameter consumption",
+    source:
+      '(async()=>{(function([x],ignored){} )((function*(){new Socket("wss://example.test/review-iteration");yield 0;})(),await ready);})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "parameter call member consumes generator",
+    source:
+      '(function([x]){}).call(null,(function*(){new Socket("wss://example.test/review-iteration");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "parameter apply member consumes generator",
+    source:
+      '(function([x]){}).apply(null,[(function*(){new Socket("wss://example.test/review-iteration");yield 0;})()]);const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "erased receiver annotation does not shift parameter",
+    source:
+      '(function(this:void,[x]){} )((function*(){new Socket("wss://example.test/review-iteration");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "optional literal call consumes parameter",
+    source:
+      '(function([x]){} )?.((function*(){new Socket("wss://example.test/review-iteration");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "non-consuming parameter retains metadata",
+    source:
+      '(function(x){} )((function*(){new Socket("wss://example.test/review-iteration");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "empty parameter pattern does not resume generator",
+    source:
+      '(function([]){} )((function*(){new Socket("wss://example.test/review-iteration");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "rest parameter alone does not resume generator",
+    source:
+      '(function(...[x]){} )((function*(){new Socket("wss://example.test/review-iteration");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "array optional receiver evaluates key",
+    source:
+      '(async()=>{[]?.[await ready];new Socket("wss://example.test/review-iteration");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "number optional receiver evaluates key",
+    source:
+      '(async()=>{(0)?.[await ready];new Socket("wss://example.test/review-iteration");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "function optional receiver evaluates key",
+    source:
+      '(async()=>{(function(){})?.[await ready];new Socket("wss://example.test/review-iteration");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "null optional receiver skips key",
+    source:
+      '(async()=>{null?.[await ready];new Socket("wss://example.test/review-iteration");})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "void optional receiver skips key",
+    source:
+      '(async()=>{(void 0)?.[await ready];new Socket("wss://example.test/review-iteration");})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "nested optional chain retains mandatory first key",
+    source:
+      '(async()=>{({})?.[await ready]?.x;new Socket("wss://example.test/review-iteration");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "constructed optional receiver evaluates key",
+    source:
+      '(async()=>{(new(class{}))?.[await ready];new Socket("wss://example.test/review-iteration");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "member assignment immediate call",
+    source:
+      'const holder={};(holder.run=()=>new Socket("wss://example.test/review-iteration"))();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "custom nested array iterator skips default",
+    source:
+      'Array.prototype[Symbol.iterator]=function*(){yield 1;};(async()=>{const [[x=await 0],next]=(function*(){yield [undefined];new Socket("wss://example.test/review-iteration");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "non-null optional member key",
+    source:
+      '(async()=>{({})?.[await ready];new Socket("wss://example.test/review-iteration");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "exhausted nested array default",
+    source:
+      '(async()=>{const [[x=await 0],next]=(function*(){yield [];new Socket("wss://example.test/review-iteration");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "nested array rest setter target",
+    source:
+      '(async()=>{let x;[...[x=await 0,({set run(v){new Socket("wss://example.test/review-iteration");}}).run]]=[undefined,0];})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "literal parameter consumes generator",
+    source:
+      '(function([x]){})((function*(){new Socket("wss://example.test/review-iteration");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+] as const;
+describe("web bundle literal consumers and iteration phases", () => {
+  it.each(iterationReviewCases)(
+    "preserves $name in both consumers",
+    ({ source, present }) => {
+      const expected = present ? ["wss://example.test/review-iteration"] : [];
+      expect(
+        socketEndpoints(source).map((items) => items.map((item) => item.value)),
+      ).toEqual([expected, expected]);
+    },
+  );
+});

@@ -411,8 +411,8 @@ export interface JavaScriptReceiverFacts {
   readonly rpcClientRoots: ReadonlySet<t.Node>;
   /** This syntax needs ambient-write facts before endpoint interpretation. */
   readonly hasWebSocketEndpointCandidate: boolean;
-  /** Literal constructor projections also require alias-aware value effects. */
-  readonly hasWebSocketLiteralProjection: boolean;
+  /** Constructor and consumed-pattern projections require alias-aware effects. */
+  readonly requiresWebSocketValueEffects: boolean;
 }
 
 export interface JavaScriptReceiverIndex extends JavaScriptBindingIndex {
@@ -496,7 +496,8 @@ function* classifyDefinitionReceiversSteps(
   const roots = new Set<t.Node>();
   const clients = new Map<string, boolean>();
   let hasWebSocketEndpointCandidate = false;
-  let hasWebSocketLiteralProjection = false;
+  let requiresWebSocketValueEffects = false;
+  let hasPatternConsumer = false;
   const classifyRpcRoot = (node: t.Node): void => {
     if (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node))
       return;
@@ -596,12 +597,14 @@ function* classifyDefinitionReceiversSteps(
   };
   yield* traverseJavaScriptAstSteps(program, {
     enter: (node) => {
+      if (t.isArrayPattern(node) || t.isObjectPattern(node))
+        hasPatternConsumer = true;
       if (
         (t.isCallExpression(node) ||
           t.isOptionalCallExpression(node) ||
           t.isNewExpression(node)) &&
         isWebSocketEndpointCandidate(node.callee, state, () => {
-          hasWebSocketLiteralProjection = true;
+          requiresWebSocketValueEffects = true;
         })
       )
         hasWebSocketEndpointCandidate = true;
@@ -609,7 +612,7 @@ function* classifyDefinitionReceiversSteps(
       // itself is a plain binding. Request the same completed effect facts.
       if (t.isAwaitExpression(node))
         semanticPromiseSettlementDependency(node.argument, state, () => {
-          hasWebSocketLiteralProjection = true;
+          requiresWebSocketValueEffects = true;
         });
       classifyRpcRoot(node);
       classifyOpenReceiver(node);
@@ -622,7 +625,9 @@ function* classifyDefinitionReceiversSteps(
     openReceivers: facts,
     rpcClientRoots: roots,
     hasWebSocketEndpointCandidate,
-    hasWebSocketLiteralProjection,
+    requiresWebSocketValueEffects:
+      requiresWebSocketValueEffects ||
+      (hasWebSocketEndpointCandidate && hasPatternConsumer),
   };
 }
 

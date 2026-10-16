@@ -682,6 +682,42 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "iteration-review-0.js",
+    source:
+      'const holder={};(holder.run=()=>new Socket("wss://example.test/review-latest"))();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "iteration-review-1.js",
+    source:
+      'Array.prototype[Symbol.iterator]=function*(){yield 1;};(async()=>{const [[x=await 0],next]=(function*(){yield [undefined];new Socket("wss://example.test/review-latest");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "iteration-review-2.js",
+    source:
+      '(async()=>{({})?.[await ready];new Socket("wss://example.test/review-latest");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "iteration-review-3.js",
+    source:
+      '(async()=>{const [[x=await 0],next]=(function*(){yield [];new Socket("wss://example.test/review-latest");yield 1;})();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "iteration-review-4.js",
+    source:
+      '(async()=>{let x;[...[x=await 0,({set run(v){new Socket("wss://example.test/review-latest");}}).run]]=[undefined,0];})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "iteration-review-5.js",
+    source:
+      '(function([x]){})((function*(){new Socket("wss://example.test/review-latest");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
     file: "phase-review-0.js",
     source:
       '((()=>0)(),()=>new Socket("wss://example.test/review-latest"))();const Socket=globalThis.WebSocket;',
@@ -870,7 +906,7 @@ it("retains reviewed completion endpoints with filesystem source provenance", as
     const observations = graph.nodes
       .filter((node) => node.kind === "endpoint")
       .flatMap((node) => node.observations);
-    expect(observations).toHaveLength(17);
+    expect(observations).toHaveLength(20);
     for (const { file, present } of completedWriteAndConsumerSources) {
       const matching = observations.filter(
         ({ evidence }) =>

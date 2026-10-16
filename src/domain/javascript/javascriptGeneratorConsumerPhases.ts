@@ -2,7 +2,6 @@ import * as t from "@babel/types";
 
 import {
   readExactJavaScriptLiteral,
-  semanticLiteralProperty,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -10,11 +9,19 @@ import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
+import { semanticLiteralProjectionSlot } from "./javascriptSemanticLiteralProjection.js";
+
+interface PatternWaitCache {
+  readonly effects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
+  readonly iterationUnknown: boolean | undefined;
+  readonly ownedResultEscape: t.Node | undefined;
+  readonly index: number | null;
+}
 
 interface GeneratorPrefixFacts {
   readonly before: WeakMap<t.Node, number>;
   readonly yielded: readonly t.YieldExpression[];
-  readonly firstPatternWait: WeakMap<t.ArrayPattern, number | null>;
+  readonly firstPatternWait: WeakMap<t.ArrayPattern, PatternWaitCache>;
 }
 const prefixes = new WeakMap<t.Node, GeneratorPrefixFacts>();
 
@@ -63,13 +70,18 @@ const generatorPrefixes = (
   const facts = {
     before,
     yielded,
-    firstPatternWait: new WeakMap<t.ArrayPattern, number | null>(),
+    firstPatternWait: new WeakMap<t.ArrayPattern, PatternWaitCache>(),
   };
   prefixes.set(body, facts);
   return facts;
 };
 
-type PatternValue = { readonly known: boolean; readonly node?: t.Node };
+type PatternValue = {
+  readonly known: boolean;
+  readonly node?: t.Node;
+  readonly restStartIndex?: number;
+  readonly ownedResultEscape?: t.Node;
+};
 
 const undefinedPatternValue = (
   value: PatternValue,
@@ -90,16 +102,61 @@ const undefinedPatternValue = (
   );
 };
 
-/** Only an explicit literal data value proves default selection; inherited keys stay unknown. */
+/** Use the same mutation and iterator proof as ordinary literal projections. */
 const patternPropertyValue = (
   value: PatternValue,
   key: string | number,
+  state: JavaScriptSemanticAnalysisState,
+  capture: t.Node,
 ): PatternValue => {
   if (!value.known || value.node === undefined) return { known: false };
   const node = unwrapJavaScriptExpression(value.node).node;
-  const selected = semanticLiteralProperty(node, key);
-  if (selected !== undefined) return { known: true, node: selected };
+  if (value.restStartIndex !== undefined && typeof key !== "number")
+    return { known: false };
+  const selected = semanticLiteralProjectionSlot(
+    node,
+    typeof key === "number" ? key + (value.restStartIndex ?? 0) : key,
+    capture,
+    state,
+    value.ownedResultEscape === undefined
+      ? undefined
+      : { ownedResultEscape: value.ownedResultEscape },
+  );
+  if (selected.kind === "value")
+    return {
+      known: true,
+      node: selected.node,
+      ...(value.ownedResultEscape === undefined
+        ? {}
+        : { ownedResultEscape: value.ownedResultEscape }),
+    };
+  if (selected.kind === "undefined") return { known: true };
   return { known: false };
+};
+
+/** A rest copy owns a fresh suffix array; retain indices without synthesizing AST. */
+const patternArrayRest = (
+  value: PatternValue,
+  index: number,
+  state: JavaScriptSemanticAnalysisState,
+): PatternValue => {
+  const node =
+    value.node === undefined
+      ? undefined
+      : unwrapJavaScriptExpression(value.node).node;
+  return value.known &&
+    t.isArrayExpression(node) &&
+    state.arrayIterationUnknown !== true &&
+    !node.elements.some((item) => t.isSpreadElement(item))
+    ? {
+        known: true,
+        node,
+        restStartIndex: (value.restStartIndex ?? 0) + index,
+        ...(value.ownedResultEscape === undefined
+          ? {}
+          : { ownedResultEscape: value.ownedResultEscape }),
+      }
+    : { known: false };
 };
 
 /** Work completed inside a consumed slot precedes the next generator resume. */
@@ -136,7 +193,9 @@ const patternCompletedSuspension = (
       if (
         patternCompletedSuspension(
           property.value,
-          key === null ? { known: false } : patternPropertyValue(value, key),
+          key === null
+            ? { known: false }
+            : patternPropertyValue(value, key, state, pattern),
           state,
           suspended,
           depth + 1,
@@ -149,11 +208,13 @@ const patternCompletedSuspension = (
     }
   if (t.isArrayPattern(pattern))
     for (const [index, element] of pattern.elements.entries()) {
-      if (element === null || t.isRestElement(element)) continue;
+      if (element === null) continue;
       if (
         patternCompletedSuspension(
-          element,
-          patternPropertyValue(value, index),
+          t.isRestElement(element) ? element.argument : element,
+          t.isRestElement(element)
+            ? patternArrayRest(value, index, state)
+            : patternPropertyValue(value, index, state, pattern),
           state,
           suspended,
           depth + 1,
@@ -203,6 +264,7 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
   ordered,
   maySuspend,
   completedSuspension,
+  ownedResultEscape,
 }: {
   readonly read: t.Node;
   readonly body: t.Node;
@@ -211,12 +273,27 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
   readonly ordered: (node: t.Node) => readonly t.Node[];
   readonly maySuspend: (node: t.Node) => boolean;
   readonly completedSuspension: (node: t.Node) => boolean;
+  readonly ownedResultEscape?: t.Node;
 }): boolean => {
   const facts = generatorPrefixes(body, ordered, maySuspend);
   const count = facts.before.get(unwrapJavaScriptExpression(read).node);
   if (count === undefined || count < 0) return false;
   const cached = facts.firstPatternWait.get(pattern);
-  if (cached !== undefined) return cached !== null && cached < count;
+  if (
+    cached !== undefined &&
+    cached.effects === state.literalMemberEffects &&
+    cached.iterationUnknown === state.arrayIterationUnknown &&
+    cached.ownedResultEscape === ownedResultEscape
+  )
+    return cached.index !== null && cached.index < count;
+  const cache = (index: number | null): void => {
+    facts.firstPatternWait.set(pattern, {
+      effects: state.literalMemberEffects,
+      iterationUnknown: state.arrayIterationUnknown,
+      ownedResultEscape,
+      index,
+    });
+  };
   for (let index = 0; index < pattern.elements.length; index += 1) {
     const element = pattern.elements[index];
     if (t.isRestElement(element)) break;
@@ -229,15 +306,16 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
         {
           known: true,
           ...(yielded.argument == null ? {} : { node: yielded.argument }),
+          ...(ownedResultEscape === undefined ? {} : { ownedResultEscape }),
         },
         state,
         completedSuspension,
       )
     ) {
-      facts.firstPatternWait.set(pattern, index);
+      cache(index);
       return index < count;
     }
   }
-  facts.firstPatternWait.set(pattern, null);
+  cache(null);
   return false;
 };

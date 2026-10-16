@@ -87,7 +87,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
   const index = yield* indexJavaScriptBindingsWithReceiversSteps(file.program);
   const { bindings, receivers } = index;
   yield* index.indexAmbientWritesSteps();
-  if (receivers.hasWebSocketLiteralProjection)
+  if (receivers.requiresWebSocketValueEffects)
     yield* index.indexMemberMutationFactsSteps();
   const electronIdentity = yield* indexJavaScriptElectronIdentitySteps(
     file.program,

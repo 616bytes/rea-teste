@@ -1,4 +1,3 @@
-import { semanticExactResultOperand } from "./javascriptSemanticExpressionResults.js";
 import * as t from "@babel/types";
 import {
   semanticPatternSuspendsBeforeGeneratorRead,
@@ -17,6 +16,7 @@ import {
   semanticValueIsRead,
   semanticValueWriteSite,
   javaScriptExactResultOperand,
+  runtimeFunctionParameters,
 } from "./javascriptAstValues.js";
 import {
   javaScriptOptionalOperandsMayBeSkipped,
@@ -56,21 +56,25 @@ const webSocketReturnedGetter = (
 const webSocketOuterExpression = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  stopAtPatternConsumer = false,
 ): t.Node => {
   let current = node;
   let identity = node;
   for (;;) {
     const parent = state.parentsByNode.get(current);
     if (
+      stopAtPatternConsumer &&
+      t.isAssignmentExpression(parent) &&
+      parent.right === current &&
+      (t.isArrayPattern(parent.left) || t.isObjectPattern(parent.left))
+    )
+      return current;
+    if (
       parent !== undefined &&
       // Invocation order is conditional on reaching the body, not on proving
-      // that every earlier sequence operand can finish. Value resolution keeps
-      // its separate completion guard.
-      (t.isSequenceExpression(parent)
-        ? javaScriptExactResultOperand(parent)
-        : semanticExactResultOperand(parent, state, (point) =>
-            webSocketExecutionContexts(point, state, true),
-          )) === current
+      // that every prefix or target write can finish. A reached call retains
+      // this frame independently of the stricter completed-value proof.
+      javaScriptExactResultOperand(parent, () => true) === current
     ) {
       current = parent;
       identity = parent;
@@ -581,7 +585,68 @@ const webSocketDecoratedClass = (
   return undefined;
 };
 
-/** Direct iteration and iterable spreads resume a fresh generator in-turn. */
+interface WebSocketParameterResume {
+  readonly parameter: t.ArrayPattern;
+  readonly invocation:
+    | t.CallExpression
+    | t.OptionalCallExpression
+    | t.NewExpression;
+}
+
+/** Match a known literal invocation's positional argument, never an unknown spread offset. */
+const webSocketParameterResume = (
+  result: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): WebSocketParameterResume | undefined => {
+  const parent = state.parentsByNode.get(result);
+  const array = t.isArrayExpression(parent) ? parent : undefined;
+  const call = array === undefined ? parent : state.parentsByNode.get(array);
+  if (
+    !t.isCallExpression(call) &&
+    !t.isOptionalCallExpression(call) &&
+    !t.isNewExpression(call)
+  )
+    return undefined;
+  let callee = unwrapJavaScriptExpression(call.callee).node;
+  const select = (): void => {
+    for (;;) {
+      const next = javaScriptExactResultOperand(callee, () => true);
+      if (next === undefined) break;
+      callee = unwrapJavaScriptExpression(next).node;
+    }
+  };
+  select();
+  let offset = 0;
+  if (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) {
+    const method = semanticStaticPropertyName(callee.property, callee.computed);
+    if (method !== "call" && method !== "apply") return undefined;
+    if (
+      method === "apply"
+        ? array === undefined || call.arguments[1] !== array
+        : array !== undefined
+    )
+      return undefined;
+    offset = method === "call" ? 1 : 0;
+    callee = unwrapJavaScriptExpression(callee.object).node;
+    select();
+  } else if (array !== undefined) return undefined;
+  if (!t.isFunctionExpression(callee) && !t.isArrowFunctionExpression(callee))
+    return undefined;
+  const arguments_ = array?.elements ?? call.arguments;
+  const index = arguments_.indexOf(result as t.Expression);
+  if (
+    index < offset ||
+    arguments_.slice(0, index).some((argument) => t.isSpreadElement(argument))
+  )
+    return undefined;
+  const parameter = runtimeFunctionParameters(callee)[index - offset];
+  const pattern = t.isAssignmentPattern(parameter) ? parameter.left : parameter;
+  return t.isArrayPattern(pattern) && pattern.elements.length > 0
+    ? { parameter: pattern, invocation: call }
+    : undefined;
+};
+
+/** Direct iteration, literal parameters and iterable spreads resume a fresh generator in-turn. */
 const webSocketGeneratorResume = (
   invocation: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -592,8 +657,9 @@ const webSocketGeneratorResume = (
   | t.SpreadElement
   | t.ArrayPattern
   | t.YieldExpression
+  | WebSocketParameterResume
   | undefined => {
-  const result = webSocketOuterExpression(invocation, state);
+  const result = webSocketOuterExpression(invocation, state, true);
   const member = state.parentsByNode.get(result);
   if (t.isForOfStatement(member) && member.right === result) return member;
   if (
@@ -611,6 +677,8 @@ const webSocketGeneratorResume = (
         ? member.left
         : undefined;
   if (t.isArrayPattern(pattern) && pattern.elements.length > 0) return pattern;
+  const parameter = webSocketParameterResume(result, state);
+  if (parameter !== undefined) return parameter;
   if (t.isSpreadElement(member) && member.argument === result) {
     const consumer = state.parentsByNode.get(member);
     if (
@@ -669,6 +737,7 @@ const webSocketGeneratorConsumerStaysInTurn = (
   read: t.Node,
   body: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  ownedResultEscape?: t.Node,
   seen = new Set<t.Node>(),
 ): boolean => {
   if (seen.has(invocation)) return false;
@@ -680,6 +749,7 @@ const webSocketGeneratorConsumerStaysInTurn = (
       body,
       pattern: invocation,
       state,
+      ...(ownedResultEscape === undefined ? {} : { ownedResultEscape }),
       ordered: webSocketOrderedEvaluation,
       maySuspend: webSocketBodyMaySuspend,
       completedSuspension: (node) =>
@@ -706,10 +776,11 @@ const webSocketGeneratorConsumerStaysInTurn = (
     return (
       resume !== undefined &&
       webSocketGeneratorConsumerStaysInTurn(
-        resume,
+        "parameter" in resume ? resume.parameter : resume,
         read,
         owner.body,
         state,
+        call,
         seen,
       )
     );
@@ -904,12 +975,23 @@ export const webSocketExecutionContexts = (
         current === parent.body &&
         !t.isArrowFunctionExpression(parent) &&
         parent.generator;
+      const generatorInvocation = invocation;
+      let parameterConsumer: t.ArrayPattern | undefined;
       if (
         generatorBody &&
         invocation !== undefined &&
         !t.isNewExpression(invocation)
-      )
-        invocation = webSocketGeneratorResume(invocation, state);
+      ) {
+        const resume = webSocketGeneratorResume(invocation, state);
+        parameterConsumer =
+          resume !== undefined && "parameter" in resume
+            ? resume.parameter
+            : undefined;
+        invocation =
+          resume !== undefined && "parameter" in resume
+            ? resume.invocation
+            : resume;
+      }
       if (invocation === undefined) return contexts;
       const decoratedClass = t.isDecorator(invocation)
         ? webSocketDecoratedClass(invocation, state)
@@ -962,10 +1044,11 @@ export const webSocketExecutionContexts = (
           !parent.async &&
           generatorBody &&
           webSocketGeneratorConsumerStaysInTurn(
-            invocation,
+            parameterConsumer ?? invocation,
             node,
             parent.body,
             state,
+            generatorInvocation,
           )
         )
       ) {

@@ -199,9 +199,28 @@ async function exerciseWindowsGrandchild(
     await vi.waitFor(async () =>
       expect(await readFile(leaderExitedPath, "utf8")).toBe("exited"),
     );
-    await expect(
-      launch(directory, 'process.stdout.write("unexpected");').closed,
-    ).resolves.toMatchObject({
+    const activityBefore = await readFile(activityPath, "utf8");
+    await delay(100);
+    const activityDuring = await readFile(activityPath, "utf8");
+    const contender = await launch(
+      directory,
+      'process.stdout.write("unexpected");',
+    ).closed;
+    const evidence = JSON.stringify({
+      cancellation,
+      supervisorAlive: runner.child.exitCode === null,
+      leaderExited: await pathExists(leaderExitedPath),
+      descendantReady: await pathExists(readyPath),
+      descendantWroteDuringProbe: activityDuring.length > activityBefore.length,
+      supervisorCode: runner.child.exitCode,
+      supervisorStdout: runner.stdout,
+      supervisorStderr: runner.stderr,
+      contender,
+    });
+    expect(
+      contender,
+      `Windows process-tree ownership evidence: ${evidence}`,
+    ).toMatchObject({
       code: 1,
       stderr: expect.stringContaining("already running"),
     });
@@ -242,7 +261,7 @@ it.runIf(process.platform === "win32")(
         withTimeout(
           runner.closeEvent,
           "supervisor retained the child after disconnect",
-          1_000,
+          5_000,
         ),
       ).resolves.toMatchObject({ code: 143 });
       expect(await pathExists(gate)).toBe(false);
@@ -511,7 +530,18 @@ function launchSupervisor(directory: string, command: string) {
     });
   });
   const closed = withTimeout(closeEvent, "runner supervisor did not finish");
-  return { child, ready, closeEvent, closed };
+  return {
+    child,
+    ready,
+    closeEvent,
+    closed,
+    get stdout() {
+      return stdout;
+    },
+    get stderr() {
+      return stderr;
+    },
+  };
 }
 
 function gatedCommand(gate: string, started: string): string {

@@ -1,4 +1,8 @@
 import { EventEmitter, once } from "node:events";
+import { readFile, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { expect, it, vi } from "vitest";
 
@@ -7,6 +11,9 @@ import {
   loadWindowsOwnedProcessClass,
   superviseWindowsOwnedProcess,
 } from "../../scripts/lib/windows-owned-command.mjs";
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+
+const require = createRequire(import.meta.url);
 
 it("imports the source Windows owner without dist using a fake native authority", async () => {
   const calls: string[] = [];
@@ -64,6 +71,41 @@ it("imports the source Windows owner without dist using a fake native authority"
 
   await expect(once(child, "close")).resolves.toEqual([0, null]);
   expect(calls).toEqual(["process_spawn", "process_poll", "process_close"]);
+});
+
+it("passes cross-spawn's resolved executable to the native owner", () => {
+  const parserPath = require.resolve("cross-spawn/lib/parse");
+  require(parserPath);
+  const parserModule = require.cache[parserPath];
+  if (parserModule === undefined)
+    throw new Error("cross-spawn parser was not loaded");
+  const originalParser = parserModule.exports;
+  let received: unknown[] | undefined;
+  class CaptureOwnedProcess {
+    constructor(...arguments_: unknown[]) {
+      received = arguments_;
+    }
+  }
+  parserModule.exports = () => ({
+    command: "node",
+    file: "C:\\runtime\\node.exe",
+    args: ["-e", "code"],
+    options: {},
+  });
+  try {
+    createWindowsOwnedCommand({
+      WindowsOwnedProcess: CaptureOwnedProcess as never,
+      command: "node",
+      arguments: ["-e", "code"],
+      cwd: undefined,
+      environment: {},
+    });
+  } finally {
+    parserModule.exports = originalParser;
+  }
+
+  expect(received?.[0]).toBe("C:\\runtime\\node.exe");
+  expect(received?.[1]).toEqual(["-e", "code"]);
 });
 
 it("supervises protocol stdin errors until the owned job and stream close", async () => {
@@ -142,6 +184,77 @@ it("supervises protocol stdin errors until the owned job and stream close", asyn
   expect(calls).toContain("process_terminate");
   expect(calls).toContain("process_close");
 });
+
+it.runIf(process.platform === "win32")(
+  "keeps native Job Object ownership after the leader exits",
+  async () => {
+    const directory = await createTestTempDirectory("rea-owned-tree-probe-");
+    const activityPath = join(directory, "descendant-activity.log");
+    const readyPath = join(directory, "descendant-ready");
+    const stopPath = join(directory, "descendant-stop");
+    const grandchild = `
+      const fs = require("node:fs");
+      fs.writeFileSync(${JSON.stringify(readyPath)}, "ready");
+      const timer = setInterval(() => {
+        if (fs.existsSync(${JSON.stringify(stopPath)})) {
+          clearInterval(timer);
+          process.exit(0);
+        }
+        fs.appendFileSync(${JSON.stringify(activityPath)}, "active\\n");
+      }, 20);
+    `;
+    const leader = `
+      const fs = require("node:fs");
+      const child = require("node:child_process").spawn(
+        process.execPath,
+        ["-e", ${JSON.stringify(grandchild)}],
+        { stdio: "ignore" },
+      );
+      child.unref();
+      const waitForDescendant = setInterval(() => {
+        if (!fs.existsSync(${JSON.stringify(readyPath)})) return;
+        clearInterval(waitForDescendant);
+        process.exit(0);
+      }, 10);
+    `;
+    const WindowsOwnedProcess = await loadWindowsOwnedProcessClass();
+    const child = new WindowsOwnedProcess(
+      process.execPath,
+      ["-e", leader],
+      directory,
+      process.env,
+      false,
+    );
+    child.stdout.resume();
+    child.stderr.resume();
+    const exited = once(child, "exit");
+    const closed = once(child, "close");
+    let hasClosed = false;
+    void closed.then(() => {
+      hasClosed = true;
+    });
+
+    try {
+      await exited;
+      await expect(readFile(readyPath, "utf8")).resolves.toBe("ready");
+      await delay(150);
+      expect(hasClosed).toBe(false);
+      await expect(child.cleanup()).resolves.toMatchObject({ cleaned: true });
+      await closed;
+      const activityAtCleanup = await readFile(activityPath, "utf8");
+      await delay(100);
+      expect(await readFile(activityPath, "utf8")).toBe(activityAtCleanup);
+    } finally {
+      await writeFile(stopPath, "stop");
+      if (!hasClosed) {
+        const cleanup = await child.cleanup();
+        if (cleanup.cleaned) await closed;
+        else child.unref();
+      }
+      await delay(100);
+    }
+  },
+);
 
 it("retries thrown and false cleanup results, then preserves the first error", async () => {
   vi.useFakeTimers();

@@ -41,8 +41,15 @@ export function createWindowsOwnedCommand(options) {
     throw new TypeError(
       "cross-spawn returned an unsupported Windows command shape",
     );
+  // cross-spawn keeps the user's spelling in `command` for a resolved .exe
+  // (for example bare `node`), while `file` is the PATH-resolved executable.
+  // The native boundary intentionally requires an absolute application path.
+  const executable =
+    parsed.command === command && typeof parsed.file === "string"
+      ? parsed.file
+      : parsed.command;
   return new WindowsOwnedProcess(
-    parsed.command,
+    executable,
     parsed.args,
     cwd,
     environment,

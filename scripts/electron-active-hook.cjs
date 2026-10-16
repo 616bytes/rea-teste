@@ -519,7 +519,7 @@ const createObservedOnceCallback = (target, channel, listener, receiver) => {
 const patchIpcMain = (ipcMain) => {
   if (ipcMain === null || ipcMain === undefined) return;
   const { handle, on, once, removeAllListeners } = ipcMain;
-  let unobservedOnceDepth = 0;
+  let unobservedOnceScope = null;
   if (typeof handle === "function")
     ipcMain.handle = function patchedIpcMainHandle(channel, listener) {
       if (typeof listener !== "function")
@@ -548,9 +548,11 @@ const patchIpcMain = (ipcMain) => {
   if (typeof on !== "function") return;
   ipcMain.on = function patchedIpcMainOn(channel, listener) {
     if (typeof listener !== "function") return on.call(this, channel, listener);
-    if (unobservedOnceDepth !== 0) {
+    if (unobservedOnceScope !== null) {
+      const scope = unobservedOnceScope;
       const result = on.call(this, channel, listener);
       recordIpcObservationGap(channel, "once-metadata");
+      if (scope.channel === channel) scope.gapRecorded = true;
       return result;
     }
     const wrapperStatus = classifyHookListenerWrapper(listener);
@@ -636,11 +638,18 @@ const patchIpcMain = (ipcMain) => {
         // Native wrapper creation can expose its callback through an inherited
         // setter/Proxy, including one installed by an on getter. Pass the exact
         // app callback; registrations in this synchronous scope stay unwrapped.
-        unobservedOnceDepth += 1;
+        const previousScope = unobservedOnceScope;
+        const scope = { channel, gapRecorded: false };
+        unobservedOnceScope = scope;
         try {
-          return applyFunction(once, target, [channel, listener]);
+          const result = applyFunction(once, target, [channel, listener]);
+          // An app getter/decorator may choose a native alias that bypasses
+          // patched on entirely. The once owner still reports its limitation.
+          if (!scope.gapRecorded)
+            recordIpcObservationGap(channel, "once-metadata");
+          return result;
         } finally {
-          unobservedOnceDepth -= 1;
+          unobservedOnceScope = previousScope;
         }
       }
       const receiver = new ProxyConstructor(

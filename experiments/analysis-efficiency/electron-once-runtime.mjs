@@ -194,6 +194,34 @@ additional("on-getter-listener-setter", (emitter, channel) => {
   };
 });
 
+additional("on-getter-native-alias", (emitter, channel) => {
+  const original = Object.getOwnPropertyDescriptor(emitter, "on");
+  let reads = 0,
+    bodyCalls = 0;
+  const listener = () => {
+    bodyCalls += 1;
+  };
+  Object.defineProperty(emitter, "on", {
+    configurable: true,
+    get() {
+      reads += 1;
+      return EventEmitter.prototype.on;
+    },
+  });
+  try {
+    emitter.once(channel, listener);
+  } finally {
+    if (original) Object.defineProperty(emitter, "on", original);
+    else delete emitter.on;
+  }
+  emitter.emit(channel);
+  return {
+    body_calls: bodyCalls,
+    reads,
+    listeners_after: emitter.listenerCount(channel),
+  };
+});
+
 additional("throwing-listener-setter", (emitter, channel) => {
   const original = Object.getOwnPropertyDescriptor(
     Function.prototype,

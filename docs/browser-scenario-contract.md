@@ -193,7 +193,8 @@ frame belongs to its private seed script; page breakpoints and `debugger`
 statements remain under the attached debugger client's control.
 
 The result is Evidence with an initial state followed by one record per
-declared action. Each step reports action status, elapsed time, sanitized URLs,
+declared action. The initial state is always the completed step 0, with
+`step_id` `scenario_start` and action `goto_start`. Each step reports action status, elapsed time, sanitized URLs,
 event bounds, and independently typed capture states for screenshot, DOM,
 accessibility, URL, history, and storage. Console, page-error, network,
 WebSocket, frame, worker, popup, and cancelled-download events are attributed to
@@ -396,10 +397,14 @@ step. Missing, truncated, or mismatched capture coverage remains unknown
 instead of being treated as equality.
 
 `scenario.event_families` records the sorted, de-duplicated `capture.events`
-selection. Captures with different selections report event evidence as unknown
+selection. Retained events belong only to selected families, and any network
+content selection also selects network events. Omission accounting names only
+selected families, except that a popup page refused by an event budget is an
+omitted `popup-opened` record whenever any family is selected, because popup
+discovery serves every selected family. Comparisons and views reject inline
+captures that contradict their selection or their initial state as malformed
+input. Captures with different selections report event evidence as unknown
 with a recovery instruction, even when no selected family emitted an event.
-Captures written before this field existed omit it, so their event evidence is
-also unknown.
 
 Network normalization also commits the removal of capture-local transaction IDs,
 attribution to the requesting step, and unordered transaction comparison. These

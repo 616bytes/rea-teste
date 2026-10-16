@@ -320,6 +320,54 @@ export const browserScenarioEventKindSchema = z.enum([
   "popup-closed",
   "download-cancelled",
 ]);
+export type BrowserScenarioEventKind = z.infer<
+  typeof browserScenarioEventKindSchema
+>;
+
+const EVENT_KIND_FAMILIES = {
+  console: "console",
+  "page-error": "page-errors",
+  request: "network",
+  response: "network",
+  "request-failed": "network",
+  "request-finished": "network",
+  "request-unfinished": "network",
+  "network-content": "network",
+  "websocket-opened": "websockets",
+  "websocket-closed": "websockets",
+  "websocket-frame-sent": "websockets",
+  "websocket-frame-received": "websockets",
+  "frame-attached": "frames",
+  "frame-detached": "frames",
+  "frame-navigated": "frames",
+  "worker-created": "workers",
+  "worker-closed": "workers",
+  "popup-opened": "popups",
+  "popup-closed": "popups",
+  "download-cancelled": "downloads",
+} as const satisfies Record<
+  BrowserScenarioEventKind,
+  BrowserScenarioEventFamily
+>;
+
+/** The family whose selection records an event kind. */
+export const browserScenarioEventKindFamily = (
+  kind: BrowserScenarioEventKind,
+): BrowserScenarioEventFamily => EVENT_KIND_FAMILIES[kind];
+
+/**
+ * Whether omission accounting can name a kind under the selected families.
+ * Popup discovery serves every selected family, so a popup page that fails
+ * admission is accounted as an omitted popup-opened record even when popups
+ * are not selected; the page's selected events were not observed.
+ */
+export const browserScenarioOmissionKindSelected = (
+  kind: BrowserScenarioEventKind,
+  selected: ReadonlySet<BrowserScenarioEventFamily>,
+): boolean =>
+  selected.has(browserScenarioEventKindFamily(kind)) ||
+  (kind === "popup-opened" && selected.size > 0);
+
 export const browserScenarioEventBudgetReasonSchema = z.enum([
   "max-events",
   "max-event-allocation-bytes",
@@ -424,6 +472,12 @@ export const classifyBrowserScenarioCompleteness = (
     truncated_sections: [],
   };
 };
+
+/** The implicit start navigation every capture records as completed step 0. */
+export const BROWSER_SCENARIO_START_STEP = {
+  step_id: "scenario_start",
+  action: "goto_start",
+} as const;
 
 const browserScenarioStepShape = {
   step_index: z.number().int().min(0),

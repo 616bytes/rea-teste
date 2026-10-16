@@ -16,6 +16,7 @@ import {
   browserScenarioFixtureParameters,
   browserScenarioFixtureScenario,
 } from "../browserScenarioCapture.fixture.js";
+import { browserScenarioEventKindFamily } from "../browserScenarioCaptureValues.js";
 import { UNAVAILABLE_SUBJECT_LIMITATION } from "../evidence.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 
@@ -272,35 +273,99 @@ it("pages retained text by UTF-16 code units and reports uncaptured text", () =>
   ).toBeInstanceOf(AnalysisInputError);
 });
 
-it("treats network content selection as enabled network observation", () => {
+const selectingFamilies = (
+  eventFamilies: BrowserScenarioCapture["scenario"]["event_families"],
+  responseBody: boolean,
+  items: BrowserScenarioCapture["events"]["items"],
+) => {
   const fixture = browserScenarioFixtureCapture();
-  const capture = (eventFamilies: string[], responseBody: boolean) =>
-    browserScenarioCaptureSchema.parse({
-      ...fixture,
-      scenario: {
-        ...fixture.scenario,
-        event_families: eventFamilies,
-        network_content: {
-          ...fixture.scenario.network_content,
-          response_body: responseBody,
-        },
+  return {
+    ...fixture,
+    scenario: {
+      ...fixture.scenario,
+      event_families: eventFamilies,
+      network_content: {
+        ...fixture.scenario.network_content,
+        response_body: responseBody,
       },
-    });
+    },
+    events: { ...fixture.events, retained: items.length, items },
+  };
+};
+
+const networkEvents = () =>
+  browserScenarioFixtureCapture().events.items.filter(
+    ({ kind }) => browserScenarioEventKindFamily(kind) === "network",
+  );
+
+it("treats network content selection as enabled network observation", () => {
+  const steps = { kind: "browser-scenario", collection: "steps" };
   const contentOnly = stepPage(
     project(
-      { kind: "browser-scenario", collection: "steps" },
-      parent(capture([], true)),
+      steps,
+      parent(
+        browserScenarioCaptureSchema.parse(
+          selectingFamilies([], true, networkEvents()),
+        ),
+      ),
     ),
   );
   expect(contentOnly[3]?.events_received.coverage).toBe("captured");
+  expect(contentOnly[3]?.network_transactions.retained).not.toBeNull();
 
   const nothingSelected = stepPage(
     project(
-      { kind: "browser-scenario", collection: "steps" },
-      parent(capture([], false)),
+      steps,
+      parent(
+        browserScenarioCaptureSchema.parse(selectingFamilies([], false, [])),
+      ),
     ),
   );
   expect(nothingSelected[3]?.events_received.coverage).toBe("not_requested");
+  expect(nothingSelected[3]?.network_transactions).toEqual({
+    coverage: "not_requested",
+    retained: null,
+  });
+});
+
+it("rejects retained events from families the scenario did not select", () => {
+  const unselected = selectingFamilies(["console"], false, networkEvents());
+  expect(
+    failure(
+      { kind: "browser-scenario", collection: "steps" },
+      { ...parent(), normalizedResult: unselected },
+    ),
+  ).toMatchObject({
+    issues: expect.arrayContaining([
+      expect.objectContaining({
+        path: ["source", "normalized_result", "events", "items", 0, "kind"],
+      }),
+    ]),
+  });
+});
+
+it("rejects a step 0 that is not the completed implicit start navigation", () => {
+  const fixture = browserScenarioFixtureCapture();
+  for (const start of [
+    { step_id: "open-settings", action: "click" },
+    { status: "failed", error: "navigation failed" },
+  ])
+    expect(
+      failure(
+        { kind: "browser-scenario", collection: "steps" },
+        {
+          ...parent(),
+          normalizedResult: {
+            ...fixture,
+            steps: fixture.steps.map((step) =>
+              step.step_index === 0 ? { ...step, ...start } : step,
+            ),
+          },
+        },
+      ),
+    ).toMatchObject({
+      issues: [{ path: ["source", "normalized_result", "steps", 0] }],
+    });
 });
 
 it("fails closed when recorded actions do not describe the capture steps", () => {

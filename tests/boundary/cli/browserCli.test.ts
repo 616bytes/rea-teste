@@ -670,7 +670,7 @@ const completeScenarioCapture = () => {
     },
     duration_ms: 1,
     steps: [
-      step(0, "scenario_start", "scenario_start"),
+      step(0, "scenario_start", "goto_start"),
       step(1, "open-settings", "click"),
     ],
     events: {

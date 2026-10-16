@@ -588,6 +588,8 @@ export class PlaywrightScenarioEvents {
 
   private popup(page: Page): void {
     if (this.pages.has(page)) return;
+    // A rejected page is accounted as an omitted popup-opened record even
+    // when popups are unselected: its selected-family events go unobserved.
     if (
       !this.admitOwner("popup-opened") ||
       !this.admitText("popup-opened", page.url())

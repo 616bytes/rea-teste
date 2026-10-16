@@ -11,6 +11,7 @@ import {
   type BrowserScenarioPartialObservation,
 } from "../domain/browserScenarioCapture.js";
 import {
+  BROWSER_SCENARIO_START_STEP,
   classifyBrowserScenarioCompleteness,
   browserScenarioStepSchema,
   browserStepArtifactsSchema,
@@ -133,8 +134,8 @@ const initialStep = async (input: {
   );
   return createStep({
     stepIndex: 0,
-    stepId: "scenario_start",
-    action: "goto_start",
+    stepId: BROWSER_SCENARIO_START_STEP.step_id,
+    action: BROWSER_SCENARIO_START_STEP.action,
     status: "completed",
     elapsedMs,
     beforeUrl: session.sanitizeUrl(session.initialUrl),

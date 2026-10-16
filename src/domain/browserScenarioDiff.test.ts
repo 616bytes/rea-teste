@@ -217,7 +217,8 @@ it("reports event-family selection mismatch as unknown", () => {
   ).toBe(false);
 
   const quiet = browserScenarioCaptureSchema.parse({
-    ...withFamilies(consoleOnly, []),
+    ...consoleOnly,
+    scenario: { ...consoleOnly.scenario, event_families: [] },
     events: { retained: 0, dropped: 0, items: [], omissions: noEventOmissions },
   });
   const differentEvents = compare(quiet, widened);
@@ -284,6 +285,7 @@ const concurrentCapture = (
   ).map((event, index) => ({ ...event, sequence: index + 1 }));
   return browserScenarioCaptureSchema.parse({
     ...base,
+    scenario: { ...base.scenario, event_families: ["network"] },
     events: {
       items: events,
       retained: events.length,
@@ -344,6 +346,7 @@ const redirectChainCapture = (swapLeaves = false, reverseReceipt = false) => {
     .map((event, index) => ({ ...event, sequence: index + 1 }));
   return browserScenarioCaptureSchema.parse({
     ...base,
+    scenario: { ...base.scenario, event_families: ["network"] },
     events: {
       items: events,
       retained: events.length,
@@ -1049,7 +1052,7 @@ const scenarioCapture = (
       {
         step_index: 0,
         step_id: "scenario_start",
-        action: "scenario_start",
+        action: "goto_start",
         status: "completed",
         elapsed_ms: 0,
         before_url: url,

@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 
 import { sanitizeBrowserUrl } from "./browserObservation.js";
 import {
+  BROWSER_SCENARIO_START_STEP,
   browserScenarioCompletenessSchema,
   browserScenarioEventSchema,
   browserStepArtifactsSchema,
@@ -177,8 +178,9 @@ it("accepts complete scenario output beyond former string caps", () => {
   const longText = "detail".repeat(1_000);
   const step = (index: number) => ({
     step_index: index,
-    step_id: longText,
-    action: longText,
+    ...(index === 0
+      ? BROWSER_SCENARIO_START_STEP
+      : { step_id: longText, action: longText }),
     elapsed_ms: 0,
     before_url: sanitizeBrowserUrl("https://example.test/"),
     after_url: sanitizeBrowserUrl("https://example.test/"),
@@ -242,15 +244,17 @@ it("accepts complete scenario output beyond former string caps", () => {
     limitations: Array.from({ length: 65 }, () => longText),
   });
 
-  expect(parsed.steps[0]?.step_id).toBe(longText);
+  expect(parsed.steps[1]?.step_id).toBe(longText);
   expect(parsed.limitations).toHaveLength(65);
 });
 
-it("validates reported event limits and omission accounting", () => {
+/** Complete capture input with network omission accounting. */
+const omissionAccountingInput = () => {
   const outputStep = (index: number) => ({
     step_index: index,
-    step_id: `step-${index}`,
-    action: "wait_for_timeout",
+    ...(index === 0
+      ? BROWSER_SCENARIO_START_STEP
+      : { step_id: `step-${index}`, action: "wait_for_timeout" }),
     elapsed_ms: 0,
     before_url: sanitizeBrowserUrl("http://127.0.0.1/"),
     after_url: sanitizeBrowserUrl("http://127.0.0.1/"),
@@ -273,7 +277,7 @@ it("validates reported event limits and omission accounting", () => {
     status: "completed",
     error: null,
   });
-  const capture = browserScenarioCaptureSchema.safeParse({
+  return {
     browser: {
       mode: "launch",
       process_ownership: "provider-owned",
@@ -337,7 +341,13 @@ it("validates reported event limits and omission accounting", () => {
       truncated_sections: [],
     },
     limitations: ["Event coverage is incomplete."],
-  });
+  };
+};
+
+it("validates reported event limits and omission accounting", () => {
+  const capture = browserScenarioCaptureSchema.safeParse(
+    omissionAccountingInput(),
+  );
   if (!capture.success) throw new Error("Expected valid omission accounting");
   expect(capture.data.scenario.limits.max_total_event_allocation_bytes).toBe(
     32 * 1024 * 1024,
@@ -367,6 +377,88 @@ it("validates reported event limits and omission accounting", () => {
       scenario: { ...capture.data.scenario, limits: undefined },
     }).success,
   ).toBe(false);
+});
+
+it("limits event omission accounting to selected families", () => {
+  const capture = browserScenarioCaptureSchema.parse(omissionAccountingInput());
+  const selecting = (
+    eventFamilies: (typeof capture.scenario.event_families)[number][],
+    responseBody: boolean,
+  ) =>
+    browserScenarioCaptureSchema.safeParse({
+      ...capture,
+      scenario: {
+        ...capture.scenario,
+        event_families: eventFamilies,
+        network_content: {
+          ...capture.scenario.network_content,
+          response_body: responseBody,
+        },
+      },
+    });
+  // Selecting network content alone enables network observation.
+  expect(selecting([], true).success).toBe(true);
+  expect(
+    selecting(["console"], false).error?.issues.map(({ path }) => path),
+  ).toEqual([
+    ["events", "omissions", "by_kind", 0, "kind"],
+    ["events", "omissions", "by_kind", 1, "kind"],
+    ["events", "omissions", "network_transactions", 0],
+    ["events", "omissions", "network_transaction_range"],
+  ]);
+  const transactionOmitting = (kind: "network-content" | "popup-opened") =>
+    browserScenarioCaptureSchema.safeParse({
+      ...capture,
+      events: {
+        ...capture.events,
+        omissions: {
+          ...capture.events.omissions,
+          network_transactions: [
+            {
+              transaction_id: "request-1",
+              omitted_kinds: [kind],
+              reasons: ["max-total-event-allocation-bytes"],
+            },
+          ],
+        },
+      },
+    });
+  expect(transactionOmitting("network-content").success).toBe(true);
+  expect(
+    transactionOmitting("popup-opened").error?.issues.map(({ path }) => path),
+  ).toEqual([
+    ["events", "omissions", "network_transactions", 0, "omitted_kinds", 0],
+  ]);
+  // Popup discovery serves every selected family, so an unadmitted popup page
+  // is an omission whenever any family is selected.
+  const popupDiscovery = (
+    eventFamilies: (typeof capture.scenario.event_families)[number][],
+  ) =>
+    browserScenarioCaptureSchema.safeParse({
+      ...capture,
+      scenario: {
+        ...capture.scenario,
+        event_families: eventFamilies,
+        network_content: {
+          request_body: false,
+          response_body: false,
+          header_values: false,
+        },
+      },
+      events: {
+        ...capture.events,
+        dropped: 1,
+        omissions: {
+          by_kind: [
+            { kind: "popup-opened", count: 1, reasons: ["max-events"] },
+          ],
+          network_transactions: [],
+          network_transaction_range: null,
+        },
+      },
+    }).success;
+  expect(popupDiscovery(["console"])).toBe(true);
+  expect(popupDiscovery([])).toBe(false);
 });
 
 it("derives equality eligibility from exact completeness state", () => {

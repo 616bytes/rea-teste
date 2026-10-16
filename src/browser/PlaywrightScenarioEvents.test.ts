@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { BrowserContext, Page, Request, Response } from "playwright-core";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
+import { browserScenarioCaptureSchema } from "../domain/browserScenarioCapture.js";
+import { browserScenarioFixtureCapture } from "../domain/browserScenarioCapture.fixture.js";
 import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
 
@@ -283,6 +285,53 @@ describe("PlaywrightScenarioEvents", () => {
       stack: "s".repeat(300_000),
     });
   });
+});
+
+it("accounts an unadmitted popup page as an omission its capture accepts", () => {
+  const listeners = new Map<string, (value: unknown) => void>();
+  const page = {
+    on: (name: string, listener: (value: unknown) => void) => {
+      listeners.set(name, listener);
+    },
+  } as unknown as Page;
+  const popup = {
+    url: () => "https://app.example.test/popup",
+    on: () => undefined,
+  } as unknown as Page;
+  const scenario = browserScenarioSchema.parse({
+    browser: { mode: "launch", executable_path: "/opt/chromium" },
+    start_url: { url: "https://app.example.test/" },
+    actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
+    capture: { events: ["page-errors"], limits: { max_events: 1 } },
+  });
+  const secrets = BrowserScenarioSecrets.resolve(scenario, {});
+  if (secrets === undefined) throw new Error("Expected resolved secrets");
+  const events = new PlaywrightScenarioEvents({
+    page,
+    enabled: new Set(["page-errors"]),
+    limits: scenario.capture.limits,
+    secrets,
+  });
+  listeners.get("pageerror")?.(new Error("retained application failure"));
+  listeners.get("popup")?.(popup);
+
+  const recorded = events.result();
+  // Popups are unselected, but the rejected page's page errors went unobserved.
+  expect(recorded.omissions.by_kind).toEqual([
+    { kind: "popup-opened", count: 1, reasons: ["max-events"] },
+  ]);
+  const fixture = browserScenarioFixtureCapture();
+  expect(
+    browserScenarioCaptureSchema.safeParse({
+      ...fixture,
+      scenario: {
+        ...fixture.scenario,
+        event_families: ["page-errors"],
+        limits: scenario.capture.limits,
+      },
+      events: recorded,
+    }).success,
+  ).toBe(true);
 });
 
 it("retains ordinary event volumes and reports event-count exhaustion", () => {

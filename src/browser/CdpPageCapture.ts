@@ -173,6 +173,9 @@ const captureAuthorizedPage = async (
       null,
     );
   await report(context.progress, 3, "Normalizing browser evidence");
+  // Drain worker commands before the final page check so a navigation that
+  // lands while one is pending still reports `target_changed`.
+  await state.workerNetwork.settle();
   const completedFrameResult = await authorizedMainFrame({
     connection: context.connection,
     sessionId: context.sessionId,
@@ -185,7 +188,6 @@ const captureAuthorizedPage = async (
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   if (state.events.navigationDuringCapture || completedUrl !== attachedUrl)
     throw new BrowserObservationError("inspect_web_page", "target_changed");
-  await state.workerNetwork.settle();
   // Body IDs were enumerated before asynchronous CDP reads. Events remain
   // enabled through the final capture, so account for eligible responses that
   // arrived while those reads were pending.

@@ -4,6 +4,7 @@ import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import {
   startFakeCdpBrowser,
+  type FakeCdpBrowser,
   type FakeOptions,
 } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
@@ -1078,6 +1079,20 @@ const workerEvents: NonNullable<FakeOptions["commandEvents"]> = (
   ];
 };
 
+/** Wait until a held command was sent and REA has stopped issuing commands. */
+const heldCommandOnceQuiet = async (
+  browser: FakeCdpBrowser,
+  matches: (command: FakeCdpBrowser["commands"][number]) => boolean,
+): Promise<FakeCdpBrowser["commands"][number]> => {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const sent = browser.commands.length;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const held = browser.commands.find(matches);
+    if (held !== undefined && browser.commands.length === sent) return held;
+  }
+  throw new Error("REA did not wait on the held command");
+};
+
 describe("dedicated worker network", () => {
   it("records requests that the page's dedicated workers send", async () => {
     const browser = await startFakeCdpBrowser({ commandEvents: workerEvents });
@@ -1197,5 +1212,44 @@ describe("dedicated worker network", () => {
     expect(result.value.limitations).toContain(
       "Target.setAutoAttach was unavailable from this browser target.",
     );
+  });
+});
+
+describe("dedicated worker network and target changes", () => {
+  it("reports a navigation that lands while a worker command is pending", async () => {
+    const isWorkerEnable = ({
+      method,
+      sessionId,
+    }: FakeCdpBrowser["commands"][number]) =>
+      method === "Network.enable" && sessionId === "worker-session";
+    const browser = await startFakeCdpBrowser({
+      commandEvents: workerEvents,
+      holdReplyFor: isWorkerEnable,
+    });
+    trackBrowser(browser);
+    const inspection = new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    const held = await heldCommandOnceQuiet(browser, isWorkerEnable);
+    browser.emitEvent({
+      sessionId: "session-1",
+      method: "Page.frameNavigated",
+      params: {
+        frame: { id: "frame-main", url: `${browser.allowedOrigin}/changed` },
+      },
+    });
+    browser.emitRawMessage(
+      JSON.stringify({ id: held.id, sessionId: "worker-session", result: {} }),
+    );
+
+    expect(await inspection).toMatchObject({
+      ok: false,
+      error: { _tag: "BrowserObservationError", reason: "target_changed" },
+    });
   });
 });

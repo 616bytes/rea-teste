@@ -272,6 +272,163 @@ test("retains partial bytes and uncertainty when exited output never closes", as
   }
 });
 
+test.each(["cancel", "overflow", "cancel-overflow"] as const)(
+  "preserves exit-drain evidence across %s",
+  async (mode) => {
+    const controller = new AbortController();
+    const injected = createInjectedProcess({
+      onWrite: (text, control) => {
+        if (!text.includes("!echo __REA_COMMAND_COMPLETE_")) return;
+        setImmediate(() => {
+          control.output("before exit\0");
+          control.exitLeader();
+          setImmediate(() => {
+            control.output("after exit\0");
+            if (mode.includes("overflow"))
+              control.output("late\0".repeat(4096));
+            if (mode.includes("cancel")) controller.abort();
+            control.closeOutput();
+          });
+        });
+      },
+    });
+    const manager = createRizinTestManager(
+      {},
+      { spawnProcess: injected.spawnProcess },
+    );
+    try {
+      const started = await manager.start({
+        path: "fixture.bin",
+        inferior_tty: await rizinTestInferiorTty(),
+      });
+      if (!started.ok) throw started.error;
+      const result = await manager.execute(
+        started.value.session_id,
+        "dr",
+        controller.signal,
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected interrupted command");
+      const expected = mode.includes("overflow")
+        ? [
+            "before exit",
+            "after exit",
+            ...Array<string>(4094).fill("late"),
+          ].join("\n")
+        : "before exit\nafter exit";
+      expect(result.error.partialObservation).toMatchObject({
+        normalized_result: {
+          output: expected,
+          output_truncated: mode.includes("overflow"),
+          completion_status: "unknown",
+        },
+        raw_result: { output: expected },
+      });
+      expect(manager.status(started.value.session_id)?.state).toBe("closed");
+    } finally {
+      injected.control.exit();
+      await manager.closeAll();
+    }
+  },
+);
+
+test.each(["before-wait", "during-wait"])(
+  "preserves accepted bytes on stdin failure %s",
+  async (mode) => {
+    const injected = createInjectedProcess({
+      onWrite: (text, control) => {
+        if (!text.includes("!echo __REA_COMMAND_COMPLETE_")) return;
+        const fail = () => {
+          control.output("accepted diagnostic Ω");
+          control.stdinError();
+        };
+        if (mode === "before-wait") fail();
+        else setImmediate(fail);
+      },
+    });
+    const manager = createRizinTestManager(
+      {},
+      { spawnProcess: injected.spawnProcess },
+    );
+    try {
+      const started = await manager.start({
+        path: "fixture.bin",
+        inferior_tty: await rizinTestInferiorTty(),
+      });
+      if (!started.ok) throw started.error;
+      const result = await manager.execute(started.value.session_id, "dr");
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected stdin protocol failure");
+      expect(result.error.partialObservation).toMatchObject({
+        normalized_result: {
+          output: "accepted diagnostic Ω",
+          output_truncated: false,
+          completion_status: "unknown",
+        },
+      });
+    } finally {
+      injected.control.exit();
+      await manager.closeAll();
+    }
+  },
+);
+
+test("marks output discarded by the byte queue limit during exit drainage", async () => {
+  const size = 1024 * 1024;
+  const injected = createInjectedProcess({
+    onWrite: (text, control) => {
+      if (!text.includes("!echo __REA_COMMAND_COMPLETE_")) return;
+      setImmediate(() => {
+        control.output("before exit\0");
+        control.exitLeader();
+        setImmediate(() => {
+          const frame = Buffer.alloc(size + 1, "x");
+          frame[size] = 0;
+          for (let index = 0; index < 5; index += 1) control.output(frame);
+          control.closeOutput();
+        });
+      });
+    },
+  });
+  const manager = createRizinTestManager(
+    {},
+    { spawnProcess: injected.spawnProcess },
+  );
+  try {
+    const started = await manager.start({
+      path: "fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    if (!started.ok) throw started.error;
+    const result = await manager.execute(started.value.session_id, "dr");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected bounded queue failure");
+    const observation = result.error.partialObservation;
+    expect(observation).toMatchObject({
+      normalized_result: {
+        output_truncated: true,
+        completion_status: "unknown",
+      },
+    });
+    const output = toolContract("rizin_debug_command").outputSchema.parse(
+      observation,
+    ).normalized_result.output;
+    const frames = output.split("\n");
+    expect(frames.map((frame) => frame.length)).toEqual([
+      "before exit".length,
+      size,
+      size,
+      size,
+      size,
+    ]);
+    expect(frames.shift()).toBe("before exit");
+    expect(frames.every((frame) => /^x+$/u.test(frame))).toBe(true);
+  } finally {
+    injected.control.exit();
+    await manager.closeAll();
+  }
+});
+
 test("publishes the bounded prefix when an oversized frame has no terminator", async () => {
   const injected = createInjectedProcess({
     onWrite: (text, control) => {

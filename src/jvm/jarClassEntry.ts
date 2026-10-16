@@ -28,14 +28,12 @@ export type JarSelection =
 const VERSIONS_PREFIX = "META-INF/versions/";
 
 /**
- * Canonicalize a caller-supplied JAR member path to the internal form ZIP
- * entries use: forward slashes, no leading slash. A JAR member is identified by
- * exactly this string, so normalization happens once here before any match.
- */
-/**
- * Normalise a requested entry the way the ZIP reader forms logical member
- * paths (it owns that rule): forward slashes, no leading `/`, and no leading
- * `./` segments, so the archive's literal `./Foo.class` is selectable.
+ * Normalize a caller-supplied entry once, before any match: backslashes become
+ * `/`, then leading `/` characters and leading `./` segments are removed.
+ * Interior segments (`a/./b`, `..`) are left unchanged. ZIP member paths come
+ * from the reader, which strips only leading `./`; this request-side rule
+ * additionally accepts Windows separators and a leading `/`, so a member stored
+ * as `./Foo.class` is selectable as either `Foo.class` or `./Foo.class`.
  */
 export const normalizeJarEntryPath = (entry: string): string =>
   entry

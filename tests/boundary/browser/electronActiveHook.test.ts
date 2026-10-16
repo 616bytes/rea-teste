@@ -303,6 +303,115 @@ process.stdout.write(JSON.stringify({
   });
 });
 
+it("removes the newest matching ipcMain registration across unpatched aliases", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-ipc-aliases-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-aliases.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const event = { sender: { id: 9 }, senderFrame: { routingId: 7 } };
+const order = [];
+const f = () => { order.push("f"); };
+const g = () => { order.push("g"); };
+ipcMain.on("mixed", f);
+ipcMain.on("mixed", g);
+ipcMain.addListener("mixed", f);
+ipcMain.removeListener("mixed", f);
+ipcMain.emit("mixed", event);
+let onceCalls = 0;
+const fn = () => { onceCalls += 1; };
+ipcMain.once("once-then-add", fn);
+ipcMain.addListener("once-then-add", fn);
+ipcMain.removeListener("once-then-add", fn);
+ipcMain.emit("once-then-add", event);
+ipcMain.emit("once-then-add", event);
+const snapshot = globalThis.__reaElectronActiveSnapshot();
+process.stdout.write(JSON.stringify({
+  order,
+  once_calls: onceCalls,
+  listeners: ["mixed", "once-then-add"].map((channel) => ipcMain.listenerCount(channel)),
+  invocations: snapshot.events.filter((item) => item.kind === "main-event-invocation").map((item) => item.channel),
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  expect(JSON.parse(execution.stdout)).toEqual({
+    order: ["f", "g"],
+    once_calls: 1,
+    listeners: [2, 0],
+    invocations: ["mixed", "mixed", "once-then-add"],
+  });
+});
+
+it("records ipcMain listeners registered by a newListener callback during once", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-ipc-nested-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-nested.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const event = { sender: { id: 9 }, senderFrame: { routingId: 7 } };
+let nestedCalls = 0;
+ipcMain.addListener("newListener", (channel) => {
+  if (channel === "outer") ipcMain.on("nested", () => { nestedCalls += 1; });
+});
+ipcMain.once("outer", () => undefined);
+ipcMain.emit("nested", event);
+ipcMain.emit("outer", event);
+const snapshot = globalThis.__reaElectronActiveSnapshot();
+process.stdout.write(JSON.stringify({
+  nested_calls: nestedCalls,
+  invocations: snapshot.events.filter((item) => item.kind === "main-event-invocation").map((item) => item.channel),
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  expect(JSON.parse(execution.stdout)).toEqual({
+    nested_calls: 1,
+    invocations: ["nested", "outer"],
+  });
+});
+
+it("keeps removal working after many fired ipcMain once registrations", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-ipc-repeat-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-repeat.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const event = { sender: { id: 9 }, senderFrame: { routingId: 7 } };
+let calls = 0;
+const listener = () => { calls += 1; };
+for (let index = 0; index < 200; index += 1) {
+  ipcMain.once("repeated-once", listener);
+  ipcMain.emit("repeated-once", event);
+}
+const afterOnce = ipcMain.rawListeners("repeated-once").length;
+ipcMain.on("repeated-once", listener);
+ipcMain.removeListener("repeated-once", listener);
+ipcMain.emit("repeated-once", event);
+process.stdout.write(JSON.stringify({
+  calls,
+  after_once: afterOnce,
+  listeners: ipcMain.listenerCount("repeated-once"),
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  expect(JSON.parse(execution.stdout)).toEqual({
+    calls: 200,
+    after_once: 0,
+    listeners: 0,
+  });
+});
+
 it("isolates hook and exercise from ancestor Electron packages", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ancestor-");
   temporary.push(root);

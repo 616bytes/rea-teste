@@ -1,6 +1,11 @@
 "use strict";
 
 const applyFunction = Reflect.apply;
+const applyArguments = Function.prototype.apply;
+const bindFunction = Function.prototype.bind;
+const sliceArguments = applyFunction(bindFunction, Function.prototype.call, [
+  Array.prototype.slice,
+]);
 
 const { isProxy } = require("node:util").types;
 const {
@@ -357,7 +362,7 @@ const invokeObservedEventListener = (
     "main-event-invocation",
     channel,
     args[0],
-    args.slice(1),
+    sliceArguments(args, 1),
   );
   try {
     if (nativeMethod === "call") return listener.call(thisArg);
@@ -448,15 +453,19 @@ const patchIpcMain = (ipcMain) => {
     Object.defineProperty(wrapped, "apply", {
       configurable: true,
       writable: true,
-      value: function nativeApply(thisArg, args) {
-        return invokeObservedEventListener(
-          thisArg,
-          channel,
-          listener,
-          args,
-          "apply",
-        );
-      },
+      // Binding native apply preserves its own array-like conversion and
+      // null/undefined handling before recording touches argument values.
+      value: applyFunction(bindFunction, applyArguments, [
+        function nativeApply(...args) {
+          return invokeObservedEventListener(
+            this,
+            channel,
+            listener,
+            args,
+            "apply",
+          );
+        },
+      ]),
     });
     wrapped.listener = listener;
     hookListenerRemovalTargets.set(wrapped, listener);
@@ -470,7 +479,7 @@ const patchIpcMain = (ipcMain) => {
         return once.call(this, channel, listener);
       const target = this;
       let fired = false;
-      const wrapped = function wrappedOnceEventListener(...args) {
+      const wrapped = function wrappedOnceEventListener() {
         if (fired) return undefined;
         target.removeListener(channel, wrapped);
         fired = true;
@@ -478,8 +487,8 @@ const patchIpcMain = (ipcMain) => {
           target,
           channel,
           listener,
-          args,
-          args.length === 0 ? "call" : "apply",
+          arguments,
+          arguments.length === 0 ? "call" : "apply",
         );
       };
       wrapped.listener = listener;

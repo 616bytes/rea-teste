@@ -939,6 +939,109 @@ console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenar
   },
 );
 
+it.each([
+  "arguments",
+  "array-like",
+  "null",
+  "undefined",
+  "missing",
+  "primitive",
+])("preserves raw callback apply with %s argument lists", async (mode) => {
+  const root = await createTestTempDirectory("rea-electron-hook-ipc-apply-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-apply.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const mode = ${JSON.stringify(mode)};
+const scenario = (emitter) => {
+  let calls = 0, reads = 0, correctReceiver = false, arity = null;
+  const event = { sender: { id: 9 } };
+  let first = null;
+  emitter.on("ch", function(...args) {
+    calls++; correctReceiver = this === emitter; arity = args.length;
+    first = args.length ? args[0] === event : null;
+  });
+  const listener = emitter.rawListeners("ch")[0];
+  let list;
+  if (mode === "arguments") list = (function() { return arguments; })(event, 42);
+  if (mode === "array-like") list = { length: 2, get 0() { reads++; return event; }, 1: 42 };
+  if (mode === "null") list = null;
+  if (mode === "primitive") list = 42;
+  let typeError = false;
+  try {
+    if (mode === "missing") listener.apply(emitter);
+    else listener.apply(emitter, list);
+  } catch (cause) { typeError = cause instanceof TypeError; }
+  return { calls, reads, correctReceiver, arity, first, typeError };
+};
+console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain) }));
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const { plain, hooked } = JSON.parse(execution.stdout) as {
+    plain: Record<string, unknown>;
+    hooked: Record<string, unknown>;
+  };
+  const populated = mode === "arguments" || mode === "array-like";
+  expect(plain).toEqual({
+    calls: mode === "primitive" ? 0 : 1,
+    reads: mode === "array-like" ? 1 : 0,
+    correctReceiver: mode !== "primitive",
+    arity: mode === "primitive" ? null : populated ? 2 : 0,
+    first: populated ? true : null,
+    typeError: mode === "primitive",
+  });
+  expect(hooked).toEqual(plain);
+});
+
+it("preserves the native once argument-list object passed to custom apply", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-ipc-once-args-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-once-arguments.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const scenario = (emitter) => {
+  const event = { sender: { id: 9 } };
+  let calls = 0, argumentObject = false, correctReceiver = false;
+  const listener = function(value) { calls++; correctReceiver = this === emitter && value === event; };
+  listener.apply = function(receiver, list) {
+    argumentObject = Object.prototype.toString.call(list) === "[object Arguments]";
+    if (!argumentObject) throw new Error("once changed argument-list identity");
+    return Reflect.apply(Function.prototype.apply, this, [receiver, list]);
+  };
+  emitter.once("ch", listener);
+  let failure = null;
+  try { emitter.emit("ch", event); } catch (cause) { failure = cause.message; }
+  return { calls, argumentObject, correctReceiver, failure, remaining: emitter.listenerCount("ch") };
+};
+console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain) }));
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const { plain, hooked } = JSON.parse(execution.stdout) as {
+    plain: Record<string, unknown>;
+    hooked: Record<string, unknown>;
+  };
+  expect(plain).toEqual({
+    calls: 1,
+    argumentObject: true,
+    correctReceiver: true,
+    failure: null,
+    remaining: 0,
+  });
+  expect(hooked).toEqual(plain);
+});
+
 it("invokes handle callbacks without reading callable method properties", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-callable-");
   temporary.push(root);

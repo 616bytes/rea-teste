@@ -13,6 +13,12 @@ const commandsWithUuid = (uuid: string) =>
     ),
   ).commands;
 
+/**
+ * The inspection owner maps lipo's slice name to dwarfdump's spelling
+ * (`arm64e.v1` to `arm64e`); this parser matches the mapped name exactly.
+ */
+const toolNames: Readonly<Record<string, string>> = { "arm64e.v1": "arm64e" };
+
 const reconcile = (
   dwarfdump: string,
   selectedArchitecture: string | null,
@@ -22,7 +28,13 @@ const reconcile = (
     commandsWithUuid(uuid),
     dwarfdump,
     path,
-    selectedArchitecture,
+    selectedArchitecture === null
+      ? null
+      : {
+          name: selectedArchitecture,
+          dwarfdumpName:
+            toolNames[selectedArchitecture] ?? selectedArchitecture,
+        },
   );
 
 describe("Mach-O UUID row selection", () => {

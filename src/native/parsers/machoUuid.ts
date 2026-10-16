@@ -7,12 +7,17 @@ type UuidObservation =
   | { readonly kind: "valid"; readonly value: string }
   | { readonly kind: "invalid" | "conflict"; readonly reason: string };
 
+interface UuidArchitectureSelection {
+  readonly name: string;
+  readonly dwarfdumpName: string;
+}
+
 /** Reconcile the selected slice's UUID observations from otool and dwarfdump. */
 export const reconcileMachoUuid = (
   commands: ReturnType<typeof parseOtoolLoadCommands>["commands"],
   dwarfdumpOutput: string,
   artifactPath: string,
-  selectedArchitecture: string | null,
+  selectedArchitecture: UuidArchitectureSelection | null,
 ): {
   readonly value: string | null;
   readonly limitations: readonly string[];
@@ -25,7 +30,7 @@ export const reconcileMachoUuid = (
 const parseDwarfdumpUuid = (
   output: string,
   artifactPath: string,
-  selectedArchitecture: string | null,
+  selectedArchitecture: UuidArchitectureSelection | null,
 ): UuidObservation => {
   const parsed = parseDwarfdumpRows(output, artifactPath);
   return parsed.kind === "invalid"
@@ -92,19 +97,9 @@ const parseDwarfdumpRows = (
   return { kind: "rows", rows };
 };
 
-/**
- * lipo names an arm64e slice with its pointer-auth ABI version (`arm64e.v1`),
- * while dwarfdump reports the CPU-family name (`arm64e`) for the slice it was
- * asked about. Compare families so a versioned selection still finds its row.
- * Other variants (`arm64e.x1`) are distinct subtypes that the tools address
- * only by their exact name, so they are left to match exactly.
- */
-const dwarfdumpArchitectureName = (architecture: string): string =>
-  architecture.replace(/\.v\d+$/u, "");
-
 const selectDwarfdumpRow = (
   rows: readonly DwarfdumpUuidRow[],
-  selectedArchitecture: string | null,
+  selectedArchitecture: UuidArchitectureSelection | null,
 ): UuidObservation => {
   if (rows.length === 0) return { kind: "absent" };
   const selectedRows =
@@ -112,8 +107,7 @@ const selectDwarfdumpRow = (
       ? rows
       : rows.filter(
           ({ architecture }) =>
-            dwarfdumpArchitectureName(architecture) ===
-            dwarfdumpArchitectureName(selectedArchitecture),
+            architecture === selectedArchitecture.dwarfdumpName,
         );
   const validRows = selectedRows.filter(({ value }) => MACHO_UUID.test(value));
   const distinctValid = new Set(
@@ -122,15 +116,15 @@ const selectDwarfdumpRow = (
   if (distinctValid.size > 1)
     return {
       kind: "conflict",
-      reason: `dwarfdump --uuid returned conflicting UUIDs for selected architecture ${selectedArchitecture ?? "unknown"}`,
+      reason: `dwarfdump --uuid returned conflicting UUIDs for selected architecture ${selectedArchitecture?.name ?? "unknown"}`,
     };
   if (selectedRows.length !== 1)
     return {
       kind: "invalid",
       reason:
         selectedRows.length > 1
-          ? `dwarfdump --uuid returned multiple rows for selected architecture ${selectedArchitecture}`
-          : `dwarfdump --uuid returned no row for selected architecture ${selectedArchitecture}`,
+          ? `dwarfdump --uuid returned multiple rows for selected architecture ${selectedArchitecture?.name ?? "unknown"}`
+          : `dwarfdump --uuid returned no row for selected architecture ${selectedArchitecture?.name ?? "unknown"}`,
     };
   const [row] = selectedRows;
   if (row === undefined) return { kind: "absent" };

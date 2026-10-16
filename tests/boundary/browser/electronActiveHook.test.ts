@@ -491,6 +491,55 @@ process.stdout.write(JSON.stringify({
   });
 });
 
+it("registers and removes ipcMain once listeners through decorators installed after the hook", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-ipc-decor-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-decorators.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const event = { sender: { id: 9 }, senderFrame: { routingId: 7 } };
+const seen = [];
+const hookedOn = ipcMain.on;
+const hookedRemoveListener = ipcMain.removeListener;
+ipcMain.on = function decoratedOn(channel, listener) {
+  if (channel === "decorated") seen.push("on");
+  return hookedOn.call(this, channel, listener);
+};
+ipcMain.removeListener = function decoratedRemoveListener(channel, listener) {
+  if (channel === "decorated") seen.push("removeListener");
+  return hookedRemoveListener.call(this, channel, listener);
+};
+let calls = 0;
+const listener = () => { calls += 1; };
+const returned = ipcMain.once("decorated", listener);
+const registered = ipcMain.listenerCount("decorated", listener);
+ipcMain.emit("decorated", event);
+ipcMain.emit("decorated", event);
+const snapshot = globalThis.__reaElectronActiveSnapshot();
+process.stdout.write(JSON.stringify({
+  seen,
+  returns_emitter: returned === ipcMain,
+  registered,
+  remaining: ipcMain.listenerCount("decorated"),
+  calls,
+  invocations: snapshot.events.filter((item) => item.kind === "main-event-invocation").map((item) => item.channel),
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  expect(JSON.parse(execution.stdout)).toEqual({
+    seen: ["on", "removeListener"],
+    returns_emitter: true,
+    registered: 1,
+    remaining: 0,
+    calls: 1,
+    invocations: ["decorated"],
+  });
+});
+
 it("keeps hooked ipcMain listener semantics identical to an unhooked EventEmitter", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-diff-");
   temporary.push(root);
@@ -542,10 +591,20 @@ const scenario = (emitter) => {
   emitter.emit("ch", event);
   state();
   emitter.off("ch", c);
-  // With several entries, removeAllListeners reports each raw entry to
-  // removeListener observers, so a hooked on() wrapper surfaces there.
-  // Compare the single-entry form, which unwraps .listener.
+  // An app function's own listener property is not a hook wrapper.
+  const e = named("e");
+  e.listener = c;
+  emitter.on("ch", a);
+  emitter.on("ch", c);
+  emitter.prependOnceListener("ch", d);
+  emitter.prependListener("ch", e);
+  emitter.on("ch", a);
+  state();
   emitter.removeAllListeners("ch");
+  state();
+  emitter.on("ch", b);
+  emitter.on("ch", c);
+  emitter.removeAllListeners();
   state();
   return log;
 };

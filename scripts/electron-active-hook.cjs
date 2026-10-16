@@ -362,9 +362,13 @@ const invokeObservedEventListener = (thisArg, channel, listener, args) => {
 // names the caller's function. Native removeListener, listenerCount, listeners,
 // and the newListener/removeListener meta-events then resolve the wrapper to
 // the caller's function exactly as they resolve EventEmitter#once wrappers.
+// Only hook-created wrappers are tracked: they already record, so patched on()
+// registers them as is, and removeAllListeners unwraps only them.
+const hookListenerWrappers = new WeakSet();
+
 const patchIpcMain = (ipcMain) => {
   if (ipcMain === null || ipcMain === undefined) return;
-  const { handle, on, once, removeListener } = ipcMain;
+  const { handle, on, once, removeAllListeners } = ipcMain;
   if (typeof handle === "function")
     ipcMain.handle = function patchedIpcMainHandle(channel, listener) {
       if (typeof listener !== "function")
@@ -392,30 +396,57 @@ const patchIpcMain = (ipcMain) => {
     };
   if (typeof on !== "function") return;
   ipcMain.on = function patchedIpcMainOn(channel, listener) {
-    if (typeof listener !== "function") return on.call(this, channel, listener);
+    if (typeof listener !== "function" || hookListenerWrappers.has(listener))
+      return on.call(this, channel, listener);
     const wrapped = function wrappedEventListener(...args) {
       return invokeObservedEventListener(this, channel, listener, args);
     };
     wrapped.listener = listener;
+    hookListenerWrappers.add(wrapped);
     return on.call(this, channel, wrapped);
   };
-  if (typeof once !== "function" || typeof removeListener !== "function")
-    return;
-  // Mirror EventEmitter's _onceWrap: bind the registering emitter, remove this
-  // registration through the original removeListener, then call the listener.
-  ipcMain.once = function patchedIpcMainOnce(channel, listener) {
-    if (typeof listener !== "function")
-      return once.call(this, channel, listener);
-    const target = this;
-    let fired = false;
-    const wrapped = function wrappedOnceEventListener(...args) {
-      if (fired) return undefined;
-      removeListener.call(target, channel, wrapped);
-      fired = true;
-      return invokeObservedEventListener(target, channel, listener, args);
+  // Mirror EventEmitter#once and _onceWrap: resolve this.on at registration
+  // and target.removeListener at firing, so later decorators observe both.
+  if (typeof once === "function")
+    ipcMain.once = function patchedIpcMainOnce(channel, listener) {
+      if (typeof listener !== "function")
+        return once.call(this, channel, listener);
+      const target = this;
+      let fired = false;
+      const wrapped = function wrappedOnceEventListener(...args) {
+        if (fired) return undefined;
+        target.removeListener(channel, wrapped);
+        fired = true;
+        return invokeObservedEventListener(target, channel, listener, args);
+      };
+      wrapped.listener = listener;
+      hookListenerWrappers.add(wrapped);
+      this.on(channel, wrapped);
+      return this;
     };
-    wrapped.listener = listener;
-    return on.call(this, channel, wrapped);
+  if (typeof removeAllListeners !== "function") return;
+  // Native removeAllListeners(channel) passes each raw entry to removeListener,
+  // which reports that argument verbatim while several entries remain. Remove
+  // entries newest-first, passing a hook wrapper's original function so
+  // observers see it as native single-entry removal reports it; other entries
+  // pass through unchanged. The original handles any remainder, its
+  // no-observer fast path, and the no-argument form, which re-enters this
+  // method once per channel.
+  ipcMain.removeAllListeners = function patchedIpcMainRemoveAllListeners(
+    ...args
+  ) {
+    if (args.length > 0 && this.listenerCount("removeListener") > 0) {
+      const [channel] = args;
+      const entries = this.rawListeners(channel);
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const entry = entries[index];
+        this.removeListener(
+          channel,
+          hookListenerWrappers.has(entry) ? entry.listener : entry,
+        );
+      }
+    }
+    return removeAllListeners.apply(this, args);
   };
 };
 

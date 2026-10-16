@@ -399,14 +399,7 @@ export class BinarySession
     const recorded = this.#recordProviderSelection(target, route);
     if (!recorded.ok) {
       this.#active = undefined;
-      return err(
-        await this.#failedOpen(
-          client,
-          route.identity.id,
-          previous,
-          recorded.error,
-        ),
-      );
+      return err(await this.#failedOpen(run, previous, recorded.error));
     }
     return ok(target);
   }

@@ -257,6 +257,8 @@ const syntaxCompletion = (
     };
   if (t.isBlockStatement(node) || t.isStaticBlock(node) || t.isProgram(node))
     return syntaxSequenceCompletion(node.body, complete);
+  if (t.isSwitchCase(node))
+    return syntaxSequenceCompletion(node.consequent, complete);
   if (t.isIfStatement(node)) return syntaxIfCompletion(node, complete);
   if (t.isTryStatement(node)) return syntaxTryCompletion(node, complete);
   if (t.isLoop(node)) return syntaxLoopCompletion(node, complete);
@@ -274,6 +276,10 @@ const syntaxCompletion = (
   if (t.isWithStatement(node)) return complete(node.body);
   return normalCompletion;
 };
+
+/** A selected case test can be skipped only through a normally completing predecessor. */
+export const syntaxMayCompleteNormally = (node: t.Node): boolean =>
+  syntaxCompletion(node, 0).normal;
 
 /** Only outward jumps can skip a containing phase; nested owners consume theirs. */
 export const syntaxMayExitByJump = (node: t.Node): boolean =>
@@ -333,10 +339,79 @@ export const syntaxEvaluationCannotThrow = (node: t.Node): boolean => {
   return result;
 };
 
-/** A catch may resume after an earlier throwing operand without reaching a wait. */
+/** A caught exception matters only after the selected producer was created. */
 const createCaughtPrefixBypassProof = (parents: WeakMap<t.Node, t.Node>) => {
-  const prefixes = new WeakMap<t.Node, ReadonlyMap<t.Node, boolean>>();
-  return (node: t.Node): boolean => {
+  const paths = new WeakMap<t.Node, ReadonlyMap<t.Node, t.Node>>();
+  const orders = new WeakMap<
+    t.Node,
+    {
+      indexes: ReadonlyMap<t.Node, number>;
+      throwing: readonly number[];
+      children: readonly t.Node[];
+    }
+  >();
+  const order = (parent: t.Node) => {
+    const cached = orders.get(parent);
+    if (cached !== undefined) return cached;
+    const children =
+      syntaxUnconditionalOperands(parent) ??
+      syntaxEvaluationOperands(parent) ??
+      [];
+    const indexes = new Map<t.Node, number>();
+    const throwing = [0];
+    for (const [index, child] of children.entries()) {
+      indexes.set(child, index);
+      throwing.push(
+        (throwing[index] ?? 0) + Number(!syntaxEvaluationCannotThrow(child)),
+      );
+    }
+    const result = { indexes, throwing, children };
+    orders.set(parent, result);
+    return result;
+  };
+  return (node: t.Node, after?: t.Node): boolean => {
+    let path: ReadonlyMap<t.Node, t.Node> = new Map();
+    if (after !== undefined) {
+      const cached = paths.get(after);
+      if (cached !== undefined) path = cached;
+      else {
+        const indexed = new Map<t.Node, t.Node>();
+        let current = after;
+        for (;;) {
+          const parent = parents.get(current);
+          if (parent === undefined || t.isFunction(parent)) break;
+          indexed.set(parent, current);
+          current = parent;
+        }
+        path = indexed;
+        paths.set(after, path);
+      }
+    }
+    const tailMayThrow = (operand: t.Node): boolean => {
+      if (operand === after) return false;
+      const selected = path.get(operand);
+      if (selected === undefined) return !syntaxEvaluationCannotThrow(operand);
+      if (t.isVariableDeclarator(operand) && t.isIdentifier(operand.id))
+        return operand.init != null && tailMayThrow(operand.init);
+      if (
+        !(
+          t.isExpressionStatement(operand) ||
+          t.isBlockStatement(operand) ||
+          t.isSequenceExpression(operand) ||
+          t.isArrayExpression(operand) ||
+          (t.isVariableDeclaration(operand) &&
+            ["var", "let", "const"].includes(operand.kind))
+        )
+      )
+        return true;
+      const indexed = order(operand);
+      const index = indexed.indexes.get(selected);
+      return (
+        index === undefined ||
+        tailMayThrow(selected) ||
+        (indexed.throwing.at(-1) ?? 0) > (indexed.throwing[index + 1] ?? 0)
+      );
+    };
     let child = node;
     if (t.isAwaitExpression(child)) {
       child = child.argument;
@@ -350,20 +425,19 @@ const createCaughtPrefixBypassProof = (parents: WeakMap<t.Node, t.Node>) => {
     for (;;) {
       const parent = parents.get(child);
       if (parent === undefined || t.isFunction(parent)) return false;
-      let indexed = prefixes.get(parent);
-      if (indexed === undefined) {
-        const values = new Map<t.Node, boolean>();
-        let throws = false;
-        for (const operand of syntaxUnconditionalOperands(parent) ??
-          syntaxEvaluationOperands(parent) ??
-          []) {
-          values.set(operand, throws);
-          throws ||= !syntaxEvaluationCannotThrow(operand);
-        }
-        indexed = values;
-        prefixes.set(parent, indexed);
+      const indexed = order(parent);
+      const end = indexed.indexes.get(child);
+      const selected = path.get(parent);
+      const start =
+        selected === undefined ? undefined : indexed.indexes.get(selected);
+      if (end !== undefined) {
+        if (selected === undefined)
+          mayThrow ||= (indexed.throwing[end] ?? 0) > 0;
+        else if (start !== undefined && start < end)
+          mayThrow ||=
+            tailMayThrow(selected) ||
+            (indexed.throwing[end] ?? 0) > (indexed.throwing[start + 1] ?? 0);
       }
-      mayThrow ||= indexed.get(child) === true;
       if (
         t.isTryStatement(parent) &&
         parent.block === child &&
@@ -379,7 +453,7 @@ const createCaughtPrefixBypassProof = (parents: WeakMap<t.Node, t.Node>) => {
 /** Prove a syntax-local path is unconditional; unknown branches remain unknown. */
 export const createUnconditionalEvaluationProof = (
   parents: WeakMap<t.Node, t.Node>,
-): ((node: t.Node, boundary?: t.Node) => boolean) => {
+): ((node: t.Node, boundary?: t.Node, after?: t.Node) => boolean) => {
   const caughtPrefixMayBypass = createCaughtPrefixBypassProof(parents);
   const reachableStatements = new WeakMap<
     t.Program | t.BlockStatement | t.SwitchCase,
@@ -389,8 +463,8 @@ export const createUnconditionalEvaluationProof = (
     const literal = readExactJavaScriptLiteral(node);
     return literal.found ? Boolean(literal.value) : undefined;
   };
-  return (node, boundary) => {
-    if (caughtPrefixMayBypass(node)) return false;
+  return (node, boundary, after) => {
+    if (caughtPrefixMayBypass(node, after)) return false;
     let child = node;
     for (;;) {
       if (child === boundary) return true;

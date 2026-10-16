@@ -31,6 +31,7 @@ const lexicalFrame = (
 const assignmentCanComplete = (
   node: t.AssignmentExpression,
   state: JavaScriptSemanticAnalysisState,
+  executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): boolean => {
   const target = unwrapJavaScriptExpression(node.left).node;
   if (!t.isIdentifier(target)) return false;
@@ -62,8 +63,10 @@ const assignmentCanComplete = (
         read: node,
         bindingNode,
         parents: state.parentsByNode,
-        initializerContexts: [lexicalFrame(declaration, state)],
-        readContexts: [lexicalFrame(node, state)],
+        initializerContexts: executionFrames?.(declaration) ?? [
+          lexicalFrame(declaration, state),
+        ],
+        readContexts: executionFrames?.(node) ?? [lexicalFrame(node, state)],
       }) === true
     );
   });
@@ -73,7 +76,8 @@ const assignmentCanComplete = (
 export const semanticExactResultOperand = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): t.Node | undefined =>
   javaScriptExactResultOperand(node, (assignment) =>
-    assignmentCanComplete(assignment, state),
+    assignmentCanComplete(assignment, state, executionFrames),
   );

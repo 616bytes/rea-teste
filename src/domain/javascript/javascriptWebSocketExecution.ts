@@ -23,6 +23,7 @@ import {
   syntaxUnconditionalOperands,
   syntaxEvaluationOperands,
   syntaxEvaluationCannotThrow,
+  syntaxMayCompleteNormally,
 } from "./javascriptSymbolicControlFlow.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
 
@@ -55,7 +56,9 @@ const webSocketOuterExpression = (
     const parent = state.parentsByNode.get(current);
     if (
       parent !== undefined &&
-      semanticExactResultOperand(parent, state) === current
+      semanticExactResultOperand(parent, state, (point) =>
+        webSocketExecutionContexts(point, state, true),
+      ) === current
     ) {
       current = parent;
       identity = parent;
@@ -190,7 +193,8 @@ const webSocketImmediateInvocation = (
 type WebSocketSuspension =
   | t.AwaitExpression
   | t.YieldExpression
-  | t.ForOfStatement;
+  | t.ForOfStatement
+  | t.BlockStatement;
 
 const loopJumpFacts = new WeakMap<t.Node, boolean>();
 /** An abrupt loop path cannot prove normal body completion before its test/update. */
@@ -331,6 +335,18 @@ const webSocketCompletedSuspension = (
     const next = pending.pop();
     if (next === undefined) continue;
     const current = unwrapJavaScriptExpression(next).node;
+    // Disposal belongs to successful scope exit, never the declaration point.
+    if (
+      t.isBlockStatement(current) &&
+      current.body.some(
+        (statement) =>
+          t.isVariableDeclaration(statement) &&
+          statement.kind === "await using",
+      )
+    ) {
+      cached.set(node, current);
+      return current;
+    }
     const delegateOwner =
       t.isYieldExpression(current) && current.delegate
         ? webSocketSuspensionOwner(current, state)
@@ -384,6 +400,21 @@ const webSocketPrecedingSuspension = (
     parent.cases.includes(child as t.SwitchCase)
   )
     return webSocketCompletedSuspension(parent.discriminant, state);
+  if (t.isSwitchCase(parent) && child !== parent.test && parent.test != null) {
+    const selection = state.parentsByNode.get(parent);
+    if (t.isSwitchStatement(selection)) {
+      const index = selection.cases.indexOf(parent);
+      const preceding = selection.cases[index - 1];
+      // Earlier matching cases may fall through without evaluating this test.
+      if (
+        index === 0 ||
+        (preceding !== undefined && !syntaxMayCompleteNormally(preceding))
+      ) {
+        const suspension = webSocketCompletedSuspension(parent.test, state);
+        if (suspension !== undefined) return suspension;
+      }
+    }
+  }
   // Executed optional children follow the mandatory receiver/callee, even
   // though skipped children cannot prove completion for following siblings.
   if (
@@ -505,10 +536,20 @@ const webSocketGeneratorResume = (
   | t.OptionalCallExpression
   | t.ForOfStatement
   | t.SpreadElement
+  | t.ArrayPattern
   | undefined => {
   const result = webSocketOuterExpression(invocation, state);
   const member = state.parentsByNode.get(result);
   if (t.isForOfStatement(member) && member.right === result) return member;
+  const pattern =
+    t.isVariableDeclarator(member) && member.init === result
+      ? member.id
+      : t.isAssignmentExpression(member) &&
+          member.right === result &&
+          member.operator === "="
+        ? member.left
+        : undefined;
+  if (t.isArrayPattern(pattern) && pattern.elements.length > 0) return pattern;
   if (t.isSpreadElement(member) && member.argument === result) {
     const consumer = state.parentsByNode.get(member);
     if (
@@ -737,7 +778,8 @@ export const webSocketExecutionContexts = (
       let invocation:
         | ReturnType<typeof webSocketImmediateInvocation>
         | t.ForOfStatement
-        | t.SpreadElement =
+        | t.SpreadElement
+        | t.ArrayPattern =
         t.isClassMethod(parent) && parent.kind === "constructor"
           ? webSocketClassConstruction(parent, state)
           : webSocketImmediateInvocation(parent, state);
@@ -756,11 +798,18 @@ export const webSocketExecutionContexts = (
       const decoratedClass = t.isDecorator(invocation)
         ? webSocketDecoratedClass(invocation, state)
         : undefined;
-      suspendedAfter(
-        t.isForOfStatement(invocation)
-          ? invocation.right
-          : (decoratedClass ?? invocation),
-      );
+      if (t.isOptionalCallExpression(invocation)) {
+        // Reaching this literal body proves the optional call was taken.
+        // Its argument evaluation therefore precedes body entry.
+        for (const operand of [invocation.callee, ...invocation.arguments])
+          suspendedAfter(operand);
+      } else if (!t.isArrayPattern(invocation)) {
+        suspendedAfter(
+          t.isForOfStatement(invocation)
+            ? invocation.right
+            : (decoratedClass ?? invocation),
+        );
+      }
       if (
         (parent.async || generatorBody) &&
         current === parent.body &&
@@ -768,6 +817,8 @@ export const webSocketExecutionContexts = (
         !(
           !parent.async &&
           (t.isSpreadElement(invocation) ||
+            (t.isArrayPattern(invocation) &&
+              !webSocketBodyMaySuspend(invocation)) ||
             (t.isForOfStatement(invocation) &&
               !invocation.await &&
               !webSocketBodyMaySuspend(invocation.left) &&

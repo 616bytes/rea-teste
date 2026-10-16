@@ -723,6 +723,48 @@ const completedWriteAndConsumerSources = [
       '(async () => { for (const item of (function* () { yield 0; new Socket("wss://example.test/review-latest"); })()) { await using resource = null; } })(); const Socket = globalThis.WebSocket;',
     present: true,
   },
+  {
+    file: "scope-review-0.js",
+    source:
+      '(async () => { { await using resource = null; } new Socket("wss://example.test/review-latest"); })(); const Socket = globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "scope-review-1.js",
+    source:
+      'export {}; try { const pending = (async () => { await 0; new Socket("wss://example.test/review-latest"); })(); await pending; const Socket = globalThis.WebSocket; } catch {}',
+    present: false,
+  },
+  {
+    file: "scope-review-2.js",
+    source:
+      'let connect; (() => { (connect = () => new Socket("wss://example.test/review-latest"))(); })(); const Socket = globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "scope-review-3.js",
+    source:
+      'for (let holder of [new (holder = globalThis.WebSocket)("wss://example.test/review-latest")]) {}',
+    present: false,
+  },
+  {
+    file: "scope-review-4.js",
+    source:
+      'const [ignored] = (function* () { new Socket("wss://example.test/review-latest"); yield 0; })(); const Socket = globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "scope-review-5.js",
+    source:
+      '(async () => { switch (kind) { case await ready: new Socket("wss://example.test/review-latest"); } })(); const Socket = globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "scope-review-6.js",
+    source:
+      '(async () => { (async (_x) => { new Socket("wss://example.test/review-latest"); })?.(await ready); })(); const Socket = globalThis.WebSocket;',
+    present: true,
+  },
 ];
 
 it("retains reviewed completion endpoints with filesystem source provenance", async () => {
@@ -738,7 +780,7 @@ it("retains reviewed completion endpoints with filesystem source provenance", as
     const observations = graph.nodes
       .filter((node) => node.kind === "endpoint")
       .flatMap((node) => node.observations);
-    expect(observations).toHaveLength(5);
+    expect(observations).toHaveLength(8);
     for (const { file, present } of completedWriteAndConsumerSources) {
       const matching = observations.filter(
         ({ evidence }) =>

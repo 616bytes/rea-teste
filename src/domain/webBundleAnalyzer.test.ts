@@ -3149,3 +3149,221 @@ describe("web bundle completed writes and consumer suspension", () => {
     },
   );
 });
+
+const scopeExitReviewCases = [
+  {
+    name: "block disposal",
+    source:
+      '(async () => { { await using resource = null; } new Socket("wss://example.test/review-scope"); })(); const Socket = globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "producer created in caught block",
+    source:
+      'export {}; try { const pending = (async () => { await 0; new Socket("wss://example.test/review-scope"); })(); await pending; const Socket = globalThis.WebSocket; } catch {}',
+    present: false,
+  },
+  {
+    name: "outer mutable assignment invocation",
+    source:
+      'let connect; (() => { (connect = () => new Socket("wss://example.test/review-scope"))(); })(); const Socket = globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "loop head assignment",
+    source:
+      'for (let holder of [new (holder = globalThis.WebSocket)("wss://example.test/review-scope")]) {}',
+    present: false,
+  },
+  {
+    name: "destructuring generator",
+    source:
+      'const [ignored] = (function* () { new Socket("wss://example.test/review-scope"); yield 0; })(); const Socket = globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "selected switch test suspension",
+    source:
+      '(async () => { switch (kind) { case await ready: new Socket("wss://example.test/review-scope"); } })(); const Socket = globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "optional literal arguments",
+    source:
+      '(async () => { (async (_x) => { new Socket("wss://example.test/review-scope"); })?.(await ready); })(); const Socket = globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "disposal has not exited",
+    source:
+      '(async()=>{await using resource=null;new Socket("wss://example.test/review-scope")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "synchronous block disposal",
+    source:
+      '(async()=>{{using resource=null;}new Socket("wss://example.test/review-scope")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "stored disposal scope",
+    source:
+      '(async()=>{const later=async()=>{await using resource=null;};new Socket("wss://example.test/review-scope")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "skipped disposal block",
+    source:
+      '(async()=>{if(false){await using resource=null;}new Socket("wss://example.test/review-scope")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "taken disposal block",
+    source:
+      '(async()=>{if(true){await using resource=null;}new Socket("wss://example.test/review-scope")})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "throw before same-block producer",
+    source:
+      'export {};try{null.value;const pending=(async()=>{await 0;new Socket("wss://example.test/review-scope")})();await pending;const Socket=globalThis.WebSocket;}catch{}',
+    present: false,
+  },
+  {
+    name: "throw after same-block producer",
+    source:
+      'export {};try{const pending=(async()=>{await 0;new Socket("wss://example.test/review-scope")})();null.value;await pending;}catch{}const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "throw after producer in same declaration",
+    source:
+      'export {};try{const pending=(async()=>{await 0;new Socket("wss://example.test/review-scope")})(), tail=null.value;await pending;}catch{}const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "safe prefix before same-block producer",
+    source:
+      'export {};try{0;const pending=(async()=>{await 0;new Socket("wss://example.test/review-scope")})();await pending;const Socket=globalThis.WebSocket;}catch{}',
+    present: false,
+  },
+  {
+    name: "outer var assignment invocation",
+    source:
+      'var connect;(()=>{(connect=()=>new Socket("wss://example.test/review-scope"))()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "outer let assignment after alias initialization",
+    source:
+      'const Socket=globalThis.WebSocket;let connect;(()=>{(connect=()=>new Socket("wss://example.test/review-scope"))()})();',
+    present: true,
+  },
+  {
+    name: "for-in loop head assignment",
+    source:
+      'for(let holder in { [new(holder=globalThis.WebSocket)("wss://example.test/review-scope")]:0}){}',
+    present: false,
+  },
+  {
+    name: "var loop head assignment",
+    source:
+      'for(var holder of [new(holder=globalThis.WebSocket)("wss://example.test/review-scope")]){}',
+    present: true,
+  },
+  {
+    name: "initialized loop body assignment",
+    source:
+      'for(let holder of [0]){new(holder=globalThis.WebSocket)("wss://example.test/review-scope")}',
+    present: true,
+  },
+  {
+    name: "array hole consumes first resume",
+    source:
+      'const [,ignored]=(function*(){new Socket("wss://example.test/review-scope");yield 0})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "assignment pattern consumes generator",
+    source:
+      'let ignored;[ignored]=(function*(){new Socket("wss://example.test/review-scope");yield 0})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "rest pattern drains generator",
+    source:
+      'const [...ignored]=(function*(){yield 0;new Socket("wss://example.test/review-scope")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "two pattern elements resume in same turn",
+    source:
+      'const [a,b]=(function*(){yield 0;new Socket("wss://example.test/review-scope");yield 1})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "empty array pattern only closes iterator",
+    source:
+      'const []=(function*(){new Socket("wss://example.test/review-scope");yield 0})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "object pattern does not iterate",
+    source:
+      'const {}=(function*(){new Socket("wss://example.test/review-scope");yield 0})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "stored generator consumed after alias",
+    source:
+      'const iterator=(function*(){new Socket("wss://example.test/review-scope");yield 0})();const Socket=globalThis.WebSocket;const [ignored]=iterator;',
+    present: true,
+  },
+  {
+    name: "pattern default can suspend before next resume",
+    source:
+      '(async()=>{const [a=await ready,b]=(function*(){yield undefined;new Socket("wss://example.test/review-scope");yield 1})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "switch fallthrough skips selected test",
+    source:
+      '(async()=>{switch(kind){case 0:case await ready:new Socket("wss://example.test/review-scope")}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "switch predecessor break prevents fallthrough",
+    source:
+      '(async()=>{switch(kind){case 0:break;case await ready:new Socket("wss://example.test/review-scope")}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "optional literal call without argument wait",
+    source:
+      '(async()=>{(async x=>{new Socket("wss://example.test/review-scope")})?.(0)})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "optional argument stores an async function",
+    source:
+      '(async()=>{(async x=>{new Socket("wss://example.test/review-scope")})?.(async()=>await ready)})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "skipped optional arguments do not suspend siblings",
+    source:
+      '(async()=>{null?.(await ready);new Socket("wss://example.test/review-scope")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+];
+describe("web bundle scope exit and relative producer order", () => {
+  it.each(scopeExitReviewCases)(
+    "preserves $name in both consumers",
+    ({ source, present }) => {
+      const expected = present ? ["wss://example.test/review-scope"] : [];
+      expect(
+        socketEndpoints(source).map((items) => items.map((item) => item.value)),
+      ).toEqual([expected, expected]);
+    },
+  );
+});

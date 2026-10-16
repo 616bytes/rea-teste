@@ -175,7 +175,10 @@ const promiseWaitCoupledToProducer = ({
         waitFrame.point,
         parents,
       );
-      return boundary !== undefined && reached(waitFrame.point, boundary);
+      return (
+        boundary !== undefined &&
+        reached(waitFrame.point, boundary, producerFrame.point)
+      );
     }
     if (
       !t.isFunction(waitFrame.owner) ||

@@ -45,6 +45,23 @@ export const semanticInitializerPrecedesRead = ({
     }
     current = parents.get(current);
   }
+  // A lexical iteration head is uninitialized throughout iterable evaluation.
+  // Source order alone would incorrectly place its bare declarator before RHS.
+  if (t.isVariableDeclarator(initializer)) {
+    const declaration = parents.get(initializer);
+    const loop =
+      declaration === undefined ? undefined : parents.get(declaration);
+    if (
+      (t.isForOfStatement(loop) || t.isForInStatement(loop)) &&
+      loop.left === declaration
+    ) {
+      let ancestor: t.Node | undefined = read;
+      while (ancestor !== undefined && ancestor !== loop) {
+        if (ancestor === loop.right) return false;
+        ancestor = parents.get(ancestor);
+      }
+    }
+  }
   const shared = readContexts.find(({ owner }) =>
     initializerContexts.some((frame) => frame.owner === owner),
   );

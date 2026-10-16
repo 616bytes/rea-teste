@@ -317,3 +317,93 @@ it("resolves extensionless imports and requires to .mts and .cts files and direc
     ]),
   );
 });
+
+const readSource = (
+  files: readonly (readonly [string, string])[],
+): ReferenceSourceRead => ({
+  root: "/selected/source",
+  entries: files.map(([path, content]) => ({
+    status: "read",
+    kind: "file",
+    path,
+    bytes: Buffer.from(content),
+    size: Buffer.byteLength(content),
+  })),
+  bytesRead: files.reduce(
+    (sum, [, content]) => sum + Buffer.byteLength(content),
+    0,
+  ),
+  limitations: [],
+});
+
+const relationshipsOf = (files: readonly (readonly [string, string])[]) =>
+  parseReferenceSourceEntries(
+    readSource(files),
+    new Set(files.map(([path]) => path)),
+  ).relationships;
+
+it("resolves query and fragment ESM requests to the inventoried pathname (#3916)", () => {
+  const relationships = relationshipsOf([
+    [
+      "main.mjs",
+      'import "./dep.mjs?revision=1#first";\n' +
+        'import "./query.mjs?v=2";\n' +
+        'import "./fragment.mjs#part";\n' +
+        'await import("./dynamic.mjs?lazy");\n',
+    ],
+    ["dep.mjs", "export const value = 1;\n"],
+    ["query.mjs", "export const value = 2;\n"],
+    ["fragment.mjs", "export const value = 3;\n"],
+    ["dynamic.mjs", "export const value = 4;\n"],
+  ]);
+  for (const to of ["dep.mjs", "query.mjs", "fragment.mjs", "dynamic.mjs"])
+    expect(relationships).toContainEqual(
+      expect.objectContaining({
+        from_path: "main.mjs",
+        to,
+        resolution: "internal",
+      }),
+    );
+});
+
+it("prefers an inventoried filename that contains the literal suffix", () => {
+  expect(
+    relationshipsOf([
+      ["main.ts", 'import "./dep?raw";\n'],
+      ["dep?raw.ts", "export const value = 1;\n"],
+      ["dep.ts", "export const value = 2;\n"],
+    ]),
+  ).toContainEqual(
+    expect.objectContaining({
+      from_path: "main.ts",
+      to: "dep?raw.ts",
+      resolution: "internal",
+    }),
+  );
+});
+
+it("keeps an unmatched query-bearing ESM request unresolved", () => {
+  expect(
+    relationshipsOf([["main.mjs", 'import "./missing.mjs?v=1";\n']]),
+  ).toContainEqual(
+    expect.objectContaining({
+      from_path: "main.mjs",
+      to: "missing.mjs?v=1",
+      resolution: "unresolved",
+    }),
+  );
+});
+
+it("does not strip a query from a CommonJS require specifier", () => {
+  expect(
+    relationshipsOf([
+      ["main.cjs", 'require("./dep.js?v=1");\n'],
+      ["dep.js", "module.exports = 1;\n"],
+    ]),
+  ).toContainEqual(
+    expect.objectContaining({
+      from_path: "main.cjs",
+      resolution: "unresolved",
+    }),
+  );
+});

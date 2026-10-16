@@ -320,6 +320,31 @@ const resolveInternalSpecifier = (
     : { to: match, resolution: "internal" };
 };
 
+/**
+ * ESM resolves a relative specifier as a URL: its query and fragment select
+ * no pathname bytes. Prefer an exact filename match so existing literal
+ * resolution is unchanged, then retry with the URL pathname component.
+ */
+const resolveImportSpecifier = (
+  fromPath: string,
+  specifier: string,
+  context: SpecifierContext,
+  mode: InternalSpecifierResolutionMode,
+): { to: string; resolution: "internal" | "unresolved" } => {
+  const literal = resolveInternalSpecifier(fromPath, specifier, context, mode);
+  if (literal.resolution === "internal" || mode !== "source-import")
+    return literal;
+  const suffix = specifier.search(/[?#]/u);
+  if (suffix <= 0) return literal;
+  const pathname = resolveInternalSpecifier(
+    fromPath,
+    specifier.slice(0, suffix),
+    context,
+    mode,
+  );
+  return pathname.resolution === "internal" ? pathname : literal;
+};
+
 type ReadFile = Extract<ReferenceSourceEntry, { status: "read"; kind: "file" }>;
 
 const appendFile = (
@@ -355,7 +380,7 @@ const appendFile = (
         : graphRelationship.kind === "requires"
           ? "source-require"
           : "source-import";
-    const resolved = resolveInternalSpecifier(
+    const resolved = resolveImportSpecifier(
       graphRelationship.from_path,
       graphRelationship.to,
       context,

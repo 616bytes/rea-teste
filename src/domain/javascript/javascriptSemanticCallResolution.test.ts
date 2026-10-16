@@ -229,6 +229,11 @@ function run(){ let x = root; x = x.next; return x.make(); }`),
     references(`function make(){ return {v:1}; } const root = {next:{make}};
 function run(flag){ let x = root, y = x; if (flag) { x = y; y = x; } x = y.next; return x.make(); }`),
   ).toHaveLength(1);
+  // A write that reads the chain in one branch only keeps its other branch.
+  expect(
+    references(`function make(){ return {v:1}; } const root = {next:{make}};
+function run(flag){ let x; x = flag ? root : x.next; x = x.next; return x.make(); }`),
+  ).toHaveLength(1);
   // A second self-walk on the same binding is the bound: the chain leaves
   // through writes that do not read its own bindings (x = root) and stops.
   expect(

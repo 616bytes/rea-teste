@@ -462,8 +462,12 @@ uncertain group and its temporary root stay owned for retry. Unrelated withheld
 environment observations are retained through refreshed scans and partial cleanup.
 
 Generic owned-command cleanup also retains descendant groups found in a fresh
-liveness table. It validates those groups without scanning unrelated host
-processes. Pre-signal discovery precedes the final group ownership check;
+liveness table. Newly observed rows and changed parent/group relationships are
+also inspected, because a child can already be reparented when its parent exits.
+Cleanup and lineage observation share token/start-identity validation for these
+candidates: positive proof retains owned children, explicit foreign tokens leave
+unrelated children untouched, and unavailable proof keeps the outcome unresolved.
+Stable unrelated rows remain outside generic discovery. Pre-signal discovery precedes the final group ownership check;
 newer scan failures cannot be erased by an earlier successful check. Captured
 start identities remain pinned across bounded replanning, including when a
 process recovers its run token.
@@ -472,6 +476,12 @@ Identity-inspection failures preserve the affected PIDs and native inspection
 reasons in the cleanup diagnostic. Completed capture observations remain
 available, and unresolved process cleanup keeps the temporary root owned for
 retry.
+
+An exhausted discovery budget is reported as `process-discovery-incomplete`,
+with the unexamined PIDs and discovery diagnostic. This is incomplete snapshot
+coverage, not a claim that a PID's native start identity changed. It still
+prevents successful cleanup; available observations remain partial and the
+cleanup owner retains its resources for retry.
 
 The process-table producer excludes only its own collector invocation from the
 snapshot that invocation produced. It does not exclude processes by command name

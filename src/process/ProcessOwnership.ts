@@ -13,6 +13,10 @@ import {
   readProcessRunTokens,
 } from "./ProcessRunTokenObservations.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import {
+  readProcessOwnershipCandidates,
+  refreshedProcessCandidates,
+} from "./ProcessOwnershipRefresh.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -131,7 +135,8 @@ interface ProcessOwnershipValidationFailure {
   readonly reason:
     | "environment-unreadable"
     | "run-token-mismatch"
-    | "process-identity-unavailable";
+    | "process-identity-unavailable"
+    | "process-discovery-incomplete";
   readonly diagnostic?: string;
 }
 
@@ -516,10 +521,12 @@ const createOwnedCleanupPlan = async (
         )
       : {
           processes: settledProcesses,
-          owned: [],
+          owned: settledProcesses.filter(({ pid }) =>
+            tokenOwnedIdentities.has(pid),
+          ),
           failures: [],
           unverified: [],
-          identities: new Map(),
+          identities: tokenOwnedIdentities,
         };
   if ("cleaned" in tokenOwned) return tokenOwned;
   // Replanning changes membership, not the start identity already captured
@@ -796,7 +803,7 @@ const revalidateOwnedProcessGroup = async (
     processGroupId,
     validation,
     ownership,
-    { ...plan, processes: observedProcesses },
+    plan,
     host,
     sweepBudget,
   );
@@ -901,6 +908,22 @@ const cleanupValidationFailure = (
       ...unverifiedEntry,
     };
   }
+  const undiscovered = failures.filter(
+    ({ reason }) => reason === "process-discovery-incomplete",
+  );
+  if (undiscovered.length > 0)
+    return {
+      cleaned: false,
+      reason: `process ownership discovery could not complete within its retry budget; unexamined live candidates ${undiscovered
+        .map(
+          ({ pid, diagnostic }) =>
+            `${String(pid)}=${diagnostic ?? "discovery incomplete"}`,
+        )
+        .sort(compareUnicodeCodePoints)
+        .join(", ")}`,
+      failures,
+      ...unverifiedEntry,
+    };
   return {
     cleaned: false,
     reason: "process ownership could not be revalidated",
@@ -1008,14 +1031,40 @@ const reconcileCleanupRefresh = async (
       ({ pid, processGroupId }) =>
         relatedPids.has(pid) && !plannedGroups.has(processGroupId),
     );
+    const failures = [...validation.failures];
+    const identities = new Map(plan.tokenOwnedIdentities);
+    const unlinked = refreshedProcessCandidates(
+      plan.processes,
+      refreshed,
+    ).filter(
+      ({ pid, processGroupId }) =>
+        !relatedPids.has(pid) && !plannedGroups.has(processGroupId),
+    );
+    for (const {
+      process,
+      ownership: proof,
+    } of await readProcessOwnershipCandidates(
+      unlinked,
+      ownership.runId,
+      host,
+      identities,
+    )) {
+      if (proof.state === "owned") {
+        discovered.push(process);
+        if (!identities.has(process.pid))
+          identities.set(process.pid, proof.identity);
+      } else if (proof.state === "unavailable")
+        mergeProcessOwnershipFailure(failures, {
+          pid: process.pid,
+          reason: proof.reason,
+          diagnostic: proof.diagnostic,
+        });
+    }
+    if (failures.length > validation.failures.length)
+      return cleanupValidationFailure(failures);
     return discovered.length === 0
       ? undefined
-      : cleanupMembershipRefresh(
-          refreshed,
-          discovered,
-          validation.failures,
-          plan.tokenOwnedIdentities,
-        );
+      : cleanupMembershipRefresh(refreshed, discovered, failures, identities);
   }
   if (
     refreshed.every(({ processGroupId }) => plannedGroups.has(processGroupId))
@@ -1068,7 +1117,7 @@ const cleanupMembershipRefresh = (
     if (!failures.some((failure) => failure.pid === pid))
       failures.push({
         pid,
-        reason: "process-identity-unavailable",
+        reason: "process-discovery-incomplete",
         diagnostic:
           "process-group membership kept changing during bounded cleanup planning",
       });
@@ -1127,7 +1176,7 @@ const validateProcessGroupMembers = async (
     ...(refreshedProcesses === undefined ? {} : { refreshedProcesses }),
     failures: members.map(({ pid }) => ({
       pid,
-      reason: "process-identity-unavailable",
+      reason: "process-discovery-incomplete",
       diagnostic:
         "process-group membership kept changing during ownership validation",
     })),
@@ -1444,7 +1493,7 @@ const scanTokenOwnedProcesses = async (
       for (const { pid } of discovered)
         mergeProcessOwnershipFailure(failures, {
           pid,
-          reason: "process-identity-unavailable",
+          reason: "process-discovery-incomplete",
           diagnostic: identityFailureDiagnostic(
             "processes kept changing during bounded ownership sweep",
             currentExcludedIdentities.get(pid) ??

@@ -122,6 +122,70 @@ it("does not publish verified group liveness when an exit refresh reveals a fore
   });
 });
 
+it.each(["owned", "foreign", "missing", "reused"])(
+  "accounts for a reparented %s child before publishing refreshed lineage",
+  async (token) => {
+    const child = {
+      ...processes[1]!,
+      pid: 200,
+      parentPid: 1,
+      processGroupId: 200,
+    };
+    const neighbor = { ...child, pid: 900, processGroupId: 900 };
+    let rows = [...processes, neighbor];
+    let childReads = 0;
+    const environment = vi.fn(async (pid: number) => {
+      if (pid === neighbor.pid)
+        throw new Error("Do not inspect stable unrelated rows");
+      if (pid === 101) {
+        rows = [processes[0]!, child, neighbor];
+        return {};
+      }
+      if (pid === child.pid) {
+        childReads++;
+        if (token === "missing") return {};
+        if (token === "foreign") return { REA_PROCESS_RUN_ID: "other-run" };
+      }
+      return { REA_PROCESS_RUN_ID: ownership.runId };
+    });
+    const result = await observeOwnedProcessLineage(ownership, {
+      listProcesses: async () => rows,
+      processIdentities: async (members) =>
+        new Map(
+          members.map(({ pid }) => [
+            pid,
+            {
+              state: "readable" as const,
+              identity:
+                pid === child.pid && token === "reused" && childReads > 0
+                  ? "replacement-start"
+                  : `start-${String(pid)}`,
+            },
+          ]),
+        ),
+      environment,
+      signalGroup: vi.fn(),
+    });
+    expect(environment).toHaveBeenCalledWith(child.pid);
+    expect(environment).not.toHaveBeenCalledWith(neighbor.pid);
+    if (token === "owned" || token === "foreign")
+      expect(result).toMatchObject({
+        status: "verified",
+        lineage: {
+          descendants:
+            token === "owned"
+              ? [{ pid: 200, parentPid: 1, processGroupId: 200 }]
+              : [],
+        },
+      });
+    else
+      expect(result).toMatchObject({
+        status: "unavailable",
+        reason: expect.stringContaining(`PID ${String(child.pid)}`),
+      });
+  },
+);
+
 it.each(["groups", "lineage"])(
   "bounds repeated descendant replacement during %s observation",
   async (kind) => {

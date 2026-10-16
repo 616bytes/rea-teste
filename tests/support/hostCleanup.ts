@@ -30,35 +30,45 @@ const isSerializedCleanupReport = (
   "state" in value.temporary_root &&
   "reason" in value.temporary_root;
 
-const expectHostCleanupReport = (report: {
-  readonly owned_process_group: {
-    readonly state: unknown;
-    readonly reason: unknown;
-  };
-  readonly terminal_renderer: { readonly state: unknown };
-  readonly temporary_root: {
-    readonly state: unknown;
-    readonly reason: unknown;
-  };
-}): void => {
+const expectHostCleanupReport = (
+  report: {
+    readonly owned_process_group: {
+      readonly state: unknown;
+      readonly reason: unknown;
+    };
+    readonly terminal_renderer: { readonly state: unknown };
+    readonly temporary_root: {
+      readonly state: unknown;
+      readonly reason: unknown;
+    };
+  },
+  platform: NodeJS.Platform,
+): void => {
   expect(report.owned_process_group.state).toBe("unverified");
   const reason = report.owned_process_group.reason;
   expect(typeof reason).toBe("string");
   if (typeof reason !== "string")
     throw new Error("cleanup report omitted reason");
   const category =
-    process.platform === "linux"
+    platform === "linux"
       ? "(?:run_token_missing|environment_errno_(?:EACCES|EPERM))"
       : "(?:run_token_missing|environment_unavailable)";
   const candidate = `[1-9][0-9]*=${category}`;
-  expect(reason).toMatch(
-    new RegExp(
-      `^process ownership token could not be read for [1-9][0-9]* live process\\(es\\): ` +
-        `${category}=[1-9][0-9]*(?:, ${category}=[1-9][0-9]*)*; ` +
-        `live candidates ${candidate}(?:, ${candidate})*$`,
-      "u",
-    ),
-  );
+  const acceptedReasons = [
+    `process ownership token could not be read for [1-9][0-9]* live process\\(es\\): ` +
+      `${category}=[1-9][0-9]*(?:, ${category}=[1-9][0-9]*)*; ` +
+      `live candidates ${candidate}(?:, ${candidate})*`,
+  ];
+  // The real Darwin lane also observes bounded host process-table churn. Keep
+  // this coverage failure distinct from actual native identity or token faults.
+  if (platform === "darwin") {
+    const discoveryCandidate =
+      "[1-9][0-9]*=(?:processes kept changing during bounded ownership sweep(?:: process_not_in_snapshot)?|process-group membership kept changing during bounded cleanup planning|process-group membership kept changing during ownership validation)";
+    acceptedReasons.push(
+      `process ownership discovery could not complete within its retry budget; unexamined live candidates ${discoveryCandidate}(?:, ${discoveryCandidate})*`,
+    );
+  }
+  expect(reason).toMatch(new RegExp(`^(?:${acceptedReasons.join("|")})$`, "u"));
   expect(report.terminal_renderer.state).toBe("cleaned");
   // The temporary root is retained while owned process cleanup is unverified.
   expect(report.temporary_root).toEqual({
@@ -70,13 +80,14 @@ const expectHostCleanupReport = (report: {
 /** Preserve missing/unreadable-token outcomes seen by real captures as unverified. */
 export const expectUnverifiedHostCleanup = (
   error: ProcessCaptureError,
+  platform: NodeJS.Platform = process.platform,
 ): void => {
   expect(error.reason, error.message).toBe("cleanup_incomplete");
   const report = error.cleanupReport;
   expect(report).toBeDefined();
   if (report === undefined)
     throw new Error("cleanup-incomplete error omitted report");
-  expectHostCleanupReport(report);
+  expectHostCleanupReport(report, platform);
 };
 
 /**
@@ -85,6 +96,7 @@ export const expectUnverifiedHostCleanup = (
  */
 export const expectSerializedUnverifiedHostCleanup = (
   value: unknown,
+  platform: NodeJS.Platform = process.platform,
 ): unknown => {
   expect(typeof value).toBe("object");
   expect(value).not.toBeNull();
@@ -114,6 +126,6 @@ export const expectSerializedUnverifiedHostCleanup = (
   const cleanupReport = details.cleanup_report;
   if (!isSerializedCleanupReport(cleanupReport))
     throw new Error("cleanup error report is incomplete");
-  expectHostCleanupReport(cleanupReport);
+  expectHostCleanupReport(cleanupReport, platform);
   return details.partial_observation;
 };

@@ -12,6 +12,10 @@ import {
   classifyProcessRunToken,
   readProcessRunTokens,
 } from "./ProcessRunTokenObservations.js";
+import {
+  readProcessOwnershipCandidates,
+  refreshedProcessCandidates,
+} from "./ProcessOwnershipRefresh.js";
 import type {
   OwnedProcessGroup,
   ProcessGroupObservation,
@@ -125,6 +129,7 @@ export const observeOwnedProcessLineage = async (
     );
   }
   const descendantAnchors = new Set<number>([ownership.leaderPid]);
+  const discoveredIdentities = new Map<number, string | null>();
   for (let attempt = 0; attempt < OWNERSHIP_OBSERVATION_ATTEMPTS; attempt++) {
     const processes = table.processes;
     const launcher = processes.find(({ pid }) => pid === ownership.leaderPid);
@@ -144,20 +149,26 @@ export const observeOwnedProcessLineage = async (
     for (const { pid } of descendants) descendantAnchors.add(pid);
     const verifiedDescendants: ProcessTableEntry[] = [];
     const unavailable: { readonly pid: number; readonly reason: string }[] = [];
-    for await (const { process: member, observation } of readProcessRunTokens(
-      host,
+    for (const {
+      process: member,
+      ownership: validation,
+    } of await readProcessOwnershipCandidates(
       [launcher, ...descendants],
+      ownership.runId,
+      host,
+      discoveredIdentities,
     )) {
-      const validation = classifyProcessRunToken(observation, ownership.runId);
       if (validation.state === "foreign")
         return unavailableLineage(
           ownership,
           "process lineage contains an unowned or PID-reused process",
         );
       if (validation.state === "owned") {
+        if (!discoveredIdentities.has(member.pid))
+          discoveredIdentities.set(member.pid, validation.identity);
         if (member.pid !== launcher.pid) verifiedDescendants.push(member);
       } else {
-        unavailable.push({ pid: member.pid, reason: validation.reason });
+        unavailable.push({ pid: member.pid, reason: validation.diagnostic });
       }
     }
     if (unavailable.length > 0) {
@@ -179,7 +190,38 @@ export const observeOwnedProcessLineage = async (
           `process ownership could not be revalidated for PID ${pid}: ${reason}${refreshed.available ? "" : `; process table could not be inspected: ${refreshed.reason}`}`,
         );
       }
-      if (refreshed.available) table = refreshed;
+      if (refreshed.available) {
+        const linked = new Set([
+          ...descendantAnchors,
+          ...descendantsOf([...descendantAnchors], refreshed.processes).map(
+            ({ pid }) => pid,
+          ),
+        ]);
+        const candidates = refreshedProcessCandidates(
+          processes,
+          refreshed.processes,
+        ).filter(({ pid }) => !linked.has(pid));
+        for (const {
+          process,
+          ownership: proof,
+        } of await readProcessOwnershipCandidates(
+          candidates,
+          ownership.runId,
+          host,
+          discoveredIdentities,
+        )) {
+          if (proof.state === "unavailable")
+            return unavailableLineage(
+              ownership,
+              `process ownership could not be revalidated for PID ${String(process.pid)}: ${proof.diagnostic}`,
+            );
+          if (proof.state === "owned") {
+            descendantAnchors.add(process.pid);
+            discoveredIdentities.set(process.pid, proof.identity);
+          }
+        }
+        table = refreshed;
+      }
       continue;
     }
     return {

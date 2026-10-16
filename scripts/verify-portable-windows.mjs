@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import {
   copyFile,
   mkdir,
@@ -12,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { parseArgs, promisify } from "node:util";
+import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parse as parseToml } from "smol-toml";
@@ -21,6 +20,7 @@ import {
   readPortableManifest,
   verifyPortableInventory,
 } from "./lib/portable-inventory.mjs";
+import { executePortableCommand as execute } from "./lib/portable-command.mjs";
 
 const { values } = parseArgs({
   options: { directory: { type: "string" }, powershell: { type: "string" } },
@@ -45,14 +45,6 @@ for (const file of manifest.files) {
 }
 
 const workspace = await mkdtemp(join(tmpdir(), "rea-portable-verification-"));
-const executeFile = promisify(execFile);
-const execute = (...args) => {
-  const result = executeFile(...args);
-  // These finite CLI calls have no input. PowerShell's native boundary otherwise
-  // keeps the host alive waiting for the redirected input stream to close.
-  result.child.stdin.end();
-  return result;
-};
 const node = join(directory, "runtime/node.exe");
 const entry = join(directory, "app/scripts/rea.mjs");
 let complete = false;
@@ -99,7 +91,6 @@ try {
       {
         cwd: directory,
         env: environment,
-        windowsHide: true,
         windowsVerbatimArguments: true,
         timeout: 120_000,
         maxBuffer: 8 * 1024 * 1024,
@@ -128,7 +119,6 @@ try {
       {
         cwd: workspace,
         env: environment,
-        windowsHide: true,
         timeout: 120_000,
         maxBuffer: 8 * 1024 * 1024,
       },
@@ -276,7 +266,6 @@ if ($LASTEXITCODE -ne 0 -or -not $piped.healthy) { throw 'Piped doctor failed' }
       {
         cwd: workspace,
         env: environment,
-        windowsHide: true,
         timeout: 120_000,
         maxBuffer: 8 * 1024 * 1024,
       },

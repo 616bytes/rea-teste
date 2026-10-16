@@ -149,6 +149,19 @@ const textSchema = z.strictObject({
   location: rangeSchema,
 });
 
+/**
+ * Recursive projections (objects nest children, values nest items) advertise
+ * nonrecursively, the way the shared JSON value boundary does: the wire shape
+ * stays valid for every decoded output while nested members are described as
+ * following the same shape. Runtime parsing keeps the exact recursive schema.
+ */
+const boundedObjectProjection =
+  (description: string) => (): Record<string, unknown> => ({
+    type: "object",
+    additionalProperties: {},
+    description,
+  });
+
 const propertySchema: z.ZodType<DelphiFormProperty> = z.lazy(() =>
   z.strictObject({
     name: textSchema,
@@ -253,6 +266,22 @@ const objectSchema: z.ZodType<DelphiFormObject> = z.lazy(() =>
       .strictObject({ reason: z.string(), bytes_hex: z.string() })
       .nullable(),
   }),
+);
+
+propertySchema._zod.toJSONSchema = boundedObjectProjection(
+  "One decoded form property: the property name, the declared value type, the decoded value and the byte location. A value can itself nest further properties and values, which follow the same shape.",
+);
+
+collectionItemSchema._zod.toJSONSchema = boundedObjectProjection(
+  "One vaCollection item: its optional position, its properties and the byte location. Nested properties and values follow the same shape.",
+);
+
+valueSchema._zod.toJSONSchema = boundedObjectProjection(
+  "One decoded property value, discriminated by kind: null, nil, boolean, integer, float, string, identifier, binary, set, list, collection or unknown, each carrying the byte location it came from. List items and collection items nest further values and properties, which follow the same shape.",
+);
+
+objectSchema._zod.toJSONSchema = boundedObjectProjection(
+  "One decoded form object: class and component names, filer flags with the child position, properties, nested children and an explicit unknown when decoding stopped. Nested children follow the same shape.",
 );
 
 export const delphiFormResourceSchema: z.ZodType<DelphiFormResource> =

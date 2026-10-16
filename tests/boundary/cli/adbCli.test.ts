@@ -200,6 +200,18 @@ exit 1
     expect(await readFile(workspace.path("events"), "utf8")).toBe(
       "fresh-install\nreplacement\nfresh-install\n",
     );
+    const snapshots = (await readFile(workspace.path("snapshots"), "utf8"))
+      .trim()
+      .split("\n");
+    expect(snapshots).toHaveLength(3);
+    expect(new Set(snapshots).size).toBe(3);
+    for (const snapshot of snapshots) {
+      expect(snapshot).not.toBe(apk);
+      await expect(lstat(dirname(snapshot))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }
+    expect(await readFile(apk, "utf8")).toBe("apk");
     const calls = await readFile(workspace.path("calls"), "utf8");
     const commands = calls
       .split("\0\0")

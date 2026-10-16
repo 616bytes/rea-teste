@@ -22,6 +22,10 @@ interface ServerContext {
   readonly loadOptionalProviders: () => Promise<OptionalProviderLoadResult>;
 }
 
+type ClosableOptionalProvider = {
+  readonly close?: () => Promise<void>;
+};
+
 export const startMcpTransport = async (
   dependencies: RuntimeDependencies,
   session: BinarySession,

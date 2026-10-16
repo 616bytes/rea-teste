@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { expect } from "vitest";
+import { z } from "zod";
 
 import { browserScenarioCaptureSchema } from "../../../src/domain/browserScenarioCapture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -87,7 +88,7 @@ processTest
         confidence: "observed",
       });
       const capture = browserScenarioCaptureSchema.parse(
-        evidence.normalized_result,
+        cancellation.details.partial_observation.capture,
       );
       expect(capture.browser.cleanup).toBe("terminated-owned-process");
       expect(capture.steps.map(({ status }) => status)).toEqual([

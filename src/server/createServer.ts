@@ -178,6 +178,8 @@ export interface CreateServerOptions {
   /** Shared startup providers remain owned by the caller across SDK probes. */
   readonly optionalProviderOwnership?: "server" | "caller";
   readonly electronObservation?: ElectronObservationPort;
+  /** Selects who closes the shared optional observation providers. */
+  readonly optionalObservationProviderOwner?: "server" | "caller";
   readonly electronActiveObservation?: ElectronActiveObservationPort;
   readonly javascriptRuntimeObservation?: JavaScriptRuntimeObservationPort;
   readonly fridaInstrumentation?: FridaInstrumentationPort;

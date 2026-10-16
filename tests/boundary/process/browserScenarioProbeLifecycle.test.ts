@@ -2,7 +2,8 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
 
 import type { BrowserScenarioCapturePort } from "../../../src/application/BrowserScenarioCapturePort.js";
-import type { OptionalObservationProviders } from "../../../src/application/OptionalObservationProviders.js";
+import { createBrowserObservationProvider } from "../../../src/composition/browserObservation.js";
+import { createElectronObservationProvider } from "../../../src/composition/electronObservation.js";
 import { silentLogger } from "../../../src/logger.js";
 import { startMcpTransport } from "../../../src/main/transport.js";
 import type { RuntimeDependencies } from "../../../src/main/types.js";
@@ -108,37 +109,18 @@ it("lets a standalone server own optional provider cleanup by default", async ()
   const session = createTestBinarySession(() => {
     throw new Error("Unexpected deep provider");
   });
-  const close = vi.fn(async () => undefined);
-  const server = createServer(
-    { kind: "session", session },
-    {
-      browserScenarioCapture: {
-        identity: () => ({
-          id: "fake-browser",
-          name: "Fake browser",
-          version: "1",
-        }),
-        captureScenario: async () => {
-          throw new Error("Unexpected scenario capture");
-        },
-        close,
-      },
-    },
-  );
-  try {
-    await server.close();
-    await server.close();
-    expect(close).toHaveBeenCalledTimes(1);
-  } finally {
-    await session.close();
-  }
-});
-
-it("closes optional providers when MCP server startup throws", async () => {
-  const session = createTestBinarySession(() => {
-    throw new Error("Unexpected deep provider");
-  });
-  const close = vi.fn(async () => undefined);
+  const scenarioClose = vi
+    .fn<() => Promise<void>>()
+    .mockRejectedValueOnce(new Error("Scenario cleanup failed"))
+    .mockResolvedValue(undefined);
+  const browserObservation = createBrowserObservationProvider();
+  const browserClose = vi
+    .spyOn(browserObservation, "close")
+    .mockResolvedValue(undefined);
+  const electronObservation = createElectronObservationProvider();
+  const electronClose = vi
+    .spyOn(electronObservation, "close")
+    .mockResolvedValue(undefined);
   const browserScenarioCapture: BrowserScenarioCapturePort = {
     identity: () => ({
       id: "fake-browser",
@@ -148,7 +130,81 @@ it("closes optional providers when MCP server startup throws", async () => {
     captureScenario: async () => {
       throw new Error("Unexpected scenario capture");
     },
-    close,
+    close: scenarioClose,
+  };
+  const factories: Parameters<RuntimeDependencies["serve"]>[0][] = [];
+  const runtime: RuntimeDependencies = {
+    env: {},
+    serve: (factory) => {
+      factories.push(factory);
+      return { close: async () => undefined };
+    },
+    writeStderr: () => undefined,
+    setExitCode: () => undefined,
+    registerShutdown: () => () => undefined,
+  };
+  const transport = await startMcpTransport(runtime, session, {
+    logger: silentLogger,
+    serverLogger: silentLogger,
+    environment: runtime.env,
+    delivery: new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+    loadOptionalProviders: async () => ({
+      browserObservation,
+      browserScenarioCapture,
+      electronObservation,
+    }),
+  });
+  if (!transport.ok) throw new Error("Transport failed");
+  const factory = factories[0];
+  if (factory === undefined) throw new Error("Missing SDK server factory");
+  try {
+    const probe = await factory({ era: "modern" });
+    await probe.close();
+    const replacement = await factory({ era: "legacy" });
+    await replacement.close();
+    expect(browserClose).not.toHaveBeenCalled();
+    expect(scenarioClose).not.toHaveBeenCalled();
+    expect(electronClose).not.toHaveBeenCalled();
+
+    await expect(transport.closeOptionalProviders()).rejects.toMatchObject({
+      errors: [expect.objectContaining({ message: "Scenario cleanup failed" })],
+    });
+    expect(browserClose).toHaveBeenCalledTimes(1);
+    expect(scenarioClose).toHaveBeenCalledTimes(1);
+    expect(electronClose).toHaveBeenCalledTimes(1);
+    await transport.closeOptionalProviders();
+    await transport.closeOptionalProviders();
+    expect(browserClose).toHaveBeenCalledTimes(1);
+    expect(scenarioClose).toHaveBeenCalledTimes(2);
+    expect(electronClose).toHaveBeenCalledTimes(1);
+  } finally {
+    await session.close();
+  }
+});
+
+it("closes optional providers when MCP server startup throws", async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("Unexpected deep provider");
+  });
+  const scenarioClose = vi.fn(async () => undefined);
+  const browserObservation = createBrowserObservationProvider();
+  const browserClose = vi
+    .spyOn(browserObservation, "close")
+    .mockResolvedValue(undefined);
+  const electronObservation = createElectronObservationProvider();
+  const electronClose = vi
+    .spyOn(electronObservation, "close")
+    .mockResolvedValue(undefined);
+  const browserScenarioCapture: BrowserScenarioCapturePort = {
+    identity: () => ({
+      id: "fake-browser",
+      name: "Fake browser",
+      version: "1",
+    }),
+    captureScenario: async () => {
+      throw new Error("Unexpected scenario capture");
+    },
+    close: scenarioClose,
   };
   const runtime: RuntimeDependencies = {
     env: {},
@@ -165,11 +221,17 @@ it("closes optional providers when MCP server startup throws", async () => {
       serverLogger: silentLogger,
       environment: runtime.env,
       delivery: new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
-      loadOptionalProviders: async () => ({ browserScenarioCapture }),
+      loadOptionalProviders: async () => ({
+        browserObservation,
+        browserScenarioCapture,
+        electronObservation,
+      }),
     });
 
     expect(transport).toEqual({ ok: false });
-    expect(close).toHaveBeenCalledTimes(1);
+    expect(browserClose).toHaveBeenCalledTimes(1);
+    expect(scenarioClose).toHaveBeenCalledTimes(1);
+    expect(electronClose).toHaveBeenCalledTimes(1);
   } finally {
     await session.close();
   }

@@ -6,7 +6,9 @@ import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ApkSignatureProvider } from "./ApkSignatureProvider.js";
+import { apkSignatureFailure } from "./apkSignatureFailures.js";
 
 type Report = {
   schemes: Record<
@@ -201,6 +203,21 @@ describe("ApkSignatureProvider without the Android SDK", () => {
 });
 
 describe("ApkSignatureProvider failure surfaces", () => {
+  it("keeps typed reader failures as input errors and defects as adapter errors", () => {
+    expect(
+      apkSignatureFailure(
+        new ArtifactReaderFailure(
+          "format",
+          "archive entry did not yield bytes",
+        ),
+        "/x.apk",
+      )._tag,
+    ).toBe("AnalysisInputError");
+    expect(apkSignatureFailure(new RangeError("boom"), "/x.apk")._tag).toBe(
+      "ProviderAdapterError",
+    );
+  });
+
   it("reports a missing file without leaking the raw errno text", async () => {
     const result = await provider.inspect({ path: join(dir, "absent.apk") });
     expect(result.ok).toBe(false);

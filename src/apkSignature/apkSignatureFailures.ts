@@ -149,6 +149,12 @@ export const apkSignatureFailure = (
         message: `No regular file can be read at the selected path (${String(cause.code)}): ${path}.`,
       },
     ]);
+  // A typed reader failure (format, path, io, unavailable) describes the
+  // selected artifact, so it stays a caller-facing input error.
+  if (cause instanceof ArtifactReaderFailure)
+    return new AnalysisInputError(OPERATION, { cause }, [
+      { path: ["path"], reason: "invalid_value", message: reason },
+    ]);
   // Anything else is an adapter defect, not a caller input problem.
   return new ProviderAdapterError(
     APK_SIGNATURE_PROVIDER_IDENTITY.id,

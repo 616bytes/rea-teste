@@ -30,12 +30,12 @@ works at two granularities:
 
 - **Summary (default).** One entry per DEX member (for an APK, the members
   Android auto-loads: `classes.dex`, `classes2.dex`, … up to the first missing
-  name; select any other `.dex` with `entry`). Each reports `dex_version`, `class_count`, method tallies
-  (`methods_with_code`, `methods_with_debug_info`, `methods_with_parameter_names`),
-  `line_positions`, `local_declarations`, `explicit_local_declarations`,
-  `set_file_events`, `source_file_present`,
-  `distinct_source_files` (count + up to 3 sample names), and a derived
-  `readiness`.
+  name; select any other `.dex` with `entry`). Each reports `dex_version`,
+  `class_count`, method tallies (`methods_with_code`, `methods_with_debug_info`,
+  `methods_with_parameter_names`), `line_positions`, `local_declarations`,
+  `explicit_local_declarations`, `set_file_events`, `source_file_present`,
+  `distinct_source_files` (the count of distinct source-file string ids + up to
+  3 distinct sample names), and a derived `readiness`.
 - **Per-class detail (`--class-descriptor Lpkg/Name;`).** Full per-method
   `name`, JVM-form `descriptor`, `state`, and `locals` (name, type, signature,
   `register`, scope `start_address`/`end_address` in 16-bit code units,

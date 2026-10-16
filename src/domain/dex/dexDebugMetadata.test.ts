@@ -447,3 +447,22 @@ describe("dexDebugMetadata class_data validation", () => {
     });
   });
 });
+
+describe("dexDebugMetadata distinct source files", () => {
+  it("counts distinct string_ids but samples each text once", async () => {
+    const bytes = withSecondClassDef(0);
+    const { view } = layoutOf(bytes);
+    const stringIdsOff = view.getUint32(60, true);
+    // string_id 2 re-pointed at the data of string_id 0 ("Foo.java").
+    view.setUint32(stringIdsOff + 8, view.getUint32(stringIdsOff, true), true);
+    view.setUint32(bytes.length - 32 + 16, 2, true); // second source_file_idx
+    const parsed = parseDexFile(bytes);
+    if (!parsed.ok) throw new Error("fixture must frame");
+    const result = await summarizeDex(parsed.value, bytes, work());
+    if (!result.ok) throw new Error(result.error.kind);
+    expect(result.value.distinctSourceFiles).toEqual({
+      count: 2,
+      sample: ["Foo.java"],
+    });
+  });
+});

@@ -66,6 +66,7 @@ const summarySchema = z.strictObject({
   set_file_events: z.number().int().nonnegative(),
   source_file_present: z.number().int().nonnegative(),
   distinct_source_files: z.strictObject({
+    /** Distinct `source_file_idx` string_ids (not decoded texts). */
     count: z.number().int().nonnegative(),
     sample: z.array(z.string()),
   }),

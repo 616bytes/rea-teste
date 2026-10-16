@@ -22,13 +22,14 @@ reverse-endian or unsupported/withdrawn versions (036, 041) are refused.
 
 Two output modes, because a DEX holds thousands of classes:
 
-- **summary** (default; one per member Android auto-loads from an archive): per-member
-  `dex_version`, `class_count`, method tallies, `line_positions`,
+- **summary** (default; one per member Android auto-loads from an archive):
+  per-member `dex_version`, `class_count`, method tallies, `line_positions`,
   `local_declarations`, `set_file_events`, `source_file_present`,
-  `distinct_source_files` (count + up to 3 sample names), and a derived
-  `readiness` with the per-method vocabulary: `present` (line positions and
-  local evidence), `partial` (exactly one), `stripped` (neither), `unknown`
-  (unreadable structures leave the label open).
+  `distinct_source_files` (the count of distinct source-file string ids + up to
+  3 distinct sample names), and a derived `readiness` with the per-method
+  vocabulary: `present` (line positions and local evidence), `partial` (exactly
+  one), `stripped` (neither), `unknown` (unreadable structures leave the label
+  open).
 - **class-detail** (`class_descriptor` = `Lpkg/Name;`): per method `name`,
   JVM-form `descriptor`, `state`, parameter names, and `locals` with
   name/type/signature/`register`/scope (`start_address`/`end_address` in 16-bit

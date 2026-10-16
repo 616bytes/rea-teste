@@ -86,7 +86,12 @@ export interface DexSummary {
   readonly setFileEvents: number;
   readonly sourceFilePresent: number;
   readonly distinctSourceFiles: {
+    /**
+     * Distinct valid `source_file_idx` string_ids. Malformed input can encode
+     * one text under two string_ids, which count twice.
+     */
     readonly count: number;
+    /** Up to {@link SOURCE_FILE_SAMPLE_CAP} distinct texts. */
     readonly sample: readonly string[];
   };
   /** Structures that could not be read (their debug metadata is unknown). */
@@ -590,7 +595,9 @@ export const summarizeDex = async (
             resolver.jsonBound(idx) <= SOURCE_FILE_SAMPLE_MAX_BYTES
           ) {
             const source = resolver.string(idx);
-            if (source !== null) sourceSample.push(source);
+            // Two string_ids can decode to one text; sample it once.
+            if (source !== null && !sourceSample.includes(source))
+              sourceSample.push(source);
           }
         }
       }

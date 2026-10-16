@@ -49,6 +49,9 @@ const countLineBreaks = (text: string): number => {
   return count;
 };
 
+/** Quoted-field segments joined at once, bounding intermediate strings. */
+const SEGMENTS_PER_JOIN = 4096;
+
 /** The next comma or row ending; a native search keeps long fields fast. */
 const FIELD_END = /[,\r\n]/gu;
 
@@ -78,31 +81,39 @@ class CsvCursor {
     return true;
   }
 
-  field(recordLine: number): string {
-    return this.text[this.index] === '"'
-      ? this.#quoted(recordLine)
-      : this.#unquoted();
+  field(): string {
+    return this.text[this.index] === '"' ? this.#quoted() : this.#unquoted();
   }
 
-  #quoted(recordLine: number): string {
-    this.index += 1;
+  #quoted(): string {
+    // Join bounded batches of segments: appending once per doubled quote
+    // would allocate many times the cell's size before any budget check.
+    const start = this.index + 1;
+    let at = start;
     let value = "";
+    let parts: string[] = [];
+    let close: number;
     for (;;) {
-      const close = this.text.indexOf('"', this.index);
+      close = this.text.indexOf('"', at);
+      // Reading stops at the end of the export, not where the row began.
       if (close < 0)
         throw new CsvSyntaxStop(
           "truncated",
           "A quoted field is not closed before the end of the export.",
-          recordLine,
+          this.line + countLineBreaks(this.text.slice(start)),
         );
-      const chunk = this.text.slice(this.index, close);
-      value += chunk;
-      this.line += countLineBreaks(chunk);
-      this.index = close + 1;
-      if (this.text[this.index] !== '"') break;
-      value += '"';
-      this.index += 1;
+      if (this.text[close + 1] !== '"') break;
+      parts.push(this.text.slice(at, close + 1));
+      at = close + 2;
+      if (parts.length === SEGMENTS_PER_JOIN) {
+        value += parts.join("");
+        parts = [];
+      }
     }
+    parts.push(this.text.slice(at, close));
+    value += parts.join("");
+    this.line += countLineBreaks(this.text.slice(start, close));
+    this.index = close + 1;
     if (!isFieldEnd(this.text[this.index]))
       throw new CsvSyntaxStop(
         "malformed",
@@ -171,7 +182,7 @@ function* csvRecords(
           `Row has more than ${width.maximum} fields.`,
           line,
         );
-      fields.push(cursor.field(line));
+      fields.push(cursor.field());
     } while (cursor.comma());
     const terminated = cursor.lineEnding();
     yield { fields, line, terminated, end: cursor.index };

@@ -76,7 +76,7 @@ export class ProcmonExportProvider implements ProcmonExportPort {
         Buffer.byteLength(JSON.stringify(parsed.data), "utf8") >
           PROCMON_EXPORT_LIMITS.output_bytes
       )
-        throw new ProcmonExportOutputFailure(parsed.data.events.length);
+        throw finalBudgetFailure(parsed.data.events);
       if (!parsed.success)
         throw new AnalysisOutputError(
           OPERATION,
@@ -89,6 +89,16 @@ export class ProcmonExportProvider implements ProcmonExportPort {
     }
   }
 }
+
+/** The report envelope pushed an admitted page over the budget. */
+const finalBudgetFailure = (
+  events: ProcmonExport["events"],
+): ProcmonExportOutputFailure =>
+  events.length === 0
+    ? new ProcmonExportOutputFailure(0, "metadata")
+    : events.length === 1
+      ? new ProcmonExportOutputFailure(1, "first-event", events[0]?.ordinal)
+      : new ProcmonExportOutputFailure(events.length);
 
 const limitationsFor = (reading: ProcmonExportReading): string[] => [
   "Events are text recorded by whoever exported the capture. They are not authenticated and do not show what the events mean.",

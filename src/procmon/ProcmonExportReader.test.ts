@@ -359,3 +359,28 @@ describe("readProcmonExport review of 262a1da", () => {
     expect(reading.coverage).toMatchObject({ status: "partial", line: 4 });
   });
 });
+
+describe("readProcmonExport review of a212505", () => {
+  const all = { ...selection, event_limit: null };
+
+  it("reports the end-of-export line for an unclosed quoted field", async () => {
+    const reading = await readProcmonExport(
+      Buffer.from(`${header}"a.exe","Read"\n"b.exe","Wr\nit\ne\n`),
+      all,
+    );
+    expect(reading.coverage).toMatchObject({
+      status: "partial",
+      reason: "truncated",
+      line: 6,
+    });
+  });
+
+  it("unescapes a cell made of many doubled quotes", async () => {
+    const quotes = 100_000;
+    const reading = await readProcmonExport(
+      Buffer.from(`${header}"a.exe","${'""'.repeat(quotes)}"\n`),
+      selection,
+    );
+    expect(reading.events[0]?.operation).toBe('"'.repeat(quotes));
+  });
+});

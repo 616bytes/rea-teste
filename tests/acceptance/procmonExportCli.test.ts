@@ -429,3 +429,24 @@ cliTest(
     expect(unseen).not.toContain("Detail");
   },
 );
+
+cliTest(
+  "explains a one-event page that the report envelope pushes over budget",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-procmon-envelope-");
+    const path = join(root, "envelope.csv");
+    // The event fits the reader's budget; the report's envelope does not.
+    await writeFile(
+      path,
+      `"Process Name","Detail"\n"a.exe","${"d".repeat(8 * 1024 * 1024 - 400)}"\n`,
+    );
+    const result = await cli.run({
+      arguments: ["inspect-procmon-export", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({ code: "resource_constraint" });
+    const message = JSON.stringify(result.json);
+    expect(message).toContain("Event 1 alone exceeds");
+    expect(message).not.toContain("choose a smaller event_limit");
+  },
+);

@@ -132,10 +132,12 @@ const withCilDigests =
         ? method
         : {
             ...method,
+            // Distinct bodies differ in their bytes and in what they name.
             body: {
               ...method.body,
               il_sha256: digest,
               normalized_il_sha256: digest,
+              nominal_il_sha256: digest,
             },
           };
     }),

@@ -205,6 +205,7 @@ it("keeps collections that historical member Evidence never examined unknown", a
     user_strings: _strings,
     selection: _selection,
     signature_resolution: _resolution,
+    cil_operand_resolution: _operands,
     ...recorded
   } = managedMemberInspectionSchema.parse(parent.normalized_result);
   const historical = createEvidence(undefined, parent.provider, {
@@ -224,6 +225,7 @@ it("keeps collections that historical member Evidence never examined unknown", a
   );
   expect(view.summary.reported_counts.exported_types).toBeNull();
   expect(view.summary.signature_resolution).toBeNull();
+  expect(view.summary.cil_operand_resolution).toBeNull();
   expect(view.summary.reported_counts.user_strings).toBeNull();
   expect(view.summary.user_strings).toBeNull();
   expect(view.summary.selection).toBeNull();

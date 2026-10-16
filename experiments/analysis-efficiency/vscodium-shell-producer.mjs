@@ -159,7 +159,7 @@ try {
   assert.equal(before.dropped, 0);
   await row.click({ button: "right" });
   await page
-    .getByRole("menuitem", { name: "Delete", exact: true })
+    .getByRole("menuitem", { name: /^Delete(?:\s*Del)?$/ })
     .click({ timeout: 5_000 });
   let after = await readObservation();
   const expires = performance.now() + 5_000;

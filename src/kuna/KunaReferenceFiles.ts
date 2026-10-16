@@ -95,7 +95,13 @@ const GRAPH_DOCUMENT = {
  */
 export class KunaCallGraphReader extends KunaJsonDocumentReader<KunaCallGraph> {
   readonly #nodes = new Map<string, KunaGraphNode>();
-  #edges: z.infer<typeof graphEdge>[] = [];
+  /** Callees of every edge by caller, which also detects repeated edges. */
+  readonly #targets = new Map<string, Set<string>>();
+  /** Callee orders by caller; each caller's must be 0..n-1. */
+  readonly #orders = new Map<string, Set<number>>();
+  readonly #callers = new Map<string, string[]>();
+  readonly #callees = new Map<string, string[]>();
+  #edgeCount = 0;
   #hasIndirectCalls = false;
 
   constructor() {
@@ -112,27 +118,25 @@ export class KunaCallGraphReader extends KunaJsonDocumentReader<KunaCallGraph> {
       return err(this.unusable("graph names a different input"));
     if (
       header.data.binary.functionCount !== this.#nodes.size ||
-      header.data.binary.edgeCount !== this.#edges.length
+      header.data.binary.edgeCount !== this.#edgeCount
     )
       return err(this.unusable("graph counts disagree with examined rows"));
-    const edges = this.#edges;
-    this.#edges = [];
-    try {
-      const { callers, callees } = this.#index(edges);
-      return ok({
-        nodes: this.#nodes,
-        callers,
-        callees,
-        edgeCount: edges.length,
-        hasIndirectCalls: this.#hasIndirectCalls,
-        bytes: completed.value.bytes,
-        sha256: completed.value.sha256,
-      });
-    } catch (cause: unknown) {
-      return err(
-        this.unusable(cause instanceof Error ? cause.message : String(cause)),
-      );
-    }
+    const invalid = this.#invalidEdges();
+    // These indexes only validate edges; queries never read them.
+    this.#targets.clear();
+    this.#orders.clear();
+    if (invalid !== undefined) return err(this.unusable(invalid));
+    for (const index of [this.#callers, this.#callees])
+      for (const list of index.values()) list.sort(compareKunaAddresses);
+    return ok({
+      nodes: this.#nodes,
+      callers: this.#callers,
+      callees: this.#callees,
+      edgeCount: this.#edgeCount,
+      hasIndirectCalls: this.#hasIndirectCalls,
+      bytes: completed.value.bytes,
+      sha256: completed.value.sha256,
+    });
   }
 
   protected override acceptRow(
@@ -140,8 +144,7 @@ export class KunaCallGraphReader extends KunaJsonDocumentReader<KunaCallGraph> {
     fields: Readonly<Record<string, unknown>>,
   ): void {
     if (member === "edges") {
-      // Endpoints are checked once every node is known.
-      this.#edges.push(parseKunaRow(graphEdge, "graph edge", fields));
+      this.#index(parseKunaRow(graphEdge, "graph edge", fields));
       return;
     }
     const node = parseKunaRow(graphNode, "graph function", fields);
@@ -152,43 +155,54 @@ export class KunaCallGraphReader extends KunaJsonDocumentReader<KunaCallGraph> {
   }
 
   protected override discardRows(): void {
-    this.#nodes.clear();
-    this.#edges = [];
+    for (const index of [
+      this.#nodes,
+      this.#targets,
+      this.#orders,
+      this.#callers,
+      this.#callees,
+    ])
+      index.clear();
   }
 
-  /** Check every edge against the nodes and index the call edges. */
-  #index(edges: readonly z.infer<typeof graphEdge>[]) {
-    const nodes = this.#nodes;
-    const callers = new Map<string, string[]>();
-    const callees = new Map<string, string[]>();
-    const pairs = new Set<string>();
-    const orders = new Map<string, Set<number>>();
-    for (const edge of edges) {
-      if (!nodes.has(edge.callerAddress) || !nodes.has(edge.calleeAddress))
-        throw new Error("graph edge has an unknown endpoint");
-      const pair = `${edge.callerAddress}:${edge.calleeAddress}`;
-      if (pairs.has(pair)) throw new Error("graph repeats an edge");
-      pairs.add(pair);
-      const order = orders.get(edge.callerAddress) ?? new Set<number>();
-      if (order.has(edge.calleeOrder))
-        throw new Error("graph repeats a callee order");
-      order.add(edge.calleeOrder);
-      orders.set(edge.callerAddress, order);
-      if (edge.kind !== "call") continue;
-      const incoming = callers.get(edge.calleeAddress) ?? [];
-      incoming.push(edge.callerAddress);
-      callers.set(edge.calleeAddress, incoming);
-      const outgoing = callees.get(edge.callerAddress) ?? [];
-      outgoing.push(edge.calleeAddress);
-      callees.set(edge.callerAddress, outgoing);
+  /**
+   * Index one edge as it arrives, so the working set grows under the row
+   * admission instead of after it; endpoints are checked once every node is
+   * known.
+   */
+  #index(edge: z.infer<typeof graphEdge>): void {
+    const { callerAddress: caller, calleeAddress: callee } = edge;
+    this.#edgeCount += 1;
+    const targets = this.#targets.get(caller) ?? new Set<string>();
+    if (targets.has(callee)) throw new Error("graph repeats an edge");
+    targets.add(callee);
+    this.#targets.set(caller, targets);
+    const order = this.#orders.get(caller) ?? new Set<number>();
+    if (order.has(edge.calleeOrder))
+      throw new Error("graph repeats a callee order");
+    order.add(edge.calleeOrder);
+    this.#orders.set(caller, order);
+    if (edge.kind !== "call") return;
+    const incoming = this.#callers.get(callee) ?? [];
+    incoming.push(caller);
+    this.#callers.set(callee, incoming);
+    const outgoing = this.#callees.get(caller) ?? [];
+    outgoing.push(callee);
+    this.#callees.set(caller, outgoing);
+  }
+
+  /** Why the edges contradict the nodes, if they do. */
+  #invalidEdges(): string | undefined {
+    for (const [caller, targets] of this.#targets) {
+      if (!this.#nodes.has(caller)) return "graph edge has an unknown endpoint";
+      for (const callee of targets)
+        if (!this.#nodes.has(callee))
+          return "graph edge has an unknown endpoint";
     }
-    for (const order of orders.values())
+    for (const order of this.#orders.values())
       for (let index = 0; index < order.size; index += 1)
-        if (!order.has(index))
-          throw new Error("graph callee orders are incomplete");
-    for (const list of [...callers.values(), ...callees.values()])
-      list.sort(compareKunaAddresses);
-    return { callers, callees };
+        if (!order.has(index)) return "graph callee orders are incomplete";
+    return undefined;
   }
 }
 

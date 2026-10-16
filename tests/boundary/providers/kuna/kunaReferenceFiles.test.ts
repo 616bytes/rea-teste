@@ -1,13 +1,16 @@
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import * as v8 from "node:v8";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { normalizeKunaAddress } from "../../../../src/kuna/KunaAddress.js";
 import {
   KunaCallGraphReader,
   parseKunaIncomingReferences,
 } from "../../../../src/kuna/KunaReferenceFiles.js";
+
+vi.mock("node:v8", { spy: true });
 
 const input = "/snapshot/program";
 // Fixture-only numeric placeholders preserve decimal u64 tokens in JSON text.
@@ -175,6 +178,56 @@ it("rejects unrequested bodies and a document for a different input", async () =
     ok: false,
     error: { reason: "functions row codeC must be null" },
   });
+});
+
+it("admits the edge index while edges stream and refuses it under low headroom", async () => {
+  const nodes = Array.from({ length: 300 }, (_, index) =>
+    node(String(index + 1), `f${String(index)}`),
+  );
+  const edges = Array.from({ length: 3000 }, (_, index) => ({
+    callerAddress: `@${String((index % 10) + 1)}`,
+    calleeAddress: `@${String(Math.floor(index / 10) + 1)}`,
+    kind: "call",
+    calleeOrder: Math.floor(index / 10),
+  }));
+  const text = wire({
+    schemaVersion: 4,
+    binary: { sourcePath: input, functionCount: 300, edgeCount: 3000 },
+    functions: nodes,
+    edges,
+  });
+  expect(await parseKunaCallGraph(text, input)).toMatchObject({
+    ok: true,
+    value: { edgeCount: 3000 },
+  });
+  const heap = v8.getHeapStatistics();
+  let samples = 0;
+  // Headroom runs out after the node rows have been admitted.
+  vi.mocked(v8.getHeapStatistics).mockImplementation(() => ({
+    ...heap,
+    total_available_size:
+      (samples += 1) <= 2 ? heap.total_available_size : 1024,
+  }));
+  try {
+    const refused = await parseKunaCallGraph(text, input);
+    expect(refused).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisResourceConstraintError",
+        resource: "memory",
+      },
+    });
+    if (refused.ok) return;
+    const retained = (
+      refused.error as unknown as {
+        reportedLimits: { retained_rows: number };
+      }
+    ).reportedLimits.retained_rows;
+    expect(retained).toBeGreaterThan(nodes.length);
+    expect(retained).toBeLessThan(nodes.length + edges.length);
+  } finally {
+    vi.mocked(v8.getHeapStatistics).mockReset();
+  }
 });
 
 it("skips fields it does not interpret, including nested parameters", async () => {

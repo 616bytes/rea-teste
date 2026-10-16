@@ -9,7 +9,6 @@ import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
-import { KUNA_DIAGNOSTIC_BYTES } from "./KunaLimits.js";
 import {
   KUNA_XREF_OUTPUT_BYTES,
   KunaCallGraphReader,

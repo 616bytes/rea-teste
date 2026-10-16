@@ -2,7 +2,6 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import {
   analysisSearchPredicate,
@@ -15,7 +14,7 @@ import { normalizeKunaAddress } from "./KunaAddress.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
 import type { KunaPendingQuery, KunaQueryWork } from "./KunaQueryWork.js";
 import { kunaQueryFailureForCaller } from "./KunaQueryErrors.js";
-import { KUNA_DIAGNOSTIC_BYTES, KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
+import { KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
 import {
   KunaStringInventoryReader,
   type KunaStringInventory,

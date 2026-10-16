@@ -42,6 +42,25 @@ export const normalizeJarEntryPath = (entry: string): string =>
     .replace(/^(?:\.\/)+/u, "");
 
 /**
+ * Split a `META-INF/versions/<N>/<entry>` path into its release and entry. The
+ * JAR spec only honors versioned directories named by an integer >= 9, with no
+ * leading zeros; any other path (including lower or non-canonical numbers,
+ * which are inert resources) is `undefined`.
+ */
+export const parseVersionedJarEntry = (
+  path: string,
+): { readonly release: number; readonly entry: string } | undefined => {
+  if (!path.startsWith(VERSIONS_PREFIX)) return undefined;
+  const rest = path.slice(VERSIONS_PREFIX.length);
+  const slash = rest.indexOf("/");
+  if (slash <= 0) return undefined;
+  const version = rest.slice(0, slash);
+  if (!/^[1-9][0-9]*$/.test(version) || Number(version) < 9) return undefined;
+  const entry = rest.slice(slash + 1);
+  return entry === "" ? undefined : { release: Number(version), entry };
+};
+
+/**
  * Classify an archive member path for the requested class entry: the base entry,
  * a versioned override, or unrelated (`undefined`).
  */
@@ -50,20 +69,10 @@ export const classifyJarEntry = (
   entry: string,
 ): JarEntryCandidate | undefined => {
   if (memberPath === entry) return { release: null, path: memberPath };
-  if (!memberPath.startsWith(VERSIONS_PREFIX)) return undefined;
-  const rest = memberPath.slice(VERSIONS_PREFIX.length);
-  const slash = rest.indexOf("/");
-  if (slash <= 0) return undefined;
-  const version = rest.slice(0, slash);
-  // The JAR spec only honors versioned directories named by an integer >= 9,
-  // with no leading zeros; lower or non-canonical numbers are inert resources.
-  if (
-    !/^[1-9][0-9]*$/.test(version) ||
-    Number(version) < 9 ||
-    rest.slice(slash + 1) !== entry
-  )
-    return undefined;
-  return { release: Number(version), path: memberPath };
+  const versioned = parseVersionedJarEntry(memberPath);
+  return versioned?.entry === entry
+    ? { release: versioned.release, path: memberPath }
+    : undefined;
 };
 
 /** Resolve which candidate to read for the requested release, or refuse explicitly. */

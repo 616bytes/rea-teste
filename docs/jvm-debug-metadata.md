@@ -37,7 +37,12 @@ The MCP method is `inspect_jvm_debug_metadata`. Pass the absolute local `path`
 A JAR entry is selected explicitly: an omitted `release` reads the base entry,
 and a requested `release` must match a present `META-INF/versions/<N>/` override
 or the call is refused with the available versions — metadata is never combined
-across versions.
+across versions. When only overrides exist, an omitted `release` is refused as
+requiring one. In a multi-release JAR, an `entry` spelled as
+`META-INF/versions/<N>/<path>` is refused with the equivalent `entry` plus
+`release`, so `selected_entry.release` always names the version read; in a JAR
+that is not multi-release such a member is an inert resource and is read as
+itself.
 
 ## Interpret the result
 

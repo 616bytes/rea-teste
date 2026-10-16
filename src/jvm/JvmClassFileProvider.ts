@@ -49,6 +49,7 @@ import {
 import {
   classifyJarEntry,
   isMultiReleaseManifest,
+  parseVersionedJarEntry,
   normalizeJarEntryPath,
   resolveJarSelection,
 } from "./jarClassEntry.js";
@@ -393,9 +394,13 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       byRelease.set(candidate.release, members);
     }
     // Without a requested release, a present base entry is selected whatever
-    // the manifest says, so an unreadable manifest must not block it.
+    // the manifest says, so an unreadable manifest must not block it. A
+    // versioned spelling of the entry needs it to know what the member means.
+    const versionedEntry = parseVersionedJarEntry(entry);
     const needsManifest =
-      requestedRelease !== undefined || !byRelease.has(null);
+      requestedRelease !== undefined ||
+      !byRelease.has(null) ||
+      versionedEntry !== undefined;
     const multiRelease =
       needsManifest &&
       manifestEntry !== undefined &&
@@ -407,6 +412,16 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
         this.#inputError(
           "release",
           `${jar} is not a multi-release JAR (no Multi-Release: true manifest attribute); META-INF/versions entries are inert, so only the base entry is selectable.`,
+        ),
+      );
+    // In a multi-release JAR a META-INF/versions/<N>/ member is the release-N
+    // override of its base entry; reading it as the base would report
+    // release null for version-N bytes, so one identity form is required.
+    if (multiRelease && versionedEntry !== undefined)
+      return err(
+        this.#inputError(
+          "entry",
+          `${entry} is the multi-release version ${String(versionedEntry.release)} override in ${jar}; select it as entry=${versionedEntry.entry} with release=${String(versionedEntry.release)}.`,
         ),
       );
     // Outside a multi-release JAR, versioned entries never load; drop them.
@@ -421,7 +436,8 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       path: members[0]!.path,
     }));
     const selection = resolveJarSelection(candidates, requestedRelease);
-    if (!selection.ok) return err(this.#selectionError(selection, jar, entry));
+    if (!selection.ok)
+      return err(this.#selectionError(selection, jar, entry, requestedRelease));
     const selectedMembers = effective.get(selection.release) ?? [];
     if (selectedMembers.length !== 1)
       return err(
@@ -560,11 +576,18 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     },
     jar: string,
     entry: string,
+    requestedRelease: number | undefined,
   ): AnalysisInputError {
+    const versions =
+      selection.available.length === 0
+        ? "none (base only)"
+        : selection.available.join(", ");
     const message =
       selection.reason === "not-found"
         ? `No class entry ${entry} exists in ${jar}.`
-        : `Entry ${entry} is not available for the requested release in ${jar}; available multi-release versions: ${selection.available.length === 0 ? "none (base only)" : selection.available.join(", ")}.`;
+        : requestedRelease === undefined
+          ? `${jar} has no base entry ${entry}; it exists only as multi-release overrides, so a release is required. Available versions: ${versions}.`
+          : `Entry ${entry} is not available for release ${String(requestedRelease)} in ${jar}; available multi-release versions: ${versions}.`;
     return new AnalysisInputError(OPERATION, undefined, [
       {
         path: [selection.reason === "not-found" ? "entry" : "release"],

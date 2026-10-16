@@ -11,6 +11,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { JvmClassFileProvider } from "./JvmClassFileProvider.js";
+import type { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { CONSTANT_TAG } from "../domain/jvm/javaClassFile.js";
 
 /** Minimal valid class named com/example/Foo at the given major version. */
@@ -261,5 +262,61 @@ describe("JvmClassFileProvider JAR safety and format", () => {
     await symlink(real, link);
     const result = await provider.inspect({ path: link, entry: ENTRY });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("JvmClassFileProvider multi-release identity", () => {
+  const VERSIONED = `META-INF/versions/17/${ENTRY}`;
+
+  it("refuses a versioned member path in a multi-release JAR and names entry + release", async () => {
+    const result = await provider.inspect({
+      path: await mrJar(),
+      entry: VERSIONED,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisInputError");
+    expect((result.error as AnalysisInputError).issues).toEqual([
+      expect.objectContaining({
+        path: ["entry"],
+        message: expect.stringContaining(`entry=${ENTRY} with release=17`),
+      }),
+    ]);
+  });
+
+  it("reads a versioned path in a non-multi-release JAR as the inert member it is", async () => {
+    const path = await writeJar(
+      "inert.jar",
+      await buildZip([
+        { name: "META-INF/MANIFEST.MF", text: PLAIN_MANIFEST },
+        { name: VERSIONED, bytes: minimalClass(61) },
+      ]),
+    );
+    const result = await provider.inspect({ path, entry: VERSIONED });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      (result.value.result as { selected_entry: { release: number | null } })
+        .selected_entry.release,
+    ).toBeNull();
+  });
+
+  it("says a release is required when only versioned overrides exist", async () => {
+    const path = await writeJar(
+      "versioned-only.jar",
+      await buildZip([
+        { name: "META-INF/MANIFEST.MF", text: MR_MANIFEST },
+        { name: VERSIONED, bytes: minimalClass(61) },
+      ]),
+    );
+    const result = await provider.inspect({ path, entry: ENTRY });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect((result.error as AnalysisInputError).issues).toEqual([
+      expect.objectContaining({
+        path: ["release"],
+        message: expect.stringContaining("a release is required"),
+      }),
+    ]);
   });
 });

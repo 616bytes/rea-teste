@@ -27,6 +27,7 @@ import {
 } from "./CdpCaptureValues.js";
 import { captureScripts } from "./CdpPageCaptureScripts.js";
 import { captureWorkers } from "./CdpPageCaptureWorkers.js";
+import { CdpPageCaptureWorkerSessions } from "./CdpPageCaptureWorkerSessions.js";
 import type { WebSourceMapRequest } from "./WebSourceMapFetcher.js";
 
 export interface CaptureContext {
@@ -46,6 +47,7 @@ export interface CaptureContext {
 interface CaptureState {
   readonly context: CaptureContext;
   readonly events: CdpCaptureEvents;
+  readonly workerSessions: CdpPageCaptureWorkerSessions;
   readonly allowedOrigins: ReadonlySet<string>;
   readonly limitations: string[];
   readonly startedAt: string;
@@ -73,31 +75,44 @@ export const capturePage = async (
 ): Promise<CapturedPage> => {
   const allowedOrigins = new Set(context.input.allowed_origins);
   const events = new CdpCaptureEvents(context.input, allowedOrigins);
+  const limitations: string[] = [
+    "Observation starts when REA attaches; prior network and console activity is unavailable.",
+    "Raw network headers, bodies, cookies, storage values, console objects, and WebSocket payloads are never retained; explicitly requested primitive console text is retained verbatim, while payload captures retain value-free shapes.",
+    "Source maps are reported only as declarative URLs and are not fetched.",
+    "URL-less scripts and console events without an allowed source URL are excluded because their origin cannot be proven.",
+    ...(context.target.attached === null
+      ? [
+          "CDP discovery omitted the target attachment state; attached is reported as unknown.",
+        ]
+      : []),
+  ];
+  const workerSessions = new CdpPageCaptureWorkerSessions(
+    context,
+    limitations,
+    events.completeness,
+  );
   const removeListener = context.connection.onEvent((event) => {
-    if (event.sessionId !== context.sessionId) return;
-    events.ingest(event);
+    if (event.sessionId === context.sessionId) {
+      workerSessions.observe(event);
+      events.ingest(event);
+      return;
+    }
+    const source = workerSessions.sourceFor(event.sessionId);
+    if (source !== undefined) events.ingest(event, source);
   });
   const state: CaptureState = {
     context,
     events,
+    workerSessions,
     allowedOrigins,
-    limitations: [
-      "Observation starts when REA attaches; prior network and console activity is unavailable.",
-      "Raw network headers, bodies, cookies, storage values, console objects, and WebSocket payloads are never retained; explicitly requested primitive console text is retained verbatim, while payload captures retain value-free shapes.",
-      "Source maps are reported only as declarative URLs and are not fetched.",
-      "URL-less scripts and console events without an allowed source URL are excluded because their origin cannot be proven.",
-      ...(context.target.attached === null
-        ? [
-            "CDP discovery omitted the target attachment state; attached is reported as unknown.",
-          ]
-        : []),
-    ],
+    limitations,
     startedAt: new Date().toISOString(),
   };
   try {
     return await captureAuthorizedPage(state);
   } finally {
     removeListener();
+    await workerSessions.release();
   }
 };
 
@@ -207,10 +222,24 @@ const captureJsonResponseBodies = async (
       state.events.responseBodyUnavailable(candidate);
       continue;
     }
+    // Worker requests exist only in the issuing worker's Network domain.
+    const workerSession =
+      current.worker_target_id === null
+        ? undefined
+        : state.workerSessions.sessionFor(current.worker_target_id);
+    if (current.worker_target_id !== null && workerSession === undefined) {
+      state.events.responseBodyUnavailable(candidate);
+      state.limitations.push(
+        `Response body unavailable for request ${candidate.requestId}: the issuing worker session detached before the body was read.`,
+      );
+      continue;
+    }
     let result: unknown;
     try {
       result = await optionalCdpCommand(
-        state.context,
+        workerSession === undefined
+          ? state.context
+          : { ...state.context, sessionId: workerSession },
         "Network.getResponseBody",
         { requestId: candidate.requestId },
         state.limitations,
@@ -219,8 +248,8 @@ const captureJsonResponseBodies = async (
       if (
         !(cause instanceof CdpCommandRejection) ||
         cause.command !== "Network.getResponseBody" ||
-        cause.code !== -32_000 ||
-        cause.reportedMessage === null
+        cause.reportedMessage === null ||
+        !rejectedResponseBodyRead(cause.code, workerSession)
       )
         throw cause;
       state.events.responseBodyUnavailable(candidate);
@@ -238,6 +267,16 @@ const captureJsonResponseBodies = async (
     return;
   }
 };
+
+/**
+ * The page session reports missing bodies as -32000. A flattened worker
+ * session also vanishes with -32001 when its worker terminates first.
+ */
+const rejectedResponseBodyRead = (
+  code: number | null,
+  workerSession: string | undefined,
+): boolean =>
+  code === -32_000 || (workerSession !== undefined && code === -32_001);
 
 const authorizeObservationWindow = async (
   state: CaptureState,
@@ -257,13 +296,16 @@ const authorizeObservationWindow = async (
   if (mainFrame === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   events.beginAuthorizedFrame(mainFrame.frame_id);
-  await enableObservationDomains(connection, sessionId, signal);
+  await enableObservationDomains(state);
   await report(context.progress, 2, "Observing page events");
   await delayWithCancellation(
     context.input.observation_ms,
     context.operation,
     signal,
   );
+  // Worker sessions admitted during the window settle before their response
+  // bodies are enumerated, so an enable failure surfaces with its own cause.
+  await state.workerSessions.settle();
   if (events.originViolation)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
 };
@@ -383,14 +425,14 @@ const normalizedInspection = (
   limitations: state.limitations,
 });
 
-const enableObservationDomains = async (
-  connection: CdpConnection,
-  sessionId: string | undefined,
-  signal?: AbortSignal,
-): Promise<void> => {
+const enableObservationDomains = async (state: CaptureState): Promise<void> => {
+  const { connection, sessionId, signal } = state.context;
   await connection.send("Runtime.enable", {}, sessionId, signal);
   await connection.send("Debugger.enable", {}, sessionId, signal);
   await connection.send("Network.enable", {}, sessionId, signal);
+  // Dedicated workers carry their own CDP sessions; flatten them onto this
+  // connection so their Network events can be multiplexed into the capture.
+  await state.workerSessions.enable();
 };
 
 const accessibilityForFrames = async (

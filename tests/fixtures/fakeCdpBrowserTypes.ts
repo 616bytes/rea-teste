@@ -90,6 +90,13 @@ export interface FakeOptions {
   readonly redirectResponseEnvelope?: unknown;
   readonly responseAfterMalformedUrl?: string;
   readonly unrelatedWorker?: boolean;
+  /**
+   * Flatten one auto-attached dedicated worker when Target.setAutoAttach is
+   * enabled, and emit its Network traffic after its Network.enable.
+   */
+  readonly dedicatedWorkerRequests?: boolean;
+  /** Terminate the dedicated worker after its requests and emit a stale event. */
+  readonly terminateDedicatedWorker?: boolean;
   readonly binaryWebSocketEvent?: boolean;
   /** Emit an allowed WebSocket creation without any frames in the capture window. */
   readonly webSocketWithoutFrames?: boolean;

@@ -2,6 +2,13 @@ import type { WebSocket } from "ws";
 
 import type { FakeCdpCommand, FakeOptions } from "./fakeCdpBrowserTypes.js";
 
+/** Flattened session and target identity of the fake dedicated worker. */
+export const DEDICATED_WORKER_SESSION_ID = "worker-session-1";
+export const DEDICATED_WORKER_TARGET_ID = "worker-attached-1";
+const ROGUE_WORKER_SESSION_ID = "rogue-worker-session";
+/** Session the fake assigns to the attached page target. */
+const PAGE_SESSION_ID = "session-1";
+
 export const emitEvents = (
   socket: WebSocket,
   command: FakeCdpCommand,
@@ -10,10 +17,85 @@ export const emitEvents = (
 ): void => {
   emitDebuggerEvents(socket, command, port, options);
   emitNetworkEvents(socket, command, port, options);
+  emitWorkerSessionEvents(socket, command, port, options);
   emitRuntimeEvents(socket, command, port, options);
   emitWebMcpEvents(socket, command, port, options);
   emitSessionTimeline(socket, command, port, options);
   emitCaptureNavigation(socket, command, port, options);
+};
+
+const emitWorkerSessionEvents = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  port: number,
+  options: FakeOptions,
+): void => {
+  if (options.dedicatedWorkerRequests !== true) return;
+  if (
+    command.method === "Target.setAutoAttach" &&
+    command.params.autoAttach === true
+  ) {
+    event(socket, "Target.attachedToTarget", command.sessionId, {
+      sessionId: DEDICATED_WORKER_SESSION_ID,
+      targetInfo: {
+        targetId: DEDICATED_WORKER_TARGET_ID,
+        type: "worker",
+        title: "Dedicated worker",
+        url: `http://127.0.0.1:${String(port)}/dedicated-worker.js`,
+        attached: true,
+      },
+      waitingForDebugger: false,
+    });
+    return;
+  }
+  if (command.method !== "Network.enable") return;
+  if (command.sessionId === DEDICATED_WORKER_SESSION_ID) {
+    const url = `http://127.0.0.1:${String(port)}/worker-api?token=worker-secret`;
+    event(socket, "Network.requestWillBeSent", DEDICATED_WORKER_SESSION_ID, {
+      requestId: "worker-request-1",
+      type: "Fetch",
+      request: { url, method: "GET" },
+      initiator: { type: "script" },
+      timestamp: 9,
+    });
+    event(socket, "Network.responseReceived", DEDICATED_WORKER_SESSION_ID, {
+      requestId: "worker-request-1",
+      response: { url, status: 200, mimeType: "application/json" },
+    });
+    event(socket, "Network.loadingFinished", DEDICATED_WORKER_SESSION_ID, {
+      requestId: "worker-request-1",
+      encodedDataLength: 21,
+    });
+    if (options.terminateDedicatedWorker === true) {
+      event(socket, "Target.detachedFromTarget", PAGE_SESSION_ID, {
+        sessionId: DEDICATED_WORKER_SESSION_ID,
+        targetId: DEDICATED_WORKER_TARGET_ID,
+      });
+      // Delivered after the detach; an unadmitted session must be ignored.
+      event(socket, "Network.requestWillBeSent", DEDICATED_WORKER_SESSION_ID, {
+        requestId: "worker-request-after-detach",
+        type: "Fetch",
+        request: {
+          url: `http://127.0.0.1:${String(port)}/worker-after-detach.json`,
+          method: "GET",
+        },
+        initiator: { type: "script" },
+      });
+    }
+    return;
+  }
+  if (command.sessionId === PAGE_SESSION_ID) {
+    // A session REA never admitted must not contribute recorded requests.
+    event(socket, "Network.requestWillBeSent", ROGUE_WORKER_SESSION_ID, {
+      requestId: "rogue-session-request",
+      type: "Fetch",
+      request: {
+        url: `http://127.0.0.1:${String(port)}/rogue-worker-session.json`,
+        method: "GET",
+      },
+      initiator: { type: "other" },
+    });
+  }
 };
 
 const webMcpToolAnnotations = {
@@ -447,6 +529,8 @@ const emitNetworkEvents = (
   options: FakeOptions,
 ): void => {
   if (command.method !== "Network.enable") return;
+  // The worker session's traffic is owned by emitWorkerSessionEvents.
+  if (command.sessionId === DEDICATED_WORKER_SESSION_ID) return;
   if (options.navigateDuringObservationUrl !== undefined)
     event(socket, "Page.frameNavigated", command.sessionId, {
       frame: {

@@ -4,7 +4,11 @@ import type { CdpEvent } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import * as bodyShapes from "./CdpCaptureEventBodyShapes.js";
 import type { CdpCaptureEventsState } from "./CdpCaptureEventState.js";
-import type { CapturedScript, NetworkState } from "./CdpCaptureEventTypes.js";
+import type {
+  CapturedScript,
+  CdpNetworkEventSource,
+  NetworkState,
+} from "./CdpCaptureEventTypes.js";
 import * as handlers from "./CdpCaptureEventHandlers.js";
 import { isJsonMediaType } from "./CdpCaptureEventHelpers.js";
 import { cdpStringValue, recordValue } from "./CdpCaptureValues.js";
@@ -121,7 +125,7 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
       );
   }
 
-  ingest(event: CdpEvent): void {
+  ingest(event: CdpEvent, source?: CdpNetworkEventSource): void {
     const params = recordValue(event.params);
     if (params === undefined) return;
     switch (event.method) {
@@ -141,7 +145,7 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
         const requestId = cdpStringValue(params.requestId);
         const previous =
           requestId === undefined ? undefined : this.network.get(requestId);
-        handlers.handleRequestWillBeSent(this, params);
+        handlers.handleRequestWillBeSent(this, params, source);
         if (requestId !== undefined && this.network.get(requestId) !== previous)
           this.#networkRequestOccurrences.set(
             requestId,

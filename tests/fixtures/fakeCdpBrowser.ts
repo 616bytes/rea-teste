@@ -16,6 +16,10 @@ import type {
 } from "./fakeCdpBrowserTypes.js";
 
 export type { FakeCdpBrowser, FakeOptions } from "./fakeCdpBrowserTypes.js";
+export {
+  DEDICATED_WORKER_SESSION_ID,
+  DEDICATED_WORKER_TARGET_ID,
+} from "./fakeCdpBrowserEvents.js";
 /** Start a real HTTP/WebSocket fake at the same seams as a user-owned browser. */
 export const startFakeCdpBrowser = async (
   options: FakeOptions = {},

@@ -32,6 +32,12 @@ const workerAutoAttachParameters = {
   ],
 };
 
+const isUnavailableWorkerCommand = (cause: unknown): boolean =>
+  cause instanceof CdpCommandRejection &&
+  (cause.code === -32_000 ||
+    (cause.code === -32_001 &&
+      cause.reportedMessage === "Session with given id not found."));
+
 type Worker = WebPageInspection["workers"][number];
 type Observation = NonNullable<Worker["observation"]>;
 interface WorkerState {
@@ -452,11 +458,7 @@ export class CdpWorkerCapture {
             );
             frame.autoAttach = result !== undefined;
           } catch (cause) {
-            if (
-              this.signal.aborted ||
-              !(cause instanceof CdpCommandRejection) ||
-              cause.code !== -32_000
-            )
+            if (this.signal.aborted || !isUnavailableWorkerCommand(cause))
               throw cause;
           }
           if (!frame.autoAttach)
@@ -613,11 +615,7 @@ export class CdpWorkerCapture {
             );
           item.source = sourceResult(text);
         } catch (cause) {
-          if (
-            !this.signal.aborted &&
-            cause instanceof CdpCommandRejection &&
-            cause.code === -32_000
-          ) {
+          if (!this.signal.aborted && isUnavailableWorkerCommand(cause)) {
             item.source = sourceExcluded(
               "Worker source became unavailable during capture",
             );
@@ -806,11 +804,7 @@ export class CdpWorkerCapture {
           );
       }
     } catch (cause) {
-      if (
-        !this.signal.aborted &&
-        cause instanceof CdpCommandRejection &&
-        cause.code === -32_000
-      ) {
+      if (!this.signal.aborted && isUnavailableWorkerCommand(cause)) {
         worker.item.observation.limitations.push(
           `${stage} became unavailable during worker attachment.`,
         );

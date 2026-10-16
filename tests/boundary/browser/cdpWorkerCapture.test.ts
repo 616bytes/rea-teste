@@ -801,13 +801,17 @@ it.each([undefined, "malformed", [42], []])(
   },
 );
 
-it.each([-32_000, -32_601])(
+it.each([
+  [-32_000, "Source unavailable"],
+  [-32_601, "Source unavailable"],
+  [-32_001, "Session with given id not found."],
+] as const)(
   "retains worker identity when source retrieval becomes unavailable (%s)",
-  async (code) => {
+  async (code, message) => {
     const { provider, input } = await fixture({
       commandError: (c) =>
         c.method === "Debugger.getScriptSource" && c.sessionId === "worker-own"
-          ? { code, message: "Source unavailable" }
+          ? { code, message }
           : undefined,
     });
     const result = await provider.inspectPage(input);
@@ -819,6 +823,48 @@ it.each([-32_000, -32_601])(
     expect(observed.completeness.unavailable_sections).toContain(
       "script_sources",
     );
+  },
+);
+
+it.each([
+  "Target.setAutoAttach",
+  "Runtime.enable",
+  "Debugger.enable",
+  "Network.enable",
+])("retains page evidence when a worker exits during %s", async (method) => {
+  const { provider, input, browser } = await fixture({
+    commandError: (command) =>
+      command.method === method && command.sessionId === "worker-own"
+        ? { code: -32_001, message: "Session with given id not found." }
+        : undefined,
+  });
+  const result = await provider.inspectPage(input);
+  if (!result.ok) throw result.error;
+  expect(result.value.target.target_id).toBe(input.target_id);
+  expect(result.value.scripts.items.length).toBeGreaterThan(0);
+  const observed = result.value.workers.find(
+    (worker) => worker.target_id === "own",
+  )!.observation!;
+  expect(observed.completeness.unavailable_sections).toContain("workers");
+  expect(observed.limitations.join(" ")).toContain(method);
+  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+});
+
+it.each([-32_001, -32_602])(
+  "propagates other worker source command rejections (%s)",
+  async (code) => {
+    const { provider, input, browser } = await fixture({
+      commandError: (command) =>
+        command.method === "Debugger.getScriptSource" &&
+        command.sessionId === "worker-own"
+          ? { code, message: "Unexpected command failure" }
+          : undefined,
+    });
+    expect(await provider.inspectPage(input)).toMatchObject({
+      ok: false,
+      error: { reason: "protocol_error" },
+    });
+    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   },
 );
 
@@ -1622,6 +1668,30 @@ it.each(["page", "worker", "inventory", "legacy", "none"] as const)(
   },
 );
 
+it.each(["own", "shared"])(
+  "rejects worker %s source bytes contrary to recorded source selection",
+  async (targetId) => {
+    const { provider, input } = await fixture();
+    const selected = { ...input, worker_target_ids: ["shared"] };
+    const captured = await provider.inspectPage(selected);
+    if (!captured.ok) throw captured.error;
+    captured.value.scripts = { total: 0, items: [] };
+    captured.value.workers = captured.value.workers.filter(
+      (worker) => worker.target_id === targetId,
+    );
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      { ...selected, include_script_sources: false },
+      captured.value,
+      provider.identity(),
+    );
+    expect(() => parseEvidence(evidence)).not.toThrow();
+    expect(() => parseRuntimeCaptures([evidence])).toThrow(/source/u);
+    expect(() => selectScriptCapture(evidence)).toThrow(/source/u);
+    expect(() => selectScriptCapture(captured.value)).not.toThrow();
+  },
+);
+
 it("rejects inconsistent worker Evidence through CLI and MCP without publishing", async () => {
   const { provider, input } = await fixture();
   const selected = { ...input, worker_target_ids: ["shared"] };
@@ -1629,7 +1699,12 @@ it("rejects inconsistent worker Evidence through CLI and MCP without publishing"
   if (!captured.ok) throw captured.error;
   const root = await createTestTempDirectory("rea-worker-selection-boundary-");
   const { call, client } = await connectLocalToolsMcp();
-  for (const mismatch of ["selection", "origin", "ownership"] as const) {
+  for (const mismatch of [
+    "selection",
+    "origin",
+    "ownership",
+    "source-selection",
+  ] as const) {
     const inspection = structuredClone(captured.value);
     if (mismatch === "origin")
       inspection.workers.find(
@@ -1645,7 +1720,11 @@ it("rejects inconsistent worker Evidence through CLI and MCP without publishing"
     }
     const evidence = createBrowserEvidence(
       "inspect_web_page",
-      mismatch === "origin" ? selected : input,
+      mismatch === "source-selection"
+        ? { ...selected, include_script_sources: false }
+        : mismatch === "origin"
+          ? selected
+          : input,
       inspection,
       provider.identity(),
     );

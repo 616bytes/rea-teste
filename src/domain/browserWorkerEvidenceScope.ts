@@ -12,6 +12,7 @@ export const browserWorkerEvidenceScopeSchema = z
   .object({
     parameters: z.object({
       target_id: z.string().trim().min(1),
+      include_script_sources: z.boolean(),
       allowed_origins: browserAllowedOriginsSchema,
       worker_target_ids: browserWorkerTargetIdsSchema,
     }),
@@ -31,6 +32,16 @@ export const browserWorkerEvidenceScopeSchema = z
         });
       const observation = worker.observation;
       if (observation === undefined) continue;
+      if (
+        !parameters.include_script_sources &&
+        observation.scripts.some(({ source }) => source.included)
+      )
+        context.addIssue({
+          code: "custom",
+          path: [...path, "observation", "scripts"],
+          message:
+            "Worker Evidence contains source without source-capture selection",
+        });
       if (
         observation.page_target_id !==
         (observation.ownership === "unknown" ? null : parameters.target_id)

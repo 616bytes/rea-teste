@@ -96,7 +96,7 @@ export const describeSignedSlicesOfUnsignedDefault = (
         `Mach-O slices signed although codesign's default slice is unsigned: ${slices
           .map(
             (slice) =>
-              `${slice.architecture} (identifier ${slice.identifier ?? "unavailable"}; CDHash ${listOrNone(slice.cdhashes)}; hardened runtime ${runtimeState(slice.hardened_runtime)})`,
+              `${slice.architecture} (identifier ${slice.identifier ?? "unavailable"}; team identifier ${slice.team_identifier ?? "not set"}; authorities ${listOrNone(slice.authorities)}; CDHash ${listOrNone(slice.cdhashes)}; hardened runtime ${runtimeState(slice.hardened_runtime)})`,
           )
           .join(
             ", ",
@@ -162,7 +162,9 @@ const describeDifferences = (
     canonicalJson(withoutEmptyDictionary(slice.entitlements)) !==
       canonicalJson(withoutEmptyDictionary(aggregate.entitlements))
   )
-    differences.push(`entitlements ${entitlementKeys(slice.entitlements)}`);
+    differences.push(
+      `entitlements ${describeEntitlementDifferences(slice.entitlements, aggregate.entitlements)}`,
+    );
   return differences.length === 0
     ? null
     : `${slice.architecture} (${differences.join("; ")})`;
@@ -210,11 +212,51 @@ const withoutEmptyDictionary = (value: JsonValue | null): JsonValue | null =>
     ? null
     : value;
 
-/** Entitlement keys, so the limitation stays short for large dictionaries. */
-const entitlementKeys = (value: JsonValue | null | undefined): string => {
-  if (value === null || value === undefined) return "none";
-  if (typeof value !== "object" || Array.isArray(value))
-    return "not a dictionary";
-  const keys = Object.keys(value).sort();
-  return keys.length === 0 ? "none" : keys.join(", ");
+/**
+ * The entries of a slice's entitlements that differ from the described
+ * slice's, with their values, so the policy signed into the other slice is
+ * readable from the result. A key the slice lacks is reported as absent.
+ */
+const describeEntitlementDifferences = (
+  slice: JsonValue | null | undefined,
+  described: JsonValue | null,
+): string => {
+  const own = asDictionary(slice);
+  const other = asDictionary(described);
+  if (own === null)
+    return slice === null || slice === undefined ? "none" : "not a dictionary";
+  const keys = [
+    ...new Set([
+      ...Object.keys(own),
+      ...(other === null ? [] : Object.keys(other)),
+    ]),
+  ].sort();
+  const entries = keys.flatMap((key) => {
+    const value = own[key];
+    const theirs = other?.[key];
+    if (value === undefined) return [`${key} absent`];
+    if (theirs === undefined) return [`${key}: ${renderValue(value)}`];
+    return canonicalJson(value) === canonicalJson(theirs)
+      ? []
+      : [
+          `${key}: ${renderValue(value)} (described slice ${renderValue(theirs)})`,
+        ];
+  });
+  return entries.length === 0 ? "none" : entries.join(", ");
+};
+
+const asDictionary = (
+  value: JsonValue | null | undefined,
+): Record<string, JsonValue> | null =>
+  value !== null &&
+  value !== undefined &&
+  typeof value === "object" &&
+  !Array.isArray(value)
+    ? (value as Record<string, JsonValue>)
+    : null;
+
+/** A compact JSON rendering, cut so one entitlement cannot flood the sentence. */
+const renderValue = (value: JsonValue): string => {
+  const text = canonicalJson(value);
+  return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 };

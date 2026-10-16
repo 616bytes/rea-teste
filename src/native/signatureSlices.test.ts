@@ -46,7 +46,7 @@ describe("describeSignatureSlices", () => {
   it("names the described slice and every differing field of the others", () => {
     expect(describeSignatureSlices(aggregate, [x86Slice, armSlice])).toEqual([
       `Signature fields describe the arm64 slice that codesign displayed by default; other signed slices: x86_64 (CDHash ${X86}).`,
-      "Mach-O slices signed differently from the arm64 slice: x86_64 (identifier com.example.x86slice; hardened runtime off; entitlements com.apple.security.get-task-allow).",
+      "Mach-O slices signed differently from the arm64 slice: x86_64 (identifier com.example.x86slice; hardened runtime off; entitlements com.apple.security.cs.disable-library-validation absent, com.apple.security.get-task-allow: true).",
       `designated_requirement covers the whole file and names CDHashes of other slices (x86_64 ${X86}); cdhashes lists only the described slice.`,
     ]);
   });
@@ -75,7 +75,7 @@ describe("describeSignatureSlices", () => {
   it("names signed slices when codesign's default slice is unsigned", () => {
     expect(describeSignedSlicesOfUnsignedDefault([])).toEqual([]);
     expect(describeSignedSlicesOfUnsignedDefault([armSlice])).toEqual([
-      `Mach-O slices signed although codesign's default slice is unsigned: arm64 (identifier com.example.armslice; CDHash ${ARM}; hardened runtime on); signed is false for the default slice and their entitlements were not reported.`,
+      `Mach-O slices signed although codesign's default slice is unsigned: arm64 (identifier com.example.armslice; team identifier not set; authorities none; CDHash ${ARM}; hardened runtime on); signed is false for the default slice and their entitlements were not reported.`,
     ]);
   });
 
@@ -124,7 +124,9 @@ describe("describeSignatureSlices", () => {
       "Mach-O slices signed differently from the described slice: x86_64 (",
     );
   });
+});
 
+describe("describeSignatureSlices entitlement and requirement details", () => {
   it("does not report entitlements for a slice that was not asked for them", () => {
     const { entitlements: _omitted, ...withoutEntitlements } = x86Slice;
     const limitations = describeSignatureSlices(aggregate, [
@@ -163,6 +165,33 @@ describe("describeSignatureSlices", () => {
     ]);
     expect(differing[1]).toBe(
       "Mach-O slices signed differently from the arm64 slice: x86_64 (entitlements none).",
+    );
+  });
+
+  it("shows the differing value when both slices carry the same entitlement key", () => {
+    const limitations = describeSignatureSlices(
+      {
+        ...aggregate,
+        entitlements: {
+          "com.apple.security.get-task-allow": false,
+          "com.apple.security.cs.disable-library-validation": true,
+        },
+      },
+      [
+        {
+          ...x86Slice,
+          identifier: aggregate.identifier,
+          hardened_runtime: true,
+          entitlements: {
+            "com.apple.security.get-task-allow": true,
+            "com.apple.security.cs.disable-library-validation": true,
+          },
+        },
+        armSlice,
+      ],
+    );
+    expect(limitations[1]).toBe(
+      "Mach-O slices signed differently from the arm64 slice: x86_64 (entitlements com.apple.security.get-task-allow: true (described slice false)).",
     );
   });
 

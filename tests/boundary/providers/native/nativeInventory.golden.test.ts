@@ -28,6 +28,26 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 const signatureTarget = async (
   signedArchitecture: "arm64" | "arm64e" = "arm64",
 ) => {
+  const target = await signatureTargetFile(signedArchitecture);
+  return target;
+};
+
+/** The same two-slice file classified as a universal container. */
+const universalSignatureTarget = async (
+  signedArchitecture: "arm64" | "arm64e" = "arm64",
+) => {
+  const { format: _format, ...target } =
+    await signatureTargetFile(signedArchitecture);
+  return {
+    ...target,
+    format: "mach-o-universal" as const,
+    universalSlice: { offset: 0, size: 0 },
+  };
+};
+
+const signatureTargetFile = async (
+  signedArchitecture: "arm64" | "arm64e" = "arm64",
+) => {
   const path = join(
     await createTestTempDirectory("rea-native-inventory-"),
     "fixture",
@@ -161,7 +181,7 @@ it("names the described slice and the differently signed slices of a signed univ
   expect(result.limitations).toEqual(
     expect.arrayContaining([
       "Signature fields describe the arm64 slice that codesign displayed by default; other signed slices: x86_64 (CDHash 269615ed3412eb7a8c0945e51c76355412db4b12).",
-      "Mach-O slices signed differently from the arm64 slice: x86_64 (identifier com.example.x86slice; hardened runtime off; entitlements com.apple.security.get-task-allow).",
+      "Mach-O slices signed differently from the arm64 slice: x86_64 (identifier com.example.x86slice; hardened runtime off; entitlements com.apple.security.cs.disable-library-validation absent, com.apple.security.get-task-allow: true).",
       "designated_requirement covers the whole file and names CDHashes of other slices (x86_64 269615ed3412eb7a8c0945e51c76355412db4b12); cdhashes lists only the described slice.",
     ]),
   );
@@ -269,7 +289,7 @@ it("names signed slices when codesign's default slice is unsigned", async () => 
     },
   };
   const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-    await signatureTarget("arm64"),
+    await universalSignatureTarget("arm64"),
   );
 
   const execution = await client.execute("inspect_signature", {});
@@ -285,7 +305,7 @@ it("names signed slices when codesign's default slice is unsigned", async () => 
     expect.arrayContaining([
       "Artifact is not signed.",
       "Unsigned Mach-O slices: x86_64.",
-      "Mach-O slices signed although codesign's default slice is unsigned: arm64e.x1 (identifier com.example.armslice; CDHash 133d589374281103e27b32ee243781884bc41413; hardened runtime on); signed is false for the default slice and their entitlements were not reported.",
+      "Mach-O slices signed although codesign's default slice is unsigned: arm64e.x1 (identifier com.example.armslice; team identifier not set; authorities none; CDHash 133d589374281103e27b32ee243781884bc41413; hardened runtime on); signed is false for the default slice and their entitlements were not reported.",
     ]),
   );
   // A fully unsigned file is not "mixed"; that wording needs a signed slice.
@@ -344,7 +364,7 @@ it("falls back to the target's CPU families when lipo is unavailable", async () 
     },
   };
   const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-    await signatureTarget("arm64"),
+    await universalSignatureTarget("arm64"),
   );
 
   const execution = await client.execute("inspect_signature", {});
@@ -443,7 +463,7 @@ it("keeps the result when a non-default slice's entitlements hold data or protot
         /^Entitlements of the x86_64 slice: .*__proto__.*$/u,
       ),
       'Entitlements of the x86_64 slice: data and date values are reported as typed objects such as { "$plist_type": "data", "base64": ... }.',
-      "Mach-O slices signed differently from the arm64 slice: x86_64 (identifier com.example.x86slice; hardened runtime off; entitlements com.apple.security.get-task-allow, com.example.blob).",
+      'Mach-O slices signed differently from the arm64 slice: x86_64 (identifier com.example.x86slice; hardened runtime off; entitlements com.apple.security.cs.disable-library-validation absent, com.apple.security.get-task-allow: true, com.example.blob: {"$plist_type":"data","base64":"AQID"}).',
     ]),
   );
 });

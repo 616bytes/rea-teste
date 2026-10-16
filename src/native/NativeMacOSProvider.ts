@@ -650,9 +650,14 @@ class NativeMacOSClient implements AnalysisClient {
     // no Format line, so the bound target's architectures stand in for it.
     // The bound target names slices by CPU family, which merges arm64, arm64e
     // and arm64e.x1; lipo names each slice as codesign -a accepts it.
-    const sliceNames = unsigned
-      ? await this.#unsignedSliceNames(binding, signal)
-      : null;
+    // Target classification already proves a thin file has one slice, so
+    // only an unsigned universal file needs lipo for its slice names.
+    const sliceNames =
+      unsigned &&
+      this.target.kind === "executable" &&
+      this.target.format === "mach-o-universal"
+        ? await this.#unsignedSliceNames(binding, signal)
+        : null;
     if (sliceNames !== null && !sliceNames.ok) return sliceNames;
     if (sliceNames !== null) {
       captures.push(...sliceNames.value.captures);
@@ -869,9 +874,15 @@ class NativeMacOSClient implements AnalysisClient {
       signal,
       "lipo",
     );
-    // A missing lipo must not fail the signature facts already collected;
-    // cancellation, target changes and cleanup failures still propagate.
-    if (!archs.ok && archs.error instanceof AnalysisCapabilityUnavailableError)
+    // A missing lipo must not fail the signature facts already collected.
+    // Only that exact, cleanup-complete condition falls back; cancellation,
+    // target changes, a closed client and cleanup failures still propagate.
+    if (
+      !archs.ok &&
+      archs.error instanceof AnalysisCapabilityUnavailableError &&
+      archs.error.reason === "lipo is unavailable through xcrun." &&
+      !archs.error.cleanupIncomplete
+    )
       return ok({
         names: codeSignArchitectures(null, this.target),
         captures: [],

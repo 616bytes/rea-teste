@@ -44,6 +44,14 @@ describe("packed tar listing", () => {
     ]);
   });
 
+  it("keeps a literal CR at the end of a filename in an LF listing", () => {
+    // One listing has one separator; a bare LF makes CR bytes filename bytes.
+    expect(parseTarListing("package/a\r\npackage/b\n")).toEqual([
+      "package/a\r",
+      "package/b",
+    ]);
+  });
+
   it("splits a bare newline listing the way the Windows bug appeared", () => {
     // Guard the reported regression: the previous parse kept `\r` on members.
     const naive = listing("\r\n").split("\n");

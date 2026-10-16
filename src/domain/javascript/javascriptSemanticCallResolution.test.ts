@@ -243,6 +243,16 @@ function run(flag){ let x = (flag ? root : root).child; x = x.next; return x.mak
     references(`function make(){ return {v:1}; } const root = {next:{next:{make}}}; const fallback = {};
 function run(flag){ let x; x = (flag ? root : fallback).next; x = x.next; return x.make(); }`),
   ).toHaveLength(1);
+  // A container holding a chain read is cut like a direct read, so a literal
+  // wrapper cannot reopen the search; one through a container still resolves.
+  expect(
+    references(`function make(){ return {v:1}; } const root = {next:{make}};
+function run(){ let x = root; x = ({value: x.next}).value; return x.make(); }`),
+  ).toHaveLength(1);
+  expect(
+    references(`function make(){ return {v:1}; } const root = {next:{next:{make}}};
+function run(){ let x = root; x = ({value: x.next}).value; x = ({value: x.next}).value; return x.make(); }`),
+  ).toHaveLength(0);
   // A second self-walk on the same binding is the bound: the chain leaves
   // through writes that do not read its own bindings (x = root) and stops.
   expect(

@@ -6,6 +6,7 @@ import {
 } from "./javascriptAstValues.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { childNodes } from "./javascriptSemanticTraversal.js";
 import {
   semanticArrayIndex,
   type JavaScriptSemanticPropertyPath,
@@ -400,8 +401,15 @@ const splitChainReads = (
       : t.isSequenceExpression(current)
         ? current.expressions.slice(-1)
         : null;
-  if (branches === null)
-    return { cut: [], followable: [{ node: current, keys: allKeys }] };
+  if (branches === null) {
+    // A container (object, array, class, `new`) is expanded by the main loop
+    // and can hold a chain read inside it: `({value: x.next}).value` would
+    // otherwise bypass the cut and reopen the exponential search.
+    const read = containedChainRead(current, chain, state);
+    return read === undefined
+      ? { cut: [], followable: [{ node: current, keys: allKeys }] }
+      : { cut: [read], followable: [] };
+  }
   const splits = branches.map((branch) =>
     splitChainReads(branch, chain, state, allKeys),
   );
@@ -410,6 +418,44 @@ const splitChainReads = (
     followable: splits.flatMap((split) => split.followable),
   };
 };
+
+/**
+ * The first binding on the chain read anywhere inside an expression, not
+ * entering nested functions (their bodies are not expanded as reads) and not
+ * counting non-computed property or member names, which are not reads.
+ */
+const containedChainRead = (
+  root: t.Node,
+  chain: Chain,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticBindingState | undefined => {
+  const stack: t.Node[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node === undefined) break;
+    if (node !== root && t.isFunction(node)) continue;
+    if (t.isIdentifier(node)) {
+      const binding = resolveSemanticBindingState(state, node, node.name);
+      if (binding !== undefined && chain.has(binding)) return binding;
+      continue;
+    }
+    for (const child of childNodes(node))
+      if (child !== literalName(node)) stack.push(child);
+  }
+  return undefined;
+};
+
+/** The child that names a property or member without being a read. */
+const literalName = (node: t.Node): t.Node | null =>
+  (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+  !node.computed
+    ? node.property
+    : (t.isObjectMember(node) ||
+          t.isClassProperty(node) ||
+          t.isClassMethod(node)) &&
+        !node.computed
+      ? node.key
+      : null;
 
 const selectObjectTargets = (
   node: t.ObjectExpression,

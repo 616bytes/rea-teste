@@ -4,7 +4,7 @@
 [#4389](https://github.com/morluto/rea/pull/4389), umbrella
 [#4027](https://github.com/morluto/rea/issues/4027).
 
-All 24 final IPC regressions pass, and real draw.io operation phases succeed.
+All 28 final IPC regressions pass, and real draw.io operation phases succeed.
 Every real capture still **fails overall provider cleanup**. These are distinct
 results; neither completed-task acceleration nor token savings is established.
 
@@ -191,3 +191,33 @@ explicit in the observation guide and is not represented as fixed by this PR.
 
 Current-source static checks also pass: two uncached tasks, 92.912 s wall,
 92.031383 family CPU s and 4,340,375,552 peak cgroup bytes, no OOM.
+
+## Native single/array dispatch follow-up
+
+Fresh review of `6fc2d2769` identified that the earlier native controls covered
+only one listener. Node 24.18.0 reads `.apply` during single-listener dispatch,
+but invokes each callback intrinsically during array dispatch. Native `once`
+uses `.call` for zero arguments and `.apply` otherwise. Unconditional `.apply`
+in the observation helper changed two of those paths: a multi-listener callback
+could throw before later callbacks ran, and zero-argument once read the wrong
+property. Four explicit native controls reproduce two failures (26 passed,
+two failed), rather than assuming all callable-property reads should disappear.
+
+Source `e8d7e8f20` keeps one observation boundary. An `on` recording wrapper
+delegates direct calls intrinsically and forwards native `.apply` calls through
+its own nonenumerable method. Node selects the route; the hook does not inspect
+or copy listener storage. `once` preserves its native zero/nonzero-argument
+invocation. All **28 cases** pass, including the prior callback identity,
+retention, reentrant-removal and fatal-error coverage. `handle` remains intrinsic.
+
+The unchanged real draw.io verifier again completes dialog recovery and shape
+insertion, with seven IPC events, SVG elements 0 → 2 and the unsaved indicator.
+Overall provider cleanup still fails; no deadline fires. Its 12.290 s pipeline
+run is a validation observation, not a paired performance comparison. Exact
+source hashes, failures, resource measurements and post-scope states are appended
+under `native_dispatch_followup`; all previous records remain unchanged.
+The separate raw metadata limitation [#4513](https://github.com/morluto/rea/issues/4513)
+remains open and is not represented as fixed.
+
+Final-source static checks pass: two uncached tasks, 171.430 s wall,
+169.139239 family CPU s and 4,091,392,000 peak cgroup bytes, no OOM.

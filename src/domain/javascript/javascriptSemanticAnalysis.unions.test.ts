@@ -418,8 +418,8 @@ describe("branch selector source reads", () => {
   it("keeps unordered assignment-backed lexical bindings uncertain", () => {
     for (const source of [
       'let enabled; const answer = enabled ? "on" : "off"; 0, enabled = true;',
-      'let enabled; 0, enabled = true; const answer = enabled ? "on" : "off";',
       'let enabled; const alias = enabled; 0, enabled = true; const answer = alias ? "on" : "off";',
+      'let enabled; if (choice) enabled = true; const answer = enabled ? "on" : "off";',
     ])
       expect(
         topLevelBinding(analyzeJavaScriptSemantics(source), "answer").value,
@@ -436,15 +436,16 @@ describe("branch selector source reads", () => {
           "answer",
         ).value.status,
       ).toBe("ambiguous");
-    expect(
-      topLevelBinding(
-        analyzeJavaScriptSemantics(`
-      let enabled; enabled = true;
+    for (const assignment of ["enabled = true;", "0, enabled = true;"])
+      expect(
+        topLevelBinding(
+          analyzeJavaScriptSemantics(`
+      let enabled; ${assignment}
       const answer = enabled ? "on" : "off";
     `),
-        "answer",
-      ).value,
-    ).toEqual({ status: "literal", value: "on" });
+          "answer",
+        ).value,
+      ).toEqual({ status: "literal", value: "on" });
   });
 });
 
@@ -632,8 +633,8 @@ describe("semantic primitive allocation and binding reuse", () => {
     });
     expect(
       ir.callables.find(({ name }) => name === "readsMutation")?.returnSites[0]
-        ?.value.status,
-    ).toBe("ambiguous");
+        ?.value,
+    ).toEqual({ status: "literal", value: "after" });
   });
 
   it("retains a large derived string while its aggregate JSON estimate fits", () => {

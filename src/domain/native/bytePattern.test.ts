@@ -25,6 +25,32 @@ it.each(["0x20", "overlay:0x10", "invalid"])(
   },
 );
 
+it.each(["", "overlay:"])(
+  "accepts matches at both inclusive coverage boundaries in address space %s",
+  (space) => {
+    const start = `${space}0x10`;
+    const end = `${space}0x1f`;
+    expect(
+      byteSearchResultSchema.safeParse({
+        matches: [start, end].map((address) => ({
+          address,
+          segment: ".text",
+          file_offset: null,
+          procedure: null,
+        })),
+        searched: {
+          blocks: [{ segment: ".text", start, end, bytes: 16 }],
+          bytes: 16,
+          skipped_uninitialized: [],
+          skipped_not_loaded: [],
+        },
+        complete: true,
+        next_cursor: null,
+      }).success,
+    ).toBe(true);
+  },
+);
+
 describe("masked byte patterns", () => {
   it("preserves whole-byte wildcards and combines explicit bit masks", () => {
     const parsed = parseBytePattern("48 8b\t??89", "ff f0 ff 0f");

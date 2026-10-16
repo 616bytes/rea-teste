@@ -227,8 +227,8 @@ const inspectMethod = async (
       `Select one of ${candidates.length} overloads: ${candidates.map((method) => `${method.overload_index}: ${method.reported_signature}`).join("; ")}`,
     );
   const index = request.input.overload_index ?? 0;
-  const selected = candidates[index];
-  if (selected === undefined)
+  const selected =
+    candidates[index] ??
     inputFailure(
       request,
       "overload_index",

@@ -4,7 +4,7 @@
 [#4389](https://github.com/morluto/rea/pull/4389), umbrella
 [#4027](https://github.com/morluto/rea/issues/4027).
 
-The listener regressions pass, and the real draw.io operation phases succeed.
+All 23 final listener regressions pass, and real draw.io operation phases succeed.
 Every real capture still **fails overall provider cleanup**. These are distinct
 results; neither completed-task acceleration nor token savings is established.
 
@@ -22,7 +22,8 @@ failed). Fix `3c330f259` delegates traversal to Node, translating only owned `on
 wrappers at `removeListener`, and preserves the `off` alias. Descriptor reads
 avoid evaluating getters. A further Proxy case exposed that descriptor reflection
 can itself run a trap (16 passed, one failed); `2fb7f5523` uses Node's Proxy
-identity first and removes the superseded catch. All **17 cases** now pass.
+identity first and removes the superseded catch. Those initial **17 cases** pass;
+the later decorator finding and final 23-case validation are recorded below.
 The native EventEmitter controls are semantic regressions, not real-app proof.
 
 The change uses weak wrapper keys, removes the copied traversal and its snapshot
@@ -63,7 +64,7 @@ the production hook wraps their registration as described above.
 The source also registers `app-load-finished` through both `once` and `on`;
 recording its once callback twice adds a spurious event.
 
-## Fixed-source ABBA observations
+## Initial fixed-source ABBA observations
 
 Verifier/source revision is `d02cc934c`; its hashes were recorded before all four
 trials. Baseline is main `180ba03bf`. The same script, runtime, artifact and
@@ -121,3 +122,38 @@ node experiments/analysis-efficiency/drawio-electron-lifecycle.mjs \
 The helper returns failure on incomplete provider cleanup. This shared-service
 probe does not establish successful public CLI/MCP workflows. App images,
 extractions/profiles and full Result files are regenerable and excluded from Git.
+
+## Review follow-up: normalization before app decorators
+
+Fresh review of `f3bb9b9ed` found that translation inside a patched
+`removeListener` happened after an application's outer decorator had already
+seen the recording wrapper. Two native controls reproduced this with stable and
+replaced decorators (17 passed, two failed).
+
+`c8c494b5c` delegates the original Node traversal through a private forwarding
+receiver. It shares the real emitter's live state and translates owned `on`
+entries **before** invoking the current application removal method. App methods
+and getters receive the real emitter; read-only method properties remain valid.
+Native once entries pass unchanged. The public `removeListener`/`off` patches
+are removed. Five decorator variants pass: stable, replaced, read-only, getter
+and Proxy.
+
+An additional mutation case proved that reading a changed public `.listener`
+getter before delegation also changed deletion timing (22 passed, one failed).
+Final source `5a094a0df` retains canonical removal targets in the weak owner
+registry. Only unchanged data links are translated; changed getters run when
+Node performs removal, preserving the exception and state transition. All
+**23 cases** pass, including the original retention/fatal-error coverage.
+
+The same frozen draw.io verifier was reused. The follow-up ABBA attempt ran
+its first baseline, then the resource launcher refused the other three requests
+because 8 GiB plus its 4 GiB host reserve was unavailable. Those are **not
+executed**, with no performance measurements. The final source was separately
+admitted and completed dialog recovery and insertion with seven IPC events;
+overall cleanup still failed, and Xvfb teardown also returned an error. No new
+completed-task speedup or cold/warm pair is claimed.
+
+Final static checks passed: two uncached tasks, 135.173 s wall, 133.786166 family
+CPU s and 4,274,634,752 peak cgroup bytes, no OOM. The JSON record appends exact
+source pins, denial logs, final real-app/public cleanup diagnostics and checks
+under `review_followup`; the initial records were not overwritten.

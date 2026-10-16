@@ -3116,5 +3116,964 @@
     "Earlier diagnostic helper hashes were not captured. Only the four formal trials have the pre-run manifest; failed attempts were not overwritten.",
     "Application images, extracted resources/profiles and full Result files are regenerable local inputs/outputs, not committed data.",
     "Historical captures omit unrelated full timeline/process arrays and exploratory palette/body listings; original logs remain identified by digest. Boolean invalid-file text projections are derived from the recorded renderer excerpt."
-  ]
+  ],
+  "review_followup": {
+    "reviewed_head": "f3bb9b9ed736ca7076559cda5c0cc7e5bff9bda5",
+    "finding_thread": "PRRT_kwDOSB6hVc6tPP5b",
+    "root_cause": "Translation inside a patched removeListener happened after application decorators had already received the raw on wrapper.",
+    "structural_fix": "Native removeAllListeners runs through a private forwarding receiver sharing the real emitter state; owned on entries are normalized before current app method/decorator invocation. Real receivers, reentrant replacement, readonly methods, getters and Proxy decorators are preserved. Public removeListener/off patches are removed. Canonical removal targets are held in the weak registry independently of mutable public metadata; changed getters run at the native deletion stage.",
+    "decorator_red": {
+      "passed": 17,
+      "failed": 2,
+      "receipt": {
+        "name": "removal-decorator-red",
+        "log_sha256": "3fe1b148b717cb59ede675047b38d00c3a380791239859bd755ef440cd9386b2",
+        "execution_status": "executed",
+        "observations": [],
+        "resource_observation": {
+          "scope": "rea-efficiency-d6ad36626706407b8b78f90836d83542.scope",
+          "elapsed_seconds": 3.588,
+          "abort": null,
+          "payload_exit": {
+            "phase": "payload-exited-observer-alive",
+            "ownership_token": "rea-efficiency-d6ad36626706407b8b78f90836d83542.scope",
+            "payload_exit_code": 1,
+            "observer_pid": 3728302,
+            "remaining_processes": [3728302],
+            "payload_cleanup_verified": true,
+            "cpu_stat": {
+              "usage_usec": 3365700,
+              "user_usec": 2242425,
+              "system_usec": 1123274,
+              "nr_periods": 35,
+              "nr_throttled": 0,
+              "throttled_usec": 0,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_peak_bytes": 341663744,
+            "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-d6ad36626706407b8b78f90836d83542.scope",
+            "resource_events": {
+              "memory.events": {
+                "low": 0,
+                "high": 0,
+                "max": 0,
+                "oom": 0,
+                "oom_kill": 0,
+                "oom_group_kill": 0
+              },
+              "pids.events": {
+                "max": 0
+              }
+            }
+          },
+          "payload_resource_observation_verified": true,
+          "final_whole_scope_counters_verified": false
+        },
+        "post_scope_state": "ActiveState=inactive\nSubState=dead",
+        "xvfb_teardown_failure": false
+      }
+    },
+    "mutated_metadata_red": {
+      "passed": 22,
+      "failed": 1,
+      "receipt": {
+        "name": "raw-metadata-red",
+        "log_sha256": "54342240b486549bc2b3e941ee775269ef15cf34b4619766bd74dd9c381d03db",
+        "execution_status": "executed",
+        "observations": [],
+        "resource_observation": {
+          "scope": "rea-efficiency-fc3a1632b0da47d598557d98455eb25e.scope",
+          "elapsed_seconds": 4.028,
+          "abort": null,
+          "payload_exit": {
+            "phase": "payload-exited-observer-alive",
+            "ownership_token": "rea-efficiency-fc3a1632b0da47d598557d98455eb25e.scope",
+            "payload_exit_code": 1,
+            "observer_pid": 3743076,
+            "remaining_processes": [3743076],
+            "payload_cleanup_verified": true,
+            "cpu_stat": {
+              "usage_usec": 3600018,
+              "user_usec": 2431019,
+              "system_usec": 1168998,
+              "nr_periods": 38,
+              "nr_throttled": 2,
+              "throttled_usec": 3178,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_peak_bytes": 347525120,
+            "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-fc3a1632b0da47d598557d98455eb25e.scope",
+            "resource_events": {
+              "memory.events": {
+                "low": 0,
+                "high": 0,
+                "max": 0,
+                "oom": 0,
+                "oom_kill": 0,
+                "oom_group_kill": 0
+              },
+              "pids.events": {
+                "max": 0
+              }
+            }
+          },
+          "payload_resource_observation_verified": true,
+          "final_whole_scope_counters_verified": false
+        },
+        "post_scope_state": "ActiveState=inactive\nSubState=dead",
+        "xvfb_teardown_failure": false
+      }
+    },
+    "final_focused": {
+      "passed": 23,
+      "receipt": {
+        "name": "raw-metadata-green",
+        "log_sha256": "85492543307ccd121c7c93bc877ffca1e25c4a1f861c91a558021b8070601d69",
+        "execution_status": "executed",
+        "observations": [],
+        "resource_observation": {
+          "scope": "rea-efficiency-3915d88b7ccc47e582431c2ce598c6c4.scope",
+          "elapsed_seconds": 3.658,
+          "abort": null,
+          "payload_exit": {
+            "phase": "payload-exited-observer-alive",
+            "ownership_token": "rea-efficiency-3915d88b7ccc47e582431c2ce598c6c4.scope",
+            "payload_exit_code": 0,
+            "observer_pid": 3744278,
+            "remaining_processes": [3744278],
+            "payload_cleanup_verified": true,
+            "cpu_stat": {
+              "usage_usec": 3436723,
+              "user_usec": 2322900,
+              "system_usec": 1113823,
+              "nr_periods": 35,
+              "nr_throttled": 0,
+              "throttled_usec": 0,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_peak_bytes": 310366208,
+            "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-3915d88b7ccc47e582431c2ce598c6c4.scope",
+            "resource_events": {
+              "memory.events": {
+                "low": 0,
+                "high": 0,
+                "max": 0,
+                "oom": 0,
+                "oom_kill": 0,
+                "oom_group_kill": 0
+              },
+              "pids.events": {
+                "max": 0
+              }
+            }
+          },
+          "payload_resource_observation_verified": true,
+          "final_whole_scope_counters_verified": false
+        },
+        "post_scope_state": "ActiveState=inactive\nSubState=dead",
+        "xvfb_teardown_failure": false
+      }
+    },
+    "intermediate_source_pins": {
+      "candidate_revision": "c8c494b5c225a4fe1e1b6d22cd632088b5f3e132",
+      "baseline_revision": "180ba03bfddd5916251e81e97a500b1ede7a9eea",
+      "source_sha256": {
+        "scripts/electron-active-hook.cjs": "3fca1c597477dfb19b5873a8ee4be8291ca0bf3e3634cef1b1e8fefb3f7597aa",
+        "tests/boundary/browser/electronActiveHook.test.ts": "ac0ceeb4b739ebdac7e0b4863635c8e35b9feabd69b1de1a463cba27bf369bd3",
+        "experiments/analysis-efficiency/drawio-electron-lifecycle.mjs": "d484b1550704b3be1bf8b4fb1980ab50b81924a917ffae8659c84dea036fd96a"
+      }
+    },
+    "intermediate_abba_attempts": [
+      {
+        "name": "drawio-review-baseline-1",
+        "log_sha256": "aa1c5b34621865c4075602647eaca310a243eeebf7d9aa7075e1b297899f1013",
+        "execution_status": "executed",
+        "observations": [
+          {
+            "profile": "/tmp/rea-4390-realapps-20261016/profiles/drawio-ui-lhshti",
+            "runtime": "/home/yann/yann/rea-electron-cancellation-main-control-20261016",
+            "elapsed_ms": 15030.539359,
+            "deadline_triggered": false,
+            "selected_shape": ".geSidebar a.geItem:visible >> nth=0",
+            "before": {
+              "title": "Untitled Diagram - draw.io",
+              "invalid_file_dialog": true,
+              "unsaved_changes": false,
+              "diagram_svg_elements": 0,
+              "cells": 0
+            },
+            "after": {
+              "title": "Untitled Diagram - draw.io",
+              "invalid_file_dialog": false,
+              "unsaved_changes": true,
+              "diagram_svg_elements": 2,
+              "cells": 0
+            },
+            "actions_completed": true,
+            "shape_inserted": true,
+            "provider_ok": false,
+            "cleanup_verified": false,
+            "reason": "cleanup_failed",
+            "coverage": {
+              "status": "partial_attach",
+              "observed_event_families": [
+                "app-lifecycle",
+                "ipc",
+                "navigation",
+                "preload-configuration",
+                "web-contents-lifecycle",
+                "window-lifecycle"
+              ],
+              "unavailable_event_families": [
+                "download",
+                "error",
+                "native-addon",
+                "permission",
+                "popup-attempt",
+                "preload",
+                "process-lifecycle",
+                "protocol",
+                "renderer-ipc",
+                "shell-attempt",
+                "updater"
+              ],
+              "observed_roles": ["browser", "main", "web_contents", "window"],
+              "pre_capture_activity": "unavailable"
+            },
+            "retention": {
+              "budget_bytes": 16777216,
+              "estimated_retained_bytes": 203982,
+              "event_serialized_byte_upper_bound": 48666,
+              "retained": 110,
+              "dropped": 0,
+              "dropped_event_families": [],
+              "dropped_event_roles": [],
+              "observed_ipc": 8,
+              "dropped_ipc": 0,
+              "observed_runtime": 102,
+              "dropped_runtime": 0
+            },
+            "ipc": {
+              "events": [
+                {
+                  "sequence": 77,
+                  "correlation_id": "capture:3738060:77",
+                  "kind": "main-event-invocation",
+                  "event": null,
+                  "phase": "observed",
+                  "channel": "rendererReq",
+                  "direction": "renderer-to-main",
+                  "sender": "webContents:1",
+                  "receiver": "main",
+                  "frame": "frame:1",
+                  "target": null,
+                  "argument_shapes": ["object"],
+                  "result_shape": null,
+                  "process_type": "main",
+                  "source": "electron-active-hook",
+                  "capture_method": "api-wrapper",
+                  "artifact_path": null,
+                  "artifact_sha256": null,
+                  "error": false
+                },
+                {
+                  "sequence": 84,
+                  "correlation_id": "capture:3738060:84",
+                  "kind": "main-event-invocation",
+                  "event": null,
+                  "phase": "observed",
+                  "channel": "rendererReq",
+                  "direction": "renderer-to-main",
+                  "sender": "webContents:1",
+                  "receiver": "main",
+                  "frame": "frame:1",
+                  "target": null,
+                  "argument_shapes": ["object"],
+                  "result_shape": null,
+                  "process_type": "main",
+                  "source": "electron-active-hook",
+                  "capture_method": "api-wrapper",
+                  "artifact_path": null,
+                  "artifact_sha256": null,
+                  "error": false
+                },
+                {
+                  "sequence": 87,
+                  "correlation_id": "capture:3738060:87",
+                  "kind": "main-event-invocation",
+                  "event": null,
+                  "phase": "observed",
+                  "channel": "app-load-finished",
+                  "direction": "renderer-to-main",
+                  "sender": "webContents:1",
+                  "receiver": "main",
+                  "frame": "frame:1",
+                  "target": null,
+                  "argument_shapes": ["null"],
+                  "result_shape": null,
+                  "process_type": "main",
+                  "source": "electron-active-hook",
+                  "capture_method": "api-wrapper",
+                  "artifact_path": null,
+                  "artifact_sha256": null,
+                  "error": false
+                },
+                {
+                  "sequence": 88,
+                  "correlation_id": "capture:3738060:88",
+                  "kind": "main-event-invocation",
+                  "event": null,
+                  "phase": "observed",
+                  "channel": "app-load-finished",
+                  "direction": "renderer-to-main",
+                  "sender": "webContents:1",
+                  "receiver": "main",
+                  "frame": "frame:1",
+                  "target": null,
+                  "argument_shapes": ["null"],
+                  "result_shape": null,
+                  "process_type": "main",
+                  "source": "electron-active-hook",
+                  "capture_method": "api-wrapper",
+                  "artifact_path": null,
+                  "artifact_sha256": null,
+                  "error": false
+                },
+                {
+                  "sequence": 89,
+                  "correlation_id": "capture:3738060:89",
+                  "kind": "main-event-invocation",
+                  "event": null,
+                  "phase": "observed",
+                  "channel": "app-load-finished",
+                  "direction": "renderer-to-main",
+                  "sender": "webContents:1",
+                  "receiver": "main",
+                  "frame": "frame:1",
+                  "target": null,
+                  "argument_shapes": ["null"],
+                  "result_shape": null,
+                  "process_type": "main",
+                  "source": "electron-active-hook",
+                  "capture_method": "api-wrapper",
+                  "artifact_path": null,
+                  "artifact_sha256": null,
+                  "error": false
+                },
+                {
+                  "sequence": 90,
+                  "correlation_id": "capture:3738060:90",
+                  "kind": "ipc-main-to-renderer",
+                  "event": null,
+                  "phase": "observed",
+                  "channel": "args-obj",
+                  "direction": "main-to-renderer",
+                  "sender": "main",
+                  "receiver": "webContents:1",
+                  "frame": null,
+                  "target": "webContents:1",
+                  "argument_shapes": ["object"],
+                  "result_shape": "undefined",
+                  "process_type": "main",
+                  "source": "electron-active-hook",
+                  "capture_method": "api-wrapper",
+                  "artifact_path": null,
+                  "artifact_sha256": null,
+                  "error": false
+                },
+                {
+                  "sequence": 93,
+                  "correlation_id": "capture:3738060:93",
+                  "kind": "main-event-invocation",
+                  "event": null,
+                  "phase": "observed",
+                  "channel": "rendererReq",
+                  "direction": "renderer-to-main",
+                  "sender": "webContents:1",
+                  "receiver": "main",
+                  "frame": "frame:1",
+                  "target": null,
+                  "argument_shapes": ["object"],
+                  "result_shape": null,
+                  "process_type": "main",
+                  "source": "electron-active-hook",
+                  "capture_method": "api-wrapper",
+                  "artifact_path": null,
+                  "artifact_sha256": null,
+                  "error": false
+                },
+                {
+                  "sequence": 97,
+                  "correlation_id": "capture:3738060:97",
+                  "kind": "main-event-invocation",
+                  "event": null,
+                  "phase": "observed",
+                  "channel": "rendererReq",
+                  "direction": "renderer-to-main",
+                  "sender": "webContents:1",
+                  "receiver": "main",
+                  "frame": "frame:1",
+                  "target": null,
+                  "argument_shapes": ["object"],
+                  "result_shape": null,
+                  "process_type": "main",
+                  "source": "electron-active-hook",
+                  "capture_method": "api-wrapper",
+                  "artifact_path": null,
+                  "artifact_sha256": null,
+                  "error": false
+                }
+              ],
+              "observed": 8,
+              "dropped": 0
+            },
+            "actions": [
+              {
+                "step_id": "dismiss-invalid-file",
+                "kind": "click",
+                "window_index": 0,
+                "target": "window:0",
+                "elapsed_ms": 124,
+                "status": "completed",
+                "error": null
+              },
+              {
+                "step_id": "insert-shape",
+                "kind": "click",
+                "window_index": 0,
+                "target": "window:0",
+                "elapsed_ms": 174,
+                "status": "completed",
+                "error": null
+              },
+              {
+                "step_id": "settle-renderer",
+                "kind": "wait",
+                "window_index": 0,
+                "target": "window:0",
+                "elapsed_ms": 503,
+                "status": "completed",
+                "error": null
+              }
+            ],
+            "workflow_status": "partial-or-failed",
+            "serialized_result_sha256": "5be1733640c6f09ea8615fdc36623e590eb3ee7a8b83e4274387af76ecd9f408",
+            "provider_error": {
+              "_tag": "BrowserObservationError",
+              "operation": "capture_electron_scenario",
+              "reason": "cleanup_failed",
+              "userMessage": "Electron cleanup could not be verified: process ownership token mismatch for PID(s): 3738062, 3738063, 3738096, 3738097, 3738121. Collected observations are retained in partial_observation. Inspect the reported process resources before launching another capture.",
+              "cleanup": {
+                "reason": "process ownership token mismatch for PID(s): 3738062, 3738063, 3738096, 3738097, 3738121",
+                "resources": [
+                  "owned_process_group",
+                  "run:961f5596-11c2-47fa-b060-9b2a707f6e57",
+                  "process-group:3738060"
+                ]
+              },
+              "cleanupIncomplete": true
+            }
+          }
+        ],
+        "resource_observation": {
+          "scope": "rea-efficiency-15cacfddc00e4458aa785198a0ce3d9a.scope",
+          "elapsed_seconds": 17.014,
+          "abort": null,
+          "payload_exit": {
+            "phase": "payload-exited-observer-alive",
+            "ownership_token": "rea-efficiency-15cacfddc00e4458aa785198a0ce3d9a.scope",
+            "payload_exit_code": 1,
+            "observer_pid": 3737995,
+            "remaining_processes": [3737995, 3738007, 3738245, 3738247],
+            "payload_cleanup_verified": false,
+            "cpu_stat": {
+              "usage_usec": 12788998,
+              "user_usec": 9235429,
+              "system_usec": 3553568,
+              "nr_periods": 168,
+              "nr_throttled": 4,
+              "throttled_usec": 15852,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_peak_bytes": 519233536,
+            "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-15cacfddc00e4458aa785198a0ce3d9a.scope",
+            "resource_events": {
+              "memory.events": {
+                "low": 0,
+                "high": 0,
+                "max": 0,
+                "oom": 0,
+                "oom_kill": 0,
+                "oom_group_kill": 0
+              },
+              "pids.events": {
+                "max": 0
+              }
+            }
+          },
+          "payload_resource_observation_verified": false,
+          "final_whole_scope_counters_verified": false
+        },
+        "post_scope_state": "ActiveState=inactive\nSubState=dead",
+        "xvfb_teardown_failure": false,
+        "requested_runtime_revision": "180ba03bfddd5916251e81e97a500b1ede7a9eea",
+        "runtime_revision": "180ba03bfddd5916251e81e97a500b1ede7a9eea"
+      },
+      {
+        "name": "drawio-review-candidate-1",
+        "log_sha256": "3f7280a31108f0e8908089baca5c76fff2f01db1b439be0e7c5495d29720f07a",
+        "execution_status": "not_started",
+        "reason": "memory admission denied: requested 8 GiB plus 4 GiB host reserve unavailable",
+        "observations": [],
+        "resource_observation": null,
+        "requested_runtime_revision": "c8c494b5c225a4fe1e1b6d22cd632088b5f3e132",
+        "runtime_revision": null
+      },
+      {
+        "name": "drawio-review-candidate-2",
+        "log_sha256": "3f7280a31108f0e8908089baca5c76fff2f01db1b439be0e7c5495d29720f07a",
+        "execution_status": "not_started",
+        "reason": "memory admission denied: requested 8 GiB plus 4 GiB host reserve unavailable",
+        "observations": [],
+        "resource_observation": null,
+        "requested_runtime_revision": "c8c494b5c225a4fe1e1b6d22cd632088b5f3e132",
+        "runtime_revision": null
+      },
+      {
+        "name": "drawio-review-baseline-2",
+        "log_sha256": "3f7280a31108f0e8908089baca5c76fff2f01db1b439be0e7c5495d29720f07a",
+        "execution_status": "not_started",
+        "reason": "memory admission denied: requested 8 GiB plus 4 GiB host reserve unavailable",
+        "observations": [],
+        "resource_observation": null,
+        "requested_runtime_revision": "180ba03bfddd5916251e81e97a500b1ede7a9eea",
+        "runtime_revision": null
+      }
+    ],
+    "final_source_pins": {
+      "candidate_revision": "5a094a0dfa5a2d7f0145f6bb63d2b0476fa6bd3e",
+      "baseline_revision": "180ba03bfddd5916251e81e97a500b1ede7a9eea",
+      "source_sha256": {
+        "scripts/electron-active-hook.cjs": "58266134f1a8ca83f6a9a4da3a1c36880cd394a272bf250e504dff53cf852858",
+        "tests/boundary/browser/electronActiveHook.test.ts": "850f7ed4d5dbde52d1c987caf1cd2bed3f1c8668db4a953fd35dbc0113337e0a",
+        "experiments/analysis-efficiency/drawio-electron-lifecycle.mjs": "d484b1550704b3be1bf8b4fb1980ab50b81924a917ffae8659c84dea036fd96a"
+      }
+    },
+    "final_real_app": {
+      "name": "drawio-review-final-candidate",
+      "log_sha256": "80a36000dabcbe0f2e0c879a243f1b344654b81c7e36ed75da68719c10491624",
+      "execution_status": "executed",
+      "observations": [
+        {
+          "profile": "/tmp/rea-4390-realapps-20261016/profiles/drawio-ui-4WKSqs",
+          "runtime": "/home/yann/yann/rea-electron-ipc-listener-4390-20261016",
+          "elapsed_ms": 11172.099482,
+          "deadline_triggered": false,
+          "selected_shape": ".geSidebar a.geItem:visible >> nth=0",
+          "before": {
+            "title": "Untitled Diagram - draw.io",
+            "invalid_file_dialog": true,
+            "unsaved_changes": false,
+            "diagram_svg_elements": 0,
+            "cells": 0
+          },
+          "after": {
+            "title": "Untitled Diagram - draw.io",
+            "invalid_file_dialog": false,
+            "unsaved_changes": true,
+            "diagram_svg_elements": 2,
+            "cells": 0
+          },
+          "actions_completed": true,
+          "shape_inserted": true,
+          "provider_ok": false,
+          "cleanup_verified": false,
+          "reason": "cleanup_failed",
+          "coverage": {
+            "status": "partial_attach",
+            "observed_event_families": [
+              "app-lifecycle",
+              "ipc",
+              "navigation",
+              "preload-configuration",
+              "web-contents-lifecycle",
+              "window-lifecycle"
+            ],
+            "unavailable_event_families": [
+              "download",
+              "error",
+              "native-addon",
+              "permission",
+              "popup-attempt",
+              "preload",
+              "process-lifecycle",
+              "protocol",
+              "renderer-ipc",
+              "shell-attempt",
+              "updater"
+            ],
+            "observed_roles": ["browser", "main", "web_contents", "window"],
+            "pre_capture_activity": "unavailable"
+          },
+          "retention": {
+            "budget_bytes": 16777216,
+            "estimated_retained_bytes": 202114,
+            "event_serialized_byte_upper_bound": 48214,
+            "retained": 109,
+            "dropped": 0,
+            "dropped_event_families": [],
+            "dropped_event_roles": [],
+            "observed_ipc": 7,
+            "dropped_ipc": 0,
+            "observed_runtime": 102,
+            "dropped_runtime": 0
+          },
+          "ipc": {
+            "events": [
+              {
+                "sequence": 77,
+                "correlation_id": "capture:3749543:77",
+                "kind": "main-event-invocation",
+                "event": null,
+                "phase": "observed",
+                "channel": "rendererReq",
+                "direction": "renderer-to-main",
+                "sender": "webContents:1",
+                "receiver": "main",
+                "frame": "frame:1",
+                "target": null,
+                "argument_shapes": ["object"],
+                "result_shape": null,
+                "process_type": "main",
+                "source": "electron-active-hook",
+                "capture_method": "api-wrapper",
+                "artifact_path": null,
+                "artifact_sha256": null,
+                "error": false
+              },
+              {
+                "sequence": 84,
+                "correlation_id": "capture:3749543:84",
+                "kind": "main-event-invocation",
+                "event": null,
+                "phase": "observed",
+                "channel": "rendererReq",
+                "direction": "renderer-to-main",
+                "sender": "webContents:1",
+                "receiver": "main",
+                "frame": "frame:1",
+                "target": null,
+                "argument_shapes": ["object"],
+                "result_shape": null,
+                "process_type": "main",
+                "source": "electron-active-hook",
+                "capture_method": "api-wrapper",
+                "artifact_path": null,
+                "artifact_sha256": null,
+                "error": false
+              },
+              {
+                "sequence": 87,
+                "correlation_id": "capture:3749543:87",
+                "kind": "main-event-invocation",
+                "event": null,
+                "phase": "observed",
+                "channel": "app-load-finished",
+                "direction": "renderer-to-main",
+                "sender": "webContents:1",
+                "receiver": "main",
+                "frame": "frame:1",
+                "target": null,
+                "argument_shapes": ["null"],
+                "result_shape": null,
+                "process_type": "main",
+                "source": "electron-active-hook",
+                "capture_method": "api-wrapper",
+                "artifact_path": null,
+                "artifact_sha256": null,
+                "error": false
+              },
+              {
+                "sequence": 88,
+                "correlation_id": "capture:3749543:88",
+                "kind": "main-event-invocation",
+                "event": null,
+                "phase": "observed",
+                "channel": "app-load-finished",
+                "direction": "renderer-to-main",
+                "sender": "webContents:1",
+                "receiver": "main",
+                "frame": "frame:1",
+                "target": null,
+                "argument_shapes": ["null"],
+                "result_shape": null,
+                "process_type": "main",
+                "source": "electron-active-hook",
+                "capture_method": "api-wrapper",
+                "artifact_path": null,
+                "artifact_sha256": null,
+                "error": false
+              },
+              {
+                "sequence": 89,
+                "correlation_id": "capture:3749543:89",
+                "kind": "ipc-main-to-renderer",
+                "event": null,
+                "phase": "observed",
+                "channel": "args-obj",
+                "direction": "main-to-renderer",
+                "sender": "main",
+                "receiver": "webContents:1",
+                "frame": null,
+                "target": "webContents:1",
+                "argument_shapes": ["object"],
+                "result_shape": "undefined",
+                "process_type": "main",
+                "source": "electron-active-hook",
+                "capture_method": "api-wrapper",
+                "artifact_path": null,
+                "artifact_sha256": null,
+                "error": false
+              },
+              {
+                "sequence": 92,
+                "correlation_id": "capture:3749543:92",
+                "kind": "main-event-invocation",
+                "event": null,
+                "phase": "observed",
+                "channel": "rendererReq",
+                "direction": "renderer-to-main",
+                "sender": "webContents:1",
+                "receiver": "main",
+                "frame": "frame:1",
+                "target": null,
+                "argument_shapes": ["object"],
+                "result_shape": null,
+                "process_type": "main",
+                "source": "electron-active-hook",
+                "capture_method": "api-wrapper",
+                "artifact_path": null,
+                "artifact_sha256": null,
+                "error": false
+              },
+              {
+                "sequence": 96,
+                "correlation_id": "capture:3749543:96",
+                "kind": "main-event-invocation",
+                "event": null,
+                "phase": "observed",
+                "channel": "rendererReq",
+                "direction": "renderer-to-main",
+                "sender": "webContents:1",
+                "receiver": "main",
+                "frame": "frame:1",
+                "target": null,
+                "argument_shapes": ["object"],
+                "result_shape": null,
+                "process_type": "main",
+                "source": "electron-active-hook",
+                "capture_method": "api-wrapper",
+                "artifact_path": null,
+                "artifact_sha256": null,
+                "error": false
+              }
+            ],
+            "observed": 7,
+            "dropped": 0
+          },
+          "actions": [
+            {
+              "step_id": "dismiss-invalid-file",
+              "kind": "click",
+              "window_index": 0,
+              "target": "window:0",
+              "elapsed_ms": 124,
+              "status": "completed",
+              "error": null
+            },
+            {
+              "step_id": "insert-shape",
+              "kind": "click",
+              "window_index": 0,
+              "target": "window:0",
+              "elapsed_ms": 117,
+              "status": "completed",
+              "error": null
+            },
+            {
+              "step_id": "settle-renderer",
+              "kind": "wait",
+              "window_index": 0,
+              "target": "window:0",
+              "elapsed_ms": 502,
+              "status": "completed",
+              "error": null
+            }
+          ],
+          "workflow_status": "partial-or-failed",
+          "serialized_result_sha256": "97991c178260b1562a08ebc2281c82b7307e68ee640da38386e300205a698c5f",
+          "provider_error": {
+            "_tag": "BrowserObservationError",
+            "operation": "capture_electron_scenario",
+            "reason": "cleanup_failed",
+            "userMessage": "Electron cleanup could not be verified: process ownership token mismatch for PID(s): 3749547, 3749548, 3749585, 3749587, 3749605. Collected observations are retained in partial_observation. Inspect the reported process resources before launching another capture.",
+            "cleanup": {
+              "reason": "process ownership token mismatch for PID(s): 3749547, 3749548, 3749585, 3749587, 3749605",
+              "resources": [
+                "owned_process_group",
+                "run:750e2da3-8f6a-4662-921e-5d86ba40b018",
+                "process-group:3749543"
+              ]
+            },
+            "cleanupIncomplete": true
+          }
+        }
+      ],
+      "resource_observation": {
+        "scope": "rea-efficiency-1b1d76dffc5d402385b9b164a1fd774d.scope",
+        "elapsed_seconds": 12.3,
+        "abort": null,
+        "payload_exit": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-1b1d76dffc5d402385b9b164a1fd774d.scope",
+          "payload_exit_code": 5,
+          "observer_pid": 3749467,
+          "remaining_processes": [3749467, 3749479],
+          "payload_cleanup_verified": false,
+          "cpu_stat": {
+            "usage_usec": 7213035,
+            "user_usec": 4961284,
+            "system_usec": 2251750,
+            "nr_periods": 121,
+            "nr_throttled": 3,
+            "throttled_usec": 8438,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 546140160,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-1b1d76dffc5d402385b9b164a1fd774d.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": false,
+        "final_whole_scope_counters_verified": false
+      },
+      "post_scope_state": "ActiveState=inactive\nSubState=dead",
+      "xvfb_teardown_failure": true,
+      "runtime_revision": "5a094a0dfa5a2d7f0145f6bb63d2b0476fa6bd3e"
+    },
+    "static": {
+      "tasks_passed": 2,
+      "tasks_cached": 0,
+      "receipt": {
+        "name": "review-check",
+        "log_sha256": "72073f3ed7a75a36f6005932974aa5b283498cb608b029a4f316c079323bc44d",
+        "execution_status": "executed",
+        "observations": [],
+        "resource_observation": {
+          "scope": "rea-efficiency-b393f8ccbb774849979e1c349bf943c4.scope",
+          "elapsed_seconds": 135.173,
+          "abort": null,
+          "payload_exit": {
+            "phase": "payload-exited-observer-alive",
+            "ownership_token": "rea-efficiency-b393f8ccbb774849979e1c349bf943c4.scope",
+            "payload_exit_code": 0,
+            "observer_pid": 3753488,
+            "remaining_processes": [3753488],
+            "payload_cleanup_verified": true,
+            "cpu_stat": {
+              "usage_usec": 133786166,
+              "user_usec": 124480122,
+              "system_usec": 9306043,
+              "nr_periods": 1350,
+              "nr_throttled": 32,
+              "throttled_usec": 10768,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_peak_bytes": 4274634752,
+            "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-b393f8ccbb774849979e1c349bf943c4.scope",
+            "resource_events": {
+              "memory.events": {
+                "low": 0,
+                "high": 0,
+                "max": 0,
+                "oom": 0,
+                "oom_kill": 0,
+                "oom_group_kill": 0
+              },
+              "pids.events": {
+                "max": 0
+              }
+            }
+          },
+          "payload_resource_observation_verified": true,
+          "final_whole_scope_counters_verified": false
+        },
+        "post_scope_state": "ActiveState=inactive\nSubState=dead",
+        "xvfb_teardown_failure": false
+      }
+    },
+    "docs_check": {
+      "tasks_passed": 6,
+      "readme_cases_passed": 5,
+      "log_sha256": "d19d6e8a8631f9d4dbae7fea66f90ea17225326758b67d183ddea850ade1d182",
+      "payload_exit": {
+        "phase": "payload-exited-observer-alive",
+        "ownership_token": "rea-efficiency-36aa218a8d5c49e8964f53b3fd14ad74.scope",
+        "payload_exit_code": 0,
+        "observer_pid": 3757012,
+        "remaining_processes": [3757012],
+        "payload_cleanup_verified": true,
+        "cpu_stat": {
+          "usage_usec": 10848469,
+          "user_usec": 9007805,
+          "system_usec": 1840663,
+          "nr_periods": 115,
+          "nr_throttled": 1,
+          "throttled_usec": 2365,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "memory_peak_bytes": 474152960,
+        "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-36aa218a8d5c49e8964f53b3fd14ad74.scope",
+        "resource_events": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        }
+      },
+      "post_scope_state": "ActiveState=inactive\nSubState=dead"
+    },
+    "input_asar_sha256_rechecked_after_trials": "e64b9650c0b8241ca9a7d33b56386a385bceee63270cec701d3a467347b697e6",
+    "limits": [
+      "Only the initial four d02cc934c trials are a complete ABBA observation set. Three later attempts were refused before target launch; no performance measurements exist for them.",
+      "Final source has one real-app recovery/insertion validation, not a new completed-task performance pair. Overall provider cleanup remains unverified; Xvfb teardown also fails in this final pipeline.",
+      "Serialized Result summaries retain public cleanup diagnostics; they do not reconstruct non-enumerable native Error cause chains.",
+      "Original manifests, measurements and failed attempts remain unchanged."
+    ]
+  }
 }

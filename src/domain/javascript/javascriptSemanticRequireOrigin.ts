@@ -7,6 +7,7 @@ import {
   resolveSemanticBindingState,
   isUnmodifiedCommonJsWrapperBinding,
   isUnshadowedGlobal,
+  commonJsWrapperBindingDeclaration,
   semanticResolutionBlocked,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
@@ -19,7 +20,8 @@ import {
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import {
-  semanticReadInitializers,
+  semanticBindingAtRead,
+  semanticEffectTiming,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
@@ -42,17 +44,49 @@ export const semanticRequireLoaderAt = (
   state: JavaScriptSemanticAnalysisState,
   factoryBindingIds: ReadonlySet<string>,
 ): JavaScriptRequireLoaderFact => {
-  if (!t.isIdentifier(node.callee, { name: "require" })) return "local";
-  const binding = resolveSemanticBindingState(state, node.callee, "require");
-  if (binding === undefined)
-    return semanticResolutionBlocked(state, node.callee, "require")
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  const loader = t.isIdentifier(callee, { name: "require" })
+    ? callee
+    : (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+        ["resolve", "main"].includes(
+          semanticStaticPropertyKey(callee.property, callee.computed) ?? "",
+        ) &&
+        t.isIdentifier(callee.object, { name: "require" })
+      ? callee.object
+      : undefined;
+  if (loader === undefined) return "local";
+  const binding = resolveSemanticBindingState(state, loader, "require");
+  if (binding === undefined) {
+    if (semanticResolutionBlocked(state, loader, "require")) return "unknown";
+    return (state.ambientBindingWrites.get("require") ?? []).some(
+      (write) => semanticEffectTiming(node, write, state) !== "after",
+    )
       ? "unknown"
       : "commonjs-loader";
+  }
   if (factoryBindingIds.has(binding.bindingId))
     return binding.initializers.length === 0 ? "factory-loader" : "unknown";
+  if (
+    binding.hostOrigin === "commonjs-wrapper" &&
+    [...binding.declarationKinds].every((kind) => kind === "var")
+  ) {
+    if (binding.definitions.some(({ kind }) => kind === "function"))
+      return "local";
+    return commonJsWrapperBindingHasPriorWrite(node, binding, state)
+      ? "unknown"
+      : "commonjs-loader";
+  }
   if (isWrapperRequireInitializerCall(binding, node, state))
     return "commonjs-loader";
-  if (isUnmodifiedCommonJsWrapperBinding(node.callee, "require", state))
+  const wrapperBinding = commonJsWrapperBindingDeclaration(
+    loader,
+    "require",
+    state,
+  );
+  if (
+    wrapperBinding !== undefined &&
+    !commonJsWrapperBindingHasPriorWrite(node, wrapperBinding, state)
+  )
     return "commonjs-loader";
   if (isSemanticCreateRequireBinding(binding, state)) return "create-require";
   const initializer = semanticStableInitializer(binding, state)?.node;
@@ -69,6 +103,42 @@ export const semanticRequireLoaderAt = (
   )
     return "local";
   return "unknown";
+};
+
+const commonJsWrapperBindingHasPriorWrite = (
+  site: t.Node,
+  binding: NonNullable<ReturnType<typeof resolveSemanticBindingState>>,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const writes = state.bindingWrites.get(binding.bindingId) ?? [];
+  const declarationInitializers = binding.initializers
+    .map(({ node }) => node)
+    .filter(
+      (initializer) =>
+        !writes.some((write) => semanticNodeWithin(initializer, write, state)),
+    );
+  return (
+    writes.some(
+      (write) => semanticEffectTiming(site, write, state) !== "after",
+    ) ||
+    declarationInitializers.some(
+      (initializer) =>
+        semanticEffectTiming(site, initializer, state) !== "after",
+    )
+  );
+};
+
+const semanticNodeWithin = (
+  node: t.Node,
+  ancestor: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let current: t.Node | undefined = node;
+  while (current !== undefined) {
+    if (current === ancestor) return true;
+    current = state.parentsByNode.get(current);
+  }
+  return false;
 };
 
 /** Classify a call through an exact recovered factory-loader binding. */
@@ -220,17 +290,55 @@ const writesModuleRequire = (
     const binding = resolveSemanticBindingState(state, value, value.name);
     if (binding === undefined || visited.has(binding.bindingId)) return false;
     const next = new Set(visited).add(binding.bindingId);
-    const { initializers } = semanticReadInitializers(
+    const { initializers } = semanticBindingAtRead(
       binding,
       value,
       state.parentsByNode,
-    );
+    ).binding;
     return (
       initializers.length > 0 &&
       initializers.every(
         ({ node: init, projection }) =>
           projection.length === 0 && isModuleObject(init, next),
       )
+    );
+  };
+  const isSeparateReceiver = (
+    node: t.Node,
+    visited = new Set<string>(),
+  ): boolean => {
+    const value = unwrapJavaScriptExpression(node).node;
+    if (
+      interop.isFreshObject(value) ||
+      readExactJavaScriptLiteral(value).found ||
+      t.isBigIntLiteral(value) ||
+      t.isUnaryExpression(value, { operator: "void" }) ||
+      isUnshadowedGlobal(value, state, "undefined")
+    )
+      return true;
+    const separateNamespace = (origin: JavaScriptModuleOrigin): boolean =>
+      MUTABLE_BUILTIN_DEFAULTS.has(origin.specifier.replace(/^node:/u, "")) &&
+      (origin.importedPath.length === 0 ||
+        (origin.resolutionMode !== "require" &&
+          origin.importedPath.length === 1 &&
+          origin.importedPath[0] === "default"));
+    const required = semanticRequireOrigin(value, state);
+    if (required !== undefined && separateNamespace(required.origin))
+      return true;
+    if (!t.isIdentifier(value)) return false;
+    const binding = resolveSemanticBindingState(state, value, value.name);
+    if (binding === undefined || visited.has(binding.bindingId)) return false;
+    const snapshot = semanticBindingAtRead(binding, value, state.parentsByNode);
+    if (snapshot.status !== "ordered") return false;
+    const { initializers, referenceInitializers, directOrigins } =
+      snapshot.binding;
+    if (referenceInitializers.length !== 0) return false;
+    if (initializers.length === 0)
+      return directOrigins.length > 0 && directOrigins.every(separateNamespace);
+    const next = new Set(visited).add(binding.bindingId);
+    return initializers.every(
+      ({ node: source, projection }) =>
+        projection.length === 0 && isSeparateReceiver(source, next),
     );
   };
   // Unknown keys, spread sources and accessors may all replace the delegate.
@@ -290,12 +398,12 @@ const writesModuleRequire = (
           method === "defineProperty" &&
           isModuleObject(args?.[0] ?? t.nullLiteral())
         ) {
-          const key = interop.staticString(args?.[1]);
+          const key = interop.staticPropertyKey(args?.[1]);
           if (key === "require" || key === undefined) writes.push(node);
         } else if (owner === "Reflect" && method === "set") {
           const key = args?.slice(0, 2).some(t.isSpreadElement)
             ? undefined
-            : interop.staticString(args?.[1]);
+            : interop.staticPropertyKey(args?.[1]);
           if (key !== "require" && key !== undefined) return;
           // Ordinary [[Set]] writes the receiver, which defaults to the target
           // only when omitted. An unknown receiver can still be this module.
@@ -308,15 +416,7 @@ const writesModuleRequire = (
             writes.push(node);
             return;
           }
-          const value = unwrapJavaScriptExpression(receiver).node;
-          if (
-            !interop.isFreshObject(value) &&
-            !readExactJavaScriptLiteral(value).found &&
-            !t.isBigIntLiteral(value) &&
-            !t.isUnaryExpression(value, { operator: "void" }) &&
-            !isUnshadowedGlobal(value, state, "undefined")
-          )
-            writes.push(node);
+          if (!isSeparateReceiver(receiver)) writes.push(node);
         } else if (
           owner === "Object" &&
           method === "defineProperties" &&

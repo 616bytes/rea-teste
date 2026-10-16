@@ -16,6 +16,10 @@ it.each([
   "const set=Reflect.set.bind(null, {}, 'require', replacement); set(module);",
   "Object.defineProperty(module, 'require', {value: replacement}, {});",
   "let owner=module; owner.require=replacement; owner={};",
+  "Object.create=()=>module; const registry=Object.create(null); Reflect.set(registry, key, replacement);",
+  "function Object(){}; Object.create=()=>module; Reflect.set(Object.create(null), key, replacement);",
+  "const receiver=require('./local'); Reflect.set(receiver, 'require', replacement);",
+  "let receiver=require('fs'); receiver=module; Reflect.set(receiver, 'require', replacement);",
 ])("invalidates the wrapper loader at its write: %s", (write) => {
   const ir = analyzeJavaScriptSemantics(`${write}
     const fs=require('fs'); fs.readFileSync('wrong');`);
@@ -26,6 +30,20 @@ it.each([
   "Object.assign(module, { unrelated: replacement });",
   "Object.defineProperties(module, { unrelated: { value: replacement } });",
   "Reflect.set(module, 'unrelated', replacement);",
+  "const registry=Object.create(null); Reflect.set(registry, key, replacement);",
+  "const registry=Object.create(module); Reflect.set(registry, 'require', replacement);",
+  "const fs=require('node:fs'); Reflect.set(fs, 'require', replacement);",
+  "const fs=require('fs'); const receiver=fs; Reflect.set(module, 'require', replacement, receiver);",
+  "import * as fs from 'node:fs'; Reflect.set(fs, 'require', replacement);",
+  "let receiver=module; receiver=require('fs'); Reflect.set(receiver, 'require', replacement);",
+  "Reflect.set(module, 0, replacement);",
+  "Reflect.set(module, -0, replacement);",
+  "Reflect.set(module, true, replacement);",
+  "Reflect.set(module, null, replacement);",
+  "Reflect.set(module, undefined, replacement);",
+  "Reflect.set(module, void 0, replacement);",
+  "Reflect.set(module, 1n, replacement);",
+  "const key=0; Reflect.set(module, key, replacement);",
   "Reflect.set(module, 'require', replacement, {});",
   "const receiver={}; Reflect.set(module, 'require', replacement, receiver);",
   "Reflect.set(module, 'require', replacement, null);",
@@ -35,7 +53,7 @@ it.each([
   "let owner=module; owner={}; owner.require=replacement;",
 ])("preserves the wrapper loader across unrelated writes: %s", (write) => {
   const ir = analyzeJavaScriptSemantics(`${write}
-    const fs=require('fs'); fs.readFileSync('kept');`);
+    require('fs').readFileSync('kept');`);
   expect(ir.configurationOperations.map(({ key }) => key)).toEqual(["kept"]);
 });
 
@@ -101,6 +119,19 @@ it("keeps a replaced native receiver uncertain", () => {
   expect(ir.configurationOperations).toEqual([]);
 });
 
+it.each([
+  "Reflect.set(fs, 'readFileSync', custom);",
+  "Reflect.set(fs, key, custom);",
+  "Reflect.set = custom; Reflect.set(fs, 'require', replacement);",
+  "Object.defineProperty(fs, 'require', {set(value) {fs.readFileSync=custom;}}); Reflect.set(fs, 'require', replacement);",
+])("keeps builtin mutations through Reflect.set conservative: %s", (write) => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `const fs=require('fs'); ${write} require('fs').readFileSync('wrong');`,
+    ).configurationOperations,
+  ).toEqual([]);
+});
+
 it.each(["process", "proc"])(
   "retains scalar process reads passed to calls: %s",
   (receiver) => {
@@ -118,6 +149,14 @@ it("tracks process writes through self-reassigned global aliases", () => {
     analyzeJavaScriptSemantics(`let host=globalThis; host=host.globalThis;
     host.process.env={}; const proc=require('process'); const value=proc.env.MODE;`);
   expect(ir.configurationOperations).toEqual([]);
+});
+
+it("retains each builtin read across repeated assignments and later writes", () => {
+  const keys = Array.from({ length: 32 }, (_, index) => `kept-${index}`);
+  const ir = analyzeJavaScriptSemantics(`let fs;
+    ${keys.map((key) => `fs=require('fs'); fs.readFileSync('${key}'); fs={};`).join("\n")}
+    fs=require('fs'); fs.readFileSync=custom; fs.readFileSync('wrong');`);
+  expect(ir.configurationOperations.map(({ key }) => key)).toEqual(keys);
 });
 
 it.each(["key", "'__proto__'"])(

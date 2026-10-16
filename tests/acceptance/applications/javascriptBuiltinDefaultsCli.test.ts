@@ -12,8 +12,7 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 
 const execute = promisify(execFile);
 
-it("preserves earlier and sibling effects without inventing replaced cached-module or process effects", async () => {
-  const root = await createTestTempDirectory("rea-builtin-identity-");
+const writeBuiltinIdentitySources = async (root: string): Promise<void> => {
   await writeFile(
     join(root, "app.cjs"),
     `
@@ -101,6 +100,25 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     `Reflect.set({}, 'require', replacement, module);
      const fs=require('fs'); fs.readFileSync('wrong-reflect-module.json');`,
   );
+  await writeFile(
+    join(root, "reflect-independent.cjs"),
+    `const registry=Object.create(null); Reflect.set(registry, key, replacement);
+     Reflect.set(module, 0, replacement);
+     const fs=require('fs'); Reflect.set(fs, 'require', replacement);
+     require('fs').readFileSync('reflect-independent-kept.json');`,
+  );
+  await writeFile(
+    join(root, "repeated-reads.cjs"),
+    `let fs;
+     fs=require('fs'); fs.readFileSync('timeline-first.json'); fs={};
+     fs=require('fs'); fs.readFileSync('timeline-second.json');
+     fs.readFileSync=custom; fs.readFileSync('wrong-timeline.json');`,
+  );
+};
+
+it("preserves earlier and sibling effects without inventing replaced cached-module or process effects", async () => {
+  const root = await createTestTempDirectory("rea-builtin-identity-");
+  await writeBuiltinIdentitySources(root);
   const { stdout } = await execute(
     process.execPath,
     ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
@@ -126,11 +144,14 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "loader-before.json",
     "nested-kept.json",
     "ordered-kept.json",
+    "reflect-independent-kept.json",
     "reflect-receiver-kept.json",
     "replacement-kept.json",
     "saved-destructured.json",
     "saved.json",
     "sibling.json",
+    "timeline-first.json",
+    "timeline-second.json",
     "wrapped-kept.json",
   ]);
   expect(

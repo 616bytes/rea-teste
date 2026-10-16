@@ -21,7 +21,7 @@ import {
 
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import {
-  semanticReadInitializers,
+  semanticBindingAtRead,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
@@ -479,11 +479,8 @@ const computeBuiltinBindingPath = (
   const initializers =
     provenanceCapture === undefined
       ? binding.initializers
-      : semanticReadInitializers(
-          binding,
-          provenanceCapture,
-          state.parentsByNode,
-        ).initializers;
+      : semanticBindingAtRead(binding, provenanceCapture, state.parentsByNode)
+          .binding.initializers;
   for (const initializer of initializers) {
     const pending = [
       {
@@ -1036,15 +1033,6 @@ export const dataEffectArgumentBindingId = (
   t.isIdentifier(node)
     ? (resolveSemanticBindingState(state, node, node.name)?.bindingId ?? null)
     : null;
-
-/** Read one JSON primitive default without evaluating code. */
-export const dataEffectPrimitive = (
-  node: t.Node,
-): string | number | boolean | null => {
-  if (t.isStringLiteral(node) || t.isNumericLiteral(node)) return node.value;
-  if (t.isBooleanLiteral(node)) return node.value;
-  return null;
-};
 
 /**
  * Read one static string or expression-free template. A template recovered

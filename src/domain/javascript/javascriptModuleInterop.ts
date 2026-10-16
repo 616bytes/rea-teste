@@ -26,6 +26,7 @@ import {
 import { SemanticPropertyPathCoverage } from "./javascriptSemanticPropertyPaths.js";
 import {
   readExactJavaScriptLiteral,
+  semanticStaticPropertyKey,
   runtimeFunctionParameters,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -185,15 +186,41 @@ export const createSemanticModuleInterop = (
     }
   };
 
-  const staticString = (node: t.Node | undefined): string | undefined => {
+  const staticString = (
+    node: t.Node | undefined,
+    propertyKey = false,
+  ): string | undefined => {
     if (node === undefined) return undefined;
     const visited = new Set<string>();
     let current = node;
     for (;;) {
       const literal = readExactJavaScriptLiteral(current);
       if (literal.found)
-        return typeof literal.value === "string" ? literal.value : undefined;
+        return propertyKey
+          ? String(literal.value)
+          : typeof literal.value === "string"
+            ? literal.value
+            : undefined;
       const expression = unwrapJavaScriptExpression(current).node;
+      if (propertyKey) {
+        const key = semanticStaticPropertyKey(expression, true);
+        if (key !== null) return key;
+        if (
+          isUnshadowedGlobal(expression, state, "undefined") ||
+          t.isUnaryExpression(expression, { operator: "void" })
+        )
+          return "undefined";
+        if (
+          t.isUnaryExpression(expression) &&
+          ["+", "-"].includes(expression.operator) &&
+          t.isNumericLiteral(expression.argument)
+        )
+          return String(
+            expression.operator === "-"
+              ? -expression.argument.value
+              : expression.argument.value,
+          );
+      }
       if (!t.isIdentifier(expression)) return undefined;
       const binding = resolveSemanticBindingState(
         state,
@@ -362,6 +389,19 @@ export const createSemanticModuleInterop = (
         t.isRegExpLiteral(current)
       )
         return true;
+      if (t.isCallExpression(current)) {
+        const invocation = resolveJavaScriptIntrinsicInvocation(
+          current,
+          intrinsicPath,
+          boundIntrinsic,
+          intrinsicReadChanged,
+        );
+        if (
+          invocation?.path?.join(".") === "intrinsic.Object.create" &&
+          !state.ambientWrites.covers(["global", "Object", "create"])
+        )
+          return true;
+      }
       if (!t.isIdentifier(current)) return false;
       const binding = resolveSemanticBindingState(state, current, current.name);
       const initializer = unprojectedInitializer(binding, state);
@@ -627,6 +667,7 @@ export const createSemanticModuleInterop = (
       ),
     boundIntrinsic,
     staticString,
+    staticPropertyKey: (node: t.Node | undefined) => staticString(node, true),
     isFreshObject,
     opaqueMutationPath,
     retainWrite: (node: t.Node, path: readonly (string | null)[]) => {

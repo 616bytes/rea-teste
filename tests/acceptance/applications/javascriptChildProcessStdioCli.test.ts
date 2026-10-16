@@ -41,7 +41,7 @@ const cases = [
     0,
   ],
   [
-    'spawn("coerced-keys", [], {stdio:"inherit",[true]:1,[null]:1,[-1]:1})',
+    'spawn("coerced-keys", [], {stdio:"inherit",[true]:1,[null]:1,[-1]:1,[+(1 as number)]:1})',
     "coerced-keys",
     "inherit",
     0,
@@ -56,6 +56,30 @@ const cases = [
     'spawn("primitive-spreads", [], {stdio:"inherit",...false,...42,...1n})',
     "primitive-spreads",
     "inherit",
+    0,
+  ],
+  [
+    'spawn("inline-empty", [], {stdio:"inherit",...{}})',
+    "inline-empty",
+    "inherit",
+    0,
+  ],
+  [
+    'spawn("inline-final", [], {stdio:"pipe",...{...{stdio:"ignore",stdio:"inherit"}}})',
+    "inline-final",
+    "inherit",
+    0,
+  ],
+  [
+    'spawn("inline-getter", [], {stdio:"pipe",...{get other(){return input},stdio:"inherit"}})',
+    "inline-getter",
+    "dynamic",
+    0,
+  ],
+  [
+    'spawn("inline-unknown", [], {stdio:"inherit",...{...input}})',
+    "inline-unknown",
+    "dynamic",
     0,
   ],
   [

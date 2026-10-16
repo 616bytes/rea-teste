@@ -1,5 +1,6 @@
 import * as t from "@babel/types";
 import type { JavaScriptSemanticPrimitive } from "./javascriptSemanticValueTypes.js";
+import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 /** TypeScript receiver annotations occupy no positional runtime parameter slot. */
 export const runtimeFunctionParameters = (
@@ -97,6 +98,10 @@ export const semanticStaticPropertyKey = (
   if (t.isNullLiteral(property)) return "null";
   if (t.isBigIntLiteral(property)) return String(property.value);
   if (t.isUnaryExpression(property, { operator: "void" })) return "undefined";
+  if (t.isUnaryExpression(property, { operator: "+" })) {
+    const argument = unwrapJavaScriptExpression(property.argument).node;
+    if (t.isNumericLiteral(argument)) return String(argument.value);
+  }
   if (t.isUnaryExpression(property, { operator: "-" })) {
     const argument = unwrapJavaScriptExpression(property.argument).node;
     if (t.isNumericLiteral(argument)) return String(-argument.value);
@@ -121,37 +126,59 @@ export const isNullishJavaScriptSyntax = (node: t.Node): boolean => {
   );
 };
 
+type StaticObjectProperty =
+  | { readonly status: "missing" | "dynamic" }
+  | { readonly status: "explicit"; readonly property: t.ObjectProperty };
+
 /** Find the effective explicit property, preserving unresolved overrides. */
 export const staticObjectProperty = (
   object: t.Node | undefined,
   name: string,
   isNullish?: (node: t.Node) => boolean,
-):
-  | { readonly status: "missing" | "dynamic" }
-  | { readonly status: "explicit"; readonly property: t.ObjectProperty } => {
+): StaticObjectProperty => {
   if (object === undefined) return { status: "missing" };
   if (!t.isObjectExpression(object)) return { status: "dynamic" };
-  for (const property of object.properties.toReversed()) {
-    if (t.isSpreadElement(property)) {
-      const spread = unwrapJavaScriptExpression(property.argument).node;
-      // These primitive boxes have no own keys; strings can own index keys.
-      if (
-        t.isBooleanLiteral(spread) ||
-        t.isNumericLiteral(spread) ||
-        t.isBigIntLiteral(spread) ||
-        isNullish?.(property.argument) === true
-      )
-        continue;
-      return { status: "dynamic" };
+  const lookup = (
+    current: t.ObjectExpression,
+    depth: number,
+  ): StaticObjectProperty => {
+    for (const property of current.properties.toReversed()) {
+      if (t.isSpreadElement(property)) {
+        const { node: spread, depth: wrappers } = unwrapJavaScriptExpression(
+          property.argument,
+        );
+        if (t.isObjectExpression(spread)) {
+          const nextDepth = depth + wrappers + 1;
+          // Copying an accessor can run code that changes another source key.
+          if (
+            nextDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT ||
+            spread.properties.some((entry) => t.isObjectMethod(entry))
+          )
+            return { status: "dynamic" };
+          const found = lookup(spread, nextDepth);
+          if (found.status === "missing") continue;
+          return found;
+        }
+        // These primitive boxes have no own keys; strings can own index keys.
+        if (
+          t.isBooleanLiteral(spread) ||
+          t.isNumericLiteral(spread) ||
+          t.isBigIntLiteral(spread) ||
+          isNullish?.(property.argument) === true
+        )
+          continue;
+        return { status: "dynamic" };
+      }
+      const key = semanticStaticPropertyKey(property.key, property.computed);
+      if (key === null) return { status: "dynamic" };
+      if (key !== name) continue;
+      return t.isObjectProperty(property)
+        ? { status: "explicit", property }
+        : { status: "dynamic" };
     }
-    const key = semanticStaticPropertyKey(property.key, property.computed);
-    if (key === null) return { status: "dynamic" };
-    if (key !== name) continue;
-    return t.isObjectProperty(property)
-      ? { status: "explicit", property }
-      : { status: "dynamic" };
-  }
-  return { status: "missing" };
+    return { status: "missing" };
+  };
+  return lookup(object, 0);
 };
 
 /** Later properties own a key; an intervening dynamic write leaves it unknown. */

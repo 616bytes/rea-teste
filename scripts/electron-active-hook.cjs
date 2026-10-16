@@ -693,6 +693,16 @@ const patchIpcMain = (ipcMain) => {
   // including decorators installed/replaced during traversal. Application
   // getters and methods always receive the real emitter; its public methods
   // are never temporarily replaced. Native once entries remain unchanged.
+  // The registry stays authoritative when the application mutates or replaces
+  // the public `.listener` metadata: translated removal that leaves the
+  // wrapper registered (mutated metadata defeats the application's own
+  // native match) is completed by wrapper identity through the native
+  // removal captured here. Public metadata is never temporarily restored.
+  const nativeRemoveListener = ipcMain.removeListener;
+  const nativeRawListeners = ipcMain.rawListeners;
+  const completionAvailable =
+    typeof nativeRemoveListener === "function" &&
+    typeof nativeRawListeners === "function";
   ipcMain.removeAllListeners = function patchedIpcMainRemoveAllListeners(
     ...args
   ) {
@@ -716,14 +726,29 @@ const patchIpcMain = (ipcMain) => {
                 hookListenerRemovalTargets,
                 entry,
               );
-              // Translate only a still-valid data link. If app code changed it
-              // to an accessor, native removal owns when that getter executes.
+              // Translate by registry identity whenever the data link is a
+              // data property, whatever value mutation left on it. Accessor
+              // metadata stays untranslated: the application's own native
+              // removal owns when that getter executes, preserving plain
+              // EventEmitter parity for throwing accessors.
               if (
                 removalTarget !== undefined &&
                 removalTarget !== entry &&
-                listenerDataDescriptor(entry)?.value === removalTarget
-              )
+                listenerDataDescriptor(entry) != null
+              ) {
                 methodArgs[1] = removalTarget;
+                const result = applyFunction(value, emitter, methodArgs);
+                // Mutated metadata defeats the application's own native
+                // match; complete the removal by wrapper identity.
+                if (
+                  completionAvailable &&
+                  nativeRawListeners
+                    .call(emitter, methodArgs[0])
+                    .includes(entry)
+                )
+                  nativeRemoveListener.call(emitter, methodArgs[0], entry);
+                return result;
+              }
             }
             return applyFunction(value, emitter, methodArgs);
           };

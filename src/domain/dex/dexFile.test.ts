@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEX_NO_INDEX,
+  DexClassDataReader,
+  type DexEncodedMethod,
+  type DexWorkCharge,
   readClassDef,
-  classDataMethods,
-  walkClassData,
   parseCodeItem,
   parseDexFile,
 } from "./dexFile.js";
@@ -20,6 +21,26 @@ const CLASS_DEFS_OFF = 0x70;
 const CODE_ITEM_OFF = 0x90;
 const CLASS_DATA_OFF = 0xa0;
 const DEBUG_INFO_OFF = 500; // sentinel; framing reads the field, never follows it
+const IDS = { fieldIdsSize: 1 << 20, methodIdsSize: 1 << 20 };
+
+/** Open and step a class_data to its end, collecting methods and the outcome. */
+const readClassData = (
+  bytes: Uint8Array,
+  offset: number,
+  charge: DexWorkCharge = () => true,
+  ids = IDS,
+) => {
+  const opened = DexClassDataReader.open(bytes, offset, ids);
+  if (!opened.ok) return { methods: [], error: opened.error };
+  const reader = opened.value;
+  const methods: DexEncodedMethod[] = [];
+  for (;;) {
+    const step = reader.step(charge);
+    if (step === "method") methods.push(reader.method);
+    else if (step === "failed") return { methods, error: reader.failure };
+    else if (step === "end") return { methods, error: null };
+  }
+};
 
 const minimalDex = (version = "035"): Uint8Array => {
   const classData = [
@@ -79,11 +100,8 @@ describe("parseDexFile framing", () => {
 
   it("decodes the class_data method list and reaches the code item's debug_info_off", () => {
     const bytes = minimalDex();
-    const methods: { codeOff: number }[] = [];
-    const walk = classDataMethods(bytes, CLASS_DATA_OFF, () => true);
-    let step = walk.next();
-    for (; step.done !== true; step = walk.next()) methods.push(step.value);
-    expect(step.value).toEqual({ ok: true, value: { methodCount: 1 } });
+    const { methods, error } = readClassData(bytes, CLASS_DATA_OFF);
+    expect(error).toBeNull();
     expect(methods).toHaveLength(1);
     const method = methods[0]!;
     expect(method.codeOff).toBe(CODE_ITEM_OFF);
@@ -191,10 +209,8 @@ describe("parseClassData bounds", () => {
     ]);
 
   it("refuses a field count that cannot fit before walking it", () => {
-    const result = walkClassData(classData(1_000_000, 64), 1, () => true);
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatchObject({
+    const { error } = readClassData(classData(1_000_000, 64), 1);
+    expect(error).toMatchObject({
       kind: "budget-exceeded",
       resource: "class-data",
     });
@@ -202,40 +218,86 @@ describe("parseClassData bounds", () => {
 
   it("charges every skipped field to the caller's work and stops when spent", () => {
     let units = 3;
-    const result = walkClassData(classData(10, 64), 1, () => units-- > 0);
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatchObject({
+    const { error } = readClassData(classData(10, 64), 1, () => units-- > 0);
+    expect(error).toMatchObject({
       kind: "budget-exceeded",
       resource: "work",
     });
   });
 });
 
-describe("walkClassData streaming", () => {
-  it("validates without materialising methods and lets a consumer stop early", () => {
-    const methods = 5;
-    const data = Uint8Array.from([
+describe("DexClassDataReader stepping", () => {
+  /** class_data at offset 1 declaring `direct` methods with no code. */
+  const methodsData = (direct: number, virtual = 0): Uint8Array =>
+    Uint8Array.from([
       0xff,
       ...uleb(0),
       ...uleb(0),
-      ...uleb(methods),
-      ...uleb(0),
-      ...Array.from({ length: methods }, () => [
+      ...uleb(direct),
+      ...uleb(virtual),
+      ...Array.from({ length: direct + virtual }, () => [
         ...uleb(1),
         ...uleb(1),
         ...uleb(0),
       ]).flat(),
     ]);
-    expect(walkClassData(data, 1, () => true)).toEqual({
-      ok: true,
-      value: { methodCount: methods },
+
+  it("reads one entry per step, so a consumer can stop early", () => {
+    const opened = DexClassDataReader.open(methodsData(5), 1, IDS);
+    if (!opened.ok) throw new Error(opened.error.kind);
+    expect(opened.value.step(() => true)).toBe("method");
+    expect(opened.value.step(() => true)).toBe("method");
+    expect(opened.value.methodCount).toBe(2);
+    expect(opened.value.method).toEqual({
+      methodIdx: 2,
+      accessFlags: 1,
+      codeOff: 0,
     });
-    let seen = 0;
-    for (const method of classDataMethods(data, 1, () => true)) {
-      void method;
-      if (++seen === 2) break;
-    }
-    expect(seen).toBe(2);
+  });
+
+  it("refuses method lists longer than the method id table before reading them", () => {
+    let charged = 0;
+    const { methods, error } = readClassData(
+      methodsData(2, 1),
+      1,
+      () => (charged += 1) > 0,
+      { fieldIdsSize: 4, methodIdsSize: 2 },
+    );
+    expect(error).toEqual({
+      kind: "member-count-exceeds-ids",
+      offset: 1,
+      members: "methods",
+      declared: 3,
+      bound: 2,
+    });
+    expect(methods).toHaveLength(0);
+    expect(charged).toBe(0);
+  });
+
+  it("refuses a field list longer than the field id table", () => {
+    const bytes = Uint8Array.from([
+      0xff,
+      ...uleb(0),
+      ...uleb(3),
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+    ]);
+    expect(
+      readClassData(bytes, 1, () => true, {
+        fieldIdsSize: 2,
+        methodIdsSize: 0,
+      }).error,
+    ).toMatchObject({
+      kind: "member-count-exceeds-ids",
+      members: "instance-fields",
+      declared: 3,
+      bound: 2,
+    });
   });
 });

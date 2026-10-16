@@ -19,9 +19,8 @@ import {
   type DexClassDef,
   type DexEncodedMethod,
   type DexFile,
+  DexClassDataReader,
   readClassDef,
-  classDataMethods,
-  walkClassData,
   parseCodeItem,
 } from "./dexFile.js";
 import {
@@ -242,27 +241,65 @@ const decodeMethodDebug = (
 };
 
 /**
- * A class's methods, pulled one at a time and never materialised. The
- * class_data is validated first with an allocation-free pass, so a malformed
- * class contributes nothing (not a partial list); both passes are charged to
- * the member's budget, because many class_defs may share one (or overlapping)
- * class_data.
+ * Step through a class_data, pausing after each slice of work, and hand each
+ * method to `visit`. Every field and method is charged to the member's budget,
+ * because many class_defs may share one (or overlapping) class_data. Returns
+ * the first stop reason, `"unreadable"` when the framing fails, or null at the
+ * end.
  */
-const classMethods = (
+const walkClassMethods = async (
+  reader: DexClassDataReader,
+  work: DexWork,
+  pacer: DexPacer,
+  visit: (method: DexEncodedMethod) => DexWorkError | null,
+): Promise<DexWorkError | "unreadable" | null> => {
+  const charge = (): boolean => chargeWork(work.budget);
+  for (;;) {
+    if (pacer.due) {
+      const paused = await pacer.pause();
+      if (paused !== null) return paused;
+    }
+    const step = reader.step(charge);
+    if (step === "end") return null;
+    if (step === "failed") {
+      const failure = reader.failure;
+      // A spent budget is reported as such, not as damage.
+      return failure?.kind === "budget-exceeded" && failure.resource === "work"
+        ? (outOfWork(work) ?? "unreadable")
+        : "unreadable";
+    }
+    if (step === "method") {
+      const stop = visit(reader.method);
+      if (stop !== null) return stop;
+    }
+  }
+};
+
+/**
+ * A class's methods, read one at a time and never materialised. The whole
+ * class_data is validated first (paced like the method pass), so a malformed
+ * class contributes nothing rather than a partial list; the reader returned is
+ * positioned at its start. A stop during validation is the error.
+ */
+const classMethods = async (
+  dex: DexFile,
   bytes: Uint8Array,
   classDef: DexClassDef,
   work: DexWork,
-): Iterable<DexEncodedMethod> | "no-class-data" | "unreadable" => {
-  if (classDef.classDataOff === 0) return "no-class-data";
-  const charge = (): boolean => chargeWork(work.budget);
-  const valid = walkClassData(bytes, classDef.classDataOff, charge);
-  if (!valid.ok)
-    // A spent budget is reported by the caller's budget check, not as damage.
-    return valid.error.kind === "budget-exceeded" &&
-      valid.error.resource === "work"
-      ? []
-      : "unreadable";
-  return classDataMethods(bytes, classDef.classDataOff, charge);
+  pacer: DexPacer,
+): Promise<
+  Result<DexClassDataReader | "no-class-data" | "unreadable", DexWorkError>
+> => {
+  if (classDef.classDataOff === 0) return ok("no-class-data");
+  const open = () =>
+    DexClassDataReader.open(bytes, classDef.classDataOff, dex.header);
+  const check = open();
+  if (!check.ok) return ok("unreadable");
+  const valid = await walkClassMethods(check.value, work, pacer, () => null);
+  if (valid === "unreadable") return ok("unreadable");
+  if (valid !== null) return err(valid);
+  const reader = open();
+  return ok(reader.ok ? reader.value : "unreadable");
 };
 
 const outOfWork = (work: DexWork): DexWorkError | null =>
@@ -378,16 +415,17 @@ export const assembleClassDetail = async (
   // per-method check, and its source_file must not be decoded past the limit.
   if (projected > outputLimit) return err(overBudget());
   const methods: DexMethodDetail[] = [];
-  const walk = classMethods(bytes, classDef, work);
+  const walk = await classMethods(dex, bytes, classDef, work, pacer);
+  if (!walk.ok) return walk;
   // The class exists but its member list is unreadable: unknown, not empty.
-  if (walk === "unreadable")
-    return err({
-      kind: "malformed-class-data",
-      classDataOff: classDef.classDataOff,
-    });
-  for (const method of walk === "no-class-data" ? [] : walk) {
-    const stop = pacer.due ? await pacer.pause() : outOfWork(work);
-    if (stop !== null) return err(stop);
+  const malformed = (): DexWorkError => ({
+    kind: "malformed-class-data",
+    classDataOff: classDef.classDataOff,
+  });
+  if (walk.value === "unreadable") return err(malformed());
+  const visit = (method: DexEncodedMethod): DexWorkError | null => {
+    const stop = outOfWork(work);
+    if (stop !== null) return stop;
     const debug = decodeMethodDebug(
       bytes,
       method,
@@ -404,10 +442,10 @@ export const assembleClassDetail = async (
       },
     );
     const after = outOfWork(work);
-    if (after !== null) return err(after);
+    if (after !== null) return after;
     // Bound the name and descriptor from type ids before building them.
     projected += METHOD_OVERHEAD + resolver.methodJsonBound(method.methodIdx);
-    if (projected > outputLimit) return err(overBudget());
+    if (projected > outputLimit) return overBudget();
     const name = resolver.methodName(method.methodIdx);
     const descriptor = resolver.methodDescriptor(method.methodIdx);
     // Each name plus its array separator.
@@ -425,7 +463,7 @@ export const assembleClassDetail = async (
           resolver.typeJsonBound(local.typeIdx) +
           resolver.jsonBound(local.signatureIdx);
     if (debug.localLimitExceeded || projected > outputLimit)
-      return err(overBudget());
+      return overBudget();
     const hasCode = method.codeOff !== 0;
     methods.push({
       name,
@@ -448,6 +486,12 @@ export const assembleClassDetail = async (
       })),
       setFileEvents: debug.setFileEvents,
     });
+    return null;
+  };
+  if (walk.value !== "no-class-data") {
+    const stop = await walkClassMethods(walk.value, work, pacer, visit);
+    if (stop === "unreadable") return err(malformed());
+    if (stop !== null) return err(stop);
   }
   const spent = outOfWork(work);
   if (spent !== null) return err(spent);
@@ -552,23 +596,21 @@ export const summarizeDex = async (
       }
       if ((validSource[at]! & bit) !== 0) sourceFilePresent += 1;
     }
-    const walk = classMethods(bytes, classDef, work);
-    if (walk === "unreadable") {
+    const walk = await classMethods(dex, bytes, classDef, work, pacer);
+    if (!walk.ok) return walk;
+    if (walk.value === "no-class-data") continue;
+    if (walk.value === "unreadable") {
       unreadableClassData += 1;
       continue;
     }
-    for (const method of walk === "no-class-data" ? [] : walk) {
-      if (pacer.due) {
-        const paused = await pacer.pause();
-        if (paused !== null) return err(paused);
-      }
-      if (method.codeOff === 0) continue;
+    const visit = (method: DexEncodedMethod): DexWorkError | null => {
+      if (method.codeOff === 0) return null;
       methodsWithCode += 1;
       const code = methodCode(bytes, method);
-      if (code === null) continue;
+      if (code === null) return null;
       if (code === "unreadable") {
         unreadableCodeItems += 1;
-        continue;
+        return null;
       }
       // O(1) key: the implicit parameter layout is fixed by the proto, so its
       // index stands in for the (up to 255) parameter types.
@@ -585,7 +627,7 @@ export const summarizeDex = async (
           { budget: work.budget, collectLocals: false },
         );
         const spent = outOfWork(work);
-        if (spent !== null) return err(spent);
+        if (spent !== null) return spent;
         tally = {
           present: debug.present,
           positions: debug.positionCount,
@@ -600,14 +642,19 @@ export const summarizeDex = async (
         if (tallies.size < MEMO_LIMIT) tallies.set(key, tally);
       }
       if (tally.malformed) malformedDebugInfo += 1;
-      if (!tally.present) continue;
+      if (!tally.present) return null;
       methodsWithDebugInfo += 1;
       linePositions += tally.positions;
       localDeclarations += tally.locals;
       explicitLocalDeclarations += tally.explicitLocals;
       setFileEvents += tally.setFileEvents;
       if (tally.hasParameterNames) methodsWithParameterNames += 1;
-    }
+      return null;
+    };
+    const ended = await walkClassMethods(walk.value, work, pacer, visit);
+    // Validated framing cannot fail on the method pass; stay unknown if it does.
+    if (ended === "unreadable") unreadableClassData += 1;
+    else if (ended !== null) return err(ended);
   }
   const spent = outOfWork(work);
   if (spent !== null) return err(spent);

@@ -7,7 +7,7 @@ import {
   summarizeDex,
 } from "./dexDebugMetadata.js";
 import { parseDexFile } from "./dexFile.js";
-import { debuggableDex } from "../../../tests/fixtures/dexFile.js";
+import { debuggableDex, uleb } from "../../../tests/fixtures/dexFile.js";
 
 const work = (limit = 1_000_000, cancelled = false): DexWork => ({
   budget: dexWorkBudget(limit),
@@ -377,5 +377,73 @@ describe("dexDebugMetadata cooperative scheduling", () => {
     );
     expect(result.ok && result.value.readiness).toBe("present");
     expect(yields).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The fixture's class re-pointed at an appended class_data declaring `methods`
+ * direct methods without code, with the header claiming `methodIds` method ids.
+ */
+const withCodelessMethods = (
+  methods: number,
+  methodIds: number,
+): Uint8Array => {
+  const base = debuggableDex();
+  const classData = [
+    ...uleb(0),
+    ...uleb(0),
+    ...uleb(methods),
+    ...uleb(0),
+    ...Array.from({ length: methods }, (_, i) => [
+      ...uleb(i === 0 ? 0 : 1),
+      ...uleb(1),
+      ...uleb(0),
+    ]).flat(),
+  ];
+  const bytes = new Uint8Array(base.length + classData.length);
+  bytes.set(base);
+  bytes.set(classData, base.length);
+  const { view, classDefsOff } = layoutOf(bytes);
+  view.setUint32(classDefsOff + 24, base.length, true); // class_data_off
+  view.setUint32(32, bytes.length, true); // file_size
+  view.setUint32(88, methodIds, true); // method_ids_size
+  return bytes;
+};
+
+describe("dexDebugMetadata class_data validation", () => {
+  it("paces the class_data validation pass, not only the method pass", async () => {
+    const methods = 4096;
+    const bytes = withCodelessMethods(methods, methods);
+    const parsed = parseDexFile(bytes);
+    if (!parsed.ok) throw new Error("fixture must frame");
+    const budget = dexWorkBudget(1_000_000);
+    let usedAtFirstYield: number | null = null;
+    const result = await summarizeDex(parsed.value, bytes, {
+      budget,
+      cancelled: () => usedAtFirstYield !== null,
+      yieldNow: () => {
+        usedAtFirstYield ??= budget.limit - budget.remaining;
+        return Promise.resolve();
+      },
+      sliceUnits: 64,
+    });
+    expect(result).toEqual({ ok: false, error: { kind: "cancelled" } });
+    // The abort lands one slice into validating the class's methods.
+    expect(usedAtFirstYield).toBeGreaterThanOrEqual(64);
+    expect(usedAtFirstYield).toBeLessThan(methods);
+  });
+
+  it("treats more methods than the method id table names as unreadable class_data", async () => {
+    const bytes = withCodelessMethods(2, 1);
+    const summary = await summaryOf(bytes);
+    expect(summary.unreadable.classData).toBe(1);
+    expect(summary.readiness).toBe("unknown");
+    expect(await detailOf(bytes)).toEqual({
+      ok: false,
+      error: {
+        kind: "malformed-class-data",
+        classDataOff: debuggableDex().length,
+      },
+    });
   });
 });

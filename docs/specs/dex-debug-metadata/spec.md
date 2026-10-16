@@ -61,20 +61,22 @@ from any decompiler output.
 
 ## Resource admission
 
-Every length and offset is bounded against the buffer before allocation: the
-DEX header, id-table and `class_defs` counts, a `class_data` method count
-(structurally, so a crafted count cannot force an unbounded array), the
-`string_data_item` NUL scan with a `utf16_size` cross-check, and LEB128 capped
-at 5 bytes. The archive is admitted once through a no-follow descriptor; members
-are read under a per-member byte budget (a decompression bomb cannot be
-buffered) and the archive digest is read through the same descriptor only after
-a member is selected. The summary decodes one method at a time and discards it,
-so peak memory is bounded regardless of class count. The projected result is
-bounded by an inline output budget. Decoding yields to the event loop after
-each slice of work, so a large member does not block other requests and
-cancellation takes effect within a slice. The archive descriptor and its ZIP
-reader are owned through the work and released after it; a failed close is
-retained as a cleanup lease, named in the error, and retried by `close()`.
+Every length and offset is bounded against the buffer before allocation: the DEX
+header, id-table and `class_defs` counts, `class_data` field and method counts
+(against the remaining bytes, and against the id tables each list must index in
+strictly increasing order, so an impossible count is refused before it is
+walked), the `string_data_item` NUL scan with a `utf16_size` cross-check, and
+LEB128 capped at 5 bytes. The archive is admitted once through a no-follow
+descriptor; members are read under a per-member byte budget (a decompression
+bomb cannot be buffered) and the archive digest is read through the same
+descriptor only after a member is selected. The summary decodes one method at a
+time and discards it, so peak memory is bounded regardless of class count. The
+projected result is bounded by an inline output budget. Decoding, including the
+`class_data` validation pass, yields to the event loop after each slice of work,
+so a large member does not block other requests and cancellation takes effect
+within a slice. The archive descriptor and its ZIP reader are owned through the
+work and released after it; a failed close is retained as a cleanup lease, named
+in the error, and retried by `close()`.
 
 ## Verification
 

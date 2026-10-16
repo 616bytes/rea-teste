@@ -60,6 +60,14 @@ export type DexFileParseError =
       readonly declared: number;
       readonly remaining: number;
     }
+  /** A class_data list declares more members than the id table can name. */
+  | {
+      readonly kind: "member-count-exceeds-ids";
+      readonly offset: number;
+      readonly members: "static-fields" | "instance-fields" | "methods";
+      readonly declared: number;
+      readonly bound: number;
+    }
   | {
       readonly kind: "invalid-index";
       readonly offset: number;
@@ -185,6 +193,7 @@ export interface DexHeader {
   readonly typeIdsOff: number;
   readonly protoIdsSize: number;
   readonly protoIdsOff: number;
+  readonly fieldIdsSize: number;
   readonly methodIdsSize: number;
   readonly methodIdsOff: number;
   readonly classDefsSize: number;
@@ -312,6 +321,7 @@ export const parseDexFile = (
     typeIdsOff: view.getUint32(68, true),
     protoIdsSize: view.getUint32(72, true),
     protoIdsOff: view.getUint32(76, true),
+    fieldIdsSize: view.getUint32(80, true),
     methodIdsSize: view.getUint32(88, true),
     methodIdsOff: view.getUint32(92, true),
     classDefsSize: view.getUint32(96, true),
@@ -362,107 +372,182 @@ export const parseDexFile = (
  */
 export type DexWorkCharge = () => boolean;
 
-const workSpent = (cursor: DexCursor): Result<never, DexFileParseError> =>
-  err({
-    kind: "budget-exceeded",
-    offset: cursor.offset,
-    resource: "work",
-    declared: 0,
-    remaining: cursor.remaining,
-  });
+const workSpentError = (cursor: DexCursor): DexFileParseError => ({
+  kind: "budget-exceeded",
+  offset: cursor.offset,
+  resource: "work",
+  declared: 0,
+  remaining: cursor.remaining,
+});
+
+/** What one {@link DexClassDataReader.step} read. */
+export type DexClassDataStep = "field" | "method" | "end" | "failed";
 
 /**
- * Walk a `class_data_item`: skip its encoded_field lists and yield each
- * encoded_method in order (direct, then virtual), holding one method at a time.
- * Counts that could not fit are refused up front and every field and method is
- * charged to the caller's work. A consumer may stop early (or pause between
- * methods) because the walk is pull-driven; the return value is the framing
- * outcome once the walk is exhausted.
+ * Pull-driven reader over a `class_data_item`: each {@link step} reads one
+ * encoded_field (skipped) or encoded_method, charged to the caller's work, so
+ * a consumer can pause between entries and stop early. Nothing is
+ * materialised while stepping; {@link method} builds the method last read.
+ *
+ * Counts are refused before any entry is read when they cannot fit the
+ * remaining bytes, or when they exceed what the id tables can name: ART
+ * requires strictly increasing indices within each list and rejects a virtual
+ * method that repeats a direct one, so each field list is at most
+ * `field_ids_size` long and the two method lists together at most
+ * `method_ids_size`.
  */
-export function* classDataMethods(
-  bytes: Uint8Array,
-  offset: number,
-  charge: DexWorkCharge,
-): Generator<
-  DexEncodedMethod,
-  Result<{ readonly methodCount: number }, DexFileParseError>
-> {
-  if (offset <= 0 || offset >= bytes.length)
-    return err({
-      kind: "invalid-index",
-      offset,
-      index: offset,
-      bound: bytes.length,
-    });
-  const cursor = new DexCursor(bytes, offset);
-  const staticFields = cursor.uleb128();
-  if (!staticFields.ok) return staticFields;
-  const instanceFields = cursor.uleb128();
-  if (!instanceFields.ok) return instanceFields;
-  const directMethods = cursor.uleb128();
-  if (!directMethods.ok) return directMethods;
-  const virtualMethods = cursor.uleb128();
-  if (!virtualMethods.ok) return virtualMethods;
+export class DexClassDataReader {
+  #fieldsLeft: number;
+  readonly #methodLists: number[];
+  #methodsLeft = 0;
+  #methodIdx = 0;
+  #accessFlags = 0;
+  #codeOff = 0;
+  #methodCount = 0;
+  #failure: DexFileParseError | null = null;
 
-  // encoded_field: field_idx_diff uleb + access uleb (at least two bytes).
-  const fields = staticFields.value + instanceFields.value;
-  if (fields > cursor.remaining / 2)
-    return err({
-      kind: "budget-exceeded",
-      offset: cursor.offset,
-      resource: "class-data",
-      declared: fields,
-      remaining: cursor.remaining,
-    });
-  for (let i = 0; i < fields; i += 1) {
-    if (!charge()) return workSpent(cursor);
-    if (!cursor.uleb128().ok || !cursor.uleb128().ok)
-      return err({
-        kind: "truncated",
-        offset: cursor.offset,
-        need: 1,
-        have: cursor.remaining,
-      });
+  private constructor(
+    private readonly cursor: DexCursor,
+    fields: number,
+    directMethods: number,
+    virtualMethods: number,
+  ) {
+    this.#fieldsLeft = fields;
+    this.#methodLists = [directMethods, virtualMethods];
   }
 
-  // encoded_method: method_idx_diff, access, code_off (at least three bytes).
-  let methodCount = 0;
-  for (const count of [directMethods.value, virtualMethods.value]) {
-    if (count > cursor.remaining / 3)
+  static open(
+    bytes: Uint8Array,
+    offset: number,
+    ids: Pick<DexHeader, "fieldIdsSize" | "methodIdsSize">,
+  ): Result<DexClassDataReader, DexFileParseError> {
+    if (offset <= 0 || offset >= bytes.length)
+      return err({
+        kind: "invalid-index",
+        offset,
+        index: offset,
+        bound: bytes.length,
+      });
+    const cursor = new DexCursor(bytes, offset);
+    const staticFields = cursor.uleb128();
+    if (!staticFields.ok) return staticFields;
+    const instanceFields = cursor.uleb128();
+    if (!instanceFields.ok) return instanceFields;
+    const directMethods = cursor.uleb128();
+    if (!directMethods.ok) return directMethods;
+    const virtualMethods = cursor.uleb128();
+    if (!virtualMethods.ok) return virtualMethods;
+
+    const overIds = (
+      members: "static-fields" | "instance-fields" | "methods",
+      declared: number,
+      bound: number,
+    ): Result<never, DexFileParseError> =>
+      err({
+        kind: "member-count-exceeds-ids",
+        offset,
+        members,
+        declared,
+        bound,
+      });
+    if (staticFields.value > ids.fieldIdsSize)
+      return overIds("static-fields", staticFields.value, ids.fieldIdsSize);
+    if (instanceFields.value > ids.fieldIdsSize)
+      return overIds("instance-fields", instanceFields.value, ids.fieldIdsSize);
+    const methods = directMethods.value + virtualMethods.value;
+    if (methods > ids.methodIdsSize)
+      return overIds("methods", methods, ids.methodIdsSize);
+
+    // encoded_field: field_idx_diff uleb + access uleb (at least two bytes).
+    const fields = staticFields.value + instanceFields.value;
+    if (fields > cursor.remaining / 2)
       return err({
         kind: "budget-exceeded",
         offset: cursor.offset,
         resource: "class-data",
-        declared: count,
+        declared: fields,
         remaining: cursor.remaining,
       });
-    let methodIdx = 0; // indices are cumulative deltas within each list
-    for (let i = 0; i < count; i += 1) {
-      if (!charge()) return workSpent(cursor);
-      const diff = cursor.uleb128();
-      if (!diff.ok) return diff;
-      const access = cursor.uleb128();
-      if (!access.ok) return access;
-      const codeOff = cursor.uleb128();
-      if (!codeOff.ok) return codeOff;
-      methodIdx += diff.value;
-      methodCount += 1;
-      yield { methodIdx, accessFlags: access.value, codeOff: codeOff.value };
-    }
+    return ok(
+      new DexClassDataReader(
+        cursor,
+        fields,
+        directMethods.value,
+        virtualMethods.value,
+      ),
+    );
   }
-  return ok({ methodCount });
-}
 
-/** Validate a `class_data_item`'s framing without materialising its methods. */
-export const walkClassData = (
-  bytes: Uint8Array,
-  offset: number,
-  charge: DexWorkCharge,
-): Result<{ readonly methodCount: number }, DexFileParseError> => {
-  const walk = classDataMethods(bytes, offset, charge);
-  for (let step = walk.next(); ; step = walk.next())
-    if (step.done === true) return step.value;
-};
+  /** Methods read so far. */
+  get methodCount(): number {
+    return this.#methodCount;
+  }
+
+  /** Why the last step returned `"failed"`. */
+  get failure(): DexFileParseError | null {
+    return this.#failure;
+  }
+
+  /** The method the last `"method"` step read (indices resolved from their deltas). */
+  get method(): DexEncodedMethod {
+    return {
+      methodIdx: this.#methodIdx,
+      accessFlags: this.#accessFlags,
+      codeOff: this.#codeOff,
+    };
+  }
+
+  /** Read the next entry: direct then virtual methods follow the fields. */
+  step(charge: DexWorkCharge): DexClassDataStep {
+    if (this.#failure !== null) return "failed";
+    const cursor = this.cursor;
+    if (this.#fieldsLeft > 0) {
+      if (!charge()) return this.#fail(workSpentError(cursor));
+      if (!cursor.uleb128().ok || !cursor.uleb128().ok)
+        return this.#fail({
+          kind: "truncated",
+          offset: cursor.offset,
+          need: 1,
+          have: cursor.remaining,
+        });
+      this.#fieldsLeft -= 1;
+      return "field";
+    }
+    while (this.#methodsLeft === 0) {
+      const next = this.#methodLists.shift();
+      if (next === undefined) return "end";
+      // encoded_method: method_idx_diff, access, code_off (at least three bytes).
+      if (next > cursor.remaining / 3)
+        return this.#fail({
+          kind: "budget-exceeded",
+          offset: cursor.offset,
+          resource: "class-data",
+          declared: next,
+          remaining: cursor.remaining,
+        });
+      this.#methodsLeft = next;
+      this.#methodIdx = 0; // indices are cumulative deltas within each list
+    }
+    if (!charge()) return this.#fail(workSpentError(cursor));
+    const diff = cursor.uleb128();
+    if (!diff.ok) return this.#fail(diff.error);
+    const access = cursor.uleb128();
+    if (!access.ok) return this.#fail(access.error);
+    const codeOff = cursor.uleb128();
+    if (!codeOff.ok) return this.#fail(codeOff.error);
+    this.#methodIdx += diff.value;
+    this.#accessFlags = access.value;
+    this.#codeOff = codeOff.value;
+    this.#methodsLeft -= 1;
+    this.#methodCount += 1;
+    return "method";
+  }
+
+  #fail(error: DexFileParseError): "failed" {
+    this.#failure = error;
+    return "failed";
+  }
+}
 
 /** Read a `code_item` header at `offset`, exposing its `debug_info_off`. */
 export const parseCodeItem = (

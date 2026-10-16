@@ -35,6 +35,7 @@ const fixture = (): { bytes: Uint8Array; header: DexHeader } => {
     typeIdsOff: TYPE_IDS_OFF,
     protoIdsSize: 0,
     protoIdsOff: 0,
+    fieldIdsSize: 0,
     methodIdsSize: 0,
     methodIdsOff: 0,
     classDefsSize: 0,

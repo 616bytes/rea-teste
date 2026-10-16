@@ -4,7 +4,12 @@ This walkthrough answers one question: **which native Windows API does this mana
 - .NET 8 SDK
 - A REA CLI build that includes the managed-code commands. No Windows host or native-analysis engine is needed.
 ## Build the sample
-Create a console project and replace its Program.cs with:
+Create the project first:
+```bash
+dotnet new console --framework net8.0 --name ReaManagedDemo
+```
+
+Replace the contents of `ReaManagedDemo/Program.cs` with:
 ```csharp
 using System.Runtime.InteropServices;
 namespace ReaManagedDemo;
@@ -18,9 +23,8 @@ internal static class Program
     private static int Main() => 0;
 }
 ```
-Build without running the program:
+Build the project without running the program:
 ```bash
-dotnet new console --framework net8.0 --name ReaManagedDemo
 dotnet build ReaManagedDemo --configuration Release
 ```
 
@@ -31,9 +35,10 @@ DLL="$PWD/ReaManagedDemo/bin/Release/net8.0/ReaManagedDemo.dll"
 Then run:
 ```bash
 rea inspect-managed-artifact "$DLL" --json
+rea inspect-managed-members "$DLL" --type ReaManagedDemo.Program --json
 rea inspect-managed-members "$DLL" --type ReaManagedDemo.NativeMethods --json
 rea inspect-managed-native-boundaries "$DLL" --json
 ```
-The source is the independent oracle: `NativeMethods.ShowMessage` declares `MessageBoxW` from `user32.dll`. Check the artifact identity, selected method and CIL, and declared native boundary. A declaration does not establish that the method ran, that Windows loaded the library, or that the import resolved at runtime.
+The source is the independent oracle: `NativeMethods.ShowMessage` declares `MessageBoxW` from `user32.dll`. The `Program.Main` inspection should include its CIL body; `NativeMethods.ShowMessage` is `extern` and should have no CIL body. Check the artifact identity, selected members and CIL, and declared native boundary. A declaration does not establish that the method ran, that Windows loaded the library, or that the import resolved at runtime.
 ## Limits
 This is static inspection of the produced PE/CLI assembly. The source does not prove compiler output. REA does not load the assembly, call `MessageBoxW`, or recover original C# from it. Record the REA build, SDK version, host, and artifact SHA-256 alongside captured results.

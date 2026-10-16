@@ -11,7 +11,6 @@ import {
 } from "../../domain/apple/plistValue.js";
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
 import {
-  decodeBinaryPlistNumbers,
   scanBinaryPlistNumberLiterals,
   xmlPlistNumberLiterals,
 } from "./PlistNumberLiterals.js";
@@ -78,9 +77,6 @@ export const decodeKeyedArchiveBytes = (
     binaryExpansion !== undefined
       ? {
           value: parseBinaryPropertyList(bytes),
-          value: parseBinary(
-            decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
-          ),
           omittedPrototypeKeys: binaryExpansion.binaryPrototypeKeyObserved
             ? null
             : 0,

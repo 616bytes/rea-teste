@@ -238,14 +238,6 @@ export const scanBinaryPlistNumberLiterals = (
       return { literals: output.result(true), wideIntegers };
     if (type === 1 && width === 8)
       output.integer(view.getBigInt64(offset + 1).toString());
-    else if (type === 1 && width === 16)
-      output.integer(
-        (
-          (view.getBigInt64(offset + 1) << 64n) |
-          view.getBigUint64(offset + 9)
-        ).toString(),
-      );
-    else if (type === 1 && width > 4) return output.result(true);
     else if (type === 1 && width === 16) {
       const value = BigInt.asIntN(
         128,

@@ -64,9 +64,10 @@ from any decompiler output.
 
 Every length and offset is bounded against the buffer before allocation: the DEX
 header, id-table and `class_defs` counts, `class_data` field and method counts
-(against the remaining bytes, and against the id tables each list must index in
-strictly increasing order, so an impossible count is refused before it is
-walked), the `string_data_item` NUL scan with a `utf16_size` cross-check, and
+(against the remaining bytes before any entry is walked; not against the id
+tables, since ART's verifier accepts a list that repeats an index and rejects
+only a decreasing one, while each entry's index must name an id, as ART
+checks), the `string_data_item` NUL scan with a `utf16_size` cross-check, and
 LEB128 capped at 5 bytes. The archive is admitted once through a no-follow
 descriptor; members are read under a per-member byte budget (a decompression
 bomb cannot be buffered) and the archive digest is read through the same

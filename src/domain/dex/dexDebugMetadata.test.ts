@@ -387,6 +387,7 @@ describe("dexDebugMetadata cooperative scheduling", () => {
 const withCodelessMethods = (
   methods: number,
   methodIds: number,
+  diff = 1,
 ): Uint8Array => {
   const base = debuggableDex();
   const classData = [
@@ -395,7 +396,7 @@ const withCodelessMethods = (
     ...uleb(methods),
     ...uleb(0),
     ...Array.from({ length: methods }, (_, i) => [
-      ...uleb(i === 0 ? 0 : 1),
+      ...uleb(i === 0 ? 0 : diff),
       ...uleb(1),
       ...uleb(0),
     ]).flat(),
@@ -433,7 +434,14 @@ describe("dexDebugMetadata class_data validation", () => {
     expect(usedAtFirstYield).toBeLessThan(methods);
   });
 
-  it("treats more methods than the method id table names as unreadable class_data", async () => {
+  it("reads a method list that repeats an index past the id table's size, as ART accepts", async () => {
+    // ART's CheckOrder rejects only a decreasing index: three direct methods
+    // all naming method id 0 are verifiable though the table has one entry.
+    const summary = await summaryOf(withCodelessMethods(3, 1, 0));
+    expect(summary.unreadable.classData).toBe(0);
+  });
+
+  it("treats a method index past the method id table as unreadable class_data", async () => {
     const bytes = withCodelessMethods(2, 1);
     const summary = await summaryOf(bytes);
     expect(summary.unreadable.classData).toBe(1);

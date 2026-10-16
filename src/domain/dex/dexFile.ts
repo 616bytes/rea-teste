@@ -60,12 +60,12 @@ export type DexFileParseError =
       readonly declared: number;
       readonly remaining: number;
     }
-  /** A class_data list declares more members than the id table can name. */
+  /** A class_data entry names an index past the id table it indexes. */
   | {
-      readonly kind: "member-count-exceeds-ids";
+      readonly kind: "member-index-exceeds-ids";
       readonly offset: number;
-      readonly members: "static-fields" | "instance-fields" | "methods";
-      readonly declared: number;
+      readonly members: "fields" | "methods";
+      readonly index: number;
       readonly bound: number;
     }
   | {
@@ -389,15 +389,20 @@ export type DexClassDataStep = "field" | "method" | "end" | "failed";
  * a consumer can pause between entries and stop early. Nothing is
  * materialised while stepping; {@link method} builds the method last read.
  *
- * Counts are refused before any entry is read when they cannot fit the
- * remaining bytes, or when they exceed what the id tables can name: ART
- * requires strictly increasing indices within each list and rejects a virtual
- * method that repeats a direct one, so each field list is at most
- * `field_ids_size` long and the two method lists together at most
- * `method_ids_size`.
+ * Counts are refused before any entry is read only when they cannot fit the
+ * remaining bytes (two bytes per encoded_field, three per encoded_method).
+ * They are not bounded by the id tables: ART's verifier (CheckOrder) rejects
+ * only a decreasing index within a list, and a repeat across lists (an
+ * instance field equal to a static one, a virtual method equal to a direct
+ * one), so a list that repeats an index is valid and may be longer than the
+ * id table. The caller's work charge and pacing bound the walk instead. As in
+ * ART's CheckIndex, each entry's cumulative index must name an id; unsigned
+ * deltas never decrease it.
  */
 export class DexClassDataReader {
-  #fieldsLeft: number;
+  readonly #fieldLists: number[];
+  #fieldsLeft = 0;
+  #fieldIdx = 0;
   readonly #methodLists: number[];
   #methodsLeft = 0;
   #methodIdx = 0;
@@ -408,12 +413,11 @@ export class DexClassDataReader {
 
   private constructor(
     private readonly cursor: DexCursor,
-    fields: number,
-    directMethods: number,
-    virtualMethods: number,
+    private readonly ids: Pick<DexHeader, "fieldIdsSize" | "methodIdsSize">,
+    counts: readonly [number, number, number, number],
   ) {
-    this.#fieldsLeft = fields;
-    this.#methodLists = [directMethods, virtualMethods];
+    this.#fieldLists = [counts[0], counts[1]];
+    this.#methodLists = [counts[2], counts[3]];
   }
 
   static open(
@@ -438,26 +442,6 @@ export class DexClassDataReader {
     const virtualMethods = cursor.uleb128();
     if (!virtualMethods.ok) return virtualMethods;
 
-    const overIds = (
-      members: "static-fields" | "instance-fields" | "methods",
-      declared: number,
-      bound: number,
-    ): Result<never, DexFileParseError> =>
-      err({
-        kind: "member-count-exceeds-ids",
-        offset,
-        members,
-        declared,
-        bound,
-      });
-    if (staticFields.value > ids.fieldIdsSize)
-      return overIds("static-fields", staticFields.value, ids.fieldIdsSize);
-    if (instanceFields.value > ids.fieldIdsSize)
-      return overIds("instance-fields", instanceFields.value, ids.fieldIdsSize);
-    const methods = directMethods.value + virtualMethods.value;
-    if (methods > ids.methodIdsSize)
-      return overIds("methods", methods, ids.methodIdsSize);
-
     // encoded_field: field_idx_diff uleb + access uleb (at least two bytes).
     const fields = staticFields.value + instanceFields.value;
     if (fields > cursor.remaining / 2)
@@ -469,12 +453,12 @@ export class DexClassDataReader {
         remaining: cursor.remaining,
       });
     return ok(
-      new DexClassDataReader(
-        cursor,
-        fields,
+      new DexClassDataReader(cursor, ids, [
+        staticFields.value,
+        instanceFields.value,
         directMethods.value,
         virtualMethods.value,
-      ),
+      ]),
     );
   }
 
@@ -501,14 +485,29 @@ export class DexClassDataReader {
   step(charge: DexWorkCharge): DexClassDataStep {
     if (this.#failure !== null) return "failed";
     const cursor = this.cursor;
+    while (this.#fieldsLeft === 0 && this.#fieldLists.length > 0) {
+      this.#fieldsLeft = this.#fieldLists.shift() ?? 0;
+      this.#fieldIdx = 0; // indices are cumulative deltas within each list
+    }
     if (this.#fieldsLeft > 0) {
       if (!charge()) return this.#fail(workSpentError(cursor));
-      if (!cursor.uleb128().ok || !cursor.uleb128().ok)
+      const at = cursor.offset;
+      const diff = cursor.uleb128();
+      if (!diff.ok || !cursor.uleb128().ok)
         return this.#fail({
           kind: "truncated",
           offset: cursor.offset,
           need: 1,
           have: cursor.remaining,
+        });
+      this.#fieldIdx += diff.value;
+      if (this.#fieldIdx >= this.ids.fieldIdsSize)
+        return this.#fail({
+          kind: "member-index-exceeds-ids",
+          offset: at,
+          members: "fields",
+          index: this.#fieldIdx,
+          bound: this.ids.fieldIdsSize,
         });
       this.#fieldsLeft -= 1;
       return "field";
@@ -529,6 +528,7 @@ export class DexClassDataReader {
       this.#methodIdx = 0; // indices are cumulative deltas within each list
     }
     if (!charge()) return this.#fail(workSpentError(cursor));
+    const at = cursor.offset;
     const diff = cursor.uleb128();
     if (!diff.ok) return this.#fail(diff.error);
     const access = cursor.uleb128();
@@ -536,6 +536,14 @@ export class DexClassDataReader {
     const codeOff = cursor.uleb128();
     if (!codeOff.ok) return this.#fail(codeOff.error);
     this.#methodIdx += diff.value;
+    if (this.#methodIdx >= this.ids.methodIdsSize)
+      return this.#fail({
+        kind: "member-index-exceeds-ids",
+        offset: at,
+        members: "methods",
+        index: this.#methodIdx,
+        bound: this.ids.methodIdsSize,
+      });
     this.#accessFlags = access.value;
     this.#codeOff = codeOff.value;
     this.#methodsLeft -= 1;

@@ -255,49 +255,59 @@ describe("DexClassDataReader stepping", () => {
     });
   });
 
-  it("refuses method lists longer than the method id table before reading them", () => {
-    let charged = 0;
-    const { methods, error } = readClassData(
-      methodsData(2, 1),
-      1,
-      () => (charged += 1) > 0,
-      { fieldIdsSize: 4, methodIdsSize: 2 },
-    );
-    expect(error).toEqual({
-      kind: "member-count-exceeds-ids",
-      offset: 1,
-      members: "methods",
-      declared: 3,
-      bound: 2,
-    });
-    expect(methods).toHaveLength(0);
-    expect(charged).toBe(0);
-  });
-
-  it("refuses a field list longer than the field id table", () => {
+  it("reads lists that repeat an index, which ART accepts, however long", () => {
+    // ART's CheckOrder rejects only a decreasing index, so a list may repeat
+    // one id (diff 0) and be longer than the id table it indexes: two static
+    // fields and three direct methods that all name id 0 are verifiable.
     const bytes = Uint8Array.from([
       0xff,
-      ...uleb(0),
-      ...uleb(3),
-      0,
-      0,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
+      ...uleb(2), // static_fields_size
+      ...uleb(0), // instance_fields_size
+      ...uleb(3), // direct_methods_size
+      ...uleb(0), // virtual_methods_size
+      ...[0, 8, 0, 8].flatMap((value) => uleb(value)), // field diffs 0, 0
+      ...Array.from({ length: 3 }, () =>
+        [0, 1, 0].flatMap((value) => uleb(value)),
+      ).flat(),
+    ]);
+    const { methods, error } = readClassData(bytes, 1, () => true, {
+      fieldIdsSize: 1,
+      methodIdsSize: 1,
+    });
+    expect(error).toBeNull();
+    expect(methods.map((method) => method.methodIdx)).toEqual([0, 0, 0]);
+  });
+
+  it("refuses an entry whose index is past its id table, as ART's CheckIndex does", () => {
+    // Instance field indices restart at 0: static 0, then instance 0 and 1.
+    const fields = Uint8Array.from([
+      0xff,
+      ...[1, 2, 0, 0].flatMap((value) => uleb(value)),
+      ...[0, 8, 0, 0, 1, 0].flatMap((value) => uleb(value)),
     ]);
     expect(
-      readClassData(bytes, 1, () => true, {
-        fieldIdsSize: 2,
+      readClassData(fields, 1, () => true, {
+        fieldIdsSize: 1,
         methodIdsSize: 0,
       }).error,
-    ).toMatchObject({
-      kind: "member-count-exceeds-ids",
-      members: "instance-fields",
-      declared: 3,
-      bound: 2,
+    ).toEqual({
+      kind: "member-index-exceeds-ids",
+      offset: 9,
+      members: "fields",
+      index: 1,
+      bound: 1,
+    });
+    const { methods, error } = readClassData(methodsData(1, 1), 1, () => true, {
+      fieldIdsSize: 0,
+      methodIdsSize: 1,
+    });
+    // The direct method names id 1 (diff 1) past a one-entry table.
+    expect(methods).toHaveLength(0);
+    expect(error).toMatchObject({
+      kind: "member-index-exceeds-ids",
+      members: "methods",
+      index: 1,
+      bound: 1,
     });
   });
 });

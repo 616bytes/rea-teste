@@ -102,10 +102,10 @@ export const mapDexParseError = (
         "invalid_value",
         `${path}: declared ${error.resource} count (${String(error.declared)}) exceeds the remaining ${String(error.remaining)} bytes at byte ${String(error.offset)}.${context}`,
       );
-    case "member-count-exceeds-ids":
+    case "member-index-exceeds-ids":
       return inputError(
         "invalid_value",
-        `${path}: class_data at byte ${String(error.offset)} declares ${String(error.declared)} ${error.members}, more than the ${String(error.bound)} ids the DEX defines.${context}`,
+        `${path}: class_data entry at byte ${String(error.offset)} names ${error.members} index ${String(error.index)}, past the ${String(error.bound)} ids the DEX defines.${context}`,
       );
     case "invalid-index":
       return inputError(

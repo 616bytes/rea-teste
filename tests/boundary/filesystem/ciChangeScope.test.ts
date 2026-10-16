@@ -748,6 +748,10 @@ it.each([
     { code: true, runtime: true, package: true, apple: false, evm: false },
   ],
   [
+    "tests/process-global/portableCommand.test.ts",
+    { code: true, runtime: true, package: true, apple: false, evm: false },
+  ],
+  [
     ".agents/skills/reverse-engineer-anything/SKILL.md",
     { code: true, runtime: true, docs: true, package: false, evm: false },
   ],
@@ -1284,6 +1288,9 @@ it("owns every explicit native-host test path with the lane that runs it", async
     );
   expect(listed("apple-artifacts").length).toBeGreaterThan(0);
   expect(listed("windows-curated").length).toBeGreaterThan(0);
+  expect(listed("windows-curated")).toContain(
+    "tests/process-global/portableCommand.test.ts",
+  );
   expect(unowned("apple-artifacts", "apple")).toEqual([]);
   expect(unowned("windows-curated", "package")).toEqual([]);
 });

@@ -141,6 +141,16 @@ export class DexStringResolver {
       : null;
   }
 
+  /** A method's `proto_idx`, or null when the method or proto is out of range. */
+  methodProtoIndex(methodIndex: number): number | null {
+    if (methodIndex < 0 || methodIndex >= this.header.methodIdsSize)
+      return null;
+    const protoAt = this.header.methodIdsOff + methodIndex * 8 + 2;
+    if (protoAt + 2 > this.bytes.length) return null;
+    const protoIndex = this.view.getUint16(protoAt, true);
+    return protoIndex < this.header.protoIdsSize ? protoIndex : null;
+  }
+
   /** `method_id_item` = { class_idx u2, proto_idx u2, name_idx u4 }. */
   methodName(methodIndex: number): string | null {
     if (methodIndex < 0 || methodIndex >= this.header.methodIdsSize)

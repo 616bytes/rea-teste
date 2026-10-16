@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEX_NO_INDEX,
-  parseClassData,
+  readClassDef,
+  walkClassData,
   parseCodeItem,
   parseDexFile,
 } from "./dexFile.js";
@@ -80,8 +81,8 @@ describe("parseDexFile framing", () => {
     if (!result.ok) return;
     expect(result.value.header.version).toBe("035");
     expect(result.value.header.sizeMismatch).toBe(false);
-    expect(result.value.classDefs).toHaveLength(1);
-    const def = result.value.classDefs[0]!;
+    expect(result.value.header.classDefsSize).toBe(1);
+    const def = readClassDef(minimalDex(), result.value.header, 0);
     expect(def.sourceFileIdx).toBe(0);
     expect(def.superclassIdx).toBe(DEX_NO_INDEX);
     expect(def.classDataOff).toBe(CLASS_DATA_OFF);
@@ -89,12 +90,19 @@ describe("parseDexFile framing", () => {
 
   it("decodes the class_data method list and reaches the code item's debug_info_off", () => {
     const bytes = minimalDex();
-    const data = parseClassData(bytes, CLASS_DATA_OFF);
-    expect(data.ok).toBe(true);
-    if (!data.ok) return;
-    expect(data.value.directMethods).toHaveLength(1);
-    expect(data.value.virtualMethods).toHaveLength(0);
-    const method = data.value.directMethods[0]!;
+    const methods: { codeOff: number }[] = [];
+    const data = walkClassData(
+      bytes,
+      CLASS_DATA_OFF,
+      () => true,
+      (m) => {
+        methods.push(m);
+        return true;
+      },
+    );
+    expect(data).toEqual({ ok: true, value: { methodCount: 1 } });
+    expect(methods).toHaveLength(1);
+    const method = methods[0]!;
     expect(method.codeOff).toBe(CODE_ITEM_OFF);
     const code = parseCodeItem(bytes, method.codeOff);
     expect(code.ok).toBe(true);
@@ -178,7 +186,7 @@ describe("parseClassData bounds", () => {
     ]);
 
   it("refuses a field count that cannot fit before walking it", () => {
-    const result = parseClassData(classData(1_000_000, 64), 1);
+    const result = walkClassData(classData(1_000_000, 64), 1, () => true);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toMatchObject({
@@ -189,12 +197,43 @@ describe("parseClassData bounds", () => {
 
   it("charges every skipped field to the caller's work and stops when spent", () => {
     let units = 3;
-    const result = parseClassData(classData(10, 64), 1, () => units-- > 0);
+    const result = walkClassData(classData(10, 64), 1, () => units-- > 0);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toMatchObject({
       kind: "budget-exceeded",
       resource: "work",
     });
+  });
+});
+
+describe("walkClassData streaming", () => {
+  it("validates without a visitor and lets a visitor stop early", () => {
+    const methods = 5;
+    const data = Uint8Array.from([
+      0xff,
+      ...uleb(0),
+      ...uleb(0),
+      ...uleb(methods),
+      ...uleb(0),
+      ...Array.from({ length: methods }, () => [
+        ...uleb(1),
+        ...uleb(1),
+        ...uleb(0),
+      ]).flat(),
+    ]);
+    expect(walkClassData(data, 1, () => true)).toEqual({
+      ok: true,
+      value: { methodCount: methods },
+    });
+    let seen = 0;
+    const stopped = walkClassData(
+      data,
+      1,
+      () => true,
+      () => ++seen < 2,
+    );
+    expect(stopped.ok).toBe(true);
+    expect(seen).toBe(2);
   });
 });

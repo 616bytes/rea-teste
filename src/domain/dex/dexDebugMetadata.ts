@@ -16,7 +16,8 @@ import {
   type DexClassDef,
   type DexEncodedMethod,
   type DexFile,
-  parseClassData,
+  readClassDef,
+  walkClassData,
   parseCodeItem,
 } from "./dexFile.js";
 import {
@@ -122,27 +123,19 @@ const methodState = (
   return hasLines && hasLocals ? "present" : "partial";
 };
 
-interface MethodDecodeInput {
+/** A method's code_item facts that decoding and the summary memo key need. */
+interface MethodCode {
   readonly debugInfoOff: number;
   readonly insnsSize: number;
   readonly firstRegister: number;
   readonly registersSize: number;
-  readonly paramTypes: readonly {
-    readonly typeIdx: number;
-    readonly wide: boolean;
-  }[];
 }
 
-/**
- * Resolve what decoding a method needs: its code_item's debug_info offset and
- * register layout plus its proto parameters. Null for a method with no code or
- * no debug_info.
- */
-const methodDecodeInput = (
+/** The method's code_item facts, or null with no code or no debug_info. O(1). */
+const methodCode = (
   bytes: Uint8Array,
   method: DexEncodedMethod,
-  resolver: DexStringResolver,
-): MethodDecodeInput | null => {
+): MethodCode | null => {
   if (method.codeOff === 0) return null;
   const code = parseCodeItem(bytes, method.codeOff);
   if (!code.ok || code.value.debugInfoOff === 0) return null;
@@ -151,55 +144,60 @@ const methodDecodeInput = (
     insnsSize: code.value.insnsSize,
     firstRegister: code.value.registersSize - code.value.insSize,
     registersSize: code.value.registersSize,
-    paramTypes: resolver.methodParameters(method.methodIdx) ?? [],
   };
 };
 
 /**
  * Decode a method's debug_info with its implicit parameter locals (and `this`)
  * seeded at address 0 from the code_item register layout and the proto, as the
- * DEX format and dexdump/ART do.
+ * DEX format and dexdump/ART do. Parameters are resolved only here, when a
+ * decode actually runs.
  */
 const decodeMethodDebug = (
   bytes: Uint8Array,
   method: DexEncodedMethod,
-  input: MethodDecodeInput | null,
+  code: MethodCode | null,
   classTypeIdx: number,
+  resolver: DexStringResolver,
   options: DexDecodeOptions,
 ): DexMethodDebug =>
-  input === null
+  code === null
     ? absentMethodDebug()
     : decodeDebugInfo(
         bytes,
-        input.debugInfoOff,
-        input.insnsSize,
+        code.debugInfoOff,
+        code.insnsSize,
         {
-          firstRegister: input.firstRegister,
-          registersSize: input.registersSize,
+          firstRegister: code.firstRegister,
+          registersSize: code.registersSize,
           accessFlags: method.accessFlags,
           thisTypeIdx: classTypeIdx,
-          paramTypes: input.paramTypes,
+          paramTypes: resolver.methodParameters(method.methodIdx) ?? [],
         },
         options,
       );
 
+/** Methods between cancellation/budget polls inside one class. */
+const METHOD_POLL_INTERVAL = 4096;
+
 /**
- * A class's methods, with class_data parsing charged to the call-wide budget:
- * many class_defs may point at one (or overlapping) class_data, so its cost
- * must be bounded per call, not per distinct offset.
+ * Visit a class's methods one at a time, never materialising them. The
+ * class_data is validated first with an allocation-free pass, so a malformed
+ * class contributes nothing (not a partial list), then walked again with the
+ * visitor; both passes are charged to the call-wide budget, because many
+ * class_defs may share one (or overlapping) class_data. The visitor returns
+ * `false` to stop.
  */
-const methodsOf = (
+const forEachMethod = (
   bytes: Uint8Array,
   classDef: DexClassDef,
   work: DexWork,
-): readonly DexEncodedMethod[] => {
-  if (classDef.classDataOff === 0) return [];
-  const data = parseClassData(bytes, classDef.classDataOff, () =>
-    chargeWork(work.budget),
-  );
-  return data.ok
-    ? [...data.value.directMethods, ...data.value.virtualMethods]
-    : [];
+  visit: (method: DexEncodedMethod) => boolean,
+): void => {
+  if (classDef.classDataOff === 0) return;
+  const charge = (): boolean => chargeWork(work.budget);
+  if (!walkClassData(bytes, classDef.classDataOff, charge).ok) return;
+  walkClassData(bytes, classDef.classDataOff, charge, visit);
 };
 
 const outOfWork = (work: DexWork): DexWorkError | null =>
@@ -216,12 +214,27 @@ const MEMO_LIMIT = 65_536;
 const METHOD_OVERHEAD = 320;
 const LOCAL_OVERHEAD = 192;
 
+/** Find the class_def whose type descriptor matches, scanning the table in place. */
+const findClassDef = (
+  dex: DexFile,
+  bytes: Uint8Array,
+  resolver: DexStringResolver,
+  classDescriptor: string,
+): DexClassDef | undefined => {
+  for (let i = 0; i < dex.header.classDefsSize; i += 1) {
+    const def = readClassDef(bytes, dex.header, i);
+    if (resolver.typeDescriptor(def.classIdx) === classDescriptor) return def;
+  }
+  return undefined;
+};
+
 /**
  * Full per-method detail for the one class whose descriptor matches (`null`
- * when absent). Locals are collected under a cap derived from the output limit
- * (each serialises to at least {@link LOCAL_OVERHEAD} bytes) and every emitted
- * string is charged its memoised JSON bound, so an oversized class is refused
- * before its report is built.
+ * when absent). Methods are visited one at a time; locals are collected under
+ * a cap derived from the output limit (each serialises to at least
+ * {@link LOCAL_OVERHEAD} bytes) and every emitted string is charged its
+ * memoised JSON bound, so an oversized class is refused before its report is
+ * built.
  */
 export const assembleClassDetail = (
   dex: DexFile,
@@ -231,37 +244,42 @@ export const assembleClassDetail = (
   outputLimit: number,
 ): Result<DexClassDetail | null, DexWorkError> => {
   const resolver = new DexStringResolver(bytes, dex.header);
-  const classDef = dex.classDefs.find(
-    (def) => resolver.typeDescriptor(def.classIdx) === classDescriptor,
-  );
+  const classDef = findClassDef(dex, bytes, resolver, classDescriptor);
   if (classDef === undefined) return ok(null);
   let projected =
     1024 +
     resolver.typeJsonBound(classDef.classIdx) +
     resolver.jsonBound(classDef.sourceFileIdx);
-  const overBudget = (): Result<never, DexWorkError> =>
-    err({
-      kind: "output-budget-exceeded",
-      projectedBytes: projected,
-      limit: outputLimit,
-    });
+  let failure: DexWorkError | null = null;
   const methods: DexMethodDetail[] = [];
-  for (const method of methodsOf(bytes, classDef, work)) {
+  forEachMethod(bytes, classDef, work, (method) => {
     const stop = outOfWork(work);
-    if (stop !== null) return err(stop);
-    const input = methodDecodeInput(bytes, method, resolver);
-    const debug = decodeMethodDebug(bytes, method, input, classDef.classIdx, {
-      budget: work.budget,
-      cancelled: work.cancelled,
-      collectPositions: false,
-      collectLocals: true,
-      maxLocals: Math.max(
-        0,
-        Math.floor((outputLimit - projected) / LOCAL_OVERHEAD),
-      ),
-    });
+    if (stop !== null) {
+      failure = stop;
+      return false;
+    }
+    const debug = decodeMethodDebug(
+      bytes,
+      method,
+      methodCode(bytes, method),
+      classDef.classIdx,
+      resolver,
+      {
+        budget: work.budget,
+        cancelled: work.cancelled,
+        collectPositions: false,
+        collectLocals: true,
+        maxLocals: Math.max(
+          0,
+          Math.floor((outputLimit - projected) / LOCAL_OVERHEAD),
+        ),
+      },
+    );
     const after = outOfWork(work);
-    if (after !== null) return err(after);
+    if (after !== null) {
+      failure = after;
+      return false;
+    }
     const name = resolver.methodName(method.methodIdx);
     const descriptor = resolver.methodDescriptor(method.methodIdx);
     projected +=
@@ -271,19 +289,25 @@ export const assembleClassDetail = (
     // Each name plus its array separator.
     for (const idx of debug.parameterNames)
       projected += resolver.jsonBound(idx) + 1;
-    if (debug.localLimitExceeded) {
+    if (debug.localLimitExceeded)
       projected += (debug.localCount - debug.locals.length) * LOCAL_OVERHEAD;
-      return overBudget();
+    else
+      for (const local of debug.locals)
+        projected +=
+          LOCAL_OVERHEAD +
+          (local.nameIdx === DEX_THIS_NAME
+            ? 6
+            : resolver.jsonBound(local.nameIdx)) +
+          resolver.typeJsonBound(local.typeIdx) +
+          resolver.jsonBound(local.signatureIdx);
+    if (debug.localLimitExceeded || projected > outputLimit) {
+      failure = {
+        kind: "output-budget-exceeded",
+        projectedBytes: projected,
+        limit: outputLimit,
+      };
+      return false;
     }
-    for (const local of debug.locals)
-      projected +=
-        LOCAL_OVERHEAD +
-        (local.nameIdx === DEX_THIS_NAME
-          ? 6
-          : resolver.jsonBound(local.nameIdx)) +
-        resolver.typeJsonBound(local.typeIdx) +
-        resolver.jsonBound(local.signatureIdx);
-    if (projected > outputLimit) return overBudget();
     const hasCode = method.codeOff !== 0;
     methods.push({
       name,
@@ -306,7 +330,11 @@ export const assembleClassDetail = (
       })),
       setFileEvents: debug.setFileEvents,
     });
-  }
+    return true;
+  });
+  if (failure !== null) return err(failure);
+  const spent = outOfWork(work);
+  if (spent !== null) return err(spent);
   return ok({
     descriptor: resolver.typeDescriptor(classDef.classIdx),
     sourceFile: resolver.string(classDef.sourceFileIdx),
@@ -373,9 +401,12 @@ export const summarizeDex = (
   let distinctSources = 0;
   const sourceSample: string[] = [];
 
-  for (const classDef of dex.classDefs) {
+  let failure: DexWorkError | null = null;
+  let visited = 0;
+  for (let c = 0; c < dex.header.classDefsSize; c += 1) {
     const stop = outOfWork(work);
     if (stop !== null) return err(stop);
+    const classDef = readClassDef(bytes, dex.header, c);
     const idx = classDef.sourceFileIdx;
     if (idx >= 0 && idx < idSpace) {
       const at = idx >>> 3;
@@ -393,29 +424,28 @@ export const summarizeDex = (
       }
       if ((validSource[at]! & bit) !== 0) sourceFilePresent += 1;
     }
-    for (const method of methodsOf(bytes, classDef, work)) {
-      if (method.codeOff === 0) continue;
+    forEachMethod(bytes, classDef, work, (method) => {
+      visited += 1;
+      if (visited % METHOD_POLL_INTERVAL === 0) {
+        failure = outOfWork(work);
+        if (failure !== null) return false;
+      }
+      if (method.codeOff === 0) return true;
       methodsWithCode += 1;
-      const input = methodDecodeInput(bytes, method, resolver);
-      if (input === null) continue;
+      const code = methodCode(bytes, method);
+      if (code === null) return true;
+      // O(1) key: the implicit parameter layout is fixed by the proto, so its
+      // index stands in for the (up to 255) parameter types.
       const isStatic = (method.accessFlags & 0x8) !== 0;
-      const key = [
-        input.debugInfoOff,
-        input.insnsSize,
-        input.firstRegister,
-        input.registersSize,
-        isStatic ? "s" : `i${String(classDef.classIdx)}`,
-        input.paramTypes
-          .map((p) => `${String(p.typeIdx)}${p.wide ? "w" : ""}`)
-          .join(","),
-      ].join(":");
+      const key = `${String(code.debugInfoOff)}:${String(code.insnsSize)}:${String(code.firstRegister)}:${String(code.registersSize)}:${isStatic ? "s" : `i${String(classDef.classIdx)}`}:${String(resolver.methodProtoIndex(method.methodIdx))}`;
       let tally = tallies.get(key);
       if (tally === undefined) {
         const debug = decodeMethodDebug(
           bytes,
           method,
-          input,
+          code,
           classDef.classIdx,
+          resolver,
           {
             budget: work.budget,
             cancelled: work.cancelled,
@@ -423,8 +453,8 @@ export const summarizeDex = (
             collectLocals: false,
           },
         );
-        const after = outOfWork(work);
-        if (after !== null) return err(after);
+        failure = outOfWork(work);
+        if (failure !== null) return false;
         tally = {
           present: debug.present,
           positions: debug.positionCount,
@@ -437,19 +467,23 @@ export const summarizeDex = (
         // repeat is decoded again (still charged), never retained.
         if (tallies.size < MEMO_LIMIT) tallies.set(key, tally);
       }
-      if (!tally.present) continue;
+      if (!tally.present) return true;
       methodsWithDebugInfo += 1;
       linePositions += tally.positions;
       localDeclarations += tally.locals;
       explicitLocalDeclarations += tally.explicitLocals;
       setFileEvents += tally.setFileEvents;
       if (tally.hasParameterNames) methodsWithParameterNames += 1;
-    }
+      return true;
+    });
+    if (failure !== null) return err(failure);
   }
+  const spent = outOfWork(work);
+  if (spent !== null) return err(spent);
 
   return ok({
     dexVersion: dex.header.version,
-    classCount: dex.classDefs.length,
+    classCount: dex.header.classDefsSize,
     methodsWithCode,
     methodsWithDebugInfo,
     methodsWithParameterNames,

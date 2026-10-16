@@ -207,10 +207,31 @@ export interface DexClassDef {
 }
 
 /** A framed DEX file: its header and every `class_def_item`. */
+/**
+ * A framed DEX file. `class_def_item`s are a fixed 32-byte table and are read
+ * on demand with {@link readClassDef}, never materialised as millions of
+ * objects; `header.classDefsSize` is their count (checked to fit the buffer).
+ */
 export interface DexFile {
   readonly header: DexHeader;
-  readonly classDefs: readonly DexClassDef[];
 }
+
+/** Read the `index`-th class_def_item (caller keeps `index < classDefsSize`). */
+export const readClassDef = (
+  bytes: Uint8Array,
+  header: DexHeader,
+  index: number,
+): DexClassDef => {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const base = header.classDefsOff + index * 32;
+  return {
+    classIdx: view.getUint32(base, true),
+    accessFlags: view.getUint32(base + 4, true),
+    superclassIdx: view.getUint32(base + 8, true),
+    sourceFileIdx: view.getUint32(base + 16, true),
+    classDataOff: view.getUint32(base + 24, true),
+  };
+};
 
 /** One method within a `class_data_item` (indices resolved from their deltas). */
 export interface DexEncodedMethod {
@@ -221,11 +242,6 @@ export interface DexEncodedMethod {
 }
 
 /** The decoded members of a `class_data_item` relevant to debug inspection. */
-export interface DexClassData {
-  readonly directMethods: readonly DexEncodedMethod[];
-  readonly virtualMethods: readonly DexEncodedMethod[];
-}
-
 /** The `code_item` header, down to the fields needed to reach its debug info. */
 export interface DexCodeItem {
   readonly registersSize: number;
@@ -313,58 +329,9 @@ export const parseDexFile = (
       remaining: Math.max(0, bytes.length - header.classDefsOff),
     });
 
-  const classDefs: DexClassDef[] = [];
-  for (let i = 0; i < header.classDefsSize; i += 1) {
-    const base = header.classDefsOff + i * 32;
-    classDefs.push({
-      classIdx: view.getUint32(base, true),
-      accessFlags: view.getUint32(base + 4, true),
-      superclassIdx: view.getUint32(base + 8, true),
-      sourceFileIdx: view.getUint32(base + 16, true),
-      classDataOff: view.getUint32(base + 24, true),
-    });
-  }
-
-  return ok({ header, classDefs });
+  return ok({ header });
 };
 
-const readEncodedMethods = (
-  cursor: DexCursor,
-  count: number,
-  charge: DexWorkCharge,
-): Result<DexEncodedMethod[], DexFileParseError> => {
-  // Each encoded_method is at least three ULEB128 bytes; a declared count that
-  // could not fit in the remaining buffer is refused before allocating, so a
-  // crafted class_data cannot force an unbounded method array.
-  if (count > cursor.remaining / 3)
-    return err({
-      kind: "budget-exceeded",
-      offset: cursor.offset,
-      resource: "class-data",
-      declared: count,
-      remaining: cursor.remaining,
-    });
-  const methods: DexEncodedMethod[] = [];
-  let methodIdx = 0; // indices are cumulative deltas within each list
-  for (let i = 0; i < count; i += 1) {
-    if (!charge()) return workSpent(cursor);
-    const diff = cursor.uleb128();
-    if (!diff.ok) return diff;
-    const access = cursor.uleb128();
-    if (!access.ok) return access;
-    const codeOff = cursor.uleb128();
-    if (!codeOff.ok) return codeOff;
-    methodIdx += diff.value;
-    methods.push({
-      methodIdx,
-      accessFlags: access.value,
-      codeOff: codeOff.value,
-    });
-  }
-  return ok(methods);
-};
-
-/** Decode a `class_data_item`, skipping fields and returning the method lists. */
 /**
  * Charge one unit of caller-owned work; `false` once it is spent. Lets a
  * caller bound the total class_data parsing of a whole call, since many
@@ -381,11 +348,19 @@ const workSpent = (cursor: DexCursor): Result<never, DexFileParseError> =>
     remaining: cursor.remaining,
   });
 
-export const parseClassData = (
+/**
+ * Walk a `class_data_item`: skip its encoded_field lists and visit each
+ * encoded_method in order (direct, then virtual), holding one method at a time.
+ * Counts that could not fit are refused up front, every field and method is
+ * charged to the caller's work, and a visitor returning `false` stops the walk.
+ * Without a visitor the walk only validates the framing, allocating nothing.
+ */
+export const walkClassData = (
   bytes: Uint8Array,
   offset: number,
-  charge: DexWorkCharge = () => true,
-): Result<DexClassData, DexFileParseError> => {
+  charge: DexWorkCharge,
+  visit?: (method: DexEncodedMethod) => boolean,
+): Result<{ readonly methodCount: number }, DexFileParseError> => {
   if (offset <= 0 || offset >= bytes.length)
     return err({
       kind: "invalid-index",
@@ -403,9 +378,7 @@ export const parseClassData = (
   const virtualMethods = cursor.uleb128();
   if (!virtualMethods.ok) return virtualMethods;
 
-  // Skip both encoded_field lists (each entry: field_idx_diff uleb, access
-  // uleb — at least two bytes). A count that could not fit is refused up
-  // front, as for methods, and each skipped entry is charged.
+  // encoded_field: field_idx_diff uleb + access uleb (at least two bytes).
   const fields = staticFields.value + instanceFields.value;
   if (fields > cursor.remaining / 2)
     return err({
@@ -426,11 +399,40 @@ export const parseClassData = (
       });
   }
 
-  const direct = readEncodedMethods(cursor, directMethods.value, charge);
-  if (!direct.ok) return direct;
-  const virtual = readEncodedMethods(cursor, virtualMethods.value, charge);
-  if (!virtual.ok) return virtual;
-  return ok({ directMethods: direct.value, virtualMethods: virtual.value });
+  // encoded_method: method_idx_diff, access, code_off (at least three bytes).
+  let methodCount = 0;
+  for (const count of [directMethods.value, virtualMethods.value]) {
+    if (count > cursor.remaining / 3)
+      return err({
+        kind: "budget-exceeded",
+        offset: cursor.offset,
+        resource: "class-data",
+        declared: count,
+        remaining: cursor.remaining,
+      });
+    let methodIdx = 0; // indices are cumulative deltas within each list
+    for (let i = 0; i < count; i += 1) {
+      if (!charge()) return workSpent(cursor);
+      const diff = cursor.uleb128();
+      if (!diff.ok) return diff;
+      const access = cursor.uleb128();
+      if (!access.ok) return access;
+      const codeOff = cursor.uleb128();
+      if (!codeOff.ok) return codeOff;
+      methodIdx += diff.value;
+      methodCount += 1;
+      if (
+        visit !== undefined &&
+        !visit({
+          methodIdx,
+          accessFlags: access.value,
+          codeOff: codeOff.value,
+        })
+      )
+        return ok({ methodCount });
+    }
+  }
+  return ok({ methodCount });
 };
 
 /** Read a `code_item` header at `offset`, exposing its `debug_info_off`. */

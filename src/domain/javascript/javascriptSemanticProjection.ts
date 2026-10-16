@@ -36,6 +36,7 @@ import {
   isTypeOnlyExportSpecifier,
   isTypeOnlyImportDeclaration,
   isTypeOnlyImportSpecifier,
+  semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
 import {
   commonJsExportName,
@@ -148,16 +149,6 @@ const collectImportEquals = (
     node,
   );
 };
-
-/** Runtime external-module target for a value import-equals declaration. */
-export const semanticImportEqualsSpecifier = (
-  node: t.TSImportEqualsDeclaration,
-): string | null =>
-  node.importKind !== "type" &&
-  t.isTSExternalModuleReference(node.moduleReference) &&
-  t.isStringLiteral(node.moduleReference.expression)
-    ? node.moduleReference.expression.value
-    : null;
 
 /** Collect lexical references after definitions exist, optionally for one name. */
 export const collectSemanticReferences = (
@@ -679,6 +670,7 @@ const isDeleteSite = (site: t.Node): boolean =>
   t.isUnaryExpression(site, { operator: "delete" });
 
 const isPatternOwnerDeclaration = (node: t.Node): boolean =>
+  t.isTSParameterProperty(node) ||
   (t.isVariableDeclarator(node) && t.isPattern(node.id)) ||
   (t.isFunction(node) &&
     node.params.some((value): value is t.Pattern => t.isPattern(value))) ||
@@ -708,6 +700,8 @@ const isDeclarationIdentifier = (
 ): boolean => {
   if (t.isTSImportEqualsDeclaration(parent)) return parent.id === node;
   return (
+    (t.isTSParameterProperty(parent) &&
+      patternContains(parent.parameter, node)) ||
     (t.isVariableDeclarator(parent) && patternContains(parent.id, node)) ||
     ((t.isFunctionDeclaration(parent) || t.isFunctionExpression(parent)) &&
       parent.id === node) ||
@@ -769,6 +763,8 @@ const patternNames = (pattern: t.Node): string[] => {
 
 const patternContains = (pattern: t.Node, target: t.Identifier): boolean =>
   pattern === target ||
+  (t.isTSParameterProperty(pattern) &&
+    patternContains(pattern.parameter, target)) ||
   (t.isAssignmentPattern(pattern) && patternContains(pattern.left, target)) ||
   (t.isRestElement(pattern) && patternContains(pattern.argument, target)) ||
   (t.isObjectPattern(pattern) &&

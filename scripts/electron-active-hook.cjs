@@ -367,7 +367,10 @@ const invokeObservedEventListener = (thisArg, channel, listener, args) => {
 // for: they already record, so patched on() registers them as is. An "on"
 // wrapper stands in for the caller's raw function and a "once" wrapper for
 // EventEmitter's once wrapper, which removeAllListeners reports accordingly.
-const hookListenerWrappers = new WeakMap();
+// The value is the native removal argument: the app function for an "on"
+// wrapper, or the wrapper itself for "once". Public .listener is mutable;
+// it is not the authority for the original function's identity.
+const hookListenerRemovalTargets = new WeakMap();
 const MAX_LISTENER_CHAIN_HOPS = 16;
 
 // A decorator that wraps once's hook wrapper and names it through `.listener`
@@ -384,7 +387,7 @@ const reachesHookListenerWrapper = (listener) => {
     !visited.has(candidate);
     hops += 1
   ) {
-    if (hookListenerWrappers.has(candidate)) return true;
+    if (hookListenerRemovalTargets.has(candidate)) return true;
     visited.add(candidate);
     // Proxy reflection can run application traps; ordinary own descriptors
     // expose data links without evaluating application-owned accessors.
@@ -430,7 +433,7 @@ const patchIpcMain = (ipcMain) => {
       return invokeObservedEventListener(this, channel, listener, args);
     };
     wrapped.listener = listener;
-    hookListenerWrappers.set(wrapped, "on");
+    hookListenerRemovalTargets.set(wrapped, listener);
     return on.call(this, channel, wrapped);
   };
   // Mirror EventEmitter#once and _onceWrap: resolve this.on at registration
@@ -448,7 +451,7 @@ const patchIpcMain = (ipcMain) => {
         return invokeObservedEventListener(target, channel, listener, args);
       };
       wrapped.listener = listener;
-      hookListenerWrappers.set(wrapped, "once");
+      hookListenerRemovalTargets.set(wrapped, wrapped);
       this.on(channel, wrapped);
       return this;
     };
@@ -473,11 +476,19 @@ const patchIpcMain = (ipcMain) => {
         )
           return value;
         return (...methodArgs) => {
-          if (
-            key === "removeListener" &&
-            hookListenerWrappers.get(methodArgs[1]) === "on"
-          )
-            methodArgs[1] = methodArgs[1].listener;
+          if (key === "removeListener") {
+            const entry = methodArgs[1];
+            const removalTarget = hookListenerRemovalTargets.get(entry);
+            // Translate only a still-valid data link. If app code changed it
+            // to an accessor, native removal owns when that getter executes.
+            if (
+              removalTarget !== undefined &&
+              removalTarget !== entry &&
+              Object.getOwnPropertyDescriptor(entry, "listener")?.value ===
+                removalTarget
+            )
+              methodArgs[1] = removalTarget;
+          }
           return Reflect.apply(value, emitter, methodArgs);
         };
       },

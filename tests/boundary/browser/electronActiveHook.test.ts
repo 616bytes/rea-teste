@@ -843,6 +843,43 @@ process.stdout.write(JSON.stringify({ plain: scenario(new EventEmitter()), hooke
   },
 );
 
+it("preserves native removal before mutated raw listener metadata throws", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-ipc-mutated-metadata-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-mutated-listener-metadata.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const scenario = (emitter) => {
+  const marker = new Error("application metadata failure");
+  let reads = 0;
+  emitter.on("removeListener", () => undefined);
+  emitter.on("ch", () => undefined);
+  Object.defineProperty(emitter.rawListeners("ch")[0], "listener", { get() {
+    reads += 1;
+    throw marker;
+  }});
+  let failure;
+  try { emitter.removeAllListeners("ch"); } catch (cause) { failure = cause; }
+  return { reads, remaining: emitter.listenerCount("ch"), error_preserved: failure === marker };
+};
+process.stdout.write(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain) }) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const { plain, hooked } = JSON.parse(execution.stdout) as {
+    plain: Record<string, unknown>;
+    hooked: Record<string, unknown>;
+  };
+  expect(plain).toEqual({ reads: 1, remaining: 0, error_preserved: true });
+  expect(hooked).toEqual(plain);
+});
+
 it("keeps native removal traversal when an ipcMain observer prepends a listener", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-prepend-");
   temporary.push(root);

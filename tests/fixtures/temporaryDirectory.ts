@@ -62,11 +62,16 @@ export const createNodeDiscoveryTempDirectory = async (
       "Test temporary directory prefixes must be safe basenames ending in '-'",
     );
   }
-  const candidates = [await realpath(tmpdir()), await realpath("/tmp")];
-  const base = candidates.find((path) => !NODE_DISCOVERY_AMBIGUOUS.test(path));
-  if (base === undefined)
+  // Resolve /tmp only when the primary directory is ineligible, so a host
+  // without /tmp still uses a clean tmpdir().
+  const primary = await realpath(tmpdir());
+  const fallback = NODE_DISCOVERY_AMBIGUOUS.test(primary)
+    ? await realpath("/tmp")
+    : undefined;
+  const base = fallback === undefined ? primary : fallback;
+  if (NODE_DISCOVERY_AMBIGUOUS.test(base))
     throw new Error(
-      `No temporary directory free of '_', '"' and '\\' for Node discovery fixtures: ${candidates.join(", ")}`,
+      `No temporary directory free of '_', '"' and '\\' for Node discovery fixtures: ${primary}, ${base}`,
     );
   const canonicalDirectory = await realpath(await mkdtemp(join(base, prefix)));
   onTestFinished(async () => {

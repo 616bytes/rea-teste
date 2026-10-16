@@ -42,6 +42,8 @@ export interface DebugTable<T> {
 export interface LineNumberEntry {
   readonly startPc: number;
   readonly lineNumber: number;
+  /** `startPc` is not an index into the method's code array (JVMS §4.7.12). */
+  readonly outOfRange: boolean;
 }
 
 export interface LocalVariableEntry {
@@ -191,11 +193,16 @@ const u2 = (cursor: ByteCursor): number => {
 
 const decodeLineNumberTable = (
   infos: readonly Uint8Array[],
+  codeLength: number,
 ): DebugTable<LineNumberEntry> =>
-  decodeTable(infos, 4, (cursor) => ({
-    startPc: u2(cursor),
-    lineNumber: u2(cursor),
-  }));
+  decodeTable(infos, 4, (cursor) => {
+    const startPc = u2(cursor);
+    return {
+      startPc,
+      lineNumber: u2(cursor),
+      outOfRange: startPc >= codeLength,
+    };
+  });
 
 /** A scope lies outside the code when it starts at/after the end or extends past it. */
 const scopeOutOfRange = (
@@ -373,7 +380,10 @@ export const decodeMethodDebugMetadata = (
       : table;
 
   const lineNumbers = orUnread(
-    decodeLineNumberTable(collectAttributes(attributes, "LineNumberTable")),
+    decodeLineNumberTable(
+      collectAttributes(attributes, "LineNumberTable"),
+      codeLength,
+    ),
   );
   const localVariables = orUnread(
     decodeLocalVariableTable(
@@ -422,7 +432,7 @@ const DEBUG_TABLE_STRIDES: ReadonlyArray<readonly [string, number]> = [
 
 /** Serialized overhead per projected object (keys, numbers, punctuation). */
 const METHOD_OVERHEAD = 320;
-const LINE_ENTRY_OVERHEAD = 48;
+const LINE_ENTRY_OVERHEAD = 72;
 const LOCAL_ENTRY_OVERHEAD = 160;
 
 /** What {@link decodeClassDebugMetadata} would materialise, projected without materialising it. */

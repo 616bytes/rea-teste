@@ -145,7 +145,9 @@ describe("decodeClassDebugMetadata", () => {
     });
     const method = meta.methods[0]!;
     expect(method.state).toBe("present");
-    expect(method.lineNumbers.entries).toEqual([{ startPc: 0, lineNumber: 5 }]);
+    expect(method.lineNumbers.entries).toEqual([
+      { startPc: 0, lineNumber: 5, outOfRange: false },
+    ]);
     expect(method.localVariables.entries[0]).toMatchObject({
       slot: 0,
       name: "x",
@@ -177,9 +179,10 @@ describe("decodeClassDebugMetadata", () => {
     expect(method.lineNumbers.presence).toBe("present");
     expect(method.lineNumbers.declaredCount).toBe(3);
     expect(method.lineNumbers.entries).toEqual([
-      { startPc: 0, lineNumber: 1 },
-      { startPc: 5, lineNumber: 2 },
-      { startPc: 9, lineNumber: 3 },
+      { startPc: 0, lineNumber: 1, outOfRange: false },
+      // code_length is 1 in this fixture: later pcs are flagged, not dropped.
+      { startPc: 5, lineNumber: 2, outOfRange: true },
+      { startPc: 9, lineNumber: 3, outOfRange: true },
     ]);
   });
 
@@ -271,7 +274,9 @@ describe("decodeClassDebugMetadata — states and edge cases", () => {
     const method = decodeClassDebugMetadata(cls.value).methods[0]!;
     expect(method.lineNumbers.presence).toBe("malformed");
     expect(method.lineNumbers.declaredCount).toBe(5);
-    expect(method.lineNumbers.entries).toEqual([{ startPc: 0, lineNumber: 7 }]); // partial fact kept
+    expect(method.lineNumbers.entries).toEqual([
+      { startPc: 0, lineNumber: 7, outOfRange: false },
+    ]); // partial fact kept
     expect(method.state).toBe("malformed");
   });
 
@@ -454,7 +459,9 @@ describe("Code sub-attribute recovery", () => {
     const method = decodeClassDebugMetadata(cls.value).methods[0]!;
     expect(method.state).toBe("malformed");
     expect(method.lineNumbers.presence).toBe("present");
-    expect(method.lineNumbers.entries).toEqual([{ startPc: 0, lineNumber: 5 }]);
+    expect(method.lineNumbers.entries).toEqual([
+      { startPc: 0, lineNumber: 5, outOfRange: false },
+    ]);
     expect(method.localVariables.presence).toBe("unread");
     expect(method.localVariableTypes.presence).toBe("unread");
   });
@@ -528,4 +535,26 @@ describe("decodeClassDebugMetadata — constant references", () => {
       expect(method.state).toBe("malformed");
     },
   );
+});
+
+describe("decodeClassDebugMetadata — line-number ranges", () => {
+  it("flags a line entry whose start_pc is not an index into the code array", () => {
+    const code = codeAttrInfo(
+      subAttrs(
+        1,
+        new Blob().attr(
+          4,
+          lineNumberTable([
+            [0, 1],
+            [99, 2],
+          ]),
+        ),
+      ).parts,
+    );
+    const method = decodeOnly(new Blob().u2(1).attr(3, code)).methods[0]!;
+    expect(method.lineNumbers.entries).toEqual([
+      { startPc: 0, lineNumber: 1, outOfRange: false },
+      { startPc: 99, lineNumber: 2, outOfRange: true },
+    ]);
+  });
 });

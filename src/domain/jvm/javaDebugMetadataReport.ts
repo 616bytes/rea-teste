@@ -62,6 +62,7 @@ export type InspectJvmDebugMetadataInput = z.infer<
 const lineNumberEntry = z.strictObject({
   start_pc: z.number().int().nonnegative(),
   line_number: z.number().int().nonnegative(),
+  out_of_range: z.boolean(),
 });
 const localVariableEntry = z.strictObject({
   start_pc: z.number().int().nonnegative(),
@@ -226,6 +227,7 @@ export const buildJavaDebugMetadataResult = (
         entries: m.lineNumbers.entries.map((e) => ({
           start_pc: e.startPc,
           line_number: e.lineNumber,
+          out_of_range: e.outOfRange,
         })),
       },
       local_variable_table: {

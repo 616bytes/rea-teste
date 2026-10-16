@@ -59,7 +59,8 @@ The normalized result binds every fact to exact identity:
 - `methods[]` — each with `name`, `descriptor`, debugging `state`, `max_locals`
   (from the `Code` attribute; `null` without a readable `Code` header), and the
   three decoded tables:
-  - `line_number_table` — `start_pc` → `line_number` entries.
+  - `line_number_table` — `start_pc` → `line_number` entries, and
+    `out_of_range` (`start_pc` is not an index into the method's code array).
   - `local_variable_table` — `start_pc`, `length`, `name`, `descriptor`, `slot`,
     and `out_of_range` (the scope lies outside the method's code length).
   - `local_variable_type_table` — as above with a generic `signature`.
@@ -112,8 +113,9 @@ the encoded size of every constant-pool string each entry references, so a class
 with too many entries, or whose shared long names would expand past the inline
 output budget, is refused without building the report; the exact serialized
 size is checked again afterwards. A local-variable scope whose `[start_pc, start_pc+length)`
-lies outside the method's code length is surfaced as declared and flagged
-`out_of_range: true`, never silently corrected.
+lies outside the method's code length, or a line entry whose `start_pc` is at
+or past it, is surfaced as declared and flagged `out_of_range: true`, never
+silently corrected.
 
 Verified by the `verify:jvm` real lane, which compiles owned `javac` fixtures
 with `-g` and `-g:none` and cross-checks the decoded facts against `javap` —

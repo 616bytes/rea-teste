@@ -97,7 +97,7 @@ it("observes cancellation during a recovered descriptor close", async () => {
 });
 
 it.each(["completed", "failed"] as const)(
-  "retains the primary outcome when close fails after cancellation: %s",
+  "retains the physical read outcome when close fails after cancellation: %s",
   async (outcome) => {
     const root = await createTestTempDirectory("rea-file-close-cancel-");
     const path = join(root, "input.txt");
@@ -134,10 +134,12 @@ it.each(["completed", "failed"] as const)(
       expect(failure).toBeInstanceOf(RegularFileCleanupFailure);
       if (!(failure instanceof RegularFileCleanupFailure))
         throw new Error("Expected the retained close owner");
-      expect(failure.outcome).toEqual({
-        kind: "failed",
-        cause: outcome === "failed" ? primary : reason,
-      });
+      expect(failure.outcome).toEqual(
+        outcome === "failed"
+          ? { kind: "failed", cause: primary }
+          : { kind: "completed", value: Buffer.from("fixture bytes") },
+      );
+      expect(controller.signal.reason).toBe(reason);
       expect(failure.cleanupCause).toBe(cleanupCause);
       expect(retained).toEqual([failure.owner]);
       expect(failure.owner.handle.fd).toBeGreaterThanOrEqual(0);

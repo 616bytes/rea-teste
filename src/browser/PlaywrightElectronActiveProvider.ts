@@ -13,6 +13,7 @@ import type {
 } from "../application/javascript/ElectronActiveObservationPort.js";
 import type { ElectronActiveObservationResult } from "../domain/javascript/electronActiveObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -34,6 +35,7 @@ import { selectCapturedProcessGroupIds } from "../process/ProcessOwnershipProces
 import {
   runElectronActions,
   readApplicationState,
+  readFinalApplicationState,
   runWithExecutionLimits,
 } from "./PlaywrightElectronActiveActions.js";
 import { projectElectronActiveCapture } from "./PlaywrightElectronActiveProjection.js";
@@ -137,24 +139,19 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         ...(captureBaseline === undefined ? {} : { captureBaseline }),
       };
       lineage = await observeOwnedProcessLineage(ownership);
-      initialState = await readApplicationState(application);
-      actions = await runElectronActions(application, input, options);
-      const state = await runWithExecutionLimits(
+      initialState = await runWithExecutionLimits(
         readApplicationState(application),
-        undefined,
-        options.signal?.aborted ? performance.now() + 5_000 : undefined,
+        options.signal,
+        startupDeadline,
+      );
+      actions = await runElectronActions(application, input, options);
+      const state = await readFinalApplicationState(
+        application,
+        options.signal,
       );
       capture = projectElectronActiveCapture(paths, actions, state);
-      outcome = options.signal?.aborted
-        ? err(
-            new BrowserObservationError(OPERATION, "cancelled", {
-              partialObservation: {
-                kind: "electron-active-observation",
-                capture,
-              },
-            }),
-          )
-        : ok(capture);
+      // Cancellation after this read is decided once finalization has settled.
+      outcome = ok(capture);
     } catch (cause: unknown) {
       if (paths !== undefined && initialState !== undefined) {
         const retainedCapture = projectElectronActiveCapture(
@@ -173,7 +170,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       if (options.signal?.aborted === true)
         outcome = err(
           new BrowserObservationError(OPERATION, "cancelled", {
-            cause,
+            ...cancellationCause(cause, options.signal),
             ...(capture === undefined
               ? {}
               : {
@@ -276,9 +273,43 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
           ],
         });
     }
+    // Cleanup failures returned above keep precedence; a completed capture
+    // observed under late cancellation is retained as partial Evidence.
+    if (outcome.ok && options.signal?.aborted === true)
+      return err(
+        new BrowserObservationError(OPERATION, "cancelled", {
+          cause: options.signal.reason,
+          partialObservation: {
+            kind: "electron-active-observation",
+            capture: outcome.value,
+          },
+        }),
+      );
     return outcome;
   }
 }
+
+/**
+ * A cancellation wrapper stands in for the caller's abort reason and keeps its
+ * producer diagnostics; any other failure observed with cancellation stays the
+ * primary cause.
+ */
+const cancellationCause = (
+  cause: unknown,
+  signal: AbortSignal,
+): {
+  readonly cause: unknown;
+  readonly diagnostics?: AnalysisError["diagnostics"];
+} =>
+  cause instanceof AnalysisCancelledError ||
+  (cause instanceof AnalysisError && cause.userCategory === "cancelled")
+    ? {
+        cause: signal.reason,
+        ...(cause.diagnostics === undefined
+          ? {}
+          : { diagnostics: cause.diagnostics }),
+      }
+    : { cause };
 
 /** Clean up an Electron launch. Windows signals a process only after lineage is verified. */
 export const cleanupElectronProcesses = async (

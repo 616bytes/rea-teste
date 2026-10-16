@@ -1089,6 +1089,62 @@ console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenar
   expect(hooked).toEqual(plain);
 });
 
+it.each(["on", "once"])(
+  "records %s invocations without consulting application Array species",
+  async (kind) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-hook-ipc-species-",
+    );
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const script = join(root, "ipc-array-species.cjs");
+    await writeFile(
+      script,
+      `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const kind = ${JSON.stringify(kind)};
+let retainedUnderSpecies = 0;
+const scenario = (emitter) => {
+  let calls = 0, reads = 0, failure = null;
+  emitter[kind]("ch", () => { calls++; });
+  const prior = Object.getOwnPropertyDescriptor(Array, Symbol.species);
+  Object.defineProperty(Array, Symbol.species, { configurable: true, get() {
+    reads++; throw new Error("application array species");
+  }});
+  try {
+    emitter.emit("ch", { sender: { id: 9 } }, 42);
+    if (emitter === ipcMain) {
+      for (const event of globalThis.__reaElectronActiveSnapshot().events)
+        if (event.kind === "main-event-invocation") retainedUnderSpecies++;
+    }
+  }
+  catch (cause) { failure = cause.message; }
+  finally { Object.defineProperty(Array, Symbol.species, prior); }
+  return { calls, reads, failure };
+};
+const plain = scenario(new EventEmitter());
+const hooked = scenario(ipcMain);
+const invocations = globalThis.__reaElectronActiveSnapshot().events.filter(e => e.kind === "main-event-invocation").length;
+console.log(JSON.stringify({ plain, hooked, invocations, retainedUnderSpecies }));
+`,
+    );
+    const execution = await runNode(script, root);
+    expect(execution.code, execution.stderr).toBe(0);
+    const { plain, hooked, invocations, retainedUnderSpecies } = JSON.parse(
+      execution.stdout,
+    ) as {
+      plain: Record<string, unknown>;
+      hooked: Record<string, unknown>;
+      invocations: number;
+      retainedUnderSpecies: number;
+    };
+    expect(plain).toEqual({ calls: 1, reads: 0, failure: null });
+    expect(hooked).toEqual(plain);
+    expect(invocations).toBe(1);
+    expect(retainedUnderSpecies).toBe(1);
+  },
+);
+
 it("invokes handle callbacks without reading callable method properties", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-callable-");
   temporary.push(root);

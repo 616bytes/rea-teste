@@ -3,6 +3,7 @@
 const applyFunction = Reflect.apply;
 const applyArguments = Function.prototype.apply;
 const bindFunction = Function.prototype.bind;
+const arrayFrom = Array.from;
 const sliceArguments = applyFunction(bindFunction, Function.prototype.call, [
   Array.prototype.slice,
 ]);
@@ -199,7 +200,7 @@ const record = (event) => {
     ...event,
   };
   const shapeGroups = Array.isArray(raw.argument_shape_value_groups)
-    ? raw.argument_shape_value_groups.filter(Array.isArray)
+    ? raw.argument_shape_value_groups
     : Array.isArray(raw.argument_shape_values)
       ? [raw.argument_shape_values]
       : [];
@@ -250,11 +251,13 @@ const record = (event) => {
           eventBytes + estimatedRetainedBytes + snapshotEnvelopeReserveBytes >
           retentionBudgetBytes;
       };
-      for (const group of shapeGroups)
+      for (const group of shapeGroups) {
+        if (!Array.isArray(group)) continue;
         for (const argument of group) {
           countShape(argument);
           if (shapeOverflow) break;
         }
+      }
       if (shapeOverflow) {
         noteDropped(raw.kind, retainedEvent.process_type, isIpc);
         return null;
@@ -298,9 +301,11 @@ const record = (event) => {
     noteDropped(raw.kind, retainedEvent.process_type, isIpc);
     return null;
   }
-  for (const group of shapeGroups)
+  for (const group of shapeGroups) {
+    if (!Array.isArray(group)) continue;
     for (const argument of group)
       retainedEvent.argument_shapes.push(shape(argument));
+  }
   for (const valueShape of existingShapes)
     retainedEvent.argument_shapes.push(
       typeof valueShape === "string" ? valueShape : "unknown",
@@ -357,12 +362,15 @@ const invokeObservedEventListener = (
   listener,
   args,
   nativeMethod,
+  recordingArguments = args,
 ) => {
+  // Recording slices an actual invocation frame, avoiding Array species;
+  // callback dispatch keeps its native Array/Arguments representation.
   const recorded = recordInvocation(
     "main-event-invocation",
     channel,
-    args[0],
-    sliceArguments(args, 1),
+    recordingArguments[0],
+    sliceArguments(recordingArguments, 1),
   );
   try {
     if (nativeMethod === "call") return listener.call(thisArg);
@@ -444,8 +452,8 @@ const patchIpcMain = (ipcMain) => {
   ipcMain.on = function patchedIpcMainOn(channel, listener) {
     if (typeof listener !== "function" || reachesHookListenerWrapper(listener))
       return on.call(this, channel, listener);
-    const wrapped = function wrappedEventListener(...args) {
-      return invokeObservedEventListener(this, channel, listener, args);
+    const wrapped = function wrappedEventListener() {
+      return invokeObservedEventListener(this, channel, listener, arguments);
     };
     // Native single-listener dispatch reads .apply; array dispatch invokes the
     // function directly. Let Node select that path without inspecting or
@@ -463,6 +471,7 @@ const patchIpcMain = (ipcMain) => {
             listener,
             args,
             "apply",
+            arguments,
           );
         },
       ]),
@@ -813,7 +822,7 @@ try {
 }
 
 globalThis.__reaElectronActiveSnapshot = () => ({
-  events: events.map((event) => ({
+  events: arrayFrom(events, (event) => ({
     ...event,
     argument_shapes: [...event.argument_shapes],
   })),
@@ -824,11 +833,11 @@ globalThis.__reaElectronActiveSnapshot = () => ({
   dropped,
   dropped_ipc: droppedIpc,
   dropped_runtime: droppedRuntime,
-  dropped_event_families: [...droppedFamilies].map(([family, count]) => ({
+  dropped_event_families: arrayFrom(droppedFamilies, ([family, count]) => ({
     family,
     count,
   })),
-  dropped_event_roles: [...droppedRoles].map(([role, count]) => ({
+  dropped_event_roles: arrayFrom(droppedRoles, ([role, count]) => ({
     role,
     count,
   })),

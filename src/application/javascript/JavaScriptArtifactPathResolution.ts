@@ -262,6 +262,18 @@ const conditionalResolution = (
 });
 
 const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
+  if (
+    input.runtimePathKind !== undefined &&
+    input.runtimePathKind !== "url-resource" &&
+    posix.isAbsolute(input.declaredPath) &&
+    !looksExternal(input.declaredPath)
+  )
+    return (
+      rejectDeclaration(input.declaredPath, declaresLiteralPercent(input)) ??
+      unresolvedCandidate("unavailable", [
+        "An absolute runtime host path has no established mapping to the selected logical artifact root.",
+      ])
+    );
   if (input.runtimePathKind === "node-entrypoint")
     return resolveNodeRuntimeEntrypoint(input);
   if (input.moduleKind === "compiler-dependent") {
@@ -411,13 +423,6 @@ const resolveRuntimeEntrypoint = (
   if (hasScheme(input.declaredPath) || looksExternal(input.declaredPath))
     return unresolvedCandidate("external", [
       "Electron runtime entrypoints must identify local paths, not external URLs.",
-    ]);
-  if (
-    input.runtimePathKind === "application-file" &&
-    posix.isAbsolute(input.declaredPath)
-  )
-    return unresolvedCandidate("unavailable", [
-      "An absolute loadFile host path has no established mapping to the selected logical artifact root.",
     ]);
   if (
     input.runtimePathKind === "application-file" &&

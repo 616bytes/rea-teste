@@ -480,6 +480,7 @@ export const addJavaScriptPackageNodes = (
             name: packageValue.name,
             version: packageValue.version,
             main: packageValue.main,
+            main_status: packageValue.main_status,
             renderer: packageValue.renderer,
             parse_status: packageValue.status,
           },
@@ -516,7 +517,10 @@ export const addJavaScriptPackageNodes = (
         operation: "inventory-package",
       });
     if (dependencyManifest(file.path)) continue;
-    if (packageValue.status === "included" && packageValue.main === null) {
+    if (
+      packageValue.status === "included" &&
+      packageValue.main_status === "default"
+    ) {
       const defaultPath = `${file.path.slice(0, -"package.json".length)}index.js`;
       const defaultEntry = context.filesByPath.get(defaultPath);
       if (defaultEntry?.container_sha256 === file.container_sha256)

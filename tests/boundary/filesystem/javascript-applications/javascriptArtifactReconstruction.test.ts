@@ -52,6 +52,72 @@ import { parseJavaScriptSemanticGraph } from "../../../../src/domain/javascript/
 import { writeJavaScriptArtifactFixture } from "../../../fixtures/javascriptArtifactApplication.js";
 import { writeFixtureFiles } from "../../../support/javascriptApplicationFixture.js";
 
+it("keeps imported loadFile ownership unknown across an application projection omission", async () => {
+  const root = await createTestTempDirectory("rea-omitted-app-owner-");
+  await writeFixtureFiles(root, {
+    "app/package.json": JSON.stringify({ main: "../shared/main.cjs" }),
+    "shared/main.cjs": 'require("./window.cjs");',
+    "shared/window.cjs":
+      'const { BrowserWindow } = require("electron"); const win = new BrowserWindow(); win.loadFile("index.html");',
+    "index.html": "artifact-root decoy",
+    "app/index.html": "unproven application page",
+  });
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const analysis = analyzeJavaScriptArtifactFiles(files);
+    const entry = analysis.files.find(
+      ({ file }) => file.path === "shared/main.cjs",
+    );
+    expect(
+      entry?.javascript?.references.some(
+        ({ specifier }) => specifier === "./window.cjs",
+      ),
+    ).toBe(true);
+    // Exercise the production omission boundary without bypassing its memory guard.
+    const graph = buildJavaScriptArtifactGraph(snapshot, files, {
+      ...analysis,
+      files: analysis.files.map((file) =>
+        file.file.path === "shared/main.cjs"
+          ? {
+              ...file,
+              application_projection_failure: {
+                reason: "fixture projection omitted",
+                error: null,
+                limits: null,
+              },
+            }
+          : file,
+      ),
+    });
+    const roles = graph.nodes.filter(
+      ({ kind }) => kind === "electron-renderer",
+    );
+    expect(roles).toHaveLength(1);
+    const role = roles[0];
+    if (role === undefined) throw new Error("Missing renderer");
+    expect(role.observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            resolved_path: null,
+            resolution_status: "unavailable",
+          }),
+        }),
+      ]),
+    );
+    expect(
+      graph.edges.filter(
+        ({ source_node_id, relation }) =>
+          source_node_id === role.node_id && relation === "maps_to",
+      ),
+    ).toEqual([]);
+  } finally {
+    await reader.close();
+  }
+});
+
 it("keeps a loadFile owner unknown when a sibling manifest is unavailable in the inventory projection", async () => {
   const root = await createTestTempDirectory("rea-unavailable-app-owner-");
   await writeFixtureFiles(root, {

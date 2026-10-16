@@ -56,7 +56,7 @@ export interface JavaScriptArtifactGraphContext {
   readonly containerNodes: Map<string, ApplicationNode>;
   /** Resolved entrypoints/imports retain unique or competing application owners. */
   readonly applicationRootsBySource: Map<string, Set<string>>;
-  /** Unparsed package metadata prevents proving a unique launch owner. */
+  /** Incomplete package/module facts prevent proving a unique launch owner. */
   readonly applicationOwnershipUnknownContainers: ReadonlySet<string>;
 }
 

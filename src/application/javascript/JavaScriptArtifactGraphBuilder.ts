@@ -97,7 +97,10 @@ function* buildJavaScriptArtifactGraphInputSteps(
   const root = createJavaScriptArtifactRootNode(accumulator, snapshot);
   const parsedPackages = new Set(
     analysis.packages
-      .filter(({ status }) => status === "included")
+      .filter(
+        (metadata) =>
+          metadata.status === "included" && metadata.main_status !== "invalid",
+      )
       .map(({ path }) => path),
   );
   const applicationOwnershipUnknownContainers = new Set<string>();
@@ -112,6 +115,17 @@ function* buildJavaScriptArtifactGraphInputSteps(
           applicationContainerIdentity(fileSet, file),
         );
     }
+  }
+  // Omitted module relationships can hide another launch owner. Do not expand
+  // retained facts beyond the projection guard merely to recover ownership.
+  for (const analyzed of analysis.files) {
+    if (
+      analyzed.application_projection_failure !== undefined ||
+      analyzed.analysis_failure !== undefined
+    )
+      applicationOwnershipUnknownContainers.add(
+        applicationContainerIdentity(fileSet, analyzed.file),
+      );
   }
   const context: JavaScriptArtifactGraphContext = {
     accumulator,

@@ -10,6 +10,12 @@ import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js
 
 const cases = [
   {
+    directory: "absolute-runtime",
+    expression: '"/outside%2Fname.cjs"',
+    target: null,
+    status: "unavailable",
+  },
+  {
     directory: "literal",
     expression: 'path.join(__dirname, "preload%2F%5C%2E.cjs")',
     target: "preload%2F%5C%2E.cjs",
@@ -127,6 +133,64 @@ const writeRuntimeFixture = async (root: string): Promise<void> => {
   // Equal container digests must not select the other archive occurrence.
   await copyFile(join(root, "a.asar"), join(root, "b.asar"));
 };
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps invalid main declarations distinct from default entries through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-invalid-main-owner-");
+    for (const [index, main] of [123, false, null, {}, []].entries()) {
+      await writeFixtureFiles(root, {
+        [`a${index}/package.json`]: JSON.stringify({
+          name: `invalid-${index}`,
+          main,
+        }),
+        [`a${index}/index.js`]: `require("../shared/window${index}.cjs");`,
+        [`shared/window${index}.cjs`]:
+          'const { BrowserWindow } = require("electron"); const win = new BrowserWindow(); win.loadFile("index.html");',
+        [`a${index}/index.html`]: "invalid launch-owner decoy",
+        "index.html": "artifact root decoy",
+      });
+    }
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    const packages = graph.nodes.filter(({ kind }) => kind === "package");
+    expect(packages).toHaveLength(5);
+    for (const node of packages)
+      expect(node.observations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              main: null,
+              main_status: "invalid",
+              parse_status: "included",
+              name: expect.stringMatching(/^invalid-\d$/u),
+            }),
+          }),
+        ]),
+      );
+    const roles = graph.nodes.filter(
+      ({ kind }) => kind === "electron-renderer",
+    );
+    expect(roles).toHaveLength(5);
+    for (const role of roles) {
+      expect(role.observations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              resolved_path: null,
+              resolution_status: "unavailable",
+            }),
+          }),
+        ]),
+      );
+      expect(
+        graph.edges.filter(
+          ({ source_node_id, relation }) =>
+            source_node_id === role.node_id && relation === "maps_to",
+        ),
+      ).toEqual([]);
+    }
+  },
+);
 
 cliTest.for(
   (["CLI", "stdio MCP"] as const).flatMap((surface) => [

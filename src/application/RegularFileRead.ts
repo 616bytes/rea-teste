@@ -77,7 +77,7 @@ const withRegularFileOwned = async <Value>(
   const { signal, resources } = options;
   const operation = async () => {
     try {
-      return await withOwnedRegularFile(
+      const value = await withOwnedRegularFile(
         path,
         {
           ...(signal === undefined ? {} : { signal }),
@@ -100,6 +100,9 @@ const withRegularFileOwned = async <Value>(
           return value;
         },
       );
+      // Cancellation can arrive during the final metadata checks or close.
+      signal?.throwIfAborted();
+      return value;
     } catch (cause: unknown) {
       if (
         !(cause instanceof RegularFileCleanupFailure) ||
@@ -109,6 +112,7 @@ const withRegularFileOwned = async <Value>(
       const retry = await retryRegularFileCleanup(cause, resources);
       if (retry.cleanup !== undefined) throw cause;
       if (retry.outcome.kind === "failed") throw retry.outcome.cause;
+      signal?.throwIfAborted();
       return retry.outcome.value;
     }
   };

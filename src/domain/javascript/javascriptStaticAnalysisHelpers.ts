@@ -757,7 +757,8 @@ export const isWebSocketEndpointCandidate = (
     // constructor itself is selected, including destructuring at initialization.
     if (selectedCapture === undefined) {
       if (members.length > 0) selectedCapture = current;
-      else if (projection.length > 0) selectedCapture = initializer.node;
+      else if (projection.length > 0)
+        selectedCapture = initializer.bindingNode ?? initializer.node;
     }
     selected = [...projection, ...members, ...selected];
     current = projected;

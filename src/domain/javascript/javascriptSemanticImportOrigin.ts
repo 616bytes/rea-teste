@@ -25,7 +25,12 @@ export const semanticAwaitedImportOrigin = (
     result === undefined ||
     result.aliases.some(
       ({ read, initializer }) =>
-        !webSocketInitializerDominatesRead(initializer, read, state),
+        !webSocketInitializerDominatesRead(
+          initializer.node,
+          read,
+          state,
+          initializer.bindingNode,
+        ),
     )
   )
     return undefined;

@@ -3,6 +3,7 @@ import * as t from "@babel/types";
 import {
   unwrapJavaScriptExpression,
   javaScriptExactResultOperand,
+  semanticDirectFunctionReturn,
 } from "./javascriptAstValues.js";
 import { semanticLiteralInitializerProjection } from "./javascriptSemanticLiteralProjection.js";
 import {
@@ -13,6 +14,7 @@ import {
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
 import { createUnconditionalEvaluationProof } from "./javascriptSymbolicControlFlow.js";
 
@@ -26,20 +28,8 @@ const directLiteralReturn = (node: t.Node): t.Node | undefined => {
     if (result === undefined) break;
     callee = unwrapJavaScriptExpression(result).node;
   }
-  if (
-    (!t.isArrowFunctionExpression(callee) && !t.isFunctionExpression(callee)) ||
-    callee.async ||
-    callee.generator ||
-    callee.params.length !== 0
-  )
-    return undefined;
-  if (!t.isBlockStatement(callee.body)) return callee.body;
-  const statements = callee.body.body.filter(
-    (item) => !t.isEmptyStatement(item),
-  );
-  const statement = statements[0];
-  return statements.length === 1 && t.isReturnStatement(statement)
-    ? (statement.argument ?? undefined)
+  return t.isArrowFunctionExpression(callee) || t.isFunctionExpression(callee)
+    ? semanticDirectFunctionReturn(callee)
     : undefined;
 };
 
@@ -53,12 +43,15 @@ export const semanticPromiseResultIdentity = (
       readonly node: t.Node;
       readonly aliases: readonly {
         readonly read: t.Identifier;
-        readonly initializer: t.Node;
+        readonly initializer: JavaScriptSemanticInitializer;
       }[];
     }
   | undefined => {
   const seen = new Set<string>();
-  const aliases: { read: t.Identifier; initializer: t.Node }[] = [];
+  const aliases: {
+    read: t.Identifier;
+    initializer: JavaScriptSemanticInitializer;
+  }[] = [];
   let node = rawNode;
   for (;;) {
     node = unwrapJavaScriptExpression(node).node;
@@ -87,7 +80,7 @@ export const semanticPromiseResultIdentity = (
     );
     if (projected === undefined || projected.projection.length !== 0)
       return undefined;
-    aliases.push({ read: node, initializer: initializer.node });
+    aliases.push({ read: node, initializer });
     node = projected.node;
   }
 };
@@ -103,20 +96,20 @@ const awaitedResults = new WeakMap<
 
 /** Alias identity needs initialization proof through directly owned callers. */
 const promiseAliasInitializedBeforeRead = (
-  initializer: t.Node,
+  initializer: JavaScriptSemanticInitializer,
   read: t.Identifier,
   state: JavaScriptSemanticAnalysisState,
   executionFrames: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): boolean => {
-  const binding = resolveSemanticBindingState(state, read, read.name);
-  const bindingNode = semanticStableInitializer(binding, state)?.bindingNode;
   return (
     semanticInitializerPrecedesRead({
-      initializer,
+      initializer: initializer.node,
       read,
-      ...(bindingNode === undefined ? {} : { bindingNode }),
+      ...(initializer.bindingNode === undefined
+        ? {}
+        : { bindingNode: initializer.bindingNode }),
       parents: state.parentsByNode,
-      initializerContexts: executionFrames(initializer),
+      initializerContexts: executionFrames(initializer.node),
       readContexts: executionFrames(read),
     }) === true
   );

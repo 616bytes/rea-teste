@@ -2798,3 +2798,129 @@ describe("web bundle exact returned promises and class phases", () => {
     },
   );
 });
+
+const freshReadAndIterationCases = [
+  [
+    "object getter call",
+    '({ get run() { new Socket("wss://example.test/fresh-read"); return () => {}; } }).run();',
+    false,
+  ],
+  [
+    "object getter read",
+    'void ({ get run() { new Socket("wss://example.test/fresh-read"); return () => {}; } }).run;',
+    false,
+  ],
+  [
+    "paired getter and setter",
+    'void ({ get run() { new Socket("wss://example.test/fresh-read"); }, set run(value) {} }).run;',
+    false,
+  ],
+  [
+    "static getter read",
+    'void (class { static get run() { new Socket("wss://example.test/fresh-read"); } }).run;',
+    false,
+  ],
+  [
+    "fresh instance method",
+    '(new (class { run() { new Socket("wss://example.test/fresh-read"); } })()).run();',
+    false,
+  ],
+  [
+    "fresh instance getter",
+    'void (new (class { get run() { new Socket("wss://example.test/fresh-read"); } })()).run;',
+    false,
+  ],
+  [
+    "fresh instance function field",
+    '(new (class { run = () => new Socket("wss://example.test/fresh-read"); })()).run();',
+    false,
+  ],
+  [
+    "instance method shadowed by field",
+    '(new (class { run() { new Socket("wss://example.test/fresh-read"); } run = () => {}; })()).run();',
+    true,
+  ],
+  [
+    "stored instance method",
+    'const run = (new (class { run() { new Socket("wss://example.test/fresh-read"); } })()).run;',
+    true,
+  ],
+  [
+    "synchronous generator for-of",
+    'for (const ignored of (function* () { new Socket("wss://example.test/fresh-read"); yield 0; })()) {}',
+    false,
+  ],
+  [
+    "synchronous generator after yield",
+    'for (const ignored of (function* () { yield 0; new Socket("wss://example.test/fresh-read"); })()) {}',
+    false,
+  ],
+  [
+    "getter precedes awaited call argument",
+    '(async () => { ({ get run() { new Socket("wss://example.test/fresh-read"); return () => {}; } }).run(await 0); })();',
+    false,
+  ],
+  [
+    "method follows awaited call argument",
+    '(async () => { (new (class { run() { new Socket("wss://example.test/fresh-read"); } })()).run(await 0); })();',
+    true,
+  ],
+  [
+    "generator consumer awaits between steps",
+    '(async () => { for (const ignored of (function* () { yield 0; new Socket("wss://example.test/fresh-read"); })()) { await 0; } })();',
+    true,
+  ],
+  [
+    "generator consumer conditionally awaits",
+    '(async () => { for (const ignored of (function* () { yield 0; new Socket("wss://example.test/fresh-read"); })()) { if (condition) await 0; } })();',
+    true,
+  ],
+  [
+    "async generator first step",
+    '(async () => { for await (const ignored of (async function* () { new Socket("wss://example.test/fresh-read"); yield 0; })()) {} })();',
+    false,
+  ],
+  [
+    "generator consumer yields between steps",
+    '(function* () { for (const ignored of (function* () { yield 0; new Socket("wss://example.test/fresh-read"); })()) { yield 0; } })().next();',
+    true,
+  ],
+  [
+    "generator consumer pattern awaits",
+    '(async () => { for (const [value = await 0] of (function* () { yield []; new Socket("wss://example.test/fresh-read"); })()) {} })();',
+    true,
+  ],
+  [
+    "getter returned callable",
+    '({ get run() { return () => new Socket("wss://example.test/fresh-read"); } }).run();',
+    false,
+  ],
+  [
+    "stored getter returned callable",
+    'const run = ({ get run() { return () => new Socket("wss://example.test/fresh-read"); } }).run;',
+    true,
+  ],
+  [
+    "getter returned callable follows awaited argument",
+    '(async () => { ({ get run() { return () => new Socket("wss://example.test/fresh-read"); } }).run(await 0); })();',
+    true,
+  ],
+  [
+    "unresumed generator",
+    '(function* () { new Socket("wss://example.test/fresh-read"); yield 0; })();',
+    true,
+  ],
+] as const;
+
+describe("fresh member reads and synchronous generator consumption", () => {
+  it.each(freshReadAndIterationCases)(
+    "preserves %s in both source consumers",
+    (_name, prefix, present) => {
+      const source = `${prefix} const Socket = globalThis.WebSocket;`;
+      const expected = present ? ["wss://example.test/fresh-read"] : [];
+      expect(
+        socketEndpoints(source).map((items) => items.map(({ value }) => value)),
+      ).toEqual([expected, expected]);
+    },
+  );
+});

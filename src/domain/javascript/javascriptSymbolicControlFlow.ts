@@ -80,32 +80,168 @@ export const syntaxUnconditionalOperands = (
   return undefined;
 };
 
+type SyntaxAbruptCompletion =
+  | { readonly kind: "return" | "throw" | "unknown" }
+  | { readonly kind: "break" | "continue"; readonly label: string | null };
+
+interface SyntaxCompletion {
+  readonly normal: boolean;
+  readonly abrupt: readonly SyntaxAbruptCompletion[];
+}
+
+const normalCompletion: SyntaxCompletion = { normal: true, abrupt: [] };
+type CompleteSyntax = (node: t.Node | null | undefined) => SyntaxCompletion;
+
+const syntaxSequenceCompletion = (
+  statements: readonly t.Node[],
+  complete: CompleteSyntax,
+): SyntaxCompletion => {
+  const abrupt: SyntaxAbruptCompletion[] = [];
+  for (const statement of statements) {
+    const completion = complete(statement);
+    for (const exit of completion.abrupt) abrupt.push(exit);
+    if (!completion.normal) return { normal: false, abrupt };
+  }
+  return { normal: true, abrupt };
+};
+
+const syntaxTryCompletion = (
+  node: t.TryStatement,
+  complete: CompleteSyntax,
+): SyntaxCompletion => {
+  let completion = complete(node.block);
+  if (node.handler != null) {
+    const handler = complete(node.handler.body);
+    // Expressions may throw even when their ordinary completion is known.
+    // A catch must also exit before a try/catch can prove a definite exit.
+    completion = {
+      normal: completion.normal || handler.normal,
+      abrupt: [
+        ...completion.abrupt.filter(({ kind }) => kind !== "throw"),
+        ...handler.abrupt,
+      ],
+    };
+  }
+  if (node.finalizer == null) return completion;
+  const finalizer = complete(node.finalizer);
+  return {
+    normal: completion.normal && finalizer.normal,
+    abrupt: [
+      ...(finalizer.normal ? completion.abrupt : []),
+      ...finalizer.abrupt,
+    ],
+  };
+};
+
+const syntaxLabeledCompletion = (
+  node: t.LabeledStatement,
+  complete: CompleteSyntax,
+): SyntaxCompletion => {
+  const body = complete(node.body);
+  let target = node.body;
+  while (t.isLabeledStatement(target)) target = target.body;
+  let consumed = false;
+  const abrupt = body.abrupt.filter((exit) => {
+    const owned =
+      (exit.kind === "break" ||
+        (exit.kind === "continue" && t.isLoop(target))) &&
+      exit.label === node.label.name;
+    consumed ||= owned;
+    return !owned;
+  });
+  return { normal: body.normal || consumed, abrupt };
+};
+
+const syntaxLoopCompletion = (
+  node: t.Loop,
+  complete: CompleteSyntax,
+): SyntaxCompletion => ({
+  // Loop termination is deliberately not proven from syntax alone.
+  normal: true,
+  abrupt: complete(node.body).abrupt.filter(
+    (exit) =>
+      (exit.kind !== "break" && exit.kind !== "continue") ||
+      exit.label !== null,
+  ),
+});
+
+const syntaxIfCompletion = (
+  node: t.IfStatement,
+  complete: CompleteSyntax,
+): SyntaxCompletion => {
+  const test = readExactJavaScriptLiteral(node.test);
+  if (test.found)
+    return complete(test.value ? node.consequent : node.alternate);
+  const consequent = complete(node.consequent);
+  const alternate = complete(node.alternate);
+  return {
+    normal: consequent.normal || alternate.normal,
+    abrupt: [...consequent.abrupt, ...alternate.abrupt],
+  };
+};
+
+/** Each structured statement consumes its own jumps before facts escape it. */
+const syntaxCompletion = (
+  node: t.Node | null | undefined,
+  depth: number,
+): SyntaxCompletion => {
+  if (node == null) return normalCompletion;
+  if (depth >= 128) return { normal: true, abrupt: [{ kind: "unknown" }] };
+  const complete = (child: t.Node | null | undefined) =>
+    syntaxCompletion(child, depth + 1);
+  if (t.isReturnStatement(node) || t.isThrowStatement(node))
+    return {
+      normal: false,
+      abrupt: [{ kind: t.isReturnStatement(node) ? "return" : "throw" }],
+    };
+  if (t.isBreakStatement(node) || t.isContinueStatement(node))
+    return {
+      normal: false,
+      abrupt: [
+        {
+          kind: t.isBreakStatement(node) ? "break" : "continue",
+          label: node.label?.name ?? null,
+        },
+      ],
+    };
+  if (t.isBlockStatement(node) || t.isStaticBlock(node) || t.isProgram(node))
+    return syntaxSequenceCompletion(node.body, complete);
+  if (t.isIfStatement(node)) return syntaxIfCompletion(node, complete);
+  if (t.isTryStatement(node)) return syntaxTryCompletion(node, complete);
+  if (t.isLoop(node)) return syntaxLoopCompletion(node, complete);
+  if (t.isSwitchStatement(node))
+    return {
+      normal: true,
+      abrupt: node.cases.flatMap((item) =>
+        syntaxSequenceCompletion(item.consequent, complete).abrupt.filter(
+          (exit) => exit.kind !== "break" || exit.label !== null,
+        ),
+      ),
+    };
+  if (t.isLabeledStatement(node))
+    return syntaxLabeledCompletion(node, complete);
+  if (t.isWithStatement(node)) return complete(node.body);
+  return normalCompletion;
+};
+
+/** Only outward jumps can skip a containing phase; nested owners consume theirs. */
+export const syntaxMayExitByJump = (node: t.Node): boolean =>
+  syntaxCompletion(node, 0).abrupt.some(
+    ({ kind }) => kind === "break" || kind === "continue" || kind === "unknown",
+  );
+
 /** Recognize abrupt prefixes without treating a loop's jump as a function exit. */
 const syntaxDefiniteExit = (
   node: t.Node | null | undefined,
   depth: number,
   includeJumps: boolean,
 ): boolean => {
-  if (!node || depth >= 128) return false;
-  if (
-    t.isReturnStatement(node) ||
-    t.isThrowStatement(node) ||
-    (includeJumps && (t.isBreakStatement(node) || t.isContinueStatement(node)))
-  )
-    return true;
-  if (t.isBlockStatement(node))
-    return node.body.some((child) =>
-      syntaxDefiniteExit(child, depth + 1, includeJumps),
-    );
-  if (!t.isIfStatement(node)) return false;
-  const test = readExactJavaScriptLiteral(node.test);
-  if (includeJumps && test.found) {
-    const branch = test.value ? node.consequent : node.alternate;
-    return syntaxDefiniteExit(branch, depth + 1, includeJumps);
-  }
+  const completion = syntaxCompletion(node, depth);
   return (
-    syntaxDefiniteExit(node.consequent, depth + 1, includeJumps) &&
-    syntaxDefiniteExit(node.alternate, depth + 1, includeJumps)
+    !completion.normal &&
+    completion.abrupt.every(
+      ({ kind }) => kind === "return" || kind === "throw" || includeJumps,
+    )
   );
 };
 

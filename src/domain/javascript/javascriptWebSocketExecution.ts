@@ -9,6 +9,7 @@ import {
   semanticFinalClassMember,
   semanticStaticPropertyKey,
   javaScriptClassField,
+  semanticDirectFunctionReturn,
 } from "./javascriptAstValues.js";
 import {
   javaScriptOptionalOperandsMayBeSkipped,
@@ -17,8 +18,29 @@ import {
 } from "./javascriptSemanticEvaluationOrder.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { semanticAwaitedResultSites } from "./javascriptSemanticPromiseIdentity.js";
-import { syntaxUnconditionalOperands } from "./javascriptSymbolicControlFlow.js";
+import {
+  syntaxMayExitByJump,
+  syntaxUnconditionalOperands,
+} from "./javascriptSymbolicControlFlow.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
+
+/** A selected getter read owns its exact returned value, separately from its body. */
+const webSocketReturnedGetter = (
+  value: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.ObjectMethod | t.ClassMethod | undefined => {
+  const statement = state.parentsByNode.get(value);
+  if (!t.isReturnStatement(statement) || statement.argument !== value)
+    return undefined;
+  const block = state.parentsByNode.get(statement);
+  const owner =
+    block === undefined ? undefined : state.parentsByNode.get(block);
+  return (t.isObjectMethod(owner) || t.isClassMethod(owner)) &&
+    owner.kind === "get" &&
+    semanticDirectFunctionReturn(owner) === value
+    ? owner
+    : undefined;
+};
 
 /** Outward syntax wrappers preserve the expression's runtime identity. */
 const webSocketOuterExpression = (
@@ -40,8 +62,17 @@ const webSocketOuterExpression = (
     if (
       parent === undefined ||
       unwrapJavaScriptExpression(parent).node !== identity
-    )
-      return current;
+    ) {
+      const getter = webSocketReturnedGetter(current, state);
+      const selection =
+        getter === undefined
+          ? undefined
+          : webSocketFreshMethodSelection(getter, getter, state);
+      if (selection === undefined) return current;
+      current = selection;
+      identity = selection;
+      continue;
+    }
     current = parent;
   }
 };
@@ -54,11 +85,10 @@ const webSocketFreshMethodSelection = (
 ): t.MemberExpression | t.OptionalMemberExpression | undefined => {
   const parent = state.parentsByNode.get(value);
   const property =
-    (t.isObjectMethod(node) || (t.isClassMethod(node) && node.static)) &&
-    node.kind === "method"
+    (t.isObjectMethod(node) || t.isClassMethod(node)) &&
+    (node.kind === "method" || node.kind === "get")
       ? node
-      : (t.isObjectProperty(parent) ||
-            (javaScriptClassField(parent) && parent.static)) &&
+      : (t.isObjectProperty(parent) || javaScriptClassField(parent)) &&
           parent.value === value
         ? parent
         : undefined;
@@ -69,7 +99,17 @@ const webSocketFreshMethodSelection = (
     : container;
   if (!t.isObjectExpression(literal) && !t.isClassExpression(literal))
     return undefined;
-  const object = webSocketOuterExpression(literal, state);
+  let object = webSocketOuterExpression(literal, state);
+  const isStatic =
+    !t.isClassMethod(property) && !javaScriptClassField(property)
+      ? true
+      : property.static;
+  if (!isStatic) {
+    const construction = state.parentsByNode.get(object);
+    if (!t.isNewExpression(construction) || construction.callee !== object)
+      return undefined;
+    object = webSocketOuterExpression(construction, state);
+  }
   const member = state.parentsByNode.get(object);
   if (
     (!t.isMemberExpression(member) && !t.isOptionalMemberExpression(member)) ||
@@ -80,7 +120,7 @@ const webSocketFreshMethodSelection = (
   return key !== null &&
     (t.isObjectExpression(literal)
       ? semanticFinalObjectMember(literal, key)
-      : semanticFinalClassMember(literal, key)) === property
+      : semanticFinalClassMember(literal, key, isStatic)) === property
     ? member
     : undefined;
 };
@@ -95,9 +135,18 @@ const webSocketImmediateInvocation = (
   | t.NewExpression
   | t.TaggedTemplateExpression
   | t.Decorator
+  | t.MemberExpression
+  | t.OptionalMemberExpression
   | undefined => {
   const value = webSocketOuterExpression(node, state);
   const selection = webSocketFreshMethodSelection(node, value, state);
+  // Reading an accessor invokes its getter before any returned value is called.
+  if (
+    selection !== undefined &&
+    (t.isObjectMethod(node) || t.isClassMethod(node)) &&
+    node.kind === "get"
+  )
+    return selection;
   let callee =
     selection === undefined
       ? value
@@ -146,18 +195,9 @@ const loopJumpFacts = new WeakMap<t.Node, boolean>();
 const webSocketBodyMayJump = (body: t.Node): boolean => {
   const known = loopJumpFacts.get(body);
   if (known !== undefined) return known;
-  const pending = [body];
-  while (pending.length > 0) {
-    const node = pending.pop();
-    if (node === undefined || t.isFunction(node)) continue;
-    if (t.isBreakStatement(node) || t.isContinueStatement(node)) {
-      loopJumpFacts.set(body, true);
-      return true;
-    }
-    for (const child of childNodes(node)) pending.push(child);
-  }
-  loopJumpFacts.set(body, false);
-  return false;
+  const mayJump = syntaxMayExitByJump(body);
+  loopJumpFacts.set(body, mayJump);
+  return mayJump;
 };
 
 const finalizerEntries = new WeakMap<
@@ -501,13 +541,18 @@ const webSocketDecoratedClass = (
   return undefined;
 };
 
-/** Resume only a directly produced generator with a literal next call. */
+/** A direct next call or for-of iteration resumes its fresh generator. */
 const webSocketGeneratorResume = (
   invocation: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): t.CallExpression | t.OptionalCallExpression | undefined => {
+):
+  | t.CallExpression
+  | t.OptionalCallExpression
+  | t.ForOfStatement
+  | undefined => {
   const result = webSocketOuterExpression(invocation, state);
   const member = state.parentsByNode.get(result);
+  if (t.isForOfStatement(member) && member.right === result) return member;
   if (
     (!t.isMemberExpression(member) && !t.isOptionalMemberExpression(member)) ||
     member.object !== result ||
@@ -520,6 +565,34 @@ const webSocketGeneratorResume = (
     call.callee === callee
     ? call
     : undefined;
+};
+
+const bodySuspensionFacts = new WeakMap<t.Node, boolean>();
+/** A synchronous iterator resumes in-turn unless its consumer body can await. */
+const webSocketBodyMaySuspend = (body: t.Node): boolean => {
+  const known = bodySuspensionFacts.get(body);
+  if (known !== undefined) return known;
+  const pending = [body];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node === undefined) continue;
+    if (
+      t.isAwaitExpression(node) ||
+      t.isYieldExpression(node) ||
+      (t.isForOfStatement(node) && node.await)
+    ) {
+      bodySuspensionFacts.set(body, true);
+      return true;
+    }
+    if (t.isFunction(node)) {
+      if ((t.isObjectMethod(node) || t.isClassMethod(node)) && node.computed)
+        pending.push(node.key);
+      continue;
+    }
+    pending.push(...childNodes(node));
+  }
+  bodySuspensionFacts.set(body, false);
+  return false;
 };
 
 /** The lexical body that actually suspends owns the continuation boundary. */
@@ -695,7 +768,9 @@ export const webSocketExecutionContexts = (
         current = parent;
         continue;
       }
-      let invocation =
+      let invocation:
+        | ReturnType<typeof webSocketImmediateInvocation>
+        | t.ForOfStatement =
         t.isClassMethod(parent) && parent.kind === "constructor"
           ? webSocketClassConstruction(parent, state)
           : webSocketImmediateInvocation(parent, state);
@@ -714,8 +789,23 @@ export const webSocketExecutionContexts = (
       const decoratedClass = t.isDecorator(invocation)
         ? webSocketDecoratedClass(invocation, state)
         : undefined;
-      suspendedAfter(decoratedClass ?? invocation);
-      if ((parent.async || generatorBody) && current === parent.body) {
+      suspendedAfter(
+        t.isForOfStatement(invocation)
+          ? invocation.right
+          : (decoratedClass ?? invocation),
+      );
+      if (
+        (parent.async || generatorBody) &&
+        current === parent.body &&
+        // Synchronous for-of resumes after every ordinary yield in the same turn.
+        !(
+          t.isForOfStatement(invocation) &&
+          !invocation.await &&
+          !parent.async &&
+          !webSocketBodyMaySuspend(invocation.left) &&
+          !webSocketBodyMaySuspend(invocation.body)
+        )
+      ) {
         const continuation = webSocketContinuation(node, parent.body, state);
         if (continuation !== undefined)
           suspendedOwner = webSocketSuspensionOwner(continuation, state);
@@ -725,6 +815,11 @@ export const webSocketExecutionContexts = (
       if (suspendedOwner === parent && !directOnly)
         return [...contexts, ...webSocketWaitingContexts(invocation, state)];
       point = invocation;
+      // A returned callable executes outside the getter's completed activation.
+      if (webSocketReturnedGetter(parent, state) !== undefined) {
+        current = invocation;
+        continue;
+      }
       // Method/parameter decorator metadata is evaluated with the class, not
       // within the decorated method's runtime activation.
       if (decoratedClass !== undefined) {

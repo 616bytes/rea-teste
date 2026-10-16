@@ -121,6 +121,25 @@ export const semanticStaticPropertyName = (
   computed: boolean,
 ): string => semanticStaticPropertyKey(property, computed) ?? "";
 
+/** A synchronous parameter-free callable with one literal returned expression. */
+export const semanticDirectFunctionReturn = (
+  node: t.Node,
+): t.Node | undefined => {
+  if (
+    !t.isFunction(node) ||
+    node.async ||
+    node.generator ||
+    node.params.length !== 0
+  )
+    return undefined;
+  if (!t.isBlockStatement(node.body)) return node.body;
+  const statements = node.body.body.filter((item) => !t.isEmptyStatement(item));
+  const statement = statements[0];
+  return statements.length === 1 && t.isReturnStatement(statement)
+    ? (statement.argument ?? undefined)
+    : undefined;
+};
+
 /** Read an exact property key, preserving the legal empty-string key. */
 export const semanticStaticPropertyKey = (
   property: t.Node,
@@ -151,12 +170,20 @@ export const semanticFinalObjectMember = (
   node: t.ObjectExpression,
   key: string,
 ): t.ObjectProperty | t.ObjectMethod | undefined => {
+  let setter = false;
   for (let index = node.properties.length - 1; index >= 0; index -= 1) {
     const property = node.properties[index];
     if (property === undefined || t.isSpreadElement(property)) return undefined;
     const name = semanticStaticPropertyKey(property.key, property.computed);
     if (name === null) return undefined;
-    if (name === key) return property;
+    if (name !== key) continue;
+    if (t.isObjectMethod(property) && property.kind === "set") {
+      setter = true;
+      continue;
+    }
+    return !setter || (t.isObjectMethod(property) && property.kind === "get")
+      ? property
+      : undefined;
   }
   return undefined;
 };
@@ -174,15 +201,21 @@ export const semanticFinalObjectProperty = (
 export const semanticFinalClassMember = (
   node: t.ClassExpression,
   key: string,
+  isStatic = true,
 ): t.ClassMethod | t.ClassProperty | undefined => {
+  if (!isStatic && node.superClass != null) return undefined;
   if (node.decorators != null && node.decorators.length !== 0) return undefined;
   let method: t.ClassMethod | undefined;
   let field: t.ClassProperty | undefined;
   for (const member of node.body.body) {
-    if (t.isStaticBlock(member)) return undefined;
+    if (
+      t.isStaticBlock(member) ||
+      (!isStatic && t.isClassMethod(member) && member.kind === "constructor")
+    )
+      return undefined;
     if (
       (!t.isClassMethod(member) && !javaScriptClassField(member)) ||
-      !member.static
+      member.static !== isStatic
     )
       continue;
     // Accessor definitions and private names are not public data selections.
@@ -203,7 +236,15 @@ export const semanticFinalClassMember = (
       )
         return undefined;
       if (name === key) field = member;
-    } else if (name === key) method = member;
+    } else if (name === key) {
+      // A setter updates only the setter half of an accessor descriptor.
+      method =
+        member.kind === "set"
+          ? method?.kind === "get"
+            ? method
+            : undefined
+          : member;
+    }
   }
   return field ?? method;
 };

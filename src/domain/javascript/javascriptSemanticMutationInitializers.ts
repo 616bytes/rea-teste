@@ -4,6 +4,7 @@ import {
   delayedInstanceFieldValue,
   semanticBranchMayBeSkipped,
   semanticIterationCardinality,
+  semanticPatternInitializationPrecedesRead,
 } from "./javascriptSemanticEvaluationOrder.js";
 
 import {
@@ -155,7 +156,14 @@ export const semanticTopLevelEffectFollowsCapture = (
     before.declaratorIndex !== after.declaratorIndex
   )
     return false;
-  return expressionEvaluationOrder(capture, effect, parents) === "before";
+  const patternOrder =
+    effect === undefined
+      ? undefined
+      : semanticPatternInitializationPrecedesRead(capture, effect, parents);
+  return (
+    patternOrder ??
+    expressionEvaluationOrder(capture, effect, parents) === "before"
+  );
 };
 
 /** Include expression order when a write operation contains the read site. */

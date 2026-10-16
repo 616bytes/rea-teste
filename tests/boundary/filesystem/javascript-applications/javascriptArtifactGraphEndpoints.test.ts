@@ -129,6 +129,22 @@ it("retains constructor captures, ws imports and template keys with their graph 
 });
 
 const socketExecutionPhaseSources = {
+  "review-getter.js":
+    '({ get run() { new Socket("wss://example.test/review-getter"); return () => {}; } }).run(); const Socket = globalThis.WebSocket;',
+  "review-pattern.mjs":
+    'export {}; const { pending, unused = new (await pending).WebSocket("wss://example.test/review-pattern") } = { pending: import("ws") };',
+  "review-label.js":
+    '(async () => { label: { for (;;) { break; } await 0; } new Socket("wss://example.test/review-label"); })(); const Socket = globalThis.WebSocket;',
+  "review-caught.mjs":
+    'export {}; const pending=(async()=>{await 0;new Socket("wss://example.test/review-caught")})(); try { try {throw 0;} finally {} await pending; } catch {} const Socket=globalThis.WebSocket;',
+  "review-capture.js":
+    'const ws=require("ws");const {WebSocket:Socket,[(ws.WebSocket=class{},"x")]:ignored}=ws;new Socket("wss://example.test/review-capture");',
+  "review-nested-loop.js":
+    '(async()=>{do {while(true){break;} await 0;}while(false);new Socket("wss://example.test/review-nested-loop")})(); const Socket=globalThis.WebSocket;',
+  "review-generator.js":
+    'for(const ignored of (function*(){new Socket("wss://example.test/review-generator");yield 0;})()){} const Socket=globalThis.WebSocket;',
+  "review-instance.js":
+    '(new(class {run(){new Socket("wss://example.test/review-instance")}})()).run();const Socket=globalThis.WebSocket;',
   "phase-class.js":
     "(class { static run() { new Socket('wss://example.test/invalid-phase-class') } }).run(); const Socket = globalThis.WebSocket;",
   "phase-wrapper.js":
@@ -320,6 +336,11 @@ const socketExecutionPhaseSources = {
 };
 
 const socketExecutionPhaseLocations = [
+  ["review-capture", "review-capture.js", 1],
+  ["review-caught", "review-caught.mjs", 1],
+  ["review-label", "review-label.js", 1],
+  ["review-nested-loop", "review-nested-loop.js", 1],
+  ["review-pattern", "review-pattern.mjs", 1],
   ["phase-label", "phase-label.js", 1],
   ["phase-finally", "phase-finally.js", 1],
   ["phase-projection", "phase-projection.mjs", 1],
@@ -443,6 +464,11 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/phase-label",
       "wss://example.test/phase-projection",
       "wss://example.test/rebound-import",
+      "wss://example.test/review-capture",
+      "wss://example.test/review-caught",
+      "wss://example.test/review-label",
+      "wss://example.test/review-nested-loop",
+      "wss://example.test/review-pattern",
       "wss://example.test/selected-branch",
       "wss://example.test/selected-stored",
       "wss://example.test/sequence-capture",

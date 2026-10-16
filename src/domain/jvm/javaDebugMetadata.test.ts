@@ -558,3 +558,39 @@ describe("decodeClassDebugMetadata — line-number ranges", () => {
     ]);
   });
 });
+
+describe("decodeClassDebugMetadata — repeated single attributes", () => {
+  it("reports a method with two Code attributes as malformed without choosing a body", () => {
+    const stripped = codeAttrInfo(subAttrs(0, new Blob()).parts);
+    const withLines = codeAttrInfo(
+      subAttrs(1, new Blob().attr(4, lineNumberTable([[0, 1]]))).parts,
+    );
+    const method = decodeOnly(
+      new Blob().u2(2).attr(3, stripped).attr(3, withLines),
+    ).methods[0]!;
+    expect(method.state).toBe("malformed");
+    expect(method.hasCode).toBe(true);
+    expect(method.maxLocals).toBeNull();
+    expect(method.lineNumbers.presence).toBe("unread");
+    expect(method.localVariables.presence).toBe("unread");
+  });
+
+  it("reports two SourceFile attributes as malformed, not the first name", () => {
+    const metadata = decodeOnly(
+      new Blob().u2(0),
+      new Blob().u2(2).attr(8, [0, 9]).attr(8, [0, 10]),
+    );
+    expect(metadata.sourceFile).toEqual({ presence: "malformed", name: null });
+  });
+
+  it("reports two SourceDebugExtension attributes as malformed", () => {
+    const metadata = decodeOnly(
+      new Blob().u2(0),
+      new Blob().u2(2).attr(12, [0x41]).attr(12, [0x42, 0x43]),
+    );
+    expect(metadata.sourceDebugExtension).toEqual({
+      presence: "malformed",
+      byteLength: 0,
+    });
+  });
+});

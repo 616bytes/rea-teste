@@ -23,11 +23,12 @@ import {
   resolveConstantUtf8,
 } from "./javaClassFile.js";
 
-/** Whether a named attribute was found and whether it decoded cleanly. */
 /**
+ * Whether a named attribute was found and whether it decoded cleanly.
  * `unread` means the table could not be looked for: an earlier sibling
  * attribute in the same `Code` attribute was malformed, so framing stopped
- * before reaching it. It is unknown, never `absent`.
+ * before reaching it, or the method repeats its `Code` attribute so no body is
+ * chosen. It is unknown, never `absent`.
  */
 export type AttributePresence = "absent" | "present" | "malformed" | "unread";
 
@@ -110,7 +111,10 @@ export interface ClassDebugMetadata {
   };
   readonly sourceDebugExtension: {
     readonly presence: Exclude<AttributePresence, "unread">;
-    /** Byte length of the opaque extension; the bytes themselves are never interpreted here. */
+    /**
+     * Byte length of the opaque extension, or 0 unless `present` (a repeated
+     * extension is `malformed`). The bytes are never interpreted here.
+     */
     readonly byteLength: number;
   };
   readonly methods: readonly MethodDebugMetadata[];
@@ -121,11 +125,27 @@ type NamedAttribute = {
   readonly info: Uint8Array;
 };
 
-/** First matching attribute's info. For names JVMS permits at most once (Code, SourceFile, SourceDebugExtension). */
-const findAttribute = (
+/**
+ * The one occurrence of an attribute JVMS permits at most once (Code,
+ * SourceFile, SourceDebugExtension). A repeated occurrence is `duplicate`:
+ * HotSpot rejects the class, and which occurrence is meant is unknown, so no
+ * occurrence is chosen.
+ */
+type SingleAttribute =
+  | { readonly kind: "absent" }
+  | { readonly kind: "one"; readonly info: Uint8Array }
+  | { readonly kind: "duplicate" };
+
+const singleAttribute = (
   attributes: readonly NamedAttribute[],
   name: string,
-): Uint8Array | null => attributes.find((a) => a.name === name)?.info ?? null;
+): SingleAttribute => {
+  const found = attributes.filter((a) => a.name === name);
+  if (found.length === 0) return { kind: "absent" };
+  return found.length === 1
+    ? { kind: "one", info: found[0]!.info }
+    : { kind: "duplicate" };
+};
 
 /**
  * Every matching attribute's info, in order. JVMS §4.7.12–14 permit multiple
@@ -345,13 +365,28 @@ export const decodeMethodDebugMetadata = (
   method: JavaMember,
   pool: readonly ConstantPoolEntry[],
 ): MethodDebugMetadata => {
-  const code = findAttribute(method.attributes, "Code");
-  const absentTable = <T>(): DebugTable<T> => ({
-    presence: "absent",
+  const codeAttribute = singleAttribute(method.attributes, "Code");
+  const absentTable = <T>(
+    presence: "absent" | "unread" = "absent",
+  ): DebugTable<T> => ({
+    presence,
     declaredCount: 0,
     entries: [],
   });
-  if (code === null) {
+  if (codeAttribute.kind === "duplicate")
+    // More than one body: none is chosen, so no table can be looked for.
+    return {
+      name: method.name,
+      descriptor: method.descriptor,
+      state: "malformed",
+      hasCode: true,
+      maxLocals: null,
+      lineNumbers: absentTable("unread"),
+      localVariables: absentTable("unread"),
+      localVariableTypes: absentTable("unread"),
+      reusedSlots: [],
+    };
+  if (codeAttribute.kind === "absent") {
     return {
       name: method.name,
       descriptor: method.descriptor,
@@ -365,7 +400,7 @@ export const decodeMethodDebugMetadata = (
     };
   }
 
-  const seeked = seekCodeSubAttributes(code);
+  const seeked = seekCodeSubAttributes(codeAttribute.info);
   // Keep every table framed before a malformed sibling; tables framing never
   // reached are `unread`, not `absent`.
   const framed = seeked
@@ -488,9 +523,9 @@ export const projectDebugOutput = (
       METHOD_OVERHEAD +
       stringBytes(method.nameIndex) +
       stringBytes(method.descriptorIndex);
-    const code = findAttribute(method.attributes, "Code");
-    if (code === null) continue;
-    const seeked = seekCodeSubAttributes(code);
+    const code = singleAttribute(method.attributes, "Code");
+    if (code.kind !== "one") continue;
+    const seeked = seekCodeSubAttributes(code.info);
     if (seeked === null) continue;
     const framed = frameAttributes(
       seeked.cursor,
@@ -530,12 +565,13 @@ export const projectDebugOutput = (
 export const decodeClassDebugMetadata = (
   cls: JavaClassFile,
 ): ClassDebugMetadata => {
-  const sourceFileInfo = findAttribute(cls.attributes, "SourceFile");
-  let sourceFile: ClassDebugMetadata["sourceFile"] = {
-    presence: "absent",
-    name: null,
-  };
-  if (sourceFileInfo !== null) {
+  const sourceFileAttribute = singleAttribute(cls.attributes, "SourceFile");
+  let sourceFile: ClassDebugMetadata["sourceFile"] =
+    sourceFileAttribute.kind === "duplicate"
+      ? { presence: "malformed", name: null }
+      : { presence: "absent", name: null };
+  if (sourceFileAttribute.kind === "one") {
+    const sourceFileInfo = sourceFileAttribute.info;
     const cursor = new ByteCursor(sourceFileInfo);
     const indexResult = cursor.u2();
     // SourceFile_attribute is a single u2 index that must name a
@@ -551,11 +587,14 @@ export const decodeClassDebugMetadata = (
         : { presence: "present", name };
   }
 
-  const sdeInfo = findAttribute(cls.attributes, "SourceDebugExtension");
+  const sde = singleAttribute(cls.attributes, "SourceDebugExtension");
   const sourceDebugExtension: ClassDebugMetadata["sourceDebugExtension"] =
-    sdeInfo === null
-      ? { presence: "absent", byteLength: 0 }
-      : { presence: "present", byteLength: sdeInfo.length };
+    sde.kind === "one"
+      ? { presence: "present", byteLength: sde.info.length }
+      : {
+          presence: sde.kind === "absent" ? "absent" : "malformed",
+          byteLength: 0,
+        };
 
   return {
     sourceFile,

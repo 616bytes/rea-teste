@@ -91,6 +91,12 @@ name a `CONSTANT_Utf8` entry violates JVMS §4.7.10/§4.7.13–14: the attribute
 reported `malformed`, and the entry is kept with a `null` name, descriptor, or
 signature.
 
+JVMS permits `Code`, `SourceFile` and `SourceDebugExtension` at most once
+(HotSpot rejects a repeat). A repeated `SourceFile` or `SourceDebugExtension` is
+`malformed` with no name or length chosen; a method with more than one `Code`
+attribute is `malformed`, with `max_locals` `null` and every table `unread`,
+because which body is meant is unknown.
+
 A table whose declared entry count exceeds its bytes is reported `malformed` with
 the entries recovered before the short read. When a later sibling inside the
 same `Code` attribute is malformed, tables framed before it are kept and tables

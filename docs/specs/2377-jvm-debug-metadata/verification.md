@@ -190,9 +190,10 @@ Unit/service suite is now 53 tests (7 files); `verify:jvm` 16 cases.
   class (unit-covered today).
 - Discoverability surfaces (README capability row, reverse-engineer-anything
   skill source, `architecture.mermaid`) — F8.
-- F9–F11 decoder-strictness and ergonomics one-liners (SourceFile length check,
-  duplicate single-attribute → malformed, HotSpot-reject parity, a `detail`
-  summary mode).
+- Remaining F9–F11 items: HotSpot-reject parity beyond the landed checks
+  (SourceFile length and Utf8 target, Utf8 local-variable names, repeated
+  Code/SourceFile/SourceDebugExtension → malformed, out-of-range line pcs,
+  trailing Code bytes) and a `detail` summary mode.
 - `npm run check:pr` and full module-boundary/architecture guards at PR time.
   `docs:check` currently fails only on a pre-existing, unrelated `README_tr`
   link drift.

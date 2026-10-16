@@ -2,6 +2,97 @@ import { describe, expect, it } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
+describe("Electron constant option evidence", () => {
+  it("resolves local constant options despite an unrelated option write", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron");
+      function open() {
+        const preferences = { nodeIntegration: true, contextIsolation: false };
+        const options = { webPreferences: preferences };
+        if (linux) options.icon = "icon.png";
+        new BrowserWindow(options);
+      }
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        options_status: "object-literal",
+        web_preferences_status: "object-literal",
+        web_preferences: [
+          {
+            name: "contextIsolation",
+            value: { status: "literal", value: false },
+          },
+          {
+            name: "nodeIntegration",
+            value: { status: "literal", value: true },
+          },
+        ],
+        resolution_sources: [expect.any(Object), expect.any(Object)],
+      },
+    ]);
+  });
+
+  it.each([
+    "options.webPreferences.sandbox = false;",
+    "const alias = options.webPreferences; alias.sandbox = false;",
+    "mutate(options);",
+    "const { webPreferences: alias } = options; mutate(alias);",
+    "Object.assign(options, unknown);",
+    "options = replacement;",
+  ])("keeps changed or escaped constant options unknown: %s", (mutation) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron");
+      const options = { webPreferences: { sandbox: true } };
+      ${mutation}
+      new BrowserWindow(options);
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        options_status: "dynamic",
+        web_preferences_status: "dynamic",
+        web_preferences: [],
+        preload_path: null,
+      },
+    ]);
+  });
+
+  it.each([
+    "new BrowserWindow(options); const options = { webPreferences: { sandbox: true } };",
+    "const options = alias; const alias = { webPreferences: { sandbox: true } }; new BrowserWindow(options);",
+    "const options = alias; const alias = options; new BrowserWindow(options);",
+    "const options = { webPreferences: { sandbox: true } }; { const options = unknown; new BrowserWindow(options); }",
+    "let options = { webPreferences: { sandbox: true } }; new BrowserWindow(options);",
+  ])("does not invent a constant initializer: %s", (source) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron"); ${source}
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        options_status: "dynamic",
+        web_preferences_status: "dynamic",
+        web_preferences: [],
+      },
+    ]);
+  });
+
+  it("preserves constants selected before later mutation and resolves preload context", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron");
+      const original = { webPreferences: { preload: require("path").join(__dirname, "preload.js"), sandbox: true } };
+      const options = original;
+      new BrowserWindow(options);
+      original.webPreferences.sandbox = false;
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        options_status: "object-literal",
+        preload_path: "preload.js",
+        preload_resolution_context: "filesystem-expression",
+      },
+    ]);
+  });
+});
+
 describe("Electron option evidence", () => {
   it.each([
     '({ webPreferences: { preload: "./preload.js", sandbox: true } } as const)',

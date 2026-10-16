@@ -325,7 +325,9 @@ member, or literal, is reported in the `cil` dimension. A body with an operand
 REA could not name has no nominal digest, so its CIL facet is `unknown`, with a
 `cil-operand-not-resolved` limitation, unless another dimension establishes a
 change. Typed exception clauses compare their classes the same way through
-`class_identity_sha256` in the `exception-shape` dimension. Nominal identity
+`class_identity_sha256` in the `exception-shape` dimension, clause by clause:
+a class difference REA can name is reported even when another clause's class
+could not be named. Nominal identity
 follows the signature rule: a type is its namespace, name, and enclosing names,
 not its defining assembly, so a TypeDef and a TypeRef with the same name are one
 type, and a member is its owner, name, and resolved signature, so a method

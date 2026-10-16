@@ -1791,12 +1791,44 @@ describe("managed member comparison across builds", () => {
   });
 });
 
+// List`1 is TypeRef row 2 on the left and row 3 on the right; TypeRef row 1
+// is another type in both builds.
+const leftList = 0x0100_0002;
+const rightList = 0x0100_0003;
+const otherType = 0x0100_0001;
+
+// try { nop } catch (<type>) { pop } with one handler per type, then ret
+const catching = (...types: readonly number[]): Buffer => {
+  const end = 3 * (types.length + 1);
+  const il = Buffer.from([
+    0x00,
+    0xde,
+    end - 3,
+    ...types.flatMap((_type, index) => [0x26, 0xde, end - 6 - 3 * index]),
+    0x2a,
+  ]);
+  const header = Buffer.alloc(12);
+  header.writeUInt16LE(0x300b, 0);
+  header.writeUInt16LE(8, 2);
+  header.writeUInt32LE(il.length, 4);
+  // A small EH section: a 4-byte header, then 12 bytes per clause.
+  const section = Buffer.alloc(4 + 12 * types.length);
+  section[0] = 0x01;
+  section[1] = section.length;
+  types.forEach((type, index) => {
+    const clause = 4 + 12 * index;
+    section[clause + 4] = 3;
+    section.writeUInt16LE(3 * (index + 1), clause + 5);
+    section[clause + 7] = 3;
+    section.writeUInt32LE(type, clause + 8);
+  });
+  const padding = Buffer.alloc((4 - ((header.length + il.length) % 4)) % 4);
+  return Buffer.concat([header, il, padding, section]);
+};
+
 describe("managed member comparison of CIL operands across builds", () => {
   // List`1 is TypeRef row 2 on the left and row 3 on the right. TypeRef row 1
   // names another type in both builds.
-  const leftList = 0x0100_0002;
-  const rightList = 0x0100_0003;
-  const otherType = 0x0100_0001;
   // The right build's earlier literal moves the same text to a later offset.
   const leftStrings = fixtureUserStringHeap(["quicksave"]);
   const rightStrings = fixtureUserStringHeap(["autosave", "quicksave"]);
@@ -1821,22 +1853,6 @@ describe("managed member comparison of CIL operands across builds", () => {
       0x2a,
     ];
     return Buffer.from([(il.length << 2) | 2, ...il]);
-  };
-  // try { nop } catch (<type>) { pop } ret
-  const catching = (type: number): Buffer => {
-    const il = Buffer.from([0x00, 0xde, 0x03, 0x26, 0xde, 0x00, 0x2a]);
-    const header = Buffer.alloc(12);
-    header.writeUInt16LE(0x300b, 0);
-    header.writeUInt16LE(8, 2);
-    header.writeUInt32LE(il.length, 4);
-    const section = Buffer.alloc(16);
-    section[0] = 0x01;
-    section[1] = section.length;
-    section[8] = 3;
-    section.writeUInt16LE(3, 9);
-    section[11] = 3;
-    section.writeUInt32LE(type, 12);
-    return Buffer.concat([header, il, Buffer.alloc(1), section]);
   };
   const left = {
     ...leftBuild,
@@ -1876,26 +1892,6 @@ describe("managed member comparison of CIL operands across builds", () => {
   ])("reports a body that names %s as changed CIL", (_case, ilBody) => {
     expect(compareBuilds(left, right(ilBody)).methods).toEqual([
       expect.objectContaining({ status: "changed", dimensions: ["cil"] }),
-    ]);
-  });
-
-  it("keeps a renumbered catch class unchanged and reports another class", () => {
-    const leftCatch = { ...leftBuild, ilBody: catching(leftList) };
-
-    expect(
-      compareBuilds(leftCatch, { ...rightBuild, ilBody: catching(rightList) })
-        .methods,
-    ).toEqual([
-      expect.objectContaining({ status: "unchanged", dimensions: [] }),
-    ]);
-    expect(
-      compareBuilds(leftCatch, { ...rightBuild, ilBody: catching(otherType) })
-        .methods,
-    ).toEqual([
-      expect.objectContaining({
-        status: "changed",
-        dimensions: ["exception-shape"],
-      }),
     ]);
   });
 
@@ -1944,6 +1940,62 @@ describe("managed member comparison of CIL operands across builds", () => {
     expect(result.limitations).toContain(
       "ldstr literals are not compared; normalized CIL keeps #US tokens rather than decoded text, so an unchanged method does not establish unchanged string literals.",
     );
+  });
+});
+
+describe("managed member comparison of catch classes across builds", () => {
+  it("keeps a renumbered catch class unchanged and reports another class", () => {
+    const leftCatch = { ...leftBuild, ilBody: catching(leftList) };
+
+    expect(
+      compareBuilds(leftCatch, { ...rightBuild, ilBody: catching(rightList) })
+        .methods,
+    ).toEqual([
+      expect.objectContaining({ status: "unchanged", dimensions: [] }),
+    ]);
+    expect(
+      compareBuilds(leftCatch, { ...rightBuild, ilBody: catching(otherType) })
+        .methods,
+    ).toEqual([
+      expect.objectContaining({
+        status: "changed",
+        dimensions: ["exception-shape"],
+      }),
+    ]);
+  });
+
+  it("keeps a known catch class change beside a class REA could not name", () => {
+    // Neither build has TypeRef row 9, so the first clause's class has no
+    // identity, and the second clause's class decides.
+    const leftCatch = {
+      ...leftBuild,
+      ilBody: catching(0x0100_0009, leftList),
+    };
+
+    expect(
+      compareBuilds(leftCatch, {
+        ...rightBuild,
+        ilBody: catching(0x0100_0009, otherType),
+      }).methods,
+    ).toEqual([
+      expect.objectContaining({
+        status: "changed",
+        dimensions: ["exception-shape"],
+        limitations: [],
+      }),
+    ]);
+    expect(
+      compareBuilds(leftCatch, {
+        ...rightBuild,
+        ilBody: catching(0x0100_0009, rightList),
+      }).methods,
+    ).toEqual([
+      expect.objectContaining({
+        status: "unknown",
+        dimensions: [],
+        limitations: [expect.stringMatching(/^cil-operand-not-resolved: /u)],
+      }),
+    ]);
   });
 });
 

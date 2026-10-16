@@ -15,13 +15,10 @@ interface OperandFacets {
   readonly unknown: boolean;
 }
 
-/**
- * Exception clauses with each class as its build-local token, only marked
- * typed, or by its nominal identity.
- */
+/** Exception clauses with each class as its build-local token or only marked typed. */
 const exceptionShape = (
   method: Method,
-  classes: "token" | "typed" | "named",
+  classes: "token" | "typed",
 ): string | undefined =>
   canonicalize(
     method.body.exception_regions.map((region) => [
@@ -34,9 +31,7 @@ const exceptionShape = (
         ? null
         : classes === "token"
           ? region.class_token
-          : classes === "typed"
-            ? "typed"
-            : region.class_identity_sha256,
+          : "typed",
       region.filter_offset,
     ]),
   );
@@ -56,17 +51,39 @@ const tokenFacets = (left: Method, right: Method): OperandFacets => ({
   unknown: false,
 });
 
-const unnamedClass = (method: Method): boolean =>
-  method.body.exception_regions.some(
-    (region) =>
-      region.class_token !== null && region.class_identity_sha256 === null,
+/**
+ * Compare the catch classes of otherwise equal clauses one by one by nominal
+ * identity, so a known difference in one clause stays known beside a class
+ * REA could not name in another. Only without a known difference does an
+ * unnamed class leave the facet unknown.
+ */
+const catchClassFacets = (
+  left: Method,
+  right: Method,
+): { readonly changed: boolean; readonly unknown: boolean } => {
+  const classes = left.body.exception_regions.flatMap((region, index) => {
+    const other = right.body.exception_regions[index];
+    return region.class_token === null || other === undefined
+      ? []
+      : [[region.class_identity_sha256, other.class_identity_sha256] as const];
+  });
+  const changed = classes.some(
+    ([named, other]) => named !== null && other !== null && named !== other,
   );
+  return {
+    changed,
+    unknown:
+      !changed &&
+      classes.some(([named, other]) => named === null || other === null),
+  };
+};
 
 /**
  * Bytes that differ only in renumbered tokens are not a change: where the
- * build-local bytes differ, nominal operand identity decides. A body or class
- * REA could not name leaves that facet unknown, since its tokens neither
- * establish nor rule out a change.
+ * build-local bytes differ, nominal operand identity decides. A body REA
+ * could not name, or a catch class without a known difference beside it,
+ * leaves that facet unknown, since its tokens neither establish nor rule out
+ * a change.
  */
 const nominalFacets = (left: Method, right: Method): OperandFacets => {
   const tokens = tokenFacets(left, right);
@@ -76,21 +93,17 @@ const nominalFacets = (left: Method, right: Method): OperandFacets => {
       right.body.nominal_il_sha256 === null);
   const clauseChange =
     exceptionShape(left, "typed") !== exceptionShape(right, "typed");
-  const classUnknown =
-    tokens.exceptionShape &&
-    !clauseChange &&
-    (unnamedClass(left) || unnamedClass(right));
+  const classes =
+    tokens.exceptionShape && !clauseChange
+      ? catchClassFacets(left, right)
+      : { changed: false, unknown: false };
   return {
     cil:
       tokens.cil &&
       !cilUnknown &&
       left.body.nominal_il_sha256 !== right.body.nominal_il_sha256,
-    exceptionShape:
-      tokens.exceptionShape &&
-      (clauseChange ||
-        (!classUnknown &&
-          exceptionShape(left, "named") !== exceptionShape(right, "named"))),
-    unknown: cilUnknown || classUnknown,
+    exceptionShape: tokens.exceptionShape && (clauseChange || classes.changed),
+    unknown: cilUnknown || classes.unknown,
   };
 };
 

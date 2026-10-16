@@ -79,14 +79,26 @@ await writeFile(
 const fs = require("node:fs");
 const { createElectronActiveBoundaryPatches } = require(${JSON.stringify(boundary)});
 const events = []; let dropped = 0;
+let nativeCalls = 0, nativeOwnedCalls = 0;
 const observation = ${JSON.stringify(observationPath)};
 let engine = null;
 const publish = () => {
-  fs.writeFileSync(observation + ".tmp", JSON.stringify({ engine, events, dropped }));
+  fs.writeFileSync(observation + ".tmp", JSON.stringify({ engine, events, dropped,
+    native_calls: { total: nativeCalls, matching_owned_path: nativeOwnedCalls } }));
   fs.renameSync(observation + ".tmp", observation);
 };
 const unused = () => { throw new Error("Unexpected non-shell observer path"); };
 if (typeof electron.shell.trashItem !== "function") throw new Error("Missing real shell.trashItem");
+const nativeTrash = electron.shell.trashItem;
+const invoke = Reflect.apply;
+electron.shell.trashItem = function observedNativeTrash(...args) {
+  try { return invoke(nativeTrash, this, args); }
+  finally {
+    nativeCalls += 1;
+    if (args.length === 1 && args[0] === ${JSON.stringify(target)}) nativeOwnedCalls += 1;
+    publish();
+  }
+};
 createElectronActiveBoundaryPatches({
   identity: unused, patchEmitter: unused, processType: unused, recordIpc: unused, shape: unused,
   recordRuntime(kind, event, phase, meta) {
@@ -116,6 +128,7 @@ let probe;
 let engine;
 let closeStatus = "not-launched";
 let failure;
+let observation;
 const pageErrors = [];
 const readObservation = async () =>
   JSON.parse(await readFile(observationPath, "utf8"));
@@ -152,11 +165,13 @@ try {
   const row = page.getByRole("treeitem", { name: /README-copy\.md/ }).first();
   await row.waitFor({ timeout: 15_000 });
   const before = await readObservation();
+  observation = before;
   engine = before.engine;
   assert.equal(engine.application_path, resolve(values.application));
   assert.equal(engine.full_hook_installed, false);
   assert.deepEqual(before.events, []);
   assert.equal(before.dropped, 0);
+  assert.deepEqual(before.native_calls, { total: 0, matching_owned_path: 0 });
   await row.click({ button: "right" });
   await page
     .getByRole("menuitem", { name: /^Delete(?:\s*Del)?$/ })
@@ -167,8 +182,10 @@ try {
     await page.waitForTimeout(50);
     after = await readObservation();
   }
+  observation = after;
   assert.deepEqual(after, {
     engine,
+    native_calls: { total: 0, matching_owned_path: 0 },
     events: [
       {
         kind: "shell-attempt",
@@ -247,6 +264,7 @@ console.log(
     settings,
     elapsed_ms: performance.now() - started,
     probe: probe ?? null,
+    observation: observation ?? null,
     failure: failure ?? null,
     close_status: closeStatus,
     scenario_ok: probe !== undefined,

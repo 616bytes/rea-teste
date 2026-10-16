@@ -133,22 +133,26 @@ const collectDestructuring = (
 ): void => {
   const source = expressionObjectIdentity(node.init, state);
   const visit = (pattern: t.Node, path: readonly string[]): void => {
-    if (t.isObjectPattern(pattern)) {
-      for (const property of pattern.properties) {
+    // A default value wraps the pattern it defaults (`[fallback] = []`), and the
+    // enclosing path still names the known source slot, so unwrap before
+    // deciding which shape this pattern has.
+    const inner = t.isAssignmentPattern(pattern) ? pattern.left : pattern;
+    if (t.isObjectPattern(inner)) {
+      for (const property of inner.properties) {
         if (!t.isObjectProperty(property)) continue;
         const name = semanticStaticPropertyKey(property.key, property.computed);
         if (name !== null) visit(property.value, [...path, name]);
       }
       return;
     }
-    if (t.isArrayPattern(pattern)) {
-      pattern.elements.forEach((element, index) => {
+    if (t.isArrayPattern(inner)) {
+      inner.elements.forEach((element, index) => {
         if (element !== null && !t.isRestElement(element))
           visit(element, [...path, String(index)]);
       });
       return;
     }
-    const target = bindingIdentifier(pattern);
+    const target = bindingIdentifier(inner);
     if (target === null) return;
     addObjectOperation(
       {

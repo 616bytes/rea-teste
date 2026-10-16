@@ -38,8 +38,17 @@ class PlistSourceRunner extends NativeFixtureRunner {
   }
 }
 
+const OPENSTEP = "{ Name = Example; Items = (a, b); }\n";
+
 it.for([
   { description: "ASCII text\n", expected: "unknown", xmlFallback: false },
+  // `file` reports XML without a declaration as plain text.
+  {
+    description: "ASCII text, with no line terminators\n",
+    contents: `﻿ \n${XML}`,
+    expected: "xml",
+    xmlFallback: true,
+  },
   { description: "ASCII text\n", expected: "unknown", xmlFallback: true },
   {
     description: "Unicode text, UTF-8 text\n",
@@ -64,10 +73,13 @@ it.for([
   },
 ])(
   "keeps source format $expected for $description (XML fallback: $xmlFallback)",
-  async ({ description, expected, xmlFallback }, { onTestFinished }) => {
+  async (
+    { description, contents = OPENSTEP, expected, xmlFallback },
+    { onTestFinished },
+  ) => {
     const root = await createTestTempDirectory("rea-plist-source-format-");
     const path = join(root, "selected.plist");
-    await writeFile(path, "{ Name = Example; Items = (a, b); }\n");
+    await writeFile(path, contents);
     const client = new NativeMacOSProvider(
       {},
       new PlistSourceRunner(description, xmlFallback),

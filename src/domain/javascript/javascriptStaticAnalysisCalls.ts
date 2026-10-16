@@ -567,8 +567,7 @@ const resolvedRequestTarget = (
   // A toString result is selected before the enclosing request invocation.
   const expression = unwrapJavaScriptExpression(node).node;
   const capture = reference === expression ? site : expression;
-  if (referenceMayHaveChangedAtSite(reference, capture, index))
-    return undefined;
+  if (index.referenceMayHaveChangedAt(capture, reference)) return undefined;
   if (!requestInitializerPrecedesSite(reference, capture, bindings, index))
     return undefined;
   const evaluated = evaluateSemanticExpression(node, bindings);
@@ -583,9 +582,7 @@ const requestInitializerPrecedesSite = (
   bindings: JavaScriptSemanticAnalysisState,
   index: JavaScriptBindingIndex,
 ): boolean => {
-  const effects = index.effectsForReferenceAt(site, reference);
-  if (effects.bindingId === null) return false;
-  const binding = bindings.bindingsById.get(effects.bindingId);
+  const binding = index.bindingForReferenceAt(reference);
   const initializer = semanticStableInitializer(binding, bindings);
   return (
     initializer !== undefined &&
@@ -594,19 +591,6 @@ const requestInitializerPrecedesSite = (
       site,
       bindings.parentsByNode,
     )
-  );
-};
-
-const referenceMayHaveChangedAtSite = (
-  reference: t.Node,
-  site: t.Node,
-  index: JavaScriptBindingIndex,
-): boolean => {
-  const effects = index.effectsForReferenceAt(site, reference);
-  return (
-    !effects.memberEffectsIndexed ||
-    effects.resolution !== "resolved" ||
-    effects.effects.some(({ timing }) => timing !== "after")
   );
 };
 
@@ -648,16 +632,9 @@ const urlObjectRequestTarget = (
     )
       target = unwrapJavaScriptExpression(callee.object).node;
   }
-  if (
-    !t.isIdentifier(target) ||
-    referenceMayHaveChangedAtSite(target, site, index)
-  )
+  if (!t.isIdentifier(target) || index.referenceMayHaveChangedAt(site, target))
     return undefined;
-  const effects = index.effectsForReferenceAt(site, target);
-  const binding =
-    effects.bindingId === null
-      ? undefined
-      : bindings.bindingsById.get(effects.bindingId);
+  const binding = index.bindingForReferenceAt(target);
   if (binding === undefined || seen.has(binding.bindingId)) return undefined;
   seen.add(binding.bindingId);
   const stable = semanticStableInitializer(binding, bindings);

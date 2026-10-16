@@ -1376,3 +1376,54 @@ describe("dedicated worker network and worker exit", () => {
     );
   });
 });
+
+describe("dedicated worker network admission window", () => {
+  it("admits workers only between auto-attach and the final page check", async () => {
+    const attachedPerRead: string[] = [];
+    const browser = await startFakeCdpBrowser({
+      eventsBeforeReply: ["Page.getFrameTree"],
+      commandEvents(command, origin) {
+        if (command.method !== "Page.getFrameTree") return undefined;
+        const sessionId = `late-${String(attachedPerRead.length)}`;
+        attachedPerRead.push(sessionId);
+        return [
+          {
+            sessionId: "session-1",
+            method: "Target.attachedToTarget",
+            params: {
+              sessionId,
+              targetInfo: {
+                targetId: sessionId,
+                type: "worker",
+                url: `${origin}/late.js`,
+                attached: true,
+              },
+              waitingForDebugger: false,
+            },
+          },
+        ];
+      },
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    const enabled = new Set(
+      browser.commands
+        .filter(({ method }) => method === "Network.enable")
+        .map(({ sessionId }) => sessionId),
+    );
+    const finalRead = attachedPerRead.at(-1);
+    expect(attachedPerRead.length).toBeGreaterThan(1);
+    expect(enabled).not.toContain(attachedPerRead[0]);
+    expect(enabled).toContain(attachedPerRead[1]);
+    expect(enabled).not.toContain(finalRead);
+  });
+});

@@ -67,6 +67,7 @@ const budgetExclusion = (events: CdpCaptureEvents) =>
 describe("CDP worker network admission", () => {
   it("admits at most the worker budget and counts omitted workers", async () => {
     const { events, sent, workers } = observation();
+    await workers.start();
     for (
       let index = 0;
       index < CDP_WORKER_NETWORK_LIMITS.workers + 3;
@@ -90,6 +91,7 @@ describe("CDP worker network admission", () => {
 
   it("stops retaining worker requests past the request budget", async () => {
     const { events, workers } = observation();
+    await workers.start();
     workers.ingest(attached("worker-0"));
     await workers.settle();
     for (

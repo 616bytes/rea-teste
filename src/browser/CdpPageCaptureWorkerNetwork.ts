@@ -60,7 +60,8 @@ export class CdpWorkerNetworkObservation {
   readonly #pending = new Set<Promise<void>>();
   #admittedWorkers = 0;
   #failure: { readonly cause: unknown } | undefined;
-  #closed = false;
+  /** Workers are admitted only from `start()` until `settle()` or `close()`. */
+  #admitting = false;
 
   constructor(
     private readonly context: WorkerNetworkContext,
@@ -71,6 +72,8 @@ export class CdpWorkerNetworkObservation {
 
   /** Auto-attach existing and new dedicated workers without pausing them. */
   async start(): Promise<void> {
+    // Chrome can report existing workers before it answers this command.
+    this.#admitting = true;
     const result = await optionalCdpCommand(
       this.context,
       "Target.setAutoAttach",
@@ -78,6 +81,7 @@ export class CdpWorkerNetworkObservation {
       this.limitations,
     );
     if (result === undefined) {
+      this.#admitting = false;
       this.events.completeness.exclude(
         "network_requests",
         "provider_unavailable",
@@ -152,15 +156,20 @@ export class CdpWorkerNetworkObservation {
       : undefined;
   }
 
-  /** Surface transport or cancellation failures from worker commands issued so far. */
+  /**
+   * Stop admitting workers, drain their commands, and surface transport or
+   * cancellation failures. Call before the final page check so nothing a
+   * worker command does can land after that check.
+   */
   async settle(): Promise<void> {
+    this.#admitting = false;
     await this.#drain();
     if (this.#failure !== undefined) throw this.#failure.cause;
   }
 
   /** Stop admitting workers and wait for issued commands before the session closes. */
   async close(): Promise<void> {
-    this.#closed = true;
+    this.#admitting = false;
     await this.#drain();
   }
 
@@ -183,7 +192,7 @@ export class CdpWorkerNetworkObservation {
       return;
     }
     // Browsers that ignore the auto-attach filter may still report frames.
-    if (type !== "worker" || this.#closed) return;
+    if (type !== "worker" || !this.#admitting) return;
     const rawUrl = cdpStringValue(targetInfo.url);
     if (allowedSanitizedUrl(rawUrl, this.allowedOrigins) === undefined) {
       this.events.completeness.exclude(

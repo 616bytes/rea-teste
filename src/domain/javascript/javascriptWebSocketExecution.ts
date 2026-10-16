@@ -4,6 +4,7 @@ import {
   unwrapJavaScriptExpression,
   semanticStaticPropertyName,
   javaScriptExactResultOperand,
+  readExactJavaScriptLiteral,
 } from "./javascriptAstValues.js";
 import {
   javaScriptOptionalOperandsMayBeSkipped,
@@ -113,6 +114,50 @@ const webSocketBodyMayJump = (body: t.Node): boolean => {
   return false;
 };
 
+const finalizerEntries = new WeakMap<
+  t.BlockStatement,
+  t.AwaitExpression | null
+>();
+/** A finally entry can precede a wait if any earlier evaluation can throw. */
+const webSocketFinalizerEntrySuspension = (
+  block: t.BlockStatement,
+): t.AwaitExpression | undefined => {
+  const known = finalizerEntries.get(block);
+  if (known !== undefined) return known ?? undefined;
+  const pending: t.Node[] = [block];
+  while (pending.length > 0) {
+    const next = pending.pop();
+    if (next === undefined) break;
+    const node = unwrapJavaScriptExpression(next).node;
+    if (
+      t.isAwaitExpression(node) &&
+      readExactJavaScriptLiteral(node.argument).found
+    ) {
+      finalizerEntries.set(block, node);
+      return node;
+    }
+    if (
+      readExactJavaScriptLiteral(node).found ||
+      t.isEmptyStatement(node) ||
+      t.isFunctionDeclaration(node)
+    )
+      continue;
+    if (t.isExpressionStatement(node)) pending.push(node.expression);
+    else if (t.isBlockStatement(node)) pending.push(...node.body.toReversed());
+    else if (t.isSequenceExpression(node))
+      pending.push(...node.expressions.toReversed());
+    else if (
+      t.isVariableDeclaration(node) &&
+      node.declarations.every((item) => t.isIdentifier(item.id))
+    ) {
+      for (const item of node.declarations.toReversed())
+        if (item.init != null) pending.push(item.init);
+    } else break;
+  }
+  finalizerEntries.set(block, null);
+  return undefined;
+};
+
 /** Class keys complete before any static initializer or instance construction. */
 const webSocketClassKeys = (node: t.Class): readonly t.Node[] => [
   ...(t.isNode(node.superClass) ? [node.superClass] : []),
@@ -146,7 +191,8 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
     return node.elements.filter((item) => item !== null);
   if (t.isRestElement(node) || t.isAssignmentPattern(node))
     return [t.isRestElement(node) ? node.argument : node.left];
-  if (t.isUnaryExpression(node)) return [node.argument];
+  if (t.isUnaryExpression(node) || t.isUpdateExpression(node))
+    return [node.argument];
   if (t.isMemberExpression(node))
     return node.computed ? [node.object, node.property] : [node.object];
   if (t.isOptionalMemberExpression(node))
@@ -169,6 +215,7 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   if (t.isObjectMethod(node)) return node.computed ? [node.key] : [];
   if (t.isSpreadElement(node)) return [node.argument];
   if (t.isBinaryExpression(node)) return [node.left, node.right];
+  if (t.isSwitchStatement(node)) return [node.discriminant];
   // Every normally completed loop evaluates its initial test, but its body
   // and updates may never execute. A do/while body precedes its first test.
   if (t.isWhileStatement(node)) return [node.test];
@@ -257,8 +304,27 @@ const webSocketPrecedingSuspension = (
     return webSocketCompletedSuspension(parent.test, state);
   if (t.isLogicalExpression(parent) && child === parent.right)
     return webSocketCompletedSuspension(parent.left, state);
-  // Finally also runs after an abrupt try; normal-block proof does not carry into it.
-  if (t.isTryStatement(parent) && child === parent.finalizer) return undefined;
+  if (t.isTryStatement(parent) && child === parent.finalizer)
+    return webSocketFinalizerEntrySuspension(parent.block);
+  if (
+    t.isSwitchStatement(parent) &&
+    parent.cases.includes(child as t.SwitchCase)
+  )
+    return webSocketCompletedSuspension(parent.discriminant, state);
+  // Executed optional children follow the mandatory receiver/callee, even
+  // though skipped children cannot prove completion for following siblings.
+  if (
+    (t.isCallExpression(parent) || t.isOptionalCallExpression(parent)) &&
+    parent.arguments.includes(child as t.Expression) &&
+    javaScriptOptionalOperandsMayBeSkipped(parent)
+  )
+    return webSocketCompletedSuspension(parent.callee, state);
+  if (
+    t.isOptionalMemberExpression(parent) &&
+    parent.computed &&
+    child === parent.property
+  )
+    return webSocketCompletedSuspension(parent.object, state);
   if (
     t.isForOfStatement(parent) &&
     parent.await &&

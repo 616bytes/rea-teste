@@ -129,6 +129,24 @@ it("retains constructor captures, ws imports and template keys with their graph 
 });
 
 const socketExecutionPhaseSources = {
+  "finally-entry.js":
+    '(async () => { try { await 0; } finally { new Socket("wss://example.test/finally-entry"); } })(); const Socket = globalThis.WebSocket;',
+  "wrapped-array.js":
+    'const [Socket] = (0, [globalThis.WebSocket]); new Socket("wss://example.test/wrapped-array");',
+  "switch-await.js":
+    '(async () => { switch (await ready) { default: new Socket("wss://example.test/switch-await"); } })(); const Socket = globalThis.WebSocket;',
+  "optional-argument.js":
+    '(async () => { (await ready)?.(new Socket("wss://example.test/optional-argument")); })(); const Socket = globalThis.WebSocket;',
+  "update-operand.js":
+    '(async () => { (await ready).count++; new Socket("wss://example.test/update-operand"); })(); const Socket = globalThis.WebSocket;',
+  "nested-write.js":
+    'const ws = require("ws"); const Socket = ws.WebSocket; if (flag) { ws.WebSocket = Fake; } new Socket("wss://example.test/nested-write");',
+  "ws-self.js":
+    'const ws = require("ws"); new ws.WebSocket.WebSocket("wss://example.test/ws-self");',
+  "exact-result-write.js":
+    'let holder; const ws = (holder = require("ws")); ws.WebSocket = Fake; new ws.WebSocket("wss://example.test/invalid-exact-write");',
+  "conditional-producer.js":
+    '(async () => { if (condition) await (async () => { await ready; new Socket("wss://example.test/invalid-wait"); })(); const Socket = globalThis.WebSocket; })();',
   "implicit-await.js":
     '(async () => { for await (const item of [0]) { new Socket("wss://example.test/implicit-await"); } })(); const Socket = globalThis.WebSocket;',
   "do-await.js":
@@ -275,6 +293,7 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/do-await",
       "wss://example.test/dynamic-import",
       "wss://example.test/field",
+      "wss://example.test/finally-entry",
       "wss://example.test/generator-body",
       "wss://example.test/implicit-await",
       "wss://example.test/import-alias",
@@ -283,8 +302,10 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/iterable-continuation",
       "wss://example.test/loop-continuation",
       "wss://example.test/member-await",
+      "wss://example.test/nested-write",
       "wss://example.test/object-continuation",
       "wss://example.test/object-key",
+      "wss://example.test/optional-argument",
       "wss://example.test/optional-call",
       "wss://example.test/optional-capture",
       "wss://example.test/pattern-await",
@@ -292,12 +313,23 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/selected-branch",
       "wss://example.test/sequence-capture",
       "wss://example.test/skipped-wait",
+      "wss://example.test/switch-await",
       "wss://example.test/tag-generator",
       "wss://example.test/template-continuation",
       "wss://example.test/try-await",
       "wss://example.test/update-await",
+      "wss://example.test/update-operand",
+      "wss://example.test/wrapped-array",
+      "wss://example.test/ws-self",
     ]);
     for (const [path, source, line] of [
+      ["finally-entry", "finally-entry.js", 1],
+      ["wrapped-array", "wrapped-array.js", 1],
+      ["switch-await", "switch-await.js", 1],
+      ["optional-argument", "optional-argument.js", 1],
+      ["update-operand", "update-operand.js", 1],
+      ["nested-write", "nested-write.js", 1],
+      ["ws-self", "ws-self.js", 1],
       ["implicit-await", "implicit-await.js", 1],
       ["do-await", "do-await.js", 1],
       ["try-await", "try-await.js", 1],

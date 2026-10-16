@@ -140,7 +140,12 @@ export const semanticLiteralProperty = (
   rawNode: t.Node,
   key: string | number,
 ): t.Node | undefined => {
-  const node = unwrapJavaScriptExpression(rawNode).node;
+  let node = unwrapJavaScriptExpression(rawNode).node;
+  for (;;) {
+    const result = javaScriptExactResultOperand(node);
+    if (result === undefined) break;
+    node = unwrapJavaScriptExpression(result).node;
+  }
   // Numeric projections denote array-pattern iteration, not property lookup.
   // Object patterns retain string keys, including a numeric property's spelling.
   if (typeof key === "number" && !t.isArrayExpression(node)) return undefined;

@@ -29,6 +29,7 @@ import {
 import {
   isUnmodifiedGlobalReference,
   isUnmodifiedRequiredWebSocketReference,
+  semanticRequiredWebSocketProjection,
 } from "./javascriptSemanticAmbientWrites.js";
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
@@ -637,10 +638,13 @@ export const isWebSocketEndpointCandidate = (
       return true;
     const required = semanticRequireOrigin(current, state)?.origin;
     if (required !== undefined) {
-      const path = [...required.importedPath, ...selected];
+      const path = semanticRequiredWebSocketProjection([
+        ...required.importedPath,
+        ...selected,
+      ]);
       return (
         required.specifier === "ws" &&
-        (path.length === 0 || (path.length === 1 && path[0] === "WebSocket")) &&
+        path !== undefined &&
         isUnmodifiedRequiredWebSocketReference(
           selectedCapture ?? current,
           state,
@@ -696,7 +700,12 @@ export const isWebSocketEndpointCandidate = (
           (definition.location.end.line < location.line ||
             (definition.location.end.line === location.line &&
               definition.location.end.column < location.column)));
-      const path = [...origin.importedPath, ...members, ...selected];
+      const rawPath = [...origin.importedPath, ...members, ...selected];
+      const path = rawPath.every(
+        (key): key is string => typeof key === "string",
+      )
+        ? semanticRequiredWebSocketProjection(rawPath)
+        : undefined;
       return (
         binding.scopeId === state.scopes[0]?.scopeId &&
         binding.definitions.length === 1 &&
@@ -704,8 +713,7 @@ export const isWebSocketEndpointCandidate = (
         binding.initializers.length === 0 &&
         origin.resolutionMode === "require" &&
         origin.specifier === "ws" &&
-        path.every((key): key is string => typeof key === "string") &&
-        (path.length === 0 || (path.length === 1 && path[0] === "WebSocket")) &&
+        path !== undefined &&
         initialized &&
         isUnmodifiedRequiredWebSocketReference(
           selectedCapture ?? current,

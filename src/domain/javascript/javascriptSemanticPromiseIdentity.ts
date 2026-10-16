@@ -67,9 +67,12 @@ export const semanticAwaitedResultSites = (
     index = new WeakMap();
     const reached = createUnconditionalEvaluationProof(state.parentsByNode);
     for (const awaited of state.awaitSites) {
-      if (!reached(awaited)) continue;
       const result = semanticPromiseResultIdentity(awaited.argument, state);
       if (result === undefined) continue;
+      // A producer syntactically owned by this await cannot run without the
+      // wait, even when their whole branch is conditional. An independently
+      // created/aliased promise still needs unconditional reachability proof.
+      if (result.aliases.length !== 0 && !reached(awaited)) continue;
       const sites = index.get(result.node) ?? [];
       sites.push(awaited);
       index.set(result.node, sites);

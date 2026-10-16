@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 
 import {
   semanticStaticPropertyKey,
+  javaScriptExactResultOperand,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -24,6 +25,18 @@ import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 
 const GLOBAL_OBJECT_NAMES = ["globalThis", "global", "window", "self"];
+
+/** The CommonJS ws constructor's repeated self members select the same export. */
+export const semanticRequiredWebSocketProjection = (
+  path: readonly string[],
+): readonly string[] | undefined => {
+  const canonical = canonicalAmbientPath(["commonjs-ws", ...path]);
+  return canonical.length === 1
+    ? path.length === 0
+      ? []
+      : ["WebSocket"]
+    : undefined;
+};
 
 const globalObjectName = (
   node: t.Node,
@@ -126,6 +139,11 @@ const createAmbientPathResolver = (
           suffix: path,
           ...(current.readsAtSelf && { readsAtSelf: true }),
         });
+      const exactResult = javaScriptExactResultOperand(root);
+      if (exactResult !== undefined) {
+        continueWith(exactResult);
+        continue;
+      }
       if (
         t.isMetaProperty(root) &&
         root.meta.name === "import" &&

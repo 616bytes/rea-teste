@@ -9,7 +9,7 @@ import { firmwareResultSchemas } from "../../../src/domain/firmware/firmwareAnal
 import { FirmwareAnalysisService } from "../../../src/application/firmware/FirmwareAnalysisService.js";
 import { FirmwareProvider } from "../../../src/firmware/FirmwareProvider.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { ToolResultDelivery } from "../../../src/server/toolResult.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
@@ -198,9 +198,15 @@ it("retains a setup-failed publication tree for provider cleanup retry", async (
       error: {
         cleanupIncomplete: true,
         diagnostics: {
-          previous_error: expect.stringContaining(
-            "injected post-acquisition setup failure",
-          ),
+          cleanup_error: {
+            details: {
+              diagnostics: {
+                previous_error: expect.stringContaining(
+                  "injected post-acquisition setup failure",
+                ),
+              },
+            },
+          },
         },
       },
     });
@@ -266,7 +272,7 @@ it("retains the complete firmware result when published output cleanup stays unc
       },
     });
     if (result.ok) throw new Error("Expected unresolved descriptor cleanup");
-    expect(result.error).toBeInstanceOf(ProviderCleanupError);
+    expect(result.error).toBeInstanceOf(ProviderAdapterError);
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "cleanup_incomplete",
       details: {

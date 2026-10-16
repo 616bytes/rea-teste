@@ -122,6 +122,7 @@ const provenance = { path: "/fixture/app", sha256: "a".repeat(64) };
 const partialSiblingsFixture = (
   options: {
     readonly emptyMiddleClass?: boolean;
+    readonly emptyMiddleClassIvar?: boolean;
   } = {},
 ) => {
   const bytes = Buffer.alloc(4096);
@@ -159,6 +160,16 @@ const partialSiblingsFixture = (
   bytes.write("KeptClass\0", 0x600);
   if (!options.emptyMiddleClass) bytes.write("OtherClass\0", 0x620);
   bytes.write("LaterClass\0", 0x640);
+  if (options.emptyMiddleClassIvar) {
+    bytes.writeBigUInt64LE(imageBase + 0x700n, 0x540 + 48);
+    bytes.writeUInt32LE(32, 0x700);
+    bytes.writeUInt32LE(1, 0x704);
+    bytes.writeBigUInt64LE(imageBase + 0x780n, 0x708);
+    bytes.writeBigUInt64LE(imageBase + 0x7c0n, 0x710);
+    bytes.writeBigUInt64LE(imageBase + 0x7d0n, 0x718);
+    bytes.writeUInt32LE(8, 0x780);
+    bytes.write("i\0", 0x7d0);
+  }
   return bytes;
 };
 
@@ -349,6 +360,24 @@ describe("Apple dispatch binary metadata", () => {
       { name: "state", alignment, decode: { status: "decoded" } },
     ]);
   });
+
+  it("rejects an empty ivar name and marks coverage partial", () => {
+    const bytes = fixture();
+    bytes.write("\0", 0x5a0);
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.objc_ivars).toEqual([]);
+    expect(result.objc_classes).toEqual([]);
+    expect(
+      result.coverage.find(
+        ({ facet }) => facet === "objc_class_method_ivar_metadata",
+      ),
+    ).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining(
+        "Objective-C ivar in class Fixture has an empty name",
+      ),
+    });
+  });
 });
 
 describe("Apple dispatch coverage ownership", () => {
@@ -517,6 +546,29 @@ describe("malformed Apple dispatch metadata", () => {
         ({ facet }) => facet === "objc_class_method_ivar_metadata",
       ),
     ).toMatchObject({ status: "partial", examined: 3 });
+  });
+
+  it("retains valid class siblings when one class has an empty ivar name", () => {
+    const result = decodeAppleDispatchMetadata(
+      partialSiblingsFixture({ emptyMiddleClassIvar: true }),
+      100,
+      provenance,
+    );
+    expect(result.objc_classes.map(({ name }) => name)).toEqual([
+      "KeptClass",
+      "LaterClass",
+    ]);
+    expect(
+      result.coverage.find(
+        ({ facet }) => facet === "objc_class_method_ivar_metadata",
+      ),
+    ).toMatchObject({
+      status: "partial",
+      examined: 3,
+      reason: expect.stringContaining(
+        "Objective-C ivar in class OtherClass has an empty name",
+      ),
+    });
   });
 
   it("retains valid Swift class vtable siblings when one descriptor has an empty class name", () => {

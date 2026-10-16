@@ -2,7 +2,6 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import {
   analysisSearchPredicate,
@@ -15,7 +14,7 @@ import { normalizeKunaAddress } from "./KunaAddress.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
 import type { KunaPendingQuery, KunaQueryWork } from "./KunaQueryWork.js";
 import { kunaQueryFailureForCaller } from "./KunaQueryErrors.js";
-import { KUNA_DIAGNOSTIC_BYTES, KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
+import { KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
 import {
   KunaStringInventoryReader,
   type KunaStringInventory,
@@ -125,47 +124,31 @@ export class KunaStringQueries {
     }
     if (this.#pending === undefined) {
       const pending = this.work.start<KunaStringInventory>(
-        async (producerSignal) => {
-          const reader = new KunaStringInventoryReader();
-          const run = await this.work.run({
-            installation,
-            operation: "kuna:strings",
-            arguments: (input) => [
-              "strings",
-              input,
-              "--json",
-              "--encoding",
-              "all",
-              "--min-length",
-              String(KUNA_STRING_MIN_LENGTH),
-              "--termination",
-              "any",
-              "--no-xrefs",
-            ],
-            timeoutMs: installation.configuration.projectTimeoutMs,
-            outputBytes: KUNA_DIAGNOSTIC_BYTES,
-            stdout: reader,
-            // A rejected document stops Kuna instead of awaiting its remainder.
-            signal: AbortSignal.any([producerSignal, reader.rejected]),
-          });
-          if (!run.ok) {
-            const rejection = reader.rejection;
-            if (
-              rejection !== undefined &&
-              run.error instanceof AnalysisCancelledError &&
-              !producerSignal.aborted
-            )
-              return err(rejection);
-            // Diagnostics beyond their buffer recur for this target and executable.
-            if (
-              run.error instanceof AnalysisResourceConstraintError &&
-              run.error.resource === "memory"
-            )
-              this.#failure = run.error;
-            return run;
-          }
-          return reader.finish(run.value.input);
-        },
+        (producerSignal) =>
+          this.work.scan(
+            {
+              installation,
+              operation: "kuna:strings",
+              arguments: (input) => [
+                "strings",
+                input,
+                "--json",
+                "--encoding",
+                "all",
+                "--min-length",
+                String(KUNA_STRING_MIN_LENGTH),
+                "--termination",
+                "any",
+                "--no-xrefs",
+              ],
+              timeoutMs: installation.configuration.projectTimeoutMs,
+            },
+            new KunaStringInventoryReader(),
+            producerSignal,
+            (failure) => {
+              this.#failure = failure;
+            },
+          ),
         (value) => {
           this.#inventory = value;
         },

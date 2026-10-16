@@ -1119,37 +1119,44 @@ const plutilDiagnostic = (stderr: string, path: string): string => {
   return text.startsWith(`${path}: `) ? text.slice(path.length + 2) : text;
 };
 
-/**
- * Admit a readable regular file before plutil runs, so a later plutil failure
- * reflects the bytes rather than a missing path or a host permission denial.
- */
 /** Bytes examined for leading markup when `file` reports only text. */
 const PLIST_MARKUP_PROBE_BYTES = 4_096;
 
 /**
- * `file` names XML only when a document declaration is present, so XML
- * without one and OpenStep text both read as plain text. Their first
- * non-whitespace character separates them; anything else stays unknown.
+ * Preserve explicit source identities. For generic text, recognize XML
+ * markup rather than a lone `<`, which also opens an OpenStep data value.
+ * A prefix without recognizable markup stays unknown.
  */
 const plistSourceFormat = async (
   description: string,
   path: string,
   requested: string | undefined,
-): Promise<Result<"binary" | "xml" | "unknown", AnalysisError>> => {
+): Promise<Result<"binary" | "xml" | "json" | "unknown", AnalysisError>> => {
   if (/binary property list/iu.test(description)) return ok("binary");
   if (/\bXML\b/iu.test(description)) return ok("xml");
+  if (/\bJSON\b/iu.test(description)) return ok("json");
   if (!/\btext\b/iu.test(description)) return ok("unknown");
   try {
     const handle = await open(path, "r");
     try {
       const head = Buffer.alloc(PLIST_MARKUP_PROBE_BYTES);
       const { bytesRead } = await handle.read(head, 0, head.length, 0);
-      const text = head
-        .subarray(0, bytesRead)
-        .toString("utf8")
-        .replace(/^﻿/u, "")
+      const encoding =
+        head[0] === 0xff && head[1] === 0xfe
+          ? "utf-16le"
+          : head[0] === 0xfe && head[1] === 0xff
+            ? "utf-16be"
+            : "utf-8";
+      const text = new TextDecoder(encoding)
+        .decode(head.subarray(0, bytesRead))
         .trimStart();
-      return ok(text.startsWith("<") ? "xml" : "unknown");
+      return ok(
+        /^<(?:[!?]|(?:plist|dict|array|string|integer|real|data|date|true|false)[\s/>])/u.test(
+          text,
+        )
+          ? "xml"
+          : "unknown",
+      );
     } finally {
       await handle.close();
     }
@@ -1164,6 +1171,10 @@ const plistSourceFormat = async (
   }
 };
 
+/**
+ * Admit a readable regular file before plutil runs, so a later plutil failure
+ * reflects the bytes rather than a missing path or a host permission denial.
+ */
 const requireRegularPlist = async (
   path: string,
   requested: string | undefined,

@@ -84,6 +84,8 @@ describe.skipIf(process.platform !== "darwin")(
     cliTest.for([
       ["openstep", "unknown"],
       ["openstep-data", "unknown"],
+      ["openstep-data-root", "unknown"],
+      ["openstep-empty-data", "unknown"],
       ["xml", "xml"],
       ["xml16", "xml"],
       ["binary", "binary"],
@@ -94,10 +96,16 @@ describe.skipIf(process.platform !== "darwin")(
         const target = join(directory, "target");
         const plist = join(directory, "selected.plist");
         const withData = encoding === "openstep-data";
+        const dataRoot = encoding === "openstep-data-root";
+        const emptyData = encoding === "openstep-empty-data";
         await writeFile(target, thinMach(0xfeedfacf, 0x0100000c));
         await writeFile(
           plist,
-          `{ Name = Example; Items = (a, b); ${withData ? "Blob = <deadbeef>;" : ""} }\n`,
+          dataRoot
+            ? "<deadbeef>\n"
+            : emptyData
+              ? "<>\n"
+              : `{ Name = Example; Items = (a, b); ${withData ? "Blob = <deadbeef>;" : ""} }\n`,
         );
         if (encoding === "binary" || encoding.startsWith("xml")) {
           await promisify(execFile)("/usr/bin/plutil", [
@@ -145,13 +153,16 @@ describe.skipIf(process.platform !== "darwin")(
           normalized_result: {
             format,
             source_path: plist,
-            value: {
-              Name: "Example",
-              Items: ["a", "b"],
-              ...(withData
-                ? { Blob: { $plist_type: "data", base64: "3q2+7w==" } }
-                : {}),
-            },
+            value:
+              dataRoot || emptyData
+                ? { $plist_type: "data", base64: emptyData ? "" : "3q2+7w==" }
+                : {
+                    Name: "Example",
+                    Items: ["a", "b"],
+                    ...(withData
+                      ? { Blob: { $plist_type: "data", base64: "3q2+7w==" } }
+                      : {}),
+                  },
           },
         });
       },

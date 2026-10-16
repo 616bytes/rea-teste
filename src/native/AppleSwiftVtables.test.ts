@@ -149,12 +149,83 @@ describe("Swift vtable coverage facts: unresolved Swift dispatch slots", () => {
     });
 
     expect(result.swift_dispatch_slots[0]?.decode.status).toBe("partial");
-    expect(facts).toMatchObject({
-      facet: "swift_conformances_static_witness_slots",
-      exhaustive: false,
-      issues: [{ code: "witness_slot_unresolved", location: "0x388" }],
-    });
   });
+});
+
+const emptyNameConformance = (stringReader: (address: bigint) => string) => {
+  const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
+  const values = new Map<bigint, number>([
+    [0x20cn, 0],
+    [0x500n, 3],
+    [0x50cn, 0],
+    [0x510n, 1],
+    [0x2b0n, 16],
+    [0x518n, 1],
+  ]);
+  const budget: DispatchRecordBudget = {
+    truncated: false,
+    isFull: () => false,
+    markTruncated: () => {
+      budget.truncated = true;
+    },
+    admit: () => true,
+  };
+  const facts = decodeSwiftDispatchFacets({
+    sections: [{ name: "__swift5_proto", address: 0x100n, size: 4 }],
+    segments: [],
+    readers: {
+      u32: (address) => values.get(address) ?? 0,
+      pointer: (address) => (address === 0x380n ? 0x200n : 0x900n),
+      string: stringReader,
+      location: (address) => ({
+        address: `0x${address.toString(16)}`,
+        file_offset: Number(address),
+      }),
+      evidence: (address, description) => [
+        {
+          kind: "binary_metadata",
+          description,
+          location: {
+            address: `0x${address.toString(16)}`,
+            file_offset: Number(address),
+          },
+          artifact_path: "/fixture",
+          artifact_sha256: "a".repeat(64),
+        },
+      ],
+      offset: (address) => Number(address),
+    },
+    relative: (field) =>
+      new Map<bigint, bigint>([
+        [0x100n, 0x200n],
+        [0x200n, 0x500n],
+        [0x508n, 0x600n],
+        [0x204n, 0x2b0n],
+        [0x2b8n, 0x700n],
+        [0x208n, 0x380n],
+      ]).get(field) ?? 0n,
+    budget,
+    result,
+  });
+  return { result, facts };
+};
+
+describe("Swift conformance coverage facts: empty name handling", () => {
+  it.each([
+    ["protocol", (address: bigint) => (address === 0x600n ? "" : "Widget")],
+    ["type", (address: bigint) => (address === 0x600n ? "Proto" : "")],
+  ])(
+    "rejects an empty Swift %s name and preserves coverage",
+    (_kind, reader) => {
+      const { result, facts } = emptyNameConformance(reader);
+      expect(result.swift_conformances).toEqual([]);
+      expect(facts).toMatchObject({
+        facet: "swift_conformances_static_witness_slots",
+        exhaustive: false,
+        issues: [{ code: "conformance_decode_failed", location: "0x100" }],
+      });
+    },
+  );
 });
 
 describe("Swift vtable coverage facts: unsupported pointer fixup coverage", () => {

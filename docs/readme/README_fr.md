@@ -263,6 +263,8 @@ Si vous utilisez un agent, terminez l'[actualisation de la configuration](#mettr
 
 ## Documentation
 
+Pour les publications associées et les méthodes d’évaluation, consultez la [liste de lectures de recherche](https://rea.tools/research/) (en anglais).
+
 Commencez par les [guides pas à pas](https://rea.tools/fr/guides/) du site web. Pour les options exactes, les prérequis et les contrats de résultats :
 
 - [Installation et configuration](../installation.md) : enregistrement des agents, configuration des fournisseurs, mises à jour et désinstallation.

@@ -264,6 +264,8 @@ Ajan kullanıyorsanız [kurulum yenilemesini](#reayı-güncelleyin) tamamlayın 
 
 ## Belgeler
 
+İlgili makaleler ve değerlendirme yöntemleri için [araştırma okuma listesine](https://rea.tools/research/) (İngilizce) bakın.
+
 Web sitesindeki [uygulamalı rehberlerden](https://rea.tools/tr/guides/) başlayın. Kesin seçenekler, ön koşullar ve sonuç sözleşmeleri için:
 
 - [Yükleme ve kurulum](../installation.md): ajan kaydı, sağlayıcı yapılandırması, güncellemeler ve kaldırma.

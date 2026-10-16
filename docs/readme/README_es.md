@@ -259,6 +259,8 @@ Si usas un agente, completa la [actualización de la configuración](#actualiza-
 
 ## Documentación
 
+Para artículos relacionados y métodos de evaluación, consulta la [lista de lecturas de investigación](https://rea.tools/research/) (en inglés).
+
 Empieza con las [guías prácticas](https://rea.tools/es/guides/) del sitio web. Para opciones exactas, requisitos y contratos de resultados:
 
 - [Instalación y configuración](../installation.md): registro de agentes, configuración de proveedores, actualizaciones y desinstalación.

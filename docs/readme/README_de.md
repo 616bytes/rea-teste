@@ -259,6 +259,8 @@ Wenn du einen Agenten verwendest, schließe die [Aktualisierung der Einrichtung]
 
 ## Dokumentation
 
+Verwandte Arbeiten und Bewertungsmethoden findest du in der [Literaturübersicht](https://rea.tools/research/) (auf Englisch).
+
 Beginne mit den [praxisnahen Anleitungen](https://rea.tools/de/guides/) auf der Website. Genaue Optionen, Voraussetzungen und Ergebniskontrakte findest du hier:
 
 - [Installation und Einrichtung](../installation.md): Agentenregistrierung, Provider-Konfiguration, Updates und Deinstallation.

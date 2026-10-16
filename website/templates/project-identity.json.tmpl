@@ -1,0 +1,25 @@
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "$origin/#website",
+      "url": "$origin/",
+      "name": "REA — Reverse Engineer Anything",
+      "alternateName": "REA",
+      "mainEntity": { "@id": "$origin/#software" }
+    },
+    {
+      "@type": "SoftwareSourceCode",
+      "@id": "$origin/#software",
+      "name": "REA",
+      "alternateName": ["Reverse Engineer Anything", "rea-agents"],
+      "description": "Local reverse-engineering CLI and MCP server for analyzing binaries, applications, and runtime behavior.",
+      "url": "$origin/",
+      "codeRepository": "https://github.com/morluto/rea",
+      "license": "https://github.com/morluto/rea/blob/main/LICENSE",
+      "programmingLanguage": "TypeScript",
+      "runtimePlatform": "Node.js"
+    }
+  ]
+}

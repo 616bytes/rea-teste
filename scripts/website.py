@@ -128,8 +128,11 @@ class PageMetadata(HTMLParser):
         self.titles = []
         self.descriptions = []
         self.noindex = False
+        self.lang = None
 
     def handle_starttag(self, tag, attrs):
+        if tag == "html":
+            self.lang = dict(attrs).get("lang")
         if tag == "head":
             self.in_head = True
         if not self.in_head:

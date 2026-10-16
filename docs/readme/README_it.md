@@ -263,6 +263,8 @@ Se stai usando un agente, completa l'[aggiornamento della configurazione](#aggio
 
 ## Documentazione
 
+Per articoli correlati e metodi di valutazione, consulta la [lista di letture di ricerca](https://rea.tools/research/) (in inglese).
+
 Inizia dalle [guide pratiche](https://rea.tools/it/guides/) del sito web. Per opzioni esatte, prerequisiti e contratti dei risultati:
 
 - [Installazione e configurazione](../installation.md): registrazione agente, configurazione provider, aggiornamenti e disinstallazione.

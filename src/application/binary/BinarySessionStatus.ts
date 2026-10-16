@@ -76,6 +76,7 @@ export const binarySessionStatus = ({
       availability: structuredClone(candidate.availability),
       target_support: structuredClone(candidate.targetSupport),
       selected: candidate.selected,
+      eligibility: candidate.eligibility,
       capabilities: providerCapabilitySets(
         candidate.capabilities
           .slice()
@@ -88,6 +89,9 @@ export const binarySessionStatus = ({
   const common = {
     cleanup_pending: cleanupPending,
     capabilities,
+    // A target-free route has not selected anything yet; an admitted target
+    // always reports the outcome that its resolver produced.
+    analysis_provider_selection_state: route.selection?.selectionState ?? null,
     analysis_provider_binding: analysisProviderBinding,
     analysis_provider_candidates: analysisProviderCandidates,
     analysis_run:

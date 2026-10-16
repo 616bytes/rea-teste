@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { expect, it as test } from "vitest";
 
 import { readKunaConfiguration } from "../../../../src/kuna/KunaConfiguration.js";
-import { inspectKunaInstallation } from "../../../../src/kuna/KunaInstallation.js";
+import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaFileCloseOwner.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
 
@@ -40,6 +40,7 @@ it("identifies a caller-selected kuna by version and digest", async () => {
   expect(await fakeKunaCalls(kuna)).toEqual([
     {
       pid: expect.any(Number),
+      at: expect.any(Number),
       argv: ["--version"],
       home: join(root, "cache", "home"),
       xdg: join(root, "cache", "home", ".cache"),

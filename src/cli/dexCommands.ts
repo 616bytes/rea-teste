@@ -17,7 +17,7 @@ export const registerDexCommands = (
   const service = dexDebugMetadataModule.create(environment);
   cli.command(dexDebugMetadataModule.cliCommand, {
     description:
-      "Inspect compiler-emitted debug metadata in a selected local Android .dex, or a classes*.dex inside an APK/ZIP",
+      "Inspect compiler-emitted debug metadata in a selected local Android .dex, or the DEX members of an APK/ZIP",
     args: z.object({
       path: z
         .string()
@@ -28,7 +28,7 @@ export const registerDexCommands = (
         .string()
         .optional()
         .describe(
-          "DEX member to select inside the archive, e.g. classes2.dex; omit to summarize every classes*.dex",
+          "DEX member to select inside the archive, e.g. classes2.dex; omit to summarize the members Android auto-loads (classes.dex, classes2.dex, ... up to the first missing name). Members after a gap are not included; select them here",
         ),
       "class-descriptor": z
         .string()

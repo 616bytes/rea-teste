@@ -293,27 +293,23 @@ export class DexFileProvider implements DexDebugMetadataPort {
   > {
     const requested =
       entry === undefined ? undefined : normalizeArchiveMemberPath(entry);
-    const matches: { entry: string; member: ArtifactEntry }[] = [];
+    const candidates: { entry: string; member: ArtifactEntry }[] = [];
     for await (const member of reader.entries(signal)) {
       if (member.kind !== "file") continue;
       if (requested !== undefined) {
         if (member.path === requested)
-          matches.push({ entry: member.path, member });
+          candidates.push({ entry: member.path, member });
       } else if (isCanonicalDexMember(member.path)) {
-        matches.push({ entry: member.path, member });
+        candidates.push({ entry: member.path, member });
       }
     }
     if (requested !== undefined)
-      return this.#resolveRequested(matches, requested, path);
+      return this.#resolveRequested(candidates, requested, path);
     // Only the contiguous sequence Android loads is promised; a member after a
     // gap is never loaded, so it can neither fail nor shadow the inspection.
-    const sequence = autoLoadedDexMembers(matches.map(({ entry }) => entry));
+    const sequence = autoLoadedDexMembers(candidates.map(({ entry }) => entry));
     const loadOrder = new Map(sequence.map((name, index) => [name, index]));
-    matches.splice(
-      0,
-      matches.length,
-      ...matches.filter(({ entry }) => loadOrder.has(entry)),
-    );
+    const matches = candidates.filter(({ entry }) => loadOrder.has(entry));
     // Every root member is promised, so one that cannot be read is refused,
     // never silently skipped (that would turn unknown into absent).
     const encrypted = matches.filter((m) => m.member.encrypted);
@@ -355,6 +351,10 @@ export class DexFileProvider implements DexDebugMetadataPort {
           "capacity",
           `${path} holds ${String(matches.length)} dex members, over the ${String(DEX_LIMITS.maxDexMembers)} limit; select one with entry.`,
           { maximum_dex_members: DEX_LIMITS.maxDexMembers },
+          {
+            remediationAction:
+              "Select one member with entry; members are inspected one at a time.",
+          },
         ),
       );
     matches.sort(

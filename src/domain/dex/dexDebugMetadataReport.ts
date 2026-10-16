@@ -27,7 +27,7 @@ export const inspectDexDebugMetadataInputSchema = z.strictObject({
     .min(1)
     .optional()
     .describe(
-      "DEX member to select inside an APK/ZIP at path, e.g. classes2.dex; omit to summarize every classes*.dex",
+      "DEX member to select inside an APK/ZIP at path, e.g. classes2.dex; omit to summarize the members Android auto-loads (classes.dex, classes2.dex, ... up to the first missing name). Members after a gap are not included; select them here",
     ),
   class_descriptor: z
     .string()

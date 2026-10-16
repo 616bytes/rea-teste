@@ -14,7 +14,7 @@ export const DEX_LIMITS = {
   archiveMetadataBytes: 16 * 1024 * 1024,
   /** Inline result ceiling; a decoded result past this is refused, not truncated. */
   outputBytes: 8 * 1024 * 1024,
-  /** Cap on root `classes*.dex` members summarized for an archive; refuse past it. */
+  /** Cap on auto-loaded multidex members summarized for an archive; refuse past it. */
   maxDexMembers: 64,
   /**
    * Work units (debug opcodes, parameter-name reads, class_data entries walked)

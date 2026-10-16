@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyJarEntry, resolveJarSelection } from "./jarClassEntry.js";
+import {
+  classifyJarEntry,
+  normalizeJarEntryPath,
+  resolveJarSelection,
+} from "./jarClassEntry.js";
 
 describe("classifyJarEntry", () => {
   it("recognizes the base entry", () => {
@@ -83,5 +87,14 @@ describe("resolveJarSelection", () => {
       reason: "not-found",
       available: [],
     });
+  });
+});
+
+describe("normalizeJarEntryPath", () => {
+  it("applies the ZIP reader's logical-path rule to the request", () => {
+    expect(normalizeJarEntryPath("./Foo.class")).toBe("Foo.class");
+    expect(normalizeJarEntryPath("././a/Foo.class")).toBe("a/Foo.class");
+    expect(normalizeJarEntryPath("/a\\Foo.class")).toBe("a/Foo.class");
+    expect(normalizeJarEntryPath("a/./Foo.class")).toBe("a/./Foo.class");
   });
 });

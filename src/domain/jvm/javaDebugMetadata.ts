@@ -389,20 +389,39 @@ export interface DebugOutputProjection {
  * objects — and charges every reference with the JSON-encoded length of the
  * string it names, so a name shared by thousands of entries is counted
  * thousands of times (`JSON.stringify` would expand it that many times).
- * String sizes are upper bounds computed from the bytes, without decoding.
+ * String sizes are upper bounds computed once per constant from its bytes,
+ * without decoding, and the walk stops once `stopAbove` is exceeded.
  * Code sub-attributes are framed against `attributeLimit`.
  */
 export const projectDebugOutput = (
   cls: JavaClassFile,
   attributeLimit: number,
+  stopAbove: { readonly entries: number; readonly encodedBytes: number } = {
+    entries: Number.POSITIVE_INFINITY,
+    encodedBytes: Number.POSITIVE_INFINITY,
+  },
 ): DebugOutputProjection => {
   // Bounded from the bytes, never decoded: a refused class decodes nothing.
-  const stringBytes = (index: number): number =>
-    constantUtf8JsonBound(cls.constantPool, index);
+  // Each constant's bound is computed once; a name shared by millions of rows
+  // is scanned once, not once per row.
+  const bounds = new Map<number, number>();
+  const stringBytes = (index: number): number => {
+    let bound = bounds.get(index);
+    if (bound === undefined) {
+      bound = constantUtf8JsonBound(cls.constantPool, index);
+      bounds.set(index, bound);
+    }
+    return bound;
+  };
   const budget = attributeBudget(attributeLimit);
   let entries = cls.methods.length;
   let encodedBytes = 4096;
+  // Stop as soon as either running total passes the caller's limit: the
+  // answer is already "refuse", and finishing the walk is wasted work.
+  const over = (): boolean =>
+    entries > stopAbove.entries || encodedBytes > stopAbove.encodedBytes;
   for (const method of cls.methods) {
+    if (over()) break;
     encodedBytes +=
       METHOD_OVERHEAD +
       stringBytes(method.nameIndex) +
@@ -433,7 +452,7 @@ export const projectDebugOutput = (
           continue;
         }
         // name_index and descriptor/signature_index sit at +4 and +6.
-        for (let i = 0; i < count; i += 1) {
+        for (let i = 0; i < count && !over(); i += 1) {
           const at = 2 + i * stride;
           encodedBytes +=
             LOCAL_ENTRY_OVERHEAD +

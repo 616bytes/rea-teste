@@ -212,6 +212,21 @@ describe("JvmClassFileProvider JAR safety and format", () => {
     expect(r.selected_entry.entry).toBe(ENTRY);
   });
 
+  it("selects a './'-prefixed member by either spelling and keeps its archive name visible", async () => {
+    const path = await writeJar(
+      "dotslash.jar",
+      await buildZip([{ name: `./${ENTRY}`, bytes: minimalClass(52) }]),
+    );
+    for (const entry of [ENTRY, `./${ENTRY}`]) {
+      const result = await provider.inspect({ path, entry });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.limitations.join("\n")).toContain(
+        JSON.stringify(`./${ENTRY}`),
+      );
+    }
+  });
+
   it("reports an encrypted matching member as unavailable, not absent", async () => {
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add(ENTRY, new Uint8ArrayReader(minimalClass(52)), {

@@ -32,8 +32,16 @@ const VERSIONS_PREFIX = "META-INF/versions/";
  * entries use: forward slashes, no leading slash. A JAR member is identified by
  * exactly this string, so normalization happens once here before any match.
  */
+/**
+ * Normalise a requested entry the way the ZIP reader forms logical member
+ * paths (it owns that rule): forward slashes, no leading `/`, and no leading
+ * `./` segments, so the archive's literal `./Foo.class` is selectable.
+ */
 export const normalizeJarEntryPath = (entry: string): string =>
-  entry.replace(/\\/g, "/").replace(/^\/+/, "");
+  entry
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/^(?:\.\/)+/u, "");
 
 /**
  * Classify an archive member path for the requested class entry: the base entry,

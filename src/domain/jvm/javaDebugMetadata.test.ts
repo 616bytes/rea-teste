@@ -382,6 +382,38 @@ describe("projectDebugOutput", () => {
     expect(projected(3) - projected(1)).toBe(2 * (160 + 3 + 3));
   });
 
+  it("stops walking once a running total passes the caller's limit", () => {
+    const code = codeAttrInfo(
+      subAttrs(
+        1,
+        new Blob().attr(
+          5,
+          localVariableTable(
+            Array.from({ length: 50 }, (_, slot) => ({
+              startPc: 0,
+              length: 1,
+              slot,
+            })),
+          ),
+        ),
+      ).parts,
+    );
+    const cls = parseJavaClassFile(
+      classWith(new Blob().u2(1).attr(3, code), new Blob().u2(0)),
+    );
+    expect(cls.ok).toBe(true);
+    if (!cls.ok) return;
+    const full = projectDebugOutput(cls.value, 1000);
+    expect(full.entries).toBe(51);
+    const stopped = projectDebugOutput(cls.value, 1000, {
+      entries: Number.POSITIVE_INFINITY,
+      encodedBytes: 5000,
+    });
+    // Over the limit, but well short of the full walk.
+    expect(stopped.encodedBytes).toBeGreaterThan(5000);
+    expect(stopped.encodedBytes).toBeLessThan(full.encodedBytes);
+  });
+
   it("stops framing at the retained-attribute budget", () => {
     const code = codeAttrInfo(
       subAttrs(

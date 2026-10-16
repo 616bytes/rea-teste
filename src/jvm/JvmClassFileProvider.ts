@@ -314,9 +314,21 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
             },
           },
         );
-        const tooLarge = this.#rejectIfOversized(result, jar);
+        // The ZIP reader owns member-name interpretation; keep its notes (e.g.
+        // an omitted leading "./") so the archive's own name stays visible.
+        const withMemberNotes =
+          selected.value.member.limitations.length === 0
+            ? result
+            : {
+                ...result,
+                limitations: [
+                  ...result.limitations,
+                  ...selected.value.member.limitations,
+                ],
+              };
+        const tooLarge = this.#rejectIfOversized(withMemberNotes, jar);
         if (tooLarge) return err(tooLarge);
-        return ok(execution(result, jar, jarDigest.sha256, "zip"));
+        return ok(execution(withMemberNotes, jar, jarDigest.sha256, "zip"));
       } finally {
         await this.#releaseOrRetain({
           kind: "reader",
@@ -482,6 +494,10 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     const projection = projectDebugOutput(
       classFile,
       JVM_LIMITS.maxDebugEntries,
+      {
+        entries: JVM_LIMITS.maxDebugEntries,
+        encodedBytes: JVM_LIMITS.outputBytes,
+      },
     );
     if (projection.attributeBudgetExceeded)
       return new AnalysisResourceConstraintError(

@@ -22,6 +22,10 @@ interface ServerContext {
   readonly loadOptionalProviders: () => Promise<OptionalProviderLoadResult>;
 }
 
+type ClosableOptionalProvider = {
+  readonly close?: () => Promise<void>;
+};
+
 export const startMcpTransport = async (
   dependencies: RuntimeDependencies,
   session: BinarySession,
@@ -76,7 +80,7 @@ export const startMcpTransport = async (
   };
   // Optional providers are shared by every server instance the SDK creates,
   // including a discarded discovery probe, so only process shutdown closes them.
-  const pendingOptionalProviders = new Set<{ close?(): Promise<void> }>(
+  const optionalProvidersToClose = new Set<ClosableOptionalProvider>(
     [
       optionalProviders.browserObservation,
       optionalProviders.browserScenarioCapture,
@@ -85,26 +89,22 @@ export const startMcpTransport = async (
   );
   let optionalProviderClose: Promise<void> | undefined;
   const closeOptionalProviders = async (): Promise<void> => {
-    optionalProviderClose ??= Promise.allSettled(
-      [...pendingOptionalProviders].map(async (provider) => {
-        await provider.close?.();
-        pendingOptionalProviders.delete(provider);
-      }),
-    )
-      .then((results) => {
-        const failures = results.flatMap((result) =>
-          result.status === "rejected" ? [result.reason] : [],
-        );
-        if (failures.length > 0)
-          throw new AggregateError(
-            failures,
-            "Optional provider cleanup failed",
-          );
-      })
-      .catch((cause: unknown) => {
-        optionalProviderClose = undefined;
-        throw cause;
-      });
+    optionalProviderClose ??= (async () => {
+      const results = await Promise.allSettled(
+        [...optionalProvidersToClose].map(async (provider) => {
+          await provider.close?.();
+          optionalProvidersToClose.delete(provider);
+        }),
+      );
+      const failures = results.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (failures.length > 0)
+        throw new AggregateError(failures, "Optional provider cleanup failed");
+    })().catch((cause: unknown) => {
+      optionalProviderClose = undefined;
+      throw cause;
+    });
     await optionalProviderClose;
   };
   let handle: StdioServerHandle;

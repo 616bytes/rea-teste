@@ -34,8 +34,8 @@ export const finishAnalysisCommand = async <
     };
   }
   try {
-    // Only the resource owner can resolve its earlier cleanup failure. A
-    // successful service close does not prove that producer resources settled.
+    // Resource owners may resolve their retained errors during close. This
+    // adapter cannot infer resolution of a producer's earlier cleanup failure.
     await service.close();
   } catch (cause) {
     let cleanup: AnalysisError;

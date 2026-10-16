@@ -176,13 +176,13 @@ export interface CreateServerOptions {
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
   readonly electronObservation?: ElectronObservationPort;
+  /** Selects who closes the shared optional observation providers. */
+  readonly optionalObservationProviderOwner?: "server" | "caller";
   readonly electronActiveObservation?: ElectronActiveObservationPort;
   readonly javascriptRuntimeObservation?: JavaScriptRuntimeObservationPort;
   readonly fridaInstrumentation?: FridaInstrumentationPort;
   readonly availabilityPolicy?: () => AvailabilityPolicy;
   readonly optionalProviderLoadFailures?: OptionalProviderLoadFailures;
-  /** Shared SDK probes borrow optional providers from the transport owner. */
-  readonly optionalObservationProviderOwner?: "server" | "caller";
 }
 
 const installSessionToolAvailability = (

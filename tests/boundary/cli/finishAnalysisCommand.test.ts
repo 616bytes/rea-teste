@@ -2,44 +2,58 @@ import { expect, it } from "vitest";
 
 import { finishAnalysisCommand } from "../../../src/cli/finishAnalysisCommand.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { scriptCaptureEvidenceFixture } from "../../fixtures/webScriptCapture.js";
 
-it.each([false, true])(
-  "reports producer cleanup recovery only when its owner resolves the error: %s",
-  async (ownerReleased) => {
-    const evidence = scriptCaptureEvidenceFixture();
-    const original = new ProviderCleanupError(
-      "fixture-provider",
-      ["producer-resource"],
-      { reason: "original cleanup failure" },
-      { operation: "inspect_web_page", partialObservation: evidence },
-    );
-    const result = await finishAnalysisCommand(
-      async () => err(original),
-      {
-        close: async () => {
-          if (ownerReleased) original.resolveCleanup();
-        },
+it("reports producer cleanup recovery after its owner resolves the error", async () => {
+  const evidence = scriptCaptureEvidenceFixture();
+  const original = new ProviderCleanupError(
+    "fixture-provider",
+    ["producer-resource"],
+    { reason: "original cleanup failure" },
+    { operation: "inspect_web_page", partialObservation: evidence },
+  );
+  const result = await finishAnalysisCommand(
+    async () => err(original),
+    {
+      close: async () => {
+        original.resolveCleanup();
       },
-      "fixture-provider",
-      "inspect_web_page",
-    );
-    expect(result).toMatchObject({
-      code: ownerReleased ? "execution_failure" : "cleanup_incomplete",
-      details: {
-        diagnostics: { reason: "original cleanup failure" },
-        partial_observation: evidence,
-      },
-    });
-    if (ownerReleased) expect(result).not.toHaveProperty("details.resources");
-    else
-      expect(result).toMatchObject({
-        details: { resources: ["producer-resource"] },
-      });
-  },
-);
+    },
+    "fixture-provider",
+    "inspect_web_page",
+  );
+  expect(result).toMatchObject({
+    code: "execution_failure",
+    details: {
+      diagnostics: { reason: "original cleanup failure" },
+      partial_observation: evidence,
+    },
+  });
+  expect(result).not.toHaveProperty("details.resources");
+});
+
+it("preserves producer-owned cleanup failure when service close does not resolve it", async () => {
+  const evidence = scriptCaptureEvidenceFixture();
+  const failure = new ProviderCleanupError(
+    "fixture-provider",
+    ["producer-owned-resource"],
+    { reason: "producer cleanup was not confirmed" },
+    { operation: "inspect_web_page", partialObservation: evidence },
+  );
+  const expected = projectAnalysisError(failure);
+  const result = await finishAnalysisCommand(
+    async () => err(failure),
+    { close: async () => {} },
+    "fixture-provider",
+    "inspect_web_page",
+  );
+
+  expect(result).toEqual(expected);
+  expect(failure.cleanupIncomplete).toBe(true);
+});
 
 it("returns completed partial Evidence when cancellation arrives during close", async () => {
   const evidence = scriptCaptureEvidenceFixture();

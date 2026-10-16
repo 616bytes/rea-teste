@@ -322,7 +322,7 @@ const sharedFields = (
   artifact: { path: "", sha256: null },
   // Only parent-owned limitations may be omitted; the parent keeps them.
   limitations: boundedViewMessages(
-    parent.limitations,
+    [...parent.limitations, ...capture.limitations],
     parent.evidenceId,
     "limitations",
     [...VIEW_LIMITATIONS, ...conditionalLimitations(capture)],

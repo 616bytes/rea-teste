@@ -1116,6 +1116,21 @@ it("rejects events outside every window that name another step", () => {
     });
 });
 
+it("carries the capture's own limitations even when the envelope omits them", () => {
+  const capture = browserScenarioCaptureSchema.parse({
+    ...browserScenarioFixtureCapture(),
+    limitations: ["Capture-local caveat kept only in the result."],
+  });
+  const source = { ...parent(capture), limitations: [] };
+  for (const view of [
+    { kind: "summary" },
+    { kind: "browser-scenario", collection: "steps" },
+  ])
+    expect(project(view, source).limitations).toContain(
+      "Capture-local caveat kept only in the result.",
+    );
+});
+
 it("keeps the view's own limitations when parent limitations exceed the budget", () => {
   const source = parent();
   const crowded: AnalysisViewParent = {

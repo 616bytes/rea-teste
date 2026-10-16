@@ -191,6 +191,24 @@ it("identifies packaged executables correctly in executableContainsApplication",
   ).toBe(true);
   expect(
     await executableContainsApplication(
+      "/opt/example/example",
+      "/opt/example/resources/app/index.js",
+    ),
+  ).toBe(true);
+  expect(
+    await executableContainsApplication(
+      "/opt/example/example",
+      "/opt/example/resources/app/worker.js",
+    ),
+  ).toBe(false);
+  expect(
+    await executableContainsApplication(
+      "/opt/example/example",
+      "/opt/example/resources/app/other-script.js",
+    ),
+  ).toBe(false);
+  expect(
+    await executableContainsApplication(
       "/usr/lib/drawio/drawio",
       "/usr/lib/drawio/resources/other-tool/index.js",
     ),

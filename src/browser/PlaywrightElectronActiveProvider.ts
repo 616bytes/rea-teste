@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { basename, dirname, join, normalize } from "node:path";
+import { readFile } from "node:fs/promises";
+import {
+  basename,
+  dirname,
+  join,
+  normalize,
+  relative,
+  resolve,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { _electron as electron } from "playwright-core";
@@ -58,6 +66,61 @@ type ElectronPaths = {
   readonly executable: string;
   readonly application: string;
   readonly root: string;
+};
+
+const STANDARD_ELECTRON_ENTRIES = new Set([
+  "main.js",
+  "index.js",
+  "main.cjs",
+  "index.cjs",
+  "main.mjs",
+  "index.mjs",
+  "dist/main.js",
+  "dist/index.js",
+  "src/main.js",
+  "src/index.js",
+]);
+
+const isBundledAppEntry = async (
+  root: string,
+  application: string,
+  isDarwinOrWin: boolean,
+): Promise<boolean> => {
+  const normRoot = normalize(root);
+  const normApp = normalize(application);
+
+  // Exact match with the bundled root (e.g. app directory or app.asar archive)
+  const matchesRoot = isDarwinOrWin
+    ? normRoot.toLowerCase() === normApp.toLowerCase()
+    : normRoot === normApp;
+  if (matchesRoot) return true;
+
+  // Check if application is lexically contained within root
+  const isWithin = isDarwinOrWin
+    ? isPathWithinRoot(normRoot.toLowerCase(), normApp.toLowerCase())
+    : isPathWithinRoot(normRoot, normApp);
+  if (!isWithin) return false;
+
+  // Try reading package.json to identify the app's declared main entry point
+  try {
+    const pkgPath = join(normRoot, "package.json");
+    const content = await readFile(pkgPath, "utf-8");
+    const pkg = JSON.parse(content) as { main?: unknown };
+    const declaredMain =
+      typeof pkg.main === "string" && pkg.main.trim().length > 0
+        ? pkg.main.trim()
+        : "index.js";
+    const resolvedEntry = normalize(resolve(normRoot, declaredMain));
+    return isDarwinOrWin
+      ? resolvedEntry.toLowerCase() === normApp.toLowerCase()
+      : resolvedEntry === normApp;
+  } catch {
+    // If package.json is missing or unreadable (e.g. inside asar or virtual test paths),
+    // match only recognized standard Electron main entry files, distinguishing them from other scripts.
+    const rel = relative(normRoot, normApp).replace(/\\/g, "/");
+    const relKey = isDarwinOrWin ? rel.toLowerCase() : rel;
+    return STANDARD_ELECTRON_ENTRIES.has(relKey);
+  }
 };
 
 /**
@@ -127,18 +190,13 @@ export const executableContainsApplication = async (
   }
 
   // 2. Matches bundled app archive/directory or its entry file inside
-  return candidateRoots.some((root) => {
-    const normRoot = normalize(root);
-    if (isDarwinOrWin) {
-      const lowerRoot = normRoot.toLowerCase();
-      const lowerApp = normalizedApplication.toLowerCase();
-      return lowerRoot === lowerApp || isPathWithinRoot(lowerRoot, lowerApp);
+  for (const root of candidateRoots) {
+    if (await isBundledAppEntry(root, normalizedApplication, isDarwinOrWin)) {
+      return true;
     }
-    return (
-      normRoot === normalizedApplication ||
-      isPathWithinRoot(normRoot, normalizedApplication)
-    );
-  });
+  }
+
+  return false;
 };
 
 /** Launch an owned Electron application through the official Playwright API. */

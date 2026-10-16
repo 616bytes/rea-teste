@@ -29,6 +29,7 @@ import {
   type DexMethodDebug,
   type DexWorkBudget,
   chargeWork,
+  dexParameterWords,
 } from "./dexDebugInfo.js";
 import { type Result, err, ok } from "../result.js";
 import { DexStringResolver } from "./dexStrings.js";
@@ -189,7 +190,7 @@ const decodeMethodDebug = (
   if (paramTypes !== null) {
     const words =
       ((method.accessFlags & ACC_STATIC) === 0 ? 1 : 0) +
-      paramTypes.reduce((sum, { wide }) => sum + (wide ? 2 : 1), 0);
+      dexParameterWords(paramTypes);
     if (words !== code.registersSize - code.firstRegister) return malformed;
   }
   return decodeDebugInfo(

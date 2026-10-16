@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { decodeDebugInfo } from "./dexDebugInfo.js";
+import { decodeDebugInfo, dexParameterList } from "./dexDebugInfo.js";
 
 const uleb = (value: number): number[] => {
   const out: number[] = [];
@@ -189,7 +189,7 @@ describe("decodeDebugInfo bounds and semantics", () => {
       firstRegister: 0,
       accessFlags: 0x8,
       thisTypeIdx: 0,
-      paramTypes: [{ typeIdx: 3, wide: false }],
+      paramTypes: dexParameterList([{ typeIdx: 3, wide: false }]),
     });
     expect(d.explicitLocalCount).toBe(1);
     expect(d.localCount).toBeGreaterThan(d.explicitLocalCount);
@@ -237,7 +237,7 @@ describe("decodeDebugInfo register bound", () => {
       registersSize: 4,
       accessFlags: 0x8,
       thisTypeIdx: 0,
-      paramTypes: [],
+      paramTypes: dexParameterList([]),
     });
     expect(d.malformed).toBe(true);
     expect(d.localCount).toBe(0);

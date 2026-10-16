@@ -323,12 +323,17 @@ export const parseDexFile = (
   // truncation, and trailing bytes past it are ignored by ART 15+ (rejected by
   // ART 14 and earlier). Every offset is checked against the framed bytes, so
   // nothing in the trailing bytes is ever read.
+  if (fileSize < HEADER_SIZE_V40)
+    return err({
+      kind: "bad-header",
+      offset: 32,
+      detail: `file_size ${String(fileSize)} is smaller than the 0x70-byte header`,
+    });
   if (fileSize > bytes.length)
     return err({
-      kind: "truncated",
+      kind: "bad-header",
       offset: 32,
-      need: fileSize,
-      have: bytes.length,
+      detail: `file_size ${String(fileSize)} exceeds the ${String(bytes.length)} bytes present (truncated DEX)`,
     });
   if (fileSize < bytes.length) {
     const framed = parseDexFile(bytes.subarray(0, fileSize));

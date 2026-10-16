@@ -58,13 +58,33 @@ export interface DexParameterLayout {
   /** The declaring class's type index, for the implicit `this`. */
   readonly thisTypeIdx: number;
   /** `null` when the method's proto cannot be resolved (count unknown). */
-  readonly paramTypes:
-    | readonly {
-        readonly typeIdx: number;
-        readonly wide: boolean;
-      }[]
-    | null;
+  readonly paramTypes: DexParameterList | null;
 }
+
+/**
+ * A proto's parameters in declaration order: type index and whether each is
+ * wide (long/double, two registers). Two typed arrays rather than one object
+ * per parameter, so a 255-parameter proto costs two small allocations.
+ */
+export interface DexParameterList {
+  readonly typeIdx: Uint16Array;
+  readonly wide: Uint8Array;
+}
+
+/** Build a parameter list from plain entries. */
+export const dexParameterList = (
+  entries: readonly { readonly typeIdx: number; readonly wide: boolean }[],
+): DexParameterList => ({
+  typeIdx: Uint16Array.from(entries, (e) => e.typeIdx),
+  wide: Uint8Array.from(entries, (e) => (e.wide ? 1 : 0)),
+});
+
+/** Incoming argument words the parameters occupy (wide ones take two). */
+export const dexParameterWords = (params: DexParameterList): number => {
+  let words = 0;
+  for (const wide of params.wide) words += wide === 1 ? 2 : 1;
+  return words;
+};
 
 /** A local-variable scope. Name/type/signature are string-pool indices (`-1` = none). */
 export interface DexLocalEntry {
@@ -246,10 +266,11 @@ class DebugInfoWalk {
       open(register, DEX_THIS_NAME, layout.thisTypeIdx);
       register += 1;
     }
-    const paramTypes = layout.paramTypes ?? [];
-    for (let i = 0; i < paramTypes.length; i += 1) {
-      open(register, this.parameterNames[i] ?? -1, paramTypes[i]!.typeIdx);
-      register += paramTypes[i]!.wide ? 2 : 1;
+    const params = layout.paramTypes;
+    const count = params?.typeIdx.length ?? 0;
+    for (let i = 0; i < count; i += 1) {
+      open(register, this.parameterNames[i] ?? -1, params!.typeIdx[i]!);
+      register += params!.wide[i] === 1 ? 2 : 1;
     }
   }
 
@@ -287,7 +308,7 @@ class DebugInfoWalk {
     if (
       declared !== undefined &&
       declared !== null &&
-      paramsSize.value !== declared.length
+      paramsSize.value !== declared.typeIdx.length
     )
       return false;
     for (let i = 0; i < paramsSize.value; i += 1) {

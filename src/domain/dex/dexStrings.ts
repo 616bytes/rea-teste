@@ -11,7 +11,7 @@ import {
   modifiedUtf8JsonBound,
   modifiedUtf8Units,
 } from "../modifiedUtf8.js";
-import { DEX_MAX_PARAMETERS } from "./dexDebugInfo.js";
+import { DEX_MAX_PARAMETERS, type DexParameterList } from "./dexDebugInfo.js";
 import { DEX_NO_INDEX, DexCursor, type DexHeader } from "./dexFile.js";
 
 /**
@@ -289,56 +289,52 @@ export class DexStringResolver {
    * to seed the implicit parameter locals that a debug_info_item starts at
    * address 0. Returns null when the method or proto cannot be resolved.
    */
-  methodParameters(
-    methodIndex: number,
-  ): readonly { readonly typeIdx: number; readonly wide: boolean }[] | null {
+  methodParameters(methodIndex: number): DexParameterList | null {
     if (methodIndex < 0 || methodIndex >= this.header.methodIdsSize)
       return null;
     const protoAt = this.header.methodIdsOff + methodIndex * 8 + 2;
     if (protoAt + 2 > this.bytes.length) return null;
     const protoIndex = this.view.getUint16(protoAt, true);
     if (protoIndex >= this.header.protoIdsSize) return null;
-    // Many methods share a proto; resolve each proto once.
-    const cached = this.#protoParams.get(protoIndex);
-    if (cached !== undefined || this.#protoParams.has(protoIndex))
-      return cached ?? null;
-    const params = this.#protoParameters(protoIndex);
-    const size = params?.length ?? 0;
-    this.charge(size + 1);
-    // Bounded by retained parameter entries, not just protos: one proto can
-    // expand to 255 entries.
-    if (this.#retainedParams + size <= RETAINED_PARAMS_LIMIT) {
-      this.#retainedParams += size;
-      this.#remember(this.#protoParams, protoIndex, params);
-    }
-    return params;
-  }
-
-  readonly #protoParams = new Map<
-    number,
-    readonly { readonly typeIdx: number; readonly wide: boolean }[] | null
-  >();
-
-  #protoParameters(
-    protoIndex: number,
-  ): readonly { readonly typeIdx: number; readonly wide: boolean }[] | null {
     const parametersOff = this.#u4(
       this.header.protoIdsOff + protoIndex * 12 + 8,
     );
     if (parametersOff === null) return null;
-    if (parametersOff === 0) return [];
+    // Keyed by the type_list itself: protos (and so methods) sharing a
+    // parameter list decode it once, so total work follows the type_list
+    // bytes present in the file rather than methods x parameters.
+    const cached = this.#protoParams.get(parametersOff);
+    if (cached !== undefined || this.#protoParams.has(parametersOff))
+      return cached ?? null;
+    const params = this.#typeListParameters(parametersOff);
+    const size = params?.typeIdx.length ?? 0;
+    this.charge(size + 1);
+    // Bounded by retained parameter entries, not just lists: one list can
+    // expand to 255 entries.
+    if (this.#retainedParams + size <= RETAINED_PARAMS_LIMIT) {
+      this.#retainedParams += size;
+      this.#remember(this.#protoParams, parametersOff, params);
+    }
+    return params;
+  }
+
+  readonly #protoParams = new Map<number, DexParameterList | null>();
+
+  #typeListParameters(parametersOff: number): DexParameterList | null {
+    if (parametersOff === 0)
+      return { typeIdx: new Uint16Array(0), wide: new Uint8Array(0) };
     const size = this.#u4(parametersOff);
     // A proto with more parameters than a method's 255 argument registers can
     // hold is malformed; refuse before allocating its list.
     if (size === null || size > DEX_MAX_PARAMETERS) return null;
-    const params: { typeIdx: number; wide: boolean }[] = [];
+    if (parametersOff + 4 + size * 2 > this.bytes.length) return null;
+    const typeIdx = new Uint16Array(size);
+    const wide = new Uint8Array(size);
     for (let i = 0; i < size; i += 1) {
-      const at = parametersOff + 4 + i * 2;
-      if (at + 2 > this.bytes.length) return null;
-      const typeIdx = this.view.getUint16(at, true);
-      params.push({ typeIdx, wide: this.#isWideType(typeIdx) });
+      typeIdx[i] = this.view.getUint16(parametersOff + 4 + i * 2, true);
+      wide[i] = this.#isWideType(typeIdx[i]!) ? 1 : 0;
     }
-    return params;
+    return { typeIdx, wide };
   }
 
   /**
@@ -346,6 +342,19 @@ export class DexStringResolver {
    * bytes: only the one-byte strings qualify, so no descriptor is decoded.
    */
   #isWideType(typeIdx: number): boolean {
+    // Memoised per type id (0 unknown, 1 narrow, 2 wide): type ids are 16-bit
+    // here, so 64 KiB answers every repeat without a map lookup or rescan.
+    const known = this.#wideByType[typeIdx];
+    if (known !== undefined && known !== 0) return known === 2;
+    const wide = this.#resolveWide(typeIdx);
+    if (typeIdx < this.#wideByType.length)
+      this.#wideByType[typeIdx] = wide ? 2 : 1;
+    return wide;
+  }
+
+  readonly #wideByType = new Uint8Array(0x10000);
+
+  #resolveWide(typeIdx: number): boolean {
     const stringIdx = this.#typeStringIndex(typeIdx);
     const raw = stringIdx === null ? null : this.#raw(stringIdx);
     if (raw === null || raw.utf16Size !== 1 || raw.bytes.length !== 1)

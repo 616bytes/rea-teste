@@ -260,6 +260,21 @@ describe("DexFileProvider APK selection", () => {
     expect(result.value.limitations.at(-1)).toContain("5 bytes after");
   });
 
+  it("keeps the unread-trailing-bytes fact on a refused class lookup", async () => {
+    const dex = minimalDex();
+    const padded = new Uint8Array(dex.length + 3);
+    padded.set(dex);
+    const result = await provider.inspect({
+      path: await write("trailing-absent.dex", padded),
+      class_descriptor: "LAbsent;",
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message + JSON.stringify(result.error)).toContain(
+      "3 bytes after",
+    );
+  });
+
   it("selects one dex member by entry", async () => {
     const apk = await write(
       "one.apk",

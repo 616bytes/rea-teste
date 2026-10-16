@@ -502,13 +502,18 @@ export class DexFileProvider implements DexDebugMetadataPort {
             input.class_descriptor ?? "",
             artifact,
             container,
+            findings.limitations,
           );
     if (!result.ok) return result;
     const report = {
       ...result.value,
       limitations: [...result.value.limitations, ...findings.limitations],
     };
-    const tooLarge = this.#rejectIfOversized(report, artifact.path);
+    const tooLarge = this.#rejectIfOversized(
+      report,
+      artifact.path,
+      findings.limitations,
+    );
     if (tooLarge) return err(tooLarge);
     return ok(execution(report, artifact.path, artifact.sha256, format));
   }
@@ -521,19 +526,22 @@ export class DexFileProvider implements DexDebugMetadataPort {
     descriptor: string,
     artifact: { path: string; sha256: string; bytes: number },
     container: DexDebugMetadataResult["container"],
+    limitations: readonly string[],
   ): Result<DexDebugMetadataResult, AnalysisError> {
+    // Facts about what was (not) read must reach the caller on refusals too.
+    const context = limitations.length === 0 ? "" : ` ${limitations.join(" ")}`;
     if (found.length === 0)
       return err(
         this.#inputError(
           "class_descriptor",
-          `No class ${descriptor} exists in the selected DEX member(s).`,
+          `No class ${descriptor} exists in the selected DEX member(s).${context}`,
         ),
       );
     if (found.length > 1)
       return err(
         this.#inputError(
           "class_descriptor",
-          `Class ${descriptor} appears in more than one dex member; select one with entry.`,
+          `Class ${descriptor} appears in more than one dex member; select one with entry.${context}`,
         ),
       );
     return ok(buildDexClassDetailResult(artifact, container, found[0]!));
@@ -542,6 +550,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
   #rejectIfOversized(
     result: DexDebugMetadataResult,
     path: string,
+    limitations: readonly string[],
   ): AnalysisResourceConstraintError | undefined {
     if (
       Buffer.byteLength(JSON.stringify(result), "utf8") <=
@@ -551,7 +560,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
     return new AnalysisResourceConstraintError(
       OPERATION,
       "transport",
-      `Decoded DEX detail for ${path} exceeds the inline output budget; select a narrower class.`,
+      `Decoded DEX detail for ${path} exceeds the inline output budget; select a narrower class.${limitations.length === 0 ? "" : ` ${limitations.join(" ")}`}`,
       { maximum_output_bytes: DEX_LIMITS.outputBytes },
     );
   }

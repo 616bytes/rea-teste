@@ -4,7 +4,7 @@
 [#4389](https://github.com/morluto/rea/pull/4389), umbrella
 [#4027](https://github.com/morluto/rea/issues/4027).
 
-All 39 final IPC regressions pass, and real draw.io operation phases succeed.
+All 42 final IPC regressions pass, and real draw.io operation phases succeed.
 Every real capture still **fails overall provider cleanup**. These are distinct
 results; neither completed-task acceleration nor token savings is established.
 
@@ -28,8 +28,9 @@ The native EventEmitter controls are semantic regressions, not real-app proof.
 
 The change uses weak wrapper keys, removes the copied traversal and its snapshot
 allocation, and adds no tool, cache, schema or normal reply field. Related
-compiled provider/service modules and catalog metadata are byte-identical to
-main. This does not prove arbitrary function introspection equivalence: custom
+compiled provider/service modules and catalog metadata were byte-identical to
+baseline main `180ba03bf` at the initial source freeze. This does not prove
+arbitrary function introspection equivalence: custom
 `.listener` properties and raw wrapper re-registration retain the limitations
 documented in [Electron observation](../electron-observation.md).
 
@@ -278,3 +279,45 @@ appended under `owned_metadata_and_verifier_followup` without replacing history.
 
 Final-source static checks pass: two uncached tasks, 99.992 s wall,
 98.956939 family CPU s and 4,237,795,328 peak cgroup bytes, no OOM.
+
+## Species-free recording and snapshot ownership
+
+Fresh review of `e2cf2d89b` found that slicing a rest Array invokes application
+`Array[Symbol.species]` before dispatch. The first control reproduced failed on
+dispatch (40 passed, one failed); once dispatch already used Arguments.
+Extending the check to retrieve the retained snapshot while the throwing getter
+remains installed exposed the same representation problem in snapshot maps
+(39 passed, two failed).
+
+Source `3141ac3f4` records from actual invocation frames while preserving native
+callback argument-list types: the method-based on path still passes an Array,
+and once passes Arguments. Group validation uses the existing recording loops
+without a filtered intermediate Array. Captured `Array.from` produces snapshots
+without species lookup, reading dropped-counter Maps directly rather than
+spreading them into another Array first. The initial **41 cases** pass, including both
+live snapshots under the throwing getter with zero getter reads.
+
+The frozen-source real unchanged draw.io operation again completes recovery and
+insertion with seven IPC events, no deadline and failed overall cleanup
+(pipeline 12.779 s). This does not establish that draw.io customizes species.
+The corrected verifier and its five previously passing controlled oracles are
+byte-identical to `4a9a01f7a`, so those unchanged oracle sources were reused.
+Exact hashes, failures, resource receipts and scope states are appended under
+`array_species_followup`; earlier records remain unchanged. There is no new
+completed-task performance or token/context claim.
+
+The native multiple-listener route was then included in the same live-species
+control: all **42 cases** pass. Only test coverage expanded; production hook
+and verifier bytes remain identical to `3141ac3f4`. Exact validation identities
+and the additional result are recorded under `all_native_dispatch_paths`.
+
+A fresh-profile real negative control omits `--selector` while retaining dialog
+recovery and the same 500 ms wait. SVG elements remain **0 → 0** and unsaved
+changes remain false; insertion gives **0 → 2** and unsaved true. This supports
+the operation oracle rather than attributing startup rendering to the click.
+The control also returns seven IPC events and failed provider cleanup. These
+are different tasks, not a performance pair or a model-cell-count proof.
+
+Final 42-case source validation includes two uncached static tasks passing in
+94.234 s wall, 93.308800 family CPU s and 4,406,538,240 peak cgroup bytes,
+with no OOM. These are verification costs, not an application speedup.

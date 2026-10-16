@@ -752,3 +752,64 @@ it("keeps cleanup failure precedence over cancellation observed during cleanup",
     },
   });
 });
+
+it.each(["process", "transport"] as const)(
+  "preserves cancellation that preceded a %s cleanup failure",
+  async (failure) => {
+    stubVerifiedElectronCleanup();
+    stubCompletedCapture();
+    const controller = new AbortController();
+    const reason = new Error("SIGTERM before cleanup");
+    vi.spyOn(electronActions, "runElectronActions").mockImplementation(
+      async () => {
+        controller.abort(reason);
+        return [];
+      },
+    );
+    if (failure === "process") {
+      const failed = async () => ({
+        cleaned: false as const,
+        reason: "process group still alive",
+      });
+      vi.spyOn(processOwnership, "cleanupOwnedProcessGroup").mockImplementation(
+        failed,
+      );
+      vi.spyOn(
+        processOwnership,
+        "cleanupWindowsProcessTree",
+      ).mockImplementation(failed);
+    }
+    const application = {
+      process: () => ({ pid: 424242 }),
+      close: vi.fn(async () => {
+        if (failure === "transport")
+          throw new Error("transport still connected");
+      }),
+      windows: () => [],
+    };
+
+    const result = await captureWithController(controller, application, []);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected incomplete cleanup");
+    expect(result.error).toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "cleanup_failed",
+      userCategory: "cancelled",
+      cause: {
+        _tag: "BrowserObservationError",
+        reason: "cancelled",
+        cause: reason,
+      },
+      partialObservation: {
+        kind: "electron-active-observation",
+      },
+    });
+    expect(result.error.userMessage).toContain(
+      failure === "process"
+        ? "process group still alive"
+        : "transport still connected",
+    );
+    expect(application.close).toHaveBeenCalledOnce();
+  },
+);

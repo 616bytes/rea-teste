@@ -150,8 +150,11 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         options.signal,
       );
       capture = projectElectronActiveCapture(paths, actions, state);
-      // Cancellation after this read is decided once finalization has settled.
-      outcome = ok(capture);
+      // Preserve a cancellation already observed before finalization so a
+      // later cleanup failure keeps its cause. Late cancellation is checked below.
+      outcome = options.signal?.aborted
+        ? err(cancelledCapture(capture, options.signal.reason))
+        : ok(capture);
     } catch (cause: unknown) {
       if (paths !== undefined && initialState !== undefined) {
         const retainedCapture = projectElectronActiveCapture(
@@ -276,18 +279,19 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     // Cleanup failures returned above keep precedence; a completed capture
     // observed under late cancellation is retained as partial Evidence.
     if (outcome.ok && options.signal?.aborted === true)
-      return err(
-        new BrowserObservationError(OPERATION, "cancelled", {
-          cause: options.signal.reason,
-          partialObservation: {
-            kind: "electron-active-observation",
-            capture: outcome.value,
-          },
-        }),
-      );
+      return err(cancelledCapture(outcome.value, options.signal.reason));
     return outcome;
   }
 }
+
+const cancelledCapture = (
+  capture: ElectronActiveObservationResult,
+  reason: unknown,
+): BrowserObservationError =>
+  new BrowserObservationError(OPERATION, "cancelled", {
+    cause: reason,
+    partialObservation: { kind: "electron-active-observation", capture },
+  });
 
 /**
  * A cancellation wrapper stands in for the caller's abort reason and keeps its

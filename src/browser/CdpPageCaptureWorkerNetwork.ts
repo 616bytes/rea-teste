@@ -16,14 +16,16 @@ import {
  * refused workers, and retained worker request identities and WebSocket
  * frames. Each admitted worker holds a browser session and two commands; the
  * request and frame bounds match the script metadata record bound, and the
- * frame payload bound, applied when WebSocket shapes are inferred, matches the
- * script metadata byte bound.
+ * byte bounds match the script metadata byte bound. Request bytes count each
+ * retained URL plus, when JSON body shapes are inferred, its request body;
+ * frame bytes count payloads when WebSocket shapes are inferred.
  */
 export const CDP_WORKER_NETWORK_LIMITS = {
   workers: 256,
   releases: 256,
   requests: 50_000,
   frames: 50_000,
+  requestBytes: 8 * 1024 * 1024,
   frameBytes: 8 * 1024 * 1024,
 } as const;
 
@@ -82,6 +84,7 @@ export class CdpWorkerNetworkObservation {
   #releases = 0;
   #workerFrames = 0;
   #workerFrameBytes = 0;
+  #workerRequestBytes = 0;
   #failure: { readonly cause: unknown } | undefined;
   /** Workers are admitted only from `start()` until `settle()` or `close()`. */
   #admitting = false;
@@ -184,15 +187,61 @@ export class CdpWorkerNetworkObservation {
         this.#workerFrameBytes += payloadBytes;
       }
     }
+    const requestBytes = this.#retainedRequestBytes(event);
+    if (
+      this.#workerRequestBytes + requestBytes >
+      CDP_WORKER_NETWORK_LIMITS.requestBytes
+    ) {
+      this.#requestOmitted(event.method, "resource_budget_exhausted");
+      if (requestId !== undefined && !this.#retains(requestId))
+        this.#requestSessions.delete(requestId);
+      return;
+    }
+    this.#workerRequestBytes += requestBytes;
     this.events.ingest(event);
-    // A start the origin policy rejected keeps no record; free its budget slot.
+    // A start the origin policy rejected keeps no record; free its budget.
     if (
       requestId !== undefined &&
       REQUEST_START_EVENTS.has(event.method) &&
-      !this.events.network.has(requestId) &&
-      !this.events.webSocketConnectionsById.has(requestId)
-    )
+      !this.#retains(requestId)
+    ) {
       this.#requestSessions.delete(requestId);
+      this.#workerRequestBytes -= requestBytes;
+    }
+  }
+
+  #retains(requestId: string): boolean {
+    return (
+      this.events.network.has(requestId) ||
+      this.events.webSocketConnectionsById.has(requestId)
+    );
+  }
+
+  /**
+   * Bytes a request start, redirect hop, or WebSocket start adds to retained
+   * state. A URL the origin policy rejects retains nothing, so it costs
+   * nothing and keeps its own exclusion reason.
+   */
+  #retainedRequestBytes(event: CdpEvent): number {
+    const params = recordValue(event.params);
+    const request = recordValue(params?.request);
+    const url =
+      event.method === "Network.webSocketCreated"
+        ? cdpStringValue(params?.url)
+        : event.method === "Network.requestWillBeSent"
+          ? cdpStringValue(request?.url)
+          : undefined;
+    if (
+      url === undefined ||
+      allowedSanitizedUrl(url, this.allowedOrigins) === undefined
+    )
+      return 0;
+    const body =
+      event.method === "Network.requestWillBeSent" &&
+      this.events.input.include_json_body_shapes
+        ? (cdpStringValue(request?.postData) ?? "")
+        : "";
+    return Buffer.byteLength(url) + Buffer.byteLength(body);
   }
 
   /**

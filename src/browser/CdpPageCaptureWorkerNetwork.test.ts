@@ -11,13 +11,17 @@ import {
 const origin = "http://127.0.0.1:43127";
 
 const observation = (
-  options: { readonly includeWebSocketShapes?: boolean } = {},
+  options: {
+    readonly includeWebSocketShapes?: boolean;
+    readonly includeJsonBodyShapes?: boolean;
+  } = {},
 ) => {
   const input = inspectWebPageInputSchema.parse({
     cdp_endpoint: origin,
     allowed_origins: [origin],
     target_id: "page",
     include_websocket_shapes: options.includeWebSocketShapes ?? false,
+    include_json_body_shapes: options.includeJsonBodyShapes ?? false,
   });
   const events = new CdpCaptureEvents(input, new Set([origin]));
   events.beginAuthorizedFrame("frame-main");
@@ -392,6 +396,57 @@ describe("CDP worker network shapes, page ownership and malformed attachments", 
           }),
         ),
       ),
+    );
+  });
+});
+
+describe("CDP worker network request bytes", () => {
+  it("bounds retained worker request bytes and refunds excluded requests", async () => {
+    const { events, workers } = observation({ includeJsonBodyShapes: true });
+    await workers.start();
+    workers.ingest(attached("worker-0"));
+    await workers.settle();
+    const post = (requestId: string, url: string, postData: string) => ({
+      sessionId: "worker-0",
+      method: "Network.requestWillBeSent",
+      params: {
+        requestId,
+        type: "Fetch",
+        request: {
+          url,
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          postData,
+        },
+        initiator: { type: "script" },
+      },
+    });
+    workers.ingest(
+      post(
+        "foreign",
+        `https://foreign.example.test/${"x".repeat(CDP_WORKER_NETWORK_LIMITS.requestBytes)}`,
+        "{}",
+      ),
+    );
+    const url = `${origin}/upload`;
+    const postData = JSON.stringify({ value: "x".repeat(1024 * 1024) });
+    const retained = Math.floor(
+      CDP_WORKER_NETWORK_LIMITS.requestBytes /
+        (Buffer.byteLength(url) + Buffer.byteLength(postData)),
+    );
+    for (let index = 0; index < retained + 2; index += 1)
+      workers.ingest(post(`upload-${String(index)}`, url, postData));
+
+    expect(events.network.size).toBe(retained);
+    expect(events.completeness.snapshot().excluded).toEqual(
+      expect.arrayContaining([
+        {
+          section: "network_requests",
+          reason: "resource_budget_exhausted",
+          count: 2,
+        },
+        { section: "network_requests", reason: "disallowed_origin", count: 1 },
+      ]),
     );
   });
 });

@@ -231,9 +231,12 @@ const describeEntitlementDifferences = (
       ...(other === null ? [] : Object.keys(other)),
     ]),
   ].sort();
+  // Entitlement keys are attacker-chosen plist keys; a key such as
+  // "constructor" must read the dictionary, never its prototype.
   const entries = keys.flatMap((key) => {
-    const value = own[key];
-    const theirs = other?.[key];
+    const value = Object.hasOwn(own, key) ? own[key] : undefined;
+    const theirs =
+      other !== null && Object.hasOwn(other, key) ? other[key] : undefined;
     if (value === undefined) return [`${key} absent`];
     if (theirs === undefined) return [`${key}: ${renderValue(value)}`];
     return canonicalJson(value) === canonicalJson(theirs)
@@ -257,6 +260,11 @@ const asDictionary = (
 
 /** A compact JSON rendering, cut so one entitlement cannot flood the sentence. */
 const renderValue = (value: JsonValue): string => {
-  const text = canonicalJson(value);
+  let text: string;
+  try {
+    text = canonicalJson(value);
+  } catch {
+    return "unrenderable";
+  }
   return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 };

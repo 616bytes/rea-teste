@@ -195,6 +195,24 @@ describe("describeSignatureSlices entitlement and requirement details", () => {
     );
   });
 
+  it("reads entitlement keys that shadow prototype properties as own entries", () => {
+    const limitations = describeSignatureSlices(
+      { ...aggregate, entitlements: { toString: true } },
+      [
+        {
+          ...x86Slice,
+          identifier: aggregate.identifier,
+          hardened_runtime: true,
+          entitlements: { constructor: "x", hasOwnProperty: 1 },
+        },
+        armSlice,
+      ],
+    );
+    expect(limitations[1]).toBe(
+      'Mach-O slices signed differently from the arm64 slice: x86_64 (entitlements constructor: "x", hasOwnProperty: 1, toString absent).',
+    );
+  });
+
   it("compares CDHashes without regard to letter case", () => {
     const limitations = describeSignatureSlices(
       {

@@ -466,16 +466,18 @@ const installationCoordinates = (
     applicationPropertiesPath === null
       ? undefined
       : host.readText(applicationPropertiesPath);
-  const javaCommand =
+  const javaCandidates =
     options.javaHome === undefined
       ? platform === "win32"
-        ? "java.exe"
-        : "java"
-      : path.join(
-          options.javaHome,
-          "bin",
-          platform === "win32" ? "java.exe" : "java",
-        );
+        ? ["java.exe"]
+        : [
+            "java",
+            "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home/bin/java",
+            "/usr/local/opt/openjdk/libexec/openjdk.jdk/Contents/Home/bin/java",
+          ]
+      : [path.join(options.javaHome, "bin", platform === "win32" ? "java.exe" : "java")];
+  const javaCommand =
+    javaCandidates.find((candidate) => host.executable(candidate)) ?? javaCandidates[0];
   return {
     installDir,
     applicationPropertiesPath,

@@ -7,7 +7,10 @@ import {
 } from "./ProcessOwnershipObservation.js";
 import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
 import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
-import { readProcessRunTokens } from "./ProcessRunTokenObservations.js";
+import {
+  classifyProcessRunToken,
+  readProcessRunTokens,
+} from "./ProcessRunTokenObservations.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 const execFileAsync = promisify(execFile);
@@ -510,15 +513,16 @@ const createOwnedCleanupPlan = async (
         observedGroupId === processGroupId,
     );
     if (members.length === 0) continue;
-    const failures = await processOwnershipFailures(
-      members,
-      ownership.runId,
-      host,
-      tokenOwned.identities,
-    );
+    const { failures, members: validatedMembers } =
+      await processOwnershipFailures(
+        members,
+        ownership.runId,
+        host,
+        tokenOwned.identities,
+      );
     if (failures.length === 0 && unverifiableSampledGroups.has(processGroupId))
       unresolved.push(
-        ...members.map(({ pid }) => ({
+        ...validatedMembers.map(({ pid }) => ({
           pid,
           reason: "process-identity-unavailable" as const,
           diagnostic:
@@ -533,6 +537,7 @@ const createOwnedCleanupPlan = async (
     if (
       failures.length === 0 &&
       scanFailures.length === 0 &&
+      validatedMembers.length > 0 &&
       !unverifiableSampledGroups.has(processGroupId)
     )
       signalableGroups.add(processGroupId);
@@ -609,13 +614,15 @@ const revalidateOwnedProcessGroup = async (
       reason: `process ownership could not be revalidated: ${errorMessage(cause)}`,
     };
   }
-  const failures = await processOwnershipFailures(
+  const validation = await processOwnershipFailures(
     members,
     ownership.runId,
     host,
     expectedIdentities,
   );
-  if (failures.length > 0) return cleanupValidationFailure(failures);
+  if (validation.failures.length > 0)
+    return cleanupValidationFailure(validation.failures);
+  members = validation.members;
   if (
     processGroupId !== ownership.processGroupId &&
     members.length > 0 &&
@@ -692,6 +699,7 @@ const cleanupValidationFailure = (
 };
 
 const sanitizedTokenReadFailure = (diagnostic: string | undefined): string => {
+  if (diagnostic === "run_token_missing") return diagnostic;
   if (diagnostic === "environment_unavailable") return diagnostic;
   if (diagnostic === "platform_binary_environment_withheld") return diagnostic;
   if (diagnostic === "restricted_process_environment_withheld")
@@ -726,8 +734,16 @@ const processOwnershipFailures = async (
   runId: string,
   host: ProcessOwnershipHost,
   expectedIdentities: ReadonlyMap<number, string | null> = new Map(),
-): Promise<readonly ProcessOwnershipValidationFailure[]> => {
+): Promise<{
+  readonly failures: readonly ProcessOwnershipValidationFailure[];
+  readonly members: readonly ProcessTableEntry[];
+}> => {
   const failures: ProcessOwnershipValidationFailure[] = [];
+  const exitedPids = new Set<number>();
+  const retainRecheck = (recheck: ProcessOwnershipRecheck): void => {
+    failures.push(...recheck.failures);
+    for (const pid of recheck.exitedPids) exitedPids.add(pid);
+  };
   if (expectedIdentities.size > 0 && host.processIdentities !== undefined) {
     const expectedMembers = members.filter(({ pid }) =>
       expectedIdentities.has(pid),
@@ -750,16 +766,22 @@ const processOwnershipFailures = async (
         });
       }
     }
-    failures.push(...(await recheckOwnershipFailures(identityFailures, host)));
+    retainRecheck(await recheckOwnershipFailures(identityFailures, host));
   }
-  failures.push(...(await processRunTokenFailures(members, runId, host)));
+  retainRecheck(
+    await processRunTokenFailures(
+      members.filter(({ pid }) => !exitedPids.has(pid)),
+      runId,
+      host,
+    ),
+  );
   if (
     failures.length === 0 &&
     expectedIdentities.size > 0 &&
     host.processIdentities !== undefined
   ) {
-    const expectedMembers = members.filter(({ pid }) =>
-      expectedIdentities.has(pid),
+    const expectedMembers = members.filter(
+      ({ pid }) => expectedIdentities.has(pid) && !exitedPids.has(pid),
     );
     const observed = await host.processIdentities(expectedMembers);
     const identityFailures: ProcessOwnershipValidationFailure[] = [];
@@ -779,30 +801,39 @@ const processOwnershipFailures = async (
           "process identity changed or became unavailable during token validation",
       });
     }
-    failures.push(...(await recheckOwnershipFailures(identityFailures, host)));
+    retainRecheck(await recheckOwnershipFailures(identityFailures, host));
   }
-  return failures;
+  return {
+    failures,
+    members: members.filter(({ pid }) => !exitedPids.has(pid)),
+  };
 };
+
+interface ProcessOwnershipRecheck {
+  readonly failures: readonly ProcessOwnershipValidationFailure[];
+  readonly exitedPids: readonly number[];
+}
 
 const processRunTokenFailures = async (
   members: readonly ProcessTableEntry[],
   runId: string,
   host: ProcessOwnershipHost,
-): Promise<readonly ProcessOwnershipValidationFailure[]> => {
+): Promise<ProcessOwnershipRecheck> => {
   const failures: ProcessOwnershipValidationFailure[] = [];
   for await (const { process: member, observation } of readProcessRunTokens(
     host,
     members,
   )) {
-    if (observation.state === "readable") {
-      if (observation.runId !== runId)
-        failures.push({ pid: member.pid, reason: "run-token-mismatch" });
+    const validation = classifyProcessRunToken(observation, runId);
+    if (validation.state === "owned") continue;
+    if (validation.state === "foreign") {
+      failures.push({ pid: member.pid, reason: "run-token-mismatch" });
       continue;
     }
     failures.push({
       pid: member.pid,
       reason: "environment-unreadable",
-      diagnostic: observation.reason,
+      diagnostic: validation.reason,
     });
   }
   return recheckOwnershipFailures(failures, host);
@@ -810,15 +841,16 @@ const processRunTokenFailures = async (
 
 /**
  * Take a fresh liveness snapshot after each ownership-read phase. Only an
- * absent PID resolves an unreadable observation; a readable token mismatch
- * remains a failure. Never reuse this snapshot across identity/token reads.
+ * absent or zombie PID resolves an unavailable observation; an explicitly
+ * foreign token remains a failure. Retain confirmed exits for signaling
+ * consumers. Never reuse this snapshot across identity/token reads.
  */
 const recheckOwnershipFailures = async (
   failures: readonly ProcessOwnershipValidationFailure[],
   host: ProcessOwnershipHost,
-): Promise<readonly ProcessOwnershipValidationFailure[]> => {
+): Promise<ProcessOwnershipRecheck> => {
   if (!failures.some(({ reason }) => reason !== "run-token-mismatch"))
-    return failures;
+    return { failures, exitedPids: [] };
   try {
     let processes = await host.listProcesses();
     const isDarwin = (host.platform ?? process.platform) === "darwin";
@@ -841,18 +873,29 @@ const recheckOwnershipFailures = async (
       processes = await host.listProcesses();
     }
     const live = new Set(liveProcesses(processes).map(({ pid }) => pid));
-    return failures.filter(
-      ({ pid, reason }) => reason === "run-token-mismatch" || live.has(pid),
-    );
+    return {
+      failures: failures.filter(
+        ({ pid, reason }) => reason === "run-token-mismatch" || live.has(pid),
+      ),
+      exitedPids: failures
+        .filter(
+          ({ pid, reason }) =>
+            reason !== "run-token-mismatch" && !live.has(pid),
+        )
+        .map(({ pid }) => pid),
+    };
   } catch (cause: unknown) {
-    return failures.map((failure) =>
-      failure.reason === "run-token-mismatch"
-        ? failure
-        : {
-            ...failure,
-            diagnostic: `${failure.diagnostic}; process liveness recheck failed: ${errorMessage(cause)}`,
-          },
-    );
+    return {
+      exitedPids: [],
+      failures: failures.map((failure) =>
+        failure.reason === "run-token-mismatch"
+          ? failure
+          : {
+              ...failure,
+              diagnostic: `${failure.diagnostic}; process liveness recheck failed: ${errorMessage(cause)}`,
+            },
+      ),
+    };
   }
 };
 
@@ -948,7 +991,9 @@ const scanTokenOwnedProcesses = async (
         diagnostic: "process identity was unavailable during token scan",
       });
     }
-    failures.push(...(await recheckOwnershipFailures(identityFailures, host)));
+    failures.push(
+      ...(await recheckOwnershipFailures(identityFailures, host)).failures,
+    );
     candidates = stableCandidates;
   }
   const owned: ProcessTableEntry[] = [];
@@ -1054,7 +1099,9 @@ const scanTokenOwnedProcesses = async (
           "process identity changed or became unavailable during token validation",
       });
     }
-    failures.push(...(await recheckOwnershipFailures(identityFailures, host)));
+    failures.push(
+      ...(await recheckOwnershipFailures(identityFailures, host)).failures,
+    );
     return {
       owned: stillOwned,
       failures,

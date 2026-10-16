@@ -116,6 +116,20 @@ describe("captured intrinsic invocation reads", () => {
     },
   );
 
+  it("defers a wrapped default target until after its default runs", () => {
+    // `(change.call as any)` unwraps to a pattern leaf, but its write lands
+    // only after the default `change.call(...)` runs — the call must stay
+    // known so the fresh-target write does not mask a real window.
+    const result = analyzeJavaScriptStaticSource(`
+      const define = Object.defineProperty;
+      const change = define.bind(null);
+      const metadata = {};
+      [(change.call as any) = change.call(null, metadata, "x", {value: 1})] = [];
+      ${CAPTURED_INTEROP} ${WINDOW}
+    `);
+    expect(result.electron.browser_windows).toHaveLength(1);
+  });
+
   it("evaluates a destructuring RHS before any target writes", () => {
     const result = analyzeJavaScriptStaticSource(`
       const define = Object.defineProperty;

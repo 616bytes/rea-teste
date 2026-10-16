@@ -217,6 +217,11 @@ export function* collectJavaScriptIdentityWritesSteps(
             : undefined;
   const isPattern = (node: t.Node | undefined): boolean =>
     t.isArrayPattern(node) || t.isObjectPattern(node);
+  // `as` casts and assertions wrap a leaf but evaluate to it; the wrapper's
+  // own exit decides the write's timing so a wrapped default target is not
+  // recorded before its initializer runs.
+  const isTransparentWrapper = (node: t.Node | null | undefined): boolean =>
+    node != null && unwrapJavaScriptExpression(node).depth > 0;
   const retainTargets = (node: t.Node): void => {
     const target = targetOf(node);
     if (target !== undefined)
@@ -234,7 +239,10 @@ export function* collectJavaScriptIdentityWritesSteps(
         return ["right", "left"];
       if (t.isForOfStatement(node) || t.isForInStatement(node))
         return ["right", "left", "body"];
-      if (t.isAssignmentPattern(node) && isPattern(node.left))
+      if (
+        t.isAssignmentPattern(node) &&
+        isPattern(unwrapJavaScriptExpression(node.left).node)
+      )
         return ["right", "left"];
       if (t.isVariableDeclarator(node) && isPattern(node.id))
         return ["init", "id"];
@@ -260,13 +268,32 @@ export function* collectJavaScriptIdentityWritesSteps(
       if (patternLeaves.has(node)) {
         // The default expression runs after the target reference is evaluated,
         // but before its value is written. Later leaves see this completed write.
-        if (!t.isAssignmentPattern(parent) || parent.left !== node)
+        // A leaf under transparent wrappers exits first: the outermost
+        // wrapper's exit decides, since it is the node `AssignmentPattern.left`
+        // actually points at.
+        if (isTransparentWrapper(parent)) {
+          // Defer to the wrapper's own exit.
+        } else if (!t.isAssignmentPattern(parent) || parent.left !== node)
           retainTarget(node, node, patternLeafContexts.get(node) ?? node);
-      } else if (t.isAssignmentPattern(node) && patternLeaves.has(node.left))
+      } else if (
+        isTransparentWrapper(node) &&
+        patternLeaves.has(unwrapJavaScriptExpression(node).node)
+      ) {
+        const leaf = unwrapJavaScriptExpression(node).node;
+        if (
+          !isTransparentWrapper(parent) &&
+          (!t.isAssignmentPattern(parent) || parent.left !== node)
+        )
+          retainTarget(leaf, node, patternLeafContexts.get(leaf) ?? node);
+      } else if (
+        t.isAssignmentPattern(node) &&
+        patternLeaves.has(unwrapJavaScriptExpression(node.left).node)
+      )
         retainTarget(
           node.left,
           node,
-          patternLeafContexts.get(node.left) ?? node,
+          patternLeafContexts.get(unwrapJavaScriptExpression(node.left).node) ??
+            node,
         );
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
         retainCallEffects(node);

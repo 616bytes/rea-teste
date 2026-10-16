@@ -22,6 +22,17 @@ const parse = (bytes: Buffer, maxEntries = 4096, signal?: AbortSignal) =>
     signal,
   );
 
+const addEmptySection = (
+  fixture: ReturnType<typeof peResourceFixture>,
+  rva: number,
+): void => {
+  fixture.bytes.writeUInt16LE(2, 0x86);
+  const section = fixture.sectionAt + 40;
+  fixture.bytes.writeUInt32LE(0, section + 8);
+  fixture.bytes.writeUInt32LE(rva, section + 12);
+  fixture.bytes.writeUInt32LE(0, section + 16);
+};
+
 describe("portable PE resource parsing", () => {
   it.each([false, true])(
     "preserves original identities, ranges, hashes and icon candidates (PE32+ = %s)",
@@ -360,6 +371,41 @@ describe("PE resource section virtual extent", () => {
     fixture.bytes.writeUInt32LE(0, fixture.sectionAt + 8);
     expect(await parse(fixture.bytes)).toMatchObject({
       coverage: { status: "complete", resources: 5 },
+    });
+  });
+
+  it("ignores an empty section inside a section-backed payload", async () => {
+    const fixture = peResourceFixture(false, [
+      { type: 10, name: 1, language: 1033, payload: Buffer.from("DATA") },
+    ]);
+    addEmptySection(fixture, 0x2001);
+
+    const payloadRva = fixture.bytes.readUInt32LE(fixture.dataOffsets[0] ?? 0);
+    const result = peResourcesSchema.parse(await parse(fixture.bytes));
+    expect(result.resources[0]?.payload).toMatchObject({
+      rva: payloadRva,
+      location: {
+        offset: 0x400 + payloadRva - 0x2000,
+        bytes: 4,
+      },
+      sha256: createHash("sha256").update("DATA").digest("hex"),
+    });
+  });
+
+  it("ignores an empty section inside a header-backed payload", async () => {
+    const fixture = peResourceFixture(false, [
+      { type: 10, name: 1, language: 1033, payload: Buffer.from("DATA") },
+    ]);
+    addEmptySection(fixture, 0x102);
+    fixture.bytes.writeUInt32LE(0x100, fixture.dataOffsets[0] ?? 0);
+    fixture.bytes.writeUInt32LE(4, (fixture.dataOffsets[0] ?? 0) + 4);
+    fixture.bytes.write("DATA", 0x100, "ascii");
+
+    const result = peResourcesSchema.parse(await parse(fixture.bytes));
+    expect(result.resources[0]?.payload).toMatchObject({
+      rva: 0x100,
+      location: { offset: 0x100, bytes: 4 },
+      sha256: createHash("sha256").update("DATA").digest("hex"),
     });
   });
 

@@ -90,6 +90,17 @@ const expectPeInputFailuresAcrossAdapters = async (input: {
     });
 };
 
+const addEmptySection = (
+  fixture: ReturnType<typeof peResourceFixture>,
+  rva: number,
+): void => {
+  fixture.bytes.writeUInt16LE(2, 0x86);
+  const section = fixture.sectionAt + 40;
+  fixture.bytes.writeUInt32LE(0, section + 8);
+  fixture.bytes.writeUInt32LE(rva, section + 12);
+  fixture.bytes.writeUInt32LE(0, section + 16);
+};
+
 const contract = toolContract("inspect_pe_resources");
 
 const expectPeInventoriesAcrossAdapters = async (
@@ -97,21 +108,60 @@ const expectPeInventoriesAcrossAdapters = async (
   client: Client,
   root: string,
 ): Promise<void> => {
-  for (const [plus, empty] of [
-    [false, false],
-    [true, false],
-    [false, true],
-    [true, true],
+  for (const { plus, emptyPayload, emptySectionRva, headerPayload } of [
+    {
+      plus: false,
+      emptyPayload: false,
+      emptySectionRva: undefined,
+      headerPayload: false,
+    },
+    {
+      plus: true,
+      emptyPayload: false,
+      emptySectionRva: undefined,
+      headerPayload: false,
+    },
+    {
+      plus: false,
+      emptyPayload: true,
+      emptySectionRva: undefined,
+      headerPayload: false,
+    },
+    {
+      plus: true,
+      emptyPayload: true,
+      emptySectionRva: undefined,
+      headerPayload: false,
+    },
+    {
+      plus: false,
+      emptyPayload: false,
+      emptySectionRva: 0x2001,
+      headerPayload: false,
+    },
+    {
+      plus: false,
+      emptyPayload: false,
+      emptySectionRva: 0x102,
+      headerPayload: true,
+    },
   ]) {
     const fixture = peResourceFixture(plus);
     const virtualSize = fixture.bytes.readUInt32LE(fixture.sectionAt + 8);
-    if (empty) {
+    if (emptyPayload) {
       fixture.bytes.writeUInt32LE(0x2000 + virtualSize, fixture.dataOffsets[0]);
       fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
     }
+    if (emptySectionRva !== undefined)
+      addEmptySection(fixture, emptySectionRva);
+    if (headerPayload) {
+      fixture.bytes.writeUInt32LE(0x100, fixture.dataOffsets[0]);
+      fixture.bytes.writeUInt32LE(4, (fixture.dataOffsets[0] ?? 0) + 4);
+      fixture.bytes.write("ICON", 0x100, "ascii");
+    }
     const path = join(
       root,
-      `resource${plus ? "64" : "32"}${empty ? "-empty" : ""}.exe`,
+      `resource${plus ? "64" : "32"}${emptyPayload ? "-empty" : ""}${emptySectionRva === 0x2001 ? "-empty-section" : ""}${headerPayload ? "-empty-header-section" : ""}.exe`,
     );
     await writeFile(path, fixture.bytes);
     const result = await cli.run({
@@ -129,13 +179,18 @@ const expectPeInventoriesAcrossAdapters = async (
     });
     expect(report.resources[0]?.payload.sha256).toBe(
       createHash("sha256")
-        .update(empty ? "" : "ICON")
+        .update(emptyPayload ? "" : "ICON")
         .digest("hex"),
     );
-    if (empty)
+    if (emptyPayload)
       expect(report.resources[0]?.payload.location).toEqual({
         offset: 0x400 + virtualSize,
         bytes: 0,
+      });
+    if (headerPayload)
+      expect(report.resources[0]?.payload.location).toEqual({
+        offset: 0x100,
+        bytes: 4,
       });
     expect(
       report.resources.find(({ name }) => name.kind === "name")?.name,
@@ -264,5 +319,5 @@ cliTest(
       }
     }
   },
-  30_000,
+  60_000,
 );

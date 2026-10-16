@@ -112,17 +112,33 @@ export const semanticStaticPropertyKey = (
   return !computed && t.isIdentifier(property) ? property.name : null;
 };
 
+/** Syntax whose value cannot contribute own properties to an object spread. */
+export const isNullishJavaScriptSyntax = (node: t.Node): boolean => {
+  node = unwrapJavaScriptExpression(node).node;
+  return (
+    t.isNullLiteral(node) || t.isUnaryExpression(node, { operator: "void" })
+  );
+};
+
 /** Find the effective explicit property, preserving unresolved overrides. */
 export const staticObjectProperty = (
   object: t.Node | undefined,
   name: string,
+  isNullish?: (node: t.Node) => boolean,
 ):
   | { readonly status: "missing" | "dynamic" }
   | { readonly status: "explicit"; readonly property: t.ObjectProperty } => {
   if (object === undefined) return { status: "missing" };
   if (!t.isObjectExpression(object)) return { status: "dynamic" };
   for (const property of object.properties.toReversed()) {
-    if (t.isSpreadElement(property)) return { status: "dynamic" };
+    if (t.isSpreadElement(property)) {
+      if (
+        isNullishJavaScriptSyntax(property.argument) ||
+        isNullish?.(property.argument) === true
+      )
+        continue;
+      return { status: "dynamic" };
+    }
     const key = semanticStaticPropertyKey(property.key, property.computed);
     if (key === null) return { status: "dynamic" };
     if (key !== name) continue;
@@ -137,16 +153,18 @@ export const staticObjectProperty = (
 export const semanticFinalObjectProperty = (
   node: t.ObjectExpression,
   key: string,
+  isNullish?: (node: t.Node) => boolean,
 ): t.Node | undefined => {
-  const property = staticObjectProperty(node, key);
+  const property = staticObjectProperty(node, key, isNullish);
   return property.status === "explicit" ? property.property.value : undefined;
 };
 
 export const semanticFinalObjectStringProperty = (
   node: t.ObjectExpression,
   key: string,
+  isNullish?: (node: t.Node) => boolean,
 ): string | undefined => {
-  const value = semanticFinalObjectProperty(node, key);
+  const value = semanticFinalObjectProperty(node, key, isNullish);
   return t.isStringLiteral(value) ? value.value : undefined;
 };
 

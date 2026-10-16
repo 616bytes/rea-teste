@@ -3,6 +3,48 @@ import { describe, expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 describe("computed Electron web preference keys", () => {
+  it.each(["null", "undefined", "void 0", "(null as unknown)"])(
+    "keeps preload and service after a no-op spread: %s",
+    (spread) => {
+      const analysis = analyzeJavaScriptStaticSource(`
+        const { BrowserWindow, utilityProcess } = require("electron");
+        new BrowserWindow({ webPreferences: { preload: "./kept.js", ...${spread} }, ...${spread} });
+        utilityProcess.fork("./worker.js", [], { serviceName: "kept", ...${spread} });
+      `);
+      expect(analysis.electron.browser_windows[0]).toMatchObject({
+        preload_path: "./kept.js",
+        web_preferences_status: "object-literal",
+      });
+      expect(analysis.electron.utility_processes[0]?.service_name).toBe("kept");
+    },
+  );
+
+  it("does not skip an undefined spread shadowed by an unknown parameter", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow, utilityProcess } = require("electron");
+      function run(undefined) {
+        new BrowserWindow({ webPreferences: { preload: "./old.js", ...undefined } });
+        utilityProcess.fork("./worker.js", [], { serviceName: "old", ...undefined });
+      }
+    `);
+    expect(analysis.electron.browser_windows[0]?.preload_path).toBeNull();
+    expect(analysis.electron.utility_processes[0]?.service_name).toBeNull();
+  });
+
+  it("uses captured nullish aliases without reusing a later unknown spread", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron");
+      function run(incoming) {
+        let value = null; const saved = value; value = incoming;
+        new BrowserWindow({ webPreferences: { preload: "./kept.js", ...saved } });
+        new BrowserWindow({ webPreferences: { preload: "./unknown.js", ...value } });
+      }
+    `);
+    expect(
+      analysis.electron.browser_windows.map((window) => window.preload_path),
+    ).toEqual(["./kept.js", null]);
+  });
+
   it("retains exact string, numeric, and empty literal keys", () => {
     const analysis = analyzeJavaScriptStaticSource(`
       const { BrowserWindow } = require("electron");

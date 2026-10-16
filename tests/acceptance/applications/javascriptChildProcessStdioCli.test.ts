@@ -10,6 +10,14 @@ const cases = [
   ["explicit", '{ stdio: "inherit" }', "inherit"],
   ["spread-after", '{ stdio: "pipe", ...options }', "dynamic"],
   ["spread-before", '{ ...options, stdio: "inherit" }', "inherit"],
+  ["null-spread", '{ stdio: "inherit", ...null }', "inherit"],
+  ["undefined-spread", '{ stdio: "inherit", ...undefined }', "inherit"],
+  ["void-spread", '{ stdio: "inherit", ...void 0 }', "inherit"],
+  [
+    "wrapped-null-spread",
+    '{ stdio: "inherit", ...(null as unknown) }',
+    "inherit",
+  ],
   ["computed-after", '{ stdio: "pipe", [key]: "inherit" }', "dynamic"],
   ["computed-before", '{ [key]: "pipe", stdio: "inherit" }', "inherit"],
   ["computed-literal", '{ stdio: "pipe", ["stdio"]: "inherit" }', "inherit"],
@@ -47,6 +55,38 @@ const cases = [
   ["stdio-null", "{ stdio: null }", "default"],
   ["stdio-undefined", "{ stdio: undefined }", "default"],
   ["stdio-void", "{ stdio: void 0 }", "default"],
+] as const;
+
+const spreadBindingFixture = `export function spreadBindings(incoming, flag) {
+          let value = null;
+          spawn("spread-before-replacement", [], { stdio: "inherit", ...value });
+          const saved = value; value = incoming;
+          spawn("spread-after-replacement", [], { stdio: "inherit", ...value });
+          spawn("spread-captured", [], { stdio: "inherit", ...saved });
+          value = null;
+          spawn("spread-reinitialized", [], { stdio: "inherit", ...value });
+          spawn("spread-before-initialization", [], { stdio: "inherit", ...future });
+          const future = null;
+          const empty = undefined;
+          spawn("spread-undefined-alias", [], { stdio: "inherit", ...empty });
+          const alternatives = flag ? null : void 0;
+          spawn("spread-nullish-branches", [], { stdio: "inherit", ...alternatives });
+          const mixed = flag ? null : incoming;
+          spawn("spread-unknown-branch", [], { stdio: "inherit", ...mixed });
+          let partial; if(flag) partial = null;
+          spawn("spread-partial", [], { stdio: "inherit", ...partial });
+        }`;
+
+const spreadBindingModes = [
+  ["before-replacement", "inherit"],
+  ["captured", "inherit"],
+  ["reinitialized", "inherit"],
+  ["undefined-alias", "inherit"],
+  ["nullish-branches", "inherit"],
+  ["after-replacement", "dynamic"],
+  ["before-initialization", "dynamic"],
+  ["unknown-branch", "dynamic"],
+  ["partial", "dynamic"],
 ] as const;
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
@@ -128,10 +168,19 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         ...calls,
         "}",
         'export function shadowed(undefined) { spawn("shadowed-undefined", [], undefined); spawn("shadowed-undefined-third", undefined, { stdio: null }); }',
+        'export function shadowedSpread(undefined) { spawn("shadowed-spread", [], { stdio: "inherit", ...undefined }); }',
+        'export function localUndefinedSpread() { const undefined = { stdio: "pipe" }; spawn("local-undefined-spread", [], { stdio: "inherit", ...undefined }); }',
+        'const absent = null; const noOptions = absent; spawn("null-alias-spread", [], { stdio: "inherit", ...noOptions });',
+        spreadBindingFixture,
       ].join("\n"),
     });
     expected.set("shadowed-undefined", "dynamic");
     expected.set("shadowed-undefined-third", "dynamic");
+    expected.set("shadowed-spread", "dynamic");
+    expected.set("local-undefined-spread", "dynamic");
+    expected.set("null-alias-spread", "inherit");
+    for (const [name, mode] of spreadBindingModes)
+      expected.set(`spread-${name}`, mode);
     const { semantic_graph: graph } = await analyzeJavaScriptDirectory(
       surface,
       cli,

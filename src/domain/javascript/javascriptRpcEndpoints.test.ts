@@ -34,6 +34,9 @@ describe("RPC object property ownership", () => {
     ['url: "/trpc/live", [null]: {}', "/trpc/live"],
     ['url: "/trpc/live", [-1]: {}', "/trpc/live"],
     ['url: "/trpc/live", [-0]: {}', "/trpc/live"],
+    ['url: "/trpc/live", ...null', "/trpc/live"],
+    ['url: "/trpc/live", ...undefined', "/trpc/live"],
+    ['url: "/trpc/live", ...void 0', "/trpc/live"],
   ] as const)(
     "reads only the final known link URL from {%s}",
     (options, value) => {
@@ -57,6 +60,9 @@ describe("RPC object property ownership", () => {
     ["[null]: 1", "Old", "graphql:query"],
     ["[-1]: 1", "Old", "graphql:query"],
     ["[-0]: 1", "Old", "graphql:query"],
+    ["...null", "Old", "graphql:query"],
+    ["...undefined", "Old", "graphql:query"],
+    ["...void 0", "Old", "graphql:query"],
   ] as const)(
     "honors final GraphQL document properties: %s",
     (override, value, mechanism) => {
@@ -69,6 +75,37 @@ describe("RPC object property ownership", () => {
       );
     },
   );
+
+  it("keeps shadowed undefined spreads uncertain in RPC and GraphQL", () => {
+    expect(
+      rpcEndpoints(`function run(undefined) {
+      httpBatchLink({ url: "/trpc/old", ...undefined });
+      const doc = { kind: "OperationDefinition", operation: "query",
+        name: { kind: "Name", value: "Old" }, ...undefined };
+    }`),
+    ).toEqual([]);
+  });
+
+  it("uses nullish aliases at their spread reads in RPC and GraphQL", () => {
+    expect(
+      rpcEndpoints(`function run(incoming) {
+      let value = null; const saved = value; value = incoming;
+      httpBatchLink({ url: "/trpc/kept", ...saved });
+      httpBatchLink({ url: "/trpc/unknown", ...value });
+      const kept = { kind: "OperationDefinition", operation: "query",
+        name: { kind: "Name", value: "Kept" }, ...saved };
+      const unknown = { kind: "OperationDefinition", operation: "query",
+        name: { kind: "Name", value: "Unknown" }, ...value };
+    }`),
+    ).toEqual([
+      {
+        kind: "network",
+        value: "/trpc/kept",
+        mechanism: "trpc:link:httpBatchLink",
+      },
+      { kind: "network", value: "Kept", mechanism: "graphql:query" },
+    ]);
+  });
 });
 
 describe("tRPC procedure recognition", () => {

@@ -6,6 +6,7 @@ import type {
   JavaScriptSemanticChildProcessSpawn,
 } from "./javascriptSemanticIr.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
+import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import {
   resolveLocalCallables,
   type ResolveLocalCallablesInput,
@@ -41,7 +42,11 @@ interface ChildProcessAnalysis {
   readonly childProcessInteractions: readonly JavaScriptSemanticChildProcessInteraction[];
 }
 
-type ChildSpawnContext = Omit<ResolveLocalCallablesInput, "node">;
+type ChildSpawnContext = Omit<ResolveLocalCallablesInput, "node"> & {
+  readonly expressionShape: ReturnType<
+    typeof createSemanticExpressionShapeResolver
+  >;
+};
 
 interface SpawnCandidate {
   readonly node: t.CallExpression | t.OptionalCallExpression;
@@ -75,6 +80,7 @@ export const collectJavaScriptSemanticChildProcesses = (
     ),
     seenInitializers: new Set(),
     bindingCache: new WeakMap(),
+    expressionShape: createSemanticExpressionShapeResolver(state),
   };
   const childProcessSpawns = candidates.map((candidate) =>
     immutableSpawn(candidate, context),
@@ -141,8 +147,7 @@ const immutableSpawn = (
   candidate: SpawnCandidate,
   context: ChildSpawnContext,
 ): JavaScriptSemanticChildProcessSpawn => {
-  const { state } = context;
-  const { options, argvCount } = spawnArguments(candidate, state);
+  const { options, argvCount } = spawnArguments(candidate, context);
   const command = dataEffectLiteralString(candidate.node.arguments[0]);
   return {
     processId: spawnId(candidate),
@@ -320,7 +325,7 @@ const resolveChildCandidates = (
 };
 const spawnArguments = (
   candidate: SpawnCandidate,
-  state: JavaScriptSemanticAnalysisState,
+  context: ChildSpawnContext,
 ): {
   readonly options: t.Node | undefined;
   readonly argvCount: number | null;
@@ -328,6 +333,7 @@ const spawnArguments = (
   const args = candidate.node.arguments;
   const second = args[1] && unwrapJavaScriptExpression(args[1]).node;
   const third = args[2] && unwrapJavaScriptExpression(args[2]).node;
+  const { expressionShape } = context;
   const argv =
     candidate.method !== "exec" && t.isArrayExpression(second)
       ? second
@@ -337,7 +343,9 @@ const spawnArguments = (
   const options =
     candidate.method === "exec" || second === undefined
       ? second
-      : argv !== undefined || defaultOptionValue(second, state)
+      : argv !== undefined ||
+          expressionShape.isArray(second) ||
+          expressionShape.isNullish(second)
         ? third
         : second;
   return {
@@ -364,19 +372,22 @@ const stdioMode = (
   context: ChildSpawnContext,
 ): string => {
   if (options === undefined) return "default";
-  const { state } = context;
   const expression = unwrapJavaScriptExpression(options).node;
   if (
-    defaultOptionValue(expression, state) ||
+    context.expressionShape.isNullish(expression) ||
     ((method === "exec" || method === "execFile") &&
       isLocalCallback(expression, context))
   )
     return "default";
-  const lookup = staticObjectProperty(expression, "stdio");
+  const lookup = staticObjectProperty(
+    expression,
+    "stdio",
+    context.expressionShape.isNullish,
+  );
   if (lookup.status === "missing") return "default";
   if (lookup.status !== "explicit") return "dynamic";
   const value = unwrapJavaScriptExpression(lookup.property.value).node;
-  if (defaultOptionValue(value, state)) return "default";
+  if (context.expressionShape.isNullish(value)) return "default";
   if (t.isStringLiteral(value)) return value.value;
   if (t.isArrayExpression(value)) return "array";
   return "dynamic";
@@ -392,14 +403,6 @@ const isLocalCallback = (node: t.Node, context: ChildSpawnContext): boolean => {
     )
   );
 };
-
-const defaultOptionValue = (
-  value: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): boolean =>
-  t.isNullLiteral(value) ||
-  t.isUnaryExpression(value, { operator: "void" }) ||
-  isUnshadowedGlobal(value, state, "undefined");
 
 const objectBinding = (
   node: t.Expression | t.Super,

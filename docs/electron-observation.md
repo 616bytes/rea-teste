@@ -133,6 +133,17 @@ removal order and traversal, including listeners registered by removal observers
 the hook translates only its own recording wrappers at the removal boundary.
 Wrapper metadata uses weak keys and does not retain removed registrations.
 
+An application-defined listener `.apply` receives the original argument-list
+object unchanged. Because that method owns argument interpretation and may not
+invoke the callback, the hook records a bounded `ipc-observation-gap` timeline
+entry with the registered channel rather than an IPC invocation. Its empty
+`argument_shapes` means unobserved arguments, not a zero-argument callback;
+callback execution and result remain unknown. Coverage and retention include
+these gaps even when their individual records are dropped. Normal native
+dispatch continues to record actual invocation frames. Evidence snapshots copy
+retained arrays and counters without invoking application iterators or Array
+species.
+
 This does not establish complete JavaScript function introspection equivalence.
 Caller-defined `.listener` properties can change the identity exposed by
 `listeners()` and meta-events; accessors and Proxy metadata are not followed for

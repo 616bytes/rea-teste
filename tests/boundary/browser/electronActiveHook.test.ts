@@ -1147,6 +1147,114 @@ console.log(JSON.stringify({ plain, hooked, invocations, retainedUnderSpecies })
   },
 );
 
+it.each(["array", "arguments", "array-like", "null"])(
+  "preserves opaque custom apply inputs for raw %s lists",
+  async (mode) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-hook-custom-apply-",
+    );
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const script = join(root, "ipc-custom-apply.cjs");
+    await writeFile(
+      script,
+      `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const mode = ${JSON.stringify(mode)};
+const scenario = (emitter) => {
+  let calls = 0, reads = 0, exact = false, methodThis = false, arity = null;
+  const token = {};
+  const listener = function(...args) { calls++; arity = args.length; return token; };
+  let list = [42, 43];
+  if (mode === "arguments") list = (function() { return arguments; })(42, 43);
+  if (mode === "array-like") list = { length: 2, get 0() { reads++; return 42; }, 1: 43 };
+  if (mode === "null") list = null;
+  listener.apply = function(receiver, input) {
+    exact = input === list;
+    methodThis = this === listener;
+    if (!exact) throw new Error("custom apply input was replaced");
+    return Reflect.apply(listener, receiver, input ?? []);
+  };
+  emitter.on("ch", listener);
+  let returned = false, failure = null;
+  try { returned = emitter.rawListeners("ch")[0].apply(emitter, list) === token; }
+  catch (cause) { failure = cause.message; }
+  return { calls, reads, exact, methodThis, arity, returned, failure };
+};
+const plain = scenario(new EventEmitter());
+const hooked = scenario(ipcMain);
+const snapshot = globalThis.__reaElectronActiveSnapshot();
+console.log(JSON.stringify({ plain, hooked,
+  invocations: snapshot.events.filter(e => e.kind === "main-event-invocation").length,
+  gaps: snapshot.events.filter(e => e.kind === "ipc-observation-gap").map(e => ({channel: e.channel, event: e.event})) }));
+`,
+    );
+    const execution = await runNode(script, root);
+    expect(execution.code, execution.stderr).toBe(0);
+    const { plain, hooked, invocations, gaps } = JSON.parse(
+      execution.stdout,
+    ) as {
+      plain: Record<string, unknown>;
+      hooked: Record<string, unknown>;
+      invocations: number;
+      gaps: unknown[];
+    };
+    expect(plain).toEqual({
+      calls: 1,
+      reads: mode === "array-like" ? 1 : 0,
+      exact: true,
+      methodThis: true,
+      arity: mode === "null" ? 0 : 2,
+      returned: true,
+      failure: null,
+    });
+    expect(hooked).toEqual(plain);
+    expect(invocations).toBe(0);
+    expect(gaps).toEqual([{ channel: "ch", event: "custom-apply" }]);
+  },
+);
+
+it.each(["array", "map"])(
+  "snapshots retained state without application %s iterators",
+  async (kind) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-hook-snapshot-iterator-",
+    );
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const script = join(root, "ipc-snapshot-iterator.cjs");
+    await writeFile(
+      script,
+      `const { ipcMain } = require("electron");
+let calls = 0, reads = 0, failure = null, snapshot;
+ipcMain.on("ch", () => { calls++; });
+ipcMain.emit("ch", { sender: { id: 9 } }, 42);
+const prototype = ${JSON.stringify(kind)} === "array" ? Array.prototype : Map.prototype;
+const prior = Object.getOwnPropertyDescriptor(prototype, Symbol.iterator);
+Object.defineProperty(prototype, Symbol.iterator, { configurable: true, value() {
+  reads++; throw new Error("application iterator observed retained state");
+}});
+try { snapshot = globalThis.__reaElectronActiveSnapshot(); }
+catch (cause) { failure = cause.message; }
+finally { Object.defineProperty(prototype, Symbol.iterator, prior); }
+const copied = snapshot?.events.find(e => e.kind === "main-event-invocation");
+if (copied) { copied.channel = "changed"; copied.argument_shapes[0] = "changed"; }
+const retained = globalThis.__reaElectronActiveSnapshot().events.find(e => e.kind === "main-event-invocation");
+console.log(JSON.stringify({ calls, reads, failure, copied: !!copied, retained: {channel: retained.channel, shapes: retained.argument_shapes} }));
+`,
+    );
+    const execution = await runNode(script, root);
+    expect(execution.code, execution.stderr).toBe(0);
+    expect(JSON.parse(execution.stdout)).toEqual({
+      calls: 1,
+      reads: 0,
+      failure: null,
+      copied: true,
+      retained: { channel: "ch", shapes: ["number"] },
+    });
+  },
+);
+
 it("invokes handle callbacks without reading callable method properties", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-callable-");
   temporary.push(root);

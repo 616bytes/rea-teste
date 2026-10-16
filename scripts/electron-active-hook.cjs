@@ -4,6 +4,9 @@ const applyFunction = Reflect.apply;
 const applyArguments = Function.prototype.apply;
 const bindFunction = Function.prototype.bind;
 const arrayFrom = Array.from;
+const forEachMapEntry = applyFunction(bindFunction, Function.prototype.call, [
+  Map.prototype.forEach,
+]);
 const sliceArguments = applyFunction(bindFunction, Function.prototype.call, [
   Array.prototype.slice,
 ]);
@@ -330,6 +333,19 @@ const recordIpc = (kind, channel, args, details = {}) =>
     });
   })();
 
+const recordIpcObservationGap = (channel, error = false) =>
+  recordRuntime(
+    "ipc-observation-gap",
+    "custom-apply",
+    error ? "failed" : "observed",
+    {
+      channel,
+      target: "ipcMain.on",
+      process_type: "main",
+      error,
+    },
+  );
+
 const patchEmitter = (emitter, observeEvent) => {
   if (emitter === null || emitter === undefined) return;
   const original = emitter.emit;
@@ -362,15 +378,14 @@ const invokeObservedEventListener = (
   listener,
   args,
   nativeMethod,
-  recordingArguments = args,
 ) => {
   // Recording slices an actual invocation frame, avoiding Array species;
   // callback dispatch keeps its native Array/Arguments representation.
   const recorded = recordInvocation(
     "main-event-invocation",
     channel,
-    recordingArguments[0],
-    sliceArguments(recordingArguments, 1),
+    args[0],
+    sliceArguments(args, 1),
   );
   try {
     if (nativeMethod === "call") return listener.call(thisArg);
@@ -461,20 +476,32 @@ const patchIpcMain = (ipcMain) => {
     Object.defineProperty(wrapped, "apply", {
       configurable: true,
       writable: true,
-      // Binding native apply preserves its own array-like conversion and
-      // null/undefined handling before recording touches argument values.
-      value: applyFunction(bindFunction, applyArguments, [
-        function nativeApply(...args) {
-          return invokeObservedEventListener(
-            this,
-            channel,
-            listener,
-            args,
-            "apply",
-            arguments,
-          );
-        },
-      ]),
+      value: function nativeApply(...methodArgs) {
+        let applicationApply;
+        try {
+          applicationApply = listener.apply;
+        } catch (cause) {
+          recordIpcObservationGap(channel, true);
+          throw cause;
+        }
+        if (applicationApply !== applyArguments) {
+          // Custom apply owns the original list's interpretation. Forward it
+          // unchanged rather than executing getters to invent callback facts.
+          const gap = recordIpcObservationGap(channel);
+          try {
+            return applyFunction(applicationApply, listener, methodArgs);
+          } catch (cause) {
+            if (gap !== null) {
+              gap.error = true;
+              gap.phase = "failed";
+            }
+            throw cause;
+          }
+        }
+        // Native Function.apply performs its own list conversion before the
+        // recording wrapper observes an actual invocation frame.
+        return applyFunction(applyArguments, wrapped, methodArgs);
+      },
     });
     Object.defineProperty(wrapped, "listener", {
       configurable: true,
@@ -821,10 +848,24 @@ try {
   );
 }
 
+// Never expose retained buffers to application iterators or array constructors.
+const snapshotArray = (values, project) =>
+  arrayFrom({ __proto__: null, length: values.length }, (_unused, index) =>
+    project === undefined ? values[index] : project(values[index]),
+  );
+
+const snapshotCounts = (counts, field) => {
+  const values = { __proto__: null, length: 0 };
+  forEachMapEntry(counts, (count, value) => {
+    values[values.length++] = { [field]: value, count };
+  });
+  return arrayFrom(values);
+};
+
 globalThis.__reaElectronActiveSnapshot = () => ({
-  events: arrayFrom(events, (event) => ({
+  events: snapshotArray(events, (event) => ({
     ...event,
-    argument_shapes: [...event.argument_shapes],
+    argument_shapes: snapshotArray(event.argument_shapes),
   })),
   retention_budget_bytes: retentionBudgetBytes,
   estimated_retained_bytes: estimatedRetainedBytes,
@@ -833,14 +874,8 @@ globalThis.__reaElectronActiveSnapshot = () => ({
   dropped,
   dropped_ipc: droppedIpc,
   dropped_runtime: droppedRuntime,
-  dropped_event_families: arrayFrom(droppedFamilies, ([family, count]) => ({
-    family,
-    count,
-  })),
-  dropped_event_roles: arrayFrom(droppedRoles, ([role, count]) => ({
-    role,
-    count,
-  })),
+  dropped_event_families: snapshotCounts(droppedFamilies, "family"),
+  dropped_event_roles: snapshotCounts(droppedRoles, "role"),
   observed,
   observed_ipc: observedIpc,
   observed_runtime: observedRuntime,

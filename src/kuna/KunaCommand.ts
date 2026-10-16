@@ -4,7 +4,8 @@ import { stat } from "node:fs/promises";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
@@ -17,6 +18,8 @@ import {
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
 import { hashStableFile } from "../filesystem/StableFileHash.js";
+import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import type {
   OwnedProviderProcessSpawnOptions,
   ProviderProcessSnapshot,
@@ -53,6 +56,10 @@ export interface KunaCommandRequest {
   readonly reportedTimeoutMs: number;
   readonly outputBytes: number;
   readonly signal: AbortSignal;
+  readonly retainFailedFileClose: (
+    owner: OwnedFileHandle,
+    resource: string,
+  ) => void;
   readonly launcher?: KunaProcessLauncher | undefined;
 }
 
@@ -63,7 +70,11 @@ export interface KunaCommandRequest {
  */
 export type KunaCommandOutcome =
   | { readonly kind: "ok"; readonly snapshot: ProviderProcessSnapshot }
-  | { readonly kind: "failed"; readonly error: AnalysisError }
+  | {
+      readonly kind: "failed";
+      readonly error: AnalysisError;
+      readonly fileCleanupFailure?: RegularFileCleanupFailure;
+    }
   | {
       readonly kind: "retained";
       readonly error: ProviderCleanupError;
@@ -73,6 +84,48 @@ export type KunaCommandOutcome =
 
 const message = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
+
+/** Preserve the operation's typed failure while attaching descriptor cleanup. */
+export const kunaFileCleanupError = (
+  failure: RegularFileCleanupFailure,
+  operation: string,
+  signal?: AbortSignal,
+): AnalysisError => {
+  const cleanup = new ProviderCleanupError(
+    KUNA_PROVIDER_ID,
+    [failure.path],
+    { reason: message(failure.cleanupCause) },
+    { cause: failure, operation },
+  );
+  if (failure.outcome.kind === "completed") return cleanup;
+  const primaryCause = failure.outcome.cause;
+  const primary =
+    primaryCause instanceof AnalysisError
+      ? primaryCause
+      : signal?.aborted === true
+        ? new AnalysisCancelledError(operation, { cause: primaryCause })
+        : new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
+            cause: primaryCause,
+            userMessage: `Kuna ${operation} failed: ${message(primaryCause)}`,
+          });
+  if (primary instanceof AnalysisCancelledError)
+    return new AnalysisCancelledError(operation, {
+      cause: new AggregateError(
+        [primary, cleanup],
+        "Kuna operation was cancelled and descriptor cleanup failed",
+        { cause: primary },
+      ),
+      cleanup: {
+        reason: cleanup.message,
+        resources: [failure.path],
+      },
+      ...(primary.capturedOutput === undefined
+        ? {}
+        : { capturedOutput: primary.capturedOutput }),
+      partialObservation: primary.partialObservation,
+    });
+  return analysisErrorWithCleanupFailure(primary, cleanup, operation);
+};
 
 /** File metadata that, unchanged, lets a verified digest stand without re-hashing. */
 const verifiedExecutables = new Map<
@@ -87,6 +140,7 @@ const verifiedExecutables = new Map<
 const verifyExecutable = async (
   installation: KunaInstallation,
   signal: AbortSignal,
+  retainFailedFileClose: KunaCommandRequest["retainFailedFileClose"],
 ): Promise<string | undefined> => {
   const status = await stat(installation.executable, { bigint: true });
   const identity = [
@@ -99,7 +153,13 @@ const verifyExecutable = async (
   const known = verifiedExecutables.get(installation.executable);
   let sha256 = known?.identity === identity ? known.sha256 : undefined;
   if (sha256 === undefined) {
-    sha256 = (await hashStableFile(installation.executable, signal)).sha256;
+    sha256 = (
+      await hashStableFile(installation.executable, {
+        signal,
+        retainFailedClose: (owner) =>
+          retainFailedFileClose(owner, installation.executable),
+      })
+    ).sha256;
     verifiedExecutables.set(installation.executable, { identity, sha256 });
   }
   return sha256 === installation.sha256 ? undefined : sha256;
@@ -111,7 +171,11 @@ export const runKunaCommand = async (
 ): Promise<KunaCommandOutcome> => {
   const { installation } = request;
   try {
-    const changed = await verifyExecutable(installation, request.signal);
+    const changed = await verifyExecutable(
+      installation,
+      request.signal,
+      request.retainFailedFileClose,
+    );
     if (changed !== undefined)
       return {
         kind: "failed",
@@ -124,6 +188,13 @@ export const runKunaCommand = async (
         }),
       };
   } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure) {
+      return {
+        kind: "failed",
+        error: kunaFileCleanupError(cause, request.operation, request.signal),
+        fileCleanupFailure: cause,
+      };
+    }
     return {
       kind: "failed",
       error: request.signal.aborted
@@ -206,8 +277,13 @@ const commandFailure = (
     snapshot === null
       ? undefined
       : {
-          // Output can be evidence-sized, not diagnostic-sized; keep only its tail.
-          stdout: snapshot.stdout.text.slice(-4096),
+          // Output can be evidence-sized, not diagnostic-sized; keep only its
+          // tail. Output that overflowed its buffer is a cut-off document
+          // whose tail explains nothing, so none of it is kept.
+          stdout:
+            cause.reason === "output-limit"
+              ? ""
+              : snapshot.stdout.text.slice(-4096),
           stderr: snapshot.stderr.text,
           truncated:
             snapshot.diagnosticTruncated === true ||
@@ -245,15 +321,20 @@ const commandFailure = (
         details,
       ),
     };
+  // The same target and executable always produce the same output, so a
+  // fixed buffer it overflows is a memory bound, not a busy admission queue.
   if (cause.reason === "output-limit")
     return {
       kind: "failed",
       error: new AnalysisResourceConstraintError(
         operation,
-        "capacity",
+        "memory",
         `kuna ${subcommand} wrote more than ${String(request.outputBytes)} bytes of output.`,
         { output_limit_bytes: request.outputBytes },
-        details,
+        {
+          ...details,
+          remediationAction: `REA buffers at most ${String(request.outputBytes)} bytes of kuna ${subcommand} output, so repeating this request for this target fails the same way. Use another provider for it.`,
+        },
       ),
     };
   const exitCode = capturedOutput?.exit_code;

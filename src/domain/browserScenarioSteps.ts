@@ -147,39 +147,62 @@ const nonEmptyWindows = (
 };
 
 /**
+ * The producer opens each step's window just before making that step current,
+ * and steps after the first action that did not complete never run. An event
+ * therefore belongs to the last run step whose window had opened at receipt.
+ */
+const stepsThatRan = (
+  capture: BrowserScenarioCapture,
+): readonly BrowserScenarioStep[] => {
+  const unfinished = capture.steps.findIndex(
+    ({ step_index: index, status }) => index > 0 && status !== "completed",
+  );
+  return unfinished === -1
+    ? capture.steps
+    : capture.steps.slice(0, unfinished + 1);
+};
+
+/**
  * Group retained events by the step whose recorded sequence window received
  * them. The producer records rising, disjoint windows and indexes every event
  * by the step current at receipt; events between one step's capture and the
- * next step's start, or after the final capture, belong to no window.
+ * next step's start, or after the final capture, belong to no window but keep
+ * the step that was current.
  */
 const eventsByReceiptWindow = (
   capture: BrowserScenarioCapture,
 ): Result<ReceiptWindows, AnalysisInputIssue> => {
   const windows = nonEmptyWindows(capture);
   if (!windows.ok) return windows;
+  const ran = stepsThatRan(capture);
   const byStep = capture.steps.map((): BrowserScenarioEvent[] => []);
   const outside: BrowserScenarioEvent[] = [];
-  const events = [...capture.events.items].sort(
-    (left, right) => left.sequence - right.sequence,
-  );
+  const events = capture.events.items
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => left.event.sequence - right.event.sequence);
   let cursor = 0;
-  for (const event of events) {
+  let current = 0;
+  for (const { event, index } of events) {
+    while (
+      current + 1 < ran.length &&
+      (ran[current + 1]?.event_sequence_start ?? Infinity) <= event.sequence
+    )
+      current += 1;
+    const expected = ran[current]?.step_index ?? 0;
+    if (event.step_index !== expected)
+      return windowIssue(
+        ["events", "items", index, "step_index"],
+        `Event ${String(event.sequence)} was received while step ${String(expected)} was current but records step_index ${String(event.step_index)}.`,
+      );
     while (
       cursor < windows.value.length &&
       (windows.value[cursor]?.event_sequence_end ?? 0) < event.sequence
     )
       cursor += 1;
     const window = windows.value[cursor];
-    if (window === undefined || window.event_sequence_start > event.sequence) {
+    if (window === undefined || window.event_sequence_start > event.sequence)
       outside.push(event);
-      continue;
-    }
-    if (event.step_index !== window.step_index)
-      return windowIssue(
-        ["events", "items"],
-        `Event ${String(event.sequence)} lies in step ${String(window.step_index)}'s receipt window but records step_index ${String(event.step_index)}.`,
-      );
-    byStep[window.step_index]?.push(event);
+    else byStep[window.step_index]?.push(event);
   }
   return ok({ byStep, outside });
 };

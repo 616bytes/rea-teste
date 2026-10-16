@@ -460,7 +460,8 @@ An artifact that a step did not request keeps its comparison `unknown` or
 needs. Event receipt does not establish causation, responses can arrive during
 later steps, and events received between windows or after the final capture
 fall in no step's receipt window, although the parent records them with the
-step then current.
+step then current: the last step that ran whose window had opened. Views
+reject captures whose events name another step.
 Selecting network content enables network events even when `capture.events`
 omits `network`. Cancelled steps have no post-action capture. The views do not
 inventory available controls; read the accessibility text for the elements a

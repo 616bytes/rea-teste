@@ -625,6 +625,39 @@ it("keeps browser ownership and transaction omissions consistent", () => {
   ).toEqual([["events", "omissions", "network_transactions", 0]]);
 });
 
+it("counts only network drops toward refused transactions", () => {
+  const range = {
+    first_transaction_id: "request-9",
+    last_transaction_id: "request-9",
+    count: 1,
+    reason: "max-network-transactions",
+  };
+  expect(
+    fixtureIssues((capture) => ({
+      ...capture,
+      events: {
+        ...capture.events,
+        dropped: 1,
+        omissions: {
+          by_kind: [
+            {
+              kind: "console",
+              count: 1,
+              reasons: ["max-network-transactions"],
+            },
+          ],
+          network_transactions: [],
+          network_transaction_range: range,
+        },
+      },
+      completeness: scenarioFixtureCompleteness(capture.steps, true),
+    })),
+  ).toEqual([
+    ["events", "omissions", "by_kind", 0],
+    ["events", "omissions", "network_transaction_range"],
+  ]);
+});
+
 it("backs each transaction omission with its per-kind drop", () => {
   const { request } = fixtureFacts();
   const transaction = (

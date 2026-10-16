@@ -693,6 +693,13 @@ it("keeps truncated artifacts and events between windows explicit", () => {
     return {
       ...fixture,
       steps,
+      // Received before step 3 opened its window, the save request keeps step 2.
+      events: {
+        ...fixture.events,
+        items: fixture.events.items.map((event) =>
+          event.sequence === 5 ? { ...event, step_index: 2 } : event,
+        ),
+      },
       completeness: scenarioFixtureCompleteness(steps),
     };
   });
@@ -827,8 +834,61 @@ it("rejects inverted windows and events indexed to another step", () => {
       parent(misindexed),
     ),
   ).toMatchObject({
-    issues: [{ path: ["source", "normalized_result", "events", "items"] }],
+    issues: [
+      {
+        path: [
+          "source",
+          "normalized_result",
+          "events",
+          "items",
+          3,
+          "step_index",
+        ],
+      },
+    ],
   });
+});
+
+it("rejects events outside every window that name another step", () => {
+  const fixture = browserScenarioFixtureCapture();
+  const lastWindowEnd = Math.max(
+    ...fixture.steps.map(({ event_sequence_end: end }) => end),
+  );
+  const late = fixture.events.items.findIndex(
+    ({ sequence }) => sequence > lastWindowEnd,
+  );
+  // The failed save step stays current after the final capture.
+  expect(fixture.events.items[late]?.step_index).toBe(3);
+  for (const stepIndex of [4, 0])
+    expect(
+      failure(
+        { kind: "browser-scenario", collection: "steps" },
+        parent(
+          reparsed((capture) => ({
+            ...capture,
+            events: {
+              ...capture.events,
+              items: capture.events.items.map((event, index) =>
+                index === late ? { ...event, step_index: stepIndex } : event,
+              ),
+            },
+          })),
+        ),
+      ),
+    ).toMatchObject({
+      issues: [
+        {
+          path: [
+            "source",
+            "normalized_result",
+            "events",
+            "items",
+            late,
+            "step_index",
+          ],
+        },
+      ],
+    });
 });
 
 it("keeps the view's own limitations when parent limitations exceed the budget", () => {

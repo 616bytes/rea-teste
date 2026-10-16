@@ -177,18 +177,41 @@ const networkSelected = ({ scenario }: CapturedFields): boolean =>
   ).includes("network");
 
 /**
- * Only transactions refused by max-network-transactions fill the omitted
- * range, and each refused transaction drops at least one of its events.
+ * Only the network collector refuses transactions, so max-network-transactions
+ * marks network drops alone; refused transactions fill the omitted range, and
+ * each drops at least one of its network events.
  */
 const refineTransactionRange = (
   capture: CapturedFields,
   context: z.RefinementCtx,
 ): void => {
-  if (!networkSelected(capture)) return;
   const { omissions } = capture.events;
+  const selected = new Set(
+    enabledScenarioEventFamilies(
+      capture.scenario.event_families,
+      capture.scenario.network_content,
+    ),
+  );
+  for (const [index, { kind, reasons }] of omissions.by_kind.entries())
+    if (
+      reasons.includes("max-network-transactions") &&
+      browserScenarioEventKindFamily(kind) !== "network" &&
+      // The family rule reports kinds the scenario did not select.
+      browserScenarioOmissionKindSelected(kind, selected)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["events", "omissions", "by_kind", index],
+        message: `max-network-transactions refuses network transactions, not ${kind} events`,
+      });
+  if (!selected.has("network")) return;
   const range = omissions.network_transaction_range;
   const refusedDrops = omissions.by_kind
-    .filter(({ reasons }) => reasons.includes("max-network-transactions"))
+    .filter(
+      ({ kind, reasons }) =>
+        browserScenarioEventKindFamily(kind) === "network" &&
+        reasons.includes("max-network-transactions"),
+    )
     .reduce((count, omission) => count + omission.count, 0);
   if (range === null ? refusedDrops > 0 : refusedDrops < range.count)
     context.addIssue({
@@ -196,8 +219,8 @@ const refineTransactionRange = (
       path: ["events", "omissions", "network_transaction_range"],
       message:
         range === null
-          ? "Events dropped for max-network-transactions require the omitted transaction range"
-          : "Each transaction in the omitted range drops at least one event for max-network-transactions",
+          ? "Network events dropped for max-network-transactions require the omitted transaction range"
+          : "Each transaction in the omitted range drops at least one network event for max-network-transactions",
     });
 };
 

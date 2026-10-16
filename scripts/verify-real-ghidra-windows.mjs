@@ -19,7 +19,7 @@ import {
   parseGhidraInventoryResult,
 } from "../dist/ghidra/GhidraInventoryValues.js";
 import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
-import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraInstallationPolicy.js";
+import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "../dist/ghidra/GhidraLauncher.js";
 import { GHIDRA_PROVIDER_IDENTITY } from "../dist/ghidra/GhidraProviderCapabilities.js";
 import {
@@ -110,6 +110,7 @@ if (profile.value.profile.parameters.executable_role !== role)
 const client = new GhidraClient({
   platform: installation.platform,
   launcher: new GhidraHeadlessLauncher({
+    configurationDirectoryName: installation.configurationDirectoryName,
     environment: process.env,
     analyzeHeadlessPath: installation.analyzeHeadlessPath,
     ...(process.env.JAVA_HOME === undefined

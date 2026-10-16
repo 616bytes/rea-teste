@@ -1,3 +1,6 @@
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type {
   AnalysisClient,
@@ -73,10 +76,12 @@ const SUPPORTED_ARCHITECTURES = new Set([
   "6502",
   "riscv",
   "powerpc",
+  "m68k",
 ]);
 
 /** Ghidra candidate backed by an isolated ephemeral headless import. */
 export class GhidraProvider implements AnalysisProviderCandidate {
+  readonly #inspectionResources = new ArtifactResourceScope();
   #installation: GhidraInstallationInspection | undefined;
   private readonly environment: NodeJS.ProcessEnv;
 
@@ -211,7 +216,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         status: "unsupported",
         code: "architecture_unsupported",
         reason:
-          "Ghidra v1 requires a supported x86, x86_64, arm, arm64, MIPS, RISC-V, or raw 6502 target profile.",
+          "Ghidra v1 requires a supported x86, x86_64, arm, arm64, MIPS, RISC-V, raw 6502, or raw m68k target profile.",
         diagnostics,
       };
     return {
@@ -220,6 +225,28 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       reason: null,
       diagnostics,
     };
+  }
+
+  hasPendingOwnedResources(): boolean {
+    return this.#inspectionResources.hasPending;
+  }
+
+  async closeOwnedResources() {
+    try {
+      await this.#inspectionResources.retryCleanup();
+      return ok(null);
+    } catch (cause: unknown) {
+      const error = new ProviderCleanupError(
+        "ghidra",
+        cause instanceof ArtifactReaderFailure
+          ? (cause.cleanup?.resources ?? [])
+          : [],
+        { reason: providerFailureText(cause) },
+        { cause },
+      );
+      bindArtifactFileCleanup(cause, error);
+      return err(error);
+    }
   }
 
   async resolveAnalysisProfile(
@@ -231,6 +258,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       target,
       GHIDRA_PROVIDER_IDENTITY,
       installation,
+      this.#inspectionResources,
       options?.signal,
       this.config.ghidraLanguageOverride,
       this.config.ghidraDisabledAnalyzers,

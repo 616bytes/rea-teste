@@ -1,19 +1,18 @@
 /**
- * Decode "modified UTF-8" into a JavaScript string. This is the encoding used by
- * both the JVM class-file constant pool (JVMS §4.4.7) and the DEX
- * `string_data_item` (Dalvik Executable format): U+0000 is encoded as the
- * two-byte `C0 80`, and supplementary characters are encoded as a CESU-8
- * surrogate pair (two three-byte sequences), never as a four-byte sequence.
- *
- * Returns `null` on any malformed sequence — a stray continuation byte used as
- * a lead, a lead that promises continuation bytes the buffer does not hold, a
- * four-byte (0xF0+) lead that modified UTF-8 never emits, or an overlong
- * (non-shortest) form, which both the JVM and ART's DEX verifier reject.
- * Callers attach their own positional context to the failure.
+ * "Modified UTF-8", the encoding used by both the JVM class-file constant pool
+ * (JVMS §4.4.7) and the DEX `string_data_item` (Dalvik Executable format):
+ * U+0000 is encoded as the two-byte `C0 80`, and supplementary characters are
+ * encoded as a CESU-8 surrogate pair (two three-byte sequences), never as a
+ * four-byte sequence.
  */
+
 /**
- * Validate modified-UTF8 (JVMS §4.4.7) in place, allocating nothing. Returns
- * the number of UTF-16 code units it decodes to, or null when malformed.
+ * Validate modified-UTF8 in place, allocating nothing. Returns the number of
+ * UTF-16 code units it decodes to, or `null` on any malformed sequence — a
+ * stray continuation byte used as a lead, a lead that promises continuation
+ * bytes the buffer does not hold, a four-byte (0xF0+) lead that modified UTF-8
+ * never emits, or an overlong (non-shortest) form, which both the JVM and
+ * ART's DEX verifier reject. Callers attach their own positional context.
  */
 export const modifiedUtf8Units = (bytes: Uint8Array): number | null => {
   const isContinuation = (byte: number | undefined): boolean =>
@@ -56,10 +55,7 @@ const DECODE_CHUNK = 8192;
  * Lone surrogates are preserved exactly (a UTF-16 TextDecoder would replace
  * them).
  */
-export const decodeValidModifiedUtf8 = (
-  bytes: Uint8Array,
-  units: number,
-): string => {
+const decodeValidModifiedUtf8 = (bytes: Uint8Array, units: number): string => {
   const out = new Uint16Array(units);
   let u = 0;
   let i = 0;

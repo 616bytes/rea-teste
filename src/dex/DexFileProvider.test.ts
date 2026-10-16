@@ -6,111 +6,7 @@ import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { DexFileProvider } from "./DexFileProvider.js";
-import { DEX_NO_INDEX } from "../domain/dex/dexFile.js";
-
-/** Compact DEX fixture: class Lcom/example/Foo; method run (I)V with a local x:I. */
-class DexBuilder {
-  private readonly b: number[] = [];
-  u1(v: number) {
-    this.b.push(v & 0xff);
-    return this;
-  }
-  u2(v: number) {
-    this.b.push(v & 0xff, (v >> 8) & 0xff);
-    return this;
-  }
-  u4(v: number) {
-    this.b.push(v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff);
-    return this;
-  }
-  uleb(v: number) {
-    let n = v >>> 0;
-    do {
-      let x = n & 0x7f;
-      n >>>= 7;
-      if (n !== 0) x |= 0x80;
-      this.b.push(x);
-    } while (n !== 0);
-    return this;
-  }
-  ulebp1(v: number) {
-    return this.uleb(v + 1);
-  }
-  ascii(t: string) {
-    for (const c of t) this.b.push(c.charCodeAt(0));
-    return this;
-  }
-  at() {
-    return this.b.length;
-  }
-  setU4(at: number, v: number) {
-    this.b[at] = v & 0xff;
-    this.b[at + 1] = (v >> 8) & 0xff;
-    this.b[at + 2] = (v >> 16) & 0xff;
-    this.b[at + 3] = (v >>> 24) & 0xff;
-  }
-  bytes() {
-    return Uint8Array.from(this.b);
-  }
-}
-
-const STRINGS = ["Foo.java", "run", "x", "Lcom/example/Foo;", "I", "V"];
-
-const minimalDex = (): Uint8Array => {
-  const d = new DexBuilder();
-  for (let i = 0; i < 112; i += 1) d.u1(0);
-  const dataOff = STRINGS.map((s) => {
-    const off = d.at();
-    d.uleb(s.length).ascii(s).u1(0);
-    return off;
-  });
-  const stringIdsOff = d.at();
-  for (const off of dataOff) d.u4(off);
-  const typeIdsOff = d.at();
-  for (const s of [3, 4, 5]) d.u4(s);
-  const typeListOff = d.at();
-  d.u4(1).u2(1);
-  const protoIdsOff = d.at();
-  d.u4(0).u4(2).u4(typeListOff);
-  const methodIdsOff = d.at();
-  d.u2(0).u2(0).u4(1);
-  // static run(int): the single param "x" is an implicit local seeded at reg 0.
-  const debugOff = d.at();
-  d.uleb(10).uleb(1).ulebp1(2); // line_start 10, 1 param name "x"
-  d.u1(0x0e).u1(0x00); // emit position, END_SEQUENCE
-  const codeOff = d.at();
-  d.u2(1).u2(1).u2(0).u2(0).u4(debugOff).u4(4);
-  for (let i = 0; i < 4; i += 1) d.u2(0);
-  const classDataOff = d.at();
-  d.uleb(0).uleb(0).uleb(1).uleb(0).uleb(0).uleb(0x9).uleb(codeOff); // access public|static
-  const classDefsOff = d.at();
-  d.u4(0).u4(1).u4(DEX_NO_INDEX).u4(0).u4(0).u4(0).u4(classDataOff).u4(0);
-  d.setU4(0, 0x0a786564);
-  d.setU4(4, 0x00353330);
-  d.setU4(32, d.at());
-  d.setU4(36, 0x70);
-  d.setU4(40, 0x12345678);
-  d.setU4(56, STRINGS.length);
-  d.setU4(60, stringIdsOff);
-  d.setU4(64, 3);
-  d.setU4(68, typeIdsOff);
-  d.setU4(72, 1);
-  d.setU4(76, protoIdsOff);
-  d.setU4(88, 1);
-  d.setU4(92, methodIdsOff);
-  d.setU4(96, 1);
-  d.setU4(100, classDefsOff);
-  return d.bytes();
-};
-
-const buildApk = async (
-  members: readonly { name: string; bytes: Uint8Array }[],
-): Promise<Uint8Array> => {
-  const writer = new ZipWriter(new Uint8ArrayWriter());
-  for (const m of members)
-    await writer.add(m.name, new Uint8ArrayReader(m.bytes));
-  return writer.close();
-};
+import { debuggableDex, zipArchive } from "../../tests/fixtures/dexFile.js";
 
 let dir: string;
 const provider = new DexFileProvider();
@@ -132,7 +28,7 @@ const write = async (name: string, bytes: Uint8Array): Promise<string> => {
 describe("DexFileProvider loose .dex", () => {
   it("summarizes a loose dex with readiness present", async () => {
     const result = await provider.inspect({
-      path: await write("a.dex", minimalDex()),
+      path: await write("a.dex", debuggableDex()),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -150,7 +46,7 @@ describe("DexFileProvider loose .dex", () => {
 
   it("returns full per-method detail for a selected class", async () => {
     const result = await provider.inspect({
-      path: await write("b.dex", minimalDex()),
+      path: await write("b.dex", debuggableDex()),
       class_descriptor: "Lcom/example/Foo;",
     });
     expect(result.ok).toBe(true);
@@ -179,7 +75,7 @@ describe("DexFileProvider loose .dex", () => {
 
   it("refuses a class descriptor not present", async () => {
     const result = await provider.inspect({
-      path: await write("c.dex", minimalDex()),
+      path: await write("c.dex", debuggableDex()),
       class_descriptor: "LNope;",
     });
     expect(result.ok).toBe(false);
@@ -189,10 +85,10 @@ describe("DexFileProvider loose .dex", () => {
 describe("DexFileProvider APK selection", () => {
   it("refuses an encrypted root member instead of silently skipping it", async () => {
     const writer = new ZipWriter(new Uint8ArrayWriter());
-    await writer.add("classes.dex", new Uint8ArrayReader(minimalDex()), {
+    await writer.add("classes.dex", new Uint8ArrayReader(debuggableDex()), {
       password: "secret",
     });
-    await writer.add("classes2.dex", new Uint8ArrayReader(minimalDex()));
+    await writer.add("classes2.dex", new Uint8ArrayReader(debuggableDex()));
     const result = await provider.inspect({
       path: await write("encrypted.apk", await writer.close()),
     });
@@ -205,9 +101,9 @@ describe("DexFileProvider APK selection", () => {
   it("summarizes every root classes*.dex when no entry is given", async () => {
     const apk = await write(
       "app.apk",
-      await buildApk([
-        { name: "classes.dex", bytes: minimalDex() },
-        { name: "classes2.dex", bytes: minimalDex() },
+      await zipArchive([
+        { name: "classes.dex", bytes: debuggableDex() },
+        { name: "classes2.dex", bytes: debuggableDex() },
         { name: "res/raw/note.txt", bytes: Uint8Array.from([1, 2, 3]) },
       ]),
     );
@@ -228,9 +124,9 @@ describe("DexFileProvider APK selection", () => {
   it("auto-loads members by their stored name, as ART does", async () => {
     const dotted = await write(
       "dotted.apk",
-      await buildApk([
-        { name: "./classes.dex", bytes: minimalDex() },
-        { name: "classes.dex", bytes: minimalDex() },
+      await zipArchive([
+        { name: "./classes.dex", bytes: debuggableDex() },
+        { name: "classes.dex", bytes: debuggableDex() },
       ]),
     );
     const result = await provider.inspect({ path: dotted });
@@ -242,14 +138,14 @@ describe("DexFileProvider APK selection", () => {
     const onlyDotted = await provider.inspect({
       path: await write(
         "only-dotted.apk",
-        await buildApk([{ name: "./classes.dex", bytes: minimalDex() }]),
+        await zipArchive([{ name: "./classes.dex", bytes: debuggableDex() }]),
       ),
     });
     expect(onlyDotted.ok).toBe(false);
   });
 
   it("reports bytes after file_size as unread instead of refusing the DEX", async () => {
-    const dex = minimalDex();
+    const dex = debuggableDex();
     const padded = new Uint8Array(dex.length + 5);
     padded.set(dex);
     const result = await provider.inspect({
@@ -261,7 +157,7 @@ describe("DexFileProvider APK selection", () => {
   });
 
   it("keeps the unread-trailing-bytes fact on a refused class lookup", async () => {
-    const dex = minimalDex();
+    const dex = debuggableDex();
     const padded = new Uint8Array(dex.length + 3);
     padded.set(dex);
     const result = await provider.inspect({
@@ -279,9 +175,9 @@ describe("DexFileProvider APK selection", () => {
     const result = await provider.inspect({
       path: await write(
         "gap.apk",
-        await buildApk([
-          { name: "classes.dex", bytes: minimalDex() },
-          { name: "classes3.dex", bytes: minimalDex() },
+        await zipArchive([
+          { name: "classes.dex", bytes: debuggableDex() },
+          { name: "classes3.dex", bytes: debuggableDex() },
         ]),
       ),
     });
@@ -297,7 +193,7 @@ describe("DexFileProvider APK selection", () => {
   it("selects one dex member by entry", async () => {
     const apk = await write(
       "one.apk",
-      await buildApk([{ name: "classes.dex", bytes: minimalDex() }]),
+      await zipArchive([{ name: "classes.dex", bytes: debuggableDex() }]),
     );
     const result = await provider.inspect({ path: apk, entry: "classes.dex" });
     expect(result.ok).toBe(true);
@@ -309,7 +205,7 @@ describe("DexFileProvider APK selection", () => {
   it("reports a missing entry as an input error", async () => {
     const apk = await write(
       "miss.apk",
-      await buildApk([{ name: "classes.dex", bytes: minimalDex() }]),
+      await zipArchive([{ name: "classes.dex", bytes: debuggableDex() }]),
     );
     const result = await provider.inspect({ path: apk, entry: "classes9.dex" });
     expect(result.ok).toBe(false);

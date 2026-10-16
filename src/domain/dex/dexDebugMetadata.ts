@@ -138,6 +138,9 @@ const methodState = (
   return hasLines && hasLocals ? "present" : "partial";
 };
 
+/** `ACC_STATIC`: a static method has no implicit `this` parameter. */
+const ACC_STATIC = 0x8;
+
 /** A method's code_item facts that decoding and the summary memo key need. */
 interface MethodCode {
   readonly debugInfoOff: number;
@@ -207,8 +210,6 @@ const decodeMethodDebug = (
     options,
   );
 };
-
-const ACC_STATIC = 0x8;
 
 /** Methods between cancellation/budget polls inside one class. */
 const METHOD_POLL_INTERVAL = 4096;
@@ -352,7 +353,6 @@ export const assembleClassDetail = (
       {
         budget: work.budget,
         cancelled: work.cancelled,
-        collectPositions: false,
         collectLocals: true,
         maxLocals: Math.max(
           0,
@@ -557,7 +557,7 @@ export const summarizeDex = (
       }
       // O(1) key: the implicit parameter layout is fixed by the proto, so its
       // index stands in for the (up to 255) parameter types.
-      const isStatic = (method.accessFlags & 0x8) !== 0;
+      const isStatic = (method.accessFlags & ACC_STATIC) !== 0;
       const key = `${String(code.debugInfoOff)}:${String(code.insnsSize)}:${String(code.firstRegister)}:${String(code.registersSize)}:${isStatic ? "s" : `i${String(classDef.classIdx)}`}:${String(resolver.methodProtoIndex(method.methodIdx))}`;
       let tally = tallies.get(key);
       if (tally === undefined) {
@@ -570,7 +570,6 @@ export const summarizeDex = (
           {
             budget: work.budget,
             cancelled: work.cancelled,
-            collectPositions: false,
             collectLocals: false,
           },
         );

@@ -139,7 +139,7 @@ export type DexDebugMetadataResult = z.infer<
   typeof dexDebugMetadataResultSchema
 >;
 
-export const DEX_DEBUG_METADATA_LIMITATIONS: readonly string[] = [
+const DEX_DEBUG_METADATA_LIMITATIONS: readonly string[] = [
   "Static DEX inspection only. No Android code executes; positions, registers and names are read from compiler-emitted debug_info, not from a decompiler or a live process.",
   "Line positions are compiler-emitted and may be R8/ProGuard-renumbered synthetic lines that require a mapping.txt to retrace; they are not asserted source lines.",
   'A single distinct source-file name across classes (e.g. "SourceFile") indicates -renamesourcefileattribute; readiness is a conservative derived label over observed tallies.',

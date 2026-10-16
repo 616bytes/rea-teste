@@ -26,13 +26,6 @@ const DBG_FIRST_SPECIAL = 0x0a;
 const DBG_LINE_BASE = -4;
 const DBG_LINE_RANGE = 15;
 
-/** One source position; `sourceFileIdx` is set only when DBG_SET_FILE redirected it. */
-export interface DexLinePosition {
-  readonly address: number;
-  readonly line: number;
-  readonly sourceFileIdx: number | null;
-}
-
 /** Sentinel `nameIdx` for the implicit `this` local: it has no string-pool entry. */
 export const DEX_THIS_NAME = -2;
 
@@ -71,14 +64,6 @@ export interface DexParameterList {
   readonly wide: Uint8Array;
 }
 
-/** Build a parameter list from plain entries. */
-export const dexParameterList = (
-  entries: readonly { readonly typeIdx: number; readonly wide: boolean }[],
-): DexParameterList => ({
-  typeIdx: Uint16Array.from(entries, (e) => e.typeIdx),
-  wide: Uint8Array.from(entries, (e) => (e.wide ? 1 : 0)),
-});
-
 /** Incoming argument words the parameters occupy (wide ones take two). */
 export const dexParameterWords = (params: DexParameterList): number => {
   let words = 0;
@@ -105,8 +90,6 @@ export interface DexMethodDebug {
   readonly lineStart: number;
   /** Parameter name indices in declaration order (`-1` = unnamed/stripped). */
   readonly parameterNames: readonly number[];
-  /** Decoded positions; empty unless the caller asked to collect them. */
-  readonly positions: readonly DexLinePosition[];
   /** Decoded locals; empty unless the caller asked to collect them. */
   readonly locals: readonly DexLocalEntry[];
   /**
@@ -129,13 +112,12 @@ export interface DexMethodDebug {
 }
 
 /**
- * What to materialise. Counting is always exact; collecting is opt-in per kind
- * so a summary allocates nothing per position or local, and a detail view can
- * cap the locals it will hold.
+ * What to materialise. Counting is always exact; positions are only counted
+ * and locals are collected on request, so a summary allocates nothing per
+ * position or local, and a detail view can cap the locals it will hold.
  */
 export interface DexDecodeOptions {
   readonly budget?: DexWorkBudget;
-  readonly collectPositions?: boolean;
   readonly collectLocals?: boolean;
   readonly maxLocals?: number;
   /** Polled every {@link CANCEL_POLL_INTERVAL} opcodes within one stream. */
@@ -148,7 +130,6 @@ export const absentMethodDebug = (): DexMethodDebug => ({
   malformed: false,
   lineStart: 0,
   parameterNames: [],
-  positions: [],
   locals: [],
   positionCount: 0,
   localCount: 0,
@@ -202,7 +183,6 @@ export const chargeWork = (budget: DexWorkBudget): boolean => {
 /** Mutable walk over one `debug_info_item`; one handler per opcode group. */
 class DebugInfoWalk {
   private readonly cursor: DexCursor;
-  private readonly positions: DexLinePosition[] = [];
   private readonly locals: DexLocalEntry[] = [];
   private readonly live = new Map<number, LiveLocal>();
   private readonly lastByRegister = new Map<number, LiveLocal>();
@@ -211,7 +191,6 @@ class DebugInfoWalk {
   private lineStart = 0;
   private address = 0;
   private setFileEvents = 0;
-  private currentFileIdx: number | null = null;
   private malformed = false;
   private positionCount = 0;
   private localCount = 0;
@@ -220,7 +199,6 @@ class DebugInfoWalk {
   private readonly cancelled: (() => boolean) | undefined;
   private localLimitExceeded = false;
   private readonly budget: DexWorkBudget | undefined;
-  private readonly collectPositions: boolean;
   private readonly collectLocals: boolean;
   private readonly maxLocals: number;
 
@@ -233,7 +211,6 @@ class DebugInfoWalk {
   ) {
     this.cursor = new DexCursor(bytes, offset);
     this.budget = options.budget;
-    this.collectPositions = options.collectPositions ?? true;
     this.collectLocals = options.collectLocals ?? true;
     this.maxLocals = options.maxLocals ?? Number.POSITIVE_INFINITY;
     this.cancelled = options.cancelled;
@@ -375,7 +352,6 @@ class DebugInfoWalk {
   private setFile(): Step {
     const nameIdx = this.cursor.uleb128p1();
     if (!nameIdx.ok) return false;
-    this.currentFileIdx = nameIdx.value === -1 ? null : nameIdx.value;
     this.setFileEvents += 1;
     return true;
   }
@@ -391,12 +367,6 @@ class DebugInfoWalk {
     // instruction of this method maps to it.
     if (this.address >= this.insnsSize) return;
     this.positionCount += 1;
-    if (this.collectPositions)
-      this.positions.push({
-        address: this.address,
-        line: this.line,
-        sourceFileIdx: this.currentFileIdx,
-      });
   }
 
   /** Dispatch one non-terminal opcode; returns false to stop on a fault. */
@@ -430,7 +400,6 @@ class DebugInfoWalk {
       malformed,
       lineStart: this.lineStart,
       parameterNames: this.parameterNames,
-      positions: this.positions,
       locals: this.locals,
       positionCount: this.positionCount,
       localCount: this.localCount,

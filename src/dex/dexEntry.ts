@@ -9,11 +9,7 @@
 /** A canonical multidex name: `classes.dex` or `classesN.dex` with N >= 2. */
 const CANONICAL = /^classes(?:[2-9]|[1-9][0-9]+)?\.dex$/;
 
-/** Whether `path` is a canonical multidex name (a candidate for auto-loading). */
-export const isCanonicalDexMember = (path: string): boolean =>
-  CANONICAL.test(path);
-
-/** Load position of a canonical name (`classes.dex` is 0), or null. */
+/** Load position of a canonical name (`classes.dex` is 0), or null for any other name. */
 export const multidexIndex = (path: string): number | null => {
   if (!CANONICAL.test(path)) return null;
   const digits = path.slice("classes".length, -".dex".length);

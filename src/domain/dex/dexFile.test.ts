@@ -7,6 +7,7 @@ import {
   parseCodeItem,
   parseDexFile,
 } from "./dexFile.js";
+import { uleb } from "../../../tests/fixtures/dexFile.js";
 
 /**
  * Assemble a minimal valid DEX with one class carrying one direct method whose
@@ -18,18 +19,6 @@ const CLASS_DEFS_OFF = 0x70;
 const CODE_ITEM_OFF = 0x90;
 const CLASS_DATA_OFF = 0xa0;
 const DEBUG_INFO_OFF = 500; // sentinel; framing reads the field, never follows it
-
-const uleb = (value: number): number[] => {
-  const out: number[] = [];
-  let v = value >>> 0;
-  do {
-    let b = v & 0x7f;
-    v >>>= 7;
-    if (v !== 0) b |= 0x80;
-    out.push(b);
-  } while (v !== 0);
-  return out;
-};
 
 const minimalDex = (version = "035"): Uint8Array => {
   const classData = [

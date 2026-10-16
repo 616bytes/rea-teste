@@ -1,33 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { decodeDebugInfo, dexParameterList } from "./dexDebugInfo.js";
-
-const uleb = (value: number): number[] => {
-  const out: number[] = [];
-  let v = value >>> 0;
-  do {
-    let b = v & 0x7f;
-    v >>>= 7;
-    if (v !== 0) b |= 0x80;
-    out.push(b);
-  } while (v !== 0);
-  return out;
-};
-const ulebp1 = (value: number): number[] => uleb(value + 1);
-const sleb = (value: number): number[] => {
-  const out: number[] = [];
-  let more = true;
-  let v = value;
-  while (more) {
-    let b = v & 0x7f;
-    v >>= 7;
-    if ((v === 0 && (b & 0x40) === 0) || (v === -1 && (b & 0x40) !== 0))
-      more = false;
-    else b |= 0x80;
-    out.push(b);
-  }
-  return out;
-};
+import { decodeDebugInfo } from "./dexDebugInfo.js";
+import {
+  dexParameterList,
+  sleb,
+  uleb,
+  ulebp1,
+} from "../../../tests/fixtures/dexFile.js";
 
 // Opcodes
 const END_SEQUENCE = 0x00;
@@ -63,7 +42,7 @@ describe("decodeDebugInfo", () => {
     expect(d.present).toBe(true);
     expect(d.malformed).toBe(false);
     expect(d.parameterNames).toEqual([5]);
-    expect(d.positions).toEqual([{ address: 0, line: 1, sourceFileIdx: null }]);
+    expect(d.positionCount).toBe(1);
     expect(d.locals).toHaveLength(1);
     expect(d.locals[0]).toMatchObject({
       register: 1,
@@ -120,7 +99,7 @@ describe("decodeDebugInfo", () => {
     expect(d.malformed).toBe(true);
   });
 
-  it("attaches a SET_FILE source index to subsequent positions", () => {
+  it("counts a SET_FILE redirect and the position after it", () => {
     const bytes = stream(
       ...uleb(5),
       ...uleb(0),
@@ -131,7 +110,8 @@ describe("decodeDebugInfo", () => {
     );
     const d = decodeDebugInfo(bytes, 1, 4);
     expect(d.setFileEvents).toBe(1);
-    expect(d.positions[0]).toEqual({ address: 0, line: 5, sourceFileIdx: 7 });
+    expect(d.positionCount).toBe(1);
+    expect(d.malformed).toBe(false);
   });
 
   it("preserves a position but marks malformed when a line goes non-positive", () => {
@@ -144,7 +124,7 @@ describe("decodeDebugInfo", () => {
       END_SEQUENCE,
     );
     const d = decodeDebugInfo(bytes, 1, 4);
-    expect(d.positions[0]!.line).toBe(-4);
+    expect(d.positionCount).toBe(1);
     expect(d.malformed).toBe(true);
   });
 
@@ -152,7 +132,7 @@ describe("decodeDebugInfo", () => {
     const bytes = stream(...uleb(1), ...uleb(0), EMIT_HERE); // no END_SEQUENCE
     const d = decodeDebugInfo(bytes, 1, 4);
     expect(d.malformed).toBe(true);
-    expect(d.positions).toHaveLength(1);
+    expect(d.positionCount).toBe(1);
   });
 });
 
@@ -171,7 +151,6 @@ describe("decodeDebugInfo bounds and semantics", () => {
     );
     const d = decodeDebugInfo(bytes, 1, 2);
     expect(d.positionCount).toBe(2);
-    expect(d.positions.map((p) => p.address)).toEqual([0, 1]);
   });
 
   it("separates declared locals from implicit parameter locals", () => {

@@ -38,7 +38,14 @@ export const classifySwiftSymbol = (
   let category: SwiftTypeCategory | null = null;
   for (;;) {
     const end = identifierEnd(mangling, offset);
-    if (end === undefined) break;
+    if (end === undefined) {
+      // The literal module is the first substitution (`AA`). Reusing it here
+      // can continue an extension context with an undecoded generic signature.
+      // Do not keep the nominal category or guess from a later `E`. Other
+      // substitutions may be constructor result types, not declaration contexts.
+      if (mangling.startsWith("AA", offset)) category = null;
+      break;
+    }
     const kind = mangling.charAt(end);
     const nominal = NOMINAL_CATEGORIES.get(kind);
     if (nominal === undefined) {

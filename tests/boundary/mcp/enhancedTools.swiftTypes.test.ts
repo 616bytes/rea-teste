@@ -158,3 +158,112 @@ describe("Swift classification through MCP", () => {
     ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
   });
 });
+
+describe("Unresolved Swift contexts through MCP", () => {
+  it("keeps unresolved substituted contexts out of nominal categories", async () => {
+    // Reported swiftc spellings from #4296, supplied by a controlled provider.
+    // These are not observations from a real Swift/Hopper run in this test.
+    const unresolved = [
+      "_$s1M7WrapperVAASQRzlE4sameySbxF",
+      "_$s1M3BoxVAARi_zrlE1vxvM",
+      "_$s1M3BoxVAARi_zrlE1vxvr.resume.0",
+      "_$s1M3BoxVAARi_zrlE1vxvs",
+      "_$s1M3BoxVAARi_zrlE1vACyxGx_tcfC",
+    ];
+    const structs = [
+      "_$s1M7WrapperV1vxvg",
+      "_$s1M7WrapperVMa",
+      "_$s1M7WrapperV1vACyxGx_tcfC",
+      // Unaliased constructors use nominal substitutions for their result type.
+      "_$s4main6ScorerVACycfC",
+      "_$s1M1SVACycfC",
+      // Operator-looking text inside literal member names is not context.
+      "_$s1M7WrapperV4AASQyyF",
+      "_$s1M7WrapperV4sameySExF",
+      "_TtV7Fixture6Struct",
+    ];
+    const extension = "_$s10Foundation4DataV1ME10countTwiceSiyF";
+    const procedures = [...unresolved, ...structs, extension].map(
+      (value, index) => ({ address: `0x${index.toString(16)}`, value }),
+    );
+    const entries = (names: readonly string[]) =>
+      procedures
+        .filter(({ value }) => names.includes(value))
+        .map(({ address, value }) => ({
+          address,
+          name: value,
+          mangled_names: [value],
+        }));
+    const unclassified = entries(unresolved).map((item) => ({
+      ...item,
+      reason: "category_not_decoded",
+    }));
+    const client = await connect({
+      execute: async (operation) =>
+        ok(operation === "list_procedures" ? procedures : []),
+    });
+    for (const category of [undefined, "structs"] as const) {
+      const result = await client.callTool({
+        name: "analyze_swift_types",
+        arguments: category === undefined ? {} : { category },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(jsonResult(result)).toMatchObject({
+        total: category === undefined ? procedures.length : structs.length,
+        categories: {
+          structs: { count: structs.length, items: entries(structs) },
+          extensions: {
+            count: category === undefined ? 1 : 0,
+            items: category === undefined ? entries([extension]) : [],
+          },
+          other: {
+            count: category === undefined ? unresolved.length : 0,
+            items: category === undefined ? entries(unresolved) : [],
+          },
+        },
+        unclassified,
+        limitations: expect.arrayContaining([
+          expect.stringContaining("could not be established"),
+        ]),
+      });
+    }
+  });
+
+  it.each([false, true])(
+    "retains a decoded alias beside an unresolved context (reversed: %s)",
+    async (reversed) => {
+      const names = ["_$s1M7ServiceCMa", "_$s1M7WrapperVAASQRzlE4sameySbxF"];
+      if (reversed) names.reverse();
+      const client = await connect({
+        execute: async (operation) =>
+          ok(
+            operation === "list_procedures"
+              ? [{ address: "0x1", value: "provider::shared" }]
+              : names.map((value) => ({ address: "0x1", value })),
+          ),
+      });
+      const result = await client.callTool({
+        name: "analyze_swift_types",
+        arguments: { category: "classes" },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(jsonResult(result)).toMatchObject({
+        total: 1,
+        categories: {
+          classes: {
+            count: 1,
+            items: [
+              {
+                address: "0x1",
+                name: "provider::shared",
+                mangled_names: names,
+              },
+            ],
+          },
+          other: { count: 0, items: [] },
+        },
+        unclassified: [],
+      });
+    },
+  );
+});

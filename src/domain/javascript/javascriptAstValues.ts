@@ -2,6 +2,14 @@ import * as t from "@babel/types";
 import type { JavaScriptSemanticPrimitive } from "./javascriptSemanticValueTypes.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 
+/** All class field forms share value timing; keys remain definition-time syntax. */
+export const javaScriptClassField = (
+  node: t.Node | null | undefined,
+): node is t.ClassProperty | t.ClassPrivateProperty | t.ClassAccessorProperty =>
+  t.isClassProperty(node) ||
+  t.isClassPrivateProperty(node) ||
+  t.isClassAccessorProperty(node);
+
 /** TypeScript receiver annotations occupy no positional runtime parameter slot. */
 export const runtimeFunctionParameters = (
   node: t.Function,
@@ -160,6 +168,44 @@ export const semanticFinalObjectProperty = (
 ): t.Node | undefined => {
   const property = semanticFinalObjectMember(node, key);
   return t.isObjectProperty(property) ? property.value : undefined;
+};
+
+/** Class fields initialize after all method definitions, in field order. */
+export const semanticFinalClassMember = (
+  node: t.ClassExpression,
+  key: string,
+): t.ClassMethod | t.ClassProperty | undefined => {
+  if (node.decorators != null && node.decorators.length !== 0) return undefined;
+  let method: t.ClassMethod | undefined;
+  let field: t.ClassProperty | undefined;
+  for (const member of node.body.body) {
+    if (t.isStaticBlock(member)) return undefined;
+    if (
+      (!t.isClassMethod(member) && !javaScriptClassField(member)) ||
+      !member.static
+    )
+      continue;
+    // Accessor definitions and private names are not public data selections.
+    if (t.isClassPrivateProperty(member)) continue;
+    if (t.isClassAccessorProperty(member)) return undefined;
+    const name = semanticStaticPropertyKey(member.key, member.computed);
+    if (
+      name === null ||
+      (member.decorators != null && member.decorators.length !== 0)
+    )
+      return undefined;
+    if (t.isClassProperty(member)) {
+      if (
+        member.value != null &&
+        !readExactJavaScriptLiteral(member.value).found &&
+        !t.isFunctionExpression(member.value) &&
+        !t.isArrowFunctionExpression(member.value)
+      )
+        return undefined;
+      if (name === key) field = member;
+    } else if (name === key) method = member;
+  }
+  return field ?? method;
 };
 
 /** Preserve allocation identity through expressions with one exact result. */

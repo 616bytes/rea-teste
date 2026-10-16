@@ -55,6 +55,7 @@ import {
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { semanticBundledRequireOrigin } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
+import { semanticPromiseResultIdentity } from "./javascriptSemanticPromiseIdentity.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
 import {
   indexJavaScriptAmbientWritesSteps,
@@ -561,6 +562,12 @@ function* classifyDefinitionReceiversSteps(
         })
       )
         hasWebSocketEndpointCandidate = true;
+      // Awaited aliases can project literal promises even when the constructor
+      // itself is a plain binding. Request the same completed effect facts.
+      if (t.isAwaitExpression(node))
+        semanticPromiseResultIdentity(node.argument, state, () => {
+          hasWebSocketLiteralProjection = true;
+        });
       classifyRpcRoot(node);
       classifyOpenReceiver(node);
     },

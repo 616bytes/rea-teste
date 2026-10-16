@@ -2572,3 +2572,229 @@ it("retains distinct WebMCP descriptions and names while deduplicating equivalen
     ),
   ).toBe(true);
 });
+
+const exactReturnedPromiseAndClassPhaseCases = [
+  {
+    name: "fresh static class method",
+    source:
+      "(class { static run() { new Socket('wss://example.test/review-phase') } }).run(); const Socket = globalThis.WebSocket;",
+    present: false,
+  },
+  {
+    name: "literal wrapper returned promise",
+    source:
+      "(async () => { const pending = (async () => { await 0; new Socket('wss://example.test/review-phase') })(); await (() => pending)(); const Socket = globalThis.WebSocket; })();",
+    present: false,
+  },
+  {
+    name: "labeled suspension",
+    source:
+      "(async () => { label: { await 0; } new Socket('wss://example.test/review-phase') })(); const Socket = globalThis.WebSocket;",
+    present: true,
+  },
+  {
+    name: "awaited abrupt finally entry",
+    source:
+      "(async () => { try { throw await 0; } finally { new Socket('wss://example.test/review-phase') } })(); const Socket = globalThis.WebSocket;",
+    present: true,
+  },
+  {
+    name: "destructured promise identity",
+    source:
+      "export {}; const { pending } = { pending: import('ws') }; const { WebSocket: Socket } = await pending; new Socket('wss://example.test/review-phase');",
+    present: true,
+  },
+  {
+    name: "instance auto accessor",
+    source:
+      "const Client = class { accessor socket = new Socket('wss://example.test/review-phase') }; const Socket = globalThis.WebSocket; new Client();",
+    present: true,
+  },
+  {
+    name: "JSX child suspension",
+    source:
+      "(async () => { <div>{await ready}</div>; new Socket('wss://example.test/review-phase'); })(); const Socket = globalThis.WebSocket;",
+    present: true,
+  },
+  {
+    name: "computed static method",
+    source:
+      "(class { static [`run`]() { new Socket('wss://example.test/review-phase') } })[`run`](); const Socket = globalThis.WebSocket;",
+    present: false,
+  },
+  {
+    name: "static method call wrapper",
+    source:
+      "(class { static run() { new Socket('wss://example.test/review-phase') } }).run.call(null); const Socket = globalThis.WebSocket;",
+    present: false,
+  },
+  {
+    name: "async static continuation",
+    source:
+      "(class { static async run() { await 0; new Socket('wss://example.test/review-phase') } }).run(); const Socket = globalThis.WebSocket;",
+    present: true,
+  },
+  {
+    name: "unresumed generator method",
+    source:
+      "(class { static *run() { new Socket('wss://example.test/review-phase') } }).run(); const Socket = globalThis.WebSocket;",
+    present: true,
+  },
+  {
+    name: "stored class method",
+    source:
+      "const run = (class { static run() { new Socket('wss://example.test/review-phase') } }).run; const Socket = globalThis.WebSocket; run();",
+    present: true,
+  },
+  {
+    name: "field initialization after methods",
+    source:
+      "(class { static run = () => new Socket('wss://example.test/review-phase'); static run() {} }).run(); const Socket = globalThis.WebSocket;",
+    present: false,
+  },
+  {
+    name: "overridden method remains deferred",
+    source:
+      "(class { static run = () => {}; static run() { new Socket('wss://example.test/review-phase') } }).run(); const Socket = globalThis.WebSocket;",
+    present: true,
+  },
+  {
+    name: "label breaks before suspension",
+    source:
+      "(async () => { label: { break label; await 0; } new Socket('wss://example.test/review-phase'); })(); const Socket = globalThis.WebSocket;",
+    present: false,
+  },
+  {
+    name: "label suspends before break",
+    source:
+      "(async () => { label: { await 0; break label; } new Socket('wss://example.test/review-phase'); })(); const Socket = globalThis.WebSocket;",
+    present: true,
+  },
+  {
+    name: "labeled stored function does not suspend",
+    source:
+      "(async () => { label: { const run = async () => await 0; } new Socket('wss://example.test/review-phase'); })(); const Socket = globalThis.WebSocket;",
+    present: false,
+  },
+  {
+    name: "awaited return enters finally",
+    source:
+      "(async () => { try { return await 0; } finally { new Socket('wss://example.test/review-phase'); } })(); const Socket = globalThis.WebSocket;",
+    present: true,
+  },
+  {
+    name: "throw before unreachable await",
+    source:
+      "(async () => { try { throw 0; await 0; } finally { new Socket('wss://example.test/review-phase'); } })(); const Socket = globalThis.WebSocket;",
+    present: false,
+  },
+  {
+    name: "throwing operand before await",
+    source:
+      "(async () => { try { throw (missing(), await 0); } finally { new Socket('wss://example.test/review-phase'); } })(); const Socket = globalThis.WebSocket;",
+    present: false,
+  },
+  {
+    name: "await before throwing operand",
+    source:
+      "(async () => { try { throw (await 0, missing()); } finally { new Socket('wss://example.test/review-phase'); } })(); const Socket = globalThis.WebSocket;",
+    present: true,
+  },
+  {
+    name: "nested promise projection",
+    source:
+      "export {}; const { box: { pending } } = { box: { pending: import('ws') } }; const { WebSocket: Socket } = await pending; new Socket('wss://example.test/review-phase');",
+    present: true,
+  },
+  {
+    name: "array promise projection",
+    source:
+      "export {}; const [pending] = [import('ws')]; const { WebSocket: Socket } = await pending; new Socket('wss://example.test/review-phase');",
+    present: true,
+  },
+  {
+    name: "getter promise stays unknown",
+    source:
+      "export {}; const { pending } = { get pending() { return import('ws') } }; const { WebSocket: Socket } = await pending; new Socket('wss://example.test/review-phase');",
+    present: false,
+  },
+  {
+    name: "changed iteration stays unknown",
+    source:
+      "export {}; Array.prototype[Symbol.iterator] = function* () { yield Promise.resolve({ WebSocket: class {} }); }; const [pending] = [import('ws')]; const { WebSocket: Socket } = await pending; new Socket('wss://example.test/review-phase');",
+    present: false,
+  },
+  {
+    name: "ordinary wrapper return",
+    source:
+      "(async () => { const pending = (async () => { await 0; new Socket('wss://example.test/review-phase'); })(); await (function () { return pending; })(); const Socket = globalThis.WebSocket; })();",
+    present: false,
+  },
+  {
+    name: "nested literal wrapper returns",
+    source:
+      "(async () => { const pending = (async () => { await 0; new Socket('wss://example.test/review-phase'); })(); await (() => (() => pending)())(); const Socket = globalThis.WebSocket; })();",
+    present: false,
+  },
+  {
+    name: "forward wrapper alias is not initialized",
+    source:
+      "(async () => { try { await (() => pending)(); } catch {} const pending = (async () => { await 0; new Socket('wss://example.test/review-phase'); })(); const Socket = globalThis.WebSocket; })();",
+    present: true,
+  },
+  {
+    name: "JSX attribute suspension",
+    source:
+      "(async () => { <div value={await ready} />; new Socket('wss://example.test/review-phase'); })(); const Socket = globalThis.WebSocket;",
+    present: true,
+  },
+  {
+    name: "JSX fragment suspension",
+    source:
+      "(async () => { <><div />{await ready}</>; new Socket('wss://example.test/review-phase'); })(); const Socket = globalThis.WebSocket;",
+    present: true,
+  },
+  {
+    name: "JSX spread suspension",
+    source:
+      "(async () => { <div {...await ready} />; new Socket('wss://example.test/review-phase'); })(); const Socket = globalThis.WebSocket;",
+    present: true,
+  },
+  {
+    name: "JSX stored function does not suspend",
+    source:
+      "(async () => { <div>{async () => await ready}</div>; new Socket('wss://example.test/review-phase'); })(); const Socket = globalThis.WebSocket;",
+    present: false,
+  },
+  {
+    name: "static auto accessor is eager",
+    source:
+      "const Client = class { static accessor socket = new Socket('wss://example.test/review-phase') }; const Socket = globalThis.WebSocket;",
+    present: false,
+  },
+  {
+    name: "immediate auto accessor construction",
+    source:
+      "new (class { accessor socket = new Socket('wss://example.test/review-phase') })(); const Socket = globalThis.WebSocket;",
+    present: false,
+  },
+  {
+    name: "private auto accessor is deferred",
+    source:
+      "const Client = class { accessor #socket = new Socket('wss://example.test/review-phase') }; const Socket = globalThis.WebSocket; new Client();",
+    present: true,
+  },
+];
+
+describe("web bundle exact returned promises and class phases", () => {
+  it.each(exactReturnedPromiseAndClassPhaseCases)(
+    "preserves $name in both source consumers",
+    ({ source, present }) => {
+      const values = socketEndpoints(source).map((items) =>
+        items.map((item) => item.value),
+      );
+      const expected = present ? ["wss://example.test/review-phase"] : [];
+      expect(values).toEqual([expected, expected]);
+    },
+  );
+});

@@ -16,8 +16,6 @@ import {
   runtimeFunctionParameters,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
-  semanticLiteralProperty,
-  semanticLiteralContainer,
   javaScriptExactResultOperand,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -35,12 +33,7 @@ import {
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { semanticAwaitedImportOrigin } from "./javascriptSemanticImportOrigin.js";
-import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
-import { semanticPatternInitializationPrecedesRead } from "./javascriptSemanticEvaluationOrder.js";
-import {
-  semanticArrayIndex,
-  semanticPropertyPathKeyMatches,
-} from "./javascriptSemanticPropertyPaths.js";
+import { semanticLiteralInitializerProjection } from "./javascriptSemanticLiteralProjection.js";
 import {
   webSocketExecutionContexts,
   webSocketInitializerDominatesRead,
@@ -660,7 +653,11 @@ export const isWebSocketEndpointCandidate = (
         )
       );
     }
-    const imported = semanticAwaitedImportOrigin(current, state);
+    const imported = semanticAwaitedImportOrigin(
+      current,
+      state,
+      onLiteralProjection,
+    );
     if (imported !== undefined) {
       const path = [...imported.importedPath, ...selected];
       return (
@@ -744,52 +741,14 @@ export const isWebSocketEndpointCandidate = (
     )
       return false;
     visited.add(binding.bindingId);
-    let projected = initializer.node;
-    let projection = initializer.projection;
-    while (projection.length > 0) {
-      const key = projection[0];
-      if (typeof key !== "string" && typeof key !== "number") return false;
-      const container = semanticLiteralContainer(projected);
-      if (container !== undefined) onLiteralProjection?.();
-      if (typeof key === "number" && state.arrayIterationUnknown === true)
-        return false;
-      const capture = initializer.bindingNode ?? initializer.node;
-      if (
-        container !== undefined &&
-        state.literalMemberEffects?.get(container)?.some((effect) => {
-          const [affected] = effect.path;
-          // Writes to a selected value's members retain its identity. Escapes
-          // threaten this slot only when they expose its containing allocation.
-          const affectsSlot =
-            effect.path.length === 0 ||
-            (effect.kind === "write" &&
-              effect.path.length === 1 &&
-              affected !== undefined &&
-              (semanticPropertyPathKeyMatches(affected, String(key)) ||
-                (t.isArrayExpression(container) &&
-                  semanticArrayIndex(key) !== null &&
-                  affected === "length")));
-          if (!affectsSlot) return false;
-          const patternOrder =
-            effect.node === undefined
-              ? undefined
-              : semanticPatternInitializationPrecedesRead(
-                  capture,
-                  effect.node,
-                  state.parentsByNode,
-                );
-          return !(
-            patternOrder ??
-            semanticEffectTiming(capture, effect.node, state) === "after"
-          );
-        })
-      )
-        return false;
-      const value = semanticLiteralProperty(projected, key);
-      if (value === undefined) break;
-      projected = value;
-      projection = projection.slice(1);
-    }
+    const selection = semanticLiteralInitializerProjection(
+      initializer,
+      state,
+      onLiteralProjection,
+    );
+    if (selection === undefined) return false;
+    const projected = selection.node;
+    const projection = selection.projection;
     // Numeric pattern positions require a fresh array; string keys select properties.
     // never infer a mutable aliased array or an unknown/rest projection.
     if (!projection.every((key): key is string => typeof key === "string"))

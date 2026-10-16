@@ -12,10 +12,15 @@ import { webSocketInitializerDominatesRead } from "./javascriptWebSocketExecutio
 export const semanticAwaitedImportOrigin = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  onLiteralProjection?: () => void,
 ): JavaScriptModuleOrigin | undefined => {
   const chain = semanticMemberChain(node);
   if (chain === undefined || !t.isAwaitExpression(chain.root)) return undefined;
-  const result = semanticPromiseResultIdentity(chain.root.argument, state);
+  const result = semanticPromiseResultIdentity(
+    chain.root.argument,
+    state,
+    onLiteralProjection,
+  );
   if (
     result === undefined ||
     result.aliases.some(

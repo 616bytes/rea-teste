@@ -6,7 +6,9 @@ import {
   javaScriptExactResultOperand,
   readExactJavaScriptLiteral,
   semanticFinalObjectMember,
+  semanticFinalClassMember,
   semanticStaticPropertyKey,
+  javaScriptClassField,
 } from "./javascriptAstValues.js";
 import {
   javaScriptOptionalOperandsMayBeSkipped,
@@ -52,15 +54,22 @@ const webSocketFreshMethodSelection = (
 ): t.MemberExpression | t.OptionalMemberExpression | undefined => {
   const parent = state.parentsByNode.get(value);
   const property =
-    t.isObjectMethod(node) && node.kind === "method"
+    (t.isObjectMethod(node) || (t.isClassMethod(node) && node.static)) &&
+    node.kind === "method"
       ? node
-      : t.isObjectProperty(parent) && parent.value === value
+      : (t.isObjectProperty(parent) ||
+            (javaScriptClassField(parent) && parent.static)) &&
+          parent.value === value
         ? parent
         : undefined;
   if (property === undefined) return undefined;
   const container = state.parentsByNode.get(property);
-  if (!t.isObjectExpression(container)) return undefined;
-  const object = webSocketOuterExpression(container, state);
+  const literal = t.isClassBody(container)
+    ? state.parentsByNode.get(container)
+    : container;
+  if (!t.isObjectExpression(literal) && !t.isClassExpression(literal))
+    return undefined;
+  const object = webSocketOuterExpression(literal, state);
   const member = state.parentsByNode.get(object);
   if (
     (!t.isMemberExpression(member) && !t.isOptionalMemberExpression(member)) ||
@@ -68,7 +77,10 @@ const webSocketFreshMethodSelection = (
   )
     return undefined;
   const key = semanticStaticPropertyKey(member.property, member.computed);
-  return key !== null && semanticFinalObjectMember(container, key) === property
+  return key !== null &&
+    (t.isObjectExpression(literal)
+      ? semanticFinalObjectMember(literal, key)
+      : semanticFinalClassMember(literal, key)) === property
     ? member
     : undefined;
 };
@@ -177,7 +189,13 @@ const webSocketFinalizerEntrySuspension = (
     )
       continue;
     if (t.isExpressionStatement(node)) pending.push(node.expression);
-    else if (t.isBlockStatement(node)) pending.push(...node.body.toReversed());
+    else if (t.isThrowStatement(node) || t.isReturnStatement(node)) {
+      // Abrupt completion discards every later statement, but evaluates its
+      // argument before entering a finalizer.
+      pending.length = 0;
+      if (node.argument != null) pending.push(node.argument);
+    } else if (t.isBlockStatement(node))
+      pending.push(...node.body.toReversed());
     else if (t.isSequenceExpression(node))
       pending.push(...node.expressions.toReversed());
     else if (
@@ -197,7 +215,9 @@ const webSocketFinalizerEntrySuspension = (
 const webSocketClassKeys = (node: t.Class): readonly t.Node[] => [
   ...(t.isNode(node.superClass) ? [node.superClass] : []),
   ...node.body.body.flatMap((member) =>
-    (t.isClassProperty(member) || t.isClassMethod(member)) && member.computed
+    (javaScriptClassField(member) || t.isClassMethod(member)) &&
+    "computed" in member &&
+    member.computed
       ? [member.key]
       : [],
   ),
@@ -206,9 +226,7 @@ const webSocketClassKeys = (node: t.Class): readonly t.Node[] => [
 const webSocketStaticInitializers = (member: t.Node): readonly t.Node[] =>
   t.isStaticBlock(member)
     ? member.body
-    : (t.isClassProperty(member) || t.isClassPrivateProperty(member)) &&
-        member.static &&
-        t.isNode(member.value)
+    : javaScriptClassField(member) && member.static && t.isNode(member.value)
       ? [member.value]
       : [];
 
@@ -217,6 +235,16 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   const operands = syntaxUnconditionalOperands(node);
   if (operands !== undefined) return operands;
   if (t.isBlockStatement(node)) return node.body;
+  if (t.isLabeledStatement(node)) {
+    const prefix: t.Node[] = [];
+    for (const statement of t.isBlockStatement(node.body)
+      ? node.body.body
+      : [node.body]) {
+      if (webSocketBodyMayJump(statement)) break;
+      prefix.push(statement);
+    }
+    return prefix;
+  }
   if (t.isSwitchCase(node)) return node.consequent;
   if (t.isExpressionStatement(node)) return [node.expression];
   if (t.isVariableDeclaration(node)) return node.declarations;
@@ -249,6 +277,13 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   if (t.isObjectProperty(node))
     return node.computed ? [node.key, node.value] : [node.value];
   if (t.isObjectMethod(node)) return node.computed ? [node.key] : [];
+  if (t.isJSXElement(node)) return [node.openingElement, ...node.children];
+  if (t.isJSXFragment(node)) return node.children;
+  if (t.isJSXOpeningElement(node)) return node.attributes;
+  if (t.isJSXAttribute(node)) return node.value == null ? [] : [node.value];
+  if (t.isJSXSpreadAttribute(node)) return [node.argument];
+  if (t.isJSXExpressionContainer(node) || t.isJSXSpreadChild(node))
+    return [node.expression];
   if (t.isSpreadElement(node)) return [node.argument];
   if (t.isBinaryExpression(node)) return [node.left, node.right];
   if (t.isSwitchStatement(node)) return [node.discriminant];
@@ -588,7 +623,11 @@ const webSocketClassPrefix = (
       : undefined;
     for (const item of declaration.body.body) {
       keys.set(item, suspended ?? null);
-      if ((t.isClassProperty(item) || t.isClassMethod(item)) && item.computed)
+      if (
+        (javaScriptClassField(item) || t.isClassMethod(item)) &&
+        "computed" in item &&
+        item.computed
+      )
         suspended = webSocketCompletedSuspension(item.key, state) ?? suspended;
     }
     for (const item of declaration.body.body) {
@@ -629,10 +668,7 @@ export const webSocketExecutionContexts = (
   for (;;) {
     const parent = state.parentsByNode.get(current);
     if (parent === undefined) return [...contexts, { owner: current, point }];
-    if (
-      (t.isClassProperty(parent) || t.isClassPrivateProperty(parent)) &&
-      parent.value === current
-    ) {
+    if (javaScriptClassField(parent) && parent.value === current) {
       if (parent.static)
         suspendedAt(webSocketClassPrefix(parent, false, state));
       else {
@@ -643,7 +679,8 @@ export const webSocketExecutionContexts = (
       }
     }
     if (
-      (t.isClassProperty(parent) || t.isClassMethod(parent)) &&
+      (javaScriptClassField(parent) || t.isClassMethod(parent)) &&
+      "computed" in parent &&
       parent.computed &&
       parent.key === current
     )

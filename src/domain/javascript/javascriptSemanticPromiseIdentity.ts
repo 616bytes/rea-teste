@@ -4,6 +4,7 @@ import {
   unwrapJavaScriptExpression,
   javaScriptExactResultOperand,
 } from "./javascriptAstValues.js";
+import { semanticLiteralInitializerProjection } from "./javascriptSemanticLiteralProjection.js";
 import {
   semanticInitializerPrecedesRead,
   type SemanticExecutionFrame,
@@ -15,10 +16,38 @@ import {
 } from "./javascriptSemanticState.js";
 import { createUnconditionalEvaluationProof } from "./javascriptSymbolicControlFlow.js";
 
+/** A zero-argument literal wrapper can return a promise without allocating one. */
+const directLiteralReturn = (node: t.Node): t.Node | undefined => {
+  if (!t.isCallExpression(node) || node.arguments.length !== 0)
+    return undefined;
+  let callee = unwrapJavaScriptExpression(node.callee).node;
+  for (;;) {
+    const result = javaScriptExactResultOperand(callee);
+    if (result === undefined) break;
+    callee = unwrapJavaScriptExpression(result).node;
+  }
+  if (
+    (!t.isArrowFunctionExpression(callee) && !t.isFunctionExpression(callee)) ||
+    callee.async ||
+    callee.generator ||
+    callee.params.length !== 0
+  )
+    return undefined;
+  if (!t.isBlockStatement(callee.body)) return callee.body;
+  const statements = callee.body.body.filter(
+    (item) => !t.isEmptyStatement(item),
+  );
+  const statement = statements[0];
+  return statements.length === 1 && t.isReturnStatement(statement)
+    ? (statement.argument ?? undefined)
+    : undefined;
+};
+
 /** Exact local promise-result identity; aliases do not prove execution order. */
 export const semanticPromiseResultIdentity = (
   rawNode: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  onLiteralProjection?: () => void,
 ):
   | {
       readonly node: t.Node;
@@ -33,7 +62,8 @@ export const semanticPromiseResultIdentity = (
   let node = rawNode;
   for (;;) {
     node = unwrapJavaScriptExpression(node).node;
-    const result = javaScriptExactResultOperand(node);
+    const result =
+      javaScriptExactResultOperand(node) ?? directLiteralReturn(node);
     if (result !== undefined) {
       node = result;
       continue;
@@ -45,20 +75,30 @@ export const semanticPromiseResultIdentity = (
       binding === undefined ||
       binding.mutable ||
       initializer === undefined ||
-      initializer.projection.length !== 0 ||
       binding.referenceInitializers.length !== 0 ||
       seen.has(binding.bindingId)
     )
       return undefined;
     seen.add(binding.bindingId);
+    const projected = semanticLiteralInitializerProjection(
+      initializer,
+      state,
+      onLiteralProjection,
+    );
+    if (projected === undefined || projected.projection.length !== 0)
+      return undefined;
     aliases.push({ read: node, initializer: initializer.node });
-    node = initializer.node;
+    node = projected.node;
   }
 };
 
 const awaitedResults = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  WeakMap<t.Node, t.AwaitExpression[]>
+  {
+    readonly literalEffects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
+    readonly iterationUnknown: boolean | undefined;
+    readonly sites: WeakMap<t.Node, t.AwaitExpression[]>;
+  }
 >();
 
 /** Alias identity needs initialization proof through directly owned callers. */
@@ -155,9 +195,13 @@ export const semanticAwaitedResultSites = (
   state: JavaScriptSemanticAnalysisState,
   executionFrames: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): readonly t.AwaitExpression[] => {
-  let index = awaitedResults.get(state);
-  if (index === undefined) {
-    index = new WeakMap();
+  let cached = awaitedResults.get(state);
+  if (
+    cached === undefined ||
+    cached.literalEffects !== state.literalMemberEffects ||
+    cached.iterationUnknown !== state.arrayIterationUnknown
+  ) {
+    const index = new WeakMap<t.Node, t.AwaitExpression[]>();
     const reached = createUnconditionalEvaluationProof(state.parentsByNode);
     for (const awaited of state.awaitSites) {
       const result = semanticPromiseResultIdentity(awaited.argument, state);
@@ -193,7 +237,12 @@ export const semanticAwaitedResultSites = (
       sites.push(awaited);
       index.set(result.node, sites);
     }
-    awaitedResults.set(state, index);
+    cached = {
+      literalEffects: state.literalMemberEffects,
+      iterationUnknown: state.arrayIterationUnknown,
+      sites: index,
+    };
+    awaitedResults.set(state, cached);
   }
-  return index.get(node) ?? [];
+  return cached.sites.get(node) ?? [];
 };

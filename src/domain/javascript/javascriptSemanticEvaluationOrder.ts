@@ -4,6 +4,7 @@ import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
+  javaScriptClassField,
 } from "./javascriptAstValues.js";
 
 const preserveGrouping = { stopAtParentheses: true } as const;
@@ -191,11 +192,7 @@ export const delayedInstanceFieldValue = (
   parent: t.Node | undefined,
   child: t.Node | undefined,
 ): boolean =>
-  (t.isClassProperty(parent) ||
-    t.isClassPrivateProperty(parent) ||
-    t.isClassAccessorProperty(parent)) &&
-  !parent.static &&
-  parent.value === child;
+  javaScriptClassField(parent) && !parent.static && parent.value === child;
 
 /** Shared branch facts for binding writes and their possible execution positions. */
 export const semanticBranchMayBeSkipped = (

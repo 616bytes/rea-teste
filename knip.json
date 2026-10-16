@@ -12,7 +12,6 @@
     "scripts/verify-real-ghidra-noreturn.mjs",
     "scripts/package-portable-windows.mjs",
     "scripts/lib/portable-node-bootstrap.mjs",
-    "scripts/run-exact-tests.mjs",
     "tests/processOwnershipRunner.ts"
   ],
   "project": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs"],

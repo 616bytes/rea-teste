@@ -440,7 +440,10 @@ it.each(["", "not-a-commit"])(
   },
 );
 
-it("selects only a trusted successful ancestor from recent CI push runs", async () => {
+it("selects only a trusted successful ancestor from recent CI push runs", async ({
+  skip,
+}) => {
+  skip(process.platform === "win32", "the fake gh is a POSIX shell script");
   const { directory, base } = await fixture();
   const head = await change(directory, ["src/evm/client.ts"]);
   const bin = join(directory, "fake-bin");
@@ -473,7 +476,11 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
   const output = join(directory, "baseline-output");
   const result = await execFileAsync(
     process.execPath,
-    [new URL("../../../scripts/ci/baseline.mjs", import.meta.url).pathname],
+    [
+      fileURLToPath(
+        new URL("../../../scripts/ci/baseline.mjs", import.meta.url),
+      ),
+    ],
     {
       cwd: directory,
       env: {
@@ -491,7 +498,8 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
   expect(await readFile(output, "utf8")).toBe(`base=${base}\nreason=\n`);
 });
 
-it("returns an empty baseline when GitHub lookup fails", async () => {
+it("returns an empty baseline when GitHub lookup fails", async ({ skip }) => {
+  skip(process.platform === "win32", "the fake gh is a POSIX shell script");
   const { directory, base } = await fixture();
   const head = await change(directory, ["src/evm/client.ts"]);
   const bin = join(directory, "fake-bin");
@@ -501,7 +509,11 @@ it("returns an empty baseline when GitHub lookup fails", async () => {
   await chmod(gh, 0o755);
   const result = await execFileAsync(
     process.execPath,
-    [new URL("../../../scripts/ci/baseline.mjs", import.meta.url).pathname],
+    [
+      fileURLToPath(
+        new URL("../../../scripts/ci/baseline.mjs", import.meta.url),
+      ),
+    ],
     {
       cwd: directory,
       env: {
@@ -665,8 +677,34 @@ it.each([
     },
   ],
   [
+    "scripts/verify-ghidra-bridge-sources.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "src/ghidra/GhidraBridgeSources.ts",
+    { code: true, ghidra_bridge: true, runtime: true, package: true },
+  ],
+  [
+    "src/ghidra/GhidraJavaProperties.ts",
+    { code: true, ghidra_bridge: true, runtime: true, package: false },
+  ],
+  [
+    "src/ghidra/GhidraReleasePolicy.ts",
+    { code: true, ghidra_bridge: true, runtime: true },
+  ],
+  [
+    ".github/workflows/ghidra-bridge-sources.yml",
+    { code: false, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "bridge/ghidra/Example.java",
-    { code: true, runtime: true, package: false, apple: false },
+    {
+      code: true,
+      runtime: true,
+      ghidra_bridge: true,
+      package: false,
+      apple: false,
+    },
   ],
   [
     "src/native/AppleExample.ts",
@@ -768,7 +806,10 @@ it.each([
     "src/domain/analysisErrorProjection.ts",
     { code: true, sqlite: true, runtime: true },
   ],
-  ["src/domain/javascript/example.ts", { code: true, sqlite: false }],
+  [
+    "src/domain/javascript/example.ts",
+    { code: true, sqlite: false, ghidra_bridge: false },
+  ],
 ])("selects the appropriate lanes for %s", async (path, expected) => {
   const { directory, base } = await fixture();
   const head = await change(directory, [path]);
@@ -867,6 +908,7 @@ it.each([
   ["web_runtime", "real-web-runtime"],
   ["web_source_map", "real-web-source-map"],
   ["nativeaot", "nativeaot-fixtures"],
+  ["ghidra_bridge", "ghidra-bridge-sources"],
   ["website", "website-check"],
 ])(
   "routes %s through the selector without a duplicate PR trigger",

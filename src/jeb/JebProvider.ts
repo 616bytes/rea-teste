@@ -107,6 +107,7 @@ export class JebProvider implements JebAnalysisPort {
   readonly #endpoint: URL;
   #identity: ProviderIdentity = JEB_PROVIDER_IDENTITY;
   #guiClient: boolean | null = null;
+  #informationGeneration: number | undefined;
 
   constructor(options: JebProviderOptions = {}) {
     const environment = options.environment ?? {};
@@ -169,11 +170,6 @@ export class JebProvider implements JebAnalysisPort {
       const execution = await this.#dispatch(request, options?.signal);
       if (options?.signal?.aborted)
         return err(new AnalysisCancelledError(request.operation));
-      if (execution.ok)
-        this.#identity = {
-          ...this.#identity,
-          version: execution.value.provider.version,
-        };
       return execution;
     } catch (cause) {
       if (options?.signal?.aborted)
@@ -225,13 +221,12 @@ export class JebProvider implements JebAnalysisPort {
   }
 
   async #requireClientInformation(signal?: AbortSignal): Promise<void> {
-    if (this.#identity.version !== null) return;
+    if (this.#informationGeneration === this.#connection.sessionGeneration)
+      return;
     await this.#refreshClientInformation(signal);
   }
 
-  async #refreshClientInformation(
-    signal: AbortSignal | undefined,
-  ): Promise<void> {
+  async #refreshClientInformation(signal: AbortSignal | undefined) {
     if (signal?.aborted === true)
       throw new AnalysisCancelledError("inspect_jeb_client");
     const payload = await this.#connection.call(
@@ -247,22 +242,13 @@ export class JebProvider implements JebAnalysisPort {
       version: information.version ?? null,
     };
     this.#guiClient = information.gui_client ?? null;
+    this.#informationGeneration = this.#connection.sessionGeneration;
+    return { payload, information };
   }
 
   async #inspectClient(signal?: AbortSignal) {
-    const payload = await this.#connection.call(
-      "get_client_information",
-      {},
-      signal,
-    );
-    const information = clientInformation.parse(
-      this.#requireSuccess(payload, "inspect_jeb_client"),
-    );
-    this.#identity = {
-      ...this.#identity,
-      version: information.version ?? null,
-    };
-    this.#guiClient = information.gui_client ?? null;
+    const { payload, information } =
+      await this.#refreshClientInformation(signal);
     const result = jebResultSchemas.inspect_jeb_client.parse({
       engine: {
         name: "jeb",

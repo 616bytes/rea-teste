@@ -330,6 +330,7 @@ const spawnArguments = (
   readonly argvCount: number | null;
 } => {
   const args = candidate.node.arguments;
+  if (t.isSpreadElement(args[0])) return { options: args[0], argvCount: null };
   const second = args[1] && unwrapJavaScriptExpression(args[1]).node;
   const third = args[2] && unwrapJavaScriptExpression(args[2]).node;
   const { expressionShape } = context;

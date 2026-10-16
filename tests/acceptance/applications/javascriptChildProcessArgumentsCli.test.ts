@@ -72,6 +72,132 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
 );
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps child argument slots unknown after a command spread through %s",
+  async (surface, { cli, processes }) => {
+    const controlRoot = await createTestTempDirectory(
+      "rea-child-call-control-",
+    );
+    await writeFixtureFiles(controlRoot, {
+      "control.cjs": `
+        const {spawn} = require('node:child_process');
+        const prefix = [process.execPath, ['-e', 'console.log(process.env.VALUE)'],
+          {stdio:['ignore','pipe','pipe'],env:{VALUE:'right'}}];
+        const child = spawn(...prefix, [], {stdio:'inherit',env:{VALUE:'wrong'}});
+        let output = '';
+        child.stdout.on('data', chunk => { output += chunk; });
+        child.on('error', () => { process.exitCode = 1; });
+        child.on('close', code => {
+          console.log(JSON.stringify({code,output,pipe:child.stdout !== null}));
+        });`,
+    });
+    const control = await processes.run(
+      process.execPath,
+      [join(controlRoot, "control.cjs")],
+      { timeoutMs: 5_000 },
+    );
+    expect(control.exitCode, control.stderr).toBe(0);
+    expect(JSON.parse(control.stdout)).toEqual({
+      code: 0,
+      output: "right\n",
+      pipe: true,
+    });
+
+    const root = await createTestTempDirectory("rea-child-call-spread-");
+    const fixture = [
+      'import {spawn,exec,execFile,fork} from "node:child_process";',
+      'throw new Error("static fixture must never execute");',
+    ];
+    const expected = new Map<
+      number,
+      { method: string; mode: string; argvCount: number | null }
+    >();
+    for (const method of ["spawn", "exec", "execFile", "fork"]) {
+      for (const [call, mode, argvCount] of [
+        [`${method}(...parts);`, "dynamic", null],
+        [
+          `${method}(...parts, [], {stdio:'inherit',env:{A:'1'}});`,
+          "dynamic",
+          null,
+        ],
+        [
+          method === "exec"
+            ? `${method}('fixed',{stdio:'inherit',env:{A:'1'}},...parts);`
+            : `${method}('fixed',['one','two'],{stdio:'inherit',env:{A:'1'}},...parts);`,
+          "inherit",
+          method === "exec" ? null : 2,
+        ],
+        [
+          `${method}('fixed',{stdio:'ignore',env:{A:'1'}},...parts);`,
+          "ignore",
+          null,
+        ],
+      ] as const) {
+        fixture.push(call);
+        expected.set(fixture.length, { method, mode, argvCount });
+      }
+    }
+    await writeFixtureFiles(root, { "entry.mjs": fixture.join("\n") });
+    const graph = (await analyzeJavaScriptDirectory(surface, cli, root))
+      .semantic_graph;
+    const children = graph.nodes.filter(({ kind }) => kind === "child-process");
+    expect(children).toHaveLength(expected.size);
+    const nodeIds = new Set(graph.nodes.map(({ node_id }) => node_id));
+    for (const child of children) {
+      const row = expected.get(child.identity.source_range?.start.line ?? -1);
+      expect(row).toBeDefined();
+      if (row === undefined) continue;
+      const uncertain = row.mode === "dynamic";
+      expect(child.properties).toMatchObject({
+        method: row.method,
+        command: uncertain ? null : "fixed",
+        stdio_mode: row.mode,
+        argv_count: row.argvCount,
+        environment_supplied: !uncertain,
+      });
+      expect(
+        graph.relations.filter(
+          (edge) =>
+            edge.relation === "supplies-argv" &&
+            edge.target_node_id === child.node_id,
+        ),
+      ).toHaveLength(row.argvCount === null ? 0 : 1);
+      expect(
+        graph.relations.filter(
+          (edge) =>
+            edge.relation === "supplies-env" &&
+            edge.target_node_id === child.node_id,
+        ),
+      ).toHaveLength(uncertain ? 0 : 1);
+      const stdio = graph.relations.filter(
+        (edge) =>
+          edge.relation === "connects-stdio" &&
+          edge.source_node_id === child.node_id,
+      );
+      expect(stdio).toHaveLength(1);
+      expect(stdio[0]?.resolution).toBe(uncertain ? "candidate" : "resolved");
+      expect(
+        graph.nodes.find(({ node_id }) => node_id === stdio[0]?.target_node_id),
+      ).toMatchObject({ kind: "stdio", properties: { mode: row.mode } });
+      expect(
+        graph.unknowns.filter(
+          (unknown) =>
+            unknown.node_id === child.node_id &&
+            unknown.relation_kinds.includes("connects-stdio"),
+        ),
+      ).toHaveLength(uncertain ? 1 : 0);
+    }
+    for (const edge of graph.relations) {
+      expect(nodeIds.has(edge.source_node_id)).toBe(true);
+      expect(nodeIds.has(edge.target_node_id)).toBe(true);
+    }
+    for (const unknown of graph.unknowns)
+      for (const id of unknown.candidate_node_ids)
+        expect(nodeIds.has(id)).toBe(true);
+    expect(graph.coverage.truncated).toBe(false);
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
   "keeps eval-exposed argv and undefined uncertain through %s",
   async (surface, { cli }) => {
     const root = await createTestTempDirectory("rea-child-eval-shapes-");

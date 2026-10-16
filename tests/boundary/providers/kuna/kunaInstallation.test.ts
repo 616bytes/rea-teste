@@ -40,6 +40,7 @@ it("identifies a caller-selected kuna by version and digest", async () => {
   expect(await fakeKunaCalls(kuna)).toEqual([
     {
       pid: expect.any(Number),
+      at: expect.any(Number),
       argv: ["--version"],
       home: join(root, "cache", "home"),
       xdg: join(root, "cache", "home", ".cache"),
@@ -145,6 +146,7 @@ it("parses cache, timeout and job settings at the configuration boundary", () =>
       cacheRoot: "/home/analyst/.cache/rea/kuna",
       cacheMaxBytes: 4 * 1024 ** 3,
       projectTimeoutMs: 1_800_000,
+      functionTimeoutMs: 120_000,
       // Kuna's reference answer is a serial export; more jobs change results.
       jobs: 1,
     },
@@ -164,18 +166,25 @@ it("parses cache, timeout and job settings at the configuration boundary", () =>
         ...environment,
         REA_KUNA_CACHE_MAX_BYTES: "2097152",
         REA_KUNA_PROJECT_TIMEOUT_MS: "60000",
+        REA_KUNA_TIMEOUT_MS: "5000",
         REA_KUNA_JOBS: "3",
       },
       "linux",
     ),
   ).toMatchObject({
-    value: { cacheMaxBytes: 2097152, projectTimeoutMs: 60000, jobs: 3 },
+    value: {
+      cacheMaxBytes: 2097152,
+      projectTimeoutMs: 60000,
+      functionTimeoutMs: 5000,
+      jobs: 3,
+    },
   });
   for (const [setting, value] of [
     ["REA_KUNA_CACHE_DIR", "relative/cache"],
     ["REA_KUNA_CACHE_MAX_BYTES", "1024"],
     ["REA_KUNA_CACHE_MAX_BYTES", "4GiB"],
     ["REA_KUNA_PROJECT_TIMEOUT_MS", "0"],
+    ["REA_KUNA_TIMEOUT_MS", "-1"],
     ["REA_KUNA_JOBS", "33"],
     ["REA_KUNA_JOBS", "0"],
   ] as const)

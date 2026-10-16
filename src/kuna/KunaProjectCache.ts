@@ -15,6 +15,7 @@ import canonicalize from "canonicalize";
 import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -142,13 +143,14 @@ interface RetainedProcess {
 }
 
 interface RetainedHashFile {
-  readonly key: string | null;
+  readonly key: string;
   readonly staging: string | null;
   readonly resource: string;
+  readonly lease: AnalysisCleanupLease;
   /** The first failure tied to this owner; kept stable across retry attempts. */
-  readonly originatingFailure?: AnalysisError;
+  originatingFailure?: AnalysisError;
   /** Most recent close failure, reported without wrapping prior retry errors. */
-  readonly lastCloseFailure?: ProviderCleanupError;
+  lastCloseFailure?: ProviderCleanupError;
 }
 
 interface CleanupErrorReport {
@@ -253,6 +255,8 @@ export class KunaProjectCache {
   >();
   /** Hash descriptors whose close was not confirmed; staging stays until retry. */
   readonly #retainedHashFiles = new Map<OwnedFileHandle, RetainedHashFile>();
+  /** Keep the exact close lease available for errors bound after a retry ends. */
+  readonly #hashRecords = new WeakMap<OwnedFileHandle, RetainedHashFile>();
   /** Serialize owner release and staging retirement across concurrent lookups. */
   #hashRetry: Promise<void> = Promise.resolve();
   /** Weakly track caller errors against every resource owner they report. */
@@ -483,10 +487,10 @@ export class KunaProjectCache {
       for (const [owner, retained] of [...this.#retainedHashFiles]) {
         if (key !== undefined && retained.key !== key) continue;
         try {
-          await owner.close();
+          await retained.lease.release();
           this.#retainedHashFiles.delete(owner);
           this.#resolveCleanupOwner(owner);
-          if (retained.staging !== null && retained.key !== null)
+          if (retained.staging !== null)
             staging.set(retained.staging, retained.key);
         } catch (cause: unknown) {
           const original = retained.originatingFailure;
@@ -505,10 +509,7 @@ export class KunaProjectCache {
                     ),
             },
           );
-          this.#retainedHashFiles.set(owner, {
-            ...retained,
-            lastCloseFailure: closeFailure,
-          });
+          retained.lastCloseFailure = closeFailure;
           this.#bindCleanupError(closeFailure, [
             owner,
             ...(retained.staging === null
@@ -1043,11 +1044,14 @@ export class KunaProjectCache {
     staging: string | null,
     resource: string,
   ): void {
-    this.#retainedHashFiles.set(owner, {
+    const retained: RetainedHashFile = {
       key,
       staging,
       resource,
-    });
+      lease: new AnalysisCleanupLease(async () => owner.close()),
+    };
+    this.#hashRecords.set(owner, retained);
+    this.#retainedHashFiles.set(owner, retained);
   }
 
   #replaceHashCloseError(
@@ -1056,13 +1060,12 @@ export class KunaProjectCache {
     failure: AnalysisError,
     fileCleanupFailure: RegularFileCleanupFailure,
   ): AnalysisError {
-    const retained = this.#retainedHashFiles.get(fileCleanupFailure.owner);
-    if (retained?.key === key && retained.staging === staging) {
-      this.#retainedHashFiles.set(fileCleanupFailure.owner, {
-        ...retained,
-        originatingFailure: retained.originatingFailure ?? failure,
-      });
-      this.#bindCleanupError(failure, [fileCleanupFailure.owner]);
+    const owner = fileCleanupFailure.owner;
+    const retained = this.#hashRecords.get(owner);
+    if (retained !== undefined) {
+      retained.lease.bindCleanupError(failure);
+      if (retained.key === key && retained.staging === staging)
+        retained.originatingFailure ??= failure;
     }
     return failure;
   }

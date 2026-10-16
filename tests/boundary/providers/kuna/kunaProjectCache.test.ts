@@ -26,6 +26,7 @@ import type { KunaExportStatus } from "../../../../src/kuna/KunaProjectExport.js
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
+import * as stableFileHash from "../../../../src/filesystem/StableFileHash.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import {
   fakeKunaCalls,
@@ -99,6 +100,29 @@ const processGone = (pid: number): boolean => {
   } catch {
     return true;
   }
+};
+
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (cause: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
+const causesOf = (cause: unknown): unknown[] => {
+  const pending = [cause];
+  const seen = new Set<unknown>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!(current instanceof Error) || seen.has(current)) continue;
+    seen.add(current);
+    if (current.cause !== undefined) pending.push(current.cause);
+    if (current instanceof AggregateError) pending.push(...current.errors);
+  }
+  return [...seen];
 };
 
 it("publishes a verified export and serves later requests from the cache", async () => {
@@ -217,6 +241,160 @@ it("retains a failed warm-cache hash descriptor and retries it at cache close", 
       key: built.value.key,
     });
   } finally {
+    close.mockRestore();
+    expect(await warmCache.close()).toEqual({ ok: true, value: null });
+    await cache.close();
+  }
+});
+
+it.each(["success", "failure"] as const)(
+  "keeps hash cleanup bound to its exact owner when a concurrent lookup retry %s",
+  async (retryOutcome) => {
+    const { installation, cache, target } = await fixture(
+      `rea-kuna-cache-hash-race-${retryOutcome}-`,
+    );
+    const input = await target("program");
+    const built = await cache.build({ installation, ...input });
+    if (!built.ok) throw built.error;
+
+    const warmCache = newCache(installation);
+    const initialCloseFailure = new Error("initial descriptor close failure");
+    const retryCloseFailure = new Error("concurrent retry close failure");
+    const initialClose = deferred<void>();
+    const retryGate = deferred<void>();
+    const initialCloseEntered = deferred<void>();
+    const retryEntered = deferred<void>();
+    const closeCounts = new Map<OwnedFileHandle, number>();
+    let retainedOwner: OwnedFileHandle | undefined;
+    let concurrentLookup: Promise<unknown> | undefined;
+    const closeOwner = OwnedFileHandle.prototype.close;
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(function (this: OwnedFileHandle) {
+        const count = (closeCounts.get(this) ?? 0) + 1;
+        closeCounts.set(this, count);
+        if (count === 1 && retainedOwner === undefined) {
+          retainedOwner = this;
+          initialCloseEntered.resolve();
+          return initialClose.promise;
+        }
+        if (this === retainedOwner && count === 2) {
+          retryEntered.resolve();
+          return retryGate.promise.then(async () => {
+            if (retryOutcome === "failure") throw retryCloseFailure;
+            await closeOwner.call(this);
+          });
+        }
+        return closeOwner.call(this);
+      });
+
+    try {
+      const firstLookup = warmCache
+        .lookup(built.value.key)
+        .catch((cause) => cause);
+      await initialCloseEntered.promise;
+      initialClose.reject(initialCloseFailure);
+      // The failed descriptor is retained before the first lookup binds its
+      // originating error, so this lookup begins the retry in that window.
+      queueMicrotask(() => {
+        concurrentLookup = warmCache
+          .lookup(built.value.key)
+          .catch((cause: unknown) => cause);
+      });
+      await retryEntered.promise;
+
+      const firstFailure = await firstLookup;
+      expect(firstFailure).toBeInstanceOf(ProviderCleanupError);
+      if (!(firstFailure instanceof ProviderCleanupError)) throw firstFailure;
+      expect(firstFailure.cleanupIncomplete).toBe(true);
+      retryGate.resolve();
+      if (concurrentLookup === undefined)
+        throw new Error("Concurrent lookup did not start");
+      const retryResult = await concurrentLookup;
+
+      if (retryOutcome === "success") {
+        expect(retryResult).toMatchObject({ key: built.value.key });
+        // Closing the retained owner resolves the already-bound operation error.
+        expect(firstFailure.cleanupIncomplete).toBe(false);
+      } else {
+        expect(retryResult).toBeInstanceOf(ProviderCleanupError);
+        if (!(retryResult instanceof ProviderCleanupError)) throw retryResult;
+        const retryCause = retryResult.cause;
+        expect(retryCause).toBeInstanceOf(AggregateError);
+        if (!(retryCause instanceof AggregateError)) throw retryCause;
+        const retryCauses = causesOf(retryCause);
+        expect(retryCauses).toContain(firstFailure);
+        expect(retryCauses).toContain(retryCloseFailure);
+
+        // The next confirmed close recovers both errors without admitting an
+        // extra read in between the failed retry and recovery.
+        close.mockRestore();
+        expect(await warmCache.lookup(built.value.key)).toMatchObject({
+          key: built.value.key,
+        });
+        expect(firstFailure.cleanupIncomplete).toBe(false);
+        expect(retryResult.cleanupIncomplete).toBe(false);
+      }
+    } finally {
+      close.mockRestore();
+      expect(await warmCache.close()).toEqual({ ok: true, value: null });
+      await cache.close();
+    }
+  },
+);
+
+it("resolves a hash failure delivered after its retained owner was released", async () => {
+  const { installation, cache, target } = await fixture(
+    "rea-kuna-cache-late-hash-",
+  );
+  const built = await cache.build({
+    installation,
+    ...(await target("program")),
+  });
+  if (!built.ok) throw built.error;
+  const warmCache = newCache(installation);
+  const failureRetained = deferred<void>();
+  const deliverFailure = deferred<void>();
+  const hashFile = stableFileHash.hashStableFile;
+  const hash = vi
+    .spyOn(stableFileHash, "hashStableFile")
+    .mockImplementation(async (...args) => {
+      try {
+        return await hashFile(...args);
+      } catch (cause: unknown) {
+        if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
+        failureRetained.resolve();
+        await deliverFailure.promise;
+        throw cause;
+      }
+    });
+  const closeCause = new Error("initial hash descriptor close failure");
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockRejectedValueOnce(closeCause);
+  const firstLookup = warmCache
+    .lookup(built.value.key)
+    .catch((cause: unknown) => cause);
+  try {
+    await failureRetained.promise;
+    expect(warmCache.hasPendingCleanup).toBe(true);
+    expect(await warmCache.lookup(built.value.key)).toMatchObject({
+      key: built.value.key,
+    });
+    expect(warmCache.hasPendingCleanup).toBe(false);
+    deliverFailure.resolve();
+    const error = await firstLookup;
+    expect(error).toBeInstanceOf(ProviderCleanupError);
+    if (!(error instanceof ProviderCleanupError)) throw error;
+    expect(error.cleanupIncomplete).toBe(false);
+    expect(error.cause).toBeInstanceOf(RegularFileCleanupFailure);
+    if (!(error.cause instanceof RegularFileCleanupFailure)) throw error.cause;
+    expect(error.cause.cleanupCause).toBe(closeCause);
+    expect(error.cause.owner.handle.fd).toBe(-1);
+  } finally {
+    deliverFailure.resolve();
+    await firstLookup;
+    hash.mockRestore();
     close.mockRestore();
     expect(await warmCache.close()).toEqual({ ok: true, value: null });
     await cache.close();

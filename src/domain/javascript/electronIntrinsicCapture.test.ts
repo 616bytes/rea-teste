@@ -887,6 +887,65 @@ describe("captured member nested owners and projections", () => {
   });
 });
 
+describe("captured member containers and deep chains", () => {
+  it("re-enters a captured member with different argument identities", () => {
+    // `invoke.apply(invoke, [invoke, X])` re-enters the captured
+    // `change.apply` state repeatedly at equal arity — the cycle key must
+    // distinguish argument identities, not just their count.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const invoke = change.apply;
+      invoke.apply(invoke, [invoke, [change, [null, [{value: customCreate}]]]]);`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("resolves a member capture through a literal container segment", () => {
+    // `[{call: invoke}] = [change]` reads element 0 of the RHS literal,
+    // then `.call` on it — the container is data, not an owner rewrite.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const [{call: invoke}] = [change];
+      invoke.call(change, null, {value: customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("follows long captured-member owner chains iteratively", () => {
+    // Deep alias chains must not overflow the call stack — owner descent
+    // is an explicit work stack, not recursion.
+    const depth = 300;
+    const links = Array.from(
+      { length: depth },
+      (_, index) => `const a${index + 1} = a${index}.call;`,
+    ).join("\n      ");
+    const { invocations, writes } = collectedWrites(
+      `const a0 = Object.defineProperty.bind(null,Object,"create");
+      ${links}
+      a${depth}.call(a0, null, {value: customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+});
+
 describe("captured invocation member identity", () => {
   it("follows a copied captured-member alias", () => {
     // `copy` is a second stable alias of the captured member; the call still

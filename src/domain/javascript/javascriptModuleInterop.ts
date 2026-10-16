@@ -512,17 +512,34 @@ export const createSemanticModuleInterop = (
     if (
       declarator === undefined ||
       !t.isVariableDeclarator(declarator) ||
-      !t.isObjectPattern(declarator.id)
+      (!t.isObjectPattern(declarator.id) && !t.isArrayPattern(declarator.id))
     )
       return [node];
     // Walk one projection level at a time — `{call: {call: invoke}}` reads
     // `call` on the outer value, then `call` again inside the nested pattern.
     const search = (
-      pattern: t.ObjectPattern,
+      pattern: t.ObjectPattern | t.ArrayPattern,
       path: readonly (string | number | null)[],
       requireName = false,
     ): t.Node[] | undefined => {
       const [key, ...rest] = path;
+      if (t.isArrayPattern(pattern)) {
+        // An element position reads the value at that index before any
+        // nested pattern inside it runs.
+        if (typeof key !== "number") return undefined;
+        let element = pattern.elements[key];
+        if (element === null || element === undefined) return undefined;
+        while (t.isAssignmentPattern(element)) element = element.left;
+        if (rest.length === 0) {
+          if (t.isIdentifier(element, { name: binding.name })) return [element];
+          return requireName ? undefined : [element];
+        }
+        if (t.isObjectPattern(element) || t.isArrayPattern(element)) {
+          const inner = search(element, rest, requireName);
+          return inner === undefined ? undefined : [element, ...inner];
+        }
+        return undefined;
+      }
       let firstMatch: t.Node[] | undefined;
       let namedMatch: t.Node[] | undefined;
       for (const property of pattern.properties) {
@@ -532,7 +549,7 @@ export const createSemanticModuleInterop = (
         let leaf = property.value;
         while (t.isAssignmentPattern(leaf)) leaf = leaf.left;
         if (rest.length > 0) {
-          if (t.isObjectPattern(leaf)) {
+          if (t.isObjectPattern(leaf) || t.isArrayPattern(leaf)) {
             // Only a nested subtree declaring this binding's name can be
             // the read that produced the value; otherwise keep scanning
             // sibling properties (duplicate outer keys).
@@ -562,131 +579,203 @@ export const createSemanticModuleInterop = (
   // Zero-projection identifier aliases (`const copy = invoke`) are followed
   // transitively with a cycle guard. A direct member expression names the
   // same shape — `change.call.call` reads `.call` on the member value.
+  // A leading literal container segment in a destructured projection is a
+  // read into the RHS's own structure — `[{call: invoke}] = [change]`
+  // reads element 0 of the array literal before `.call` on it. Descend
+  // into the literal to find the member's real owner.
+  const containerElement = (
+    node: t.Node,
+    segment: string | number | null,
+  ): t.Node | undefined => {
+    if (typeof segment === "number" && t.isArrayExpression(node)) {
+      const element = node.elements[segment];
+      return element === null || element === undefined ? undefined : element;
+    }
+    if (t.isObjectExpression(node))
+      for (const property of node.properties)
+        if (
+          t.isObjectProperty(property) &&
+          t.isExpression(property.value) &&
+          semanticStaticPropertyKey(property.key, property.computed) === segment
+        )
+          return property.value;
+    return undefined;
+  };
+
+  type CapturedLevel = {
+    readonly owner: t.Node;
+    readonly key: "call" | "apply" | "bind";
+    readonly at: t.Node;
+    readonly directOffset: boolean;
+    readonly projection: readonly (string | null)[];
+    readonly captureLeaves: readonly t.Node[];
+  };
+
   const capturedInvocationMember = (
     node: t.Node,
     visited = new Set<string>(),
   ): CapturedInvocationMember | undefined => {
     let current = unwrapJavaScriptExpression(node).node;
+    // An unproven owner is itself a captured-member candidate. Descending
+    // iteratively with `pending` instead of recursing keeps arbitrarily
+    // long alias chains (`a0 = bound.call; a1 = a0.call; …`) off the call
+    // stack; the shared `visited` still terminates cyclic owners.
+    const pending: CapturedLevel[] = [];
+    let level: CapturedLevel | undefined;
+    // The key of the level just resolved — a folded level's owner path.
+    let resolvedKey: "call" | "apply" | "bind" | undefined;
     for (;;) {
-      current = peelValueSequence(current);
-      let owner: t.Node;
-      let key: "call" | "apply" | "bind" | null;
-      let at: t.Node;
-      let directOffset = false;
-      let projection: readonly (string | null)[] = [];
-      let captureLeaves: readonly t.Node[] = [];
-      if (
-        t.isMemberExpression(current) ||
-        t.isOptionalMemberExpression(current)
-      ) {
-        const rawKey = semanticStaticPropertyKey(
-          current.property,
-          current.computed,
-        );
-        key =
-          rawKey === "call" || rawKey === "apply" || rawKey === "bind"
-            ? rawKey
-            : null;
-        owner = peelValueSequence(current.object);
-        at = current;
-      } else if (t.isIdentifier(current)) {
-        const binding = resolveSemanticBindingState(
-          state,
-          current,
-          current.name,
-        );
-        const initializer = semanticStableInitializer(binding, state);
-        if (
-          binding === undefined ||
-          initializer === undefined ||
-          (initializer.node.end ?? Infinity) >= (current.start ?? -1) ||
-          visited.has(binding.bindingId)
-        )
-          return undefined;
-        visited.add(binding.bindingId);
-        const next = peelValueSequence(initializer.node);
-        // A comma initializer stores its tail: `const invoke = (0, change.call)`
-        // captures the member read; peelValueSequence above already followed it.
-        if (t.isIdentifier(next) && initializer.projection.length === 0) {
-          current = next;
-          continue;
-        }
-        // A destructured capture stores the projected member directly:
-        // `const {call: invoke} = change` binds invoke to change.call.
-        if (initializer.projection.length === 0) {
+      if (level === undefined) {
+        // Parse one captured member read at `current`.
+        let owner: t.Node | undefined;
+        let key: "call" | "apply" | "bind" | null = null;
+        let at: t.Node | undefined;
+        let directOffset = false;
+        let projection: readonly (string | null)[] = [];
+        let captureLeaves: readonly t.Node[] = [];
+        for (;;) {
+          current = peelValueSequence(current);
           if (
-            !t.isMemberExpression(next) &&
-            !t.isOptionalMemberExpression(next)
-          )
-            return undefined;
-          const rawKey = semanticStaticPropertyKey(
-            next.property,
-            next.computed,
-          );
-          key =
-            rawKey === "call" || rawKey === "apply" || rawKey === "bind"
-              ? rawKey
-              : null;
-          owner = peelValueSequence(next.object);
-          at = next;
-        } else {
-          // Every projected segment must be an invocation member: each read
-          // lands on a Function.prototype member value, whose own
-          // call/apply/bind members resolve to the same canonical members —
-          // `{call: {call: invoke}}` captures Function.prototype.call.
-          const projected = initializer.projection;
-          if (
-            projected.length === 0 ||
-            projected.some(
-              (segment) =>
-                segment !== "call" && segment !== "apply" && segment !== "bind",
+            t.isMemberExpression(current) ||
+            t.isOptionalMemberExpression(current)
+          ) {
+            const rawKey = semanticStaticPropertyKey(
+              current.property,
+              current.computed,
+            );
+            key =
+              rawKey === "call" || rawKey === "apply" || rawKey === "bind"
+                ? rawKey
+                : null;
+            owner = peelValueSequence(current.object);
+            at = current;
+            break;
+          }
+          if (t.isIdentifier(current)) {
+            const binding = resolveSemanticBindingState(
+              state,
+              current,
+              current.name,
+            );
+            const initializer = semanticStableInitializer(binding, state);
+            if (
+              binding === undefined ||
+              initializer === undefined ||
+              (initializer.node.end ?? Infinity) >= (current.start ?? -1) ||
+              visited.has(binding.bindingId)
             )
-          )
-            return undefined;
-          const memberProjection = projected as readonly (
-            | "call"
-            | "apply"
-            | "bind"
-          )[];
-          key = memberProjection.at(-1) ?? null;
-          projection = memberProjection;
-          owner = peelValueSequence(next);
-          captureLeaves =
-            key === null
-              ? [initializer.node]
-              : projectedCaptureAts(
-                  initializer.node,
-                  memberProjection,
-                  binding,
-                );
-          at = captureLeaves.at(-1) ?? initializer.node;
-          directOffset = true;
+              return undefined;
+            visited.add(binding.bindingId);
+            const next = peelValueSequence(initializer.node);
+            // A comma initializer stores its tail: `const invoke = (0,
+            // change.call)` captures the member read; already followed.
+            if (t.isIdentifier(next) && initializer.projection.length === 0) {
+              current = next;
+              continue;
+            }
+            // A destructured capture stores the projected member directly:
+            // `const {call: invoke} = change` binds invoke to change.call.
+            if (initializer.projection.length === 0) {
+              if (
+                !t.isMemberExpression(next) &&
+                !t.isOptionalMemberExpression(next)
+              )
+                return undefined;
+              const rawKey = semanticStaticPropertyKey(
+                next.property,
+                next.computed,
+              );
+              key =
+                rawKey === "call" || rawKey === "apply" || rawKey === "bind"
+                  ? rawKey
+                  : null;
+              owner = peelValueSequence(next.object);
+              at = next;
+              break;
+            }
+            // Leading literal container segments index into the RHS's own
+            // structure — `[{call: invoke}] = [change]` reads element 0,
+            // then `.call` on it. Every remaining segment must be an
+            // invocation member: each read lands on a Function.prototype
+            // member whose own members resolve canonically.
+            const projected = initializer.projection;
+            let ownerNode: t.Node | undefined = next;
+            let memberStart = 0;
+            while (
+              memberStart < projected.length &&
+              projected[memberStart] !== "call" &&
+              projected[memberStart] !== "apply" &&
+              projected[memberStart] !== "bind"
+            ) {
+              ownerNode = containerElement(
+                ownerNode,
+                projected[memberStart] ?? null,
+              );
+              if (ownerNode === undefined) return undefined;
+              memberStart += 1;
+            }
+            const memberProjection = projected.slice(memberStart);
+            if (
+              memberProjection.length === 0 ||
+              memberProjection.some(
+                (segment) =>
+                  segment !== "call" &&
+                  segment !== "apply" &&
+                  segment !== "bind",
+              )
+            )
+              return undefined;
+            const memberKeys = memberProjection as readonly (
+              | "call"
+              | "apply"
+              | "bind"
+            )[];
+            key = memberKeys.at(-1) ?? null;
+            projection = memberKeys;
+            owner = peelValueSequence(ownerNode);
+            const leaves =
+              key === null
+                ? [initializer.node]
+                : projectedCaptureAts(initializer.node, projected, binding);
+            captureLeaves = leaves.slice(memberStart);
+            at = captureLeaves.at(-1) ?? initializer.node;
+            directOffset = true;
+            break;
+          }
+          return undefined;
         }
-      } else return undefined;
-      if (key === null) return undefined;
+        if (owner === undefined || at === undefined || key === null)
+          return undefined;
+        level = {
+          owner,
+          key,
+          at,
+          directOffset,
+          projection,
+          captureLeaves,
+        };
+      }
+      const { owner, key, at, directOffset, projection, captureLeaves } = level;
       // The canonical Function.prototype member identity holds only while
       // the owner is a provable callable: an alias of `custom.call` on
       // application data does not hold the intrinsic member at all. A
-      // captured member is itself provable — `outer = invoke.call` reads the
-      // member from the function `invoke` already stores.
-      let ownerPath = intrinsicPath(owner) ?? boundIntrinsic(owner)?.path;
+      // captured member is itself provable — `outer = invoke.call` reads
+      // the member from the function `invoke` already stores; the folded
+      // `resolvedKey` names that deeper member.
+      const ownerPath =
+        resolvedKey !== undefined
+          ? intrinsicInvocationMemberPath(resolvedKey)
+          : (intrinsicPath(owner) ?? boundIntrinsic(owner)?.path);
       if (ownerPath === undefined) {
-        // Recurse without a fixed depth cap — the shared binding-visited
-        // set terminates cyclic owner chains (`a = b.call; b = a.call`).
-        const capturedOwner = capturedInvocationMember(owner, visited);
-        // A replaced owner stores an unknown value — a member read on it is
-        // unknown too. Propagate the replaced marker instead of discarding
-        // the capture, or `outer = invoke.call; outer()` loses its effect.
-        if (capturedOwner !== undefined) {
-          if (capturedOwner.replaced === true)
-            return { replaced: true, path: capturedOwner.path };
-          ownerPath = intrinsicInvocationMemberPath(capturedOwner.key);
-        }
+        pending.push(level);
+        current = owner;
+        level = undefined;
+        resolvedKey = undefined;
+        continue;
       }
-      if (ownerPath === undefined) return undefined;
-      // A provable owner whose slot was overwritten before the read stores an
-      // unknown replacement in `invoke` — recognized member shape, unknown
-      // callable. The call must stay opaque rather than effect-free.
+      // A provable owner whose slot was overwritten before the read stores
+      // an unknown replacement — recognized member shape, unknown callable.
+      // The call must stay opaque rather than effect-free.
       const ownerMemberPath = [
         ...ownerPath,
         projection.length > 1 ? (projection[0] ?? key) : key,
@@ -696,11 +785,12 @@ export const createSemanticModuleInterop = (
           return { replaced: true, path: ownerMemberPath };
       } else {
         // A destructured read captures the member at the destructuring, but
-        // `at` is the RHS identifier — intrinsicReadChanged would follow its
-        // binding back to the owner's initializer and miss writes between
-        // them. Check each level's slot at that level's own read offset:
-        // the outer `call` is read before an inner pattern's defaults run,
-        // so a later `change.call = noop` does not replace what was captured.
+        // `at` is the RHS identifier — intrinsicReadChanged would follow
+        // its binding back to the owner's initializer and miss writes
+        // between them. Check each level's slot at that level's own read
+        // offset: the outer `call` is read before an inner pattern's
+        // defaults run, so a later `change.call = noop` does not replace
+        // what was captured.
         const scope = opaqueMutationPath(at).join(".");
         const previous = ownerPath.at(-1);
         // The first level reads the owner's own slot and its inherited
@@ -708,8 +798,8 @@ export const createSemanticModuleInterop = (
         // member's own slot plus its inherited member — `{call: {apply:
         // invoke}}` checks `[ownerPath,call]` + `[i,F,p,call]`, then
         // `[i,F,p,call,apply]` + `[i,F,p,apply]`.
-        const levelSlots = (level: number): (readonly string[])[] => {
-          const segment = projection[level];
+        const levelSlots = (slot: number): (readonly string[])[] => {
+          const segment = projection[slot];
           if (segment === null || segment === undefined) return [];
           const inherited = [
             "intrinsic",
@@ -717,7 +807,7 @@ export const createSemanticModuleInterop = (
             "prototype",
             segment,
           ] as const;
-          if (level === 0) {
+          if (slot === 0) {
             const nestedRead =
               previous === "call" || previous === "apply" || previous === "bind"
                 ? ([
@@ -734,27 +824,32 @@ export const createSemanticModuleInterop = (
               ...(nestedRead === undefined ? [] : [nestedRead]),
             ];
           }
-          const prior = projection[level - 1];
+          const prior = projection[slot - 1];
           if (prior === null || prior === undefined) return [];
           return [
             ["intrinsic", "Function", "prototype", prior, segment],
             inherited,
           ];
         };
-        for (let level = 0; level < projection.length; level += 1) {
-          const offset = evaluationOffset(captureLeaves[level] ?? at);
-          const replaced = levelSlots(level).find((slot) =>
+        for (let slot = 0; slot < projection.length; slot += 1) {
+          const offset = evaluationOffset(captureLeaves[slot] ?? at);
+          const replaced = levelSlots(slot).find((candidate) =>
             writes.some(
               (write) =>
                 (write.scope === scope || write.scope === "intrinsic") &&
                 write.offset < offset &&
-                invocationMemberWriteCovers(write, slot),
+                invocationMemberWriteCovers(write, candidate),
             ),
           );
           if (replaced !== undefined) return { replaced: true, path: replaced };
         }
       }
-      return { owner, key, at };
+      // Fold one pending level: its owner is the member value just proven.
+      // A replaced level below propagates up — `outer = invoke.call` on a
+      // replaced `invoke` holds an unknown value, not an absent effect.
+      resolvedKey = key;
+      level = pending.pop();
+      if (level === undefined) return { owner, key, at };
     }
   };
 

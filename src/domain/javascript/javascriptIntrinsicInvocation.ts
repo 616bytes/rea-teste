@@ -136,7 +136,12 @@ export const resolveJavaScriptIntrinsicInvocation = (
       idOf(callee),
       receiver === undefined ? -1 : idOf(receiver),
       explicitReceiver ? 1 : 0,
-      arguments_ === undefined ? -1 : arguments_.length,
+      // Argument identity, not arity: `invoke.apply(invoke, [invoke, X])`
+      // legitimately re-enters `change.apply` with different arguments of
+      // the same length — an arity-only key would drop the second state.
+      arguments_ === undefined
+        ? -1
+        : arguments_.map((argument) => idOf(argument)).join(","),
       virtualMember === undefined
         ? ""
         : `${virtualMember.key}@${idOf(virtualMember.at)}`,

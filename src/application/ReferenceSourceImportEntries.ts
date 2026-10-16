@@ -186,6 +186,17 @@ const nodeRequireIndexCandidates = (directory: string): string[] =>
     posix.join(directory, `index${suffix}`),
   );
 
+/** ESM specifiers identify URL pathnames; CommonJS requests use literal paths. */
+const decodeImportPathname = (specifier: string): string | undefined => {
+  if (/%2f/iu.test(specifier) || specifier.includes("\\")) return undefined;
+  try {
+    const decoded = decodeURIComponent(specifier);
+    return decoded.includes("\0") ? undefined : decoded;
+  } catch {
+    return undefined;
+  }
+};
+
 /** Inventory facts an internal specifier resolves against. */
 interface SpecifierContext {
   readonly lookupPath: ReferenceSourcePathLookup;
@@ -272,14 +283,22 @@ const resolveInternalSpecifier = (
 ): { to: string; resolution: "internal" | "unresolved" } => {
   if (posix.isAbsolute(specifier))
     return { to: specifier, resolution: "unresolved" };
+  // TypeScript resolves source specifiers literally, even when emitted JS
+  // would later use URL semantics for the same text.
+  const pathname =
+    mode === "source-import" && /\.(?:c|m)?js$/u.test(fromPath)
+      ? decodeImportPathname(specifier)
+      : specifier;
+  if (pathname === undefined)
+    return { to: specifier, resolution: "unresolved" };
   const normalized = posix.normalize(
-    posix.join(posix.dirname(fromPath), specifier),
+    posix.join(posix.dirname(fromPath), pathname),
   );
   if (logicalPathEscapesRoot(normalized))
     return { to: normalized, resolution: "unresolved" };
   // Preserve directory intent before normalization removes terminal dot segments.
   const directoryReference =
-    specifier.endsWith("/") || [".", ".."].includes(posix.basename(specifier));
+    pathname.endsWith("/") || [".", ".."].includes(posix.basename(pathname));
   // A directory resolves only to an index with an extension; neither Node nor
   // TypeScript selects an extensionless `index` file.
   const slots = resolutionSuffixes(mode);

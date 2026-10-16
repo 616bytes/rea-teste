@@ -179,8 +179,8 @@ const browserResultTargetOrigin = (
     typeof result.inspection.target.origin === "string"
   )
     return result.inspection.target.origin;
-  if ("capture" in result && "target_url" in result.capture)
-    return sanitizeBrowserUrl(result.capture.target_url).origin ?? undefined;
+  if ("capture" in result && "target_origin" in result.capture)
+    return result.capture.target_origin ?? undefined;
   if (!("target" in result)) return undefined;
   if ("origin" in result.target) return result.target.origin;
   if ("initial_url" in result.target)

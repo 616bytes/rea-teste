@@ -40,6 +40,13 @@ export const browserOriginSchema = z
     return origin;
   });
 
+/** Already-normalized HTTP(S) origin retained in provider output. */
+export const recordedBrowserOriginSchema = z
+  .url()
+  .regex(/^https?:\/\/[^/?#@*]+$/u, {
+    message: "Expected one normalized HTTP(S) origin",
+  });
+
 /** Recognize the URL API's bracketed IPv6 form and normalized bare literals. */
 export const isLiteralLoopbackHostname = (hostname: string): boolean =>
   hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";

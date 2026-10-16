@@ -11,6 +11,7 @@ const provider = { id: "fixture", name: "Fixture", version: "1" };
 const result = webBundleAnalysisSchema.parse({
   capture: {
     target_url: "https://app.example.test/dashboard?token=redacted",
+    target_origin: "https://app.example.test",
     scripts_observed: 0,
     scripts_analyzed: 0,
     source_artifacts: [],
@@ -79,7 +80,29 @@ describe("web bundle Evidence origin scope", () => {
       input([]),
       webBundleAnalysisSchema.parse({
         ...result,
-        capture: { ...result.capture, target_url: "file:///tmp/app.html" },
+        capture: {
+          ...result.capture,
+          target_url: "file:///tmp/app.html",
+          target_origin: null,
+        },
+      }),
+      provider,
+    );
+
+    expect(evidence.parameters.allowed_origins).toEqual([]);
+  });
+
+  it("does not infer a non-HTTP origin from a bundle URL", () => {
+    const evidence = createBrowserEvidence(
+      "analyze_web_bundle",
+      input([]),
+      webBundleAnalysisSchema.parse({
+        ...result,
+        capture: {
+          ...result.capture,
+          target_url: "ftp://host/app",
+          target_origin: null,
+        },
       }),
       provider,
     );

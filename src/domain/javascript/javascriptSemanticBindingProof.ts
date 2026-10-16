@@ -33,10 +33,15 @@ const GLOBAL_OBJECT_NAMES = new Set(["globalThis", "global", "window", "self"]);
 export const semanticBindingProofExposure = (
   state: JavaScriptSemanticAnalysisState,
   binding: JavaScriptSemanticBindingState | undefined,
+  proof: "binding" | "contents" = "binding",
 ): string | undefined => {
   const exposure = sourceBindingProofExposure(state);
   if (exposure.lexicalEval)
     return "A lexical eval reference may replace source bindings.";
+  // A parameter can receive an object through aliases, containers or captures.
+  // The source index does not prove that mapped arguments cannot reach it.
+  if (proof === "contents" && exposure.mappedArgumentScopes.size > 0)
+    return "A mapped arguments object may expose referenced contents.";
   if (binding === undefined) return undefined;
   if (
     exposure.mappedArgumentScopes.has(binding.scopeId) &&
@@ -73,7 +78,7 @@ const sourceBindingProofExposure = (
   const callableStack = createSemanticCallableStack((id) =>
     state.callableNodesById.get(id),
   );
-  const mappedOwners = new WeakMap<t.Function, string | null>();
+  const mappedOwners = new WeakMap<t.Function | t.Program, string | null>();
   let globalObject = false;
   traverseJavaScriptAst(state.program, {
     enter(node, parent) {
@@ -124,18 +129,21 @@ const mappedArgumentsScope = (
   reference: t.Identifier,
   owner: t.Function | undefined,
   state: JavaScriptSemanticAnalysisState,
-  mappedOwners: WeakMap<t.Function, string | null>,
+  mappedOwners: WeakMap<t.Function | t.Program, string | null>,
 ): string | null => {
-  if (owner === undefined) return null;
-  let scopeId = mappedOwners.get(owner);
+  // Script parsing does not exclude a CommonJS wrapper's implicit arguments.
+  const executionOwner = owner ?? state.program;
+  let scopeId = mappedOwners.get(executionOwner);
   if (scopeId === undefined) {
     scopeId =
-      runtimeFunctionParameters(owner).every((parameter) =>
-        t.isIdentifier(parameter),
-      ) && !isStrictFunction(owner, state)
-        ? (state.scopeByNode.get(owner)?.scopeId ?? null)
+      (t.isProgram(executionOwner)
+        ? executionOwner.sourceType === "script"
+        : runtimeFunctionParameters(executionOwner).every((parameter) =>
+            t.isIdentifier(parameter),
+          )) && !isStrictContext(executionOwner, state)
+        ? (state.scopeByNode.get(executionOwner)?.scopeId ?? null)
         : null;
-    mappedOwners.set(owner, scopeId);
+    mappedOwners.set(executionOwner, scopeId);
   }
   if (scopeId === null) return null;
   const lookup = semanticBindingLookupAt(state, reference, "arguments");
@@ -152,7 +160,10 @@ const mappedArgumentsScope = (
       shadow.initializers.some(
         ({ node }) =>
           t.isFunctionDeclaration(node) &&
-          state.parentsByNode.get(node) === owner.body,
+          state.parentsByNode.get(node) ===
+            (t.isProgram(executionOwner)
+              ? executionOwner
+              : executionOwner.body),
       ))
   )
     return null;
@@ -183,8 +194,8 @@ const bindingWithinScope = (
   return false;
 };
 
-const isStrictFunction = (
-  node: t.Function,
+const isStrictContext = (
+  node: t.Function | t.Program,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   let current: t.Node | undefined = node;
@@ -228,7 +239,7 @@ const mayExposeGlobalThis = (
         parent.key === child
       )
     )
-      return !isStrictFunction(parent, state);
+      return !isStrictContext(parent, state);
     if (
       t.isStaticBlock(parent) ||
       ((t.isClassProperty(parent) ||

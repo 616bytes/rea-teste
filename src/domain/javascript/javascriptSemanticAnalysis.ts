@@ -200,7 +200,11 @@ const visitSemanticReferenceEffectsAtSite = (
   const resolution =
     lookup.kind === "binding" ? "resolved" : blocked ? "unknown" : "unbound";
   const path = requestedPath ?? inferredPath;
-  const proofExposure = semanticBindingProofExposure(state, binding);
+  const proofExposure = semanticBindingProofExposure(
+    state,
+    binding,
+    "contents",
+  );
   const metadata: Omit<JavaScriptSemanticReferenceEffectsAtSite, "effects"> = {
     bindingId: binding?.bindingId ?? null,
     resolution,

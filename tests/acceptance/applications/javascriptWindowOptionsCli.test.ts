@@ -151,6 +151,35 @@ cliTest(
         "  new BrowserWindow({webPreferences: preferences});",
         "}",
       ].join("\n"),
+      "mapped.cjs": [
+        'throw new Error("Static input must never execute");',
+        'const {BrowserWindow} = require("electron");',
+        "function open(parameter) {",
+        '  const options = {webPreferences: {preload: "./safe.js"}, ...null};',
+        "  parameter = options;",
+        '  arguments[0].webPreferences.preload = "./changed.js";',
+        "  new BrowserWindow(options);",
+        '  const preferences = {preload: "./safe.js", ...null};',
+        "  parameter = preferences;",
+        '  arguments[0].preload = "./changed.js";',
+        "  new BrowserWindow({webPreferences: preferences});",
+        "}",
+      ].join("\n"),
+      "strict.cjs": [
+        'throw new Error("Static input must never execute");',
+        'const {BrowserWindow} = require("electron");',
+        "function open(parameter) {",
+        '  "use strict";',
+        '  const options = {webPreferences: {preload: "./safe.js"}, ...null};',
+        "  parameter = options;",
+        '  arguments[0].webPreferences.preload = "./changed.js";',
+        "  new BrowserWindow(options);",
+        '  const preferences = {preload: "./other.js", ...undefined};',
+        "  parameter = preferences;",
+        '  arguments[0].preload = "./changed.js";',
+        "  new BrowserWindow({webPreferences: preferences});",
+        "}",
+      ].join("\n"),
       "safe.js": "// Inert preload source",
       "other.js": "// Inert second preload source",
     });
@@ -171,8 +200,8 @@ cliTest(
       mcpEvidence.normalized_result,
     );
     expect(result.summary).toMatchObject({
-      browser_windows: 5,
-      preload_entrypoints: 3,
+      browser_windows: 9,
+      preload_entrypoints: 5,
     });
     const windows = result.graph.nodes.filter(
       (node) => node.kind === "browser-window",
@@ -199,12 +228,24 @@ cliTest(
     expect(
       stable.map((node) => node.observations[0]?.properties.resolution_sources),
     ).toEqual([[expect.any(Object)], [expect.any(Object)]]);
+    const mapped = windows.filter(
+      (node) => node.observations[0]?.properties.source_path === "mapped.cjs",
+    );
+    expect(
+      mapped.map((node) => node.observations[0]?.properties.preload_path),
+    ).toEqual([null, null]);
+    const strict = windows.filter(
+      (node) => node.observations[0]?.properties.source_path === "strict.cjs",
+    );
+    expect(
+      strict.map((node) => node.observations[0]?.properties.preload_path),
+    ).toEqual(["./safe.js", "./other.js"]);
     const associations = result.graph.edges.filter(
       (edge) =>
         edge.evidence.extractor.operation ===
         "associate-browser-window-preload",
     );
-    expect(associations).toHaveLength(3);
+    expect(associations).toHaveLength(5);
     expect(
       associations.some((edge) =>
         mutated

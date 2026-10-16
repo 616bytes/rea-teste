@@ -8,6 +8,7 @@ import {
   classifyParsedJavaScriptElectronBindingsSteps,
   indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
+import { semanticBindingProofExposure } from "./javascriptSemanticBindingProof.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { createJavaScriptGraphqlScan } from "./javascriptGraphqlOperations.js";
 import {
@@ -304,5 +305,57 @@ it.each([false, true])(
         timing: "before",
       });
     expect(index.referenceMayHaveChangedAt(site, reference)).toBe(exposed);
+  },
+);
+
+it.each([false, true])(
+  "keeps binding and contents proofs stable across query/index order (contents first: %s)",
+  (contentsFirst) => {
+    const parsed = parseJavaScriptSource(`
+      function open(parameter) {
+        const options = {preload: "./safe.js"};
+        parameter = options;
+        arguments[0].preload = "./changed.js";
+        inspect(options);
+      }
+    `);
+    if (parsed === null) throw new Error("Expected parsed source");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    let reference: t.Identifier | undefined;
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "inspect" }) &&
+          t.isIdentifier(node.arguments[0])
+        )
+          reference = node.arguments[0];
+      },
+    });
+    if (reference === undefined) throw new Error("Expected contents read");
+    const binding = index.bindingForReferenceAt(reference);
+    if (contentsFirst)
+      expect(
+        semanticBindingProofExposure(index.bindings, binding, "contents"),
+      ).toMatch(/mapped arguments/u);
+    else
+      expect(
+        semanticBindingProofExposure(index.bindings, binding),
+      ).toBeUndefined();
+    const proofs = () => ({
+      binding: semanticBindingProofExposure(index.bindings, binding),
+      contents: semanticBindingProofExposure(
+        index.bindings,
+        binding,
+        "contents",
+      ),
+    });
+    const before = proofs();
+    expect(before.binding).toBeUndefined();
+    expect(before.contents).toMatch(/mapped arguments/u);
+    completeSemanticSteps(index.indexMemberMutationFactsSteps());
+    expect(proofs()).toEqual(before);
   },
 );

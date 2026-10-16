@@ -6,7 +6,14 @@
 import { z } from "zod";
 
 import { localPathStringSchema } from "../localPath.js";
-import type { EvidenceSubjectTarget } from "../evidence.js";
+import {
+  createEvidence,
+  type Evidence,
+  type EvidenceLocation,
+  type EvidenceProvider,
+  type EvidenceSubjectTarget,
+} from "../evidence.js";
+import type { JsonValue } from "../jsonValue.js";
 import { type JavaClassFile, resolveConstantUtf8 } from "./javaClassFile.js";
 import { decodeClassDebugMetadata } from "./javaDebugMetadata.js";
 import { buildJavaDebugMetadataEvidence } from "./javaDebugMetadataEvidence.js";
@@ -265,3 +272,33 @@ export const javaDebugMetadataMatchesSubject = (
   artifact.sha256 === subject.sha256 &&
   artifact.path === subject.path &&
   (subject.format === "file" || subject.format === "zip");
+
+/**
+ * Evidence for one completed inspection, echoing exactly the caller's
+ * selection. Shared by the workflow's success and the provider's completed
+ * observation retained under late cancellation or failed cleanup.
+ */
+export const createJavaDebugMetadataEvidence = (
+  input: InspectJvmDebugMetadataInput,
+  observed: {
+    readonly subject: EvidenceSubjectTarget;
+    readonly provider: EvidenceProvider;
+    readonly result: JsonValue;
+    readonly rawResult: JsonValue | null;
+    readonly locations: readonly EvidenceLocation[];
+    readonly limitations: readonly string[];
+  },
+): Evidence =>
+  createEvidence(observed.subject, observed.provider, {
+    operation: "inspect_jvm_debug_metadata",
+    parameters: {
+      path: input.path,
+      ...(input.entry === undefined ? {} : { entry: input.entry }),
+      ...(input.release === undefined ? {} : { release: input.release }),
+    },
+    result: observed.result,
+    ...(observed.rawResult === null ? {} : { rawResult: observed.rawResult }),
+    confidence: "observed",
+    locations: observed.locations,
+    limitations: observed.limitations,
+  });

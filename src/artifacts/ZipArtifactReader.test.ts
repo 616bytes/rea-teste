@@ -175,6 +175,42 @@ describe("ZipArtifactReader decompression budget", () => {
   });
 });
 
+describe("ZipArtifactReader cancellation", () => {
+  it("carries the caller's abort reason on enumeration and open", async () => {
+    const directory = await createTestTempDirectory("rea-zip-cancel-");
+    const path = join(directory, "member.zip");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("member.bin", new TextReader("member bytes"));
+    await writeFile(path, await writer.close());
+    const reader = new ZipArtifactReader(path, "zip");
+    const reason = new Error("caller cancelled the ZIP read");
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const entry = entries[0];
+      if (entry === undefined) throw new Error("Expected a ZIP member");
+      const controller = new AbortController();
+      controller.abort(reason);
+      await expect(
+        (async () => reader.open(entry, controller.signal))(),
+      ).rejects.toMatchObject({
+        reason: "cancelled",
+        cancellation: { reason },
+      });
+      const enumeration = async () => {
+        for await (const _ of reader.entries(controller.signal))
+          throw new Error("Expected cancellation before a member");
+      };
+      await expect(enumeration()).rejects.toMatchObject({
+        reason: "cancelled",
+        cancellation: { reason },
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+});
+
 describe("artifactDecompressionBudgetBytes", () => {
   it("grants at least the floor and grows with the compressed size", () => {
     expect(artifactDecompressionBudgetBytes(0)).toBe(

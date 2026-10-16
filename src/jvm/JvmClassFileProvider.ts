@@ -1,4 +1,12 @@
 import { createHash } from "node:crypto";
+import {
+  completedJarInspection,
+  finishJarInspection,
+  JarInspection,
+  type JarRequest,
+} from "./jarInspection.js";
+import type { FileHandle } from "node:fs/promises";
+import type { Stats } from "node:fs";
 
 import { createAnalysisExecution } from "../application/AnalysisProvider.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
@@ -32,19 +40,24 @@ import {
 } from "../domain/jvm/javaDebugMetadataReport.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { hashStableRootArtifactHandle } from "../artifacts/inventory/hashStableRootArtifact.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
-  openRegularFile,
-  RegularFileAdmissionFailure,
-} from "../filesystem/RegularFile.js";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+  assertArtifactReadActive,
+  bindArtifactFileCleanup,
+  withArtifactRegularFile,
+} from "../artifacts/ArtifactFileOperation.js";
 import {
   classifyJarEntry,
+  isMultiReleaseManifest,
   normalizeJarEntryPath,
   resolveJarSelection,
 } from "./jarClassEntry.js";
 import { JVM_LIMITS, JVM_PROVIDER_IDENTITY } from "./JvmClassFileRelease.js";
-import { jvmClassFileFailure, mapParseError } from "./jvmFailures.js";
+import {
+  jvmClassFileFailure,
+  jvmCleanupError,
+  mapParseError,
+} from "./jvmFailures.js";
 
 const OPERATION = "inspect_jvm_debug_metadata";
 
@@ -72,40 +85,6 @@ const looksLikeMachOUniversal = (bytes: Uint8Array): boolean =>
   bytes[3] === 0xbe &&
   ((bytes[6]! << 8) | bytes[7]!) < MIN_CLASS_MAJOR_VERSION;
 
-/**
- * A JAR is multi-release only when its main manifest section carries
- * `Multi-Release: true` (JAR File Specification). Otherwise META-INF/versions
- * entries are inert resources the runtime never loads. Parses only the main
- * section (up to the first blank line), honoring line continuations.
- */
-const isMultiReleaseManifest = (bytes: Uint8Array): boolean => {
-  let text: string;
-  try {
-    text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  } catch {
-    return false;
-  }
-  const logical: string[] = [];
-  for (const line of text.split(/\r\n|\r|\n/)) {
-    if (line === "") break; // end of the main section
-    if (line.startsWith(" ") && logical.length > 0)
-      logical[logical.length - 1] += line.slice(1); // value continuation
-    else logical.push(line);
-  }
-  for (const attribute of logical) {
-    const colon = attribute.indexOf(":");
-    if (colon < 0) continue;
-    if (attribute.slice(0, colon).trim().toLowerCase() === "multi-release")
-      return (
-        attribute
-          .slice(colon + 1)
-          .trim()
-          .toLowerCase() === "true"
-      );
-  }
-  return false;
-};
-
 const execution = (
   result: JavaDebugMetadataResult,
   path: string,
@@ -123,23 +102,24 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
   /** Handles whose close failed stay owned here and are retried by `close()`. */
   readonly #resources = new ArtifactResourceScope();
 
-  /** Retry retained cleanup without discarding handles that still cannot close. */
+  /**
+   * Retry retained cleanup without discarding owners that still cannot close.
+   * A retained-owner failure becomes a ProviderCleanupError bound to those
+   * exact leases, so it resolves once a later close() releases them; any other
+   * failure is not a cleanup fact and propagates unchanged.
+   */
   async close(): Promise<void> {
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
-      const cleanup =
-        cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
-      throw new ProviderCleanupError(
-        JVM_PROVIDER_IDENTITY.id,
-        cleanup?.resources ?? ["artifact-resources"],
-        {
-          reason:
-            cleanup?.reason ??
-            (cause instanceof Error ? cause.message : String(cause)),
-        },
-        { operation: OPERATION, cause },
-      );
+      if (
+        !(cause instanceof ArtifactReaderFailure) ||
+        cause.cleanup === undefined
+      )
+        throw cause;
+      const error = jvmCleanupError(cause.cleanup, cause);
+      bindArtifactFileCleanup(cause, error);
+      throw error;
     }
   }
 
@@ -149,16 +129,20 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
   ): Promise<Result<JvmDebugMetadataExecution, AnalysisError>> {
     try {
       if (options?.signal?.aborted)
-        return err(new AnalysisCancelledError(OPERATION));
+        return err(
+          new AnalysisCancelledError(OPERATION, {
+            cause: options.signal.reason,
+          }),
+        );
       return await this.#resources.run(() =>
         input.entry === undefined
           ? this.#inspectClassFile(input, options)
-          : this.#inspectJarEntry(
-              input.path,
-              normalizeJarEntryPath(input.entry),
+          : this.#inspectJarEntry({
+              jar: input.path,
+              entry: normalizeJarEntryPath(input.entry),
               input,
-              options,
-            ),
+              signal: options?.signal,
+            }),
       );
     } catch (cause: unknown) {
       return err(jvmClassFileFailure(cause, input.path, options?.signal));
@@ -212,7 +196,9 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       this.#resources,
     );
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      return err(
+        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
+      );
     const parsed = parseJavaClassFile(selected.bytes, {
       retainedAttributeBudget: JVM_LIMITS.maxDebugEntries,
     });
@@ -231,134 +217,148 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     return ok(execution(result, input.path, selected.sha256, "file"));
   }
 
+  /**
+   * Admit the JAR once (no-follow) through the shared descriptor owner, so
+   * admission, the final close, failed-close retention and late cancellation
+   * all flow through one typed outcome. The member reads and the archive digest
+   * use that same descriptor, so the Evidence sha256 identifies exactly the
+   * bytes a member was read from.
+   */
   async #inspectJarEntry(
-    jar: string,
-    entry: string,
-    input: InspectJvmDebugMetadataInput,
-    options?: ExecutionOptions,
+    request: JarRequest,
   ): Promise<Result<JvmDebugMetadataExecution, AnalysisError>> {
-    // Admit the archive once with a no-follow descriptor, and read both its
-    // members and its digest through that same descriptor, so the Evidence
-    // sha256 identifies exactly the bytes a member was read from (closing the
-    // former hash/read TOCTOU) and the symlink policy is consistent.
-    let handle;
+    let inspection: JarInspection;
     try {
-      handle = await openRegularFile(jar, {
-        symlinks: "reject",
-        signal: options?.signal,
-      });
+      inspection = await withArtifactRegularFile(
+        request.jar,
+        this.#resources,
+        request.signal,
+        (handle) => this.#readJar(handle, request),
+        "reject",
+      );
     } catch (cause: unknown) {
-      // Admission failed and its descriptor close failed too: keep that owner
-      // so a later close() retries it instead of leaking the descriptor.
-      if (cause instanceof RegularFileAdmissionFailure)
-        await this.#resources.release({
-          kind: "file-handle",
-          resource: jar,
-          handle: cause.owner,
-        });
-      throw cause;
+      const completed = completedJarInspection(cause);
+      if (completed === undefined) throw cause;
+      return finishJarInspection(request, completed, cause);
     }
-    const owner = new OwnedFileHandle(handle);
-    try {
-      const initial = await handle.stat();
-      if (initial.size > JVM_LIMITS.archiveBytes)
-        return err(
+    return finishJarInspection(request, inspection, undefined);
+  }
+
+  /**
+   * Read one member under the admitted descriptor. Every outcome, including a
+   * thrown read failure, becomes this inspection's result so the descriptor
+   * close can never replace it; the ZIP reader is released through a lease the
+   * provider scope retains if its close fails.
+   */
+  async #readJar(
+    handle: FileHandle,
+    request: JarRequest,
+  ): Promise<JarInspection> {
+    const { jar, signal } = request;
+    const initial = await handle.stat();
+    if (initial.size > JVM_LIMITS.archiveBytes)
+      return new JarInspection(
+        err(
           new AnalysisResourceConstraintError(
             OPERATION,
             "file-size",
             `Selected JAR exceeds ${String(JVM_LIMITS.archiveBytes)} bytes: ${jar}`,
             { maximum_archive_bytes: JVM_LIMITS.archiveBytes },
           ),
-        );
-      const reader = new ZipArtifactReader(
-        jar,
-        "zip",
-        JVM_LIMITS.archiveMetadataBytes,
-        { handle, initial },
+        ),
       );
-      try {
-        const selected = await this.#selectJarMember(
-          reader,
-          entry,
-          input.release,
-          jar,
-          options?.signal,
-        );
-        if (!selected.ok) return selected;
-        if (options?.signal?.aborted)
-          return err(new AnalysisCancelledError(OPERATION));
-        const classBytes = await this.#readEntryBytes(
-          reader,
-          selected.value.member,
-          options?.signal,
-        );
-        const parsed = parseJavaClassFile(classBytes, {
-          retainedAttributeBudget: JVM_LIMITS.maxDebugEntries,
-        });
-        if (!parsed.ok) return err(mapParseError(parsed.error, jar));
-        const tooMany = this.#rejectIfTooManyEntries(parsed.value, jar, [
-          jar,
-          entry,
-        ]);
-        if (tooMany) return err(tooMany);
-        // Hash only after a member is selected and parsed: a refused call never
-        // pays the full-archive (up to 512 MiB) digest.
-        const jarDigest = await hashStableRootArtifactHandle(
-          jar,
-          handle,
-          initial,
-          options?.signal,
-        );
-        const result = buildJavaDebugMetadataResult(
-          parsed.value,
-          { path: jar, sha256: jarDigest.sha256, bytes: jarDigest.bytes },
-          {
-            container: "jar",
-            selectedEntry: {
-              entry,
-              release: selected.value.release,
-              sha256: sha256(classBytes),
-              bytes: classBytes.length,
-            },
-          },
-        );
-        // The ZIP reader owns member-name interpretation; keep its notes (e.g.
-        // an omitted leading "./") so the archive's own name stays visible.
-        const withMemberNotes =
-          selected.value.member.limitations.length === 0
-            ? result
-            : {
-                ...result,
-                limitations: [
-                  ...result.limitations,
-                  ...selected.value.member.limitations,
-                ],
-              };
-        const tooLarge = this.#rejectIfOversized(withMemberNotes, jar);
-        if (tooLarge) return err(tooLarge);
-        return ok(execution(withMemberNotes, jar, jarDigest.sha256, "zip"));
-      } finally {
-        await this.#releaseOrRetain({
-          kind: "reader",
-          resource: jar,
-          reader,
-        });
-      }
-    } finally {
-      await this.#releaseOrRetain({
-        kind: "file-handle",
-        resource: jar,
-        handle: owner,
-      });
+    const reader = new ZipArtifactReader(
+      jar,
+      "zip",
+      JVM_LIMITS.archiveMetadataBytes,
+      { handle, initial },
+    );
+    const readerLease = new AnalysisCleanupLease(() => reader.close());
+    let result: Result<JvmDebugMetadataExecution, AnalysisError>;
+    try {
+      result = await this.#readJarMember(request, reader, { handle, initial });
+    } catch (cause: unknown) {
+      result = err(jvmClassFileFailure(cause, jar, signal));
     }
+    const released = await this.#resources.release({
+      kind: "lease",
+      resource: jar,
+      lease: readerLease,
+    });
+    return new JarInspection(
+      result,
+      released.kind === "released"
+        ? undefined
+        : { cause: released.cause, lease: readerLease },
+    );
   }
 
-  /** Close now; on failure the scope retains the owner for `close()` and the call fails. */
-  async #releaseOrRetain(
-    owner: Parameters<ArtifactResourceScope["release"]>[0],
-  ): Promise<void> {
-    const attempt = await this.#resources.release(owner);
-    if (attempt.kind === "failed") throw attempt.cause;
+  async #readJarMember(
+    { jar, entry, input, signal }: JarRequest,
+    reader: ZipArtifactReader,
+    {
+      handle,
+      initial,
+    }: { readonly handle: FileHandle; readonly initial: Stats },
+  ): Promise<Result<JvmDebugMetadataExecution, AnalysisError>> {
+    const selected = await this.#selectJarMember(reader, {
+      jar,
+      entry,
+      input,
+      signal,
+    });
+    if (!selected.ok) return selected;
+    assertArtifactReadActive(signal);
+    const classBytes = await this.#readEntryBytes(
+      reader,
+      selected.value.member,
+      signal,
+    );
+    const parsed = parseJavaClassFile(classBytes, {
+      retainedAttributeBudget: JVM_LIMITS.maxDebugEntries,
+    });
+    if (!parsed.ok) return err(mapParseError(parsed.error, jar));
+    const tooMany = this.#rejectIfTooManyEntries(parsed.value, jar, [
+      jar,
+      entry,
+    ]);
+    if (tooMany) return err(tooMany);
+    // Hash only after a member is selected and parsed: a refused call never
+    // pays the full-archive (up to 512 MiB) digest.
+    const jarDigest = await hashStableRootArtifactHandle(
+      jar,
+      handle,
+      initial,
+      signal,
+    );
+    const result = buildJavaDebugMetadataResult(
+      parsed.value,
+      { path: jar, sha256: jarDigest.sha256, bytes: jarDigest.bytes },
+      {
+        container: "jar",
+        selectedEntry: {
+          entry,
+          release: selected.value.release,
+          sha256: sha256(classBytes),
+          bytes: classBytes.length,
+        },
+      },
+    );
+    // The ZIP reader owns member-name interpretation; keep its notes (e.g.
+    // an omitted leading "./") so the archive's own name stays visible.
+    const withMemberNotes =
+      selected.value.member.limitations.length === 0
+        ? result
+        : {
+            ...result,
+            limitations: [
+              ...result.limitations,
+              ...selected.value.member.limitations,
+            ],
+          };
+    const tooLarge = this.#rejectIfOversized(withMemberNotes, jar);
+    if (tooLarge) return err(tooLarge);
+    return ok(execution(withMemberNotes, jar, jarDigest.sha256, "zip"));
   }
 
   /**
@@ -368,16 +368,14 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
    */
   async #selectJarMember(
     reader: ZipArtifactReader,
-    entry: string,
-    requestedRelease: number | undefined,
-    jar: string,
-    signal: AbortSignal | undefined,
+    { jar, entry, input, signal }: JarRequest,
   ): Promise<
     Result<
       { readonly member: ArtifactEntry; readonly release: number | null },
       AnalysisError
     >
   > {
+    const requestedRelease = input.release;
     let manifestEntry: ArtifactEntry | undefined;
     const byRelease = new Map<number | null, ArtifactEntry[]>();
     for await (const member of reader.entries(signal)) {
@@ -462,7 +460,9 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     for await (const chunk of stream) {
       if (signal?.aborted) {
         stream.destroy();
-        throw new ArtifactReaderFailure("cancelled", "JAR read cancelled");
+        throw new ArtifactReaderFailure("cancelled", "JAR read cancelled", {
+          cause: signal.reason,
+        });
       }
       if (!Buffer.isBuffer(chunk)) {
         stream.destroy();
@@ -485,14 +485,11 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
   }
 
   /**
-   * Refuse before the (potentially ~50x) expansion into entry objects: a crafted
-   * class near the input budget can declare millions of fixed-stride table
-   * entries. The pre-count reads only table headers and allocates nothing.
-   */
-  /**
-   * Refuse before building the report: too many projected objects, too many
+   * Refuse before building the report, ahead of the (potentially ~50x)
+   * expansion into entry objects: too many projected objects, too many
    * debug-relevant attributes, or a projected serialization (counting every
-   * repeated constant-pool string) past the inline output budget.
+   * repeated constant-pool string) past the inline output budget. The
+   * pre-count reads only table headers and allocates nothing.
    */
   #rejectIfTooManyEntries(
     classFile: Parameters<typeof projectDebugOutput>[0],

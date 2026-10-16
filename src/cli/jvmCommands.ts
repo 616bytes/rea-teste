@@ -4,7 +4,8 @@ import type { Logger } from "pino";
 
 import { jvmDebugMetadataModule } from "../composition/jvm.js";
 import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { JVM_PROVIDER_IDENTITY } from "../jvm/JvmClassFileRelease.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 
@@ -14,7 +15,6 @@ export const registerJvmCommands = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  const service = jvmDebugMetadataModule.create(environment);
   cli.command(jvmDebugMetadataModule.cliCommand, {
     description:
       "Inspect compiler-emitted debug metadata in a selected local JVM .class file or JAR entry",
@@ -40,13 +40,12 @@ export const registerJvmCommands = (
         ),
     }),
     run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        try {
-          return await logCliCommand(
-            logger,
-            jvmDebugMetadataModule.cliCommand,
-            async () => {
-              const result = await service.inspect(
+      withCommandCancellation((signal) => {
+        const service = jvmDebugMetadataModule.create(environment);
+        return logCliCommand(logger, jvmDebugMetadataModule.cliCommand, () =>
+          finishAnalysisCommand(
+            () =>
+              service.inspect(
                 {
                   path: resolve(args.path),
                   ...(options.entry === undefined
@@ -57,15 +56,14 @@ export const registerJvmCommands = (
                     : { release: options.release }),
                 },
                 { signal },
-              );
-              return result.ok
-                ? result.value
-                : projectAnalysisError(result.error);
-            },
-          );
-        } finally {
-          await service.close();
-        }
+              ),
+            service,
+            JVM_PROVIDER_IDENTITY.id,
+            jvmDebugMetadataModule.contract.name,
+            undefined,
+            signal,
+          ),
+        );
       }),
   });
 };

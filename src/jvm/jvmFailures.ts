@@ -1,11 +1,16 @@
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
+  artifactFileCancellationCause,
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisPartialObservation,
+} from "../domain/analysisErrorBase.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -78,94 +83,131 @@ export const mapParseError = (
 };
 
 /**
- * Map a read or analysis failure. A failed descriptor close keeps the read's
- * primary failure (or cancellation) and binds its cleanup lease to the error,
- * so the provider's close() retries the retained handle.
+ * Map a read or analysis failure (mirrors the Rust reader). A failed descriptor
+ * close keeps the read's primary failure (or the caller's cancellation), adds
+ * the cleanup as a ProviderCleanupError in one aggregate, and binds the exact
+ * retained leases so the error resolves once the provider's close() releases
+ * them.
  */
 export const jvmClassFileFailure = (
   cause: unknown,
   path: string,
   signal?: AbortSignal,
 ): AnalysisError => {
-  const error =
+  const primary =
     cause instanceof ArtifactFileCleanupFailure &&
     cause.fileCleanupFailure.outcome.kind === "failed"
-      ? withCleanupFacts(
-          primaryFailure(cause.fileCleanupFailure.outcome.cause, path),
-          cause,
-        )
+      ? primaryFailure(cause.fileCleanupFailure.outcome.cause, path, signal)
       : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
-        ? withCleanupFacts(
-            new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
-            cause,
-          )
-        : primaryFailure(cause, path);
+        ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
+        : primaryFailure(cause, path, signal);
+  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
+    return primary;
+  const error = analysisErrorWithCleanupFailure(
+    primary,
+    jvmCleanupError(cause.cleanup, cause),
+    OPERATION,
+  );
   bindArtifactFileCleanup(cause, error);
   return error;
 };
 
-/** Attach a failed close as a cleanup fact to a primary failure. */
-const withCleanupFacts = (
-  primary: AnalysisError,
-  cause: ArtifactReaderFailure,
-): AnalysisError =>
-  cause.cleanup === undefined
-    ? primary
-    : analysisErrorWithCleanupFailure(
-        primary,
-        new ProviderCleanupError(
-          JVM_PROVIDER_IDENTITY.id,
-          cause.cleanup.resources,
-          { reason: cause.cleanup.reason },
-          { cause, operation: OPERATION },
-        ),
-        OPERATION,
-      );
+/** The provider-owned cleanup fact for resources that remain retained. */
+export const jvmCleanupError = (
+  cleanup: { readonly reason: string; readonly resources: readonly string[] },
+  cause: unknown,
+  partialObservation?: AnalysisPartialObservation,
+): ProviderCleanupError =>
+  new ProviderCleanupError(
+    JVM_PROVIDER_IDENTITY.id,
+    cleanup.resources,
+    { reason: cleanup.reason },
+    {
+      cause,
+      operation: OPERATION,
+      ...(partialObservation === undefined ? {} : { partialObservation }),
+    },
+  );
 
-/** Distinguish cancellation, access, integrity and limits for the primary failure. */
-const primaryFailure = (cause: unknown, path: string): AnalysisError => {
+const INPUT_ERROR_CODES = new Set([
+  "ENOENT",
+  "ENOTDIR",
+  "ELOOP",
+  "ENAMETOOLONG",
+  "EISDIR",
+  "ENOTFILE",
+]);
+
+/** Distinguish cancellation, caller input, access, integrity and limits from execution failures. */
+const primaryFailure = (
+  cause: unknown,
+  path: string,
+  signal: AbortSignal | undefined,
+): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  const cleanup =
-    cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
-      ? { cleanup: cause.cleanup }
-      : {};
-  const reason = cause instanceof Error ? cause.message : String(cause);
-  if (
-    (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled") ||
-    (cause instanceof Error && cause.name === "AbortError")
-  )
-    return new AnalysisCancelledError(OPERATION, { cause, ...cleanup });
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "file-size",
-      reason,
-      { max_input_bytes: JVM_LIMITS.inputBytes },
-      {
+  // A cancelled wait may surface the caller's own abort reason unwrapped.
+  if (signal?.aborted && cause === signal.reason)
+    return new AnalysisCancelledError(OPERATION, { cause });
+  if (cause instanceof ArtifactReaderFailure) return readerFailure(cause, path);
+  if (cause instanceof Error && "code" in cause) {
+    if (cause.code === "EACCES" || cause.code === "EPERM")
+      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
         cause,
-        ...cleanup,
-        remediationAction:
-          "The class-file size budget is fixed; select a smaller artifact.",
-      },
-    );
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-    return new AnalysisArtifactChangedError(OPERATION, path, reason, {
-      cause,
-      ...cleanup,
-    });
-  if (
-    cause instanceof Error &&
-    "code" in cause &&
-    (cause.code === "EACCES" || cause.code === "EPERM")
-  )
-    return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-      cause,
-      ...cleanup,
-    });
-  // The only work after input validation is reading the selected file and a
-  // total in-process parse, so a remaining thrown error is an artifact-read
-  // problem (missing path, not a regular file, I/O), not a producer fault.
-  return new AnalysisInputError(OPERATION, { cause, ...cleanup }, [
-    { path: ["path"], reason: "invalid_value", message: reason },
-  ]);
+      });
+    if (INPUT_ERROR_CODES.has(String(cause.code)))
+      return new AnalysisInputError(OPERATION, { cause }, [
+        {
+          path: ["path"],
+          reason: "invalid_value",
+          message: `Selected artifact could not be read (${String(cause.code)}): ${cause.message}`,
+        },
+      ]);
+  }
+  return executionFailure(cause, path);
 };
+
+const readerFailure = (
+  cause: ArtifactReaderFailure,
+  path: string,
+): AnalysisError => {
+  switch (cause.reason) {
+    case "cancelled":
+      return new AnalysisCancelledError(OPERATION, {
+        cause: artifactFileCancellationCause(cause),
+      });
+    case "limit":
+      return new AnalysisResourceConstraintError(
+        OPERATION,
+        "file-size",
+        cause.message,
+        { max_input_bytes: JVM_LIMITS.inputBytes },
+        {
+          cause,
+          remediationAction:
+            "The class-file size budget is fixed; select a smaller artifact.",
+        },
+      );
+    case "integrity":
+      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
+        cause,
+      });
+    case "path":
+    case "format":
+      return new AnalysisInputError(OPERATION, { cause }, [
+        { path: ["path"], reason: "invalid_format", message: cause.message },
+      ]);
+    case "io":
+    case "unavailable":
+      return executionFailure(cause, path);
+  }
+};
+
+/** Local I/O and lifecycle faults are the reader's execution failures, not caller input. */
+const executionFailure = (cause: unknown, path: string): AnalysisError =>
+  new ProviderAdapterError(JVM_PROVIDER_IDENTITY.id, OPERATION, {
+    cause,
+    diagnostics: {
+      path,
+      reason: cause instanceof Error ? cause.message : String(cause),
+    },
+  });

@@ -628,6 +628,17 @@ const addPackageRole = (
     directoryPaths: context.directoryPaths,
     unanalyzedFiles: context.unanalyzedFiles,
   });
+  if (resolution.resolution_status === "resolved") {
+    const roots =
+      context.applicationRootsByEntrypoint.get(resolution.resolved_path) ??
+      new Set<string>();
+    roots.add(
+      input.packageFile.path
+        .slice(0, -"package.json".length)
+        .replace(/\/$/u, ""),
+    );
+    context.applicationRootsByEntrypoint.set(resolution.resolved_path, roots);
+  }
   const role = createElectronRoleNode(context, {
     kind: input.kind,
     anchor: input.packageFile,

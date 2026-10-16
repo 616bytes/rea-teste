@@ -112,6 +112,7 @@ function* buildJavaScriptArtifactGraphInputSteps(
     chunkNodes: new Map(),
     moduleNodes: new Map(),
     containerNodes: new Map([[snapshot.manifest.root_sha256, root]]),
+    applicationRootsByEntrypoint: new Map(),
   };
   addJavaScriptArtifactContainers(context);
   yield;

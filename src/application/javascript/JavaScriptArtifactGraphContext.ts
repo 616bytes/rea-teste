@@ -54,6 +54,8 @@ export interface JavaScriptArtifactGraphContext {
   readonly chunkNodes: Map<string, ApplicationNode>;
   readonly moduleNodes: Map<string, ApplicationNode>;
   readonly containerNodes: Map<string, ApplicationNode>;
+  /** Package-entrypoint resolution owns the source occurrence's application base. */
+  readonly applicationRootsByEntrypoint: Map<string, Set<string>>;
 }
 
 /** Application manifests exclude dependency packages but retain nested app roots. */
@@ -83,7 +85,8 @@ export const applicationRootPath = (
   context: JavaScriptArtifactGraphContext,
   source: JavaScriptArtifactFile,
 ): string | null => {
-  const roots: string[] = [];
+  const entryRoots = context.applicationRootsByEntrypoint.get(source.path);
+  const roots = new Set<string>(entryRoots);
   const directories = source.path.split("/").slice(0, -1);
   for (let depth = directories.length; depth >= 0; depth -= 1) {
     const root = directories.slice(0, depth).join("/");
@@ -99,14 +102,30 @@ export const applicationRootPath = (
     if (metadata?.status !== "included") return null;
     const defaultEntry = context.filesByPath.get(`${prefix}index.js`);
     if (
-      metadata.main !== null ||
-      metadata.renderer !== null ||
-      defaultEntry?.container_sha256 === source.container_sha256
+      entryRoots === undefined &&
+      (metadata.main !== null ||
+        metadata.renderer !== null ||
+        defaultEntry?.container_sha256 === source.container_sha256)
     )
-      roots.push(root);
+      roots.add(root);
   }
-  if (roots.length > 1) return null;
-  if (roots[0] !== undefined) return roots[0];
+  if (roots.size > 1) return null;
+  for (const root of roots) return root;
+  // An unparsed sibling package may own an entry outside its own directory.
+  // Inventory presence must not become an absent-owner fallback.
+  if (
+    context.fileSet.files.some(
+      (file) =>
+        file.kind === "package-json" &&
+        file.container_sha256 === source.container_sha256 &&
+        !dependencyManifest(file.path) &&
+        !context.analysis.packages.some(
+          (metadata) =>
+            metadata.path === file.path && metadata.status === "included",
+        ),
+    )
+  )
+    return null;
   return (
     context.fileSet.containers.find(
       ({ sha256, path }) =>

@@ -76,6 +76,10 @@ const writeRuntimeFixture = async (root: string): Promise<void> => {
     "app/sub/dist%2Findex.html": "wrapped source decoy",
     "app/sub/plain.html": "wrapped source decoy",
     "app/sub/absent.html": "wrapped missing-target decoy",
+    "external-app/package.json": JSON.stringify({ main: "../shared/main.cjs" }),
+    "shared/main.cjs": loadFileSource,
+    "external-app/dist%2Findex.html": "external-main application target",
+    "external-app/plain.html": "external-main application target",
     "default-app/package.json": JSON.stringify({ name: "default-entry-app" }),
     "default-app/index.js": loadFileSource,
     "default-app/dist%2Findex.html": "default-entry application target",
@@ -96,19 +100,29 @@ const writeRuntimeFixture = async (root: string): Promise<void> => {
     "sub/dist%2Findex.html": "nested decoy",
     "sub/plain.html": "nested decoy",
     "sub/absent.html": "nested-only decoy",
+    "external-app/package.json": JSON.stringify({ main: "../shared/main.cjs" }),
+    "shared/main.cjs": loadFileSource,
+    "external-app/dist%2Findex.html": "external-main application target",
+    "external-app/plain.html": "external-main application target",
   });
   await createPackageWithOptions(archiveSource, join(root, "a.asar"), {});
   // Equal container digests must not select the other archive occurrence.
   await copyFile(join(root, "a.asar"), join(root, "b.asar"));
 };
 
-cliTest.for(["CLI", "stdio MCP"] as const)(
-  "keeps unselected package ownership unknown through %s",
-  async (surface, { cli }) => {
+cliTest.for(
+  (["CLI", "stdio MCP"] as const).flatMap((surface) => [
+    { surface, source: "app/sub/main.cjs" },
+    { surface, source: "shared/main.cjs" },
+  ]),
+)(
+  "keeps unselected package ownership unknown through $surface for $source",
+  async ({ surface, source }, { cli }) => {
     const root = await createTestTempDirectory("rea-selected-loadfile-");
     await writeRuntimeFixture(root);
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root, [
-      "app/sub/main.cjs",
+      "package.json",
+      source,
     ]);
     const roles = graph.nodes.filter(
       ({ kind, observations }) =>
@@ -146,16 +160,21 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     const root = await createTestTempDirectory("rea-runtime-percent-");
     await writeRuntimeFixture(root);
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
-    for (const [prefix, declared] of [
-      "",
-      "app/",
-      "default-app/",
-      "ambiguous/",
-      "a.asar/",
-      "b.asar/",
-    ].flatMap((prefix) =>
+    for (const [sourcePath, targetRoot, declared] of (
+      [
+        ["sub/main.cjs", ""],
+        ["app/sub/main.cjs", "app/"],
+        ["shared/main.cjs", "external-app/"],
+        ["default-app/index.js", "default-app/"],
+        ["ambiguous/sub/main.cjs", null],
+        ["a.asar/sub/main.cjs", "a.asar/"],
+        ["b.asar/sub/main.cjs", "b.asar/"],
+        ["a.asar/shared/main.cjs", "a.asar/external-app/"],
+        ["b.asar/shared/main.cjs", "b.asar/external-app/"],
+      ] as const
+    ).flatMap(([sourcePath, targetRoot]) =>
       ["dist%2Findex.html", "plain.html", "absent.html"].map(
-        (declared) => [prefix, declared] as const,
+        (declared) => [sourcePath, targetRoot, declared] as const,
       ),
     )) {
       const role = graph.nodes.find(
@@ -166,16 +185,15 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
               properties.declared_path === declared &&
               evidence.location.available &&
               evidence.location.value.kind === "source-range" &&
-              evidence.location.value.source ===
-                `${prefix}${prefix === "default-app/" ? "index.js" : "sub/main.cjs"}`,
+              evidence.location.value.source === sourcePath,
           ),
       );
       expect(role).toBeDefined();
       if (role === undefined) throw new Error(`Missing loadFile ${declared}`);
       const expected =
-        declared === "absent.html" || prefix === "ambiguous/"
+        declared === "absent.html" || targetRoot === null
           ? null
-          : `${prefix}${declared}`;
+          : `${targetRoot}${declared}`;
       expect(role.observations).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -184,7 +202,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
               runtime_path_base: "application-root",
               resolved_path: expected,
               resolution_status:
-                prefix === "ambiguous/"
+                targetRoot === null
                   ? "unavailable"
                   : expected === null
                     ? "not-found"

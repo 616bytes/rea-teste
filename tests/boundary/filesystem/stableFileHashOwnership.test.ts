@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { open as openFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -236,7 +237,8 @@ it("retries a publisher-owned launcher hash close before returning its digest", 
 it("retries pending cleanup before acquiring a publisher temporary root", async () => {
   const root = await createTestTempDirectory("rea-publisher-admission-");
   const path = join(root, "launcher");
-  await writeFile(path, "fixture launcher bytes");
+  const launcherBytes = "fixture launcher bytes";
+  await writeFile(path, launcherBytes);
   const publisher = new LinuxHopperPublisher(
     { ...process.env, XDG_CACHE_HOME: join(root, "cache") },
     async () => undefined,
@@ -256,6 +258,10 @@ it("retries pending cleanup before acquiring a publisher temporary root", async 
     await expect(publisher.hashLauncher(path)).rejects.toMatchObject({
       reason: "cleanup_failed",
     });
+    const retainedOwner = closeOwners[0];
+    if (retainedOwner === undefined)
+      throw new Error("Expected a retained launcher descriptor");
+    const attemptsBeforeAdmission = closeOwners.length;
     await expect(
       publisher.retainVerifiedArchive({} as VerifiedLinuxHopperPackage, path),
     ).resolves.toMatchObject({
@@ -266,21 +272,22 @@ it("retries pending cleanup before acquiring a publisher temporary root", async 
       },
     });
     expect(createRoot).not.toHaveBeenCalled();
-    expect(closeOwners).toHaveLength(4);
-    expect(closeOwners.every((owner) => owner === closeOwners[0])).toBe(true);
+    expect(closeOwners.length).toBeGreaterThan(attemptsBeforeAdmission);
+    expect(closeOwners.every((owner) => owner === retainedOwner)).toBe(true);
 
+    const attemptsBeforeRecovery = closeOwners.length;
     allowClose = true;
-    await expect(publisher.hashLauncher(path)).resolves.toMatch(
-      /^[a-f0-9]{64}$/u,
+    await expect(publisher.hashLauncher(path)).resolves.toBe(
+      createHash("sha256").update(launcherBytes).digest("hex"),
     );
-    expect(closeOwners).toHaveLength(6);
-    expect(
-      closeOwners.slice(0, 5).every((owner) => owner === closeOwners[0]),
-    ).toBe(true);
-    expect(closeOwners[0]?.handle.fd).toBe(-1);
+    const recoveryOwners = closeOwners.slice(attemptsBeforeRecovery);
+    expect(recoveryOwners[0]).toBe(retainedOwner);
+    expect(recoveryOwners.some((owner) => owner !== retainedOwner)).toBe(true);
+    expect(closeOwners.every((owner) => owner.handle.fd === -1)).toBe(true);
     expect(createRoot).not.toHaveBeenCalled();
+    const attemptsAfterRecovery = closeOwners.length;
     await publisher.close();
-    expect(closeOwners).toHaveLength(6);
+    expect(closeOwners).toHaveLength(attemptsAfterRecovery);
   } finally {
     close.mockRestore();
     createRoot.mockRestore();

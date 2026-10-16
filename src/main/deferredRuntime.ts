@@ -143,6 +143,9 @@ export const runDeferred = async (
     );
   };
   try {
+    // Keep cleanup reachable even if serve creates a server and then throws.
+    unregister = dependencies.registerShutdown(requestClose);
+    dependencies.captureShutdown?.(close);
     handle = dependencies.serve(
       (context) => {
         const catalog = firstCatalog ?? readCatalog();
@@ -186,8 +189,6 @@ export const runDeferred = async (
         },
       },
     );
-    unregister = dependencies.registerShutdown(requestClose);
-    dependencies.captureShutdown?.(close);
     return 0;
   } catch {
     await close();

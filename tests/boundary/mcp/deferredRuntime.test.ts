@@ -228,6 +228,71 @@ globalThis.Date = class extends NativeDate {
   });
 });
 
+it("retains process cleanup ownership after partial startup and failed cleanup", () => {
+  const child = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `
+import assert from "node:assert/strict";
+import { runDeferred } from "./dist/main/deferredRuntime.js";
+import { parseConfig } from "./dist/config/parseConfig.js";
+const config = parseConfig({ HOME: process.env.HOME });
+assert.equal(config.ok, true);
+const handlers = [];
+const calls = [0, 0];
+let unregistrations = 0;
+let captured;
+let registeredBeforeServe;
+const result = await runDeferred({
+  env: {},
+  writeStderr: () => {},
+  setExitCode: () => {},
+  registerShutdown: (handler) => {
+    handlers.push(handler);
+    return () => { unregistrations++; };
+  },
+  captureShutdown: (close) => { captured = close; },
+  serve: (factory) => {
+    registeredBeforeServe = handlers.length;
+    for (let index = 0; index < calls.length; index++) {
+      const server = factory({});
+      const close = server.server.close.bind(server.server);
+      server.server.close = async () => {
+        calls[index]++;
+        if (index === 0 && calls[index] === 1) throw new Error("close denied");
+        await close();
+      };
+    }
+    throw new Error("serve failed after creating servers");
+  },
+}, config.value).then(() => "unexpected success", (cause) => cause.name);
+assert.equal(result, "AggregateError");
+assert.equal(registeredBeforeServe, 1);
+assert.deepEqual(calls, [1, 1]);
+assert.equal(unregistrations, 0);
+assert.equal(typeof captured, "function");
+const retry = captured();
+handlers[0]();
+await retry;
+await new Promise((resolve) => setImmediate(resolve));
+assert.deepEqual(calls, [2, 1]);
+assert.equal(unregistrations, 1);
+await captured();
+assert.deepEqual(calls, [2, 1]);
+assert.equal(unregistrations, 1);
+console.log("STARTUP_CLEANUP_RETRIED");
+`,
+    ],
+    { cwd: process.cwd(), encoding: "utf8", timeout: 10000 },
+  );
+  expect(child.error).toBeUndefined();
+  expect(child.status, child.stderr).toBe(0);
+  expect(child.stdout).toBe("STARTUP_CLEANUP_RETRIED\n");
+  expect(child.stderr).toBe("");
+});
+
 it.each([
   { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" },
   { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" },
@@ -339,11 +404,13 @@ syncBuiltinESMExports();
 });
 
 it.each([
-  { failures: ["client"] },
-  { failures: ["client", "server", "session"] },
+  { failures: ["client"], producerFails: false },
+  { failures: ["client", "server", "session"], producerFails: false },
+  { failures: ["client"], producerFails: true },
+  { failures: [], producerFails: true },
 ])(
-  "settles every recorder owner when cleanup fails for $failures",
-  async ({ failures }) => {
+  "preserves producer failure=$producerFails and settles every recorder owner with cleanup failures=$failures",
+  async ({ failures, producerFails }) => {
     const directory = await copyCompiledPackage("rea-catalog-cleanup-");
     await cp(
       resolve("scripts/record-mcp-catalog.mjs"),
@@ -372,7 +439,10 @@ it.each([
     const clientModule = `data:text/javascript,${encodeURIComponent(`
 export class Client {
   async connect() {}
-  async listTools() { return { tools: [] }; }
+  async listTools() {
+    if (${JSON.stringify(producerFails)}) throw new Error("catalog generation failed");
+    return { tools: [] };
+  }
   async listPrompts() { return { prompts: [] }; }
   getServerVersion() {}
   getServerCapabilities() {}
@@ -424,8 +494,17 @@ registerHooks({
     ).toEqual(new Set(["client", "server", "session"]));
     for (const owner of failures)
       expect(child.stderr).toContain(`${owner} cleanup failed`);
-    expect(child.stderr).toContain("AggregateError: Catalog cleanup failed");
-    expect(await readdir(temporary)).toHaveLength(1);
+    if (producerFails) {
+      expect(child.stderr).toContain("Error: catalog generation failed");
+      if (failures.length > 0)
+        expect(
+          child.stderr.indexOf("Error: catalog generation failed"),
+        ).toBeLessThan(child.stderr.indexOf(`${failures[0]} cleanup failed`));
+    }
+    if (failures.length > 0)
+      expect(child.stderr).toContain("AggregateError: Catalog cleanup failed");
+    else expect(child.stderr).not.toContain("AggregateError");
+    expect(await readdir(temporary)).toHaveLength(failures.length > 0 ? 1 : 0);
   },
 );
 

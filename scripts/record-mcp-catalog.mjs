@@ -32,6 +32,7 @@ const environment = {
   XDG_STATE_HOME: join(home, "state"),
 };
 const cleanup = [];
+let producerFailure;
 try {
   const config = parseConfig(environment);
   if (!config.ok) throw config.error;
@@ -73,6 +74,9 @@ try {
     join(compiled, "recordedMcpCatalog.js"),
     `/** Recorded from the compiled runtime; do not edit. */\nexport const RECORDED_MCP_CATALOG_SHA256 = ${JSON.stringify(digest)};\n`,
   );
+} catch (cause) {
+  producerFailure = { cause };
+  throw cause;
 } finally {
   const results = await Promise.allSettled(
     cleanup.reverse().map((close) => Promise.resolve().then(close)),
@@ -80,10 +84,18 @@ try {
   const failures = results.flatMap((result) =>
     result.status === "rejected" ? [result.reason] : [],
   );
+  if (failures.length === 0) {
+    try {
+      await rm(home, { recursive: true, force: true });
+    } catch (cause) {
+      failures.push(cause);
+    }
+  }
   if (failures.length > 0)
     throw new AggregateError(
-      failures,
+      producerFailure === undefined
+        ? failures
+        : [producerFailure.cause, ...failures],
       `Catalog cleanup failed; temporary home retained at ${home}`,
     );
-  await rm(home, { recursive: true, force: true });
 }

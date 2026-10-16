@@ -371,3 +371,74 @@ describe("JvmClassFileProvider multi-release identity", () => {
     ]);
   });
 });
+
+describe("JvmClassFileProvider manifest member attributes", () => {
+  const VERSIONED = `META-INF/versions/17/${ENTRY}`;
+
+  /** A multi-release JAR whose manifest carries the given external attributes. */
+  const jarWithManifestAttributes = async (
+    file: string,
+    options: { externalFileAttributes: number; msDosCompatible?: boolean },
+  ): Promise<string> => {
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("META-INF/MANIFEST.MF", new TextReader(MR_MANIFEST), {
+      ...options,
+    });
+    await writer.add(ENTRY, new Uint8ArrayReader(minimalClass(52)));
+    await writer.add(VERSIONED, new Uint8ArrayReader(minimalClass(61)));
+    return writeJar(file, await writer.close());
+  };
+
+  // The JDK ignores external attributes: only a trailing "/" makes a name a
+  // directory (audit z09/z10: OpenJDK 25 multi-release true).
+  it.each([
+    ["Unix directory mode", { externalFileAttributes: 0o040755 * 0x10000 }],
+    [
+      "MS-DOS directory attribute",
+      { externalFileAttributes: 0x10, msDosCompatible: true },
+    ],
+  ])("honors a manifest stored with a %s", async (_label, options) => {
+    const result = await provider.inspect({
+      path: await jarWithManifestAttributes("dir-attr-manifest.jar", options),
+      entry: ENTRY,
+      release: 17,
+    });
+    if (!result.ok) throw result.error;
+    const r = result.value.result as {
+      selected_entry: { release: number | null };
+      class: { major_version: number };
+    };
+    expect(r.selected_entry.release).toBe(17);
+    expect(r.class.major_version).toBe(61);
+  });
+
+  it("reports multi-release status as unknown, not absent, for a symlink-moded manifest", async () => {
+    const result = await provider.inspect({
+      path: await jarWithManifestAttributes("symlink-manifest.jar", {
+        externalFileAttributes: 0o120777 * 0x10000,
+      }),
+      entry: ENTRY,
+      release: 17,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+    expect(result.error.message).toContain("is stored as a ZIP symlink");
+    expect(result.error.message).toContain("multi-release JAR is unknown");
+  });
+
+  it("refuses a symlink-moded class member as unavailable, not absent", async () => {
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add(ENTRY, new Uint8ArrayReader(minimalClass(52)), {
+      externalFileAttributes: 0o120777 * 0x10000,
+    });
+    const result = await provider.inspect({
+      path: await writeJar("symlink-class.jar", await writer.close()),
+      entry: ENTRY,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+    expect(result.error.message).toContain("unavailable, not absent");
+  });
+});

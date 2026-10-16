@@ -372,7 +372,10 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     { jar, entry, input, signal }: JarRequest,
   ): Promise<
     Result<
-      { readonly member: ArtifactEntry; readonly release: number | null },
+      {
+        readonly member: ArtifactEntry;
+        readonly release: number | null;
+      },
       AnalysisError
     >
   > {
@@ -380,11 +383,11 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     let manifestEntry: ArtifactEntry | undefined;
     const byRelease = new Map<number | null, ArtifactEntry[]>();
     for await (const member of reader.entries(signal)) {
-      // Encrypted members are kept as candidates: the entry exists but is
-      // unreadable, which must be reported as such, not as "not found".
-      if (member.kind !== "file") continue;
-      // The JDK finds the manifest by its stored name in any ASCII case; the
-      // last such member wins, and a `./`-prefixed name is not the manifest.
+      // The JDK finds members by stored name and ignores external attributes,
+      // so every kind is matched here; an unreadable match (encrypted, or a
+      // symlink the reader does not read) is reported as such, never absent.
+      // The manifest matches in any ASCII case and the last such member wins;
+      // a `./`-prefixed name is not the manifest.
       if (isJarManifestName(member.storedPath ?? member.path)) {
         manifestEntry = member;
         continue;
@@ -403,12 +406,18 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       requestedRelease !== undefined ||
       !byRelease.has(null) ||
       versionedEntry !== undefined;
-    const multiRelease =
-      needsManifest &&
-      manifestEntry !== undefined &&
-      isMultiReleaseManifest(
-        await this.#readEntryBytes(reader, manifestEntry, signal),
+    const manifest = needsManifest
+      ? await this.#readManifest(reader, manifestEntry, signal)
+      : ({ kind: "not-read" } as const);
+    if (manifest.kind === "unknown")
+      return err(
+        new AnalysisUnsupportedTargetError(
+          OPERATION,
+          jar,
+          `${manifest.reason}; REA cannot read it, so whether ${jar} is a multi-release JAR is unknown and its META-INF/versions entries cannot be resolved.`,
+        ),
       );
+    const multiRelease = manifest.kind === "multi-release";
     if (!multiRelease && requestedRelease !== undefined)
       return err(
         this.#inputError(
@@ -449,6 +458,14 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
         ),
       );
     const member = selectedMembers[0]!;
+    if (member.kind !== "file")
+      return err(
+        new AnalysisUnsupportedTargetError(
+          OPERATION,
+          jar,
+          `The selected entry ${entry} is stored as a ZIP ${member.kind}, which REA does not read as member bytes; its debug metadata is unavailable, not absent.`,
+        ),
+      );
     if (member.encrypted)
       return err(
         new AnalysisUnsupportedTargetError(
@@ -458,6 +475,34 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
         ),
       );
     return ok({ member, release: selection.release });
+  }
+
+  /**
+   * Decide the JDK's multi-release status from the last manifest member. A
+   * manifest REA cannot read leaves that status unknown, never false.
+   */
+  async #readManifest(
+    reader: ZipArtifactReader,
+    manifest: ArtifactEntry | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<
+    | { readonly kind: "multi-release" | "not-multi-release" }
+    | { readonly kind: "unknown"; readonly reason: string }
+  > {
+    if (manifest === undefined) return { kind: "not-multi-release" };
+    const name = JSON.stringify(manifest.storedPath ?? manifest.path);
+    if (manifest.kind !== "file")
+      return {
+        kind: "unknown",
+        reason: `The JAR manifest member ${name} is stored as a ZIP ${manifest.kind}, which the JDK reads as a file but REA does not read`,
+      };
+    return {
+      kind: isMultiReleaseManifest(
+        await this.#readEntryBytes(reader, manifest, signal),
+      )
+        ? "multi-release"
+        : "not-multi-release",
+    };
   }
 
   #inputError(field: "entry" | "release", message: string): AnalysisInputError {

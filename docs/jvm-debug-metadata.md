@@ -52,7 +52,12 @@ main section parses as `java.util.jar.Attributes` does with a last
 `Multi-Release` value of `true` ignoring case and untrimmed. Any parse failure
 in the main section, such as a missing space after a colon, an invalid
 attribute name, a byte-order mark, or a line longer than the JDK's line buffer,
-makes the JAR not multi-release. A release is a
+makes the JAR not multi-release. Like the JDK, REA ignores ZIP external
+attributes: only a trailing `/` makes a member a directory, so a manifest or
+class member marked as a directory by Unix-mode or MS-DOS attributes is read as
+a file. A manifest REA cannot read, such as one stored as a symlink, leaves the
+multi-release status unknown: a call that needs it is refused as unsupported
+rather than treating the JAR as not multi-release. A release is a
 `META-INF/versions/<N>/` directory whose `<N>` is a decimal number from 9 to
 2147483647 without leading zeros; other directories are inert resources. REA
 lists every such release present, while a running JDK only consults versions

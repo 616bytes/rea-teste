@@ -1,5 +1,6 @@
 "use strict";
 
+const { isProxy } = require("node:util").types;
 const {
   createElectronActiveBoundaryPatches,
 } = require("./electron-active-hook-boundaries.cjs");
@@ -385,13 +386,10 @@ const reachesHookListenerWrapper = (listener) => {
   ) {
     if (hookListenerWrappers.has(candidate)) return true;
     visited.add(candidate);
-    // Inspect data links without evaluating application-owned accessors. A
-    // function whose metadata cannot be inspected is not a known hook wrapper.
-    try {
-      candidate = Object.getOwnPropertyDescriptor(candidate, "listener")?.value;
-    } catch {
-      return false;
-    }
+    // Proxy reflection can run application traps; ordinary own descriptors
+    // expose data links without evaluating application-owned accessors.
+    if (isProxy(candidate)) return false;
+    candidate = Object.getOwnPropertyDescriptor(candidate, "listener")?.value;
   }
   return false;
 };

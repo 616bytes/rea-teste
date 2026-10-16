@@ -814,24 +814,39 @@ process.stdout.write(JSON.stringify({ plain: scenario(new EventEmitter()), hooke
   expect(hooked).toEqual(plain);
 });
 
-it("does not evaluate listener accessors while classifying ipcMain wrappers", async () => {
-  const root = await createTestTempDirectory("rea-electron-hook-ipc-accessor-");
-  temporary.push(root);
-  await writeElectronFixture(root);
-  const script = join(root, "ipc-listener-accessor.cjs");
-  await writeFile(
-    script,
-    `const { ipcMain } = require("electron");
+it.each(["accessor", "proxy"])(
+  "does not evaluate %s listener metadata while classifying ipcMain wrappers",
+  async (kind) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-hook-ipc-accessor-",
+    );
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const script = join(root, "ipc-listener-accessor.cjs");
+    await writeFile(
+      script,
+      `const { ipcMain } = require("electron");
 const { EventEmitter } = require("node:events");
 const event = { sender: { id: 9 } };
 const scenario = (emitter) => {
   let reads = 0;
   let calls = 0;
-  const listener = () => { calls += 1; };
-  Object.defineProperty(listener, "listener", { get() {
+  let listener = () => { calls += 1; };
+  const inspectMetadata = () => {
     reads += 1;
     throw new Error("listener metadata must not run during registration");
-  }});
+  };
+  if (${JSON.stringify(kind)} === "accessor") {
+    Object.defineProperty(listener, "listener", { get: inspectMetadata });
+  } else {
+    listener = new Proxy(listener, {
+      getOwnPropertyDescriptor: inspectMetadata,
+      get(target, key, receiver) {
+        if (key === "listener") return inspectMetadata();
+        return Reflect.get(target, key, receiver);
+      },
+    });
+  }
   let failure = null;
   let registered = 0;
   try {
@@ -844,16 +859,17 @@ const scenario = (emitter) => {
 };
 process.stdout.write(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain) }) + "\\n");
 `,
-  );
-  const execution = await runNode(script, root);
-  expect(execution.code, execution.stderr).toBe(0);
-  const { plain, hooked } = JSON.parse(execution.stdout) as {
-    plain: Record<string, unknown>;
-    hooked: Record<string, unknown>;
-  };
-  expect(plain).toEqual({ reads: 0, calls: 1, registered: 1, failure: null });
-  expect(hooked).toEqual(plain);
-});
+    );
+    const execution = await runNode(script, root);
+    expect(execution.code, execution.stderr).toBe(0);
+    const { plain, hooked } = JSON.parse(execution.stdout) as {
+      plain: Record<string, unknown>;
+      hooked: Record<string, unknown>;
+    };
+    expect(plain).toEqual({ reads: 0, calls: 1, registered: 1, failure: null });
+    expect(hooked).toEqual(plain);
+  },
+);
 
 it("isolates hook and exercise from ancestor Electron packages", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ancestor-");

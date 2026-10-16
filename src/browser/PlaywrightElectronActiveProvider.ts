@@ -34,6 +34,7 @@ import { selectCapturedProcessGroupIds } from "../process/ProcessOwnershipProces
 import {
   runElectronActions,
   readApplicationState,
+  readFinalApplicationState,
   runWithExecutionLimits,
 } from "./PlaywrightElectronActiveActions.js";
 import { projectElectronActiveCapture } from "./PlaywrightElectronActiveProjection.js";
@@ -137,12 +138,15 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         ...(captureBaseline === undefined ? {} : { captureBaseline }),
       };
       lineage = await observeOwnedProcessLineage(ownership);
-      initialState = await readApplicationState(application);
-      actions = await runElectronActions(application, input, options);
-      const state = await runWithExecutionLimits(
+      initialState = await runWithExecutionLimits(
         readApplicationState(application),
-        undefined,
-        options.signal?.aborted ? performance.now() + 5_000 : undefined,
+        options.signal,
+        startupDeadline,
+      );
+      actions = await runElectronActions(application, input, options);
+      const state = await readFinalApplicationState(
+        application,
+        options.signal,
       );
       capture = projectElectronActiveCapture(paths, actions, state);
       outcome = options.signal?.aborted

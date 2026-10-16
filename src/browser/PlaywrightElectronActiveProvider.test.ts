@@ -9,6 +9,7 @@ import {
 } from "../../tests/fixtures/electron/fuseImage.js";
 
 import * as processOwnership from "../process/ProcessOwnership.js";
+import * as processOwnershipObservation from "../process/ProcessOwnershipObservation.js";
 import * as electronActions from "./PlaywrightElectronActiveActions.js";
 import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
 import type { OwnedProcessGroup } from "../process/ProcessOwnership.js";
@@ -162,12 +163,16 @@ it("retains the partial capture without taskkill when Windows lineage is unavail
   const terminateTree = vi
     .spyOn(processOwnership, "cleanupWindowsProcessTree")
     .mockResolvedValue({ cleaned: true, signaled: true });
-  vi.spyOn(electronActions, "readApplicationState").mockResolvedValue({
+  const state = {
     windows: [],
     metrics: [],
     electronVersion: "44.0.0",
     hookSnapshot: emptyHookSnapshot(),
-  });
+  };
+  vi.spyOn(electronActions, "readApplicationState").mockResolvedValue(state);
+  vi.spyOn(electronActions, "readFinalApplicationState").mockResolvedValue(
+    state,
+  );
   const application = {
     process: () => ({ pid: 424242 }),
     close: vi.fn(async () => undefined),
@@ -222,9 +227,12 @@ it("retains the initial snapshot when the final state read fails", async () => {
     electronVersion: "44.0.0",
     hookSnapshot: emptyHookSnapshot(),
   };
-  vi.spyOn(electronActions, "readApplicationState")
-    .mockResolvedValueOnce(initialState)
-    .mockRejectedValueOnce(new Error("final renderer state unavailable"));
+  vi.spyOn(electronActions, "readApplicationState").mockResolvedValueOnce(
+    initialState,
+  );
+  vi.spyOn(electronActions, "readFinalApplicationState").mockRejectedValueOnce(
+    new Error("final renderer state unavailable"),
+  );
   const application = {
     process: () => ({ pid: 424242 }),
     close: vi.fn(async () => undefined),
@@ -289,5 +297,120 @@ it("rejects active capture before launch when EnableNodeCliInspectArguments fuse
     path: disabledBinary,
     message: expect.stringContaining("EnableNodeCliInspectArguments"),
     remediationAction: expect.stringContaining("inspect_electron_page"),
+  });
+});
+
+const stubVerifiedElectronCleanup = () => {
+  vi.spyOn(
+    processOwnershipObservation,
+    "observeOwnedProcessLineage",
+  ).mockImplementation(async (group) => ({
+    status: "verified",
+    observedAt: "2026-10-10T00:00:00.000Z",
+    lineage: {
+      runId: group.runId,
+      launcherPid: group.leaderPid,
+      launcherParentPid: process.pid,
+      processGroupId: group.processGroupId,
+      descendants: [],
+    },
+  }));
+  return [
+    vi
+      .spyOn(processOwnership, "cleanupWindowsProcessTree")
+      .mockResolvedValue({ cleaned: true, signaled: true }),
+    vi
+      .spyOn(processOwnership, "cleanupOwnedProcessGroup")
+      .mockResolvedValue({ cleaned: true, signaled: true }),
+    vi
+      .spyOn(processOwnership, "verifyNoTokenOwnedProcesses")
+      .mockResolvedValue({ cleaned: true, signaled: false }),
+  ];
+};
+
+const captureCancelledWhilePending = async (
+  application: Record<string, unknown>,
+  actions: unknown[],
+) => {
+  const controller = new AbortController();
+  const provider = new PlaywrightElectronActiveProvider({}, async () => {
+    setTimeout(() => controller.abort(), 50);
+    return application as unknown as Awaited<
+      ReturnType<typeof import("playwright-core")._electron.launch>
+    >;
+  });
+  return provider.capture(
+    {
+      ...electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: process.execPath,
+        actions,
+      }),
+      application_root: dirname(process.execPath),
+    },
+    { signal: controller.signal },
+  );
+};
+
+it("cancels a windowless wait action and cleans up the owned application", async () => {
+  const cleanupSpies = stubVerifiedElectronCleanup();
+  const state = {
+    windows: [],
+    metrics: [],
+    electronVersion: "44.0.0",
+    hookSnapshot: emptyHookSnapshot(),
+  };
+  vi.spyOn(electronActions, "readApplicationState").mockResolvedValue(state);
+  vi.spyOn(electronActions, "readFinalApplicationState").mockResolvedValue(
+    state,
+  );
+  const application = {
+    process: () => ({ pid: 424242 }),
+    close: vi.fn(async () => undefined),
+    windows: () => [],
+    firstWindow: vi.fn(() => new Promise<never>(() => undefined)),
+  };
+
+  const result = await captureCancelledWhilePending(application, [
+    { step_id: "settle", kind: "wait", duration_ms: 10 },
+  ]);
+
+  expect(application.firstWindow).toHaveBeenCalledOnce();
+  expect(application.close).toHaveBeenCalledOnce();
+  expect(cleanupSpies.some((spy) => spy.mock.calls.length > 0)).toBe(true);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected the capture to be cancelled");
+  expect(result.error).toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "cancelled",
+    partialObservation: {
+      kind: "electron-active-observation",
+      capture: {
+        actions: [{ step_id: "settle", kind: "wait", status: "cancelled" }],
+      },
+    },
+  });
+});
+
+it("cancels a pending initial state read and cleans up the owned application", async () => {
+  const cleanupSpies = stubVerifiedElectronCleanup();
+  vi.spyOn(electronActions, "readApplicationState").mockReturnValue(
+    new Promise<never>(() => undefined),
+  );
+  const application = {
+    process: () => ({ pid: 424242 }),
+    close: vi.fn(async () => undefined),
+    windows: () => [],
+  };
+
+  const result = await captureCancelledWhilePending(application, []);
+
+  expect(application.close).toHaveBeenCalledOnce();
+  expect(cleanupSpies.some((spy) => spy.mock.calls.length > 0)).toBe(true);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected the capture to be cancelled");
+  expect(result.error).toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "cancelled",
   });
 });

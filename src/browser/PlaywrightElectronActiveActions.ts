@@ -10,6 +10,7 @@ import {
 } from "../domain/javascript/electronActiveObservation.js";
 
 const OPERATION = "capture_electron_scenario" as const;
+const CANCELLED_STATE_READ_TIMEOUT_MS = 5_000;
 
 const hookSnapshotSchema = z.strictObject({
   events: z.array(electronActiveTimelineEventSchema),
@@ -63,6 +64,9 @@ export type ElectronHookEvent = z.infer<
 >;
 export type ElectronMetrics = z.infer<typeof metricSchema>[];
 type ElectronWindowMetadata = z.infer<typeof windowMetadataSchema>;
+type ElectronApplicationState = Awaited<
+  ReturnType<typeof readApplicationState>
+>;
 
 /** Run explicit actions against provider-owned Electron windows. */
 export const runElectronActions = async (
@@ -160,9 +164,12 @@ const runAction = async ({
     case "wait": {
       const page =
         selectedWindow ??
-        (await application.firstWindow({
-          timeout: 0,
-        }));
+        (await runWithExecutionLimits(
+          application.firstWindow({
+            timeout: 0,
+          }),
+          options.signal,
+        ));
       await runWithExecutionLimits(
         page.waitForTimeout(action.duration_ms),
         options.signal,
@@ -353,6 +360,32 @@ export const readApplicationState = async (
     electronVersion,
     hookSnapshot,
   };
+};
+
+/**
+ * Read the post-action state. Cancellation before or during the read leaves the
+ * same bounded grace period so a responsive app still yields its final state.
+ */
+export const readFinalApplicationState = async (
+  application: ElectronApplication,
+  signal: AbortSignal | undefined,
+): Promise<ElectronApplicationState> => {
+  const state = readApplicationState(application);
+  if (signal?.aborted !== true)
+    try {
+      return await runWithExecutionLimits(state, signal);
+    } catch (cause: unknown) {
+      if (
+        !(cause instanceof BrowserObservationError) ||
+        cause.reason !== "cancelled"
+      )
+        throw cause;
+    }
+  return runWithExecutionLimits(
+    state,
+    undefined,
+    performance.now() + CANCELLED_STATE_READ_TIMEOUT_MS,
+  );
 };
 
 /** Apply an optional lifecycle deadline and caller cancellation to an operation. */

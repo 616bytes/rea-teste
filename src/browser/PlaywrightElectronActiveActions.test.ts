@@ -1,13 +1,21 @@
 // Fixture-backed action coverage; real Electron verification lives in
 // `npm run verify:electron`.
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
+import type { ElectronApplication } from "playwright-core";
 
 import {
   electronActiveObservationInputSchema,
   electronActiveObservationResultSchema,
 } from "../domain/javascript/electronActiveObservation.js";
 import { createElectronActiveObservationFixtureResult } from "../domain/javascript/electronActiveObservation.fixture.js";
-import { runElectronActions } from "./PlaywrightElectronActiveActions.js";
+import {
+  readFinalApplicationState,
+  runElectronActions,
+} from "./PlaywrightElectronActiveActions.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 it("requires observed Electron retention and coverage instead of repairing old results", () => {
   const result = createElectronActiveObservationFixtureResult("/opt/app");
@@ -366,4 +374,60 @@ it("rejects action outcomes that disagree with their error state", () => {
       actions: [{ ...action, status: "failed", error: null }],
     }).success,
   ).toBe(false);
+});
+
+it("cancels a wait without window_index while the app has no window", async () => {
+  const controller = new AbortController();
+  const application = {
+    firstWindow: vi.fn(() => new Promise<never>(() => undefined)),
+  } as unknown as ElectronApplication;
+  setTimeout(() => controller.abort(), 20);
+
+  const actions = await runElectronActions(
+    application,
+    electronActiveObservationInputSchema.parse({
+      executable_path: "/opt/electron",
+      application_path: "/opt/app/main.js",
+      application_root: "/opt/app",
+      actions: [{ step_id: "settle", kind: "wait", duration_ms: 10 }],
+    }),
+    { signal: controller.signal },
+  );
+
+  expect(actions).toEqual([
+    {
+      step_id: "settle",
+      kind: "wait",
+      window_index: null,
+      target: null,
+      status: "cancelled",
+      elapsed_ms: expect.any(Number),
+      error: expect.stringContaining("cancel"),
+    },
+  ]);
+});
+
+it("bounds a final state read that is still pending after cancellation", async () => {
+  vi.useFakeTimers();
+  const controller = new AbortController();
+  const application = {
+    evaluate: vi.fn(() => new Promise<never>(() => undefined)),
+  } as unknown as ElectronApplication;
+
+  const state = readFinalApplicationState(application, controller.signal);
+  const outcome = state.then(
+    () => null,
+    (cause: unknown) => cause,
+  );
+  controller.abort();
+  await vi.advanceTimersByTimeAsync(4_000);
+  expect(await Promise.race([outcome, Promise.resolve("pending")])).toBe(
+    "pending",
+  );
+  await vi.advanceTimersByTimeAsync(1_000);
+
+  expect(await outcome).toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "timeout",
+  });
 });

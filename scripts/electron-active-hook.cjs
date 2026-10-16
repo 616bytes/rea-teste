@@ -467,7 +467,12 @@ const patchIpcMain = (ipcMain) => {
         },
       ]),
     });
-    wrapped.listener = listener;
+    Object.defineProperty(wrapped, "listener", {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: listener,
+    });
     hookListenerRemovalTargets.set(wrapped, listener);
     return on.call(this, channel, wrapped);
   };

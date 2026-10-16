@@ -1042,6 +1042,53 @@ console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenar
   expect(hooked).toEqual(plain);
 });
 
+it.each([
+  "function-setter",
+  "function-readonly",
+  "object-setter",
+  "object-readonly",
+])("owns on-wrapper metadata despite inherited %s properties", async (mode) => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-ipc-prototype-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-inherited-listener.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const mode = ${JSON.stringify(mode)};
+const scenario = (emitter) => {
+  const prototype = mode.startsWith("function") ? Function.prototype : Object.prototype;
+  const prior = Object.getOwnPropertyDescriptor(prototype, "listener");
+  let calls = 0, writes = 0, failure = null;
+  Object.defineProperty(prototype, "listener", mode.endsWith("setter") ? {
+    configurable: true, set() { writes++; throw new Error("inherited metadata write"); },
+  } : { configurable: true, writable: false, value: undefined });
+  try {
+    emitter.on("ch", () => { calls++; });
+    emitter.emit("ch", { sender: { id: 9 } });
+  } catch (cause) { failure = cause.message; }
+  finally {
+    if (prior) Object.defineProperty(prototype, "listener", prior);
+    else delete prototype.listener;
+  }
+  return { calls, writes, failure, remaining: emitter.listenerCount("ch") };
+};
+console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain) }));
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const { plain, hooked } = JSON.parse(execution.stdout) as {
+    plain: Record<string, unknown>;
+    hooked: Record<string, unknown>;
+  };
+  expect(plain).toEqual({ calls: 1, writes: 0, failure: null, remaining: 1 });
+  expect(hooked).toEqual(plain);
+});
+
 it("invokes handle callbacks without reading callable method properties", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-callable-");
   temporary.push(root);

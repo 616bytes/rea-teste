@@ -72,4 +72,18 @@ describe("web bundle Evidence origin scope", () => {
       "https://explicit.example.test",
     ]);
   });
+
+  it("does not infer an origin from a URL without one", () => {
+    const evidence = createBrowserEvidence(
+      "analyze_web_bundle",
+      input([]),
+      webBundleAnalysisSchema.parse({
+        ...result,
+        capture: { ...result.capture, target_url: "file:///tmp/app.html" },
+      }),
+      provider,
+    );
+
+    expect(evidence.parameters.allowed_origins).toEqual([]);
+  });
 });

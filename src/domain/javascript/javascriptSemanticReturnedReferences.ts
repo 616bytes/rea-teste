@@ -6,7 +6,6 @@ import {
 } from "./javascriptAstValues.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { childNodes } from "./javascriptSemanticTraversal.js";
 import {
   semanticArrayIndex,
   type JavaScriptSemanticPropertyPath,
@@ -18,15 +17,6 @@ import {
   type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
 
-/**
- * How many keys a chain may add to one binding's projection through that
- * binding's own writes before further self-referencing writes count as
- * cycles. One pass keeps `x = root; x = x.next; x.run()` resolvable and
- * bounds a mesh of self-walking writes by their count; two passes cost 10 s
- * on a React bundle that one pass finishes in 2 s, and three did not finish.
- */
-const MAX_PROJECTION_GROWTH = 1;
-
 /** A reference potentially handed to a caller or generator consumer. */
 export interface SemanticReturnedReference {
   readonly node: t.Node;
@@ -35,11 +25,17 @@ export interface SemanticReturnedReference {
 
 /**
  * What one expansion chain has passed through: each initializer it followed
- * (value 0) and each binding it read, with the projection length at that
- * first read. An initializer is followed at most once per chain. A binding
- * re-read with a longer projection has grown it through a self-referencing
- * write (x = x.next); from there only writes that leave the chain's bindings
- * are followed, so the projection grows once per binding per chain.
+ * (value 0) and each binding it read, with the projection depth at that
+ * first read. An initializer is followed at most once per chain.
+ *
+ * A binding re-read with a deeper projection has grown it through one of its
+ * own writes (`x = x.next`). The first such re-read still follows every write
+ * the read selects, so `x = root` resolves `root.next` and the ordinary
+ * expansion rules decide what a conditional, object or array write selects.
+ * Its depth is then recorded as `-(depth + 1)`, and a later re-read deeper
+ * than that first read is a cycle at the binding: nothing is followed. A
+ * binding therefore grows its projection once per chain, and a mesh of
+ * self-walking writes costs their count squared rather than every order.
  */
 type ChainEntry =
   | JavaScriptSemanticInitializer
@@ -200,10 +196,23 @@ export const createSemanticReturnedReferences = (
         // binding, and only writes that leave the chain (x = root) continue.
         // Re-reads at the same depth keep every write, as alias cycles and
         // position-narrowed reads need.
-        const entered = item.chain.get(binding);
-        const grown =
-          entered !== undefined &&
-          item.path.length - entered >= MAX_PROJECTION_GROWTH;
+        const recorded = item.chain.get(binding);
+        const entered =
+          recorded === undefined
+            ? undefined
+            : recorded >= 0
+              ? recorded
+              : -recorded - 1;
+        const deeper = entered !== undefined && item.path.length > entered;
+        if (deeper && recorded !== undefined && recorded < 0) {
+          // Second deeper re-read: the chain already grew this binding once.
+          frame.blockers.set(binding, recorded);
+          continue;
+        }
+        const chain = new Map(item.chain);
+        if (recorded === undefined) chain.set(binding, item.path.length);
+        else if (deeper && entered !== undefined)
+          chain.set(binding, -(entered + 1));
         for (const initializer of [
           ...selected.initializers,
           ...selected.referenceInitializers,
@@ -212,29 +221,11 @@ export const createSemanticReturnedReferences = (
             frame.blockers.set(initializer, 0);
             continue;
           }
-          // After the growth, a write is split into the parts that read a
-          // chain binding (cut, with that binding recorded so the cache
-          // reuses the cut only for chains that hold it) and the parts that
-          // leave the chain, which are still followed: `flag ? root : x.next`
-          // keeps its `root` branch.
-          const parts = grown
-            ? splitChainReads(initializer.node, item.chain, state)
-            : { cut: [], followable: [{ node: initializer.node, keys: [] }] };
-          if (parts.cut.length > 0 && entered !== undefined) {
-            frame.blockers.set(binding, entered);
-            for (const read of parts.cut)
-              frame.blockers.set(read, item.chain.get(read) ?? 0);
-          }
-          if (parts.followable.length === 0) continue;
-          const chain = new Map(item.chain);
-          if (entered === undefined) chain.set(binding, item.path.length);
-          chain.set(initializer, 0);
-          for (const part of parts.followable)
-            pending.push({
-              node: part.node,
-              path: [...part.keys, ...initializer.projection, ...item.path],
-              chain,
-            });
+          pending.push({
+            node: initializer.node,
+            path: [...initializer.projection, ...item.path],
+            chain: new Map(chain).set(initializer, 0),
+          });
         }
       } else if (
         t.isMemberExpression(node) ||
@@ -348,162 +339,6 @@ export const createSemanticReturnedReferences = (
     return output;
   };
 };
-
-interface ChainReadSplit {
-  /** Chain bindings the write reads directly or through a member chain. */
-  readonly cut: readonly JavaScriptSemanticBindingState[];
-  /**
-   * Value expressions of the write that do not read a chain binding, each
-   * with the member keys that wrapped it, so `(flag ? root : x.next).child`
-   * still follows `root.child`.
-   */
-  readonly followable: readonly {
-    readonly node: t.Node;
-    readonly keys: readonly (string | number | null)[];
-  }[];
-}
-
-/**
- * Split a write's value into the parts that read a binding the chain already
- * holds (the binding itself or a member chain on it) and the parts that do
- * not. Conditional, logical and sequence expressions are split per branch so
- * a branch that leaves the chain is still followed, keeping the member keys
- * around it.
- */
-const splitChainReads = (
-  node: t.Node,
-  chain: Chain,
-  state: JavaScriptSemanticAnalysisState,
-  outerKeys: readonly (string | number | null)[] = [],
-): ChainReadSplit => {
-  let current = unwrapJavaScriptExpression(node).node;
-  const keys: (string | number | null)[] = [];
-  while (
-    t.isMemberExpression(current) ||
-    t.isOptionalMemberExpression(current)
-  ) {
-    keys.push(semanticStaticPropertyKey(current.property, current.computed));
-    current = unwrapJavaScriptExpression(current.object).node;
-  }
-  // Walking outward reads the outermost key first; the path lists keys from
-  // the receiver outward, followed by the keys that wrap this expression.
-  const allKeys = [...keys.reverse(), ...outerKeys];
-  if (t.isIdentifier(current)) {
-    const binding = resolveSemanticBindingState(state, current, current.name);
-    return binding !== undefined && chain.has(binding)
-      ? { cut: [binding], followable: [] }
-      : { cut: [], followable: [{ node: current, keys: allKeys }] };
-  }
-  const branches = t.isConditionalExpression(current)
-    ? [current.consequent, current.alternate]
-    : t.isLogicalExpression(current)
-      ? [current.left, current.right]
-      : t.isSequenceExpression(current)
-        ? current.expressions.slice(-1)
-        : null;
-  if (branches === null) {
-    // A container (object, array, class, `new`) is expanded by the main loop
-    // and can hold a chain read inside it: `({value: x.next}).value` would
-    // otherwise bypass the cut and reopen the exponential search. Only the
-    // members the first key can select are scanned, so an unrelated
-    // property that reads the chain does not hide the selected one.
-    const read = selectedMembers(current, allKeys[0])
-      .map((member) => containedChainRead(member, chain, state))
-      .find((found) => found !== undefined);
-    return read === undefined
-      ? { cut: [], followable: [{ node: current, keys: allKeys }] }
-      : { cut: [read], followable: [] };
-  }
-  const splits = branches.map((branch) =>
-    splitChainReads(branch, chain, state, allKeys),
-  );
-  return {
-    cut: splits.flatMap((split) => split.cut),
-    followable: splits.flatMap((split) => split.followable),
-  };
-};
-
-/**
- * The first binding on the chain read anywhere inside an expression, not
- * entering nested functions (their bodies are not expanded as reads) and not
- * counting non-computed property or member names, which are not reads.
- */
-const containedChainRead = (
-  root: t.Node,
-  chain: Chain,
-  state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticBindingState | undefined => {
-  const stack: t.Node[] = [root];
-  while (stack.length > 0) {
-    const node = stack.pop();
-    if (node === undefined) break;
-    if (node !== root && t.isFunction(node)) continue;
-    if (t.isIdentifier(node)) {
-      const binding = resolveSemanticBindingState(state, node, node.name);
-      if (binding !== undefined && chain.has(binding)) return binding;
-      continue;
-    }
-    for (const child of childNodes(node))
-      if (child !== literalName(node)) stack.push(child);
-  }
-  return undefined;
-};
-
-/**
- * The parts of a container that a projection's first key can select: for an
- * object literal, the last property with that static name and any later
- * spread or computed-key property that could replace it; for an array, the
- * element at that index unless a spread makes offsets uncertain. Without a
- * usable key, or for other containers, the whole expression.
- */
-const selectedMembers = (
-  node: t.Node,
-  key: string | number | null | undefined,
-): readonly t.Node[] => {
-  if (key === null || key === undefined) return [node];
-  if (t.isObjectExpression(node)) {
-    const selected: t.Node[] = [];
-    for (const property of [...node.properties].reverse()) {
-      if (t.isSpreadElement(property)) {
-        selected.push(property.argument);
-        continue;
-      }
-      const name = semanticStaticPropertyKey(property.key, property.computed);
-      if (name === null) {
-        selected.push(property);
-        continue;
-      }
-      if (name !== String(key)) continue;
-      selected.push(t.isObjectProperty(property) ? property.value : property);
-      return selected;
-    }
-    return selected;
-  }
-  if (t.isArrayExpression(node)) {
-    const index = semanticArrayIndex(key);
-    if (index === null) return [node];
-    const prefix = node.elements.slice(0, index + 1);
-    if (
-      prefix.some((element) => element !== null && t.isSpreadElement(element))
-    )
-      return [node];
-    const element = node.elements[index];
-    return element === null || element === undefined ? [] : [element];
-  }
-  return [node];
-};
-
-/** The child that names a property or member without being a read. */
-const literalName = (node: t.Node): t.Node | null =>
-  (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
-  !node.computed
-    ? node.property
-    : (t.isObjectMember(node) ||
-          t.isClassProperty(node) ||
-          t.isClassMethod(node)) &&
-        !node.computed
-      ? node.key
-      : null;
 
 const selectObjectTargets = (
   node: t.ObjectExpression,

@@ -207,6 +207,36 @@ ${Array.from({ length: writes }, (_, i) => `case ${i}: t = t.key${i}; break;`).j
   expect(large).toBeLessThan(3 * small);
 });
 
+it("bounds self-walks hidden behind array spreads and containers", () => {
+  const measure = (writes: number) => {
+    const context = indexed(`function fallback(){return {};}
+function walk(root, flag){ let t = root; switch (flag) {
+${Array.from({ length: writes }, (_, i) => `case ${i}: t = ([root, ...t.key${i}])[0]; break;`).join("\n")}
+} return t.make(); }`);
+    const walk = context.state.program.body.at(-1);
+    if (!t.isFunctionDeclaration(walk)) throw new Error("Missing walk");
+    const last = walk.body.body.at(-1);
+    if (!t.isReturnStatement(last) || !t.isCallExpression(last.argument))
+      throw new Error("Missing call");
+    const lookups = context.state.scopes.map((scope) =>
+      vi.spyOn(scope.bindings, "get"),
+    );
+    try {
+      createSemanticReturnedReferences(context.state)(last.argument.callee);
+      return lookups.reduce(
+        (total, lookup) => total + lookup.mock.calls.length,
+        0,
+      );
+    } finally {
+      for (const lookup of lookups) lookup.mockRestore();
+    }
+  };
+  const small = measure(8);
+  const large = measure(12);
+  expect(small).toBeGreaterThan(0);
+  expect(large).toBeLessThan(3 * small);
+});
+
 it("grows a binding's projection once per chain through its own writes", () => {
   const references = (source: string) => {
     const context = indexed(source);
@@ -258,6 +288,16 @@ function run(){ let x = root; x = ({value: x.next}).value; x = ({value: x.next})
   expect(
     references(`function make(){ return {v:1}; } const root = {next:{make}};
 function run(){ let x; x = ({value: root, unused: x}).value; x = x.next; return x.make(); }`),
+  ).toHaveLength(1);
+  // The ordinary expansion decides what a container or conditional selects,
+  // so an unselected or alternative chain read does not hide a value.
+  expect(
+    references(`function make(){ return {v:1}; } const root = {next:{make}}; const seed = {};
+function run(){ let x = seed; x = ({unused: x.other, chosen: root}).chosen; x = x.next; return x.make(); }`),
+  ).toHaveLength(1);
+  expect(
+    references(`function make(){ return {v:1}; } const root = {next:{make}}; const seed = {};
+function run(flag){ let x = seed; x = ({value: flag ? x : root}).value; x = x.next; return x.make(); }`),
   ).toHaveLength(1);
   // A second self-walk on the same binding is the bound: the chain leaves
   // through writes that do not read its own bindings (x = root) and stops.

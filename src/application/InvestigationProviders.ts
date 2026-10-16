@@ -49,6 +49,13 @@ export const PE_RESOURCES_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free PE/ELF packer indicators. */
+export const PACKER_INDICATORS_PROVIDER = Object.freeze({
+  id: "rea-packer-indicators",
+  name: "REA static packer indicator reader",
+  version: "1",
+} as const);
+
 /** Provider identity for deterministic managed-code comparison workflows. */
 export const MANAGED_WORKFLOW_PROVIDER = {
   id: "rea-dotnet-workflows",

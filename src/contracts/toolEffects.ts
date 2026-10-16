@@ -249,6 +249,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   }),
   inspect_pe_resources: evidence,
   inspect_analysis_view: evidence,
+  derive_ui_state_transition: evidence,
   inspect_firmware_regions: effects({
     mutatesSession: true,
     launchesProcess: true,
@@ -564,6 +565,15 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     mutatesSession: true,
     launchesProcess: true,
     writesFilesystem: true,
+  }),
+  capture_windows_window_screenshot: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    writesFilesystem: true,
+    accessesNetwork: true,
+    changesUiState: true,
+    executesForeignCode: true,
+    idempotent: false,
   }),
   capture_native_ui_scenario: effects({
     writesFilesystem: true,

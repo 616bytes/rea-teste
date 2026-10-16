@@ -105,6 +105,13 @@ export const ANALYSIS_VIEW_PROVIDER = {
   version: "1",
 } as const;
 
+/** Provider identity for read-only browser UI state/transition derivation. */
+export const UI_STATE_TRANSITION_PROVIDER = {
+  id: "rea-ui-state-transition",
+  name: "REA UI state transition projection",
+  version: "1",
+} as const;
+
 /** Provider identity for graph-native feature tracing and version comparison. */
 export const JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER = {
   id: "rea-javascript-application-workflows",

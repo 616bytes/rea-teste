@@ -123,7 +123,6 @@ export const startMcpTransport = async (
             environment: serverContext.environment,
             delivery: serverContext.delivery,
             ...optionalProviders,
-            optionalObservationProviderOwner: "caller",
             androidAnalysis: android,
           },
         );

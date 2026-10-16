@@ -337,7 +337,7 @@ it("awaits SQLite cleanup and retries its retained owner after failed server shu
   expect(attempts).toBe(2);
 });
 
-it("closes the bound Go and web-capture services and retries failed shutdown", async () => {
+it("closes the bound Go and web-capture services, retries failed shutdown, and leaves the injected scenario port to its loader", async () => {
   let goCalls = 0;
   let goCloseAttempts = 0;
   let captureCloseAttempts = 0;
@@ -406,18 +406,21 @@ it("closes the bound Go and web-capture services and retries failed shutdown", a
 
     await expect(server.close()).rejects.toMatchObject({
       errors: expect.arrayContaining([
-        expect.objectContaining({ message: "Scenario cleanup refused" }),
+        expect.objectContaining({ message: "Go cleanup refused" }),
+        expect.objectContaining({ message: "Capture cleanup refused" }),
       ]),
     });
     expect(goCloseAttempts).toBe(1);
     expect(captureCloseAttempts).toBe(1);
-    expect(scenarioCloseAttempts).toBe(1);
+    // The scenario port was injected, so its loader owns it; the server never
+    // closes it, even while retrying its own bound services.
+    expect(scenarioCloseAttempts).toBe(0);
 
     cleanupAllowed = true;
     await server.close();
     expect(goCloseAttempts).toBe(2);
     expect(captureCloseAttempts).toBe(2);
-    expect(scenarioCloseAttempts).toBe(2);
+    expect(scenarioCloseAttempts).toBe(0);
   } finally {
     cleanupAllowed = true;
   }

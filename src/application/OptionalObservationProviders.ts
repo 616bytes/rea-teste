@@ -5,7 +5,10 @@ import type { ElectronActiveObservationPort } from "./javascript/ElectronActiveO
 import type { JavaScriptRuntimeObservationPort } from "./javascript/JavaScriptRuntimeObservationPort.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 
-/** Existing observation ports loaded independently at MCP startup. */
+/**
+ * Existing observation ports loaded independently at MCP startup. The loader
+ * owns their lifetime: server instances share them and never close them.
+ */
 export interface OptionalObservationProviders {
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;

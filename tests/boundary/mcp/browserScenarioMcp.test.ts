@@ -5,17 +5,17 @@ import { z } from "zod";
 
 import type { BrowserScenarioCapturePort } from "../../../src/application/BrowserScenarioCapturePort.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import {
+  FAKE_BROWSER_SCENARIO_PROVIDER_IDENTITY,
+  fakeBrowserScenarioCapture,
+} from "../../fixtures/browserScenarioCapture.js";
 import type {
   ExecutionOptions,
   ProviderIdentity,
 } from "../../../src/application/AnalysisProvider.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
-import { sanitizeBrowserUrl } from "../../../src/domain/browserObservation.js";
 import type { BrowserScenario } from "../../../src/domain/browserScenario.js";
-import {
-  browserScenarioCaptureSchema,
-  type BrowserScenarioCapture,
-} from "../../../src/domain/browserScenarioCapture.js";
+import type { BrowserScenarioCapture } from "../../../src/domain/browserScenarioCapture.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../../../src/domain/result.js";
@@ -23,17 +23,11 @@ import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
-const providerIdentity: ProviderIdentity = {
-  id: "test-browser-scenario",
-  name: "Test browser scenario provider",
-  version: "1",
-};
-
 class FakeBrowserScenarioProvider implements BrowserScenarioCapturePort {
   readonly scenarios: BrowserScenario[] = [];
 
   identity(): ProviderIdentity {
-    return providerIdentity;
+    return FAKE_BROWSER_SCENARIO_PROVIDER_IDENTITY;
   }
 
   captureScenario(
@@ -41,82 +35,9 @@ class FakeBrowserScenarioProvider implements BrowserScenarioCapturePort {
     _options?: ExecutionOptions,
   ): Promise<Result<BrowserScenarioCapture, AnalysisError>> {
     this.scenarios.push(scenario);
-    return Promise.resolve(ok(captureFor(scenario)));
+    return Promise.resolve(ok(fakeBrowserScenarioCapture(scenario)));
   }
 }
-
-const artifacts = {
-  screenshot: { state: "not_requested" },
-  dom: { state: "not_requested" },
-  accessibility: { state: "not_requested" },
-  url: { state: "not_requested" },
-  history: { state: "not_requested" },
-  storage: { state: "not_requested" },
-} as const;
-
-const captureFor = (scenario: BrowserScenario): BrowserScenarioCapture => {
-  const start = scenario.start_url.url;
-  const step = (stepIndex: number, stepId: string, action: string) => ({
-    step_index: stepIndex,
-    step_id: stepId,
-    action,
-    status: "completed",
-    elapsed_ms: 1,
-    before_url: sanitizeBrowserUrl(start),
-    after_url: sanitizeBrowserUrl(start),
-    error: null,
-    event_sequence_start: 1,
-    event_sequence_end: 0,
-    artifacts,
-    completeness: {
-      status: "complete",
-      equality_eligible: true,
-      missing_sections: [],
-      truncated_sections: [],
-    },
-  });
-  return browserScenarioCaptureSchema.parse({
-    browser: {
-      mode: scenario.browser.mode,
-      process_ownership: "provider-owned",
-      cleanup: "terminated-owned-process",
-      product: "Test Browser",
-      version: "1",
-    },
-    scenario: {
-      start_origin: new URL(start).origin,
-      action_count: scenario.actions.length,
-      secret_references: scenario.secrets.map(({ secret_id: id }) => id),
-      network_content: scenario.capture.network,
-      event_families: scenario.capture.events,
-      limits: scenario.capture.limits,
-    },
-    duration_ms: 2,
-    steps: [
-      step(0, "scenario_start", "goto_start"),
-      ...scenario.actions.map((action, index) =>
-        step(index + 1, action.step_id, action.action),
-      ),
-    ],
-    events: {
-      retained: 0,
-      dropped: 0,
-      items: [],
-      omissions: {
-        by_kind: [],
-        network_transactions: [],
-        network_transaction_range: null,
-      },
-    },
-    completeness: {
-      status: "complete",
-      equality_eligible: true,
-      missing_sections: [],
-      truncated_sections: [],
-    },
-    limitations: [],
-  });
-};
 
 const minimalScenario = (origin = "https://app.example.test") => ({
   browser: {
@@ -300,9 +221,9 @@ describe("browser scenario MCP tool", () => {
 
 test("records a completed late-close cancellation as server Evidence", async () => {
   const provider: BrowserScenarioCapturePort = {
-    identity: () => providerIdentity,
+    identity: () => FAKE_BROWSER_SCENARIO_PROVIDER_IDENTITY,
     captureScenario: async (request) => {
-      const capture = captureFor(request);
+      const capture = fakeBrowserScenarioCapture(request);
       return err(
         new AnalysisCancelledError("capture_browser_scenario", {
           partialObservation: { kind: "browser-scenario-observation", capture },

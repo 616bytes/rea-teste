@@ -148,6 +148,7 @@ const webSocketFinalizerEntrySuspension = (
       pending.push(...node.expressions.toReversed());
     else if (
       t.isVariableDeclaration(node) &&
+      (node.kind === "var" || node.kind === "let" || node.kind === "const") &&
       node.declarations.every((item) => t.isIdentifier(item.id))
     ) {
       for (const item of node.declarations.toReversed())
@@ -182,6 +183,7 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   const operands = syntaxUnconditionalOperands(node);
   if (operands !== undefined) return operands;
   if (t.isBlockStatement(node)) return node.body;
+  if (t.isSwitchCase(node)) return node.consequent;
   if (t.isExpressionStatement(node)) return [node.expression];
   if (t.isVariableDeclaration(node)) return node.declarations;
   if (t.isVariableDeclarator(node))
@@ -302,7 +304,12 @@ const webSocketPrecedingSuspension = (
     (child === parent.consequent || child === parent.alternate)
   )
     return webSocketCompletedSuspension(parent.test, state);
-  if (t.isLogicalExpression(parent) && child === parent.right)
+  if (
+    (t.isLogicalExpression(parent) ||
+      (t.isAssignmentExpression(parent) &&
+        ["&&=", "||=", "??="].includes(parent.operator))) &&
+    child === parent.right
+  )
     return webSocketCompletedSuspension(parent.left, state);
   if (t.isTryStatement(parent) && child === parent.finalizer)
     return webSocketFinalizerEntrySuspension(parent.block);

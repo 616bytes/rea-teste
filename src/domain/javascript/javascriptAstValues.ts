@@ -135,17 +135,27 @@ export const semanticFinalObjectProperty = (
   return undefined;
 };
 
-/** Project only fresh literal containers; aliases require a separate write proof. */
-export const semanticLiteralProperty = (
+/** Preserve allocation identity through expressions with one exact result. */
+export const semanticLiteralContainer = (
   rawNode: t.Node,
-  key: string | number,
-): t.Node | undefined => {
+): t.ObjectExpression | t.ArrayExpression | undefined => {
   let node = unwrapJavaScriptExpression(rawNode).node;
   for (;;) {
     const result = javaScriptExactResultOperand(node);
     if (result === undefined) break;
     node = unwrapJavaScriptExpression(result).node;
   }
+  return t.isObjectExpression(node) || t.isArrayExpression(node)
+    ? node
+    : undefined;
+};
+
+/** Project literal syntax; callers separately prove mutation and iteration. */
+export const semanticLiteralProperty = (
+  rawNode: t.Node,
+  key: string | number,
+): t.Node | undefined => {
+  const node = semanticLiteralContainer(rawNode);
   // Numeric projections denote array-pattern iteration, not property lookup.
   // Object patterns retain string keys, including a numeric property's spelling.
   if (typeof key === "number" && !t.isArrayExpression(node)) return undefined;

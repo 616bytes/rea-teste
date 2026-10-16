@@ -939,6 +939,58 @@ describe("web bundle promise aliases and object evaluation", () => {
   );
 });
 
+describe("web bundle selected bindings and reachable waits", () => {
+  it.each([
+    'const pending = (async () => { await 0; new Socket("wss://example.test/selected"); })(); try { await alias; } catch {} const alias = pending; const Socket = globalThis.WebSocket;',
+    'const pending = (async () => { await 0; new Socket("wss://example.test/selected"); })(); try { await second; } catch {} const first = pending; const second = first; const Socket = globalThis.WebSocket;',
+    '(async () => { const pending = (async () => { await ready; new Socket("wss://example.test/selected"); })(); while (true) { break; await pending; } const Socket = globalThis.WebSocket; })();',
+    '(async () => { const pending = (async () => { await ready; new Socket("wss://example.test/selected"); })(); for (let i = 0; i < 1; i++) { continue; await pending; } const Socket = globalThis.WebSocket; })();',
+    '(async () => { (await ready).value &&= new Socket("wss://example.test/selected"); })(); const Socket = globalThis.WebSocket;',
+    '(async () => { (await ready).value ||= new Socket("wss://example.test/selected"); })(); const Socket = globalThis.WebSocket;',
+    '(async () => { (await ready).value ??= new Socket("wss://example.test/selected"); })(); const Socket = globalThis.WebSocket;',
+    '(async () => { switch (kind) { case 0: await ready; new Socket("wss://example.test/selected"); } })(); const Socket = globalThis.WebSocket;',
+    '(async () => { switch (kind) { default: 0; await ready; new Socket("wss://example.test/selected"); } })(); const Socket = globalThis.WebSocket;',
+    'import ws = require("ws"); const other = require("ws"); ws = {}; ws.WebSocket = class {}; new other.WebSocket("wss://example.test/selected");',
+    'import ws = require("ws"); const other = require("ws"); ws = {}; const replacement = ws; replacement.WebSocket = class {}; new other.WebSocket("wss://example.test/selected");',
+    'Array.prototype[Symbol.iterator] = function* () { yield class {}; }; const { 0: Socket } = [globalThis.WebSocket]; new Socket("wss://example.test/selected");',
+    'let box; const { WebSocket: Socket, unused = (box.WebSocket = class {}) } = (box = { WebSocket: globalThis.WebSocket }); new Socket("wss://example.test/selected");',
+    'let box; const { 0: Socket, unused = (box.length = 0) } = (box = [globalThis.WebSocket]); new Socket("wss://example.test/selected");',
+  ])("retains source-proven constructor reads: %s", (source) => {
+    expect(
+      socketEndpoints(source).map((items) => items.map((item) => item.value)),
+    ).toEqual([
+      ["wss://example.test/selected"],
+      ["wss://example.test/selected"],
+    ]);
+  });
+
+  it.each([
+    '(async () => { if (condition) { const pending = (async () => { await ready; new Socket("wss://example.test/invalid"); })(); await pending; } const Socket = globalThis.WebSocket; })();',
+    '(async () => { if (condition) { const pending = (async () => { await ready; new Socket("wss://example.test/invalid"); })(); const alias = pending; await alias; } const Socket = globalThis.WebSocket; })();',
+    'let box; const { unused = (box.WebSocket = class {}), WebSocket: Socket } = (box = { WebSocket: globalThis.WebSocket }); new Socket("wss://example.test/invalid");',
+    'let box; const { [box.WebSocket = class {}]: unused, WebSocket: Socket } = (box = { WebSocket: globalThis.WebSocket }); new Socket("wss://example.test/invalid");',
+    'let box; const { nested: { unused = (box.nested.WebSocket = class {}), WebSocket: Socket } } = (box = { nested: { WebSocket: globalThis.WebSocket } }); new Socket("wss://example.test/invalid");',
+    'let box; const { unused = (box.length = 0), 0: Socket } = (box = [globalThis.WebSocket]); new Socket("wss://example.test/invalid");',
+    'Array.prototype[Symbol.iterator] = function* () { yield class {}; }; const [Socket] = [globalThis.WebSocket]; new Socket("wss://example.test/invalid");',
+    'const prototype = Array.prototype; prototype[Symbol.iterator] = function* () { yield class {}; }; const [Socket] = (0, [globalThis.WebSocket]); new Socket("wss://example.test/invalid");',
+    'globalThis.Array.prototype[Symbol.iterator] = function* () { yield class {}; }; const { nested: [Socket] } = { nested: [globalThis.WebSocket] }; new Socket("wss://example.test/invalid");',
+    'globalThis.WebSocket("wss://example.test/invalid");',
+    'const Socket = globalThis.WebSocket; Socket("wss://example.test/invalid");',
+    'window[`WebSocket`]("wss://example.test/invalid");',
+    '(async () => { try { using resource = 1; await 0; } finally { new Socket("wss://example.test/invalid"); } })(); const Socket = globalThis.WebSocket;',
+    '(async () => { try { await using resource = 1; await 0; } finally { new Socket("wss://example.test/invalid"); } })(); const Socket = globalThis.WebSocket;',
+    '(async () => { condition &&= await ready; new Socket("wss://example.test/invalid"); })(); const Socket = globalThis.WebSocket;',
+    '(async () => { switch (kind) { case 0: await ready; break; case 1: new Socket("wss://example.test/invalid"); } })(); const Socket = globalThis.WebSocket;',
+    'import ws = require("ws"); const other = require("ws"); ws.WebSocket = class {}; new other.WebSocket("wss://example.test/invalid");',
+    '(async () => { const pending = (async () => { await ready; new Socket("wss://example.test/invalid"); })(); const alias = pending; await alias; const Socket = globalThis.WebSocket; })();',
+  ])(
+    "does not manufacture construction, value or wait proofs: %s",
+    (source) => {
+      expect(socketEndpoints(source)).toEqual([[], []]);
+    },
+  );
+});
+
 describe("web bundle owned waits and exact result paths", () => {
   it.each([
     '(async () => { try { await 0; } finally { new Socket("wss://example.test/owned"); } })(); const Socket = globalThis.WebSocket;',

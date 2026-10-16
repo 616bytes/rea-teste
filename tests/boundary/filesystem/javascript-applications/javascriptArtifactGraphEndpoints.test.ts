@@ -129,6 +129,26 @@ it("retains constructor captures, ws imports and template keys with their graph 
 });
 
 const socketExecutionPhaseSources = {
+  "caught-alias.mjs":
+    'const pending = (async () => { await 0; new Socket("wss://example.test/caught-alias"); })(); try { await alias; } catch {} const alias = pending; const Socket = globalThis.WebSocket;',
+  "dead-wait.js":
+    '(async () => { const pending = (async () => { await ready; new Socket("wss://example.test/dead-wait"); })(); while (true) { break; await pending; } const Socket = globalThis.WebSocket; })();',
+  "logical-rhs.js":
+    '(async () => { (await ready).value &&= new Socket("wss://example.test/logical-assignment"); })(); const Socket = globalThis.WebSocket;',
+  "case-prefix.js":
+    '(async () => { switch (kind) { case 0: await ready; new Socket("wss://example.test/case-prefix"); } })(); const Socket = globalThis.WebSocket;',
+  "rebound-import.ts":
+    'import ws = require("ws"); const other = require("ws"); ws = {}; ws.WebSocket = class {}; new other.WebSocket("wss://example.test/rebound-import");',
+  "branch-alias.js":
+    '(async () => { if (condition) { const pending = (async () => { await ready; new Socket("wss://example.test/invalid-branch-alias"); })(); await pending; } const Socket = globalThis.WebSocket; })();',
+  "escaped-literal.js":
+    'let box; const { unused = (box.WebSocket = class {}), WebSocket: Socket } = (box = { WebSocket: globalThis.WebSocket }); new Socket("wss://example.test/invalid-escaped");',
+  "replaced-iterator.js":
+    'Array.prototype[Symbol.iterator] = function* () { yield class {}; }; const [Socket] = [globalThis.WebSocket]; new Socket("wss://example.test/invalid-iterator");',
+  "ordinary-call.js":
+    'globalThis.WebSocket("wss://example.test/invalid-call");',
+  "resource-registration.js":
+    '(async () => { try { using resource = 1; await 0; } finally { new Socket("wss://example.test/invalid-using"); } })(); const Socket = globalThis.WebSocket;',
   "finally-entry.js":
     '(async () => { try { await 0; } finally { new Socket("wss://example.test/finally-entry"); } })(); const Socket = globalThis.WebSocket;',
   "wrapped-array.js":
@@ -285,10 +305,13 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/assignment-capture",
       "wss://example.test/binding-event",
       "wss://example.test/branch-continuation",
+      "wss://example.test/case-prefix",
+      "wss://example.test/caught-alias",
       "wss://example.test/compound-continuation",
       "wss://example.test/computed-key",
       "wss://example.test/continuation",
       "wss://example.test/copy-order",
+      "wss://example.test/dead-wait",
       "wss://example.test/deferred-bind",
       "wss://example.test/do-await",
       "wss://example.test/dynamic-import",
@@ -300,6 +323,7 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/import-equals-member",
       "wss://example.test/iterable-body",
       "wss://example.test/iterable-continuation",
+      "wss://example.test/logical-assignment",
       "wss://example.test/loop-continuation",
       "wss://example.test/member-await",
       "wss://example.test/nested-write",
@@ -310,6 +334,7 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/optional-capture",
       "wss://example.test/pattern-await",
       "wss://example.test/pending-initialized",
+      "wss://example.test/rebound-import",
       "wss://example.test/selected-branch",
       "wss://example.test/sequence-capture",
       "wss://example.test/skipped-wait",
@@ -323,6 +348,11 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/ws-self",
     ]);
     for (const [path, source, line] of [
+      ["caught-alias", "caught-alias.mjs", 1],
+      ["dead-wait", "dead-wait.js", 1],
+      ["logical-assignment", "logical-rhs.js", 1],
+      ["case-prefix", "case-prefix.js", 1],
+      ["rebound-import", "rebound-import.ts", 1],
       ["finally-entry", "finally-entry.js", 1],
       ["wrapped-array", "wrapped-array.js", 1],
       ["switch-await", "switch-await.js", 1],

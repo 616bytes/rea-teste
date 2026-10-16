@@ -69,6 +69,10 @@ export interface JavaScriptSemanticRequiredModuleEffect extends JavaScriptSemant
   readonly kind: "write" | "escape";
 }
 
+export interface JavaScriptSemanticLiteralMemberEffect extends JavaScriptSemanticMemberEffect {
+  readonly kind: "write" | "escape";
+}
+
 export interface JavaScriptSemanticBindingState {
   readonly hostOrigin?: "commonjs-wrapper";
   readonly bindingId: string;
@@ -119,6 +123,13 @@ export interface JavaScriptSemanticAnalysisState {
   readonly bindingsById: Map<string, JavaScriptSemanticBindingState>;
   /** Resolved identifier writes retained at their exact source sites. */
   readonly bindingWrites: Map<string, t.Node[]>;
+  /** Allocation effects produced by the shared alias-aware mutation pass. */
+  literalMemberEffects?: WeakMap<
+    t.ObjectExpression | t.ArrayExpression,
+    JavaScriptSemanticLiteralMemberEffect[]
+  >;
+  /** Visible Array prototype effects make numeric pattern iteration unknown. */
+  arrayIterationUnknown?: boolean;
   /** Source evidence that Object.prototype may supply a `require` property. */
   prototypeRequireMutationObserved: boolean | undefined;
   /** Source evidence that Object.prototype may add inherited enumerable keys. */

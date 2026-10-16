@@ -388,6 +388,8 @@ export interface JavaScriptReceiverFacts {
   readonly rpcClientRoots: ReadonlySet<t.Node>;
   /** This syntax needs ambient-write facts before endpoint interpretation. */
   readonly hasWebSocketEndpointCandidate: boolean;
+  /** Literal constructor projections also require alias-aware value effects. */
+  readonly hasWebSocketLiteralProjection: boolean;
 }
 
 export interface JavaScriptReceiverIndex extends JavaScriptBindingIndex {
@@ -450,6 +452,7 @@ function* classifyDefinitionReceiversSteps(
   const roots = new Set<t.Node>();
   const clients = new Map<string, boolean>();
   let hasWebSocketEndpointCandidate = false;
+  let hasWebSocketLiteralProjection = false;
   const classifyRpcRoot = (node: t.Node): void => {
     if (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node))
       return;
@@ -553,7 +556,9 @@ function* classifyDefinitionReceiversSteps(
         (t.isCallExpression(node) ||
           t.isOptionalCallExpression(node) ||
           t.isNewExpression(node)) &&
-        isWebSocketEndpointCandidate(node.callee, state)
+        isWebSocketEndpointCandidate(node.callee, state, () => {
+          hasWebSocketLiteralProjection = true;
+        })
       )
         hasWebSocketEndpointCandidate = true;
       classifyRpcRoot(node);
@@ -567,6 +572,7 @@ function* classifyDefinitionReceiversSteps(
     openReceivers: facts,
     rpcClientRoots: roots,
     hasWebSocketEndpointCandidate,
+    hasWebSocketLiteralProjection,
   };
 }
 

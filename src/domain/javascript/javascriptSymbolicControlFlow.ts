@@ -76,26 +76,45 @@ export const syntaxUnconditionalOperands = (
   return undefined;
 };
 
+/** Recognize abrupt prefixes without treating a loop's jump as a function exit. */
+const syntaxDefiniteExit = (
+  node: t.Node | null | undefined,
+  depth: number,
+  includeJumps: boolean,
+): boolean => {
+  if (!node || depth >= 128) return false;
+  if (
+    t.isReturnStatement(node) ||
+    t.isThrowStatement(node) ||
+    (includeJumps && (t.isBreakStatement(node) || t.isContinueStatement(node)))
+  )
+    return true;
+  if (t.isBlockStatement(node))
+    return node.body.some((child) =>
+      syntaxDefiniteExit(child, depth + 1, includeJumps),
+    );
+  if (!t.isIfStatement(node)) return false;
+  const test = readExactJavaScriptLiteral(node.test);
+  if (includeJumps && test.found) {
+    const branch = test.value ? node.consequent : node.alternate;
+    return syntaxDefiniteExit(branch, depth + 1, includeJumps);
+  }
+  return (
+    syntaxDefiniteExit(node.consequent, depth + 1, includeJumps) &&
+    syntaxDefiniteExit(node.alternate, depth + 1, includeJumps)
+  );
+};
+
 /** Only definite synchronous exits; unsupported control flow stays unknown. */
 export const symbolicDefiniteExit = (
   node: t.Node | null | undefined,
   depth = 0,
-): boolean => {
-  if (!node || depth >= 128) return false;
-  if (t.isReturnStatement(node) || t.isThrowStatement(node)) return true;
-  if (t.isBlockStatement(node))
-    return node.body.some((child) => symbolicDefiniteExit(child, depth + 1));
-  return (
-    t.isIfStatement(node) &&
-    symbolicDefiniteExit(node.consequent, depth + 1) &&
-    symbolicDefiniteExit(node.alternate, depth + 1)
-  );
-};
+): boolean => syntaxDefiniteExit(node, depth, false);
 
 /** Prove a syntax-local path is unconditional; unknown branches remain unknown. */
 export const createUnconditionalEvaluationProof = (
   parents: WeakMap<t.Node, t.Node>,
-): ((node: t.Node) => boolean) => {
+): ((node: t.Node, boundary?: t.Node) => boolean) => {
   const reachableStatements = new WeakMap<
     t.Program | t.BlockStatement,
     ReadonlySet<t.Node>
@@ -104,11 +123,12 @@ export const createUnconditionalEvaluationProof = (
     const literal = readExactJavaScriptLiteral(node);
     return literal.found ? Boolean(literal.value) : undefined;
   };
-  return (node) => {
+  return (node, boundary) => {
     let child = node;
     for (;;) {
+      if (child === boundary) return true;
       const parent = parents.get(child);
-      if (parent === undefined) return true;
+      if (parent === undefined) return boundary === undefined;
       const operands = syntaxUnconditionalOperands(parent);
       if (operands !== undefined && !operands.includes(child)) return false;
       if (t.isWhileStatement(parent) && child === parent.body) {
@@ -150,7 +170,7 @@ export const createUnconditionalEvaluationProof = (
           const statements = new Set<t.Node>();
           for (const statement of parent.body) {
             statements.add(statement);
-            if (symbolicDefiniteExit(statement)) break;
+            if (syntaxDefiniteExit(statement, 0, true)) break;
           }
           reachable = statements;
           reachableStatements.set(parent, reachable);
@@ -165,7 +185,7 @@ export const createUnconditionalEvaluationProof = (
           parent.key === child
         )
       )
-        return true;
+        return boundary === undefined;
       child = parent;
     }
   };

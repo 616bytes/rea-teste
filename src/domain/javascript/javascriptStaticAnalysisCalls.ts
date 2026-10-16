@@ -471,13 +471,7 @@ const inspectEndpointCall = (
   // browser request API. Do not let the literal fallback turn it into one.
   if (isNetworkRequestSpelling(name)) return;
   const receiverFact = context.openReceiverFacts?.get(node.start ?? -1);
-  const endpoint = endpointArgumentHelper(
-    name,
-    node.arguments,
-    node.callee,
-    bindings,
-    receiverFact,
-  );
+  const endpoint = endpointArgumentHelper(name, node, bindings, receiverFact);
   if (endpoint !== undefined)
     addEndpoint(context, {
       node,

@@ -196,6 +196,77 @@ describe("unresolved Claude Desktop package identity", () => {
   });
 });
 
+describe("Claude Desktop AppData roots", () => {
+  /** Package storage with Claude Desktop and no private files, recording probed paths. */
+  const probedFileSystem = (
+    probed: string[],
+  ): ClaudeDesktopLocationFileSystem => ({
+    readdir: (path) => {
+      probed.push(path);
+      if (path.endsWith("Packages")) return [CLAUDE_DESKTOP_PACKAGE_FAMILY];
+      throw failure("ENOENT");
+    },
+    lstat: (path) => {
+      probed.push(path);
+      throw failure("ENOENT");
+    },
+    realpath: (path) => path,
+  });
+
+  it("preserves nonblank APPDATA and LOCALAPPDATA values exactly", () => {
+    const roaming = ` ${env.APPDATA} `;
+    const local = `\t${env.LOCALAPPDATA} `;
+    const probed: string[] = [];
+    const location = resolveWindowsClaudeDesktopLocation(
+      home,
+      { APPDATA: roaming, LOCALAPPDATA: local },
+      probedFileSystem(probed),
+    );
+    const packageStorage = join(local, "Packages");
+    expect(probed[0]).toBe(packageStorage);
+    expect(location).toEqual({
+      ok: true,
+      value: expect.objectContaining({
+        configPath: join(
+          packageStorage,
+          CLAUDE_DESKTOP_PACKAGE_FAMILY,
+          "LocalCache",
+          "Roaming",
+          "Claude",
+          "claude_desktop_config.json",
+        ),
+        msixPackage: expect.objectContaining({
+          appDataConfigPath: join(
+            roaming,
+            "Claude",
+            "claude_desktop_config.json",
+          ),
+          virtualizedRoots: [roaming, local],
+        }),
+      }),
+    });
+  });
+
+  it.each([
+    ["missing", {}],
+    ["empty", { APPDATA: "", LOCALAPPDATA: "" }],
+    ["whitespace-only", { APPDATA: " \t ", LOCALAPPDATA: "  " }],
+  ])("falls back to the profile roots when values are %s", (_, values) => {
+    const probed: string[] = [];
+    const location = resolveWindowsClaudeDesktopLocation(
+      home,
+      values,
+      probedFileSystem(probed),
+    );
+    expect(probed[0]).toBe(packages);
+    expect(location.ok && location.value.msixPackage).toMatchObject({
+      appDataConfigPath: appDataConfig,
+      privateConfigPath: privateConfig,
+      virtualizedRoots: [env.APPDATA, env.LOCALAPPDATA],
+    });
+  });
+});
+
 describe("package-private REA launchers", () => {
   const launcher = join(
     env.APPDATA,

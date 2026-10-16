@@ -66,6 +66,10 @@ Setup enregistre REA auprès de votre agent et installe les instructions de work
 
 ## Démarrage rapide
 
+### DeepSeek Harness
+
+La prise en charge native de Desktop reste à valider. N’utilisez pas le plugin 0.2.0 ; le candidat 0.2.1 nécessite une installation Node autonome fournie par l’utilisateur. Le [guide d’intégration](../../integrations/deepseek-harness/README.md) décrit les prérequis et les vérifications restantes.
+
 ### Configurer votre agent
 
 Une fois Node.js et npm installés, exécutez :
@@ -170,7 +174,7 @@ L'inspection statique JavaScript et .NET lit les fichiers fournis sans exécuter
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Les formats natifs et les hôtes pris en charge varient selon le fournisseur. Consultez [la configuration de Hopper et Ghidra](../installation.md#hopper), le [guide IDA](../ida-provider.md), [Kuna](../kuna-provider.md) et [la prise en charge expérimentale de Ghidra sous Windows](../windows-ghidra-p0.md). Ghidra prend aussi en charge [l'analyse DOS 16 bits](../ghidra-dos.md). Pour les gros binaires, augmentez son délai de démarrage avec `REA_GHIDRA_STARTUP_TIMEOUT_MS`. Pour le choix du fournisseur, consultez le [guide CLI](../cli.md#choose-a-provider). Vérifiez la [disponibilité dans les versions publiées](../installation.md#released-package-and-main) pour les fonctionnalités ajoutées depuis la dernière version npm.
+Les formats natifs et les hôtes pris en charge varient selon le fournisseur. Consultez [la configuration de Hopper et Ghidra](../installation.md#hopper), le [guide IDA](../ida-provider.md) et [la prise en charge expérimentale de Ghidra sous Windows](../windows-ghidra-p0.md). Ghidra prend aussi en charge [l'analyse DOS 16 bits](../ghidra-dos.md). Pour les gros binaires, augmentez son délai de démarrage avec `REA_GHIDRA_STARTUP_TIMEOUT_MS`. Pour le choix du fournisseur, consultez le [guide CLI](../cli.md#choose-a-provider). Vérifiez la [disponibilité dans les versions publiées](../installation.md#released-package-and-main) pour les fonctionnalités ajoutées depuis la dernière version npm.
 
 ## Études de cas
 
@@ -276,7 +280,7 @@ Signalez les vulnérabilités via [SECURITY.md](../../SECURITY.md).
 
 ## Historique des étoiles
 
-🎉 **250 000 étoiles GitHub — merci !**
+🎉 **200 000 étoiles GitHub — merci !**
 
 Merci à toutes les personnes qui utilisent REA, signalent des bugs, proposent des fonctionnalités, testent les builds et contribuent des correctifs.
 

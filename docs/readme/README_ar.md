@@ -66,6 +66,10 @@
 
 ## البدء السريع
 
+### DeepSeek Harness
+
+دعم Desktop الأصلي غير مؤهّل بعد. لا تستخدم الإضافة 0.2.0؛ تتطلب النسخة المرشحة 0.2.1 برنامج Node مستقلًا يوفّره المستخدم. راجع [دليل التكامل المرشح](../../integrations/deepseek-harness/README.md) لمعرفة المتطلبات والتحقق المتبقي.
+
 ### إعداد وكيلك
 
 بعد تثبيت Node.js وnpm، نفّذ:
@@ -166,7 +170,7 @@ npx rea-agents@latest setup
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-تختلف صيغ ملفات الشيفرة الأصلية والأنظمة المضيفة المدعومة باختلاف الموفّر. راجع [إعداد Hopper وGhidra](../installation.md#hopper)، و[دليل IDA](../ida-provider.md)، [Kuna](../kuna-provider.md)، و[دعم Ghidra التجريبي على Windows](../windows-ghidra-p0.md). يدعم Ghidra أيضًا [تحليل DOS ذي 16 بت](../ghidra-dos.md). لاختيار الموفّر، راجع [دليل CLI](../cli.md#choose-a-provider). تحقّق من [توفر الميزات في الإصدارات](../installation.md#released-package-and-main) للميزات المضافة بعد أحدث إصدار على npm.
+تختلف صيغ ملفات الشيفرة الأصلية والأنظمة المضيفة المدعومة باختلاف الموفّر. راجع [إعداد Hopper وGhidra](../installation.md#hopper)، و[دليل IDA](../ida-provider.md)، و[دعم Ghidra التجريبي على Windows](../windows-ghidra-p0.md). يدعم Ghidra أيضًا [تحليل DOS ذي 16 بت](../ghidra-dos.md). لاختيار الموفّر، راجع [دليل CLI](../cli.md#choose-a-provider). تحقّق من [توفر الميزات في الإصدارات](../installation.md#released-package-and-main) للميزات المضافة بعد أحدث إصدار على npm.
 
 ## دراسات الحالة
 
@@ -274,7 +278,7 @@ npx rea-agents@latest setup
 
 ## سجل النجوم
 
-🎉 **250,000 نجمة على GitHub — شكرًا لكم!**
+🎉 **200,000 نجمة على GitHub — شكرًا لكم!**
 
 شكرًا لكل من يستخدم REA، ويبلّغ عن الأخطاء، ويقترح ميزات، ويختبر إصدارات البناء، ويساهم بالإصلاحات.
 

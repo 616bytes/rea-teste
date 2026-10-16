@@ -66,6 +66,10 @@ REA 將 AI 代理連接到分析工具，用於檢查原生二進位檔案、Jav
 
 ## 快速開始
 
+### DeepSeek Harness
+
+原生 Desktop 支援尚未完成驗證。請勿使用 0.2.0 外掛；0.2.1 候選版本需要使用者提供獨立的 Node。[整合指南](../../integrations/deepseek-harness/README.md)說明了前提條件與剩餘驗證工作。
+
 ### 設定 AI 代理
 
 安裝 Node.js 和 npm 後，執行：
@@ -170,7 +174,7 @@ REA 需要 Node.js 22.x（>=22.19）、24.x（>=24.11）或 26+，以及 npm。�
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-不同提供者支援的原生格式和主機系統有所不同。請參閱 [Hopper 與 Ghidra 設定](../installation.md#hopper)、[IDA 指南](../ida-provider.md)、[Kuna](../kuna-provider.md)和[實驗性 Windows Ghidra 支援](../windows-ghidra-p0.md)。Ghidra 也支援 [16 位 DOS 分析](../ghidra-dos.md)。提供者選擇見 [CLI 指南](../cli.md#choose-a-provider)。對於最新 npm 版本發佈後新增的功能，請查看[發佈可用性](../installation.md#released-package-and-main)。
+不同提供者支援的原生格式和主機系統有所不同。請參閱 [Hopper 與 Ghidra 設定](../installation.md#hopper)、[IDA 指南](../ida-provider.md)和[實驗性 Windows Ghidra 支援](../windows-ghidra-p0.md)。Ghidra 也支援 [16 位 DOS 分析](../ghidra-dos.md)。提供者選擇見 [CLI 指南](../cli.md#choose-a-provider)。對於最新 npm 版本發佈後新增的功能，請查看[發佈可用性](../installation.md#released-package-and-main)。
 
 ## 案例
 
@@ -278,7 +282,7 @@ npx rea-agents@latest setup
 
 ## Star 歷史
 
-🎉 **GitHub Star 達到 250,000 個，感謝大家！**
+🎉 **GitHub Star 達到 200,000 個，感謝大家！**
 
 感謝每一位使用 REA、報告錯誤、提出功能需求、測試建置和貢獻修復的朋友。
 

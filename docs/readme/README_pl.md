@@ -66,6 +66,10 @@ Konfigurator rejestruje REA w Twoim agencie i instaluje pasujące instrukcje pra
 
 ## Szybki start
 
+### DeepSeek Harness
+
+Obsługa natywnego Desktop nie została jeszcze zweryfikowana. Nie używaj wtyczki 0.2.0; kandydat 0.2.1 wymaga osobnej instalacji Node dostarczonej przez użytkownika. [Przewodnik integracji](../../integrations/deepseek-harness/README.md) opisuje wymagania i pozostałe kontrole.
+
 ### Skonfiguruj agenta
 
 Po zainstalowaniu Node.js i npm uruchom:
@@ -166,7 +170,7 @@ Statyczna analiza JavaScript i .NET odczytuje dostarczone pliki bez uruchamiania
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Obsługiwane formaty natywne i platformy zależą od dostawcy analizy. Zobacz [konfigurację Hoppera i Ghidry](../installation.md#hopper), [przewodnik IDA](../ida-provider.md), [Kuna](../kuna-provider.md) oraz [eksperymentalną obsługę Ghidry w systemie Windows](../windows-ghidra-p0.md). Ghidra obsługuje też [analizę 16-bitowego DOS-a](../ghidra-dos.md). Wybór dostawcy opisuje [przewodnik CLI](../cli.md#choose-a-provider). Sprawdź [dostępność w wydaniach](../installation.md#released-package-and-main) dla funkcji dodanych po najnowszym wydaniu npm.
+Obsługiwane formaty natywne i platformy zależą od dostawcy analizy. Zobacz [konfigurację Hoppera i Ghidry](../installation.md#hopper), [przewodnik IDA](../ida-provider.md) oraz [eksperymentalną obsługę Ghidry w systemie Windows](../windows-ghidra-p0.md). Ghidra obsługuje też [analizę 16-bitowego DOS-a](../ghidra-dos.md). Wybór dostawcy opisuje [przewodnik CLI](../cli.md#choose-a-provider). Sprawdź [dostępność w wydaniach](../installation.md#released-package-and-main) dla funkcji dodanych po najnowszym wydaniu npm.
 
 ## Przykłady zastosowań
 
@@ -272,7 +276,7 @@ Zgłaszaj podatności zgodnie z [SECURITY.md](../../SECURITY.md).
 
 ## Historia gwiazdek
 
-🎉 **250 000 gwiazdek na GitHubie — dziękujemy!**
+🎉 **200 000 gwiazdek na GitHubie — dziękujemy!**
 
 Dziękujemy wszystkim, którzy używają REA, zgłaszają błędy, proponują nowe funkcje, testują kompilacje i przesyłają poprawki.
 

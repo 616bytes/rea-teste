@@ -66,6 +66,10 @@ Die Einrichtung registriert REA bei deinem Agenten und installiert passende Work
 
 ## Schnellstart
 
+### DeepSeek Harness
+
+Die native Desktop-Unterstützung ist noch nicht qualifiziert. Verwenden Sie das Plugin 0.2.0 nicht; der Kandidat 0.2.1 benötigt eine vom Benutzer bereitgestellte eigenständige Node-Installation. Der [Integrationsleitfaden](../../integrations/deepseek-harness/README.md) beschreibt die Voraussetzungen und ausstehenden Prüfungen.
+
 ### Deinen Agenten einrichten
 
 Wenn Node.js und npm installiert sind, führe diesen Befehl aus:
@@ -166,7 +170,7 @@ Statische JavaScript- und .NET-Untersuchungen lesen die bereitgestellten Dateien
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Native Formate und unterstützte Hostsysteme unterscheiden sich je nach Provider. Siehe [Hopper- und Ghidra-Einrichtung](../installation.md#hopper), den [IDA-Leitfaden](../ida-provider.md), [Kuna](../kuna-provider.md) und die [experimentelle Ghidra-Unterstützung unter Windows](../windows-ghidra-p0.md). Ghidra unterstützt auch [16-Bit-DOS-Analyse](../ghidra-dos.md). Die Provider-Auswahl beschreibt der [CLI-Leitfaden](../cli.md#choose-a-provider). Prüfe die [Verfügbarkeit in Releases](../installation.md#released-package-and-main) für Funktionen, die seit der neuesten npm-Version hinzugekommen sind.
+Native Formate und unterstützte Hostsysteme unterscheiden sich je nach Provider. Siehe [Hopper- und Ghidra-Einrichtung](../installation.md#hopper), den [IDA-Leitfaden](../ida-provider.md) und die [experimentelle Ghidra-Unterstützung unter Windows](../windows-ghidra-p0.md). Ghidra unterstützt auch [16-Bit-DOS-Analyse](../ghidra-dos.md). Die Provider-Auswahl beschreibt der [CLI-Leitfaden](../cli.md#choose-a-provider). Prüfe die [Verfügbarkeit in Releases](../installation.md#released-package-and-main) für Funktionen, die seit der neuesten npm-Version hinzugekommen sind.
 
 ## Fallstudien
 
@@ -272,7 +276,7 @@ Melde Sicherheitslücken gemäß [SECURITY.md](../../SECURITY.md).
 
 ## Sternverlauf
 
-🎉 **250.000 GitHub-Sterne – vielen Dank!**
+🎉 **200.000 GitHub-Sterne – vielen Dank!**
 
 Danke an alle, die REA nutzen, Fehler melden, Funktionswünsche äußern, Builds testen und Fehlerbehebungen beitragen.
 

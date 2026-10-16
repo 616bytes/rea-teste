@@ -66,6 +66,10 @@ Proses penyiapan mendaftarkan REA ke agen Anda dan memasang instruksi alur kerja
 
 ## Mulai Cepat
 
+### DeepSeek Harness
+
+Dukungan Desktop native belum divalidasi. Jangan gunakan plugin 0.2.0; kandidat 0.2.1 memerlukan Node mandiri yang disediakan pengguna. Lihat [panduan integrasi](../../integrations/deepseek-harness/README.md) untuk prasyarat dan verifikasi yang masih diperlukan.
+
 ### Siapkan agen Anda
 
 Dengan Node.js dan npm yang telah terpasang, jalankan:
@@ -173,7 +177,7 @@ Pemeriksaan JavaScript dan .NET statis membaca berkas yang disediakan tanpa menj
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Format native dan dukungan sistem host berbeda-beda menurut penyedia. Lihat [penyiapan Hopper dan Ghidra](../installation.md#hopper), [panduan IDA](../ida-provider.md), [Kuna](../kuna-provider.md), dan [dukungan eksperimental Ghidra di Windows](../windows-ghidra-p0.md).
+Format native dan dukungan sistem host berbeda-beda menurut penyedia. Lihat [penyiapan Hopper dan Ghidra](../installation.md#hopper), [panduan IDA](../ida-provider.md), dan [dukungan eksperimental Ghidra di Windows](../windows-ghidra-p0.md).
 
 Ghidra juga mendukung [analisis DOS 16-bit](../ghidra-dos.md).
 
@@ -297,7 +301,7 @@ Laporkan kerentanan melalui [SECURITY.md](../../SECURITY.md).
 
 ## Riwayat Bintang
 
-🎉 **250.000 bintang GitHub, terima kasih!**
+🎉 **200.000 bintang GitHub, terima kasih!**
 
 Terima kasih kepada semua orang yang menggunakan REA, melaporkan bug, meminta fitur, menguji build, dan berkontribusi dalam perbaikan.
 

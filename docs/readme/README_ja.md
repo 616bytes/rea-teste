@@ -66,6 +66,10 @@ REA はエージェントを分析ツールにつなぎ、ネイティブバイ�
 
 ## クイックスタート
 
+### DeepSeek Harness
+
+ネイティブ Desktop の対応はまだ検証されていません。プラグイン 0.2.0 は使用しないでください。候補版 0.2.1 にはユーザーが用意する独立した Node が必要です。[統合ガイド](../../integrations/deepseek-harness/README.md)に前提条件と残りの検証項目を記載しています。
+
 ### エージェントを設定する
 
 Node.js と npm がインストールされている環境で実行します。
@@ -166,7 +170,7 @@ REA には Node.js 22.x（>=22.19）、24.x（>=24.11）、または 26+ と npm
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-対応するネイティブ形式とホストは、プロバイダーによって異なります。[Hopper と Ghidra のセットアップ](../installation.md#hopper)、[IDA ガイド](../ida-provider.md)、[Kuna](../kuna-provider.md)、[Windows 向け Ghidra の実験的対応](../windows-ghidra-p0.md)を参照してください。Ghidra は [16 ビット DOS 分析](../ghidra-dos.md)にも対応しています。プロバイダーの選択は [CLI ガイド](../cli.md#choose-a-provider)を参照してください。最新の npm リリース以降に追加された機能については、[リリースでの利用可否](../installation.md#released-package-and-main)を確認してください。
+対応するネイティブ形式とホストは、プロバイダーによって異なります。[Hopper と Ghidra のセットアップ](../installation.md#hopper)、[IDA ガイド](../ida-provider.md)、[Windows 向け Ghidra の実験的対応](../windows-ghidra-p0.md)を参照してください。Ghidra は [16 ビット DOS 分析](../ghidra-dos.md)にも対応しています。プロバイダーの選択は [CLI ガイド](../cli.md#choose-a-provider)を参照してください。最新の npm リリース以降に追加された機能については、[リリースでの利用可否](../installation.md#released-package-and-main)を確認してください。
 
 ## 事例
 
@@ -274,7 +278,7 @@ npx rea-agents@latest setup
 
 ## スター履歴
 
-🎉 **GitHub スター 250,000 件、ありがとうございます！**
+🎉 **GitHub スター 200,000 件、ありがとうございます！**
 
 REA の利用、バグ報告、機能の要望、ビルドのテスト、修正への貢献に感謝します。
 

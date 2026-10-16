@@ -90,6 +90,18 @@ Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build and
 [installation and setup](docs/installation.md) for provider configuration and
 manual MCP registration.
 
+### DeepSeek Harness native plugin
+
+Native Desktop support remains unqualified. The immutable 0.2.0 plugin starts
+its MCP child with Electron's executable and is unsuitable for Desktop;
+enabling that package does not fix the launcher. A fixed 0.2.1 candidate exists
+in source, but it is not a qualified published Desktop release.
+
+Do not use the old Desktop install URLs. See the
+[candidate integration guide](integrations/deepseek-harness/README.md) for the
+required caller-supplied standalone Node path and remaining qualification work.
+Desktop installation recommendations will resume after a fixed release is qualified.
+
 ### Ask your agent
 
 ```text
@@ -205,8 +217,7 @@ or update either provider.
 
 Native formats and host support vary by provider. See
 [Hopper and Ghidra setup](docs/installation.md#hopper), the
-[IDA guide](docs/ida-provider.md) (including an optional native MCP bridge), the
-[Kuna decompiler guide](docs/kuna-provider.md), and
+[IDA guide](docs/ida-provider.md) (including an optional native MCP bridge), and
 [experimental Windows Ghidra support](docs/windows-ghidra-p0.md).
 Ghidra also supports [16-bit DOS analysis](docs/ghidra-dos.md).
 For large binaries, raise the provider's startup deadline with
@@ -345,7 +356,7 @@ Report vulnerabilities through [SECURITY.md](SECURITY.md).
 
 ## Star history
 
-🎉 **250,000 GitHub stars — thank you!**
+🎉 **200,000 GitHub stars — thank you!**
 
 Thanks to everyone using REA, reporting bugs, requesting features, testing builds, and contributing fixes.
 

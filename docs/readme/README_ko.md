@@ -68,6 +68,10 @@ REA는 에이전트를 분석 도구에 연결해 네이티브 바이너리, Jav
 
 Linux에서 Ghidra, JADX, 펌웨어 도구를 실행하거나 정적 JavaScript/Electron 분석을 하려면, 프로세스 소유권 확인을 위해 REA의 `PATH`에 procps 호환 `ps`가 있어야 합니다. 해결 방법은 `docs/installation.md`의 "Linux owned-process prerequisite" 항목에 있습니다.
 
+### DeepSeek Harness
+
+네이티브 Desktop 지원은 아직 검증되지 않았습니다. 플러그인 0.2.0을 사용하지 마세요. 후보 버전 0.2.1은 사용자가 제공하는 독립 Node 설치가 필요합니다. [통합 가이드](../../integrations/deepseek-harness/README.md)에서 요구 사항과 남은 검증 항목을 확인하세요.
+
 ### 에이전트 설정
 
 Node.js와 npm이 설치된 환경에서 다음 명령을 실행하세요.
@@ -175,7 +179,7 @@ REA에는 Node.js 22.x(>=22.19), 24.x(>=24.11) 또는 26+와 npm이 필요합니
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-지원하는 네이티브 형식과 호스트는 제공자마다 다릅니다. [Hopper 및 Ghidra 설정](../installation.md#hopper), [IDA 가이드](../ida-provider.md)(선택 사항인 네이티브 MCP 브리지 포함), [Kuna](../kuna-provider.md), [실험적 Windows Ghidra 지원](../windows-ghidra-p0.md)을 참고하세요. Ghidra는 [16비트 DOS 분석](../ghidra-dos.md)도 지원합니다. 큰 바이너리를 분석할 때는 `REA_GHIDRA_STARTUP_TIMEOUT_MS` 또는 `REA_HOPPER_STARTUP_TIMEOUT_MS`로 제공자의 시작 제한 시간을 늘리세요. 제공자 선택은 [CLI 가이드](../cli.md#choose-a-provider)를 참고하세요. 최신 npm 릴리스 이후 추가된 기능은 [릴리스에서의 사용 가능 여부](../installation.md#released-package-and-main)를 확인하세요.
+지원하는 네이티브 형식과 호스트는 제공자마다 다릅니다. [Hopper 및 Ghidra 설정](../installation.md#hopper), [IDA 가이드](../ida-provider.md)(선택 사항인 네이티브 MCP 브리지 포함), [실험적 Windows Ghidra 지원](../windows-ghidra-p0.md)을 참고하세요. Ghidra는 [16비트 DOS 분석](../ghidra-dos.md)도 지원합니다. 큰 바이너리를 분석할 때는 `REA_GHIDRA_STARTUP_TIMEOUT_MS` 또는 `REA_HOPPER_STARTUP_TIMEOUT_MS`로 제공자의 시작 제한 시간을 늘리세요. 제공자 선택은 [CLI 가이드](../cli.md#choose-a-provider)를 참고하세요. 최신 npm 릴리스 이후 추가된 기능은 [릴리스에서의 사용 가능 여부](../installation.md#released-package-and-main)를 확인하세요.
 
 ## 사례
 
@@ -283,7 +287,7 @@ npx rea-agents@latest setup
 
 ## 스타 기록
 
-🎉 **GitHub 스타 250,000개, 감사합니다!**
+🎉 **GitHub 스타 200,000개, 감사합니다!**
 
 REA를 사용하고, 버그를 보고하고, 기능을 요청하고, 빌드를 테스트하고, 수정에 기여해 주신 모든 분께 감사드립니다.
 

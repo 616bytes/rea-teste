@@ -66,6 +66,10 @@ La configuración registra REA en tu agente e instala las instrucciones de traba
 
 ## Inicio rápido
 
+### DeepSeek Harness
+
+El soporte nativo de Desktop aún no está validado. No use el complemento 0.2.0; el candidato 0.2.1 requiere un Node independiente proporcionado por el usuario. La [guía de integración](../../integrations/deepseek-harness/README.md) describe los requisitos y las verificaciones pendientes.
+
 ### Configura tu agente
 
 Con Node.js y npm instalados, ejecuta:
@@ -166,7 +170,7 @@ La inspección estática de JavaScript y .NET lee los archivos suministrados sin
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Los formatos nativos y los sistemas anfitriones compatibles varían según el proveedor. Consulta [configuración de Hopper y Ghidra](../installation.md#hopper), la [guía de IDA](../ida-provider.md), [Kuna](../kuna-provider.md) y la [compatibilidad experimental de Ghidra en Windows](../windows-ghidra-p0.md). Ghidra también admite [análisis de DOS de 16 bits](../ghidra-dos.md). Para elegir un proveedor, consulta la [guía de CLI](../cli.md#choose-a-provider). Comprueba la [disponibilidad por versión](../installation.md#released-package-and-main) de las funciones añadidas después de la última versión publicada en npm.
+Los formatos nativos y los sistemas anfitriones compatibles varían según el proveedor. Consulta [configuración de Hopper y Ghidra](../installation.md#hopper), la [guía de IDA](../ida-provider.md) y la [compatibilidad experimental de Ghidra en Windows](../windows-ghidra-p0.md). Ghidra también admite [análisis de DOS de 16 bits](../ghidra-dos.md). Para elegir un proveedor, consulta la [guía de CLI](../cli.md#choose-a-provider). Comprueba la [disponibilidad por versión](../installation.md#released-package-and-main) de las funciones añadidas después de la última versión publicada en npm.
 
 ## Casos prácticos
 
@@ -272,7 +276,7 @@ Informa de vulnerabilidades siguiendo [SECURITY.md](../../SECURITY.md).
 
 ## Historial de estrellas
 
-🎉 **250.000 estrellas en GitHub: ¡gracias!**
+🎉 **200.000 estrellas en GitHub: ¡gracias!**
 
 Gracias a quienes usan REA, informan de errores, solicitan funciones, prueban compilaciones y contribuyen con correcciones.
 

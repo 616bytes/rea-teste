@@ -64,11 +64,12 @@ it("reports a graph beyond REA's buffer once per session instead of rebuilding i
         procedure: "0x1000",
       });
       if (result.ok) throw new Error("the oversized graph was admitted");
-      expect(result.error).toMatchObject({
+      const failure = projectAnalysisError(result.error);
+      expect(result.error, JSON.stringify(failure)).toMatchObject({
         _tag: "AnalysisResourceConstraintError",
         resource: "memory",
       });
-      expect(projectAnalysisError(result.error).retryable).toBe(false);
+      expect(failure.retryable).toBe(false);
     }
     // The second query reused the failure instead of walking the program again.
     expect(

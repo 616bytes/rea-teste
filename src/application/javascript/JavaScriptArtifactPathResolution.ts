@@ -524,13 +524,11 @@ const contextualCandidate = (
     )
       return bareModuleCandidate(input);
     if (input.moduleKind !== "require") {
-      if (/%(?:2f|5c)/iu.test(stripQueryAndFragment(declared)))
-        return unresolvedCandidate("rejected", [
-          "ES module URL paths cannot contain percent-encoded slash or backslash bytes.",
-        ]);
-      const decoded = decodeModuleUrlPath(stripQueryAndFragment(declared));
-      if (typeof decoded !== "string") return decoded;
-      declared = decoded;
+      const modulePath = normalizeModuleUrlPath(
+        stripQueryAndFragment(declared),
+      );
+      if (typeof modulePath !== "string") return modulePath;
+      declared = modulePath;
     }
   } else if (looksExternal(declared))
     return unresolvedCandidate("external", [
@@ -596,6 +594,45 @@ const decodeModuleUrlPath = (
         "The decoded module URL path contains NUL.",
       ])
     : decoded;
+};
+
+/** Normalize URL dot segments before checking bytes in the retained path. */
+const normalizeModuleUrlPath = (
+  declared: string,
+): string | CandidateResolution => {
+  // URL parsing converts JavaScript strings to scalar values before path
+  // decoding. Encoded dots are structural only when the whole segment is a
+  // URL dot segment; encoded separators in discarded segments are harmless.
+  const scalarPath = Buffer.from(declared, "utf8").toString("utf8");
+  const structuralPath = scalarPath
+    .split("/")
+    .map((segment) => {
+      const dots = segment.replace(/%2e/giu, ".");
+      return dots === "." || dots === ".." ? dots : segment;
+    })
+    .join("/");
+  const state = applyUrlReference(urlDirectoryState(""), structuralPath);
+  if (state.segments.some((segment) => /%(?:2f|5c)/iu.test(segment)))
+    return unresolvedCandidate("rejected", [
+      "ES module URL paths cannot contain percent-encoded slash or backslash bytes.",
+    ]);
+  const decodedSegments: string[] = [];
+  for (const segment of state.segments) {
+    const decoded = decodeModuleUrlPath(segment);
+    if (typeof decoded !== "string") return decoded;
+    decodedSegments.push(decoded);
+  }
+  const normalized = [
+    ...Array.from({ length: state.escapes }, () => ".."),
+    ...decodedSegments,
+  ].join("/");
+  return scalarPath.startsWith("/")
+    ? `/${normalized}`
+    : normalized === "" && state.segments.at(-1) === ""
+      ? "./"
+      : normalized.startsWith("/")
+        ? `./${normalized}`
+        : normalized;
 };
 
 const relativeCandidate = (sourcePath: string, declared: string): string =>
@@ -1757,15 +1794,10 @@ const exactPackageTargetNotFound = (
 const fileUrlPath = (value: string): string | null | undefined => {
   if (!/^file:\/\//iu.test(value)) return undefined;
   // URL parsing removes tabs and newlines and normalizes encoded dot segments.
-  // Check the raw path first, excluding URL identity suffixes, then check the
-  // parsed pathname so parser normalization cannot introduce a separator.
+  // Refuse raw syntax the parser would silently alter, then check the
+  // normalized pathname so discarded segments do not block a valid target.
   const rawPath = stripQueryAndFragment(value);
-  if (
-    value.includes("\0") ||
-    value.includes("\\") ||
-    /[\t\n\r]/u.test(rawPath) ||
-    !admitsCanonicalPathSyntax(rawPath)
-  )
+  if (value.includes("\0") || value.includes("\\") || /[\t\n\r]/u.test(rawPath))
     return null;
   try {
     const url = new URL(value);

@@ -9,7 +9,6 @@ import { firmwareResultSchemas } from "../../../src/domain/firmware/firmwareAnal
 import { FirmwareAnalysisService } from "../../../src/application/firmware/FirmwareAnalysisService.js";
 import { FirmwareProvider } from "../../../src/firmware/FirmwareProvider.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { ToolResultDelivery } from "../../../src/server/toolResult.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
@@ -197,10 +196,34 @@ it("retains a setup-failed publication tree for provider cleanup retry", async (
       ok: false,
       error: {
         cleanupIncomplete: true,
+        cause: expect.any(AggregateError),
+      },
+    });
+    if (result.ok) throw new Error("Expected setup and cleanup failures");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        operation: "extract_firmware",
+        resources: [fixture.output, fixture.launches.at(-1)?.cwd],
         diagnostics: {
-          previous_error: expect.stringContaining(
-            "injected post-acquisition setup failure",
-          ),
+          primary_error: {
+            code: "execution_failure",
+            details: {
+              diagnostics: {
+                reason: "injected post-acquisition setup failure",
+              },
+            },
+          },
+          cleanup_error: {
+            code: "cleanup_incomplete",
+            details: {
+              resources: [fixture.output, fixture.launches.at(-1)?.cwd],
+              diagnostics: {
+                previous_error: "injected post-acquisition setup failure",
+                reason: "injected first cleanup failure",
+              },
+            },
+          },
         },
       },
     });
@@ -266,14 +289,38 @@ it("retains the complete firmware result when published output cleanup stays unc
       },
     });
     if (result.ok) throw new Error("Expected unresolved descriptor cleanup");
-    expect(result.error).toBeInstanceOf(ProviderCleanupError);
+    expect(result.error.cause).toBeInstanceOf(AggregateError);
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "cleanup_incomplete",
       details: {
-        partial_observation: {
-          kind: "firmware",
-          result: { output_directory: fixture.output },
+        operation: "extract_firmware",
+        resources: [fixture.output, fixture.launches.at(-1)?.cwd],
+        diagnostics: {
+          primary_error: {
+            code: "cleanup_incomplete",
+            details: {
+              resources: [fixture.output],
+              diagnostics: {
+                reason:
+                  "Extraction output directory handles could not be closed",
+              },
+              partial_observation: result.error.partialObservation,
+            },
+          },
+          cleanup_error: {
+            code: "cleanup_incomplete",
+            details: {
+              resources: [fixture.output, fixture.launches.at(-1)?.cwd],
+              diagnostics: {
+                reason: "Output tree handles remain open",
+                previous_error:
+                  "Extraction output directory handles could not be closed",
+              },
+              partial_observation: result.error.partialObservation,
+            },
+          },
         },
+        partial_observation: result.error.partialObservation,
       },
     });
     expect(await readFile(`${fixture.output}/rootfs/config`, "utf8")).toBe(

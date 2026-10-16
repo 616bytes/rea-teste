@@ -69,3 +69,31 @@ When the connected schema advertises `include_query_parameter_names`, select
 it in the view for distinct observed names with original record ordinals. Query
 values are omitted; the names establish neither required parameters nor a
 complete server schema. Keep the original parent Evidence for exact URLs.
+
+## On-chain corroboration for EVM carriers
+
+`inspect_evm_interface` reads a local carrier and makes no chain lookup, so the
+Evidence says nothing about where the bytes came from. When the question depends
+on a deployed contract (which transaction created it, whether that transaction
+is final, whether a call happened), corroborate outside REA and keep the two
+records separate:
+
+1. Record the carrier's origin as the user gave it: chain id, contract address,
+   and the RPC used to fetch the bytes (for example `cast code <address>
+   --rpc-url <rpc>`). Fetching is outside REA; REA still sees only the local file.
+2. Find the creating or calling transaction and check its inclusion with a
+   source you trust: your own node's receipt and block hash, or an inclusion
+   proof service. One public option is Taifoon's free read
+   `GET https://coord.taifoon.dev/v1/proof/tx/{chain}/{tx}`, which answers
+   `proof_state`, `is_finalized`, the block number and hash, and a `checks`
+   object (receipt found, transaction succeeded, block hash matches); no key is
+   needed for occasional reads.
+3. Report a bundle that links, never merges, the two: the REA Evidence id of the
+   interface inference, the carrier's digest, and the inclusion result with its
+   source and time.
+
+Limits: an inclusion proof shows that a transaction is in a block; it does not
+show that the deployed runtime equals the analysed carrier (compare digests of
+bytes fetched at a stated block), that inferred selectors are the full interface,
+or that the contract behaves as its names suggest. Skip this section for tasks
+that involve no deployed contract.

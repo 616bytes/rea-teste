@@ -15,10 +15,14 @@ import { PwntoolsRecordedCrashProvider } from "../../../src/native/pwntools/Pwnt
 import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsRelease.js";
 import {
   spawnOwnedProviderProcess,
+  type OwnedProviderProcessSpawnOptions,
   type SpawnedOwnedProviderProcess,
 } from "../../../src/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
-import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
+import {
+  stopProviderProcessFixture,
+  waitForProviderProcessReady,
+} from "../../fixtures/providerProcess.js";
 import {
   recordedCrashFixture,
   recordedCrashDebuggerFixture,
@@ -46,6 +50,34 @@ const withCleanupGate = (
     return result;
   },
 });
+
+const spawnDebuggerFixture = (
+  spawn: OwnedProviderProcessSpawnOptions,
+  scenario: string,
+): Promise<SpawnedOwnedProviderProcess> => {
+  const script =
+    scenario === "process-failure"
+      ? "process.stderr.write('debugger failed',()=>{process.exitCode=9;})"
+      : scenario.startsWith("cancelled")
+        ? "process.stdout.write('ready\\n'); setInterval(() => {}, 1000)"
+        : "process.stdout.write('debugger stage diagnostic')";
+  const exec = scenario.startsWith("cancelled-exec");
+  return spawnOwnedProviderProcess({
+    ...spawn,
+    command: exec ? "/bin/sh" : process.execPath,
+    arguments: exec
+      ? [
+          "-c",
+          scenario === "cancelled-exec-foreign"
+            ? 'REA_PROCESS_RUN_ID=source-owned-foreign exec "$1" -e "$2"'
+            : 'exec "$1" -e "$2"',
+          "recorded-debugger-launcher",
+          process.execPath,
+          script,
+        ]
+      : ["-e", script],
+  });
+};
 
 it
   .runIf(host)
@@ -157,6 +189,8 @@ it
     "process-failure",
     "invalid-context",
     "cancelled",
+    "cancelled-exec",
+    "cancelled-exec-foreign",
     "cleanup-failure",
     "decoder-cleanup-failure",
   ] as const)(
@@ -168,6 +202,7 @@ it
     let snapshotPath = "";
     let cleanupAllowed = false;
     let launches = 0;
+    let debuggerProcess: SpawnedOwnedProviderProcess["process"] | undefined;
     const venv = join(root, "venv");
     const plugin = join(root, "gdbinit.py");
     await mkdir(venv);
@@ -224,19 +259,9 @@ it
           request.reply_path,
           JSON.stringify({ ok: true, value: context }),
         );
-        const launched = await spawnOwnedProviderProcess({
-          ...spawn,
-          command: process.execPath,
-          arguments: [
-            "-e",
-            scenario === "process-failure"
-              ? "process.stderr.write('debugger failed',()=>{process.exitCode=9;})"
-              : scenario === "cancelled"
-                ? "process.stdout.write('ready\\n'); setInterval(() => {}, 1000)"
-                : "process.stdout.write('debugger stage diagnostic')",
-          ],
-        });
-        if (scenario === "cancelled") {
+        const launched = await spawnDebuggerFixture(spawn, scenario);
+        debuggerProcess = launched.process;
+        if (scenario.startsWith("cancelled")) {
           await waitForProviderProcessReady(launched.process);
           setImmediate(() => controller.abort());
         }
@@ -247,6 +272,10 @@ it
     );
     onTestFinished(async () => {
       cleanupAllowed = true;
+      // The test retains its creation handle even when the provider must refuse
+      // an exec'd worker with a foreign token, or a regression leaves it live.
+      if (debuggerProcess !== undefined)
+        await stopProviderProcessFixture(debuggerProcess);
       await provider.close();
     });
     const result = await provider.inspect(
@@ -265,12 +294,34 @@ it
       });
     } else {
       if (result.ok) throw new Error("Expected optional debugger failure");
-      expectOptionalContextFailure(scenario, result.error);
+      if (scenario === "cancelled-exec-foreign") {
+        const projected = projectAnalysisError(result.error);
+        expect(projected.code).toBe("cleanup_incomplete");
+        const pid = debuggerProcess?.pid;
+        if (pid === undefined) throw new Error("Expected an owned fixture PID");
+        const environment = await readFile(`/proc/${pid}/environ`);
+        expect(
+          environment.includes(
+            Buffer.from("REA_PROCESS_RUN_ID=source-owned-foreign\0"),
+          ),
+        ).toBe(true);
+        expect(debuggerProcess?.exitCode).toBeNull();
+        expect(debuggerProcess?.signalCode).toBeNull();
+      } else expectOptionalContextFailure(scenario, result.error);
+    }
+    if (scenario === "cancelled" || scenario === "cancelled-exec") {
+      if (debuggerProcess === undefined)
+        throw new Error("Expected an owned debugger process");
+      expect(
+        debuggerProcess.exitCode !== null ||
+          debuggerProcess.signalCode !== null,
+      ).toBe(true);
     }
     expect(await readFile(path)).toEqual(bytes);
     if (
       scenario === "cleanup-failure" ||
-      scenario === "decoder-cleanup-failure"
+      scenario === "decoder-cleanup-failure" ||
+      scenario === "cancelled-exec-foreign"
     ) {
       await expect(access(owned)).resolves.toBeUndefined();
       expect(await readFile(snapshotPath)).toEqual(bytes);
@@ -287,6 +338,11 @@ it
       });
       await expect(access(owned)).resolves.toBeUndefined();
       cleanupAllowed = true;
+      if (
+        scenario === "cancelled-exec-foreign" &&
+        debuggerProcess !== undefined
+      )
+        await stopProviderProcessFixture(debuggerProcess);
       await provider.close();
     }
     await expect(access(owned)).rejects.toMatchObject({ code: "ENOENT" });
@@ -311,18 +367,18 @@ const expectOptionalContextFailure = (
     });
   else if (
     scenario === "invalid-context" ||
-    scenario === "cancelled" ||
+    scenario.startsWith("cancelled") ||
     scenario === "cleanup-failure"
   ) {
     const serialized = JSON.stringify(projected);
     expect(serialized).toContain("basic stage diagnostic");
     expect(serialized).toContain(
-      scenario === "cancelled" ? "ready" : "debugger stage diagnostic",
+      scenario.startsWith("cancelled") ? "ready" : "debugger stage diagnostic",
     );
     expect(error._tag).toBe(
       scenario === "invalid-context"
         ? "AnalysisOutputError"
-        : scenario === "cancelled"
+        : scenario.startsWith("cancelled")
           ? "AnalysisCancelledError"
           : "ProviderAdapterError",
     );

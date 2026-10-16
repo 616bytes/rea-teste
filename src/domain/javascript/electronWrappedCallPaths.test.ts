@@ -1013,6 +1013,69 @@ it.each(["||=", "??=", "&&="])(
     }
   },
 );
+it.each(["||=", "??=", "&&="])(
+  "preserves ordinary values beside synthetic receivers for %s",
+  (operator) => {
+    for (const moduleFirst of [false, true]) {
+      const ordinary =
+        operator === "&&="
+          ? "{exports: false}"
+          : "{exports: () => electron.ipcRenderer.send('left')}";
+      const receiver = moduleFirst
+        ? `(flag ? module : ${ordinary})`
+        : `(flag ? ${ordinary} : module)`;
+      const target = `${receiver}.exports`;
+      const result = analyzeJavaScriptStaticSource(
+        rootFixture(
+          `const selected = (${target} ${operator} () => electron.ipcRenderer.send("right"));
+        electron.contextBridge.exposeInMainWorld("desktop", {action: selected});`,
+          false,
+        ),
+      );
+      const paths = result.electron.call_paths
+        ?.map(({ channel, conditions, resolution }) => ({
+          channel,
+          conditions: conditions.map(({ expression }) => expression),
+          resolution,
+        }))
+        .sort((a, b) => String(a.channel).localeCompare(String(b.channel)));
+      expect(paths).toEqual([
+        ...(operator === "&&="
+          ? []
+          : [
+              {
+                channel: "left",
+                conditions: [
+                  moduleFirst ? "!(flag)" : "flag",
+                  operator === "||="
+                    ? target
+                    : `(${target}) !== null && (${target}) !== undefined`,
+                ],
+                resolution: "candidate",
+              },
+            ]),
+        {
+          channel: "right",
+          conditions: [
+            operator === "&&="
+              ? target
+              : operator === "||="
+                ? `!(${target})`
+                : `(${target}) === null || (${target}) === undefined`,
+          ],
+          resolution: "candidate",
+        },
+      ]);
+      expect(result.electron.ipc).toContainEqual(
+        expect.objectContaining({ channel: "right" }),
+      );
+      if (operator !== "&&=")
+        expect(result.electron.ipc).toContainEqual(
+          expect.objectContaining({ channel: "left" }),
+        );
+    }
+  },
+);
 it.each(["(module)", "(module as any)", "(module!)"])(
   "recognizes wrapped synthetic receivers: %s",
   (receiver) => {
@@ -1025,6 +1088,41 @@ it.each(["(module)", "(module as any)", "(module!)"])(
       "||=",
       `${receiver}.exports`,
     );
+  },
+);
+it.each(["||=", "??=", "&&="])(
+  "recognizes whole-target wrappers for %s",
+  (operator) => {
+    for (const target of [
+      "(module.exports as any)",
+      "(module.exports!)",
+      "(module.exports satisfies any)",
+      "(module.exports)",
+    ]) {
+      expectGuardedRoot(
+        rootFixture(
+          `module.exports = null;
+          const selected = (${target} ${operator} {action: () => electron.ipcRenderer.send("rhs")});
+          electron.contextBridge.exposeInMainWorld("desktop", selected);`,
+          false,
+        ),
+        operator,
+        target.slice(1, -1),
+      );
+      const ordinary = target.replace(
+        "module.exports",
+        `({exports: ${operator === "&&=" ? "false" : "true"}}).exports`,
+      );
+      const result =
+        analyzeJavaScriptStaticSource(`const e = require("electron");
+        e.contextBridge.exposeInMainWorld("desktop", {action() {
+          (${ordinary} ${operator} () => e.ipcRenderer.send("skipped"))();
+        }});`);
+      expect(result.electron.call_paths ?? []).toEqual([]);
+      expect(result.electron.ipc).toContainEqual(
+        expect.objectContaining({ channel: "skipped" }),
+      );
+    }
   },
 );
 it.each(["||=", "??="])(

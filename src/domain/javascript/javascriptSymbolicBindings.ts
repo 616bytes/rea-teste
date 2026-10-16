@@ -636,26 +636,37 @@ export class JavaScriptSymbolicBindings {
   }
 
   #assignmentLeft(node: t.Node, env: SymbolicEnvironment): SymbolicValue {
+    const target = unwrapJavaScriptExpression(node).node;
     if (
-      t.isMemberExpression(node) &&
-      semanticStaticPropertyKey(node.property, node.computed) === "exports"
+      t.isMemberExpression(target) &&
+      semanticStaticPropertyKey(target.property, target.computed) === "exports"
     ) {
-      const receiver = this.evaluate(node.object, env);
-      if (
-        symbolicVariants(receiver).some((variant) => {
-          const namespace =
-            variant.kind === "record"
-              ? variant.values.get("exports")
-              : undefined;
-          return (
-            namespace?.kind === "namespace" &&
-            this.#namespaceOwners.has(namespace.bindingId)
-          );
-        })
-      )
-        // This slot preserves module identity, not the mutable exports value.
-        // Root writes, aliases and receiver calls are not a complete value model.
-        return symbolicUnknown("mutable module exports value");
+      const receiver = this.evaluate(target.object, env);
+      const variants = symbolicVariants(receiver);
+      const isModuleRecord = (variant: SymbolicValue): boolean => {
+        const namespace =
+          variant.kind === "record" ? variant.values.get("exports") : undefined;
+        return (
+          namespace?.kind === "namespace" &&
+          this.#namespaceOwners.has(namespace.bindingId)
+        );
+      };
+      if (variants.some(isModuleRecord)) {
+        const result = symbolicUnion(
+          variants.map((variant) =>
+            isModuleRecord(variant)
+              ? // This slot preserves module identity, not its mutable value.
+                this.#withConditions(
+                  symbolicUnknown("mutable module exports value"),
+                  variant,
+                )
+              : this.property(variant, "exports", { node, environment: env }),
+          ),
+        );
+        return receiver.kind === "union"
+          ? this.#withConditions(result, receiver)
+          : result;
+      }
     }
     return this.evaluate(node, env);
   }

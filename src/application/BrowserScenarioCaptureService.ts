@@ -69,15 +69,15 @@ export const captureBrowserScenario = async (
         { cause: report.error },
       ),
     );
+  const evidence = createBrowserScenarioEvidence(
+    scenario,
+    report.data,
+    provider.identity(),
+  );
+  if (report.data.steps.some((step) => step.status !== "completed"))
+    return { ok: true, value: evidence };
   return completeProviderEvidence(
-    {
-      ok: true,
-      value: createBrowserScenarioEvidence(
-        scenario,
-        report.data,
-        provider.identity(),
-      ),
-    },
+    { ok: true, value: evidence },
     OPERATION,
     options,
   );

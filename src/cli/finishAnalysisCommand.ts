@@ -35,8 +35,6 @@ export const finishAnalysisCommand = async <
   }
   try {
     await service.close();
-    if (!result.ok && result.error.cleanupIncomplete)
-      result.error.resolveCleanup();
   } catch (cause) {
     let cleanup: AnalysisError;
     if (cause instanceof AnalysisError) cleanup = cause;

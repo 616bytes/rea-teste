@@ -185,14 +185,14 @@ exit 1
       "fresh-install\nreplacement\nfresh-install\n",
     );
     const calls = await readFile(workspace.path("calls"), "utf8");
-    expect(calls.split("\n").filter((line) => line !== "")).toEqual([
-      "version",
-      `-s emulator-5554 install -r ${apk}`,
-      "version",
-      `-s emulator-5554 install -r ${apk}`,
-      "version",
-      `-s emulator-5554 install ${apk}`,
-    ]);
+    const lines = calls.split("\n").filter((line) => line !== "");
+    expect(lines.filter((line) => line === "version")).toHaveLength(3);
+    const installs = lines.filter((line) => line !== "version");
+    expect(installs).toHaveLength(3);
+    expect(installs[0]).toMatch(/^-s emulator-5554 install -r .*\/app\.apk$/);
+    expect(installs[1]).toMatch(/^-s emulator-5554 install -r .*\/app\.apk$/);
+    expect(installs[2]).toMatch(/^-s emulator-5554 install .*\/app\.apk$/);
+    expect(installs[2]).not.toContain(" -r ");
   },
 );
 

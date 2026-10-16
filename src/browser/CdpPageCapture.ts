@@ -1,12 +1,16 @@
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { stableWebResources } from "../domain/webInventory.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpConnection } from "./CdpConnection.js";
-import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
+import {
+  CdpCaptureEvents,
+  type ResponseBodyCandidate,
+} from "./CdpCaptureEvents.js";
 import { authorizedMainFrame } from "./CdpAuthorizedMainFrame.js";
 import { captureStorage } from "./CdpCaptureStorage.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
@@ -223,22 +227,38 @@ const captureJsonResponseBodies = async (
     }
     const owner = state.workerNetwork.responseBodySession(candidate.requestId);
     if (owner === undefined) {
-      state.events.responseBodyUnavailable(candidate);
-      state.limitations.push(
-        `Response body unavailable for request ${candidate.requestId}: its worker detached before REA read the body.`,
-      );
+      workerBodyDetached(state, candidate);
       continue;
     }
     const workerOwned = owner.sessionId !== state.context.sessionId;
+    const signal =
+      owner.detached === undefined
+        ? state.context.signal
+        : state.context.signal === undefined
+          ? owner.detached
+          : AbortSignal.any([state.context.signal, owner.detached]);
     let result: unknown;
     try {
       result = await optionalCdpCommand(
-        { ...state.context, sessionId: owner.sessionId },
+        {
+          connection: state.context.connection,
+          sessionId: owner.sessionId,
+          ...(signal === undefined ? {} : { signal }),
+        },
         "Network.getResponseBody",
         { requestId: candidate.requestId },
         state.limitations,
       );
     } catch (cause: unknown) {
+      // Chrome never answers a read pending on a worker session that detaches.
+      if (
+        cause instanceof AnalysisCancelledError &&
+        owner.detached?.aborted === true &&
+        state.context.signal?.aborted !== true
+      ) {
+        workerBodyDetached(state, candidate);
+        continue;
+      }
       // A worker session can also detach while its body read is in flight.
       if (
         !(cause instanceof CdpCommandRejection) ||
@@ -261,6 +281,16 @@ const captureJsonResponseBodies = async (
       state.events.responseBodyUnavailable(remaining);
     return;
   }
+};
+
+const workerBodyDetached = (
+  state: CaptureState,
+  candidate: ResponseBodyCandidate,
+): void => {
+  state.events.responseBodyUnavailable(candidate);
+  state.limitations.push(
+    `Response body unavailable for request ${candidate.requestId}: its worker detached before REA read the body.`,
+  );
 };
 
 const authorizeObservationWindow = async (

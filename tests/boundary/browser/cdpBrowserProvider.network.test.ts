@@ -1147,11 +1147,23 @@ describe("dedicated worker network", () => {
     expect(
       result.value.network.requests.map(({ request_id }) => request_id),
     ).not.toContain("foreign-session-request");
-    expect(result.value.completeness.excluded).toContainEqual({
-      section: "network_requests",
-      reason: "disallowed_origin",
-      count: null,
-    });
+    for (const section of [
+      "network_requests",
+      "websocket_connections",
+      "websocket_frames",
+    ])
+      expect(result.value.completeness.excluded).toContainEqual({
+        section,
+        reason: "disallowed_origin",
+        count: null,
+      });
+    expect(browser.commands).toContainEqual(
+      expect.objectContaining({
+        method: "Target.detachFromTarget",
+        sessionId: "session-1",
+        params: { sessionId: "foreign-session" },
+      }),
+    );
     expect(result.value.network.requests).toContainEqual(
       expect.objectContaining({
         request_id: "worker-script",
@@ -1238,11 +1250,16 @@ describe("dedicated worker network", () => {
     );
 
     if (!result.ok) throw result.error;
-    expect(result.value.completeness.excluded).toContainEqual({
-      section: "network_requests",
-      reason: "provider_unavailable",
-      count: null,
-    });
+    for (const section of [
+      "network_requests",
+      "websocket_connections",
+      "websocket_frames",
+    ])
+      expect(result.value.completeness.excluded).toContainEqual({
+        section,
+        reason: "provider_unavailable",
+        count: null,
+      });
     expect(result.value.limitations).toContain(
       "Target.setAutoAttach was unavailable from this browser target.",
     );
@@ -1322,15 +1339,22 @@ describe("dedicated worker network command rejections", () => {
     expect(
       result.value.network.requests.map(({ request_id }) => request_id),
     ).not.toContain("worker-session-request");
-    const rejection = {
-      section: "network_requests",
+    const rejections = [
+      "network_requests",
+      "websocket_connections",
+      "websocket_frames",
+    ].map((section) => ({
+      section,
       reason: "provider_unavailable",
-      count: 1,
-    };
-    if (unavailable)
-      expect(result.value.completeness.excluded).toContainEqual(rejection);
-    else
-      expect(result.value.completeness.excluded).not.toContainEqual(rejection);
+      count: null,
+    }));
+    for (const rejection of rejections)
+      if (unavailable)
+        expect(result.value.completeness.excluded).toContainEqual(rejection);
+      else
+        expect(result.value.completeness.excluded).not.toContainEqual(
+          rejection,
+        );
   });
 });
 
@@ -1425,5 +1449,57 @@ describe("dedicated worker network admission window", () => {
     expect(enabled).not.toContain(attachedPerRead[0]);
     expect(enabled).toContain(attachedPerRead[1]);
     expect(enabled).not.toContain(finalRead);
+  });
+});
+
+describe("dedicated worker response bodies and worker exit", () => {
+  it("reports a worker body unavailable when the worker detaches mid-read", async () => {
+    const isWorkerBodyRead = ({
+      method,
+      params,
+    }: FakeCdpBrowser["commands"][number]) =>
+      method === "Network.getResponseBody" &&
+      params.requestId === "worker-session-request";
+    const browser = await startFakeCdpBrowser({
+      commandEvents: workerEvents,
+      holdReplyFor: isWorkerBodyRead,
+      commandResult: ({ method }) =>
+        method === "Network.getResponseBody"
+          ? { body: "{}", base64Encoded: false }
+          : undefined,
+    });
+    trackBrowser(browser);
+    const started = Date.now();
+    const inspection = new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 20,
+        include_json_body_shapes: true,
+      }),
+    );
+    await heldCommandOnceQuiet(browser, isWorkerBodyRead);
+    browser.emitEvent({
+      sessionId: "session-1",
+      method: "Target.detachedFromTarget",
+      params: { sessionId: "worker-session", targetId: "worker-1" },
+    });
+
+    const result = await inspection;
+    if (!result.ok) throw result.error;
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(result.value.network.requests).toContainEqual(
+      expect.objectContaining({
+        request_id: "worker-session-request",
+        body_shapes: expect.objectContaining({ response: null }),
+      }),
+    );
+    expect(result.value.completeness.unavailable_sections).toContain(
+      "json_body_shapes",
+    );
+    expect(result.value.limitations).toContain(
+      "Response body unavailable for request worker-session-request: its worker detached before REA read the body.",
+    );
   });
 });

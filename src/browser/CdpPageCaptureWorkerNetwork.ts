@@ -1,4 +1,5 @@
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import type { BrowserExclusionReason } from "../domain/browserCompleteness.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import type { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
@@ -27,6 +28,13 @@ const WORKER_AUTO_ATTACH = {
   flatten: true,
   filter: [{ type: "worker" }],
 } as const;
+
+/** Sections one unobserved worker leaves incomplete; its counts are unknown. */
+const WORKER_TRAFFIC_SECTIONS = [
+  "network_requests",
+  "websocket_connections",
+  "websocket_frames",
+] as const;
 
 /** Chrome's reply for a command sent to a session that no longer exists. */
 const SESSION_NOT_FOUND = -32_001;
@@ -82,11 +90,7 @@ export class CdpWorkerNetworkObservation {
     );
     if (result === undefined) {
       this.#admitting = false;
-      this.events.completeness.exclude(
-        "network_requests",
-        "provider_unavailable",
-        null,
-      );
+      this.#workerTrafficOmitted("provider_unavailable");
       return;
     }
     this.limitations.push(
@@ -101,7 +105,7 @@ export class CdpWorkerNetworkObservation {
       this.#workerSessions.has(event.sessionId);
     if (event.sessionId === this.context.sessionId || fromWorker) {
       if (event.method === "Target.attachedToTarget") {
-        this.#attached(event.params);
+        this.#attached(event.sessionId, event.params);
         return;
       }
       if (event.method === "Target.detachedFromTarget") {
@@ -154,15 +158,20 @@ export class CdpWorkerNetworkObservation {
    * Select the session that can return a request's response body. `undefined`
    * means the request came from a worker whose session has already detached.
    */
-  responseBodySession(
-    requestId: string,
-  ): { readonly sessionId: string | undefined } | undefined {
+  responseBodySession(requestId: string):
+    | {
+        readonly sessionId: string | undefined;
+        /** Aborts when the owning worker detaches; Chrome then never replies. */
+        readonly detached?: AbortSignal;
+      }
+    | undefined {
     const workerSession = this.#requestSessions.get(requestId);
     if (workerSession === undefined)
       return { sessionId: this.context.sessionId };
-    return this.#workerSessions.has(workerSession)
-      ? { sessionId: workerSession }
-      : undefined;
+    const detach = this.#workerSessions.get(workerSession);
+    return detach === undefined
+      ? undefined
+      : { sessionId: workerSession, detached: detach.signal };
   }
 
   /**
@@ -182,7 +191,7 @@ export class CdpWorkerNetworkObservation {
     await this.#drain();
   }
 
-  #attached(value: unknown): void {
+  #attached(parentSessionId: string | undefined, value: unknown): void {
     const params = recordValue(value);
     const sessionId = cdpStringValue(params?.sessionId);
     const targetInfo = recordValue(params?.targetInfo);
@@ -193,39 +202,66 @@ export class CdpWorkerNetworkObservation {
       targetInfo === undefined ||
       type === undefined
     ) {
-      this.events.completeness.exclude(
-        "network_requests",
-        "invalid_protocol_value",
-        null,
-      );
+      this.#workerTrafficOmitted("invalid_protocol_value");
       return;
     }
     // Browsers that ignore the auto-attach filter may still report frames.
-    if (type !== "worker" || !this.#admitting) return;
+    if (type !== "worker" || !this.#admitting) {
+      this.#release(parentSessionId, sessionId);
+      return;
+    }
     const rawUrl = cdpStringValue(targetInfo.url);
-    if (allowedSanitizedUrl(rawUrl, this.allowedOrigins) === undefined) {
-      this.events.completeness.exclude(
-        "network_requests",
-        rawUrl === undefined || rawUrl === ""
+    const refusal =
+      allowedSanitizedUrl(rawUrl, this.allowedOrigins) === undefined
+        ? rawUrl === undefined || rawUrl === ""
           ? "unattributed_origin"
           : isHttpUrl(rawUrl)
             ? "disallowed_origin"
-            : "unsupported_url",
-        null,
-      );
-      return;
-    }
-    if (this.#admittedWorkers >= CDP_WORKER_NETWORK_LIMITS.workers) {
-      this.events.completeness.exclude(
-        "network_requests",
-        "resource_budget_exhausted",
-      );
+            : "unsupported_url"
+        : this.#admittedWorkers >= CDP_WORKER_NETWORK_LIMITS.workers
+          ? "resource_budget_exhausted"
+          : undefined;
+    if (refusal !== undefined) {
+      this.#workerTrafficOmitted(refusal);
+      this.#release(parentSessionId, sessionId);
       return;
     }
     this.#admittedWorkers += 1;
     const detach = new AbortController();
     this.#workerSessions.set(sessionId, detach);
-    this.#track(this.#observeWorker(sessionId, detach.signal));
+    this.#track(this.#observeWorker(parentSessionId, sessionId, detach.signal));
+  }
+
+  /** Record that one whole worker's requests and WebSockets are unobserved. */
+  #workerTrafficOmitted(reason: BrowserExclusionReason): void {
+    for (const section of WORKER_TRAFFIC_SECTIONS)
+      this.events.completeness.exclude(section, reason, null);
+  }
+
+  /**
+   * Detach an auto-attached session REA does not observe; Chrome keeps the
+   * worker running. Best effort: detaching the page session releases it too.
+   */
+  #release(parentSessionId: string | undefined, sessionId: string): void {
+    const signals = [
+      this.context.signal,
+      parentSessionId === undefined
+        ? undefined
+        : this.#workerSessions.get(parentSessionId)?.signal,
+    ].filter((signal): signal is AbortSignal => signal !== undefined);
+    this.#track(
+      this.context.connection
+        .send(
+          "Target.detachFromTarget",
+          { sessionId },
+          parentSessionId,
+          signals.length === 0 ? undefined : AbortSignal.any(signals),
+        )
+        .then(
+          () => undefined,
+          () => undefined,
+        ),
+    );
   }
 
   #detached(value: unknown): void {
@@ -238,14 +274,16 @@ export class CdpWorkerNetworkObservation {
 
   /** Enable the worker's Network domain, then auto-attach the workers it starts. */
   async #observeWorker(
+    parentSessionId: string | undefined,
     sessionId: string,
     detached: AbortSignal,
   ): Promise<void> {
     try {
       await this.#send("Network.enable", {}, sessionId, detached);
     } catch (cause: unknown) {
-      this.#rejected(sessionId, cause, detached);
+      const live = this.#rejected(sessionId, cause, detached);
       this.#workerSessions.delete(sessionId);
+      if (live) this.#release(parentSessionId, sessionId);
       return;
     }
     try {
@@ -281,27 +319,26 @@ export class CdpWorkerNetworkObservation {
    * accepts or answers commands; network coverage is already attach-limited,
    * so that does not invalidate the page capture. Any other rejection from a live
    * worker leaves its traffic unobserved and is reported as unavailable.
-   * Transport and cancellation failures propagate.
+   * Transport and cancellation failures propagate. Returns whether the
+   * worker session is still live.
    */
-  #rejected(sessionId: string, cause: unknown, detached: AbortSignal): void {
+  #rejected(sessionId: string, cause: unknown, detached: AbortSignal): boolean {
     if (
       cause instanceof AnalysisCancelledError &&
       detached.aborted &&
       this.context.signal?.aborted !== true
     )
-      return;
+      return false;
     if (!(cause instanceof CdpCommandRejection)) throw cause;
     if (
       !this.#workerSessions.has(sessionId) ||
       cause.code === SESSION_NOT_FOUND
     ) {
       this.#workerSessions.delete(sessionId);
-      return;
+      return false;
     }
-    this.events.completeness.exclude(
-      "network_requests",
-      "provider_unavailable",
-    );
+    this.#workerTrafficOmitted("provider_unavailable");
+    return true;
   }
 
   #track(operation: Promise<void>): void {

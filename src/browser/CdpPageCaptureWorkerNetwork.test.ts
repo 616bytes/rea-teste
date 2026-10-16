@@ -18,10 +18,14 @@ const observation = () => {
   });
   const events = new CdpCaptureEvents(input, new Set([origin]));
   events.beginAuthorizedFrame("frame-main");
-  const sent: { method: string; sessionId: string | undefined }[] = [];
+  const sent: {
+    method: string;
+    params: unknown;
+    sessionId: string | undefined;
+  }[] = [];
   const connection = {
-    async send(method: string, _params: unknown, sessionId?: string) {
-      sent.push({ method, sessionId });
+    async send(method: string, params: unknown, sessionId?: string) {
+      sent.push({ method, params, sessionId });
       return {};
     },
   } as unknown as CdpConnection;
@@ -55,15 +59,6 @@ const requested = (sessionId: string, requestId: string) => ({
   },
 });
 
-const budgetExclusion = (events: CdpCaptureEvents) =>
-  events.completeness
-    .snapshot()
-    .excluded.find(
-      ({ section, reason }) =>
-        section === "network_requests" &&
-        reason === "resource_budget_exhausted",
-    );
-
 describe("CDP worker network admission", () => {
   it("admits at most the worker budget and counts omitted workers", async () => {
     const { events, sent, workers } = observation();
@@ -79,13 +74,31 @@ describe("CDP worker network admission", () => {
     expect(
       sent.filter(({ method }) => method === "Network.enable"),
     ).toHaveLength(CDP_WORKER_NETWORK_LIMITS.workers);
-    expect(budgetExclusion(events)).toEqual({
-      section: "network_requests",
-      reason: "resource_budget_exhausted",
-      count: 3,
-    });
+    expect(events.completeness.snapshot().excluded).toEqual(
+      expect.arrayContaining(
+        ["network_requests", "websocket_connections", "websocket_frames"].map(
+          (section) => ({
+            section,
+            reason: "resource_budget_exhausted",
+            count: null,
+          }),
+        ),
+      ),
+    );
     expect(events.completeness.snapshot().truncated_sections).toContain(
       "network_requests",
+    );
+    expect(
+      sent
+        .filter(({ method }) => method === "Target.detachFromTarget")
+        .map(({ params, sessionId }) => [sessionId, params]),
+    ).toEqual(
+      [0, 1, 2].map((offset) => [
+        "page-session",
+        {
+          sessionId: `worker-${String(CDP_WORKER_NETWORK_LIMITS.workers + offset)}`,
+        },
+      ]),
     );
   });
 

@@ -198,9 +198,15 @@ it("retains a setup-failed publication tree for provider cleanup retry", async (
       error: {
         cleanupIncomplete: true,
         diagnostics: {
-          previous_error: expect.stringContaining(
-            "injected post-acquisition setup failure",
-          ),
+          cleanup_error: {
+            details: {
+              diagnostics: {
+                previous_error: expect.stringContaining(
+                  "injected post-acquisition setup failure",
+                ),
+              },
+            },
+          },
         },
       },
     });

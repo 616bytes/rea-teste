@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
+import { basename, dirname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { _electron as electron } from "playwright-core";
@@ -41,6 +43,7 @@ import {
 import { projectElectronActiveCapture } from "./PlaywrightElectronActiveProjection.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
 import { assertNodeCliInspectArgumentsSupported } from "./PlaywrightElectronActiveFuses.js";
+import { isPathWithinRoot } from "../domain/localPath.js";
 
 const OPERATION = "capture_electron_scenario" as const;
 const STARTUP_TIMEOUT_MS = 60_000;
@@ -56,6 +59,72 @@ type ElectronPaths = {
   readonly executable: string;
   readonly application: string;
   readonly root: string;
+};
+
+/**
+ * Determine whether the executable already packages or contains the target application,
+ * meaning passing the application path as a CLI argument is unnecessary and would
+ * cause packaged applications (such as draw.io) to treat the archive as an open-file argument.
+ */
+export const executableContainsApplication = async (
+  executable: string,
+  application: string,
+): Promise<boolean> => {
+  if (executable === application) return true;
+
+  const normalizedExecutable = normalize(executable);
+  const normalizedApplication = normalize(application);
+  const exeDir = dirname(normalizedExecutable);
+
+  const candidateResourceDirs = [
+    join(exeDir, "resources"),
+    join(exeDir, "Resources"),
+  ];
+  const candidateBundleRoots: string[] = [];
+
+  // macOS app bundle: <App>.app/Contents/MacOS/<exec>
+  const parent = dirname(exeDir);
+  const grandparent = dirname(parent);
+  if (
+    basename(exeDir).toLowerCase() === "macos" &&
+    basename(parent).toLowerCase() === "contents"
+  ) {
+    candidateResourceDirs.push(join(parent, "Resources"));
+    candidateResourceDirs.push(join(parent, "resources"));
+    if (basename(grandparent).toLowerCase().endsWith(".app")) {
+      candidateBundleRoots.push(grandparent);
+    }
+  }
+
+  // 1. Is the application structurally inside the executable's resources or app bundle?
+  if (
+    candidateResourceDirs.some((dir) =>
+      isPathWithinRoot(dir, normalizedApplication),
+    ) ||
+    candidateBundleRoots.some((root) =>
+      isPathWithinRoot(root, normalizedApplication),
+    )
+  ) {
+    return true;
+  }
+
+  // 2. Does the executable directory or bundle contain a packaged application on disk?
+  for (const resourcesDir of candidateResourceDirs) {
+    try {
+      const asarStat = await stat(join(resourcesDir, "app.asar"));
+      if (asarStat.isFile()) return true;
+    } catch {
+      // not present as asar file
+    }
+    try {
+      const appStat = await stat(join(resourcesDir, "app"));
+      if (appStat.isDirectory() || appStat.isFile()) return true;
+    } catch {
+      // not present as app directory
+    }
+  }
+
+  return false;
 };
 
 /** Launch an owned Electron application through the official Playwright API. */
@@ -109,6 +178,10 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         await systemProcessOwnershipHost.captureBaseline?.(options.signal);
       if (options.signal?.aborted)
         throw new BrowserObservationError(OPERATION, "cancelled");
+      const containsApp = await executableContainsApplication(
+        paths.executable,
+        paths.application,
+      );
       const launchOptions: Parameters<typeof electron.launch>[0] = {
         executablePath: paths.executable,
         cwd: paths.root,
@@ -116,9 +189,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         args: [
           "-r",
           hookPath,
-          ...(paths.executable === paths.application
-            ? []
-            : [paths.application]),
+          ...(containsApp ? [] : [paths.application]),
           ...input.args,
         ],
         timeout: Math.max(1, startupDeadline - performance.now()),

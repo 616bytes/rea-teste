@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -15,6 +15,7 @@ import { electronActiveObservationInputSchema } from "../domain/javascript/elect
 import type { OwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
   cleanupElectronProcesses,
+  executableContainsApplication,
   PlaywrightElectronActiveProvider,
   safeElectronEnvironment,
 } from "./PlaywrightElectronActiveProvider.js";
@@ -100,6 +101,100 @@ it("includes application_path in args when executable differs from application",
     asarPath,
     "--no-sandbox",
   ]);
+});
+
+it("omits application_path from args when executable packages the application bundle", async () => {
+  let launchedArgs: readonly string[] | undefined;
+  const provider = new PlaywrightElectronActiveProvider({}, async (options) => {
+    launchedArgs = options?.args;
+    throw new Error("launch boundary reached");
+  });
+  const tempDir = await createTestTempDirectory("rea-packaged-app-");
+  const executablePath = join(tempDir, "drawio");
+  const asarPath = join(tempDir, "resources", "app.asar");
+  await mkdir(dirname(asarPath), { recursive: true });
+  await writeFile(executablePath, "");
+  await writeFile(asarPath, "");
+
+  await provider.capture({
+    ...electronActiveObservationInputSchema.parse({
+      executable_path: executablePath,
+      application_path: asarPath,
+      args: ["--open", "/tmp/diagram.drawio"],
+    }),
+    application_root: tempDir,
+  });
+
+  expect(launchedArgs).toEqual([
+    "-r",
+    expect.stringMatching(/electron-active-hook\.cjs$/),
+    "--open",
+    "/tmp/diagram.drawio",
+  ]);
+});
+
+it("omits application_path from args for macOS packaged app bundle", async () => {
+  let launchedArgs: readonly string[] | undefined;
+  const provider = new PlaywrightElectronActiveProvider({}, async (options) => {
+    launchedArgs = options?.args;
+    throw new Error("launch boundary reached");
+  });
+  const tempDir = await createTestTempDirectory("rea-mac-app-");
+  const appBundle = join(tempDir, "Draw.app");
+  const executablePath = join(appBundle, "Contents", "MacOS", "draw");
+  const asarPath = join(appBundle, "Contents", "Resources", "app.asar");
+  await mkdir(dirname(executablePath), { recursive: true });
+  await mkdir(dirname(asarPath), { recursive: true });
+  await writeFile(executablePath, "");
+  await writeFile(asarPath, "");
+
+  await provider.capture({
+    ...electronActiveObservationInputSchema.parse({
+      executable_path: executablePath,
+      application_path: asarPath,
+      args: ["--hidden"],
+    }),
+    application_root: appBundle,
+  });
+
+  expect(launchedArgs).toEqual([
+    "-r",
+    expect.stringMatching(/electron-active-hook\.cjs$/),
+    "--hidden",
+  ]);
+});
+
+it("identifies packaged executables correctly in executableContainsApplication", async () => {
+  expect(
+    await executableContainsApplication(
+      "/usr/lib/drawio/drawio",
+      "/usr/lib/drawio/resources/app.asar",
+    ),
+  ).toBe(true);
+  expect(
+    await executableContainsApplication(
+      "/Applications/draw.io.app/Contents/MacOS/draw.io",
+      "/Applications/draw.io.app/Contents/Resources/app.asar",
+    ),
+  ).toBe(true);
+  expect(
+    await executableContainsApplication(
+      "/Applications/draw.io.app/Contents/MacOS/draw.io",
+      "/Applications/draw.io.app",
+    ),
+  ).toBe(true);
+  expect(
+    await executableContainsApplication(
+      "/usr/bin/electron",
+      "/tmp/external/app.asar",
+    ),
+  ).toBe(false);
+  expect(
+    await executableContainsApplication(
+      "/usr/bin/electron",
+      "/usr/bin/electron",
+    ),
+  ).toBe(true);
 });
 
 it("passes required Windows runtime variables without inheriting unrelated values", () => {

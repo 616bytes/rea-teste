@@ -1,5 +1,6 @@
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { fileURLToPath } from "node:url";
+import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 
 import {
   createAnalysisExecution,
@@ -74,7 +75,7 @@ import {
 } from "./GhidraMipsProfile.js";
 import { ghidraRiscvLimitations } from "./GhidraRiscvProfile.js";
 import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
-import { unverifiedGhidraBuildLimitation } from "./GhidraInstallationPolicy.js";
+import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import {
@@ -584,7 +585,10 @@ export const createGhidraProviderClient = (input: {
         ? {}
         : { javaVmName: installation.javaVmName }),
       bridgeScriptPath: fileURLToPath(
-        new URL("../../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
+        new URL(
+          `../../bridge/ghidra/${GHIDRA_BRIDGE_SOURCES.bridge}`,
+          import.meta.url,
+        ),
       ),
       ...(pspExtension?.success === true
         ? { pspExtension: pspExtension.data }
@@ -858,8 +862,16 @@ export const createGhidraProviderClient = (input: {
         if (!result.ok) return result;
         normalized = result.value;
       }
-      if (operation === "inspect_native_data_type") {
-        const address = input.value.address;
+      if (
+        operation === "inspect_native_data_type" &&
+        normalized !== null &&
+        typeof normalized === "object" &&
+        !Array.isArray(normalized) &&
+        normalized.metadata_recovery === undefined
+      ) {
+        // The bridge owns address-space resolution. Enrich its parsed identity;
+        // request parameters retain the caller's spelling.
+        const address = normalized.address;
         if (typeof address === "string") {
           if (target.format === "pe" && nativeAotOwner !== undefined) {
             const started = await client.start(
@@ -883,23 +895,12 @@ export const createGhidraProviderClient = (input: {
             );
             if (!derived.ok) return derived;
           }
-          let metadata:
-            | ReturnType<NativeAotPeResult["readTypeDetail"]>
-            | undefined;
-          metadata = nativeAotOwner?.readTypeDetail(address);
-          if (
-            metadata !== undefined &&
-            normalized !== null &&
-            typeof normalized === "object" &&
-            !Array.isArray(normalized)
-          ) {
-            const nativeResult = normalized as Record<string, JsonValue>;
-            if (nativeResult.metadata_recovery === undefined)
-              normalized = jsonValueSchema.parse({
-                ...nativeResult,
-                metadata_recovery: metadata,
-              });
-          }
+          const metadata = nativeAotOwner?.readTypeDetail(address);
+          if (metadata !== undefined)
+            normalized = jsonValueSchema.parse({
+              ...normalized,
+              metadata_recovery: metadata,
+            });
         }
       }
       if (operation === "inspect_native_load_image") {
@@ -1091,7 +1092,7 @@ const projectPrimarySessionError = (
     (failure.kind === "remote" && failure.remoteCode === "decompile_cancelled")
   )
     return new AnalysisCancelledError(operation, context);
-  if (failure.kind === "timeout" || failure.kind === "analysis_timeout")
+  if (failure.kind === "analysis_timeout")
     return new AnalysisTimeoutError(
       operation,
       failure.timeoutMs ?? startupTimeoutMs,
@@ -1128,6 +1129,18 @@ const projectPrimarySessionError = (
       failure.message,
       context,
     );
+  const memoryFailure = projectObservedJvmMemoryFailure(
+    operation,
+    failure,
+    context,
+  );
+  if (memoryFailure !== undefined) return memoryFailure;
+  if (failure.kind === "timeout")
+    return new AnalysisTimeoutError(
+      operation,
+      failure.timeoutMs ?? startupTimeoutMs,
+      context,
+    );
   const exited = exitedProviderMessage(operation, failure, health);
   if (exited !== undefined)
     return new ProviderAdapterError("ghidra", operation, {
@@ -1135,6 +1148,90 @@ const projectPrimarySessionError = (
       userMessage: exited,
     });
   return new ProviderAdapterError("ghidra", operation, context);
+};
+
+/** Project only OOME evidence captured during the operation that failed. */
+const projectObservedJvmMemoryFailure = (
+  operation: AnalysisOperation,
+  failure: GhidraSessionError,
+  context: {
+    readonly cause: GhidraSessionError;
+    readonly diagnostics: Readonly<Record<string, JsonValue>>;
+  },
+): AnalysisResourceConstraintError | undefined => {
+  if (
+    failure.kind !== "start" &&
+    failure.kind !== "process" &&
+    failure.kind !== "protocol" &&
+    failure.kind !== "timeout"
+  )
+    return undefined;
+  const scoped = failure.diagnostics.failure_output;
+  if (
+    scoped === null ||
+    typeof scoped !== "object" ||
+    Array.isArray(scoped) ||
+    typeof scoped.stdout !== "object" ||
+    scoped.stdout === null ||
+    typeof scoped.stderr !== "object" ||
+    scoped.stderr === null
+  )
+    return undefined;
+  const streamText = (value: JsonValue): string =>
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof value.text === "string"
+      ? value.text
+      : "";
+  const output = `${streamText(scoped.stdout)}\n${streamText(scoped.stderr)}`;
+  if (!/java\.lang\.OutOfMemoryError(?:\s*:|\b)/u.test(output))
+    return undefined;
+  const threadCapacity = /unable to create native thread/iu.test(output);
+  const heapExhaustion = /Java heap space|GC overhead limit exceeded/iu.test(
+    output,
+  );
+  const detail = [
+    "Java heap space",
+    "GC overhead limit exceeded",
+    "Metaspace",
+    "Requested array size exceeds VM limit",
+    "unable to create native thread",
+  ].find((candidate) => output.includes(candidate));
+  if (threadCapacity)
+    return new AnalysisResourceConstraintError(
+      operation,
+      "capacity",
+      "Ghidra's process output reports an OutOfMemoryError while creating a native thread. This is observed capacity evidence; it does not establish a process limit or the precise cause.",
+      null,
+      {
+        ...context,
+        remediationAction:
+          "Reduce concurrent analysis processes or review the host's available thread and process capacity, then retry.",
+      },
+    );
+  const configuredHeap = failure.diagnostics.configured_jvm_max_heap;
+  const reportedLimits = heapExhaustion
+    ? {
+        configured_jvm_max_heap:
+          typeof configuredHeap === "string" ? configuredHeap : null,
+      }
+    : null;
+  return new AnalysisResourceConstraintError(
+    operation,
+    "memory",
+    `Ghidra's operation-scoped process output reports java.lang.OutOfMemoryError${detail === undefined ? "" : `: ${detail}`}. This is reported evidence and does not prove the exact allocation failure.`,
+    reportedLimits,
+    {
+      ...context,
+      ...(heapExhaustion
+        ? {
+            remediationAction:
+              "If the host has available memory, consider increasing GHIDRA_HEADLESS_MAXMEM or disabling expensive analyzers with REA_GHIDRA_DISABLED_ANALYZERS, then retry.",
+          }
+        : {}),
+    },
+  );
 };
 
 /** A provider already observed as running can be restarted by reopening. */

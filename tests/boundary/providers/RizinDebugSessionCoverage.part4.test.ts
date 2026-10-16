@@ -58,6 +58,8 @@ it.skipIf(process.platform === "win32")(
         onWrite: (text, control) => {
           const marker = /!echo (.+)\n/u.exec(text)?.[1];
           if (marker === undefined) return;
+          if (!/^pad\n/mu.test(text))
+            throw new Error(`Unmodeled rizin command: ${JSON.stringify(text)}`);
           setImmediate(() => {
             if (framing === "coalesced")
               control.output(`value  \n${marker}\n\0`);
@@ -68,11 +70,9 @@ it.skipIf(process.platform === "win32")(
       const { manager, started } = await startInjected(injected.spawnProcess, {
         frameTimeoutMs: 1000,
       });
-      expect(started.ok).toBe(true);
-      if (!started.ok) return "";
+      if (!started.ok) throw started.error;
       const result = await manager.execute(started.value.session_id, "pad");
-      expect(result.ok).toBe(true);
-      if (!result.ok) return "";
+      if (!result.ok) throw result.error;
       expect(result.value.result.completion_status).toBe("complete");
       return result.value.result.output;
     };

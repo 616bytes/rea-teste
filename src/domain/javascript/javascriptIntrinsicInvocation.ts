@@ -192,7 +192,22 @@ export const resolveJavaScriptIntrinsicInvocation = (
         }
       }
       const bound = boundIntrinsic(callee);
-      if (bound === undefined) return undefined;
+      if (bound === undefined) {
+        // `Reflect.apply(invoke, target, args)` replaces the callee with the
+        // bare identifier: it names the captured member itself, not a read
+        // on it. Only an explicit receiver can make that stored value
+        // callable, so a bare `invoke(...)` still resolves to nothing.
+        // Rewriting the callee to the captured member lets the call/apply
+        // branch resolve it like `invoke.call(target, ...)`.
+        const captured: CapturedInvocationMember | undefined = explicitReceiver
+          ? memberRead?.(callee)
+          : undefined;
+        if (captured === undefined) return undefined;
+        if (captured.replaced === true)
+          return { kind: "opaque", path: captured.path, arguments: undefined };
+        callee = captured.member;
+        continue;
+      }
       if (bound.kind === "opaque") return bound;
       path = bound.path;
       receiver = bound.receiver;

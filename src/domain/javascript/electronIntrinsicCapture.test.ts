@@ -464,6 +464,40 @@ describe("captured invocation member identity", () => {
     expect(writes).toContainEqual(["intrinsic"]);
   });
 
+  it("resolves a captured member passed directly to Reflect.apply", () => {
+    // `invoke` IS Function.prototype.call, so `Reflect.apply(invoke, change,
+    // args)` runs `change(...args)` — the bound defineProperty writes
+    // `Object.create` exactly as `invoke.call(change, ...)` would.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const invoke = change.call;
+      Reflect.apply(invoke, change, [null, {value: customCreate}]);`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("keeps a replaced captured member opaque as a Reflect.apply target", () => {
+    // `invoke` holds the replacement, so `Reflect.apply(invoke, ...)` calls an
+    // unknown function: opaque, never a confirmed defineProperty write.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      change.call = () => {};
+      const invoke = change.call;
+      Reflect.apply(invoke, change, [null, {value: customCreate}]);`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({ kind: "opaque" }),
+    );
+    expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
+    expect(writes).toContainEqual(["intrinsic"]);
+  });
+
   it("follows a copied captured-member alias", () => {
     // `copy` is a second stable alias of the captured member; the call still
     // reaches the bound defineProperty and must keep its write.

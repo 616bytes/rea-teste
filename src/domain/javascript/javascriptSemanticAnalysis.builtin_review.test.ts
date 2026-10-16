@@ -20,6 +20,9 @@ it.each([
   "function Object(){}; Object.create=()=>module; Reflect.set(Object.create(null), key, replacement);",
   "const receiver=require('./local'); Reflect.set(receiver, 'require', replacement);",
   "let receiver=require('fs'); receiver=module; Reflect.set(receiver, 'require', replacement);",
+  "Object.create.call=()=>module; const registry=Object.create.call(null,null); Reflect.set(registry,'require',replacement);",
+  "Object.create.apply=()=>module; const registry=Object.create.apply(null,[null]); Reflect.set(registry,'require',replacement);",
+  "Object.create.bind=()=>()=>module; const make=Object.create.bind(null,null); Reflect.set(make(),'require',replacement);",
 ])("invalidates the wrapper loader at its write: %s", (write) => {
   const ir = analyzeJavaScriptSemantics(`${write}
     const fs=require('fs'); fs.readFileSync('wrong');`);
@@ -48,6 +51,11 @@ it.each([
   "const receiver={}; Reflect.set(module, 'require', replacement, receiver);",
   "Reflect.set(module, 'require', replacement, null);",
   "Reflect.set(module, 'require', replacement, undefined);",
+  "Reflect.set(module, 'require', replacement, -1);",
+  "Reflect.set(module, 'require', replacement, +value);",
+  "Reflect.set(module, 'require', replacement, !value);",
+  "Reflect.set(module, 'require', replacement, ~value);",
+  "Reflect.set(module, 'require', replacement, typeof value);",
   "Reflect.apply(Reflect.set, null, [module, 'require', replacement, {}]);",
   "const set=Reflect.set.bind(null, module, 'require', replacement); set({});",
   "let owner=module; owner={}; owner.require=replacement;",
@@ -113,6 +121,76 @@ it.each(["stat", "readdir", "mkdir"])(
   },
 );
 
+// Public filesystem functions outside the original synchronous subset.
+// Constructors and private exports are deliberately not receiver guarantees.
+it.each([
+  "exists",
+  "glob",
+  "globSync",
+  "mkdtempDisposableSync",
+  "openAsBlob",
+  "watch",
+  "watchFile",
+  "unwatchFile",
+  "createReadStream",
+  "createWriteStream",
+])("retains native fs reads after public fs.%s calls", (method) => {
+  for (const specifier of ["fs", "node:fs"]) {
+    const ir = analyzeJavaScriptSemantics(`const fs=require('${specifier}');
+      fs.${method}('probe'); fs.readFileSync('kept');`);
+    expect(ir.configurationOperations.map(({ key }) => key)).toContain("kept");
+    const replaced =
+      analyzeJavaScriptSemantics(`const fs=require('${specifier}');
+      fs.${method}=custom; fs.${method}('probe'); fs.readFileSync('wrong');`);
+    expect(replaced.configurationOperations).toEqual([]);
+  }
+});
+
+it.each(["glob", "mkdtempDisposable", "lchmod", "watch"])(
+  "retains native promises reads after public promises.%s calls",
+  (method) => {
+    for (const imported of [
+      "const fs=require('node:fs/promises');",
+      "const fs=require('fs').promises;",
+      "import * as fs from 'node:fs/promises';",
+    ]) {
+      const ir = analyzeJavaScriptSemantics(
+        `${imported} fs.${method}('probe'); fs.open('kept');`,
+      );
+      expect(ir.resourceOperations.map(({ method }) => method)).toContain(
+        "open",
+      );
+    }
+  },
+);
+
+it.each([";", ","])(
+  "orders repeated writes and reads with %s separators",
+  (separator) => {
+    const keys = Array.from({ length: 64 }, (_, i) => `kept-${i}`);
+    const operations = keys.map(
+      (key) => `fs=require('fs'),fs.readFileSync('${key}'),fs={}`,
+    );
+    const ir = analyzeJavaScriptSemantics(
+      `let fs; ${operations.join(separator)};`,
+    );
+    expect(ir.configurationOperations.map(({ key }) => key)).toEqual(keys);
+  },
+);
+
+it.each([
+  "let fs=require('fs'); fs=(fs.readFileSync('kept'),{}),fs.readFileSync('wrong');",
+  "let fs; fs=require('fs'),fs={},fs.readFileSync('wrong');",
+  "let fs=require('fs'); {fs={}; fs.readFileSync('wrong');}",
+  "let fs=require('fs'); function later(){fs.readFileSync('wrong');} fs={};",
+])("retains assignment completion and activation boundaries: %s", (source) => {
+  expect(
+    analyzeJavaScriptSemantics(source).configurationOperations.map(
+      ({ key }) => key,
+    ),
+  ).toEqual(source.includes("'kept'") ? ["kept"] : []);
+});
+
 it("keeps a replaced native receiver uncertain", () => {
   const ir = analyzeJavaScriptSemantics(`const fs=require('fs');
     fs.statSync=custom; fs.statSync('probe'); fs.readFileSync('wrong');`);
@@ -124,6 +202,11 @@ it.each([
   "Reflect.set(fs, key, custom);",
   "Reflect.set = custom; Reflect.set(fs, 'require', replacement);",
   "Object.defineProperty(fs, 'require', {set(value) {fs.readFileSync=custom;}}); Reflect.set(fs, 'require', replacement);",
+  "Reflect.set.call=()=>{fs.readFileSync=custom}; Reflect.set.call(null, fs, 'require', replacement);",
+  "Reflect.set.apply=()=>{fs.readFileSync=custom}; Reflect.set.apply(null, [fs, 'require', replacement]);",
+  "const target={fs,set hook(value){this.fs.readFileSync=custom;}}; Reflect.set(target, 'hook', 1);",
+  "const target={fs,set hook(value){this.fs.readFileSync=custom;}}; Reflect.set(target, key, 1);",
+  "const target={set hook(value){this.fs.readFileSync=custom;}}; Reflect.set(target, 'hook', 1, {fs});",
 ])("keeps builtin mutations through Reflect.set conservative: %s", (write) => {
   expect(
     analyzeJavaScriptSemantics(
@@ -158,6 +241,33 @@ it("retains each builtin read across repeated assignments and later writes", () 
     fs=require('fs'); fs.readFileSync=custom; fs.readFileSync('wrong');`);
   expect(ir.configurationOperations.map(({ key }) => key)).toEqual(keys);
 });
+
+it.each([
+  "import fs = require('fs'); fs={}; fs={}; fs.readFileSync('wrong');",
+  "import fs = require('fs'); fs={},fs={}; fs.readFileSync('wrong');",
+])("drops entry origins after definite replacement: %s", (source) => {
+  expect(analyzeJavaScriptSemantics(source).configurationOperations).toEqual(
+    [],
+  );
+});
+
+it.each([
+  "const fs=require('fs'); Reflect.set(fs,'readFileSync',custom,{}); fs.readFileSync('kept');",
+  "const fs=require('fs'); const receiver={}; Reflect.set(fs,'readFileSync',custom,receiver); fs.readFileSync('kept');",
+  "let fs=require('fs'); { fs.readFileSync('kept'); } fs={};",
+  "let fs=require('fs'); { { fs.readFileSync('kept'); } } fs={};",
+  "let fs=require('fs'); if(flag) { fs.readFileSync('kept'); } fs={};",
+  "let fs; fs=require('fs'),fs.readFileSync('kept'); fs={};",
+])(
+  "retains ordered reads across receiver and statement boundaries: %s",
+  (source) => {
+    expect(
+      analyzeJavaScriptSemantics(source).configurationOperations.map(
+        ({ key }) => key,
+      ),
+    ).toEqual(["kept"]);
+  },
+);
 
 it.each(["key", "'__proto__'"])(
   "retains uncertainty when a required argv object escapes through %s",

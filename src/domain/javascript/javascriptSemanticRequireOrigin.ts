@@ -312,7 +312,7 @@ const writesModuleRequire = (
       interop.isFreshObject(value) ||
       readExactJavaScriptLiteral(value).found ||
       t.isBigIntLiteral(value) ||
-      t.isUnaryExpression(value, { operator: "void" }) ||
+      t.isUnaryExpression(value) ||
       isUnshadowedGlobal(value, state, "undefined")
     )
       return true;

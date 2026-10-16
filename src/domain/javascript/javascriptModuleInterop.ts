@@ -23,7 +23,10 @@ import {
   expandJavaScriptInvocationArguments,
   resolveJavaScriptIntrinsicInvocation,
 } from "./javascriptIntrinsicInvocation.js";
-import { SemanticPropertyPathCoverage } from "./javascriptSemanticPropertyPaths.js";
+import {
+  SemanticPropertyPathCoverage,
+  type JavaScriptSemanticPropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
@@ -103,6 +106,24 @@ export const createSemanticModuleInterop = (
     }
     return ["intrinsic"];
   };
+  const retainWrite = (
+    node: t.Node | undefined,
+    path: JavaScriptSemanticPropertyPath,
+  ) => {
+    const coverage = new SemanticPropertyPathCoverage();
+    coverage.retain(path[0] === "opaque-intrinsic" ? ["intrinsic"] : path);
+    writes.push({
+      scope:
+        node === undefined ? "intrinsic" : opaqueMutationPath(node).join("."),
+      offset: node?.start ?? -Infinity,
+      coverage,
+    });
+  };
+  // Consumers created after ambient indexing must see the same invocation
+  // mutations as the collector that supplies retainWrite during indexing.
+  for (const effect of state.ambientWriteEffects)
+    if (effect.path[0] === "global")
+      retainWrite(effect.node, ["intrinsic", ...effect.path.slice(1)]);
 
   const intrinsicPath =
     options?.intrinsicPath ??
@@ -397,7 +418,8 @@ export const createSemanticModuleInterop = (
           intrinsicReadChanged,
         );
         if (
-          invocation?.path?.join(".") === "intrinsic.Object.create" &&
+          invocation?.kind === "known" &&
+          invocation.path.join(".") === "intrinsic.Object.create" &&
           !state.ambientWrites.covers(["global", "Object", "create"])
         )
           return true;
@@ -670,15 +692,7 @@ export const createSemanticModuleInterop = (
     staticPropertyKey: (node: t.Node | undefined) => staticString(node, true),
     isFreshObject,
     opaqueMutationPath,
-    retainWrite: (node: t.Node, path: readonly (string | null)[]) => {
-      const coverage = new SemanticPropertyPathCoverage();
-      coverage.retain(path[0] === "opaque-intrinsic" ? ["intrinsic"] : path);
-      writes.push({
-        scope: opaqueMutationPath(node).join("."),
-        offset: node.start ?? Infinity,
-        coverage,
-      });
-    },
+    retainWrite,
     invalidated: (binding: JavaScriptSemanticBindingState): boolean => {
       const cached = invalidatedBindings.get(binding.bindingId);
       if (cached !== undefined) return cached;

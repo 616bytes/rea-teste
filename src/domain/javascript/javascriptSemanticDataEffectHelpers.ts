@@ -628,6 +628,7 @@ const FS_RECEIVER_METHODS = [
   "fsync",
   "ftruncate",
   "futimes",
+  "glob",
   "lchmod",
   "lchown",
   "link",
@@ -663,6 +664,12 @@ const BUILTIN_RECEIVER_METHODS: Readonly<Record<string, ReadonlySet<string>>> =
     fs: new Set([
       ...FS_RECEIVER_METHODS.flatMap((method) => [method, `${method}Sync`]),
       "existsSync",
+      "exists",
+      "mkdtempDisposableSync",
+      "openAsBlob",
+      "watch",
+      "watchFile",
+      "unwatchFile",
       ...BUILTIN_RESOURCE_METHODS.fs,
     ]),
     "fs/promises": new Set([
@@ -672,12 +679,15 @@ const BUILTIN_RECEIVER_METHODS: Readonly<Record<string, ReadonlySet<string>>> =
       "chown",
       "copyFile",
       "cp",
+      "glob",
+      "lchmod",
       "lchown",
       "link",
       "lstat",
       "lutimes",
       "mkdir",
       "mkdtemp",
+      "mkdtempDisposable",
       "opendir",
       "readdir",
       "readFile",
@@ -693,6 +703,7 @@ const BUILTIN_RECEIVER_METHODS: Readonly<Record<string, ReadonlySet<string>>> =
       "unlink",
       "utimes",
       "writeFile",
+      "watch",
       ...BUILTIN_RESOURCE_METHODS["fs/promises"],
     ]),
     net: new Set(BUILTIN_RESOURCE_METHODS.net),
@@ -905,7 +916,7 @@ const computeOriginalBuiltinReceiver = (
   ]);
   if (
     method === null ||
-    !BUILTIN_RECEIVER_METHODS[origin.specifier]?.has(method) ||
+    !semanticBuiltinDataMethod(origin, method) ||
     receiver?.memberWrites.some(
       ({ path, node: write }) =>
         affectsBuiltinPath(path, [method]) &&
@@ -932,6 +943,18 @@ const computeOriginalBuiltinReceiver = (
       builtinNamespaceOrigin(passedOrigin.origins[0]).importedPath.length === 0
     );
   });
+};
+
+/** Known native method slots are data properties, not setter dispatch. */
+export const semanticBuiltinDataMethod = (
+  source: JavaScriptModuleOrigin,
+  method: string,
+): boolean => {
+  const origin = builtinNamespaceOrigin(source);
+  return (
+    origin.importedPath.length === 0 &&
+    (BUILTIN_RECEIVER_METHODS[origin.specifier]?.has(method) ?? false)
+  );
 };
 
 const semanticExpressionModuleOrigin = (

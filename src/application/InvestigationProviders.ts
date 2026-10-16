@@ -49,6 +49,13 @@ export const PE_RESOURCES_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free NE header and table decoding. */
+export const NE_EXECUTABLE_PROVIDER = Object.freeze({
+  id: "rea-ne-executable",
+  name: "REA NE executable parser",
+  version: "1",
+} as const);
+
 /** Provider identity for deterministic managed-code comparison workflows. */
 export const MANAGED_WORKFLOW_PROVIDER = {
   id: "rea-dotnet-workflows",

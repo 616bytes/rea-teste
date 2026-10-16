@@ -272,6 +272,18 @@ Other payloads are opaque, and this operation does not decode images or simulate
 Windows resource loading. Consult the budgets and supported tree profile in
 [offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/binary-diagnostics.md).
 
+## Offline NE executable inventory
+
+Use `inspect_ne_executable` with an absolute `path`, or
+`rea inspect-ne-executable ./legacy.dll --json`, for a 16-bit Windows 3.x or
+OS/2 NE image. Preserve returned Evidence: the header, module name and
+description, segment file ranges and relocation-record counts, resource
+identities and ranges, exported names with ordinals, referenced module names and
+entry points, each with its original file location. Segment data, relocations
+and resource payloads are opaque, so imported function names are not reported.
+See the budgets in
+[offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/binary-diagnostics.md).
+
 For exact core-module import/export differences, use `compare_wasm_interfaces`
 with two complete inspection Evidence records (or current-session retained
 references) and explicit scope. Preserve unknown types/duplicate names; static

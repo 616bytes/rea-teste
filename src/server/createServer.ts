@@ -9,9 +9,14 @@ import { wasmArtifactModule } from "../composition/wasm.js";
 import { registerWasmTools } from "./registerWasmTools.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
-import { createPeResourcesService } from "../composition/binaryDiagnostics.js";
+import {
+  createNeExecutableService,
+  createPeResourcesService,
+} from "../composition/binaryDiagnostics.js";
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
+import type { NeExecutableService } from "../application/binaryDiagnostics/NeExecutableService.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
+import { registerNeExecutableTool } from "./registerNeExecutableTool.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import { evmInterfaceModule } from "../composition/evm.js";
 import { registerEvmTools } from "./registerEvmTools.js";
@@ -312,6 +317,7 @@ export const createServer = (
   const goBinary = options.goBinary ?? createGoBinaryService();
   const rustBinary = options.rustBinary ?? createRustBinaryService();
   const peResources = createPeResourcesService();
+  const neExecutable = createNeExecutableService();
   const webNetworkCapture =
     options.webNetworkCapture ?? createWebNetworkCaptureService(environment);
   const javascriptRecovery =
@@ -394,6 +400,7 @@ export const createServer = (
       goBinary.close(),
       rustBinary.close(),
       peResources.close(),
+      neExecutable.close(),
       webNetworkCapture.close(),
       javascriptRecovery.close?.() ?? Promise.resolve(),
       ...(options.optionalObservationProviderOwner === "caller"
@@ -452,6 +459,7 @@ export const createServer = (
     goBinary,
     rustBinary,
     peResources,
+    neExecutable,
     webNetworkCapture,
   };
   registerBinaryAnalysisTools(toolContext);
@@ -651,6 +659,7 @@ const registerConfiguredAnalysisTools = (
     goBinary,
     rustBinary,
     peResources,
+    neExecutable,
     webNetworkCapture,
   }: ServerToolContext,
   android: AndroidAnalysisPort,
@@ -693,6 +702,13 @@ const registerConfiguredAnalysisTools = (
   registerPeResourcesTool(
     server,
     peResources,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerNeExecutableTool(
+    server,
+    neExecutable,
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -819,6 +835,7 @@ interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
   readonly goBinary: GoBinaryService;
   readonly rustBinary: RustBinaryService;
   readonly peResources: PeResourcesService;
+  readonly neExecutable: NeExecutableService;
   readonly webNetworkCapture: WebNetworkCaptureService;
   readonly artifactResources: ArtifactResourceScope;
   readonly server: EvidenceMcpServer;

@@ -213,12 +213,12 @@ export const resolveJavaScriptIntrinsicInvocation = (
           intrinsicReadChanged(memberAt, bindPath)
         )
           return { kind: "opaque", path: bindPath, arguments: undefined };
-        const bindTarget: t.Node | undefined =
-          virtual !== undefined
-            ? explicitReceiver && t.isExpression(receiver)
-              ? receiver
-              : undefined
-            : memberObject;
+        // An explicit receiver is the bind target even for a direct member
+        // callee: `Reflect.apply(change.bind, fn, […])` binds `fn`, never
+        // `change`. Without one, the member owner is the target.
+        const bindTarget: t.Node | undefined = explicitReceiver
+          ? receiver
+          : memberObject;
         if (bindTarget === undefined || !t.isExpression(bindTarget))
           return { kind: "opaque", path: bindPath, arguments: undefined };
         // A direct `.bind` on an unprovable owner produces an unprovable

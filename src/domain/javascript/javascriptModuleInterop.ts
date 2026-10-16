@@ -468,7 +468,14 @@ export const createSemanticModuleInterop = (
   // The projected pattern leaf marks when the property was read — an earlier
   // property's default can write the owner slot first:
   // `const {missing: x = (change.call = noop), call: invoke} = change`.
-  const projectedCaptureAt = (node: t.Node, key: string): t.Node => {
+  // Duplicate keys require matching by the binding's own declaration site:
+  // `{call: first, …, call: invoke}` reads the slot twice, and `invoke`
+  // captures the second read.
+  const projectedCaptureAt = (
+    node: t.Node,
+    key: string,
+    binding: JavaScriptSemanticBindingState,
+  ): t.Node => {
     const declarator = state.parentsByNode.get(node);
     if (
       declarator === undefined ||
@@ -476,15 +483,20 @@ export const createSemanticModuleInterop = (
       !t.isObjectPattern(declarator.id)
     )
       return node;
+    let firstMatch: t.Node | undefined;
+    let namedMatch: t.Node | undefined;
     for (const property of declarator.id.properties) {
       if (!t.isObjectProperty(property)) continue;
       if (semanticStaticPropertyKey(property.key, property.computed) !== key)
         continue;
       let leaf = property.value;
       while (t.isAssignmentPattern(leaf)) leaf = leaf.left;
-      return leaf;
+      firstMatch ??= leaf;
+      // A later duplicate key re-reads and rebinds the slot; the leaf
+      // carrying this binding's name is the read that produced the value.
+      if (t.isIdentifier(leaf, { name: binding.name })) namedMatch = leaf;
     }
-    return node;
+    return namedMatch ?? firstMatch ?? node;
   };
 
   // An alias initializer can hold a captured invocation member read, as in
@@ -572,7 +584,7 @@ export const createSemanticModuleInterop = (
           at =
             key === null
               ? initializer.node
-              : projectedCaptureAt(initializer.node, key);
+              : projectedCaptureAt(initializer.node, key, binding);
           directOffset = true;
         }
       } else return undefined;

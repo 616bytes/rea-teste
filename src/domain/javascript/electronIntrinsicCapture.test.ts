@@ -721,6 +721,42 @@ describe("captured member canonicalization and timing", () => {
     );
     expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
   });
+
+  it("preserves the explicit receiver of a direct bind member", () => {
+    // `Reflect.apply(change.bind, Object.defineProperty, […])` invokes
+    // Function.prototype.bind with Object.defineProperty as its receiver —
+    // `decorate` binds defineProperty onto `metadata`, never `change`'s
+    // bound create write.
+    const { invocations, writes } = collectedWrites(
+      `const metadata = {};
+      const change = Object.defineProperty.bind(null,Object,"create");
+      const decorate = Reflect.apply(change.bind, Object.defineProperty, [null, metadata, "x"]);
+      decorate({value: 1});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("times a destructured capture at its own duplicate-key read", () => {
+    // `call` appears twice: `first` reads the intact member, then the
+    // `missing` default overwrites it, so the second read stores `noop` in
+    // `invoke` — matching by binding name must select the later leaf.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const noop = () => {};
+      const {call: first, missing: x = (change.call = noop), call: invoke} = change;
+      invoke.call(change, null, {value: customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({ kind: "opaque" }),
+    );
+    expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
+  });
 });
 
 describe("captured invocation member identity", () => {

@@ -1,6 +1,35 @@
 import { describe, expect, it } from "vitest";
 
-import { CONSTANT_TAG, parseJavaClassFile } from "./javaClassFile.js";
+import {
+  CONSTANT_TAG,
+  constantUtf8JsonBound,
+  parseJavaClassFile,
+  resolveConstantUtf8,
+} from "./javaClassFile.js";
+
+/** Encode a JS string as JVM modified UTF-8, one UTF-16 code unit at a time. */
+const modifiedUtf8 = (text: string): number[] =>
+  [...Array(text.length).keys()].flatMap((i) => {
+    const u = text.charCodeAt(i);
+    if (u !== 0 && u < 0x80) return [u];
+    if (u < 0x800) return [0xc0 | (u >> 6), 0x80 | (u & 0x3f)];
+    return [0xe0 | (u >> 12), 0x80 | ((u >> 6) & 0x3f), 0x80 | (u & 0x3f)];
+  });
+
+/** A class whose pool holds exactly the given strings at indices 1..n. */
+const classWithStrings = (texts: readonly string[]): Uint8Array => {
+  const b = new Blob()
+    .u4(0xcafebabe)
+    .u2(0)
+    .u2(52)
+    .u2(texts.length + 1);
+  for (const text of texts) {
+    const encoded = modifiedUtf8(text);
+    b.u1(CONSTANT_TAG.utf8).u2(encoded.length);
+    for (const byte of encoded) b.u1(byte);
+  }
+  return b.u2(0x0021).u2(0).u2(0).u2(0).u2(0).u2(0).u2(0).bytes();
+};
 
 /** Minimal big-endian builder so fixtures read like the class-file layout they encode. */
 class Blob {
@@ -102,11 +131,7 @@ describe("parseJavaClassFile framing", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.constantPool[7]).toEqual({ kind: "unusable" });
-    expect(result.value.constantPool[8]).toEqual({
-      tag: 1,
-      kind: "utf8",
-      value: "Example",
-    });
+    expect(resolveConstantUtf8(result.value.constantPool, 8)).toBe("Example");
   });
 
   it("exposes the SourceFile attribute at class level with raw info retained", () => {
@@ -189,11 +214,7 @@ describe("parseJavaClassFile framing", () => {
     const result = parseJavaClassFile(bytes);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.constantPool[1]).toEqual({
-      tag: 1,
-      kind: "utf8",
-      value: "😀",
-    });
+    expect(resolveConstantUtf8(result.value.constantPool, 1)).toBe("😀");
   });
 
   it("accepts the modified-UTF8 0xC0 0x80 encoding of U+0000", () => {
@@ -217,11 +238,7 @@ describe("parseJavaClassFile framing", () => {
     const result = parseJavaClassFile(blob);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.constantPool[1]).toEqual({
-      tag: 1,
-      kind: "utf8",
-      value: "\u0000",
-    });
+    expect(resolveConstantUtf8(result.value.constantPool, 1)).toBe("\u0000");
   });
 
   it("refuses an impossible method count instead of allocating", () => {
@@ -241,5 +258,38 @@ describe("parseJavaClassFile framing", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("budget-exceeded");
+  });
+});
+
+describe("lazy constant-pool strings", () => {
+  const texts = [
+    "plain",
+    'quote" and \\ backslash',
+    "tab\tnewline\n\u0001",
+    "\u0000",
+    "é ü ñ",
+    "😀 pair",
+    "lone \ud800 surrogate",
+    "x".repeat(20_000),
+  ];
+
+  it("decodes each string exactly on demand, lone surrogates included", () => {
+    const parsed = parseJavaClassFile(classWithStrings(texts));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    texts.forEach((text, i) =>
+      expect(resolveConstantUtf8(parsed.value.constantPool, i + 1)).toBe(text),
+    );
+  });
+
+  it("bounds the serialized size from the bytes, never below the real size", () => {
+    const parsed = parseJavaClassFile(classWithStrings(texts));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    texts.forEach((text, i) =>
+      expect(
+        constantUtf8JsonBound(parsed.value.constantPool, i + 1),
+      ).toBeGreaterThanOrEqual(Buffer.byteLength(JSON.stringify(text))),
+    );
   });
 });

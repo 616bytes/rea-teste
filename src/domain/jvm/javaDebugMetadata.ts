@@ -17,6 +17,7 @@ import {
   type JavaClassFile,
   type JavaMember,
   attributeBudget,
+  constantUtf8JsonBound,
   frameAttributes,
   RETAINED_ATTRIBUTES,
   resolveConstantUtf8,
@@ -388,23 +389,16 @@ export interface DebugOutputProjection {
  * objects — and charges every reference with the JSON-encoded length of the
  * string it names, so a name shared by thousands of entries is counted
  * thousands of times (`JSON.stringify` would expand it that many times).
+ * String sizes are upper bounds computed from the bytes, without decoding.
  * Code sub-attributes are framed against `attributeLimit`.
  */
 export const projectDebugOutput = (
   cls: JavaClassFile,
   attributeLimit: number,
 ): DebugOutputProjection => {
-  const encoder = new TextEncoder();
-  const lengths = new Map<number, number>();
-  const stringBytes = (index: number): number => {
-    let length = lengths.get(index);
-    if (length === undefined) {
-      const value = resolveConstantUtf8(cls.constantPool, index) ?? "";
-      length = encoder.encode(JSON.stringify(value)).length;
-      lengths.set(index, length);
-    }
-    return length;
-  };
+  // Bounded from the bytes, never decoded: a refused class decodes nothing.
+  const stringBytes = (index: number): number =>
+    constantUtf8JsonBound(cls.constantPool, index);
   const budget = attributeBudget(attributeLimit);
   let entries = cls.methods.length;
   let encodedBytes = 4096;

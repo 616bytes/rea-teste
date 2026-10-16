@@ -36,7 +36,16 @@ export const CONSTANT_TAG = {
 
 /** A single constant-pool slot. Only fields later lookups need are retained; other tags stay opaque by tag. */
 export type ConstantPoolEntry =
-  | { readonly tag: 1; readonly kind: "utf8"; readonly value: string }
+  | {
+      readonly tag: 1;
+      readonly kind: "utf8";
+      /**
+       * The validated modified-UTF8 bytes, a view over the input. Decoded only
+       * when referenced, via {@link resolveConstantUtf8}: an unused 65,535-byte
+       * constant costs no string at all.
+       */
+      readonly bytes: Uint8Array;
+    }
   | { readonly tag: 7; readonly kind: "class"; readonly nameIndex: number }
   | {
       readonly tag: 12;
@@ -197,46 +206,69 @@ export class ByteCursor {
   }
 }
 
-/** Decode modified-UTF8 (JVMS §4.4.7) into a string; rejects malformed sequences. */
-const decodeModifiedUtf8 = (
-  bytes: Uint8Array,
-  at: number,
-): Result<string, JavaClassFileParseError> => {
+/**
+ * Validate modified-UTF8 (JVMS §4.4.7) in place, allocating nothing. Returns
+ * the number of UTF-16 code units it decodes to, or null when malformed.
+ */
+const modifiedUtf8Units = (bytes: Uint8Array): number | null => {
   const isContinuation = (byte: number | undefined): boolean =>
     byte !== undefined && (byte & 0xc0) === 0x80;
-  let out = "";
+  let units = 0;
   let i = 0;
   while (i < bytes.length) {
     const a = bytes[i]!;
-    if (a === 0 || a >= 0xf0) return err({ kind: "invalid-utf8", offset: at });
-    if (a < 0x80) {
-      out += String.fromCharCode(a);
-      i += 1;
-    } else if (a < 0xe0) {
+    if (a === 0 || a >= 0xf0) return null;
+    if (a < 0x80) i += 1;
+    else if (a < 0xe0) {
       // A 2-byte sequence leads with 110xxxxx (>= 0xc0); 0x80-0xbf are
       // continuation bytes and are never valid as a lead. (0xc0 0x80 remains
       // the modified-UTF8 encoding of U+0000 and stays accepted.)
-      if (a < 0xc0 || i + 1 >= bytes.length || !isContinuation(bytes[i + 1]))
-        return err({ kind: "invalid-utf8", offset: at });
-      const b = bytes[i + 1]!;
-      out += String.fromCharCode(((a & 0x1f) << 6) | (b & 0x3f));
+      if (a < 0xc0 || !isContinuation(bytes[i + 1])) return null;
       i += 2;
     } else {
-      if (
-        i + 2 >= bytes.length ||
-        !isContinuation(bytes[i + 1]) ||
-        !isContinuation(bytes[i + 2])
-      )
-        return err({ kind: "invalid-utf8", offset: at });
-      const b = bytes[i + 1]!;
-      const c = bytes[i + 2]!;
-      out += String.fromCharCode(
-        ((a & 0x0f) << 12) | ((b & 0x3f) << 6) | (c & 0x3f),
-      );
+      if (!isContinuation(bytes[i + 1]) || !isContinuation(bytes[i + 2]))
+        return null;
       i += 3;
     }
+    units += 1;
   }
-  return ok(out);
+  return units;
+};
+
+const DECODE_CHUNK = 8192;
+
+/**
+ * Decode already-validated modified-UTF8 into one flat string. Code units are
+ * written to a typed array and converted in bounded chunks: per-character
+ * concatenation would build a rope of tens of thousands of nodes per string.
+ * Lone surrogates are preserved exactly (a UTF-16 TextDecoder would replace
+ * them).
+ */
+const decodeValidModifiedUtf8 = (bytes: Uint8Array, units: number): string => {
+  const out = new Uint16Array(units);
+  let u = 0;
+  let i = 0;
+  while (i < bytes.length) {
+    const a = bytes[i]!;
+    if (a < 0x80) {
+      out[u] = a;
+      i += 1;
+    } else if (a < 0xe0) {
+      out[u] = ((a & 0x1f) << 6) | (bytes[i + 1]! & 0x3f);
+      i += 2;
+    } else {
+      out[u] =
+        ((a & 0x0f) << 12) |
+        ((bytes[i + 1]! & 0x3f) << 6) |
+        (bytes[i + 2]! & 0x3f);
+      i += 3;
+    }
+    u += 1;
+  }
+  let text = "";
+  for (let at = 0; at < units; at += DECODE_CHUNK)
+    text += String.fromCharCode(...out.subarray(at, at + DECODE_CHUNK));
+  return text;
 };
 
 /** Fixed `info` byte sizes for constant tags whose body is not length-prefixed. */
@@ -260,12 +292,66 @@ const FIXED_CONSTANT_SIZE: Readonly<Record<number, number>> = {
 };
 
 /** Resolve a constant-pool index to its Utf8 string, or `null` when it is not a Utf8 entry. */
+/** Decoded strings per pool, so each referenced constant is decoded once. */
+const DECODED = new WeakMap<
+  readonly ConstantPoolEntry[],
+  Map<number, string>
+>();
+
+/** Resolve a CONSTANT_Utf8 index to its string, decoding it on first use. */
 export const resolveConstantUtf8 = (
   pool: readonly ConstantPoolEntry[],
   index: number,
 ): string | null => {
   const entry = pool[index];
-  return entry && entry.kind === "utf8" ? entry.value : null;
+  if (entry === undefined || entry.kind !== "utf8") return null;
+  let decoded = DECODED.get(pool);
+  if (decoded === undefined) {
+    decoded = new Map();
+    DECODED.set(pool, decoded);
+  }
+  let text = decoded.get(index);
+  if (text === undefined) {
+    // Validated when the pool was parsed, so the unit count is non-null.
+    text = decodeValidModifiedUtf8(
+      entry.bytes,
+      modifiedUtf8Units(entry.bytes) ?? 0,
+    );
+    decoded.set(index, text);
+  }
+  return text;
+};
+
+/**
+ * Upper bound on the UTF-8 bytes `JSON.stringify` emits for a validated
+ * modified-UTF8 constant (quotes included), computed from its bytes alone:
+ * control characters escape to `\\u00XX`, quote/backslash to two bytes, and a
+ * 3-byte sequence is charged 6 in case it is a lone surrogate (`\\udXXX`).
+ */
+export const constantUtf8JsonBound = (
+  pool: readonly ConstantPoolEntry[],
+  index: number,
+): number => {
+  const entry = pool[index];
+  if (entry === undefined || entry.kind !== "utf8") return 4; // null
+  const bytes = entry.bytes;
+  let total = 2;
+  let i = 0;
+  while (i < bytes.length) {
+    const a = bytes[i]!;
+    if (a < 0x80) {
+      total += a < 0x20 ? 6 : a === 0x22 || a === 0x5c ? 2 : 1;
+      i += 1;
+    } else if (a < 0xe0) {
+      // 0xC0 0x80 is U+0000, escaped as \u0000.
+      total += a === 0xc0 && bytes[i + 1] === 0x80 ? 6 : 2;
+      i += 2;
+    } else {
+      total += a === 0xed ? 6 : 3;
+      i += 3;
+    }
+  }
+  return total;
 };
 
 const parseConstantPool = (
@@ -286,9 +372,11 @@ const parseConstantPool = (
       if (!lenResult.ok) return lenResult;
       const bytesResult = cursor.slice(lenResult.value);
       if (!bytesResult.ok) return bytesResult;
-      const text = decodeModifiedUtf8(bytesResult.value, tagOffset);
-      if (!text.ok) return text;
-      pool.push({ tag: 1, kind: "utf8", value: text.value });
+      // Validate now (a malformed constant still rejects the class, as the
+      // JVM would) but retain only the byte view; decode on first use.
+      if (modifiedUtf8Units(bytesResult.value) === null)
+        return err({ kind: "invalid-utf8", offset: tagOffset });
+      pool.push({ tag: 1, kind: "utf8", bytes: bytesResult.value });
       continue;
     }
     if (tag === CONSTANT_TAG.class) {

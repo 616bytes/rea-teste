@@ -447,6 +447,12 @@ process is settled and excluded from signaling. A live process with a missing
 token, or an unavailable liveness check, still blocks cleanup; an explicitly
 different token remains a mismatch.
 
+The refreshed process table also owns current group membership: newly discovered
+members must pass ownership validation before cleanup can report an empty group.
+Repeated membership churn retains uncertainty after bounded validation attempts.
+Token sweeps apply the same missing-token classification and bounded liveness
+settlement, while unchanged prelaunch start identities remain outside the scan.
+
 On macOS, changing a Node process's `process.title` can make its run token
 unreadable. Node documents that [setting the title overwrites argv memory](https://nodejs.org/download/release/v24.18.0/docs/api/process.html#processtitle).
 With the pinned toolchain, a live child retained a readable start identity

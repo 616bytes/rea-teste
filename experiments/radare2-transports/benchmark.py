@@ -11,8 +11,27 @@ import time
 import psutil
 
 
-def measure(command, directory, prompt=None, timeout=600):
+class CleanupIncomplete(RuntimeError):
+    """The retained ownership manifest must be settled before another trial."""
+
+    def __init__(self, message, child):
+        super().__init__(message)
+        self.child = child  # Retain the direct-child handle for reaping after retry.
+
+
+def ownership_command(node, operation, manifest=None):
+    command = [node, str(Path(__file__).with_name("benchmark-ownership.mjs")), operation]
+    if manifest is not None:
+        command.append(str(manifest))
+    result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=True)
+    return json.loads(result.stdout)
+
+
+def measure(command, directory, prompt=None, timeout=600, *, node="node", memory_limit=6 * 1024**3):
     directory.mkdir(parents=True, exist_ok=False)
+    # Prepare inspection and capture the identity baseline before measuring the task.
+    ownership = ownership_command(node, "prepare")
+    manifest = directory / "ownership.json"
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
     began = time.monotonic()
     seen = {}
@@ -20,44 +39,55 @@ def measure(command, directory, prompt=None, timeout=600):
     sample_count = 0
     denied_observations = 0
     timed_out = False
-    with (directory / "stdout.log").open("w") as output, (directory / "process.stderr.log").open("w") as errors:
-        child = subprocess.Popen(command, stdin=subprocess.PIPE if prompt else subprocess.DEVNULL,
-                                 stdout=output, stderr=errors, text=True, start_new_session=True,
-                                 env={**os.environ, "R2_COLOR": "0", "R2_UTF8": "0"})
+    cleanup = {"cleaned": False, "reason": "Cleanup has not run"}
+    failure = None
+    with (directory / "stdin.txt").open("w+") as input_stream, (directory / "stdout.log").open("w") as output, (directory / "process.stderr.log").open("w") as errors:
         if prompt:
-            child.stdin.write(prompt)
-            child.stdin.close()
-        while child.poll() is None:
-            try:
-                parent = psutil.Process(child.pid)
-                family = [parent, *parent.children(recursive=True)]
-            except psutil.NoSuchProcess:
-                family = []
-            rss = 0
-            for process in family:
+            input_stream.write(prompt)
+            input_stream.seek(0)
+        child = subprocess.Popen(command, stdin=input_stream,
+                                 stdout=output, stderr=errors, text=True, start_new_session=True,
+                                 env={**os.environ, "R2_COLOR": "0", "R2_UTF8": "0",
+                                      "REA_PROCESS_RUN_ID": ownership["runId"]})
+        ownership.update(leaderPid=child.pid, processGroupId=child.pid)
+        try:
+            manifest.write_text(json.dumps(ownership, indent=2) + "\n")
+            while child.poll() is None:
                 try:
-                    with process.oneshot():
-                        identity = (process.pid, process.create_time())
-                        cpu = process.cpu_times()
-                        rss += process.memory_info().rss
-                        seen[identity] = max(seen.get(identity, 0), cpu.user + cpu.system)
+                    parent = psutil.Process(child.pid)
+                    family = [parent, *parent.children(recursive=True)]
                 except psutil.NoSuchProcess:
-                    pass
-                except psutil.AccessDenied:
-                    denied_observations += 1
-            peak = max(peak, rss)
-            sample_count += 1
-            if time.monotonic() - began > timeout or rss > 6 * 1024**3:
-                timed_out = True
-                child.terminate()
-                try:
-                    child.wait(timeout=20)
-                except subprocess.TimeoutExpired:
-                    child.kill()
-                    child.wait()
-                break
-            time.sleep(0.05)
-        code = child.wait()
+                    family = []
+                rss = 0
+                for process in family:
+                    try:
+                        with process.oneshot():
+                            identity = (process.pid, process.create_time())
+                            cpu = process.cpu_times()
+                            rss += process.memory_info().rss
+                            seen[identity] = max(seen.get(identity, 0), cpu.user + cpu.system)
+                    except psutil.NoSuchProcess:
+                        pass
+                    except psutil.AccessDenied:
+                        denied_observations += 1
+                peak = max(peak, rss)
+                sample_count += 1
+                if time.monotonic() - began > timeout or rss > memory_limit:
+                    timed_out = True
+                    break
+                time.sleep(0.05)
+        except BaseException as cause:
+            failure = cause
+        finally:
+            cleanup_began = time.monotonic()
+            try:
+                cleanup = ownership_command(node, "cleanup", manifest)
+                if cleanup["cleaned"]:
+                    child.wait(timeout=5)
+            except Exception as cause:
+                cleanup = {"cleaned": False, "reason": str(cause)}
+            cleanup_seconds = time.monotonic() - cleanup_began
+        code = child.poll()
     after = resource.getrusage(resource.RUSAGE_CHILDREN)
     remaining = []
     for pid, created in seen:
@@ -69,6 +99,10 @@ def measure(command, directory, prompt=None, timeout=600):
                 remaining.append(pid)
         except psutil.NoSuchProcess:
             pass
+        except psutil.AccessDenied:
+            cleanup = {"cleaned": False, "reason": f"Cannot inspect observed PID {pid}"}
+    if remaining:
+        cleanup = {"cleaned": False, "reason": "Observed descendants remain alive"}
     result = {
         "elapsed_seconds": time.monotonic() - began,
         "cpu_user_seconds": after.ru_utime - before.ru_utime,
@@ -79,8 +113,14 @@ def measure(command, directory, prompt=None, timeout=600):
         "observed_processes": len(seen), "remaining_observed_pids": remaining,
         "denied_observations": denied_observations,
         "exit_code": code, "interrupted_by_limit": timed_out,
+        "cleanup": cleanup, "cleanup_seconds": cleanup_seconds,
+        "ownership_manifest": str(manifest),
     }
     (directory / "resources.json").write_text(json.dumps(result, indent=2) + "\n")
+    if not cleanup["cleaned"]:
+        raise CleanupIncomplete(f"Owned cleanup is unverified; stopping trials. Retry using {manifest}: {cleanup}", child)
+    if failure is not None:
+        raise failure
     return result
 
 
@@ -181,14 +221,14 @@ def main():
                 if args.mode == "sdk":
                     command = [config["node"], config["sdk_driver"], str(args.configuration),
                                lane, target["id"], str(directory / "payload")]
-                    result = measure(command, directory)
+                    result = measure(command, directory, node=config["node"])
                 else:
                     setup = root / f"setup-{target['id']}-{lane}-{trial + 1}"
                     command = agent_command(config, lane, setup)
                     prompt = target["prompt"]
                     (setup / "prompt.txt").write_text(prompt)
                     before_digest = hashlib.sha256(Path(target["path"]).read_bytes()).hexdigest()
-                    result = measure(command, directory, prompt=prompt, timeout=600)
+                    result = measure(command, directory, prompt=prompt, timeout=600, node=config["node"])
                     usage = []
                     calls = []
                     events = directory / "stdout.log"

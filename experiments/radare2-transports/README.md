@@ -91,3 +91,27 @@ retains and retries unresolved process owners within the experiment process.
 External HTTP sessions remain unowned. Results explicitly leave target identity
 unverified. Review the proposal's authority and verification gaps before running
 arbitrary commands against a valuable external session.
+
+Writes and frame reads share the batch cancellation signal. Interrupted reads
+retain the unfinished frame within the existing capture bound, including base64
+when its bytes are not valid UTF-8. Invalid UTF-8 JSON fails before interpretation
+on every transport; the exec supervisor exposes its invalid-byte flag and text,
+but does not retain base64. Cleanup settles before the analyst queue advances.
+
+The analyst experiment applies one deadline from request submission through
+queueing, before/after target digests, transport calls and independent byte
+verification. Local hashing and byte verification share regular-file handle
+ownership; FIFOs/devices are rejected with a nonblocking open. Cancellation is
+checked between bounded reads. An OS filesystem call already in progress and
+owned cleanup can extend beyond the deadline.
+
+Focused fault checks (C compiler required for the synthetic transport fixture):
+
+```sh
+node --test experiments/radare2-transports/probe.test.mjs
+node --test experiments/radare2-transports/analysis-deadline.test.mjs
+python3 experiments/radare2-transports/benchmark_test.py
+```
+
+The Python checks require `psutil` and the pinned `node` on `PATH`. They exercise
+synthetic process trees and injected inspection failure, not engine behavior.

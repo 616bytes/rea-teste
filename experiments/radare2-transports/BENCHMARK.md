@@ -259,6 +259,43 @@ REA dependencies and a built checkout of the pinned PR. Supply installed r2,
 r2ghidra, r2mcp, Codex, Java and Ghidra paths in a JSON configuration; Python
 requires `psutil`. REA setup does not install these engines.
 
+The review cleanup fix gives each trial a run token and retains `ownership.json`
+beside its output. `benchmark-ownership.mjs` reuses REA's process identity and
+cleanup primitives to stop and verify owned groups, including detached children,
+after limits, normal exit or measurement failure. Unverified cleanup writes its
+reason to `resources.json` and raises an error, stopping subsequent trials.
+The manifest remains available for an explicit retry with
+`node experiments/radare2-transports/benchmark-ownership.mjs cleanup /absolute/path/ownership.json`;
+inspect the returned `cleaned` status before continuing. PID reuse or unreadable
+identity does not authorize signaling. Prompts use retained file-backed stdin
+so a child that does not read cannot block the limit monitor.
+
+New `elapsed_seconds` and child CPU totals include the cleanup helper;
+`cleanup_seconds` reports its wall time separately. Ownership preparation runs
+before those measurements. Sampled task-family CPU/RSS still cover the workload,
+not the separate preparation/cleanup helpers. The historical tables above retain
+their original measurements and have not been rerun with this instrumentation.
+
+A macOS arm64 harness comparison on 2026-10-16 used the same Python task
+(allocate 8 MiB, sleep 250 ms) before/after this cleanup fix. Each measurement
+starts fresh workload/helper processes. “Repeat” reuses host filesystem/compiler
+caches; neither a flushed-cache cold run nor a persistent-helper warm run was
+measured. Totals include preparation, cleanup and the external 10 ms sampler:
+
+| Revision | Run    | Elapsed (s) | CPU (s) | Sampled family peak RSS (MiB) | Agent tokens |
+| -------- | ------ | ----------: | ------: | ----------------------------: | -----------: |
+| Before   | First  |       0.405 |   0.354 |                          46.0 |            0 |
+| After    | First  |       2.633 |   4.359 |                        ≥276.8 |            0 |
+| Before   | Repeat |       0.350 |   0.309 |                          47.0 |            0 |
+| After    | Repeat |       2.798 |   4.549 |                        ≥279.9 |            0 |
+
+The new ownership checks cost time and compiler/helper memory. Both after runs
+had nine denied RSS observations, so their peaks are lower bounds. All four
+tasks completed successfully; the after runs verified cleanup. These two trials
+measure harness overhead, not engine or agent performance. Raw measurements are
+retained locally at `/private/tmp/rea-pr4148-review/comparison-v2.json`; the first
+attempt in `comparison.json` had an interrupted RSS sampler and is not used here.
+
 The configuration keys are `node`, `sdk_driver`, `rea3521`, `r2`, `r2mcp`,
 `ghidra`, `java`, `codex`, `model`, `reasoning`, `output`, `warm_repeats`, `lanes`
 and `targets`. Each target has `id`, `path`, `addresses`, literal SDK `checks`

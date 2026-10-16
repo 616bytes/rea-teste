@@ -817,6 +817,55 @@ describe("captured member nested owners and projections", () => {
     );
     expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
   });
+
+  it("checks the recorded bind read on a captured-member bind chain", () => {
+    // `invoke.bind = …` shadows Function.prototype.bind on the captured
+    // member, so `changed` is the replacement's no-op — not bound call.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const invoke = change.call;
+      invoke.bind = () => () => {};
+      const changed = invoke.bind(change, null);
+      changed({value: customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({ kind: "opaque" }),
+    );
+    expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("checks the inherited member slot at every projected level", () => {
+    // `Function.prototype.call = {apply: noop}` replaces the value the
+    // outer `.call` read captures — `invoke` is the no-op, not apply.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      Function.prototype.call = {apply: () => {}};
+      const {call: {apply: invoke}} = change;
+      Reflect.apply(invoke, change, [null, [{value: customCreate}]]);`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({ kind: "opaque" }),
+    );
+    expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("times each projected level at its own property read", () => {
+    // The outer `.call` is read before the `missing` default replaces
+    // `change.call`, so `invoke` still holds Function.prototype.call and
+    // the final call writes only through the bound defineProperty.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null);
+      const metadata = {};
+      const {call: {missing: x = (change.call = () => {}), call: invoke}} = change;
+      invoke.call(change, null, metadata, "x", {value: 1});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+  });
 });
 
 describe("captured invocation member identity", () => {

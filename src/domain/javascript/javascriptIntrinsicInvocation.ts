@@ -205,7 +205,11 @@ export const resolveJavaScriptIntrinsicInvocation = (
         // executes an unknown function, and a replaced Function.prototype
         // member cannot be assumed intact either.
         if (
+          // A virtual member is a synthetic substitution for a captured
+          // read — the real read (`invoke.bind`) was already checked; no
+          // `owner.bind` slot is read again here.
           (bound !== undefined &&
+            virtual === undefined &&
             intrinsicReadChanged(memberAt, [...bound.path, "bind"])) ||
           (captured !== undefined &&
             memberPath !== undefined &&
@@ -270,6 +274,7 @@ export const resolveJavaScriptIntrinsicInvocation = (
           };
         if (
           bound !== undefined &&
+          virtual === undefined &&
           intrinsicReadChanged(memberAt, [...bound.path, method])
         )
           return { kind: "opaque", path: bound.path, arguments: undefined };

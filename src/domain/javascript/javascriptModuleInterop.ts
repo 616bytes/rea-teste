@@ -405,9 +405,16 @@ export const createSemanticModuleInterop = (
             path: capturedMember.path,
             arguments: undefined,
           };
+        // `invoke.bind = replacement` shadows Function.prototype.bind on
+        // the captured member — every recorded `.bind` read must stay
+        // intact, exactly as the terminal path below requires.
+        const memberPath = intrinsicInvocationMemberPath(capturedMember.key);
+        opaqueArguments ||= bindReads.some((capture) =>
+          intrinsicReadChanged(capture, [...memberPath, "bind"]),
+        );
         return {
           kind: opaqueArguments ? "opaque" : "known",
-          path: intrinsicInvocationMemberPath(capturedMember.key),
+          path: memberPath,
           ...(receiver === undefined ? {} : { receiver }),
           arguments: opaqueArguments
             ? undefined
@@ -488,34 +495,36 @@ export const createSemanticModuleInterop = (
     return current;
   };
 
-  // The projected pattern leaf marks when the property was read — an earlier
-  // property's default can write the owner slot first:
-  // `const {missing: x = (change.call = noop), call: invoke} = change`.
+  // Returns one timing node per projection level. An intermediate level's
+  // read happens when its property is entered — the key exits before the
+  // value subtree runs defaults, so `{call: {missing: x = W, call: v}}`
+  // checks the outer slot before `W`: `const {missing: x = (change.call =
+  // noop), call: invoke} = change`.
   // Duplicate keys require matching by the binding's own declaration site:
   // `{call: first, …, call: invoke}` reads the slot twice, and `invoke`
   // captures the second read.
-  const projectedCaptureAt = (
+  const projectedCaptureAts = (
     node: t.Node,
     keys: readonly (string | number | null)[],
     binding: JavaScriptSemanticBindingState,
-  ): t.Node => {
+  ): readonly t.Node[] => {
     const declarator = state.parentsByNode.get(node);
     if (
       declarator === undefined ||
       !t.isVariableDeclarator(declarator) ||
       !t.isObjectPattern(declarator.id)
     )
-      return node;
+      return [node];
     // Walk one projection level at a time — `{call: {call: invoke}}` reads
     // `call` on the outer value, then `call` again inside the nested pattern.
     const search = (
       pattern: t.ObjectPattern,
       path: readonly (string | number | null)[],
       requireName = false,
-    ): t.Node | undefined => {
+    ): t.Node[] | undefined => {
       const [key, ...rest] = path;
-      let firstMatch: t.Node | undefined;
-      let namedMatch: t.Node | undefined;
+      let firstMatch: t.Node[] | undefined;
+      let namedMatch: t.Node[] | undefined;
       for (const property of pattern.properties) {
         if (!t.isObjectProperty(property)) continue;
         if (semanticStaticPropertyKey(property.key, property.computed) !== key)
@@ -528,20 +537,22 @@ export const createSemanticModuleInterop = (
             // the read that produced the value; otherwise keep scanning
             // sibling properties (duplicate outer keys).
             const inner = search(leaf, rest, true);
-            if (inner !== undefined) return inner;
-            firstMatch ??= search(leaf, rest, false);
+            if (inner !== undefined) return [property.key, ...inner];
+            const fallback = search(leaf, rest, false);
+            if (fallback !== undefined)
+              firstMatch ??= [property.key, ...fallback];
           }
           continue;
         }
-        firstMatch ??= leaf;
+        firstMatch ??= [leaf];
         // A later duplicate key re-reads and rebinds the slot; the leaf
         // carrying this binding's name is the read that produced the value.
-        if (t.isIdentifier(leaf, { name: binding.name })) namedMatch = leaf;
+        if (t.isIdentifier(leaf, { name: binding.name })) namedMatch = [leaf];
       }
       return namedMatch ?? (requireName ? undefined : firstMatch);
     };
     return (
-      search(declarator.id, keys, true) ?? search(declarator.id, keys) ?? node
+      search(declarator.id, keys, true) ?? search(declarator.id, keys) ?? [node]
     );
   };
 
@@ -564,6 +575,7 @@ export const createSemanticModuleInterop = (
       let at: t.Node;
       let directOffset = false;
       let projection: readonly (string | null)[] = [];
+      let captureLeaves: readonly t.Node[] = [];
       if (
         t.isMemberExpression(current) ||
         t.isOptionalMemberExpression(current)
@@ -640,10 +652,15 @@ export const createSemanticModuleInterop = (
           key = memberProjection.at(-1) ?? null;
           projection = memberProjection;
           owner = peelValueSequence(next);
-          at =
+          captureLeaves =
             key === null
-              ? initializer.node
-              : projectedCaptureAt(initializer.node, memberProjection, binding);
+              ? [initializer.node]
+              : projectedCaptureAts(
+                  initializer.node,
+                  memberProjection,
+                  binding,
+                );
+          at = captureLeaves.at(-1) ?? initializer.node;
           directOffset = true;
         }
       } else return undefined;
@@ -680,43 +697,61 @@ export const createSemanticModuleInterop = (
         // A destructured read captures the member at the destructuring, but
         // `at` is the RHS identifier — intrinsicReadChanged would follow its
         // binding back to the owner's initializer and miss writes between
-        // them. Check the slot at the destructuring offset directly.
+        // them. Check each level's slot at that level's own read offset:
+        // the outer `call` is read before an inner pattern's defaults run,
+        // so a later `change.call = noop` does not replace what was captured.
         const scope = opaqueMutationPath(at).join(".");
-        const offset = evaluationOffset(at);
         const previous = ownerPath.at(-1);
-        const nestedRead =
-          previous === "call" || previous === "apply" || previous === "bind"
-            ? ["intrinsic", "Function", "prototype", previous, key]
-            : undefined;
-        // A multi-segment projection reads each level in turn: the first
-        // on the owner, each later one on the previous canonical member —
-        // `{call: {call: invoke}}` checks `[ownerPath,call]` and
-        // `[i,F,p,call,call]`. A write to any level replaces the value.
-        const slots: (readonly string[])[] = [
-          ownerMemberPath,
-          ["intrinsic", "Function", "prototype", key],
-          ...(nestedRead === undefined ? [] : [nestedRead]),
-        ];
-        for (let level = 1; level < projection.length; level += 1) {
+        // The first level reads the owner's own slot and its inherited
+        // canonical member; each later level reads the previous canonical
+        // member's own slot plus its inherited member — `{call: {apply:
+        // invoke}}` checks `[ownerPath,call]` + `[i,F,p,call]`, then
+        // `[i,F,p,call,apply]` + `[i,F,p,apply]`.
+        const levelSlots = (level: number): (readonly string[])[] => {
+          const segment = projection[level];
+          if (segment === null || segment === undefined) return [];
+          const inherited = [
+            "intrinsic",
+            "Function",
+            "prototype",
+            segment,
+          ] as const;
+          if (level === 0) {
+            const nestedRead =
+              previous === "call" || previous === "apply" || previous === "bind"
+                ? ([
+                    "intrinsic",
+                    "Function",
+                    "prototype",
+                    previous,
+                    segment,
+                  ] as const)
+                : undefined;
+            return [
+              [...ownerPath, segment],
+              inherited,
+              ...(nestedRead === undefined ? [] : [nestedRead]),
+            ];
+          }
           const prior = projection[level - 1];
-          const current = projection[level];
-          if (
-            prior !== null &&
-            current !== null &&
-            (prior === "call" || prior === "apply" || prior === "bind") &&
-            (current === "call" || current === "apply" || current === "bind")
-          )
-            slots.push(["intrinsic", "Function", "prototype", prior, current]);
+          if (prior === null || prior === undefined) return [];
+          return [
+            ["intrinsic", "Function", "prototype", prior, segment],
+            inherited,
+          ];
+        };
+        for (let level = 0; level < projection.length; level += 1) {
+          const offset = evaluationOffset(captureLeaves[level] ?? at);
+          const replaced = levelSlots(level).find((slot) =>
+            writes.some(
+              (write) =>
+                (write.scope === scope || write.scope === "intrinsic") &&
+                write.offset < offset &&
+                invocationMemberWriteCovers(write, slot),
+            ),
+          );
+          if (replaced !== undefined) return { replaced: true, path: replaced };
         }
-        if (
-          writes.some(
-            (write) =>
-              (write.scope === scope || write.scope === "intrinsic") &&
-              write.offset < offset &&
-              slots.some((slot) => invocationMemberWriteCovers(write, slot)),
-          )
-        )
-          return { replaced: true, path: ownerMemberPath };
       }
       return { owner, key, at };
     }

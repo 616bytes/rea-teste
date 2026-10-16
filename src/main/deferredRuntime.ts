@@ -41,6 +41,7 @@ const initializeRuntime = async (
   dependencies: RuntimeDependencies,
   context: McpRequestContext,
   config: AppConfig,
+  startedAt: string,
 ): Promise<void> => {
   let shutdown: (() => Promise<void>) | undefined;
   let closeSession: (() => Promise<void>) | undefined;
@@ -81,7 +82,11 @@ const initializeRuntime = async (
             });
             if (!result.ok) throw result.error;
           };
-        return createServer(source, { ...options, mcpServer: server });
+        return createServer(source, {
+          ...options,
+          mcpServer: server,
+          startedAt,
+        });
       },
       serve: (factory) => {
         let close: (() => Promise<void>) | undefined;
@@ -142,18 +147,23 @@ export const runDeferred = async (
       (context) => {
         const catalog = firstCatalog ?? readCatalog();
         firstCatalog = undefined;
+        const startedAt = new Date().toISOString();
         const server = new DeferredEvidenceMcpServer(
           catalog,
           new ToolResultDelivery(
             config.mcpMaxResponseBytes ?? STDIO_DEFAULT_MAX_BUFFER_SIZE,
           ),
           (target) =>
-            initializeRuntime(target, dependencies, context, config).catch(
-              (cause) => {
-                dependencies.setExitCode(1);
-                throw cause;
-              },
-            ),
+            initializeRuntime(
+              target,
+              dependencies,
+              context,
+              config,
+              startedAt,
+            ).catch((cause) => {
+              dependencies.setExitCode(1);
+              throw cause;
+            }),
         );
         const stop = server.close.bind(server);
         const ownedClose = async () => {

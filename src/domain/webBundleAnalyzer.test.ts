@@ -939,6 +939,63 @@ describe("web bundle promise aliases and object evaluation", () => {
   );
 });
 
+describe("web bundle selected invocations, imports and case waits", () => {
+  it.each([
+    '(true ? () => new Socket("wss://example.test/invalid") : noop)(); const Socket = globalThis.WebSocket;',
+    '(false ? noop : function () { new Socket("wss://example.test/invalid"); })(); const Socket = globalThis.WebSocket;',
+    '(true && (() => new Socket("wss://example.test/invalid")))(); const Socket = globalThis.WebSocket;',
+    '(false || function () { new Socket("wss://example.test/invalid"); })(); const Socket = globalThis.WebSocket;',
+    '(null ?? function () { new Socket("wss://example.test/invalid"); })(); const Socket = globalThis.WebSocket;',
+    '({ run() { new Socket("wss://example.test/invalid"); } }).run(); const Socket = globalThis.WebSocket;',
+    '({ [`run`]() { new Socket("wss://example.test/invalid"); } })[`run`](); const Socket = globalThis.WebSocket;',
+    '({ run: () => new Socket("wss://example.test/invalid") }).run(); const Socket = globalThis.WebSocket;',
+    '({ run() { new Socket("wss://example.test/invalid"); } }).run.call(null); const Socket = globalThis.WebSocket;',
+    '({ run() { new Socket("wss://example.test/invalid"); } }).run.bind(null)(); const Socket = globalThis.WebSocket;',
+    '(true ? { run() { new Socket("wss://example.test/invalid"); } } : other).run(); const Socket = globalThis.WebSocket;',
+    '@(function () { new Socket("wss://example.test/invalid"); }) class Client {}; const Socket = globalThis.WebSocket;',
+    '@(() => { new Socket("wss://example.test/invalid"); }) class Client {}; const Socket = globalThis.WebSocket;',
+    'class Client { @(function () { new Socket("wss://example.test/invalid"); }) run() {} }; const Socket = globalThis.WebSocket;',
+    '(async () => { switch (kind) { case 0: const pending = (async () => { await ready; new Socket("wss://example.test/invalid"); })(); await pending; } const Socket = globalThis.WebSocket; })();',
+    '(async () => { switch (kind) { case 0: const pending = (async () => { await ready; new Socket("wss://example.test/invalid"); })(); const alias = pending; await alias; } const Socket = globalThis.WebSocket; })();',
+    '(async () => { switch (kind) { case 0: const pending = (async () => { await ready; new Socket("wss://example.test/invalid"); })(); await (async () => { await pending; })(); } const Socket = globalThis.WebSocket; })();',
+    '(async () => { import("owned:module"); new Socket("wss://example.test/invalid"); })(); const Socket = globalThis.WebSocket;',
+    '(async () => { import("owned:module", { ignored: async () => await ready }); new Socket("wss://example.test/invalid"); })(); const Socket = globalThis.WebSocket;',
+    'const Socket = condition ? globalThis.WebSocket : Fake; new Socket("wss://example.test/invalid");',
+  ])(
+    "does not manufacture a deferred activation or a mandatory wait: %s",
+    (source) => {
+      expect(socketEndpoints(source)).toEqual([[], []]);
+    },
+  );
+
+  it.each([
+    '(async () => { import(await ready); new Socket("wss://example.test/selected"); })(); const Socket = globalThis.WebSocket;',
+    '(async () => { import("owned:module", await ready); new Socket("wss://example.test/selected"); })(); const Socket = globalThis.WebSocket;',
+    '(async () => { import("owned:module", { with: { type: await ready } }); new Socket("wss://example.test/selected"); })(); const Socket = globalThis.WebSocket;',
+    'const connect = (true ? () => new Socket("wss://example.test/selected") : noop); const Socket = globalThis.WebSocket; connect();',
+    'const connect = ({ run() { new Socket("wss://example.test/selected"); } }).run; const Socket = globalThis.WebSocket; connect();',
+    '({ async run() { await ready; new Socket("wss://example.test/selected"); } }).run(); const Socket = globalThis.WebSocket;',
+    '@(function* () { new Socket("wss://example.test/selected"); }) class Client {}; const Socket = globalThis.WebSocket;',
+    '@(function () { return function () { new Socket("wss://example.test/selected"); }; }) class Client {}; const Socket = globalThis.WebSocket; Client();',
+    '(async () => { @(function () { new Socket("wss://example.test/selected"); }) class Client { [await ready]() {} } })(); const Socket = globalThis.WebSocket;',
+    '(async () => { class Client { @(function () { new Socket("wss://example.test/selected"); }) run() {} [await ready]() {} } })(); const Socket = globalThis.WebSocket;',
+    'const Socket = true ? globalThis.WebSocket : Fake; new Socket("wss://example.test/selected");',
+    'const Socket = false || globalThis.WebSocket; new Socket("wss://example.test/selected");',
+    '(async () => { switch (kind) { case 0: const pending = (async () => { await ready; new Socket("wss://example.test/selected"); })(); break; await pending; } const Socket = globalThis.WebSocket; })();',
+    '(async () => { const pending = (async () => { await ready; new Socket("wss://example.test/selected"); })(); switch (kind) { case 0: await pending; } const Socket = globalThis.WebSocket; })();',
+  ])(
+    "retains proven selections and suspension without promoting skipped paths: %s",
+    (source) => {
+      expect(
+        socketEndpoints(source).map((items) => items.map((item) => item.value)),
+      ).toEqual([
+        ["wss://example.test/selected"],
+        ["wss://example.test/selected"],
+      ]);
+    },
+  );
+});
+
 describe("web bundle selected bindings and reachable waits", () => {
   it.each([
     'const pending = (async () => { await 0; new Socket("wss://example.test/invalid"); })(); await (async () => { await pending; })(); const Socket = globalThis.WebSocket;',

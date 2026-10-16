@@ -5,6 +5,8 @@ import {
   semanticStaticPropertyName,
   javaScriptExactResultOperand,
   readExactJavaScriptLiteral,
+  semanticFinalObjectMember,
+  semanticStaticPropertyKey,
 } from "./javascriptAstValues.js";
 import {
   javaScriptOptionalOperandsMayBeSkipped,
@@ -42,6 +44,35 @@ const webSocketOuterExpression = (
   }
 };
 
+/** A directly selected method/data function on a fresh literal owns its call. */
+const webSocketFreshMethodSelection = (
+  node: t.Function | t.ClassExpression,
+  value: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.MemberExpression | t.OptionalMemberExpression | undefined => {
+  const parent = state.parentsByNode.get(value);
+  const property =
+    t.isObjectMethod(node) && node.kind === "method"
+      ? node
+      : t.isObjectProperty(parent) && parent.value === value
+        ? parent
+        : undefined;
+  if (property === undefined) return undefined;
+  const container = state.parentsByNode.get(property);
+  if (!t.isObjectExpression(container)) return undefined;
+  const object = webSocketOuterExpression(container, state);
+  const member = state.parentsByNode.get(object);
+  if (
+    (!t.isMemberExpression(member) && !t.isOptionalMemberExpression(member)) ||
+    member.object !== object
+  )
+    return undefined;
+  const key = semanticStaticPropertyKey(member.property, member.computed);
+  return key !== null && semanticFinalObjectMember(container, key) === property
+    ? member
+    : undefined;
+};
+
 /** Binding a literal defers it only until that bound result is invoked. */
 const webSocketImmediateInvocation = (
   node: t.Function | t.ClassExpression,
@@ -51,8 +82,14 @@ const webSocketImmediateInvocation = (
   | t.OptionalCallExpression
   | t.NewExpression
   | t.TaggedTemplateExpression
+  | t.Decorator
   | undefined => {
-  let callee = webSocketOuterExpression(node, state);
+  const value = webSocketOuterExpression(node, state);
+  const selection = webSocketFreshMethodSelection(node, value, state);
+  let callee =
+    selection === undefined
+      ? value
+      : webSocketOuterExpression(selection, state);
   for (;;) {
     let invocation = state.parentsByNode.get(callee);
     let binds = false;
@@ -71,7 +108,9 @@ const webSocketImmediateInvocation = (
       callee = webSocketOuterExpression(invocation, state);
       invocation = state.parentsByNode.get(callee);
     }
-    if (t.isTaggedTemplateExpression(invocation)) {
+    if (t.isDecorator(invocation)) {
+      if (invocation.expression !== callee) return undefined;
+    } else if (t.isTaggedTemplateExpression(invocation)) {
       if (invocation.tag !== callee) return undefined;
     } else if (
       (!t.isCallExpression(invocation) &&
@@ -232,6 +271,8 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
     return javaScriptOptionalOperandsMayBeSkipped(node)
       ? [node.callee]
       : [node.callee, ...node.arguments];
+  if (t.isImportExpression(node))
+    return [node.source, node.options].filter((item) => item != null);
   if (t.isNewExpression(node)) return [node.callee, ...node.arguments];
   // Conditional/short-circuit branches, nested functions and try/catch do not
   // establish a suspension on every path to the following expression.
@@ -403,6 +444,26 @@ const webSocketClassConstruction = (
   if (!t.isClassExpression(declaration)) return undefined;
   const invocation = webSocketImmediateInvocation(declaration, state);
   return t.isNewExpression(invocation) ? invocation : undefined;
+};
+
+/** Legacy decorator application follows its class's keys and static values. */
+const webSocketDecoratedClass = (
+  node: t.Decorator,
+  state: JavaScriptSemanticAnalysisState,
+): t.Class | undefined => {
+  let parent = state.parentsByNode.get(node);
+  while (parent !== undefined) {
+    if (t.isClass(parent)) return parent;
+    if (
+      t.isProgram(parent) ||
+      (t.isFunction(parent) &&
+        !t.isClassMethod(parent) &&
+        !t.isClassPrivateMethod(parent))
+    )
+      return undefined;
+    parent = state.parentsByNode.get(parent);
+  }
+  return undefined;
 };
 
 /** Resume only a directly produced generator with a literal next call. */
@@ -613,7 +674,10 @@ export const webSocketExecutionContexts = (
       )
         invocation = webSocketGeneratorResume(invocation, state);
       if (invocation === undefined) return contexts;
-      suspendedAfter(invocation);
+      const decoratedClass = t.isDecorator(invocation)
+        ? webSocketDecoratedClass(invocation, state)
+        : undefined;
+      suspendedAfter(decoratedClass ?? invocation);
       if ((parent.async || generatorBody) && current === parent.body) {
         const continuation = webSocketContinuation(node, parent.body, state);
         if (continuation !== undefined)
@@ -624,6 +688,12 @@ export const webSocketExecutionContexts = (
       if (suspendedOwner === parent && !directOnly)
         return [...contexts, ...webSocketWaitingContexts(invocation, state)];
       point = invocation;
+      // Method/parameter decorator metadata is evaluated with the class, not
+      // within the decorated method's runtime activation.
+      if (decoratedClass !== undefined) {
+        current = decoratedClass;
+        continue;
+      }
     }
     current = parent;
   }

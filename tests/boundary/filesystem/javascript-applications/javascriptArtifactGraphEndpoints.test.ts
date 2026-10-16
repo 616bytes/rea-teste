@@ -129,6 +129,22 @@ it("retains constructor captures, ws imports and template keys with their graph 
 });
 
 const socketExecutionPhaseSources = {
+  "selected-call.js":
+    '(true ? () => new Socket("wss://example.test/invalid-selected-call") : noop)(); const Socket = globalThis.WebSocket;',
+  "import-source.js":
+    '(async () => { import(await ready); new Socket("wss://example.test/import-source"); })(); const Socket = globalThis.WebSocket;',
+  "case-coupled.js":
+    '(async () => { switch (kind) { case 0: const pending = (async () => { await ready; new Socket("wss://example.test/invalid-case-coupled"); })(); await pending; } const Socket = globalThis.WebSocket; })();',
+  "fresh-method.js":
+    '({ run() { new Socket("wss://example.test/invalid-fresh-method"); } }).run(); const Socket = globalThis.WebSocket;',
+  "decorator.ts":
+    '@(function () { new Socket("wss://example.test/invalid-decorator"); }) class Client {}; const Socket = globalThis.WebSocket;',
+  "selected-stored.js":
+    'const connect = (true ? () => new Socket("wss://example.test/selected-stored") : noop); const Socket = globalThis.WebSocket; connect();',
+  "import-no-wait.js":
+    '(async () => { import("owned:module"); new Socket("wss://example.test/invalid-import-no-wait"); })(); const Socket = globalThis.WebSocket;',
+  "case-skipped.js":
+    '(async () => { switch (kind) { case 0: const pending = (async () => { await ready; new Socket("wss://example.test/case-skipped"); })(); break; await pending; } const Socket = globalThis.WebSocket; })();',
   "blocking-wrapper.mjs":
     'const pending = (async () => { await 0; new Socket("wss://example.test/invalid-blocking-wrapper"); })(); await (async () => { await pending; })(); const Socket = globalThis.WebSocket;',
   "suspended-blocking-wrapper.mjs":
@@ -314,6 +330,7 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/binding-event",
       "wss://example.test/branch-continuation",
       "wss://example.test/case-prefix",
+      "wss://example.test/case-skipped",
       "wss://example.test/caught-alias",
       "wss://example.test/compound-continuation",
       "wss://example.test/computed-key",
@@ -329,6 +346,7 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/implicit-await",
       "wss://example.test/import-alias",
       "wss://example.test/import-equals-member",
+      "wss://example.test/import-source",
       "wss://example.test/iterable-body",
       "wss://example.test/iterable-continuation",
       "wss://example.test/logical-assignment",
@@ -345,6 +363,7 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/pending-initialized",
       "wss://example.test/rebound-import",
       "wss://example.test/selected-branch",
+      "wss://example.test/selected-stored",
       "wss://example.test/sequence-capture",
       "wss://example.test/skipped-wait",
       "wss://example.test/switch-await",
@@ -358,6 +377,9 @@ it("preserves eager and deferred socket phases through filesystem graph projecti
       "wss://example.test/ws-self",
     ]);
     for (const [path, source, line] of [
+      ["case-skipped", "case-skipped.js", 1],
+      ["import-source", "import-source.js", 1],
+      ["selected-stored", "selected-stored.js", 1],
       ["unawaited-wrapper", "unawaited-wrapper.js", 1],
       ["optional-wrapper", "optional-wrapper.mjs", 1],
       ["caught-alias", "caught-alias.mjs", 1],

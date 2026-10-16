@@ -44,12 +44,31 @@ export const unwrapJavaScriptExpression = (
   return { node: current, depth };
 };
 
-/** Only sequence-final and plain assignment operands are exact result values. */
+/** Result identity follows only one syntax-proven selected operand. */
 export const javaScriptExactResultOperand = (
   node: t.Node,
 ): t.Node | undefined => {
   node = unwrapJavaScriptExpression(node).node;
   if (t.isSequenceExpression(node)) return node.expressions.at(-1);
+  if (t.isConditionalExpression(node)) {
+    const test = readExactJavaScriptLiteral(node.test);
+    return test.found
+      ? test.value
+        ? node.consequent
+        : node.alternate
+      : undefined;
+  }
+  if (t.isLogicalExpression(node)) {
+    const left = readExactJavaScriptLiteral(node.left);
+    if (!left.found) return undefined;
+    const right =
+      node.operator === "??"
+        ? left.value === null || left.value === undefined
+        : node.operator === "&&"
+          ? Boolean(left.value)
+          : !left.value;
+    return right ? node.right : node.left;
+  }
   return t.isAssignmentExpression(node) && node.operator === "="
     ? node.right
     : undefined;
@@ -120,19 +139,27 @@ export const semanticStaticPropertyKey = (
 };
 
 /** Later properties own a key; an intervening dynamic write leaves it unknown. */
-export const semanticFinalObjectProperty = (
+export const semanticFinalObjectMember = (
   node: t.ObjectExpression,
   key: string,
-): t.Node | undefined => {
+): t.ObjectProperty | t.ObjectMethod | undefined => {
   for (let index = node.properties.length - 1; index >= 0; index -= 1) {
     const property = node.properties[index];
     if (property === undefined || t.isSpreadElement(property)) return undefined;
     const name = semanticStaticPropertyKey(property.key, property.computed);
     if (name === null) return undefined;
-    if (name === key)
-      return t.isObjectProperty(property) ? property.value : undefined;
+    if (name === key) return property;
   }
   return undefined;
+};
+
+/** Select a data value without substituting a getter or method for that value. */
+export const semanticFinalObjectProperty = (
+  node: t.ObjectExpression,
+  key: string,
+): t.Node | undefined => {
+  const property = semanticFinalObjectMember(node, key);
+  return t.isObjectProperty(property) ? property.value : undefined;
 };
 
 /** Preserve allocation identity through expressions with one exact result. */

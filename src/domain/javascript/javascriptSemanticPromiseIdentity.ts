@@ -87,18 +87,24 @@ const promiseWaitBoundary = (
   producer: t.Node,
   wait: t.Node,
   parents: WeakMap<t.Node, t.Node>,
-): t.Program | t.BlockStatement | undefined => {
+): t.Program | t.BlockStatement | t.SwitchCase | undefined => {
   const blocks = new Set<t.Node>();
   let current: t.Node | undefined = producer;
   while (current !== undefined && !t.isFunction(current)) {
-    if (t.isBlockStatement(current) || t.isProgram(current))
+    if (
+      t.isBlockStatement(current) ||
+      t.isProgram(current) ||
+      t.isSwitchCase(current)
+    )
       blocks.add(current);
     current = parents.get(current);
   }
   current = wait;
   while (current !== undefined && !t.isFunction(current)) {
     if (
-      (t.isBlockStatement(current) || t.isProgram(current)) &&
+      (t.isBlockStatement(current) ||
+        t.isProgram(current) ||
+        t.isSwitchCase(current)) &&
       blocks.has(current)
     )
       return current;

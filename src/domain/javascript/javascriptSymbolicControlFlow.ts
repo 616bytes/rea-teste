@@ -1,5 +1,8 @@
 import * as t from "@babel/types";
-import { readExactJavaScriptLiteral } from "./javascriptAstValues.js";
+import {
+  javaScriptExactResultOperand,
+  readExactJavaScriptLiteral,
+} from "./javascriptAstValues.js";
 import { javaScriptOptionalOperandsMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
 import {
   symbolicTruth,
@@ -42,7 +45,11 @@ export const symbolicLogicalRight = (
 export const syntaxUnconditionalOperands = (
   node: t.Node,
 ): readonly t.Node[] | undefined => {
-  if (t.isIfStatement(node) || t.isConditionalExpression(node)) {
+  if (t.isConditionalExpression(node)) {
+    const branch = javaScriptExactResultOperand(node);
+    return branch === undefined ? [node.test] : [node.test, branch];
+  }
+  if (t.isIfStatement(node)) {
     const test = readExactJavaScriptLiteral(node.test);
     const branch = test.found
       ? test.value
@@ -52,12 +59,7 @@ export const syntaxUnconditionalOperands = (
     return branch == null ? [node.test] : [node.test, branch];
   }
   if (t.isLogicalExpression(node)) {
-    const left = readExactJavaScriptLiteral(node.left);
-    return left.found &&
-      symbolicLogicalRight(node.operator, {
-        kind: "literal",
-        value: left.value,
-      }) === true
+    return javaScriptExactResultOperand(node) === node.right
       ? [node.left, node.right]
       : [node.left];
   }
@@ -116,7 +118,7 @@ export const createUnconditionalEvaluationProof = (
   parents: WeakMap<t.Node, t.Node>,
 ): ((node: t.Node, boundary?: t.Node) => boolean) => {
   const reachableStatements = new WeakMap<
-    t.Program | t.BlockStatement,
+    t.Program | t.BlockStatement | t.SwitchCase,
     ReadonlySet<t.Node>
   >();
   const truth = (node: t.Node): boolean | undefined => {
@@ -148,7 +150,11 @@ export const createUnconditionalEvaluationProof = (
         return false;
       else if (t.isDoWhileStatement(parent) && child === parent.test)
         return false;
-      else if (t.isSwitchCase(parent) || t.isCatchClause(parent)) return false;
+      else if (
+        (t.isSwitchCase(parent) && parent !== boundary) ||
+        t.isCatchClause(parent)
+      )
+        return false;
       else if (t.isAssignmentPattern(parent) && child === parent.right)
         return false;
       else if (
@@ -164,11 +170,17 @@ export const createUnconditionalEvaluationProof = (
         javaScriptOptionalOperandsMayBeSkipped(parent)
       )
         return false;
-      if (t.isBlockStatement(parent) || t.isProgram(parent)) {
+      if (
+        t.isBlockStatement(parent) ||
+        t.isProgram(parent) ||
+        t.isSwitchCase(parent)
+      ) {
         let reachable = reachableStatements.get(parent);
         if (reachable === undefined) {
           const statements = new Set<t.Node>();
-          for (const statement of parent.body) {
+          for (const statement of t.isSwitchCase(parent)
+            ? parent.consequent
+            : parent.body) {
             statements.add(statement);
             if (syntaxDefiniteExit(statement, 0, true)) break;
           }

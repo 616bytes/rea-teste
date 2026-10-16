@@ -209,11 +209,11 @@ const parseBrowserCapture = (
       workerDiscoveryComplete(inspection.completeness) &&
       inspection.workers.every(
         (worker) =>
-          worker.observation === undefined ||
-          (worker.observation.ownership === "unknown" &&
+          worker.observation !== undefined &&
+          ((worker.observation.ownership === "unknown" &&
             !worker.observation.selected_explicitly) ||
-          (scriptsComplete(worker.observation.completeness) &&
-            workerDiscoveryComplete(worker.observation.completeness)),
+            (scriptsComplete(worker.observation.completeness) &&
+              workerDiscoveryComplete(worker.observation.completeness))),
       ),
   };
 };

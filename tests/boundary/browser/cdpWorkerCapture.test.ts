@@ -109,7 +109,7 @@ it.each([
   ["https://foreign.example/a.js", "disallowed_origin"],
   ["file:///worker.js", "unsupported_url"],
   ["", "unattributed_origin"],
-  [undefined, "unattributed_origin"],
+  [undefined, "invalid_protocol_value"],
 ] as const)(
   "retains the exclusion reason for worker URL %s",
   async (url, reason) => {
@@ -594,6 +594,37 @@ it("does not request worker sources when source capture is disabled", async () =
   ).toBe(false);
 });
 
+it.each([undefined, null, "", 42])(
+  "distinguishes inactive service versions from malformed target IDs: %j",
+  async (targetId) => {
+    const { provider, input } = await fixture({
+      commandEvents: (command) =>
+        command.method === "ServiceWorker.enable"
+          ? [
+              {
+                method: "ServiceWorker.workerVersionUpdated",
+                sessionId: "session-1",
+                params: {
+                  versions: [
+                    { targetId, runningStatus: "stopped", status: "installed" },
+                  ],
+                },
+              },
+            ]
+          : undefined,
+    });
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    expect(
+      captured.value.completeness.excluded.some(
+        (entry) =>
+          entry.section === "workers" &&
+          entry.reason === "invalid_protocol_value",
+      ),
+    ).toBe(targetId !== undefined);
+  },
+);
+
 it.each([false, true, null])(
   "retains service worker client evidence before attachment (controls page: %s)",
   async (controls) => {
@@ -1019,33 +1050,6 @@ it.each([undefined, null, 42, ""])(
   },
 );
 
-it.each([undefined, 42, ""])(
-  "records malformed service worker target %j",
-  async (targetId) => {
-    const { provider, input } = await fixture({
-      commandEvents: (command) =>
-        command.method === "ServiceWorker.enable"
-          ? [
-              {
-                method: "ServiceWorker.workerVersionUpdated",
-                sessionId: "session-1",
-                params: {
-                  versions: [{ targetId, controlledClients: ["allowed-page"] }],
-                },
-              },
-            ]
-          : undefined,
-    });
-    const captured = await provider.inspectPage(input);
-    if (!captured.ok) throw captured.error;
-    expect(captured.value.completeness.excluded).toContainEqual({
-      section: "workers",
-      reason: "invalid_protocol_value",
-      count: 1,
-    });
-  },
-);
-
 it("observes workers reached through an allowed iframe session and releases it", async () => {
   const { provider, input, browser } = await fixture({
     commandEvents: (command, origin) => {
@@ -1374,6 +1378,72 @@ it.each(["explicit", "worker", "iframe"] as const)(
   },
 );
 
+it.each([undefined, { length: 1 }, []])(
+  "distinguishes unknown worker inventories from explicit empty arrays: %j",
+  async (targetInfos) => {
+    const { provider, input } = await fixture({
+      commandResult: (command) =>
+        command.method === "Target.getTargets" ? { targetInfos } : undefined,
+      commandEvents: () => [],
+    });
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    expect(captured.value.workers).toEqual([]);
+    expect(
+      captured.value.completeness.unavailable_sections.includes("workers"),
+    ).toBe(!Array.isArray(targetInfos));
+  },
+);
+
+it("retains valid worker records beside malformed inventory entries", async () => {
+  const { provider, input } = await fixture({
+    commandEvents: () => [],
+    commandResult: (command, origin) =>
+      command.method === "Target.getTargets"
+        ? {
+            targetInfos: [
+              null,
+              {
+                targetId: "worker-1",
+                type: "service_worker",
+                url: origin + "/worker.js",
+                attached: true,
+                openerId: "allowed-page",
+              },
+              {
+                targetId: "missing-url",
+                type: "worker",
+                attached: true,
+                openerId: "another-page",
+              },
+              {
+                type: "worker",
+                url: origin + "/missing-id.js",
+                attached: true,
+              },
+              {
+                targetId: "bad-attached",
+                type: "worker",
+                url: origin + "/bad.js",
+                attached: "true",
+              },
+              "malformed",
+            ],
+          }
+        : undefined,
+  });
+  const captured = await provider.inspectPage(input);
+  if (!captured.ok) throw captured.error;
+  expect(captured.value.workers.map((worker) => worker.target_id)).toEqual([
+    "worker-1",
+  ]);
+  expect(captured.value.completeness.excluded).toContainEqual({
+    section: "workers",
+    reason: "invalid_protocol_value",
+    count: 5,
+  });
+});
+
 it.each(["attached", "url", "type"] as const)(
   "refreshes worker inventory while checking stable identity (%s)",
   async (change) => {
@@ -1451,7 +1521,42 @@ it.each(["target", "script", "origin"] as const)(
   },
 );
 
-it.each(["page", "worker", "inventory", "none"] as const)(
+it.each([
+  ["page_related", null],
+  ["page_related", "another-page"],
+  ["service_worker_client", null],
+  ["service_worker_client", "another-page"],
+  ["unknown", "allowed-page"],
+] as const)(
+  "rejects contradictory worker ownership %s / %s in Evidence consumers",
+  async (ownership, pageTargetId) => {
+    const { provider, input } = await fixture();
+    const captured = await provider.inspectPage({
+      ...input,
+      worker_target_ids: ["shared"],
+    });
+    if (!captured.ok) throw captured.error;
+    const observation = captured.value.workers.find(
+      (w) => w.target_id === "shared",
+    )!.observation!;
+    observation.ownership = ownership;
+    observation.page_target_id = pageTargetId;
+    observation.selected_explicitly = ownership === "unknown";
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      ownership === "unknown"
+        ? { ...input, worker_target_ids: ["shared"] }
+        : input,
+      captured.value,
+      provider.identity(),
+    );
+    expect(() => parseEvidence(evidence)).not.toThrow();
+    expect(() => parseRuntimeCaptures([evidence])).toThrow(/ownership/u);
+    expect(() => selectScriptCapture(evidence)).toThrow(/ownership/u);
+  },
+);
+
+it.each(["page", "worker", "inventory", "legacy", "none"] as const)(
   "keeps script absence unknown after failed %s discovery",
   async (failed) => {
     const { provider, input } = await fixture({
@@ -1460,6 +1565,7 @@ it.each(["page", "worker", "inventory", "none"] as const)(
           failed === "inventory"
             ? c.method === "Target.getTargets"
             : failed !== "none" &&
+              failed !== "legacy" &&
               c.method === "Target.setAutoAttach" &&
               c.params.autoAttach === true &&
               c.sessionId === (failed === "page" ? "session-1" : "worker-own")
@@ -1469,6 +1575,8 @@ it.each(["page", "worker", "inventory", "none"] as const)(
     });
     const captured = await provider.inspectPage(input);
     if (!captured.ok) throw captured.error;
+    if (failed === "legacy")
+      for (const worker of captured.value.workers) delete worker.observation;
     const evidence = createBrowserEvidence(
       "inspect_web_page",
       input,
@@ -1521,15 +1629,23 @@ it("rejects inconsistent worker Evidence through CLI and MCP without publishing"
   if (!captured.ok) throw captured.error;
   const root = await createTestTempDirectory("rea-worker-selection-boundary-");
   const { call, client } = await connectLocalToolsMcp();
-  for (const mismatch of ["selection", "origin"] as const) {
+  for (const mismatch of ["selection", "origin", "ownership"] as const) {
     const inspection = structuredClone(captured.value);
     if (mismatch === "origin")
       inspection.workers.find(
         (w) => w.target_id === "shared",
       )!.observation!.scripts[0]!.url = "https://foreign.example/worker.js";
+    if (mismatch === "ownership") {
+      const observation = inspection.workers.find(
+        (w) => w.target_id === "shared",
+      )!.observation!;
+      observation.selected_explicitly = false;
+      observation.ownership = "page_related";
+      observation.page_target_id = null;
+    }
     const evidence = createBrowserEvidence(
       "inspect_web_page",
-      mismatch === "selection" ? input : selected,
+      mismatch === "origin" ? selected : input,
       inspection,
       provider.identity(),
     );

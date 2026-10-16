@@ -8,9 +8,12 @@ import {
   AnalysisCancelledError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import type { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { hashStableFile } from "../filesystem/StableFileHash.js";
+import { StableFileHashCleanupFailure } from "../filesystem/StableFileHash.js";
+import { OwnedRegularFileCleanupFailure } from "../filesystem/RegularFile.js";
 import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
@@ -67,8 +70,11 @@ export interface KunaExport {
 /** The step an export is in; Kuna itself reports no progress until it finishes. */
 export interface KunaExportStatus {
   readonly phase: "inventory" | "decompiling" | "sealing";
-  /** Callable entries found by the inventory, once known. */
-  readonly inventoryFunctions: number | null;
+  /**
+   * Every callable entry the export's inventory found, once known. Listings
+   * use it while the export still decompiles, so no second inventory runs.
+   */
+  readonly inventory: readonly KunaInventoryFunction[] | null;
 }
 
 /**
@@ -80,6 +86,7 @@ export type KunaExportOutcome =
   | {
       readonly kind: "done";
       readonly result: Result<KunaExport, AnalysisError>;
+      readonly fileCleanup?: OwnedRegularFileCleanupFailure;
     }
   | {
       readonly kind: "retained";
@@ -115,6 +122,36 @@ export const kunaExportFailure = (
   cause: unknown,
   signal: AbortSignal,
 ): AnalysisError => {
+  if (cause instanceof OwnedRegularFileCleanupFailure) {
+    const primary = signal.aborted
+      ? new AnalysisCancelledError(KUNA_EXPORT_OPERATION, {
+          cause: cause.cause,
+        })
+      : new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
+          cause: cause.cause,
+          userMessage: `Kuna project cache failed: ${message(cause.cause)}`,
+        });
+    const cleanup = new ProviderCleanupError(
+      KUNA_PROVIDER_ID,
+      [cause.path],
+      {
+        reason:
+          cause.cleanupCause instanceof Error
+            ? cause.cleanupCause.message
+            : String(cause.cleanupCause),
+        ...(cause instanceof StableFileHashCleanupFailure &&
+        cause.completedHash !== undefined
+          ? { completed_hash: cause.completedHash }
+          : {}),
+      },
+      { operation: KUNA_EXPORT_OPERATION, cause: cause.cleanupCause },
+    );
+    return analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+      KUNA_EXPORT_OPERATION,
+    );
+  }
   if (signal.aborted)
     return new AnalysisCancelledError(KUNA_EXPORT_OPERATION, { cause });
   if (cause instanceof AnalysisError) return cause;
@@ -203,11 +240,17 @@ export const exportKunaProject = async (
               error: outcome.error,
               owner: outcome.owner,
             } as const)
-          : ({ kind: "done", result: err(outcome.error) } as const),
+          : ({
+              kind: "done",
+              result: err(outcome.error),
+              ...(outcome.fileCleanup === undefined
+                ? {}
+                : { fileCleanup: outcome.fileCleanup }),
+            } as const),
     };
   };
 
-  request.onStatus({ phase: "inventory", inventoryFunctions: null });
+  request.onStatus({ phase: "inventory", inventory: null });
   const listed = await run(
     ["functions", input, "--json"],
     KUNA_INVENTORY_OUTPUT_BYTES,
@@ -223,10 +266,7 @@ export const exportKunaProject = async (
     { mode: 0o600 },
   );
 
-  request.onStatus({
-    phase: "decompiling",
-    inventoryFunctions: inventory.value.length,
-  });
+  request.onStatus({ phase: "decompiling", inventory: inventory.value });
   const exported = await run(
     [
       "decompile-project",
@@ -240,10 +280,7 @@ export const exportKunaProject = async (
   );
   if (!exported.ok) return exported.outcome;
 
-  request.onStatus({
-    phase: "sealing",
-    inventoryFunctions: inventory.value.length,
-  });
+  request.onStatus({ phase: "sealing", inventory: inventory.value });
   const summary = parseKunaExportSummary(exported.snapshot.stdout.text);
   if (summary === undefined)
     return unusable(
@@ -272,22 +309,44 @@ export const exportKunaProject = async (
     files[role] = { path: name, ...(await hashStableFile(path, signal)) };
   }
   const complete = files as KunaExportFiles;
-  const parsed = await readKunaExport(
+  const functions = await readKunaExportSource(
     request.output,
-    complete,
+    complete.c,
     summary,
     signal,
   );
-  if (!parsed.ok) return unusable(parsed.error);
+  if (!functions.ok) return unusable(functions.error);
   const identity = await verifyKunaExecutable(installation, signal);
   if (!identity.ok) return { kind: "done", result: identity };
+  // `functions.json` holds exactly the text this inventory was parsed from, so
+  // publishing reuses it rather than holding a second parsed copy.
   return {
     kind: "done",
-    result: ok({ files: complete, summary, ...parsed.value }),
+    result: ok({
+      files: complete,
+      summary,
+      functions: functions.value,
+      inventory: inventory.value,
+    }),
   };
 };
 
-/** Parse an export's function blocks and inventory from its own files. */
+/** Split an export's `.c` into its function blocks without buffering the file. */
+const readKunaExportSource = (
+  directory: string,
+  file: KunaExportFile,
+  summary: KunaExportSummary,
+  signal: AbortSignal | undefined,
+): Promise<Result<readonly KunaProjectFunction[], string>> =>
+  scanKunaProjectSource(
+    createReadStream(
+      join(directory, file.path),
+      signal === undefined ? {} : { signal },
+    ),
+    summary,
+  );
+
+/** Parse a published export's function blocks and inventory from its own files. */
 export const readKunaExport = async (
   directory: string,
   files: KunaExportFiles,
@@ -302,12 +361,11 @@ export const readKunaExport = async (
     string
   >
 > => {
-  const functions = await scanKunaProjectSource(
-    createReadStream(
-      join(directory, files.c.path),
-      signal === undefined ? {} : { signal },
-    ),
+  const functions = await readKunaExportSource(
+    directory,
+    files.c,
     summary,
+    signal,
   );
   if (!functions.ok) return functions;
   const inventory = parseKunaInventory(

@@ -11,6 +11,7 @@ import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 export const browserWorkerEvidenceScopeSchema = z
   .object({
     parameters: z.object({
+      target_id: z.string().trim().min(1),
       allowed_origins: browserAllowedOriginsSchema,
       worker_target_ids: browserWorkerTargetIdsSchema,
     }),
@@ -30,6 +31,16 @@ export const browserWorkerEvidenceScopeSchema = z
         });
       const observation = worker.observation;
       if (observation === undefined) continue;
+      if (
+        observation.page_target_id !==
+        (observation.ownership === "unknown" ? null : parameters.target_id)
+      )
+        context.addIssue({
+          code: "custom",
+          path: [...path, "observation", "page_target_id"],
+          message:
+            "Worker Evidence ownership disagrees with its recorded page target",
+        });
       const selected =
         parameters.worker_target_ids?.includes(worker.target_id) ?? false;
       if (

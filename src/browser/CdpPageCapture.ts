@@ -421,6 +421,7 @@ const accessibilityForFrames = async (
   const capture = captureAccessibility(results, {
     includeText: context.input.include_accessibility_text,
     ...(results.length === 0 && unavailable ? { unavailable: true } : {}),
+    completeness: events.completeness,
   });
   if (!context.input.include_accessibility_text)
     events.completeness.exclude(
@@ -428,7 +429,8 @@ const accessibilityForFrames = async (
       "not_approved",
       capture.textCapture.excluded_fields,
     );
-  if (capture.treeIncomplete) events.completeness.truncate("accessibility");
+  if (capture.hasUnobservedChildren)
+    events.completeness.truncate("accessibility");
   return capture;
 };
 

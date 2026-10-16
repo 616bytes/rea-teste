@@ -9,6 +9,7 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
+  admitRecords,
   allowedSanitizedUrl,
   cdpStringValue,
   numberValue,
@@ -231,12 +232,34 @@ export class CdpWorkerCapture {
     const result = await this.#command("Target.getTargets", {}, undefined);
     if (result === undefined)
       this.pageEvents.completeness.unavailable("workers");
-    for (const target of recordsValue(recordValue(result)?.targetInfos))
-      this.#admit(target);
+    const targets = admitRecords(recordValue(result)?.targetInfos);
+    if (result !== undefined && targets === undefined)
+      this.pageEvents.completeness.exclude(
+        "workers",
+        "invalid_protocol_value",
+        null,
+      );
+    for (const target of targets ?? []) this.#admit(target);
   }
 
-  #admit(target: Readonly<Record<string, unknown>>): WorkerState | undefined {
+  #invalidTarget(target: unknown): void {
+    const key = JSON.stringify(target);
+    if (this.#invalidTargets.has(key)) return;
+    this.#invalidTargets.add(key);
+    this.pageEvents.completeness.exclude("workers", "invalid_protocol_value");
+  }
+
+  #admit(value: unknown): WorkerState | undefined {
+    const target = recordValue(value);
+    if (target === undefined) {
+      this.#invalidTarget(value);
+      return;
+    }
     const type = cdpStringValue(target.type);
+    if (type === undefined || type.length === 0) {
+      this.#invalidTarget(target);
+      return;
+    }
     if (
       type !== "worker" &&
       type !== "shared_worker" &&
@@ -244,16 +267,18 @@ export class CdpWorkerCapture {
     )
       return;
     const id = cdpStringValue(target.targetId);
+    const openerId = cdpStringValue(target.openerId);
+    const parentFrameId = cdpStringValue(target.parentFrameId);
     const existing = id === undefined ? undefined : this.#workers.get(id);
-    if (typeof target.attached !== "boolean") {
-      const key = id ?? JSON.stringify(target);
-      if (!this.#invalidTargets.has(key)) {
-        this.#invalidTargets.add(key);
-        this.pageEvents.completeness.exclude(
-          "workers",
-          "invalid_protocol_value",
-        );
-      }
+    if (
+      id === undefined ||
+      id.length === 0 ||
+      typeof target.attached !== "boolean" ||
+      typeof target.url !== "string" ||
+      (target.openerId !== undefined && openerId === undefined) ||
+      (target.parentFrameId !== undefined && parentFrameId === undefined)
+    ) {
+      this.#invalidTarget(target);
       return;
     }
     const url = allowedSanitizedUrl(target.url, this.allowedOrigins);
@@ -265,15 +290,12 @@ export class CdpWorkerCapture {
         this.context.operation,
         "target_changed",
       );
-    if (id === undefined || id === "" || url === undefined) {
-      const key = id ?? JSON.stringify(target);
-      if (!this.#invalidTargets.has(key)) {
-        this.#invalidTargets.add(key);
+    if (url === undefined) {
+      if (!this.#invalidTargets.has(id)) {
+        this.#invalidTargets.add(id);
         this.pageEvents.completeness.exclude(
           "workers",
-          id === undefined || id === ""
-            ? "invalid_protocol_value"
-            : exclusionReasonForUrl(cdpStringValue(target.url)),
+          exclusionReasonForUrl(target.url),
         );
       }
       return;
@@ -289,8 +311,8 @@ export class CdpWorkerCapture {
         url: url.url,
         origin: url.origin,
         attached: target.attached === true,
-        opener_target_id: cdpStringValue(target.openerId) ?? null,
-        parent_frame_id: cdpStringValue(target.parentFrameId) ?? null,
+        opener_target_id: openerId ?? null,
+        parent_frame_id: parentFrameId ?? null,
         observation: {
           ownership: this.#versionsByTarget
             .get(id)
@@ -611,6 +633,8 @@ export class CdpWorkerCapture {
 
   #versions(params: Readonly<Record<string, unknown>>): void {
     for (const version of recordsValue(params.versions)) {
+      // Installed/stopped versions need not have a running Target.
+      if (version.targetId === undefined) continue;
       const id = cdpStringValue(version.targetId);
       if (id === undefined || id.length === 0) {
         this.pageEvents.completeness.exclude(

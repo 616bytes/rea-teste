@@ -88,14 +88,19 @@ export const semanticStaticPropertyKey = (
   computed: boolean,
 ): string | null => {
   property = unwrapJavaScriptExpression(property).node;
-  if (t.isStringLiteral(property) || t.isNumericLiteral(property))
-    return String(property.value);
-  if (t.isBigIntLiteral(property)) return String(property.value);
   if (
-    t.isUnaryExpression(property, { operator: "-" }) &&
-    t.isBigIntLiteral(property.argument)
+    t.isStringLiteral(property) ||
+    t.isNumericLiteral(property) ||
+    t.isBooleanLiteral(property)
   )
-    return String(-BigInt(property.argument.value));
+    return String(property.value);
+  if (t.isNullLiteral(property)) return "null";
+  if (t.isBigIntLiteral(property)) return String(property.value);
+  if (t.isUnaryExpression(property, { operator: "-" })) {
+    const argument = unwrapJavaScriptExpression(property.argument).node;
+    if (t.isNumericLiteral(argument)) return String(-argument.value);
+    if (t.isBigIntLiteral(argument)) return String(-BigInt(argument.value));
+  }
   if (
     t.isTemplateLiteral(property) &&
     property.expressions.length === 0 &&

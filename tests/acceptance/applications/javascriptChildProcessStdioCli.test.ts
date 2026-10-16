@@ -16,6 +16,18 @@ const cases = [
   ["unrelated", '{ stdio: "inherit", cwd: "/unused", [0]: "x" }', "inherit"],
   ["empty-template", '{ stdio: "inherit", [``]: 1 }', "inherit"],
   ["empty-string", '{ stdio: "inherit", [""]: 1 }', "inherit"],
+  ["boolean-key", '{ stdio: "inherit", [true]: 1 }', "inherit"],
+  ["null-key", '{ stdio: "inherit", [null]: 1 }', "inherit"],
+  ["negative-key", '{ stdio: "inherit", [-1]: 1 }', "inherit"],
+  ["negative-zero-key", '{ stdio: "inherit", [-0]: 1 }', "inherit"],
+  ["typed-key", '{ stdio: "inherit", [-(1 as number)]: 1 }', "inherit"],
+  [
+    "typed-boolean-key",
+    '{ stdio: "inherit", [(true as boolean)]: 1 }',
+    "inherit",
+  ],
+  ["call-key", '{ stdio: "inherit", [getKey()]: 1 }', "dynamic"],
+  ["object-key", '{ stdio: "inherit", [{}]: 1 }', "dynamic"],
   [
     "typed-env",
     '({ stdio: "inherit", env: { MODE: "test" } } as const)',
@@ -172,5 +184,146 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     expect(
       graph.coverage.families.find(({ family }) => family === "child-process"),
     ).toMatchObject({ status: "partial" });
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "proves local callback defaults at each child-process read through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-child-callback-");
+    await writeFixtureFiles(root, {
+      "entry.ts": `
+        import { exec, execFile, spawn, fork } from "node:child_process";
+        import { done as imported } from "./external.mjs";
+        throw new Error("static fixture must never execute");
+        function done() {}
+        const arrow = () => {};
+        const alias = done;
+        class NotCallback {}
+        exec("declaration", done);
+        exec("const", arrow);
+        exec("alias", alias);
+        exec("typed", (done as () => void)!);
+        execFile("callback-second", done);
+        execFile("argv-callback", [], alias);
+        execFile("typed-argv-callback", [] as string[], arrow);
+        exec("explicit-options", { stdio: "inherit" }, done);
+        execFile("argv-options", [], { stdio: "inherit" }, done);
+        spawn("spawn-function", [], done);
+        fork("fork-function", [], alias);
+        exec("imported", imported);
+        exec("class", NotCallback);
+        let changing = done;
+        exec("before-replacement", changing);
+        const saved = changing;
+        changing = {};
+        exec("after-replacement", changing);
+        exec("captured-alias", saved);
+        let later;
+        exec("before-initialization", later);
+        later = done;
+        exec("after-initialization", later);
+        {
+          exec("before-const-initialization", future);
+          const future = () => {};
+        }
+        export function run(options, flag) {
+          exec("unknown", options);
+          execFile("unknown-options", options, done);
+          let partial;
+          if (flag) partial = done;
+          exec("partial", partial);
+          const alternatives = flag ? done : arrow;
+          exec("all-functions", alternatives);
+          const mixed = flag ? done : NotCallback;
+          exec("mixed-class", mixed);
+          let replaced = done;
+          replaced = options;
+          exec("unknown-replacement", replaced);
+          const projected = { done }.done;
+          exec("projected", projected);
+        }
+        export function shadowed(done) { exec("shadowed", done); }
+        let unordered;
+        function initialize() { unordered = done; }
+        export function use() { exec("unordered", unordered); }
+      `,
+      "external.mjs": "export function done() {}",
+    });
+    const expected = new Map([
+      ...[
+        "declaration",
+        "const",
+        "alias",
+        "typed",
+        "callback-second",
+        "argv-callback",
+        "typed-argv-callback",
+        "before-replacement",
+        "captured-alias",
+        "after-initialization",
+        "all-functions",
+      ].map((command) => [command, "default"] as const),
+      ...["explicit-options", "argv-options"].map(
+        (command) => [command, "inherit"] as const,
+      ),
+      ...[
+        "spawn-function",
+        "fork-function",
+        "imported",
+        "class",
+        "after-replacement",
+        "before-initialization",
+        "before-const-initialization",
+        "unknown",
+        "unknown-options",
+        "partial",
+        "mixed-class",
+        "unknown-replacement",
+        "projected",
+        "shadowed",
+        "unordered",
+      ].map((command) => [command, "dynamic"] as const),
+    ]);
+    const { semantic_graph: graph } = await analyzeJavaScriptDirectory(
+      surface,
+      cli,
+      root,
+    );
+    const children = graph.nodes.filter(
+      (node) => node.kind === "child-process",
+    );
+    expect(children).toHaveLength(expected.size);
+    for (const child of children) {
+      const command = String(child.properties.command);
+      const mode = expected.get(command);
+      expect(mode, command).toBeDefined();
+      expect(child.properties.stdio_mode, command).toBe(mode);
+      const relations = graph.relations.filter(
+        (relation) =>
+          relation.source_node_id === child.node_id &&
+          relation.relation === "connects-stdio",
+      );
+      expect(relations, command).toHaveLength(1);
+      expect(relations[0]?.resolution, command).toBe(
+        mode === "dynamic" ? "candidate" : "resolved",
+      );
+      expect(
+        graph.nodes.find(
+          (node) => node.node_id === relations[0]?.target_node_id,
+        ),
+        command,
+      ).toMatchObject({ kind: "stdio", properties: { mode } });
+      const unknowns = graph.unknowns.filter(
+        (unknown) =>
+          unknown.node_id === child.node_id &&
+          unknown.family === "child-process" &&
+          unknown.relation_kinds.includes("connects-stdio"),
+      );
+      expect(unknowns.length, command).toBe(mode === "dynamic" ? 1 : 0);
+      if (mode === "dynamic")
+        expect(unknowns[0]?.reason, command).toBe("unknown-value");
+    }
+    expect(graph.coverage.truncated).toBe(false);
   },
 );

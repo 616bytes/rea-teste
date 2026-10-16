@@ -7,6 +7,10 @@ import type {
 } from "./javascriptSemanticIr.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
 import {
+  resolveLocalCallables,
+  type ResolveLocalCallablesInput,
+} from "./javascriptSemanticCallResolution.js";
+import {
   semanticStaticPropertyName,
   staticObjectProperty,
   unwrapJavaScriptExpression,
@@ -37,6 +41,8 @@ interface ChildProcessAnalysis {
   readonly childProcessInteractions: readonly JavaScriptSemanticChildProcessInteraction[];
 }
 
+type ChildSpawnContext = Omit<ResolveLocalCallablesInput, "node">;
+
 interface SpawnCandidate {
   readonly node: t.CallExpression | t.OptionalCallExpression;
   readonly method: JavaScriptSemanticChildProcessSpawn["method"];
@@ -62,8 +68,16 @@ export const collectJavaScriptSemanticChildProcesses = (
   callables: readonly JavaScriptSemanticCallable[],
 ): ChildProcessAnalysis => {
   const candidates = collectSpawns(program, state, callables);
+  const context: ChildSpawnContext = {
+    state,
+    callableById: new Map(
+      callables.map((callable) => [callable.callableId, callable]),
+    ),
+    seenInitializers: new Set(),
+    bindingCache: new WeakMap(),
+  };
   const childProcessSpawns = candidates.map((candidate) =>
-    immutableSpawn(candidate, state),
+    immutableSpawn(candidate, context),
   );
   return {
     childProcessSpawns,
@@ -125,8 +139,9 @@ const collectSpawns = (
 
 const immutableSpawn = (
   candidate: SpawnCandidate,
-  state: JavaScriptSemanticAnalysisState,
+  context: ChildSpawnContext,
 ): JavaScriptSemanticChildProcessSpawn => {
+  const { state } = context;
   const { options, argvCount } = spawnArguments(candidate, state);
   const command = dataEffectLiteralString(candidate.node.arguments[0]);
   return {
@@ -139,7 +154,7 @@ const immutableSpawn = (
     command,
     argvCount,
     environmentSupplied: objectHasProperty(options, "env"),
-    stdioMode: stdioMode(options, candidate.method, state),
+    stdioMode: stdioMode(options, candidate.method, context),
     resolution: command === null ? "partial" : "complete",
   };
 };
@@ -346,13 +361,15 @@ const objectHasProperty = (object: t.Node | undefined, name: string): boolean =>
 const stdioMode = (
   options: t.Node | undefined,
   method: JavaScriptSemanticChildProcessSpawn["method"],
-  state: JavaScriptSemanticAnalysisState,
+  context: ChildSpawnContext,
 ): string => {
   if (options === undefined) return "default";
+  const { state } = context;
   const expression = unwrapJavaScriptExpression(options).node;
   if (
     defaultOptionValue(expression, state) ||
-    ((method === "exec" || method === "execFile") && t.isFunction(expression))
+    ((method === "exec" || method === "execFile") &&
+      isLocalCallback(expression, context))
   )
     return "default";
   const lookup = staticObjectProperty(expression, "stdio");
@@ -363,6 +380,17 @@ const stdioMode = (
   if (t.isStringLiteral(value)) return value.value;
   if (t.isArrayExpression(value)) return "array";
   return "dynamic";
+};
+
+const isLocalCallback = (node: t.Node, context: ChildSpawnContext): boolean => {
+  const resolution = resolveLocalCallables({ ...context, node });
+  return (
+    resolution.complete &&
+    resolution.callableIds.length > 0 &&
+    resolution.callableIds.every((id) =>
+      t.isFunction(context.state.callableNodesById.get(id)),
+    )
+  );
 };
 
 const defaultOptionValue = (

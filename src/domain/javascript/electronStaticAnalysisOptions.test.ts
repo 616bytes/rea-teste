@@ -68,6 +68,7 @@ describe("Electron constant option evidence", () => {
     "mutate(options);",
     "const { webPreferences: alias } = options; mutate(alias);",
     "Object.assign(options, unknown);",
+    "const box = {}; box.options = options; box.options.webPreferences.sandbox = false;",
     "options = replacement;",
   ])("keeps changed or escaped constant options unknown: %s", (mutation) => {
     const analysis = analyzeJavaScriptStaticSource(`

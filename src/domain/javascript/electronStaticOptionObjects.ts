@@ -23,13 +23,10 @@ const optionObjectCandidate = (
   while (t.isIdentifier(node)) {
     if (seen.has(node)) return undefined;
     seen.add(node);
-    const effects = index.effectsForReferenceAt(node, node);
-    if (effects.resolution !== "resolved" || effects.bindingId === null)
-      return undefined;
-    const binding = index.bindings.bindingsById.get(effects.bindingId);
+    const binding = index.bindingForReferenceAt(node);
+    if (binding === undefined) return undefined;
     const initializer = semanticStableInitializer(binding, index.bindings);
     if (
-      binding === undefined ||
       binding.mutable ||
       binding.declarationKinds.size !== 1 ||
       !binding.declarationKinds.has("const") ||
@@ -61,11 +58,7 @@ export const resolveElectronOptionObject = (
   const candidate = optionObjectCandidate(input, index);
   if (candidate === undefined) return undefined;
   for (const reference of candidate.references) {
-    const effects = index.effectsForReferenceAt(site, reference, propertyPath);
-    if (
-      !effects.memberEffectsIndexed ||
-      effects.effects.some(({ timing }) => timing !== "after")
-    )
+    if (index.referenceMayHaveChangedAt(site, reference, propertyPath))
       return undefined;
   }
   return candidate.object;

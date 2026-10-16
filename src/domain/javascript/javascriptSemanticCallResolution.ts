@@ -6,6 +6,12 @@ import type {
 } from "./javascriptSemanticIr.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
+import {
+  SEMANTIC_EXPRESSION_DEPTH_LIMIT,
+  SEMANTIC_CALLABLE_EXPANSION_LIMIT,
+  semanticResourceLimitReason,
+} from "./javascriptSemanticResourceLimits.js";
+import { semanticBindingProofExposure } from "./javascriptSemanticBindingProof.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   unwrapJavaScriptExpression,
@@ -27,13 +33,27 @@ export interface LocalCallableResolution {
   readonly reason: string;
   /** A cycle cut depends on the active alias path and cannot be memoized. */
   readonly cycleDependent?: true;
+  /** A depth cut can hide a cycle that would change work on another path. */
+  readonly depthDependent?: true;
+  /** Exhausted work depends on the caller's remaining query budget. */
+  readonly budgetDependent?: true;
 }
+
+/** A cached read retains the proof work it replaces, as well as consumed depth. */
+export type LocalCallableResolutionCache = WeakMap<
+  t.Identifier,
+  Map<
+    number,
+    { readonly resolution: LocalCallableResolution; readonly work: number }
+  >
+>;
 
 interface CallResolutionContext {
   readonly state: JavaScriptSemanticAnalysisState;
   readonly callableById: ReadonlyMap<string, JavaScriptSemanticCallable>;
-  readonly seenInitializers: ReadonlySet<JavaScriptSemanticInitializer>;
-  readonly bindingCache: WeakMap<t.Identifier, LocalCallableResolution>;
+  readonly activeInitializers: Set<JavaScriptSemanticInitializer>;
+  readonly budget: { remaining: number };
+  readonly bindingCache: LocalCallableResolutionCache;
 }
 
 /** Inputs needed to resolve one local call target. */
@@ -41,29 +61,52 @@ export interface ResolveLocalCallablesInput {
   readonly node: t.Node;
   readonly state: JavaScriptSemanticAnalysisState;
   readonly callableById: ReadonlyMap<string, JavaScriptSemanticCallable>;
-  readonly seenInitializers: ReadonlySet<JavaScriptSemanticInitializer>;
-  readonly bindingCache: WeakMap<t.Identifier, LocalCallableResolution>;
+  readonly bindingCache: LocalCallableResolutionCache;
 }
 
 /** Resolve local callable candidates without following dynamic properties. */
 export const resolveLocalCallables = (
   input: ResolveLocalCallablesInput,
 ): LocalCallableResolution =>
-  resolveCallables(input.node, {
-    state: input.state,
-    callableById: input.callableById,
-    seenInitializers: input.seenInitializers,
-    bindingCache: input.bindingCache,
-  });
+  resolveCallables(
+    input.node,
+    {
+      state: input.state,
+      callableById: input.callableById,
+      activeInitializers: new Set(),
+      budget: { remaining: SEMANTIC_CALLABLE_EXPANSION_LIMIT },
+      bindingCache: input.bindingCache,
+    },
+    0,
+  );
 
 const resolveCallables = (
-  node: t.Node,
+  input: t.Node,
   context: CallResolutionContext,
+  depth: number,
 ): LocalCallableResolution => {
-  // `unwrapJavaScriptExpression` strips all transparent layers iteratively,
-  // so a single recursion step suffices (no per-layer stack growth).
-  const unwrapped = unwrapJavaScriptExpression(node).node;
-  if (unwrapped !== node) return resolveCallables(unwrapped, context);
+  if (context.budget.remaining === 0) {
+    context.state.valueResourceLimits.add("callable-expansion");
+    return {
+      callableIds: [],
+      complete: false,
+      budgetDependent: true,
+      reason: semanticResourceLimitReason("callable-expansion"),
+    };
+  }
+  context.budget.remaining--;
+  const unwrapped = unwrapJavaScriptExpression(input);
+  const node = unwrapped.node;
+  depth += unwrapped.depth;
+  if (depth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
+    context.state.valueResourceLimits.add("expression-depth");
+    return {
+      callableIds: [],
+      complete: false,
+      depthDependent: true,
+      reason: semanticResourceLimitReason("expression-depth"),
+    };
+  }
   const direct = semanticCallableIdForNode(node);
   if (direct !== null && context.callableById.has(direct))
     return {
@@ -71,12 +114,13 @@ const resolveCallables = (
       complete: true,
       reason: "Direct local callable.",
     };
-  if (t.isIdentifier(node)) return resolveIdentifier(node, context);
+  if (t.isIdentifier(node)) return resolveIdentifier(node, context, depth);
   if (t.isConditionalExpression(node) || t.isLogicalExpression(node))
     return resolveAlternatives(
       t.isConditionalExpression(node) ? node.consequent : node.left,
       t.isConditionalExpression(node) ? node.alternate : node.right,
       context,
+      depth + 1,
     );
   return {
     callableIds: [],
@@ -88,9 +132,16 @@ const resolveCallables = (
 const resolveIdentifier = (
   node: t.Identifier,
   context: CallResolutionContext,
+  depth: number,
 ): LocalCallableResolution => {
-  const cached = context.bindingCache.get(node);
-  if (cached !== undefined) return cached;
+  const cached = context.bindingCache.get(node)?.get(depth);
+  // Charge the same semantic work on a cache hit. Otherwise warming a shared
+  // subtree could turn an exhausted cold proof into a complete warm proof.
+  if (cached !== undefined && cached.work <= context.budget.remaining) {
+    context.budget.remaining -= cached.work;
+    return cached.resolution;
+  }
+  const remainingBefore = context.budget.remaining;
   const binding = resolveSemanticBindingState(context.state, node, node.name);
   if (binding === undefined)
     return {
@@ -103,24 +154,38 @@ const resolveIdentifier = (
     node,
     context.state.parentsByNode,
   );
-  const candidates = resolveBindingCallables(read.binding, context);
+  const candidates = resolveBindingCallables(read.binding, context, depth + 1);
+  const exposure = semanticBindingProofExposure(context.state, binding);
   // Knowing every local candidate does not prove that any write replaced the
   // incoming value, or that a write in another activation precedes this read.
   const covered =
     read.hasDefiniteInitializer ||
     semanticStableInitializer(binding, context.state) !== undefined;
   const resolution =
-    candidates.complete && !covered
-      ? {
-          ...candidates,
-          complete: false,
-          reason: `Call target ${binding.name} may retain an incoming value or an unordered assignment.`,
-        }
-      : candidates;
-  // Key by the immutable read, not binding identity: before/after snapshots
-  // differ. Cache cycle-independent partial results too, keeping alias
-  // diamonds linear even when their shared leaf has an unknown incoming value.
-  if (!resolution.cycleDependent) context.bindingCache.set(node, resolution);
+    exposure !== undefined
+      ? { ...candidates, complete: false, reason: exposure }
+      : candidates.complete && !covered
+        ? {
+            ...candidates,
+            complete: false,
+            reason: `Call target ${binding.name} may retain an incoming value or an unordered assignment.`,
+          }
+        : candidates;
+  // Immutable reads and depth distinguish temporal snapshots and remaining
+  // nesting. Truncated paths may hide active cycles, so neither those results
+  // nor explicit cycle cuts or exhausted work can be reused across entry paths.
+  if (
+    !resolution.cycleDependent &&
+    !resolution.depthDependent &&
+    !resolution.budgetDependent
+  ) {
+    const depths = context.bindingCache.get(node) ?? new Map();
+    depths.set(depth, {
+      resolution,
+      work: remainingBefore - context.budget.remaining,
+    });
+    context.bindingCache.set(node, depths);
+  }
   return resolution;
 };
 
@@ -128,9 +193,10 @@ const resolveAlternatives = (
   left: t.Node,
   right: t.Node,
   context: CallResolutionContext,
+  depth: number,
 ): LocalCallableResolution => {
   const candidates = [left, right].map((candidate) =>
-    resolveCallables(candidate, context),
+    resolveCallables(candidate, context, depth),
   );
   return {
     callableIds: uniqueCallableIds(
@@ -141,37 +207,43 @@ const resolveAlternatives = (
     ...(candidates.some((candidate) => candidate.cycleDependent)
       ? { cycleDependent: true as const }
       : {}),
+    ...(candidates.some((candidate) => candidate.depthDependent)
+      ? { depthDependent: true as const }
+      : {}),
+    ...(candidates.some((candidate) => candidate.budgetDependent)
+      ? { budgetDependent: true as const }
+      : {}),
   };
 };
 
 const resolveBindingCallables = (
   binding: JavaScriptSemanticBindingState,
   context: CallResolutionContext,
+  depth: number,
 ): LocalCallableResolution => {
   if (binding.initializers.length === 0)
     return missingBindingInitializer(binding);
   const candidates = binding.initializers.map(
     (initializer): LocalCallableResolution => {
-      if (context.seenInitializers.has(initializer))
+      if (context.activeInitializers.has(initializer))
         return {
           callableIds: [],
           complete: false,
           cycleDependent: true,
           reason: `Call target initializer cycle at ${binding.name}.`,
         };
-      return initializer.projection.length === 0
-        ? resolveCallables(initializer.node, {
-            ...context,
-            seenInitializers: new Set([
-              ...context.seenInitializers,
-              initializer,
-            ]),
-          })
-        : {
-            callableIds: [],
-            complete: false,
-            reason: `Projected call target ${binding.name} is unresolved.`,
-          };
+      if (initializer.projection.length !== 0)
+        return {
+          callableIds: [],
+          complete: false,
+          reason: `Projected call target ${binding.name} is unresolved.`,
+        };
+      context.activeInitializers.add(initializer);
+      try {
+        return resolveCallables(initializer.node, context, depth);
+      } finally {
+        context.activeInitializers.delete(initializer);
+      }
     },
   );
   const callableIds = uniqueCallableIds(
@@ -186,6 +258,12 @@ const resolveBindingCallables = (
         : `Call target ${binding.name} has ambiguous or unsupported assignments.`,
     ...(candidates.some((candidate) => candidate.cycleDependent)
       ? { cycleDependent: true as const }
+      : {}),
+    ...(candidates.some((candidate) => candidate.depthDependent)
+      ? { depthDependent: true as const }
+      : {}),
+    ...(candidates.some((candidate) => candidate.budgetDependent)
+      ? { budgetDependent: true as const }
       : {}),
   };
   return resolution;

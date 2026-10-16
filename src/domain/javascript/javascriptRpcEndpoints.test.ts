@@ -788,3 +788,27 @@ it("keeps existing network endpoint recognition unchanged", () => {
     },
   ]);
 });
+
+it.each([
+  "function run(p){p=null;arguments[0]={url:'/changed'};",
+  "function run(p){p=null;const args=arguments;args[0]={url:'/changed'};",
+  "function run(p){p=null;Object.defineProperty(arguments,'0',{value:{url:'/changed'}});",
+])(
+  "does not skip a mapped-parameter spread in shared RPC/GraphQL: %s",
+  (prefix) => {
+    expect(
+      rpcEndpoints(`${prefix}
+    httpLink({url:'/safe',...p});
+    const doc={kind:'OperationDefinition',operation:'query',name:{kind:'Name',value:'Unsafe'},...p};
+  }`),
+    ).toEqual([]);
+  },
+);
+
+it("keeps a classic global binding uncertain after a global-object exposure", () => {
+  expect(
+    rpcEndpoints(
+      "var p=null;globalThis.p={url:'/changed'};httpLink({url:'/safe',...p});",
+    ),
+  ).toEqual([]);
+});

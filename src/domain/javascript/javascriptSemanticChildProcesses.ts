@@ -78,7 +78,6 @@ export const collectJavaScriptSemanticChildProcesses = (
     callableById: new Map(
       callables.map((callable) => [callable.callableId, callable]),
     ),
-    seenInitializers: new Set(),
     bindingCache: new WeakMap(),
     expressionShape: createSemanticExpressionShapeResolver(state),
   };

@@ -5,7 +5,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { collectSemanticReferences } from "./javascriptSemanticProjection.js";
+import { semanticBindingProofExposure } from "./javascriptSemanticBindingProof.js";
 import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   isUnshadowedGlobal,
@@ -14,21 +14,6 @@ import {
 } from "./javascriptSemanticState.js";
 
 type ExpressionShape = "array" | "nullish" | "unknown";
-
-const evalExposure = new WeakMap<JavaScriptSemanticAnalysisState, boolean>();
-
-const hasEvalExposure = (state: JavaScriptSemanticAnalysisState): boolean => {
-  let exposed = evalExposure.get(state);
-  if (exposed === undefined) {
-    // Match the shared GraphQL ownership boundary: a lexical eval reference
-    // may be the intrinsic, even when supplied through a parameter. Do not
-    // infer which activation or execution order could change local bindings.
-    exposed =
-      collectSemanticReferences(state.program, state, "eval").length > 0;
-    evalExposure.set(state, exposed);
-  }
-  return exposed;
-};
 
 /** Query identity without claiming container contents or intrinsic length. */
 export const createSemanticExpressionShapeResolver = (
@@ -58,7 +43,14 @@ export const createSemanticExpressionShapeResolver = (
     depth += wrappers;
     if (depth > SEMANTIC_EXPRESSION_DEPTH_LIMIT || active.has(node))
       return "unknown";
-    if (t.isIdentifier(node) && hasEvalExposure(state)) return "unknown";
+    const binding = t.isIdentifier(node)
+      ? resolveSemanticBindingState(state, node, node.name)
+      : undefined;
+    if (
+      t.isIdentifier(node) &&
+      semanticBindingProofExposure(state, binding) !== undefined
+    )
+      return "unknown";
     const cached = cache.get(node)?.get(depth);
     if (cached !== undefined) return cached;
     active.add(node);
@@ -75,7 +67,6 @@ export const createSemanticExpressionShapeResolver = (
       else if (t.isLogicalExpression(node))
         shape = commonShape([node.left, node.right], depth + 1);
       else if (t.isIdentifier(node)) {
-        const binding = resolveSemanticBindingState(state, node, node.name);
         if (binding !== undefined) {
           const read = semanticBindingAtRead(
             binding,

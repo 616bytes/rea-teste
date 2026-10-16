@@ -19,7 +19,7 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
-  type LocalCallableResolution,
+  type LocalCallableResolutionCache,
   parameterBindings,
   resolveLocalCallables,
 } from "./javascriptSemanticCallResolution.js";
@@ -50,10 +50,7 @@ interface CallCollectionContext {
   readonly state: JavaScriptSemanticAnalysisState;
   readonly callableById: ReadonlyMap<string, JavaScriptSemanticCallable>;
   readonly output: MutableCallAnalysis;
-  readonly bindingResolutionCache: WeakMap<
-    t.Identifier,
-    LocalCallableResolution
-  >;
+  readonly bindingResolutionCache: LocalCallableResolutionCache;
   readonly parameterBindingCache: Map<
     string,
     readonly JavaScriptSemanticBindingState[]
@@ -130,7 +127,6 @@ const collectCallSite = (
     node: node.callee,
     state,
     callableById,
-    seenInitializers: new Set(),
     bindingCache: context.bindingResolutionCache,
   });
   const callSiteId = semanticCallSiteId(node);

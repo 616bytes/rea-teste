@@ -258,3 +258,120 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     expect(graph.coverage.truncated).toBe(false);
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "retains child graphs while bounding exposed and deep callback proofs through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-child-binding-proofs-");
+    const requireChildren =
+      'const {spawn,exec,execFile}=require("node:child_process");';
+    const files = {
+      "mapped.cjs": `${requireChildren}
+        function run(p){
+          p=null;arguments[0]='inherit';spawn('mapped-value',[],{stdio:p});
+          p=null;arguments[0]={stdio:'inherit'};spawn('mapped-options',[],p);
+          p=[];const args=arguments;args[0]={};spawn('mapped-argv',p,{stdio:'inherit',env:{A:'1'}});
+          p=()=>{};args[0]={stdio:'inherit'};exec('mapped-callback',p);
+          const saved=p;execFile('mapped-captured',saved);
+          p=null;Object.defineProperty(arguments,'0',{value:{stdio:'ignore'}});
+          const after=p;spawn('mapped-spread',[],{stdio:'inherit',...after});
+        }`,
+      "strict.cjs": `${requireChildren}
+        function run(p){'use strict';
+          p=null;arguments[0]='inherit';spawn('strict-value',[],{stdio:p});
+          p=[];arguments[0]={};spawn('strict-argv',p,{stdio:'inherit',env:{A:'1'}});
+          p=()=>{};arguments[0]={};exec('strict-callback',p);
+        }`,
+      "module.mjs": `import {spawn} from 'node:child_process';
+        function run(p){p=null;arguments[0]='inherit';spawn('module-value',[],{stdio:p});}`,
+      "arrow.cjs": `${requireChildren}
+        function outer(){const run=(p)=>{p=[];arguments[0]={};spawn('arrow-argv',p,{stdio:'inherit',env:{A:'1'}});};}`,
+      "defaults.cjs": `${requireChildren}
+        function run(p=null){p=()=>{};arguments[0]={};execFile('non-simple-callback',p);}`,
+      "eval.cjs": `${requireChildren}
+        function run(options){let done=()=>{};eval('done=options');
+          exec('eval-callback',done);const alias=done;execFile('eval-alias',alias);
+          exec('eval-inline',()=>{});}`,
+      "global.js": `${requireChildren}
+        var p=null;globalThis.p={stdio:'inherit'};spawn('global-value',[],{stdio:p});
+        var done=()=>{};globalThis.done={stdio:'inherit'};execFile('global-callback',done);`,
+      "deep.cjs": `${requireChildren}const done=()=>{};
+        ${Array.from({ length: 4096 }, (_, i) => `const a${i}=${i ? `a${i - 1}` : "done"};`).join("\n")}
+        execFile('deep-callback',a4095);spawn('deep-stable',[],{stdio:'inherit'});`,
+    };
+    await writeFixtureFiles(root, files);
+    const result = await analyzeJavaScriptDirectory(surface, cli, root);
+    const graph = result.semantic_graph;
+    const expected = new Map<string, string>([
+      ...[
+        "mapped-value",
+        "mapped-options",
+        "mapped-argv",
+        "mapped-callback",
+        "mapped-captured",
+        "mapped-spread",
+        "eval-callback",
+        "eval-alias",
+        "global-value",
+        "global-callback",
+        "deep-callback",
+      ].map((name) => [name, "dynamic"] as const),
+      ...[
+        "strict-value",
+        "strict-callback",
+        "module-value",
+        "non-simple-callback",
+        "eval-inline",
+      ].map((name) => [name, "default"] as const),
+      ...["strict-argv", "arrow-argv", "deep-stable"].map(
+        (name) => [name, "inherit"] as const,
+      ),
+    ]);
+    const children = graph.nodes.filter(({ kind }) => kind === "child-process");
+    expect(children).toHaveLength(expected.size);
+    for (const child of children) {
+      const command = String(child.properties.command);
+      const mode = expected.get(command);
+      expect(mode, command).toBeDefined();
+      expect(child.properties.stdio_mode, command).toBe(mode);
+      const edges = graph.relations.filter(
+        (edge) =>
+          edge.relation === "connects-stdio" &&
+          edge.source_node_id === child.node_id,
+      );
+      expect(edges, command).toHaveLength(1);
+      expect(edges[0]?.resolution, command).toBe(
+        mode === "dynamic" ? "candidate" : "resolved",
+      );
+      expect(
+        graph.unknowns.filter(
+          (unknown) =>
+            unknown.node_id === child.node_id &&
+            unknown.relation_kinds.includes("connects-stdio"),
+        ),
+        command,
+      ).toHaveLength(mode === "dynamic" ? 1 : 0);
+      const env = command === "strict-argv" || command === "arrow-argv";
+      expect(child.properties.environment_supplied, command).toBe(env);
+      expect(
+        graph.relations.filter(
+          (edge) =>
+            edge.relation === "supplies-env" &&
+            edge.target_node_id === child.node_id,
+        ),
+        command,
+      ).toHaveLength(env ? 1 : 0);
+    }
+    expect(graph.coverage.status).toBe("partial");
+    expect(
+      graph.coverage.limits.some(
+        ({ name }) => name === "javascript_semantic_expression_depth",
+      ),
+    ).toBe(true);
+    expect(
+      result.limitations.some((limitation) =>
+        limitation.includes("Maximum call stack size exceeded"),
+      ),
+    ).toBe(false);
+  },
+);

@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   Browser,
@@ -85,8 +88,10 @@ it("passes the selected environment to the actual browser launch boundary", asyn
 
 it("keeps Termux execution support when launching Chromium on Android", async () => {
   Object.defineProperty(process, "platform", { value: "android" });
-  vi.stubEnv("PREFIX", "/data/data/com.termux/files/usr");
-  const selected = { LANG: "selected-language", PREFIX: process.env.PREFIX };
+  const prefix = await mkdtemp(join(tmpdir(), "rea-termux-prefix-"));
+  vi.stubEnv("PREFIX", prefix);
+  const selected = { LANG: "selected-language", PREFIX: prefix };
+  let launchedProfile: string | undefined;
   let launchOptions: Parameters<
     typeof import("playwright-core").chromium.launchPersistentContext
   >[1];
@@ -98,25 +103,82 @@ it("keeps Termux execution support when launching Chromium on Android", async ()
     ],
   });
 
-  await expect(
-    openPlaywrightScenarioBrowser(scenario, selected, {
-      launcher: {
-        connectOverCDP: async () => {
-          throw new Error("Unexpected connection");
+  try {
+    await expect(
+      openPlaywrightScenarioBrowser(scenario, selected, {
+        launcher: {
+          connectOverCDP: async () => {
+            throw new Error("Unexpected connection");
+          },
+          launchPersistentContext: async (profile, options) => {
+            launchedProfile = profile;
+            launchOptions = options;
+            throw new Error("launch boundary reached");
+          },
         },
-        launchPersistentContext: async (_profile, options) => {
-          launchOptions = options;
-          throw new Error("launch boundary reached");
-        },
-      },
-    }),
-  ).rejects.toThrow("launch boundary reached");
+      }),
+    ).rejects.toThrow("launch boundary reached");
+  } finally {
+    await rm(prefix, { recursive: true, force: true });
+  }
 
-  expect(launchOptions?.args).toEqual(["--no-sandbox", "--single-process"]);
+  const temporaryDirectory = join(prefix, "tmp");
+  expect(launchedProfile?.startsWith(temporaryDirectory)).toBe(true);
+  expect(launchOptions?.args).toEqual([
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--single-process",
+  ]);
   expect(launchOptions?.env).toEqual({
     LANG: "selected-language",
-    LD_PRELOAD: "/data/data/com.termux/files/usr/lib/libtermux-exec.so",
+    LD_PRELOAD: `${prefix}/lib/libtermux-exec.so`,
     TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
+    TMPDIR: temporaryDirectory,
+  });
+});
+
+it("keeps a caller-selected Termux temp directory for the Chromium profile", async () => {
+  Object.defineProperty(process, "platform", { value: "android" });
+  const root = await mkdtemp(join(tmpdir(), "rea-termux-temp-"));
+  const prefix = join(root, "usr");
+  const temporaryDirectory = join(root, "explicit-tmp");
+  const selected = { PREFIX: prefix, TMPDIR: temporaryDirectory };
+  let launchedProfile: string | undefined;
+  let launchOptions: Parameters<
+    typeof import("playwright-core").chromium.launchPersistentContext
+  >[1];
+  const scenario = browserScenarioSchema.parse({
+    browser: { mode: "launch", executable_path: process.execPath },
+    start_url: { url: "https://example.test" },
+    actions: [
+      { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
+    ],
+  });
+
+  try {
+    await expect(
+      openPlaywrightScenarioBrowser(scenario, selected, {
+        launcher: {
+          connectOverCDP: async () => {
+            throw new Error("Unexpected connection");
+          },
+          launchPersistentContext: async (profile, options) => {
+            launchedProfile = profile;
+            launchOptions = options;
+            throw new Error("launch boundary reached");
+          },
+        },
+      }),
+    ).rejects.toThrow("launch boundary reached");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+
+  expect(launchedProfile?.startsWith(temporaryDirectory)).toBe(true);
+  expect(launchOptions?.env).toEqual({
+    LD_PRELOAD: `${prefix}/lib/libtermux-exec.so`,
+    TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
+    TMPDIR: temporaryDirectory,
   });
 });
 

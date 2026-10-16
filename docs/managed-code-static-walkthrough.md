@@ -23,7 +23,12 @@ Build without running the program:
 dotnet new console --framework net8.0 --name ReaManagedDemo
 dotnet build ReaManagedDemo --configuration Release
 ```
-The assembly is at `ReaManagedDemo/bin/Release/net8.0/ReaManagedDemo.dll`. Set `DLL` to its absolute path before running:
+
+The assembly is at `ReaManagedDemo/bin/Release/net8.0/ReaManagedDemo.dll`. In Bash, set its absolute path with:
+```bash
+DLL="$PWD/ReaManagedDemo/bin/Release/net8.0/ReaManagedDemo.dll"
+```
+Then run:
 ```bash
 rea inspect-managed-artifact "$DLL" --json
 rea inspect-managed-members "$DLL" --type ReaManagedDemo.NativeMethods --json

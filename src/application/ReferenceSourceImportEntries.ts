@@ -188,7 +188,10 @@ const nodeRequireIndexCandidates = (directory: string): string[] =>
 
 /** ESM specifiers identify URL pathnames; CommonJS requests use literal paths. */
 const decodeImportPathname = (specifier: string): string | undefined => {
-  if (/%2f/iu.test(specifier) || specifier.includes("\\")) return undefined;
+  // Node rejects encoded separators during module resolution, before converting
+  // the URL to a filesystem path (which accepts %5c on POSIX).
+  if (/%(?:2f|5c)/iu.test(specifier) || specifier.includes("\\"))
+    return undefined;
   try {
     const decoded = decodeURIComponent(specifier);
     return decoded.includes("\0") ? undefined : decoded;

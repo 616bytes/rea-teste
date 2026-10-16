@@ -175,7 +175,12 @@ it("resolves percent-escaped ESM filenames once without changing CommonJS paths"
 
 it("does not map invalid ESM URL pathnames to literal percent filenames", async () => {
   const root = await createTestTempDirectory("rea-reference-esm-invalid-");
-  const filenames = ["bad%zz.mjs", "slash%2fname.mjs", "nul%00name.mjs"];
+  const filenames = [
+    "bad%zz.mjs",
+    "slash%2fname.mjs",
+    "backslash%5cname.mjs",
+    "nul%00name.mjs",
+  ];
   await Promise.all([
     writeFile(
       join(root, "main.mjs"),
@@ -203,7 +208,7 @@ it("does not map invalid ESM URL pathnames to literal percent filenames", async 
 });
 
 it.skipIf(process.platform === "win32")(
-  "decodes an escaped backslash as a POSIX filename byte",
+  "rejects an encoded backslash even when a POSIX backslash filename exists",
   async () => {
     const root = await createTestTempDirectory("rea-reference-esm-backslash-");
     await Promise.all([
@@ -221,9 +226,9 @@ it.skipIf(process.platform === "win32")(
     expect(result.value.parse_failures).toEqual([]);
     expect(result.value.relationships).toContainEqual({
       from_path: "main.mjs",
-      to: "backslash\\name.mjs",
+      to: "./backslash%5cname.mjs",
       kind: "imports",
-      resolution: "internal",
+      resolution: "unresolved",
       parse_state: "parsed",
     });
   },

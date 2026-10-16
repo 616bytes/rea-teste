@@ -7,9 +7,15 @@ import type { ArtifactReader } from "./ArtifactReader.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import type { SafeOutputTree } from "./SafeOutputTree.js";
 import type { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
 
-/** One artifact resource and its format-specific cleanup owner. */
+/** One artifact resource and the capability that owns its cleanup. */
 export type ArtifactResourceOwner =
+  | {
+      readonly kind: "lease";
+      readonly resource: string;
+      readonly lease: { release(): Promise<void> };
+    }
   | {
       readonly kind: "javascript-source-analysis";
       readonly resource: string;
@@ -49,6 +55,27 @@ export type ArtifactResourceOwner =
 export type ArtifactCleanupAttempt =
   | { readonly kind: "released" }
   | { readonly kind: "failed"; readonly cause: unknown };
+
+/** Retry failure carrying the exact retained owners that did not release. */
+export class ArtifactResourceRetryFailure extends ArtifactReaderFailure {
+  readonly cleanupLeases: readonly AnalysisCleanupLease[] | undefined;
+  constructor(
+    readonly failedOwners: readonly ArtifactResourceOwner[],
+    message: string,
+    options: ConstructorParameters<typeof ArtifactReaderFailure>[2],
+  ) {
+    super("unavailable", message, options);
+    const leases = failedOwners.flatMap((owner) =>
+      owner.kind === "lease" && owner.lease instanceof AnalysisCleanupLease
+        ? [owner.lease]
+        : [],
+    );
+    this.cleanupLeases =
+      leases.length > 0 && leases.length === failedOwners.length
+        ? [...new Set(leases)]
+        : undefined;
+  }
+}
 
 /** Caller-owned scope that retains failed artifact cleanup for a later close. */
 export class ArtifactResourceScope {
@@ -101,6 +128,11 @@ export class ArtifactResourceScope {
     }
   }
 
+  /** Adopt an owner after another boundary's cleanup attempt failed. */
+  retain(owner: ArtifactResourceOwner): void {
+    this.#pending.add(owner);
+  }
+
   /** Retry retained owners without closing resource admission. */
   retryCleanup(): Promise<void> {
     if (this.#draining !== undefined) return this.#draining;
@@ -137,8 +169,8 @@ export class ArtifactResourceScope {
     const resources = [
       ...new Set(observations.flatMap(({ resources }) => resources)),
     ];
-    throw new ArtifactReaderFailure(
-      "unavailable",
+    throw new ArtifactResourceRetryFailure(
+      failures.map(({ owner }) => owner),
       `Artifact cleanup remains incomplete: ${resources.join(", ")}`,
       {
         cause: new AggregateError(
@@ -156,6 +188,9 @@ export class ArtifactResourceScope {
 
 const cleanup = async (owner: ArtifactResourceOwner): Promise<void> => {
   switch (owner.kind) {
+    case "lease":
+      await owner.lease.release();
+      return;
     case "javascript-source-analysis":
       await owner.analysis.close();
       return;

@@ -280,9 +280,15 @@ export const decodeObjcDispatchFacets = (input: {
       if (stride !== 32)
         throw new TypeError("Unsupported Objective-C ivar entry size");
       ivarCount = count;
+      const classIvars: ObjcSwiftMetadata["objc_ivars"] = [];
       for (let index = 0; index < count; index++) {
         if (!budget.admit()) break;
         const entry = ivarList + 8n + BigInt(index * stride);
+        const ivarName = read.string(read.pointer(entry + 8n));
+        if (ivarName.length === 0)
+          throw new TypeError(
+            `Objective-C ivar in class ${name} has an empty name`,
+          );
         const encodedOffset = read.pointer(entry);
         let value: number | null = null;
         try {
@@ -293,9 +299,9 @@ export const decodeObjcDispatchFacets = (input: {
           failures.push(`Unresolved ivar offset pointer ${hex(encodedOffset)}`);
         }
         const alignment = read.u32(entry + 24n);
-        result.objc_ivars.push({
+        classIvars.push({
           class_name: name,
-          name: read.string(read.pointer(entry + 8n)),
+          name: ivarName,
           type_encoding: read.string(read.pointer(entry + 16n)),
           offset: value,
           size: read.u32(entry + 28n),
@@ -317,6 +323,7 @@ export const decodeObjcDispatchFacets = (input: {
           ),
         });
       }
+      result.objc_ivars.push(...classIvars);
     }
     methods(read.pointer(ro + 32n), name, meta ? "class" : "instance");
     result.objc_classes.push({

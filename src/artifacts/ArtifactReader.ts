@@ -34,9 +34,11 @@ export interface ArtifactEntry {
   readonly limitations: readonly string[];
   readonly adapterKey: string;
   /**
-   * The name exactly as the container stores it, when it differs from `path`
-   * (e.g. a ZIP member stored as `./classes.dex`). Runtimes that look members
-   * up by stored name (ART) must match on this, not on `path`.
+   * The name exactly as the container stores it, when it differs from `path`:
+   * for a ZIP member, the raw central-directory name (e.g. `./classes.dex`, or
+   * the name an Info-ZIP Unicode Path extra field replaces in `path`). Runtimes
+   * that look members up by stored name (the JDK, ART) must match on this, not
+   * on `path`.
    */
   readonly storedPath?: string;
   /** Filesystem identity captured during traversal, when supplied by an adapter. */

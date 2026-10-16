@@ -179,7 +179,8 @@ export class ZipArtifactReader implements ArtifactReader {
       checkSignature: true,
       checkOverlappingEntry: true,
       // Unflagged names use the ZIP legacy encoding (CP437); the UTF-8 flag
-      // and validated Unicode Path extra fields remain authoritative.
+      // remains authoritative, and a validated Unicode Path extra field names
+      // the logical path while `storedPath` keeps the raw central-directory name.
       filenameEncoding: "cp437",
       // REA applies its own provider-neutral path validation in scanReader and
       // must preserve that typed failure instead of zip.js rejecting first.
@@ -275,7 +276,8 @@ const projectZipEntry = (
     : entry.directory
       ? "directory"
       : "file";
-  const sourcePath = zipEntryPath(entry);
+  const storedName = zipStoredName(entry);
+  const sourcePath = zipEntryPath(entry, storedName);
   const path = sourcePath.replace(/^(?:\.\/)+/u, "");
   // Root directory markers carry no inventory occurrence. A file with this
   // spelling is still passed to the shared path validator and rejected there.
@@ -292,6 +294,11 @@ const projectZipEntry = (
     unpacked: false,
     limitations: [
       ...(kind === "symlink" ? ["Archive symlink target was not read."] : []),
+      ...(sourcePath === storedName
+        ? []
+        : [
+            `ZIP member stored name ${JSON.stringify(storedName)} differs from its Info-ZIP Unicode Path extra field name ${JSON.stringify(sourcePath)}; the logical path uses the Unicode Path name, while lookups by stored name (e.g. the JDK or ART) see ${JSON.stringify(storedName)}.`,
+          ]),
       ...(path === sourcePath
         ? []
         : [
@@ -299,7 +306,7 @@ const projectZipEntry = (
           ]),
     ],
     adapterKey: `zip-entry:${index}`,
-    ...(path === sourcePath ? {} : { storedPath: sourcePath }),
+    ...(path === storedName ? {} : { storedPath: storedName }),
   };
 };
 
@@ -331,9 +338,21 @@ const decodeCp437 = (bytes: Uint8Array): string =>
       : CP437_HIGH_HALF.charAt(byte - 0x80),
   ).join("");
 
-const zipEntryPath = (entry: Entry): string => {
+/**
+ * The central-directory name exactly as stored, decoded by the same rule as an
+ * unextended name: UTF-8 when the language-encoding flag is set, else CP437.
+ * zip.js replaces `filename` with a valid Unicode Path extra field name, so the
+ * stored name is decoded from `rawFilename` here.
+ */
+const zipStoredName = (entry: Entry): string =>
+  entry.bitFlag?.languageEncodingFlag === true
+    ? decodeStrictZipUtf8(entry.rawFilename, "ZIP filename is not valid UTF-8")
+    : decodeCp437(entry.rawFilename);
+
+/** The logical name: a valid Info-ZIP Unicode Path field, else the stored name. */
+const zipEntryPath = (entry: Entry, storedName: string): string => {
   const field = entry.extraFieldUnicodePath;
-  if (field?.valid !== true) return entry.filename;
+  if (field?.valid !== true) return storedName;
   return decodeStrictZipUtf8(
     field.data.subarray(5),
     "ZIP Unicode Path extra field is not valid UTF-8",

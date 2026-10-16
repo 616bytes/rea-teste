@@ -624,6 +624,59 @@ test("keeps a sticky publication close failure until provider close retries its 
   expect(await readFile(f.destination)).toEqual(f.png);
 });
 
+test("resolves an admission cleanup error when the retained runtime-root lease closes", async () => {
+  let allowClose = false;
+  const f = await exclusiveScreenCloseFixture(() => !allowClose);
+  const first = await f.provider.execute({
+    operation: "capture_adb_screen",
+    input: { serial: "device", output_directory: f.output },
+  });
+  expect(first.ok).toBe(false);
+  if (first.ok) throw new Error("expected publication close failure");
+  expect(first.error.cleanupIncomplete).toBe(true);
+  expect(f.closeAttempts()).toBe(2);
+
+  const admission = await f.provider.execute({
+    operation: "capture_adb_screen",
+    input: { serial: "device", output_directory: f.output },
+  });
+  expect(admission.ok).toBe(false);
+  if (admission.ok) throw new Error("expected retained cleanup refusal");
+  const admissionError = admission.error;
+  expect(admissionError.cleanupIncomplete).toBe(true);
+  expect(f.closeAttempts()).toBe(3);
+
+  allowClose = true;
+  await f.provider.close();
+  expect(f.closeAttempts()).toBe(4);
+  expect(admissionError.cleanupIncomplete).toBe(false);
+  expect(admissionError.cause).toBeInstanceOf(AggregateError);
+  expect(await readFile(f.destination)).toEqual(f.png);
+});
+
+test("resolves the provider close aggregate after its failed root owner recovers", async () => {
+  let allowClose = false;
+  const f = await exclusiveScreenCloseFixture(() => !allowClose);
+  const result = await f.provider.execute({
+    operation: "capture_adb_screen",
+    input: { serial: "device", output_directory: f.output },
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected publication close failure");
+  expect(result.error.cleanupIncomplete).toBe(true);
+
+  const closeError = await f.provider.close().catch((cause: unknown) => cause);
+  expect(closeError).toMatchObject({ cleanupIncomplete: true });
+  expect(f.closeAttempts()).toBe(3);
+
+  allowClose = true;
+  await f.provider.close();
+  expect(f.closeAttempts()).toBe(4);
+  expect(closeError).toMatchObject({ cleanupIncomplete: false });
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(await readFile(f.destination)).toEqual(f.png);
+});
+
 test("retains incomplete cleanup on a cancelled capture while keeping cancellation typed", async () => {
   const f = await fixture();
   const runtime = await PrivateRuntimeRoot.create({

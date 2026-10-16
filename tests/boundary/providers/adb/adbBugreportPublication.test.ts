@@ -321,7 +321,8 @@ test("keeps a bugreport error unresolved until digest and staging owners recover
   expect(digestCloseAttempts).toBe(1);
   expect(stagingRemovalAttempts).toBe(1);
 
-  await expect(f.provider.close()).rejects.toBeDefined();
+  const closeError = await f.provider.close().catch((cause: unknown) => cause);
+  expect(closeError).toMatchObject({ cleanupIncomplete: true });
   expect(digestCloseAttempts).toBe(2);
   expect(stagingRemovalAttempts).toBe(2);
   expect(originatingError.cleanupIncomplete).toBe(true);
@@ -337,6 +338,7 @@ test("keeps a bugreport error unresolved until digest and staging owners recover
   expect(digestCloseAttempts).toBe(3);
   expect(stagingRemovalAttempts).toBe(2);
   expect(originatingError.cleanupIncomplete).toBe(false);
+  expect(closeError).toMatchObject({ cleanupIncomplete: false });
 });
 
 test("refuses an archive reported outside the owned staging directory", async () => {

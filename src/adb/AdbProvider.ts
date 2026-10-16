@@ -31,8 +31,14 @@ import type {
   AdbRequest,
 } from "../domain/adb/adbDeviceAnalysis.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  ArtifactResourceRetryFailure,
+  ArtifactResourceScope,
+} from "../artifacts/ArtifactResourceScope.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../artifacts/AnalysisCleanupLease.js";
 import { adbResultSchemas } from "../domain/adb/adbDeviceAnalysis.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -562,6 +568,22 @@ const hardLinksUnsupported = (cause: unknown): boolean =>
 const describeAdbFailure = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
+const cleanupLeasesForRetryFailure = (
+  cause: unknown,
+): readonly AnalysisCleanupLease[] | undefined => {
+  if (!(cause instanceof ArtifactResourceRetryFailure)) return undefined;
+  const leases = new Set<AnalysisCleanupLease>();
+  for (const owner of cause.failedOwners) {
+    if (
+      owner.kind !== "lease" ||
+      !(owner.lease instanceof AnalysisCleanupLease)
+    )
+      return undefined;
+    leases.add(owner.lease);
+  }
+  return leases.size > 0 ? [...leases] : undefined;
+};
+
 interface ScreenPublicationCloseFailure {
   readonly cause: unknown;
   readonly resource: string;
@@ -780,8 +802,8 @@ interface PendingOutputDirectoryCleanup {
   readonly operation: "pull_adb_package" | "collect_adb_bugreport";
   readonly path: string;
   readonly primary: AnalysisError;
-  readonly error: AnalysisError;
   readonly remove: () => Promise<void>;
+  readonly lease: AnalysisCleanupLease;
 }
 
 interface OutputDirectoryIdentity {
@@ -940,6 +962,10 @@ export class AdbProvider {
     options?: PrivateRuntimeRootOptions,
   ) => Promise<AdbRuntimeRoot>;
   readonly #resources = new ArtifactResourceScope();
+  readonly #outputDirectoryRetryLeases = new WeakMap<
+    AnalysisError,
+    readonly AnalysisCleanupLease[]
+  >();
   readonly #pendingOutputDirectoryCleanup =
     new Set<PendingOutputDirectoryCleanup>();
   readonly #activeOperations = new Set<Promise<void>>();
@@ -988,6 +1014,8 @@ export class AdbProvider {
     const closing = (async () => {
       await Promise.all(this.#activeOperations);
       const failures: unknown[] = [];
+      const failedLeases = new Set<AnalysisCleanupLease>();
+      let allFailuresHaveExactLeaseOwners = true;
       // Directory errors may also depend on a retained digest descriptor.
       // Settle those owners before deciding whether the directory error resolved.
       for (const cleanup of [
@@ -998,13 +1026,19 @@ export class AdbProvider {
           await cleanup();
         } catch (cause: unknown) {
           failures.push(cause);
+          const leases =
+            (cause instanceof AnalysisError
+              ? this.#outputDirectoryRetryLeases.get(cause)
+              : undefined) ?? cleanupLeasesForRetryFailure(cause);
+          if (leases === undefined) allFailuresHaveExactLeaseOwners = false;
+          for (const lease of leases ?? []) failedLeases.add(lease);
         }
       }
       if (failures.length > 0) {
         const resources = failures.flatMap((cause) =>
           this.#cleanupResources(cause, "ADB provider-owned resource"),
         );
-        throw new ProviderCleanupError(
+        const error = new ProviderCleanupError(
           ADB_PROVIDER_IDENTITY.id,
           [...new Set(resources)],
           {
@@ -1022,6 +1056,9 @@ export class AdbProvider {
             ),
           },
         );
+        if (allFailuresHaveExactLeaseOwners && failedLeases.size > 0)
+          new AnalysisCleanupLeaseGroup(error, [...failedLeases]);
+        throw error;
       }
     })().finally(() => {
       if (this.#closePromise === closing) this.#closePromise = undefined;
@@ -1246,15 +1283,23 @@ export class AdbProvider {
   }
 
   #retainOutputDirectoryCleanup(
-    owner: Omit<PendingOutputDirectoryCleanup, "error">,
+    owner: Omit<PendingOutputDirectoryCleanup, "lease">,
     cleanup: ProviderCleanupError,
   ): AnalysisError {
+    const lease = new AnalysisCleanupLease(async () => {
+      await owner.remove();
+      if (owner.primary.cleanupIncomplete)
+        throw new Error(
+          "ADB output directory primary cleanup remains incomplete",
+        );
+    });
     const error = analysisErrorWithCleanupFailure(
       owner.primary,
       cleanup,
       owner.operation,
     );
-    this.#pendingOutputDirectoryCleanup.add({ ...owner, error });
+    lease.bindCleanupError(error);
+    this.#pendingOutputDirectoryCleanup.add({ ...owner, lease });
     return error;
   }
 
@@ -1273,12 +1318,7 @@ export class AdbProvider {
     const failures: AnalysisError[] = [];
     for (const owner of this.#pendingOutputDirectoryCleanup) {
       try {
-        await owner.remove();
-        if (owner.primary.cleanupIncomplete) {
-          failures.push(owner.primary);
-          continue;
-        }
-        owner.error.resolveCleanup();
+        await owner.lease.release();
         this.#pendingOutputDirectoryCleanup.delete(owner);
       } catch (cause: unknown) {
         const cleanup = new ProviderCleanupError(
@@ -1289,38 +1329,52 @@ export class AdbProvider {
           },
           { operation: owner.operation, cause },
         );
-        failures.push(
-          analysisErrorWithCleanupFailure(
-            owner.primary,
-            cleanup,
-            owner.operation,
-          ),
+        const error = analysisErrorWithCleanupFailure(
+          owner.primary,
+          cleanup,
+          owner.operation,
         );
+        owner.lease.bindCleanupError(error);
+        failures.push(error);
       }
     }
-    if (failures.length === 1) throw failures[0];
-    if (failures.length > 1)
-      throw new ProviderCleanupError(
-        ADB_PROVIDER_IDENTITY.id,
-        [...new Set(failures.flatMap((failure) => failure.cleanupResources))],
-        {
-          reason: "Failed ADB output directories remain after cleanup retry",
-          operations: [...this.#pendingOutputDirectoryCleanup].map(
-            ({ operation }) => operation,
-          ),
-          failures: failures.map(({ message, cleanupResources }) => ({
-            message,
-            resources: [...cleanupResources],
-          })),
-        },
-        {
-          operation: "close_binary",
-          cause: new AggregateError(
-            failures,
-            "Multiple ADB output directory cleanups failed",
-          ),
-        },
+    if (failures.length > 0) {
+      const error =
+        failures.length === 1
+          ? failures[0]!
+          : new ProviderCleanupError(
+              ADB_PROVIDER_IDENTITY.id,
+              [
+                ...new Set(
+                  failures.flatMap((failure) => failure.cleanupResources),
+                ),
+              ],
+              {
+                reason:
+                  "Failed ADB output directories remain after cleanup retry",
+                operations: [...this.#pendingOutputDirectoryCleanup].map(
+                  ({ operation }) => operation,
+                ),
+                failures: failures.map(({ message, cleanupResources }) => ({
+                  message,
+                  resources: [...cleanupResources],
+                })),
+              },
+              {
+                operation: "close_binary",
+                cause: new AggregateError(
+                  failures,
+                  "Multiple ADB output directory cleanups failed",
+                ),
+              },
+            );
+      const leases = [...this.#pendingOutputDirectoryCleanup].map(
+        ({ lease }) => lease,
       );
+      this.#outputDirectoryRetryLeases.set(error, leases);
+      if (failures.length > 1) new AnalysisCleanupLeaseGroup(error, leases);
+      throw error;
+    }
   }
 
   async execute(
@@ -1338,14 +1392,15 @@ export class AdbProvider {
       try {
         await this.#resources.retryCleanup();
       } catch (cause: unknown) {
-        return err(
-          this.#cleanupError(
-            request.operation,
-            jsonObjectSchema.parse(request.input),
-            [cause],
-            this.#cleanupResources(cause, "ADB provider-owned resource"),
-          ),
+        const error = this.#cleanupError(
+          request.operation,
+          jsonObjectSchema.parse(request.input),
+          [cause],
+          this.#cleanupResources(cause, "ADB provider-owned resource"),
         );
+        const leases = cleanupLeasesForRetryFailure(cause);
+        if (leases !== undefined) new AnalysisCleanupLeaseGroup(error, leases);
+        return err(error);
       }
       if (this.#pendingOutputDirectoryCleanup.size > 0) {
         try {

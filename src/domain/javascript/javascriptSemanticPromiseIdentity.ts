@@ -89,6 +89,51 @@ export const semanticPromiseResultIdentity = (
   }
 };
 
+/** A returned promise can be adopted without sharing the wrapper promise's identity. */
+export const semanticPromiseSettlementDependency = (
+  rawNode: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  onLiteralProjection?: () => void,
+): ReturnType<typeof semanticPromiseResultIdentity> => {
+  const aliases: NonNullable<
+    ReturnType<typeof semanticPromiseResultIdentity>
+  >["aliases"][number][] = [];
+  const seen = new Set<t.Node>();
+  let current = rawNode;
+  for (;;) {
+    const result = semanticPromiseResultIdentity(
+      current,
+      state,
+      onLiteralProjection,
+    );
+    if (result === undefined || seen.has(result.node)) return undefined;
+    seen.add(result.node);
+    aliases.push(...result.aliases);
+    const call = unwrapJavaScriptExpression(result.node).node;
+    if (
+      (!t.isCallExpression(call) && !t.isOptionalCallExpression(call)) ||
+      call.arguments.length !== 0
+    )
+      return { node: result.node, aliases };
+    let callee = unwrapJavaScriptExpression(call.callee).node;
+    for (;;) {
+      const selected = semanticExactResultOperand(callee, state);
+      if (selected === undefined) break;
+      callee = unwrapJavaScriptExpression(selected).node;
+    }
+    if (
+      (!t.isFunctionExpression(callee) &&
+        !t.isArrowFunctionExpression(callee)) ||
+      !callee.async
+    )
+      return { node: result.node, aliases };
+    const returned = semanticDirectFunctionReturn(callee, { allowAsync: true });
+    if (returned === undefined) return { node: result.node, aliases };
+    const value = unwrapJavaScriptExpression(returned).node;
+    current = t.isAwaitExpression(value) ? value.argument : value;
+  }
+};
+
 const awaitedResults = new WeakMap<
   JavaScriptSemanticAnalysisState,
   {
@@ -204,7 +249,10 @@ export const semanticAwaitedResultSites = (
     const index = new WeakMap<t.Node, t.AwaitExpression[]>();
     const reached = createUnconditionalEvaluationProof(state.parentsByNode);
     for (const awaited of state.awaitSites) {
-      const result = semanticPromiseResultIdentity(awaited.argument, state);
+      const result = semanticPromiseSettlementDependency(
+        awaited.argument,
+        state,
+      );
       if (result === undefined) continue;
       // Aliases retain identity only after their own initialization. Reachability
       // is relative to the block shared with the producer: entering a branch

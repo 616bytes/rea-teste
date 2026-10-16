@@ -5,7 +5,7 @@ import { semanticMemberChain } from "./javascriptSemanticRequireOrigin.js";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
-import { semanticPromiseResultIdentity } from "./javascriptSemanticPromiseIdentity.js";
+import { semanticPromiseSettlementDependency } from "./javascriptSemanticPromiseIdentity.js";
 import { webSocketInitializerDominatesRead } from "./javascriptWebSocketExecution.js";
 
 /** Recover an exact export of a fulfilled literal import, never its promise. */
@@ -16,7 +16,7 @@ export const semanticAwaitedImportOrigin = (
 ): JavaScriptModuleOrigin | undefined => {
   const chain = semanticMemberChain(node);
   if (chain === undefined || !t.isAwaitExpression(chain.root)) return undefined;
-  const result = semanticPromiseResultIdentity(
+  const result = semanticPromiseSettlementDependency(
     chain.root.argument,
     state,
     onLiteralProjection,

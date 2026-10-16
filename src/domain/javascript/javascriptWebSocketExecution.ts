@@ -1,5 +1,6 @@
 import { semanticExactResultOperand } from "./javascriptSemanticExpressionResults.js";
 import * as t from "@babel/types";
+import { semanticPatternSuspendsBeforeGeneratorRead } from "./javascriptGeneratorConsumerPhases.js";
 
 import {
   unwrapJavaScriptExpression,
@@ -10,6 +11,7 @@ import {
   semanticStaticPropertyKey,
   javaScriptClassField,
   semanticDirectFunctionReturn,
+  semanticValueIsRead,
 } from "./javascriptAstValues.js";
 import {
   javaScriptOptionalOperandsMayBeSkipped,
@@ -151,7 +153,9 @@ const webSocketImmediateInvocation = (
     (t.isObjectMethod(node) || t.isClassMethod(node)) &&
     node.kind === "get"
   )
-    return selection;
+    return semanticValueIsRead(selection, state.parentsByNode)
+      ? selection
+      : undefined;
   let callee =
     selection === undefined
       ? value
@@ -537,10 +541,17 @@ const webSocketGeneratorResume = (
   | t.ForOfStatement
   | t.SpreadElement
   | t.ArrayPattern
+  | t.YieldExpression
   | undefined => {
   const result = webSocketOuterExpression(invocation, state);
   const member = state.parentsByNode.get(result);
   if (t.isForOfStatement(member) && member.right === result) return member;
+  if (
+    t.isYieldExpression(member) &&
+    member.delegate &&
+    member.argument === result
+  )
+    return member;
   const pattern =
     t.isVariableDeclarator(member) && member.init === result
       ? member.id
@@ -599,6 +610,60 @@ const webSocketBodyMaySuspend = (body: t.Node): boolean => {
     pending.push(...childNodes(node));
   }
   bodySuspensionFacts.set(body, false);
+  return false;
+};
+
+/** A delegated generator inherits the surrounding generator's actual consumer. */
+const webSocketGeneratorConsumerStaysInTurn = (
+  invocation: t.Node,
+  read: t.Node,
+  body: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  seen = new Set<t.Node>(),
+): boolean => {
+  if (seen.has(invocation)) return false;
+  seen.add(invocation);
+  if (t.isSpreadElement(invocation)) return true;
+  if (t.isArrayPattern(invocation))
+    return !semanticPatternSuspendsBeforeGeneratorRead({
+      read,
+      body,
+      pattern: invocation,
+      state,
+      ordered: webSocketOrderedEvaluation,
+      maySuspend: webSocketBodyMaySuspend,
+      completedSuspension: (node) =>
+        webSocketCompletedSuspension(node, state) !== undefined,
+    });
+  if (t.isForOfStatement(invocation))
+    return (
+      !invocation.await &&
+      !webSocketBodyMaySuspend(invocation.left) &&
+      !webSocketBodyMaySuspend(invocation.body)
+    );
+  if (t.isYieldExpression(invocation) && invocation.delegate) {
+    const owner = webSocketSuspensionOwner(invocation, state);
+    if (
+      !t.isFunction(owner) ||
+      t.isArrowFunctionExpression(owner) ||
+      !owner.generator ||
+      owner.async
+    )
+      return false;
+    const call = webSocketImmediateInvocation(owner, state);
+    const resume =
+      call === undefined ? undefined : webSocketGeneratorResume(call, state);
+    return (
+      resume !== undefined &&
+      webSocketGeneratorConsumerStaysInTurn(
+        resume,
+        read,
+        owner.body,
+        state,
+        seen,
+      )
+    );
+  }
   return false;
 };
 
@@ -779,7 +844,8 @@ export const webSocketExecutionContexts = (
         | ReturnType<typeof webSocketImmediateInvocation>
         | t.ForOfStatement
         | t.SpreadElement
-        | t.ArrayPattern =
+        | t.ArrayPattern
+        | t.YieldExpression =
         t.isClassMethod(parent) && parent.kind === "constructor"
           ? webSocketClassConstruction(parent, state)
           : webSocketImmediateInvocation(parent, state);
@@ -807,7 +873,9 @@ export const webSocketExecutionContexts = (
         suspendedAfter(
           t.isForOfStatement(invocation)
             ? invocation.right
-            : (decoratedClass ?? invocation),
+            : t.isYieldExpression(invocation)
+              ? (invocation.argument ?? invocation)
+              : (decoratedClass ?? invocation),
         );
       }
       if (
@@ -816,13 +884,13 @@ export const webSocketExecutionContexts = (
         // Synchronous for-of resumes after every ordinary yield in the same turn.
         !(
           !parent.async &&
-          (t.isSpreadElement(invocation) ||
-            (t.isArrayPattern(invocation) &&
-              !webSocketBodyMaySuspend(invocation)) ||
-            (t.isForOfStatement(invocation) &&
-              !invocation.await &&
-              !webSocketBodyMaySuspend(invocation.left) &&
-              !webSocketBodyMaySuspend(invocation.body)))
+          generatorBody &&
+          webSocketGeneratorConsumerStaysInTurn(
+            invocation,
+            node,
+            parent.body,
+            state,
+          )
         )
       ) {
         const continuation = webSocketContinuation(node, parent.body, state);

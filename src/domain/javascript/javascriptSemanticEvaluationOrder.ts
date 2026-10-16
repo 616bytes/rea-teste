@@ -144,7 +144,14 @@ export const javaScriptOptionalOperandsMayBeSkipped = (
     | t.OptionalMemberExpression,
 ): boolean =>
   ((t.isOptionalCallExpression(node) || t.isOptionalMemberExpression(node)) &&
-    node.optional) ||
+    node.optional &&
+    !(
+      t.isOptionalCallExpression(node) &&
+      (t.isFunctionExpression(unwrapJavaScriptExpression(node.callee).node) ||
+        t.isArrowFunctionExpression(
+          unwrapJavaScriptExpression(node.callee).node,
+        ))
+    )) ||
   optionalChainMayShortCircuit(
     t.isOptionalMemberExpression(node) ? node.object : node.callee,
   );

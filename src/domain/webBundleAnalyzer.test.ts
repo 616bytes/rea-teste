@@ -3367,3 +3367,292 @@ describe("web bundle scope exit and relative producer order", () => {
     },
   );
 });
+
+const consumptionReviewCases = [
+  {
+    name: "later pattern default",
+    source:
+      '(async()=>{const [a,b=await 0,c]=(function*(){yield 0;new Socket("wss://example.test/review-consumption");yield undefined;yield 2})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "getter write target",
+    source:
+      '({get run(){new Socket("wss://example.test/review-consumption")}}).run=0;const Socket=globalThis.WebSocket;',
+    present: true,
+    runtimePresent: false,
+  },
+  {
+    name: "throwing sequence prefix",
+    source:
+      'new(null.value,globalThis.WebSocket)("wss://example.test/review-consumption");',
+    present: false,
+  },
+  {
+    name: "optional call sibling",
+    source:
+      '(async()=>{(()=>{})?.(await ready);new Socket("wss://example.test/review-consumption")})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "conditional break bypass",
+    source:
+      '(async()=>{const pending=(async()=>{await ready;new Socket("wss://example.test/review-consumption")})();while(true){if(skip)break;await pending;break;}const Socket=globalThis.WebSocket;})();',
+    present: true,
+  },
+  {
+    name: "async wrapper adoption",
+    source:
+      '(async()=>{const pending=(async()=>{await ready;new Socket("wss://example.test/review-consumption")})();await(async()=>pending)();const Socket=globalThis.WebSocket;})();',
+    present: false,
+  },
+  {
+    name: "resumed generator delegate",
+    source:
+      '(function*(){yield*(function*(){new Socket("wss://example.test/review-consumption");yield 0})()})().next();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "earlier selected default",
+    source:
+      '(async()=>{const [a=await 0,b]=(function*(){yield undefined;new Socket("wss://example.test/review-consumption");yield 1})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "unselected earlier default",
+    source:
+      '(async()=>{const [a=await 0,b]=(function*(){yield 0;new Socket("wss://example.test/review-consumption");yield 1})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "first resume before default",
+    source:
+      '(async()=>{const [a=await 0]=(function*(){new Socket("wss://example.test/review-consumption");yield undefined})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "stored async default does not suspend",
+    source:
+      '(async()=>{const [a=async()=>await 0,b]=(function*(){yield undefined;new Socket("wss://example.test/review-consumption");yield 1})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "argumentless yield selects default",
+    source:
+      '(async()=>{const [a=await 0,b]=(function*(){yield;new Socket("wss://example.test/review-consumption");yield 1})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "selected default before rest drain",
+    source:
+      '(async()=>{const [a=await 0,...rest]=(function*(){yield undefined;yield 0;new Socket("wss://example.test/review-consumption")})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "getter direct read",
+    source:
+      '({get run(){new Socket("wss://example.test/review-consumption")}}).run;const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "getter compound write reads first",
+    source:
+      '({get run(){new Socket("wss://example.test/review-consumption")}}).run+=0;const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "getter delete target",
+    source:
+      'delete({get run(){new Socket("wss://example.test/review-consumption")}}).run;const Socket=globalThis.WebSocket;',
+    present: true,
+    runtimePresent: false,
+  },
+  {
+    name: "getter destructuring write",
+    source:
+      '[({get run(){new Socket("wss://example.test/review-consumption")}}).run]=[0];const Socket=globalThis.WebSocket;',
+    present: true,
+    runtimePresent: false,
+  },
+  {
+    name: "getter nested receiver is read",
+    source:
+      '({get run(){new Socket("wss://example.test/review-consumption")}}).run.value=0;const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "getter optional delete target",
+    source:
+      'delete({get run(){new Socket("wss://example.test/review-consumption")}})?.run;const Socket=globalThis.WebSocket;',
+    present: true,
+    runtimePresent: false,
+  },
+  {
+    name: "literal sequence prefix",
+    source:
+      'new(0,globalThis.WebSocket)("wss://example.test/review-consumption");',
+    present: true,
+  },
+  {
+    name: "inert function sequence prefix",
+    source:
+      'new(()=>0,globalThis.WebSocket)("wss://example.test/review-consumption");',
+    present: true,
+  },
+  {
+    name: "nested throwing sequence",
+    source:
+      'const Socket=(0,(null.value,globalThis.WebSocket));new Socket("wss://example.test/review-consumption");',
+    present: false,
+  },
+  {
+    name: "projected throwing sequence",
+    source:
+      'const {WebSocket:Socket}=(null.value,globalThis);new Socket("wss://example.test/review-consumption");',
+    present: false,
+  },
+  {
+    name: "void literal sequence prefix",
+    source:
+      'new(void 0,globalThis.WebSocket)("wss://example.test/review-consumption");',
+    present: true,
+  },
+  {
+    name: "null optional sibling skips arguments",
+    source:
+      '(async()=>{null?.(await ready);new Socket("wss://example.test/review-consumption")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "stored optional async argument",
+    source:
+      '(async()=>{(()=>{})?.(async()=>await ready);new Socket("wss://example.test/review-consumption")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "ordinary literal awaited argument",
+    source:
+      '(async()=>{(()=>{})(await ready);new Socket("wss://example.test/review-consumption")})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    name: "conditional labeled break bypass",
+    source:
+      '(async()=>{const pending=(async()=>{await ready;new Socket("wss://example.test/review-consumption")})();outer:{if(skip)break outer;await pending;}const Socket=globalThis.WebSocket;})();',
+    present: true,
+  },
+  {
+    name: "break before producer does not bypass its wait",
+    source:
+      '(async()=>{while(true){if(skip)break;const pending=(async()=>{await ready;new Socket("wss://example.test/review-consumption")})();await pending;const Socket=globalThis.WebSocket;break;}})();',
+    present: false,
+  },
+  {
+    name: "literal false break retains mandatory wait",
+    source:
+      '(async()=>{const pending=(async()=>{await ready;new Socket("wss://example.test/review-consumption")})();while(true){if(false)break;await pending;break;}const Socket=globalThis.WebSocket;})();',
+    present: false,
+  },
+  {
+    name: "nested loop owns its break",
+    source:
+      '(async()=>{const pending=(async()=>{await ready;new Socket("wss://example.test/review-consumption")})();while(true){break;}await pending;const Socket=globalThis.WebSocket;})();',
+    present: false,
+  },
+  {
+    name: "async block wrapper adoption",
+    source:
+      '(async()=>{const pending=(async()=>{await ready;new Socket("wss://example.test/review-consumption")})();await(async()=>{return pending})();const Socket=globalThis.WebSocket;})();',
+    present: false,
+  },
+  {
+    name: "async return await adoption",
+    source:
+      '(async()=>{const pending=(async()=>{await ready;new Socket("wss://example.test/review-consumption")})();await(async()=>await pending)();const Socket=globalThis.WebSocket;})();',
+    present: false,
+  },
+  {
+    name: "nested async wrapper adoption",
+    source:
+      '(async()=>{const pending=(async()=>{await ready;new Socket("wss://example.test/review-consumption")})();await(async()=>(async()=>pending)())();const Socket=globalThis.WebSocket;})();',
+    present: false,
+  },
+  {
+    name: "unawaited wrapper does not block",
+    source:
+      '(async()=>{const pending=(async()=>{await ready;new Socket("wss://example.test/review-consumption")})();(async()=>pending)();const Socket=globalThis.WebSocket;})();',
+    present: true,
+  },
+  {
+    name: "unrelated wrapper does not adopt producer",
+    source:
+      '(async()=>{const pending=(async()=>{await ready;new Socket("wss://example.test/review-consumption")})();await(async()=>0)();const Socket=globalThis.WebSocket;})();',
+    present: true,
+  },
+  {
+    name: "async generator wrapper is not a promise adoption",
+    source:
+      '(async()=>{const pending=(async()=>{await ready;new Socket("wss://example.test/review-consumption")})();await(async function*(){return pending})();const Socket=globalThis.WebSocket;})();',
+    present: true,
+  },
+  {
+    name: "delegate consumed by spread",
+    source:
+      '[...(function*(){yield*(function*(){new Socket("wss://example.test/review-consumption");yield 0})()})()];const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "delegate drain after inner yield",
+    source:
+      '[...(function*(){yield*(function*(){yield 0;new Socket("wss://example.test/review-consumption")})()})()];const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "stored delegate after alias initialization",
+    source:
+      'const iterator=(function*(){yield*(function*(){new Socket("wss://example.test/review-consumption");yield 0})()})();const Socket=globalThis.WebSocket;iterator.next();',
+    present: true,
+  },
+  {
+    name: "async delegate first step",
+    source:
+      '(async function*(){yield*(function*(){new Socket("wss://example.test/review-consumption");yield 0})()})().next();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    name: "async delegate later step",
+    source:
+      '(async function*(){yield*(function*(){yield 0;new Socket("wss://example.test/review-consumption");yield 1})()})().next();const Socket=globalThis.WebSocket;',
+    present: true,
+    runtimePresent: false,
+  },
+  {
+    name: "initialized prefix read",
+    source:
+      'const value=0;new(value,globalThis.WebSocket)("wss://example.test/review-consumption");',
+    present: true,
+  },
+  {
+    name: "mutable prefix assignment",
+    source:
+      'let value;new(value=0,globalThis.WebSocket)("wss://example.test/review-consumption");',
+    present: true,
+  },
+  {
+    name: "immutable prefix assignment",
+    source:
+      'const value=0;new(value=1,globalThis.WebSocket)("wss://example.test/review-consumption");',
+    present: false,
+  },
+] as const;
+describe("web bundle consumed prefixes and settlement dependencies", () => {
+  it.each(consumptionReviewCases)(
+    "preserves $name in both consumers",
+    ({ source, present }) => {
+      const expected = present ? ["wss://example.test/review-consumption"] : [];
+      expect(
+        socketEndpoints(source).map((items) => items.map((item) => item.value)),
+      ).toEqual([expected, expected]);
+    },
+  );
+});

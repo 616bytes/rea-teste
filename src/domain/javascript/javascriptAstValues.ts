@@ -124,13 +124,14 @@ export const semanticStaticPropertyName = (
   computed: boolean,
 ): string => semanticStaticPropertyKey(property, computed) ?? "";
 
-/** A synchronous parameter-free callable with one literal returned expression. */
+/** One parameter-free returned expression; async settlement consumers opt in explicitly. */
 export const semanticDirectFunctionReturn = (
   node: t.Node,
+  options?: { readonly allowAsync: boolean },
 ): t.Node | undefined => {
   if (
     !t.isFunction(node) ||
-    node.async ||
+    (node.async && options?.allowAsync !== true) ||
     node.generator ||
     node.params.length !== 0
   )
@@ -380,3 +381,36 @@ export function* semanticWriteTargets(
  */
 export const javascriptDisplayText = (value: string): string =>
   value === "" ? '""' : value;
+
+/** A target leaf writes without a value read unless its owning operation reads first. */
+export const semanticValueIsRead = (
+  node: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  let current = node;
+  for (;;) {
+    const parent = parents.get(current);
+    if (parent === undefined) return true;
+    const target = semanticWriteSiteTarget(parent);
+    if (target !== null) {
+      for (const leaf of semanticWriteTargets(target))
+        if (leaf === node) return semanticWriteSiteReadsFirst(parent);
+      return true;
+    }
+    if (
+      !(
+        unwrapJavaScriptExpression(parent).node === current ||
+        (t.isArrayPattern(parent) &&
+          parent.elements.includes(current as t.Pattern)) ||
+        (t.isRestElement(parent) && parent.argument === current) ||
+        (t.isAssignmentPattern(parent) && parent.left === current) ||
+        (t.isObjectProperty(parent) &&
+          parent.value === current &&
+          t.isObjectPattern(parents.get(parent))) ||
+        t.isObjectPattern(parent)
+      )
+    )
+      return true;
+    current = parent;
+  }
+};

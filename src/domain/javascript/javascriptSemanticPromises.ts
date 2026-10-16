@@ -18,7 +18,7 @@ import {
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
-import { semanticPromiseResultIdentity } from "./javascriptSemanticPromiseIdentity.js";
+import { semanticPromiseSettlementDependency } from "./javascriptSemanticPromiseIdentity.js";
 import {
   assignedSemanticResultBindings,
   dataEffectMemberCallee,
@@ -445,7 +445,7 @@ const resolvePromiseExpression = (
   context: PromiseExpressionResolutionContext,
 ): PromiseResolution => {
   const { current, candidateByNode, state } = context;
-  const result = semanticPromiseResultIdentity(rawNode, state);
+  const result = semanticPromiseSettlementDependency(rawNode, state);
   const direct =
     result === undefined ? undefined : candidateByNode.get(result.node);
   if (direct !== undefined && direct.promiseId !== current.promiseId)

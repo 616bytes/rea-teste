@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { syntaxEvaluationCannotThrow } from "./javascriptSymbolicControlFlow.js";
 
 import {
   javaScriptExactResultOperand,
@@ -11,6 +12,7 @@ import {
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 
 /** Compare a local binding event in its own lexical activation, without guessing callers. */
@@ -27,27 +29,21 @@ const lexicalFrame = (
   }
 };
 
-/** A selected assignment result requires a writable, already initialised local binding. */
-const assignmentCanComplete = (
-  node: t.AssignmentExpression,
+/** Local value reads and writable results share the same initialization event proof. */
+const bindingInitializedBeforeRead = (
+  binding: JavaScriptSemanticBindingState,
+  node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): boolean => {
-  const target = unwrapJavaScriptExpression(node.left).node;
-  if (!t.isIdentifier(target)) return false;
-  const binding = resolveSemanticBindingState(state, target, target.name);
+  if (binding.runtimeImport) return false;
+  if (binding.declarationKinds.has("var")) return true;
   if (
-    binding === undefined ||
-    binding.runtimeImport ||
-    [...binding.declarationKinds].some(
-      (kind) => kind === "const" || kind === "using" || kind === "await using",
+    ![...binding.declarationKinds].some((kind) =>
+      ["let", "const", "using", "await using"].includes(kind),
     )
   )
     return false;
-  if (binding.declarationKinds.has("var")) return true;
-  // Parameters, private function-name environments and arbitrary property writes
-  // require different initialization/setter proofs and remain unresolved here.
-  if (!binding.declarationKinds.has("let")) return false;
   return binding.definitionNodes.some((bindingNode) => {
     let declaration: t.Node | undefined = bindingNode;
     while (
@@ -72,12 +68,61 @@ const assignmentCanComplete = (
   });
 };
 
+/** Parameters, private names and arbitrary setters still need different completion proofs. */
+const assignmentCanComplete = (
+  node: t.AssignmentExpression,
+  state: JavaScriptSemanticAnalysisState,
+  executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
+): boolean => {
+  const target = unwrapJavaScriptExpression(node.left).node;
+  if (!t.isIdentifier(target)) return false;
+  const binding = resolveSemanticBindingState(state, target, target.name);
+  return (
+    binding !== undefined &&
+    ![...binding.declarationKinds].some(
+      (kind) => kind === "const" || kind === "using" || kind === "await using",
+    ) &&
+    bindingInitializedBeforeRead(binding, node, state, executionFrames)
+  );
+};
+
+const prefixCanComplete = (
+  rawNode: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
+): boolean => {
+  const node = unwrapJavaScriptExpression(rawNode).node;
+  if (syntaxEvaluationCannotThrow(node)) return true;
+  if (t.isIdentifier(node)) {
+    const binding = resolveSemanticBindingState(state, node, node.name);
+    return (
+      binding !== undefined &&
+      bindingInitializedBeforeRead(binding, node, state, executionFrames)
+    );
+  }
+  return (
+    t.isAssignmentExpression(node) &&
+    node.operator === "=" &&
+    assignmentCanComplete(node, state, executionFrames) &&
+    prefixCanComplete(node.right, state, executionFrames)
+  );
+};
+
 /** Value identity follows assignment RHS only after its target write can complete. */
 export const semanticExactResultOperand = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
-): t.Node | undefined =>
-  javaScriptExactResultOperand(node, (assignment) =>
+): t.Node | undefined => {
+  const selected = unwrapJavaScriptExpression(node).node;
+  if (
+    t.isSequenceExpression(selected) &&
+    !selected.expressions
+      .slice(0, -1)
+      .every((prefix) => prefixCanComplete(prefix, state, executionFrames))
+  )
+    return undefined;
+  return javaScriptExactResultOperand(node, (assignment) =>
     assignmentCanComplete(assignment, state, executionFrames),
   );
+};

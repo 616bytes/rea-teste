@@ -765,6 +765,48 @@ const completedWriteAndConsumerSources = [
       '(async () => { (async (_x) => { new Socket("wss://example.test/review-latest"); })?.(await ready); })(); const Socket = globalThis.WebSocket;',
     present: true,
   },
+  {
+    file: "consumption-review-0.js",
+    source:
+      '(async()=>{const [a,b=await 0,c]=(function*(){yield 0;new Socket("wss://example.test/review-latest");yield undefined;yield 2})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "consumption-review-1.js",
+    source:
+      '({get run(){new Socket("wss://example.test/review-latest")}}).run=0;const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "consumption-review-2.js",
+    source:
+      'new(null.value,globalThis.WebSocket)("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "consumption-review-3.js",
+    source:
+      '(async()=>{(()=>{})?.(await ready);new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "consumption-review-4.js",
+    source:
+      '(async()=>{const pending=(async()=>{await ready;new Socket("wss://example.test/review-latest")})();while(true){if(skip)break;await pending;break;}const Socket=globalThis.WebSocket;})();',
+    present: true,
+  },
+  {
+    file: "consumption-review-5.js",
+    source:
+      '(async()=>{const pending=(async()=>{await ready;new Socket("wss://example.test/review-latest")})();await(async()=>pending)();const Socket=globalThis.WebSocket;})();',
+    present: false,
+  },
+  {
+    file: "consumption-review-6.js",
+    source:
+      '(function*(){yield*(function*(){new Socket("wss://example.test/review-latest");yield 0})()})().next();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
 ];
 
 it("retains reviewed completion endpoints with filesystem source provenance", async () => {
@@ -780,7 +822,7 @@ it("retains reviewed completion endpoints with filesystem source provenance", as
     const observations = graph.nodes
       .filter((node) => node.kind === "endpoint")
       .flatMap((node) => node.observations);
-    expect(observations).toHaveLength(8);
+    expect(observations).toHaveLength(11);
     for (const { file, present } of completedWriteAndConsumerSources) {
       const matching = observations.filter(
         ({ evidence }) =>

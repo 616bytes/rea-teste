@@ -321,6 +321,12 @@ export const syntaxEvaluationCannotThrow = (node: t.Node): boolean => {
     t.isArrowFunctionExpression(node);
   if (
     !result &&
+    t.isUnaryExpression(node) &&
+    ["void", "!", "typeof"].includes(node.operator)
+  )
+    result = syntaxEvaluationCannotThrow(node.argument);
+  if (
+    !result &&
     (t.isExpressionStatement(node) ||
       t.isBlockStatement(node) ||
       t.isSequenceExpression(node) ||
@@ -347,6 +353,7 @@ const createCaughtPrefixBypassProof = (parents: WeakMap<t.Node, t.Node>) => {
     {
       indexes: ReadonlyMap<t.Node, number>;
       throwing: readonly number[];
+      jumps: readonly number[];
       children: readonly t.Node[];
     }
   >();
@@ -359,13 +366,15 @@ const createCaughtPrefixBypassProof = (parents: WeakMap<t.Node, t.Node>) => {
       [];
     const indexes = new Map<t.Node, number>();
     const throwing = [0];
+    const jumps = [0];
     for (const [index, child] of children.entries()) {
       indexes.set(child, index);
+      jumps.push((jumps[index] ?? 0) + Number(syntaxMayExitByJump(child)));
       throwing.push(
         (throwing[index] ?? 0) + Number(!syntaxEvaluationCannotThrow(child)),
       );
     }
-    const result = { indexes, throwing, children };
+    const result = { indexes, throwing, jumps, children };
     orders.set(parent, result);
     return result;
   };
@@ -412,6 +421,17 @@ const createCaughtPrefixBypassProof = (parents: WeakMap<t.Node, t.Node>) => {
         (indexed.throwing.at(-1) ?? 0) > (indexed.throwing[index + 1] ?? 0)
       );
     };
+    const tailMayJump = (operand: t.Node): boolean => {
+      if (operand === after) return false;
+      const selected = path.get(operand);
+      if (selected === undefined) return syntaxMayExitByJump(operand);
+      const indexed = order(operand);
+      const index = indexed.indexes.get(selected);
+      return index === undefined
+        ? syntaxMayExitByJump(operand)
+        : tailMayJump(selected) ||
+            (indexed.jumps.at(-1) ?? 0) > (indexed.jumps[index + 1] ?? 0);
+    };
     let child = node;
     if (t.isAwaitExpression(child)) {
       child = child.argument;
@@ -431,6 +451,14 @@ const createCaughtPrefixBypassProof = (parents: WeakMap<t.Node, t.Node>) => {
       const start =
         selected === undefined ? undefined : indexed.indexes.get(selected);
       if (end !== undefined) {
+        const jumps =
+          selected === undefined
+            ? (indexed.jumps[end] ?? 0) > 0
+            : start !== undefined &&
+              start < end &&
+              (tailMayJump(selected) ||
+                (indexed.jumps[end] ?? 0) > (indexed.jumps[start + 1] ?? 0));
+        if (jumps) return true;
         if (selected === undefined)
           mayThrow ||= (indexed.throwing[end] ?? 0) > 0;
         else if (start !== undefined && start < end)

@@ -217,3 +217,23 @@ it("does not assign a return site to a Promise owned by a binding", () => {
     returnSiteId: null,
   });
 });
+
+it.each([
+  "(async () => pending)()",
+  "(async () => { return pending; })()",
+  "(async () => await pending)()",
+])("links settlement through a distinct async wrapper: %s", (wrapper) => {
+  const ir = analyzeJavaScriptSemantics(
+    `const pending=Promise.resolve(1);const wrapped=${wrapper};await wrapped;`,
+  );
+  const producer = ir.promiseOperations.find(
+    ({ method }) => method === "resolve",
+  );
+  if (producer === undefined) throw new Error("Missing promise producer");
+  expect(
+    ir.promiseOperations.find(({ method }) => method === "await"),
+  ).toMatchObject({
+    sourcePromiseIds: [producer.promiseId],
+    sourceResolution: "complete",
+  });
+});

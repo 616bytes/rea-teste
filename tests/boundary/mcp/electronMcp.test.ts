@@ -453,22 +453,23 @@ it("runs active Electron scenarios with selected paths and inferred working dire
     createElectronActiveObservationFixtureResult(applicationPath);
   const capturedEvent = activeResult.timeline.events[0];
   if (capturedEvent === undefined) throw new Error("IPC fixture was empty");
-  activeResult.timeline.events.push({
+  const gaps = ["custom-apply", "listener-chain"].map((event, index) => ({
     ...capturedEvent,
-    sequence: 2,
-    kind: "ipc-observation-gap",
-    event: "custom-apply",
-    channel: "custom",
+    sequence: index + 2,
+    kind: "ipc-observation-gap" as const,
+    event,
+    channel: event === "custom-apply" ? "custom" : "opaque-chain",
     direction: null,
     receiver: null,
     target: "ipcMain.on",
     argument_shapes: [],
     result_shape: null,
-  });
-  activeResult.timeline.observed = 2;
-  activeResult.retention.retained = 2;
-  activeResult.retention.estimated_retained_bytes = 1_024;
-  activeResult.retention.observed_runtime = 1;
+  }));
+  activeResult.timeline.events.push(...gaps);
+  activeResult.timeline.observed = 3;
+  activeResult.retention.retained = 3;
+  activeResult.retention.estimated_retained_bytes = 1_536;
+  activeResult.retention.observed_runtime = 2;
   activeResult.coverage.observed_event_families.push("ipc-observation-gap");
   const provider: ElectronActiveObservationPort = {
     identity: () => ({
@@ -536,6 +537,7 @@ it("runs active Electron scenarios with selected paths and inferred working dire
         events: [
           { kind: "main-handler-invocation" },
           { kind: "ipc-observation-gap", channel: "custom" },
+          { kind: "ipc-observation-gap", channel: "opaque-chain" },
         ],
       },
       coverage: {

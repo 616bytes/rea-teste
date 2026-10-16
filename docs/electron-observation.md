@@ -148,6 +148,14 @@ dispatch continues to record actual invocation frames. Evidence snapshots copy
 retained arrays and counters without invoking application iterators or Array
 species.
 
+Listener-chain recognition distinguishes owned, unowned and unknown metadata.
+Exhausting the bounded walk, encountering an accessor or seeing a Proxy leaves
+ownership unknown. The hook preserves native registration without adding another
+recording wrapper and retains a `listener-chain` observation gap after successful
+registration. This gap does not prove IPC delivery. An existing inner recording
+wrapper can still report its actual invocation; otherwise callback activity
+remains unobserved. Data-descriptor parsing is shared with removal normalization.
+
 This does not establish complete JavaScript function introspection equivalence.
 Caller-defined `.listener` properties can change the identity exposed by
 `listeners()` and meta-events; accessors and Proxy metadata are not followed for

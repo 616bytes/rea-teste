@@ -20,6 +20,7 @@ const weakMapGet = bindBuiltinMethod(WeakMap.prototype.get);
 const weakMapSet = bindBuiltinMethod(WeakMap.prototype.set);
 const setHas = bindBuiltinMethod(Set.prototype.has);
 const setAdd = bindBuiltinMethod(Set.prototype.add);
+const hasOwnProperty = bindBuiltinMethod(Object.prototype.hasOwnProperty);
 
 const { isProxy } = require("node:util").types;
 const {
@@ -343,18 +344,13 @@ const recordIpc = (kind, channel, args, details = {}) =>
     });
   })();
 
-const recordIpcObservationGap = (channel, error = false) =>
-  recordRuntime(
-    "ipc-observation-gap",
-    "custom-apply",
-    error ? "failed" : "observed",
-    {
-      channel,
-      target: "ipcMain.on",
-      process_type: "main",
-      error,
-    },
-  );
+const recordIpcObservationGap = (channel, event, error = false) =>
+  recordRuntime("ipc-observation-gap", event, error ? "failed" : "observed", {
+    channel,
+    target: "ipcMain.on",
+    process_type: "main",
+    error,
+  });
 
 const patchEmitter = (emitter, observeEvent) => {
   if (emitter === null || emitter === undefined) return;
@@ -421,28 +417,38 @@ const invokeObservedEventListener = (
 const hookListenerRemovalTargets = new WeakMap();
 const MAX_LISTENER_CHAIN_HOPS = 16;
 
+// Missing metadata is absent; accessor metadata is unknown. Only data
+// descriptors expose their own value without consulting application getters.
+const listenerDataDescriptor = (listener) => {
+  const descriptor = ownPropertyDescriptor(listener, "listener");
+  return descriptor !== undefined && !hasOwnProperty(descriptor, "value")
+    ? null
+    : descriptor;
+};
+
 // A decorator that wraps once's hook wrapper and names it through `.listener`
 // already records through that wrapper. Registering the decorator as is keeps
 // native self-removal working: the once wrapper removes itself by identity, and
 // removeListener matches the decorator through its `.listener`.
-const reachesHookListenerWrapper = (listener) => {
+const classifyHookListenerWrapper = (listener) => {
   const visited = new SetConstructor();
   let candidate = listener;
   for (
     let hops = 0;
-    hops <= MAX_LISTENER_CHAIN_HOPS &&
-    typeof candidate === "function" &&
-    !setHas(visited, candidate);
+    hops <= MAX_LISTENER_CHAIN_HOPS && typeof candidate === "function";
     hops += 1
   ) {
-    if (weakMapHas(hookListenerRemovalTargets, candidate)) return true;
+    if (weakMapHas(hookListenerRemovalTargets, candidate)) return "owned";
+    if (setHas(visited, candidate)) return "unowned";
     setAdd(visited, candidate);
     // Proxy reflection can run application traps; ordinary own descriptors
     // expose data links without evaluating application-owned accessors.
-    if (isProxy(candidate)) return false;
-    candidate = ownPropertyDescriptor(candidate, "listener")?.value;
+    if (isProxy(candidate)) return "unknown";
+    const descriptor = listenerDataDescriptor(candidate);
+    if (descriptor === null) return "unknown";
+    candidate = descriptor?.value;
   }
-  return false;
+  return typeof candidate === "function" ? "unknown" : "unowned";
 };
 
 const patchIpcMain = (ipcMain) => {
@@ -475,8 +481,14 @@ const patchIpcMain = (ipcMain) => {
     };
   if (typeof on !== "function") return;
   ipcMain.on = function patchedIpcMainOn(channel, listener) {
-    if (typeof listener !== "function" || reachesHookListenerWrapper(listener))
-      return on.call(this, channel, listener);
+    if (typeof listener !== "function") return on.call(this, channel, listener);
+    const wrapperStatus = classifyHookListenerWrapper(listener);
+    if (wrapperStatus !== "unowned") {
+      const result = on.call(this, channel, listener);
+      if (wrapperStatus === "unknown")
+        recordIpcObservationGap(channel, "listener-chain");
+      return result;
+    }
     const wrapped = function wrappedEventListener() {
       return invokeObservedEventListener(this, channel, listener, arguments);
     };
@@ -491,13 +503,13 @@ const patchIpcMain = (ipcMain) => {
         try {
           applicationApply = listener.apply;
         } catch (cause) {
-          recordIpcObservationGap(channel, true);
+          recordIpcObservationGap(channel, "custom-apply", true);
           throw cause;
         }
         if (applicationApply !== applyArguments) {
           // Custom apply owns the original list's interpretation. Forward it
           // unchanged rather than executing getters to invent callback facts.
-          const gap = recordIpcObservationGap(channel);
+          const gap = recordIpcObservationGap(channel, "custom-apply");
           try {
             return applyFunction(
               applicationApply,
@@ -586,8 +598,7 @@ const patchIpcMain = (ipcMain) => {
               if (
                 removalTarget !== undefined &&
                 removalTarget !== entry &&
-                ownPropertyDescriptor(entry, "listener")?.value ===
-                  removalTarget
+                listenerDataDescriptor(entry)?.value === removalTarget
               )
                 methodArgs[1] = removalTarget;
             }

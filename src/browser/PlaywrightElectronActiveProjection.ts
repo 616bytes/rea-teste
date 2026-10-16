@@ -186,7 +186,7 @@ export const projectElectronActiveCapture = (
       "IPC payloads are represented by value shapes; payload values are never retained.",
       ...(observations.observedEventFamilies.includes("ipc-observation-gap")
         ? [
-            "IPC dispatches with custom apply metadata have unobserved callback arguments and execution. Available ipc-observation-gap timeline records retain the registered channel; dropped gap records are counted by retention.",
+            "IPC observation gaps have unobserved callback arguments and execution. Available ipc-observation-gap timeline records identify the custom-apply or listener-chain boundary and registered channel; dropped gap records are counted by retention. Listener-chain gaps describe registration uncertainty, not proof of IPC delivery.",
           ]
         : []),
       "IPC direction and sender/receiver identifiers are observed only where Electron exposes them at the hooked boundary.",

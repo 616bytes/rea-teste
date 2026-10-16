@@ -1330,6 +1330,70 @@ console.log(JSON.stringify({ plain, hooked,
   },
 );
 
+it.each([
+  { mode: "data", depth: 16, once: true, gaps: 0, remaining: 1 },
+  { mode: "data", depth: 17, once: true, gaps: 1, remaining: 1 },
+  { mode: "accessor", depth: 1, once: true, gaps: 1, remaining: 0 },
+  { mode: "proxy", depth: 1, once: true, gaps: 1, remaining: 0 },
+  { mode: "data", depth: 17, once: false, gaps: 1, remaining: 1 },
+])(
+  "preserves native dispatch for $mode listener chains (depth $depth, once $once)",
+  async ({ mode, depth, once, gaps, remaining }) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-hook-chain-coverage-",
+    );
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const script = join(root, "ipc-chain-coverage.cjs");
+    await writeFile(
+      script,
+      `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const mode = ${JSON.stringify(mode)}, once = ${JSON.stringify(once)};
+const scenario = (target) => {
+  let calls = 0, reads = 0;
+  for (let index = 0; index < ${depth}; index++) {
+    const previous = target.on;
+    target.on = function(channel, listener) {
+      let outer = function(...args) { return Reflect.apply(listener, this, args); };
+      if (mode === "accessor") Object.defineProperty(outer, "listener", { get() { reads++; return listener; } });
+      else outer.listener = listener;
+      if (mode === "proxy") outer = new Proxy(outer, {
+        getOwnPropertyDescriptor() { throw new Error("application metadata reflection"); }
+      });
+      return Reflect.apply(previous, this, [channel, outer]);
+    };
+  }
+  target[once ? "once" : "on"]("ch", () => calls++);
+  target.emit("ch", null, 42); target.emit("ch", null, 43);
+  return { calls, reads, remaining: target.listenerCount("ch") };
+};
+const plain = scenario(new EventEmitter()), hooked = scenario(ipcMain);
+const snapshot = globalThis.__reaElectronActiveSnapshot();
+console.log(JSON.stringify({ plain, hooked,
+  invocations: snapshot.events.filter(e => e.kind === "main-event-invocation").length,
+  gaps: snapshot.events.filter(e => e.kind === "ipc-observation-gap").map(e => ({event: e.event, channel: e.channel})) }));
+`,
+    );
+    const execution = await runNode(script, root);
+    expect(execution.code, execution.stderr).toBe(0);
+    const result = JSON.parse(execution.stdout);
+    expect(result.plain).toEqual({
+      calls: once ? 1 : 2,
+      reads: mode === "accessor" ? 1 : 0,
+      remaining,
+    });
+    expect(result.hooked).toEqual(result.plain);
+    expect(result.invocations).toBe(once ? 1 : 0);
+    expect(result.gaps).toEqual(
+      Array.from({ length: gaps }, () => ({
+        event: "listener-chain",
+        channel: "ch",
+      })),
+    );
+  },
+);
+
 it.each(["array", "map"])(
   "snapshots retained state without application %s iterators",
   async (kind) => {

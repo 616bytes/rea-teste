@@ -2,9 +2,22 @@ import { canonicalJson } from "./comparisonSemantics.js";
 import {
   compareKindRows,
   matchEndpointLists,
-  type KindReference,
+  normalizedEndpoint,
 } from "./functionComparisonReferenceMatching.js";
 import { diffLines } from "diff";
+
+/** A caller-visible kind row: edge semantics with each endpoint's identity. */
+const normalizedKindRow = (row: unknown): unknown => {
+  const { source, target, ...rest } = row as {
+    source: Parameters<typeof normalizedEndpoint>[0];
+    target: Parameters<typeof normalizedEndpoint>[0];
+  };
+  return {
+    ...rest,
+    source: normalizedEndpoint(source),
+    target: normalizedEndpoint(target),
+  };
+};
 
 import type { FunctionSnapshot } from "./functionDossierEvidence.js";
 import {
@@ -331,12 +344,14 @@ const compareReferences = (
       ],
     });
   // The rows already agreed through compareKindRows, so the caller-visible
-  // values carry the edge semantics without re-deciding endpoint identity.
+  // values keep the edge semantics with each endpoint's comparison identity —
+  // resolved endpoints stay attributable and supplementary names are dropped,
+  // so the digests cannot collide across unrelated reference sets.
   if (leftKinds !== null && rightKinds !== null)
     return compareValues(
       "references",
-      leftKinds.map((row) => (row as KindReference).kind),
-      rightKinds.map((row) => (row as KindReference).kind),
+      leftKinds.map(normalizedKindRow),
+      rightKinds.map(normalizedKindRow),
       context,
     );
   return unresolvedDimension({

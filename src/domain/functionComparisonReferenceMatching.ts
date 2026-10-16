@@ -32,49 +32,133 @@ export const compareEndpoint = (
   return left.name === right.name ? "equal" : "changed";
 };
 
+/** The identity a comparison may rely on, without supplementary detail. */
+export type NormalizedEndpoint =
+  | { readonly address: string }
+  | { readonly name: string }
+  | null;
+
+export const normalizedEndpoint = (
+  endpoint: ReferenceEndpoint,
+): NormalizedEndpoint => {
+  if (endpoint === null) return null;
+  return "address" in endpoint
+    ? { address: endpoint.address }
+    : { name: endpoint.name };
+};
+
 export type ProjectedReference = {
   readonly direction: string;
   readonly source: ReferenceEndpoint;
   readonly target: ReferenceEndpoint;
 };
 
+type PairKind = "resolved" | "wild" | "incompatible";
+
 /**
- * Match projected edges across the two records by endpoint identity rather
- * than by canonical sort position: sort order is not identity, and an
- * unresolved endpoint can sit anywhere once sorted. Equal pairs match first;
- * leftover edges pair against each other, where a known mismatch is a
- * difference and an unresolved counterpart is a knowledge asymmetry.
+ * Classify one endpoint pair: both records resolve it to the same target
+ * (`resolved`), at least one side leaves it unresolved so the pair imposes no
+ * identity constraint (`wild`), or both resolve it to different targets.
+ */
+const endpointPairKind = (
+  left: ReferenceEndpoint,
+  right: ReferenceEndpoint,
+): PairKind => {
+  const outcome = compareEndpoint(left, right);
+  if (outcome === "changed") return "incompatible";
+  return outcome === "equal" ? "resolved" : "wild";
+};
+
+/** Worst pair kind across both endpoints: any conflict rejects the pairing. */
+const edgePairKind = (
+  left: ProjectedReference,
+  right: ProjectedReference,
+): PairKind => {
+  const source = endpointPairKind(left.source, right.source);
+  if (source === "incompatible") return "incompatible";
+  const target = endpointPairKind(left.target, right.target);
+  if (target === "incompatible") return "incompatible";
+  return source === "wild" || target === "wild" ? "wild" : "resolved";
+};
+
+type MatchedPair<T> = {
+  readonly left: T;
+  readonly right: T;
+  readonly wild: boolean;
+};
+
+/**
+ * Find a perfect matching between two equal-length edge lists, where a pair is
+ * admissible unless both records resolve an endpoint to different targets
+ * (plus whatever extra constraint `pairKind` rejects). The records can
+ * describe the same edges exactly when such a matching exists; greedily
+ * pairing resolved endpoints first would report differences that an
+ * alternative pairing through unresolved endpoints rules out. Returns null
+ * when none exists, and otherwise the pairs with their wildcard status.
+ */
+const perfectMatch = <T>(
+  left: readonly T[],
+  right: readonly T[],
+  pairKind: (l: T, r: T) => PairKind,
+): readonly MatchedPair<T>[] | null => {
+  if (left.length !== right.length) return null;
+  // Identical projections are the common unchanged case; pair positionally
+  // without any search and keep it linear.
+  const identical =
+    canonicalJson(left, "Function matching") ===
+    canonicalJson(right, "Function matching");
+  const adjacency: number[][] = identical
+    ? left.map((_, index) => [index])
+    : left.map((leftEdge) => {
+        const row: number[] = [];
+        right.forEach((rightEdge, index) => {
+          if (pairKind(leftEdge, rightEdge) !== "incompatible") row.push(index);
+        });
+        return row;
+      });
+  const match: number[] = new Array<number>(right.length).fill(-1);
+  const augment = (i: number, seen: boolean[]): boolean => {
+    for (const j of adjacency[i] ?? []) {
+      if (seen[j]) continue;
+      seen[j] = true;
+      if (match[j] === -1 || augment(match[j]!, seen)) {
+        match[j] = i;
+        return true;
+      }
+    }
+    return false;
+  };
+  for (let i = 0; i < left.length; i += 1)
+    if (!augment(i, new Array<boolean>(right.length).fill(false))) return null;
+  const matchOfLeft: number[] = new Array<number>(left.length).fill(-1);
+  match.forEach((i, j) => {
+    if (i !== -1) matchOfLeft[i] = j;
+  });
+  return left.map((leftEdge, i) => {
+    const rightEdge = right[matchOfLeft[i]!]!;
+    return {
+      left: leftEdge,
+      right: rightEdge,
+      // Identical rows can still pair through unresolved endpoints.
+      wild: pairKind(leftEdge, rightEdge) === "wild",
+    };
+  });
+};
+
+/**
+ * Match projected edges by endpoint identity rather than by canonical sort
+ * position. Equal-length lists whose edges admit an identity-consistent
+ * pairing compare equal (or as a knowledge asymmetry when the pairing needed
+ * an unresolved endpoint); otherwise a known endpoint really differs.
  */
 export const matchEndpointLists = (
   left: readonly ProjectedReference[],
   right: readonly ProjectedReference[],
 ): "equal" | "changed" | "asymmetric" => {
   if (left.length !== right.length) return "changed";
-  const unmatchedRight = [...right];
-  const unmatchedLeft: ProjectedReference[] = [];
-  for (const leftEdge of left) {
-    const matchAt = unmatchedRight.findIndex(
-      (rightEdge) =>
-        rightEdge.direction === leftEdge.direction &&
-        compareEndpoint(leftEdge.source, rightEdge.source) === "equal" &&
-        compareEndpoint(leftEdge.target, rightEdge.target) === "equal",
-    );
-    if (matchAt === -1) unmatchedLeft.push(leftEdge);
-    else unmatchedRight.splice(matchAt, 1);
-  }
-  let asymmetric = false;
-  for (let index = 0; index < unmatchedLeft.length; index += 1) {
-    const leftEdge = unmatchedLeft[index];
-    const rightEdge = unmatchedRight[index];
-    if (leftEdge === undefined || rightEdge === undefined) return "changed";
-    if (leftEdge.direction !== rightEdge.direction) return "changed";
-    for (const side of ["source", "target"] as const) {
-      const outcome = compareEndpoint(leftEdge[side], rightEdge[side]);
-      if (outcome === "changed") return "changed";
-      if (outcome === "asymmetric") asymmetric = true;
-    }
-  }
-  return asymmetric ? "asymmetric" : "equal";
+  const pairs = perfectMatch(left, right, edgePairKind);
+  if (pairs === null) return "changed";
+  return pairs.some(({ wild }) => wild) ? "asymmetric" : "equal";
 };
 
 export type KindReference = {
@@ -87,12 +171,24 @@ export type KindReference = {
 const kindJson = (row: KindReference): string =>
   canonicalJson(row.kind, "Function comparison");
 
+const kindRowPairKind = (
+  left: KindReference,
+  right: KindReference,
+): PairKind => {
+  const endpoints = edgePairKind(left, right);
+  if (endpoints === "incompatible") return "incompatible";
+  // The edge semantics must agree for the pairing: two edges that swapped
+  // kinds between the same endpoints cannot be explained by re-pairing.
+  if (kindJson(left) !== kindJson(right)) return "incompatible";
+  return endpoints;
+};
+
 /**
- * Compare edge-semantics rows that each carry their endpoints. A known kind
- * difference is a change whatever the endpoint identity, so the plain kind
- * multiset decides first; when it agrees, kinds are matched to their endpoints
- * so two edges cannot swap semantics undetected, while an unresolved endpoint
- * stays a knowledge asymmetry rather than kind evidence.
+ * Compare edge-semantics rows that each carry their endpoints. The rows
+ * describe the same edges when a pairing exists that respects both endpoint
+ * identity and edge semantics; a known kind difference is a change whatever
+ * the endpoint identity, and an unresolved endpoint stays a knowledge
+ * asymmetry rather than kind evidence.
  */
 export const compareKindRows = (
   left: readonly unknown[],
@@ -100,39 +196,7 @@ export const compareKindRows = (
 ): "equal" | "changed" | "asymmetric" => {
   const leftRows = left as readonly KindReference[];
   const rightRows = right as readonly KindReference[];
-  if (
-    canonicalJson(
-      leftRows.map(({ kind }) => kind),
-      "Function comparison",
-    ) !==
-    canonicalJson(
-      rightRows.map(({ kind }) => kind),
-      "Function comparison",
-    )
-  )
-    return "changed";
-  const unmatchedRight = [...rightRows];
-  const unmatchedLeft: KindReference[] = [];
-  for (const leftRow of leftRows) {
-    const matchAt = unmatchedRight.findIndex(
-      (rightRow) =>
-        rightRow.direction === leftRow.direction &&
-        compareEndpoint(leftRow.source, rightRow.source) === "equal" &&
-        compareEndpoint(leftRow.target, rightRow.target) === "equal",
-    );
-    if (matchAt === -1) unmatchedLeft.push(leftRow);
-    else if (kindJson(leftRow) !== kindJson(unmatchedRight[matchAt]!))
-      return "changed";
-    else unmatchedRight.splice(matchAt, 1);
-  }
-  let asymmetric = false;
-  for (let index = 0; index < unmatchedLeft.length; index += 1) {
-    const leftRow = unmatchedLeft[index];
-    const rightRow = unmatchedRight[index];
-    if (leftRow === undefined || rightRow === undefined) return "changed";
-    if (leftRow.direction !== rightRow.direction) return "changed";
-    if (kindJson(leftRow) !== kindJson(rightRow)) return "changed";
-    asymmetric = true;
-  }
-  return asymmetric ? "asymmetric" : "equal";
+  const pairs = perfectMatch(leftRows, rightRows, kindRowPairKind);
+  if (pairs === null) return "changed";
+  return pairs.some(({ wild }) => wild) ? "asymmetric" : "equal";
 };

@@ -1467,4 +1467,106 @@ describe("function comparison multi-edge references", () => {
       ).dimensions.find(({ dimension }) => dimension === "references"),
     ).toMatchObject({ status: "unchanged" });
   });
+
+});
+
+describe("function comparison unresolved pairing", () => {
+  it("keeps unresolved counterparts from deciding kind evidence", () => {
+    const namedAndUnresolved = (
+      named: "call" | "data",
+      unresolved: "call" | "data",
+    ) =>
+      functionDossierSchema.parse({
+        ...dossier("mix();", "0x1000"),
+        outgoing_references: [
+          {
+            ...dossierWithReference("0x1000", named).outgoing_references[0],
+            target_address: "0x1010",
+            target_procedure: procedure("0x1010", "alpha"),
+          },
+          {
+            ...dossierWithReference("0x1000", unresolved)
+              .outgoing_references[0],
+            target_address: "0x1020",
+            target_procedure: null,
+          },
+        ],
+      });
+    // The kinds could belong to either record's edges through the unresolved
+    // counterpart, so these facts establish only a knowledge asymmetry.
+    expect(
+      compareFunctions(
+        observe("a", namedAndUnresolved("call", "data")),
+        observe("b", namedAndUnresolved("data", "call")),
+      ).dimensions.find(({ dimension }) => dimension === "references"),
+    ).toMatchObject({ status: "unknown" });
+  });
+
+  it("matches leftover edges through unresolved targets on both sides", () => {
+    const oneResolved = (name: string | null) =>
+      functionDossierSchema.parse({
+        ...dossier("mix();", "0x1000"),
+        outgoing_references: [
+          {
+            ...dossierWithReference("0x1000", "call").outgoing_references[0],
+            target_address: "0x1010",
+            target_procedure: name === null ? null : procedure("0x1010", name),
+          },
+          {
+            ...dossierWithReference("0x1000", "call").outgoing_references[0],
+            target_address: "0x1020",
+            target_procedure: null,
+          },
+        ],
+      });
+    // Each record leaves one target unresolved, so the resolved targets could
+    // pair through them either way; no known target differs.
+    expect(
+      compareFunctions(
+        observe("a", oneResolved("alpha")),
+        observe("b", oneResolved("beta")),
+      ).dimensions.find(({ dimension }) => dimension === "references"),
+    ).toMatchObject({ status: "unknown" });
+  });
+
+  it("keeps endpoint identity in the unchanged evidence digest", () => {
+    const twoEdges = (first: "call" | "data", second: "call" | "data") => {
+      const edgeWith = (
+        kind: "call" | "data",
+        target: string,
+        name: string,
+      ) => {
+        const edge = dossierWithReference("0x1000", kind)
+          .outgoing_references[0];
+        return {
+          ...edge,
+          target_address: target,
+          target_procedure: procedure(target, name),
+        };
+      };
+      return functionDossierSchema.parse({
+        ...dossier("mix();", "0x1000"),
+        outgoing_references: [
+          edgeWith(first, "0x1010", "alpha"),
+          edgeWith(second, "0x1020", "beta"),
+        ],
+      });
+    };
+    const leftDigestFor = (first: "call" | "data", second: "call" | "data") => {
+      const dimension = compareFunctions(
+        observe("a", twoEdges(first, second)),
+        observe("b", twoEdges(first, second)),
+      ).dimensions.find(({ dimension: name }) => name === "references");
+      expect(dimension).toMatchObject({ status: "unchanged" });
+      return JSON.stringify(dimension).match(
+        /"left_digest":"([0-9a-f]+)"/,
+      )?.[1];
+    };
+    // The same kind multiset on different endpoints must not share the
+    // digest: the endpoints stay part of the hashed evidence.
+    expect(leftDigestFor("call", "data")).toBeDefined();
+    expect(leftDigestFor("call", "data")).not.toBe(
+      leftDigestFor("data", "call"),
+    );
+  });
 });

@@ -20,7 +20,7 @@ rea inspect-dex-debug-metadata /path/classes.dex
 # Select one dex member inside the archive:
 rea inspect-dex-debug-metadata /path/app.apk --entry classes2.dex
 # Drill into one class for full per-method detail:
-rea inspect-dex-debug-metadata /path/classes.dex --class-descriptor Lcom/example/Service;
+rea inspect-dex-debug-metadata /path/classes.dex --class-descriptor 'Lcom/example/Service;'
 ```
 
 ## Two output modes
@@ -50,6 +50,9 @@ carry, not a guarantee:
   when line tables are kept).
 - `present` — line positions plus declared locals or parameter names.
 - `partial` — local evidence without any line positions.
+- `unknown` — no local evidence was found, but some class data, code items or
+  debug streams could not be read (counted in `unreadable`), so absence is not
+  established. A damaged file never reads as `stripped`.
 
 `local_declarations` counts every local `dexdump` lists, including the implicit
 `this` and parameter locals that are synthesised from a method's register

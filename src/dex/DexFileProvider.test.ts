@@ -187,6 +187,21 @@ describe("DexFileProvider loose .dex", () => {
 });
 
 describe("DexFileProvider APK selection", () => {
+  it("refuses an encrypted root member instead of silently skipping it", async () => {
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("classes.dex", new Uint8ArrayReader(minimalDex()), {
+      password: "secret",
+    });
+    await writer.add("classes2.dex", new Uint8ArrayReader(minimalDex()));
+    const result = await provider.inspect({
+      path: await write("encrypted.apk", await writer.close()),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+    expect(result.error.message).toContain("classes.dex");
+  });
+
   it("summarizes every root classes*.dex when no entry is given", async () => {
     const apk = await write(
       "app.apk",

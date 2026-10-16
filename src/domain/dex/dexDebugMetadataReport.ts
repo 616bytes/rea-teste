@@ -42,7 +42,11 @@ export type InspectDexDebugMetadataInput = z.infer<
   typeof inspectDexDebugMetadataInputSchema
 >;
 
-const readiness = z.enum(["present", "partial", "stripped"]);
+/**
+ * `unknown`: no local evidence was found, but damaged structures (see
+ * `unreadable`) could have hidden it, so "stripped" is not established.
+ */
+const readiness = z.enum(["present", "partial", "stripped", "unknown"]);
 
 const summarySchema = z.strictObject({
   dex_version: z.string(),
@@ -60,6 +64,15 @@ const summarySchema = z.strictObject({
   distinct_source_files: z.strictObject({
     count: z.number().int().nonnegative(),
     sample: z.array(z.string()),
+  }),
+  /**
+   * Structures that could not be read; their debug metadata is unknown, not
+   * absent. Non-zero values make `readiness` unknown unless evidence was found.
+   */
+  unreadable: z.strictObject({
+    class_data: z.number().int().nonnegative(),
+    code_items: z.number().int().nonnegative(),
+    debug_info: z.number().int().nonnegative(),
   }),
   readiness,
 });
@@ -147,6 +160,11 @@ const projectSummary = (
   distinct_source_files: {
     count: summary.distinctSourceFiles.count,
     sample: [...summary.distinctSourceFiles.sample],
+  },
+  unreadable: {
+    class_data: summary.unreadable.classData,
+    code_items: summary.unreadable.codeItems,
+    debug_info: summary.unreadable.debugInfo,
   },
   readiness: summary.readiness,
 });

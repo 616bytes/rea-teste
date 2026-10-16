@@ -66,7 +66,7 @@ export interface DexClassDetail {
   readonly methods: readonly DexMethodDetail[];
 }
 
-export type DexReadiness = "present" | "partial" | "stripped";
+export type DexReadiness = "present" | "partial" | "stripped" | "unknown";
 
 export interface DexSummary {
   readonly dexVersion: string;
@@ -85,6 +85,12 @@ export interface DexSummary {
     readonly count: number;
     readonly sample: readonly string[];
   };
+  /** Structures that could not be read (their debug metadata is unknown). */
+  readonly unreadable: {
+    readonly classData: number;
+    readonly codeItems: number;
+    readonly debugInfo: number;
+  };
   readonly readiness: DexReadiness;
 }
 
@@ -94,6 +100,7 @@ const SOURCE_FILE_SAMPLE_CAP = 16;
 export type DexWorkError =
   | { readonly kind: "work-budget-exceeded"; readonly limit: number }
   | { readonly kind: "cancelled" }
+  | { readonly kind: "malformed-class-data"; readonly classDataOff: number }
   | {
       readonly kind: "output-budget-exceeded";
       readonly projectedBytes: number;
@@ -135,10 +142,12 @@ interface MethodCode {
 const methodCode = (
   bytes: Uint8Array,
   method: DexEncodedMethod,
-): MethodCode | null => {
+): MethodCode | null | "unreadable" => {
   if (method.codeOff === 0) return null;
   const code = parseCodeItem(bytes, method.codeOff);
-  if (!code.ok || code.value.debugInfoOff === 0) return null;
+  // An unreadable code_item leaves debug metadata unknown, never absent.
+  if (!code.ok) return "unreadable";
+  if (code.value.debugInfoOff === 0) return null;
   return {
     debugInfoOff: code.value.debugInfoOff,
     insnsSize: code.value.insnsSize,
@@ -156,26 +165,28 @@ const methodCode = (
 const decodeMethodDebug = (
   bytes: Uint8Array,
   method: DexEncodedMethod,
-  code: MethodCode | null,
+  code: MethodCode | null | "unreadable",
   classTypeIdx: number,
   resolver: DexStringResolver,
   options: DexDecodeOptions,
 ): DexMethodDebug =>
   code === null
     ? absentMethodDebug()
-    : decodeDebugInfo(
-        bytes,
-        code.debugInfoOff,
-        code.insnsSize,
-        {
-          firstRegister: code.firstRegister,
-          registersSize: code.registersSize,
-          accessFlags: method.accessFlags,
-          thisTypeIdx: classTypeIdx,
-          paramTypes: resolver.methodParameters(method.methodIdx) ?? [],
-        },
-        options,
-      );
+    : code === "unreadable"
+      ? { ...absentMethodDebug(), present: true, malformed: true }
+      : decodeDebugInfo(
+          bytes,
+          code.debugInfoOff,
+          code.insnsSize,
+          {
+            firstRegister: code.firstRegister,
+            registersSize: code.registersSize,
+            accessFlags: method.accessFlags,
+            thisTypeIdx: classTypeIdx,
+            paramTypes: resolver.methodParameters(method.methodIdx) ?? [],
+          },
+          options,
+        );
 
 /** Methods between cancellation/budget polls inside one class. */
 const METHOD_POLL_INTERVAL = 4096;
@@ -193,11 +204,18 @@ const forEachMethod = (
   classDef: DexClassDef,
   work: DexWork,
   visit: (method: DexEncodedMethod) => boolean,
-): void => {
-  if (classDef.classDataOff === 0) return;
+): "visited" | "no-class-data" | "unreadable" => {
+  if (classDef.classDataOff === 0) return "no-class-data";
   const charge = (): boolean => chargeWork(work.budget);
-  if (!walkClassData(bytes, classDef.classDataOff, charge).ok) return;
+  const valid = walkClassData(bytes, classDef.classDataOff, charge);
+  if (!valid.ok) {
+    // A spent budget is reported by the caller's budget check, not as damage.
+    const spent =
+      valid.error.kind === "budget-exceeded" && valid.error.resource === "work";
+    return spent ? "visited" : "unreadable";
+  }
   walkClassData(bytes, classDef.classDataOff, charge, visit);
+  return "visited";
 };
 
 const outOfWork = (work: DexWork): DexWorkError | null =>
@@ -243,7 +261,9 @@ export const assembleClassDetail = (
   work: DexWork,
   outputLimit: number,
 ): Result<DexClassDetail | null, DexWorkError> => {
-  const resolver = new DexStringResolver(bytes, dex.header);
+  const resolver = new DexStringResolver(bytes, dex.header, (units) => {
+    work.budget.remaining -= units;
+  });
   const classDef = findClassDef(dex, bytes, resolver, classDescriptor);
   if (classDef === undefined) return ok(null);
   let projected =
@@ -252,7 +272,7 @@ export const assembleClassDetail = (
     resolver.jsonBound(classDef.sourceFileIdx);
   let failure: DexWorkError | null = null;
   const methods: DexMethodDetail[] = [];
-  forEachMethod(bytes, classDef, work, (method) => {
+  const walked = forEachMethod(bytes, classDef, work, (method) => {
     const stop = outOfWork(work);
     if (stop !== null) {
       failure = stop;
@@ -280,12 +300,18 @@ export const assembleClassDetail = (
       failure = after;
       return false;
     }
+    // Bound the name and descriptor from type ids before building them.
+    projected += METHOD_OVERHEAD + resolver.methodJsonBound(method.methodIdx);
+    if (projected > outputLimit) {
+      failure = {
+        kind: "output-budget-exceeded",
+        projectedBytes: projected,
+        limit: outputLimit,
+      };
+      return false;
+    }
     const name = resolver.methodName(method.methodIdx);
     const descriptor = resolver.methodDescriptor(method.methodIdx);
-    projected +=
-      METHOD_OVERHEAD +
-      Buffer.byteLength(JSON.stringify(name)) +
-      Buffer.byteLength(JSON.stringify(descriptor));
     // Each name plus its array separator.
     for (const idx of debug.parameterNames)
       projected += resolver.jsonBound(idx) + 1;
@@ -332,6 +358,12 @@ export const assembleClassDetail = (
     });
     return true;
   });
+  // The class exists but its member list is unreadable: unknown, not empty.
+  if (walked === "unreadable" && failure === null)
+    failure = {
+      kind: "malformed-class-data",
+      classDataOff: classDef.classDataOff,
+    };
   if (failure !== null) return err(failure);
   const spent = outOfWork(work);
   if (spent !== null) return err(spent);
@@ -351,10 +383,12 @@ const classifyReadiness = (
   explicitLocalDeclarations: number,
   methodsWithParameterNames: number,
   linePositions: number,
+  unreadable: number,
 ): DexReadiness => {
   const hasLocals =
     explicitLocalDeclarations > 0 || methodsWithParameterNames > 0;
-  if (!hasLocals) return "stripped";
+  // No evidence found is only "stripped" when nothing was unreadable.
+  if (!hasLocals) return unreadable > 0 ? "unknown" : "stripped";
   return linePositions > 0 ? "present" : "partial";
 };
 
@@ -366,6 +400,7 @@ interface MethodTally {
   readonly explicitLocals: number;
   readonly setFileEvents: number;
   readonly hasParameterNames: boolean;
+  readonly malformed: boolean;
 }
 
 /**
@@ -379,7 +414,9 @@ export const summarizeDex = (
   bytes: Uint8Array,
   work: DexWork,
 ): Result<DexSummary, DexWorkError> => {
-  const resolver = new DexStringResolver(bytes, dex.header);
+  const resolver = new DexStringResolver(bytes, dex.header, (units) => {
+    work.budget.remaining -= units;
+  });
   const tallies = new Map<string, MethodTally>();
   let methodsWithCode = 0;
   let methodsWithDebugInfo = 0;
@@ -403,6 +440,9 @@ export const summarizeDex = (
 
   let failure: DexWorkError | null = null;
   let visited = 0;
+  let unreadableClassData = 0;
+  let unreadableCodeItems = 0;
+  let malformedDebugInfo = 0;
   for (let c = 0; c < dex.header.classDefsSize; c += 1) {
     const stop = outOfWork(work);
     if (stop !== null) return err(stop);
@@ -424,7 +464,7 @@ export const summarizeDex = (
       }
       if ((validSource[at]! & bit) !== 0) sourceFilePresent += 1;
     }
-    forEachMethod(bytes, classDef, work, (method) => {
+    const walked = forEachMethod(bytes, classDef, work, (method) => {
       visited += 1;
       if (visited % METHOD_POLL_INTERVAL === 0) {
         failure = outOfWork(work);
@@ -434,6 +474,10 @@ export const summarizeDex = (
       methodsWithCode += 1;
       const code = methodCode(bytes, method);
       if (code === null) return true;
+      if (code === "unreadable") {
+        unreadableCodeItems += 1;
+        return true;
+      }
       // O(1) key: the implicit parameter layout is fixed by the proto, so its
       // index stands in for the (up to 255) parameter types.
       const isStatic = (method.accessFlags & 0x8) !== 0;
@@ -462,11 +506,13 @@ export const summarizeDex = (
           explicitLocals: debug.explicitLocalCount,
           setFileEvents: debug.setFileEvents,
           hasParameterNames: debug.parameterNames.some((idx) => idx >= 0),
+          malformed: debug.malformed,
         };
         // The memo is an optimisation, not a working set: past its cap a
         // repeat is decoded again (still charged), never retained.
         if (tallies.size < MEMO_LIMIT) tallies.set(key, tally);
       }
+      if (tally.malformed) malformedDebugInfo += 1;
       if (!tally.present) return true;
       methodsWithDebugInfo += 1;
       linePositions += tally.positions;
@@ -476,6 +522,7 @@ export const summarizeDex = (
       if (tally.hasParameterNames) methodsWithParameterNames += 1;
       return true;
     });
+    if (walked === "unreadable") unreadableClassData += 1;
     if (failure !== null) return err(failure);
   }
   const spent = outOfWork(work);
@@ -496,10 +543,16 @@ export const summarizeDex = (
       count: distinctSources,
       sample: sourceSample,
     },
+    unreadable: {
+      classData: unreadableClassData,
+      codeItems: unreadableCodeItems,
+      debugInfo: malformedDebugInfo,
+    },
     readiness: classifyReadiness(
       explicitLocalDeclarations,
       methodsWithParameterNames,
       linePositions,
+      unreadableClassData + unreadableCodeItems + malformedDebugInfo,
     ),
   });
 };

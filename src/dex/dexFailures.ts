@@ -165,6 +165,14 @@ export const mapDexWorkError = (error: DexWorkError): AnalysisError => {
         `Decoding a DEX member's debug metadata needs more than ${String(error.limit)} work units (proportional to its size); a well-formed DEX never does, so it was refused rather than run unbounded.`,
         { max_work_units: error.limit },
       );
+    case "malformed-class-data":
+      return new AnalysisInputError(OPERATION, undefined, [
+        {
+          path: ["class_descriptor"],
+          reason: "invalid_value",
+          message: `The selected class's class_data at byte ${String(error.classDataOff)} cannot be read; its methods' debug metadata is unknown.`,
+        },
+      ]);
     case "output-budget-exceeded":
       return new AnalysisResourceConstraintError(
         OPERATION,

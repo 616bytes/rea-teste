@@ -236,3 +236,20 @@ describe("dexDebugMetadata work and output bounds", () => {
     expect(result.error.kind).toBe("output-budget-exceeded");
   });
 });
+
+describe("dexDebugMetadata unreadable structures", () => {
+  it("reports unreadable class_data and reads readiness as unknown, not stripped", () => {
+    const bytes = buildDex();
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const classDefsOff = view.getUint32(100, true);
+    view.setUint32(classDefsOff + 24, bytes.length + 100, true); // class_data_off past the file
+    const parsed = parseDexFile(bytes);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const result = summarizeDex(parsed.value, bytes, work());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.unreadable.classData).toBe(1);
+    expect(result.value.readiness).toBe("unknown");
+  });
+});

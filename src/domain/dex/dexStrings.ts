@@ -11,24 +11,43 @@ import { DEX_MAX_PARAMETERS } from "./dexDebugInfo.js";
 import { DEX_NO_INDEX, DexCursor, type DexHeader } from "./dexFile.js";
 
 /**
- * The resolver is the owner of string identity for one DEX file, so it decodes
- * each string id at most once: thousands of locals sharing one long name must
- * cost one decode, not one per reference.
- */
-/**
  * Entries kept per memo. Memoisation is an optimisation, not a working set:
  * past the cap a value is recomputed, never retained, so a DEX with millions of
  * distinct strings or protos cannot grow these maps without bound.
  */
 const MEMO_LIMIT = 65_536;
 
+/** Decoded UTF-16 code units retained across the string memo. */
+const RETAINED_CHARS_LIMIT = 4 * 1024 * 1024;
+
+/**
+ * Charges `units` of work (bytes scanned or decoded) to the caller's budget.
+ * The resolver never refuses on its own; the caller checks its budget and
+ * refuses the whole call once it is spent.
+ */
+export type DexStringCharge = (units: number) => void;
+
+interface RawString {
+  readonly dataOffset: number;
+  readonly bytes: Uint8Array;
+  readonly utf16Size: number;
+}
+
+/**
+ * The resolver is the owner of string identity for one DEX file. Strings are
+ * memoised by their `string_data` offset, so many ids aliasing one long string
+ * share a single decoded copy; retained decoded text is capped; and every scan
+ * and decode is charged to the caller's work budget.
+ */
 export class DexStringResolver {
   private readonly view: DataView;
   readonly #strings = new Map<number, string | null>();
   readonly #bounds = new Map<number, number>();
+  #retainedChars = 0;
   constructor(
     private readonly bytes: Uint8Array,
     private readonly header: DexHeader,
+    private readonly charge: DexStringCharge = () => undefined,
   ) {
     this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   }
@@ -39,11 +58,18 @@ export class DexStringResolver {
 
   /** Resolve a string-pool index to its text, or `null` when absent/malformed. */
   string(index: number): string | null {
-    const cached = this.#strings.get(index);
-    if (cached !== undefined || this.#strings.has(index)) return cached ?? null;
     const raw = this.#raw(index);
-    const decoded = raw === null ? null : this.#decode(raw);
-    this.#remember(this.#strings, index, decoded);
+    if (raw === null) return null;
+    const cached = this.#strings.get(raw.dataOffset);
+    if (cached !== undefined || this.#strings.has(raw.dataOffset))
+      return cached ?? null;
+    this.charge(raw.bytes.length);
+    const decoded = this.#decode(raw);
+    const size = decoded?.length ?? 0;
+    if (this.#retainedChars + size <= RETAINED_CHARS_LIMIT) {
+      this.#retainedChars += size;
+      this.#remember(this.#strings, raw.dataOffset, decoded);
+    }
     return decoded;
   }
 
@@ -52,11 +78,13 @@ export class DexStringResolver {
    * computed from the raw bytes without decoding and memoised per index.
    */
   jsonBound(index: number): number {
-    let bound = this.#bounds.get(index);
+    const raw = this.#raw(index);
+    if (raw === null) return 4;
+    let bound = this.#bounds.get(raw.dataOffset);
     if (bound === undefined) {
-      const raw = this.#raw(index);
-      bound = raw === null ? 4 : Math.max(4, modifiedUtf8JsonBound(raw.bytes));
-      this.#remember(this.#bounds, index, bound);
+      this.charge(raw.bytes.length);
+      bound = Math.max(4, modifiedUtf8JsonBound(raw.bytes));
+      this.#remember(this.#bounds, raw.dataOffset, bound);
     }
     return bound;
   }
@@ -79,9 +107,7 @@ export class DexStringResolver {
   }
 
   /** The string's modified-UTF8 bytes (a view) and declared UTF-16 size, memoised. */
-  #raw(
-    index: number,
-  ): { readonly bytes: Uint8Array; readonly utf16Size: number } | null {
+  #raw(index: number): RawString | null {
     const memo = this.#rawMemo.get(index);
     if (memo !== undefined || this.#rawMemo.has(index)) return memo ?? null;
     const raw = this.#locate(index);
@@ -89,14 +115,9 @@ export class DexStringResolver {
     return raw;
   }
 
-  readonly #rawMemo = new Map<
-    number,
-    { readonly bytes: Uint8Array; readonly utf16Size: number } | null
-  >();
+  readonly #rawMemo = new Map<number, RawString | null>();
 
-  #locate(
-    index: number,
-  ): { readonly bytes: Uint8Array; readonly utf16Size: number } | null {
+  #locate(index: number): RawString | null {
     if (
       index < 0 ||
       index === DEX_NO_INDEX ||
@@ -113,8 +134,10 @@ export class DexStringResolver {
     // Modified UTF-8 runs to a NUL terminator; find it within the buffer.
     let end = cursor.offset;
     while (end < this.bytes.length && this.bytes[end] !== 0x00) end += 1;
+    this.charge(end - cursor.offset);
     if (end >= this.bytes.length) return null; // unterminated
     return {
+      dataOffset,
       bytes: this.bytes.subarray(cursor.offset, end),
       utf16Size: utf16Size.value,
     };
@@ -164,6 +187,34 @@ export class DexStringResolver {
    * from its `proto_id_item` { shorty_idx u4, return_type_idx u4,
    * parameters_off u4 } and the `type_list` at `parameters_off`.
    */
+  /**
+   * Upper bound on the JSON bytes of `methodDescriptor(methodIndex)` (and of
+   * `methodName`), computed from the proto's type ids and memoised string
+   * bounds without building the descriptor, so a caller can refuse before a
+   * proto repeating one long type up to 255 times is joined.
+   */
+  methodJsonBound(methodIndex: number): number {
+    if (methodIndex < 0 || methodIndex >= this.header.methodIdsSize) return 8;
+    const nameIdx = this.#u4(this.header.methodIdsOff + methodIndex * 8 + 4);
+    const nameBound = nameIdx === null ? 4 : this.jsonBound(nameIdx);
+    const protoIndex = this.methodProtoIndex(methodIndex);
+    if (protoIndex === null) return nameBound + 4;
+    const protoBase = this.header.protoIdsOff + protoIndex * 12;
+    const returnTypeIdx = this.#u4(protoBase + 4);
+    const parametersOff = this.#u4(protoBase + 8);
+    if (returnTypeIdx === null || parametersOff === null) return nameBound + 4;
+    let total = nameBound + 4 + this.typeJsonBound(returnTypeIdx);
+    if (parametersOff === 0) return total;
+    const size = this.#u4(parametersOff);
+    if (size === null || size > DEX_MAX_PARAMETERS) return total;
+    for (let i = 0; i < size; i += 1) {
+      const at = parametersOff + 4 + i * 2;
+      if (at + 2 > this.bytes.length) break;
+      total += this.typeJsonBound(this.view.getUint16(at, true));
+    }
+    return total;
+  }
+
   methodDescriptor(methodIndex: number): string | null {
     if (methodIndex < 0 || methodIndex >= this.header.methodIdsSize)
       return null;

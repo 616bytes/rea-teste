@@ -100,13 +100,58 @@ const dexdumpFacts = async (dexPath) => {
   return {
     linePositions: (stdout.match(/[0-9a-f]+ line=/g) ?? []).length,
     localEntries: (stdout.match(/reg=[0-9]+/g) ?? []).length,
-    // Local names dexdump resolves, e.g. `reg=5 this LDebuggable;` -> "this".
-    localNames: new Set(
-      (stdout.match(/reg=\d+ (\S+) /g) ?? []).map((m) =>
-        m.replace(/reg=\d+ /, "").trim(),
-      ),
-    ),
   };
+};
+
+/**
+ * Per-method local tuples from dexdump: "Lpkg/Cls;->name(desc)" -> sorted
+ * "reg|name|type|start|end" strings. dexdump prints ART's exclusive end
+ * address, the same convention REA reports.
+ */
+const dexdumpMethodLocals = async (dexPath) => {
+  const { stdout } = await execute(dexdump, ["-d", dexPath], {
+    env: environment,
+    timeout: 120_000,
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  const byMethod = new Map();
+  let cls = null;
+  let name = null;
+  let type = null;
+  let inLocals = false;
+  for (const line of stdout.split("\n")) {
+    const c = /^  Class descriptor  : '(.*)'/.exec(line);
+    if (c) cls = c[1];
+    const n = /^      name          : '(.*)'/.exec(line);
+    if (n) {
+      name = n[1];
+      inLocals = false;
+    }
+    const t = /^      type          : '(.*)'/.exec(line);
+    if (t) type = t[1];
+    if (line.startsWith('      locals        :')) {
+      inLocals = true;
+      byMethod.set(`${cls}->${name}${type}`, []);
+      continue;
+    }
+    if (inLocals) {
+      const l =
+        /^        0x([0-9a-f]+) - 0x([0-9a-f]+) reg=(\d+) (\S+) (\S+)/.exec(
+          line,
+        );
+      if (!l) {
+        inLocals = false;
+        continue;
+      }
+      byMethod
+        .get(`${cls}->${name}${type}`)
+        .push(
+          `${l[3]}|${l[4]}|${l[5]}|${parseInt(l[1], 16)}|${parseInt(l[2], 16)}`,
+        );
+    }
+  }
+  for (const list of byMethod.values()) list.sort();
+  return byMethod;
 };
 
 const inspectCli = async (path, extra = {}) => {
@@ -315,20 +360,26 @@ class Debuggable {
   const compute = detail.class_detail.methods.find((m) => m.name === "compute");
   assert.ok(compute, "compute method should resolve by name");
   assert.equal(compute.descriptor, "(IJ)I", "descriptor should be JVM-form");
-  // The implicit `this` and both parameters must be present as locals — the
-  // exact regression a counts-only check misses. Cross-check against dexdump:
-  // the names REA reports for compute must all be names dexdump also resolves.
+  // The implicit `this` and both parameters (including the wide `b`) must be
+  // present as locals, the regression a counts-only check misses.
   const names = new Set(compute.locals.map((l) => l.name));
   for (const required of ["this", "a", "b"])
     assert.ok(names.has(required), `compute locals must include ${required}`);
-  for (const name of names)
-    if (name !== null)
-      assert.ok(
-        gOracle.localNames.has(name),
-        `REA local ${name} must be a name dexdump also resolves`,
-      );
-  // `this` is the parameter the old decoder dropped entirely.
-  assert.ok(gOracle.localNames.has("this"), "dexdump should resolve `this`");
+  // Every method's locals must equal dexdump's exactly, as per-method
+  // (register, name, type, start, end) tuples: swapped registers or wrong
+  // scope boundaries cannot pass by preserving names and counts.
+  const oracleLocals = await dexdumpMethodLocals(gDex);
+  for (const method of detail.class_detail.methods) {
+    const key = `LDebuggable;->${method.name}${method.descriptor}`;
+    const expected = oracleLocals.get(key) ?? [];
+    const actual = method.locals
+      .map(
+        (l) =>
+          `${String(l.register)}|${l.name ?? "(null)"}|${l.type}|${String(l.start_address)}|${String(l.end_address)}`,
+      )
+      .sort();
+    assert.deepEqual(actual, expected, `${key} locals must equal dexdump's`);
+  }
   cases += 1;
 
   // Archive (APK) selection: summarize all, and select one member by entry.

@@ -17,6 +17,8 @@ import {
   peekArtifactMagic,
   readStableArtifact,
 } from "../artifacts/readStableArtifact.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -42,7 +44,11 @@ import {
 import { parseDexFile } from "../domain/dex/dexFile.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { zipPackageFormatForPath } from "../domain/zipPackageFormat.js";
-import { openRegularFile } from "../filesystem/RegularFile.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
+  openRegularFile,
+  RegularFileAdmissionFailure,
+} from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   dexFileFailure,
@@ -93,8 +99,35 @@ const execution = (
 
 /** Read exactly the selected DEX bytes and report compiler-emitted debug metadata. */
 export class DexFileProvider implements DexDebugMetadataPort {
-  close(): Promise<void> {
-    return Promise.resolve();
+  /** Handles whose close failed stay owned here and are retried by `close()`. */
+  readonly #resources = new ArtifactResourceScope();
+
+  /** Retry retained cleanup without discarding handles that still cannot close. */
+  async close(): Promise<void> {
+    try {
+      await this.#resources.close();
+    } catch (cause: unknown) {
+      const cleanup =
+        cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
+      throw new ProviderCleanupError(
+        DEX_PROVIDER_IDENTITY.id,
+        cleanup?.resources ?? ["artifact-resources"],
+        {
+          reason:
+            cleanup?.reason ??
+            (cause instanceof Error ? cause.message : String(cause)),
+        },
+        { operation: OPERATION, cause },
+      );
+    }
+  }
+
+  /** Close now; on failure the scope retains the owner for `close()` and the call fails. */
+  async #releaseOrRetain(
+    owner: Parameters<ArtifactResourceScope["release"]>[0],
+  ): Promise<void> {
+    const attempt = await this.#resources.release(owner);
+    if (attempt.kind === "failed") throw attempt.cause;
   }
 
   async inspect(
@@ -104,12 +137,14 @@ export class DexFileProvider implements DexDebugMetadataPort {
     try {
       if (options?.signal?.aborted)
         return err(new AnalysisCancelledError(OPERATION));
-      if (input.entry !== undefined)
-        return await this.#inspectArchive(input.path, input, options);
-      const magic = await peekArtifactMagic(input.path, 8, options?.signal);
-      return looksLikeZip(magic)
-        ? await this.#inspectArchive(input.path, input, options)
-        : await this.#inspectLooseDex(input.path, input, options);
+      return await this.#resources.run(async () => {
+        if (input.entry !== undefined)
+          return this.#inspectArchive(input.path, input, options);
+        const magic = await peekArtifactMagic(input.path, 8, options?.signal);
+        return looksLikeZip(magic)
+          ? this.#inspectArchive(input.path, input, options)
+          : this.#inspectLooseDex(input.path, input, options);
+      });
     } catch (cause: unknown) {
       return err(dexFileFailure(cause, input.path));
     }
@@ -124,6 +159,8 @@ export class DexFileProvider implements DexDebugMetadataPort {
       path,
       DEX_LIMITS.inputBytes,
       options?.signal,
+      undefined,
+      this.#resources,
     );
     if (options?.signal?.aborted)
       return err(new AnalysisCancelledError(OPERATION));
@@ -155,10 +192,23 @@ export class DexFileProvider implements DexDebugMetadataPort {
     input: InspectDexDebugMetadataInput,
     options?: ExecutionOptions,
   ): Promise<Result<DexDebugMetadataExecution, AnalysisError>> {
-    const handle = await openRegularFile(path, {
-      symlinks: "reject",
-      signal: options?.signal,
-    });
+    let handle;
+    try {
+      handle = await openRegularFile(path, {
+        symlinks: "reject",
+        signal: options?.signal,
+      });
+    } catch (cause: unknown) {
+      // Admission failed and its descriptor close failed too: keep that owner
+      // so a later close() retries it instead of leaking the descriptor.
+      if (cause instanceof RegularFileAdmissionFailure)
+        await this.#resources.release({
+          kind: "file-handle",
+          resource: path,
+          handle: cause.owner,
+        });
+      throw cause;
+    }
     const owner = new OwnedFileHandle(handle);
     try {
       const initial = await handle.stat();
@@ -215,10 +265,14 @@ export class DexFileProvider implements DexDebugMetadataPort {
           format,
         });
       } finally {
-        await reader.close();
+        await this.#releaseOrRetain({ kind: "reader", resource: path, reader });
       }
     } finally {
-      await owner.close();
+      await this.#releaseOrRetain({
+        kind: "file-handle",
+        resource: path,
+        handle: owner,
+      });
     }
   }
 
@@ -239,12 +293,39 @@ export class DexFileProvider implements DexDebugMetadataPort {
       if (requested !== undefined) {
         if (member.path === requested)
           matches.push({ entry: member.path, member });
-      } else if (isRootDexMember(member.path) && !member.encrypted) {
+      } else if (isRootDexMember(member.path)) {
         matches.push({ entry: member.path, member });
       }
     }
     if (requested !== undefined)
       return this.#resolveRequested(matches, requested, path);
+    // Every root member is promised, so one that cannot be read is refused,
+    // never silently skipped (that would turn unknown into absent).
+    const encrypted = matches.filter((m) => m.member.encrypted);
+    if (encrypted.length > 0)
+      return err(
+        new AnalysisUnsupportedTargetError(
+          OPERATION,
+          path,
+          `${path} has encrypted root DEX member(s) (${encrypted.map((m) => m.entry).join(", ")}); their debug metadata is unavailable, not absent.`,
+          {
+            remediationAction:
+              "Select a readable member with entry to inspect it alone.",
+          },
+        ),
+      );
+    // A reported entry must identify exactly one member.
+    const names = new Set<string>();
+    for (const { entry: name } of matches) {
+      if (names.has(name))
+        return err(
+          this.#inputError(
+            "entry",
+            `${path} holds more than one member named ${name}; the identity is ambiguous.`,
+          ),
+        );
+      names.add(name);
+    }
     if (matches.length === 0)
       return err(
         this.#inputError(

@@ -105,8 +105,9 @@ Use `--event_offset` and `--event_limit` to page, or `--all_events` for the
 rest. Truncated or malformed exports keep the events read before the problem
 with partial coverage. See [Process Monitor exports](procmon-exports.md).
 
-Configure [Hopper or Ghidra](installation.md#hopper), or the
-[IDA adapter](ida-provider.md), before analyzing a native target. Substitute
+Configure [Hopper or Ghidra](installation.md#hopper), the
+[IDA adapter](ida-provider.md), or [Kuna](kuna-provider.md) before analyzing a
+native target. Substitute
 your target, search text and function name or address in these examples:
 
 ```bash
@@ -176,6 +177,12 @@ A client timeout can end its wait while the provider continues analyzing.
 be verified. See [MCP contracts](mcp-contracts.md) for session lifecycle and
 [Ghidra first-query deadlines](mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
 for import, client timeouts and recovery.
+
+If one-shot analysis fails and closing its session also fails, the original
+error details remain inline and `details.cleanup_error` describes the later
+close failure. Each diagnostic retains its own reported resources; the later
+failure does not establish whether an earlier resource was released. Captured
+output and partial observations remain in the original details.
 
 ## Save and reuse analysis snapshots
 

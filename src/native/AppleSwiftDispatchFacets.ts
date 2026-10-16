@@ -92,7 +92,6 @@ export const decodeSwiftDispatchFacets = (input: {
   result: ObjcSwiftMetadata;
 }): FacetDecodeFacts => {
   const { sections, segments, readers: read, relative, budget, result } = input;
-  const swiftFailures: string[] = [];
   const issues = [] as ReturnType<typeof issue>[];
   let swiftExamined = 0;
   let decodedRecords = 0;
@@ -112,6 +111,8 @@ export const decodeSwiftDispatchFacets = (input: {
         if ((read.u32(protocol) & 31) !== 3)
           throw new TypeError("Unsupported Swift protocol descriptor kind");
         const protocolName = read.string(relative(protocol + 8n));
+        if (protocolName.length === 0)
+          throw new TypeError("Swift conformance has an empty protocol name");
         const typeKind = (flags >>> 3) & 7;
         if (typeKind !== 0 && typeKind !== 1)
           throw new TypeError(
@@ -122,6 +123,8 @@ export const decodeSwiftDispatchFacets = (input: {
         if (![16, 17, 18].includes(read.u32(type) & 31))
           throw new TypeError("Unsupported Swift type descriptor kind");
         const typeName = read.string(relative(type + 8n));
+        if (typeName.length === 0)
+          throw new TypeError("Swift conformance has an empty type name");
         const witness = relative(descriptor + 8n);
         const staticWitness =
           witness !== 0n &&
@@ -154,7 +157,6 @@ export const decodeSwiftDispatchFacets = (input: {
         });
         if (conformanceDecode.status === "decoded") decodedRecords++;
         if (witnessReason !== null) {
-          swiftFailures.push(`${typeName}: ${witnessReason}`);
           issues.push(
             issue(
               "swift_conformances_static_witness_slots",
@@ -221,7 +223,6 @@ export const decodeSwiftDispatchFacets = (input: {
         }
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
-        swiftFailures.push(`${hex(field)}: ${message}`);
         issues.push(
           issue(
             "swift_conformances_static_witness_slots",

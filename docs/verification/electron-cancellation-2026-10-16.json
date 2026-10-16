@@ -2022,5 +2022,874 @@
     "Older helper hashes were not captured at execution; diagnostics remain observations, not reproducible performance pairs.",
     "Raw app images, extracted runtimes/profiles and large stdout are regenerable and are not committed.",
     "No live-model billing, peak agent context or completed-task token/latency optimization is established. Catalog metadata is unchanged; live event counts make reply sizes non-equivalent."
-  ]
+  ],
+  "review_followup": {
+    "reviewed_head": "beb4a47dba88e9fea63a9e7228f197ae2635082c",
+    "source_pins": {
+      "revision": "227217ac3b008ebebb4202043bd11ca35764cf44",
+      "source_sha256": {
+        "docs/electron-observation.md": "e98b65ef2bcbdab803b29d46520c3b4ac7a2cf982ed0f83ac00a77f5d37f84de",
+        "experiments/analysis-efficiency/electron-cancellation.mjs": "845666c9588ea3b8c675a6c2b15667da4bb65c319ffe3b934d743aa47bd8d377",
+        "experiments/analysis-efficiency/joplin-cli-cancellation.py": "cc85c60eab6beefbd93436748258cafd02ed938ba1d88b82a877a213064ca176",
+        "src/browser/PlaywrightElectronActiveActions.test.ts": "41b53212250adfed528994e16be03bef18d87ae8c87de82da7de1b56137a93b8",
+        "src/browser/PlaywrightElectronActiveActions.ts": "0b1ac1cd6c7d674a2b0cb5ec396a6c096eceb2384da824f9fa4d58d3911e6422",
+        "src/browser/PlaywrightElectronActiveProvider.test.ts": "1a36a02d6b2503b7b9de9ec99af6e3b24a48b0ac760e7df0b88347dbbd5dedad",
+        "src/browser/PlaywrightElectronActiveProvider.ts": "d05b87ebe8eed05e3c8aeef87b7856ec7f184b6b172933c49c0789e87a6022b9",
+        "experiments/analysis-efficiency/electron-cancellation-oracles.py": "824d074fc6a0510b75e7337ea263ea7c5e4ef32e9db617f1c8704c1b0e1e07a6"
+      }
+    },
+    "root_cause": "Verifier success followed main-process/CLI exit without requiring verified provider cleanup. Both scripts now reject incomplete cleanup and the public CLI requires the cancelled category.",
+    "production_source_unchanged": true,
+    "controlled_oracles": {
+      "name": "cleanup-oracles-frozen-green",
+      "log_sha256": "714b3eb5fa13ee6ea74b479748970dc2b9a6a8798411d965be6fa759a8a0c452",
+      "observations": [
+        {
+          "oracle_cases": [
+            {
+              "verifier": "shared",
+              "controlled_cleanup_complete": false,
+              "main_exited": true,
+              "exit_code": 1
+            },
+            {
+              "verifier": "shared",
+              "controlled_cleanup_complete": true,
+              "main_exited": true,
+              "exit_code": 0
+            },
+            {
+              "verifier": "cli",
+              "code": "cleanup_incomplete",
+              "category": "cancelled",
+              "application_cleanup": "unverified",
+              "accepted": false
+            },
+            {
+              "verifier": "cli",
+              "code": "cleanup_incomplete",
+              "category": "cancelled",
+              "application_cleanup": "terminated-owned-process",
+              "accepted": false
+            },
+            {
+              "verifier": "cli",
+              "code": "cancelled",
+              "category": "execution_failure",
+              "application_cleanup": "terminated-owned-process",
+              "accepted": false
+            },
+            {
+              "verifier": "cli",
+              "code": "cancelled",
+              "category": "cancelled",
+              "application_cleanup": "terminated-owned-process",
+              "accepted": true
+            }
+          ],
+          "real_provider_verified": false
+        }
+      ],
+      "resources": {
+        "resource_scope": "rea-efficiency-131e6047064a4081a42868a43c52def6.scope",
+        "peak_cgroup_bytes_sampled": 45023232,
+        "elapsed_seconds": 0.672,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 17,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 302630,
+          "user_usec": 199133,
+          "system_usec": 103496,
+          "nr_periods": 5,
+          "nr_throttled": 0,
+          "throttled_usec": 0,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-131e6047064a4081a42868a43c52def6.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3682235,
+          "remaining_processes": [3682235],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 301553,
+            "user_usec": 198425,
+            "system_usec": 103128,
+            "nr_periods": 5,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 45334528,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-131e6047064a4081a42868a43c52def6.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "post_scope_state": "ActiveState=inactive\nSubState=dead",
+      "source_revision": "227217ac3b008ebebb4202043bd11ca35764cf44"
+    },
+    "red_controls": [
+      {
+        "name": "cleanup-oracles-shared-red",
+        "log_sha256": "c3fe7c3252da06eae6dd5d1cd3bba3e067422669698227bc6f5c114718cbb77a",
+        "observations": [],
+        "resources": {
+          "resource_scope": "rea-efficiency-d30d95d6c1bf419a9b02f7eaf2e9bb18.scope",
+          "peak_cgroup_bytes_sampled": 47104000,
+          "elapsed_seconds": 0.449,
+          "abort": null,
+          "hard_memory_bytes": 8589934592,
+          "early_stop_bytes": 6442450944,
+          "cpu_quota_percent": 100,
+          "cpu_affinity": [10],
+          "task_ceiling": 192,
+          "peak_tasks_sampled": 17,
+          "resource_events_last_observed": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          },
+          "resource_events_final": null,
+          "resource_counters_verified": false,
+          "cpu_stat_last_observed": {
+            "usage_usec": 213178,
+            "user_usec": 155814,
+            "system_usec": 57363,
+            "nr_periods": 3,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "payload_resource_observation": {
+            "phase": "payload-exited-observer-alive",
+            "ownership_token": "rea-efficiency-d30d95d6c1bf419a9b02f7eaf2e9bb18.scope",
+            "payload_exit_code": 1,
+            "observer_pid": 3679706,
+            "remaining_processes": [3679706],
+            "payload_cleanup_verified": true,
+            "cpu_stat": {
+              "usage_usec": 212247,
+              "user_usec": 155134,
+              "system_usec": 57113,
+              "nr_periods": 3,
+              "nr_throttled": 0,
+              "throttled_usec": 0,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_peak_bytes": 47366144,
+            "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-d30d95d6c1bf419a9b02f7eaf2e9bb18.scope",
+            "resource_events": {
+              "memory.events": {
+                "low": 0,
+                "high": 0,
+                "max": 0,
+                "oom": 0,
+                "oom_kill": 0,
+                "oom_group_kill": 0
+              },
+              "pids.events": {
+                "max": 0
+              }
+            }
+          },
+          "payload_resource_observation_verified": true,
+          "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+          "payload_observer_sources_sha256": {
+            "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+            "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+          }
+        },
+        "post_scope_state": "ActiveState=inactive\nSubState=dead",
+        "helper_control_revision": "beb4a47dba88e9fea63a9e7228f197ae2635082c",
+        "harness_hash_at_run": "NOT_ENOUGH_INFO: not pinned before this diagnostic; frozen positive rerun recorded separately"
+      },
+      {
+        "name": "cleanup-oracles-cli-red",
+        "log_sha256": "df0e10a0822b93bfe1e7844b1b299fb664aa818c6d0294871346a2446919ff0f",
+        "observations": [],
+        "resources": {
+          "resource_scope": "rea-efficiency-a367ed3597da4e3a9edd53e18ed65809.scope",
+          "peak_cgroup_bytes_sampled": 47194112,
+          "elapsed_seconds": 0.651,
+          "abort": null,
+          "hard_memory_bytes": 8589934592,
+          "early_stop_bytes": 6442450944,
+          "cpu_quota_percent": 100,
+          "cpu_affinity": [10],
+          "task_ceiling": 192,
+          "peak_tasks_sampled": 17,
+          "resource_events_last_observed": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          },
+          "resource_events_final": null,
+          "resource_counters_verified": false,
+          "cpu_stat_last_observed": {
+            "usage_usec": 310559,
+            "user_usec": 221835,
+            "system_usec": 88724,
+            "nr_periods": 6,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "payload_resource_observation": {
+            "phase": "payload-exited-observer-alive",
+            "ownership_token": "rea-efficiency-a367ed3597da4e3a9edd53e18ed65809.scope",
+            "payload_exit_code": 1,
+            "observer_pid": 3679733,
+            "remaining_processes": [3679733],
+            "payload_cleanup_verified": true,
+            "cpu_stat": {
+              "usage_usec": 309551,
+              "user_usec": 221114,
+              "system_usec": 88436,
+              "nr_periods": 5,
+              "nr_throttled": 0,
+              "throttled_usec": 0,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_peak_bytes": 47456256,
+            "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-a367ed3597da4e3a9edd53e18ed65809.scope",
+            "resource_events": {
+              "memory.events": {
+                "low": 0,
+                "high": 0,
+                "max": 0,
+                "oom": 0,
+                "oom_kill": 0,
+                "oom_group_kill": 0
+              },
+              "pids.events": {
+                "max": 0
+              }
+            }
+          },
+          "payload_resource_observation_verified": true,
+          "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+          "payload_observer_sources_sha256": {
+            "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+            "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+          }
+        },
+        "post_scope_state": "ActiveState=inactive\nSubState=dead",
+        "helper_control_revision": "beb4a47dba88e9fea63a9e7228f197ae2635082c",
+        "harness_hash_at_run": "NOT_ENOUGH_INFO: not pinned before this diagnostic; frozen positive rerun recorded separately"
+      }
+    ],
+    "real_joplin_trials": [
+      {
+        "name": "review-window-fixed",
+        "log_sha256": "202fe2993351150263ca9093536b4c48d1df4e53f96f09211f73605db6785488",
+        "observations": [
+          {
+            "case": "window-wait",
+            "fault_injected": true,
+            "input": {
+              "executable_path": "/tmp/rea-docs-audit-20261012/runtime/electron-fixture-tools/node_modules/electron/dist/electron",
+              "application_path": "/tmp/rea-4388-runtime-20261016/resources/app.asar",
+              "args": [
+                "--no-sandbox",
+                "--disable-gpu",
+                "--user-data-dir=/tmp/rea-4388-profiles-20261016/joplin-XOXjNF/chromium",
+                "--profile",
+                "/tmp/rea-4388-profiles-20261016/joplin-XOXjNF"
+              ],
+              "actions": [
+                {
+                  "step_id": "settle",
+                  "kind": "wait",
+                  "duration_ms": 60000
+                }
+              ]
+            },
+            "profile": "/tmp/rea-4388-profiles-20261016/joplin-XOXjNF",
+            "evaluate_calls": 8,
+            "elapsed_ms": 9262.46371,
+            "cancellation_to_result_ms": 5577.494978,
+            "tag": "BrowserObservationError",
+            "reason": "cleanup_failed",
+            "user_category": "cancelled",
+            "diagnostics": null,
+            "message": "Browser observation capture_electron_scenario failed: cleanup_failed",
+            "user_message": "Electron cleanup could not be verified: process ownership token mismatch for PID(s): 3680632, 3680633, 3680679, 3680682, 3680724. Collected observations are retained in partial_observation. Capture also failed: Browser observation capture_electron_scenario failed: cancelled. Inspect the reported process resources before launching another capture.",
+            "cleanup": {
+              "reason": "process ownership token mismatch for PID(s): 3680632, 3680633, 3680679, 3680682, 3680724",
+              "resources": [
+                "owned_process_group",
+                "run:5808cb9d-085c-48ae-aa9a-546ae7fb2bc5",
+                "process-group:3680630"
+              ]
+            },
+            "cause": "Browser observation capture_electron_scenario failed: cancelled",
+            "causes": [
+              {
+                "tag": "BrowserObservationError",
+                "reason": "cleanup_failed",
+                "message": "Browser observation capture_electron_scenario failed: cleanup_failed",
+                "diagnostics": null
+              },
+              {
+                "tag": "BrowserObservationError",
+                "reason": "cancelled",
+                "message": "Browser observation capture_electron_scenario failed: cancelled",
+                "diagnostics": null
+              },
+              {
+                "tag": null,
+                "reason": null,
+                "message": "real-application cancellation: window-wait",
+                "diagnostics": null
+              }
+            ],
+            "cleanup_incomplete": true,
+            "partial": {
+              "application": {
+                "executable_path": "/tmp/rea-docs-audit-20261012/runtime/electron-fixture-tools/node_modules/electron/dist/electron",
+                "application_path": "/tmp/rea-4388-runtime-20261016/resources/app.asar",
+                "electron_version": "44.7.0",
+                "process_ownership": "provider-owned",
+                "cleanup": "unverified"
+              },
+              "actions": [
+                {
+                  "step_id": "settle",
+                  "kind": "wait",
+                  "window_index": null,
+                  "target": null,
+                  "elapsed_ms": 100,
+                  "status": "cancelled",
+                  "error": "Browser observation capture_electron_scenario failed: cancelled"
+                }
+              ],
+              "coverage": {
+                "status": "partial_attach",
+                "observed_event_families": [
+                  "app-lifecycle",
+                  "navigation",
+                  "process-lifecycle",
+                  "protocol",
+                  "web-contents-lifecycle",
+                  "window-lifecycle"
+                ],
+                "unavailable_event_families": [
+                  "download",
+                  "error",
+                  "ipc",
+                  "native-addon",
+                  "permission",
+                  "popup-attempt",
+                  "preload",
+                  "preload-configuration",
+                  "renderer-ipc",
+                  "shell-attempt",
+                  "updater"
+                ],
+                "observed_roles": ["browser", "main", "web_contents", "window"],
+                "pre_capture_activity": "unavailable"
+              },
+              "window_count": 1,
+              "limitations": [
+                "IPC payloads are represented by value shapes; payload values are never retained.",
+                "IPC direction and sender/receiver identifiers are observed only where Electron exposes them at the hooked boundary.",
+                "The runtime timeline records lifecycle, navigation, shell, permission, popup, download, protocol, preload, native-addon, process, and IPC events; activity before hook installation is unavailable.",
+                "The preload and renderer process contexts are not instrumented by the main-process -r hook; preload configuration and contextBridge API-shape events are main-boundary observations, not proof of renderer-side execution.",
+                "Preload configuration was not exposed by the observed Electron window metadata. Preload paths and execution remain unavailable.",
+                "Process metrics are an Electron API snapshot and do not prove hostile-local-user isolation.",
+                "External shell opens, external navigation, permission grants, downloads, popup windows, updater relaunches, and OS integration are blocked and recorded by the active hook; other application filesystem and network behavior is not sandboxed by this provider."
+              ]
+            },
+            "launched_process_exited": false,
+            "cancellation_phase": "verified",
+            "cleanup_phase": "unverified",
+            "workflow_status": "partial"
+          },
+          {
+            "case": "window-wait",
+            "fault_injected": true,
+            "evaluate_calls": 8,
+            "elapsed_ms": 9263.89356,
+            "cancellation_to_failure_ms": 5578.922218000001,
+            "completed": false,
+            "verifier_error": "Provider cleanup remains unverified; cancellation alone is a partial result\n+ actual - expected\n\n+ 'unverified'\n- 'verified'\n"
+          }
+        ],
+        "resources": {
+          "resource_scope": "rea-efficiency-159f43ca3b0c40908d728c211b685899.scope",
+          "peak_cgroup_bytes_sampled": 929914880,
+          "elapsed_seconds": 10.524,
+          "abort": null,
+          "hard_memory_bytes": 8589934592,
+          "early_stop_bytes": 6442450944,
+          "cpu_quota_percent": 100,
+          "cpu_affinity": [10],
+          "task_ceiling": 192,
+          "peak_tasks_sampled": 84,
+          "resource_events_last_observed": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          },
+          "resource_events_final": null,
+          "resource_counters_verified": false,
+          "cpu_stat_last_observed": {
+            "usage_usec": 7270530,
+            "user_usec": 5364012,
+            "system_usec": 1906518,
+            "nr_periods": 100,
+            "nr_throttled": 4,
+            "throttled_usec": 54,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "payload_resource_observation": {
+            "phase": "payload-exited-observer-alive",
+            "ownership_token": "rea-efficiency-159f43ca3b0c40908d728c211b685899.scope",
+            "payload_exit_code": 1,
+            "observer_pid": 3680579,
+            "remaining_processes": [3680579, 3680591],
+            "payload_cleanup_verified": false,
+            "cpu_stat": {
+              "usage_usec": 7267317,
+              "user_usec": 5362369,
+              "system_usec": 1904947,
+              "nr_periods": 100,
+              "nr_throttled": 4,
+              "throttled_usec": 54,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_peak_bytes": 931930112,
+            "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-159f43ca3b0c40908d728c211b685899.scope",
+            "resource_events": {
+              "memory.events": {
+                "low": 0,
+                "high": 0,
+                "max": 0,
+                "oom": 0,
+                "oom_kill": 0,
+                "oom_group_kill": 0
+              },
+              "pids.events": {
+                "max": 0
+              }
+            }
+          },
+          "payload_resource_observation_verified": false,
+          "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+          "payload_observer_sources_sha256": {
+            "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+            "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+          }
+        },
+        "post_scope_state": "ActiveState=inactive\nSubState=dead",
+        "source_revision": "227217ac3b008ebebb4202043bd11ca35764cf44"
+      },
+      {
+        "name": "review-cli-fixed",
+        "log_sha256": "0927aab49b8856a3643e0c27845bd1d16c699987c105a9ea457051a1ceaa0349",
+        "observations": [
+          {
+            "request": {
+              "executable_path": "/tmp/rea-docs-audit-20261012/runtime/electron-fixture-tools/node_modules/electron/dist/electron",
+              "application_path": "/tmp/rea-4388-runtime-20261016/resources/app.asar",
+              "args": [
+                "--no-sandbox",
+                "--disable-gpu",
+                "--user-data-dir=/tmp/rea-4388-profiles-20261016/joplin-cli-0p08uxzw/chromium",
+                "--profile",
+                "/tmp/rea-4388-profiles-20261016/joplin-cli-0p08uxzw"
+              ],
+              "actions": [
+                {
+                  "step_id": "settle",
+                  "kind": "wait",
+                  "duration_ms": 60000
+                }
+              ]
+            },
+            "exit_code": 143,
+            "elapsed_seconds": 29.43959220207762,
+            "cancellation_to_observation_end_seconds": 20.28105166601017,
+            "cancellation_to_response_seconds": 6.334787209983915,
+            "signals": ["request SIGTERM", "verifier recovery SIGTERM"],
+            "verifier_failure": "CLI did not exit within 20 seconds after request SIGTERM",
+            "code": "cleanup_incomplete",
+            "category": "cancelled",
+            "cancelled_action": true,
+            "application": {
+              "executable_path": "/tmp/rea-docs-audit-20261012/runtime/electron-fixture-tools/node_modules/electron/dist/electron",
+              "application_path": "/tmp/rea-4388-runtime-20261016/resources/app.asar",
+              "electron_version": "44.7.0",
+              "process_ownership": "provider-owned",
+              "cleanup": "unverified"
+            },
+            "actions": [
+              {
+                "step_id": "settle",
+                "kind": "wait",
+                "window_index": null,
+                "target": null,
+                "elapsed_ms": 2687,
+                "status": "cancelled",
+                "error": "Browser observation capture_electron_scenario failed: cancelled"
+              }
+            ],
+            "coverage": {
+              "status": "partial_attach",
+              "observed_event_families": [
+                "app-lifecycle",
+                "ipc",
+                "navigation",
+                "process-lifecycle",
+                "protocol",
+                "web-contents-lifecycle",
+                "window-lifecycle"
+              ],
+              "unavailable_event_families": [
+                "download",
+                "error",
+                "native-addon",
+                "permission",
+                "popup-attempt",
+                "preload",
+                "preload-configuration",
+                "renderer-ipc",
+                "shell-attempt",
+                "updater"
+              ],
+              "observed_roles": ["browser", "main", "web_contents", "window"],
+              "pre_capture_activity": "unavailable"
+            },
+            "stdout_bytes": 49822,
+            "stderr_bytes": 0,
+            "stdout_path": "/tmp/rea-4388-profiles-20261016/joplin-cli-0p08uxzw/verifier-stdout.json",
+            "stderr_path": "/tmp/rea-4388-profiles-20261016/joplin-cli-0p08uxzw/verifier-stderr.txt",
+            "cleanup_verified": false
+          }
+        ],
+        "resources": {
+          "resource_scope": "rea-efficiency-eed22e8997b8465bb3ba57827bc5ae03.scope",
+          "peak_cgroup_bytes_sampled": 988545024,
+          "elapsed_seconds": 29.772,
+          "abort": null,
+          "hard_memory_bytes": 8589934592,
+          "early_stop_bytes": 6442450944,
+          "cpu_quota_percent": 100,
+          "cpu_affinity": [10],
+          "task_ceiling": 192,
+          "peak_tasks_sampled": 83,
+          "resource_events_last_observed": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          },
+          "resource_events_final": null,
+          "resource_counters_verified": false,
+          "cpu_stat_last_observed": {
+            "usage_usec": 10731594,
+            "user_usec": 8181973,
+            "system_usec": 2549620,
+            "nr_periods": 295,
+            "nr_throttled": 3,
+            "throttled_usec": 109,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "payload_resource_observation": {
+            "phase": "payload-exited-observer-alive",
+            "ownership_token": "rea-efficiency-eed22e8997b8465bb3ba57827bc5ae03.scope",
+            "payload_exit_code": 1,
+            "observer_pid": 3681184,
+            "remaining_processes": [3681184],
+            "payload_cleanup_verified": true,
+            "cpu_stat": {
+              "usage_usec": 10730467,
+              "user_usec": 8181114,
+              "system_usec": 2549352,
+              "nr_periods": 295,
+              "nr_throttled": 3,
+              "throttled_usec": 109,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_peak_bytes": 989151232,
+            "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-eed22e8997b8465bb3ba57827bc5ae03.scope",
+            "resource_events": {
+              "memory.events": {
+                "low": 0,
+                "high": 0,
+                "max": 0,
+                "oom": 0,
+                "oom_kill": 0,
+                "oom_group_kill": 0
+              },
+              "pids.events": {
+                "max": 0
+              }
+            }
+          },
+          "payload_resource_observation_verified": true,
+          "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+          "payload_observer_sources_sha256": {
+            "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+            "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+          }
+        },
+        "post_scope_state": "ActiveState=inactive\nSubState=dead",
+        "source_revision": "227217ac3b008ebebb4202043bd11ca35764cf44"
+      }
+    ],
+    "static": {
+      "tasks_passed": 2,
+      "tasks_cached": 1,
+      "receipt": {
+        "name": "review-check",
+        "log_sha256": "72fd74c8c392056b07b06cd66b3cab3dd5ee59b89d0b4c19cee406224adb56c9",
+        "observations": [],
+        "resources": {
+          "resource_scope": "rea-efficiency-95e41d47d34c4523b21c77afcb3b210d.scope",
+          "peak_cgroup_bytes_sampled": 1086939136,
+          "elapsed_seconds": 9.225,
+          "abort": null,
+          "hard_memory_bytes": 8589934592,
+          "early_stop_bytes": 6442450944,
+          "cpu_quota_percent": 100,
+          "cpu_affinity": [10],
+          "task_ceiling": 192,
+          "peak_tasks_sampled": 49,
+          "resource_events_last_observed": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          },
+          "resource_events_final": null,
+          "resource_counters_verified": false,
+          "cpu_stat_last_observed": {
+            "usage_usec": 7129769,
+            "user_usec": 5889248,
+            "system_usec": 1240521,
+            "nr_periods": 91,
+            "nr_throttled": 1,
+            "throttled_usec": 2367,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "payload_resource_observation": {
+            "phase": "payload-exited-observer-alive",
+            "ownership_token": "rea-efficiency-95e41d47d34c4523b21c77afcb3b210d.scope",
+            "payload_exit_code": 0,
+            "observer_pid": 3682431,
+            "remaining_processes": [3682431],
+            "payload_cleanup_verified": true,
+            "cpu_stat": {
+              "usage_usec": 7128586,
+              "user_usec": 5888270,
+              "system_usec": 1240315,
+              "nr_periods": 90,
+              "nr_throttled": 1,
+              "throttled_usec": 2367,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_peak_bytes": 1087201280,
+            "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-95e41d47d34c4523b21c77afcb3b210d.scope",
+            "resource_events": {
+              "memory.events": {
+                "low": 0,
+                "high": 0,
+                "max": 0,
+                "oom": 0,
+                "oom_kill": 0,
+                "oom_group_kill": 0
+              },
+              "pids.events": {
+                "max": 0
+              }
+            }
+          },
+          "payload_resource_observation_verified": true,
+          "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+          "payload_observer_sources_sha256": {
+            "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+            "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+          }
+        },
+        "post_scope_state": "ActiveState=inactive\nSubState=dead"
+      }
+    },
+    "limits": [
+      "Controlled oracle cases substitute provider/CLI replies; no real-provider compatibility or performance proof.",
+      "Real Joplin trials remain partial/failed and exit nonzero; external scope shutdown is separate from provider cleanup.",
+      "Original historical records and source manifest remain unchanged; this appended stage pins the corrected scripts."
+    ],
+    "docs_check": {
+      "tasks_passed": 6,
+      "readme_cases_passed": 5,
+      "log_sha256": "e1cabcee3990e2a0887dabed84737e9f0a4af6d5506c0ba803a6fb02e4dc8c60",
+      "resources": {
+        "resource_scope": "rea-efficiency-180ac1bcc7b34b9f9c04b8d9fb2c03b2.scope",
+        "peak_cgroup_bytes_sampled": 472666112,
+        "elapsed_seconds": 9.712,
+        "abort": null,
+        "hard_memory_bytes": 8589934592,
+        "early_stop_bytes": 6442450944,
+        "cpu_quota_percent": 100,
+        "cpu_affinity": [10],
+        "task_ceiling": 192,
+        "peak_tasks_sampled": 65,
+        "resource_events_last_observed": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "resource_events_final": null,
+        "resource_counters_verified": false,
+        "cpu_stat_last_observed": {
+          "usage_usec": 9300833,
+          "user_usec": 7654563,
+          "system_usec": 1646269,
+          "nr_periods": 96,
+          "nr_throttled": 1,
+          "throttled_usec": 15,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-180ac1bcc7b34b9f9c04b8d9fb2c03b2.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 3683131,
+          "remaining_processes": [3683131],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 9299763,
+            "user_usec": 7654563,
+            "system_usec": 1645200,
+            "nr_periods": 95,
+            "nr_throttled": 1,
+            "throttled_usec": 15,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 478433280,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-180ac1bcc7b34b9f9c04b8d9fb2c03b2.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        },
+        "payload_resource_observation_verified": true,
+        "payload_observation_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "payload_observer_sources_sha256": {
+          "resource-run.py": "7728862171415e7dee2c11af2ead2b9a54265fccaf82a7113956d36b29065e33",
+          "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+        }
+      },
+      "post_scope_state": "ActiveState=inactive\nSubState=dead"
+    }
+  }
 }

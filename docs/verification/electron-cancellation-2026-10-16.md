@@ -126,3 +126,33 @@ The scripts return failure rather than claiming complete cleanup when the real
 owned app remains unresolved. App binaries, extracted runtimes/profiles and raw
 large output are regenerable and are not committed. No macOS, Windows, full
 Joplin GUI or live-model success is claimed.
+
+## Review follow-up: verifier exit semantics
+
+Review of `beb4a47db` found a verifier false pass: the shared probe could exit
+successfully once its main process had exited even though provider cleanup was
+still unverified. The CLI probe also accepted `cleanup_incomplete`. Those are
+verifier bugs; they do not invalidate the recorded failed Joplin trials above.
+
+Revision `227217ac3` requires verified provider cleanup in both probes and the
+public `cancelled` category in the CLI. Six controlled oracle cases cover an
+exited main process with incomplete cleanup, complete cleanup, transport failure
+after process cleanup, and a wrong public category. Both old scripts fail these
+regressions; the fixed scripts pass all six. These cases substitute provider/CLI
+replies and do **not** establish real-provider compatibility or performance.
+
+The fixed, frozen scripts were then rerun on the same real Joplin artifact. The
+shared window-wait probe retained cancellation in 5.577 s and explicitly failed
+because cleanup remained unverified. The public CLI retained category `cancelled`
+and a cancelled action, published its reply about 6.335 s after SIGTERM, and
+again failed the first-signal exit deadline. Both verifiers exited nonzero; their
+externally owned scopes were stopped separately. Production source and the
+earlier historical records are unchanged. The compact record appends these
+observations under `review_followup`.
+
+Run the controlled oracle regressions separately from the real-app commands:
+
+```sh
+python3 experiments/analysis-efficiency/electron-cancellation-oracles.py \
+  --node /absolute/node-24.18.0/bin/node
+```

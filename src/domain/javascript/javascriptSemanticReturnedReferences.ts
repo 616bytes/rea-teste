@@ -130,7 +130,25 @@ export const createSemanticReturnedReferences = (
     // cycle blockers affect reuse; branch history is not a dependency. An
     // acyclic expression/path is consequently expanded once across a diamond.
     const expanded: CompletedExpansions = new WeakMap();
-    let expansions = 0;
+    // Recursive reassignment webs (for example fiber locals reassigned
+    // across switch arms) enumerate every simple initializer chain as a
+    // distinct path. Reserve budget before each child is constructed so the
+    // candidate representations — not just completed visits — stay bounded
+    // for one call target; keep the references proven so far and disclose
+    // the limit through coverage instead of claiming completeness.
+    let remaining = SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT;
+    let budgeted = false;
+    const reserve = (): boolean => {
+      if (remaining > 0) {
+        remaining -= 1;
+        return true;
+      }
+      if (!budgeted) {
+        state.valueResourceLimits.add("returned-reference-expansion");
+        budgeted = true;
+      }
+      return false;
+    };
     while (work.length > 0) {
       const task = work.pop();
       if (task === undefined) break;
@@ -138,16 +156,7 @@ export const createSemanticReturnedReferences = (
         completeExpansion(task.frame, expanded);
         continue;
       }
-      // Recursive reassignment webs (for example fiber locals reassigned
-      // across switch arms) enumerate every simple initializer chain as a
-      // distinct path. Bound the states examined for one call target and
-      // keep the references proven so far; the limit is disclosed through
-      // coverage instead of claiming completeness.
-      expansions += 1;
-      if (expansions > SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT) {
-        state.valueResourceLimits.add("returned-reference-expansion");
-        break;
-      }
+      if (budgeted) break;
       const { item, parent } = task;
       const node = unwrapJavaScriptExpression(item.node).node;
       const pathKey = JSON.stringify(item.path);
@@ -185,6 +194,7 @@ export const createSemanticReturnedReferences = (
             frame.blockers.add(initializer);
             continue;
           }
+          if (!reserve()) break;
           pending.push({
             node: initializer.node,
             path: [...initializer.projection, ...item.path],
@@ -206,32 +216,29 @@ export const createSemanticReturnedReferences = (
           );
           receiver = unwrapJavaScriptExpression(receiver.object).node;
         }
-        pending.push({
-          ...item,
-          node: receiver,
-          path: [...path.reverse(), ...item.path],
-        });
+        if (reserve())
+          pending.push({
+            ...item,
+            node: receiver,
+            path: [...path.reverse(), ...item.path],
+          });
       } else if (
         t.isConditionalExpression(node) ||
         t.isLogicalExpression(node)
       ) {
-        pending.push(
-          {
-            ...item,
-            node: t.isConditionalExpression(node) ? node.consequent : node.left,
-          },
-          {
-            ...item,
-            node: t.isConditionalExpression(node) ? node.alternate : node.right,
-          },
-        );
+        for (const child of [
+          t.isConditionalExpression(node) ? node.consequent : node.left,
+          t.isConditionalExpression(node) ? node.alternate : node.right,
+        ])
+          if (reserve()) pending.push({ ...item, node: child });
       } else if (t.isSequenceExpression(node)) {
         const last = node.expressions.at(-1);
-        if (last !== undefined) pending.push({ ...item, node: last });
+        if (last !== undefined && reserve())
+          pending.push({ ...item, node: last });
       } else if (t.isFunction(node) && item.path.length === 0)
         functions.add(node);
       else if (t.isObjectExpression(node))
-        selectObjectTargets(node, item, pending, objectTargets);
+        selectObjectTargets(node, item, pending, objectTargets, reserve);
       else if (t.isArrayExpression(node)) {
         const [key, ...path] = item.path;
         const index =
@@ -241,17 +248,21 @@ export const createSemanticReturnedReferences = (
           if (element === null) return;
           if (t.isSpreadElement(element)) {
             uncertainOffset = true;
-            pending.push({
-              ...item,
-              node: element.argument,
-              path: [null, ...path],
-            });
-          } else if (index === null || uncertainOffset || index === offset)
+            if (reserve())
+              pending.push({
+                ...item,
+                node: element.argument,
+                path: [null, ...path],
+              });
+          } else if (
+            (index === null || uncertainOffset || index === offset) &&
+            reserve()
+          )
             pending.push({ ...item, node: element, path });
         });
-      } else if (t.isNewExpression(node))
-        pending.push({ ...item, node: node.callee });
-      else if (t.isClass(node)) {
+      } else if (t.isNewExpression(node)) {
+        if (reserve()) pending.push({ ...item, node: node.callee });
+      } else if (t.isClass(node)) {
         const [key, ...path] = item.path;
         for (const member of node.body.body) {
           if (t.isClassMethod(member)) {
@@ -261,8 +272,10 @@ export const createSemanticReturnedReferences = (
                 (key === null ||
                   semanticStaticPropertyKey(member.key, member.computed) ===
                     String(key)))
-            )
+            ) {
+              if (!reserve()) break;
               pending.push({ ...item, node: member, path });
+            }
           } else if (
             t.isClassProperty(member) &&
             member.value !== null &&
@@ -271,10 +284,16 @@ export const createSemanticReturnedReferences = (
             (key === null ||
               semanticStaticPropertyKey(member.key, member.computed) ===
                 String(key))
-          )
+          ) {
+            if (!reserve()) break;
             pending.push({ ...item, node: member.value, path });
+          }
         }
-        if (node.superClass !== null && node.superClass !== undefined)
+        if (
+          node.superClass !== null &&
+          node.superClass !== undefined &&
+          reserve()
+        )
           pending.push({ ...item, node: node.superClass });
       }
       for (let index = pending.length - 1; index >= 0; index--) {
@@ -309,6 +328,7 @@ const selectObjectTargets = (
   item: Candidate,
   pending: Candidate[],
   indexes: WeakMap<t.ObjectExpression, ObjectTargetIndex>,
+  reserve: () => boolean,
 ): void => {
   const [key, ...path] = item.path;
   if (key !== null && key !== undefined) {
@@ -322,7 +342,8 @@ const selectObjectTargets = (
         unknown = unknown.previous
       )
         unknowns.push(unknown);
-      for (const { node: unknown } of unknowns.reverse())
+      for (const { node: unknown } of unknowns.reverse()) {
+        if (!reserve()) return;
         pending.push({
           ...item,
           node: t.isSpreadElement(unknown)
@@ -332,11 +353,13 @@ const selectObjectTargets = (
               : unknown,
           ...(t.isSpreadElement(unknown) ? {} : { path }),
         });
-      pending.push({
-        ...item,
-        node: t.isObjectProperty(property) ? property.value : property,
-        path,
-      });
+      }
+      if (reserve())
+        pending.push({
+          ...item,
+          node: t.isObjectProperty(property) ? property.value : property,
+          path,
+        });
       return;
     }
   }
@@ -344,6 +367,7 @@ const selectObjectTargets = (
   for (const property of [...node.properties].reverse()) {
     if (replaced) break;
     if (t.isSpreadElement(property)) {
+      if (!reserve()) return;
       pending.push({ ...item, node: property.argument });
       continue;
     }
@@ -355,6 +379,7 @@ const selectObjectTargets = (
       name !== String(key)
     )
       continue;
+    if (!reserve()) return;
     if (t.isObjectProperty(property))
       pending.push({ ...item, node: property.value, path });
     else pending.push({ ...item, node: property, path });

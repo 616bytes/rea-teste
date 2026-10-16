@@ -9,8 +9,8 @@ export const SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT = 256;
 export const SEMANTIC_EXPRESSION_DEPTH_LIMIT = 256;
 /** Distinct getter, receiver and path states retained in one precise query. */
 export const SEMANTIC_GETTER_EXPANSION_LIMIT = 512;
-/** Distinct expression/path states expanded while resolving one call target's
- * returned references. */
+/** Distinct expression/path candidates admitted while resolving one call
+ * target's returned references. */
 export const SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT = 16384;
 /** Bound normalized strings and transient keys independently of transport limits. */
 export const SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT = 1_048_576;

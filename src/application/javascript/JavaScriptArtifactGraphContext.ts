@@ -58,8 +58,9 @@ export interface JavaScriptArtifactGraphContext {
   readonly applicationRootsBySource: Map<string, Set<string>>;
   /** Incomplete package facts can hide competing launch declarations. */
   readonly applicationOwnershipUnknownContainers: ReadonlySet<string>;
-  /** Missing imports prevent fallback inference, but do not erase proven roots. */
-  readonly applicationModuleUnknownContainers: ReadonlySet<string>;
+  /** Gap origins retain possible owners separately from proven source owners. */
+  readonly applicationModuleGapSources: Map<string, Set<string>>;
+  readonly applicationPossibleRootsByContainer: Map<string, Set<string>>;
 }
 
 /** Application manifests exclude dependency packages but retain nested app roots. */
@@ -123,11 +124,14 @@ export const applicationRootPath = (
   )
     return null;
   const entryRoots = context.applicationRootsBySource.get(source.path);
+  const container = applicationContainerIdentity(context.fileSet, source);
+  for (const root of context.applicationPossibleRootsByContainer.get(
+    container,
+  ) ?? [])
+    if (!entryRoots?.has(root)) return null;
   if (
     entryRoots === undefined &&
-    context.applicationModuleUnknownContainers.has(
-      applicationContainerIdentity(context.fileSet, source),
-    )
+    context.applicationModuleGapSources.has(container)
   )
     return null;
   const roots = new Set<string>(entryRoots);

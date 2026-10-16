@@ -7,6 +7,7 @@ import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptA
 import {
   addStaticInferenceEdge,
   applicationRootPath,
+  applicationContainerIdentity,
   addApplicationRootCandidate,
   artifactLocalIdentity,
   chunkLookupKey,
@@ -76,6 +77,15 @@ export function* addJavaScriptStaticFindingsSteps(
       addSourceMapEdge(context, { file, asset, value, coverage });
   }
   yield* propagateApplicationOwners(context, omissions.imports);
+  for (const [container, gaps] of context.applicationModuleGapSources) {
+    const possible = new Set<string>();
+    for (const gap of gaps) {
+      yield;
+      for (const root of context.applicationRootsBySource.get(gap) ?? [])
+        addApplicationRootCandidate(possible, root);
+    }
+    context.applicationPossibleRootsByContainer.set(container, possible);
+  }
   for (const { file, javascript } of context.analysis.files) {
     yield;
     const asset = context.assetNodes.get(file.path);
@@ -134,6 +144,21 @@ const addReference = (
     input.value.specifier === null
       ? null
       : resolveReference(context, input.file.path, input.value, input.coverage);
+  if (
+    (input.value.kind === "static-import" ||
+      input.value.kind === "dynamic-import" ||
+      input.value.kind === "require") &&
+    (input.value.specifier === null ||
+      resolved === null ||
+      resolved.resolutionStatus === "unavailable" ||
+      resolved.resolutionStatus === "not-found")
+  ) {
+    const container = applicationContainerIdentity(context.fileSet, input.file);
+    const gaps =
+      context.applicationModuleGapSources.get(container) ?? new Set<string>();
+    gaps.add(input.file.path);
+    context.applicationModuleGapSources.set(container, gaps);
+  }
   if (
     resolved !== null &&
     resolved.path !== null &&

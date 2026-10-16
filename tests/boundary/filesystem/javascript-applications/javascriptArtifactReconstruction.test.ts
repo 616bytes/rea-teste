@@ -52,6 +52,96 @@ import { parseJavaScriptSemanticGraph } from "../../../../src/domain/javascript/
 import { writeJavaScriptArtifactFixture } from "../../../fixtures/javascriptArtifactApplication.js";
 import { writeFixtureFiles } from "../../../support/javascriptApplicationFixture.js";
 
+it.each(["unselected", "unavailable", "dynamic"] as const)(
+  "retains hidden competing ownership through an %s bridge",
+  async (omission) => {
+    const root = await createTestTempDirectory("rea-competing-gap-");
+    await writeFixtureFiles(root, {
+      "a/package.json": JSON.stringify({ main: "main.cjs" }),
+      "b/package.json": JSON.stringify({ main: "main.cjs" }),
+      "a/main.cjs": 'require("../shared/window.cjs");',
+      "b/main.cjs":
+        omission === "dynamic"
+          ? "require(process.env.CHILD);"
+          : 'require("../shared/bridge.cjs");',
+      "shared/bridge.cjs": 'require("./window.cjs");',
+      "shared/window.cjs":
+        'const {BrowserWindow} = require("electron"); const w = new BrowserWindow(); w.loadFile("index.html");',
+      "a/index.html": "wrong unique owner",
+      "b/index.html": "competing owner",
+      "index.html": "root decoy",
+    });
+    const snapshot = await scanCanonicalArtifactInventory(root, {});
+    const reader = createJavaScriptArtifactReader(root, "directory");
+    try {
+      const files = await readJavaScriptArtifactFiles(
+        reader,
+        snapshot,
+        undefined,
+        omission === "unselected"
+          ? [
+              "a/package.json",
+              "b/package.json",
+              "a/main.cjs",
+              "b/main.cjs",
+              "shared/window.cjs",
+            ]
+          : undefined,
+      );
+      const bridge = files.files.find(
+        ({ path }) => path === "shared/bridge.cjs",
+      );
+      if (bridge === undefined) throw new Error("Missing bridge");
+      const partial =
+        omission !== "unavailable"
+          ? files
+          : {
+              ...files,
+              files: files.files.filter(({ path }) => path !== bridge.path),
+              unavailable_relevant_files: [
+                ...files.unavailable_relevant_files,
+                {
+                  path: bridge.path,
+                  container_sha256: bridge.container_sha256,
+                  sha256: null,
+                  bytes: null,
+                  inventory_artifact_id: bridge.inventory_artifact_id,
+                  kind: bridge.kind,
+                  hash_status: "unavailable" as const,
+                },
+              ],
+            };
+      const graph = buildJavaScriptArtifactGraph(
+        snapshot,
+        partial,
+        analyzeJavaScriptArtifactFiles(partial),
+      );
+      const roles = graph.nodes.filter(
+        ({ kind }) => kind === "electron-renderer",
+      );
+      expect(roles).toHaveLength(1);
+      expect(roles[0]?.observations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              resolved_path: null,
+              resolution_status: "unavailable",
+            }),
+          }),
+        ]),
+      );
+      expect(
+        graph.edges.filter(
+          ({ source_node_id, relation }) =>
+            source_node_id === roles[0]?.node_id && relation === "maps_to",
+        ),
+      ).toEqual([]);
+    } finally {
+      await reader.close();
+    }
+  },
+);
+
 it.each(["unselected", "unavailable"] as const)(
   "keeps imported loadFile ownership unknown across an %s module",
   async (omission) => {

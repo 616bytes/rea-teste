@@ -154,12 +154,26 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         }
       `,
       "external.mjs": "export function done(){}",
-      "globals.cjs": `
+      "globals.js": `
         const {spawn,exec}=require("node:child_process");
         var argv=[];(()=>{}).constructor("argv={stdio:'inherit'}")();
         spawn("constructed-argv",argv,{stdio:"pipe"});
         let done=()=>{};(()=>{}).constructor("done={stdio:'inherit'}")();
         exec("constructed-callback",done);
+      `,
+      "wrapper.cjs": `
+        const {spawn,exec}=require("node:child_process");
+        const argv=[]; const done=()=>{};
+        spawn("cjs-argv",argv,{stdio:"inherit"});exec("cjs-callback",done);
+        var module=[]; const args=arguments; args[2]={stdio:"inherit"};
+        spawn("cjs-wrapper-argv",module,{stdio:"pipe"});
+        function exports(){}; args[0]={stdio:"inherit"};
+        exec("cjs-wrapper-callback",exports);
+      `,
+      "wrapper.cts": `
+        const {spawn,exec}=require("node:child_process");
+        const argv: string[]=[]; const done=()=>{};
+        spawn("cts-argv",argv,{stdio:"inherit"});exec("cts-callback",done);
       `,
       "parameters.cjs": `
         const {exec}=require("node:child_process");
@@ -181,6 +195,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     const expected = new Map<string | null, readonly [string, number | null]>(
       cases.map(([, command, mode, count]) => [command, [mode, count]]),
     );
+    for (const extension of ["cjs", "cts"]) {
+      expected.set(`${extension}-argv`, ["inherit", null]);
+      expected.set(`${extension}-callback`, ["default", null]);
+    }
     for (const [command, count] of [
       ["Function-global", 0],
       ["frames-global", 0],
@@ -190,6 +208,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       ["constructed-argv", null],
       ["constructed-callback", null],
       ["mapped-callback", null],
+      ["cjs-wrapper-argv", null],
+      ["cjs-wrapper-callback", null],
     ] as const)
       expected.set(command, ["dynamic", count]);
     const children = graph.nodes.filter(

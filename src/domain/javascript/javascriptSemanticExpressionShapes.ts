@@ -18,9 +18,16 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
-import { hasProvenJavaScriptModuleContext } from "./javascriptSourceParser.js";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 
 type Shape = "array" | "callback" | "unknown";
+const commonJsWrapperParameterNames = new Set([
+  "exports",
+  "require",
+  "module",
+  "__filename",
+  "__dirname",
+]);
 
 /** Bounded child-argument identity only; never recover named object contents. */
 export const createSemanticExpressionShapeResolver = (
@@ -64,13 +71,17 @@ export const createSemanticExpressionShapeResolver = (
       const binding = resolveSemanticBindingState(state, node, node.name);
       if (binding === undefined || binding.referenceInitializers.length > 0)
         return "unknown";
-      // Unknown/classic program bindings can change via global objects or
-      // constructed code. Do not try to enumerate all paths to that environment.
-      if (
-        state.scopesById.get(binding.scopeId)?.kind === "program" &&
-        !hasProvenJavaScriptModuleContext(state.program)
-      )
-        return "unknown";
+      if (state.scopesById.get(binding.scopeId)?.kind === "program") {
+        const context = javaScriptRuntimeContext(state.program);
+        // Unknown scripts expose globals; wrapper parameters can alias arguments.
+        // Neither environment has a proven stable local initializer here.
+        if (
+          context === "unknown" ||
+          (context === "commonjs" &&
+            commonJsWrapperParameterNames.has(binding.name))
+        )
+          return "unknown";
+      }
       if (namedProofBlocked()) return "unknown";
       const initializer = semanticStableInitializer(binding, state);
       if (initializer === undefined || initializer.projection.length > 0)

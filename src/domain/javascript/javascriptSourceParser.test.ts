@@ -5,40 +5,43 @@ import {
   parseJavaScriptSource,
   parseRecoveredJavaScript,
   parserPluginsForPath,
-  hasProvenJavaScriptModuleContext,
+  javaScriptRuntimeContext,
 } from "./javascriptSourceParser.js";
 import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 it.each([
-  ['import type {T} from "example";', "fixture.cts", false],
-  ['import type {T} from "example";', "fixture.mts", true],
-  ['import type {T} from "example";', "fixture.ts", false],
-  ['export type {T} from "example";', "fixture.ts", false],
-  ['import {type T} from "example";', "fixture.ts", false],
-  ['export {type T} from "example";', "fixture.ts", false],
-  ["export declare const value: unknown;", "fixture.ts", false],
-  ["export default function f(): void;", "fixture.ts", false],
-  ["export default interface I {}", "fixture.ts", false],
-  ["export default function f() {}", "fixture.ts", true],
-  ["export default class C {}", "fixture.ts", true],
-  ['import {} from "example";', "fixture.js", true],
-  ['import {} from "example";', "fixture.cjs", false],
-  ["export {};", "fixture.ts", true],
-  ["const value = 1;", "fixture.mjs", true],
-  ["const value = 1;", "fixture.js", false],
+  ['import type {T} from "example";', "fixture.cts", "commonjs"],
+  ['import type {T} from "example";', "fixture.mts", "module"],
+  ['import type {T} from "example";', "fixture.ts", "unknown"],
+  ['export type {T} from "example";', "fixture.ts", "unknown"],
+  ['import {type T} from "example";', "fixture.ts", "unknown"],
+  ['export {type T} from "example";', "fixture.ts", "unknown"],
+  ["export declare const value: unknown;", "fixture.ts", "unknown"],
+  ["export default function f(): void;", "fixture.ts", "unknown"],
+  ["export default interface I {}", "fixture.ts", "unknown"],
+  ["export default function f() {}", "fixture.ts", "module"],
+  ["export default class C {}", "fixture.ts", "module"],
+  ['import {} from "example";', "fixture.js", "module"],
+  ['import {} from "example";', "fixture.cjs", "commonjs"],
+  ["export {};", "fixture.ts", "module"],
+  ["const value = 1;", "fixture.mjs", "module"],
+  ["const value = 1;", "fixture.js", "unknown"],
+  ["const value = 1;", "fixture.cjs", "commonjs"],
+  ["const value = 1;", "fixture.cts", "commonjs"],
+  ["declare const value: unknown;", "fixture.d.cts", "unknown"],
 ] as const)(
-  "keeps runtime module proof consistent across parser entries: %s (%s)",
-  (source, path, module) => {
+  "keeps runtime context consistent across parser entries: %s (%s)",
+  (source, path, context) => {
     const parsed = parseJavaScriptSource(source, path);
     if (parsed === null) throw new Error("Expected parsed source");
     const recovered = parseRecoveredJavaScript(source, path, {
       plugins: parserPluginsForPath(path),
     }).file;
-    expect(hasProvenJavaScriptModuleContext(parsed.program)).toBe(module);
-    expect(hasProvenJavaScriptModuleContext(recovered.program)).toBe(module);
-    expect(
-      hasProvenJavaScriptModuleContext(t.cloneNode(parsed.program, true)),
-    ).toBe(false);
+    expect(javaScriptRuntimeContext(parsed.program)).toBe(context);
+    expect(javaScriptRuntimeContext(recovered.program)).toBe(context);
+    expect(javaScriptRuntimeContext(t.cloneNode(parsed.program, true))).toBe(
+      "unknown",
+    );
   },
 );
 

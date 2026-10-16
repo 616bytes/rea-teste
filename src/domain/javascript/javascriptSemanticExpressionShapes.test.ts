@@ -1,7 +1,10 @@
 import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
-import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
+import {
+  analyzeParsedJavaScriptSemantics,
+  indexJavaScriptBindingsSteps,
+} from "./javascriptSemanticAnalysis.js";
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import { collectSemanticReferences } from "./javascriptSemanticProjection.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
@@ -37,7 +40,7 @@ it.each([
 ] as const)(
   "bounds shape proofs without refining named nullish values: %s",
   (source, expected) => {
-    const file = parseJavaScriptSource(source, "fixture.cts");
+    const file = parseJavaScriptSource(source, "fixture.ts");
     if (file === null) throw new Error("Expected valid source");
     const state = completeSemanticSteps(
       indexJavaScriptBindingsSteps(file.program),
@@ -97,3 +100,52 @@ it("bounds long callback aliases without invoking the shared callable resolver",
   expect(results).toEqual([false, true, true]);
   expect(state.valueResourceLimits).toContain("expression-depth");
 });
+
+it.each([
+  ["fixture.cjs", "const argv=[];const done=()=>{};", ["inherit", "default"]],
+  ["fixture.cts", "const argv=[];const done=()=>{};", ["inherit", "default"]],
+  ["fixture.js", "const argv=[];const done=()=>{};", ["dynamic", "dynamic"]],
+  [
+    "fixture.cjs",
+    "let argv=[];argv=input;const done=()=>{};",
+    ["dynamic", "default"],
+  ],
+  [
+    "fixture.cts",
+    "const argv=[];const done=()=>{};eval(input);",
+    ["dynamic", "dynamic"],
+  ],
+  [
+    "fixture.cts",
+    "namespace N{};const argv=[];const done=()=>{};",
+    ["dynamic", "dynamic"],
+  ],
+  [
+    "fixture.cjs",
+    "var module=[];const argv=module;const done=()=>{};const args=arguments;args[2]={};",
+    ["dynamic", "default"],
+  ],
+  [
+    "fixture.cts",
+    "const argv=[];function exports(){};const args=arguments;args[0]={};const done=exports;",
+    ["inherit", "dynamic"],
+  ],
+] as const)(
+  "distinguishes wrapper-local child identities and uncertain bindings: %s (%s)",
+  (path, declarations, expected) => {
+    const file = parseJavaScriptSource(
+      `
+      const {spawn,exec}=require("node:child_process");
+      ${declarations}
+      spawn("argv",argv,{stdio:"inherit"}); exec("callback",done);
+    `,
+      path,
+    );
+    if (file === null) throw new Error("Expected parsed source");
+    expect(
+      analyzeParsedJavaScriptSemantics(file).childProcessSpawns.map(
+        ({ stdioMode }) => stdioMode,
+      ),
+    ).toEqual(expected);
+  },
+);

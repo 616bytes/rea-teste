@@ -13,11 +13,17 @@ export type ParsedJavaScriptSource = ReturnType<typeof parse>;
 
 // Babel's module classification includes erased TypeScript syntax. Keep the
 // runtime proof separate, including explicit filename mode, for every parser entry.
-const runtimeModuleByProgram = new WeakMap<t.Program, boolean>();
+type JavaScriptRuntimeContext = "module" | "commonjs" | "unknown";
+const runtimeContextByProgram = new WeakMap<
+  t.Program,
+  JavaScriptRuntimeContext
+>();
 
-/** External/synthetic ASTs without parser-owned mode facts do not prove ESM isolation. */
-export const hasProvenJavaScriptModuleContext = (program: t.Program): boolean =>
-  runtimeModuleByProgram.get(program) === true;
+/** Only parser-owned facts establish module or CommonJS wrapper isolation. */
+export const javaScriptRuntimeContext = (
+  program: t.Program,
+): JavaScriptRuntimeContext =>
+  runtimeContextByProgram.get(program) ?? "unknown";
 
 const hasRuntimeModuleDeclaration = (program: t.Program): boolean =>
   program.body.some((node) => {
@@ -46,12 +52,17 @@ const parseWithRuntimeContext = (
   options: ParserOptions,
 ): ParsedJavaScriptSource => {
   const file = parse(source, options);
-  runtimeModuleByProgram.set(
+  runtimeContextByProgram.set(
     file.program,
-    isExplicitModuleSourcePath(sourcePath) ||
-      (!/\.c[jt]s$/iu.test(sourcePath ?? "") &&
-        file.program.sourceType === "module" &&
-        hasRuntimeModuleDeclaration(file.program)),
+    /\.c[jt]s$/iu.test(sourcePath ?? "")
+      ? /\.d\.cts$/iu.test(sourcePath ?? "")
+        ? "unknown"
+        : "commonjs"
+      : isExplicitModuleSourcePath(sourcePath) ||
+          (file.program.sourceType === "module" &&
+            hasRuntimeModuleDeclaration(file.program))
+        ? "module"
+        : "unknown",
   );
   return file;
 };

@@ -96,6 +96,56 @@ it("returns the selected callable's result expressions below the budget", () => 
   expect(t.isConditionalExpression(references[0]?.node)).toBe(true);
 });
 
+it("resolves a deep alias chain exactly within the budget", () => {
+  const depth = 1024;
+  const chain = Array.from(
+    { length: depth },
+    (_, index) => `const a${depth - index - 1} = a${depth - index};`,
+  ).join("\n");
+  const { program, state } = indexed(`
+    const marker = { value: 1 };
+    function fn() { return marker; }
+    const a${depth} = fn;
+    ${chain}
+    a0();
+  `);
+  const call = program.body.at(-1);
+  if (!t.isExpressionStatement(call) || !t.isCallExpression(call.expression))
+    throw new Error("Missing chain call");
+  const references = createSemanticReturnedReferences(state)(
+    call.expression.callee,
+  );
+  expect([...state.valueResourceLimits]).toEqual([]);
+  expect(
+    references.some(
+      (reference) =>
+        t.isIdentifier(reference.node) && reference.node.name === "marker",
+    ),
+  ).toBe(true);
+});
+
+it("bounds a reassignment chain deeper than the admission reserve", () => {
+  const depth = 32768;
+  const chain = Array.from(
+    { length: depth },
+    (_, index) => `const a${depth - index - 1} = a${depth - index};`,
+  ).join("\n");
+  const { program, state } = indexed(`
+    const marker = { value: 1 };
+    function fn() { return marker; }
+    const a${depth} = fn;
+    ${chain}
+    a0();
+  `);
+  const call = program.body.at(-1);
+  if (!t.isExpressionStatement(call) || !t.isCallExpression(call.expression))
+    throw new Error("Missing chain call");
+  createSemanticReturnedReferences(state)(call.expression.callee);
+  expect([...state.valueResourceLimits]).toEqual([
+    "returned-reference-expansion",
+  ]);
+});
+
 it("keeps references proven before the budget cuts off a reassignment web", () => {
   const bindings = ["t", "e", "a", "n", "r"];
   const keys = [

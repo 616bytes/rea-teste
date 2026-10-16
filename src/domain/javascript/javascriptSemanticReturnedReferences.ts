@@ -26,8 +26,32 @@ export interface SemanticReturnedReference {
 interface Candidate {
   readonly node: t.Node;
   readonly path: readonly (string | number | null)[];
-  readonly initializers: ReadonlySet<JavaScriptSemanticInitializer>;
+  readonly initializers: InitializerChain | null;
 }
+
+/** Entered-initializer ancestry shared across children: O(1) to extend. */
+interface InitializerChain {
+  readonly parent: InitializerChain | null;
+  readonly value: JavaScriptSemanticInitializer;
+}
+
+const initializerChainHas = (
+  chain: InitializerChain | null,
+  target: JavaScriptSemanticInitializer,
+): boolean => {
+  for (let link = chain; link !== null; link = link.parent)
+    if (link.value === target) return true;
+  return false;
+};
+
+const initializerChainCovers = (
+  chain: InitializerChain | null,
+  required: InitializerContext,
+): boolean => {
+  for (const initializer of required)
+    if (!initializerChainHas(chain, initializer)) return false;
+  return true;
+};
 
 type InitializerContext = ReadonlySet<JavaScriptSemanticInitializer>;
 type CompletedExpansions = WeakMap<
@@ -66,7 +90,7 @@ const propagateBlockers = (
 ): void => {
   if (parent === null) return;
   for (const initializer of blockers)
-    if (parent.item.initializers.has(initializer))
+    if (initializerChainHas(parent.item.initializers, initializer))
       parent.blockers.add(initializer);
 };
 
@@ -122,7 +146,7 @@ export const createSemanticReturnedReferences = (
     const work: ExpansionTask[] = [
       {
         kind: "visit",
-        item: { node: callee, path: [], initializers: new Set() },
+        item: { node: callee, path: [], initializers: null },
         parent: null,
       },
     ];
@@ -163,7 +187,7 @@ export const createSemanticReturnedReferences = (
       const covered = expanded
         .get(node)
         ?.get(pathKey)
-        ?.find((context) => contextContains(item.initializers, context));
+        ?.find((context) => initializerChainCovers(item.initializers, context));
       if (covered !== undefined) {
         // Cached cycle dependencies must reach the caller's proof too.
         propagateBlockers(covered, parent);
@@ -190,7 +214,7 @@ export const createSemanticReturnedReferences = (
           ...selected.initializers,
           ...selected.referenceInitializers,
         ]) {
-          if (item.initializers.has(initializer)) {
+          if (initializerChainHas(item.initializers, initializer)) {
             frame.blockers.add(initializer);
             continue;
           }
@@ -198,7 +222,7 @@ export const createSemanticReturnedReferences = (
           pending.push({
             node: initializer.node,
             path: [...initializer.projection, ...item.path],
-            initializers: new Set([...item.initializers, initializer]),
+            initializers: { parent: item.initializers, value: initializer },
           });
         }
       } else if (

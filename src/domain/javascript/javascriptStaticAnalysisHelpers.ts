@@ -321,26 +321,26 @@ const isSourceFileUrl = (
 const staticResolvedPath = (
   node: t.CallExpression | t.NewExpression,
 ): string | undefined => {
-  const parts: (string | null)[] = [];
-  for (const argument of node.arguments) {
+  const parts: string[] = [];
+  let anchored = false;
+  // Node walks right-to-left and never inspects arguments before its anchor.
+  for (let index = node.arguments.length - 1; index >= 0; index -= 1) {
+    const argument = node.arguments[index];
     if (isDirectoryPath(argumentNode(argument))) {
-      parts.push(null);
-      continue;
+      anchored = true;
+      break;
     }
     const value = t.isNode(argument) ? staticPath(argument) : undefined;
-    // Validate every argument, including those before the last anchor.
     if (value === undefined) return undefined;
     parts.push(value);
+    if (posix.isAbsolute(value)) {
+      anchored = true;
+      break;
+    }
   }
-  const anchor = parts.findLastIndex(
-    (part) => part === null || posix.isAbsolute(part),
-  );
   // Relative-only calls depend on the target process cwd, which is unknown.
-  if (anchor === -1) return undefined;
-  // A null anchor is the source directory; preserve its relative projection.
-  const path = posix.join(
-    ...parts.slice(anchor).filter((part) => part !== null),
-  );
+  if (!anchored) return undefined;
+  const path = posix.join(...parts.reverse());
   return path === "/" ? path : path.replace(/\/$/u, "");
 };
 

@@ -29,6 +29,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         target: null,
         status: "rejected",
       },
+      {
+        directory: "ignored-prefix",
+        expression:
+          'path.resolve(new URL("./", import.meta.url), path.dirname(fileURLToPath(import.meta.url)), "preload%2Fname.cjs")',
+        target: "preload%2Fname.cjs",
+        status: "resolved",
+      },
     ] as const;
     const inert = 'throw new Error("fixture source must never execute");';
     await writeFixtureFiles(root, {
@@ -47,6 +54,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "converted/preload%252Fname.cjs": inert,
       "converted/preload/name.cjs": inert,
       "outside%2Fname.cjs": inert,
+      "ignored-prefix/preload%2Fname.cjs": inert,
     });
 
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);

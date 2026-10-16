@@ -27,6 +27,22 @@ const anchoredExpressions = [
   ['path[`resolve`](__dirname, "preload.js")', "preload.js"],
   ['path.posix.resolve("ignored", __dirname, "preload.js")', "preload.js"],
   ['path.resolve("/ignored", __dirname, "preload.js")', "preload.js"],
+  ['path.resolve(runtimeBase, "/app/preload.js")', "/app/preload.js"],
+  ['path.resolve(runtimeBase, __dirname, "preload.js")', "preload.js"],
+  ['path.resolve(...parts, "/app/preload.js")', "/app/preload.js"],
+  ['path.resolve(42, "/app/preload.js")', "/app/preload.js"],
+  [
+    'path.resolve(new URL("./", import.meta.url), __dirname, "preload.js")',
+    "preload.js",
+  ],
+  [
+    'path.resolve(new URL("./", import.meta.url), dirname(fileURLToPath(import.meta.url)), "preload.js")',
+    "preload.js",
+  ],
+  [
+    'path.posix.resolve(new URL("./", import.meta.url), "/app", "preload.js")',
+    "/app/preload.js",
+  ],
   [
     'path.posix.resolve("ignored", dirname(fileURLToPath(import.meta.url)), "preload.js")',
     "preload.js",
@@ -58,13 +74,9 @@ const unknownExpressions = [
   "path.posix.resolve()",
   'path.resolve("sub", "../preload.js")',
   'path.resolve("", "")',
-  'path.resolve(runtimeBase, "/app/preload.js")',
   'path.resolve("/app", runtimeFile)',
-  'path.resolve(runtimeBase, __dirname, "preload.js")',
   "path.resolve(__dirname, runtimeFile)",
-  'path.resolve(...parts, "/app/preload.js")',
   'path.resolve("/app", ...parts)',
-  'path.resolve(42, "/app/preload.js")',
   'path.resolve("/app", null)',
   "path.resolve(`/app/${runtimeFile}`)",
   'path.win32.resolve("/app", "/shared/preload.js")',
@@ -77,7 +89,8 @@ const unknownExpressions = [
   'path.join(new URL("./", import.meta.url), "preload.js")',
   'path.resolve(new URL("./", import.meta.url), "preload.js")',
   'path.join(__dirname, new URL("./pre%2Fload.js", import.meta.url))',
-  'path.resolve(new URL("./", import.meta.url), __dirname, "preload.js")',
+  'path.resolve(__dirname, new URL("./", import.meta.url), "preload.js")',
+  'path.resolve("/app", new URL("./", import.meta.url), "preload.js")',
 ];
 
 const pathValueExpressions = [

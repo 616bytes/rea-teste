@@ -26,6 +26,7 @@ import {
   DEX_THIS_NAME,
   type DexMethodDebug,
   type DexWorkBudget,
+  chargeWork,
 } from "./dexDebugInfo.js";
 import { type Result, err, ok } from "../result.js";
 import { DexStringResolver } from "./dexStrings.js";
@@ -125,6 +126,7 @@ interface MethodDecodeInput {
   readonly debugInfoOff: number;
   readonly insnsSize: number;
   readonly firstRegister: number;
+  readonly registersSize: number;
   readonly paramTypes: readonly {
     readonly typeIdx: number;
     readonly wide: boolean;
@@ -148,6 +150,7 @@ const methodDecodeInput = (
     debugInfoOff: code.value.debugInfoOff,
     insnsSize: code.value.insnsSize,
     firstRegister: code.value.registersSize - code.value.insSize,
+    registersSize: code.value.registersSize,
     paramTypes: resolver.methodParameters(method.methodIdx) ?? [],
   };
 };
@@ -172,6 +175,7 @@ const decodeMethodDebug = (
         input.insnsSize,
         {
           firstRegister: input.firstRegister,
+          registersSize: input.registersSize,
           accessFlags: method.accessFlags,
           thisTypeIdx: classTypeIdx,
           paramTypes: input.paramTypes,
@@ -179,12 +183,20 @@ const decodeMethodDebug = (
         options,
       );
 
+/**
+ * A class's methods, with class_data parsing charged to the call-wide budget:
+ * many class_defs may point at one (or overlapping) class_data, so its cost
+ * must be bounded per call, not per distinct offset.
+ */
 const methodsOf = (
   bytes: Uint8Array,
   classDef: DexClassDef,
+  work: DexWork,
 ): readonly DexEncodedMethod[] => {
   if (classDef.classDataOff === 0) return [];
-  const data = parseClassData(bytes, classDef.classDataOff);
+  const data = parseClassData(bytes, classDef.classDataOff, () =>
+    chargeWork(work.budget),
+  );
   return data.ok
     ? [...data.value.directMethods, ...data.value.virtualMethods]
     : [];
@@ -196,6 +208,9 @@ const outOfWork = (work: DexWork): DexWorkError | null =>
     : work.budget.remaining <= 0
       ? { kind: "work-budget-exceeded", limit: work.budget.limit }
       : null;
+
+/** Distinct (stream, layout) tallies kept for reuse; bounds the summary's memo. */
+const MEMO_LIMIT = 65_536;
 
 /** Serialized overhead per projected object (keys, numbers, punctuation). */
 const METHOD_OVERHEAD = 320;
@@ -231,7 +246,7 @@ export const assembleClassDetail = (
       limit: outputLimit,
     });
   const methods: DexMethodDetail[] = [];
-  for (const method of methodsOf(bytes, classDef)) {
+  for (const method of methodsOf(bytes, classDef, work)) {
     const stop = outOfWork(work);
     if (stop !== null) return err(stop);
     const input = methodDecodeInput(bytes, method, resolver);
@@ -346,17 +361,39 @@ export const summarizeDex = (
   let explicitLocalDeclarations = 0;
   let setFileEvents = 0;
   let sourceFilePresent = 0;
-  const sources = new Set<string>();
+  // Distinct source files are counted with two bitmaps over the string-id
+  // space (each string_id is at least 4 bytes, so this is at most 1/32 of the
+  // file) and only the bounded sample is decoded and kept.
+  const idSpace = Math.min(
+    dex.header.stringIdsSize,
+    Math.floor(bytes.length / 4),
+  );
+  const seenSource = new Uint8Array(Math.ceil(idSpace / 8));
+  const validSource = new Uint8Array(Math.ceil(idSpace / 8));
+  let distinctSources = 0;
+  const sourceSample: string[] = [];
 
   for (const classDef of dex.classDefs) {
     const stop = outOfWork(work);
     if (stop !== null) return err(stop);
-    const source = resolver.string(classDef.sourceFileIdx);
-    if (source !== null) {
-      sourceFilePresent += 1;
-      sources.add(source); // distinct count; a single value signals -renamesourcefileattribute
+    const idx = classDef.sourceFileIdx;
+    if (idx >= 0 && idx < idSpace) {
+      const at = idx >>> 3;
+      const bit = 1 << (idx & 7);
+      if ((seenSource[at]! & bit) === 0) {
+        seenSource[at]! |= bit;
+        const source = resolver.string(idx);
+        if (source !== null) {
+          validSource[at]! |= bit;
+          // A single distinct value signals -renamesourcefileattribute.
+          distinctSources += 1;
+          if (sourceSample.length < SOURCE_FILE_SAMPLE_CAP)
+            sourceSample.push(source);
+        }
+      }
+      if ((validSource[at]! & bit) !== 0) sourceFilePresent += 1;
     }
-    for (const method of methodsOf(bytes, classDef)) {
+    for (const method of methodsOf(bytes, classDef, work)) {
       if (method.codeOff === 0) continue;
       methodsWithCode += 1;
       const input = methodDecodeInput(bytes, method, resolver);
@@ -366,6 +403,7 @@ export const summarizeDex = (
         input.debugInfoOff,
         input.insnsSize,
         input.firstRegister,
+        input.registersSize,
         isStatic ? "s" : `i${String(classDef.classIdx)}`,
         input.paramTypes
           .map((p) => `${String(p.typeIdx)}${p.wide ? "w" : ""}`)
@@ -395,7 +433,9 @@ export const summarizeDex = (
           setFileEvents: debug.setFileEvents,
           hasParameterNames: debug.parameterNames.some((idx) => idx >= 0),
         };
-        tallies.set(key, tally);
+        // The memo is an optimisation, not a working set: past its cap a
+        // repeat is decoded again (still charged), never retained.
+        if (tallies.size < MEMO_LIMIT) tallies.set(key, tally);
       }
       if (!tally.present) continue;
       methodsWithDebugInfo += 1;
@@ -419,8 +459,8 @@ export const summarizeDex = (
     setFileEvents,
     sourceFilePresent,
     distinctSourceFiles: {
-      count: sources.size,
-      sample: [...sources].slice(0, SOURCE_FILE_SAMPLE_CAP),
+      count: distinctSources,
+      sample: sourceSample,
     },
     readiness: classifyReadiness(
       explicitLocalDeclarations,

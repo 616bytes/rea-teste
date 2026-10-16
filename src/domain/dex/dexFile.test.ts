@@ -164,3 +164,37 @@ describe("parseDexFile framing", () => {
     expect(result.error.kind).toBe("budget-exceeded");
   });
 });
+
+describe("parseClassData bounds", () => {
+  /** class_data at offset 1: field/method counts, then filler bytes. */
+  const classData = (fields: number, filler: number): Uint8Array =>
+    Uint8Array.from([
+      0xff,
+      ...uleb(fields),
+      ...uleb(0),
+      ...uleb(0),
+      ...uleb(0),
+      ...Array.from({ length: filler }, () => 0),
+    ]);
+
+  it("refuses a field count that cannot fit before walking it", () => {
+    const result = parseClassData(classData(1_000_000, 64), 1);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      kind: "budget-exceeded",
+      resource: "class-data",
+    });
+  });
+
+  it("charges every skipped field to the caller's work and stops when spent", () => {
+    let units = 3;
+    const result = parseClassData(classData(10, 64), 1, () => units-- > 0);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      kind: "budget-exceeded",
+      resource: "work",
+    });
+  });
+});

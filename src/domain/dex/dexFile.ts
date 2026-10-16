@@ -56,7 +56,7 @@ export type DexFileParseError =
   | {
       readonly kind: "budget-exceeded";
       readonly offset: number;
-      readonly resource: "class-defs" | "class-data" | "leb128";
+      readonly resource: "class-defs" | "class-data" | "leb128" | "work";
       readonly declared: number;
       readonly remaining: number;
     }
@@ -331,6 +331,7 @@ export const parseDexFile = (
 const readEncodedMethods = (
   cursor: DexCursor,
   count: number,
+  charge: DexWorkCharge,
 ): Result<DexEncodedMethod[], DexFileParseError> => {
   // Each encoded_method is at least three ULEB128 bytes; a declared count that
   // could not fit in the remaining buffer is refused before allocating, so a
@@ -346,6 +347,7 @@ const readEncodedMethods = (
   const methods: DexEncodedMethod[] = [];
   let methodIdx = 0; // indices are cumulative deltas within each list
   for (let i = 0; i < count; i += 1) {
+    if (!charge()) return workSpent(cursor);
     const diff = cursor.uleb128();
     if (!diff.ok) return diff;
     const access = cursor.uleb128();
@@ -363,9 +365,26 @@ const readEncodedMethods = (
 };
 
 /** Decode a `class_data_item`, skipping fields and returning the method lists. */
+/**
+ * Charge one unit of caller-owned work; `false` once it is spent. Lets a
+ * caller bound the total class_data parsing of a whole call, since many
+ * class_defs may point at the same (or overlapping) class_data.
+ */
+export type DexWorkCharge = () => boolean;
+
+const workSpent = (cursor: DexCursor): Result<never, DexFileParseError> =>
+  err({
+    kind: "budget-exceeded",
+    offset: cursor.offset,
+    resource: "work",
+    declared: 0,
+    remaining: cursor.remaining,
+  });
+
 export const parseClassData = (
   bytes: Uint8Array,
   offset: number,
+  charge: DexWorkCharge = () => true,
 ): Result<DexClassData, DexFileParseError> => {
   if (offset <= 0 || offset >= bytes.length)
     return err({
@@ -384,8 +403,20 @@ export const parseClassData = (
   const virtualMethods = cursor.uleb128();
   if (!virtualMethods.ok) return virtualMethods;
 
-  // Skip both encoded_field lists (each entry: field_idx_diff uleb, access uleb).
-  for (let i = 0; i < staticFields.value + instanceFields.value; i += 1) {
+  // Skip both encoded_field lists (each entry: field_idx_diff uleb, access
+  // uleb — at least two bytes). A count that could not fit is refused up
+  // front, as for methods, and each skipped entry is charged.
+  const fields = staticFields.value + instanceFields.value;
+  if (fields > cursor.remaining / 2)
+    return err({
+      kind: "budget-exceeded",
+      offset: cursor.offset,
+      resource: "class-data",
+      declared: fields,
+      remaining: cursor.remaining,
+    });
+  for (let i = 0; i < fields; i += 1) {
+    if (!charge()) return workSpent(cursor);
     if (!cursor.uleb128().ok || !cursor.uleb128().ok)
       return err({
         kind: "truncated",
@@ -395,9 +426,9 @@ export const parseClassData = (
       });
   }
 
-  const direct = readEncodedMethods(cursor, directMethods.value);
+  const direct = readEncodedMethods(cursor, directMethods.value, charge);
   if (!direct.ok) return direct;
-  const virtual = readEncodedMethods(cursor, virtualMethods.value);
+  const virtual = readEncodedMethods(cursor, virtualMethods.value, charge);
   if (!virtual.ok) return virtual;
   return ok({ directMethods: direct.value, virtualMethods: virtual.value });
 };

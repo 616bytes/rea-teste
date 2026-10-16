@@ -200,3 +200,26 @@ describe("decodeDebugInfo bounds and semantics", () => {
     expect(d.positionCount).toBeLessThan(70_000);
   });
 });
+
+describe("decodeDebugInfo register bound", () => {
+  it("treats a local in a register past registers_size as malformed", () => {
+    const bytes = stream(
+      ...uleb(1),
+      ...uleb(0),
+      START_LOCAL,
+      ...uleb(70_000),
+      ...ulebp1(10),
+      ...ulebp1(11),
+      END_SEQUENCE,
+    );
+    const d = decodeDebugInfo(bytes, 1, 4, {
+      firstRegister: 0,
+      registersSize: 4,
+      accessFlags: 0x8,
+      thisTypeIdx: 0,
+      paramTypes: [],
+    });
+    expect(d.malformed).toBe(true);
+    expect(d.localCount).toBe(0);
+  });
+});

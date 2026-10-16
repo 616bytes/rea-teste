@@ -49,6 +49,11 @@ const ACC_STATIC = 0x8;
 export interface DexParameterLayout {
   /** `registers_size - ins_size`: the first register holding an incoming parameter. */
   readonly firstRegister: number;
+  /**
+   * The method's `registers_size`. A local naming a register at or past it is
+   * malformed (DEX format), which also bounds the live-register maps.
+   */
+  readonly registersSize?: number;
   readonly accessFlags: number;
   /** The declaring class's type index, for the implicit `this`. */
   readonly thisTypeIdx: number;
@@ -163,6 +168,13 @@ export const dexWorkBudget = (limit: number): DexWorkBudget => ({
   remaining: limit,
   limit,
 });
+
+/** Charge one unit to `budget`; `false` once it is spent. */
+export const chargeWork = (budget: DexWorkBudget): boolean => {
+  if (budget.remaining <= 0) return false;
+  budget.remaining -= 1;
+  return true;
+};
 
 /** Mutable walk over one `debug_info_item`; one handler per opcode group. */
 class DebugInfoWalk {
@@ -288,6 +300,10 @@ class DebugInfoWalk {
       signatureIdx = sig.value;
     }
     if (!reg.ok || !nameIdx.ok || !typeIdx.ok) return false;
+    // A register past the method's frame is malformed; refusing it also caps
+    // the live-register maps at registers_size (<= 65,535).
+    const registersSize = this.layout?.registersSize;
+    if (registersSize !== undefined && reg.value >= registersSize) return false;
     const existing = this.live.get(reg.value);
     if (existing) this.pushLocal(reg.value, existing, this.address); // implicit end
     const local: LiveLocal = {

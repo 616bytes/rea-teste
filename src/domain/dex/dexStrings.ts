@@ -15,6 +15,13 @@ import { DEX_NO_INDEX, DexCursor, type DexHeader } from "./dexFile.js";
  * each string id at most once: thousands of locals sharing one long name must
  * cost one decode, not one per reference.
  */
+/**
+ * Entries kept per memo. Memoisation is an optimisation, not a working set:
+ * past the cap a value is recomputed, never retained, so a DEX with millions of
+ * distinct strings or protos cannot grow these maps without bound.
+ */
+const MEMO_LIMIT = 65_536;
+
 export class DexStringResolver {
   private readonly view: DataView;
   readonly #strings = new Map<number, string | null>();
@@ -26,13 +33,17 @@ export class DexStringResolver {
     this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   }
 
+  #remember<K, V>(memo: Map<K, V>, key: K, value: V): void {
+    if (memo.size < MEMO_LIMIT) memo.set(key, value);
+  }
+
   /** Resolve a string-pool index to its text, or `null` when absent/malformed. */
   string(index: number): string | null {
     const cached = this.#strings.get(index);
     if (cached !== undefined || this.#strings.has(index)) return cached ?? null;
     const raw = this.#raw(index);
     const decoded = raw === null ? null : this.#decode(raw);
-    this.#strings.set(index, decoded);
+    this.#remember(this.#strings, index, decoded);
     return decoded;
   }
 
@@ -45,7 +56,7 @@ export class DexStringResolver {
     if (bound === undefined) {
       const raw = this.#raw(index);
       bound = raw === null ? 4 : Math.max(4, modifiedUtf8JsonBound(raw.bytes));
-      this.#bounds.set(index, bound);
+      this.#remember(this.#bounds, index, bound);
     }
     return bound;
   }
@@ -74,7 +85,7 @@ export class DexStringResolver {
     const memo = this.#rawMemo.get(index);
     if (memo !== undefined || this.#rawMemo.has(index)) return memo ?? null;
     const raw = this.#locate(index);
-    this.#rawMemo.set(index, raw);
+    this.#remember(this.#rawMemo, index, raw);
     return raw;
   }
 
@@ -182,7 +193,7 @@ export class DexStringResolver {
     if (cached !== undefined || this.#protoParams.has(protoIndex))
       return cached ?? null;
     const params = this.#protoParameters(protoIndex);
-    this.#protoParams.set(protoIndex, params);
+    this.#remember(this.#protoParams, protoIndex, params);
     return params;
   }
 

@@ -178,6 +178,8 @@ export interface InstalledSkillIdentity {
   readonly version: string | null;
   readonly toolCount: number | null;
   readonly canonical: boolean;
+  /** No skill manifest bytes were readable; retained files keep this identity. */
+  readonly manifestMissing?: true;
   readonly issues?: readonly SkillPathIssue[];
 }
 
@@ -652,6 +654,7 @@ export const readInstalledSkillIdentity = async (
       : /^\s{2}tool_count:\s*(\d+)\s*$/mu.exec(content)?.[1];
   return {
     canonical: inspection.ok && inspection.value.canonical,
+    ...(content === undefined ? { manifestMissing: true } : {}),
     version:
       content === undefined
         ? null

@@ -2,6 +2,8 @@ import * as t from "@babel/types";
 import {
   semanticPatternSuspendsBeforeGeneratorRead,
   semanticPatternSuspendsBeforeTarget,
+  semanticGeneratorReadInCleanup,
+  semanticGeneratorReadAfterYield,
 } from "./javascriptGeneratorConsumerPhases.js";
 
 import {
@@ -32,6 +34,7 @@ import {
   syntaxEvaluationCannotThrow,
   syntaxMayCompleteNormally,
   syntaxAlwaysThrows,
+  syntaxMayReachNextIteration,
 } from "./javascriptSymbolicControlFlow.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
 
@@ -67,7 +70,9 @@ const webSocketOuterExpression = (
       stopAtPatternConsumer &&
       t.isAssignmentExpression(parent) &&
       parent.right === current &&
-      (t.isArrayPattern(parent.left) || t.isObjectPattern(parent.left))
+      (t.isArrayPattern(parent.left) ||
+        t.isObjectPattern(parent.left) ||
+        webSocketImmediateCaller(parent, state) !== undefined)
     )
       return current;
     if (
@@ -617,7 +622,8 @@ interface WebSocketParameterResume {
   readonly invocation:
     | t.CallExpression
     | t.OptionalCallExpression
-    | t.NewExpression;
+    | t.NewExpression
+    | t.AssignmentExpression;
 }
 
 /** Select a potential reached callee without imposing completed-write validity. */
@@ -650,10 +656,13 @@ const webSocketImmediateCaller = (
   if (
     !t.isCallExpression(call) &&
     !t.isOptionalCallExpression(call) &&
-    !t.isNewExpression(call)
+    !t.isNewExpression(call) &&
+    !t.isAssignmentExpression(call)
   )
     return undefined;
-  const pending: t.Node[] = [call.callee];
+  const pending: t.Node[] = [
+    t.isAssignmentExpression(call) ? call.left : call.callee,
+  ];
   while (pending.length > 0) {
     const node = pending.pop();
     if (node === undefined) continue;
@@ -662,7 +671,14 @@ const webSocketImmediateCaller = (
         t.isClassMethod(node) && node.kind === "constructor"
           ? webSocketClassConstruction(node, state)
           : webSocketImmediateInvocation(node, state);
-      if (invocation === call) {
+      if (
+        invocation === call ||
+        (t.isAssignmentExpression(call) &&
+          (t.isObjectMethod(node) || t.isClassMethod(node)) &&
+          node.kind === "set" &&
+          invocation !== undefined &&
+          semanticValueWriteSite(invocation, state.parentsByNode) === call)
+      ) {
         callers.set(call, node);
         return node;
       }
@@ -679,6 +695,21 @@ const webSocketParameterResume = (
   state: JavaScriptSemanticAnalysisState,
 ): WebSocketParameterResume | undefined => {
   const parent = state.parentsByNode.get(result);
+  if (
+    t.isAssignmentExpression(parent) &&
+    parent.operator === "=" &&
+    parent.right === result
+  ) {
+    const owner = webSocketImmediateCaller(parent, state);
+    const parameter =
+      owner === undefined ? undefined : runtimeFunctionParameters(owner)[0];
+    const pattern = t.isAssignmentPattern(parameter)
+      ? parameter.left
+      : parameter;
+    return t.isArrayPattern(pattern) && pattern.elements.length > 0
+      ? { parameter: pattern, invocation: parent }
+      : undefined;
+  }
   const array = t.isArrayExpression(parent) ? parent : undefined;
   const call = array === undefined ? parent : state.parentsByNode.get(array);
   if (
@@ -777,6 +808,7 @@ const webSocketGeneratorResume = (
     if (
       t.isArrayExpression(consumer) ||
       t.isCallExpression(consumer) ||
+      t.isOptionalCallExpression(consumer) ||
       t.isNewExpression(consumer)
     )
       return member;
@@ -824,20 +856,22 @@ const webSocketBodyMaySuspend = (body: t.Node): boolean => {
   return false;
 };
 
-/** A delegated generator inherits the surrounding generator's actual consumer. */
-const webSocketGeneratorConsumerStaysInTurn = (
+type WebSocketConsumerPhase = "same-turn" | "after-wait" | "unknown";
+
+/** A delegated generator inherits the surrounding generator's actual consumer phase. */
+const webSocketGeneratorConsumerPhase = (
   invocation: t.Node,
   read: t.Node,
   body: t.Node,
   state: JavaScriptSemanticAnalysisState,
   ownedResultEscape?: t.Node,
   seen = new Set<t.Node>(),
-): boolean => {
-  if (seen.has(invocation)) return false;
+): WebSocketConsumerPhase => {
+  if (seen.has(invocation)) return "unknown";
   seen.add(invocation);
-  if (t.isSpreadElement(invocation)) return true;
+  if (t.isSpreadElement(invocation)) return "same-turn";
   if (t.isArrayPattern(invocation))
-    return !semanticPatternSuspendsBeforeGeneratorRead({
+    return semanticPatternSuspendsBeforeGeneratorRead({
       read,
       body,
       pattern: invocation,
@@ -847,13 +881,31 @@ const webSocketGeneratorConsumerStaysInTurn = (
       maySuspend: webSocketBodyMaySuspend,
       completedSuspension: (node) =>
         webSocketCompletedSuspension(node, state) !== undefined,
-    });
+    })
+      ? "after-wait"
+      : "same-turn";
+  if (
+    t.isForOfStatement(invocation) &&
+    !syntaxMayReachNextIteration(invocation.body)
+  )
+    return semanticGeneratorReadInCleanup(
+      read,
+      body,
+      state,
+      webSocketOrderedEvaluation,
+      webSocketBodyMaySuspend,
+    ) &&
+      (invocation.await ||
+        (t.isBlockStatement(invocation.body) &&
+          webSocketEveryExitSuspension(invocation.body) !== undefined))
+      ? "after-wait"
+      : "same-turn";
   if (t.isForOfStatement(invocation))
-    return (
-      !invocation.await &&
+    return !invocation.await &&
       !webSocketBodyMaySuspend(invocation.left) &&
       !webSocketBodyMaySuspend(invocation.body)
-    );
+      ? "same-turn"
+      : "after-wait";
   if (t.isYieldExpression(invocation) && invocation.delegate) {
     const owner = webSocketSuspensionOwner(invocation, state);
     if (
@@ -862,23 +914,22 @@ const webSocketGeneratorConsumerStaysInTurn = (
       !owner.generator ||
       owner.async
     )
-      return false;
+      return "unknown";
     const call = webSocketImmediateInvocation(owner, state);
     const resume =
       call === undefined ? undefined : webSocketGeneratorResume(call, state);
-    return (
-      resume !== undefined &&
-      webSocketGeneratorConsumerStaysInTurn(
-        "parameter" in resume ? resume.parameter : resume,
-        read,
-        owner.body,
-        state,
-        call,
-        seen,
-      )
-    );
+    return resume === undefined
+      ? "unknown"
+      : webSocketGeneratorConsumerPhase(
+          "parameter" in resume ? resume.parameter : resume,
+          read,
+          owner.body,
+          state,
+          call,
+          seen,
+        );
   }
-  return false;
+  return "unknown";
 };
 
 /** The lexical body that actually suspends owns the continuation boundary. */
@@ -1059,6 +1110,7 @@ export const webSocketExecutionContexts = (
         | t.ForOfStatement
         | t.SpreadElement
         | t.ArrayPattern
+        | t.AssignmentExpression
         | t.YieldExpression =
         t.isClassMethod(parent) && parent.kind === "constructor"
           ? webSocketClassConstruction(parent, state)
@@ -1129,22 +1181,33 @@ export const webSocketExecutionContexts = (
               : (decoratedClass ?? invocation),
         );
       }
+      const consumerPhase =
+        generatorBody && !parent.async
+          ? webSocketGeneratorConsumerPhase(
+              parameterConsumer ?? invocation,
+              node,
+              parent.body,
+              state,
+              generatorInvocation,
+            )
+          : "unknown";
       if (
         (parent.async || generatorBody) &&
         current === parent.body &&
         // Synchronous for-of resumes after every ordinary yield in the same turn.
-        !(
-          !parent.async &&
-          generatorBody &&
-          webSocketGeneratorConsumerStaysInTurn(
-            parameterConsumer ?? invocation,
+        consumerPhase !== "same-turn"
+      ) {
+        if (
+          consumerPhase === "after-wait" &&
+          semanticGeneratorReadAfterYield(
             node,
             parent.body,
             state,
-            generatorInvocation,
+            webSocketOrderedEvaluation,
+            webSocketBodyMaySuspend,
           )
         )
-      ) {
+          suspendedOwner = parent;
         const continuation = webSocketContinuation(node, parent.body, state);
         if (continuation !== undefined)
           suspendedOwner = webSocketSuspensionOwner(continuation, state);

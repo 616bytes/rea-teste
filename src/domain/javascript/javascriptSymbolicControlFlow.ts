@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 import {
   javaScriptExactResultOperand,
   readExactJavaScriptLiteral,
+  unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { javaScriptOptionalOperandsMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
 import {
@@ -300,7 +301,11 @@ export const syntaxAlwaysThrows = (node: t.Node): boolean => {
 /** Only outward jumps can skip a containing phase; nested owners consume theirs. */
 export const syntaxMayExitByJump = (node: t.Node): boolean =>
   syntaxCompletion(node, 0).abrupt.some(
-    ({ kind }) => kind === "break" || kind === "continue" || kind === "unknown",
+    ({ kind }) =>
+      kind === "break" ||
+      kind === "continue" ||
+      kind === "return" ||
+      kind === "unknown",
   );
 
 /** Recognize abrupt prefixes without treating a loop's jump as a function exit. */
@@ -325,6 +330,85 @@ export const symbolicDefiniteExit = (
 ): boolean => syntaxDefiniteExit(node, depth, false);
 
 const nonthrowingEvaluations = new WeakMap<t.Node, boolean>();
+const throwingEvaluations = new WeakMap<t.Node, boolean>();
+
+/** Definite abrupt expression completion, not merely a possibly throwing read. */
+export const syntaxEvaluationAlwaysThrows = (raw: t.Node): boolean => {
+  const root = unwrapJavaScriptExpression(raw).node;
+  const pending: { node: t.Node; exit?: true }[] = [{ node: root }];
+  while (pending.length > 0) {
+    const entry = pending.pop();
+    if (entry === undefined) continue;
+    const node = unwrapJavaScriptExpression(entry.node).node;
+    if (throwingEvaluations.has(node)) continue;
+    const object =
+      t.isMemberExpression(node) || t.isOptionalMemberExpression(node)
+        ? unwrapJavaScriptExpression(node.object).node
+        : undefined;
+    if (
+      (t.isNullLiteral(object) ||
+        t.isUnaryExpression(object, { operator: "void" })) &&
+      (t.isMemberExpression(node) ||
+        (t.isOptionalMemberExpression(node) && !node.optional))
+    ) {
+      throwingEvaluations.set(node, true);
+      continue;
+    }
+    const operands =
+      syntaxUnconditionalOperands(node) ??
+      syntaxEvaluationOperands(node) ??
+      (t.isAwaitExpression(node) ? [node.argument] : []);
+    if (entry.exit)
+      throwingEvaluations.set(
+        node,
+        operands.some(
+          (operand) =>
+            throwingEvaluations.get(
+              unwrapJavaScriptExpression(operand).node,
+            ) === true,
+        ),
+      );
+    else {
+      pending.push({ node, exit: true });
+      for (const operand of operands) pending.push({ node: operand });
+    }
+  }
+  return throwingEvaluations.get(root) === true;
+};
+
+/** Do not attribute a later wait to an expression that already definitely threw. */
+export const syntaxBeforeDefiniteThrow = (raw: t.Node): readonly t.Node[] => {
+  const prefix: t.Node[] = [];
+  let node = unwrapJavaScriptExpression(raw).node;
+  while (syntaxEvaluationAlwaysThrows(node)) {
+    const operands =
+      syntaxUnconditionalOperands(node) ??
+      syntaxEvaluationOperands(node) ??
+      (t.isAwaitExpression(node) ? [node.argument] : []);
+    let throwing: t.Node | undefined;
+    for (const operand of operands) {
+      if (syntaxEvaluationAlwaysThrows(operand)) {
+        throwing = operand;
+        break;
+      }
+      prefix.push(operand);
+    }
+    if (throwing === undefined) break;
+    node = unwrapJavaScriptExpression(throwing).node;
+  }
+  return prefix;
+};
+
+/** Normal completion or an owned continue can request another iterator step. */
+export const syntaxMayReachNextIteration = (body: t.Node): boolean => {
+  const completion = syntaxCompletion(body, 0);
+  return (
+    completion.normal ||
+    completion.abrupt.some(
+      (exit) => exit.kind === "continue" && exit.label === null,
+    )
+  );
+};
 /** Narrow syntax-only completion proof; reads, calls and disposal remain uncertain. */
 export const syntaxEvaluationCannotThrow = (node: t.Node): boolean => {
   const cached = nonthrowingEvaluations.get(node);
@@ -334,7 +418,20 @@ export const syntaxEvaluationCannotThrow = (node: t.Node): boolean => {
     t.isEmptyStatement(node) ||
     t.isFunctionDeclaration(node) ||
     t.isFunctionExpression(node) ||
-    t.isArrowFunctionExpression(node);
+    t.isArrowFunctionExpression(node) ||
+    t.isRegExpLiteral(node) ||
+    t.isBigIntLiteral(node) ||
+    (t.isUnaryExpression(node, { operator: "-" }) &&
+      (t.isNumericLiteral(node.argument) || t.isBigIntLiteral(node.argument)));
+  if (t.isObjectExpression(node))
+    result = node.properties.every(
+      (property) =>
+        (t.isObjectProperty(property) || t.isObjectMethod(property)) &&
+        (!property.computed ||
+          readExactJavaScriptLiteral(property.key).found) &&
+        (t.isObjectMethod(property) ||
+          syntaxEvaluationCannotThrow(property.value)),
+    );
   if (
     !result &&
     t.isUnaryExpression(node) &&

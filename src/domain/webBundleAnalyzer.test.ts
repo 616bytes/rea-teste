@@ -4315,6 +4315,171 @@ const iterationReviewCases = [
     present: false,
   },
 ] as const;
+const consumerRouteReviewCases = [
+  [
+    "throw before wait cannot delay cleanup",
+    "(async()=>{const[x=(null.value,await 0)]=(function*(){try{yield undefined;}finally{new Socket(URL);}})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "loop throw before wait cannot delay cleanup",
+    "(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket(URL);}})()){throw 0;await 0;}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "optional spread",
+    "(()=>{})?.(...(function*(){new Socket(URL);yield 0;})());const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "spread after awaited argument",
+    "(async()=>{(()=>{})?.(await ready,...(function*(){new Socket(URL);yield 0;})());})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "return bypasses wrapper wait",
+    "export {};const pending=(async()=>{await ready;new Socket(URL);})();await(async()=>{if(skip)return;await pending;})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "local nested return does not bypass wait",
+    "export {};const pending=(async()=>{await ready;new Socket(URL);})();await(async()=>{(()=>{return;})();await pending;})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "pattern close enters finally after wait",
+    "(async()=>{const[x=await 0]=(function*(){try{yield undefined;}finally{new Socket(URL);}})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "pattern close without wait stays eager",
+    "const[x]=(function*(){try{yield undefined;}finally{new Socket(URL);}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "pattern close cannot reach normal tail",
+    "(async()=>{const[x=await 0]=(function*(){yield undefined;new Socket(URL);})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "destructuring setter consumes generator",
+    "({set consume([x]){}}).consume=(function*(){new Socket(URL);yield 0;})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "instance destructuring setter consumes generator",
+    "(new(class{set consume([x]){}})()).consume=(function*(){new Socket(URL);yield 0;})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "setter after awaited RHS prefix",
+    "(async()=>{({set consume([x]){}}).consume=(await ready,(function*(){new Socket(URL);yield 0;})());})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "default blocks after wait",
+    "(async()=>{const[x=(await 0,null.value),next]=(function*(){yield undefined;new Socket(URL);})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "computed key blocks after wait",
+    "(async()=>{const[{[(await 0,null.value)]:x},next]=(function*(){yield {};new Socket(URL);})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "later pattern coercion blocks after wait",
+    "(async()=>{const[[x=await 0,{}],next]=(function*(){yield [undefined,null];new Socket(URL);})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "abrupt default closes iterator after wait",
+    "(async()=>{const[x=(await 0,null.value),next]=(function*(){try{yield undefined;}finally{new Socket(URL);}})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "for-of break prevents next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL);})()){await 0;break;}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "for-of return prevents next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL);})()){await 0;return;}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "for-of continue permits next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL);})()){await 0;continue;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "for-of break enters cleanup after wait",
+    "(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket(URL);}})()){await 0;break;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "unused wrapper parameter",
+    "(async()=>{const pending=(async()=>{await 0;new Socket(URL);})();await((_unused)=>pending)();const Socket=globalThis.WebSocket;})();",
+    false,
+  ],
+  [
+    "wrapper parameter shadows returned name",
+    "(async()=>{const pending=(async()=>{await ready;new Socket(URL);})();await((pending)=>pending)();const Socket=globalThis.WebSocket;})();",
+    true,
+  ],
+  [
+    "wrapper default is not inert",
+    "(async()=>{const pending=(async()=>{await ready;new Socket(URL);})();await((x=fail())=>pending)();const Socket=globalThis.WebSocket;})();",
+    true,
+  ],
+  [
+    "negative numeric receiver",
+    "(async()=>{(-1)?.[await 0];new Socket(URL);})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "negative bigint receiver",
+    "(async()=>{(-1n)?.[await 0];new Socket(URL);})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "null receiver still skips key",
+    "(async()=>{null?.[await 0];new Socket(URL);})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  ["object sequence prefix", "new({},globalThis.WebSocket)(URL);", true],
+  [
+    "object data sequence prefix",
+    "new({key:1},globalThis.WebSocket)(URL);",
+    true,
+  ],
+  ["regexp sequence prefix", "new(/safe/,globalThis.WebSocket)(URL);", true],
+  [
+    "object getter definition is inert",
+    "new({get key(){throw 0;}},globalThis.WebSocket)(URL);",
+    true,
+  ],
+  [
+    "throwing object value is not safe prefix",
+    "new({key:null.value},globalThis.WebSocket)(URL);",
+    false,
+  ],
+] as const;
+describe("web bundle completed consumer routes", () => {
+  it.each(consumerRouteReviewCases)(
+    "preserves %s in both consumers",
+    (_name, input, present) => {
+      const source = input.replaceAll(
+        "URL",
+        '"wss://example.test/review-completion"',
+      );
+      const expected = present ? ["wss://example.test/review-completion"] : [];
+      expect(
+        socketEndpoints(source).map((items) => items.map((item) => item.value)),
+      ).toEqual([expected, expected]);
+    },
+  );
+});
+
 const invocationReviewCases = [
   [
     "mandatory branching catch wait",

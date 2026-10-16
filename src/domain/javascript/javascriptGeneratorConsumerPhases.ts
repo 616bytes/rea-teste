@@ -4,7 +4,13 @@ import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
+  javaScriptExactResultOperand,
 } from "./javascriptAstValues.js";
+import {
+  syntaxEvaluationCannotThrow,
+  syntaxEvaluationAlwaysThrows,
+  syntaxBeforeDefiniteThrow,
+} from "./javascriptSymbolicControlFlow.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -16,11 +22,13 @@ interface PatternWaitCache {
   readonly iterationUnknown: boolean | undefined;
   readonly ownedResultEscape: t.Node | undefined;
   readonly index: number | null;
+  readonly blockedIndex: number | null;
 }
 
 interface GeneratorPrefixFacts {
   readonly before: WeakMap<t.Node, number>;
   readonly yielded: readonly t.YieldExpression[];
+  readonly cleanup: WeakSet<t.Node>;
   readonly firstPatternWait: WeakMap<t.ArrayPattern, PatternWaitCache>;
 }
 const prefixes = new WeakMap<t.Node, GeneratorPrefixFacts>();
@@ -30,17 +38,22 @@ const generatorPrefixes = (
   body: t.Node,
   ordered: (node: t.Node) => readonly t.Node[],
   maySuspend: (node: t.Node) => boolean,
+  state: JavaScriptSemanticAnalysisState,
 ): GeneratorPrefixFacts => {
   const cached = prefixes.get(body);
   if (cached !== undefined) return cached;
   const before = new WeakMap<t.Node, number>();
   const yielded: t.YieldExpression[] = [];
+  const cleanup = new WeakSet<t.Node>();
   let completed = 0;
-  const pending: { node: t.Node; exit?: true }[] = [{ node: body }];
+  const pending: { node: t.Node; exit?: true; cleanup?: boolean }[] = [
+    { node: body },
+  ];
   while (pending.length > 0) {
     const entry = pending.pop();
     if (entry === undefined) continue;
     const node = unwrapJavaScriptExpression(entry.node).node;
+    if (entry.cleanup) cleanup.add(node);
     if (entry.exit === true) {
       if (t.isYieldExpression(node)) {
         if (node.delegate) completed = -1;
@@ -59,17 +72,42 @@ const generatorPrefixes = (
         t.isLogicalExpression(node) ||
         t.isLoop(node) ||
         t.isSwitchStatement(node) ||
-        t.isTryStatement(node)) &&
+        (t.isTryStatement(node) &&
+          !(
+            node.handler == null &&
+            node.block.body.every((statement) => {
+              const expression = t.isExpressionStatement(statement)
+                ? statement.expression
+                : statement;
+              return (
+                syntaxEvaluationCannotThrow(expression) ||
+                (t.isYieldExpression(expression) &&
+                  !expression.delegate &&
+                  (expression.argument == null ||
+                    syntaxEvaluationCannotThrow(expression.argument) ||
+                    undefinedPatternValue(
+                      { known: true, node: expression.argument },
+                      state,
+                    )))
+              );
+            })
+          ))) &&
       maySuspend(node)
     )
       completed = -1;
     if (t.isYieldExpression(node)) pending.push({ node, exit: true });
     const children = ordered(node);
-    for (const child of children.toReversed()) pending.push({ node: child });
+    for (const child of children.toReversed())
+      pending.push({
+        node: child,
+        cleanup:
+          entry.cleanup || (t.isTryStatement(node) && child === node.finalizer),
+      });
   }
   const facts = {
     before,
     yielded,
+    cleanup,
     firstPatternWait: new WeakMap<t.ArrayPattern, PatternWaitCache>(),
   };
   prefixes.set(body, facts);
@@ -83,14 +121,22 @@ type PatternValue = {
   readonly ownedResultEscape?: t.Node;
 };
 
+/** Normal result selection is separate from whether its evaluation can finish. */
+const patternValueNode = (raw: t.Node): t.Node => {
+  let node = unwrapJavaScriptExpression(raw).node;
+  for (;;) {
+    const result = javaScriptExactResultOperand(node);
+    if (result === undefined) return node;
+    node = unwrapJavaScriptExpression(result).node;
+  }
+};
+
 const undefinedPatternValue = (
   value: PatternValue,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   const argument =
-    value.node === undefined
-      ? undefined
-      : unwrapJavaScriptExpression(value.node).node;
+    value.node === undefined ? undefined : patternValueNode(value.node);
   return (
     value.known &&
     (argument === undefined ||
@@ -110,7 +156,7 @@ const patternPropertyValue = (
   capture: t.Node,
 ): PatternValue => {
   if (!value.known || value.node === undefined) return { known: false };
-  const node = unwrapJavaScriptExpression(value.node).node;
+  const node = patternValueNode(value.node);
   if (value.restStartIndex !== undefined && typeof key !== "number")
     return { known: false };
   const selected = semanticLiteralProjectionSlot(
@@ -141,9 +187,7 @@ const patternArrayRest = (
   state: JavaScriptSemanticAnalysisState,
 ): PatternValue => {
   const node =
-    value.node === undefined
-      ? undefined
-      : unwrapJavaScriptExpression(value.node).node;
+    value.node === undefined ? undefined : patternValueNode(value.node);
   return value.known &&
     t.isArrayExpression(node) &&
     state.arrayIterationUnknown !== true &&
@@ -159,7 +203,37 @@ const patternArrayRest = (
     : { known: false };
 };
 
-type PatternCompletion = "completed" | "suspended" | "blocked";
+type PatternCompletion =
+  | "completed"
+  | "suspended"
+  | "blocked"
+  | "suspended-blocked";
+const patternSuspended = (phase: PatternCompletion): boolean =>
+  phase === "suspended" || phase === "suspended-blocked";
+const patternBlocked = (phase: PatternCompletion): boolean =>
+  phase === "blocked" || phase === "suspended-blocked";
+const combinePatternCompletion = (
+  before: PatternCompletion,
+  after: PatternCompletion,
+): PatternCompletion => {
+  if (patternBlocked(before)) return before;
+  return patternSuspended(before) || patternSuspended(after)
+    ? patternBlocked(after)
+      ? "suspended-blocked"
+      : "suspended"
+    : after;
+};
+const patternExpressionCompletion = (
+  node: t.Node,
+  suspended: (node: t.Node) => boolean,
+): PatternCompletion =>
+  syntaxEvaluationAlwaysThrows(node)
+    ? syntaxBeforeDefiniteThrow(node).some(suspended)
+      ? "suspended-blocked"
+      : "blocked"
+    : suspended(node)
+      ? "suspended"
+      : "completed";
 
 /** Work completed inside a consumed slot precedes the next generator resume. */
 const patternCompletedSuspension = (
@@ -175,18 +249,24 @@ const patternCompletedSuspension = (
   if (pattern === target) return "completed";
   if (t.isAssignmentPattern(pattern)) {
     const selectsDefault = undefinedPatternValue(value, state);
-    return selectsDefault && suspended(pattern.right)
-      ? "suspended"
-      : patternCompletedSuspension(
-          pattern.left,
-          selectsDefault ? { known: true, node: pattern.right } : value,
-          state,
-          suspended,
-          depth + 1,
-          target,
-          targetPath,
-        );
+    const prefix = selectsDefault
+      ? patternExpressionCompletion(pattern.right, suspended)
+      : "completed";
+    if (patternBlocked(prefix)) return prefix;
+    return combinePatternCompletion(
+      prefix,
+      patternCompletedSuspension(
+        pattern.left,
+        selectsDefault ? { known: true, node: pattern.right } : value,
+        state,
+        suspended,
+        depth + 1,
+        target,
+        targetPath,
+      ),
+    );
   }
+  let phase: PatternCompletion = "completed";
   if (t.isObjectPattern(pattern)) {
     // RequireObjectCoercible precedes property keys and rest operations.
     // A definite failure also blocks waits in later consumed slots.
@@ -194,12 +274,17 @@ const patternCompletedSuspension = (
       undefinedPatternValue(value, state) ||
       (value.known &&
         value.node !== undefined &&
-        t.isNullLiteral(unwrapJavaScriptExpression(value.node).node))
+        t.isNullLiteral(patternValueNode(value.node)))
     )
       return "blocked";
     for (const property of pattern.properties) {
       if (t.isRestElement(property)) continue;
-      if (property.computed && suspended(property.key)) return "suspended";
+      if (property.computed)
+        phase = combinePatternCompletion(
+          phase,
+          patternExpressionCompletion(property.key, suspended),
+        );
+      if (patternBlocked(phase)) return phase;
       const key = semanticStaticPropertyKey(property.key, property.computed);
       const completion = patternCompletedSuspension(
         property.value,
@@ -212,8 +297,9 @@ const patternCompletedSuspension = (
         target,
         targetPath,
       );
-      if (completion !== "completed") return completion;
-      if (targetPath?.has(property)) return "completed";
+      phase = combinePatternCompletion(phase, completion);
+      if (patternBlocked(phase)) return phase;
+      if (targetPath?.has(property)) return phase;
     }
   }
   if (t.isArrayPattern(pattern))
@@ -230,10 +316,11 @@ const patternCompletedSuspension = (
         target,
         targetPath,
       );
-      if (completion !== "completed") return completion;
-      if (targetPath?.has(element)) return "completed";
+      phase = combinePatternCompletion(phase, completion);
+      if (patternBlocked(phase)) return phase;
+      if (targetPath?.has(element)) return phase;
     }
-  return "completed";
+  return phase;
 };
 
 /** Selected defaults and keys before a particular destructuring write share slot semantics. */
@@ -285,9 +372,21 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
   readonly completedSuspension: (node: t.Node) => boolean;
   readonly ownedResultEscape?: t.Node;
 }): boolean => {
-  const facts = generatorPrefixes(body, ordered, maySuspend);
+  const facts = generatorPrefixes(body, ordered, maySuspend, state);
   const count = facts.before.get(unwrapJavaScriptExpression(read).node);
   if (count === undefined || count < 0) return false;
+  const cleanup = facts.cleanup.has(read);
+  // A finite pattern closes its iterator after its last slot, not another next().
+  if (
+    !cleanup &&
+    count >= pattern.elements.length &&
+    !pattern.elements.some((element) => t.isRestElement(element))
+  )
+    return false;
+  const waited = (index: number | null, blockedIndex: number | null): boolean =>
+    index !== null &&
+    index < count &&
+    (cleanup || blockedIndex === null || blockedIndex >= count);
   const cached = facts.firstPatternWait.get(pattern);
   if (
     cached !== undefined &&
@@ -295,15 +394,18 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
     cached.iterationUnknown === state.arrayIterationUnknown &&
     cached.ownedResultEscape === ownedResultEscape
   )
-    return cached.index !== null && cached.index < count;
-  const cache = (index: number | null): void => {
+    return waited(cached.index, cached.blockedIndex);
+  const cache = (index: number | null, blockedIndex: number | null): void => {
     facts.firstPatternWait.set(pattern, {
       effects: state.literalMemberEffects,
       iterationUnknown: state.arrayIterationUnknown,
       ownedResultEscape,
       index,
+      blockedIndex,
     });
   };
+  let firstWait: number | null = null;
+  let blockedAt: number | null = null;
   for (let index = 0; index < pattern.elements.length; index += 1) {
     const element = pattern.elements[index];
     if (t.isRestElement(element)) break;
@@ -320,12 +422,33 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
       state,
       completedSuspension,
     );
-    if (completion === "blocked") break;
-    if (completion === "suspended") {
-      cache(index);
-      return index < count;
+    if (patternSuspended(completion)) firstWait ??= index;
+    if (patternBlocked(completion)) {
+      blockedAt = index;
+      break;
     }
   }
-  cache(null);
-  return false;
+  cache(firstWait, blockedAt);
+  return waited(firstWait, blockedAt);
 };
+
+/** A consumer phase can defer a body read only after an owned yield was reached. */
+export const semanticGeneratorReadAfterYield = (
+  read: t.Node,
+  body: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  ordered: (node: t.Node) => readonly t.Node[],
+  maySuspend: (node: t.Node) => boolean,
+): boolean =>
+  (generatorPrefixes(body, ordered, maySuspend, state).before.get(read) ?? -1) >
+  0;
+
+/** IteratorClose enters finally without requesting another ordinary body step. */
+export const semanticGeneratorReadInCleanup = (
+  read: t.Node,
+  body: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  ordered: (node: t.Node) => readonly t.Node[],
+  maySuspend: (node: t.Node) => boolean,
+): boolean =>
+  generatorPrefixes(body, ordered, maySuspend, state).cleanup.has(read);

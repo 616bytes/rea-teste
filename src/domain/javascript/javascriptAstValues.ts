@@ -133,7 +133,9 @@ export const semanticDirectFunctionReturn = (
     !t.isFunction(node) ||
     (node.async && options?.allowAsync !== true) ||
     node.generator ||
-    node.params.length !== 0
+    !runtimeFunctionParameters(node).every((parameter) =>
+      t.isIdentifier(parameter),
+    )
   )
     return undefined;
   if (!t.isBlockStatement(node.body)) return node.body;

@@ -167,6 +167,11 @@ const optionalOperationMaySkip = (
     !t.isClassExpression(receiver) &&
     !t.isRegExpLiteral(receiver) &&
     !t.isBigIntLiteral(receiver) &&
+    !(
+      t.isUnaryExpression(receiver, { operator: "-" }) &&
+      (t.isNumericLiteral(receiver.argument) ||
+        t.isBigIntLiteral(receiver.argument))
+    ) &&
     !t.isNewExpression(receiver)
   );
 };

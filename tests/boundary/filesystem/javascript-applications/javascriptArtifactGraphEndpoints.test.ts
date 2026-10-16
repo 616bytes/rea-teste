@@ -682,6 +682,59 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "route-review-0.js",
+    source:
+      '(()=>{})?.(...(function*(){new Socket("wss://example.test/review-latest");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "route-review-1.js",
+    source:
+      'export {};const pending=(async()=>{await ready;new Socket("wss://example.test/review-latest");})();await(async()=>{if(skip)return;await pending;})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "route-review-2.js",
+    source:
+      '(async()=>{const[x=await 0]=(function*(){try{yield undefined;}finally{new Socket("wss://example.test/review-latest");}})();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "route-review-3.js",
+    source:
+      '({set consume([x]){}}).consume=(function*(){new Socket("wss://example.test/review-latest");yield 0;})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "route-review-4.js",
+    source:
+      '(async()=>{const[x=(await 0,null.value),next]=(function*(){yield undefined;new Socket("wss://example.test/review-latest");})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "route-review-5.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest");})()){await 0;break;}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "route-review-6.js",
+    source:
+      '(async()=>{const pending=(async()=>{await 0;new Socket("wss://example.test/review-latest");})();await((_unused)=>pending)();const Socket=globalThis.WebSocket;})();',
+    present: false,
+  },
+  {
+    file: "route-review-7.js",
+    source:
+      '(async()=>{(-1)?.[await 0];new Socket("wss://example.test/review-latest");})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "route-review-8.js",
+    source: 'new({},globalThis.WebSocket)("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
     file: "invocation-review-0.js",
     source:
       'new(class{constructor([x]){}})((function*(){new Socket("wss://example.test/review-latest");yield 0;})());const Socket=globalThis.WebSocket;',
@@ -930,7 +983,7 @@ it("retains reviewed completion endpoints with filesystem source provenance", as
     const observations = graph.nodes
       .filter((node) => node.kind === "endpoint")
       .flatMap((node) => node.observations);
-    expect(observations).toHaveLength(21);
+    expect(observations).toHaveLength(25);
     for (const { file, present } of completedWriteAndConsumerSources) {
       const matching = observations.filter(
         ({ evidence }) =>

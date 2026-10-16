@@ -9,6 +9,19 @@ export const SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT = 256;
 export const SEMANTIC_EXPRESSION_DEPTH_LIMIT = 256;
 /** Distinct getter, receiver and path states retained in one precise query. */
 export const SEMANTIC_GETTER_EXPANSION_LIMIT = 512;
+/** Distinct expression/path candidates admitted while resolving one call
+ * target's returned references. */
+export const SEMANTIC_RETURNED_REFERENCE_EXPANSION_LIMIT = 16384;
+/** Distinct projection-path links created while resolving one call target's
+ * returned references. One candidate can prepend a long member chain, so
+ * links are budgeted independently of candidates. */
+export const SEMANTIC_RETURNED_REFERENCE_PATH_LINK_LIMIT = 262144;
+/** Distinct cycle-blocker entries retained while resolving one call target's
+ * returned references. */
+export const SEMANTIC_RETURNED_REFERENCE_BLOCKER_LIMIT = 262144;
+/** Largest cached blocker context per completed expansion. Richer expansions
+ * stay uncached; re-expansion is bounded by the candidate reserve. */
+export const SEMANTIC_RETURNED_REFERENCE_BLOCKER_CONTEXT_LIMIT = 1024;
 /** Bound normalized strings and transient keys independently of transport limits. */
 export const SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT = 1_048_576;
 
@@ -21,6 +34,12 @@ const RESOURCE_LIMIT_REASON: Record<JavaScriptSemanticResourceLimit, string> = {
     "Semantic expression depth budget exceeded (maximum 256 nested expressions).",
   "getter-expansion":
     "Getter expansion was conservatively bounded (maximum 512 distinct states or a growing receiver cycle).",
+  "returned-reference-expansion":
+    "Returned-reference expansion was conservatively bounded (maximum 16384 distinct expression/path states for one call target).",
+  "returned-reference-path-links":
+    "Returned-reference expansion was conservatively bounded (maximum 262144 distinct projection-path links for one call target).",
+  "returned-reference-blockers":
+    "Returned-reference expansion was conservatively bounded (maximum 262144 cycle-blocker entries for one call target).",
 };
 
 /** Check UTF-16 length against worst-case JSON escaping without flattening. */

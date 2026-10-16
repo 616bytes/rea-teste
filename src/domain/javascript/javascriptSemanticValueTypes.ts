@@ -6,7 +6,10 @@ export type JavaScriptSemanticResourceLimit =
   | "primitive-candidates"
   | "primitive-bytes"
   | "expression-depth"
-  | "getter-expansion";
+  | "getter-expansion"
+  | "returned-reference-expansion"
+  | "returned-reference-path-links"
+  | "returned-reference-blockers";
 
 type JavaScriptSemanticObjectValue = {
   readonly status: "object";

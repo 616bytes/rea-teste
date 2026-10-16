@@ -20,7 +20,11 @@ const PROCESS_VIEW_PROBES = 8;
 export const CLAUDE_DESKTOP_PACKAGE_FAMILY = "Claude_pzs8sxrjxfjjc";
 
 /** `Claude_` plus a 13-character Crockford base32 MSIX publisher ID. */
-const CLAUDE_PACKAGE_FAMILY = /^Claude_[0-9a-hjkmnp-tv-z]{13}$/iu;
+// A Claude Desktop MSIX package is `<name>_<publisher>`; the Store build names
+// the package `AnthropicPBC.Claude`, so the anchored name-only pattern filtered
+// it out before the unrecognized-publisher guard could run (morluto/rea#4432).
+const CLAUDE_PACKAGE_FAMILY =
+  /^(?:[A-Za-z0-9._-]+\.)?Claude_[0-9a-hjkmnp-tv-z]{13}$/iu;
 
 /** The configuration Claude Desktop reads and the evidence that it is installed. */
 export interface ClaudeDesktopLocation {

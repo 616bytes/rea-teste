@@ -339,3 +339,46 @@ describe("writes from a redirected AppData view", () => {
     ).toBeUndefined();
   });
 });
+
+describe("Claude Desktop package family recognition", () => {
+  const packagesFileSystem = (
+    families: readonly string[],
+  ): ClaudeDesktopLocationFileSystem => ({
+    readdir: (path) => {
+      if (path === packages) return families;
+      throw failure("ENOENT");
+    },
+    lstat: () => {
+      throw failure("ENOENT");
+    },
+    realpath: (path) => path,
+  });
+
+  it("refuses an unrecognized Claude publisher instead of falling back to AppData", () => {
+    // The Store/MSIX build reports `AnthropicPBC.Claude_<publisher>` and keeps
+    // its configuration outside the AppData file REA used to assume.
+    const family = "AnthropicPBC.Claude_fnn82j28hfe8t";
+    const location = resolveWindowsClaudeDesktopLocation(
+      home,
+      env,
+      packagesFileSystem([family]),
+    );
+    expect(location.ok).toBe(false);
+    if (location.ok) return;
+    expect(location.error.path).toBe(join(packages, family));
+    expect(location.error.message).toContain("unrecognized publisher");
+    expect(location.error.message).toContain(appDataConfig);
+  });
+
+  it("still uses the AppData file when no Claude package is installed", () => {
+    const location = resolveWindowsClaudeDesktopLocation(
+      home,
+      env,
+      packagesFileSystem(["Microsoft.WindowsCalculator_8wekyb3d8bbwe"]),
+    );
+    expect(location).toEqual({
+      ok: true,
+      value: { configPath: appDataConfig, markerPath: appDataDirectory },
+    });
+  });
+});

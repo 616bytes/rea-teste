@@ -2,10 +2,11 @@
 // Real UI + production shell patch, with a test recorder. This does not exercise
 // the full hook/provider: packaged startup and navigation are separate gaps.
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { pathToFileURL } from "node:url";
 import { _electron } from "playwright-core";
 
 const { values } = parseArgs({
@@ -20,6 +21,11 @@ for (const key of ["runtime-root", "executable", "application", "trial-root"])
   assert.ok(values[key], `Missing --${key}`);
 const runtime = resolve(values["runtime-root"]);
 const trial = resolve(values["trial-root"]);
+const { safeElectronEnvironment } = await import(
+  pathToFileURL(
+    join(runtime, "dist/browser/PlaywrightElectronActiveProvider.js"),
+  )
+);
 assert.equal(
   (await readFile(join(trial, "OWNED-BY-REA-3474"), "utf8")).trim(),
   "REA3474 owned disposable verification trial",
@@ -100,6 +106,7 @@ const pageErrors = [];
 try {
   application = await _electron.launch({
     executablePath: resolve(values.executable),
+    env: safeElectronEnvironment(process.env, randomUUID()),
     args: [
       "-r",
       preload,

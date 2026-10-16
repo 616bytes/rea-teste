@@ -77,11 +77,15 @@ processTest
       expect(error).toMatchObject({
         code: "cancelled",
         category: "cancelled",
-        details: { operation: "capture_browser_scenario", cleanup: "complete" },
       });
       if (error.code !== "cancelled")
         throw new Error(`Expected cancellation, received ${error.code}`);
       const evidence = parseEvidence(error.details?.partial_observation);
+      expect(evidence).toMatchObject({
+        operation: "capture_browser_scenario",
+        authority: "controlled-replay",
+        confidence: "observed",
+      });
       const capture = browserScenarioCaptureSchema.parse(
         evidence.normalized_result,
       );

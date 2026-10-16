@@ -637,34 +637,27 @@ export class JavaScriptSymbolicBindings {
 
   #assignmentLeft(node: t.Node, env: SymbolicEnvironment): SymbolicValue {
     if (
-      !t.isMemberExpression(node) ||
-      semanticStaticPropertyKey(node.property, node.computed) !== "exports" ||
-      !t.isIdentifier(node.object)
-    )
-      return this.evaluate(node, env);
-    const binding = resolveSemanticBindingState(
-      this.state,
-      node.object,
-      node.object.name,
-    );
-    if (binding === undefined || !this.#moduleBindings.has(binding.bindingId))
-      return this.evaluate(node, env);
-    const module = this.evaluate(node.object, env);
-    const namespace =
-      module.kind === "record" ? module.values.get("exports") : undefined;
-    if (namespace?.kind !== "namespace")
-      return symbolicUnknown("unresolved module exports");
-    if (this.#mutated.has(namespace.bindingId))
-      return symbolicUnknown("ambiguous export writes");
-    // The synthetic module record retains its namespace identity. Read its
-    // prior root replacement at the assignment boundary, not the current write.
-    const writes = this.#namespaceWrites(namespace, { node, environment: env });
-    if (writes === undefined)
-      return symbolicUnknown("module export read boundary is unavailable");
-    const replacement = writes.findLast((write) => write.path.length === 0);
-    return replacement === undefined
-      ? namespace
-      : this.evaluate(replacement.value, namespace.environment);
+      t.isMemberExpression(node) &&
+      semanticStaticPropertyKey(node.property, node.computed) === "exports"
+    ) {
+      const receiver = this.evaluate(node.object, env);
+      if (
+        symbolicVariants(receiver).some((variant) => {
+          const namespace =
+            variant.kind === "record"
+              ? variant.values.get("exports")
+              : undefined;
+          return (
+            namespace?.kind === "namespace" &&
+            this.#namespaceOwners.has(namespace.bindingId)
+          );
+        })
+      )
+        // This slot preserves module identity, not the mutable exports value.
+        // Root writes, aliases and receiver calls are not a complete value model.
+        return symbolicUnknown("mutable module exports value");
+    }
+    return this.evaluate(node, env);
   }
 
   #logicalValue(

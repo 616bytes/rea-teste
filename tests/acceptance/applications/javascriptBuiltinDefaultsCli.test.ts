@@ -24,6 +24,7 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
     "let fs=require('fs'); {{fs.readFileSync('nested-timeline.json');}} fs={};",
     "const fs=require('fs'); const target={__proto__:{set hook(v){this.fs.readFileSync=custom;}}}; Reflect.set(target,'hook',1,{fs}); fs.readFileSync('wrong-inherited-setter');",
     "const {promises:fsp}=require('fs'); delete require('fs').promises; const handle=fsp.open('saved-promises'); handle.close();",
+    "Object.assign=(target,source)=>{target.require=source.require;}; Object.assign(module,{require:replacement}); require('fs').readFileSync('wrong-opaque-mutator');",
   ];
   for (const [index, source] of sources.entries())
     await writeFile(join(root, `receiver-review-${index}.ts`), source);

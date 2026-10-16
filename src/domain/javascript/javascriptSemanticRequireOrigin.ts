@@ -353,6 +353,40 @@ const writesModuleRequire = (
       const key = semanticStaticPropertyKey(property.key, property.computed);
       return key === null || key === "require";
     });
+  const exposesModule = (nodes: readonly t.Node[]): boolean => {
+    const pending = [...nodes];
+    const visited = new Set<t.Node>();
+    while (pending.length > 0) {
+      const value = unwrapJavaScriptExpression(pending.pop()!).node;
+      if (visited.has(value)) continue;
+      visited.add(value);
+      if (semanticCommonJsModuleObjectAt(value, state)) return true;
+      if (t.isIdentifier(value)) {
+        const binding = resolveSemanticBindingState(state, value, value.name);
+        if (binding !== undefined)
+          for (const initializer of semanticBindingAtRead(
+            binding,
+            value,
+            state.parentsByNode,
+          ).binding.initializers)
+            pending.push(initializer.node);
+      } else if (t.isSpreadElement(value)) pending.push(value.argument);
+      else if (t.isArrayExpression(value))
+        pending.push(
+          ...value.elements.filter(
+            (element): element is t.Expression | t.SpreadElement =>
+              element !== null,
+          ),
+        );
+      else if (t.isObjectExpression(value)) {
+        for (const property of value.properties)
+          if (t.isObjectProperty(property)) pending.push(property.value);
+          else if (t.isSpreadElement(property)) pending.push(property.argument);
+      } else if (t.isCallExpression(value) || t.isOptionalCallExpression(value))
+        pending.push(...value.arguments);
+    }
+    return false;
+  };
   traverseJavaScriptAst(state.program, {
     enter: (node) => {
       const target = t.isAssignmentExpression(node)
@@ -393,6 +427,21 @@ const writesModuleRequire = (
       }
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         const invocation = interop.intrinsicInvocation(node);
+        if (
+          invocation?.kind === "opaque" &&
+          invocation.path[1] === "Object" &&
+          ["assign", "defineProperty", "defineProperties"].includes(
+            invocation.path[2] ?? "",
+          ) &&
+          invocation.path.at(-1) !== "bind"
+        ) {
+          // An overwritten callable does not retain native mutator argument
+          // semantics. Preserve any module reference supplied directly,
+          // through call/apply containers or a captured bound argument.
+          if (exposesModule([...node.arguments, node.callee]))
+            writes.push(node);
+          return;
+        }
         const owner =
           invocation?.path?.length === 3 ? invocation.path[1] : undefined;
         const method = invocation?.path?.at(-1);

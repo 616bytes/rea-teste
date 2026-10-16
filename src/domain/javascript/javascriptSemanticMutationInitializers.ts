@@ -22,6 +22,16 @@ interface StatementPosition {
   readonly declaratorIndex: number;
 }
 
+interface EffectAncestry {
+  readonly position: StatementPosition | null;
+  readonly outer: EffectAncestry | null;
+}
+
+interface SharedEffectPosition {
+  readonly before: StatementPosition;
+  readonly after: StatementPosition;
+}
+
 interface BindingReadPosition {
   readonly position: StatementPosition | null;
   readonly repeating: boolean;
@@ -58,7 +68,14 @@ interface InitializerPositionCache {
   readonly direct: WeakMap<t.Node, StatementPosition | null>;
   readonly mutation: WeakMap<t.Node, StatementPosition | null>;
   readonly reference: WeakMap<t.Node, StatementPosition | null>;
-  readonly effect: WeakMap<t.Node, readonly StatementPosition[] | null>;
+  readonly effect: WeakMap<t.Node, EffectAncestry | null>;
+  effectMatches:
+    | {
+        readonly later: EffectAncestry;
+        readonly byBody: ReadonlyMap<readonly t.Statement[], StatementPosition>;
+        readonly earlier: WeakMap<EffectAncestry, SharedEffectPosition | null>;
+      }
+    | undefined;
   readonly read: WeakMap<t.Node, BindingReadPosition>;
   readonly evaluationChildren: WeakMap<
     t.Node,
@@ -89,6 +106,7 @@ const initializerPositionCache = (
     mutation: new WeakMap(),
     reference: new WeakMap(),
     effect: new WeakMap(),
+    effectMatches: undefined,
     read: new WeakMap(),
     evaluationChildren: new WeakMap(),
     expressionAncestry: undefined,
@@ -134,50 +152,100 @@ const positionPrecedes = (
       left.declaratorIndex >= 0 &&
       left.declaratorIndex < right.declaratorIndex));
 
+/** Share ancestor tails instead of retaining a copied array per capture. */
+const effectAncestry = (
+  start: t.Node | undefined,
+  parents: WeakMap<t.Node, t.Node>,
+): EffectAncestry | null => {
+  if (start === undefined) return null;
+  const cache = initializerPositionCache(parents).effect;
+  const pending: t.Node[] = [];
+  let node: t.Node | undefined = start;
+  while (node !== undefined && !cache.has(node)) {
+    pending.push(node);
+    node = parents.get(node);
+  }
+  let outer = node === undefined ? null : (cache.get(node) ?? null);
+  for (let index = pending.length - 1; index >= 0; index -= 1) {
+    const current = pending[index]!;
+    const parent = pending[index + 1] ?? node;
+    if (t.isProgram(current)) outer = { position: null, outer: null };
+    else if (
+      t.isFunction(current) ||
+      t.isLoop(current) ||
+      delayedInstanceFieldValue(parent, current)
+    )
+      outer = null;
+    else if (outer !== null) {
+      const declarator =
+        t.isVariableDeclarator(current) && t.isVariableDeclaration(parent);
+      const position = declarator
+        ? statementPosition(parent, parents, current)
+        : t.isStatement(current)
+          ? statementPosition(current, parents)
+          : null;
+      if (position !== null) {
+        // A declarator refines its declaration's position, not another level.
+        const tail =
+          declarator &&
+          outer.position?.body === position.body &&
+          outer.position.index === position.index
+            ? outer.outer
+            : outer;
+        outer = { position, outer: tail };
+      }
+    }
+    cache.set(current, outer);
+  }
+  return cache.get(start) ?? null;
+};
+
 /** Order effects only in a non-repeating top-level activation. */
 export const semanticTopLevelEffectFollowsCapture = (
   capture: t.Node,
   effect: t.Node | undefined,
   parents: WeakMap<t.Node, t.Node>,
 ): boolean => {
-  const positions = (
-    start: t.Node | undefined,
-  ): readonly StatementPosition[] | null => {
-    if (start === undefined) return null;
-    const cache = initializerPositionCache(parents).effect;
-    const cached = cache.get(start);
-    if (cached !== undefined) return cached;
-    // Publish the conservative result for deferred or repeating activations.
-    cache.set(start, null);
-    let node: t.Node | undefined = start;
-    const selected: StatementPosition[] = [];
-    let declarator: t.VariableDeclarator | undefined;
-    let child: t.Node | undefined;
-    while (node !== undefined) {
-      if (t.isFunction(node) || t.isLoop(node)) return null;
-      if (delayedInstanceFieldValue(node, child)) return null;
-      if (t.isVariableDeclarator(node)) declarator = node;
-      if (t.isStatement(node)) {
-        const position = statementPosition(node, parents, declarator);
-        if (position !== null) selected.push(position);
-      }
-      if (t.isProgram(node)) {
-        cache.set(start, selected);
-        return selected;
-      }
-      child = node;
-      node = parents.get(node);
-    }
-    return null;
-  };
-  const earlier = positions(capture);
-  const later = positions(effect);
+  const earlier = effectAncestry(capture, parents);
+  const later = effectAncestry(effect, parents);
   if (earlier === null || later === null) return false;
-  const before = earlier.find((position) =>
-    later.some((other) => position.body === other.body),
-  );
-  const after = later.find((position) => position.body === before?.body);
-  if (before === undefined || after === undefined) return false;
+  const cache = initializerPositionCache(parents);
+  let matches = cache.effectMatches;
+  if (matches?.later !== later) {
+    const byBody = new Map<readonly t.Statement[], StatementPosition>();
+    for (
+      let entry: EffectAncestry | null = later;
+      entry !== null;
+      entry = entry.outer
+    )
+      if (entry.position !== null && !byBody.has(entry.position.body))
+        byBody.set(entry.position.body, entry.position);
+    matches = { later, byBody, earlier: new WeakMap() };
+    cache.effectMatches = matches;
+  }
+  const pending: EffectAncestry[] = [];
+  let shared: SharedEffectPosition | null = null;
+  for (
+    let entry: EffectAncestry | null = earlier;
+    entry !== null;
+    entry = entry.outer
+  ) {
+    if (matches.earlier.has(entry)) {
+      shared = matches.earlier.get(entry) ?? null;
+      break;
+    }
+    pending.push(entry);
+    const before = entry.position;
+    const after = before === null ? undefined : matches.byBody.get(before.body);
+    if (before !== null && after !== undefined) {
+      shared = { before, after };
+      break;
+    }
+  }
+  // Retain only the current effect's matching context, bounding pair storage.
+  for (const entry of pending) matches.earlier.set(entry, shared);
+  if (shared === null) return false;
+  const { before, after } = shared;
   if (positionPrecedes(before, after)) return true;
   if (
     before.body !== after.body ||

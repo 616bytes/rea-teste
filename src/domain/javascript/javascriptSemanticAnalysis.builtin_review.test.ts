@@ -2,6 +2,26 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
 it.each([
+  "Object.assign=(target,source)=>{target.require=source.require;}; Object.assign(module,{require:replacement});",
+  "Object.defineProperty=(target,key,descriptor)=>{target[key]=descriptor.value;}; Object.defineProperty(module,'require',{value:replacement});",
+  "Object.defineProperties=(target,descriptors)=>{target.require=descriptors.require.value;}; Object.defineProperties(module,{require:{value:replacement}});",
+  "Object.assign=(target,source)=>{target.require=source.require;}; Object.assign.call(null,module,{require:replacement});",
+  "Object.assign=(target,source)=>{target.require=source.require;}; Object.assign.apply(null,[module,{require:replacement}]);",
+  "const owner=module; Object.assign=custom; Object.assign(owner,{require:replacement});",
+  "Object.assign=custom; const args=[module,{require:replacement}]; Object.assign.apply(null,args);",
+  "Object.assign=custom; const patch=Object.assign.bind(null,module); patch({require:replacement});",
+])(
+  "retains delegate invalidation through opaque Object mutators: %s",
+  (mutation) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `${mutation} require('fs').readFileSync('wrong');`,
+      ).configurationOperations,
+    ).toEqual([]);
+  },
+);
+
+it.each([
   "Object.assign(module, { [key]: replacement });",
   "Object.assign(module, { ...replacement });",
   "Object.assign(module, { require() {} });",

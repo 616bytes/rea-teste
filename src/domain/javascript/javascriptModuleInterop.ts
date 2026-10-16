@@ -24,7 +24,7 @@ import {
   resolveJavaScriptIntrinsicInvocation,
 } from "./javascriptIntrinsicInvocation.js";
 import {
-  SemanticPropertyPathCoverage,
+  SemanticPropertyPathWriteIndex,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import {
@@ -90,11 +90,7 @@ export const createSemanticModuleInterop = (
   const origins = new Map<string, InteropOrigin>();
   const calls = new WeakMap<t.Node, InteropOrigin>();
   const intrinsicBindings = new Map<string, readonly string[] | null>();
-  const writes: {
-    readonly scope: string;
-    readonly offset: number;
-    readonly coverage: SemanticPropertyPathCoverage;
-  }[] = [];
+  const writes = new Map<string, SemanticPropertyPathWriteIndex>();
   const invalidatedBindings = new Map<string, boolean>();
   const invalidatedCalls = new WeakMap<t.Node, boolean>();
   const opaqueMutationPath = (node: t.Node): readonly string[] => {
@@ -110,14 +106,26 @@ export const createSemanticModuleInterop = (
     node: t.Node | undefined,
     path: JavaScriptSemanticPropertyPath,
   ) => {
-    const coverage = new SemanticPropertyPathCoverage();
-    coverage.retain(path[0] === "opaque-intrinsic" ? ["intrinsic"] : path);
-    writes.push({
-      scope:
-        node === undefined ? "intrinsic" : opaqueMutationPath(node).join("."),
-      offset: node?.start ?? -Infinity,
-      coverage,
-    });
+    const scope =
+      node === undefined ? "intrinsic" : opaqueMutationPath(node).join(".");
+    let index = writes.get(scope);
+    if (index === undefined) {
+      index = new SemanticPropertyPathWriteIndex();
+      writes.set(scope, index);
+    }
+    index.retain(
+      path[0] === "opaque-intrinsic" ? ["intrinsic"] : path,
+      node?.start ?? -Infinity,
+    );
+  };
+  const changedBefore = (capture: t.Node, path: readonly string[]): boolean => {
+    const scope = opaqueMutationPath(capture).join(".");
+    const offset = capture.start ?? -1;
+    return (
+      writes.get("intrinsic")?.precedes(path, offset) === true ||
+      (scope !== "intrinsic" &&
+        writes.get(scope)?.precedes(path, offset) === true)
+    );
   };
   // Consumers created after ambient indexing must see the same invocation
   // mutations as the collector that supplies retainWrite during indexing.
@@ -267,22 +275,13 @@ export const createSemanticModuleInterop = (
     path: readonly string[],
   ): boolean => {
     const capture = capturedIntrinsic(node)?.capturedAt ?? node;
-    const scope = opaqueMutationPath(capture).join(".");
     const method = path.at(-1);
     const invocationMethod =
       method === "bind" || method === "call" || method === "apply";
-    return writes.some(
-      (write) =>
-        (write.scope === scope || write.scope === "intrinsic") &&
-        write.offset < (capture.start ?? -1) &&
-        (write.coverage.covers(path) ||
-          (invocationMethod &&
-            write.coverage.covers([
-              "intrinsic",
-              "Function",
-              "prototype",
-              method,
-            ]))),
+    return (
+      changedBefore(capture, path) ||
+      (invocationMethod &&
+        changedBefore(capture, ["intrinsic", "Function", "prototype", method]))
     );
   };
 
@@ -363,13 +362,9 @@ export const createSemanticModuleInterop = (
       const boundPath = [...path, "bind"];
       const functionBind = ["intrinsic", "Function", "prototype", "bind"];
       opaqueArguments ||= bindReads.some((capture) => {
-        const scope = opaqueMutationPath(capture).join(".");
-        return writes.some(
-          (write) =>
-            (write.scope === scope || write.scope === "intrinsic") &&
-            write.offset < (capture.start ?? -1) &&
-            (write.coverage.covers(boundPath) ||
-              write.coverage.covers(functionBind)),
+        return (
+          changedBefore(capture, boundPath) ||
+          changedBefore(capture, functionBind)
         );
       });
       return {
@@ -666,15 +661,9 @@ export const createSemanticModuleInterop = (
   const invalidatedOrigin = (record: InteropOrigin | undefined): boolean =>
     record?.dependencies.some(({ path, capturedAt }) => {
       if (capturedAt === undefined) return true;
-      const scope = opaqueMutationPath(capturedAt).join(".");
       // Captured function values survive later replacement of global
       // properties. Other callable bodies are not execution evidence.
-      return writes.some(
-        (write) =>
-          (write.scope === scope || write.scope === "intrinsic") &&
-          write.offset < (capturedAt.start ?? -1) &&
-          write.coverage.covers(path),
-      );
+      return changedBefore(capturedAt, path);
     }) ?? false;
   return {
     origin,

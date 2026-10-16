@@ -34,6 +34,15 @@ interface Section {
 const virtualExtent = (section: Section): number =>
   section.virtualSize === 0 ? section.size : section.virtualSize;
 
+const sectionIntersectsResourceRange = (
+  section: Section,
+  rva: number,
+  size: number,
+): boolean => {
+  const extent = virtualExtent(section);
+  return extent > 0 && section.rva < rva + size && section.rva + extent > rva;
+};
+
 /** Header admission and unambiguous file-backed RVA mapping, independent of section names. */
 export const readPeResourceLayout = (bytes: Buffer) => {
   requirePeRange(bytes, 0, 64);
@@ -111,10 +120,8 @@ export const readPeResourceLayout = (bytes: Buffer) => {
         : containing;
     if (rva < headerSize) {
       if (
-        sections.some(
-          (section) =>
-            section.rva < rva + size &&
-            section.rva + virtualExtent(section) > rva,
+        sections.some((section) =>
+          sectionIntersectsResourceRange(section, rva, size),
         ) ||
         size > headerSize - rva
       )
@@ -135,9 +142,7 @@ export const readPeResourceLayout = (bytes: Buffer) => {
     if (
       sections.some(
         (other) =>
-          other !== section &&
-          other.rva < rva + size &&
-          other.rva + virtualExtent(other) > rva,
+          other !== section && sectionIntersectsResourceRange(other, rva, size),
       )
     )
       peFailure("Resource interval intersects overlapping virtual sections.");

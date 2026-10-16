@@ -1263,6 +1263,7 @@ console.log(JSON.stringify({ plain, hooked,
 it.each([
   "defineProperty",
   "getOwnPropertyDescriptor",
+  "getPrototypeOf",
   "create",
   "get",
   "set",
@@ -1331,14 +1332,89 @@ console.log(JSON.stringify({ plain, hooked,
 );
 
 it.each([
-  { mode: "data", depth: 16, once: true, gaps: 0, remaining: 1 },
-  { mode: "data", depth: 17, once: true, gaps: 1, remaining: 1 },
-  { mode: "accessor", depth: 1, once: true, gaps: 1, remaining: 0 },
-  { mode: "proxy", depth: 1, once: true, gaps: 1, remaining: 0 },
-  { mode: "data", depth: 17, once: false, gaps: 1, remaining: 1 },
+  {
+    mode: "data",
+    depth: 16,
+    prototypeDepth: 0,
+    once: true,
+    gaps: 0,
+    remaining: 1,
+  },
+  {
+    mode: "data",
+    depth: 17,
+    prototypeDepth: 0,
+    once: true,
+    gaps: 1,
+    remaining: 1,
+  },
+  {
+    mode: "accessor",
+    depth: 1,
+    prototypeDepth: 0,
+    once: true,
+    gaps: 1,
+    remaining: 0,
+  },
+  {
+    mode: "proxy",
+    depth: 1,
+    prototypeDepth: 0,
+    once: true,
+    gaps: 1,
+    remaining: 0,
+  },
+  {
+    mode: "data",
+    depth: 17,
+    prototypeDepth: 0,
+    once: false,
+    gaps: 1,
+    remaining: 1,
+  },
+  {
+    mode: "inherited-data",
+    depth: 1,
+    prototypeDepth: 1,
+    once: true,
+    gaps: 0,
+    remaining: 0,
+  },
+  {
+    mode: "inherited-accessor",
+    depth: 1,
+    prototypeDepth: 1,
+    once: true,
+    gaps: 1,
+    remaining: 0,
+  },
+  {
+    mode: "inherited-proxy",
+    depth: 1,
+    prototypeDepth: 1,
+    once: true,
+    gaps: 1,
+    remaining: 0,
+  },
+  {
+    mode: "inherited-data",
+    depth: 1,
+    prototypeDepth: 16,
+    once: true,
+    gaps: 0,
+    remaining: 0,
+  },
+  {
+    mode: "inherited-data",
+    depth: 1,
+    prototypeDepth: 17,
+    once: true,
+    gaps: 1,
+    remaining: 0,
+  },
 ])(
-  "preserves native dispatch for $mode listener chains (depth $depth, once $once)",
-  async ({ mode, depth, once, gaps, remaining }) => {
+  "preserves native dispatch for $mode chains (depth $depth, prototype $prototypeDepth, once $once)",
+  async ({ mode, depth, prototypeDepth, once, gaps, remaining }) => {
     const root = await createTestTempDirectory(
       "rea-electron-hook-chain-coverage-",
     );
@@ -1356,7 +1432,18 @@ const scenario = (target) => {
     const previous = target.on;
     target.on = function(channel, listener) {
       let outer = function(...args) { return Reflect.apply(listener, this, args); };
-      if (mode === "accessor") Object.defineProperty(outer, "listener", { get() { reads++; return listener; } });
+      if (mode.startsWith("inherited-")) {
+        let prototype = Object.create(Function.prototype);
+        Object.defineProperty(prototype, "listener", mode === "inherited-accessor"
+          ? { get() { reads++; return listener; } } : { value: listener });
+        if (mode === "inherited-proxy") prototype = new Proxy(prototype, {
+          getOwnPropertyDescriptor() { throw new Error("prototype metadata reflection"); },
+          getPrototypeOf() { throw new Error("prototype traversal reflection"); }
+        });
+        for (let index = 1; index < ${prototypeDepth}; index++) prototype = Object.create(prototype);
+        Object.setPrototypeOf(outer, prototype);
+      }
+      else if (mode === "accessor") Object.defineProperty(outer, "listener", { get() { reads++; return listener; } });
       else outer.listener = listener;
       if (mode === "proxy") outer = new Proxy(outer, {
         getOwnPropertyDescriptor() { throw new Error("application metadata reflection"); }
@@ -1380,7 +1467,7 @@ console.log(JSON.stringify({ plain, hooked,
     const result = JSON.parse(execution.stdout);
     expect(result.plain).toEqual({
       calls: once ? 1 : 2,
-      reads: mode === "accessor" ? 1 : 0,
+      reads: mode.endsWith("accessor") ? 1 : 0,
       remaining,
     });
     expect(result.hooked).toEqual(result.plain);

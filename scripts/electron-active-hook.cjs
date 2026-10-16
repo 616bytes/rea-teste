@@ -7,6 +7,7 @@ const callFunction = Function.prototype.call;
 const arrayFrom = Array.from;
 const defineProperty = Object.defineProperty;
 const ownPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const getPrototypeOf = Object.getPrototypeOf;
 const getProperty = Reflect.get;
 const setProperty = Reflect.set;
 const SetConstructor = Set;
@@ -417,13 +418,25 @@ const invokeObservedEventListener = (
 const hookListenerRemovalTargets = new WeakMap();
 const MAX_LISTENER_CHAIN_HOPS = 16;
 
-// Missing metadata is absent; accessor metadata is unknown. Only data
-// descriptors expose their own value without consulting application getters.
+// Follow native property lookup without invoking application getters or Proxy
+// traps. Undefined means the readable link is absent; null means unknown.
 const listenerDataDescriptor = (listener) => {
-  const descriptor = ownPropertyDescriptor(listener, "listener");
-  return descriptor !== undefined && !hasOwnProperty(descriptor, "value")
-    ? null
-    : descriptor;
+  let candidate = listener;
+  for (
+    let hops = 0;
+    hops <= MAX_LISTENER_CHAIN_HOPS && candidate !== null;
+    hops += 1
+  ) {
+    if (isProxy(candidate)) return null;
+    const descriptor = ownPropertyDescriptor(candidate, "listener");
+    if (descriptor !== undefined) {
+      if (hasOwnProperty(descriptor, "value")) return descriptor;
+      // A setter-only property shadows ancestors with a known undefined read.
+      return descriptor.get === undefined ? undefined : null;
+    }
+    candidate = getPrototypeOf(candidate);
+  }
+  return candidate === null ? undefined : null;
 };
 
 // A decorator that wraps once's hook wrapper and names it through `.listener`
@@ -441,9 +454,6 @@ const classifyHookListenerWrapper = (listener) => {
     if (weakMapHas(hookListenerRemovalTargets, candidate)) return "owned";
     if (setHas(visited, candidate)) return "unowned";
     setAdd(visited, candidate);
-    // Proxy reflection can run application traps; ordinary own descriptors
-    // expose data links without evaluating application-owned accessors.
-    if (isProxy(candidate)) return "unknown";
     const descriptor = listenerDataDescriptor(candidate);
     if (descriptor === null) return "unknown";
     candidate = descriptor?.value;

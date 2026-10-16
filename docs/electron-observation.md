@@ -149,12 +149,14 @@ retained arrays and counters without invoking application iterators or Array
 species.
 
 Listener-chain recognition distinguishes owned, unowned and unknown metadata.
-Exhausting the bounded walk, encountering an accessor or seeing a Proxy leaves
+Data links may be inherited; absence is established only after completing the
+bounded prototype lookup. Exhausting either walk, encountering a getter or seeing a Proxy leaves
 ownership unknown. The hook preserves native registration without adding another
 recording wrapper and retains a `listener-chain` observation gap after successful
 registration. This gap does not prove IPC delivery. An existing inner recording
 wrapper can still report its actual invocation; otherwise callback activity
-remains unobserved. Data-descriptor parsing is shared with removal normalization.
+remains unobserved. Setter-only properties have a known undefined read.
+Data-descriptor parsing is shared with removal normalization.
 
 This does not establish complete JavaScript function introspection equivalence.
 Caller-defined `.listener` properties can change the identity exposed by

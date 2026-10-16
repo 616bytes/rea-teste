@@ -394,8 +394,11 @@ export const runWithExecutionLimits = async <Value>(
   signal: AbortSignal | undefined,
   deadline?: number,
 ): Promise<Value> => {
-  if (signal?.aborted === true)
+  if (signal?.aborted === true) {
+    // The operation has already started; observe its abandoned settlement.
+    void operation.catch(() => undefined);
     throw new BrowserObservationError(OPERATION, "cancelled");
+  }
   if (signal === undefined && deadline === undefined) return operation;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let abortListener: (() => void) | undefined;

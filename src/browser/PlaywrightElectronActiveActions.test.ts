@@ -11,6 +11,7 @@ import { createElectronActiveObservationFixtureResult } from "../domain/javascri
 import {
   readFinalApplicationState,
   runElectronActions,
+  runWithExecutionLimits,
 } from "./PlaywrightElectronActiveActions.js";
 
 afterEach(() => {
@@ -379,9 +380,11 @@ it("rejects action outcomes that disagree with their error state", () => {
 it("cancels a wait without window_index while the app has no window", async () => {
   const controller = new AbortController();
   const application = {
-    firstWindow: vi.fn(() => new Promise<never>(() => undefined)),
+    firstWindow: vi.fn(() => {
+      queueMicrotask(() => controller.abort());
+      return new Promise<never>(() => undefined);
+    }),
   } as unknown as ElectronApplication;
-  setTimeout(() => controller.abort(), 20);
 
   const actions = await runElectronActions(
     application,
@@ -430,4 +433,100 @@ it("bounds a final state read that is still pending after cancellation", async (
     _tag: "BrowserObservationError",
     reason: "timeout",
   });
+});
+
+const finalState = {
+  windows: [],
+  metrics: [],
+  electronVersion: "44.0.0",
+  hookSnapshot: {
+    events: [],
+    retention_budget_bytes: 0,
+    estimated_retained_bytes: 0,
+    event_serialized_byte_upper_bound: 0,
+    retained: 0,
+    dropped: 0,
+    dropped_ipc: 0,
+    dropped_runtime: 0,
+    dropped_event_families: [],
+    dropped_event_roles: [],
+    observed: 0,
+    observed_ipc: 0,
+    observed_runtime: 0,
+    hook_error: false,
+  },
+};
+
+/** An application whose four state reads settle only when `release` runs. */
+const gatedStateApplication = () => {
+  let release = (): void => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const evaluate = vi
+    .fn()
+    .mockImplementationOnce(() => gate.then(() => finalState.windows))
+    .mockImplementationOnce(() => gate.then(() => finalState.metrics))
+    .mockImplementationOnce(() => gate.then(() => finalState.electronVersion))
+    .mockImplementationOnce(() => gate.then(() => finalState.hookSnapshot));
+  return {
+    application: { evaluate } as unknown as ElectronApplication,
+    release,
+  };
+};
+
+it("returns a final state read that settles in the grace period after cancellation during the read", async () => {
+  vi.useFakeTimers();
+  const controller = new AbortController();
+  const { application, release } = gatedStateApplication();
+
+  const state = readFinalApplicationState(application, controller.signal);
+  controller.abort();
+  await vi.advanceTimersByTimeAsync(1_000);
+  release();
+
+  await expect(state).resolves.toEqual(finalState);
+});
+
+it("returns a final state read that settles in the grace period when cancellation preceded it", async () => {
+  vi.useFakeTimers();
+  const controller = new AbortController();
+  controller.abort();
+  const { application, release } = gatedStateApplication();
+
+  const state = readFinalApplicationState(application, controller.signal);
+  await vi.advanceTimersByTimeAsync(1_000);
+  release();
+
+  await expect(state).resolves.toEqual(finalState);
+});
+
+it("observes an operation abandoned by an already-cancelled signal", async () => {
+  const unhandled: unknown[] = [];
+  const recordUnhandled = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", recordUnhandled);
+  try {
+    const controller = new AbortController();
+    controller.abort();
+    let reject = (_cause: Error): void => undefined;
+    const operation = new Promise<never>((_, rejectOperation) => {
+      reject = rejectOperation;
+    });
+
+    await expect(
+      runWithExecutionLimits(operation, controller.signal),
+    ).rejects.toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "cancelled",
+    });
+    reject(new Error("application closed during cleanup"));
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(unhandled).toEqual([]);
+  } finally {
+    process.off("unhandledRejection", recordUnhandled);
+  }
 });

@@ -328,17 +328,19 @@ const stubVerifiedElectronCleanup = () => {
   ];
 };
 
-const captureCancelledWhilePending = async (
+/** Run a capture whose test doubles abort `controller` at a chosen phase. */
+const captureWithController = async (
+  controller: AbortController,
   application: Record<string, unknown>,
   actions: unknown[],
 ) => {
-  const controller = new AbortController();
-  const provider = new PlaywrightElectronActiveProvider({}, async () => {
-    setTimeout(() => controller.abort(), 50);
-    return application as unknown as Awaited<
-      ReturnType<typeof import("playwright-core")._electron.launch>
-    >;
-  });
+  const provider = new PlaywrightElectronActiveProvider(
+    {},
+    async () =>
+      application as unknown as Awaited<
+        ReturnType<typeof import("playwright-core")._electron.launch>
+      >,
+  );
   return provider.capture(
     {
       ...electronActiveObservationInputSchema.parse({
@@ -364,14 +366,18 @@ it("cancels a windowless wait action and cleans up the owned application", async
   vi.spyOn(electronActions, "readFinalApplicationState").mockResolvedValue(
     state,
   );
+  const controller = new AbortController();
   const application = {
     process: () => ({ pid: 424242 }),
     close: vi.fn(async () => undefined),
     windows: () => [],
-    firstWindow: vi.fn(() => new Promise<never>(() => undefined)),
+    firstWindow: vi.fn(() => {
+      queueMicrotask(() => controller.abort());
+      return new Promise<never>(() => undefined);
+    }),
   };
 
-  const result = await captureCancelledWhilePending(application, [
+  const result = await captureWithController(controller, application, [
     { step_id: "settle", kind: "wait", duration_ms: 10 },
   ]);
 
@@ -394,16 +400,18 @@ it("cancels a windowless wait action and cleans up the owned application", async
 
 it("cancels a pending initial state read and cleans up the owned application", async () => {
   const cleanupSpies = stubVerifiedElectronCleanup();
-  vi.spyOn(electronActions, "readApplicationState").mockReturnValue(
-    new Promise<never>(() => undefined),
-  );
+  const controller = new AbortController();
+  vi.spyOn(electronActions, "readApplicationState").mockImplementation(() => {
+    queueMicrotask(() => controller.abort());
+    return new Promise<never>(() => undefined);
+  });
   const application = {
     process: () => ({ pid: 424242 }),
     close: vi.fn(async () => undefined),
     windows: () => [],
   };
 
-  const result = await captureCancelledWhilePending(application, []);
+  const result = await captureWithController(controller, application, []);
 
   expect(application.close).toHaveBeenCalledOnce();
   expect(cleanupSpies.some((spy) => spy.mock.calls.length > 0)).toBe(true);
@@ -413,4 +421,50 @@ it("cancels a pending initial state read and cleans up the owned application", a
     _tag: "BrowserObservationError",
     reason: "cancelled",
   });
+});
+
+it("observes an initial state read started after cancellation and rejected by cleanup", async () => {
+  const cleanupSpies = stubVerifiedElectronCleanup();
+  const unhandled: unknown[] = [];
+  const recordUnhandled = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", recordUnhandled);
+  try {
+    const controller = new AbortController();
+    let rejectReads = (_cause: Error): void => undefined;
+    const closed = new Promise<never>((_, reject) => {
+      rejectReads = reject;
+    });
+    // Plain functions keep spy bookkeeping from observing the abandoned read.
+    const application = {
+      process: () => ({ pid: 424242 }),
+      evaluate: () => {
+        controller.abort();
+        return closed;
+      },
+      close: vi.fn(async () => {
+        rejectReads(
+          new Error("Target page, context or browser has been closed"),
+        );
+      }),
+      windows: () => [],
+    };
+
+    const result = await captureWithController(controller, application, []);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(application.close).toHaveBeenCalledOnce();
+    expect(cleanupSpies.some((spy) => spy.mock.calls.length > 0)).toBe(true);
+    expect(unhandled).toEqual([]);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected the capture to be cancelled");
+    expect(result.error).toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "cancelled",
+    });
+  } finally {
+    process.off("unhandledRejection", recordUnhandled);
+  }
 });

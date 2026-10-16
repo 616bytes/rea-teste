@@ -74,6 +74,7 @@ import {
 } from "./SignatureTargetBinding.js";
 import { parseCodeSignature } from "./parsers/codesign.js";
 import {
+  describeEntitlementDifferences,
   describeSignatureSlices,
   describeSignedSlicesOfUnsignedDefault,
   sameCdhashes,
@@ -684,6 +685,7 @@ class NativeMacOSClient implements AnalysisClient {
           // were read and decoded; an undecodable aggregate proves nothing.
           entitlementsComparable:
             entitlements.value.exitCode === 0 && entitlementValue.decoded,
+          entitlementValue: entitlementValue.value,
           entitlements: entitlements.value.exitCode,
         },
         signal,
@@ -741,6 +743,8 @@ class NativeMacOSClient implements AnalysisClient {
       requirements: number | null;
       /** The aggregate entitlements were read and decoded. */
       entitlementsComparable: boolean;
+      /** The decoded aggregate entitlements, compared against each slice. */
+      entitlementValue: JsonValue | null;
       entitlements: number | null;
     }>,
     signal?: AbortSignal,
@@ -820,7 +824,15 @@ class NativeMacOSClient implements AnalysisClient {
         entitlementsUnavailable.push(architecture);
         continue;
       }
-      signed.push({ ...facts, entitlements: decoded.value });
+      // Compare now and keep only the outcome: 128 slices of parsed
+      // entitlement trees would otherwise stay live until the end.
+      signed.push({
+        ...facts,
+        entitlementDifferences: describeEntitlementDifferences(
+          decoded.value,
+          aggregate.entitlementValue,
+        ),
+      });
     }
     if (entitlementsUnavailable.length > 0)
       limitations.push(
@@ -1283,6 +1295,12 @@ const invocation = (
   stderr_bytes: capture.stderrBytes,
 });
 
+/** Whether the XML carries an `<integer>` JavaScript numbers cannot hold exactly. */
+const hasUnsafeIntegerLiteral = (xml: string): boolean =>
+  [...xml.matchAll(/<integer>\s*([+-]?\d+)\s*<\/integer>/giu)].some(
+    ([, digits]) => !Number.isSafeInteger(Number(digits)),
+  );
+
 /**
  * Decode the entitlements plist codesign prints. Data and date values, which
  * JSON cannot carry, become the typed objects inspect_plist uses; a plist
@@ -1318,8 +1336,12 @@ const parseEntitlements = (
     decoded.omittedPrototypeKeys === 0
       ? []
       : [omittedPrototypeKeysLimitation(decoded.omittedPrototypeKeys)];
+  // The XML decoder has already rounded integers beyond the exact range;
+  // the projection recovers their digits from the source, so route such
+  // plists through it too.
   const json = jsonValueSchema.safeParse(decoded.value);
-  if (json.success) return { value: json.data, limitations, decoded: true };
+  if (json.success && !hasUnsafeIntegerLiteral(xml))
+    return { value: json.data, limitations, decoded: true };
   const projected = parsePlistXml(xml);
   const typed = projected.ok
     ? jsonValueSchema.safeParse(projected.value.value)

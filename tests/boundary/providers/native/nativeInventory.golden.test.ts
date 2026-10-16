@@ -386,6 +386,44 @@ it("falls back to the target's CPU families when lipo is unavailable", async () 
   );
 });
 
+it("compares entitlement integers beyond the exact range by their digits", async () => {
+  const load = (name: string) => fixture(`codesign-universal-signed/${name}`);
+  const plist = (digits: string) =>
+    `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.example.limit</key><integer>${digits}</integer></dict></plist>`;
+  const client = new NativeMacOSProvider(
+    {},
+    sliceRunner({
+      aggregate: await load("aggregate.txt"),
+      requirements: await load("requirements.txt"),
+      // Both literals round to the same JavaScript number.
+      entitlements: plist("9007199254740992"),
+      slices: {
+        x86_64: {
+          display: await load("slice-x86_64.txt"),
+          entitlements: plist("9007199254740993"),
+        },
+        arm64: {
+          display: await load("slice-arm64.txt"),
+          entitlements: plist("9007199254740992"),
+        },
+      },
+    }),
+    "darwin",
+  ).createClient(await signatureTarget("arm64"));
+
+  const execution = await client.execute("inspect_signature", {});
+
+  if (!execution.ok) throw execution.error;
+  const { limitations } = execution.value.result as { limitations: string[] };
+  expect(limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringMatching(
+        /^Mach-O slices signed differently from the arm64 slice: x86_64 \(identifier com\.example\.x86slice; hardened runtime off; entitlements com\.example\.limit: \{"\$plist_type":"integer","decimal":"9007199254740993"\} \(described slice \{"\$plist_type":"integer","decimal":"9007199254740992"\}\)\)\.$/u,
+      ),
+    ]),
+  );
+});
+
 it("keeps a non-default slice's undecodable entitlements unobserved", async () => {
   const load = (name: string) => fixture(`codesign-universal-signed/${name}`);
   const client = new NativeMacOSProvider(

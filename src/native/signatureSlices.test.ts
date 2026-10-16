@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  describeEntitlementDifferences,
   describeSignatureSlices,
   describeSignedSlicesOfUnsignedDefault,
   type AggregateSignature,
@@ -35,7 +36,10 @@ const x86Slice: SliceSignature = {
   cdhashes: [X86],
   authorities: [],
   hardened_runtime: false,
-  entitlements: { "com.apple.security.get-task-allow": true },
+  entitlementDifferences: describeEntitlementDifferences(
+    { "com.apple.security.get-task-allow": true },
+    aggregate.entitlements,
+  ),
 };
 
 describe("describeSignatureSlices", () => {
@@ -99,7 +103,7 @@ describe("describeSignatureSlices", () => {
       cdhashes: [cdhash],
       authorities: alike.authorities,
       hardened_runtime: false,
-      entitlements: null,
+      entitlementDifferences: null,
     });
     expect(
       describeSignatureSlices(alike, [
@@ -128,7 +132,8 @@ describe("describeSignatureSlices", () => {
 
 describe("describeSignatureSlices entitlement and requirement details", () => {
   it("does not report entitlements for a slice that was not asked for them", () => {
-    const { entitlements: _omitted, ...withoutEntitlements } = x86Slice;
+    const { entitlementDifferences: _omitted, ...withoutEntitlements } =
+      x86Slice;
     const limitations = describeSignatureSlices(aggregate, [
       withoutEntitlements,
       armSlice,
@@ -146,7 +151,7 @@ describe("describeSignatureSlices entitlement and requirement details", () => {
           ...x86Slice,
           identifier: aggregate.identifier,
           hardened_runtime: true,
-          entitlements: {},
+          entitlementDifferences: describeEntitlementDifferences({}, null),
         },
         armSlice,
       ],
@@ -159,7 +164,10 @@ describe("describeSignatureSlices entitlement and requirement details", () => {
         ...x86Slice,
         identifier: aggregate.identifier,
         hardened_runtime: true,
-        entitlements: null,
+        entitlementDifferences: describeEntitlementDifferences(
+          null,
+          aggregate.entitlements,
+        ),
       },
       armSlice,
     ]);
@@ -182,10 +190,16 @@ describe("describeSignatureSlices entitlement and requirement details", () => {
           ...x86Slice,
           identifier: aggregate.identifier,
           hardened_runtime: true,
-          entitlements: {
-            "com.apple.security.get-task-allow": true,
-            "com.apple.security.cs.disable-library-validation": true,
-          },
+          entitlementDifferences: describeEntitlementDifferences(
+            {
+              "com.apple.security.get-task-allow": true,
+              "com.apple.security.cs.disable-library-validation": true,
+            },
+            {
+              "com.apple.security.get-task-allow": false,
+              "com.apple.security.cs.disable-library-validation": true,
+            },
+          ),
         },
         armSlice,
       ],
@@ -203,7 +217,10 @@ describe("describeSignatureSlices entitlement and requirement details", () => {
           ...x86Slice,
           identifier: aggregate.identifier,
           hardened_runtime: true,
-          entitlements: { constructor: "x", hasOwnProperty: 1 },
+          entitlementDifferences: describeEntitlementDifferences(
+            { constructor: "x", hasOwnProperty: 1 },
+            { toString: true },
+          ),
         },
         armSlice,
       ],
@@ -211,6 +228,21 @@ describe("describeSignatureSlices entitlement and requirement details", () => {
     expect(limitations[1]).toBe(
       'Mach-O slices signed differently from the arm64 slice: x86_64 (entitlements constructor: "x", hasOwnProperty: 1, toString absent).',
     );
+  });
+
+  it("keeps long differing values distinguishable after the cut", () => {
+    const base = "x".repeat(90);
+    const differences = describeEntitlementDifferences(
+      { "com.example.long": `${base}a` },
+      { "com.example.long": `${base}b` },
+    );
+    expect(differences).toMatch(
+      /^com\.example\.long: "x{76}\.\.\. \(93 chars, sha256 [0-9a-f]{16}\) \(described slice "x{76}\.\.\. \(93 chars, sha256 [0-9a-f]{16}\)\)$/u,
+    );
+    const [ours, theirs] = [
+      ...(differences ?? "").matchAll(/sha256 ([0-9a-f]{16})/gu),
+    ].map(([, digest]) => digest);
+    expect(ours).not.toBe(theirs);
   });
 
   it("compares CDHashes without regard to letter case", () => {

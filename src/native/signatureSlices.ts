@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { canonicalJson } from "../domain/comparisonSemantics.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 
@@ -12,8 +14,13 @@ export interface SliceSignature {
   readonly cdhashes: readonly string[];
   readonly authorities: readonly string[];
   readonly hardened_runtime: boolean | null;
-  /** Parsed entitlements; undefined when the slice was not asked for them. */
-  readonly entitlements?: JsonValue | null;
+  /**
+   * How this slice's entitlements differ from the described slice's, from
+   * `describeEntitlementDifferences`: null when they match, undefined when
+   * the slice was not asked for them or they could not be read. The parsed
+   * tree itself is not retained, so many slices cannot pile up in memory.
+   */
+  readonly entitlementDifferences?: string | null;
 }
 
 /**
@@ -158,13 +165,10 @@ const describeDifferences = (
       `hardened runtime ${runtimeState(slice.hardened_runtime)}`,
     );
   if (
-    slice.entitlements !== undefined &&
-    canonicalJson(withoutEmptyDictionary(slice.entitlements)) !==
-      canonicalJson(withoutEmptyDictionary(aggregate.entitlements))
+    slice.entitlementDifferences !== undefined &&
+    slice.entitlementDifferences !== null
   )
-    differences.push(
-      `entitlements ${describeEntitlementDifferences(slice.entitlements, aggregate.entitlements)}`,
-    );
+    differences.push(`entitlements ${slice.entitlementDifferences}`);
   return differences.length === 0
     ? null
     : `${slice.architecture} (${differences.join("; ")})`;
@@ -216,15 +220,21 @@ const withoutEmptyDictionary = (value: JsonValue | null): JsonValue | null =>
  * The entries of a slice's entitlements that differ from the described
  * slice's, with their values, so the policy signed into the other slice is
  * readable from the result. A key the slice lacks is reported as absent.
+ * Returns null when nothing differs; codesign prints nothing for no
+ * entitlements, so an empty dictionary and null compare equal.
  */
-const describeEntitlementDifferences = (
-  slice: JsonValue | null | undefined,
+export const describeEntitlementDifferences = (
+  slice: JsonValue | null,
   described: JsonValue | null,
-): string => {
+): string | null => {
+  if (
+    canonicalJson(withoutEmptyDictionary(slice)) ===
+    canonicalJson(withoutEmptyDictionary(described))
+  )
+    return null;
   const own = asDictionary(slice);
   const other = asDictionary(described);
-  if (own === null)
-    return slice === null || slice === undefined ? "none" : "not a dictionary";
+  if (own === null) return slice === null ? "none" : "not a dictionary";
   const keys = [
     ...new Set([
       ...Object.keys(own),
@@ -245,7 +255,7 @@ const describeEntitlementDifferences = (
           `${key}: ${renderValue(value)} (described slice ${renderValue(theirs)})`,
         ];
   });
-  return entries.length === 0 ? "none" : entries.join(", ");
+  return entries.length === 0 ? "differs" : entries.join(", ");
 };
 
 const asDictionary = (
@@ -258,7 +268,11 @@ const asDictionary = (
     ? (value as Record<string, JsonValue>)
     : null;
 
-/** A compact JSON rendering, cut so one entitlement cannot flood the sentence. */
+/**
+ * A compact JSON rendering. A long value is cut so one entitlement cannot
+ * flood the sentence, and carries its length and SHA-256 prefix so two long
+ * values that differ past the cut still read as different.
+ */
 const renderValue = (value: JsonValue): string => {
   let text: string;
   try {
@@ -266,5 +280,7 @@ const renderValue = (value: JsonValue): string => {
   } catch {
     return "unrenderable";
   }
-  return text.length > 80 ? `${text.slice(0, 77)}...` : text;
+  if (text.length <= 80) return text;
+  const digest = createHash("sha256").update(text).digest("hex").slice(0, 16);
+  return `${text.slice(0, 77)}... (${String(text.length)} chars, sha256 ${digest})`;
 };

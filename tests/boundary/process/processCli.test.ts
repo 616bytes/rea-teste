@@ -25,6 +25,18 @@ import { expectSerializedUnverifiedHostCleanup } from "../../support/hostCleanup
 const execFileAsync = promisify(execFile);
 const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
 
+/** Completed command facts retained behind a narrowly verified host cleanup error. */
+const unverifiedCliCapture = (output: unknown) => {
+  const partial = partialProcessCaptureObservationSchema.parse(
+    expectSerializedUnverifiedHostCleanup({ error: output }),
+  );
+  expect(partial.execution_failure).toBeNull();
+  if (!("capture" in partial))
+    throw new Error("Unverified host cleanup omitted the completed capture");
+  expect(partial.capture.settlement.cleanup_outcome).toBe("failed");
+  return partial.capture;
+};
+
 describe("documented process CLI workflow", () => {
   cliTest(
     "feeds the documented JSON capture into the comparison CLI",
@@ -62,22 +74,14 @@ describe("documented process CLI workflow", () => {
         });
       else {
         expect(capture.exitCode, capture.stdout || capture.stderr).toBe(1);
-        const partial = partialProcessCaptureObservationSchema.parse(
-          expectSerializedUnverifiedHostCleanup({ error: capture.json }),
-        );
-        expect(partial.execution_failure).toBeNull();
-        if (!("capture" in partial))
-          throw new Error(
-            "Unverified host cleanup omitted the completed capture",
-          );
-        expect(partial.capture.exit).toMatchObject({
+        const partial = unverifiedCliCapture(capture.json);
+        expect(partial.exit).toMatchObject({
           code: 0,
           reason: "exited",
         });
-        expect(partial.capture.frames.map(({ data }) => data).join("")).toBe(
+        expect(partial.frames.map(({ data }) => data).join("")).toBe(
           "documented-capture",
         );
-        expect(partial.capture.settlement.cleanup_outcome).toBe("failed");
       }
       await writeFile(join(root, output), capture.stdout);
       const comparison = await cli.run({
@@ -222,10 +226,21 @@ describe("process CLI evidence validation", () => {
       }),
     );
     const evidence = await captureProcessScenarioFile(scenario);
-    expect(evidence).toMatchObject({
-      predicate_type: "rea.process-capture",
-      operation: "capture_process_scenario",
-    });
+    if ("error" in evidence) {
+      const capture = unverifiedCliCapture(evidence);
+      expect(capture.exit).toMatchObject({ code: 0, reason: "exited" });
+      expect(capture.frames.map(({ data }) => data).join("")).toBe(
+        "minimal-capture",
+      );
+      expect(capture.manifest.scenario).toMatchObject({
+        executable: process.execPath,
+        arguments: ["-e", "process.stdout.write('minimal-capture')"],
+      });
+    } else
+      expect(evidence).toMatchObject({
+        predicate_type: "rea.process-capture",
+        operation: "capture_process_scenario",
+      });
     expect(JSON.stringify(evidence)).toContain("minimal-capture");
   });
 

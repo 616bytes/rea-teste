@@ -28,6 +28,7 @@ export const createJadxProtocolFixture = async (
   mode = "normal",
   cleanupFailure?: () => boolean,
   inventory?: { readonly classCount?: number },
+  settings: Readonly<Record<string, string>> = {},
 ) => {
   const root = await createTestTempDirectory("rea-android-boundary-");
   const apk = join(root, "fixture.apk");
@@ -56,6 +57,7 @@ export const createJadxProtocolFixture = async (
     ...process.env,
     JAVA_HOME: javaHome,
     REA_JADX_MCP_JAR: jar,
+    ...settings,
   };
   const provider = createAndroidAnalysisProvider(
     environment,

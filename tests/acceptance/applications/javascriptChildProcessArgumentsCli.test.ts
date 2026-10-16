@@ -362,9 +362,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         command,
       ).toHaveLength(env ? 1 : 0);
     }
-    expect(graph.coverage.status).toBe("partial");
+    expect(result.graph.coverage.status).toBe("partial");
     expect(
-      graph.coverage.limits.some(
+      result.graph.coverage.limits.some(
         ({ name }) => name === "javascript_semantic_expression_depth",
       ),
     ).toBe(true);

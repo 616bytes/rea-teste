@@ -131,6 +131,17 @@ const refineStartStep = (
       path: ["steps", 0],
       message: `Step 0 must be the completed implicit start navigation (step_id ${BROWSER_SCENARIO_START_STEP.step_id}, action ${BROWSER_SCENARIO_START_STEP.action})`,
     });
+  // Later windows rise from here, so every receipt belongs to a window or follows one.
+  if (
+    start !== undefined &&
+    start.event_sequence_start !==
+      BROWSER_SCENARIO_START_STEP.event_sequence_start
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["steps", 0, "event_sequence_start"],
+      message: `Step 0's receipt window starts at event sequence ${String(BROWSER_SCENARIO_START_STEP.event_sequence_start)}`,
+    });
 };
 
 const BROWSER_IDENTITIES = {

@@ -877,6 +877,17 @@ it("requires missing events whenever the capture shows an event gap", () => {
   ).toBeUndefined();
 });
 
+it("opens the start step's receipt window at the first event sequence", () => {
+  expect(
+    fixtureIssues((capture) => ({
+      ...capture,
+      steps: capture.steps.map((step) =>
+        step.step_index === 0 ? { ...step, event_sequence_start: 2 } : step,
+      ),
+    })),
+  ).toEqual([["steps", 0, "event_sequence_start"]]);
+});
+
 it("keeps steps after a failure as cancellations that never ran", () => {
   const fixture = browserScenarioFixtureCapture();
   const capturedUrl = fixture.steps[3]?.artifacts.url;

@@ -384,6 +384,41 @@ it("rejects a step 0 that is not the completed implicit start navigation", () =>
   }
 });
 
+it("rejects a start window that leaves earlier receipts outside every window", () => {
+  const fixture = browserScenarioFixtureCapture();
+  expect(
+    fixture.events.items.filter(({ sequence }) => sequence <= 2),
+  ).toMatchObject([{ step_index: 0 }, { step_index: 0 }]);
+  expect(
+    failure(
+      { kind: "browser-scenario", collection: "steps" },
+      {
+        ...parent(),
+        normalizedResult: {
+          ...fixture,
+          steps: fixture.steps.map((step) =>
+            step.step_index === 0
+              ? { ...step, event_sequence_start: 2, event_sequence_end: 2 }
+              : step,
+          ),
+        },
+      },
+    ),
+  ).toMatchObject({
+    issues: [
+      {
+        path: [
+          "source",
+          "normalized_result",
+          "steps",
+          0,
+          "event_sequence_start",
+        ],
+      },
+    ],
+  });
+});
+
 it("rejects step completeness that contradicts the retained artifacts", () => {
   const fixture = browserScenarioFixtureCapture();
   expect(fixture.steps[1]?.artifacts.accessibility.state).toBe("captured");

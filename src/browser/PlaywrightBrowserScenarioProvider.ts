@@ -118,7 +118,7 @@ const initialStep = async (input: {
     beforeUrl: session.sanitizeUrl(session.initialUrl),
     afterUrl: session.sanitizeUrl(session.currentUrl()),
     error: null,
-    eventStart: 1,
+    eventStart: BROWSER_SCENARIO_START_STEP.event_sequence_start,
     eventEnd: session.lastEventSequence(),
     artifacts,
   });

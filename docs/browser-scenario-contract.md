@@ -203,7 +203,8 @@ statements remain under the attached debugger client's control.
 
 The result is Evidence with an initial state followed by one record per
 declared action. The initial state is always the completed step 0, with
-`step_id` `scenario_start` and action `goto_start`. Each step reports action status, elapsed time, sanitized URLs,
+`step_id` `scenario_start`, action `goto_start` and a receipt window that
+starts at event sequence 1. Each step reports action status, elapsed time, sanitized URLs,
 event bounds, and independently typed capture states for screenshot, DOM,
 accessibility, URL, history, and storage. Console, page-error, network,
 WebSocket, frame, worker, popup, and cancelled-download events are attributed to

@@ -484,10 +484,14 @@ export const classifyBrowserScenarioCompleteness = (
   };
 };
 
-/** The implicit start navigation every capture records as completed step 0. */
+/**
+ * The implicit start navigation every capture records as completed step 0,
+ * whose receipt window opens at the first event sequence.
+ */
 export const BROWSER_SCENARIO_START_STEP = {
   step_id: "scenario_start",
   action: "goto_start",
+  event_sequence_start: 1,
 } as const;
 
 const browserScenarioStepShape = {

@@ -6,6 +6,7 @@ import {
   type ProcessTableEntry,
 } from "./ProcessOwnership.js";
 import { ownership } from "./ProcessOwnership.fixture.js";
+import { ProcessCaptureResourceScope } from "./capture/ProcessCaptureLifecycle.js";
 
 const launcher: ProcessTableEntry = {
   pid: 100,
@@ -14,6 +15,150 @@ const launcher: ProcessTableEntry = {
   state: "S",
   command: "fixture",
 };
+
+it.each(["planning", "signaling", "signaling without new groups"])(
+  "cleans verified peers and retains the capture owner when a live token disappears during %s",
+  async (phase) => {
+    const peer = { ...launcher, pid: 200, processGroupId: 200 };
+    const discovered = { ...launcher, pid: 300, processGroupId: 300 };
+    let processes = [launcher, peer];
+    let launcherReads = 0;
+    let uncertain = false;
+    let recovered = false;
+    const signalGroup = vi.fn((groupId: number) => {
+      processes = processes.filter(
+        ({ processGroupId }) => processGroupId !== groupId,
+      );
+    });
+    const adapter: ProcessOwnershipHost = {
+      listProcesses: async () => processes,
+      processIdentities: async (members) =>
+        new Map(
+          members.map(({ pid }) => [
+            pid,
+            {
+              state: "readable" as const,
+              identity: `start-${String(pid)}`,
+            },
+          ]),
+        ),
+      environment: async (pid) => {
+        if (pid === launcher.pid) {
+          launcherReads++;
+          if (launcherReads === (phase === "planning" ? 2 : 3)) {
+            uncertain = true;
+            if (phase !== "signaling without new groups")
+              processes = [...processes, discovered];
+          }
+          if (uncertain && !recovered) return {};
+        }
+        return { REA_PROCESS_RUN_ID: ownership.runId };
+      },
+      signalGroup,
+    };
+    const removeTemporaryRoot = vi.fn(async () => undefined);
+    const scope = new ProcessCaptureResourceScope();
+    try {
+      const report = await scope.release({
+        timers: new Set(),
+        terminal: { pid: launcher.pid },
+        renderer: undefined,
+        runId: ownership.runId,
+        temporaryRoot: "/fixture/root",
+        captureBaseline: [],
+        host: {
+          platform: "linux",
+          cleanupProcessGroup: (owned) =>
+            cleanupOwnedProcessGroup(owned, adapter),
+          verifyTokenOwnedProcesses: (runId, _host, baseline, relation) =>
+            verifyNoTokenOwnedProcesses(runId, adapter, baseline, relation),
+          removeTemporaryRoot,
+        },
+      });
+      expect(report.owned_process_group).toMatchObject({
+        state: "unverified",
+        reason: expect.stringContaining("100=run_token_missing"),
+      });
+      expect(report.temporary_root.state).toBe("unverified");
+      expect(signalGroup.mock.calls).toEqual(
+        phase === "signaling without new groups"
+          ? [[200, "SIGKILL"]]
+          : [
+              [200, "SIGKILL"],
+              [300, "SIGKILL"],
+            ],
+      );
+      expect(processes).toEqual([launcher]);
+      expect(removeTemporaryRoot).not.toHaveBeenCalled();
+
+      await expect(scope.retryCleanup()).rejects.toThrow(
+        "cleanup remains incomplete",
+      );
+      expect(processes).toEqual([launcher]);
+      expect(removeTemporaryRoot).not.toHaveBeenCalled();
+      const cleanedPeerCount = signalGroup.mock.calls.length;
+      recovered = true;
+      await scope.retryCleanup();
+      expect(signalGroup.mock.calls.slice(cleanedPeerCount)).toEqual([
+        [100, "SIGKILL"],
+      ]);
+      expect(processes).toEqual([]);
+      expect(removeTemporaryRoot).toHaveBeenCalledExactlyOnceWith(
+        "/fixture/root",
+      );
+      await scope.close();
+      expect(signalGroup).toHaveBeenCalledTimes(cleanedPeerCount + 1);
+      expect(removeTemporaryRoot).toHaveBeenCalledTimes(1);
+    } finally {
+      recovered = true;
+      await scope.close();
+    }
+  },
+);
+
+it("bounds detached-group replanning without losing live token uncertainty", async () => {
+  let processes = [launcher];
+  let launcherReads = 0;
+  const signalGroup = vi.fn();
+  const result = await cleanupOwnedProcessGroup(
+    { ...ownership, sweepTokenOwnedProcesses: true },
+    {
+      listProcesses: async () => processes,
+      environment: async (pid) => {
+        if (pid !== launcher.pid)
+          return { REA_PROCESS_RUN_ID: ownership.runId };
+        launcherReads++;
+        processes = [
+          ...processes,
+          {
+            ...launcher,
+            pid: 200 + launcherReads,
+            processGroupId: 200 + launcherReads,
+          },
+        ];
+        return {};
+      },
+      signalGroup,
+    },
+  );
+  if (result.cleaned) throw new Error("expected unresolved cleanup");
+  expect(result.failures?.filter(({ pid }) => pid === launcher.pid)).toEqual([
+    {
+      pid: launcher.pid,
+      reason: "environment-unreadable",
+      diagnostic: "run_token_missing",
+    },
+  ]);
+  expect(result.failures).toContainEqual(
+    expect.objectContaining({
+      reason: "process-identity-unavailable",
+      diagnostic:
+        "process-group membership kept changing during bounded cleanup planning",
+    }),
+  );
+  expect(launcherReads).toBeLessThan(40);
+  expect(signalGroup).not.toHaveBeenCalled();
+});
 
 it("cleans verified peers while retaining a newly discovered missing-token candidate", async () => {
   const child = { ...launcher, pid: 200, parentPid: 100, processGroupId: 200 };

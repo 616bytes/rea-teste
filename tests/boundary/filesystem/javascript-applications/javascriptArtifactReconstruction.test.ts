@@ -88,8 +88,8 @@ it("does not let a known-absent optional import erase another application's page
   ).toHaveLength(1);
 });
 
-it.each(["unselected", "unavailable", "dynamic"] as const)(
-  "retains hidden competing ownership through an %s bridge",
+it.each(["unselected", "unavailable", "dynamic", "unavailable-json"] as const)(
+  "distinguishes hidden imports from inert unavailable data through %s",
   async (omission) => {
     const root = await createTestTempDirectory("rea-competing-gap-");
     await writeFixtureFiles(root, {
@@ -99,7 +99,10 @@ it.each(["unselected", "unavailable", "dynamic"] as const)(
       "b/main.cjs":
         omission === "dynamic"
           ? "require(process.env.CHILD);"
-          : 'require("../shared/bridge.cjs");',
+          : omission === "unavailable-json"
+            ? 'require("./config.json");'
+            : 'require("../shared/bridge.cjs");',
+      "b/config.json": "{}",
       "shared/bridge.cjs": 'require("./window.cjs");',
       "shared/window.cjs":
         'const {BrowserWindow} = require("electron"); const w = new BrowserWindow(); w.loadFile("index.html");',
@@ -125,11 +128,15 @@ it.each(["unselected", "unavailable", "dynamic"] as const)(
           : undefined,
       );
       const bridge = files.files.find(
-        ({ path }) => path === "shared/bridge.cjs",
+        ({ path }) =>
+          path ===
+          (omission === "unavailable-json"
+            ? "b/config.json"
+            : "shared/bridge.cjs"),
       );
       if (bridge === undefined) throw new Error("Missing bridge");
       const partial =
-        omission !== "unavailable"
+        omission !== "unavailable" && omission !== "unavailable-json"
           ? files
           : {
               ...files,
@@ -160,8 +167,10 @@ it.each(["unselected", "unavailable", "dynamic"] as const)(
         expect.arrayContaining([
           expect.objectContaining({
             properties: expect.objectContaining({
-              resolved_path: null,
-              resolution_status: "unavailable",
+              resolved_path:
+                omission === "unavailable-json" ? "a/index.html" : null,
+              resolution_status:
+                omission === "unavailable-json" ? "resolved" : "unavailable",
             }),
           }),
         ]),
@@ -171,7 +180,7 @@ it.each(["unselected", "unavailable", "dynamic"] as const)(
           ({ source_node_id, relation }) =>
             source_node_id === roles[0]?.node_id && relation === "maps_to",
         ),
-      ).toEqual([]);
+      ).toHaveLength(omission === "unavailable-json" ? 1 : 0);
     } finally {
       await reader.close();
     }

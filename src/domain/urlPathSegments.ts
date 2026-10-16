@@ -1,3 +1,5 @@
+import { posix } from "node:path";
+
 /** A URL path while its empty segments and above-root traversal still matter. */
 export interface UrlPathState {
   readonly escapes: number;
@@ -54,3 +56,21 @@ export const urlRelativePath = (
   reference: string,
 ): string | null =>
   urlPathCandidate(applyUrlReference(urlDirectoryState(directory), reference));
+
+/** Resolve URL dot segments first, then collapse separators for filesystem lookup. */
+export const urlRelativeFilesystemPath = (
+  directory: string,
+  reference: string,
+): string => {
+  const path = applyUrlReference(urlDirectoryState(directory), reference);
+  const segments =
+    path.segments.at(-1) === "" ? path.segments.slice(0, -1) : path.segments;
+  const normalized = posix.normalize(
+    [...Array.from({ length: path.escapes }, () => ".."), ...segments].join(
+      "/",
+    ),
+  );
+  return reference.endsWith("/") && !normalized.endsWith("/")
+    ? `${normalized}/`
+    : normalized;
+};

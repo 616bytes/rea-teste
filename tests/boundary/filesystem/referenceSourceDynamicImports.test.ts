@@ -398,9 +398,9 @@ it("resolves ESM dot segments before collapsing repeated URL separators", async 
     },
     {
       from_path: "main.mjs",
-      to: "./double//direct.mjs",
+      to: "double/direct.mjs",
       kind: "imports",
-      resolution: "unresolved",
+      resolution: "internal",
       parse_state: "parsed",
     },
   ])

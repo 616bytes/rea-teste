@@ -3,7 +3,7 @@ import { posix } from "node:path";
 
 import { logicalPathEscapesRoot } from "../domain/artifactIdentity.js";
 import { stripQueryAndFragment } from "../domain/artifactPathSyntax.js";
-import { urlRelativePath } from "../domain/urlPathSegments.js";
+import { urlRelativeFilesystemPath } from "../domain/urlPathSegments.js";
 import {
   createReferenceSourcePathLookup,
   isPortableAbsoluteReferenceTarget,
@@ -296,9 +296,8 @@ const resolveInternalSpecifier = (
   if (pathname === undefined)
     return { to: specifier, resolution: "unresolved" };
   const normalized = esmImport
-    ? urlRelativePath(posix.dirname(fromPath), pathname)
+    ? urlRelativeFilesystemPath(posix.dirname(fromPath), pathname)
     : posix.normalize(posix.join(posix.dirname(fromPath), pathname));
-  if (normalized === null) return { to: specifier, resolution: "unresolved" };
   if (logicalPathEscapesRoot(normalized))
     return { to: normalized, resolution: "unresolved" };
   // Preserve directory intent before normalization removes terminal dot segments.

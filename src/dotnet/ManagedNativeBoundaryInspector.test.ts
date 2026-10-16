@@ -26,7 +26,17 @@ describe("managed native boundary issue volume", () => {
 
     expect(result.pinvoke_imports).toHaveLength(1);
     expect(result.coverage.state).toBe("partial");
-    expect(result.coverage.issues.length).toBeGreaterThan(0);
+    const attributeIssues = result.coverage.issues.filter(({ scope }) =>
+      scope.startsWith("metadata.CustomAttribute:"),
+    );
+    expect(attributeIssues).toHaveLength(140_000);
+    expect(new Set(attributeIssues.map(({ scope }) => scope)).size).toBe(
+      140_000,
+    );
+    expect(attributeIssues.every(({ offset }) => offset !== null)).toBe(true);
+    expect(new Set(attributeIssues.map(({ offset }) => offset)).size).toBe(
+      140_000,
+    );
   }, 60_000);
 });
 

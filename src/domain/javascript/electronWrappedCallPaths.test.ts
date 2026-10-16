@@ -353,6 +353,22 @@ it("retains distinct wrapper invocation ranges for one IPC API source", () => {
     findings[1]?.invocation_location,
   );
 });
+it("keeps one wrapper registration when one invocation reaches it twice", () => {
+  const result = analyzeJavaScriptStaticSource(`
+      const e=require("electron");
+      const copy=event=>event.sender.copy();
+      function register(channel,handler){e.ipcMain.on(channel,handler);}
+      function twice(channel){register(channel,copy);register(channel,copy);}
+      twice("same:invocation");
+    `);
+  expect(
+    result.electron.ipc.filter(
+      ({ resolution_basis, channel }) =>
+        resolution_basis === "wrapper-substitution" &&
+        channel === "same:invocation",
+    ),
+  ).toHaveLength(1);
+});
 it("keeps a directly observed renderer operation singular when tracing its exposed callback", () => {
   const result = analyzeJavaScriptStaticSource(`
     const {contextBridge,ipcRenderer}=require("electron");
@@ -755,3 +771,24 @@ describe("wrapped Electron API identity", () => {
     );
   });
 });
+
+it.each([false, true])(
+  "preserves a guarded bridge entry sharing a registration with an unconditional member (reverse=%s)",
+  (reverse) => {
+    const members = ["always:register", "conditional:flag?register:()=>{}"];
+    if (reverse) members.reverse();
+    const result = analyzeJavaScriptStaticSource(`const e=require("electron");
+    function register(){e.ipcMain.on("bridge:register",()=>{});}
+    e.contextBridge.exposeInMainWorld("api",{${members.join(",")}});`);
+    expect(result.electron.call_paths).toContainEqual(
+      expect.objectContaining({
+        entry_kind: "bridge-member",
+        entry: "api.conditional",
+        terminal: "electron.ipcMain.on",
+        conditions: expect.arrayContaining([
+          expect.objectContaining({ expression: "flag" }),
+        ]),
+      }),
+    );
+  },
+);

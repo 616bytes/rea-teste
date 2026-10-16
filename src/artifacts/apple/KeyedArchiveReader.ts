@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { parseBinary } from "plist";
 import { z } from "zod";
 import {
   AnalysisInputError,
@@ -17,6 +16,7 @@ import {
 } from "./PlistNumberLiterals.js";
 import {
   omittedPrototypeKeysLimitation,
+  parseBinaryPropertyList,
   parseXmlPropertyList,
 } from "../../domain/propertyListKeys.js";
 import {
@@ -72,7 +72,7 @@ export const decodeKeyedArchiveBytes = (
   const parsed =
     binaryExpansion !== undefined
       ? {
-          value: parseBinary(bytes),
+          value: parseBinaryPropertyList(bytes),
           omittedPrototypeKeys: binaryExpansion.binaryPrototypeKeyObserved
             ? null
             : 0,

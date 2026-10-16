@@ -13,6 +13,7 @@ import {
 import {
   SCENARIO_FIXTURE_OPEN_TREE,
   scenarioFixtureCompleteness,
+  scenarioFixtureKeepingEvents,
   browserScenarioFixtureCapture,
   browserScenarioFixtureParameters,
   browserScenarioFixtureScenario,
@@ -280,9 +281,12 @@ it("pages retained text by UTF-16 code units and reports uncaptured text", () =>
 const selectingFamilies = (
   eventFamilies: BrowserScenarioCapture["scenario"]["event_families"],
   responseBody: boolean,
-  items: BrowserScenarioCapture["events"]["items"],
+  keep: (event: BrowserScenarioCapture["events"]["items"][number]) => boolean,
 ) => {
-  const fixture = browserScenarioFixtureCapture();
+  const fixture = scenarioFixtureKeepingEvents(
+    browserScenarioFixtureCapture(),
+    keep,
+  );
   return {
     ...fixture,
     scenario: {
@@ -293,14 +297,13 @@ const selectingFamilies = (
         response_body: responseBody,
       },
     },
-    events: { ...fixture.events, retained: items.length, items },
   };
 };
 
-const networkEvents = () =>
-  browserScenarioFixtureCapture().events.items.filter(
-    ({ kind }) => browserScenarioEventKindFamily(kind) === "network",
-  );
+const networkEvents = ({
+  kind,
+}: BrowserScenarioCapture["events"]["items"][number]) =>
+  browserScenarioEventKindFamily(kind) === "network";
 
 it("treats network content selection as enabled network observation", () => {
   const steps = { kind: "browser-scenario", collection: "steps" };
@@ -309,7 +312,7 @@ it("treats network content selection as enabled network observation", () => {
       steps,
       parent(
         browserScenarioCaptureSchema.parse(
-          selectingFamilies([], true, networkEvents()),
+          selectingFamilies([], true, networkEvents),
         ),
       ),
     ),
@@ -321,7 +324,9 @@ it("treats network content selection as enabled network observation", () => {
     project(
       steps,
       parent(
-        browserScenarioCaptureSchema.parse(selectingFamilies([], false, [])),
+        browserScenarioCaptureSchema.parse(
+          selectingFamilies([], false, () => false),
+        ),
       ),
     ),
   );
@@ -333,7 +338,7 @@ it("treats network content selection as enabled network observation", () => {
 });
 
 it("rejects retained events from families the scenario did not select", () => {
-  const unselected = selectingFamilies(["console"], false, networkEvents());
+  const unselected = selectingFamilies(["console"], false, networkEvents);
   expect(
     failure(
       { kind: "browser-scenario", collection: "steps" },
@@ -586,15 +591,16 @@ const reparsed = (
   );
 
 it("reports unobserved network as unknown instead of zero transactions", () => {
-  const consoleOnly = reparsed((capture) => ({
-    ...capture,
-    scenario: { ...capture.scenario, event_families: ["console"] },
-    events: {
-      ...capture.events,
-      retained: 3,
-      items: capture.events.items.filter(({ kind }) => kind === "console"),
-    },
-  }));
+  const consoleOnly = reparsed((capture) => {
+    const kept = scenarioFixtureKeepingEvents(
+      capture,
+      ({ kind }) => kind === "console",
+    );
+    return {
+      ...kept,
+      scenario: { ...kept.scenario, event_families: ["console"] },
+    };
+  });
   const result = project(
     { kind: "browser-scenario", collection: "steps" },
     parent(consoleOnly),
@@ -843,6 +849,107 @@ it("rejects inverted windows and events indexed to another step", () => {
           "items",
           3,
           "step_index",
+        ],
+      },
+    ],
+  });
+});
+
+it("rejects receipt histories the event accounting cannot produce", () => {
+  const fixture = browserScenarioFixtureCapture();
+  const first = scenarioFixtureKeepingEvents(
+    fixture,
+    ({ sequence }) => sequence === 1,
+  );
+  // One retained event at sequence 100 with nothing dropped.
+  const impossible = {
+    ...first,
+    steps: first.steps.map((step) =>
+      step.step_index === 0
+        ? { ...step, event_sequence_start: 1, event_sequence_end: 100 }
+        : { ...step, event_sequence_start: 101, event_sequence_end: 100 },
+    ),
+    events: {
+      ...first.events,
+      items: first.events.items.map((event) => ({ ...event, sequence: 100 })),
+    },
+  };
+  expect(
+    failure(
+      { kind: "browser-scenario", collection: "steps" },
+      { ...parent(), normalizedResult: impossible },
+    ),
+  ).toMatchObject({
+    issues: [
+      {
+        path: ["source", "normalized_result", "events", "items", 0, "sequence"],
+      },
+      {
+        path: ["source", "normalized_result", "steps", 0, "event_sequence_end"],
+      },
+      {
+        path: ["source", "normalized_result", "steps", 1, "event_sequence_end"],
+      },
+      {
+        path: ["source", "normalized_result", "steps", 2, "event_sequence_end"],
+      },
+      {
+        path: ["source", "normalized_result", "steps", 3, "event_sequence_end"],
+      },
+      {
+        path: ["source", "normalized_result", "steps", 4, "event_sequence_end"],
+      },
+    ],
+  });
+  // A selected request body recorded as never requested.
+  const request = fixture.events.items.find(({ kind }) => kind === "request");
+  if (request?.kind !== "request")
+    throw new Error("Expected a fixture request");
+  const next = fixture.events.retained + 1;
+  expect(
+    failure(
+      { kind: "summary" },
+      {
+        ...parent(),
+        normalizedResult: {
+          ...fixture,
+          scenario: {
+            ...fixture.scenario,
+            network_content: {
+              ...fixture.scenario.network_content,
+              request_body: true,
+            },
+          },
+          events: {
+            ...fixture.events,
+            retained: next,
+            items: [
+              ...fixture.events.items,
+              {
+                sequence: next,
+                step_index: request.step_index,
+                kind: "network-content",
+                transaction_id: request.transaction_id,
+                source_event_sequence: request.sequence,
+                phase: "request",
+                headers: { state: "not_requested" },
+                body: { state: "not_requested" },
+              },
+            ],
+          },
+        },
+      },
+    ),
+  ).toMatchObject({
+    issues: [
+      {
+        path: [
+          "source",
+          "normalized_result",
+          "events",
+          "items",
+          next - 1,
+          "body",
         ],
       },
     ],

@@ -296,6 +296,65 @@ const fixtureEvents = (): BrowserScenarioEvent[] => [
   }),
 ];
 
+/**
+ * A capture as if the recorder had seen only the kept events: later sequence
+ * numbers, source anchors and receipt windows close the gaps the others leave.
+ */
+export const scenarioFixtureKeepingEvents = (
+  capture: BrowserScenarioCapture,
+  keep: (event: BrowserScenarioEvent) => boolean,
+) => {
+  const removed = capture.events.items
+    .filter((event) => !keep(event))
+    .map(({ sequence }) => sequence);
+  const removedThrough = (sequence: number) =>
+    removed.filter((value) => value <= sequence).length;
+  const renumber = (sequence: number) => sequence - removedThrough(sequence);
+  const kept = capture.events.items.filter(keep);
+  for (const event of kept)
+    if (
+      event.kind === "network-content" &&
+      removed.includes(event.source_event_sequence)
+    )
+      throw new Error(
+        `Kept network content ${String(event.sequence)} loses its source event`,
+      );
+  const items = kept.map((event) => ({
+    ...event,
+    sequence: renumber(event.sequence),
+    ...(event.kind === "network-content"
+      ? { source_event_sequence: renumber(event.source_event_sequence) }
+      : {}),
+  }));
+  return {
+    ...capture,
+    steps: capture.steps.map((step) => ({
+      ...step,
+      event_sequence_start:
+        step.event_sequence_start -
+        removedThrough(step.event_sequence_start - 1),
+      event_sequence_end:
+        step.event_sequence_end - removedThrough(step.event_sequence_end),
+    })),
+    events: { ...capture.events, retained: items.length, items },
+  };
+};
+
+/** Fixture steps where the start step received every recorded event sequence. */
+export const scenarioFixtureStepsReceivingAll = (
+  steps: readonly BrowserScenarioStep[],
+  lastSequence: number,
+) =>
+  steps.map((step) =>
+    step.step_index === 0
+      ? { ...step, event_sequence_start: 1, event_sequence_end: lastSequence }
+      : {
+          ...step,
+          event_sequence_start: lastSequence + 1,
+          event_sequence_end: lastSequence,
+        },
+  );
+
 /** Capture completeness aggregated from step ledgers, as the producer records it. */
 export const scenarioFixtureCompleteness = (
   steps: readonly { readonly completeness: unknown }[],

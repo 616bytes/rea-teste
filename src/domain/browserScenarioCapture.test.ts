@@ -10,11 +10,13 @@ import {
   browserScenarioStepSchema,
   browserStepArtifactsSchema,
   classifyBrowserScenarioCompleteness,
+  browserScenarioEventKindFamily,
   deriveStepCompleteness,
 } from "./browserScenarioCaptureValues.js";
 import {
   browserScenarioFixtureCapture,
   scenarioFixtureCompleteness,
+  scenarioFixtureKeepingEvents,
   scenarioFixtureUrl,
 } from "./browserScenarioCapture.fixture.js";
 import {
@@ -625,6 +627,269 @@ it("keeps browser ownership and transaction omissions consistent", () => {
   ).toEqual([["events", "omissions", "network_transactions", 0]]);
 });
 
+it("keeps event sequences within the accounted events", () => {
+  const { fixture } = fixtureFacts();
+  const accounted = fixture.events.retained + fixture.events.dropped;
+  const last = fixture.events.items.length - 1;
+  expect(
+    fixtureIssues((capture) => ({
+      ...capture,
+      events: {
+        ...capture.events,
+        items: capture.events.items.map((event, index) =>
+          index === last ? { ...event, sequence: accounted + 5 } : event,
+        ),
+      },
+    })),
+  ).toEqual([["events", "items", last, "sequence"]]);
+  expect(
+    fixtureIssues((capture) => ({
+      ...capture,
+      steps: capture.steps.map((step) =>
+        step.step_index === 0
+          ? { ...step, event_sequence_end: accounted + 1 }
+          : step,
+      ),
+    })),
+  ).toEqual([["steps", 0, "event_sequence_end"]]);
+  // Dropped events spend sequence numbers too.
+  const lastItem = fixture.events.items.length - 1;
+  expect(
+    fixtureIssues((capture) => ({
+      ...capture,
+      events: {
+        ...capture.events,
+        dropped: 2,
+        items: capture.events.items.map((event, index) =>
+          index === lastItem ? { ...event, sequence: accounted + 2 } : event,
+        ),
+        omissions: {
+          ...capture.events.omissions,
+          by_kind: [{ kind: "console", count: 2, reasons: ["max-events"] }],
+        },
+      },
+      completeness: scenarioFixtureCompleteness(capture.steps, true),
+    })),
+  ).toBeUndefined();
+});
+
+it("records exactly the selected network content facets", () => {
+  const { next, request } = fixtureFacts();
+  const content = (
+    selection: Record<string, boolean>,
+    phase: "request" | "response",
+    headers: unknown,
+    body: unknown = { state: "not_requested" },
+  ) =>
+    fixtureIssues((capture) =>
+      withItems(
+        {
+          ...capture,
+          scenario: {
+            ...capture.scenario,
+            network_content: {
+              request_body: false,
+              response_body: false,
+              header_values: false,
+              ...selection,
+            },
+          },
+        },
+        [
+          ...capture.events.items,
+          {
+            sequence: next,
+            step_index: request.step_index,
+            kind: "network-content",
+            transaction_id: request.transaction_id,
+            source_event_sequence: request.sequence,
+            phase,
+            headers,
+            body,
+          },
+        ],
+      ),
+    );
+  const item = ["events", "items", next - 1];
+  const notRequested = { state: "not_requested" };
+
+  expect(
+    content({ header_values: true }, "request", {
+      state: "captured",
+      items: [],
+    }),
+  ).toBeUndefined();
+  // A selected body recorded as never requested hides an unexamined facet.
+  expect(content({ request_body: true }, "request", notRequested)).toEqual([
+    [...item, "body"],
+  ]);
+  expect(content({ header_values: true }, "request", notRequested)).toEqual([
+    [...item, "headers"],
+  ]);
+  // Unselected header values that were recorded anyway.
+  expect(
+    content({ request_body: true }, "request", {
+      state: "captured",
+      items: [],
+    }),
+  ).toEqual([
+    [...item, "headers"],
+    [...item, "body"],
+  ]);
+  // An unselected body that was recorded anyway.
+  expect(
+    content(
+      { header_values: true },
+      "request",
+      { state: "captured", items: [] },
+      {
+        state: "captured",
+        representation: "browser-exposed-request-bytes",
+        encoding: "base64",
+        content: "eA==",
+        bytes: 1,
+        sha256: createHash("sha256").update("x").digest("hex"),
+        media_type: null,
+        redacted: false,
+      },
+    ),
+  ).toEqual([[...item, "body"]]);
+  // No facet selected for the phase at all, even though headers were captured.
+  expect(content({}, "request", { state: "captured", items: [] })).toEqual([
+    item,
+  ]);
+  // A phase without any selected facet records no content.
+  expect(content({ response_body: true }, "request", notRequested)).toEqual([
+    item,
+  ]);
+});
+
+it("leaves network content in unselected families to the family rule", () => {
+  const { fixture, next, request } = fixtureFacts();
+  const networkItems = fixture.events.items.flatMap(({ kind }, index) =>
+    browserScenarioEventKindFamily(kind) === "network" ? [index] : [],
+  );
+  expect(
+    fixtureIssues((capture) =>
+      withItems(
+        {
+          ...capture,
+          scenario: { ...capture.scenario, event_families: ["console"] },
+        },
+        [
+          ...capture.events.items,
+          {
+            sequence: next,
+            step_index: request.step_index,
+            kind: "network-content",
+            transaction_id: request.transaction_id,
+            source_event_sequence: request.sequence,
+            phase: "request",
+            headers: { state: "not_requested" },
+            body: { state: "not_requested" },
+          },
+        ],
+      ),
+    ),
+  ).toEqual(
+    [...networkItems, next - 1].map((index) => [
+      "events",
+      "items",
+      index,
+      "kind",
+    ]),
+  );
+});
+
+it("drops no network content when no content facet is selected", () => {
+  const { request } = fixtureFacts();
+  expect(
+    fixtureIssues((capture) => ({
+      ...capture,
+      events: {
+        ...capture.events,
+        dropped: 1,
+        omissions: {
+          by_kind: [
+            { kind: "network-content", count: 1, reasons: ["max-events"] },
+          ],
+          network_transactions: [
+            {
+              transaction_id: request.transaction_id,
+              omitted_kinds: ["network-content"],
+              reasons: ["max-events"],
+            },
+          ],
+          network_transaction_range: null,
+        },
+      },
+      completeness: scenarioFixtureCompleteness(capture.steps, true),
+    })),
+  ).toEqual([["events", "omissions", "by_kind", 0, "kind"]]);
+});
+
+it("renumbers kept events, content anchors and windows in the fixture helper", () => {
+  const { fixture, next } = fixtureFacts();
+  // Anchor to the last request so removed console events precede its source.
+  const request = fixture.events.items.findLast(
+    ({ kind }) => kind === "request",
+  );
+  if (request?.kind !== "request")
+    throw new Error("Expected a fixture request");
+  expect(
+    fixture.events.items.some(
+      ({ kind, sequence }) => kind === "console" && sequence < request.sequence,
+    ),
+  ).toBe(true);
+  const withContent = withItems(fixture, [
+    ...fixture.events.items,
+    {
+      sequence: next,
+      step_index: request.step_index,
+      kind: "network-content",
+      transaction_id: request.transaction_id,
+      source_event_sequence: request.sequence,
+      phase: "request",
+      headers: { state: "captured", items: [] },
+      body: { state: "not_requested" },
+    },
+  ]) as BrowserScenarioCapture;
+  const kept = scenarioFixtureKeepingEvents(
+    withContent,
+    ({ kind }) => kind !== "console",
+  );
+  const keptRequest = kept.events.items.find(
+    (event) =>
+      event.kind === "request" &&
+      event.transaction_id === request.transaction_id,
+  );
+  const keptContent = kept.events.items.find(
+    ({ kind }) => kind === "network-content",
+  );
+  expect(keptContent).toMatchObject({
+    source_event_sequence: keptRequest?.sequence,
+  });
+  expect(kept.events.items.map(({ sequence }) => sequence)).toEqual(
+    kept.events.items.map((_, index) => index + 1),
+  );
+  expect(
+    browserScenarioCaptureSchema.safeParse({
+      ...kept,
+      scenario: {
+        ...kept.scenario,
+        network_content: {
+          ...kept.scenario.network_content,
+          header_values: true,
+        },
+      },
+    }).error?.issues,
+  ).toBeUndefined();
+  // Removing a kept content event's source would silently re-anchor it.
+  expect(() =>
+    scenarioFixtureKeepingEvents(withContent, ({ kind }) => kind !== "request"),
+  ).toThrow(/loses its source event/u);
+});
+
 it("counts only network drops toward refused transactions", () => {
   const range = {
     first_transaction_id: "request-9",
@@ -833,22 +1098,34 @@ it("requires missing events whenever the capture shows an event gap", () => {
         },
       ]),
     (capture: BrowserScenarioCapture) =>
-      withItems(capture, [
-        ...capture.events.items,
+      withItems(
         {
-          sequence: next,
-          step_index: request.step_index,
-          kind: "network-content",
-          transaction_id: request.transaction_id,
-          source_event_sequence: request.sequence,
-          phase: "request",
-          headers: {
-            state: "unavailable",
-            message: "headers were not exposed",
+          ...capture,
+          scenario: {
+            ...capture.scenario,
+            network_content: {
+              ...capture.scenario.network_content,
+              header_values: true,
+            },
           },
-          body: { state: "not_requested" },
         },
-      ]),
+        [
+          ...capture.events.items,
+          {
+            sequence: next,
+            step_index: request.step_index,
+            kind: "network-content",
+            transaction_id: request.transaction_id,
+            source_event_sequence: request.sequence,
+            phase: "request",
+            headers: {
+              state: "unavailable",
+              message: "headers were not exposed",
+            },
+            body: { state: "not_requested" },
+          },
+        ],
+      ),
     (capture: BrowserScenarioCapture) =>
       withItems(
         {

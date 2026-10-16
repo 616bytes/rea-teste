@@ -84,11 +84,7 @@ describe("script capture identity and response projection", () => {
   });
 
   it("keeps a metadata-only script request explicitly unavailable", () => {
-    const capture = scriptScenarioFixture();
-    capture.events.items = capture.events.items.filter(
-      ({ kind }) => kind !== "network-content",
-    );
-    capture.events.retained = capture.events.items.length;
+    const capture = scriptScenarioFixture(undefined, { responseBody: false });
     expect(selectScriptCapture(capture).scripts[0]?.content).toMatchObject({
       state: "unavailable",
       reason: "response-content-not-retained",

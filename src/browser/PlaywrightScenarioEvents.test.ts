@@ -6,6 +6,7 @@ import { browserScenarioCaptureSchema } from "../domain/browserScenarioCapture.j
 import {
   browserScenarioFixtureCapture,
   scenarioFixtureCompleteness,
+  scenarioFixtureStepsReceivingAll,
 } from "../domain/browserScenarioCapture.fixture.js";
 import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
@@ -309,6 +310,10 @@ it("accounts network metadata over its budget as omissions its capture accepts",
         network_content: scenario.capture.network,
         limits: scenario.capture.limits,
       },
+      steps: scenarioFixtureStepsReceivingAll(
+        fixture.steps,
+        result.retained + result.dropped,
+      ),
       events: result,
       completeness: scenarioFixtureCompleteness(
         fixture.steps,
@@ -360,6 +365,10 @@ it("accounts an unadmitted popup page as an omission its capture accepts", () =>
         event_families: ["page-errors"],
         limits: scenario.capture.limits,
       },
+      steps: scenarioFixtureStepsReceivingAll(
+        fixture.steps,
+        recorded.retained + recorded.dropped,
+      ),
       events: recorded,
       // Dropped events make event coverage incomplete.
       completeness: scenarioFixtureCompleteness(fixture.steps, true),

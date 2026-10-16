@@ -416,7 +416,12 @@ exactly when events were dropped for `max-network-transactions`, and each
 omitted transaction dropped at least one. Each `network_transactions` record
 names kinds and budget reasons that `by_kind` dropped, no more transactions per
 kind than that kind's drops, and every budget drop of a network kind names its
-transaction there. Launch captures record `provider-owned` and
+transaction there. Every sequence number the recorder spends belongs to a
+retained or dropped event (drops of refused transactions spend none), so no
+retained event sequence or step window end exceeds
+`events.retained + events.dropped`. Network content records headers exactly
+when `header_values` is selected and a body exactly when its phase's body is
+selected; a phase with neither selected neither records nor drops content. Launch captures record `provider-owned` and
 `terminated-owned-process`; connect captures record `external` and
 `disconnected-external`. Comparisons and views reject inline captures that
 contradict any of these rules, the completeness rules above or their initial

@@ -12,6 +12,9 @@ import {
   AnalysisProtocolError,
   AnalysisCancelledError,
 } from "../domain/analysisErrorCore.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { JebMcpAcquisitionCleanupFailure } from "./JebMcpConnectionOwner.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jebResultSchemas } from "../domain/jeb/jebAnalysis.js";
 
@@ -240,6 +243,69 @@ describe("JebProvider observations and failures", () => {
       jebResultSchemas.list_jeb_units.parse(last.value.result).coverage,
     ).toBe("complete");
   });
+});
+
+it("keeps provider cleanup status live until the connection owner releases", async () => {
+  const primary = new AnalysisProtocolError("JEB catalog cursor repeated");
+  const cleanupResources = ["loopback JEB MCP transport"];
+  const cleanup = new ProviderCleanupError(
+    "jeb",
+    cleanupResources,
+    { reason: "transport close failed" },
+    { operation: "close_jeb_connection" },
+  );
+  let ownerReleased = false;
+  cleanup.bindCleanupResourceOwner({
+    get cleanupResources() {
+      return ownerReleased ? [] : cleanupResources;
+    },
+  });
+  let releaseCleanup!: () => void;
+  const cleanupLease = new AnalysisCleanupLease(async () => {
+    ownerReleased = true;
+    releaseCleanup();
+  }, cleanupResources);
+  cleanupLease.bindCleanupError(cleanup);
+  const acquisitionFailure = new JebMcpAcquisitionCleanupFailure(
+    primary,
+    cleanup,
+  );
+  const provider = providerWith({
+    async connect() {
+      throw acquisitionFailure;
+    },
+    async listTools() {
+      throw acquisitionFailure;
+    },
+    async call() {
+      throw acquisitionFailure;
+    },
+    async close() {
+      await cleanupLease.release();
+    },
+  });
+  const released = new Promise<void>((resolve) => {
+    releaseCleanup = resolve;
+  });
+  try {
+    const result = await provider.execute({
+      operation: "inspect_jeb_client",
+      input: {},
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toEqual([
+      "loopback JEB MCP transport",
+    ]);
+    expect(result.error.cause).toBeInstanceOf(AggregateError);
+    await provider.close();
+    await released;
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupResources).toEqual([]);
+  } finally {
+    await provider.close();
+  }
 });
 
 describe("JebProvider open project inventories", () => {

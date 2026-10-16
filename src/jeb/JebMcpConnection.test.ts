@@ -1,5 +1,9 @@
 import { createServer } from "node:http";
-import { describe, expect, it } from "vitest";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   decodeJebToolResult,
@@ -170,6 +174,60 @@ const startJebHttpFixture = (
     });
   });
 };
+
+const startRepeatedCursorFixture = async (): Promise<{
+  readonly endpoint: URL;
+  readonly close: () => Promise<void>;
+}> => {
+  const server = createServer(async (request, response) => {
+    if (request.method !== "POST") {
+      request.resume();
+      response.writeHead(200).end();
+      return;
+    }
+    let body = "";
+    for await (const chunk of request) body += String(chunk);
+    const message = JSON.parse(body) as {
+      readonly id?: string | number;
+      readonly method: string;
+      readonly params?: { readonly cursor?: string };
+    };
+    if (message.id === undefined) {
+      response.writeHead(202).end();
+      return;
+    }
+    const result =
+      message.method === "initialize"
+        ? {
+            protocolVersion: "2025-11-25",
+            capabilities: { tools: {} },
+            serverInfo: { name: "jeb-repeated-cursor-fixture", version: "1" },
+          }
+        : {
+            tools: [],
+            nextCursor: "repeat",
+          };
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("Expected TCP fixture listener");
+  return {
+    endpoint: new URL(`http://127.0.0.1:${address.port}/mcp`),
+    close: async () => {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        server.close((cause) =>
+          cause === undefined ? resolve() : reject(cause),
+        ),
+      );
+    },
+  };
+};
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("decodeJebToolResult", () => {
   it("passes refusal envelopes through so the provider preserves the engine reason", () => {
@@ -370,5 +428,52 @@ it("keeps caller abort and connection close as cancellations during catalog refr
     } finally {
       await fixture.close();
     }
+  }
+});
+
+it("retains acquisition cleanup and resolves the original error after owner retry", async () => {
+  const fixture = await startRepeatedCursorFixture();
+  const nativeClientClose = Client.prototype.close;
+  const nativeTransportClose = StreamableHTTPClientTransport.prototype.close;
+  let allowClose = false;
+  const clientClose = vi
+    .spyOn(Client.prototype, "close")
+    .mockImplementation(async function (this: Client) {
+      if (!allowClose) throw new Error("injected client cleanup failure");
+      await nativeClientClose.call(this);
+    });
+  const transportClose = vi
+    .spyOn(StreamableHTTPClientTransport.prototype, "close")
+    .mockImplementation(async function (this: StreamableHTTPClientTransport) {
+      if (!allowClose) throw new Error("injected transport cleanup failure");
+      await nativeTransportClose.call(this);
+    });
+  const connection = createStreamableHttpJebMcpConnection(fixture.endpoint);
+  try {
+    const failure = await connection.connect().catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      cleanupIncomplete: true,
+      cleanupResources: expect.arrayContaining([
+        expect.stringContaining("JEB MCP"),
+      ]),
+    });
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).cause).toBeInstanceOf(AggregateError);
+
+    await expect(connection.close()).rejects.toMatchObject({
+      cleanupIncomplete: true,
+    });
+    allowClose = true;
+    await connection.close();
+    expect(failure).toMatchObject({
+      cleanupIncomplete: false,
+      cleanupResources: [],
+    });
+    expect(clientClose).toHaveBeenCalled();
+    expect(transportClose).toHaveBeenCalled();
+  } finally {
+    allowClose = true;
+    await connection.close();
+    await fixture.close();
   }
 });

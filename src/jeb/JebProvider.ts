@@ -11,6 +11,7 @@ import type {
 import { createAnalysisExecution } from "../application/AnalysisProvider.js";
 import type { JebOperation, JebRequest } from "../domain/jeb/jebAnalysis.js";
 import { jebResultSchemas } from "../domain/jeb/jebAnalysis.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -29,6 +30,10 @@ import {
   type JebMcpConnection,
   type JebMcpConnectionFactory,
 } from "./JebMcpConnection.js";
+import {
+  JebMcpAcquisitionCleanupFailure,
+  JebMcpPhysicalFailure,
+} from "./JebMcpConnectionOwner.js";
 
 export const JEB_PROVIDER_IDENTITY: ProviderIdentity = {
   id: "jeb",
@@ -413,18 +418,28 @@ export class JebProvider implements JebAnalysisPort {
   }
 
   #providerFailure(operation: JebOperation, cause: unknown): AnalysisError {
+    if (cause instanceof JebMcpAcquisitionCleanupFailure)
+      return analysisErrorWithCleanupFailure(
+        this.#providerFailure(operation, cause.primaryFailure),
+        cause.cleanupFailure,
+        operation,
+      )
+        .bindCleanupDependencies([cause.cleanupFailure])
+        .bindCleanupResourceOwner(cause.cleanupFailure);
     if (cause instanceof AnalysisError) return cause;
     if (cause instanceof z.ZodError)
       return new AnalysisProtocolError(
         "JEB omitted or malformed required observation fields",
         { cause },
       );
+    const physical =
+      cause instanceof JebMcpPhysicalFailure ? cause.cause : cause;
     return new AnalysisCapabilityUnavailableError(
       "jeb",
       operation,
-      cause instanceof Error ? cause.message : String(cause),
+      physical instanceof Error ? physical.message : String(physical),
       {
-        cause: cause instanceof Error ? cause : undefined,
+        cause,
         userMessage: `Start a JEB client serving MCP (default ${DEFAULT_JEB_MCP_ENDPOINT}) or set REA_JEB_MCP_URL to the running endpoint.`,
       },
     );

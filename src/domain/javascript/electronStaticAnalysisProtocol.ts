@@ -151,8 +151,9 @@ const enabledPrivileges = (
     }
     if (decided.has(key)) continue;
     decided.add(key);
-    if (t.isBooleanLiteral(property.value, { value: true })) enabled.push(key);
-    else if (!t.isBooleanLiteral(property.value))
+    const value = typeless(property.value);
+    if (t.isBooleanLiteral(value, { value: true })) enabled.push(key);
+    else if (!t.isBooleanLiteral(value))
       context.accumulator.unknownFindings += 1;
   }
   return enabled.toSorted();
@@ -206,7 +207,7 @@ const schemeValue = (
         value: null,
         expression: boundedExpression(context.source, located),
       }
-    : electronStaticValue(context.source, scheme);
+    : electronStaticValue(context.source, typeless(scheme));
 
 const typeless = (node: t.Node | null | undefined): t.Node | undefined =>
   node === null || node === undefined

@@ -106,21 +106,6 @@ describe("Electron custom protocol registrations", () => {
     ]);
   });
 
-  it("reads TypeScript-asserted lists, entries and privileges", () => {
-    expect(
-      protocolsOf(`
-        const { protocol } = require("electron");
-        protocol.registerSchemesAsPrivileged([
-          { scheme: "a", privileges: { secure: true } as const },
-          { scheme: "b" } satisfies Entry,
-        ] as const);
-      `),
-    ).toMatchObject([
-      { scheme: literal("a"), enabled_privileges: ["secure"] },
-      { scheme: literal("b"), enabled_privileges: [] },
-    ]);
-  });
-
   it("uses the last value of a repeated privilege key", () => {
     expect(
       protocolsOf(`
@@ -152,5 +137,40 @@ describe("Electron custom protocol registrations", () => {
     ],
   ])("ignores %s", (_name, source) => {
     expect(protocolsOf(source)).toEqual([]);
+  });
+});
+
+describe("Electron protocol registrations in TypeScript sources", () => {
+  it("reads TypeScript-asserted lists, entries and privileges", () => {
+    expect(
+      protocolsOf(`
+        const { protocol } = require("electron");
+        protocol.registerSchemesAsPrivileged([
+          { scheme: "a", privileges: { secure: true } as const },
+          { scheme: "b" } satisfies Entry,
+        ] as const);
+      `),
+    ).toMatchObject([
+      { scheme: literal("a"), enabled_privileges: ["secure"] },
+      { scheme: literal("b"), enabled_privileges: [] },
+    ]);
+  });
+
+  it("reads TypeScript-asserted schemes and privilege values", () => {
+    expect(
+      protocolsOf(`
+        const { app, protocol } = require("electron");
+        app.setAsDefaultProtocolClient("notes" as const);
+        protocol.registerSchemesAsPrivileged([
+          {
+            scheme: "app" as const,
+            privileges: { secure: true as const, standard: true satisfies boolean, stream: false as const },
+          },
+        ]);
+      `),
+    ).toMatchObject([
+      { role: "os-default-client", scheme: literal("notes") },
+      { scheme: literal("app"), enabled_privileges: ["secure", "standard"] },
+    ]);
   });
 });

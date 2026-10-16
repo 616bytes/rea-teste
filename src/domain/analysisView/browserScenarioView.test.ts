@@ -956,6 +956,47 @@ it("rejects receipt histories the event accounting cannot produce", () => {
   });
 });
 
+it("binds each step's artifacts to the recorded scenario's selection", () => {
+  const scenario = browserScenarioFixtureScenario();
+  const withSelection = (capture: Record<string, unknown>) =>
+    failure(
+      { kind: "summary" },
+      parent(
+        undefined,
+        browserScenarioFixtureParameters({
+          ...scenario,
+          capture: { ...scenario.capture, ...capture },
+        }),
+      ),
+    );
+  const artifact = (step: number, kind: string) => [
+    "source",
+    "normalized_result",
+    "steps",
+    step,
+    "artifacts",
+    kind,
+  ];
+  // DOM requested after every step, but no step records it.
+  expect(
+    withSelection({ after_each_step: ["accessibility", "dom", "url"] }),
+  ).toMatchObject({ issues: [{ path: artifact(0, "dom") }] });
+  // The final screenshot recorded without being requested.
+  expect(withSelection({ at_end: [] })).toMatchObject({
+    issues: [{ path: artifact(4, "screenshot") }],
+  });
+  const withoutCapture = Object.fromEntries(
+    Object.entries(browserScenarioFixtureParameters(scenario)).filter(
+      ([key]) => key !== "capture",
+    ),
+  );
+  expect(
+    failure({ kind: "summary" }, parent(undefined, withoutCapture)),
+  ).toMatchObject({
+    issues: [{ path: ["source", "parameters", "capture"] }],
+  });
+});
+
 it("rejects events outside every window that name another step", () => {
   const fixture = browserScenarioFixtureCapture();
   const lastWindowEnd = Math.max(

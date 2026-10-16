@@ -279,6 +279,24 @@ const refineNetworkContentFacets = (
   }
 };
 
+/** The collector creates each transaction once and emits its request once. */
+const refineTransactionRequests = (
+  { events }: CapturedFields,
+  context: z.RefinementCtx,
+): void => {
+  const requested = new Set<string>();
+  for (const [index, event] of events.items.entries()) {
+    if (event.kind !== "request") continue;
+    if (requested.has(event.transaction_id))
+      context.addIssue({
+        code: "custom",
+        path: ["events", "items", index, "transaction_id"],
+        message: `Transaction ${event.transaction_id} already has a request event`,
+      });
+    requested.add(event.transaction_id);
+  }
+};
+
 /** Cross-field rules for retained events, their accounting and omissions. */
 export const refineScenarioEvents = (
   capture: CapturedFields,
@@ -289,4 +307,5 @@ export const refineScenarioEvents = (
   refineTransactionOmissions(capture, context);
   refineSequenceAccounting(capture, context);
   refineNetworkContentFacets(capture, context);
+  refineTransactionRequests(capture, context);
 };

@@ -12,14 +12,11 @@ import {
   type BrowserScenarioStateArtifact,
 } from "../browserScenarioDiffEvidence.js";
 import {
-  browserScenarioActionClass,
   projectBrowserScenarioSteps,
-  type BrowserScenarioActionClass,
   type BrowserScenarioStepFacts,
   type BrowserScenarioStepProjection,
   type ReceivedScenarioEvents,
 } from "../browserScenarioSteps.js";
-import { jsonObjectSchema } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import type {
@@ -33,6 +30,11 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisTextPage } from "./analysisViewText.js";
+import {
+  checkRecordedSelection,
+  recordedActions,
+  type RecordedAction,
+} from "./browserScenarioViewDeclarations.js";
 import {
   browserScenarioStepRowSchema,
   browserScenarioSummarySchema,
@@ -80,74 +82,6 @@ const projectScenario = (
   const projected = { capture: parsed.value, projection: projection.value };
   if (sealed) projectedScenarios.set(normalizedResult, new WeakRef(projected));
   return ok(projected);
-};
-
-const recordedActionSchema = z.looseObject({
-  step_id: z.string().min(1),
-  action: z.string().min(1),
-});
-const recordedParametersSchema = z.looseObject({
-  actions: z.array(z.unknown()),
-});
-
-/**
- * Bind each action step to the exact declaration recorded in the parent
- * parameters. The Evidence ID authenticates the parameters; only identity
- * fields are checked, so historical declarations are never re-defaulted.
- */
-interface RecordedAction {
-  readonly declaration: z.output<typeof jsonObjectSchema>;
-  readonly actionClass: BrowserScenarioActionClass;
-}
-
-const recordedActions = (
-  parent: AnalysisViewParent,
-  capture: BrowserScenarioCapture,
-): Result<readonly RecordedAction[], AnalysisError> => {
-  const mismatch = (path: readonly (string | number)[], message: string) =>
-    err(
-      analysisViewInputError([
-        {
-          path: ["source", "parameters", ...path],
-          reason: "invalid_value",
-          message,
-        },
-      ]),
-    );
-  const parameters = recordedParametersSchema.safeParse(parent.parameters);
-  if (!parameters.success)
-    return mismatch(
-      ["actions"],
-      "Browser scenario Evidence parameters must record the declared actions.",
-    );
-  const { actions } = parameters.data;
-  if (actions.length !== capture.steps.length - 1)
-    return mismatch(
-      ["actions"],
-      "Recorded actions must match the capture's action steps one to one.",
-    );
-  const recorded: RecordedAction[] = [];
-  for (const [index, raw] of actions.entries()) {
-    const step = capture.steps[index + 1];
-    const identity = recordedActionSchema.safeParse(raw);
-    const declaration = jsonObjectSchema.safeParse(raw);
-    const actionClass =
-      step === undefined ? undefined : browserScenarioActionClass(step.action);
-    if (
-      step === undefined ||
-      actionClass === undefined ||
-      !identity.success ||
-      !declaration.success ||
-      identity.data.step_id !== step.step_id ||
-      identity.data.action !== step.action
-    )
-      return mismatch(
-        ["actions", index],
-        `Recorded action ${String(index)} must declare a known action with the step_id and action of capture step ${String(index + 1)}.`,
-      );
-    recorded.push({ declaration: declaration.data, actionClass });
-  }
-  return ok(recorded);
 };
 
 const stepRow = (
@@ -478,6 +412,8 @@ export const projectBrowserScenarioView = (
   const { capture, projection } = projected.value;
   const declarations = recordedActions(parent, capture);
   if (!declarations.ok) return declarations;
+  const selection = checkRecordedSelection(parent, capture);
+  if (!selection.ok) return selection;
   const shared = sharedFields(parent, projected.value);
   if (view.kind === "summary")
     return ok({

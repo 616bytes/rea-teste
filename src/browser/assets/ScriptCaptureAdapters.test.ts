@@ -119,10 +119,17 @@ describe("script capture identity and response projection", () => {
   });
 
   it("refuses to select one byte source from duplicate transaction identities", () => {
-    const capture = scriptScenarioFixture();
-    const request = capture.events.items[0];
+    const duplicateRequest = scriptScenarioFixture();
+    const request = duplicateRequest.events.items[0];
     if (request?.kind !== "request") throw new Error("Missing request");
-    capture.events.items.push({ ...request, sequence: 4 });
+    duplicateRequest.events.items.push({ ...request, sequence: 4 });
+    duplicateRequest.events.retained = 4;
+    // The collector emits one request per transaction, so the capture is malformed.
+    expect(() => selectScriptCapture(duplicateRequest)).toThrow(TypeError);
+    const capture = scriptScenarioFixture();
+    const response = capture.events.items[1];
+    if (response?.kind !== "response") throw new Error("Missing response");
+    capture.events.items.push({ ...response, sequence: 4 });
     capture.events.retained = 4;
     expect(selectScriptCapture(capture).scripts[0]?.source).toMatchObject({
       response_sequence: null,

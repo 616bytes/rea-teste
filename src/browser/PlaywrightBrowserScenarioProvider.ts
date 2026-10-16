@@ -4,7 +4,10 @@ import type {
   ProviderIdentity,
 } from "../application/AnalysisProvider.js";
 import type { BrowserScenario } from "../domain/browserScenario.js";
-import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
+import {
+  requestedScenarioArtifacts,
+  type BrowserScenarioAction,
+} from "../domain/browserScenarioValues.js";
 import {
   browserScenarioCaptureSchema,
   type BrowserScenarioCapture,
@@ -47,10 +50,11 @@ const requestedForStep = (
   scenario: BrowserScenario,
   stepIndex: number,
 ): ReadonlySet<SnapshotKind> =>
-  new Set([
-    ...scenario.capture.after_each_step,
-    ...(stepIndex === scenario.actions.length ? scenario.capture.at_end : []),
-  ]);
+  requestedScenarioArtifacts(
+    scenario.capture,
+    stepIndex,
+    scenario.actions.length,
+  );
 
 const unavailableArtifacts = (
   requested: ReadonlySet<SnapshotKind>,

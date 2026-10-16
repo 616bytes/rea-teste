@@ -890,6 +890,18 @@ it("renumbers kept events, content anchors and windows in the fixture helper", (
   ).toThrow(/loses its source event/u);
 });
 
+it("records one request per transaction", () => {
+  const { next, request } = fixtureFacts();
+  expect(
+    fixtureIssues((capture) =>
+      withItems(capture, [
+        ...capture.events.items,
+        { ...request, sequence: next },
+      ]),
+    ),
+  ).toEqual([["events", "items", next - 1, "transaction_id"]]);
+});
+
 it("counts only network drops toward refused transactions", () => {
   const range = {
     first_transaction_id: "request-9",

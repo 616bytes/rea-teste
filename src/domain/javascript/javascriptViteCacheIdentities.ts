@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 
 import {
   semanticStaticPropertyKey,
+  semanticWriteTargetsSteps,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -32,6 +33,9 @@ const OBJECT_TARGET_RESULTS = new Set([
   "defineProperty",
   "defineProperties",
   "setPrototypeOf",
+  "freeze",
+  "seal",
+  "preventExtensions",
 ]);
 
 const joinOwner = (
@@ -92,6 +96,7 @@ export class ViteCacheIdentities {
       enqueue: (vertex) => this.enqueue(vertex),
       objectCall: (node) => viteCacheObjectOperation(node, this.invocation),
       objectArguments: (node) => this.invocation(node)?.arguments,
+      invocation: this.invocation,
     });
   }
 
@@ -143,6 +148,7 @@ export class ViteCacheIdentities {
   *initializeSteps(owners: Iterable<string>): Generator<void> {
     let examined = 0;
     const admitted = new Set<string>();
+    const patternWrites = new WeakMap<t.AssignmentExpression, Set<string>>();
     for (const owner of owners) {
       if (examined++ % 1024 === 0) yield;
       admitted.add(owner);
@@ -165,6 +171,42 @@ export class ViteCacheIdentities {
       for (const initializers of groups)
         for (const initializer of initializers) {
           if (examined++ % 1024 === 0) yield;
+          const expression = initializer.node;
+          if (
+            t.isAssignmentExpression(expression, { operator: "=" }) &&
+            (t.isObjectPattern(expression.left) ||
+              t.isArrayPattern(expression.left)) &&
+            initializer.projection.length === 0
+          ) {
+            let written = patternWrites.get(expression);
+            if (written === undefined) {
+              written = new Set();
+              patternWrites.set(expression, written);
+              const destinations = written;
+              yield* semanticWriteTargetsSteps(expression.left, (target) => {
+                if (t.isIdentifier(target)) {
+                  const selected = resolveSemanticBindingState(
+                    this.state,
+                    target,
+                    target.name,
+                  );
+                  if (selected !== undefined)
+                    destinations.add(selected.bindingId);
+                }
+                return false;
+              });
+            }
+            // An opaque pattern initializer denotes an unknown selected leaf,
+            // not the RHS wrapper allocation. Retain its possible cache family.
+            if (written.has(binding.bindingId)) {
+              target.seed = UNKNOWN;
+              this.connect(target, {
+                kind: "family",
+                source: this.normalize(expression.right),
+              });
+              continue;
+            }
+          }
           const source = this.project(
             this.normalize(initializer.node),
             initializer.projection,
@@ -219,6 +261,7 @@ export class ViteCacheIdentities {
       this.writeReceivers.set(receiver, receivers);
       this.retainWrite(write);
     }
+    yield* this.properties.retainRestrictionsSteps();
     for (const escape of escapes) {
       if (examined++ % 1024 === 0) yield;
       const allocation = this.read(escape.value)?.allocation;

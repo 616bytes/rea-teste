@@ -110,7 +110,13 @@ function* exactTableSlotsSteps(
   for (const [index, element] of table.elements.entries()) {
     if (index > 0 && index % 1024 === 0) yield;
     if (t.isSpreadElement(element)) break;
-    slots.push(t.isStringLiteral(element) ? element.value : undefined);
+    const literal =
+      element === null ? undefined : readExactJavaScriptLiteral(element);
+    slots.push(
+      literal?.found && typeof literal.value === "string"
+        ? literal.value
+        : undefined,
+    );
   }
   return slots;
 }

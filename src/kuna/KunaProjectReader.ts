@@ -4,11 +4,12 @@ import { join } from "node:path";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCapabilityUnavailableError,
+  AnalysisCancelledError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import type { KunaProject } from "./KunaProjectCache.js";
 import {
   scanKunaAssembly,
@@ -17,6 +18,7 @@ import {
 } from "./KunaProjectFiles.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "./KunaLimits.js";
+import { kunaUnavailable } from "./KunaUnavailable.js";
 
 /** The exact producing range for one facet, including a failed C block. */
 export interface KunaProjectFileSpan {
@@ -69,7 +71,13 @@ export class KunaProjectReader {
   #blocks: ReadonlyMap<string, KunaProjectFunction> | undefined;
   #assembly: Promise<Result<KunaAssemblyIndex, string>> | undefined;
 
-  constructor(readonly project: KunaProject) {}
+  constructor(
+    readonly project: KunaProject,
+    readonly lifetime: {
+      readonly signal: AbortSignal;
+      readonly own: <T>(work: Promise<T>) => Promise<T>;
+    },
+  ) {}
 
   async pseudocode(
     address: string,
@@ -119,14 +127,14 @@ export class KunaProjectReader {
   async assembly(
     address: string,
     operation: string,
+    signal?: AbortSignal,
   ): Promise<Result<KunaProjectText, AnalysisError>> {
-    const index = await this.#index(operation);
+    const index = await this.#index(operation, signal);
     if (!index.ok) return index;
     const span = index.value.code.get(address);
     if (span === undefined)
       return err(
-        new AnalysisCapabilityUnavailableError(
-          KUNA_PROVIDER_ID,
+        kunaUnavailable(
           operation,
           `Kuna's export lists no code at ${address}; import slots and data entries have no listing.`,
         ),
@@ -155,20 +163,26 @@ export class KunaProjectReader {
   async dataName(
     address: string,
     operation: string,
+    signal?: AbortSignal,
   ): Promise<Result<string | null, AnalysisError>> {
-    const index = await this.#index(operation);
+    const index = await this.#index(operation, signal);
     return index.ok ? ok(index.value.data.get(address) ?? null) : index;
   }
 
   async #index(
     operation: string,
+    signal: AbortSignal | undefined,
   ): Promise<Result<KunaAssemblyIndex, AnalysisError>> {
-    this.#assembly ??= scanKunaAssembly(
-      createReadStream(
-        join(this.project.directory, this.project.manifest.files.asm.path),
+    this.#assembly ??= this.lifetime.own(
+      scanKunaAssembly(
+        createReadStream(
+          join(this.project.directory, this.project.manifest.files.asm.path),
+          { signal: this.lifetime.signal },
+        ),
       ),
     );
-    const index = await this.#assembly;
+    const index = await waitForAbortable(this.#assembly, signal);
+    if (index === ABORTED) return err(new AnalysisCancelledError(operation));
     return index.ok
       ? index
       : err(

@@ -16,6 +16,7 @@ export const runtimeFunctionParameters = (
  */
 export const unwrapJavaScriptExpression = (
   node: t.Node,
+  options?: { readonly stopAtParentheses: boolean },
 ): { readonly node: t.Node; readonly depth: number } => {
   let current = node;
   let depth = 0;
@@ -28,6 +29,14 @@ export const unwrapJavaScriptExpression = (
     t.isTSInstantiationExpression(current) ||
     t.isTypeCastExpression(current)
   ) {
+    // Optional-chain grouping affects execution even when expression identity
+    // is transparent. Keep every grouping boundary available to that consumer.
+    if (
+      options?.stopAtParentheses === true &&
+      (t.isParenthesizedExpression(current) ||
+        current.extra?.parenthesized === true)
+    )
+      break;
     current = current.expression;
     depth += 1;
   }
@@ -167,31 +176,72 @@ export const semanticWrappedWriteSite = (
   return null;
 };
 
+type SemanticWriteTarget =
+  | t.Identifier
+  | t.MemberExpression
+  | t.OptionalMemberExpression;
+
 /** Visit binding and member leaves in direct and destructuring write targets. */
 export function* semanticWriteTargets(
   root: t.Node,
-): Generator<t.Identifier | t.MemberExpression | t.OptionalMemberExpression> {
-  const pending = [root];
+): Generator<SemanticWriteTarget> {
+  // The synchronous adapter retains at most one cooperative chunk of leaves.
+  const leaves: SemanticWriteTarget[] = [];
+  const steps = semanticWriteTargetsSteps(root, (leaf) => {
+    leaves.push(leaf);
+    return false;
+  });
+  for (;;) {
+    const step = steps.next();
+    yield* leaves;
+    leaves.length = 0;
+    if (step.done) return;
+  }
+}
+
+/** One pattern owner bounds wide and nested write targets without recursive walks. */
+export function* semanticWriteTargetsSteps(
+  root: t.Node,
+  visit: (leaf: SemanticWriteTarget) => boolean,
+): Generator<void> {
+  const pending = [{ node: root, index: 0 }];
+  let examined = 0;
   while (pending.length > 0) {
-    const next = pending.pop();
-    if (next === undefined) break;
-    const node = unwrapJavaScriptExpression(next).node;
-    if (
-      t.isIdentifier(node) ||
-      t.isMemberExpression(node) ||
-      t.isOptionalMemberExpression(node)
-    )
-      yield node;
-    else if (t.isRestElement(node)) pending.push(node.argument);
-    else if (t.isAssignmentPattern(node)) pending.push(node.left);
-    else if (t.isArrayPattern(node)) {
-      for (const element of node.elements.toReversed())
-        if (element !== null) pending.push(element);
-    } else if (t.isObjectPattern(node)) {
-      for (const property of node.properties.toReversed())
-        pending.push(
-          t.isRestElement(property) ? property.argument : property.value,
-        );
+    if (examined++ % 1024 === 0) yield;
+    const current = pending.at(-1);
+    if (current === undefined) break;
+    const node = unwrapJavaScriptExpression(current.node).node;
+    if (t.isObjectPattern(node) || t.isArrayPattern(node)) {
+      const count = t.isObjectPattern(node)
+        ? node.properties.length
+        : node.elements.length;
+      if (current.index >= count) {
+        pending.pop();
+        continue;
+      }
+      const index = current.index++;
+      const child = t.isArrayPattern(node)
+        ? node.elements[index]
+        : (() => {
+            const property = node.properties[index];
+            return t.isRestElement(property)
+              ? property.argument
+              : property?.value;
+          })();
+      if (child != null) pending.push({ node: child, index: 0 });
+    } else {
+      pending.pop();
+      if (t.isAssignmentPattern(node))
+        pending.push({ node: node.left, index: 0 });
+      else if (t.isRestElement(node))
+        pending.push({ node: node.argument, index: 0 });
+      else if (
+        (t.isIdentifier(node) ||
+          t.isMemberExpression(node) ||
+          t.isOptionalMemberExpression(node)) &&
+        visit(node)
+      )
+        return;
     }
   }
 }

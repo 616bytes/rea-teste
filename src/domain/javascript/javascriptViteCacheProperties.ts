@@ -1,6 +1,11 @@
 import type { JavaScriptIntrinsicInvocation } from "./javascriptElectronMemberWrites.js";
 import * as t from "@babel/types";
 import {
+  readExactJavaScriptLiteral,
+  semanticStaticPropertyKey,
+} from "./javascriptAstValues.js";
+import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
+import {
   semanticReadPrecedesWrite,
   semanticWritePrecedesRead,
 } from "./javascriptSemanticMutationInitializers.js";
@@ -37,6 +42,9 @@ export interface ViteCachePropertyGraph {
   readonly objectArguments: (
     node: t.CallExpression,
   ) => readonly t.CallExpression["arguments"][number][] | undefined;
+  readonly invocation: (
+    node: t.CallExpression | t.OptionalCallExpression,
+  ) => JavaScriptIntrinsicInvocation | undefined;
 }
 
 /** shallow property selection and ordered snapshots share one literal owner. */
@@ -52,10 +60,95 @@ export class ViteCacheProperties {
   >();
   readonly writes = new Map<ViteCacheAllocation, ViteCacheWrite[]>();
   readonly escapes = new Map<ViteCacheAllocation, t.Node[]>();
+  private readonly restrictions = new Map<
+    ViteCacheAllocation,
+    Map<Key, Set<t.Node>>
+  >();
+  private readonly ordinaryAllocations = new WeakMap<
+    ViteCacheAllocation,
+    boolean
+  >();
   constructor(
     private readonly state: JavaScriptSemanticAnalysisState,
     private readonly graph: ViteCachePropertyGraph,
   ) {}
+
+  /** A source assignment is a replacement only when the property can accept it. */
+  *retainRestrictionsSteps(): Generator<void> {
+    const restrict = (
+      allocation: ViteCacheAllocation | null | undefined,
+      key: Key,
+      node: t.Node,
+    ): void => {
+      if (allocation === undefined || allocation === null) return;
+      const keys =
+        this.restrictions.get(allocation) ?? new Map<Key, Set<t.Node>>();
+      this.restrictions.set(allocation, keys);
+      const nodes = keys.get(key) ?? new Set<t.Node>();
+      keys.set(key, nodes);
+      nodes.add(node);
+    };
+    let examined = 0;
+    for (const [allocation, writes] of this.writes)
+      for (const write of writes) {
+        if (examined++ % 1024 === 0) yield;
+        if (
+          write.propertySource === undefined &&
+          (write.key === null || write.key === "__proto__")
+        )
+          restrict(allocation, null, write.node);
+      }
+    const calls: {
+      node: t.CallExpression | t.OptionalCallExpression;
+      invocation: JavaScriptIntrinsicInvocation;
+    }[] = [];
+    yield* traverseJavaScriptAstSteps(this.state.program, {
+      enter: (node) => {
+        if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+          return;
+        const invocation = this.graph.invocation(node);
+        if (
+          invocation?.kind !== "known" ||
+          invocation.path.length !== 3 ||
+          invocation.path[0] !== "intrinsic" ||
+          (invocation.path[1] !== "Object" && invocation.path[1] !== "Reflect")
+        )
+          return;
+        const method = invocation.path[2];
+        if (
+          method !== "defineProperty" &&
+          method !== "defineProperties" &&
+          method !== "freeze" &&
+          method !== "seal" &&
+          method !== "preventExtensions" &&
+          method !== "setPrototypeOf"
+        )
+          return;
+        calls.push({ node, invocation });
+      },
+    });
+    for (const { node, invocation } of calls) {
+      if (examined++ % 1024 === 0) yield;
+      const method = invocation.path[2];
+      const target = invocation.arguments?.[0];
+      if (target === undefined || t.isSpreadElement(target)) continue;
+      if (
+        method === "defineProperty" &&
+        (yield* writableDataDescriptorSteps(invocation.arguments?.[2]))
+      )
+        continue;
+      const keyNode = invocation.arguments?.[1];
+      const key =
+        method === "defineProperty" && keyNode !== undefined
+          ? readExactJavaScriptLiteral(keyNode)
+          : undefined;
+      restrict(
+        this.graph.normalize(target).fact?.allocation,
+        key?.found && typeof key.value === "string" ? key.value : null,
+        node,
+      );
+    }
+  }
 
   private lateGroup(allocation: ViteCacheAllocation, key: Key): Vertex {
     const groups = this.lateWrites.get(allocation) ?? new Map<Key, Vertex>();
@@ -73,8 +166,7 @@ export class ViteCacheProperties {
     write: ViteCacheWrite,
   ): void {
     const group = this.lateGroup(allocation, write.key);
-    if (write.value === undefined)
-      group.seed = { allocation: null, owner: null };
+    if (write.value === undefined) group.seed = UNKNOWN;
     else {
       if (write.propertySource !== undefined) group.seed = UNKNOWN;
       this.graph.connect(group, {
@@ -115,8 +207,7 @@ export class ViteCacheProperties {
         groups.set(write.key, group);
       }
       group.writes.push(write);
-      if (write.value === undefined)
-        group.vertex.seed = { allocation: null, owner: null };
+      if (write.value === undefined) group.vertex.seed = UNKNOWN;
       else {
         if (write.propertySource !== undefined) group.vertex.seed = UNKNOWN;
         this.graph.connect(group.vertex, {
@@ -154,6 +245,7 @@ export class ViteCacheProperties {
     const exact = groups.get(key);
     const latest = yield* this.latestWriteSteps(
       [exact?.writes ?? [], groups.get(null)?.writes ?? []],
+      allocation,
       key,
       read,
     );
@@ -194,6 +286,7 @@ export class ViteCacheProperties {
 
   private *latestWriteSteps(
     groups: readonly (readonly ViteCacheWrite[])[],
+    allocation: ViteCacheAllocation,
     key: string,
     read: t.Node,
   ): Generator<void, ViteCacheWrite | undefined> {
@@ -212,6 +305,7 @@ export class ViteCacheProperties {
         if (
           defines &&
           write.value !== undefined &&
+          (yield* this.acceptsReplacementSteps(allocation, key, write)) &&
           semanticWritePrecedesRead(
             write.node,
             read,
@@ -227,6 +321,113 @@ export class ViteCacheProperties {
           latest = write;
       }
     return latest;
+  }
+
+  private *acceptsReplacementSteps(
+    allocation: ViteCacheAllocation,
+    key: string,
+    write: ViteCacheWrite,
+  ): Generator<void, boolean> {
+    // Descriptor definitions have different success rules and default omitted
+    // writable/configurable fields to false. Retain their value as a possible
+    // alias, without treating them as successful ordinary assignments.
+    if (
+      !t.isAssignmentExpression(write.node, { operator: "=" }) &&
+      write.propertySource === undefined
+    )
+      return false;
+    if (!(yield* this.ordinaryAllocationSteps(allocation))) return false;
+    const receivers = [{ allocation, inherited: false }];
+    if (
+      t.isCallExpression(allocation.node) &&
+      this.graph.objectCall(allocation.node) === "create"
+    ) {
+      const prototype = this.graph.objectArguments(allocation.node)?.[0];
+      if (prototype !== undefined && !t.isSpreadElement(prototype)) {
+        const inherited = this.graph.normalize(prototype).fact?.allocation;
+        if (inherited != null)
+          receivers.push({ allocation: inherited, inherited: true });
+      }
+    }
+    let examined = 0;
+    for (const receiver of receivers) {
+      const restrictions = this.restrictions.get(receiver.allocation);
+      for (const selection of [key, null])
+        for (const restriction of restrictions?.get(selection) ?? []) {
+          if (examined++ % 1024 === 0) yield;
+          if (
+            t.isCallExpression(restriction) ||
+            t.isOptionalCallExpression(restriction)
+          ) {
+            const method = this.graph.invocation(restriction)?.path.at(-1);
+            if (
+              (method === "seal" || method === "preventExtensions") &&
+              (receiver.inherited ||
+                (t.isObjectExpression(receiver.allocation.node) &&
+                  (yield* semanticObjectExpressionDefinesKeySteps(
+                    receiver.allocation.node,
+                    key,
+                  ))))
+            )
+              continue;
+          }
+          if (
+            !semanticReadPrecedesWrite(
+              write.node,
+              restriction,
+              this.state.parentsByNode,
+            )
+          )
+            return false;
+        }
+    }
+
+    return true;
+  }
+
+  private *ordinaryAllocationSteps(
+    allocation: ViteCacheAllocation,
+  ): Generator<void, boolean> {
+    const previous = this.ordinaryAllocations.get(allocation);
+    if (previous !== undefined) return previous;
+    let ordinary = true;
+    if (allocation.kind === "container" && allocation.copy === undefined) {
+      const node = allocation.node;
+      ordinary = t.isObjectExpression(node) || t.isArrayExpression(node);
+      if (
+        t.isCallExpression(node) &&
+        this.graph.objectCall(node) === "create"
+      ) {
+        const arguments_ = this.graph.objectArguments(node);
+        const prototype = arguments_?.[0];
+        ordinary =
+          arguments_?.length === 1 &&
+          prototype !== undefined &&
+          !t.isSpreadElement(prototype) &&
+          this.graph.normalize(prototype).fact?.allocation?.kind === "helper";
+      }
+      if (t.isObjectExpression(node)) {
+        let examined = 0;
+        for (const property of node.properties) {
+          if (examined++ % 1024 === 0) yield;
+          if (t.isSpreadElement(property)) continue;
+          const key = semanticStaticPropertyKey(
+            property.key,
+            property.computed,
+          );
+          if (
+            key === null ||
+            key === "__proto__" ||
+            (t.isObjectMethod(property) && property.kind !== "method")
+          ) {
+            ordinary = false;
+            break;
+          }
+        }
+      }
+    }
+    this.ordinaryAllocations.set(allocation, ordinary);
+    return ordinary;
   }
 
   private inertWrite(
@@ -370,6 +571,30 @@ export class ViteCacheProperties {
         });
     }
   }
+}
+
+/** Explicit writable data descriptors preserve subsequent ordinary assignment. */
+function* writableDataDescriptorSteps(
+  node: t.Node | undefined,
+): Generator<void, boolean> {
+  if (!t.isObjectExpression(node)) return false;
+  let writable = false;
+  let examined = 0;
+  for (const property of node.properties) {
+    if (examined++ % 1024 === 0) yield;
+    if (!t.isObjectProperty(property)) return false;
+    const key = semanticStaticPropertyKey(property.key, property.computed);
+    if (
+      key !== "value" &&
+      key !== "writable" &&
+      key !== "enumerable" &&
+      key !== "configurable"
+    )
+      return false;
+    if (key === "writable")
+      writable = t.isBooleanLiteral(property.value, { value: true });
+  }
+  return writable;
 }
 
 export const viteCacheObjectOperation = (

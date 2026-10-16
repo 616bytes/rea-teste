@@ -42,6 +42,14 @@ export interface JavaScriptAnalysisAccumulator {
   electronCallPathLimitReached?: boolean;
   readonly references: LocatedJavaScriptFinding<JavaScriptStaticReference>[];
   readonly endpoints: LocatedJavaScriptFinding<JavaScriptStaticEndpoint>[];
+  /** Dynamic targets held until the shared mutation index is requested on demand. */
+  readonly pendingNetworkCalls: {
+    readonly node:
+      | t.CallExpression
+      | t.OptionalCallExpression
+      | t.NewExpression;
+    readonly name: string;
+  }[];
   readonly storage: LocatedJavaScriptFinding<JavaScriptStaticStorage>[];
   readonly roles: LocatedJavaScriptFinding<JavaScriptRolePath>[];
   readonly sourceMaps: JavaScriptStaticAnalysis["source_map_urls"][number][];
@@ -86,6 +94,7 @@ export interface JavaScriptEndpointInput {
   readonly value: string;
   readonly mechanism: string;
   readonly interpretation?: "candidate";
+  readonly resolution?: "partial";
 }
 
 /** Values required to append one module-attributable static finding. */
@@ -104,6 +113,7 @@ export const createJavaScriptAnalysisAccumulator = (
 ): JavaScriptAnalysisAccumulator => ({
   references: [],
   endpoints: [],
+  pendingNetworkCalls: [],
   storage: [],
   roles: [],
   sourceMaps: [],

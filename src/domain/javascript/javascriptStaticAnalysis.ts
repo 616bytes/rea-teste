@@ -21,6 +21,7 @@ import {
 import {
   addReference,
   addSourceMapDirectives,
+  finishPartialNetworkEndpoints,
   inspectCall,
   inspectRouteProperty,
   inspectRoleProperty,
@@ -53,12 +54,12 @@ import {
 } from "./javascriptSourceParser.js";
 
 import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
-import { semanticImportEqualsSpecifier } from "./javascriptSemanticProjection.js";
 import { classifyParsedJavaScriptViteDependencySpecifiersSteps } from "./javascriptViteDependencies.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
   isTypeOnlyExportDeclaration,
   isTypeOnlyImportDeclaration,
+  semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
 
 /** Parse one JavaScript artifact and recover static structure only. */
@@ -115,6 +116,10 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     viteDependencySpecifiers,
     viteReferencePositions,
   );
+  if (accumulator.pendingNetworkCalls.length > 0) {
+    yield* index.indexMemberMutationFactsSteps();
+    finishPartialNetworkEndpoints(findings, bindings, index);
+  }
   accumulator.electronCallPaths = collectElectronWrappedCallPaths(
     file.program,
     bindings,

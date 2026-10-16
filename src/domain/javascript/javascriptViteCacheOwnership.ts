@@ -2,7 +2,7 @@ import * as t from "@babel/types";
 
 import {
   semanticStaticPropertyKey,
-  semanticWriteTargets,
+  semanticWriteTargetsSteps,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -83,15 +83,14 @@ export function* invalidateJavaScriptViteCachesSteps(
     state,
     interop.intrinsicInvocation,
   );
-  const objectPrototypeUncertain = yield* collectIntrinsicWritesSteps(
+  const uncertainPrototypes = yield* collectIntrinsicWritesSteps(
     program,
     interop,
+    state,
   );
-  const { writes, calls, constructors } = yield* indexCacheEffectsSteps(
-    program,
-    identities,
-    initializations,
-  );
+  const objectPrototypeUncertain = uncertainPrototypes.has("Object");
+  const { writes, calls, exposures, admittedHelpers } =
+    yield* indexCacheEffectsSteps(program, identities, initializations, state);
   const reads = yield* createViteCacheReadProofSteps(tables, state, (node) =>
     identities.read(node),
   );
@@ -105,17 +104,21 @@ export function* invalidateJavaScriptViteCachesSteps(
     interop,
     reads,
     objectPrototypeUncertain,
+    uncertainPrototypes,
     dataDefinitions,
+    admittedHelpers,
     unsafeTargets: new Set(),
   };
   yield* identities.initializeSteps(tables.keys());
   yield* identities.solveSteps();
   context.unsafeTargets = yield* unsafeAssignmentTargetsSteps(
-    { calls, constructors, writes },
+    { calls, exposures, writes },
     context,
   );
-  const escapes = yield* indexCallExposuresSteps(calls, context);
-  yield* retainConstructorExposuresSteps(constructors, escapes);
+  const escapes = [
+    ...exposures,
+    ...(yield* indexCallExposuresSteps(calls, context)),
+  ];
   let examined = 0;
   yield* identities.retainSnapshotsSteps(writes, escapes);
   yield* identities.solveSteps();
@@ -141,6 +144,7 @@ export function* invalidateJavaScriptViteCachesSteps(
     if (examined++ % 1024 === 0) yield;
     invalidate(identities.read(escape.value)?.owner);
   }
+  yield* retainImplicitReceiverEffectsSteps(program, context, invalidate);
   yield* collectJavaScriptIdentityWritesSteps(
     program,
     (node, kind) =>
@@ -206,7 +210,16 @@ function* indexCallExposuresSteps(
       invocation?.kind === "known"
         ? (invocation.arguments ?? call.arguments)
         : call.arguments;
-    const selected = intrinsicValuePositions(path);
+    // An unproven descriptor can install accessors whose receiver effects are
+    // invisible to the property-write collector (including named metadata).
+    const selected =
+      invocation?.arguments === undefined ||
+      (!context.dataDefinitions.has(call) &&
+        (path === "intrinsic.Object.defineProperty" ||
+          path === "intrinsic.Reflect.defineProperty" ||
+          path === "intrinsic.Object.defineProperties"))
+        ? undefined
+        : intrinsicValuePositions(path);
     for (let index = 0; index < values.length; index++) {
       if (examined++ % 1024 === 0) yield;
       if (selected !== undefined && !selected.has(index)) continue;
@@ -296,7 +309,7 @@ function* ordinaryObjectLiteralSteps(
 function* unsafeAssignmentTargetsSteps(
   events: {
     readonly calls: readonly Call[];
-    readonly constructors: readonly t.NewExpression[];
+    readonly exposures: readonly CacheExposure[];
     readonly writes: readonly ViteCacheWrite[];
   },
   context: CacheEffectContext,
@@ -319,6 +332,9 @@ function* unsafeAssignmentTargetsSteps(
     if (
       path === "intrinsic.Object.assign" ||
       path === "intrinsic.Object.create" ||
+      path === "intrinsic.Object.freeze" ||
+      path === "intrinsic.Object.seal" ||
+      path === "intrinsic.Object.preventExtensions" ||
       context.dataDefinitions.has(call) ||
       context.identities.read(call.callee)?.allocation?.kind === "helper"
     )
@@ -331,47 +347,36 @@ function* unsafeAssignmentTargetsSteps(
     if (direct !== undefined && invocation === undefined)
       inputs.push(direct.receiver);
   }
-  for (const constructor of events.constructors)
-    for (const argument of constructor.arguments) {
-      if (examined++ % 1024 === 0) yield;
-      inputs.push(t.isSpreadElement(argument) ? argument.argument : argument);
-    }
-  return yield* context.identities.escapedAllocationsSteps(inputs);
-}
-
-function* retainConstructorExposuresSteps(
-  constructors: readonly t.NewExpression[],
-  exposures: { readonly node: t.Node; readonly value: t.Node }[],
-): Generator<void> {
-  let examined = 0;
-  for (const constructor of constructors) {
+  for (const exposure of events.exposures) {
     if (examined++ % 1024 === 0) yield;
-    for (const argument of constructor.arguments) {
-      if (examined++ % 1024 === 0) yield;
-      exposures.push({
-        node: constructor,
-        value: t.isSpreadElement(argument) ? argument.argument : argument,
-      });
-    }
+    inputs.push(exposure.value);
   }
+  return yield* context.identities.escapedAllocationsSteps(inputs);
 }
 
 const intrinsicValuePositions = (
   path: string | undefined,
 ): ReadonlySet<number> | undefined => {
+  if (path === "intrinsic.Reflect.deleteProperty") return new Set([1]);
+  if (path === "intrinsic.Reflect.set") return new Set([0, 1, 2, 3]);
   if (
     path === "intrinsic.Reflect.set" ||
     path === "intrinsic.Object.defineProperty" ||
     path === "intrinsic.Reflect.defineProperty"
   )
-    return new Set([2]);
+    return new Set([1, 2]);
   if (
     path === "intrinsic.Object.defineProperties" ||
     path === "intrinsic.Object.setPrototypeOf" ||
     path === "intrinsic.Reflect.setPrototypeOf"
   )
     return new Set([1]);
-  if (path === "intrinsic.Reflect.deleteProperty") return new Set();
+  if (
+    path === "intrinsic.Object.freeze" ||
+    path === "intrinsic.Object.seal" ||
+    path === "intrinsic.Object.preventExtensions"
+  )
+    return new Set();
   return undefined;
 };
 
@@ -479,27 +484,118 @@ interface CacheEffectContext {
   readonly interop: Interop;
   readonly reads: ViteCacheReadProof;
   readonly objectPrototypeUncertain: boolean;
+  readonly uncertainPrototypes: ReadonlySet<string>;
   readonly dataDefinitions: ReadonlySet<Call>;
+  readonly admittedHelpers: WeakSet<t.Node>;
   unsafeTargets: ReadonlySet<ViteCacheAllocation>;
+}
+
+interface CacheExposure {
+  readonly node: t.Node;
+  readonly value: t.Node;
 }
 
 function* indexCacheEffectsSteps(
   program: t.Program,
   identities: ViteCacheIdentities,
   initializations: ReadonlySet<t.Node | undefined>,
+  state: JavaScriptSemanticAnalysisState,
 ): Generator<
   void,
-  { writes: ViteCacheWrite[]; calls: Call[]; constructors: t.NewExpression[] }
+  {
+    writes: ViteCacheWrite[];
+    calls: Call[];
+    exposures: CacheExposure[];
+    admittedHelpers: WeakSet<t.Node>;
+  }
 > {
   const writes: ViteCacheWrite[] = [];
   const calls: Call[] = [];
-  const constructors: t.NewExpression[] = [];
+  const exposures: CacheExposure[] = [];
+  // Recognition already proves these bodies consist only of default guards
+  // and the index projection. Their scalar d[i] returns are not cache escapes.
+  const admittedHelpers = new WeakSet<t.Node>();
+  for (const initialization of initializations) {
+    let parent = initialization;
+    while (parent !== undefined && !t.isFunction(parent)) {
+      yield;
+      parent = state.parentsByNode.get(parent);
+    }
+    if (parent !== undefined) admittedHelpers.add(parent);
+  }
+  type DeferredEffect =
+    | {
+        readonly kind: "values";
+        readonly node: t.Node;
+        readonly values: readonly t.Node[];
+      }
+    | { readonly kind: "default"; readonly node: t.AssignmentPattern }
+    | {
+        readonly kind: "write";
+        readonly node: t.Node;
+        readonly target: t.Node;
+        readonly exposed: boolean;
+      };
+  const deferred: DeferredEffect[] = [];
+  let admittedDepth = 0;
+  const expose = (node: t.Node, value: t.Node): void => {
+    if (admittedDepth === 0) exposures.push({ node, value });
+  };
   yield* traverseJavaScriptAstSteps(program, {
-    enter: (node) => {
+    enter: (node, parent) => {
+      if (admittedHelpers.has(node)) admittedDepth++;
       if (t.isExpression(node)) identities.normalize(node);
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
         calls.push(node);
-      if (t.isNewExpression(node)) constructors.push(node);
+      if (admittedDepth === 0) {
+        if (t.isNewExpression(node))
+          deferred.push({ kind: "values", node, values: node.arguments });
+        if (t.isTaggedTemplateExpression(node)) {
+          const tag = unwrapJavaScriptExpression(node.tag).node;
+          if (t.isMemberExpression(tag) || t.isOptionalMemberExpression(tag))
+            expose(node, tag.object);
+          deferred.push({
+            kind: "values",
+            node,
+            values: node.quasi.expressions,
+          });
+        }
+        if (t.isTemplateLiteral(node) && !t.isTaggedTemplateExpression(parent))
+          deferred.push({ kind: "values", node, values: node.expressions });
+        if (t.isAssignmentPattern(node))
+          deferred.push({ kind: "default", node });
+      }
+      // These operations can invoke user-defined coercion or thenable hooks.
+      if (t.isAwaitExpression(node)) expose(node, node.argument);
+      if (t.isUnaryExpression(node) && ["+", "-", "~"].includes(node.operator))
+        expose(node, node.argument);
+      if (
+        t.isBinaryExpression(node) &&
+        !["===", "!=="].includes(node.operator)
+      ) {
+        expose(node, node.left);
+        expose(node, node.right);
+      }
+      if (
+        (t.isMemberExpression(node) ||
+          t.isOptionalMemberExpression(node) ||
+          t.isObjectProperty(node) ||
+          t.isObjectMethod(node)) &&
+        node.computed
+      )
+        expose(
+          node,
+          t.isMemberExpression(node) || t.isOptionalMemberExpression(node)
+            ? node.property
+            : node.key,
+        );
+      if (
+        (t.isReturnStatement(node) || t.isYieldExpression(node)) &&
+        node.argument != null
+      )
+        expose(node, node.argument);
+      if (t.isArrowFunctionExpression(node) && !t.isBlockStatement(node.body))
+        expose(node, node.body);
       const target = t.isAssignmentExpression(node)
         ? node.left
         : t.isUpdateExpression(node)
@@ -509,33 +605,96 @@ function* indexCacheEffectsSteps(
             : t.isForOfStatement(node) || t.isForInStatement(node)
               ? node.left
               : undefined;
-      if (target === undefined || initializations.has(node)) return;
-      for (const leaf of semanticWriteTargets(target)) {
+      if (target !== undefined && !initializations.has(node))
+        deferred.push({
+          kind: "write",
+          node,
+          target,
+          exposed: admittedDepth === 0,
+        });
+    },
+    exit: (node) => {
+      if (admittedHelpers.has(node)) admittedDepth--;
+    },
+  });
+  let examined = 0;
+  for (const effect of deferred) {
+    if (examined++ % 1024 === 0) yield;
+    const { node } = effect;
+    if (effect.kind === "values") {
+      for (const value of effect.values) {
+        if (examined++ % 1024 === 0) yield;
+        exposures.push({
+          node,
+          value: t.isSpreadElement(value) ? value.argument : value,
+        });
+      }
+    } else if (effect.kind === "default")
+      yield* semanticWriteTargetsSteps(effect.node.left, (leaf) => {
+        if (t.isIdentifier(leaf)) return false;
+        exposures.push({ node, value: effect.node.right });
+        return true;
+      });
+    else {
+      const directAssignment =
+        t.isAssignmentExpression(node, { operator: "=" }) &&
+        (t.isMemberExpression(effect.target) ||
+          t.isOptionalMemberExpression(effect.target));
+      let exposedPattern = false;
+      yield* semanticWriteTargetsSteps(effect.target, (leaf) => {
         const member = unwrapJavaScriptExpression(leaf).node;
         if (
           !t.isMemberExpression(member) &&
           !t.isOptionalMemberExpression(member)
         )
-          continue;
+          return false;
+        // Pattern leaves receive selected values, never the entire RHS. Until
+        // selection is proven, expose their source without assigning its wrapper.
+        if (!directAssignment && !exposedPattern) {
+          if (effect.exposed) {
+            if (t.isAssignmentExpression(node) || t.isForOfStatement(node))
+              exposures.push({ node, value: node.right });
+          }
+          exposedPattern = true;
+        }
         writes.push({
           node,
           receiver: member.object,
           key: semanticStaticPropertyKey(member.property, member.computed),
-          ...(t.isAssignmentExpression(node, { operator: "=" })
+          ...(directAssignment && t.isAssignmentExpression(node)
             ? { value: node.right }
             : {}),
         });
-      }
-    },
-  });
-  return { writes, calls, constructors };
+        return false;
+      });
+    }
+  }
+  return { writes, calls, exposures, admittedHelpers };
 }
 
 function* collectIntrinsicWritesSteps(
   program: t.Program,
   interop: Interop,
-): Generator<void, boolean> {
-  let objectPrototypeUncertain = false;
+  state: JavaScriptSemanticAnalysisState,
+): Generator<void, ReadonlySet<string>> {
+  const uncertainPrototypes = new Set<string>();
+  let examined = 0;
+  // Ambient identity owns global effects; an opaque local mutation target is
+  // not itself evidence that an intrinsic prototype was changed.
+  for (const effect of state.ambientWriteEffects) {
+    if (examined++ % 1024 === 0) yield;
+    const [root, namespace, property] = effect.path;
+    if (root !== "global" && root !== null) continue;
+    if (property !== undefined && property !== null && property !== "prototype")
+      continue;
+    for (const candidate of ["Object", "Array", "Function"])
+      if (
+        namespace === undefined ||
+        namespace === null ||
+        namespace === candidate
+      )
+        uncertainPrototypes.add(candidate);
+  }
   yield* collectJavaScriptIdentityWritesSteps(
     program,
     (node, kind) => {
@@ -549,23 +708,9 @@ function* collectIntrinsicWritesSteps(
     interop.intrinsicInvocation,
     interop.staticString,
     interop.isFreshObject,
-    (node, path) => {
-      const [root, namespace, property] = path;
-      if (
-        root === "opaque-intrinsic" ||
-        (root === "intrinsic" &&
-          (namespace === undefined ||
-            namespace === null ||
-            namespace === "Object") &&
-          (property === undefined ||
-            property === null ||
-            property === "prototype"))
-      )
-        objectPrototypeUncertain = true;
-      interop.retainWrite(node, path);
-    },
+    (node, path) => interop.retainWrite(node, path),
   );
-  return objectPrototypeUncertain;
+  return uncertainPrototypes;
 }
 
 const directArrayMethod = (
@@ -620,4 +765,174 @@ function* retainCallEffectsSteps(
     ))
   )
     invalidate(receiver?.owner);
+}
+
+/** Property access and iteration can dispatch user code without a call node. */
+function* retainImplicitReceiverEffectsSteps(
+  program: t.Program,
+  context: CacheEffectContext,
+  invalidate: (owner: string | null | undefined) => void,
+): Generator<void> {
+  const selections: { readonly value: t.Node; readonly iteration: boolean }[] =
+    [];
+  const uncertainPrototypes = context.uncertainPrototypes;
+  const unsafeReceivers = new Set<ViteCacheAllocation>();
+  const markUnsafe = (value: t.Node | undefined): void => {
+    if (value === undefined) return;
+    const allocation = context.identities.read(value)?.allocation;
+    if (allocation != null) unsafeReceivers.add(allocation);
+  };
+  let examined = 0;
+  yield* traverseJavaScriptAstSteps(program, {
+    skip: (node) => context.admittedHelpers.has(node),
+    enter: (node, parent) => {
+      if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+        const invocation = context.interop.intrinsicInvocation(node);
+        const path =
+          invocation?.kind === "known" ? invocation.path.join(".") : undefined;
+        const target = invocation?.arguments?.[0];
+        if (!t.isSpreadElement(target)) {
+          if (
+            ((path === "intrinsic.Object.defineProperty" ||
+              path === "intrinsic.Reflect.defineProperty") &&
+              !context.dataDefinitions.has(node)) ||
+            path === "intrinsic.Object.defineProperties" ||
+            path === "intrinsic.Object.setPrototypeOf" ||
+            path === "intrinsic.Reflect.setPrototypeOf"
+          )
+            markUnsafe(target);
+          if (
+            target !== undefined &&
+            (path === "intrinsic.Object.assign" ||
+              path === "intrinsic.Reflect.set")
+          )
+            selections.push({ value: target, iteration: false });
+        }
+      }
+      if (t.isAssignmentExpression(node)) {
+        const target = unwrapJavaScriptExpression(node.left).node;
+        if (
+          t.isMemberExpression(target) ||
+          t.isOptionalMemberExpression(target)
+        ) {
+          const key = semanticStaticPropertyKey(
+            target.property,
+            target.computed,
+          );
+          if (key === null || key === "__proto__") markUnsafe(target.object);
+        }
+      }
+      if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+        // Explicit receiver calls already have the method read proof and effects owner.
+        if (
+          (t.isCallExpression(parent) || t.isOptionalCallExpression(parent)) &&
+          parent.callee === node
+        )
+          return;
+        selections.push({ value: node.object, iteration: false });
+      } else if (t.isSpreadElement(node))
+        selections.push({
+          value: node.argument,
+          iteration: !t.isObjectExpression(parent),
+        });
+      else if (t.isForOfStatement(node))
+        selections.push({ value: node.right, iteration: true });
+      else {
+        const target = t.isVariableDeclarator(node)
+          ? node.id
+          : t.isAssignmentExpression(node)
+            ? node.left
+            : undefined;
+        const value = t.isVariableDeclarator(node)
+          ? node.init
+          : t.isAssignmentExpression(node)
+            ? node.right
+            : undefined;
+        if (
+          value != null &&
+          (t.isObjectPattern(target) || t.isArrayPattern(target))
+        )
+          selections.push({ value, iteration: t.isArrayPattern(target) });
+      }
+    },
+  });
+  const ordinary = new Map<ViteCacheAllocation, boolean>();
+  const ordinaryLiteral = function* (
+    node: t.ObjectExpression,
+  ): Generator<void, boolean> {
+    let properties = 0;
+    for (const property of node.properties) {
+      if (properties++ % 1024 === 0) yield;
+      // A spread materializes data descriptors; its source effects are examined separately.
+      if (t.isSpreadElement(property)) continue;
+      if (t.isObjectMethod(property) && property.kind !== "method")
+        return false;
+      if (
+        t.isObjectProperty(property) &&
+        !property.computed &&
+        !property.shorthand &&
+        semanticStaticPropertyKey(property.key, false) === "__proto__"
+      )
+        return false;
+    }
+    return true;
+  };
+  for (const selection of selections) {
+    if (examined++ % 1024 === 0) yield;
+    const identity = context.identities.read(selection.value);
+    if (identity?.owner === undefined) continue;
+    const allocation = identity.allocation;
+    if (allocation === null || unsafeReceivers.has(allocation)) {
+      invalidate(identity.owner);
+      continue;
+    }
+    const array =
+      allocation.kind === "cache" ||
+      (allocation.kind === "container" &&
+        (t.isArrayExpression(allocation.node) ||
+          allocation.copy?.initializer.copyKind === "array-rest"));
+    const namespace = array
+      ? "Array"
+      : allocation.kind === "helper"
+        ? "Function"
+        : "Object";
+    if (
+      uncertainPrototypes.has("Object") ||
+      uncertainPrototypes.has(namespace)
+    ) {
+      invalidate(identity.owner);
+      continue;
+    }
+    if (selection.iteration) {
+      if (!array) invalidate(identity.owner);
+      continue;
+    }
+    let dataOnly = ordinary.get(allocation);
+    if (dataOnly === undefined) {
+      dataOnly =
+        allocation.kind === "cache" ||
+        allocation.kind === "helper" ||
+        allocation.copy !== undefined ||
+        t.isArrayExpression(allocation.node) ||
+        (t.isObjectExpression(allocation.node) &&
+          (yield* ordinaryLiteral(allocation.node)));
+      if (!dataOnly && t.isCallExpression(allocation.node)) {
+        const invocation = context.interop.intrinsicInvocation(allocation.node);
+        const prototype = invocation?.arguments?.[0];
+        const prototypeAllocation =
+          prototype === undefined || t.isSpreadElement(prototype)
+            ? undefined
+            : context.identities.read(prototype)?.allocation;
+        dataOnly =
+          invocation?.kind === "known" &&
+          invocation.path.join(".") === "intrinsic.Object.create" &&
+          invocation.arguments?.length === 1 &&
+          prototypeAllocation?.kind === "helper" &&
+          !unsafeReceivers.has(prototypeAllocation) &&
+          !uncertainPrototypes.has("Function");
+      }
+      ordinary.set(allocation, dataOnly);
+    }
+    if (!dataOnly) invalidate(identity.owner);
+  }
 }

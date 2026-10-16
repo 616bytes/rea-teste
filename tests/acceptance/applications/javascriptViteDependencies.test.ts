@@ -188,6 +188,37 @@ const allScenarios: readonly ViteScenario[] = [
     unknown: false,
   },
   {
+    file: "typescript-comma-joined-guards.js",
+    source:
+      'function __vite__mapDeps(i, m, d) { m === void 0 && (m = __vite__mapDeps), d === void 0 && (d = m.f || (m.f = ["./first.js"])); return i.map(j => d[j]); } __vite__mapDeps([0]);',
+    resolved: ["first.js"],
+    unknown: false,
+  },
+  {
+    file: "typescript-nested-return-sequence.js",
+    source:
+      'const __vite__mapDeps = (i, m, d) => ((m === void 0 && (m = __vite__mapDeps), d === void 0 && (d = m.f || (m.f = ["./first.js"]))), i.map(j => d[j])); __vite__mapDeps([0]);',
+    resolved: ["first.js"],
+    unknown: false,
+  },
+  {
+    file: "typescript-extra-guard-operation.js",
+    source:
+      'function __vite__mapDeps(i, m, d) { runtimeEffect(), m === void 0 && (m = __vite__mapDeps), d === void 0 && (d = m.f || (m.f = ["./first.js"])); return i.map(j => d[j]); } __vite__mapDeps([0]);',
+    resolved: [],
+    unknown: false,
+  },
+  {
+    file: "template-literal-table-slots.js",
+    callSource: "__vite__mapDeps([0, 1, 2])",
+    source: mapDependencies(
+      "[`./caf\\u00e9.js`, `./${runtimeName}.js`, `./last.js`]",
+      "[0, 1, 2]",
+    ),
+    resolved: ["café.js", "last.js"],
+    unknown: true,
+  },
+  {
     file: "dynamic.js",
     callSource: "__vite__mapDeps([1, 2])",
     source: mapDependencies(
@@ -452,6 +483,260 @@ const allScenarios: readonly ViteScenario[] = [
     unknown: true,
   },
   ...[
+    {
+      file: "readonly-descriptor-replacement.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; Object.defineProperty(box, "f", {value: __vite__mapDeps.f}); box.f = []; box.f[0] = "./last.js";',
+    },
+    {
+      file: "explicit-readonly-descriptor-replacement.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; Object.defineProperty(box, "f", {value: __vite__mapDeps.f, writable: false, configurable: true}); box.f = []; box.f[0] = "./last.js";',
+    },
+    {
+      file: "readonly-descriptors-replacement.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; Object.defineProperties(box, {f: {value: __vite__mapDeps.f}}); box.f = []; box.f[0] = "./last.js";',
+    },
+    {
+      file: "frozen-holder-replacement.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {f: __vite__mapDeps.f}; Object.freeze(box); box.f = []; box.f[0] = "./last.js";',
+    },
+    {
+      file: "frozen-returned-holder-cache.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = Object.freeze({f: __vite__mapDeps.f}); box.f[0] = "./last.js";',
+    },
+    {
+      file: "sealed-inherited-cache-replacement.js",
+      mutation:
+        '__vite__mapDeps([0]); const prototype = {f: __vite__mapDeps.f}; const box = Object.create(prototype); Object.seal(box); box.f = []; box.f[0] = "./last.js";',
+    },
+    {
+      file: "nonextensible-inherited-cache-replacement.js",
+      mutation:
+        '__vite__mapDeps([0]); const prototype = {f: __vite__mapDeps.f}; const box = Object.create(prototype); Object.preventExtensions(box); box.f = []; box.f[0] = "./last.js";',
+    },
+    {
+      file: "readonly-prototype-cache-replacement.js",
+      mutation:
+        '__vite__mapDeps([0]); const prototype = {}; Object.defineProperty(prototype, "f", {value: __vite__mapDeps.f}); const box = Object.create(prototype); box.f = []; box.f[0] = "./last.js";',
+    },
+    {
+      file: "writable-data-property-replacement.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {cache: __vite__mapDeps.f}; const alias = box; alias.cache = []; box.cache[0] = "./last.js";',
+      kept: true,
+    },
+    {
+      file: "writable-descriptor-replacement.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; Object.defineProperty(box, "f", {value: __vite__mapDeps.f, writable: true}); box.f = []; box.f[0] = "./last.js";',
+      kept: true,
+    },
+    {
+      file: "sealed-writable-data-replacement.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {f: __vite__mapDeps.f}; Object.seal(box); box.f = []; box.f[0] = "./last.js";',
+      kept: true,
+    },
+    {
+      file: "nonextensible-writable-data-replacement.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {f: __vite__mapDeps.f}; Object.preventExtensions(box); box.f = []; box.f[0] = "./last.js";',
+      kept: true,
+    },
+    {
+      file: "writable-data-earlier-capture.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {cache: __vite__mapDeps.f}; const retained = box.cache; const alias = box; alias.cache = []; retained[0] = "./last.js";',
+    },
+    {
+      file: "object-destructuring-member-target.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; ({cache: box.cache} = {cache: __vite__mapDeps.f}); box.cache[0] = "./last.js";',
+    },
+    {
+      file: "array-destructuring-member-target.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; [box.cache] = [__vite__mapDeps.f]; box.cache[0] = "./last.js";',
+    },
+    {
+      file: "nested-destructuring-member-target.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; ({nested: {cache: box.cache}} = {nested: {cache: __vite__mapDeps.f}}); box.cache[0] = "./last.js";',
+    },
+    {
+      file: "default-destructuring-member-target.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; ({cache: box.cache = __vite__mapDeps.f} = {}); box.cache[0] = "./last.js";',
+    },
+    {
+      file: "conditional-destructuring-member-source.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; const source = runtimeCondition ? {cache: __vite__mapDeps.f} : {}; ({cache: box.cache} = source); box.cache[0] = "./last.js";',
+    },
+    {
+      file: "for-of-destructuring-member-target.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; for ({cache: box.cache} of [{cache: __vite__mapDeps.f}]) {} box.cache[0] = "./last.js";',
+    },
+    {
+      file: "for-of-cache-member-target.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; for (box.cache of [__vite__mapDeps.f]) {} box.cache[0] = "./last.js";',
+    },
+    {
+      file: "object-rest-member-target.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; ({...box.rest} = {cache: __vite__mapDeps.f}); box.rest.cache[0] = "./last.js";',
+    },
+    {
+      file: "independent-destructuring-member-target.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; ({cache: box.cache} = {cache: []}); box.cache[0] = "./last.js";',
+      kept: true,
+    },
+    {
+      file: "object-destructuring-cache-assignment.js",
+      mutation:
+        '__vite__mapDeps([0]); let cache; ({cache} = {cache: __vite__mapDeps.f}); cache[0] = "./last.js";',
+    },
+    {
+      file: "array-destructuring-cache-assignment.js",
+      mutation:
+        '__vite__mapDeps([0]); let cache; [cache] = [__vite__mapDeps.f]; cache[0] = "./last.js";',
+    },
+    {
+      file: "deferred-function-cache-restoration.js",
+      mutation:
+        '__vite__mapDeps([0]); const copy = {...__vite__mapDeps}; function restore() { copy.f = __vite__mapDeps.f; } copy.f = []; restore(); copy.f[0] = "./last.js";',
+    },
+    {
+      file: "deferred-arrow-cache-restoration.js",
+      mutation:
+        '__vite__mapDeps([0]); const copy = {...__vite__mapDeps}; const restore = () => { copy.f = __vite__mapDeps.f; }; copy.f = []; restore(); copy.f[0] = "./last.js";',
+    },
+    {
+      file: "deferred-method-cache-restoration.js",
+      mutation:
+        '__vite__mapDeps([0]); const copy = {...__vite__mapDeps}; const actions = {restore() { copy.f = __vite__mapDeps.f; }}; copy.f = []; actions.restore(); copy.f[0] = "./last.js";',
+    },
+    {
+      file: "ordinary-wrapper-returned-cache.js",
+      mutation:
+        '__vite__mapDeps([0]); function expose() { return __vite__mapDeps.f; } const cache = expose(); cache[0] = "./last.js";',
+    },
+    {
+      file: "arrow-wrapper-returned-cache.js",
+      mutation:
+        '__vite__mapDeps([0]); const expose = () => __vite__mapDeps.f; const cache = expose(); cache[0] = "./last.js";',
+    },
+    {
+      file: "getter-returned-cache.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {get cache() { return __vite__mapDeps.f; }}; const cache = box.cache; cache[0] = "./last.js";',
+    },
+    {
+      file: "ordinary-wrapper-returned-container.js",
+      mutation:
+        '__vite__mapDeps([0]); function expose() { return {cache: __vite__mapDeps.f}; } const box = expose(); box.cache[0] = "./last.js";',
+    },
+    {
+      file: "independent-wrapper-return.js",
+      mutation:
+        '__vite__mapDeps([0]); const expose = () => []; const cache = expose(); cache[0] = "./last.js";',
+      kept: true,
+    },
+    {
+      file: "tagged-template-cache-argument.js",
+      mutation:
+        '__vite__mapDeps([0]); function mutate(_strings, cache) { cache[0] = "./last.js"; } mutate`cache: ${__vite__mapDeps.f}`;',
+    },
+    {
+      file: "tagged-template-cache-receiver.js",
+      mutation:
+        '__vite__mapDeps([0]); const cache = __vite__mapDeps.f; cache.tag = function() { this[0] = "./last.js"; }; cache.tag`literal`;',
+    },
+    {
+      file: "tagged-template-cache-container.js",
+      mutation:
+        '__vite__mapDeps([0]); function mutate(_strings, box) { box.cache[0] = "./last.js"; } mutate`${{cache: __vite__mapDeps.f}}`;',
+    },
+    {
+      file: "tagged-template-spread-container.js",
+      mutation:
+        '__vite__mapDeps([0]); function mutate(_strings, box) { box.f[0] = "./last.js"; } mutate`${{...__vite__mapDeps}}`;',
+    },
+    {
+      file: "spread-cache-call-argument.js",
+      mutation:
+        '__vite__mapDeps([0]); function mutate(cache) { cache[0] = "./last.js"; } mutate(...[__vite__mapDeps.f]);',
+    },
+    {
+      file: "independent-tagged-template-argument.js",
+      mutation:
+        '__vite__mapDeps([0]); function mutate(_strings, cache) { cache[0] = "./last.js"; } mutate`${[]}`;',
+      kept: true,
+    },
+    {
+      file: "await-thenable-cache.js",
+      mutation:
+        '__vite__mapDeps([0]); const cache = __vite__mapDeps.f; cache.then = function(resolve) { this[0] = "./last.js"; resolve(); }; await cache;',
+    },
+    {
+      file: "await-thenable-container.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {cache: __vite__mapDeps.f, then(resolve) { this.cache[0] = "./last.js"; resolve(); }}; await box;',
+    },
+    {
+      file: "template-cache-coercion.js",
+      mutation:
+        '__vite__mapDeps([0]); const cache = __vite__mapDeps.f; cache.toString = function() { this[0] = "./last.js"; return ""; }; `${cache}`;',
+    },
+    {
+      file: "binary-cache-coercion.js",
+      mutation:
+        '__vite__mapDeps([0]); const cache = __vite__mapDeps.f; cache.valueOf = function() { this[0] = "./last.js"; return 1; }; cache + 1;',
+    },
+    {
+      file: "unary-cache-coercion.js",
+      mutation:
+        '__vite__mapDeps([0]); const cache = __vite__mapDeps.f; cache.valueOf = function() { this[0] = "./last.js"; return 1; }; +cache;',
+    },
+    {
+      file: "computed-key-container-coercion.js",
+      mutation:
+        '__vite__mapDeps([0]); const key = {cache: __vite__mapDeps.f, toString() { this.cache[0] = "./last.js"; return "key"; }}; ({})[key];',
+    },
+    {
+      file: "independent-primitive-coercions.js",
+      mutation:
+        "__vite__mapDeps([0]); const first = __vite__mapDeps.f[0]; await first; `${first}`; first + 1; +first; ({})[first];",
+      kept: true,
+    },
+    {
+      file: "getter-receiver-cache-effect.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {cache: __vite__mapDeps.f, get trigger() { this.cache[0] = "./last.js"; return 1; }}; box.trigger;',
+    },
+    {
+      file: "array-spread-iterator-cache-effect.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {cache: __vite__mapDeps.f, *[Symbol.iterator]() { this.cache[0] = "./last.js"; yield 0; }}; [...box];',
+    },
+    {
+      file: "object-spread-getter-cache-effect.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {cache: __vite__mapDeps.f, get trigger() { this.cache[0] = "./last.js"; return 1; }}; ({...box});',
+    },
+    {
+      file: "ordinary-cache-iteration.js",
+      mutation:
+        "__vite__mapDeps([0]); const cache = __vite__mapDeps.f; [...cache]; for (const slot of cache) {} const {0: first} = cache;",
+      kept: true,
+    },
     {
       file: "detached-through-container-alias.js",
       mutation:
@@ -992,6 +1277,22 @@ const allScenarios: readonly ViteScenario[] = [
       file: "object-create-replacement.js",
       mutation:
         '__vite__mapDeps([0]); const copy = Object.create(__vite__mapDeps); copy.f = []; copy.f[0] = "./last.js";',
+      kept: true,
+    },
+    {
+      file: "frozen-helper-prototype-replacement.js",
+      mutation:
+        '__vite__mapDeps([0]); Object.freeze(__vite__mapDeps); const box = Object.create(__vite__mapDeps); box.f = []; box.f[0] = "./last.js";',
+    },
+    {
+      file: "readonly-helper-prototype-replacement.js",
+      mutation:
+        '__vite__mapDeps([0]); Object.defineProperty(__vite__mapDeps, "f", {value: __vite__mapDeps.f, writable: false}); const box = Object.create(__vite__mapDeps); box.f = []; box.f[0] = "./last.js";',
+    },
+    {
+      file: "sealed-helper-prototype-replacement.js",
+      mutation:
+        '__vite__mapDeps([0]); Object.seal(__vite__mapDeps); const box = Object.create(__vite__mapDeps); box.f = []; box.f[0] = "./last.js";',
       kept: true,
     },
     {

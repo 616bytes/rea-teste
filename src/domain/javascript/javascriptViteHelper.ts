@@ -193,15 +193,14 @@ const guardedDefaultOperations = (
     returned = statement.argument;
     for (let index = 0; index < body.body.length - 1; index++) {
       const guard = body.body[index];
-      if (guard !== undefined) operations.push(guard);
+      if (
+        guard !== undefined &&
+        !appendGuardedDefaultOperations(guard, operations)
+      )
+        return undefined;
     }
   }
-  const expression = unwrapJavaScriptExpression(returned).node;
-  if (t.isSequenceExpression(expression)) {
-    if (expression.expressions.length !== 3 - operations.length)
-      return undefined;
-    for (const operation of expression.expressions) operations.push(operation);
-  } else operations.push(expression);
+  if (!appendGuardedDefaultOperations(returned, operations)) return undefined;
   const [mapGuard, dependenciesGuard, projection] = operations;
   return mapGuard !== undefined &&
     dependenciesGuard !== undefined &&
@@ -209,6 +208,36 @@ const guardedDefaultOperations = (
     operations.length === 3
     ? [mapGuard, dependenciesGuard, projection]
     : undefined;
+};
+
+/** Comma grouping does not change the ordered guards or returned projection. */
+const appendGuardedDefaultOperations = (
+  node: t.Node,
+  operations: t.Node[],
+): boolean => {
+  const pending = [node];
+  while (pending.length > 0) {
+    const operation = pending.pop();
+    if (operation === undefined) continue;
+    const expression = unwrapJavaScriptExpression(
+      t.isExpressionStatement(operation) ? operation.expression : operation,
+    ).node;
+    if (t.isSequenceExpression(expression)) {
+      if (
+        operations.length + pending.length + expression.expressions.length >
+        3
+      )
+        return false;
+      for (let index = expression.expressions.length - 1; index >= 0; index--) {
+        const child = expression.expressions[index];
+        if (child !== undefined) pending.push(child);
+      }
+    } else {
+      if (operations.length === 3) return false;
+      operations.push(expression);
+    }
+  }
+  return true;
 };
 
 const assignmentGuardedParameterDefault = (

@@ -157,6 +157,7 @@ it("retains a completed digest when cancellation follows successful close", asyn
       );
     expect(failure.path).toBe(path);
     expect(failure.reason).toBe(reason);
+    expect(failure.owner).toBe(observed);
     expect(failure.outcome).toEqual({
       kind: "completed",
       value: {

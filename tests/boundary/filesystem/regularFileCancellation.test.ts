@@ -1,5 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
-import { readFile, writeFile } from "node:fs/promises";
+import { open, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
@@ -17,10 +17,15 @@ it("keeps a caller-selected cancellation reason opaque", async () => {
   const root = await createTestTempDirectory("rea-file-caller-reason-");
   const path = join(root, "input.txt");
   await writeFile(path, "fixture bytes");
+  const callerOwner = new OwnedFileHandle(await open(path, "r"));
+  await callerOwner.close();
   const reason = new RegularFileCancelled(
     "/caller-selected-path",
-    { kind: "completed", value: "caller-owned value" },
-    new Error("nested reason"),
+    callerOwner,
+    {
+      outcome: { kind: "completed", value: "caller-owned value" },
+      reason: new Error("nested reason"),
+    },
   );
   const controller = new AbortController();
   controller.abort(reason);
@@ -36,6 +41,57 @@ it("keeps a caller-selected cancellation reason opaque", async () => {
     await resources.close();
   }
 });
+
+it.each([false, true])(
+  "preserves a nested read cancellation with the same signal=%s",
+  async (sameSignal) => {
+    const root = await createTestTempDirectory("rea-nested-file-cancel-");
+    const path = join(root, "input.txt");
+    const bytes = Buffer.from("nested read bytes");
+    await writeFile(path, bytes);
+    const outer = new AbortController();
+    const inner = sameSignal ? outer : new AbortController();
+    const reason = new Error("nested caller cancellation");
+    let outerHandle: FileHandle | undefined;
+    let innerHandle: FileHandle | undefined;
+    try {
+      const failure: unknown = await withRegularFile(
+        path,
+        async (handle) => {
+          outerHandle = handle;
+          return withOwnedRegularFile(
+            path,
+            { signal: inner.signal },
+            async (nested) => {
+              innerHandle = nested;
+              const value = await nested.readFile();
+              const close = nested.close.bind(nested);
+              vi.spyOn(nested, "close").mockImplementation(async () => {
+                await close();
+                inner.abort(reason);
+              });
+              return value;
+            },
+          );
+        },
+        { signal: outer.signal },
+      ).catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(RegularFileCancelled);
+      if (!(failure instanceof RegularFileCancelled))
+        throw new Error(
+          "Expected the nested operation's completed observations",
+        );
+      expect(failure.path).toBe(path);
+      expect(failure.reason).toBe(reason);
+      expect(failure.outcome).toEqual({ kind: "completed", value: bytes });
+      expect(failure.owner.handle).toBe(innerHandle);
+      expect(outerHandle?.fd).toBe(-1);
+      expect(innerHandle?.fd).toBe(-1);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  },
+);
 
 it.each(
   (["metadata", "close"] as const).flatMap((stage) =>

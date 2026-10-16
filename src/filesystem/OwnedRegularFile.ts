@@ -7,22 +7,31 @@ export type RegularFileOperationOutcome<Value> =
   | { readonly kind: "completed"; readonly value: Value }
   | { readonly kind: "failed"; readonly cause: unknown };
 
+type CompletedRegularFileOutcome<Value> = Extract<
+  RegularFileOperationOutcome<Value>,
+  { readonly kind: "completed" }
+>;
+
 /** Cancellation after confirmed close, retaining the completed physical read. */
 export class RegularFileCancelled<Value = unknown> extends Error {
   readonly _tag = "RegularFileCancelled";
+  readonly outcome: CompletedRegularFileOutcome<Value>;
+  readonly reason: unknown;
 
   constructor(
     readonly path: string,
-    readonly outcome: Extract<
-      RegularFileOperationOutcome<Value>,
-      { readonly kind: "completed" }
-    >,
-    readonly reason: unknown,
+    readonly owner: OwnedFileHandle,
+    completion: {
+      readonly outcome: CompletedRegularFileOutcome<Value>;
+      readonly reason: unknown;
+    },
   ) {
     super(`Regular file operation cancelled after closing ${path}`, {
-      cause: reason,
+      cause: completion.reason,
     });
     this.name = this._tag;
+    this.outcome = completion.outcome;
+    this.reason = completion.reason;
   }
 }
 
@@ -102,7 +111,10 @@ export const withOwnedRegularFile = async <Value>(
   }
   if (outcome.kind === "failed") throw outcome.cause;
   if (options.signal?.aborted === true)
-    throw new RegularFileCancelled(path, outcome, options.signal.reason);
+    throw new RegularFileCancelled(path, owner, {
+      outcome,
+      reason: options.signal.reason,
+    });
   return outcome.value;
 };
 

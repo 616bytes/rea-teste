@@ -70,6 +70,7 @@ export const withRegularFile = async <Value>(
   options: RegularFileReadOptions = {},
 ): Promise<Value> => {
   const { signal, resources } = options;
+  let admitted: FileHandle | undefined;
   const operation = async () => {
     try {
       return await withOwnedRegularFile(
@@ -79,6 +80,7 @@ export const withRegularFile = async <Value>(
           symlinks: options.symlinks ?? "follow",
         },
         async (handle) => {
+          admitted = handle;
           const stats = await handle.stat();
           signal?.throwIfAborted();
           const value = await read(handle, stats);
@@ -97,7 +99,11 @@ export const withRegularFile = async <Value>(
       );
     } catch (cause: unknown) {
       if (signal?.aborted === true && cause === signal.reason) throw cause;
-      if (cause instanceof RegularFileCancelled) throw cause.reason;
+      if (
+        cause instanceof RegularFileCancelled &&
+        cause.owner.handle === admitted
+      )
+        throw cause.reason;
       if (
         !(cause instanceof RegularFileCleanupFailure) ||
         resources === undefined

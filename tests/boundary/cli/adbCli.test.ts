@@ -1,5 +1,5 @@
 import { chmod, lstat, readFile, unlink } from "node:fs/promises";
-import { basename } from "node:path";
+import { basename, dirname } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
@@ -200,18 +200,6 @@ exit 1
     expect(await readFile(workspace.path("events"), "utf8")).toBe(
       "fresh-install\nreplacement\nfresh-install\n",
     );
-    const snapshots = (await readFile(workspace.path("snapshots"), "utf8"))
-      .trim()
-      .split("\n");
-    expect(snapshots).toHaveLength(3);
-    expect(new Set(snapshots).size).toBe(3);
-    for (const snapshot of snapshots) {
-      expect(snapshot).not.toBe(apk);
-      await expect(lstat(dirname(snapshot))).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-    }
-    expect(await readFile(apk, "utf8")).toBe("apk");
     const calls = await readFile(workspace.path("calls"), "utf8");
     const commands = calls
       .split("\0\0")
@@ -225,11 +213,17 @@ exit 1
       ["version"],
       ["-s", "emulator-5554", "install", expect.any(String)],
     ]);
-    for (const command of commands.filter((args) => args[2] === "install")) {
-      const staged = z.string().parse(command.at(-1));
+    const snapshots = commands
+      .filter((args) => args[2] === "install")
+      .map((command) => z.string().parse(command.at(-1)));
+    expect(snapshots).toHaveLength(3);
+    expect(new Set(snapshots).size).toBe(3);
+    for (const staged of snapshots) {
       expect(staged).not.toBe(apk);
       expect(basename(staged)).toBe("app.apk");
-      await expect(lstat(staged)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(lstat(dirname(staged))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     }
     expect(await readFile(apk, "utf8")).toBe("apk");
   },

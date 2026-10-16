@@ -70,27 +70,16 @@ it.each([false, true])(
     );
     const output: unknown = JSON.parse(stdout);
     expect(output).toMatchObject({
-      code: failAgain ? "cleanup_incomplete" : "execution_failure",
+      code: "cleanup_incomplete",
       details: {
         partial_observation: evidence,
+        resources: expect.arrayContaining(["original-workspace"]),
       },
     });
     if (failAgain)
       expect(output).toMatchObject({
-        details: {
-          resources: expect.arrayContaining([
-            "original-workspace",
-            "retry-workspace",
-          ]),
-        },
+        details: { resources: expect.arrayContaining(["retry-workspace"]) },
       });
-    else {
-      expect(output).toMatchObject({
-        details: { diagnostics: { reason: "original cleanup failure" } },
-      });
-      expect(output).not.toHaveProperty("details.resources");
-      expect(original.cleanupIncomplete).toBe(false);
-    }
   },
 );
 

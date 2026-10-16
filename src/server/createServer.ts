@@ -175,8 +175,6 @@ export interface CreateServerOptions {
   readonly adbDeviceAnalysis?: AdbDeviceAnalysisPort;
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
-  /** Shared startup providers remain owned by the caller across SDK probes. */
-  readonly optionalProviderOwnership?: "server" | "caller";
   readonly electronObservation?: ElectronObservationPort;
   /** Selects who closes the shared optional observation providers. */
   readonly optionalObservationProviderOwner?: "server" | "caller";
@@ -392,7 +390,7 @@ export const createServer = (
       peResources.close(),
       webNetworkCapture.close(),
       javascriptRecovery.close?.() ?? Promise.resolve(),
-      ...(options.optionalProviderOwnership === "caller"
+      ...(options.optionalObservationProviderOwner === "caller"
         ? []
         : [
             options.browserObservation?.close?.() ?? Promise.resolve(),

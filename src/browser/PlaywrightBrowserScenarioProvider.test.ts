@@ -706,14 +706,11 @@ describe("PlaywrightBrowserScenarioProvider request cancellation", () => {
     const result = await provider.captureScenario(scenario(), {
       signal: controller.signal,
     });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "cancelled",
-      details: {
-        cleanup: "complete",
-        partial_observation: {
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        partialObservation: {
           kind: "browser-scenario-observation",
           capture: {
             browser: { cleanup: "terminated-owned-process" },
@@ -723,6 +720,24 @@ describe("PlaywrightBrowserScenarioProvider request cancellation", () => {
         },
       },
     });
+    if (result.ok) throw new Error("Expected active scenario cancellation");
+    expect(result.error.cause).toBe(cancellationReason);
+    expect(session.closeCalls).toBe(1);
+  });
+
+  it("retains the completed capture when cancellation arrives during final close", async () => {
+    const controller = new AbortController();
+    const cancellationReason = new Error("cancel final close");
+    const session = new FakeSession("launch");
+    session.onClose = () => controller.abort(cancellationReason);
+    const provider = new PlaywrightBrowserScenarioProvider(() =>
+      Promise.resolve(session),
+    );
+
+    const result = await provider.captureScenario(scenario(), {
+      signal: controller.signal,
+    });
+
     expect(session.closeCalls).toBe(1);
     expect(result).toMatchObject({
       ok: false,

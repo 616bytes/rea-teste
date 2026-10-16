@@ -339,7 +339,7 @@ const runScenario = async (
     }),
     completeness,
   });
-  if (options.signal?.aborted)
+  if (signalIsAborted(options.signal))
     throw new AnalysisCancelledError(OPERATION, {
       cause: options.signal?.reason,
       partialObservation: {
@@ -348,7 +348,7 @@ const runScenario = async (
           ...capture,
           limitations: [
             ...capture.limitations,
-            "The request was cancelled; collected scenario observations and confirmed browser cleanup are retained.",
+            "Scenario capture was cancelled; collected steps, observations, and cleanup state are retained.",
           ],
         },
       },

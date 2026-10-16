@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
   access,
   copyFile,
   mkdtemp,
   open,
+  readFile,
   readdir,
   rm,
   writeFile,
@@ -19,6 +21,11 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
+import { computeApkContentDigest } from "../dist/domain/apkSignature/apkContentDigest.js";
+import {
+  locateApkSigningBlock,
+  parseZipTail,
+} from "../dist/domain/apkSignature/apkSigningBlock.js";
 import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
@@ -96,6 +103,51 @@ const run = async (tool, args) =>
     timeout: 180_000,
     maxBuffer: 64 * 1024 * 1024,
   });
+
+const nodeHash = (algorithm) => {
+  const hash = createHash(algorithm);
+  return {
+    update: (data) => {
+      hash.update(data);
+    },
+    digest: () => new Uint8Array(hash.digest()),
+  };
+};
+
+/** Change one entry byte and replace every declared content digest in the block. */
+const forgeDeclaredDigests = async (original) => {
+  const bytes = Buffer.from(original);
+  const tail = parseZipTail(bytes);
+  assert.ok(tail.ok);
+  const block = locateApkSigningBlock(bytes, tail.value);
+  assert.ok(block.ok && block.value !== null);
+  const { blockStart } = block.value;
+  const digests = () =>
+    ["sha256", "sha512"].map((algorithm) =>
+      Buffer.from(
+        computeApkContentDigest(
+          bytes,
+          { tail: tail.value, blockStart, algorithm },
+          nodeHash,
+        ),
+      ),
+    );
+  const before = digests();
+  bytes[40] = (bytes[40] ?? 0) ^ 0xff;
+  const after = digests();
+  let replaced = 0;
+  for (const [index, old] of before.entries())
+    for (
+      let at = bytes.indexOf(old, blockStart);
+      at >= 0 && at < tail.value.centralDirectoryOffset;
+      at = bytes.indexOf(old, at + old.length)
+    ) {
+      after[index].copy(bytes, at);
+      replaced += 1;
+    }
+  assert.ok(replaced > 0, "the signed data must declare a content digest");
+  return bytes;
+};
 
 /** The SDK's own verdict, parsed from `apksigner verify -v --print-certs`. */
 const oracleVerify = async (apk) => {
@@ -284,7 +336,8 @@ try {
   );
   assert.equal(fullReport.posture.v1_only, false);
 
-  // 2) v1-only signing: the strippable downgrade surface. Android requires v2+
+  // 2) v1-only signing (X-Android-APK-Signed is not read, so this cannot be
+  //    told apart from a v2/v3 block that was removed). Android requires v2+
   //    for targetSdk >= 30, so this case uses a legacy-target base APK. REA's
   //    v1.present is structural; apksigner's "verified using v1" is platform
   //    applicability and is false for minSdk >= 24 even when CERT.SF exists.
@@ -428,8 +481,15 @@ try {
   assert.equal(stampedReport.source_stamp.present, true);
   assert.equal(stampedReport.posture.source_stamp_present, true);
   assert.equal(stampedReport.posture.self_consistent, true);
+  assert.equal(stampedReport.source_stamp.decode_error, null);
+  assert.equal(
+    stampedReport.source_stamp.certificate?.sha256_fingerprint,
+    fullOracle.signerSha256,
+    "REA must read the declared stamp certificate (k1)",
+  );
 
-  // 4) Tampering: one flipped entry byte breaks both apksigner and self-consistency.
+  // 4) One changed entry byte with the declared digest left alone: apksigner
+  //    rejects it and the declared digest no longer matches the bytes.
   const tampered = join(workspace, "tampered.apk");
   await copyFile(full, tampered);
   const handle = await open(tampered, "r+");
@@ -448,6 +508,24 @@ try {
     tamperedReport.posture.self_consistent,
     false,
     "REA must report the tampered APK as not self-consistent",
+  );
+
+  // 4b) The same byte change with the declared digests recomputed and written
+  //     back: apksigner still rejects it (the signature no longer verifies),
+  //     while the declared digests match the bytes. self_consistent is a
+  //     digest comparison, not a signature verification.
+  const forged = join(workspace, "forged-digest.apk");
+  await writeFile(forged, await forgeDeclaredDigests(await readFile(full)));
+  assert.equal(
+    (await oracleVerify(forged)).verifies,
+    false,
+    "oracle must reject the APK with recomputed declared digests",
+  );
+  const forgedReport = await inspectBoth(forged);
+  assert.equal(
+    forgedReport.posture.self_consistent,
+    true,
+    "a recomputed declared digest matches the bytes without a valid signature",
   );
 
   // 5) Error surface: a non-ZIP file is an unsupported target, not a crash.

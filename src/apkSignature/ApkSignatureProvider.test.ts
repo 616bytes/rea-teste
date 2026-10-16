@@ -22,6 +22,11 @@ type Report = {
     }
   >;
   posture: Record<string, unknown>;
+  source_stamp: {
+    present: boolean;
+    certificate: { sha256_fingerprint: string } | null;
+    decode_error: string | null;
+  };
 };
 
 const zipOf = async (names: readonly string[]): Promise<Uint8Array> => {
@@ -88,6 +93,7 @@ const syntheticSigned = (
 };
 
 const V2 = 0x7109871a;
+const STAMP_V2 = 0x6dff800d;
 const V31 = 0x1b93ad61;
 
 const BOGUS_DIGEST = [
@@ -199,6 +205,63 @@ describe("ApkSignatureProvider without the Android SDK", () => {
       { algorithm: "sha256", matches_apk: false },
     ]);
     expect(r.posture.self_consistent).toBe(false);
+  });
+});
+
+describe("ApkSignatureProvider declared facts", () => {
+  it("reads the declared source-stamp certificate, or says why it could not", async () => {
+    const stamp = Uint8Array.from(lp([...lp(BOGUS_CERT), ...seq([])]));
+    const read = await reportOf(
+      await write(
+        "stamped.apk",
+        syntheticSigned([
+          { id: V2, value: bogusV2Value() },
+          { id: STAMP_V2, value: stamp },
+        ]),
+      ),
+    );
+    expect(read.source_stamp).toMatchObject({
+      present: true,
+      certificate: {
+        sha256_fingerprint: createHash("sha256")
+          .update(Uint8Array.from(BOGUS_CERT))
+          .digest("hex"),
+      },
+      decode_error: null,
+    });
+
+    const damaged = await reportOf(
+      await write(
+        "stamp-damaged.apk",
+        syntheticSigned([
+          { id: V2, value: bogusV2Value() },
+          { id: STAMP_V2, value: Uint8Array.from(u32(64)) },
+        ]),
+      ),
+    );
+    expect(damaged.source_stamp).toEqual({
+      present: true,
+      certificate: null,
+      decode_error: "source stamp data truncated",
+    });
+  });
+
+  it("reads v1 signing in META-INF subdirectories only for paired blocks", async () => {
+    const nested = await reportOf(
+      await write(
+        "v1-nested.apk",
+        await zipOf(["META-INF/a/CERT.SF", "META-INF/a/CERT.RSA"]),
+      ),
+    );
+    expect(nested.schemes.v1!.present).toBe(true);
+    const unpaired = await reportOf(
+      await write(
+        "v1-unpaired.apk",
+        await zipOf(["META-INF/RSA1.SF", "META-INF/OTHER.RSA"]),
+      ),
+    );
+    expect(unpaired.schemes.v1!.present).toBe(false);
+    expect(unpaired.posture.v1_only).toBe(false);
   });
 });
 

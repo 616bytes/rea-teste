@@ -26,6 +26,7 @@ import {
   contentDigestAlgorithm,
   decodeRotationLineage,
   decodeSigners,
+  decodeSourceStampCertificate,
   PROOF_OF_ROTATION_ATTR_ID,
   type ApkLineageNode,
   type ApkSchemeError,
@@ -42,7 +43,7 @@ import {
   type HashFactory,
 } from "../domain/apkSignature/apkContentDigest.js";
 import {
-  centralDirectoryMetaInfNames,
+  centralDirectoryV1SignatureNames,
   detectV1Signature,
 } from "../domain/apkSignature/apkV1Signature.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -339,7 +340,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     const block = locateApkSigningBlock(bytes, tail.value);
     if (!block.ok) return err(mapApkBlockError(block.error, artifact.path));
 
-    const names = centralDirectoryMetaInfNames(
+    const names = centralDirectoryV1SignatureNames(
       bytes,
       tail.value.centralDirectoryOffset,
       tail.value.centralDirectorySize,
@@ -371,18 +372,15 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     const v3signers = v3.value.signers.map((s) => v3Signer(s, matcher));
     const v31signers = v31.value.signers.map((s) => v3Signer(s, matcher));
 
-    const sourceStampPresent =
-      block.value !== null &&
-      block.value.pairs.some(
-        (p) =>
-          p.id === APK_BLOCK_ID.sourceStampV1 ||
-          p.id === APK_BLOCK_ID.sourceStampV2,
-      );
+    const sourceStamp = sourceStampFacts(block.value);
     const rotationPresent = [...v3signers, ...v31signers].some(
       (s) => s.rotation.present,
     );
     const lineageFingerprints = [...v3signers, ...v31signers].flatMap(
       (signer) => lineageFingerprintsOf(signer.rotation.lineage),
+    );
+    const lineageUnknown = [...v3signers, ...v31signers].some(
+      (signer) => signer.rotation.decode_error !== null,
     );
 
     const result: ApkSignatureResult = {
@@ -398,18 +396,19 @@ export class ApkSignatureProvider implements ApkSignaturePort {
         v3: { present: v3.value.present, signers: v3signers },
         "v3.1": { present: v31.value.present, signers: v31signers },
       },
-      source_stamp: { present: sourceStampPresent, certificate: null },
+      source_stamp: sourceStamp,
       posture: deriveApkPosture({
         v1Present: v1.present,
         v2Present: v2.value.present,
         v3Present: v3.value.present,
         v31Present: v31.value.present,
-        sourceStampPresent,
+        sourceStampPresent: sourceStamp.present,
         rotationPresent,
         schemeSignerFingerprints: [v2signers, v3signers, v31signers].map(
           signerFingerprintsOf,
         ),
         lineageFingerprints,
+        lineageUnknown,
         selfConsistent: selfConsistency([
           ...v2signers,
           ...v3signers,
@@ -438,6 +437,32 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     );
   }
 }
+
+/** The declared stamp certificate, preferring the V2 stamp block as apksig does. */
+const sourceStampFacts = (
+  block: ApkSigningBlock | null,
+): ApkSignatureResult["source_stamp"] => {
+  const pair =
+    block?.pairs.find((p) => p.id === APK_BLOCK_ID.sourceStampV2) ??
+    block?.pairs.find((p) => p.id === APK_BLOCK_ID.sourceStampV1);
+  if (pair === undefined)
+    return { present: false, certificate: null, decode_error: null };
+  const certificate = decodeSourceStampCertificate(pair.value);
+  return certificate.ok
+    ? {
+        present: true,
+        certificate: certificateFacts(certificate.value),
+        decode_error: null,
+      }
+    : {
+        present: true,
+        certificate: null,
+        decode_error:
+          certificate.error.kind === "malformed-signer"
+            ? certificate.error.detail
+            : `more ${certificate.error.resource} than ${String(certificate.error.limit)}`,
+      };
+};
 
 /** Decode one scheme's signers and their declared lineages, mapping failures by scheme. */
 const decodeScheme = (

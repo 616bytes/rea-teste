@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  centralDirectoryMetaInfNames,
+  centralDirectoryV1SignatureNames,
   detectV1Signature,
-  MAX_META_INF_ENTRIES,
+  MAX_V1_SIGNATURE_ENTRIES,
 } from "./apkV1Signature.js";
 
 /** A central-directory file header (46 fixed bytes) for one entry name. */
@@ -28,10 +28,16 @@ describe("APK v1 (JAR) signature detection", () => {
     "META-INF/CERT.RSA",
   ];
 
-  it("walks every record but keeps only top-level META-INF names", () => {
-    const all = [...names, "META-INF/services/x.Y", "lib/META-INF/z.SF"];
+  it("walks every record and keeps the META-INF signing names at any depth", () => {
+    const all = [
+      ...names,
+      "META-INF/services/x.Y",
+      "META-INF/sub/S.SF",
+      "META-INF/sub/S.EC",
+      "lib/META-INF/z.SF",
+    ];
     const bytes = centralDirectory(all);
-    const result = centralDirectoryMetaInfNames(
+    const result = centralDirectoryV1SignatureNames(
       bytes,
       0,
       bytes.length,
@@ -43,16 +49,41 @@ describe("APK v1 (JAR) signature detection", () => {
       "META-INF/MANIFEST.MF",
       "META-INF/CERT.SF",
       "META-INF/CERT.RSA",
+      "META-INF/sub/S.SF",
+      "META-INF/sub/S.EC",
     ]);
   });
 
-  it("refuses more top-level META-INF entries than a signed archive needs", () => {
+  it("pairs signature files and blocks as apksig does", () => {
+    expect(
+      detectV1Signature(["META-INF/sub/CERT.SF", "META-INF/sub/CERT.DSA"]),
+    ).toEqual({
+      present: true,
+      hasManifest: false,
+      signatureFiles: ["META-INF/sub/CERT.SF"],
+      blockFiles: ["META-INF/sub/CERT.DSA"],
+    });
+    // A block without its own .SF partner is not a v1 signer.
+    expect(
+      detectV1Signature([
+        "META-INF/MANIFEST.MF",
+        "META-INF/RSA1.SF",
+        "META-INF/OTHER.RSA",
+      ]).present,
+    ).toBe(false);
+    // Suffixes are case-sensitive.
+    expect(
+      detectV1Signature(["META-INF/CERT.sf", "META-INF/CERT.rsa"]).present,
+    ).toBe(false);
+  });
+
+  it("refuses more META-INF signing entries than a signed archive needs", () => {
     const many = Array.from(
-      { length: MAX_META_INF_ENTRIES + 1 },
+      { length: MAX_V1_SIGNATURE_ENTRIES + 1 },
       (_, i) => `META-INF/F${String(i)}.SF`,
     );
     const bytes = centralDirectory(many);
-    const result = centralDirectoryMetaInfNames(
+    const result = centralDirectoryV1SignatureNames(
       bytes,
       0,
       bytes.length,
@@ -62,14 +93,14 @@ describe("APK v1 (JAR) signature detection", () => {
     if (result.ok) return;
     expect(result.error).toEqual({
       kind: "budget-exceeded",
-      resource: "meta-inf-entries",
-      limit: MAX_META_INF_ENTRIES,
+      resource: "v1-signature-entries",
+      limit: MAX_V1_SIGNATURE_ENTRIES,
     });
   });
 
   it("detects a v1-signed APK from its META-INF files", () => {
     const bytes = centralDirectory(names);
-    const result = centralDirectoryMetaInfNames(
+    const result = centralDirectoryV1SignatureNames(
       bytes,
       0,
       bytes.length,
@@ -88,7 +119,7 @@ describe("APK v1 (JAR) signature detection", () => {
 
   it("refuses a directory that ends before its declared record count", () => {
     const bytes = centralDirectory(names);
-    const result = centralDirectoryMetaInfNames(
+    const result = centralDirectoryV1SignatureNames(
       bytes,
       0,
       bytes.length - 3,
@@ -101,7 +132,7 @@ describe("APK v1 (JAR) signature detection", () => {
 
   it("refuses an under-declared record count instead of hiding entries", () => {
     const bytes = centralDirectory(names);
-    const result = centralDirectoryMetaInfNames(bytes, 0, bytes.length, 1);
+    const result = centralDirectoryV1SignatureNames(bytes, 0, bytes.length, 1);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toMatchObject({

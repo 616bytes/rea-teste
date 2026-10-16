@@ -91,8 +91,8 @@ export const mapCentralDirectoryError = (
     ? new AnalysisResourceConstraintError(
         OPERATION,
         "capacity",
-        `The central directory holds more than ${String(error.limit)} top-level META-INF entries.`,
-        { max_meta_inf_entries: error.limit },
+        `The central directory holds more than ${String(error.limit)} META-INF v1 signing entries.`,
+        { max_v1_signature_entries: error.limit },
       )
     : inputError(
         `Malformed ZIP central directory at byte ${String(error.offset)}: ${error.detail}.`,

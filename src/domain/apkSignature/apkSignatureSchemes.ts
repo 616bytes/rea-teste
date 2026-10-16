@@ -247,6 +247,23 @@ export const decodeRotationLineage = (
   return ok(nodes);
 };
 
+/**
+ * Decode the stamp certificate from a source-stamp block value (apksig
+ * V1/V2 SourceStampVerifier): `lp(stampData)`, where `stampData` begins with
+ * `lp(certificate DER)` followed by the signed digests and signatures. The
+ * stamp signatures are NOT verified: this is the certificate the APK declares.
+ */
+export const decodeSourceStampCertificate = (
+  value: Uint8Array,
+): Result<Uint8Array, ApkSchemeError> => {
+  const stampData = new LeReader(value).lenChunk();
+  if (stampData === null) return malformed("source stamp data truncated");
+  const certificate = new LeReader(stampData).lenChunk();
+  if (certificate === null || certificate.length === 0)
+    return malformed("source stamp certificate missing");
+  return ok(certificate);
+};
+
 /** Map a signature-algorithm id to the content-digest algorithm it uses. */
 export const contentDigestAlgorithm = (
   algorithmId: number,

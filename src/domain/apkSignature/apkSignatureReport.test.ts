@@ -16,6 +16,7 @@ describe("deriveApkPosture", () => {
     rotationPresent: false,
     schemeSignerFingerprints: [] as (string | null)[][],
     lineageFingerprints: [] as string[],
+    lineageUnknown: false,
     selfConsistent: null,
   };
 
@@ -72,6 +73,35 @@ describe("deriveApkPosture", () => {
       lineageFingerprints: ["old", "new"],
     });
     expect(p.signer_change_declared_by_rotation).toBe(false);
+  });
+
+  it("leaves a declared signer change unknown when a lineage or identity is unknown", () => {
+    const changed = {
+      ...base,
+      v2Present: true,
+      v3Present: true,
+      rotationPresent: true,
+      schemeSignerFingerprints: [["old"], ["new"]],
+    };
+    expect(
+      deriveApkPosture({ ...changed, lineageUnknown: true })
+        .signer_change_declared_by_rotation,
+    ).toBeNull();
+    expect(
+      deriveApkPosture({
+        ...changed,
+        schemeSignerFingerprints: [["old"], [null]],
+        lineageFingerprints: ["old"],
+      }).signer_change_declared_by_rotation,
+    ).toBeNull();
+    // An undecoded lineage cannot hide a change when the signers agree.
+    expect(
+      deriveApkPosture({
+        ...changed,
+        schemeSignerFingerprints: [["same"], ["same"]],
+        lineageUnknown: true,
+      }).signer_change_declared_by_rotation,
+    ).toBe(false);
   });
 
   it("leaves agreement unknown when a signer carries no certificate", () => {

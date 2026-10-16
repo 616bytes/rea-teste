@@ -1,7 +1,9 @@
 /**
- * Recompute the APK Signature Scheme v2/v3 content digest so a signer's signed
- * digest can be compared with the current bytes ("does the signature cover
- * these bytes?"). This is an integrity observation, not a trust verdict.
+ * Recompute the APK Signature Scheme v2/v3 content digest so a signer's
+ * declared digest can be compared with the current bytes. A match only shows
+ * that the declared digest equals the bytes; it is not a signature
+ * verification, because anyone who changes the bytes can recompute the digest
+ * and replace the declared one.
  *
  * The digest covers three sections, as if the APK Signing Block were absent:
  *   1. ZIP entry contents: [0, blockStart)

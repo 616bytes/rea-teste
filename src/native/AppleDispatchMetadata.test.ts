@@ -501,6 +501,129 @@ describe("malformed Objective-C property records", () => {
   );
 });
 
+describe("Swift class vtable recovery", () => {
+  const swiftVtableFixture = (names: readonly [string, string]) => {
+    const bytes = Buffer.alloc(4096);
+    const u32 = (at: number, value: number) => bytes.writeUInt32LE(value, at);
+    const relative = (at: number, target: number) =>
+      bytes.writeInt32LE(target - at, at);
+    u32(0, 0xfeedfacf);
+    u32(4, 0x0100000c);
+    u32(12, 2);
+    u32(16, 1);
+    u32(20, 152);
+    u32(32, 0x19);
+    u32(36, 152);
+    bytes.write("__TEXT", 40);
+    bytes.writeBigUInt64LE(base, 56);
+    bytes.writeBigUInt64LE(4096n, 64);
+    bytes.writeBigUInt64LE(4096n, 80);
+    u32(88, 5);
+    u32(92, 5);
+    u32(96, 1);
+    bytes.write("__swift5_types", 104);
+    bytes.write("__TEXT", 120);
+    bytes.writeBigUInt64LE(base + 0x200n, 136);
+    bytes.writeBigUInt64LE(8n, 144);
+    u32(152, 0x200);
+    for (const [index, descriptor, name, implementation] of [
+      [0, 0x300, 0x500, 0x800],
+      [1, 0x380, 0x520, 0x810],
+    ] as const) {
+      relative(0x200 + index * 4, descriptor);
+      u32(descriptor, 0x80000010);
+      relative(descriptor + 8, name);
+      u32(descriptor + 28, 1);
+      u32(descriptor + 48, 1);
+      relative(descriptor + 56, implementation);
+      bytes.write(`${names[index]}\0`, name);
+    }
+    return bytes;
+  };
+
+  it.each([0, 1] as const)(
+    "retains valid siblings when Swift class name %i is empty",
+    (emptyIndex) => {
+      const names: [string, string] = ["KeptClass", "LaterClass"];
+      names[emptyIndex] = "";
+      const result = decodeAppleDispatchMetadata(
+        swiftVtableFixture(names),
+        100,
+        provenance,
+      );
+      expect(result.swift_dispatch_slots.map(({ owner }) => owner)).toEqual(
+        names.filter((name) => name !== ""),
+      );
+      expect(
+        result.coverage.find(
+          ({ facet }) => facet === "swift_class_vtable_descriptors",
+        ),
+      ).toMatchObject({
+        status: "partial",
+        examined: 2,
+        decoded: 1,
+        reason: expect.stringContaining(
+          `vtable_decode_failed at 0x${(base + 0x200n + BigInt(emptyIndex * 4)).toString(16)}`,
+        ),
+      });
+    },
+  );
+
+  it("preserves valid owner names and complete coverage", () => {
+    const names = ["KeptClass", " LaterClass "] as const;
+    const result = decodeAppleDispatchMetadata(
+      swiftVtableFixture(names),
+      100,
+      provenance,
+    );
+    expect(result.swift_dispatch_slots.map(({ owner }) => owner)).toEqual(
+      names,
+    );
+    expect(
+      result.coverage.find(
+        ({ facet }) => facet === "swift_class_vtable_descriptors",
+      ),
+    ).toMatchObject({ status: "complete", examined: 2, decoded: 2 });
+  });
+
+  it("retains valid siblings when a Swift class name is unmapped", () => {
+    const bytes = swiftVtableFixture(["KeptClass", "LaterClass"]);
+    bytes.writeInt32LE(0x5000 - 0x388, 0x388);
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.swift_dispatch_slots.map(({ owner }) => owner)).toEqual([
+      "KeptClass",
+    ]);
+    expect(
+      result.coverage.find(
+        ({ facet }) => facet === "swift_class_vtable_descriptors",
+      ),
+    ).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining("vtable_decode_failed at 0x100000204"),
+    });
+  });
+
+  it("keeps malformed class recovery within the shared record budget", () => {
+    const result = decodeAppleDispatchMetadata(
+      swiftVtableFixture(["", "LaterClass"]),
+      3,
+      provenance,
+    );
+    expect(result.swift_dispatch_slots).toEqual([]);
+    expect(result.relative_pointers).toHaveLength(2);
+    expect(
+      result.coverage.find(
+        ({ facet }) => facet === "swift_class_vtable_descriptors",
+      ),
+    ).toMatchObject({
+      status: "partial",
+      examined: 1,
+      decoded: 0,
+      reason: expect.stringContaining("max_records_reached"),
+    });
+  });
+});
+
 describe("malformed Apple dispatch metadata", () => {
   it("retains valid class siblings when one class has an empty name", () => {
     const result = decodeAppleDispatchMetadata(

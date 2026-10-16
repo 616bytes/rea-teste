@@ -62,6 +62,33 @@ const writeCaptures = async (
   return paths;
 };
 
+const scriptGroupCapture = (texts: readonly (string | null)[]) => {
+  const capture = scriptCapture(texts[0] ?? null);
+  const base = capture.inspection.scripts.items[0]!.script_key;
+  const items = texts.map(
+    (text) => scriptCapture(text).inspection.scripts.items[0]!,
+  );
+  const sourceOrder = (script: (typeof items)[number]) =>
+    script.source.included
+      ? script.source.artifact.sha256
+      : script.source.reason;
+  items.sort((left, right) =>
+    sourceOrder(left) < sourceOrder(right)
+      ? -1
+      : sourceOrder(left) > sourceOrder(right)
+        ? 1
+        : 0,
+  );
+  capture.inspection.scripts = {
+    total: items.length,
+    items: items.map((script, index) => ({
+      ...script,
+      script_key: items.length === 1 ? base : `${base}_${String(index + 1)}`,
+    })),
+  };
+  return captureSnapshotSchema.parse(capture);
+};
+
 const compareScripts = async (cli: TestCli, before: string, after: string) => {
   const result = await cli.run({
     arguments: ["compare-web-captures", before, after, "--json"],
@@ -192,6 +219,91 @@ cliTest(
 );
 
 cliTest(
+  "CLI matches unchanged duplicate sources before counting replacements",
+  async ({ cli }) => {
+    const group = scriptGroupCapture([
+      "export let x = 1;\n",
+      "export let x = 2;\n",
+      "export let x = 3;\n",
+    ]);
+    const sources = group.inspection.scripts.items.map((script) => {
+      if (!script.source.included) throw new Error("Expected fixture source");
+      return script.source.artifact.text;
+    });
+    const before = scriptGroupCapture(sources.slice(0, 2));
+    const after = scriptGroupCapture(sources.slice(1));
+    const paths = await writeCaptures([before, after]);
+    for (const [left, right, identity] of [
+      [0, 1, before.inspection.scripts.items[0]!.script_key],
+      [1, 0, after.inspection.scripts.items[1]!.script_key],
+    ] as const) {
+      expect(
+        await compareScripts(cli, paths[left]!, paths[right]!),
+      ).toMatchObject({
+        status: "changed",
+        total_changes: 1,
+        changes: [{ identity, change: "modified" }],
+      });
+    }
+  },
+);
+
+cliTest(
+  "CLI preserves duplicate occurrence counts and original keys across group growth",
+  async ({ cli }) => {
+    const group = scriptGroupCapture([
+      "export let x = 1;\n",
+      "export let x = 2;\n",
+    ]);
+    const sources = group.inspection.scripts.items.map((script) => {
+      if (!script.source.included) throw new Error("Expected fixture source");
+      return script.source.artifact.text;
+    });
+    const before = scriptGroupCapture([sources[1]!]);
+    const paths = await writeCaptures([before, group]);
+    for (const [left, right, change] of [
+      [0, 1, "added"],
+      [1, 0, "removed"],
+    ] as const) {
+      expect(
+        await compareScripts(cli, paths[left]!, paths[right]!),
+      ).toMatchObject({
+        status: "changed",
+        total_changes: 1,
+        changes: [
+          { identity: group.inspection.scripts.items[0]!.script_key, change },
+        ],
+      });
+    }
+  },
+);
+
+cliTest(
+  "CLI preserves repeated digest multiplicity instead of comparing source sets",
+  async ({ cli }) => {
+    const first = "export let x = 1;\n";
+    const second = "export let x = 2;\n";
+    const before = scriptGroupCapture([first, first, second]);
+    const after = scriptGroupCapture([first, second, second]);
+    // Inventory array order is not cross-capture identity either.
+    after.inspection.scripts.items.reverse();
+    const paths = await writeCaptures([before, after]);
+    for (const [left, right] of [
+      [0, 1],
+      [1, 0],
+    ] as const) {
+      expect(
+        await compareScripts(cli, paths[left]!, paths[right]!),
+      ).toMatchObject({
+        status: "changed",
+        total_changes: 1,
+        changes: [{ identity: expect.any(String), change: "modified" }],
+      });
+    }
+  },
+);
+
+cliTest(
   "CLI keeps bare source keys unknown when omissions can hide duplicate members",
   async ({ cli }) => {
     const captures = [
@@ -217,20 +329,15 @@ cliTest(
 cliTest(
   "CLI keeps duplicate source identity unknown across truncated script inventories",
   async ({ cli }) => {
-    const complete = scriptCapture("export let x = 1;\n");
-    const base = complete.inspection.scripts.items[0]!.script_key;
-    complete.inspection.scripts.items.push(
-      scriptCapture("export let x = 2;\n").inspection.scripts.items[0]!,
-      scriptCapture("export let x = 3;\n").inspection.scripts.items[0]!,
+    const complete = scriptGroupCapture([
+      "export let x = 1;\n",
+      "export let x = 2;\n",
+      "export let x = 3;\n",
+    ]);
+    const base = complete.inspection.scripts.items[0]!.script_key.replace(
+      /_1$/u,
+      "",
     );
-    complete.inspection.scripts.items.sort((left, right) => {
-      if (!left.source.included || !right.source.included)
-        throw new Error("Expected retained fixture sources");
-      return left.source.artifact.sha256.localeCompare(
-        right.source.artifact.sha256,
-      );
-    });
-    complete.inspection.scripts.total = 3;
     const captures = [
       [0, 1, 2],
       [0, 1],
@@ -262,21 +369,14 @@ cliTest(
 cliTest(
   "CLI keeps duplicate script source identity unknown when retention renumbers occurrences",
   async ({ cli }) => {
-    const before = scriptCapture("export let x = 1;\n");
-    const base = before.inspection.scripts.items[0]!.script_key;
-    const second = scriptCapture("export let x = 2;\n").inspection.scripts
-      .items[0]!;
-    before.inspection.scripts.items.push(second);
-    before.inspection.scripts.items.sort((left, right) => {
-      if (!left.source.included || !right.source.included)
-        throw new Error("Expected retained fixture sources");
-      return left.source.artifact.sha256.localeCompare(
-        right.source.artifact.sha256,
-      );
-    });
-    for (const [index, script] of before.inspection.scripts.items.entries())
-      script.script_key = `${base}_${String(index + 1)}`;
-    before.inspection.scripts.total = 2;
+    const before = scriptGroupCapture([
+      "export let x = 1;\n",
+      "export let x = 2;\n",
+    ]);
+    const base = before.inspection.scripts.items[0]!.script_key.replace(
+      /_1$/u,
+      "",
+    );
     const after = structuredClone(before);
     // The producer sorts retained digests before this unavailable-source reason.
     after.inspection.scripts.items.reverse();

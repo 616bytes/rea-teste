@@ -286,6 +286,7 @@ export const collectElectronWrappedCallPaths = (
     args: readonly SymbolicValue[],
     context: PathContext,
     invocationNode: t.Node,
+    caller?: SymbolicEnvironment,
   ): void => {
     if (context.active.has(fn.node)) return;
     if (fn.conditionUnresolved === true) {
@@ -297,7 +298,7 @@ export const collectElectronWrappedCallPaths = (
       fn.node.id
         ? fn.node.id.name
         : "closure";
-    walk(fn.node.body, resolver.bind(fn, args, invocationNode), {
+    walk(fn.node.body, resolver.bind(fn, args, invocationNode, caller), {
       ...context,
       steps: [
         ...context.steps,
@@ -571,6 +572,7 @@ export const collectElectronWrappedCallPaths = (
             ],
           },
           node,
+          env,
         );
       } else if (callee.kind === "external") {
         const path = callee.path;

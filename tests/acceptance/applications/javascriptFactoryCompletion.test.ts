@@ -20,6 +20,21 @@ const scenarios = [
     guard: "function unused() { return; }",
     candidate: true,
   },
+  {
+    name: "async-guard",
+    guard: "async function stop(){return false;}if(stop())return;",
+    candidate: false,
+  },
+  {
+    name: "generator-guard",
+    guard: "function* stop(){return false;}if(stop())return;",
+    candidate: false,
+  },
+  {
+    name: "async-generator-guard",
+    guard: "async function* stop(){return false;}if(stop())return;",
+    candidate: false,
+  },
   { name: "true", guard: "if (true) return;", candidate: false },
   { name: "return", guard: "return;", candidate: false },
   { name: "both", guard: "if (flag) return; else return;", candidate: false },
@@ -80,6 +95,68 @@ const scenarios = [
     candidate: false,
   },
   {
+    name: "self-alias",
+    guard: "exports.self=exports;",
+    listenerPath: "self.self.events",
+    candidate: true,
+  },
+  {
+    name: "module-alias",
+    guard: "exports.owner=module;",
+    listenerPath: "owner.exports.events",
+    candidate: true,
+  },
+  {
+    name: "returned-alias",
+    guard: "exports.getSelf=()=>exports;",
+    listenerPath: "getSelf().events",
+    candidate: true,
+  },
+  {
+    name: "self-alias-after-exit",
+    guard: "exports.self=exports;return;",
+    listenerPath: "self.events",
+    candidate: false,
+  },
+  {
+    name: "imported-guard",
+    guard:
+      "exports.stop=true;if(load(1).read(exports))return;exports.stop=false;",
+    candidate: false,
+  },
+  {
+    name: "imported-false-guard",
+    guard:
+      "exports.stop=false;if(load(1).read(exports))return;exports.stop=true;",
+    candidate: true,
+  },
+  {
+    name: "imported-nested-guard",
+    guard:
+      "exports.stop=true;if(load(1).read2(exports))return;exports.stop=false;",
+    candidate: false,
+  },
+  {
+    name: "imported-snapshot-guard",
+    guard:
+      "exports.stop=true;const saved=load(1).read(exports);exports.stop=false;if(saved)return;",
+    candidate: false,
+  },
+  {
+    name: "loaded-imported-snapshot",
+    guard:
+      "exports.stop=true;const saved=load(1).read(exports);exports.stop=false;exports.check=()=>saved;",
+    callerGuard: "if(helper.check())return;",
+    candidate: false,
+  },
+  {
+    name: "inline-self-alias",
+    guard: "exports.self=exports;",
+    listenerPath: "self.events",
+    inlineEvents: true,
+    candidate: true,
+  },
+  {
     name: "export-after-exit",
     guard: "return;",
     candidate: false,
@@ -87,28 +164,37 @@ const scenarios = [
   },
 ] as const;
 
-const factorySource = (
-  guard: string,
-  bindingFirst: boolean,
-  callerGuard = "",
-) => {
+const factorySource = (scenario: (typeof scenarios)[number]) => {
+  const { guard } = scenario;
+  const bindingFirst = "bindingFirst" in scenario && scenario.bindingFirst;
+  const callerGuard = "callerGuard" in scenario ? scenario.callerGuard : "";
+  const listenerPath =
+    "listenerPath" in scenario ? scenario.listenerPath : "events";
+  const events =
+    "inlineEvents" in scenario && scenario.inlineEvents
+      ? 'exports.events = require("electron").ipcMain;'
+      : `exports.events = { addListener(channel,handler) {
+          return electron.ipcMain.addListener(channel,handler);
+        }};`;
   const binding = "const electron = load(2);";
   return `function readStop(value) { return value.stop; }
   (() => {
     const modules = {
+      1(module,exports) {
+        exports.read = value => value.stop;
+        exports.read2 = value => readStop(value);
+      },
       2(module) { module.exports = require("electron"); },
       5(module,exports,load) {
         ${bindingFirst ? binding : ""}
         ${guard}
         ${bindingFirst ? "" : binding}
-        exports.events = { addListener(channel,handler) {
-          return electron.ipcMain.addListener(channel,handler);
-        }};
+        ${events}
       },
       9(module,exports,load) {
         const helper = load(5);
         ${callerGuard}
-        helper.events.addListener("test:copy", () => {});
+        helper.${listenerPath}.addListener("test:copy", () => {});
       }
     };
     function load(id) { const m={exports:{}}; modules[id].call(m.exports,m,m.exports,load); return m.exports; }
@@ -159,6 +245,7 @@ const verifyApplication = (
   result: Application,
   candidate: boolean,
   guarded: boolean,
+  coverage: "partial" | "complete",
 ) => {
   expect(result.statistics.parse_failures).toBe(0);
   expect(result.summary.ipc.literal_channels).toBe(
@@ -176,11 +263,11 @@ const verifyApplication = (
       authority: "static-relationship-inference",
       state: "inferred",
       location: { available: true, value: { source: "main.js" } },
-      coverage: { status: "partial" },
+      coverage: { status: coverage },
     });
   }
   expect(result.graph.coverage).toMatchObject({
-    status: "partial",
+    status: coverage,
     truncated: false,
   });
   const paths = result.graph.nodes
@@ -215,11 +302,7 @@ cliTest(
     const { call } = await connectLocalToolsMcp();
     const contract = toolContract("analyze_javascript_application");
     for (const scenario of scenarios) {
-      const source = factorySource(
-        scenario.guard,
-        "bindingFirst" in scenario,
-        "callerGuard" in scenario ? scenario.callerGuard : "",
-      );
+      const source = factorySource(scenario);
       const directory = join(root, scenario.name);
       await mkdir(directory);
       await writeFile(join(directory, "main.js"), source);
@@ -244,6 +327,9 @@ cliTest(
         ),
         scenario.candidate,
         ["unknown", "block"].includes(scenario.name),
+        "inlineEvents" in scenario && scenario.inlineEvents
+          ? "complete"
+          : "partial",
       );
       if (["control", "false", "unknown"].includes(scenario.name)) {
         const analyzed = await cli.run({

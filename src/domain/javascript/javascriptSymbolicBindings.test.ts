@@ -401,6 +401,41 @@ it("bounds predicate expansion across many conditional factory exits", () => {
   );
 });
 
+it("does not borrow an unrelated activation's namespace read boundary", () => {
+  const { parsed, resolver, values } = inspectFixture(`(() => {
+    const modules = {5(module,exports){exports.stop=true;inspect(exports);if(exports.stop)return;}};
+    function load(id){const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}
+    load(5);
+  })();`);
+  const namespace = values[0];
+  if (namespace?.kind !== "namespace")
+    throw new Error("namespace fixture missing");
+  let read: t.MemberExpression | undefined;
+  traverseJavaScriptAst(parsed.program, {
+    enter: (node) => {
+      if (t.isIfStatement(node) && t.isMemberExpression(node.test))
+        read = node.test;
+    },
+  });
+  if (read === undefined) throw new Error("namespace read fixture missing");
+  expect(
+    resolver.property(namespace, "stop", {
+      node: read,
+      environment: namespace.environment,
+    }),
+  ).toMatchObject({ kind: "literal", value: true });
+  expect(
+    resolver.property(namespace, "stop", {
+      node: read,
+      environment: { ...namespace.environment, activation: {} },
+    }),
+  ).toMatchObject({
+    kind: "unknown",
+    reason: "module export read boundary is unavailable",
+  });
+  expect(resolver.truncated).toBe(false);
+});
+
 it("treats known symbolic records and loaders as truthy", () => {
   expect(symbolicTruth({ kind: "record", values: new Map() })).toBe(true);
   expect(symbolicTruth({ kind: "loader", modules: new Map() })).toBe(true);
@@ -658,4 +693,50 @@ it("completes a loaded module past a very large array without stack overflow", (
   if (namespace?.kind !== "namespace")
     throw new Error("loaded module namespace missing");
   expect(namespace.environment.completedAt).toBe(earliestReturn);
+});
+
+it("keeps async call objects truthy and unwraps only awaited results", () => {
+  const values = inspectedValues(`async function flag(){return false;}
+    inspect(flag()); inspect(!flag()); inspect(flag() ?? true);
+    inspect(await flag()); inspect(flag() || false);`);
+  expect(values[0]).toMatchObject({
+    kind: "promise",
+    value: { kind: "literal", value: false },
+  });
+  expect(values[1]).toMatchObject({ kind: "literal", value: false });
+  expect(values[2]?.kind).toBe("promise");
+  expect(values[3]).toMatchObject({ kind: "literal", value: false });
+  expect(values[4]?.kind).toBe("promise");
+});
+
+it("does not execute generator bodies to resolve initial calls", () => {
+  const { resolver, values } = inspectFixture(`function* flag(){return false;}
+    async function* asyncFlag(){return false;}
+    inspect(flag()); inspect(!flag()); inspect(asyncFlag()); inspect(flag() ?? false);`);
+  expect(values.map((value) => value.kind)).toEqual([
+    "iterator",
+    "literal",
+    "iterator",
+    "iterator",
+  ]);
+  expect(values[1]).toMatchObject({ kind: "literal", value: false });
+  expect(resolver.unresolved).toBe(false);
+});
+
+it("preserves captured initialization through async and forwarding returns", () => {
+  const { resolver, values } = inspectFixture(`function outer(){
+    const electron=require("electron");
+    async function capture(){return ()=>electron.ipcMain;}
+    return capture();
+  }
+  async function forward(){return outer();}
+  inspect(await forward());`);
+  const fn = values[0];
+  expect(fn?.kind).toBe("function");
+  if (fn?.kind !== "function") throw new Error("awaited closure missing");
+  expect(resolver.evaluate(fn.node.body, resolver.bind(fn, []))).toMatchObject({
+    kind: "external",
+    path: ["electron", "ipcMain"],
+  });
+  expect(fn.origins.length).toBeGreaterThan(0);
 });

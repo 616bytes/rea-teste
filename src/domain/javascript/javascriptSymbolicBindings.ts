@@ -474,6 +474,7 @@ export class JavaScriptSymbolicBindings {
     fn: SymbolicFunction,
     args: readonly SymbolicValue[],
     invocationNode?: t.Node,
+    caller?: SymbolicEnvironment,
   ): SymbolicEnvironment {
     const values = new Map<string, SymbolicValue>();
     runtimeFunctionParameters(fn.node).forEach((param, index) => {
@@ -497,7 +498,9 @@ export class JavaScriptSymbolicBindings {
       this.state.scopeByNode.get(fn.node.body)?.scopeId;
     return {
       values,
+      activation: {},
       parent: fn.environment,
+      ...(caller === undefined ? {} : { caller }),
       point: invocationNode ?? fn.node,
       scopeNode: fn.node,
       ...(scopeId === undefined ? {} : { scopeId }),
@@ -542,7 +545,8 @@ export class JavaScriptSymbolicBindings {
     if (t.isSequenceExpression(node))
       return this.evaluate(node.expressions.at(-1), env);
     if (t.isAssignmentExpression(node)) return this.evaluate(node.right, env);
-    if (t.isAwaitExpression(node)) return this.evaluate(node.argument, env);
+    if (t.isAwaitExpression(node))
+      return this.#awaited(this.evaluate(node.argument, env));
     if (t.isUnaryExpression(node)) {
       const value = this.evaluate(node.argument, env);
       if (node.operator === "void")
@@ -715,19 +719,56 @@ export class JavaScriptSymbolicBindings {
     return parent === undefined ? undefined : { ...environment, parent };
   }
 
-  #completeReturnedFunction(
-    value: SymbolicFunction,
-    activation: SymbolicEnvironment,
-    returnPoint: t.Node,
-  ): SymbolicFunction {
-    const environment = this.#completedEnvironment(
-      value.environment,
-      activation,
-      returnPoint,
+  #awaited(value: SymbolicValue): SymbolicValue {
+    return symbolicUnion(
+      symbolicVariants(value).map((variant) =>
+        variant.kind === "promise"
+          ? this.#withConditions(this.#awaited(variant.value), variant)
+          : variant,
+      ),
     );
-    if (environment === undefined) return value;
-    const { returnPoint: _returnPoint, ...returned } = value;
-    return { ...returned, environment };
+  }
+
+  #completeReturnedValue(
+    value: SymbolicValue,
+    activation: SymbolicEnvironment,
+    fallbackPoint: t.Node,
+    origins: readonly t.Node[],
+  ): SymbolicValue {
+    if (value.kind === "union")
+      return symbolicUnion(
+        value.values.map((variant) =>
+          this.#completeReturnedValue(
+            variant,
+            activation,
+            fallbackPoint,
+            origins,
+          ),
+        ),
+      );
+    if (value.kind !== "function" && value.kind !== "promise") return value;
+    const { returnPoint, ...returned } = value;
+    const point = returnPoint ?? fallbackPoint;
+    if (returned.kind === "promise")
+      return {
+        ...returned,
+        value: this.#completeReturnedValue(
+          returned.value,
+          activation,
+          point,
+          origins,
+        ),
+      };
+    const environment = this.#completedEnvironment(
+      returned.environment,
+      activation,
+      point,
+    );
+    return {
+      ...returned,
+      environment: environment ?? returned.environment,
+      origins: [...origins, ...returned.origins],
+    };
   }
 
   #namespaceReadBoundary(
@@ -735,18 +776,71 @@ export class JavaScriptSymbolicBindings {
     read: SymbolicPropertyRead,
   ): SymbolicReadBoundary | undefined {
     const scopeId = value.environment.scopeId;
-    if (scopeId === undefined) return undefined;
+    const activation = value.environment.activation;
+    if (scopeId === undefined || activation === undefined) return undefined;
+    const captured = this.#hasActivation(read.environment, activation);
     // Replaying a factory-owned initializer/spread reads at capture, even
     // when a later closure observes it after the activation completed.
-    if (this.#owningFunction(read.node) === value.environment.scopeNode)
+    if (
+      captured &&
+      this.#owningFunction(read.node) === value.environment.scopeNode
+    )
       return { node: read.node, edge: "start" };
+    const caller = this.#namespaceCallerBoundary(
+      value,
+      read.environment,
+      activation,
+    );
+    if (caller !== undefined) return caller;
+    if (!captured) return undefined;
     const boundary = this.#readBoundary(scopeId, read.environment, read.node);
-    if (boundary === undefined) return undefined;
-    // A fallback invocation point outside the owning factory cannot establish
-    // its active initialization state. Keep that read unknown.
-    return this.#owningFunction(boundary.node) === value.environment.scopeNode
+    return boundary !== undefined &&
+      this.#owningFunction(boundary.node) === value.environment.scopeNode
       ? boundary
       : undefined;
+  }
+
+  #hasActivation(
+    environment: SymbolicEnvironment,
+    activation: object,
+  ): boolean {
+    for (
+      let current: SymbolicEnvironment | undefined = environment;
+      current;
+      current = current.parent
+    ) {
+      if (--this.#remainingEvaluations < 0) {
+        this.truncated = true;
+        return false;
+      }
+      if (current.activation === activation) return true;
+    }
+    return false;
+  }
+
+  #namespaceCallerBoundary(
+    value: SymbolicNamespace,
+    environment: SymbolicEnvironment,
+    activation: object,
+  ): SymbolicReadBoundary | undefined {
+    for (
+      let current = environment;
+      current.caller !== undefined;
+      current = current.caller
+    ) {
+      if (--this.#remainingEvaluations < 0) {
+        this.truncated = true;
+        return undefined;
+      }
+      const point = current.point;
+      if (
+        point !== undefined &&
+        this.#owningFunction(point) === value.environment.scopeNode &&
+        this.#hasActivation(current.caller, activation)
+      )
+        return { node: point, edge: "start" };
+    }
+    return undefined;
   }
 
   #owningFunction(node: t.Node): t.Function | undefined {
@@ -762,15 +856,22 @@ export class JavaScriptSymbolicBindings {
   ): readonly PropertyWrite[] | undefined {
     const writes = this.#writes.get(value.bindingId) ?? [];
     const completedAt = value.environment.completedAt;
-    const boundary: SymbolicReadBoundary | undefined =
-      completedAt !== undefined
-        ? { node: completedAt, edge: "end" }
-        : read === undefined
-          ? undefined
-          : this.#namespaceReadBoundary(value, read);
-    if (boundary === undefined) return read === undefined ? writes : undefined;
-    const point = boundary.node[boundary.edge];
-    if (point == null) return undefined;
+    const boundary =
+      read === undefined ? undefined : this.#namespaceReadBoundary(value, read);
+    if (this.#remainingEvaluations <= 0) {
+      this.truncated = true;
+      return undefined;
+    }
+    const sourcePoint = boundary?.node[boundary.edge];
+    if (boundary !== undefined && sourcePoint == null) return undefined;
+    if (completedAt !== undefined && completedAt.end == null) return undefined;
+    if (sourcePoint == null && completedAt === undefined)
+      return read === undefined ? writes : undefined;
+    // An owned snapshot cannot read beyond either its capture or this exit.
+    const point = Math.min(
+      sourcePoint ?? Infinity,
+      completedAt?.end ?? Infinity,
+    );
     return writes.filter(
       (write) => write.site.end != null && write.site.end <= point,
     );
@@ -780,10 +881,31 @@ export class JavaScriptSymbolicBindings {
     value: SymbolicNamespace,
     point: t.Node,
   ): SymbolicNamespace {
-    return {
-      ...value,
-      environment: { ...value.environment, completedAt: point },
+    const values = new Map(value.environment.values);
+    const environment: SymbolicEnvironment = {
+      ...value.environment,
+      values,
+      completedAt: point,
     };
+    const completed: SymbolicNamespace = { ...value, environment };
+    // A completed activation owns coherent views of both parameter aliases.
+    // Merely copying completedAt loses that proof when `exports` escapes.
+    // This map has only the recognized factory's module/exports/loader slots.
+    for (const [bindingId, slot] of value.environment.values) {
+      if (slot === value) values.set(bindingId, completed);
+      else if (
+        this.#moduleBindings.has(bindingId) &&
+        this.#exportAliases.get(bindingId) === value.bindingId &&
+        slot.kind === "record" &&
+        slot.values.get("exports") === value
+      ) {
+        values.set(bindingId, {
+          ...slot,
+          values: new Map(slot.values).set("exports", completed),
+        });
+      }
+    }
+    return completed;
   }
 
   #moduleExports(value: SymbolicNamespace): SymbolicValue {
@@ -852,27 +974,26 @@ export class JavaScriptSymbolicBindings {
           this.#activeFunctions.has(value.node)
         ) {
           result = symbolicUnknown("unresolved or recursive call");
+        } else if (value.node.generator) {
+          // Calling a generator creates an iterator without running its body.
+          result = { kind: "iterator" };
         } else {
           this.#activeFunctions.add(value.node);
           try {
-            const bound = this.bind(value, args, node);
+            const bound = this.bind(value, args, node, env);
             const returned = t.isBlockStatement(value.node.body)
               ? this.#returns(value.node.body.body, bound)
               : this.evaluate(value.node.body, bound);
-            result = symbolicUnion(
-              symbolicVariants(returned).map((v) =>
-                v.kind === "function"
-                  ? {
-                      ...this.#completeReturnedFunction(
-                        v,
-                        bound,
-                        v.returnPoint ?? value.node.body,
-                      ),
-                      origins: [...value.origins, node, ...v.origins],
-                    }
-                  : v,
-              ),
+            const completed = this.#completeReturnedValue(
+              returned,
+              bound,
+              value.node.body,
+              [...value.origins, node],
             );
+            // Async calls return a truthy Promise; only await selects its value.
+            result = value.node.async
+              ? { kind: "promise", value: this.#awaited(completed) }
+              : completed;
           } finally {
             this.#activeFunctions.delete(value.node);
           }
@@ -890,7 +1011,7 @@ export class JavaScriptSymbolicBindings {
       const value = this.evaluate(statement.argument, env);
       return symbolicUnion(
         symbolicVariants(value).map((variant) =>
-          variant.kind === "function"
+          variant.kind === "function" || variant.kind === "promise"
             ? { ...variant, returnPoint: statement }
             : variant,
         ),
@@ -1050,6 +1171,7 @@ export class JavaScriptSymbolicBindings {
       const values = new Map<string, SymbolicValue>();
       const environment: SymbolicEnvironment = {
         values,
+        activation: {},
         point: factory.body,
         scopeNode: factory,
         ...(this.state.scopeByNode.get(factory)?.scopeId === undefined

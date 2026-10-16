@@ -373,6 +373,13 @@ callbacks; they do not become unconditional IPC summary facts.
 Factory guards read export writes at their source position. Destructured and
 spread snapshots retain their capture position rather than reading later writes.
 An unproven namespace read boundary remains unknown.
+Completed factory environments preserve their `exports` and `module.exports`
+alias identity when a namespace escapes through an export or returned closure.
+Synchronous helper calls retain the caller's factory activation and read point;
+lexical captures and executing callers remain separate facts.
+Async calls retain their truthy Promise identity until an explicit `await`;
+generator calls produce iterators without evaluating their bodies. Awaited
+function values retain their source origins and captured initialization bounds.
 
 These paths appear as contextual `javascript-expression` nodes. An exact `api`
 seed such as `desktop.copy` can trace an exposed member through a unique IPC

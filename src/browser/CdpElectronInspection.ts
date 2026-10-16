@@ -209,12 +209,12 @@ const advanceFrameGeneration = (
   event: CdpEvent,
   state: ElectronInspectionState,
 ): void => {
+  // Same-document URL changes retain the document and its authorization.
   if (
     ![
       "Page.frameNavigated",
       "Page.frameDetached",
       "Page.frameAttached",
-      "Page.navigatedWithinDocument",
     ].includes(event.method)
   )
     return;
@@ -242,8 +242,7 @@ const advanceFrameGeneration = (
   const parent =
     cdpStringValue(frame?.parentId) ?? cdpStringValue(frame?.parentFrameId);
   if (parent !== undefined && parent !== "") state.frameParents.set(id, parent);
-  else if (event.method !== "Page.navigatedWithinDocument")
-    state.frameParents.delete(id);
+  else state.frameParents.delete(id);
 };
 
 const authorizeInitialFrames = async (

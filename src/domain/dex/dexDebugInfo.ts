@@ -215,7 +215,7 @@ class DebugInfoWalk {
     this.maxLocals = options.maxLocals ?? Number.POSITIVE_INFINITY;
   }
 
-  /** Charge one unit of call-wide work; false once the budget is spent. */
+  /** Charge one unit of the member's work; false once the budget is spent. */
   private charge(): boolean {
     if (this.budget === undefined) return true;
     if (this.budget.remaining <= 0) return false;
@@ -427,7 +427,7 @@ class DebugInfoWalk {
   run(): DexMethodDebug {
     if (!this.header()) return this.result(true);
     for (let guard = 0; guard < 2_000_000; guard += 1) {
-      // Out of call-wide work: stop; the caller sees remaining <= 0 and refuses.
+      // Out of the member's work: stop; the caller sees remaining <= 0 and refuses.
       if (!this.charge() || this.localLimitExceeded) break;
       const op = this.cursor.u1();
       if (!op.ok) break;

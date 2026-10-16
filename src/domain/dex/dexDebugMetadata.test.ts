@@ -88,7 +88,7 @@ describe("dexDebugMetadata assembly", () => {
 });
 
 describe("dexDebugMetadata work and output bounds", () => {
-  it("refuses once the call-wide opcode budget is spent", async () => {
+  it("refuses once the member's work budget is spent", async () => {
     const parsed = parseDexFile(debuggableDex());
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;

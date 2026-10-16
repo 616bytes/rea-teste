@@ -310,7 +310,8 @@ class Debuggable {
   );
 
   // Release dex: streams survive for lines, so dexdump still lists implicit
-  // this/parameter locals, but no local debug info survived: stripped.
+  // this/parameter locals, but no local debug info survived: partial (lines
+  // without local evidence).
   const releaseSummary = await inspectBoth(releaseDex);
   const rm = releaseSummary.members[0];
   const releaseOracle = await dexdumpFacts(releaseDex);
@@ -329,8 +330,8 @@ class Debuggable {
   assert.equal(rm.summary.methods_with_parameter_names, 0);
   assert.equal(
     rm.summary.readiness,
-    "stripped",
-    "a release dex with lines but no local debug info reads stripped",
+    "partial",
+    "a release dex with lines but no local debug info reads partial",
   );
 
   // -g:none dex: readiness stripped, no locals; dexdump agrees none exist.

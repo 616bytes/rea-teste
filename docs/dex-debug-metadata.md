@@ -34,7 +34,8 @@ works at two granularities:
   (`methods_with_code`, `methods_with_debug_info`, `methods_with_parameter_names`),
   `line_positions`, `local_declarations`, `explicit_local_declarations`,
   `set_file_events`, `source_file_present`,
-  `distinct_source_files` (count + bounded sample), and a derived `readiness`.
+  `distinct_source_files` (count + up to 3 sample names), and a derived
+  `readiness`.
 - **Per-class detail (`--class-descriptor Lpkg/Name;`).** Full per-method
   `name`, JVM-form `descriptor`, `state`, and `locals` (name, type, signature,
   `register`, scope `start_address`/`end_address` in 16-bit code units,
@@ -44,16 +45,18 @@ works at two granularities:
 ## Readiness is a derived label
 
 `readiness` is a conservative label over what the debug streams themselves
-carry, not a guarantee:
+carry, not a guarantee. It uses the same vocabulary as a method's `state`, over
+two kinds of evidence: line positions, and local evidence (declared locals or
+named parameters):
 
-- `stripped` — no declared locals and no parameter names across code-bearing
-  methods (the classic R8/ProGuard or `d8 --release` build: names gone, even
-  when line tables are kept).
-- `present` — line positions plus declared locals or parameter names.
-- `partial` — local evidence without any line positions.
-- `unknown` — no local evidence was found, but some class data, code items or
-  debug streams could not be read (counted in `unreadable`), so absence is not
-  established. A damaged file never reads as `stripped`.
+- `present` — both line positions and local evidence.
+- `partial` — exactly one of them. The classic R8/ProGuard or `d8 --release`
+  build keeps line tables but drops local names, so it reads `partial`.
+- `stripped` — neither.
+- `unknown` — some class data, code items or debug streams could not be read
+  (counted in `unreadable`) and the evidence observed does not already
+  establish `present`, so the label stays open. A damaged file never reads as
+  `stripped` or `partial`.
   Whenever `unreadable` is non-zero, every other count is a lower bound over
   what could be read.
 
@@ -63,7 +66,8 @@ layout whenever it has a debug stream. Because a release build keeps streams
 for its line tables, those implicit locals appear even when no local debug info
 survived, so `readiness` and the per-method `state` use
 `explicit_local_declarations` (locals the stream declares with
-`DBG_START_LOCAL`) and named parameters instead.
+`DBG_START_LOCAL`, counted once a scope covers an instruction of the method, so
+it never exceeds `local_declarations`) and named parameters instead.
 
 `line_positions` counts positions inside each method's code (`address <
 insns_size`). R8 shares one debug stream across many methods, so a stream can
@@ -78,10 +82,10 @@ a generic parameter's register at address 0 (verified exact on 15 real members).
 On hand-crafted streams with zero-length scopes elsewhere, `dexdump` may list
 rows REA omits.
 
-Cancellation is honoured between DEX members. One member is analysed in a
-single synchronous pass, bounded by its per-member work budget (a few seconds
-for a maximal 64 MiB member), so cancelling mid-member takes effect when that
-member finishes.
+Decoding is bounded by a per-member work budget and runs in slices: after
+each slice the reader yields to the event loop, so other MCP requests are
+served and a cancellation takes effect within one slice, not after the whole
+member.
 
 ## What the facts do and do not mean
 
@@ -108,8 +112,9 @@ Limits and refusals a caller can meet:
   Android auto-loads, matched by their exact stored names: `classes.dex`,
   `classes2.dex`, … up to the first missing name. A member stored as
   `./classes.dex`, `classes1.dex`, a zero-padded name, or one after a gap is not
-  auto-loaded; select it with `entry`. More than 64 auto-loaded members is
-  refused; select one with `entry`.
+  auto-loaded; select it with `entry`. Canonical members Android would not load
+  are named in `limitations` and on any selection refusal. More than 64
+  auto-loaded members is refused; select one with `entry`.
 - **`file_size` framing.** A header `file_size` larger than the bytes present,
   or smaller than the 0x70-byte header, is refused. When it is smaller than the
   member, analysis reads only the first `file_size` bytes (as ART on Android 15+
@@ -121,7 +126,9 @@ Limits and refusals a caller can meet:
   readiness), never "absent" or "stripped".
 - **Budgets.** Decoding work is proportional to each member's size; output is
   bounded to 8 MiB and projected before the report is built. Exceeding either is
-  refused, naming the member.
+  refused, naming the member. Size refusals report their own bound: the 64 MiB
+  DEX member, the 512 MiB archive, the 16 MiB archive-metadata read, or the
+  archive's decompression budget.
 
 Verified by the `verify:dex` real lane, which compiles an owned Java fixture with
 `-g` and `-g:none`, dexes each with the Android SDK's `d8`, and cross-checks the

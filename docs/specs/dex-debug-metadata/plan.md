@@ -22,5 +22,5 @@ introduced here, so either PR can merge first.
    registration, effect audit, `TOOL_CONTRACTS`, `createServer`, product catalog.
 6. **Tests.** Domain + adapter units (hand-built DEX fixtures, no committed
    binaries); `verify:dex` real lane (d8/dexdump); conformance.
-7. **Review.** Independent (Fable) review; fix findings.
+7. **Review.** Independent review; fix findings.
 8. **Docs.** This spec dir + the analyst guide + the docs index link.

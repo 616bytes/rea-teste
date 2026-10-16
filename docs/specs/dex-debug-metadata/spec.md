@@ -25,8 +25,10 @@ Two output modes, because a DEX holds thousands of classes:
 - **summary** (default; one per member Android auto-loads from an archive): per-member
   `dex_version`, `class_count`, method tallies, `line_positions`,
   `local_declarations`, `set_file_events`, `source_file_present`,
-  `distinct_source_files` (count + bounded sample), and a derived `readiness`
-  (`present | partial | stripped | unknown`; `unknown` when unreadable structures leave the answer open).
+  `distinct_source_files` (count + up to 3 sample names), and a derived
+  `readiness` with the per-method vocabulary: `present` (line positions and
+  local evidence), `partial` (exactly one), `stripped` (neither), `unknown`
+  (unreadable structures leave the label open).
 - **class-detail** (`class_descriptor` = `Lpkg/Name;`): per method `name`,
   JVM-form `descriptor`, `state`, parameter names, and `locals` with
   name/type/signature/`register`/scope (`start_address`/`end_address` in 16-bit
@@ -68,7 +70,11 @@ are read under a per-member byte budget (a decompression bomb cannot be
 buffered) and the archive digest is read through the same descriptor only after
 a member is selected. The summary decodes one method at a time and discards it,
 so peak memory is bounded regardless of class count. The projected result is
-bounded by an inline output budget. Token usage and peak memory are unmeasured.
+bounded by an inline output budget. Decoding yields to the event loop after
+each slice of work, so a large member does not block other requests and
+cancellation takes effect within a slice. The archive descriptor and its ZIP
+reader are owned through the work and released after it; a failed close is
+retained as a cleanup lease, named in the error, and retried by `close()`.
 
 ## Verification
 
@@ -79,8 +85,10 @@ exercises the CLI and stdio MCP in Evidence parity with a validated advertised
 schema. Unit tests cover framing (versions/endian/cdex refusals, LEB128), the
 `debug_info_item` state machine (seeding, SET_FILE, RESTART, run-to-end,
 malformed), string/proto resolution, the summary/detail assembly, and the
-provider (loose/APK multidex, entry selection, encrypted/missing refusals).
-Independent (Fable) review before handoff.
+provider (loose/APK multidex, entry selection, encrypted/missing refusals) and
+its lifecycle (failed descriptor and reader closes, cancellation during the
+final close, `close()` retry). A CI acceptance test drives the compiled CLI and
+stdio MCP. Independent review before handoff.
 
 Format reference: Dalvik Executable (DEX) format —
 https://source.android.com/docs/core/runtime/dex-format

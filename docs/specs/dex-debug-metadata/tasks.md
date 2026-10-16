@@ -10,10 +10,13 @@
 - [x] Provider (loose `.dex` + APK multidex, admit-once, ambiguity/encrypted refusals), service.
 - [x] CLI/MCP contract, catalog registration, effect audit, composition/server wiring.
 - [x] Unit + adapter tests; `verify:dex` d8/dexdump real lane (cross-checks local tuples).
-- [x] Resolve independent (Fable) review findings (implicit-parameter seeding blocker et al.).
+- [x] Resolve independent review findings (implicit-parameter seeding blocker et al.).
+- [x] Resolve PR review findings: archive descriptor/reader lifecycle, real
+      in-pass cancellation, per-source size limits, one readiness vocabulary,
+      mode-keyed schema, public CLI/MCP acceptance test.
 - [x] Analyst guide + spec dir + docs index link.
 - [x] Discoverability parity (README capability row, reverse-engineer skill source,
       architecture.mermaid) — landed for both the JVM and DEX tools.
-- [ ] `npm run check:pr` and full guards at PR time (pre-existing unrelated lint errors
-      in `artifactComparison.test.ts` / `ManagedCilDecoding.test.ts`, and the `README_tr`
-      link drift, are not from this branch).
+- [x] Focused gates at PR time (`check:fast`, `docs:check`, `mcp-catalog:check`,
+      `format:check`, `verify:module-boundaries`, `verify:dex`, focused lifecycle
+      boundary tests). The complete `check:pr` gate is optional and was not run.

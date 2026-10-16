@@ -85,7 +85,20 @@ const peResourcesFailurePrimary = (
           max_file_bytes: input.max_file_bytes,
           max_entries: input.max_entries,
         },
-        { cause },
+        {
+          cause,
+          // Both bounds are caller-selected and deterministic for the same
+          // input, so waiting for an active analysis cannot help.
+          ...(cause.boundary === undefined || cause.boundary === "memory"
+            ? {}
+            : {
+                retryable: false,
+                remediationAction:
+                  cause.boundary === "file-size"
+                    ? `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`
+                    : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected resource directory entry budget.`,
+              }),
+        },
       );
     if (cause.reason === "path" || cause.reason === "format")
       return new AnalysisInputError(operation, { cause }, [

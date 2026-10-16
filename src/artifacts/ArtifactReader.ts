@@ -185,6 +185,11 @@ export class ArtifactReaderFailure extends Error {
       {
         cause: primary,
         cleanup: combineCleanup(primary.cleanup, cleanup),
+        // The constrained bound survives cleanup wrapping, or a file-size
+        // refusal would be reported as a memory constraint once a close fails.
+        ...(primary.boundary === undefined
+          ? {}
+          : { boundary: primary.boundary }),
         ...(mergedObservation === undefined
           ? {}
           : { partialObservation: mergedObservation }),

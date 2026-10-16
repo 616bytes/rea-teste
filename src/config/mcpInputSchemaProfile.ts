@@ -25,6 +25,17 @@ const profileConstraint =
 
 export type McpInputSchemaProfile = z.infer<typeof mcpInputSchemaProfileSchema>;
 
+/**
+ * Clients whose connector rejects an oversized single-tool schema, so setup
+ * selects the bounded advertisement unless the caller chose a profile.
+ * Moonshot's cap is measured in COMPACT_INPUT_SCHEMA_BUDGET_BYTES; Claude
+ * Desktop fails to register `compare_web_captures` while the full profile
+ * advertises that tool's 179,878-byte schema (issue #4081).
+ */
+export const compactInputSchemaProfileByDefault = (
+  clientName: string,
+): boolean => clientName === "kimi" || clientName === "claude_desktop";
+
 /** Parse the advertised input schema presentation selection. */
 export const parseMcpInputSchemaProfile = (
   value: string | undefined,

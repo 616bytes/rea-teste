@@ -87,6 +87,16 @@ const readJson = async (path: string): Promise<Record<string, unknown>> =>
 
 const reaEntry = { command: command[0], args: command.slice(1) };
 
+/**
+ * The entry setup writes for Claude Desktop: its connector refused to register
+ * `compare_web_captures` while the full catalog advertised that tool's
+ * oversized schema, so registration selects the bounded advertisement.
+ */
+const registeredEntry = {
+  ...reaEntry,
+  env: { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" },
+};
+
 describe("Windows Claude Desktop configuration location", () => {
   it("uses AppData when no MSIX package storage exists", async () => {
     const { home, env, appDataConfig } = await windowsProfile();
@@ -162,7 +172,7 @@ describe("Windows Claude Desktop configuration location", () => {
       configureClientConfiguration(client, {}, command),
     ).resolves.toEqual({ status: "configured" });
     expect(await readJson(privateConfig)).toEqual({
-      mcpServers: { rea: reaEntry },
+      mcpServers: { rea: registeredEntry },
     });
   });
 
@@ -239,7 +249,7 @@ describe("MSIX Claude Desktop registration lifecycle", () => {
       ...privateOriginal,
       mcpServers: {
         ...privateOriginal.mcpServers,
-        rea: reaEntry,
+        rea: registeredEntry,
       },
     });
     expect(await readJson(`${privateConfig}.rea.backup`)).toEqual(
@@ -311,7 +321,7 @@ describe("MSIX Claude Desktop registration lifecycle", () => {
 
     expect(await readJson(appDataConfig)).toEqual({
       preferences: { theme: "light" },
-      mcpServers: { rea: reaEntry },
+      mcpServers: { rea: registeredEntry },
     });
     await expect(access(privateConfig)).rejects.toMatchObject({
       code: "ENOENT",

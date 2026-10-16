@@ -71,6 +71,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "sub/plain.html": "nested decoy",
       "sub/absent.html": "nested-only decoy",
       "app/package.json": JSON.stringify({ main: "sub/main.cjs" }),
+      "app/sub/package.json": JSON.stringify({ type: "commonjs" }),
       "app/sub/main.cjs": loadFileSource,
       "app/dist%2Findex.html": "wrapped application target",
       "app/plain.html": "wrapped application target",
@@ -80,6 +81,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     });
     const archiveSource = await createTestTempDirectory("rea-loadfile-asar-");
     await writeFixtureFiles(archiveSource, {
+      "package.json": JSON.stringify({ main: "sub/main.cjs" }),
+      "sub/package.json": JSON.stringify({ type: "commonjs" }),
       "sub/main.cjs": loadFileSource,
       "dist%2Findex.html": "application target",
       "plain.html": "application target",

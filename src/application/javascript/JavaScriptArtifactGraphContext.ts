@@ -60,7 +60,9 @@ export interface JavaScriptArtifactGraphContext {
 export const dependencyManifest = (path: string): boolean =>
   path.split("/").slice(0, -1).includes("node_modules");
 
-/** Select a manifest within the inventory, or the enclosing source occurrence. */
+/** Select the outer application manifest, optionally within a source occurrence.
+ * Nested package scopes (for example, a type-only manifest) do not change the app.
+ */
 export const applicationManifestPath = (
   context: JavaScriptArtifactGraphContext,
   source?: JavaScriptArtifactFile,
@@ -79,8 +81,7 @@ export const applicationManifestPath = (
     })
     .sort(
       (left, right) =>
-        (source === undefined ? 1 : -1) *
-          (left.split("/").length - right.split("/").length) ||
+        left.split("/").length - right.split("/").length ||
         compareUnicodeCodePoints(left, right),
     )[0];
 

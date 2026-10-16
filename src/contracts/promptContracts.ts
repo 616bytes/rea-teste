@@ -362,7 +362,7 @@ export const PROMPT_CONTRACTS = [
       {
         tools: ["analyze_function", "trace_native_values"],
         instruction:
-          "Build function context and trace relevant values from input-handling code toward each candidate sink; cite the returned Evidence for observed relationships.",
+          "Build function context. Select an Evidence-supported input/entry procedure relevant to the requested parser as the primary seed; run trace_native_values once and reuse its graph for every candidate sink it covers. Add at most one second seed only for a separately important input path the first graph does not cover; leave other source paths Unknown rather than tracing every source. Inspect truncation, Unknowns, and unresolved bindings. Default depth, function, call-site, node, and edge budgets bound each trace; this data-dependency triage cannot prove exhaustive control-flow reachability. Cite returned Evidence for observed relationships.",
       },
       {
         tools: [
@@ -371,7 +371,7 @@ export const PROMPT_CONTRACTS = [
           "resolve_native_call_targets",
         ],
         instruction:
-          "When an entry point is supported by Evidence, check paths from it to each candidate. Unresolved indirect calls and missing paths in incomplete coverage remain Unknown; no path found is not proof of unreachability.",
+          "Prefer existing Evidence. Do not use trace_call_path for broad route discovery or to prove a missing route: it has no traversal budget, and a miss can exhaust the reachable graph. Only use it with a specific start and goal when prior Evidence supports a likely short route through a narrow relevant call graph; always pass goal. Use build_call_path only for a specific start/goal and a small, low-branching set of complete analyze_function Evidence because it returns every shortest path inline; skip it when graph scope or path count is uncertain. Resolve native call targets only for an unresolved indirect call relevant to the candidate. Unresolved indirect calls and incomplete coverage remain Unknown; no path found is not proof of unreachability.",
       },
       {
         tools: ["record_unknown"],

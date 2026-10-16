@@ -50,7 +50,18 @@ can add Evidence and Unknowns to the REA session while leaving the analyzed
 target unchanged. The prompt targets the active analysis document, switching
 targets through `open_binary`. It requests a retained layout summary and the
 `mitigations` view, then starts symbol discovery with focused procedure and
-cross-reference searches; a complete symbol inventory is a fallback.
+cross-reference searches; a complete symbol inventory is a fallback. It selects
+one relevant, Evidence-supported input/entry procedure as its primary seed and
+reuses that bounded `trace_native_values` graph across the candidate sinks it
+covers. It allows one additional seed only for a separately important input
+path not covered by the first; other source paths remain Unknown. Truncation and
+unresolved bindings remain incomplete. This data-dependency
+triage does not prove exhaustive control-flow reachability. `trace_call_path`
+has no traversal budget, so it is restricted to a specific start/goal with
+prior Evidence for a likely short route through a narrow call graph; a missing
+path is not a reason to expand a broad graph. `build_call_path` returns every
+shortest path and is limited to a small, low-branching set of complete function
+Evidence for one start/goal.
 
 Use standard MCP discovery and retrieval:
 

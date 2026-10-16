@@ -132,7 +132,7 @@ registrations and records a fired `once` callback once. Native Node.js owns
 removal order and traversal, including listeners registered by removal observers;
 the hook translates only its own recording wrappers at the removal boundary.
 Wrapper metadata uses weak keys and does not retain removed registrations.
-Wrapper metadata operations and private traversal constructors are captured
+Wrapper metadata operations, private collection methods and traversal constructors are captured
 before target startup; later replacement of their global bindings does not
 change listener registration or removal.
 

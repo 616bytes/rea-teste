@@ -1268,6 +1268,11 @@ it.each([
   "set",
   "Set",
   "Proxy",
+  "WeakMap.has",
+  "WeakMap.get",
+  "WeakMap.set",
+  "Set.has",
+  "Set.add",
 ])(
   "keeps listener registration and removal independent of late %s replacement",
   async (method) => {
@@ -1281,8 +1286,11 @@ it.each([
       script,
       `const { ipcMain } = require("electron");
 const { EventEmitter } = require("node:events");
-const method = ${JSON.stringify(method)};
-const owner = method === "Set" || method === "Proxy" ? globalThis
+const specification = ${JSON.stringify(method)};
+const [constructor, member] = specification.split(".");
+const method = member ?? specification;
+const owner = member !== undefined ? globalThis[constructor].prototype
+  : method === "Set" || method === "Proxy" ? globalThis
   : method === "get" || method === "set" ? Reflect : Object;
 const original = owner[method];
 const emitter = new EventEmitter();

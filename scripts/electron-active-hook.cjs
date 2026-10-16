@@ -3,6 +3,7 @@
 const applyFunction = Reflect.apply;
 const applyArguments = Function.prototype.apply;
 const bindFunction = Function.prototype.bind;
+const callFunction = Function.prototype.call;
 const arrayFrom = Array.from;
 const defineProperty = Object.defineProperty;
 const ownPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -10,12 +11,15 @@ const getProperty = Reflect.get;
 const setProperty = Reflect.set;
 const SetConstructor = Set;
 const ProxyConstructor = Proxy;
-const forEachMapEntry = applyFunction(bindFunction, Function.prototype.call, [
-  Map.prototype.forEach,
-]);
-const sliceArguments = applyFunction(bindFunction, Function.prototype.call, [
-  Array.prototype.slice,
-]);
+const bindBuiltinMethod = (method) =>
+  applyFunction(bindFunction, callFunction, [method]);
+const forEachMapEntry = bindBuiltinMethod(Map.prototype.forEach);
+const sliceArguments = bindBuiltinMethod(Array.prototype.slice);
+const weakMapHas = bindBuiltinMethod(WeakMap.prototype.has);
+const weakMapGet = bindBuiltinMethod(WeakMap.prototype.get);
+const weakMapSet = bindBuiltinMethod(WeakMap.prototype.set);
+const setHas = bindBuiltinMethod(Set.prototype.has);
+const setAdd = bindBuiltinMethod(Set.prototype.add);
 
 const { isProxy } = require("node:util").types;
 const {
@@ -116,7 +120,7 @@ const eventFamily = (kind, processTypeValue) => {
     return "preload-configuration";
   if (kind.startsWith("ipc-renderer"))
     return processTypeValue === "renderer" ? "renderer-ipc" : "ipc";
-  return ipcEventKinds.has(kind) ? "ipc" : kind;
+  return setHas(ipcEventKinds, kind) ? "ipc" : kind;
 };
 
 const noteDropped = (kind, processTypeValue, isIpc) => {
@@ -181,7 +185,7 @@ const frameIdentity = (event) => {
 
 const record = (event) => {
   observed += 1;
-  const isIpc = ipcEventKinds.has(event.kind);
+  const isIpc = setHas(ipcEventKinds, event.kind);
   if (isIpc) observedIpc += 1;
   else observedRuntime += 1;
   const raw = {
@@ -428,11 +432,11 @@ const reachesHookListenerWrapper = (listener) => {
     let hops = 0;
     hops <= MAX_LISTENER_CHAIN_HOPS &&
     typeof candidate === "function" &&
-    !visited.has(candidate);
+    !setHas(visited, candidate);
     hops += 1
   ) {
-    if (hookListenerRemovalTargets.has(candidate)) return true;
-    visited.add(candidate);
+    if (weakMapHas(hookListenerRemovalTargets, candidate)) return true;
+    setAdd(visited, candidate);
     // Proxy reflection can run application traps; ordinary own descriptors
     // expose data links without evaluating application-owned accessors.
     if (isProxy(candidate)) return false;
@@ -520,7 +524,7 @@ const patchIpcMain = (ipcMain) => {
       writable: true,
       value: listener,
     });
-    hookListenerRemovalTargets.set(wrapped, listener);
+    weakMapSet(hookListenerRemovalTargets, wrapped, listener);
     return on.call(this, channel, wrapped);
   };
   // Mirror EventEmitter#once and _onceWrap: resolve this.on at registration
@@ -544,7 +548,7 @@ const patchIpcMain = (ipcMain) => {
         );
       };
       wrapped.listener = listener;
-      hookListenerRemovalTargets.set(wrapped, wrapped);
+      weakMapSet(hookListenerRemovalTargets, wrapped, wrapped);
       this.on(channel, wrapped);
       return this;
     };
@@ -573,7 +577,10 @@ const patchIpcMain = (ipcMain) => {
           return (...methodArgs) => {
             if (key === "removeListener") {
               const entry = methodArgs[1];
-              const removalTarget = hookListenerRemovalTargets.get(entry);
+              const removalTarget = weakMapGet(
+                hookListenerRemovalTargets,
+                entry,
+              );
               // Translate only a still-valid data link. If app code changed it
               // to an accessor, native removal owns when that getter executes.
               if (

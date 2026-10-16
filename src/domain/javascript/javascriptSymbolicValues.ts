@@ -16,6 +16,8 @@ export interface SymbolicEnvironment {
   readonly scopeNode?: t.Function;
   /** Completion boundary proven for this captured activation. */
   readonly completedAt?: t.Node;
+  /** Shared completion facts must remain unchanged through this later exit. */
+  readonly commonThrough?: t.Node;
 }
 
 export interface SymbolicCondition {

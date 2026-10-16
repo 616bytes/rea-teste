@@ -11,10 +11,60 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 const scenarios = [
+  {
+    name: "pre-exit-root-export",
+    guard: "if(flag)return;exports.unrelated=1;",
+    eventsFirst: true,
+    bindingFirst: true,
+    rootEvents: true,
+    candidate: true,
+  },
+  {
+    name: "pre-exit-export-replaced",
+    guard: "if(flag)return;exports.events=null;",
+    eventsFirst: true,
+    bindingFirst: true,
+    candidate: true,
+    guarded: true,
+    guardCondition: "flag",
+  },
+
+  {
+    name: "pre-exit-export",
+    guard: "if(flag)return;",
+    eventsFirst: true,
+    bindingFirst: true,
+    candidate: true,
+  },
+  {
+    name: "pre-exit-export-later-local",
+    guard: "if(flag)return;const unrelated=1;",
+    eventsFirst: true,
+    bindingFirst: true,
+    candidate: true,
+  },
+  {
+    name: "pre-exit-export-late-capture",
+    guard: "if(flag)return;",
+    eventsFirst: true,
+    candidate: true,
+    guarded: true,
+  },
+
   { name: "control", guard: "", candidate: true },
   { name: "false", guard: "if (false) return;", candidate: true },
-  { name: "unknown", guard: "if (flag) return;", candidate: true },
-  { name: "block", guard: "{ if (flag) return; }", candidate: true },
+  {
+    name: "unknown",
+    guard: "if (flag) return;",
+    candidate: true,
+    guarded: true,
+  },
+  {
+    name: "block",
+    guard: "{ if (flag) return; }",
+    candidate: true,
+    guarded: true,
+  },
   {
     name: "nested-function",
     guard: "function unused() { return; }",
@@ -171,9 +221,11 @@ const factorySource = (scenario: (typeof scenarios)[number]) => {
   const listenerPath =
     "listenerPath" in scenario ? scenario.listenerPath : "events";
   const events =
-    "inlineEvents" in scenario && scenario.inlineEvents
-      ? 'exports.events = require("electron").ipcMain;'
-      : `exports.events = { addListener(channel,handler) {
+    "rootEvents" in scenario && scenario.rootEvents
+      ? `module.exports={events:{addListener(channel,handler){return electron.ipcMain.addListener(channel,handler);}}};`
+      : "inlineEvents" in scenario && scenario.inlineEvents
+        ? 'exports.events = require("electron").ipcMain;'
+        : `exports.events = { addListener(channel,handler) {
           return electron.ipcMain.addListener(channel,handler);
         }};`;
   const binding = "const electron = load(2);";
@@ -187,9 +239,10 @@ const factorySource = (scenario: (typeof scenarios)[number]) => {
       2(module) { module.exports = require("electron"); },
       5(module,exports,load) {
         ${bindingFirst ? binding : ""}
+        ${"eventsFirst" in scenario && scenario.eventsFirst ? events : ""}
         ${guard}
         ${bindingFirst ? "" : binding}
-        ${events}
+        ${"eventsFirst" in scenario && scenario.eventsFirst ? "" : events}
       },
       9(module,exports,load) {
         const helper = load(5);
@@ -229,7 +282,9 @@ const runtimeChannels = (source: string, flag: boolean) => {
       channels.length !== 0 ||
       !(
         error.message === "stop" ||
-        (error.name === "TypeError" && error.message.includes("addListener"))
+        (error.name === "TypeError" && error.message.includes("addListener")) ||
+        (error.name === "ReferenceError" &&
+          error.message === "Cannot access 'electron' before initialization")
       )
     )
       throw error;
@@ -244,7 +299,7 @@ type Application = ReturnType<
 const verifyApplication = (
   result: Application,
   candidate: boolean,
-  guarded: boolean,
+  guarded: string | false,
   coverage: "partial" | "complete",
 ) => {
   expect(result.statistics.parse_failures).toBe(0);
@@ -283,7 +338,7 @@ const verifyApplication = (
       expect.objectContaining({
         resolution: "candidate",
         conditions: expect.arrayContaining([
-          expect.objectContaining({ expression: "!(flag)" }),
+          expect.objectContaining({ expression: guarded }),
         ]),
       }),
     );
@@ -313,7 +368,11 @@ cliTest(
         channels.includes("test:copy"),
       );
       expect(hasRuntimePath, scenario.name).toBe(scenario.candidate);
-      if (["unknown", "block"].includes(scenario.name))
+      if (
+        "guarded" in scenario &&
+        scenario.guarded &&
+        !("guardCondition" in scenario)
+      )
         expect(runtime).toEqual([["test:copy"], []]);
       const response = await call("analyze_javascript_application", {
         input_path: directory,
@@ -326,7 +385,11 @@ cliTest(
           evidence.normalized_result,
         ),
         scenario.candidate,
-        ["unknown", "block"].includes(scenario.name),
+        "guarded" in scenario && scenario.guarded
+          ? "guardCondition" in scenario
+            ? scenario.guardCondition
+            : "!(flag)"
+          : false,
         "inlineEvents" in scenario && scenario.inlineEvents
           ? "complete"
           : "partial",

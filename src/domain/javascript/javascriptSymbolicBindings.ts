@@ -96,6 +96,13 @@ export class JavaScriptSymbolicBindings {
     SymbolicEnvironment,
     SymbolicValue
   >();
+  readonly #completionGroups = new WeakMap<
+    SymbolicValue,
+    {
+      readonly members: ReadonlySet<SymbolicValue>;
+      readonly common: SymbolicNamespace;
+    }
+  >();
   readonly #propertyActive = new WeakMap<object, Set<string>>();
   readonly #literalPropertyIndex = new WeakMap<
     t.ObjectExpression,
@@ -244,11 +251,34 @@ export class JavaScriptSymbolicBindings {
   ): SymbolicValue {
     let result: SymbolicValue;
     if (value.kind === "union")
-      result = symbolicUnion(
-        value.values.map((variant) => this.property(variant, key, read)),
-      );
+      result = symbolicUnion([
+        ...this.#commonProperty(value.values, key, read),
+        ...value.values.map((variant) => this.property(variant, key, read)),
+      ]);
     else result = this.#property(value, key, read);
     return this.#withConditions(result, value);
+  }
+
+  #commonProperty(
+    values: readonly SymbolicValue[],
+    key: string,
+    read?: SymbolicPropertyRead,
+  ): readonly SymbolicValue[] {
+    const first = values[0];
+    const group =
+      first === undefined ? undefined : this.#completionGroups.get(first);
+    if (group === undefined || group.members.size !== values.length) return [];
+    if (values.length > this.#remainingEvaluations) {
+      this.truncated = true;
+      this.#remainingEvaluations = 0;
+      return [];
+    }
+    this.#remainingEvaluations -= values.length;
+    // Only the complete, original partition proves an unconditional fact.
+    // Added predicates or a subset of exits cannot borrow this proof.
+    if (!values.every((value) => group.members.has(value))) return [];
+    const common = this.property(group.common, key, read);
+    return common.kind === "unknown" ? [] : [common];
   }
 
   #property(
@@ -290,7 +320,7 @@ export class JavaScriptSymbolicBindings {
         this.#unsafeExports.has(`${value.bindingId}:${key}`)
       )
         return symbolicUnknown("ambiguous export writes");
-      const available = this.#namespaceWrites(value, read);
+      const available = this.#namespaceWrites(value, read, key);
       if (available === undefined) {
         this.unresolved = true;
         return symbolicUnknown("module export read boundary is unavailable");
@@ -853,6 +883,7 @@ export class JavaScriptSymbolicBindings {
   #namespaceWrites(
     value: SymbolicNamespace,
     read?: SymbolicPropertyRead,
+    selectedKey?: string,
   ): readonly PropertyWrite[] | undefined {
     const writes = this.#writes.get(value.bindingId) ?? [];
     const completedAt = value.environment.completedAt;
@@ -872,20 +903,48 @@ export class JavaScriptSymbolicBindings {
       sourcePoint ?? Infinity,
       completedAt?.end ?? Infinity,
     );
+    const commonThrough = value.environment.commonThrough?.end;
+    const changed = new Set<string>();
+    if (commonThrough != null) {
+      if (writes.length > this.#remainingEvaluations) {
+        this.#remainingEvaluations = 0;
+        this.truncated = true;
+        return undefined;
+      }
+      this.#remainingEvaluations -= writes.length;
+      for (const write of writes) {
+        if (write.site.end == null) return undefined;
+        if (
+          write.site.end > completedAt!.end! &&
+          write.site.end <= commonThrough
+        ) {
+          if (write.path.length === 0) return [];
+          changed.add(write.path[0]!);
+        }
+      }
+    }
     return writes.filter(
-      (write) => write.site.end != null && write.site.end <= point,
+      (write) =>
+        write.site.end != null &&
+        write.site.end <= point &&
+        (changed.size === 0 ||
+          (write.path.length > 0
+            ? !changed.has(write.path[0]!)
+            : selectedKey !== undefined && !changed.has(selectedKey))),
     );
   }
 
   #completeNamespace(
     value: SymbolicNamespace,
     point: t.Node,
+    commonThrough?: t.Node,
   ): SymbolicNamespace {
     const values = new Map(value.environment.values);
     const environment: SymbolicEnvironment = {
       ...value.environment,
       values,
       completedAt: point,
+      ...(commonThrough === undefined ? {} : { commonThrough }),
     };
     const completed: SymbolicNamespace = { ...value, environment };
     // A completed activation owns coherent views of both parameter aliases.
@@ -935,6 +994,35 @@ export class JavaScriptSymbolicBindings {
             ]
           : []),
       ]);
+      const variants = symbolicVariants(completed);
+      if (
+        variants.length > 1 &&
+        variants.every(
+          (variant) =>
+            variant.kind === "namespace" &&
+            variant.environment.completedAt?.end != null &&
+            !variant.conditionUnresolved,
+        )
+      ) {
+        if (variants.length > this.#remainingEvaluations) {
+          this.#remainingEvaluations = 0;
+          this.truncated = true;
+        } else {
+          this.#remainingEvaluations -= variants.length;
+          const exits = variants as readonly SymbolicNamespace[];
+          let first = exits[0]!.environment.completedAt!;
+          let last = first;
+          for (const exit of exits) {
+            const point = exit.environment.completedAt!;
+            if (point.end! < first.end!) first = point;
+            if (point.end! > last.end!) last = point;
+          }
+          const common = this.#completeNamespace(value, first, last);
+          const group = { members: new Set(variants), common };
+          for (const variant of variants)
+            this.#completionGroups.set(variant, group);
+        }
+      }
       this.#completedModules.set(value.environment, completed);
       return completed;
     } finally {

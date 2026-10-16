@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { fixtureProcessEnvironment } from "../../support/process/fixtureProcessEnvironment.js";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -58,7 +59,7 @@ cliTest(
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],
       cwd: process.cwd(),
-      env: { PATH: process.env.PATH ?? "" },
+      env: fixtureProcessEnvironment({ PATH: process.env.PATH ?? "" }),
       stderr: "pipe",
     });
     transport.stderr?.on("data", () => undefined);

@@ -17,6 +17,49 @@ const launcher: ProcessTableEntry = {
   command: "fixture",
 };
 
+const reparentedIdentityInspector =
+  (context: {
+    readonly token: string;
+    readonly childPid: number;
+    readonly childReads: () => number;
+    readonly observeExit: () => void;
+  }): NonNullable<ProcessOwnershipHost["processIdentities"]> =>
+  async (members) =>
+    new Map<number, ProcessIdentityObservation>(
+      members.map(({ pid }) => {
+        const isChild = pid === context.childPid;
+        const reads = context.childReads();
+        const foreignExited =
+          isChild &&
+          context.token === "foreign-afterread-unavailable" &&
+          reads > 0;
+        if ((isChild && context.token === "identity-exited") || foreignExited)
+          context.observeExit();
+        if (
+          isChild &&
+          (context.token === "identity-unavailable" ||
+            context.token === "identity-exited")
+        )
+          return [pid, { state: "unavailable", reason: "inspection denied" }];
+        if (foreignExited)
+          return [
+            pid,
+            { state: "unavailable", reason: "exited after foreign token read" },
+          ];
+        const reused =
+          isChild &&
+          ((context.token === "reused" && reads > 0) ||
+            (context.token === "recovered-reused" && reads > 1));
+        return [
+          pid,
+          {
+            state: "readable",
+            identity: reused ? "replacement-start" : `start-${String(pid)}`,
+          },
+        ];
+      }),
+    );
+
 it("reports exhausted sweep discovery as incomplete coverage rather than a PID identity failure", async () => {
   let generation = 0;
   const signalGroup = vi.fn();
@@ -368,11 +411,29 @@ it.each([
   { phase: "signaling", token: "missing" },
   { phase: "planning", token: "identity-unavailable" },
   { phase: "signaling", token: "reused" },
+  { phase: "planning", token: "exited" },
+  { phase: "signaling", token: "identity-exited" },
+  { phase: "signaling", token: "replacement-owned" },
+  { phase: "planning", token: "replacement-missing" },
+  { phase: "planning", token: "replacement-foreign" },
+  { phase: "signaling", token: "foreign-uid" },
+  { phase: "planning", token: "same-uid-denied" },
+  { phase: "signaling", token: "liveness-denied" },
+  { phase: "planning", token: "foreign-afterread-unavailable" },
+  { phase: "planning", token: "recovered-foreign" },
+  { phase: "signaling", token: "recovered-owned" },
+  { phase: "signaling", token: "recovered-reused" },
 ])(
   "examines a reparented $token child during generic $phase cleanup",
   async ({ phase, token }) => {
     const parent = { ...launcher, pid: 101, parentPid: launcher.pid };
-    const child = { ...launcher, pid: 200, processGroupId: 200 };
+    const child = {
+      ...launcher,
+      pid: 200,
+      processGroupId: 200,
+      uid: (process.getuid?.() ?? 0) + (token === "foreign-uid" ? 1 : 0),
+    };
+    const replacement = { ...launcher, pid: 201, processGroupId: 201 };
     const neighbor = { ...launcher, pid: 900, processGroupId: 900 };
     let rows = [launcher, parent, neighbor];
     let parentReads = 0;
@@ -389,8 +450,27 @@ it.each([
       }
       if (pid === child.pid) {
         childReads++;
+        if (token.startsWith("recovered-") && childReads === 1) return {};
+        if (token === "recovered-foreign")
+          return { REA_PROCESS_RUN_ID: "other-run" };
+        if (token === "foreign-uid" || token === "same-uid-denied")
+          throw new Error("EACCES: environment permission denied");
+        if (token === "liveness-denied") return {};
+        if (token === "exited" || token.startsWith("replacement-")) {
+          rows =
+            token === "exited"
+              ? [launcher, neighbor]
+              : [launcher, replacement, neighbor];
+          return {};
+        }
         if (token === "missing") return {};
-        if (token === "foreign") return { REA_PROCESS_RUN_ID: "other-run" };
+        if (token === "foreign" || token === "foreign-afterread-unavailable")
+          return { REA_PROCESS_RUN_ID: "other-run" };
+      }
+      if (pid === replacement.pid) {
+        if (token === "replacement-missing") return {};
+        if (token === "replacement-foreign")
+          return { REA_PROCESS_RUN_ID: "other-run" };
       }
       return { REA_PROCESS_RUN_ID: ownership.runId };
     });
@@ -398,33 +478,66 @@ it.each([
       rows = rows.filter(({ processGroupId }) => processGroupId !== groupId);
     });
     const result = await cleanupOwnedProcessGroup(ownership, {
-      listProcesses: async () => rows,
-      processIdentities: async (members) =>
-        new Map<number, ProcessIdentityObservation>(
-          members.map(({ pid }) => [
-            pid,
-            pid === child.pid && token === "identity-unavailable"
-              ? { state: "unavailable", reason: "inspection denied" }
-              : {
-                  state: "readable",
-                  identity:
-                    pid === child.pid && token === "reused" && childReads > 0
-                      ? "replacement-start"
-                      : `start-${String(pid)}`,
-                },
-          ]),
-        ),
+      listProcesses: async () => {
+        if (token === "liveness-denied" && childReads > 0)
+          throw new Error("process table denied");
+        return rows;
+      },
+      processIdentities: reparentedIdentityInspector({
+        token,
+        childPid: child.pid,
+        childReads: () => childReads,
+        observeExit: () => {
+          rows = [launcher, neighbor];
+        },
+      }),
       environment,
       signalGroup,
     });
-    if (token === "owned" || token === "foreign") {
-      expect(result).toEqual({ cleaned: true, signaled: true });
-      expect(rows).toEqual(token === "owned" ? [neighbor] : [child, neighbor]);
+    if (
+      [
+        "owned",
+        "foreign",
+        "exited",
+        "identity-exited",
+        "replacement-owned",
+        "replacement-foreign",
+        "foreign-uid",
+        "foreign-afterread-unavailable",
+        "recovered-foreign",
+        "recovered-owned",
+      ].includes(token)
+    ) {
+      expect(result).toEqual({
+        cleaned: true,
+        signaled: true,
+        ...(token === "foreign-uid"
+          ? {
+              unverified: [
+                {
+                  pid: child.pid,
+                  diagnostic: "EACCES: environment permission denied",
+                },
+              ],
+            }
+          : {}),
+      });
+      expect(rows).toEqual(
+        token === "foreign" ||
+          token === "foreign-uid" ||
+          token === "recovered-foreign"
+          ? [child, neighbor]
+          : token === "replacement-foreign"
+            ? [replacement, neighbor]
+            : [neighbor],
+      );
       expect(signalGroup.mock.calls).toEqual(
-        token === "owned"
+        token === "owned" ||
+          token === "replacement-owned" ||
+          token === "recovered-owned"
           ? [
               [100, "SIGKILL"],
-              [200, "SIGKILL"],
+              [token === "replacement-owned" ? 201 : 200, "SIGKILL"],
             ]
           : [[100, "SIGKILL"]],
       );
@@ -433,18 +546,24 @@ it.each([
         cleaned: false,
         failures: [
           {
-            pid: child.pid,
-            reason:
-              token === "missing"
-                ? "environment-unreadable"
-                : "process-identity-unavailable",
+            pid: token === "replacement-missing" ? replacement.pid : child.pid,
+            reason: [
+              "missing",
+              "replacement-missing",
+              "same-uid-denied",
+              "liveness-denied",
+            ].includes(token)
+              ? "environment-unreadable"
+              : "process-identity-unavailable",
           },
         ],
       });
       expect(signalGroup).not.toHaveBeenCalled();
     }
-    if (token !== "identity-unavailable")
+    if (token !== "identity-unavailable" && token !== "identity-exited")
       expect(environment).toHaveBeenCalledWith(child.pid);
+    if (token.startsWith("replacement-"))
+      expect(environment).toHaveBeenCalledWith(replacement.pid);
     expect(environment).not.toHaveBeenCalledWith(neighbor.pid);
   },
 );
@@ -512,6 +631,101 @@ it.each([
         });
   },
 );
+
+it("retains an owned reparented group while a newly discovered peer exits during inspection", async () => {
+  const parent = { ...launcher, pid: 101, parentPid: launcher.pid };
+  const owned = { ...launcher, pid: 200, processGroupId: 200 };
+  const transient = { ...launcher, pid: 300, processGroupId: 300 };
+  const foreign = { ...launcher, pid: 400, processGroupId: 400 };
+  let rows = [launcher, parent];
+  const signalGroup = vi.fn((groupId: number) => {
+    rows = rows.filter(({ processGroupId }) => processGroupId !== groupId);
+  });
+  const result = await cleanupOwnedProcessGroup(ownership, {
+    listProcesses: async () => rows,
+    processIdentities: async (members) =>
+      new Map(
+        members.map(({ pid }) => [
+          pid,
+          { state: "readable" as const, identity: `start-${String(pid)}` },
+        ]),
+      ),
+    environment: async (pid) => {
+      if (pid === parent.pid) {
+        rows = [launcher, owned, transient];
+        return {};
+      }
+      if (pid === transient.pid) {
+        rows = [launcher, owned, foreign];
+        return {};
+      }
+      return {
+        REA_PROCESS_RUN_ID: pid === foreign.pid ? "other-run" : ownership.runId,
+      };
+    },
+    signalGroup,
+  });
+  expect(result).toEqual({ cleaned: true, signaled: true });
+  expect(signalGroup.mock.calls).toEqual([
+    [100, "SIGKILL"],
+    [200, "SIGKILL"],
+  ]);
+  expect(rows).toEqual([foreign]);
+});
+
+it("bounds repeated unlinked candidate replacement without accepting unexamined ownership", async () => {
+  const parent = { ...launcher, pid: 101, parentPid: launcher.pid };
+  let nextPid = 200;
+  let rows = [launcher, parent];
+  const signalGroup = vi.fn();
+  const result = await cleanupOwnedProcessGroup(ownership, {
+    listProcesses: async () => rows,
+    environment: async (pid) => {
+      if (pid === launcher.pid) return { REA_PROCESS_RUN_ID: ownership.runId };
+      rows = [
+        launcher,
+        { ...launcher, pid: nextPid, processGroupId: nextPid++ },
+      ];
+      return {};
+    },
+    signalGroup,
+  });
+  expect(result).toMatchObject({
+    cleaned: false,
+    failures: [{ pid: rows[1]!.pid, reason: "process-discovery-incomplete" }],
+  });
+  expect(nextPid).toBeLessThan(210);
+  expect(signalGroup).not.toHaveBeenCalled();
+});
+
+it("keeps final liveness failure after a refreshed candidate recovers its token", async () => {
+  const parent = { ...launcher, pid: 101, parentPid: launcher.pid };
+  const child = { ...launcher, pid: 200, processGroupId: 200 };
+  let rows = [launcher, parent];
+  let childReads = 0;
+  const signalGroup = vi.fn();
+  const result = await cleanupOwnedProcessGroup(ownership, {
+    listProcesses: async () => {
+      if (childReads >= 2) throw new Error("final candidate table denied");
+      return rows;
+    },
+    environment: async (pid) => {
+      if (pid === parent.pid) {
+        rows = [launcher, child];
+        return {};
+      }
+      if (pid === child.pid && ++childReads === 1) return {};
+      return { REA_PROCESS_RUN_ID: ownership.runId };
+    },
+    signalGroup,
+  });
+  expect(childReads).toBe(2);
+  expect(result).toMatchObject({
+    cleaned: false,
+    reason: expect.stringContaining("final candidate table denied"),
+  });
+  expect(signalGroup).not.toHaveBeenCalled();
+});
 
 it("examines a replacement discovered while sweep start identity is unavailable", async () => {
   const parent = { ...launcher, pid: 200, processGroupId: 200 };

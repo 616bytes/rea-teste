@@ -3,6 +3,7 @@ import { createPackageWithOptions } from "@electron/asar";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { rm } from "node:fs/promises";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { fixtureProcessEnvironment } from "../../support/process/fixtureProcessEnvironment.js";
 import { join, resolve } from "node:path";
 import { expect, it } from "vitest";
 import { z } from "zod";
@@ -23,10 +24,10 @@ const createSelectionClient = () => {
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
     cwd: process.cwd(),
-    env: {
+    env: fixtureProcessEnvironment({
       PATH: process.env.PATH ?? "",
       NODE_OPTIONS: "--max-old-space-size=512 --max-semi-space-size=8",
-    },
+    }),
     stderr: "pipe",
   });
   return { client, transport };

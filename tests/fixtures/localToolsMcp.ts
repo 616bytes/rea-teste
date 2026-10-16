@@ -5,10 +5,10 @@ import {
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ValidateFunction } from "ajv";
-import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { expect, onTestFinished } from "vitest";
 import { z } from "zod";
+import { fixtureProcessEnvironment } from "../support/process/fixtureProcessEnvironment.js";
 
 // validateSchema checks against the meta-schema without registering user $ids.
 const schemaValidator = new Ajv2020({
@@ -44,16 +44,15 @@ export async function connectLocalToolsMcp(
       fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
       "mcp",
     ],
-    env: {
+    env: fixtureProcessEnvironment({
       PATH: process.env.PATH ?? "/usr/bin:/bin",
       REA_LOG_LEVEL: "silent",
       HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
       // The SDK owns this fixture server; sibling captures must see its
       // distinct ownership token rather than mistake it for a missing-token
       // post-baseline child. Explicit caller environment values take precedence.
-      REA_PROCESS_RUN_ID: randomUUID(),
       ...environment,
-    },
+    }),
     stderr: "pipe",
   });
   const client = new Client({ name: "local-tools-e2e", version: "1" });

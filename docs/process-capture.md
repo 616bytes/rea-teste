@@ -467,7 +467,16 @@ also inspected, because a child can already be reparented when its parent exits.
 Cleanup and lineage observation share token/start-identity validation for these
 candidates: positive proof retains owned children, explicit foreign tokens leave
 unrelated children untouched, and unavailable proof keeps the outcome unresolved.
-Stable unrelated rows remain outside generic discovery. Pre-signal discovery precedes the final group ownership check;
+Unavailable candidate reads also trigger a fresh liveness check: exited rows are
+settled, and newly observed replacements remain subject to the same bounded
+discovery and validation. The comparison advances with examined snapshots while
+retaining owned groups and start identities. Live unavailable tokens reuse the
+existing bounded settlement attempts; recovery cannot adopt a changed start
+identity or bypass the final liveness read. Proven environment withholding for
+unrelated candidates uses the same rule as token sweeps; its diagnostics remain
+attached, while same-UID permission denial stays unresolved.
+Stable unrelated rows remain outside generic discovery. Pre-signal discovery
+precedes the final group ownership check;
 newer scan failures cannot be erased by an earlier successful check. Captured
 start identities remain pinned across bounded replanning, including when a
 process recovers its run token.

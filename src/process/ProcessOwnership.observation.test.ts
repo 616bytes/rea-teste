@@ -122,7 +122,17 @@ it("does not publish verified group liveness when an exit refresh reveals a fore
   });
 });
 
-it.each(["owned", "foreign", "missing", "reused"])(
+it.each([
+  "owned",
+  "foreign",
+  "missing",
+  "reused",
+  "exited",
+  "replacement-owned",
+  "replacement-missing",
+  "recovered-owned",
+  "recovered-reused",
+])(
   "accounts for a reparented %s child before publishing refreshed lineage",
   async (token) => {
     const child = {
@@ -132,6 +142,7 @@ it.each(["owned", "foreign", "missing", "reused"])(
       processGroupId: 200,
     };
     const neighbor = { ...child, pid: 900, processGroupId: 900 };
+    const replacement = { ...child, pid: 201, processGroupId: 201 };
     let rows = [...processes, neighbor];
     let childReads = 0;
     const environment = vi.fn(async (pid: number) => {
@@ -143,9 +154,18 @@ it.each(["owned", "foreign", "missing", "reused"])(
       }
       if (pid === child.pid) {
         childReads++;
+        if (token.startsWith("recovered-") && childReads === 1) return {};
+        if (token === "exited" || token.startsWith("replacement-")) {
+          rows =
+            token === "exited"
+              ? [processes[0]!, neighbor]
+              : [processes[0]!, replacement, neighbor];
+          return {};
+        }
         if (token === "missing") return {};
         if (token === "foreign") return { REA_PROCESS_RUN_ID: "other-run" };
       }
+      if (pid === replacement.pid && token === "replacement-missing") return {};
       return { REA_PROCESS_RUN_ID: ownership.runId };
     });
     const result = await observeOwnedProcessLineage(ownership, {
@@ -157,7 +177,9 @@ it.each(["owned", "foreign", "missing", "reused"])(
             {
               state: "readable" as const,
               identity:
-                pid === child.pid && token === "reused" && childReads > 0
+                pid === child.pid &&
+                ((token === "reused" && childReads > 0) ||
+                  (token === "recovered-reused" && childReads > 1))
                   ? "replacement-start"
                   : `start-${String(pid)}`,
             },
@@ -168,21 +190,41 @@ it.each(["owned", "foreign", "missing", "reused"])(
     });
     expect(environment).toHaveBeenCalledWith(child.pid);
     expect(environment).not.toHaveBeenCalledWith(neighbor.pid);
-    if (token === "owned" || token === "foreign")
+    if (
+      [
+        "owned",
+        "foreign",
+        "exited",
+        "replacement-owned",
+        "recovered-owned",
+      ].includes(token)
+    )
       expect(result).toMatchObject({
         status: "verified",
         lineage: {
           descendants:
-            token === "owned"
-              ? [{ pid: 200, parentPid: 1, processGroupId: 200 }]
+            token === "owned" ||
+            token === "replacement-owned" ||
+            token === "recovered-owned"
+              ? [
+                  {
+                    pid: token === "replacement-owned" ? 201 : 200,
+                    parentPid: 1,
+                    processGroupId: token === "replacement-owned" ? 201 : 200,
+                  },
+                ]
               : [],
         },
       });
     else
       expect(result).toMatchObject({
         status: "unavailable",
-        reason: expect.stringContaining(`PID ${String(child.pid)}`),
+        reason: expect.stringContaining(
+          `PID ${String(token === "replacement-missing" ? replacement.pid : child.pid)}`,
+        ),
       });
+    if (token.startsWith("replacement-"))
+      expect(environment).toHaveBeenCalledWith(replacement.pid);
   },
 );
 

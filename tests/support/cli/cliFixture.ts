@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
-import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
+import { fixtureProcessEnvironment } from "../process/fixtureProcessEnvironment.js";
 
 import {
   createTestWorkspace,
@@ -70,8 +70,7 @@ export const createTestCli = (
       {
         cwd: cwd ?? process.cwd(),
         env: {
-          PATH: process.env.PATH ?? "",
-          REA_PROCESS_RUN_ID: randomUUID(),
+          ...fixtureProcessEnvironment({ PATH: process.env.PATH ?? "" }),
           // Native Windows APIs need the system root and a writable temporary
           // directory even when the command's application environment is empty.
           ...(process.platform === "win32"

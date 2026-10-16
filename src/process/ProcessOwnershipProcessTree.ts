@@ -1,4 +1,35 @@
-import type { ProcessTableEntry } from "./ProcessOwnership.js";
+import type {
+  ProcessOwnershipHost,
+  ProcessTableEntry,
+} from "./ProcessOwnership.js";
+
+/** Parsed liveness facts shared by cleanup and cancellable observations. */
+export const readLiveProcessTable = async (
+  host: ProcessOwnershipHost,
+  signal?: AbortSignal,
+): Promise<
+  | {
+      readonly available: true;
+      readonly processes: readonly ProcessTableEntry[];
+    }
+  | { readonly available: false; readonly reason: string }
+> => {
+  signal?.throwIfAborted();
+  try {
+    const processes =
+      signal === undefined
+        ? await host.listProcesses()
+        : await host.listProcesses(signal);
+    signal?.throwIfAborted();
+    return { available: true, processes: liveProcesses(processes) };
+  } catch (cause: unknown) {
+    signal?.throwIfAborted();
+    return {
+      available: false,
+      reason: cause instanceof Error ? cause.message : String(cause),
+    };
+  }
+};
 
 /** Exclude process-table entries that the operating system has already reaped. */
 export const liveProcesses = (

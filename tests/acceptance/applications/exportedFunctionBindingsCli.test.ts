@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { fixtureProcessEnvironment } from "../../support/process/fixtureProcessEnvironment.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -1315,7 +1316,10 @@ const getMcpClient = async (): Promise<Client> => {
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],
       cwd: process.cwd(),
-      env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+      env: fixtureProcessEnvironment({
+        PATH: process.env.PATH ?? "",
+        REA_LOG_LEVEL: "silent",
+      }),
       stderr: "pipe",
     });
     transport.stderr?.on("data", () => undefined);

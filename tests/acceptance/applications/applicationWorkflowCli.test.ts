@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { fixtureProcessEnvironment } from "../../support/process/fixtureProcessEnvironment.js";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -37,7 +38,10 @@ const mcpTransport = new StdioClientTransport({
   command: process.execPath,
   args: [resolve("scripts/rea.mjs"), "mcp"],
   cwd: process.cwd(),
-  env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+  env: fixtureProcessEnvironment({
+    PATH: process.env.PATH ?? "",
+    REA_LOG_LEVEL: "silent",
+  }),
   stderr: "pipe",
 });
 mcpTransport.stderr?.on("data", () => undefined);

@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { fixtureProcessEnvironment } from "../../support/process/fixtureProcessEnvironment.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -262,10 +263,10 @@ const createResourceClient = () => {
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
     cwd: process.cwd(),
-    env: {
+    env: fixtureProcessEnvironment({
       PATH: process.env.PATH ?? "",
       NODE_OPTIONS: "--max-old-space-size=512 --max-semi-space-size=8",
-    },
+    }),
     stderr: "pipe",
   });
   let diagnostics = "";

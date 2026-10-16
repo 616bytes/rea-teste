@@ -2,7 +2,11 @@ import { readFile } from "node:fs/promises";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 
 import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
-import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
+import {
+  descendantsOf,
+  liveProcesses,
+  readLiveProcessTable,
+} from "./ProcessOwnershipProcessTree.js";
 import { execFileOutput } from "./ExecFileOutput.js";
 import {
   createDarwinProcessRunTokenReader,
@@ -13,6 +17,7 @@ import {
   readProcessRunTokens,
 } from "./ProcessRunTokenObservations.js";
 import {
+  environmentWithheldFromInspection,
   readProcessOwnershipCandidates,
   refreshedProcessCandidates,
 } from "./ProcessOwnershipRefresh.js";
@@ -130,6 +135,7 @@ export const observeOwnedProcessLineage = async (
   }
   const descendantAnchors = new Set<number>([ownership.leaderPid]);
   const discoveredIdentities = new Map<number, string | null>();
+  let previousProcesses: readonly ProcessTableEntry[] | undefined;
   for (let attempt = 0; attempt < OWNERSHIP_OBSERVATION_ATTEMPTS; attempt++) {
     const processes = table.processes;
     const launcher = processes.find(({ pid }) => pid === ownership.leaderPid);
@@ -147,81 +153,64 @@ export const observeOwnedProcessLineage = async (
         (descendantAnchors.has(pid) || discovered.has(pid)),
     );
     for (const { pid } of descendants) descendantAnchors.add(pid);
+    const linkedPids = new Set([
+      launcher.pid,
+      ...descendants.map(({ pid }) => pid),
+    ]);
+    const unlinked =
+      previousProcesses === undefined
+        ? []
+        : refreshedProcessCandidates(previousProcesses, processes).filter(
+            ({ pid }) => !linkedPids.has(pid),
+          );
     const verifiedDescendants: ProcessTableEntry[] = [];
-    const unavailable: { readonly pid: number; readonly reason: string }[] = [];
-    for (const {
-      process: member,
-      ownership: validation,
-    } of await readProcessOwnershipCandidates(
-      [launcher, ...descendants],
+    const inspection = await readProcessOwnershipCandidates(
+      [launcher, ...descendants, ...unlinked],
       ownership.runId,
       host,
       discoveredIdentities,
-    )) {
-      if (validation.state === "foreign")
-        return unavailableLineage(
-          ownership,
-          "process lineage contains an unowned or PID-reused process",
-        );
+    );
+    if (inspection.failure !== undefined)
+      return unavailableLineage(ownership, inspection.failure);
+    for (const {
+      process: member,
+      ownership: validation,
+    } of inspection.observations) {
+      if (validation.state === "foreign") {
+        if (linkedPids.has(member.pid))
+          return unavailableLineage(
+            ownership,
+            "process lineage contains an unowned or PID-reused process",
+          );
+        continue;
+      }
       if (validation.state === "owned") {
         if (!discoveredIdentities.has(member.pid))
           discoveredIdentities.set(member.pid, validation.identity);
+        descendantAnchors.add(member.pid);
         if (member.pid !== launcher.pid) verifiedDescendants.push(member);
+      } else if (validation.state === "exited") {
+        if (member.pid === launcher.pid)
+          return unavailableLineage(
+            ownership,
+            "owned launcher exited during lineage validation",
+          );
       } else {
-        unavailable.push({ pid: member.pid, reason: validation.diagnostic });
-      }
-    }
-    if (unavailable.length > 0) {
-      const refreshed = await readLiveProcessTable(host);
-      for (const { pid, reason } of unavailable) {
         if (
-          refreshed.available &&
-          !refreshed.processes.some((entry) => entry.pid === pid)
-        ) {
-          if (pid === launcher.pid)
-            return unavailableLineage(
-              ownership,
-              "owned launcher exited during lineage validation",
-            );
+          !linkedPids.has(member.pid) &&
+          validation.reason === "environment-unreadable" &&
+          environmentWithheldFromInspection(member, validation.diagnostic)
+        )
           continue;
-        }
         return unavailableLineage(
           ownership,
-          `process ownership could not be revalidated for PID ${pid}: ${reason}${refreshed.available ? "" : `; process table could not be inspected: ${refreshed.reason}`}`,
+          `process ownership could not be revalidated for PID ${String(member.pid)}: ${validation.diagnostic}`,
         );
       }
-      if (refreshed.available) {
-        const linked = new Set([
-          ...descendantAnchors,
-          ...descendantsOf([...descendantAnchors], refreshed.processes).map(
-            ({ pid }) => pid,
-          ),
-        ]);
-        const candidates = refreshedProcessCandidates(
-          processes,
-          refreshed.processes,
-        ).filter(({ pid }) => !linked.has(pid));
-        for (const {
-          process,
-          ownership: proof,
-        } of await readProcessOwnershipCandidates(
-          candidates,
-          ownership.runId,
-          host,
-          discoveredIdentities,
-        )) {
-          if (proof.state === "unavailable")
-            return unavailableLineage(
-              ownership,
-              `process ownership could not be revalidated for PID ${String(process.pid)}: ${proof.diagnostic}`,
-            );
-          if (proof.state === "owned") {
-            descendantAnchors.add(process.pid);
-            discoveredIdentities.set(process.pid, proof.identity);
-          }
-        }
-        table = refreshed;
-      }
+    }
+    if (inspection.refreshedProcesses !== undefined) {
+      previousProcesses = processes;
+      table = { available: true, processes: inspection.refreshedProcesses };
       continue;
     }
     return {
@@ -651,31 +640,6 @@ export const prepareProcessOwnershipInspection = async (
   signal?: AbortSignal,
 ): Promise<void> => {
   await systemProcessOwnershipHost.prepare?.(signal);
-};
-
-/** Parsed liveness facts shared by cleanup and cancellable observations. */
-export const readLiveProcessTable = async (
-  host: ProcessOwnershipHost,
-  signal?: AbortSignal,
-): Promise<
-  | {
-      readonly available: true;
-      readonly processes: readonly ProcessTableEntry[];
-    }
-  | { readonly available: false; readonly reason: string }
-> => {
-  signal?.throwIfAborted();
-  try {
-    const processes =
-      signal === undefined
-        ? await host.listProcesses()
-        : await host.listProcesses(signal);
-    signal?.throwIfAborted();
-    return { available: true, processes: liveProcesses(processes) };
-  } catch (cause: unknown) {
-    signal?.throwIfAborted();
-    return { available: false, reason: errorMessage(cause) };
-  }
 };
 
 export const errorMessage = (cause: unknown): string =>

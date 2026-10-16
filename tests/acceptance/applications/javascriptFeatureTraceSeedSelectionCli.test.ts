@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { fixtureProcessEnvironment } from "../../support/process/fixtureProcessEnvironment.js";
 import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { expect } from "vitest";
@@ -234,7 +235,10 @@ cliTest(
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],
       cwd: process.cwd(),
-      env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+      env: fixtureProcessEnvironment({
+        PATH: process.env.PATH ?? "",
+        REA_LOG_LEVEL: "silent",
+      }),
       stderr: "pipe",
     });
     transport.stderr?.on("data", () => undefined);

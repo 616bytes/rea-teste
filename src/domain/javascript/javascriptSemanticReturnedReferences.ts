@@ -56,15 +56,24 @@ interface PathInterner {
 }
 
 const createPathInterner = (): PathInterner => {
-  const interned = new Map<string, PathLink>();
+  // Key by base link identity and the original key reference so no serialized
+  // key text is retained per entry.
+  const slotsByBase = new Map<
+    PathLink,
+    Map<string | number | null, PathLink>
+  >();
   let nextId = 1;
   const root: PathLink = { rest: null, key: null, length: 0, id: 0 };
   const prependOne = (
     base: PathLink,
     key: string | number | null,
   ): PathLink => {
-    const internKey = JSON.stringify([base.id, key]);
-    const existing = interned.get(internKey);
+    let slots = slotsByBase.get(base);
+    if (slots === undefined) {
+      slots = new Map();
+      slotsByBase.set(base, slots);
+    }
+    const existing = slots.get(key);
     if (existing !== undefined) return existing;
     const link: PathLink = {
       rest: base,
@@ -73,7 +82,7 @@ const createPathInterner = (): PathInterner => {
       id: nextId,
     };
     nextId += 1;
-    interned.set(internKey, link);
+    slots.set(key, link);
     return link;
   };
   return {

@@ -52,4 +52,20 @@ describe("computed Electron web preference keys", () => {
       ]),
     );
   });
+
+  it("keeps preload and service identity after unrelated empty template keys", () => {
+    const analysis = analyzeJavaScriptStaticSource(
+      [
+        'const { BrowserWindow, utilityProcess } = require("electron");',
+        'new BrowserWindow({ webPreferences: { preload: "./kept.js", [``]: true }, [``]: null });',
+        'utilityProcess.fork("./worker.js", [], { serviceName: "kept", [``]: null });',
+      ].join("\n"),
+    );
+
+    expect(analysis.electron.browser_windows[0]).toMatchObject({
+      preload_path: "./kept.js",
+      web_preferences_status: "object-literal",
+    });
+    expect(analysis.electron.utility_processes[0]?.service_name).toBe("kept");
+  });
 });

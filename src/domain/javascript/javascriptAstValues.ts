@@ -107,20 +107,34 @@ export const semanticStaticPropertyKey = (
   return !computed && t.isIdentifier(property) ? property.name : null;
 };
 
+/** Find the effective explicit property, preserving unresolved overrides. */
+export const staticObjectProperty = (
+  object: t.Node | undefined,
+  name: string,
+):
+  | { readonly status: "missing" | "dynamic" }
+  | { readonly status: "explicit"; readonly property: t.ObjectProperty } => {
+  if (object === undefined) return { status: "missing" };
+  if (!t.isObjectExpression(object)) return { status: "dynamic" };
+  for (const property of object.properties.toReversed()) {
+    if (t.isSpreadElement(property)) return { status: "dynamic" };
+    const key = semanticStaticPropertyKey(property.key, property.computed);
+    if (key === null) return { status: "dynamic" };
+    if (key !== name) continue;
+    return t.isObjectProperty(property)
+      ? { status: "explicit", property }
+      : { status: "dynamic" };
+  }
+  return { status: "missing" };
+};
+
 /** Later properties own a key; an intervening dynamic write leaves it unknown. */
 export const semanticFinalObjectProperty = (
   node: t.ObjectExpression,
   key: string,
 ): t.Node | undefined => {
-  for (let index = node.properties.length - 1; index >= 0; index -= 1) {
-    const property = node.properties[index];
-    if (property === undefined || t.isSpreadElement(property)) return undefined;
-    const name = semanticStaticPropertyKey(property.key, property.computed);
-    if (name === null) return undefined;
-    if (name === key)
-      return t.isObjectProperty(property) ? property.value : undefined;
-  }
-  return undefined;
+  const property = staticObjectProperty(node, key);
+  return property.status === "explicit" ? property.property.value : undefined;
 };
 
 export const semanticFinalObjectStringProperty = (

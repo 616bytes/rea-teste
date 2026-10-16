@@ -509,7 +509,8 @@ it("observes an operation abandoned by an already-cancelled signal", async () =>
   process.on("unhandledRejection", recordUnhandled);
   try {
     const controller = new AbortController();
-    controller.abort();
+    const reason = new Error("caller-reason");
+    controller.abort(reason);
     let reject = (_cause: Error): void => undefined;
     const operation = new Promise<never>((_, rejectOperation) => {
       reject = rejectOperation;
@@ -520,6 +521,7 @@ it("observes an operation abandoned by an already-cancelled signal", async () =>
     ).rejects.toMatchObject({
       _tag: "BrowserObservationError",
       reason: "cancelled",
+      cause: reason,
     });
     reject(new Error("application closed during cleanup"));
     await new Promise((resolve) => setImmediate(resolve));

@@ -397,7 +397,9 @@ export const runWithExecutionLimits = async <Value>(
   if (signal?.aborted === true) {
     // The operation has already started; observe its abandoned settlement.
     void operation.catch(() => undefined);
-    throw new BrowserObservationError(OPERATION, "cancelled");
+    throw new BrowserObservationError(OPERATION, "cancelled", {
+      cause: signal.reason,
+    });
   }
   if (signal === undefined && deadline === undefined) return operation;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -416,7 +418,11 @@ export const runWithExecutionLimits = async <Value>(
     interruptions.push(
       new Promise<never>((_, reject) => {
         abortListener = () =>
-          reject(new BrowserObservationError(OPERATION, "cancelled"));
+          reject(
+            new BrowserObservationError(OPERATION, "cancelled", {
+              cause: signal.reason,
+            }),
+          );
         signal.addEventListener("abort", abortListener, { once: true });
       }),
     );

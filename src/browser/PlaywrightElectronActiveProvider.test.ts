@@ -437,12 +437,13 @@ it("cancels a windowless wait action and cleans up the owned application", async
     state,
   );
   const controller = new AbortController();
+  const reason = new Error("caller-reason");
   const application = {
     process: () => ({ pid: 424242 }),
     close: vi.fn(async () => undefined),
     windows: () => [],
     firstWindow: vi.fn(() => {
-      queueMicrotask(() => controller.abort());
+      queueMicrotask(() => controller.abort(reason));
       return new Promise<never>(() => undefined);
     }),
   };
@@ -466,13 +467,15 @@ it("cancels a windowless wait action and cleans up the owned application", async
       },
     },
   });
+  expect(result.error.cause).toBe(reason);
 });
 
 it("cancels a pending initial state read and cleans up the owned application", async () => {
   const cleanupSpies = stubVerifiedElectronCleanup();
   const controller = new AbortController();
+  const reason = new Error("caller-reason");
   vi.spyOn(electronActions, "readApplicationState").mockImplementation(() => {
-    queueMicrotask(() => controller.abort());
+    queueMicrotask(() => controller.abort(reason));
     return new Promise<never>(() => undefined);
   });
   const application = {
@@ -491,6 +494,7 @@ it("cancels a pending initial state read and cleans up the owned application", a
     _tag: "BrowserObservationError",
     reason: "cancelled",
   });
+  expect(result.error.cause).toBe(reason);
 });
 
 it("observes an initial state read started after cancellation and rejected by cleanup", async () => {
@@ -502,6 +506,7 @@ it("observes an initial state read started after cancellation and rejected by cl
   process.on("unhandledRejection", recordUnhandled);
   try {
     const controller = new AbortController();
+    const reason = new Error("caller-reason");
     let rejectReads = (_cause: Error): void => undefined;
     const closed = new Promise<never>((_, reject) => {
       rejectReads = reject;
@@ -510,7 +515,7 @@ it("observes an initial state read started after cancellation and rejected by cl
     const application = {
       process: () => ({ pid: 424242 }),
       evaluate: () => {
-        controller.abort();
+        controller.abort(reason);
         return closed;
       },
       close: vi.fn(async () => {
@@ -534,9 +539,45 @@ it("observes an initial state read started after cancellation and rejected by cl
       _tag: "BrowserObservationError",
       reason: "cancelled",
     });
+    expect(result.error.cause).toBe(reason);
   } finally {
     process.off("unhandledRejection", recordUnhandled);
   }
+});
+
+it("keeps a failure observed with cancellation as the cancellation cause", async () => {
+  stubVerifiedElectronCleanup();
+  const state = {
+    windows: [],
+    metrics: [],
+    electronVersion: "44.0.0",
+    hookSnapshot: emptyHookSnapshot(),
+  };
+  vi.spyOn(electronActions, "readApplicationState").mockResolvedValue(state);
+  const controller = new AbortController();
+  const failure = new Error("final state read failed");
+  vi.spyOn(electronActions, "readFinalApplicationState").mockImplementation(
+    async () => {
+      controller.abort(new Error("caller-reason"));
+      throw failure;
+    },
+  );
+  const application = {
+    process: () => ({ pid: 424242 }),
+    close: vi.fn(async () => undefined),
+    windows: () => [],
+  };
+
+  const result = await captureWithController(controller, application, []);
+
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected the capture to be cancelled");
+  expect(result.error).toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "cancelled",
+    partialObservation: { kind: "electron-active-observation" },
+  });
+  expect(result.error.cause).toBe(failure);
 });
 
 const stubCompletedCapture = () => {

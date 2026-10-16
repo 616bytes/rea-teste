@@ -13,6 +13,7 @@ import type {
 } from "../application/javascript/ElectronActiveObservationPort.js";
 import type { ElectronActiveObservationResult } from "../domain/javascript/electronActiveObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -169,7 +170,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       if (options.signal?.aborted === true)
         outcome = err(
           new BrowserObservationError(OPERATION, "cancelled", {
-            cause,
+            cause: cancellationCause(cause, options.signal),
             ...(capture === undefined
               ? {}
               : {
@@ -287,6 +288,16 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     return outcome;
   }
 }
+
+/**
+ * A cancellation wrapper stands in for the caller's abort reason; any other
+ * failure observed with cancellation stays the primary cause.
+ */
+const cancellationCause = (cause: unknown, signal: AbortSignal): unknown =>
+  cause instanceof AnalysisCancelledError ||
+  (cause instanceof AnalysisError && cause.userCategory === "cancelled")
+    ? signal.reason
+    : cause;
 
 /** Clean up an Electron launch. Windows signals a process only after lineage is verified. */
 export const cleanupElectronProcesses = async (

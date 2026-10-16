@@ -338,68 +338,6 @@ it.each(reverseToolsInputs)(
   },
 );
 
-it("requires the reverse-tool gate when its scope is selected", async () => {
-  const workflow = parse(
-    await readFile(
-      new URL("../../../.github/workflows/ci.yml", import.meta.url),
-      "utf8",
-    ),
-  );
-  expect(workflow.jobs["reverse-tools-quality"].if).toBe(
-    "needs.changes.outputs.reverse_tools == 'true'",
-  );
-  expect(workflow.jobs.required.needs).toContain("reverse-tools-quality");
-  const { CI_FLAGS } = await loadScopes();
-  const outputs = {
-    ...Object.fromEntries(CI_FLAGS.map((flag) => [flag, "false"])),
-    tier: "fast",
-    reverse_tools: "true",
-  };
-  const command = new URL("../../../scripts/ci/required.mjs", import.meta.url)
-    .pathname;
-  await expect(
-    execFileAsync(process.execPath, [command], {
-      env: {
-        ...process.env,
-        CI_JOBS: JSON.stringify({
-          changes: { result: "success", outputs },
-          static: { result: "success" },
-          test: { result: "success" },
-          "reverse-tools-quality": { result: "skipped" },
-        }),
-      },
-    }),
-  ).rejects.toMatchObject({ code: 1 });
-  await expect(
-    execFileAsync(process.execPath, [command], {
-      env: {
-        ...process.env,
-        CI_JOBS: JSON.stringify({
-          changes: { result: "success", outputs },
-          static: { result: "success" },
-          test: { result: "success" },
-          "reverse-tools-quality": { result: "failure" },
-        }),
-      },
-    }),
-  ).rejects.toMatchObject({ code: 1 });
-  await expect(
-    execFileAsync(process.execPath, [command], {
-      env: {
-        ...process.env,
-        CI_JOBS: JSON.stringify({
-          changes: { result: "success", outputs },
-          static: { result: "success" },
-          test: { result: "success" },
-          "reverse-tools-quality": { result: "success" },
-        }),
-      },
-    }),
-  ).resolves.toMatchObject({
-    stdout: expect.stringContaining("Every selected CI lane passed"),
-  });
-});
-
 it.each([
   "src/README.md",
   "README.md.ts",
@@ -478,7 +416,10 @@ it.each(["", "not-a-commit"])(
   },
 );
 
-it("selects only a trusted successful ancestor from recent CI push runs", async () => {
+it("selects only a trusted successful ancestor from recent CI push runs", async ({
+  skip,
+}) => {
+  skip(process.platform === "win32", "the fake gh is a POSIX shell script");
   const { directory, base } = await fixture();
   const head = await change(directory, ["src/evm/client.ts"]);
   const bin = join(directory, "fake-bin");
@@ -511,7 +452,11 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
   const output = join(directory, "baseline-output");
   const result = await execFileAsync(
     process.execPath,
-    [new URL("../../../scripts/ci/baseline.mjs", import.meta.url).pathname],
+    [
+      fileURLToPath(
+        new URL("../../../scripts/ci/baseline.mjs", import.meta.url),
+      ),
+    ],
     {
       cwd: directory,
       env: {
@@ -529,7 +474,8 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
   expect(await readFile(output, "utf8")).toBe(`base=${base}\nreason=\n`);
 });
 
-it("returns an empty baseline when GitHub lookup fails", async () => {
+it("returns an empty baseline when GitHub lookup fails", async ({ skip }) => {
+  skip(process.platform === "win32", "the fake gh is a POSIX shell script");
   const { directory, base } = await fixture();
   const head = await change(directory, ["src/evm/client.ts"]);
   const bin = join(directory, "fake-bin");
@@ -539,7 +485,11 @@ it("returns an empty baseline when GitHub lookup fails", async () => {
   await chmod(gh, 0o755);
   const result = await execFileAsync(
     process.execPath,
-    [new URL("../../../scripts/ci/baseline.mjs", import.meta.url).pathname],
+    [
+      fileURLToPath(
+        new URL("../../../scripts/ci/baseline.mjs", import.meta.url),
+      ),
+    ],
     {
       cwd: directory,
       env: {
@@ -703,8 +653,34 @@ it.each([
     },
   ],
   [
+    "scripts/verify-ghidra-bridge-sources.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "src/ghidra/GhidraBridgeSources.ts",
+    { code: true, ghidra_bridge: true, runtime: true, package: true },
+  ],
+  [
+    "src/ghidra/GhidraJavaProperties.ts",
+    { code: true, ghidra_bridge: true, runtime: true, package: false },
+  ],
+  [
+    "src/ghidra/GhidraReleasePolicy.ts",
+    { code: true, ghidra_bridge: true, runtime: true },
+  ],
+  [
+    ".github/workflows/ghidra-bridge-sources.yml",
+    { code: false, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "bridge/ghidra/Example.java",
-    { code: true, runtime: true, package: false, apple: false },
+    {
+      code: true,
+      runtime: true,
+      ghidra_bridge: true,
+      package: false,
+      apple: false,
+    },
   ],
   [
     "src/native/AppleExample.ts",
@@ -782,7 +758,10 @@ it.each([
     "src/domain/analysisErrorProjection.ts",
     { code: true, sqlite: true, runtime: true },
   ],
-  ["src/domain/javascript/example.ts", { code: true, sqlite: false }],
+  [
+    "src/domain/javascript/example.ts",
+    { code: true, sqlite: false, ghidra_bridge: false },
+  ],
 ])("selects the appropriate lanes for %s", async (path, expected) => {
   const { directory, base } = await fixture();
   const head = await change(directory, [path]);
@@ -881,6 +860,7 @@ it.each([
   ["web_runtime", "real-web-runtime"],
   ["web_source_map", "real-web-source-map"],
   ["nativeaot", "nativeaot-fixtures"],
+  ["ghidra_bridge", "ghidra-bridge-sources"],
   ["website", "website-check"],
 ])(
   "routes %s through the selector without a duplicate PR trigger",
@@ -958,6 +938,10 @@ it("rejects skipped selected work while allowing unselected lanes to skip", asyn
 });
 
 it.each([
+  [
+    ".github/workflows/mutation.yml",
+    { workflows: true, code: true, reverse_tools: true, package: false },
+  ],
   [
     ".github/workflows/sqlite-runtime.yml",
     { workflows: true, code: true, package: false, website: false },

@@ -135,6 +135,7 @@ const browserErrorCode = (
   if (
     reason === "target_not_found" ||
     reason === "target_not_allowed" ||
+    reason === "service_worker_blocked" ||
     reason === "target_changed"
   )
     return "target_unavailable";
@@ -421,6 +422,9 @@ const providerErrorDetails = (
     return {
       stage: "launch",
       provider_state: "unknown",
+      ...(error.launchRejection === undefined
+        ? {}
+        : { launch_rejection: { ...error.launchRejection } }),
       retry_action: error.ownerRunId === undefined ? "retry" : "unknown",
       ...(error.ownerRunId === undefined
         ? {}

@@ -16,6 +16,7 @@ import type {
 } from "../AnalysisProvider.js";
 import type { AnalysisProviderCandidateStatus } from "./AnalysisProviderRegistry.js";
 import { ABORTED, waitForAbortable } from "../../process/AbortablePromise.js";
+import type { FileCloseResourceOwner } from "../AnalysisProvider.js";
 
 /** Profile-resolution truth for one discovered provider candidate. */
 export interface AnalysisProviderCandidateEvaluation {
@@ -31,6 +32,7 @@ export const evaluateAnalysisProviderCandidate = async (
   status: AnalysisProviderCandidateStatus,
   target: BinaryTarget,
   signal: AbortSignal | undefined,
+  fileCloseResources?: FileCloseResourceOwner,
 ): Promise<
   Result<AnalysisProviderCandidateEvaluation, AnalysisCancelledError>
 > => {
@@ -41,7 +43,14 @@ export const evaluateAnalysisProviderCandidate = async (
     const resolution = await waitForAbortable(
       candidate.resolveAnalysisProfile(
         target,
-        signal === undefined ? undefined : { signal },
+        signal === undefined && fileCloseResources === undefined
+          ? undefined
+          : {
+              ...(signal === undefined ? {} : { signal }),
+              ...(fileCloseResources === undefined
+                ? {}
+                : { fileCloseResources }),
+            },
       ),
       signal,
     );

@@ -670,6 +670,9 @@ const isDeleteSite = (site: t.Node): boolean =>
   t.isUnaryExpression(site, { operator: "delete" });
 
 const isPatternOwnerDeclaration = (node: t.Node): boolean =>
+  // A constructor parameter property (`constructor(public x = 1) {}`) owns its
+  // `AssignmentPattern` parameter, so the bound name is a declaration.
+  t.isTSParameterProperty(node) ||
   (t.isVariableDeclarator(node) && t.isPattern(node.id)) ||
   (t.isFunction(node) &&
     node.params.some((value): value is t.Pattern => t.isPattern(value))) ||
@@ -698,6 +701,13 @@ const isDeclarationIdentifier = (
   parent: t.Node,
 ): boolean => {
   if (t.isTSImportEqualsDeclaration(parent)) return parent.id === node;
+  // A typed constructor parameter property (`constructor(public x: number) {}`)
+  // declares the parameter through a `TSParameterProperty` wrapper, so unwrap it
+  // rather than reporting the declaration as an identifier read. The initialized
+  // form (`public x = 1`) reaches its `AssignmentPattern` through
+  // `isPatternOwnerDeclaration` instead.
+  if (t.isTSParameterProperty(parent))
+    return parameterPropertyBinds(node, parent.parameter);
   return (
     (t.isVariableDeclarator(parent) && patternContains(parent.id, node)) ||
     ((t.isFunctionDeclaration(parent) || t.isFunctionExpression(parent)) &&
@@ -713,6 +723,11 @@ const isDeclarationIdentifier = (
     (t.isCatchClause(parent) && parent.param === node)
   );
 };
+
+/** Whether a parameter-property pattern binds this identifier as its name. */
+const parameterPropertyBinds = (node: t.Identifier, pattern: t.Node): boolean =>
+  (t.isIdentifier(pattern) && pattern === node) ||
+  (t.isAssignmentPattern(pattern) && patternContains(pattern.left, node));
 
 const isNonReferenceKey = (node: t.Identifier, parent: t.Node): boolean =>
   ((t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) &&

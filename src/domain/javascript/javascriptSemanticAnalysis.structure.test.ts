@@ -533,6 +533,47 @@ describe("JavaScript semantic analysis: write references", () => {
       "read", // const observed = total
     ]);
   });
+
+  it.each([
+    [
+      "a typed parameter property",
+      "class C { constructor(public x: number) {} }",
+    ],
+    [
+      "an initialized parameter property",
+      "class C { constructor(public x = 1) {} }",
+    ],
+  ])("does not emit a read for %s declaration", (_label, source) => {
+    const roles = analyzeJavaScriptSemantics(source)
+      .references.filter(({ name }) => name === "x")
+      .map(({ role }) => role);
+    expect(roles).toEqual([]);
+  });
+
+  it("keeps a parameter-property initializer read and a body read", () => {
+    const withInitializer = analyzeJavaScriptSemantics(
+      "const seed = 1; class C { constructor(public x = seed) {} }",
+    );
+    expect(
+      withInitializer.references
+        .filter(({ name }) => name === "x")
+        .map(({ role }) => role),
+    ).toEqual([]);
+    expect(
+      withInitializer.references.filter(
+        ({ name, role }) => name === "seed" && role === "read",
+      ),
+    ).toHaveLength(1);
+
+    const withBodyRead = analyzeJavaScriptSemantics(
+      "class C { constructor(x: number) { console.log(x); } }",
+    );
+    expect(
+      withBodyRead.references
+        .filter(({ name }) => name === "x")
+        .map(({ role }) => role),
+    ).toEqual(["read"]);
+  });
 });
 
 describe("JavaScript semantic analysis: dynamic and case scopes", () => {

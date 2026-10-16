@@ -134,7 +134,8 @@ the hook translates only its own recording wrappers at the removal boundary.
 Wrapper metadata uses weak keys and does not retain removed registrations.
 
 An `on` listener's application-defined `.apply` receives the original argument-list
-object unchanged. Because that method owns argument interpretation and may not
+object unchanged. Borrowing the exposed method preserves its dynamic receiver.
+Because that method owns argument interpretation and may not
 invoke the callback, the hook records a bounded `ipc-observation-gap` timeline
 entry with the registered channel rather than an IPC invocation. Its empty
 `argument_shapes` means unobserved arguments, not a zero-argument callback;

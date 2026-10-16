@@ -1214,6 +1214,52 @@ console.log(JSON.stringify({ plain, hooked,
   },
 );
 
+it.each([false, true])(
+  "preserves a borrowed raw apply method's receiver (custom: %s)",
+  async (custom) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-hook-borrowed-apply-",
+    );
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const script = join(root, "ipc-borrowed-apply.cjs");
+    await writeFile(
+      script,
+      `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const scenario = (emitter) => {
+  let originalCalls = 0, borrowedCalls = 0, sameList = false;
+  const token = {}, list = [42, 43];
+  const listener = function() { originalCalls++; };
+  const other = function(...args) { borrowedCalls++; return args[0] === 42 && args[1] === 43 ? token : null; };
+  if (${JSON.stringify(custom)}) listener.apply = function(receiver, input) {
+    sameList = input === list;
+    return Reflect.apply(this, receiver, input);
+  };
+  emitter.on("ch", listener);
+  const returned = emitter.rawListeners("ch")[0].apply.call(other, emitter, list) === token;
+  return { originalCalls, borrowedCalls, sameList, returned };
+};
+const plain = scenario(new EventEmitter()), hooked = scenario(ipcMain);
+const snapshot = globalThis.__reaElectronActiveSnapshot();
+console.log(JSON.stringify({ plain, hooked,
+  invocations: snapshot.events.filter(e => e.kind === "main-event-invocation").length }));
+`,
+    );
+    const execution = await runNode(script, root);
+    expect(execution.code, execution.stderr).toBe(0);
+    const { plain, hooked, invocations } = JSON.parse(execution.stdout);
+    expect(plain).toEqual({
+      originalCalls: 0,
+      borrowedCalls: 1,
+      sameList: custom,
+      returned: true,
+    });
+    expect(hooked).toEqual(plain);
+    expect(invocations).toBe(0);
+  },
+);
+
 it.each(["array", "map"])(
   "snapshots retained state without application %s iterators",
   async (kind) => {

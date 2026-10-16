@@ -489,7 +489,11 @@ const patchIpcMain = (ipcMain) => {
           // unchanged rather than executing getters to invent callback facts.
           const gap = recordIpcObservationGap(channel);
           try {
-            return applyFunction(applicationApply, listener, methodArgs);
+            return applyFunction(
+              applicationApply,
+              this === wrapped ? listener : this,
+              methodArgs,
+            );
           } catch (cause) {
             if (gap !== null) {
               gap.error = true;
@@ -500,7 +504,8 @@ const patchIpcMain = (ipcMain) => {
         }
         // Native Function.apply performs its own list conversion before the
         // recording wrapper observes an actual invocation frame.
-        return applyFunction(applyArguments, wrapped, methodArgs);
+        // Borrowing the exposed method keeps its dynamic receiver.
+        return applyFunction(applyArguments, this, methodArgs);
       },
     });
     Object.defineProperty(wrapped, "listener", {

@@ -32,6 +32,7 @@ it.each([
   "bad-icon-reference",
   "form-points-at-icon-resource",
   "form-signature-outside-payload",
+  "form-code-page-mismatch",
 ])(
   "rejects invalid provider output before creating Evidence: %s",
   async (problem) => {
@@ -42,6 +43,23 @@ it.each([
     if (problem === "wrong-coverage") report.coverage.resources = 99;
     if (problem === "bad-icon-reference")
       report.icon_groups[0]!.images[0]!.candidate_resource_indices = [999];
+    if (problem === "form-code-page-mismatch")
+      report.delphi_forms = [
+        {
+          // The declared page must be the resource's own declaration: this
+          // form claims the opposite classification of what resource 2 has.
+          resource_index: 2,
+          signature: "TPF0",
+          version: "boVersion0",
+          signature_location: report.resources[2]!.payload.location,
+          prefix: null,
+          declared_code_page: report.resources[2]!.code_page === 0 ? 1252 : 0,
+          code_page: "windows-1252",
+          code_page_source:
+            report.resources[2]!.code_page === 0 ? "resource" : "default",
+          root: null,
+        },
+      ];
     if (problem === "form-points-at-icon-resource")
       report.delphi_forms = [
         {

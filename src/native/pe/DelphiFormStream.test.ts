@@ -512,4 +512,48 @@ describe("Delphi form failure surface", () => {
     );
     expect(root.children[0]?.unknown?.reason).toContain("vaInt8/16/32");
   });
+
+  it("keeps the entries decoded before a list stops", () => {
+    // A vaList whose second entry is truncated mid-value: the fixture's two
+    // trailing terminators are cut so the payload genuinely ends inside the
+    // second integer, and the first entry stays decoded evidence.
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_(
+          "Items",
+          Buffer.concat([bytes(1), int32(7), bytes(4, 0x11, 0x22)]),
+        ),
+      ]),
+    );
+    const root = rootOf(payload.subarray(0, payload.length - 2));
+    expect(root.unknown?.reason).toBeDefined();
+    const property = root.properties[0];
+    expect(property?.name.text).toBe("Items");
+    expect(property?.value).toMatchObject({ kind: "list" });
+    if (property?.value.kind !== "list") throw new Error("Expected a list");
+    expect(property.value.items).toMatchObject([{ kind: "integer" }]);
+  });
+
+  it("keeps a property name when the type marker itself is truncated", () => {
+    const payload = form(
+      component("TForm1", "Form1", [property_("Future", int32(7))]),
+    );
+    const marker = Buffer.from([0x06, ...Buffer.from("Future", "latin1")]);
+    const at = payload.indexOf(marker);
+    const truncated = payload.subarray(0, at + marker.length);
+    const root = rootOf(truncated);
+    expect(root.unknown?.reason).toBeDefined();
+    expect(root.properties.at(-1)?.name.text).toBe("Future");
+    expect(root.properties.at(-1)?.value_type).toBe("unknown");
+  });
+
+  it("reports bytes that follow the root component terminator", () => {
+    const payload = form(component("TForm1", "Form1", []));
+    const withSuffix = Buffer.concat([payload, bytes(0xde, 0xad, 0xbe, 0xef)]);
+    const root = rootOf(withSuffix);
+    expect(root.unknown?.reason).toContain(
+      "bytes follow the root component terminator",
+    );
+    expect(root.unknown?.bytes_hex).toContain("deadbeef");
+  });
 });

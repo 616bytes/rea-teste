@@ -150,36 +150,39 @@ const textSchema = z.strictObject({
 });
 
 /**
- * Recursive projections (objects nest children, values nest items) advertise
- * nonrecursively, the way the shared JSON value boundary does: the wire shape
- * stays valid for every decoded output while nested members are described as
- * following the same shape. Runtime parsing keeps the exact recursive schema.
+ * Every recursive position is built twice from the same field builders: the
+ * runtime schema nests the real recursive schemas, while the advertised shape
+ * nests a bounded stand-in. Known fields and discriminators such as `kind`,
+ * `class_name` and `location` stay machine-readable in the advertised
+ * contract, and only the recursive child/item edges are relaxed to opaque
+ * objects whose members follow the same shape — the way the shared JSON value
+ * boundary projects.
  */
-const boundedObjectProjection =
-  (description: string) => (): Record<string, unknown> => ({
-    type: "object",
-    additionalProperties: {},
-    description,
-  });
+const boundedChild = z
+  .object({})
+  .describe(
+    "A nested form object, property, collection item or value; its members follow the same shape.",
+  );
 
-const propertySchema: z.ZodType<DelphiFormProperty> = z.lazy(() =>
+const propertySchemaOf = <V extends z.ZodType>(value: V) =>
   z.strictObject({
     name: textSchema,
     value_type: z.string(),
-    value: valueSchema,
+    value,
     location: rangeSchema,
-  }),
-);
+  });
 
-const collectionItemSchema: z.ZodType<DelphiFormCollectionItem> = z.lazy(() =>
+const collectionItemSchemaOf = <P extends z.ZodType>(property: P) =>
   z.strictObject({
     position: z.string().nullable(),
-    properties: z.array(propertySchema),
+    properties: z.array(property),
     location: rangeSchema,
-  }),
-);
+  });
 
-const valueSchema: z.ZodType<DelphiFormValue> = z.lazy(() =>
+const valueSchemaOf = <V extends z.ZodType, C extends z.ZodType>(
+  value: V,
+  collectionItem: C,
+) =>
   z.discriminatedUnion("kind", [
     z.strictObject({ kind: z.literal("null"), location: rangeSchema }),
     z.strictObject({ kind: z.literal("nil"), location: rangeSchema }),
@@ -230,7 +233,7 @@ const valueSchema: z.ZodType<DelphiFormValue> = z.lazy(() =>
     }),
     z.strictObject({
       kind: z.literal("list"),
-      items: z.array(valueSchema),
+      items: z.array(value),
       location: rangeSchema,
     }),
     z.strictObject({
@@ -240,7 +243,7 @@ const valueSchema: z.ZodType<DelphiFormValue> = z.lazy(() =>
     }),
     z.strictObject({
       kind: z.literal("collection"),
-      items: z.array(collectionItemSchema),
+      items: z.array(collectionItem),
       location: rangeSchema,
     }),
     z.strictObject({
@@ -250,39 +253,61 @@ const valueSchema: z.ZodType<DelphiFormValue> = z.lazy(() =>
       truncated: z.boolean(),
       location: rangeSchema,
     }),
-  ]),
-);
+  ]);
 
-const objectSchema: z.ZodType<DelphiFormObject> = z.lazy(() =>
+const objectSchemaOf = <P extends z.ZodType, O extends z.ZodType>(
+  property: P,
+  object: O,
+) =>
   z.strictObject({
     location: rangeSchema,
     flags: z.array(z.string()),
     child_position: z.string().nullable(),
     class_name: textSchema.nullable(),
     component_name: textSchema.nullable(),
-    properties: z.array(propertySchema),
-    children: z.array(objectSchema),
+    properties: z.array(property),
+    children: z.array(object),
     unknown: z
       .strictObject({ reason: z.string(), bytes_hex: z.string() })
       .nullable(),
-  }),
+  });
+
+const propertySchema: z.ZodType<DelphiFormProperty> = z.lazy(() =>
+  propertySchemaOf(valueSchema),
 );
 
-propertySchema._zod.toJSONSchema = boundedObjectProjection(
-  "One decoded form property: the property name, the declared value type, the decoded value and the byte location. A value can itself nest further properties and values, which follow the same shape.",
+const collectionItemSchema: z.ZodType<DelphiFormCollectionItem> = z.lazy(() =>
+  collectionItemSchemaOf(propertySchema),
 );
 
-collectionItemSchema._zod.toJSONSchema = boundedObjectProjection(
-  "One vaCollection item: its optional position, its properties and the byte location. Nested properties and values follow the same shape.",
+const valueSchema: z.ZodType<DelphiFormValue> = z.lazy(() =>
+  valueSchemaOf(valueSchema, collectionItemSchema),
 );
 
-valueSchema._zod.toJSONSchema = boundedObjectProjection(
-  "One decoded property value, discriminated by kind: null, nil, boolean, integer, float, string, identifier, binary, set, list, collection or unknown, each carrying the byte location it came from. List items and collection items nest further values and properties, which follow the same shape.",
+const objectSchema: z.ZodType<DelphiFormObject> = z.lazy(() =>
+  objectSchemaOf(propertySchema, objectSchema),
 );
 
-objectSchema._zod.toJSONSchema = boundedObjectProjection(
-  "One decoded form object: class and component names, filer flags with the child position, properties, nested children and an explicit unknown when decoding stopped. Nested children follow the same shape.",
+// Values and collection items are mutually recursive (value -> collection ->
+// item -> property -> value), so the advertised shape fully expands one level
+// — keeping every field and discriminator present — and bounds the deeper
+// recursive edges.
+const advertisedNestedValue = valueSchemaOf(boundedChild, boundedChild);
+const advertisedCollectionItem = collectionItemSchemaOf(
+  propertySchemaOf(advertisedNestedValue),
 );
+const advertisedValue = valueSchemaOf(
+  advertisedNestedValue,
+  advertisedCollectionItem,
+);
+const advertisedProperty = propertySchemaOf(advertisedValue);
+const advertisedObject = objectSchemaOf(advertisedProperty, boundedChild);
+
+propertySchema._zod.toJSONSchema = () => z.toJSONSchema(advertisedProperty);
+collectionItemSchema._zod.toJSONSchema = () =>
+  z.toJSONSchema(advertisedCollectionItem);
+valueSchema._zod.toJSONSchema = () => z.toJSONSchema(advertisedValue);
+objectSchema._zod.toJSONSchema = () => z.toJSONSchema(advertisedObject);
 
 export const delphiFormResourceSchema: z.ZodType<DelphiFormResource> =
   z.strictObject({

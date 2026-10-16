@@ -199,6 +199,12 @@ const validReport = (
         offset >= payload.offset &&
         offset + bytes <= payload.offset + payload.bytes;
       return (
+        // The declared page must be the resource's own declaration, and the
+        // source classification must agree with it, so published Evidence
+        // cannot claim a declaration the artifact did not make.
+        form.declared_code_page === resource.code_page &&
+        (form.declared_code_page === 0) ===
+          (form.code_page_source === "default") &&
         within(form.signature_location) &&
         (form.prefix === null || within(form.prefix.location)) &&
         (form.root === null ||

@@ -102,6 +102,20 @@ export const DELPHI_FORM_LIMITATIONS: readonly string[] = [
 class StreamEnd extends Error {}
 
 /**
+ * A `vaList` whose later entries stopped decoding. The entries decoded before
+ * the stop travel with the error so the enclosing property keeps them as a
+ * partial list instead of a generic unknown.
+ */
+class StoppedList extends StreamEnd {
+  constructor(
+    message: string,
+    readonly partial: Extract<DelphiFormValue, { kind: "list" }>,
+  ) {
+    super(message);
+  }
+}
+
+/**
  * Decoding cannot continue past this point. The object built so far travels
  * with the error so every ancestor keeps what it parsed and stops with it,
  * instead of reading the undecodable bytes as invented components.
@@ -464,11 +478,25 @@ function readValue(
     }
     case 1: {
       const items: DelphiFormValue[] = [];
+      const partialLocation = () => range(at, stream.position);
       for (;;) {
         const next = stream.peek();
         if (next === 0) break;
         stream.byte();
-        items.push(readValue(stream, next, budget, codePage, depth + 1));
+        try {
+          items.push(readValue(stream, next, budget, codePage, depth + 1));
+        } catch (error) {
+          if (error instanceof StoppedForm) throw error;
+          if (!(error instanceof StreamEnd)) throw error;
+          // Entries decoded before the stop stay evidence. A stopped nested
+          // list keeps its own partial items as the last entry of this one.
+          if (error instanceof StoppedList) items.push(error.partial);
+          throw new StoppedList(error.message, {
+            kind: "list",
+            items,
+            location: partialLocation(),
+          });
+        }
       }
       stream.byte();
       return { kind: "list", items, location: range(at, stream.position) };
@@ -600,8 +628,11 @@ function readObject(
       if (stream.peek() === 0) break;
       const propertyAt = stream.position;
       const name = readShortString(stream, codePage);
-      const ordinal = stream.byte();
+      // The type marker can itself be truncated after a complete name; the
+      // partial-property path below must still retain the observed name.
+      let ordinal: number | null = null;
       try {
+        ordinal = stream.byte();
         const value = readValue(stream, ordinal, budget, codePage, depth);
         properties.push({
           name,
@@ -614,16 +645,20 @@ function readObject(
         if (!(error instanceof StreamEnd)) throw error;
         // Record the property that could not be decoded with the name and type
         // that were already parsed, then stop: anything read after it would be a
-        // guess rather than evidence.
+        // guess rather than evidence. A stopped list keeps the entries decoded
+        // before the stop instead of collapsing into a generic unknown.
         properties.push({
           name,
-          value_type: valueTypeName(ordinal),
-          value: {
-            kind: "unknown",
-            reason: error.message,
-            ...hexOf(stream.bytes.subarray(stream.position, stream.end)),
-            location: range(stream.position, stream.end),
-          },
+          value_type: ordinal === null ? "unknown" : valueTypeName(ordinal),
+          value:
+            error instanceof StoppedList
+              ? error.partial
+              : {
+                  kind: "unknown",
+                  reason: error.message,
+                  ...hexOf(stream.bytes.subarray(stream.position, stream.end)),
+                  location: range(stream.position, stream.end),
+                },
           location: range(propertyAt, stream.end),
         });
         throw new StoppedForm(partial(error.message));
@@ -713,6 +748,17 @@ export const decodeDelphiFormStream = (
   let root: DelphiFormObject | null = null;
   try {
     if (stream.remaining > 0) root = readObject(stream, budget, codePage, 0);
+    // A suffix after the root terminator is part of the payload but nothing
+    // decoded claims it; report it instead of presenting a complete decode.
+    if (root !== null && root.unknown === null && stream.remaining > 0)
+      root = {
+        ...root,
+        unknown: {
+          reason: `${String(stream.remaining)} bytes follow the root component terminator.`,
+          bytes_hex: hexOf(stream.bytes.subarray(stream.position, end))
+            .bytes_hex,
+        },
+      };
   } catch (error) {
     // A stopped form still carries everything decoded before the stop.
     if (error instanceof StoppedForm) root = error.object;

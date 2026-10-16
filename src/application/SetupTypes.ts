@@ -44,6 +44,12 @@ export type ClientConfigurationResult =
     }
   | {
       readonly status: "failed";
+      /** The package-private copy that decides the read target was uninspectable. */
+      readonly reason: "target_unknown";
+      readonly failure: { readonly path: string; readonly detail: string };
+    }
+  | {
+      readonly status: "failed";
       readonly reason: "rollback";
       readonly backupPath?: string;
       readonly failure: {

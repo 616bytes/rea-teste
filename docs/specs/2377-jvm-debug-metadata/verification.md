@@ -182,6 +182,35 @@ spec/plan. Fixed in commits on this branch:
 
 Unit/service suite is now 53 tests (7 files); `verify:jvm` 16 cases.
 
+## Multi-release detection parity with the JDK (landed)
+
+An adversarial audit compared REA with OpenJDK 25.0.4 `JarFile` on 25 crafted
+JARs. REA trimmed and case-folded the attribute, honored the first duplicate,
+accepted value continuations, and matched the manifest on the reader's
+`./`-stripped logical path, case-sensitively. It disagreed with the JDK on 10
+of 25 (m1–m3, m6, m12, m17, m21 and m23 read as multi-release; m4 and m22 did
+not). `jarManifest.ts` now reproduces the JDK byte for byte: the stored
+member name (`ArtifactEntry.storedPath`) matched case-insensitively, the
+`Multi-Release: true` byte pre-filter, and `Attributes.read` with its 512-byte
+line buffer, 8192-byte fills, strict `": "` separator, name validation and
+last-duplicate-wins. Results:
+
+- Crafted corpus through the built CLI: 25/25 agree with the JDK (was 15/25).
+- Differential fuzz of `isMultiReleaseManifest` against `JarFile.isMultiRelease`:
+  24,000 generated manifests and 452 line-buffer/fill-boundary cases, 0
+  disagreements (the previous parser disagreed on 5,607).
+- Real multi-release JARs (bcprov 1.81/1.84, kotlin-stdlib 2.4.0,
+  guava 33.3.1): all 19 verdicts unchanged.
+
+`parseVersionedJarEntry` now accepts only versions 9 to 2147483647 without
+leading zeros, so an overflowing directory such as `99999999999` is no longer
+listed as a release. Remaining known differences: REA never falls back to a
+lower version or to the base entry when a requested release is absent (by
+design), while the JDK also consults a `versions/8` directory during that
+fallback. The JDK reads the raw central-directory name and ignores an Info-ZIP
+Unicode Path extra field, which REA's ZIP reader prefers. A manifest member
+the ZIP reader classifies as a directory or symlink is not read.
+
 ## Still owed (follow-ups, not blocking)
 
 - A JDK-free CLI/MCP workflow test (e.g. `localToolContracts` pathRequests plus

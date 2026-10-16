@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyJarEntry,
   normalizeJarEntryPath,
+  parseVersionedJarEntry,
   resolveJarSelection,
 } from "./jarClassEntry.js";
 
@@ -96,5 +97,37 @@ describe("normalizeJarEntryPath", () => {
     expect(normalizeJarEntryPath("././a/Foo.class")).toBe("a/Foo.class");
     expect(normalizeJarEntryPath("/a\\Foo.class")).toBe("a/Foo.class");
     expect(normalizeJarEntryPath("a/./Foo.class")).toBe("a/./Foo.class");
+  });
+});
+
+describe("parseVersionedJarEntry", () => {
+  it("accepts the versions a JDK lookup can name: 9 to Integer.MAX_VALUE", () => {
+    expect(parseVersionedJarEntry("META-INF/versions/9/a/Foo.class")).toEqual({
+      release: 9,
+      entry: "a/Foo.class",
+    });
+    expect(
+      parseVersionedJarEntry("META-INF/versions/2147483647/a/Foo.class"),
+    ).toEqual({ release: 2147483647, entry: "a/Foo.class" });
+  });
+
+  it("never presents other directories as releases", () => {
+    for (const version of [
+      "8", // below the first multi-release version
+      "017", // zero-padded: the JDK never builds this name
+      "2147483648", // beyond Integer.MAX_VALUE
+      "99999999999", // audit m24: inert for the JDK at every release
+      "1e3",
+      "+17",
+      "17 ",
+      "",
+    ])
+      expect(
+        parseVersionedJarEntry(`META-INF/versions/${version}/a/Foo.class`),
+      ).toBeUndefined();
+    expect(parseVersionedJarEntry("META-INF/versions/17/")).toBeUndefined();
+    expect(
+      parseVersionedJarEntry("meta-inf/versions/17/a/Foo.class"),
+    ).toBeUndefined();
   });
 });

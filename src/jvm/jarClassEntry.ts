@@ -41,11 +41,16 @@ export const normalizeJarEntryPath = (entry: string): string =>
     .replace(/^\/+/, "")
     .replace(/^(?:\.\/)+/u, "");
 
+/** The largest version the JDK's ZIP index can represent (`Integer.MAX_VALUE`). */
+const MAX_JAR_VERSION = 2 ** 31 - 1;
+
 /**
- * Split a `META-INF/versions/<N>/<entry>` path into its release and entry. The
- * JAR spec only honors versioned directories named by an integer >= 9, with no
- * leading zeros; any other path (including lower or non-canonical numbers,
- * which are inert resources) is `undefined`.
+ * Split a `META-INF/versions/<N>/<entry>` path into its release and entry.
+ * `<N>` must be what the JDK can name in a lookup: decimal digits without a
+ * leading zero, from 9 to `Integer.MAX_VALUE`. Any other directory (non-numeric,
+ * lower, zero-padded or overflowing) is an inert resource, never a release, and
+ * yields `undefined`. REA lists every such release present; a running JDK only
+ * consults versions up to its own feature release.
  */
 export const parseVersionedJarEntry = (
   path: string,
@@ -55,9 +60,11 @@ export const parseVersionedJarEntry = (
   const slash = rest.indexOf("/");
   if (slash <= 0) return undefined;
   const version = rest.slice(0, slash);
-  if (!/^[1-9][0-9]*$/.test(version) || Number(version) < 9) return undefined;
+  if (!/^[1-9][0-9]{0,9}$/u.test(version)) return undefined;
+  const release = Number(version);
+  if (release < 9 || release > MAX_JAR_VERSION) return undefined;
   const entry = rest.slice(slash + 1);
-  return entry === "" ? undefined : { release: Number(version), entry };
+  return entry === "" ? undefined : { release, entry };
 };
 
 /**

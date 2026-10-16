@@ -44,6 +44,20 @@ requiring one. In a multi-release JAR, an `entry` spelled as
 that is not multi-release such a member is an inert resource and is read as
 itself.
 
+A JAR is multi-release exactly when the JDK's `JarFile.isMultiRelease()` would
+say so (OpenJDK 25, default settings): the manifest is the member stored as
+`META-INF/MANIFEST.MF` in any ASCII case (a `./`-prefixed name is not the
+manifest), its bytes contain `Multi-Release: true` ignoring ASCII case, and its
+main section parses as `java.util.jar.Attributes` does with a last
+`Multi-Release` value of `true` ignoring case and untrimmed. Any parse failure
+in the main section, such as a missing space after a colon, an invalid
+attribute name, a byte-order mark, or a line longer than the JDK's line buffer,
+makes the JAR not multi-release. A release is a
+`META-INF/versions/<N>/` directory whose `<N>` is a decimal number from 9 to
+2147483647 without leading zeros; other directories are inert resources. REA
+lists every such release present, while a running JDK only consults versions
+up to its own feature release.
+
 ## Interpret the result
 
 The normalized result binds every fact to exact identity:

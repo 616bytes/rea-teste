@@ -10,6 +10,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import {
   dexDebugMetadataMatchesSubject,
+  dexReportMatchesSelection,
   dexDebugMetadataResultSchema,
   inspectDexDebugMetadataInputSchema,
 } from "../../domain/dex/dexDebugMetadataReport.js";
@@ -60,12 +61,16 @@ export class DexDebugMetadataService {
     if (
       !report.success ||
       report.data.artifact.path !== input.data.path ||
-      !dexDebugMetadataMatchesSubject(report.data.artifact, execution.subject)
+      !dexDebugMetadataMatchesSubject(
+        report.data.artifact,
+        execution.subject,
+      ) ||
+      !dexReportMatchesSelection(report.data, input.data)
     )
       return err(
         new AnalysisOutputError(
           OPERATION,
-          "DEX reader returned malformed data or changed the selected artifact identity.",
+          "DEX reader returned malformed data, changed the selected artifact identity, or answered a different selection.",
         ),
       );
     return ok(

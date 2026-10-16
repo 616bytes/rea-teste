@@ -53,6 +53,8 @@ carry, not a guarantee:
 - `unknown` — no local evidence was found, but some class data, code items or
   debug streams could not be read (counted in `unreadable`), so absence is not
   established. A damaged file never reads as `stripped`.
+  Whenever `unreadable` is non-zero, every other count is a lower bound over
+  what could be read.
 
 `local_declarations` counts every local `dexdump` lists, including the implicit
 `this` and parameter locals that are synthesised from a method's register

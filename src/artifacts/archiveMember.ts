@@ -11,18 +11,7 @@ import type { ZipArtifactReader } from "./ZipArtifactReader.js";
 export const looksLikeZip = (bytes: Uint8Array): boolean =>
   bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b;
 
-/**
- * Canonicalize a caller-supplied archive member path to the logical form the
- * ZIP reader gives its members (it owns that rule): forward slashes, no leading
- * `/`, and no leading `./` segments, so an archive's literal `./Foo.class` is
- * selectable. A member is identified by exactly this string, so normalization
- * happens once before any match.
- */
-export const normalizeArchiveMemberPath = (entry: string): string =>
-  entry
-    .replace(/\\/g, "/")
-    .replace(/^\/+/, "")
-    .replace(/^(?:\.\/)+/u, "");
+export { normalizeArchiveMemberPath } from "../domain/archiveMemberPath.js";
 
 /**
  * Buffer one archive member, bounded by `maximumBytes`. Mirrors the admission a

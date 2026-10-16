@@ -95,6 +95,8 @@ export interface DexSummary {
 }
 
 const SOURCE_FILE_SAMPLE_CAP = 16;
+/** Longest source-file name (JSON bytes) included in the sample; longer ones are counted only. */
+const SOURCE_FILE_SAMPLE_MAX_BYTES = 1024;
 
 /** Why a summary or detail was refused before completing. */
 export type DexWorkError =
@@ -232,18 +234,29 @@ const MEMO_LIMIT = 65_536;
 const METHOD_OVERHEAD = 320;
 const LOCAL_OVERHEAD = 192;
 
-/** Find the class_def whose type descriptor matches, scanning the table in place. */
+/**
+ * Find the class_def whose type descriptor matches, scanning the table in
+ * place. Every descriptor read is charged by the resolver, and the scan polls
+ * the work budget and cancellation, so an absent class in a crafted table
+ * cannot cost unbounded work before the answer.
+ */
 const findClassDef = (
   dex: DexFile,
   bytes: Uint8Array,
   resolver: DexStringResolver,
   classDescriptor: string,
-): DexClassDef | undefined => {
+  work: DexWork,
+): Result<DexClassDef | undefined, DexWorkError> => {
   for (let i = 0; i < dex.header.classDefsSize; i += 1) {
+    // Checked per class: one descriptor read can cost as much as its string.
+    const stop = outOfWork(work);
+    if (stop !== null) return err(stop);
     const def = readClassDef(bytes, dex.header, i);
-    if (resolver.typeDescriptor(def.classIdx) === classDescriptor) return def;
+    if (resolver.typeDescriptor(def.classIdx) === classDescriptor)
+      return ok(def);
   }
-  return undefined;
+  const spent = outOfWork(work);
+  return spent === null ? ok(undefined) : err(spent);
 };
 
 /**
@@ -264,7 +277,10 @@ export const assembleClassDetail = (
   const resolver = new DexStringResolver(bytes, dex.header, (units) => {
     work.budget.remaining -= units;
   });
-  const classDef = findClassDef(dex, bytes, resolver, classDescriptor);
+  const found = findClassDef(dex, bytes, resolver, classDescriptor, work);
+  // An absent class is only an answer when the lookup stayed within budget.
+  if (!found.ok) return found;
+  const classDef = found.value;
   if (classDef === undefined) return ok(null);
   let projected =
     1024 +
@@ -453,13 +469,20 @@ export const summarizeDex = (
       const bit = 1 << (idx & 7);
       if ((seenSource[at]! & bit) === 0) {
         seenSource[at]! |= bit;
-        const source = resolver.string(idx);
-        if (source !== null) {
+        // Validity is checked without decoding; only short names are
+        // decoded into the bounded sample, so a multi-megabyte name is
+        // counted but never materialised.
+        if (resolver.isValid(idx)) {
           validSource[at]! |= bit;
           // A single distinct value signals -renamesourcefileattribute.
           distinctSources += 1;
-          if (sourceSample.length < SOURCE_FILE_SAMPLE_CAP)
-            sourceSample.push(source);
+          if (
+            sourceSample.length < SOURCE_FILE_SAMPLE_CAP &&
+            resolver.jsonBound(idx) <= SOURCE_FILE_SAMPLE_MAX_BYTES
+          ) {
+            const source = resolver.string(idx);
+            if (source !== null) sourceSample.push(source);
+          }
         }
       }
       if ((validSource[at]! & bit) !== 0) sourceFilePresent += 1;

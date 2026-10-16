@@ -6,7 +6,11 @@
  * and return `null` for an out-of-range index (including NO_INDEX = -1) or a
  * malformed/uncross-checked string, never a throw or a guess.
  */
-import { decodeModifiedUtf8, modifiedUtf8JsonBound } from "../modifiedUtf8.js";
+import {
+  decodeModifiedUtf8,
+  modifiedUtf8JsonBound,
+  modifiedUtf8Units,
+} from "../modifiedUtf8.js";
 import { DEX_MAX_PARAMETERS } from "./dexDebugInfo.js";
 import { DEX_NO_INDEX, DexCursor, type DexHeader } from "./dexFile.js";
 
@@ -19,6 +23,9 @@ const MEMO_LIMIT = 65_536;
 
 /** Decoded UTF-16 code units retained across the string memo. */
 const RETAINED_CHARS_LIMIT = 4 * 1024 * 1024;
+
+/** Proto parameter entries retained across the proto memo (each up to 255). */
+const RETAINED_PARAMS_LIMIT = 1024 * 1024;
 
 /**
  * Charges `units` of work (bytes scanned or decoded) to the caller's budget.
@@ -44,6 +51,7 @@ export class DexStringResolver {
   readonly #strings = new Map<number, string | null>();
   readonly #bounds = new Map<number, number>();
   #retainedChars = 0;
+  #retainedParams = 0;
   constructor(
     private readonly bytes: Uint8Array,
     private readonly header: DexHeader,
@@ -71,6 +79,19 @@ export class DexStringResolver {
       this.#remember(this.#strings, raw.dataOffset, decoded);
     }
     return decoded;
+  }
+
+  /**
+   * Whether `string(index)` would resolve to a string, checked without
+   * allocating the decoded text (charged like a decode).
+   */
+  isValid(index: number): boolean {
+    const raw = this.#raw(index);
+    if (raw === null) return false;
+    if (this.#strings.has(raw.dataOffset))
+      return this.#strings.get(raw.dataOffset) !== null;
+    this.charge(raw.bytes.length);
+    return modifiedUtf8Units(raw.bytes) === raw.utf16Size;
   }
 
   /**
@@ -254,7 +275,14 @@ export class DexStringResolver {
     if (cached !== undefined || this.#protoParams.has(protoIndex))
       return cached ?? null;
     const params = this.#protoParameters(protoIndex);
-    this.#remember(this.#protoParams, protoIndex, params);
+    const size = params?.length ?? 0;
+    this.charge(size + 1);
+    // Bounded by retained parameter entries, not just protos: one proto can
+    // expand to 255 entries.
+    if (this.#retainedParams + size <= RETAINED_PARAMS_LIMIT) {
+      this.#retainedParams += size;
+      this.#remember(this.#protoParams, protoIndex, params);
+    }
     return params;
   }
 

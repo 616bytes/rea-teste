@@ -6,6 +6,8 @@
  */
 import { z } from "zod";
 
+import { normalizeArchiveMemberPath } from "../archiveMemberPath.js";
+
 import type { EvidenceSubjectTarget } from "../evidence.js";
 import { localPathStringSchema } from "../localPath.js";
 import type { DexClassDetail, DexSummary } from "./dexDebugMetadata.js";
@@ -249,3 +251,35 @@ export const dexDebugMetadataMatchesSubject = (
   (subject.format === "file" ||
     subject.format === "apk" ||
     subject.format === "zip");
+
+/**
+ * The report answers exactly what was asked: class detail iff a class was
+ * requested (for that class), and, when an entry was selected, only that
+ * member. Guards the application boundary against a provider answering a
+ * different selection under the caller's parameters.
+ */
+export const dexReportMatchesSelection = (
+  report: DexDebugMetadataResult,
+  selection: {
+    readonly entry?: string | undefined;
+    readonly class_descriptor?: string | undefined;
+  },
+): boolean => {
+  const entry =
+    selection.entry === undefined
+      ? undefined
+      : normalizeArchiveMemberPath(selection.entry);
+  if (selection.class_descriptor === undefined)
+    return (
+      report.mode === "summary" &&
+      report.class_detail === null &&
+      (entry === undefined ||
+        (report.members.length === 1 && report.members[0]?.entry === entry))
+    );
+  return (
+    report.mode === "class-detail" &&
+    report.class_detail !== null &&
+    report.class_detail.descriptor === selection.class_descriptor &&
+    (entry === undefined || report.class_detail.entry === entry)
+  );
+};

@@ -598,39 +598,31 @@ const boundaries = createElectronActiveBoundaryPatches({
 
 try {
   if (Array.isArray(process.argv)) {
-    const isHook = (arg) =>
-      typeof arg === "string" &&
-      (arg.endsWith("electron-active-hook.cjs") ||
-        arg.endsWith("electron-active-hook.js") ||
-        arg.includes("electron-active-hook"));
+    const isExactHook = (arg) => {
+      if (typeof arg !== "string") return false;
+      return (
+        arg === __filename ||
+        arg.replace(/\\/g, "/") === __filename.replace(/\\/g, "/")
+      );
+    };
     for (let index = process.argv.length - 1; index >= 0; index--) {
       const arg = process.argv[index];
       if (typeof arg !== "string") continue;
-      if (isHook(arg)) {
-        if (
-          index > 0 &&
-          (process.argv[index - 1] === "-r" ||
-            process.argv[index - 1] === "--require")
-        ) {
-          process.argv.splice(index - 1, 2);
-        } else {
+      if (
+        isExactHook(arg) &&
+        index > 0 &&
+        (process.argv[index - 1] === "-r" ||
+          process.argv[index - 1] === "--require")
+      ) {
+        process.argv.splice(index - 1, 2);
+      } else if (arg.startsWith("--require=")) {
+        const target = arg.slice("--require=".length);
+        if (isExactHook(target)) {
           process.argv.splice(index, 1);
         }
-      } else if (arg.startsWith("--require=") && isHook(arg)) {
-        process.argv.splice(index, 1);
       }
     }
-    if (!process.defaultApp) {
-      for (let index = process.argv.length - 1; index >= 1; index--) {
-        const arg = process.argv[index];
-        if (
-          typeof arg === "string" &&
-          (arg.endsWith(".asar") || arg.includes(".asar/"))
-        ) {
-          process.argv.splice(index, 1);
-        }
-      }
-    } else {
+    if (process.defaultApp) {
       let appIndex = -1;
       for (let index = 1; index < process.argv.length; index++) {
         const arg = process.argv[index];

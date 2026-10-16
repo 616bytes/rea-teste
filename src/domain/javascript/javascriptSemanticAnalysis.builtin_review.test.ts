@@ -2,6 +2,56 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
 it.each([
+  "Reflect.set(module);",
+  "Reflect.set.call(null,module);",
+  "Reflect.set.apply(null,[module]);",
+  "const set=Reflect.set.bind(null,module); set();",
+  "Reflect.set(module,'require',replacement,require('node:path'));",
+  "const path=require('node:path'); Reflect.set(module,'require',replacement,path);",
+  "import path from 'node:path'; Reflect.set(module,'require',replacement,path);",
+  "Reflect.set(module,'require',replacement,require('node:util'));",
+  "Reflect.set(module,'require',replacement,new (class {})());",
+  "class Receiver{} Reflect.set(module,'require',replacement,new Receiver());",
+  "function Receiver(){} Reflect.set(module,'require',replacement,new Receiver());",
+  "const Receiver=function(){}; Reflect.set(module,'require',replacement,new Receiver());",
+  "Reflect.set(module,'require',replacement,new (class {constructor(){return 1;}})());",
+  "Reflect.set(module,'require',replacement,new (function(){return this;})());",
+])(
+  "keeps the wrapper loader for distinct receivers or omitted keys: %s",
+  (setup) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `${setup} require('fs').readFileSync('kept');`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(["kept"]);
+  },
+);
+
+it.each([
+  "Reflect.set(module,key,replacement);",
+  "Reflect.set(...args);",
+  "Reflect.set(module,'require',replacement,require('external'));",
+  "Reflect.set(module,'require',replacement,require('node:path').owner);",
+  "Reflect.set(module,'require',replacement,new (class {constructor(){return module;}})());",
+  "Reflect.set(module,'require',replacement,new (function(){return module;})());",
+  "Reflect.set(module,'require',replacement,new (class extends Base {})());",
+  "Reflect.set(module,'require',replacement,new (class {constructor(){if(flag)return module;}})());",
+  "let Receiver=class {}; Receiver=custom; Reflect.set(module,'require',replacement,new Receiver());",
+  "Object.assign=custom; const box={safe:{id:1},owner:module}; Object.assign({},box.safe); Object.assign({},box.owner);",
+  "Object.assign=custom; const box={safe:{id:1},owner:module}; Object.assign({},box.safe); Object.assign({},box);",
+  "Object.assign=custom; let payload={id:1}; Object.assign({},payload); payload={owner:module}; Object.assign({},payload);",
+])(
+  "retains uncertainty after cached projections or unknown construction: %s",
+  (setup) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `${setup} require('fs').readFileSync('wrong');`,
+      ).configurationOperations,
+    ).toEqual([]);
+  },
+);
+
+it.each([
   "let fs={}; outer:{ if(flag) break outer; fs=require('fs'); } fs.readFileSync('wrong');",
   "let fs={}; outer:{{ if(flag) break outer; fs=require('fs'); }} fs.readFileSync('wrong');",
   "let fs={}; outer:{ inner:{if(flag) break outer;} fs=require('fs');} fs.readFileSync('wrong');",

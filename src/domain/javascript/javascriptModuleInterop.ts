@@ -398,33 +398,12 @@ export const createSemanticModuleInterop = (
     }
   };
 
-  const isFreshObject = (node: t.Node): boolean => {
+  const stableFreshCandidate = (node: t.Node): t.Node | undefined => {
     const visited = new Set<string>();
     let current = node;
     for (;;) {
       current = unwrapJavaScriptExpression(current).node;
-      if (
-        t.isObjectExpression(current) ||
-        t.isArrayExpression(current) ||
-        t.isFunction(current) ||
-        (t.isClass(current) && !current.decorators?.length) ||
-        t.isRegExpLiteral(current)
-      )
-        return true;
-      if (t.isCallExpression(current)) {
-        const invocation = resolveJavaScriptIntrinsicInvocation(
-          current,
-          intrinsicPath,
-          boundIntrinsic,
-          intrinsicReadChanged,
-        );
-        if (
-          invocation?.kind === "known" &&
-          invocation.path.join(".") === "intrinsic.Object.create"
-        )
-          return true;
-      }
-      if (!t.isIdentifier(current)) return false;
+      if (!t.isIdentifier(current)) return current;
       const binding = resolveSemanticBindingState(state, current, current.name);
       const initializer = unprojectedInitializer(binding, state);
       if (
@@ -434,10 +413,84 @@ export const createSemanticModuleInterop = (
           (initializer.end ?? Infinity) >= (current.start ?? -1)) ||
         visited.has(binding.bindingId)
       )
-        return false;
+        return undefined;
       visited.add(binding.bindingId);
       current = initializer;
     }
+  };
+
+  const freshConstructors = new WeakMap<t.Node, boolean>();
+  const constructsFreshObject = (node: t.Node): boolean => {
+    const constructor = stableFreshCandidate(node);
+    if (constructor === undefined) return false;
+    const cached = freshConstructors.get(constructor);
+    if (cached !== undefined) return cached;
+    freshConstructors.set(constructor, false);
+    let body: t.BlockStatement | undefined;
+    if (t.isClass(constructor)) {
+      // A derived constructor may inherit a constructor returning an existing
+      // object; decorators can replace the constructor itself.
+      if (constructor.superClass != null || constructor.decorators?.length)
+        return false;
+      body = constructor.body.body.find(
+        (member): member is t.ClassMethod =>
+          t.isClassMethod(member) && member.kind === "constructor",
+      )?.body;
+    } else if (
+      (t.isFunctionExpression(constructor) ||
+        t.isFunctionDeclaration(constructor)) &&
+      !constructor.async &&
+      !constructor.generator
+    )
+      body = constructor.body;
+    else return false;
+    const pending: t.Node[] = body === undefined ? [] : [body];
+    while (pending.length > 0) {
+      const current = pending.pop()!;
+      if (t.isFunction(current) || t.isClass(current)) continue;
+      if (t.isReturnStatement(current) && current.argument != null) {
+        const value = unwrapJavaScriptExpression(current.argument).node;
+        if (
+          !t.isThisExpression(value) &&
+          !readExactJavaScriptLiteral(value).found &&
+          !t.isBigIntLiteral(value) &&
+          !t.isUnaryExpression(value) &&
+          !isUnshadowedGlobal(value, state, "undefined")
+        )
+          return false;
+      }
+      pending.push(...childNodes(current));
+    }
+    freshConstructors.set(constructor, true);
+    return true;
+  };
+
+  const isFreshObject = (node: t.Node): boolean => {
+    const current = stableFreshCandidate(node);
+    if (current === undefined) return false;
+    if (
+      t.isObjectExpression(current) ||
+      t.isArrayExpression(current) ||
+      t.isFunction(current) ||
+      (t.isClass(current) && !current.decorators?.length) ||
+      t.isRegExpLiteral(current)
+    )
+      return true;
+    if (t.isNewExpression(current))
+      return constructsFreshObject(current.callee);
+    if (t.isCallExpression(current)) {
+      const invocation = resolveJavaScriptIntrinsicInvocation(
+        current,
+        intrinsicPath,
+        boundIntrinsic,
+        intrinsicReadChanged,
+      );
+      return (
+        invocation?.kind === "known" &&
+        invocation.path.join(".") === "intrinsic.Object.create"
+      );
+    }
+    return false;
   };
 
   const helperProof = (

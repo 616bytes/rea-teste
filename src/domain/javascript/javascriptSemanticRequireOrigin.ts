@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { isBuiltin } from "node:module";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
@@ -326,7 +327,7 @@ const writesModuleRequire = (
     )
       return true;
     const separateNamespace = (origin: JavaScriptModuleOrigin): boolean =>
-      MUTABLE_BUILTIN_DEFAULTS.has(origin.specifier.replace(/^node:/u, "")) &&
+      isBuiltin(origin.specifier) &&
       (origin.importedPath.length === 0 ||
         (origin.resolutionMode !== "require" &&
           origin.importedPath.length === 1 &&
@@ -358,17 +359,25 @@ const writesModuleRequire = (
       const key = semanticStaticPropertyKey(property.key, property.computed);
       return key === null || key === "require";
     });
+  // This index is built over a completed binding/ambient-write snapshot. Cache
+  // only fully explored module-free node/projection pairs; a partial walk that
+  // found exposure cannot establish anything about its other visited nodes.
+  const moduleFree = new WeakMap<t.Node, SemanticPropertyPathCoverage>();
   const exposesModule = (nodes: readonly t.Node[]): boolean => {
     const pending: { node: t.Node; path: JavaScriptSemanticPropertyPath }[] =
       nodes.map((node) => ({ node, path: [] }));
     const visited = new WeakMap<t.Node, SemanticPropertyPathCoverage>();
+    const examined: { node: t.Node; path: JavaScriptSemanticPropertyPath }[] =
+      [];
     while (pending.length > 0) {
       const { node: source, path } = pending.pop()!;
       const value = unwrapJavaScriptExpression(source).node;
+      if (moduleFree.get(value)?.covers(path)) continue;
       const coverage = visited.get(value) ?? new SemanticPropertyPathCoverage();
       if (coverage.covers(path)) continue;
       coverage.retain(path);
       visited.set(value, coverage);
+      examined.push({ node: value, path });
       if (semanticCommonJsModuleObjectAt(value, state)) {
         if (path.length === 0) return true;
         const first = path[0];
@@ -432,6 +441,12 @@ const writesModuleRequire = (
         });
       } else if (t.isCallExpression(value) || t.isOptionalCallExpression(value))
         pending.push(...value.arguments.map((node) => ({ node, path: [] })));
+    }
+    for (const { node, path } of examined) {
+      const coverage =
+        moduleFree.get(node) ?? new SemanticPropertyPathCoverage();
+      coverage.retain(path);
+      moduleFree.set(node, coverage);
     }
     return false;
   };
@@ -506,7 +521,9 @@ const writesModuleRequire = (
         } else if (owner === "Reflect" && method === "set") {
           const key = args?.slice(0, 2).some(t.isSpreadElement)
             ? undefined
-            : interop.staticPropertyKey(args?.[1]);
+            : args !== undefined && args.length < 2
+              ? "undefined"
+              : interop.staticPropertyKey(args?.[1]);
           if (key !== "require" && key !== undefined) return;
           // Ordinary [[Set]] writes the receiver, which defaults to the target
           // only when omitted. An unknown receiver can still be this module.

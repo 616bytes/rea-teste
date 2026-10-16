@@ -115,7 +115,9 @@ Limits and refusals a caller can meet:
   auto-loaded; select it with `entry`. As in ART, both read the raw stored
   name and ignore an Info-ZIP Unicode Path name: `entry` matches the stored
   name (a leading `./` is optional) and each member is reported under its
-  stored name. Canonical members Android would not load are named in
+  stored name. What the archive reader notes about a member it reads (a
+  differing Unicode Path name, directory attributes on a file) is carried into
+  `limitations`. Canonical members Android would not load are named in
   `limitations` and on any selection refusal. More than 64 auto-loaded members
   is refused; select one with `entry`.
 - **`file_size` framing.** A header `file_size` larger than the bytes present,

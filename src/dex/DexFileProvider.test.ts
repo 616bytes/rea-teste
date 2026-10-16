@@ -325,6 +325,10 @@ describe("DexFileProvider stored member names", () => {
     );
     const auto = await members(hidden);
     expect(auto.members).toEqual(["classes.dex:first", "classes2.dex:second"]);
+    // The reader's note on the selected member reaches the report.
+    expect(auto.limitations?.join("\n")).toContain(
+      'stored name "classes2.dex" differs from its Info-ZIP Unicode Path extra field name "foo.txt"',
+    );
     expect((await members(hidden, "classes2.dex")).members).toEqual([
       "classes2.dex:second",
     ]);
@@ -377,5 +381,23 @@ describe("DexFileProvider stored member names", () => {
       expect((await members(dotted, entry)).members).toEqual([
         "./classes2.dex:second",
       ]);
+  });
+
+  it("carries the reader's attribute note on a member it reads", async () => {
+    const apk = await write(
+      "dirmode.apk",
+      await zipArchive([
+        {
+          name: "classes.dex",
+          bytes: first,
+          externalFileAttributes: 0o040755 * 0x10000,
+        },
+      ]),
+    );
+    const auto = await members(apk);
+    expect(auto.members).toEqual(["classes.dex:first"]);
+    expect(auto.limitations?.join("\n")).toContain(
+      'ZIP member "classes.dex" has directory external attributes',
+    );
   });
 });

@@ -77,6 +77,8 @@ interface MemberSource {
   readonly load: () => Promise<Uint8Array>;
   /** Where a parse error is reported (`path` or `path!entry`). */
   readonly label: string;
+  /** What the archive reader observed about this member (e.g. its stored name). */
+  readonly limitations?: readonly string[];
 }
 
 /** Stated once, before the per-member counts of unread trailing bytes. */
@@ -290,6 +292,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
       selected.value.members.map(({ entry, member }) => ({
         entry,
         label: `${path}!${entry}`,
+        limitations: member.limitations,
         load: () =>
           readArchiveMember(reader, member, DEX_LIMITS.inputBytes, signal),
       })),
@@ -331,6 +334,8 @@ export class DexFileProvider implements DexDebugMetadataPort {
     for (const source of sources) {
       if (signal?.aborted) return err(dexCancelled(signal));
       const loaded = await source.load();
+      for (const note of source.limitations ?? [])
+        if (!limitations.includes(note)) limitations.push(note);
       const parsed = parseDexFile(loaded);
       if (!parsed.ok)
         return err(mapDexParseError(parsed.error, source.label, limitations));

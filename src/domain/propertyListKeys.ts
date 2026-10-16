@@ -383,6 +383,14 @@ const readSizedUint = (
   }
 };
 
+const readUid = (view: DataView, offset: number, byteCount: number): number => {
+  let value = 0;
+  for (let i = 0; i < byteCount; i++) {
+    value = value * 256 + view.getUint8(offset + i);
+  }
+  return value;
+};
+
 /**
  * Parse a binary property list (bplist00 format) with full integer support,
  * including 16-byte integers (marker 0x14) stored by Apple tools for values
@@ -480,7 +488,7 @@ export const parseBinaryPropertyList = (data: Uint8Array): unknown => {
       }
       case 0x8: {
         const byteCount = size + 1;
-        return { UID: readSizedUint(view, offset, byteCount) };
+        return { UID: readUid(view, offset, byteCount) };
       }
       case 0xa: {
         const arr: unknown[] = [];

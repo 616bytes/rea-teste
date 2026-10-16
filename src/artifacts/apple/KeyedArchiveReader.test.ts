@@ -472,4 +472,22 @@ describe("XML plist nesting preflight", () => {
       ),
     ).toBe(false);
   });
+
+  it("decodes binary keyed archives containing three-byte UIDs", () => {
+    // Binary plist with three-byte UID marker 0x82 (0x82 0x00 0x00 0x01 = UID 1) for $top.root
+    const hex =
+      "62706c6973743030d40102030405060a0f5924617263686976657258246f626a656374735424746f70582476657273696f6e5f100f4e534b657965644172636869766572a307080955246e756c6c140000000000000000ffffffffffffffff137fffffffffffffffd20b0c0d0e536d617854726f6f7480028200000112000186a008111b24293244484e5f686d7176787c0000000000000101000000000000001000000000000000000000000000000081";
+    const graph = decodeKeyedArchiveBytes(Buffer.from(hex, "hex"), {
+      offset: 0,
+      limit: 10,
+    });
+    expect(graph.roots).toEqual({
+      max: { UID: 2 },
+      root: { UID: 1 },
+    });
+    expect(graph.objects[1]).toMatchObject({
+      id: 1,
+      status: "observed",
+    });
+  });
 });

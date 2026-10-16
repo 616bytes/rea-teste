@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "plist";
 
-import { omitPrototypeKeys, parseXmlPropertyList } from "./propertyListKeys.js";
+import {
+  omitPrototypeKeys,
+  parseBinaryPropertyList,
+  parseXmlPropertyList,
+} from "./propertyListKeys.js";
 
 const plist = (body: string) =>
   `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0">${body}</plist>`;
@@ -318,6 +322,17 @@ describe("OpenStep plist nesting preflight", () => {
     ).toEqual({
       value: { quote: '"( )', data: new Uint8Array([40, 41]), values: ["x"] },
       omittedPrototypeKeys: 0,
+    });
+  });
+});
+
+describe("binary property list parsing", () => {
+  it("decodes three-byte UIDs without rejecting non-power-of-two widths", () => {
+    // 0x82 0x00 0x00 0x01 encodes a 3-byte UID with value 1
+    const hex =
+      "62706c69737430308200000108000000000000010100000000000000010000000000000000000000000000000c";
+    expect(parseBinaryPropertyList(Buffer.from(hex, "hex"))).toEqual({
+      UID: 1,
     });
   });
 });

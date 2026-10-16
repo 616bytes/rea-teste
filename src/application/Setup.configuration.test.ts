@@ -399,7 +399,7 @@ describe("MSIX Claude Desktop setup", () => {
       "Quit Claude Desktop fully before approving; closing its window is not enough.",
     );
     expect(action?.detail).toContain(
-      "Claude Desktop's REA_MCP_INPUT_SCHEMA_PROFILE is set to compact, replacing any previous value for that key.",
+      "Claude Desktop defaults REA_MCP_INPUT_SCHEMA_PROFILE to compact only when no stored or supplied profile exists.",
     );
   });
 

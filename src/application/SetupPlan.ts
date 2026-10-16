@@ -382,7 +382,7 @@ const clientConfigurationDetail = (
       : ` Detected provider environment: ${entries.join(", ")}. Existing server environment overrides are retained; detected values replace matching keys.`;
   const schemaProfileDetail =
     client.name === "claude_desktop"
-      ? " Claude Desktop's REA_MCP_INPUT_SCHEMA_PROFILE is set to compact, replacing any previous value for that key."
+      ? " Claude Desktop defaults REA_MCP_INPUT_SCHEMA_PROFILE to compact only when no stored or supplied profile exists."
       : "";
   const hopperDetail = installHopper
     ? environment.HOPPER_LAUNCHER_PATH === undefined

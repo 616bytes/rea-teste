@@ -62,13 +62,14 @@ Setup defaults Claude Desktop's REA entry to
 local references and expose explicit array/object parameter types, avoiding the
 schema shape implicated in [#3408](https://github.com/morluto/rea/issues/3408)
 (Windows Claude Desktop 2.37337.1). Compact advertisements can reduce nested
-schema constraints; REA still validates complete canonical inputs. Setup applies
-this profile after the existing REA environment, replacing an earlier schema
-profile while preserving other settings. To update an earlier registration,
-rerun `rea setup --client claude_desktop`, or add the setting to
-`mcpServers.rea.env` while preserving other settings, then restart the client.
-Verified in automated tests and a native Claude Desktop 2.37337.1 session on
-Windows with Chrome 155: `list_browser_targets` found the
+schema constraints; REA still validates complete canonical inputs. Setup uses
+compact only when no stored or explicitly supplied schema profile exists.
+Explicit setup values take precedence over stored values, and unrelated
+environment settings are retained. To update a registration without an explicit
+profile, rerun `rea setup --client claude_desktop`. To switch an existing explicit
+`full` profile to compact, set the value in `mcpServers.rea.env`, then restart the
+client. The compact profile was verified in automated tests and a native Claude
+Desktop 2.37337.1 session on Windows with Chrome 155: `list_browser_targets` found the
 `https://example.com/` target, and `inspect_web_page` accepted the array-valued
 `allowed_origins` and returned the page title `Example Domain`.
 

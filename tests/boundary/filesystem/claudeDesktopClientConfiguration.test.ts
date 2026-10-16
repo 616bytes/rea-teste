@@ -324,20 +324,55 @@ describe("MSIX Claude Desktop registration lifecycle", () => {
 });
 
 describe("Claude Desktop input schema compatibility", () => {
-  it.each([undefined, "full", "compact"] as const)(
-    "configures Claude Desktop with schema profile %s",
-    async (profile) => {
+  it.each([
+    {
+      storedProfile: undefined,
+      callerProfile: undefined,
+      expectedProfile: "compact",
+    },
+    {
+      storedProfile: "full",
+      callerProfile: undefined,
+      expectedProfile: "full",
+    },
+    {
+      storedProfile: "compact",
+      callerProfile: undefined,
+      expectedProfile: "compact",
+    },
+    {
+      storedProfile: undefined,
+      callerProfile: "full",
+      expectedProfile: "full",
+    },
+    {
+      storedProfile: "compact",
+      callerProfile: "full",
+      expectedProfile: "full",
+    },
+    {
+      storedProfile: "full",
+      callerProfile: "compact",
+      expectedProfile: "compact",
+    },
+  ] as const)(
+    "uses $expectedProfile with stored=$storedProfile and caller=$callerProfile",
+    async ({ storedProfile, callerProfile, expectedProfile }) => {
       const { home, env, appDataConfig } = await windowsProfile();
       const existingEnvironment = {
         CALLER_SETTING: "preserve exactly",
-        ...(profile === undefined
+        ...(storedProfile === undefined
           ? {}
-          : { REA_MCP_INPUT_SCHEMA_PROFILE: profile }),
+          : { REA_MCP_INPUT_SCHEMA_PROFILE: storedProfile }),
       };
+      const overrides =
+        callerProfile === undefined
+          ? {}
+          : { REA_MCP_INPUT_SCHEMA_PROFILE: callerProfile };
       const original = {
         mcpServers: {
           rea: {
-            ...(profile === undefined
+            ...(storedProfile === undefined
               ? reaEntry
               : { command: "old-rea", args: ["mcp"] }),
             env: existingEnvironment,
@@ -349,10 +384,10 @@ describe("Claude Desktop input schema compatibility", () => {
       const client = claudeDesktop(home, env);
 
       await expect(
-        inspectClientConfiguration(client, {}, command),
+        inspectClientConfiguration(client, overrides, command),
       ).resolves.toMatchObject({ status: "update" });
       await expect(
-        configureClientConfiguration(client, {}, command),
+        configureClientConfiguration(client, overrides, command),
       ).resolves.toMatchObject({ status: "configured" });
       expect(await readJson(appDataConfig)).toEqual({
         mcpServers: {
@@ -361,17 +396,17 @@ describe("Claude Desktop input schema compatibility", () => {
             ...reaEntry,
             env: {
               ...existingEnvironment,
-              REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+              REA_MCP_INPUT_SCHEMA_PROFILE: expectedProfile,
             },
           },
         },
       });
       expect(await readJson(`${appDataConfig}.rea.backup`)).toEqual(original);
       await expect(
-        inspectClientConfiguration(client, {}, command),
+        inspectClientConfiguration(client, overrides, command),
       ).resolves.toEqual({ status: "already_current" });
       await expect(
-        configureClientConfiguration(client, {}, command),
+        configureClientConfiguration(client, overrides, command),
       ).resolves.toEqual({ status: "unchanged" });
       expect(await readJson(`${appDataConfig}.rea.backup`)).toEqual(original);
     },

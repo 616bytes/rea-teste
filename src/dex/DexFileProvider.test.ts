@@ -238,6 +238,26 @@ describe("DexFileProvider members Android does not auto-load", () => {
     );
   });
 
+  it("attributes an over-cap refusal to the limit, not to Android", async () => {
+    const members = Array.from({ length: 66 }, (_, i) => ({
+      name: i === 0 ? "classes.dex" : `classes${String(i + 1)}.dex`,
+      bytes: debuggableDex(),
+    }));
+    members.push({ name: "classes70.dex", bytes: debuggableDex() });
+    const result = await provider.inspect({
+      path: await write("over-cap.apk", await zipArchive(members)),
+    });
+    if (result.ok) throw new Error("Expected an over-cap refusal");
+    const message = result.error.message;
+    expect(message).toContain(
+      "auto-loads 66 DEX members (classes.dex … classes66.dex), more than the 64-member limit",
+    );
+    // Only the member after the gap is one Android does not auto-load.
+    expect(message).toContain(
+      "also holds classes70.dex, which Android does not auto-load",
+    );
+  });
+
   it("names skipped members on a selection refusal", async () => {
     const result = await provider.inspect({
       path: await write(

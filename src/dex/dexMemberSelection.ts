@@ -14,7 +14,11 @@ import {
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { autoLoadedDexMembers, multidexIndex } from "./dexEntry.js";
+import {
+  autoLoadedDexMembers,
+  multidexIndex,
+  multidexName,
+} from "./dexEntry.js";
 import { DEX_LIMITS } from "./DexFileRelease.js";
 
 const OPERATION = "inspect_dex_debug_metadata";
@@ -38,7 +42,22 @@ interface ArchiveListing {
   /** Canonical names by stored spelling (bounded), and how many were not kept. */
   readonly canonical: ReadonlySet<string>;
   readonly unnamedCanonical: number;
+  /**
+   * Length of the contiguous run of exactly stored canonical names from
+   * `classes.dex`: the members Android auto-loads, counted over the whole
+   * listing (by name only), so it can exceed the retained candidates.
+   */
+  readonly autoLoaded: number;
 }
+
+/**
+ * Canonical names an archive can hold: each central-directory record is 46
+ * bytes plus a name of at least `classes.dex`, inside the metadata read. A
+ * load position at or past this cannot belong to the auto-loaded run.
+ */
+const MAX_CANONICAL_RECORDS = Math.ceil(
+  DEX_LIMITS.archiveMetadataBytes / (46 + "classes.dex".length),
+);
 
 const entryError = (message: string): AnalysisInputError =>
   new AnalysisInputError(OPERATION, undefined, [
@@ -61,6 +80,8 @@ const listArchive = async (
   const occurrences = new Map<string, number>();
   const canonical = new Set<string>();
   let unnamedCanonical = 0;
+  // Load positions of exactly stored canonical names, one bit each (~36 KiB).
+  const exactPositions = new Uint8Array(Math.ceil(MAX_CANONICAL_RECORDS / 8));
   const wanted = (member: ArtifactEntry): boolean => {
     if (requested !== undefined) return member.path === requested;
     const index = multidexIndex(member.path);
@@ -73,7 +94,10 @@ const listArchive = async (
     else unnamedCanonical += 1;
     // ART finds auto-loaded members by their exact stored name, so a member
     // stored as `./classes.dex` is not auto-loaded (it stays selectable).
-    return member.storedPath === undefined && index <= DEX_LIMITS.maxDexMembers;
+    if (member.storedPath !== undefined) return false;
+    if (index < MAX_CANONICAL_RECORDS)
+      exactPositions[index >>> 3]! |= 1 << (index & 7);
+    return index <= DEX_LIMITS.maxDexMembers;
   };
   const keep = (member: ArtifactEntry): boolean => {
     if (member.kind !== "file" || !wanted(member)) return false;
@@ -86,23 +110,43 @@ const listArchive = async (
   };
   for await (const member of reader.entries(signal, { retain: keep }))
     void member;
-  return { candidates, occurrences, canonical, unnamedCanonical };
+  let autoLoaded = 0;
+  while (
+    autoLoaded < MAX_CANONICAL_RECORDS &&
+    (exactPositions[autoLoaded >>> 3]! & (1 << (autoLoaded & 7))) !== 0
+  )
+    autoLoaded += 1;
+  return { candidates, occurrences, canonical, unnamedCanonical, autoLoaded };
 };
 
-/** Name the canonical members Android does not auto-load, if any. */
+/** Whether a stored spelling is one of the members Android auto-loads. */
+const isAutoLoaded = (stored: string, listing: ArchiveListing): boolean => {
+  const index = multidexIndex(stored);
+  return index !== null && index < listing.autoLoaded;
+};
+
+/**
+ * Name the canonical members Android does not auto-load, if any: those after
+ * a gap in the sequence and those not stored under their exact name.
+ */
 const skippedMembersNote = (
   path: string,
   listing: ArchiveListing,
-  loaded: ReadonlyMap<string, number>,
 ): string | undefined => {
   const skipped = [...listing.canonical]
-    .filter((name) => !loaded.has(name))
+    .filter((name) => !isAutoLoaded(name, listing))
     .sort(
       (a, b) =>
         (multidexIndex(normalizeArchiveMemberPath(a)) ?? 0) -
         (multidexIndex(normalizeArchiveMemberPath(b)) ?? 0),
     );
-  const more = listing.unnamedCanonical;
+  // Every auto-loaded position has an exactly stored entry; those not named
+  // were counted among the unnamed ones.
+  const namedLoaded = listing.canonical.size - skipped.length;
+  const more = Math.max(
+    0,
+    listing.unnamedCanonical - (listing.autoLoaded - namedLoaded),
+  );
   if (skipped.length === 0 && more === 0) return undefined;
   const names = [
     ...skipped,
@@ -126,7 +170,7 @@ const resolveAutoLoaded = (
     loadOrder.has(entry),
   );
   // Absence from the summary must not be mistaken for absence from the archive.
-  const skippedNote = skippedMembersNote(path, listing, loadOrder);
+  const skippedNote = skippedMembersNote(path, listing);
   const withSkipped = (message: string): string =>
     skippedNote === undefined ? message : `${message} ${skippedNote}`;
   // Every root member is promised, so one that cannot be read is refused,
@@ -172,7 +216,7 @@ const resolveAutoLoaded = (
         OPERATION,
         "capacity",
         withSkipped(
-          `${path} auto-loads more than ${String(DEX_LIMITS.maxDexMembers)} dex members, over the limit; select one with entry.`,
+          `${path} auto-loads ${String(listing.autoLoaded)} DEX members (classes.dex … ${multidexName(listing.autoLoaded - 1)}), more than the ${String(DEX_LIMITS.maxDexMembers)}-member limit, so none was read; select one with entry.`,
         ),
         { maximum_dex_members: DEX_LIMITS.maxDexMembers },
         {

@@ -17,7 +17,7 @@ export const multidexIndex = (path: string): number | null => {
 };
 
 /** ART's name for the `index`-th auto-loaded member (0-based). */
-const multidexName = (index: number): string =>
+export const multidexName = (index: number): string =>
   index === 0 ? "classes.dex" : `classes${String(index + 1)}.dex`;
 
 /**

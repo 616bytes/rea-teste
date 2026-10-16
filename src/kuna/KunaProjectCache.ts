@@ -145,11 +145,20 @@ interface RetainedHashFile {
   readonly key: string | null;
   readonly staging: string | null;
   readonly resource: string;
-  readonly fileCleanupFailure?: RegularFileCleanupFailure;
   /** The first failure tied to this owner; kept stable across retry attempts. */
   readonly originatingFailure?: AnalysisError;
   /** Most recent close failure, reported without wrapping prior retry errors. */
   readonly lastCloseFailure?: ProviderCleanupError;
+}
+
+interface CleanupErrorReport {
+  readonly error: WeakRef<AnalysisError>;
+  readonly pendingOwners: Set<object>;
+}
+
+interface CleanupFailureOwner {
+  readonly error: AnalysisError;
+  readonly owners: readonly object[];
 }
 
 interface StagedResult {
@@ -236,12 +245,19 @@ export class KunaProjectCache {
   /** Only resources whose process cleanup is proven may be retried as files. */
   readonly #retainedFiles = new Map<
     string,
-    { readonly key: string | null; readonly error: ProviderCleanupError }
+    {
+      readonly key: string | null;
+      readonly error: ProviderCleanupError;
+      readonly cleanupOwner: object;
+    }
   >();
   /** Hash descriptors whose close was not confirmed; staging stays until retry. */
   readonly #retainedHashFiles = new Map<OwnedFileHandle, RetainedHashFile>();
   /** Serialize owner release and staging retirement across concurrent lookups. */
   #hashRetry: Promise<void> = Promise.resolve();
+  /** Weakly track caller errors against every resource owner they report. */
+  readonly #cleanupErrorReports: CleanupErrorReport[] = [];
+  readonly #stagingCleanupOwners = new Map<string, object>();
 
   constructor(
     root: string,
@@ -287,7 +303,8 @@ export class KunaProjectCache {
     key: string,
     signal?: AbortSignal,
   ): Promise<KunaProject | undefined> {
-    const cleanup = await this.#retryHashFiles(key);
+    await this.#retryHashFiles(key);
+    const cleanup = this.#cleanupResult(this.#hashCleanupFailures(key));
     if (!cleanup.ok) throw cleanup.error;
     const verified = this.#verified.get(key);
     if (verified !== undefined) {
@@ -414,17 +431,7 @@ export class KunaProjectCache {
     );
     await this.#retryProcesses((retained) => retained.key === key);
     await this.#retryFiles(key);
-    return cleanupResult([
-      ...[...this.#retainedProcesses, ...this.#retainedFiles.values()]
-        .filter((retained) => retained.key === key)
-        .map(({ error }) => error),
-      ...[...this.#retainedHashFiles.values()]
-        .filter((retained) => retained.key === key)
-        .flatMap(({ originatingFailure, lastCloseFailure }) => {
-          const failure = lastCloseFailure ?? originatingFailure;
-          return failure === undefined ? [] : [failure];
-        }),
-    ]);
+    return this.#cleanupResult(this.#retainedCleanupFailures(key));
   }
 
   /** Wait for builds, retry safe file removal, and report unresolved cleanup. */
@@ -435,16 +442,7 @@ export class KunaProjectCache {
     while (this.#maintenance !== undefined) await this.#maintenance;
     await this.#retryProcesses(() => true);
     await this.#retryFiles();
-    return cleanupResult([
-      ...this.#retainedProcesses.map(({ error }) => error),
-      ...[...this.#retainedFiles.values()].map(({ error }) => error),
-      ...[...this.#retainedHashFiles.values()].flatMap(
-        ({ originatingFailure, lastCloseFailure }) => {
-          const failure = lastCloseFailure ?? originatingFailure;
-          return failure === undefined ? [] : [failure];
-        },
-      ),
-    ]);
+    return this.#cleanupResult(this.#retainedCleanupFailures());
   }
 
   /** Retry stopping retained process trees; retire the staging of each one proven stopped. */
@@ -458,6 +456,7 @@ export class KunaProjectCache {
         this.#retainedProcesses.indexOf(retained),
         1,
       );
+      this.#resolveCleanupOwner(retained);
       await this.#retireStaging(retained.staging, retained.key);
     }
   }
@@ -471,9 +470,7 @@ export class KunaProjectCache {
   }
 
   /** Retry retained hash descriptors before admitting another read for a key. */
-  async #retryHashFiles(
-    key?: string,
-  ): Promise<Result<null, ProviderCleanupError>> {
+  async #retryHashFiles(key?: string): Promise<void> {
     const previous = this.#hashRetry;
     let release!: () => void;
     const current = new Promise<void>((resolve) => {
@@ -488,9 +485,7 @@ export class KunaProjectCache {
         try {
           await owner.close();
           this.#retainedHashFiles.delete(owner);
-          const original = retained.originatingFailure;
-          if (retained.fileCleanupFailure?.owner === owner)
-            original?.resolveCleanup();
+          this.#resolveCleanupOwner(owner);
           if (retained.staging !== null && retained.key !== null)
             staging.set(retained.staging, retained.key);
         } catch (cause: unknown) {
@@ -514,6 +509,12 @@ export class KunaProjectCache {
             ...retained,
             lastCloseFailure: closeFailure,
           });
+          this.#bindCleanupError(closeFailure, [
+            owner,
+            ...(retained.staging === null
+              ? []
+              : [this.#stagingCleanupOwner(retained.staging)]),
+          ]);
         }
       }
       for (const [path, retainedKey] of staging)
@@ -523,17 +524,123 @@ export class KunaProjectCache {
           )
         )
           await this.#retireStaging(path, retainedKey);
-      return cleanupResult(
-        [...this.#retainedHashFiles.values()]
-          .filter((retained) => key === undefined || retained.key === key)
-          .flatMap(({ originatingFailure, lastCloseFailure }) => {
-            const failure = lastCloseFailure ?? originatingFailure;
-            return failure === undefined ? [] : [failure];
-          }),
-      );
     } finally {
       release();
     }
+  }
+
+  #hashCleanupFailures(key?: string): CleanupFailureOwner[] {
+    return [...this.#retainedHashFiles.entries()]
+      .filter(([, retained]) => key === undefined || retained.key === key)
+      .flatMap(([owner, retained]) => {
+        const failure =
+          retained.lastCloseFailure ?? retained.originatingFailure;
+        return failure === undefined
+          ? []
+          : [
+              {
+                error: failure,
+                owners: [
+                  owner,
+                  ...(retained.staging === null
+                    ? []
+                    : [this.#stagingCleanupOwner(retained.staging)]),
+                ],
+              },
+            ];
+      });
+  }
+
+  #retainedCleanupFailures(key?: string): CleanupFailureOwner[] {
+    return [
+      ...this.#retainedProcesses
+        .filter((retained) => key === undefined || retained.key === key)
+        .map((retained) => ({
+          error: retained.error,
+          owners: [retained, this.#stagingCleanupOwner(retained.staging)],
+        })),
+      ...[...this.#retainedFiles.values()]
+        .filter((retained) => key === undefined || retained.key === key)
+        .map((retained) => ({
+          error: retained.error,
+          owners: [retained.cleanupOwner],
+        })),
+      ...this.#hashCleanupFailures(key),
+    ];
+  }
+
+  #cleanupResult(
+    failures: readonly CleanupFailureOwner[],
+  ): Result<null, ProviderCleanupError> {
+    const result = cleanupResult(failures.map(({ error }) => error));
+    if (result.ok) return result;
+    const owners = new Set(failures.flatMap(({ owners }) => owners));
+    this.#bindCleanupError(result.error, [...owners]);
+    return result;
+  }
+
+  #bindCleanupError(error: AnalysisError, owners: readonly object[]): void {
+    this.#pruneCleanupErrorReports();
+    const report = this.#cleanupErrorReports.find(
+      (candidate) => candidate.error.deref() === error,
+    );
+    const pending = report?.pendingOwners ?? new Set<object>();
+    for (const owner of owners) pending.add(owner);
+    if (report === undefined && pending.size > 0)
+      this.#cleanupErrorReports.push({
+        error: new WeakRef(error),
+        pendingOwners: pending,
+      });
+  }
+
+  #fileCleanupOwner(path: string): object {
+    return this.#retainedFiles.get(path)?.cleanupOwner ?? {};
+  }
+
+  #stagingCleanupOwner(path: string): object {
+    let owner = this.#stagingCleanupOwners.get(path);
+    if (owner === undefined) {
+      owner = {};
+      this.#stagingCleanupOwners.set(path, owner);
+    }
+    return owner;
+  }
+
+  #resolveCleanupOwner(owner: object): void {
+    for (const report of [...this.#cleanupErrorReports]) {
+      const error = report.error.deref();
+      if (error === undefined) {
+        this.#cleanupErrorReports.splice(
+          this.#cleanupErrorReports.indexOf(report),
+          1,
+        );
+        continue;
+      }
+      report.pendingOwners.delete(owner);
+      if (report.pendingOwners.size === 0) {
+        error.resolveCleanup();
+        this.#cleanupErrorReports.splice(
+          this.#cleanupErrorReports.indexOf(report),
+          1,
+        );
+      }
+    }
+  }
+
+  #transferCleanupOwner(from: object, to: object): void {
+    this.#pruneCleanupErrorReports();
+    for (const report of this.#cleanupErrorReports)
+      if (report.pendingOwners.delete(from)) report.pendingOwners.add(to);
+  }
+
+  #pruneCleanupErrorReports(): void {
+    for (
+      let index = this.#cleanupErrorReports.length - 1;
+      index >= 0;
+      index -= 1
+    )
+      if (this.#cleanupErrorReports[index]?.error.deref() === undefined)
+        this.#cleanupErrorReports.splice(index, 1);
   }
 
   /**
@@ -545,15 +652,27 @@ export class KunaProjectCache {
     key: string,
   ): Promise<ProviderCleanupError | undefined> {
     let cleanupPath = staging;
+    const stagingOwner = this.#stagingCleanupOwners.get(staging);
     try {
       const retired = join(this.#root, "trash", `build-${randomUUID()}`);
       await rename(staging, retired);
       cleanupPath = retired;
       await this.#removeRetired(retired, key);
+      if (stagingOwner !== undefined) this.#resolveCleanupOwner(stagingOwner);
       return undefined;
     } catch (cause: unknown) {
-      if (cause instanceof ProviderCleanupError) return cause;
-      return this.#retainFileCleanup(cleanupPath, cause, key);
+      const failure =
+        cause instanceof ProviderCleanupError
+          ? cause
+          : this.#retainFileCleanup(cleanupPath, cause, key);
+      if (stagingOwner !== undefined)
+        this.#transferCleanupOwner(
+          stagingOwner,
+          this.#fileCleanupOwner(cleanupPath),
+        );
+      return failure;
+    } finally {
+      this.#stagingCleanupOwners.delete(staging);
     }
   }
 
@@ -677,12 +796,17 @@ export class KunaProjectCache {
         this.#retainHashFile(owner, key, staging, resource),
     });
     if (outcome.kind === "retained") {
-      this.#retainedProcesses.push({
+      const retained: RetainedProcess = {
         key,
         error: outcome.error,
         owner: outcome.owner,
         staging,
-      });
+      };
+      this.#retainedProcesses.push(retained);
+      this.#bindCleanupError(outcome.error, [
+        retained,
+        this.#stagingCleanupOwner(staging),
+      ]);
       return { result: err(outcome.error), retainStaging: true };
     }
     return {
@@ -862,7 +986,10 @@ export class KunaProjectCache {
   async #removeRetired(path: string, key?: string): Promise<void> {
     try {
       await rm(path, { recursive: true, force: true });
+      const retained = this.#retainedFiles.get(path);
       this.#retainedFiles.delete(path);
+      if (retained !== undefined)
+        this.#resolveCleanupOwner(retained.cleanupOwner);
     } catch (cause: unknown) {
       throw this.#retainFileCleanup(path, cause, key);
     }
@@ -900,10 +1027,13 @@ export class KunaProjectCache {
       { reason: cause instanceof Error ? cause.message : String(cause) },
       { operation: KUNA_EXPORT_OPERATION, cause },
     );
-    this.#retainedFiles.set(path, {
+    const retained = {
       key: key ?? this.#retainedFiles.get(path)?.key ?? null,
       error,
-    });
+      cleanupOwner: this.#retainedFiles.get(path)?.cleanupOwner ?? {},
+    };
+    this.#retainedFiles.set(path, retained);
+    this.#bindCleanupError(error, [retained.cleanupOwner]);
     return error;
   }
 
@@ -927,12 +1057,13 @@ export class KunaProjectCache {
     fileCleanupFailure: RegularFileCleanupFailure,
   ): AnalysisError {
     const retained = this.#retainedHashFiles.get(fileCleanupFailure.owner);
-    if (retained?.key === key && retained.staging === staging)
+    if (retained?.key === key && retained.staging === staging) {
       this.#retainedHashFiles.set(fileCleanupFailure.owner, {
         ...retained,
-        fileCleanupFailure,
         originatingFailure: retained.originatingFailure ?? failure,
       });
+      this.#bindCleanupError(failure, [fileCleanupFailure.owner]);
+    }
     return failure;
   }
 }

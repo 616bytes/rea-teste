@@ -70,7 +70,7 @@ export const urlRelativeFilesystemPath = (
       "/",
     ),
   );
-  return reference.endsWith("/") && !normalized.endsWith("/")
-    ? `${normalized}/`
+  return normalized.length > 1 && normalized.endsWith("/")
+    ? normalized.slice(0, -1)
     : normalized;
 };

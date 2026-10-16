@@ -274,6 +274,7 @@ it("resolves ESM imports using the pathname before query and fragment suffixes",
       join(root, "main.mjs"),
       [
         'import "./dep.mjs?tag=%20";',
+        'import "./dep.mjs?tag=second";',
         'import "./dep%20name.mjs?cache=1#v2";',
         'import "./slash-query.mjs?tag=%2f";',
         'import "./hash%23name.mjs?tag=x";',
@@ -405,4 +406,34 @@ it("resolves ESM dot segments before collapsing repeated URL separators", async 
     },
   ])
     expect(result.value.relationships).toContainEqual(relationship);
+});
+
+it("selects the package main for a JavaScript source directory import", async () => {
+  const root = await createTestTempDirectory(
+    "rea-reference-esm-directory-main-",
+  );
+  await mkdir(join(root, "pkg"));
+  await Promise.all([
+    writeFile(join(root, "main.mjs"), 'import "./pkg/";\nimport "./pkg//";\n'),
+    writeFile(join(root, "pkg/package.json"), '{"main":"actual.js"}\n'),
+    writeFile(join(root, "pkg/index.js"), "export const decoy = true;\n"),
+    writeFile(join(root, "pkg/actual.js"), "export const selected = true;\n"),
+  ]);
+
+  const result = await importReferenceSource({
+    root,
+    caller: "reference-esm-directory-main-test",
+    policy: { secretPatterns: [] },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.parse_failures).toEqual([]);
+  expect(result.value.relationships).toEqual([
+    {
+      from_path: "main.mjs",
+      to: "pkg/actual.js",
+      kind: "imports",
+      resolution: "internal",
+      parse_state: "parsed",
+    },
+  ]);
 });

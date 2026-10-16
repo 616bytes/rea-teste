@@ -23,7 +23,6 @@ import {
   isImportExpression,
   isMemberExpression,
   isStringLiteral,
-  isTemplateLiteral,
   isTSExternalModuleReference,
   isTSImportEqualsDeclaration,
   isTSModuleDeclaration,
@@ -88,12 +87,6 @@ const isModuleExpression = (
   expression: Node | null | undefined,
 ): expression is StringLiteral | CallExpression =>
   isStringLiteral(expression) || isCallExpression(expression);
-
-/** An expression-free template supplies one exact string, like a quoted one. */
-const isExactTemplateExpression = (
-  expression: Node | null | undefined,
-): boolean =>
-  isTemplateLiteral(expression) && expression.expressions.length === 0;
 
 const moduleSpecifierFromExpression = (
   expression: Node | null | undefined,
@@ -257,11 +250,10 @@ const extractRequireAndDynamicImports = (
       continue;
     }
     const first = call.arguments[0];
-    if (
-      isRequireCallee(call.callee) &&
-      unshadowedRequireCalls.has(call) &&
-      (isModuleExpression(first) || isExactTemplateExpression(first))
-    ) {
+    // The shared exact-literal reader owns argument exactness: it unwraps
+    // runtime-transparent TS wrappers (`as const`, `!`, `satisfies`) and
+    // admits quoted and expression-free template spellings alike.
+    if (isRequireCallee(call.callee) && unshadowedRequireCalls.has(call)) {
       const result = moduleSpecifierFromExpression(first);
       if (result !== undefined) {
         appendRelationship(relationships, {

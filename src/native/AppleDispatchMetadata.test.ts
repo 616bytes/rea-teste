@@ -543,11 +543,12 @@ describe("malformed Apple dispatch metadata", () => {
     bytes.write("__swift5_types", 104);
     bytes.write("__TEXT", 120);
     ptr(136, 0x200);
-    bytes.writeBigUInt64LE(8n, 144);
+    bytes.writeBigUInt64LE(12n, 144);
     u32(152, 0x200);
     const entries: readonly (readonly [number, number, number, number])[] = [
       [0x200, 0x300, 0x500, 0x800],
       [0x204, 0x380, 0x520, 0x810],
+      [0x208, 0x400, 0x540, 0x820],
     ];
     for (const [field, descriptor, name, implementation] of entries) {
       rel(field, descriptor);
@@ -559,16 +560,18 @@ describe("malformed Apple dispatch metadata", () => {
       u32(descriptor + 52, 0);
       rel(descriptor + 56, implementation);
     }
-    bytes.write("KeptClass\0", 0x500);
+    bytes.write("EarlierClass\0", 0x500);
+    bytes.write("LaterClass\0", 0x540);
 
     const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
     expect(result.swift_dispatch_slots.map(({ owner }) => owner)).toEqual([
-      "KeptClass",
+      "EarlierClass",
+      "LaterClass",
     ]);
     const coverage = result.coverage.find(
       ({ facet }) => facet === "swift_class_vtable_descriptors",
     );
-    expect(coverage).toMatchObject({ status: "partial", examined: 2 });
+    expect(coverage).toMatchObject({ status: "partial", examined: 3 });
   });
 
   it("rejects malformed command and section boundaries", () => {

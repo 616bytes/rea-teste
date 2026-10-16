@@ -67,6 +67,21 @@ const invocationArguments = (
       : arguments_?.slice(1);
 
 /**
+ * The callee can name a captured invocation member in three ways: `member`
+ * holds the intact read for the canonical identity; `replaced` means the
+ * member shape is recognized on a provable callable but its owner slot was
+ * overwritten before capture — the stored value is unknown, not the
+ * intrinsic; `undefined` means the alias does not reference such a member
+ * at all.
+ */
+export type CapturedInvocationMember =
+  | {
+      readonly member: t.MemberExpression | t.OptionalMemberExpression;
+      readonly replaced?: false;
+    }
+  | { readonly replaced: true; readonly path: readonly string[] };
+
+/**
  * Normalize known invocation syntax once, retaining bound argument prefixes.
  * Binding a function alone is not a write; only its eventual call is examined.
  */
@@ -75,9 +90,7 @@ export const resolveJavaScriptIntrinsicInvocation = (
   intrinsicPath: (node: t.Node) => readonly string[] | undefined,
   boundIntrinsic: (node: t.Node) => JavaScriptIntrinsicInvocation | undefined,
   intrinsicReadChanged: (node: t.Node, path: readonly string[]) => boolean,
-  memberRead?: (
-    node: t.Node,
-  ) => t.MemberExpression | t.OptionalMemberExpression | undefined,
+  memberRead?: (node: t.Node) => CapturedInvocationMember | undefined,
 ): JavaScriptIntrinsicInvocation | undefined => {
   const visited = new Set<t.Node>();
   let callee: t.Node = node.callee;
@@ -116,12 +129,22 @@ export const resolveJavaScriptIntrinsicInvocation = (
           // An alias can capture an invocation member read, as in
           // `const invoke = change.call` — its stored value is the member's
           // function. Follow the captured read before giving up on a callable.
+          const captured: CapturedInvocationMember | undefined =
+            bound === undefined ? memberRead?.(callee.object) : undefined;
+          if (bound === undefined && captured === undefined) return undefined;
+          // A recognized member whose owner slot was overwritten before
+          // capture holds an unknown replacement: the call is neither the
+          // intrinsic nor effect-free.
+          if (captured !== undefined && captured.replaced === true)
+            return {
+              kind: "opaque",
+              path: captured.path,
+              arguments: undefined,
+            };
           const member:
             | t.MemberExpression
             | t.OptionalMemberExpression
-            | undefined =
-            bound === undefined ? memberRead?.(callee.object) : undefined;
-          if (bound === undefined && member === undefined) return undefined;
+            | undefined = captured?.member;
           const memberPath: readonly string[] | undefined =
             member === undefined
               ? undefined

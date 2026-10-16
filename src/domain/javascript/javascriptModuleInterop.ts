@@ -25,6 +25,7 @@ import {
 import {
   expandJavaScriptInvocationArguments,
   resolveJavaScriptIntrinsicInvocation,
+  type CapturedInvocationMember,
 } from "./javascriptIntrinsicInvocation.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import {
@@ -459,7 +460,7 @@ export const createSemanticModuleInterop = (
   // transitively with a cycle guard.
   const capturedInvocationMember = (
     node: t.Node,
-  ): t.MemberExpression | t.OptionalMemberExpression | undefined => {
+  ): CapturedInvocationMember | undefined => {
     const visited = new Set<string>();
     let current = unwrapJavaScriptExpression(node).node;
     for (;;) {
@@ -485,30 +486,32 @@ export const createSemanticModuleInterop = (
       const key = semanticStaticPropertyKey(next.property, next.computed);
       if (key !== "call" && key !== "apply" && key !== "bind") return undefined;
       // The canonical Function.prototype member identity holds only while
-      // the owner is a provable callable and its own member slot was not
-      // replaced before the read: an alias of `custom.call`, or of a member
-      // overwritten on its owner, does not hold the intrinsic function.
+      // the owner is a provable callable: an alias of `custom.call` on
+      // application data does not hold the intrinsic member at all.
       const ownerPath =
         intrinsicPath(next.object) ?? boundIntrinsic(next.object)?.path;
-      if (
-        ownerPath === undefined ||
-        intrinsicReadChanged(next, [...ownerPath, key])
-      )
-        return undefined;
-      return next;
+      if (ownerPath === undefined) return undefined;
+      // A provable owner whose slot was overwritten before the read stores an
+      // unknown replacement in `invoke` — recognized member shape, unknown
+      // callable. The call must stay opaque rather than effect-free.
+      const ownerMemberPath = [...ownerPath, key];
+      if (intrinsicReadChanged(next, ownerMemberPath))
+        return { replaced: true, path: ownerMemberPath };
+      return { member: next };
     }
   };
 
   // The read side resolves an alias of `callable.call` to the stored member
   // function's identity; writes through the alias must land on that same path
-  // or they can never invalidate the captured read.
+  // or they can never invalidate the captured read. A replaced member carries
+  // no intrinsic identity, so it yields no path.
   const capturedInvocationMemberPath = (
     node: t.Node,
   ): readonly string[] | undefined => {
-    const member = capturedInvocationMember(node);
-    return member === undefined
-      ? undefined
-      : intrinsicInvocationMemberPath(member);
+    const captured = capturedInvocationMember(node);
+    return captured !== undefined && captured.replaced !== true
+      ? intrinsicInvocationMemberPath(captured.member)
+      : undefined;
   };
 
   const activeBoundValues = new WeakSet<t.Node>();

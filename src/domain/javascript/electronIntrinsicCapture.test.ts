@@ -417,7 +417,8 @@ describe("captured invocation member identity", () => {
   it("rejects a captured member read replaced on its owner", () => {
     // `change.call` is overwritten before capture, so `invoke` holds the
     // replacement object — not Function.prototype.call — and the reflect
-    // call invokes `noop`, never the bound defineProperty.
+    // call invokes `noop`, never the bound defineProperty. The member shape
+    // is recognized but the callable is unknown, so the call is opaque.
     const { invocations, writes } = collectedWrites(
       `const change = Object.defineProperty.bind(null,Object,"create");
       change.call = {call: noop};
@@ -425,12 +426,28 @@ describe("captured invocation member identity", () => {
       Reflect.apply(invoke.call, change, [null, {value: customCreate}]);`,
     );
     expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
-    expect(invocations.at(-1)).not.toEqual(
-      expect.objectContaining({
-        kind: "known",
-        path: ["intrinsic", "Object", "defineProperty"],
-      }),
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({ kind: "opaque" }),
     );
+    expect(writes).toContainEqual(["intrinsic"]);
+  });
+
+  it("keeps a replaced captured member's call effect opaque", () => {
+    // `invoke` stores the replacement arrow, which runs and assigns
+    // `Object.create` when invoked. Rejecting the intrinsic identity must not
+    // drop the call's effect: recognized member shape plus an unknown
+    // callable means opaque, so the unknown effect is retained and a later
+    // helper cannot read a trusted intrinsic namespace.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      change.call = () => { Object.create = customCreate; };
+      const invoke = change.call;
+      invoke.call(change,null,{value:customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({ kind: "opaque" }),
+    );
+    expect(writes).toContainEqual(["intrinsic"]);
   });
 
   it("follows a copied captured-member alias", () => {

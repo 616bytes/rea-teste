@@ -117,6 +117,8 @@ export const toolFamilyCatalog = (sources) => {
       contracts: [
         ...sources.applicationContracts.APPLICATION_TOOL_CONTRACTS,
         ...sources.analysisViewContracts.ANALYSIS_VIEW_TOOL_CONTRACTS,
+        ...sources.uiStateTransitionContracts
+          .UI_STATE_TRANSITION_TOOL_CONTRACTS,
         ...sources.webScriptContracts.WEB_SCRIPT_TOOL_CONTRACTS,
         ...sources.javascriptRecoveryContracts
           .JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
@@ -391,6 +393,11 @@ export const providerCatalog = (sources) => {
     {
       identity: sources.artifactProviders.ANALYSIS_VIEW_PROVIDER,
       contracts: sources.analysisViewContracts.ANALYSIS_VIEW_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.artifactProviders.UI_STATE_TRANSITION_PROVIDER,
+      contracts:
+        sources.uiStateTransitionContracts.UI_STATE_TRANSITION_TOOL_CONTRACTS,
     },
     {
       identity: sources.artifactProviders.ANDROID_APPLICATION_PROVIDER,

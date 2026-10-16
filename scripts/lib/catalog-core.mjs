@@ -101,6 +101,8 @@ const SOURCE_PATHS = {
     "dist/contracts/javascript/javascriptRuntimeObservationToolContracts.js",
   applicationContracts: "dist/contracts/applicationToolContracts.js",
   analysisViewContracts: "dist/contracts/analysisViewToolContracts.js",
+  uiStateTransitionContracts:
+    "dist/contracts/uiStateTransitionToolContracts.js",
   webScriptContracts: "dist/contracts/webScriptToolContracts.js",
   javascriptRecoveryContracts:
     "dist/contracts/javascript/javascriptRecoveryToolContracts.js",

@@ -325,7 +325,10 @@ const runScenario = async (
         ],
       }),
     });
-  if (options.signal?.aborted)
+  if (
+    options.signal?.aborted === true &&
+    steps.every((step) => step.status === "completed")
+  )
     throw new AnalysisCancelledError(OPERATION, {
       cause: options.signal?.reason,
       partialObservation: {

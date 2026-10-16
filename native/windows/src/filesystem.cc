@@ -137,7 +137,7 @@ struct Security {
     Handle token;
     HANDLE raw;
     require(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw), "Read current user token failed");
-    token.reset(raw);
+    token = Handle(raw);
     DWORD size = 0;
     GetTokenInformation(token.get(), TokenUser, nullptr, 0, &size);
     user.resize(size);
@@ -184,13 +184,25 @@ static Handle createRelative(HANDLE parent, const std::wstring& name, DWORD acce
   return result;
 }
 
-void cleanupFailedRuntime(std::unique_ptr<Runtime>& owner, Failure& primary) {
-  if (!owner || !owner->directory.valid()) {
-    owner.reset();
-    return;
+static void closeHandleList(std::vector<Handle>& handles, const std::wstring& path) {
+  std::unique_ptr<Failure> failure;
+  for (auto& handle : handles) {
+    try { handle.close(path); }
+    catch (const Failure& cause) {
+      if (!failure) failure = std::make_unique<Failure>(cause);
+    }
   }
+  if (failure) throw *failure;
+}
+
+void cleanupFailedRuntime(std::unique_ptr<Runtime>& owner, Failure& primary) {
+  if (!owner) return;
   try {
-    closeRuntime(*owner);
+    if (owner->directory.valid()) closeRuntime(*owner);
+    else {
+      closeHandleList(owner->parents, owner->path);
+      owner->parents.clear();
+    }
     owner.reset();
   } catch (const Failure& cleanup) {
     primary.cleanupConstraint = cleanup.constraint;
@@ -407,27 +419,44 @@ static std::wstring relativePath(Runtime& root, const std::wstring& relative) {
   return localPath(root.path + L"\\" + relative);
 }
 
+static void retainPendingFile(Runtime& root, std::unique_ptr<File>& file) {
+  if (!file || file->closed || file->handles.empty()) return;
+  root.pendingFiles.push_back(std::move(file));
+}
+
+static void retainPendingHandle(Runtime& root, const std::wstring& path, Handle& handle) {
+  if (!handle.valid()) return;
+  auto file = std::make_unique<File>(path);
+  file->handles.push_back(std::move(handle));
+  root.pendingFiles.push_back(std::move(file));
+}
+
 static std::unique_ptr<File> runtimeDirectory(Runtime& root, const std::wstring& path) {
   auto result = std::make_unique<File>(path);
-  HANDLE duplicate;
-  require(DuplicateHandle(GetCurrentProcess(), root.directory.get(), GetCurrentProcess(), &duplicate, 0, FALSE,
-                          DUPLICATE_SAME_ACCESS), "Duplicate private directory handle failed", path);
-  result->handles.emplace_back(duplicate);
-  size_t offset = root.path.size() + 1;
-  while (offset < path.size()) {
-    const auto end = path.find(L'\\', offset);
-    const auto name = path.substr(offset, end == std::wstring::npos ? end : end - offset);
-    auto child = openRelative(result->get(), name,
-                              FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | READ_CONTROL,
-                              FILE_SHARE_READ, FILE_DIRECTORY_FILE, path.substr(0, end));
-    FILE_ATTRIBUTE_TAG_INFO info{};
-    require(GetFileInformationByHandleEx(child.get(), FileAttributeTagInfo, &info, sizeof(info)),
-            "Read private directory tag failed", path);
-    require((info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0,
-            "Reparse private directory is unsupported", path, ERROR_NOT_SUPPORTED);
-    result->handles.push_back(std::move(child));
-    if (end == std::wstring::npos) break;
-    offset = end + 1;
+  try {
+    HANDLE duplicate;
+    require(DuplicateHandle(GetCurrentProcess(), root.directory.get(), GetCurrentProcess(), &duplicate, 0, FALSE,
+                            DUPLICATE_SAME_ACCESS), "Duplicate private directory handle failed", path);
+    result->handles.emplace_back(duplicate);
+    size_t offset = root.path.size() + 1;
+    while (offset < path.size()) {
+      const auto end = path.find(L'\\', offset);
+      const auto name = path.substr(offset, end == std::wstring::npos ? end : end - offset);
+      auto child = openRelative(result->get(), name,
+                                FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | READ_CONTROL,
+                                FILE_SHARE_READ, FILE_DIRECTORY_FILE, path.substr(0, end));
+      FILE_ATTRIBUTE_TAG_INFO info{};
+      require(GetFileInformationByHandleEx(child.get(), FileAttributeTagInfo, &info, sizeof(info)),
+              "Read private directory tag failed", path);
+      require((info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0,
+              "Reparse private directory is unsupported", path, ERROR_NOT_SUPPORTED);
+      result->handles.push_back(std::move(child));
+      if (end == std::wstring::npos) break;
+      offset = end + 1;
+    }
+  } catch (...) {
+    retainPendingFile(root, result);
+    throw;
   }
   return result;
 }
@@ -482,26 +511,66 @@ static void dispose(HANDLE handle, const std::wstring& path) {
   require(SetFileInformationByHandle(handle, FileDispositionInfo, &deletion, sizeof(deletion)), "Delete owned object by handle failed", path);
 }
 
-static void disposeSnapshot(Runtime& root, Handle& file, const std::wstring& path) {
+static void closePendingFiles(Runtime& root) {
+  std::unique_ptr<Failure> failure;
+  for (auto& file : root.pendingFiles) {
+    try { file->close(); }
+    catch (const Failure& cause) {
+      if (!failure) failure = std::make_unique<Failure>(cause);
+    }
+  }
+  if (failure) throw *failure;
+  root.pendingFiles.clear();
+}
+
+static void closeImmutableFiles(Runtime& root) {
+  closeHandleList(root.immutableFiles, root.path);
+  root.immutableFiles.clear();
+}
+
+static void closeRuntimeLeases(Runtime& root) {
+  std::unique_ptr<Failure> failure;
+  try { root.directory.close(root.path); }
+  catch (const Failure& cause) { failure = std::make_unique<Failure>(cause); }
+  try { closeHandleList(root.parents, root.path); }
+  catch (const Failure& cause) {
+    if (!failure) failure = std::make_unique<Failure>(cause);
+  }
+  if (failure) throw *failure;
+  root.parents.clear();
+}
+
+static void disposeSnapshot(Runtime& root, File& file, const std::wstring& path) {
   // Snapshot readers do not share DELETE access. Release the writer only for
   // failed-copy cleanup, with its parent pinned and its identity recorded.
   auto parent = runtimeDirectory(root, path.substr(0, path.find_last_of(L'\\')));
-  FILE_ID_INFO expected{};
-  require(GetFileInformationByHandleEx(file.get(), FileIdInfo, &expected, sizeof(expected)),
-          "Read incomplete snapshot identity failed", path);
-  file.reset();
-  auto cleanup = openRelative(parent->get(), path.substr(path.find_last_of(L'\\') + 1),
-                              DELETE | GENERIC_READ | FILE_WRITE_ATTRIBUTES,
-                              FILE_SHARE_READ, FILE_NON_DIRECTORY_FILE, path);
-  FILE_ID_INFO observed{};
-  require(GetFileInformationByHandleEx(cleanup.get(), FileIdInfo, &observed, sizeof(observed)),
-          "Read snapshot cleanup identity failed", path);
-  require(expected.VolumeSerialNumber == observed.VolumeSerialNumber &&
-          std::equal(std::begin(expected.FileId.Identifier), std::end(expected.FileId.Identifier),
-                     std::begin(observed.FileId.Identifier)),
-          "Incomplete snapshot identity changed before cleanup", path, ERROR_ACCESS_DENIED);
-  verifyPrivate(cleanup.get(), path, false);
-  dispose(cleanup.get(), path);
+  std::unique_ptr<File> cleanup;
+  try {
+    FILE_ID_INFO expected{};
+    require(GetFileInformationByHandleEx(file.get(), FileIdInfo, &expected, sizeof(expected)),
+            "Read incomplete snapshot identity failed", path);
+    file.close();
+    auto cleanupHandle = openRelative(parent->get(), path.substr(path.find_last_of(L'\\') + 1),
+                                      DELETE | GENERIC_READ | FILE_WRITE_ATTRIBUTES,
+                                      FILE_SHARE_READ, FILE_NON_DIRECTORY_FILE, path);
+    cleanup = std::make_unique<File>(path);
+    cleanup->handles.push_back(std::move(cleanupHandle));
+    FILE_ID_INFO observed{};
+    require(GetFileInformationByHandleEx(cleanup->get(), FileIdInfo, &observed, sizeof(observed)),
+            "Read snapshot cleanup identity failed", path);
+    require(expected.VolumeSerialNumber == observed.VolumeSerialNumber &&
+            std::equal(std::begin(expected.FileId.Identifier), std::end(expected.FileId.Identifier),
+                       std::begin(observed.FileId.Identifier)),
+            "Incomplete snapshot identity changed before cleanup", path, ERROR_ACCESS_DENIED);
+    verifyPrivate(cleanup->get(), path, false);
+    dispose(cleanup->get(), path);
+    cleanup->close();
+    parent->close();
+  } catch (...) {
+    retainPendingFile(root, cleanup);
+    retainPendingFile(root, parent);
+    throw;
+  }
 }
 
 void closeRuntime(Runtime& root) {
@@ -510,7 +579,19 @@ void closeRuntime(Runtime& root) {
   // Windows keeps the bearer descriptor and snapshot leases until this owner
   // cleanup. POSIX removes its consumed descriptor earlier. Abrupt owner death
   // closes process jobs but cannot run this walk, so private files can remain.
-  root.immutableFiles.clear();
+  closePendingFiles(root);
+  closeImmutableFiles(root);
+  if (!root.directory.valid()) {
+    closeHandleList(root.parents, root.path);
+    root.parents.clear();
+    root.closed = true;
+    return;
+  }
+  if (root.contentsRemoved) {
+    closeRuntimeLeases(root);
+    root.closed = true;
+    return;
+  }
   // Enumerate and open children through the retained directory handles. Paths
   // below are diagnostic labels only: renames and ancestor junction replacement
   // cannot redirect cleanup into an unrelated tree.
@@ -562,27 +643,44 @@ void closeRuntime(Runtime& root) {
   require(DuplicateHandle(GetCurrentProcess(), root.directory.get(), GetCurrentProcess(), &duplicate, 0, FALSE,
                           DUPLICATE_SAME_ACCESS), "Duplicate runtime cleanup handle failed", root.path);
   frames.push_back(std::make_unique<Frame>(Handle(duplicate), root.path));
+  const auto retainFrames = [&]() {
+    for (auto& frame : frames) retainPendingHandle(root, frame->path, frame->directory);
+  };
   while (!frames.empty()) {
     auto& frame = *frames.back();
     std::wstring name;
-    if (!frame.next(name)) {
-      dispose(frame.directory.get(), frame.path);
-      frames.pop_back();
-      continue;
+    try {
+      if (!frame.next(name)) {
+        dispose(frame.directory.get(), frame.path);
+        frame.directory.close(frame.path);
+        frames.pop_back();
+        continue;
+      }
+      const auto path = frame.path + L"\\" + name;
+      auto child = openRelative(frame.directory.get(), name,
+                                DELETE | FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
+                                FILE_SHARE_READ | FILE_SHARE_DELETE, 0, path);
+      try {
+        FILE_ATTRIBUTE_TAG_INFO info{};
+        require(GetFileInformationByHandleEx(child.get(), FileAttributeTagInfo, &info, sizeof(info)), "Read cleanup object tag failed", path);
+        if ((info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 && (info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0)
+          frames.push_back(std::make_unique<Frame>(std::move(child), path));
+        else {
+          dispose(child.get(), path);
+          child.close(path);
+        }
+      } catch (...) {
+        retainPendingHandle(root, path, child);
+        throw;
+      }
+    } catch (...) {
+      retainFrames();
+      throw;
     }
-    const auto path = frame.path + L"\\" + name;
-    auto child = openRelative(frame.directory.get(), name,
-                              DELETE | FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
-                              FILE_SHARE_READ | FILE_SHARE_DELETE, 0, path);
-    FILE_ATTRIBUTE_TAG_INFO info{};
-    require(GetFileInformationByHandleEx(child.get(), FileAttributeTagInfo, &info, sizeof(info)), "Read cleanup object tag failed", path);
-    if ((info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 && (info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0)
-      frames.push_back(std::make_unique<Frame>(std::move(child), path));
-    else dispose(child.get(), path);
   }
+  root.contentsRemoved = true;
   // Failed walks retain the root's identity leases for a later cleanup retry.
-  root.directory.reset();
-  root.parents.clear();
+  closeRuntimeLeases(root);
   root.closed = true;
 }
 
@@ -593,7 +691,7 @@ struct SnapshotWork {
   napi_ref rootReference = nullptr;
   Runtime* root;
   std::unique_ptr<File> source;
-  Handle destination;
+  std::unique_ptr<File> destination;
   std::wstring path;
   std::wstring digest;
   std::unique_ptr<Failure> failure;
@@ -618,14 +716,14 @@ static void copySnapshot(napi_env, void* pointer) {
       require(ReadFile(work.source->get(), buffer.data(), buffer.size(), &count, nullptr),
               "Read admitted source handle failed", work.source->path);
       if (count == 0) break;
-      writeBytes(work.destination.get(), buffer.data(), count, work.path);
+      writeBytes(work.destination->get(), buffer.data(), count, work.path);
       require(BCryptHashData(hash, buffer.data(), count, 0) == 0,
               "Hash admitted snapshot bytes failed", work.source->path, ERROR_GEN_FAILURE);
     }
     std::array<unsigned char, 32> digest;
     require(BCryptFinishHash(hash, digest.data(), digest.size(), 0) == 0,
             "Finish snapshot SHA-256 failed", work.source->path, ERROR_GEN_FAILURE);
-    require(FlushFileBuffers(work.destination.get()), "Flush private snapshot failed", work.path);
+    require(FlushFileBuffers(work.destination->get()), "Flush private snapshot failed", work.path);
     work.digest = hex(digest.data(), digest.size());
   } catch (const Failure& failure) {
     work.failure = std::make_unique<Failure>(failure);
@@ -634,33 +732,77 @@ static void copySnapshot(napi_env, void* pointer) {
   }
 }
 
+static void rememberCleanupFailure(std::unique_ptr<Failure>& primary, const Failure& cleanup) {
+  if (!primary) {
+    primary = std::make_unique<Failure>(cleanup);
+    return;
+  }
+  if (primary->cleanupConstraint.empty()) {
+    primary->cleanupConstraint = cleanup.constraint;
+    primary->cleanupWin32 = cleanup.win32;
+    primary->cleanupPath = cleanup.path;
+  }
+}
+
+static void closeSnapshotSource(Runtime& root, std::unique_ptr<File>& source,
+                                std::unique_ptr<Failure>& primary) {
+  if (!source) return;
+  try {
+    source->close();
+    source.reset();
+  } catch (const Failure& failure) {
+    retainPendingFile(root, source);
+    rememberCleanupFailure(primary, failure);
+  }
+}
+
+static void disposeFailedSnapshot(Runtime& root, std::unique_ptr<File>& destination,
+                                  const std::wstring& path,
+                                  std::unique_ptr<Failure>& primary) {
+  try {
+    disposeSnapshot(root, *destination, path);
+    destination.reset();
+  } catch (const Failure& failure) {
+    if (destination && !destination->closed) retainPendingFile(root, destination);
+    else destination.reset();
+    rememberCleanupFailure(primary, failure);
+  }
+}
+
+static void retainCompletedSnapshot(Runtime& root, std::unique_ptr<File>& destination) {
+  for (auto& handle : destination->handles)
+    root.immutableFiles.push_back(std::move(handle));
+  destination.reset();
+}
+
 static void completeSnapshot(napi_env env, napi_status status, void* pointer) {
   std::unique_ptr<SnapshotWork> work(static_cast<SnapshotWork*>(pointer));
   work->root->snapshotPending = false;
-  const auto reject = [&](const Failure& failure) {
-    try {
-      disposeSnapshot(*work->root, work->destination, work->path);
-      napi_reject_deferred(env, work->deferred, failureValue(env, failure));
-    } catch (const Failure& cleanupFailure) {
-      const Failure combined(
-          failure.constraint + "; incomplete snapshot cleanup failed: " + cleanupFailure.constraint,
-          work->path, cleanupFailure.win32);
-      napi_reject_deferred(env, work->deferred, failureValue(env, combined));
-    }
-  };
+  std::unique_ptr<Failure> primary;
+  napi_value result = nullptr;
+  bool outputReady = false;
   try {
     if (work->failure) throw *work->failure;
     require(status == napi_ok && !work->root->snapshotCancelled.load(), "Native snapshot worker was cancelled", work->path, ERROR_OPERATION_ABORTED);
-    auto result = object(env);
+    result = object(env);
     set(env, result, "sha256", string(env, work->digest));
     set(env, result, "source", identity(env, work->source->get(), work->source->requestedPath));
-    set(env, result, "snapshot", identity(env, work->destination.get(), work->path));
-    work->root->immutableFiles.push_back(std::move(work->destination));
-    check(napi_resolve_deferred(env, work->deferred, result));
+    set(env, result, "snapshot", identity(env, work->destination->get(), work->path));
+    outputReady = true;
   } catch (const Failure& failure) {
-    reject(failure);
+    primary = std::make_unique<Failure>(failure);
   } catch (const std::exception& failure) {
-    reject(Failure(failure.what(), work->path, ERROR_GEN_FAILURE));
+    primary = std::make_unique<Failure>(failure.what(), work->path, ERROR_GEN_FAILURE);
+  }
+  if (primary && !outputReady) {
+    disposeFailedSnapshot(*work->root, work->destination, work->path, primary);
+    closeSnapshotSource(*work->root, work->source, primary);
+    napi_reject_deferred(env, work->deferred, failureValue(env, *primary));
+  } else {
+    closeSnapshotSource(*work->root, work->source, primary);
+    retainCompletedSnapshot(*work->root, work->destination);
+    if (primary) napi_reject_deferred(env, work->deferred, failureValue(env, *primary));
+    else check(napi_resolve_deferred(env, work->deferred, result));
   }
   napi_delete_reference(env, work->rootReference);
   napi_delete_async_work(env, work->work);
@@ -673,7 +815,8 @@ static napi_value snapshot(napi_env env, napi_value rootValue, Runtime& root,
   work->path = relativePath(root, relative);
   // Retain the write lease with read-only sharing, but omit DELETE authority:
   // Java's RandomAccessFile reader shares read/write, not delete access.
-  work->destination = createPrivateFile(root, relative, GENERIC_WRITE | GENERIC_READ | READ_CONTROL);
+  work->destination = std::make_unique<File>(work->path);
+  work->destination->handles.push_back(createPrivateFile(root, relative, GENERIC_WRITE | GENERIC_READ | READ_CONTROL));
   napi_value promise;
   check(napi_create_promise(env, &work->deferred, &promise));
   check(napi_create_reference(env, rootValue, 1, &work->rootReference));
@@ -707,7 +850,7 @@ napi_value filesystemCall(napi_env env, const std::wstring& operation,
   }
   if (operation == L"close") {
     auto& file = static_cast<File&>(resource(env, args[0], Kind::File));
-    file.handles.clear(); file.closed = true;
+    file.close();
     return null(env);
   }
   if (operation == L"read") {

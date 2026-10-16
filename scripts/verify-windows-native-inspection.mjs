@@ -61,9 +61,28 @@ import {join} from 'node:path';
 import {systemWindowsNativeAuthority} from ${JSON.stringify(loader)};
 const temp=process.env.TEMP;
 const mode=process.argv[2];
+const snapshotClose=mode==='snapshot-close';
 const creation=mode.startsWith('create-');
-const native=creation?createRequire(import.meta.url)(${JSON.stringify(join(workspace, "native", "windows", "build", "rea-windows-x64.node"))}):null;
-if(creation){
+const native=creation||snapshotClose?createRequire(import.meta.url)(${JSON.stringify(join(workspace, "native", "windows", "build", "rea-windows-x64.node"))}):null;
+if(snapshotClose){
+ const source=join(temp,'snapshot-source.bin');writeFileSync(source,'snapshot source');
+ const runtime=native.call('runtime_create',[temp,'rea-snapshot-close-']);
+ let failure;
+ const pending=native.call('runtime_snapshot',[runtime.handle,source,'snapshot.bin']);
+ native.call('runtime_snapshot_cancel',[runtime.handle]);
+ try{await pending}catch(error){failure=error}
+ assert.ok(failure instanceof Error,'runtime_snapshot unexpectedly passed injected close failure');
+ assert.equal(failure.win32Code,995);
+ assert.equal(failure.cleanupWin32Code,5);
+ let firstRetry;
+ try{native.call('runtime_close',[runtime.handle])}catch(error){firstRetry=error}
+ assert.ok(firstRetry instanceof Error);
+ assert.equal(firstRetry.win32Code,5);
+ native.call('runtime_close',[runtime.handle]);
+ assert.equal(existsSync(runtime.path),false);
+ process.stdout.write(JSON.stringify({mode,closeFailureReported:true,ownerRetained:true,retryCompleted:true}));
+ process.exit(0);
+} else if(creation){
  let failure;
  try{native.call('runtime_create',[temp,'rea-native-created-'])}catch(error){failure=error}
  assert.ok(failure instanceof Error,'runtime_create unexpectedly passed injected post-create validation failure');
@@ -107,7 +126,13 @@ console.log(JSON.stringify({mode,firstFailed:true,retainedOwner:true,name,rename
 `;
   const fixture = join(workspace, "probe.mjs");
   await writeFile(fixture, source);
-  for (const mode of ["retry", "teardown", "create-retry", "create-teardown"]) {
+  for (const mode of [
+    "retry",
+    "teardown",
+    "create-retry",
+    "create-teardown",
+    "snapshot-close",
+  ]) {
     const temp = join(workspace, mode);
     await mkdir(temp);
     const child = spawnSync(process.execPath, [fixture, mode], {
@@ -131,6 +156,15 @@ console.log(JSON.stringify({mode,firstFailed:true,retainedOwner:true,name,rename
       "Native environment teardown reported a cleanup failure",
     );
     const observed = JSON.parse(child.stdout);
+    if (mode === "snapshot-close") {
+      assert.deepEqual(observed, {
+        mode,
+        closeFailureReported: true,
+        ownerRetained: true,
+        retryCompleted: true,
+      });
+      continue;
+    }
     assert.equal(observed.mode, mode);
     assert.equal(observed.firstFailed, true);
     assert.equal(observed.retainedOwner, true);
@@ -148,7 +182,7 @@ console.log(JSON.stringify({mode,firstFailed:true,retainedOwner:true,name,rename
     );
   }
   process.stdout.write(
-    `${JSON.stringify({ ok: true, inspectionPostCreateValidationFailure: true, runtimeCreatePostCreateValidationFailure: true, controlledRollbackDispositionFailure: true, retainedOwner: true, renamedOwnerCleansChildren: true, unrelatedReplacementPreserved: true, retryRecoversByInspectionAndCreation: true, successfulAdmissionCached: true, environmentTeardownCleansProbeAndCreation: true, issue1701HostCauseReproduced: false })}\n`,
+    `${JSON.stringify({ ok: true, inspectionPostCreateValidationFailure: true, runtimeCreatePostCreateValidationFailure: true, controlledRollbackDispositionFailure: true, snapshotCloseFailureRetainsOwner: true, retainedOwner: true, renamedOwnerCleansChildren: true, unrelatedReplacementPreserved: true, retryRecoversByInspectionAndCreation: true, successfulAdmissionCached: true, environmentTeardownCleansProbeAndCreation: true, issue1701HostCauseReproduced: false })}\n`,
   );
 } finally {
   await rm(workspace, { recursive: true, force: true });

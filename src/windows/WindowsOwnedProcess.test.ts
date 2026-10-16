@@ -41,6 +41,7 @@ const authority = (
     readonly polls?: readonly unknown[];
     readonly appliedLimit?: (requested: unknown) => unknown;
     readonly failClose?: () => boolean;
+    readonly failPoll?: () => boolean;
   } = {},
 ) => {
   const calls: { operation: string; arguments_: readonly unknown[] }[] = [];
@@ -82,7 +83,10 @@ const authority = (
               }
             : {}),
         };
-      if (operation === "process_poll") return polls.shift();
+      if (operation === "process_poll") {
+        if (options.failPoll?.()) throw new Error("native poll failed");
+        return polls.shift();
+      }
       if (operation === "process_terminate") return true;
       if (operation === "process_close") {
         if (options.failClose?.()) throw new Error("native close failed");
@@ -111,6 +115,36 @@ const launch = (
   );
 
 describe("Windows native release retry", () => {
+  it("releases directly after polling fails", async () => {
+    vi.useFakeTimers();
+    let failPoll = true;
+    try {
+      const { native, calls } = authority({
+        failPoll: () => failPoll,
+      });
+      const child = launch(native);
+      const failures: string[] = [];
+      child.on("error", (error: Error) => failures.push(error.message));
+
+      await vi.advanceTimersByTimeAsync(25);
+      expect(failures).toContain("native poll failed");
+      failPoll = false;
+      let cleaned = false;
+      const cleanup = child.cleanup().then(() => {
+        cleaned = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(cleaned).toBe(true);
+      await cleanup;
+      expect(
+        calls.filter(({ operation }) => operation === "process_close"),
+      ).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("ends output streams and retains ownership for a failed close retry", async () => {
     vi.useFakeTimers();
     let shouldFailClose = true;

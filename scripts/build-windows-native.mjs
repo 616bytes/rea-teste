@@ -88,6 +88,9 @@ if (!(await exists(join(headers, "node_api.h")))) {
   headers = join(cache, `node-v${nodeVersion}`, "include", "node");
 }
 const artifact = "rea-windows-x64.node";
+const fixtureLinkerOptions = inspectionFixture
+  ? ["-Wl,--wrap=CloseHandle"]
+  : [];
 // MSVC short-import libraries do not produce a correct Node import table with
 // GNU ld. Generate a GNU delay-import library for the exact stable Node-API
 // symbols; addon.cc binds it to the host executable, whatever its file name.
@@ -130,6 +133,7 @@ run(compiler, [
     : "native/windows/src/filesystem.cc",
   "native/windows/src/process.cc",
   library,
+  ...fixtureLinkerOptions,
   "-ladvapi32",
   "-lbcrypt",
   "-lntdll",

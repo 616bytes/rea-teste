@@ -55,20 +55,38 @@ inline void require(bool condition, const char* constraint, const std::wstring& 
 
 class Handle {
   HANDLE value_ = INVALID_HANDLE_VALUE;
+
+  void discard() noexcept {
+    if (valid()) {
+      (void)CloseHandle(value_);
+      value_ = INVALID_HANDLE_VALUE;
+    }
+  }
+
 public:
   Handle() = default;
   explicit Handle(HANDLE value) : value_(value) {}
-  ~Handle() { reset(); }
+  ~Handle() noexcept { discard(); }
   Handle(const Handle&) = delete;
   Handle& operator=(const Handle&) = delete;
   Handle(Handle&& other) noexcept : value_(other.release()) {}
-  Handle& operator=(Handle&& other) noexcept { reset(other.release()); return *this; }
+  Handle& operator=(Handle&& other) {
+    if (this != &other) {
+      close();
+      value_ = other.release();
+    }
+    return *this;
+  }
   HANDLE get() const { return value_; }
   bool valid() const { return value_ != INVALID_HANDLE_VALUE && value_ != nullptr; }
   HANDLE release() { return std::exchange(value_, INVALID_HANDLE_VALUE); }
-  void reset(HANDLE next = INVALID_HANDLE_VALUE) {
-    if (valid()) CloseHandle(value_);
-    value_ = next;
+  void close(const std::wstring& path = L"") {
+    if (!valid()) return;
+    if (!CloseHandle(value_)) {
+      const auto code = GetLastError();
+      throw Failure("Close Windows handle failed", path, code);
+    }
+    value_ = INVALID_HANDLE_VALUE;
   }
 };
 
@@ -85,13 +103,28 @@ struct File : Resource {
   std::vector<Handle> handles;
   explicit File(std::wstring path) : Resource(Kind::File), requestedPath(path), path(std::move(path)) {}
   HANDLE get() const { return handles.back().get(); }
+  void close() {
+    std::unique_ptr<Failure> failure;
+    for (auto& handle : handles) {
+      try { handle.close(path); }
+      catch (const Failure& cause) {
+        if (!failure) failure = std::make_unique<Failure>(cause);
+      }
+    }
+    if (failure) throw *failure;
+    closed = true;
+  }
 };
 struct Runtime : Resource {
   std::wstring path;
   std::vector<Handle> parents;
   Handle directory;
   std::vector<Handle> immutableFiles;
+  // External snapshot sources and cleanup-walk handles whose close is unconfirmed.
+  std::vector<std::unique_ptr<File>> pendingFiles;
   bool closing = false;
+  // A completed walk must not reopen a root already marked delete-pending.
+  bool contentsRemoved = false;
   // Main-thread admission is single-flight; only the accepted copy owns the
   // atomic cancellation flag consumed by its async worker. ERROR_BUSY rejects
   // another copy before it can reset that flag or replace pending ownership.

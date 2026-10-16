@@ -247,6 +247,17 @@ export class WindowsOwnedProcess extends EventEmitter {
 
   async #stop(): Promise<ProcessCleanupResult> {
     if (this.#closed) return { cleaned: true, signaled: false };
+    if (this.#failure !== undefined) {
+      try {
+        this.#release();
+        return { cleaned: true, signaled: false };
+      } catch (cause: unknown) {
+        return {
+          cleaned: false,
+          reason: cause instanceof Error ? cause.message : String(cause),
+        };
+      }
+    }
     let timer: NodeJS.Timeout | undefined;
     try {
       const signaled = this.kill();

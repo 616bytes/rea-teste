@@ -84,7 +84,7 @@ static void pipe(Handle& read, Handle& write, bool parentReads = true) {
   SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
   HANDLE rawRead, rawWrite;
   require(CreatePipe(&rawRead, &rawWrite, &attributes, 0), "Create owned process output pipe failed");
-  read.reset(rawRead); write.reset(rawWrite);
+  read = Handle(rawRead); write = Handle(rawWrite);
   require(SetHandleInformation(parentReads ? read.get() : write.get(), HANDLE_FLAG_INHERIT, 0), "Protect parent process pipe handle inheritance failed");
 }
 
@@ -106,8 +106,8 @@ std::unique_ptr<Process> spawnProcess(const std::wstring& command, const std::ws
   Handle input;
   if (protocolStdin) pipe(input, result->stdinWrite, false);
   else {
-    input.reset(CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                           &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+    input = Handle(CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
     require(input.valid(), "Open owned process null input failed");
   }
   Attributes attributes(2);
@@ -162,7 +162,7 @@ std::unique_ptr<Process> spawnProcess(const std::wstring& command, const std::ws
                          CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW,
                          variables.data(), cwd.empty() ? nullptr : cwd.c_str(), &startup.StartupInfo, &process),
           "Create process atomically inside owned Job Object failed", command);
-  result->process.reset(process.hProcess);
+  result->process = Handle(process.hProcess);
   Handle thread(process.hThread);
   result->pid = process.dwProcessId;
   // An elevated token may default file ownership to Administrators. Normalize
@@ -224,7 +224,7 @@ static napi_value readOutput(napi_env env, Handle& read, bool& ended) {
       if (!PeekNamedPipe(read.get(), nullptr, 0, nullptr, &available, nullptr)) {
         require(GetLastError() == ERROR_BROKEN_PIPE,
                 "Observe owned process output failed");
-        read.reset();
+        read.close();
         ended = true;
         break;
       }
@@ -363,7 +363,7 @@ static napi_value inputWrite(napi_env env, napi_value owner, Process& process, n
   HANDLE pipe;
   require(DuplicateHandle(GetCurrentProcess(), process.stdinWrite.get(), GetCurrentProcess(), &pipe,
                           0, FALSE, DUPLICATE_SAME_ACCESS), "Retain owned process input handle failed");
-  work->pipe.reset(pipe);
+  work->pipe = Handle(pipe);
   napi_value promise;
   check(napi_create_promise(env, &work->deferred, &promise));
   check(napi_create_reference(env, owner, 1, &work->processReference));
@@ -379,6 +379,19 @@ static napi_value inputWrite(napi_env env, napi_value owner, Process& process, n
   }
   work.release();
   return promise;
+}
+
+static void closeProcessHandles(Process& process) {
+  std::unique_ptr<Failure> failure;
+  const auto close = [&](Handle& handle) {
+    try { handle.close(); }
+    catch (const Failure& cause) {
+      if (!failure) failure = std::make_unique<Failure>(cause);
+    }
+  };
+  close(process.job); close(process.process); close(process.stdoutRead);
+  close(process.stderrRead); close(process.stdinWrite); close(process.notifications);
+  if (failure) throw *failure;
 }
 
 napi_value processCall(napi_env env, const std::wstring& operation, const std::vector<napi_value>& args) {
@@ -411,7 +424,7 @@ napi_value processCall(napi_env env, const std::wstring& operation, const std::v
   require(args.size() == 1, "Wrong native process handle argument count", L"", ERROR_INVALID_PARAMETER);
   auto& process = static_cast<Process&>(resource(env, args[0], Kind::Process));
   if (operation == L"process_stdin_close") {
-    process.stdinWrite.reset();
+    process.stdinWrite.close();
     return null(env);
   }
   if (operation == L"process_poll") {
@@ -446,8 +459,7 @@ napi_value processCall(napi_env env, const std::wstring& operation, const std::v
   }
   if (operation == L"process_close") {
     // Closing the job is the crash-safe authority; no PID enumeration is used.
-    process.job.reset(); process.process.reset(); process.stdoutRead.reset(); process.stderrRead.reset(); process.stdinWrite.reset();
-    process.notifications.reset();
+    closeProcessHandles(process);
     process.closed = true;
     return null(env);
   }

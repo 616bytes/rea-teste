@@ -47,6 +47,8 @@ it.each([false, true])(
               { reason: "retry failed" },
               { operation: "inspect_packet_capture" },
             );
+          // Only the owner can confirm release of its retained resource.
+          original.resolveCleanup();
         },
       },
     );

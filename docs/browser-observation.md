@@ -394,12 +394,16 @@ Response metadata normalizes a `Referrer-Policy` fallback list to its last recog
 `inspect_web_page` observes related dedicated workers and Service Workers without
 pausing or executing target code. `workers[].observation` records the observed
 page relationship, worker-scoped execution contexts and script IDs, lifecycle
-transitions, network requests and capture completeness. Selected script sources
+transitions, network requests, console events, WebSocket connections/frames and
+capture completeness. Console text and WebSocket shapes follow the same explicit
+selection as page events; older captures may omit these worker event arrays.
+Selected script sources
 carry the same self-verifying UTF-8 artifacts as page scripts.
 
 Chrome's page-session attachment proves a dedicated-worker relationship;
 related iframe sessions also arm worker attachment within the selected origins.
-Service Worker `controlledClients` proves a client relationship. Same-origin
+Service Worker `controlledClients` proves a client relationship through the page,
+an owned iframe or a page-owned dedicated worker. Same-origin
 workers without either proof remain `ownership: "unknown"`. Their metadata is
 retained, but their sources and runtime activity are not collected by default.
 Service Worker version events retain `controls_page`; the ownership field records
@@ -435,12 +439,17 @@ Only the observation window is covered. Loaded source is not execution coverage;
 registration alone is not cache delivery. `network.requests[].response_source`
 preserves the browser's actual Service Worker/disk-cache response flags and
 Service Worker response-source classification, with absent fields left unknown.
+Redirect records retain the same facts independently of the final response.
 Worker response bodies are not fetched. When JSON shapes are requested, retained
 request shapes remain available and unfetched JSON response shapes are explicitly
 unavailable in each worker's completeness ledger.
 Script exports retain these ledgers and worker limitations in `worker_coverage`,
 keyed by target ID, including workers that supplied no scripts. Older captures
 without a worker observation use `completeness: null`; their coverage is unknown.
+Passive capture comparisons include worker scripts by observed target/script ID;
+incomplete worker discovery or script coverage cannot prove additions or removals.
+Unselected workers with unknown page ownership remain inventory evidence and do
+not establish runtime matches to the selected application's static graph.
 Worker requests are scoped to that worker; request IDs must not be joined across
 worker sessions. Worker attachments and domains are released on completion,
 failure and cancellation; REA does not terminate workers or the user-owned page.

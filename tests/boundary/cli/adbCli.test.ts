@@ -1,4 +1,5 @@
 import { chmod, lstat, readFile, unlink } from "node:fs/promises";
+import { dirname } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
@@ -187,18 +188,22 @@ exit 1
     expect(await readFile(workspace.path("events"), "utf8")).toBe(
       "fresh-install\nreplacement\nfresh-install\n",
     );
-    const calls = await readFile(workspace.path("calls"), "utf8");
     const snapshots = (await readFile(workspace.path("snapshots"), "utf8"))
       .trim()
       .split("\n");
+    expect(snapshots).toHaveLength(3);
     expect(new Set(snapshots).size).toBe(3);
+    for (const snapshot of snapshots) {
+      expect(snapshot).not.toBe(apk);
+      await expect(lstat(dirname(snapshot))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }
+    expect(await readFile(apk, "utf8")).toBe("apk");
+    const calls = await readFile(workspace.path("calls"), "utf8");
     expect(await readFile(workspace.path("payloads"), "utf8")).toBe(
       "apkapkapk",
     );
-    for (const snapshot of snapshots) {
-      expect(snapshot).not.toBe(apk);
-      await expect(lstat(snapshot)).rejects.toMatchObject({ code: "ENOENT" });
-    }
     expect(calls.split("\n").filter((line) => line !== "")).toEqual([
       "version",
       `-s emulator-5554 install -r ${snapshots[0]}`,

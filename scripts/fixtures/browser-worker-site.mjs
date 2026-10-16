@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 export async function startWorkerSite() {
   const sources = {
     "/worker.js":
-      'onmessage=async()=>{await fetch("/worker-request");postMessage("done")};postMessage("ready");',
+      'onmessage=async()=>{console.log("worker fixture message");await fetch("/worker-request");postMessage("done")};postMessage("ready");',
     "/module.js":
       'export const marker="模块🧪";onmessage=async()=>{await fetch("/module-request")};',
     "/shared.js":

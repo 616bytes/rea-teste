@@ -22,7 +22,14 @@ export const browserWorkerEvidenceScopeSchema = z
     const allowed = new Set(parameters.allowed_origins);
     for (const [index, worker] of normalized_result.workers.entries()) {
       const path = ["normalized_result", "workers", index];
-      const origin = sanitizeBrowserUrl(worker.url).origin;
+      const sanitized = sanitizeBrowserUrl(worker.url);
+      if (sanitized.url !== worker.url)
+        context.addIssue({
+          code: "custom",
+          path: [...path, "url"],
+          message: "Worker Evidence URL must be sanitized",
+        });
+      const origin = sanitized.origin;
       if (origin === null || origin !== worker.origin || !allowed.has(origin))
         context.addIssue({
           code: "custom",
@@ -67,7 +74,14 @@ export const browserWorkerEvidenceScopeSchema = z
             "Worker Evidence disagrees with its recorded target selection",
         });
       for (const [scriptIndex, script] of observation.scripts.entries()) {
-        const scriptOrigin = sanitizeBrowserUrl(script.url).origin;
+        const sanitizedScript = sanitizeBrowserUrl(script.url);
+        if (sanitizedScript.url !== script.url)
+          context.addIssue({
+            code: "custom",
+            path: [...path, "observation", "scripts", scriptIndex, "url"],
+            message: "Worker Evidence script URL must be sanitized",
+          });
+        const scriptOrigin = sanitizedScript.origin;
         if (scriptOrigin === null || !allowed.has(scriptOrigin))
           context.addIssue({
             code: "custom",

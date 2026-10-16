@@ -38,6 +38,9 @@ import {
 const OPERATION = "capture_browser_scenario" as const;
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
 
+const signalIsAborted = (signal: AbortSignal | undefined): boolean =>
+  signal?.aborted === true;
+
 type SnapshotKind = BrowserScenario["capture"]["after_each_step"][number];
 const SNAPSHOT_KINDS = [
   "screenshot",
@@ -326,29 +329,7 @@ const runScenario = async (
       }),
     });
   const completeness = globalCompleteness(scenario, session, steps);
-  if (options.signal?.aborted)
-    throw new AnalysisCancelledError(OPERATION, {
-      cause: options.signal?.reason,
-      partialObservation: {
-        kind: "browser-scenario-observation",
-        // All steps settled; retain a complete capture envelope so the service
-        // can authenticate these partial observations as Evidence.
-        capture: browserScenarioCaptureSchema.parse({
-          ...browserScenarioCaptureData({
-            session,
-            scenario,
-            startedAt,
-            steps,
-            cleanup: cleanupOutcome.cleanup,
-            limitations: [
-              "Scenario capture was cancelled; settled steps and cleanup are retained.",
-            ],
-          }),
-          completeness,
-        }),
-      },
-    });
-  return browserScenarioCaptureSchema.parse({
+  const capture = browserScenarioCaptureSchema.parse({
     ...browserScenarioCaptureData({
       session,
       scenario,
@@ -358,6 +339,21 @@ const runScenario = async (
     }),
     completeness,
   });
+  if (signalIsAborted(options.signal))
+    throw new AnalysisCancelledError(OPERATION, {
+      cause: options.signal?.reason,
+      partialObservation: {
+        kind: "browser-scenario-observation",
+        capture: {
+          ...capture,
+          limitations: [
+            ...capture.limitations,
+            "Scenario capture was cancelled; collected steps, observations, and cleanup state are retained.",
+          ],
+        },
+      },
+    });
+  return capture;
 };
 
 /** Controlled Playwright/CDP scenario driver with exact process ownership. */

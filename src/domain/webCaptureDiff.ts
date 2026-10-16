@@ -182,19 +182,7 @@ const compareWebCaptureDimensions = (
   const after = input.after.inspection;
   return {
     dom_structure: domDimension(before, after),
-    scripts: compareDimension(
-      keyed(
-        before.scripts.items.map(scriptProjection),
-        (item) => item.script_key,
-      ),
-      keyed(
-        after.scripts.items.map(scriptProjection),
-        (item) => item.script_key,
-      ),
-      sectionsComplete(before, ["scripts"]) &&
-        sectionsComplete(after, ["scripts"]),
-      "Script inventory was incomplete in at least one observation.",
-    ),
+    scripts: scriptsDimension(before, after),
     resources: compareDimension(
       keyed(before.resources, (item) => item.resource_key),
       keyed(after.resources, (item) => item.resource_key),
@@ -315,12 +303,23 @@ const redirectMetadataFields = [
   ...requiredNetworkResponseFields,
   "resource_type",
 ] as const;
+const redirectComparableFields = [
+  ...networkResponseFields,
+  "resource_type",
+] as const;
 type NetworkMetadataField =
   | (typeof networkResponseFields)[number]
   | (typeof redirectMetadataFields)[number];
 
 const networkResponseValue = (
-  request: WebPageInspection["network"]["requests"][number],
+  request: Pick<
+    WebPageInspection["network"]["requests"][number],
+    | "status"
+    | "mime_type"
+    | "encoded_data_length"
+    | "resource_type"
+    | "response_source"
+  >,
   field: NetworkMetadataField,
 ): string | number | boolean | null =>
   field === "service_worker" ||
@@ -365,8 +364,9 @@ const sharedNetworkMetadata = (
       for (const [index, redirect] of (request.redirects ?? []).entries())
         retainKnownFields(
           redirectNetworkIdentity(identity, index),
-          (field) => redirect[field],
+          (field) => networkResponseValue(redirect, field),
           redirectMetadataFields,
+          redirectComparableFields,
         );
     }
   return { fields: shared, complete };
@@ -549,15 +549,12 @@ const networkMap = (
             },
             index,
           ) => {
-            const response: Partial<
-              Record<(typeof redirectMetadataFields)[number], number | string>
-            > = {};
+            const response: Record<string, unknown> = {};
             const fields = projection.metadataFields.get(
               redirectNetworkIdentity(identity, index),
             );
-            for (const field of redirectMetadataFields)
-              if (fields?.has(field) && redirect[field] !== null)
-                response[field] = redirect[field];
+            for (const field of fields ?? [])
+              response[field] = networkResponseValue(redirect, field);
             return {
               url: redirect.url,
               response_url: redirect.response_url,
@@ -845,6 +842,66 @@ const scriptProjection = (
   language: script.language,
   source_map_url: script.source_map_url,
 });
+
+/** Worker target/script IDs compare one observed instance, never URL peers. */
+const scriptsDimension = (
+  before: WebPageInspection,
+  after: WebPageInspection,
+): Dimension => {
+  const selectedWorkers = (inspection: WebPageInspection) =>
+    inspection.workers.filter(
+      (worker) =>
+        worker.observation?.ownership !== "unknown" ||
+        worker.observation.selected_explicitly,
+    );
+  const workerComplete = [before, after].every(
+    (inspection) =>
+      sectionsComplete(inspection, ["workers"]) &&
+      selectedWorkers(inspection).every((worker) => {
+        const coverage = worker.observation?.completeness;
+        return (
+          coverage !== undefined &&
+          !incompleteSections(coverage).has("scripts") &&
+          !incompleteSections(coverage).has("workers") &&
+          coverage.dropped_events.scripts === 0
+        );
+      }),
+  );
+  const pageComplete = [before, after].every(
+    (inspection) =>
+      sectionsComplete(inspection, ["scripts"]) &&
+      inspection.completeness.dropped_events.scripts === 0,
+  );
+  const fingerprints = (inspection: WebPageInspection) => {
+    const result = new Map(
+      keyed(
+        inspection.scripts.items.map(scriptProjection),
+        (item) => item.script_key,
+      ),
+    );
+    for (const worker of selectedWorkers(inspection))
+      for (const script of worker.observation?.scripts ?? [])
+        result.set(
+          `worker:${compositeKey([worker.target_id, script.script_id])}`,
+          digestCanonicalValue({
+            url: script.url,
+            cdp_hash: script.cdp_hash,
+            is_module: script.is_module,
+            language: script.language,
+            source_map_url: script.source_map_url,
+          }),
+        );
+    return result;
+  };
+  return compareDimension(
+    fingerprints(before),
+    fingerprints(after),
+    pageComplete && workerComplete,
+    "Page or worker script inventory was incomplete in at least one observation.",
+    (identity) =>
+      identity.startsWith("worker:") ? workerComplete : pageComplete,
+  );
+};
 
 const metadataProjection = (inspection: WebPageInspection) => ({
   responses: inspection.metadata.responses

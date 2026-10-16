@@ -123,15 +123,16 @@ const browserResourceSchema = z.object({
   mime_type: z.string(),
   content_size: z.number().min(0).nullable(),
 });
+const browserResponseSourceSchema = z
+  .object({
+    service_worker: z.boolean().nullable(),
+    disk_cache: z.boolean().nullable(),
+    service_worker_response_source: z.string().nullable(),
+  })
+  .optional();
 const browserNetworkRequestSchema = z.object({
   request_id: z.string(),
-  response_source: z
-    .object({
-      service_worker: z.boolean().nullable(),
-      disk_cache: z.boolean().nullable(),
-      service_worker_response_source: z.string().nullable(),
-    })
-    .optional(),
+  response_source: browserResponseSourceSchema,
   url: z.string(),
   origin: z.string().nullable(),
   method: z.string(),
@@ -151,6 +152,7 @@ const browserNetworkRequestSchema = z.object({
         encoded_data_length: z.number().min(0).nullable(),
         request_timestamp: z.number().nullable(),
         redirect_event_timestamp: z.number().nullable(),
+        response_source: browserResponseSourceSchema,
       }),
     )
     .optional(),
@@ -243,6 +245,10 @@ const browserWorkerSchema = z.object({
         }),
       ),
       network_requests: z.array(browserNetworkRequestSchema),
+      console_events: z.array(browserConsoleEventSchema).optional(),
+      websocket_connections: z
+        .array(browserWebSocketConnectionSchema)
+        .optional(),
       completeness: browserCompletenessSchema,
       limitations: z.array(z.string()),
     })

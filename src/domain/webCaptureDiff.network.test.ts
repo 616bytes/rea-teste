@@ -50,6 +50,45 @@ const redirectCapture = (resourceType: string | null): WebPageInspection => {
   return capture;
 };
 
+it.each([
+  "service_worker",
+  "disk_cache",
+  "service_worker_response_source",
+] as const)(
+  "compares known redirect response source %s without inventing missing facts",
+  (field) => {
+    const before = redirectCapture("Document");
+    Object.assign(before.network.requests[0]!.redirects![0]!, {
+      response_source: {
+        service_worker: false,
+        disk_cache: false,
+        service_worker_response_source: "network",
+      },
+    });
+    const after = structuredClone(before);
+    Object.assign(after.network.requests[0]!.redirects![0]!, {
+      response_source: {
+        service_worker: false,
+        disk_cache: false,
+        service_worker_response_source: "network",
+        [field]:
+          field === "service_worker_response_source" ? "cache-storage" : true,
+      },
+    });
+    expect(compare(before, after)).toMatchObject({
+      status: "changed",
+      total_changes: 1,
+    });
+    Object.assign(after.network.requests[0]!.redirects![0]!, {
+      response_source: undefined,
+    });
+    expect(compare(before, after)).toMatchObject({
+      status: "unchanged",
+      total_changes: 0,
+    });
+  },
+);
+
 describe("nullable redirect resource types", () => {
   it.each([true, false])(
     "retains uncertainty when a redirect type is omitted (reversed=%s)",

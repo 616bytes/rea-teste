@@ -182,10 +182,36 @@ export async function verifyBrowserWorkers(
     check(defaultResult, site, target, false);
     assert.deepEqual(summarize(defaultResult), summarize(cliResult));
     const explicit = await capture(
-      { ...input, worker_target_ids: [shared.targetId] },
+      {
+        ...input,
+        worker_target_ids: [shared.targetId],
+        include_console_text: true,
+      },
       () => page.evaluate(() => window.act()),
     );
     check(explicit, site, target, true);
+    const workerConsole = (result) =>
+      result.workers.flatMap(
+        (worker) => worker.observation.console_events ?? [],
+      );
+    assert.ok(
+      workerConsole(explicit).some((event) =>
+        event.text_capture.values.some(
+          (value) => value.text === "worker fixture message",
+        ),
+      ),
+    );
+    const consoleRedacted = await capture(input, () =>
+      page.evaluate(() => window.act()),
+    );
+    assert.ok(workerConsole(consoleRedacted).length > 0);
+    assert.ok(
+      workerConsole(consoleRedacted).every(
+        (event) =>
+          event.text_capture.status === "not_approved" &&
+          event.text_capture.values.length === 0,
+      ),
+    );
     const savedCapture = join(artifacts, "worker-capture.json");
     await writeFile(savedCapture, JSON.stringify(explicit));
     const exported = await promisify(execFile)(
@@ -361,7 +387,9 @@ export async function verifyBrowserWorkers(
     await client.ping();
     await cdp.detach();
     return {
-      cases: 12,
+      cases: 14,
+      workerConsoleSelected: true,
+      workerConsoleRedacted: true,
       outOfProcessIframeWorker: true,
       outOfProcessIframeServiceWorker: true,
       originBoundary: true,

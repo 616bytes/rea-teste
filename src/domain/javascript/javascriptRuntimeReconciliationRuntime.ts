@@ -216,6 +216,14 @@ const workerEntities = (
   capture: ParsedRuntimeCapture,
 ): RuntimeReconciliationEntity[] =>
   capture.inspection.workers.flatMap((worker) => {
+    // The inventory remains in the capture; unrelated inventory rows do not
+    // establish runtime matches to the selected application, even at one URL.
+    if (
+      "observation" in worker &&
+      worker.observation?.ownership === "unknown" &&
+      !worker.observation.selected_explicitly
+    )
+      return [];
     const location =
       "url" in worker
         ? ({ kind: "url", value: worker.url } as const)

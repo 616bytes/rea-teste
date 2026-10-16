@@ -3,7 +3,6 @@ import { expect } from "vitest";
 import { z } from "zod";
 
 import { browserScenarioCaptureSchema } from "../../../src/domain/browserScenarioCapture.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
 import { processTest } from "../../support/process/processFixture.js";
 
 // Actual CLI subprocess and OS signals with a controlled browser session.
@@ -67,18 +66,21 @@ processTest
       expect(stderr).toContain("REA_CONTROLLED_CLOSE_CALLBACK");
       expect(stderr).toContain("REA_CONTROLLED_PROFILE_CALLBACK");
       const document: unknown = JSON.parse(stdout);
-      const failure = z
+      const cancellation = z
         .object({
+          error: z.literal("Browser scenario capture failed"),
           code: z.literal("cancelled"),
           category: z.literal("cancelled"),
-          details: z.object({ partial_observation: z.unknown() }),
+          details: z.object({
+            partial_observation: z.object({
+              kind: z.literal("browser-scenario-observation"),
+              capture: z.unknown(),
+            }),
+          }),
         })
         .parse(document);
-      const evidence = parseEvidence(failure.details.partial_observation);
-      expect(evidence).toEqual(failure.details.partial_observation);
-      expect(evidence.operation).toBe("capture_browser_scenario");
       const capture = browserScenarioCaptureSchema.parse(
-        evidence.normalized_result,
+        cancellation.details.partial_observation.capture,
       );
       expect(capture.browser.cleanup).toBe("terminated-owned-process");
       expect(capture.steps.map(({ status }) => status)).toEqual([

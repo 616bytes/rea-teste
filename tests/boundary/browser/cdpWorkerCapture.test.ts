@@ -21,6 +21,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import type { CdpEvent } from "../../../src/browser/CdpConnection.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
+import { compareWebCaptures } from "../../../src/domain/webCaptureDiff.js";
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 import {
   startFakeCdpBrowser,
@@ -1602,19 +1603,21 @@ it.each([
   },
 );
 
-it.each(["page", "worker", "inventory", "legacy", "none"] as const)(
+it.each(["page", "worker", "service", "inventory", "legacy", "none"] as const)(
   "keeps script absence unknown after failed %s discovery",
   async (failed) => {
     const { provider, input } = await fixture({
       commandError: (c) =>
         (
-          failed === "inventory"
-            ? c.method === "Target.getTargets"
-            : failed !== "none" &&
-              failed !== "legacy" &&
-              c.method === "Target.setAutoAttach" &&
-              c.params.autoAttach === true &&
-              c.sessionId === (failed === "page" ? "session-1" : "worker-own")
+          failed === "service"
+            ? c.method === "ServiceWorker.enable"
+            : failed === "inventory"
+              ? c.method === "Target.getTargets"
+              : failed !== "none" &&
+                failed !== "legacy" &&
+                c.method === "Target.setAutoAttach" &&
+                c.params.autoAttach === true &&
+                c.sessionId === (failed === "page" ? "session-1" : "worker-own")
         )
           ? { code: -32601, message: "Unavailable" }
           : undefined,
@@ -1668,6 +1671,242 @@ it.each(["page", "worker", "inventory", "legacy", "none"] as const)(
   },
 );
 
+it("keeps unselected unknown-owner workers out of runtime matching", async () => {
+  const { provider, input } = await fixture();
+  const captured = await provider.inspectPage(input);
+  if (!captured.ok) throw captured.error;
+  const evidence = createBrowserEvidence(
+    "inspect_web_page",
+    input,
+    captured.value,
+    provider.identity(),
+  );
+  const projected = projectRuntimeCaptures(parseRuntimeCaptures([evidence]));
+  expect(
+    projected.entities
+      .filter((e) => e.kind === "worker")
+      .map((e) => e.runtimeKey),
+  ).toEqual(["own"]);
+  expect(captured.value.workers.some((w) => w.target_id === "other")).toBe(
+    true,
+  );
+});
+
+it.each(["cdp_hash", "is_module", "source_map_url"] as const)(
+  "compares observed worker script %s while preserving incomplete absence",
+  async (field) => {
+    const { provider, input } = await fixture();
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    const before = captured.value,
+      after = structuredClone(before);
+    const observation = after.workers.find(
+      (w) => w.target_id === "own",
+    )!.observation!;
+    Object.assign(observation.scripts[0]!, {
+      [field]: field === "is_module" ? true : "changed",
+    });
+    const compare = () =>
+      compareWebCaptures({
+        before: { inspection: before, webmcp: null },
+        after: { inspection: after, webmcp: null },
+      }).dimensions.scripts;
+    expect(compare()).toMatchObject({ status: "changed", total_changes: 1 });
+    observation.scripts = [];
+    observation.completeness.unavailable_sections.push("scripts");
+    expect(compare()).toMatchObject({ status: "unknown", total_changes: 0 });
+  },
+);
+
+it.each(["target", "script"] as const)(
+  "rejects unsanitized worker %s URLs",
+  async (location) => {
+    const { provider, input } = await fixture();
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    const worker = captured.value.workers.find((w) => w.target_id === "own")!;
+    const selected =
+      location === "target" ? worker : worker.observation!.scripts[0]!;
+    const url = new URL(selected.url);
+    url.username = "user";
+    url.password = "secret";
+    selected.url = url.href;
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      input,
+      captured.value,
+      provider.identity(),
+    );
+    expect(() => parseRuntimeCaptures([evidence])).toThrow(/sanitized/u);
+    expect(() => selectScriptCapture(evidence)).toThrow(/sanitized/u);
+  },
+);
+
+it.each([false, true])(
+  "retains worker console and websocket evidence with selected content=%s",
+  async (selected) => {
+    const { provider, input } = await fixture({
+      commandEvents(command, origin) {
+        if (
+          command.method !== "Network.enable" ||
+          command.sessionId !== "worker-own"
+        )
+          return undefined;
+        return [
+          {
+            method: "Runtime.consoleAPICalled",
+            sessionId: "worker-own",
+            params: {
+              type: "log",
+              timestamp: 1,
+              args: [{ type: "string", value: "worker text" }],
+              stackTrace: {
+                callFrames: [
+                  { url: origin + "/same.js", lineNumber: 0, columnNumber: 0 },
+                ],
+              },
+            },
+          },
+          {
+            method: "Network.webSocketCreated",
+            sessionId: "worker-own",
+            params: {
+              requestId: "ws",
+              url: origin.replace("http:", "ws:") + "/socket",
+            },
+          },
+          {
+            method: "Network.webSocketFrameReceived",
+            sessionId: "worker-own",
+            params: {
+              requestId: "ws",
+              response: { opcode: 1, payloadData: '{"value":1}' },
+            },
+          },
+        ];
+      },
+    });
+    const captured = await provider.inspectPage({
+      ...input,
+      include_console_text: selected,
+      include_websocket_shapes: selected,
+    });
+    if (!captured.ok) throw captured.error;
+    const observation = captured.value.workers.find(
+      (w) => w.target_id === "own",
+    )!.observation!;
+    expect(observation).toMatchObject({
+      console_events: [
+        {
+          type: "log",
+          text_capture: { status: selected ? "included" : "not_approved" },
+        },
+      ],
+      websocket_connections: [
+        { events: [{ direction: "received", opcode: 1 }] },
+      ],
+    });
+    expect(JSON.stringify(observation)).toContain(
+      selected ? "worker text" : "not_approved",
+    );
+    if (!selected)
+      expect(JSON.stringify(observation)).not.toContain("worker text");
+  },
+);
+
+it.each(["before", "after", "detached", "foreign"] as const)(
+  "recognizes page-owned dedicated clients of service workers: %s",
+  async (order) => {
+    const { provider, input, browser } = await fixture({
+      commandEvents(command, origin) {
+        if (
+          command.method !== "Target.setAutoAttach" ||
+          command.params.autoAttach !== true ||
+          command.sessionId !== "session-1"
+        )
+          return undefined;
+        const attached = (id: string, type: string): CdpEvent => ({
+          method: "Target.attachedToTarget",
+          sessionId: "session-1",
+          params: {
+            sessionId: "worker-" + id,
+            targetInfo: {
+              targetId: id,
+              type,
+              url: origin + "/" + id + ".js",
+              attached: true,
+            },
+          },
+        });
+        const version: CdpEvent = {
+          method: "ServiceWorker.workerVersionUpdated",
+          sessionId: "session-1",
+          params: {
+            versions: [
+              {
+                targetId: "service",
+                controlledClients: [order === "foreign" ? "unowned" : "client"],
+                status: "activated",
+              },
+            ],
+          },
+        };
+        const events =
+          order === "before"
+            ? [
+                version,
+                attached("service", "service_worker"),
+                attached("client", "worker"),
+              ]
+            : [
+                attached("client", "worker"),
+                version,
+                attached("service", "service_worker"),
+              ];
+        if (order === "detached")
+          events.push({
+            method: "Target.detachedFromTarget",
+            sessionId: "session-1",
+            params: { sessionId: "worker-client" },
+          });
+        return events;
+      },
+    });
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    const observation = captured.value.workers.find(
+      (w) => w.target_id === "service",
+    )!.observation!;
+    expect(observation.ownership).toBe(
+      order === "foreign" ? "unknown" : "service_worker_client",
+    );
+    expect(
+      observation.lifecycle.find((x) => x.event === "version")?.controls_page,
+    ).toBe(order !== "foreign");
+    expect(
+      browser.commands.some(
+        (c) =>
+          c.method === "Debugger.enable" && c.sessionId === "worker-service",
+      ),
+    ).toBe(order !== "foreign");
+    if (order === "detached") {
+      // Domain enable may already be in flight; later out-of-scope events
+      // must not become retained script evidence after the client detaches.
+      expect(observation.scripts).toEqual([]);
+      expect(observation.completeness.unavailable_sections).toEqual(
+        expect.arrayContaining([
+          "console_events",
+          "websocket_connections",
+          "websocket_frames",
+        ]),
+      );
+      expect(observation.completeness.unavailable_sections).toContain(
+        "scripts",
+      );
+    }
+  },
+);
+
 it.each(["own", "shared"])(
   "rejects worker %s source bytes contrary to recorded source selection",
   async (targetId) => {
@@ -1704,8 +1943,17 @@ it("rejects inconsistent worker Evidence through CLI and MCP without publishing"
     "origin",
     "ownership",
     "source-selection",
+    "unsanitized",
   ] as const) {
     const inspection = structuredClone(captured.value);
+    if (mismatch === "unsanitized") {
+      const script = inspection.workers.find((w) => w.target_id === "shared")!
+        .observation!.scripts[0]!;
+      const url = new URL(script.url);
+      url.username = "user";
+      url.password = "secret";
+      script.url = url.href;
+    }
     if (mismatch === "origin")
       inspection.workers.find(
         (w) => w.target_id === "shared",
@@ -1722,7 +1970,7 @@ it("rejects inconsistent worker Evidence through CLI and MCP without publishing"
       "inspect_web_page",
       mismatch === "source-selection"
         ? { ...selected, include_script_sources: false }
-        : mismatch === "origin"
+        : mismatch === "origin" || mismatch === "unsanitized"
           ? selected
           : input,
       inspection,

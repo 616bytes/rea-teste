@@ -107,7 +107,13 @@ export class CdpWorkerCapture {
         this.#fail(cause);
       }
     });
-    await this.#command("ServiceWorker.enable", {}, this.context.sessionId);
+    const serviceWorkers = await this.#command(
+      "ServiceWorker.enable",
+      {},
+      this.context.sessionId,
+    );
+    if (serviceWorkers === undefined)
+      this.pageEvents.completeness.unavailable("workers");
     if (this.context.sessionId !== undefined) {
       const attached = await this.#command(
         "Target.setAutoAttach",
@@ -165,13 +171,23 @@ export class CdpWorkerCapture {
         if (!worker.domains.has("Debugger"))
           worker.events.completeness.unavailable("scripts");
         if (!worker.domains.has("Network"))
-          worker.events.completeness.unavailable("network_requests");
+          for (const section of [
+            "network_requests",
+            "websocket_connections",
+            "websocket_frames",
+          ] as const)
+            worker.events.completeness.unavailable(section);
         if (!worker.domains.has("Runtime"))
-          worker.events.completeness.unavailable("metadata");
+          for (const section of ["metadata", "console_events"] as const)
+            worker.events.completeness.unavailable(section);
         worker.item.observation.network_requests = [
           ...worker.events.network.values(),
         ];
         worker.item.observation.scripts = [...worker.sources.values()];
+        worker.item.observation.console_events = worker.events.console;
+        worker.item.observation.websocket_connections = [
+          ...worker.events.webSocketConnectionsById.values(),
+        ];
         worker.item.observation.completeness =
           worker.events.completeness.snapshot();
         if (!worker.enabled)
@@ -470,11 +486,13 @@ export class CdpWorkerCapture {
       if (worker === undefined) return;
       if (
         worker.item.type === "worker" &&
+        worker.item.observation.ownership !== "page_related" &&
         (parent === undefined ||
           parent.item.observation.ownership !== "unknown")
       ) {
         worker.item.observation.ownership = "page_related";
         worker.item.observation.page_target_id = this.context.target.id;
+        this.#refreshServiceClients();
       }
       this.#attach(worker, sessionId);
       return;
@@ -495,6 +513,7 @@ export class CdpWorkerCapture {
       const worker = this.#sessions.get(sessionId);
       if (worker !== undefined) {
         worker.detached = true;
+        this.#refreshServiceClients();
         worker.item.observation.lifecycle.push({
           event: "detached",
           observed_at: new Date().toISOString(),
@@ -670,7 +689,15 @@ export class CdpWorkerCapture {
       clients.includes(this.context.target.id) ||
       [...this.#frames.values()].some(
         (frame) => !frame.detached && clients.includes(frame.targetId),
-      )
+      ) ||
+      clients.some((id) => {
+        const worker = this.#workers.get(id);
+        return (
+          worker !== undefined &&
+          !worker.detached &&
+          worker.item.observation.ownership === "page_related"
+        );
+      })
     );
   }
 
@@ -711,6 +738,9 @@ export class CdpWorkerCapture {
       for (const section of [
         "scripts",
         "network_requests",
+        "console_events",
+        "websocket_connections",
+        "websocket_frames",
         "metadata",
       ] as const)
         worker.events.completeness.exclude(
@@ -718,8 +748,14 @@ export class CdpWorkerCapture {
           "out_of_target_scope",
           null,
         );
-      worker.events.completeness.unavailable("scripts");
-      worker.events.completeness.unavailable("network_requests");
+      for (const section of [
+        "scripts",
+        "network_requests",
+        "console_events",
+        "websocket_connections",
+        "websocket_frames",
+      ] as const)
+        worker.events.completeness.unavailable(section);
       worker.item.observation.limitations.push(
         "Service-worker control was revoked during capture; later runtime events outside the selected page scope were excluded.",
       );

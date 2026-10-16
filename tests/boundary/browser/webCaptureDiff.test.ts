@@ -874,8 +874,10 @@ describe("web capture diff", () => {
     const script = after.scripts.items[0];
     if (script !== undefined && !script.source.included)
       script.source.reason = "different approval explanation";
-    markSectionsComplete(captured.value, ["scripts", "metadata"]);
-    markSectionsComplete(after, ["scripts", "metadata"]);
+    // This control proves equal complete inventories; incomplete worker
+    // discovery is covered separately and cannot establish script equality.
+    markSectionsComplete(captured.value, ["scripts", "workers", "metadata"]);
+    markSectionsComplete(after, ["scripts", "workers", "metadata"]);
 
     const result = compareWebCaptures(
       compareWebCapturesInputSchema.parse({

@@ -4,7 +4,7 @@
 [#4389](https://github.com/morluto/rea/pull/4389), umbrella
 [#4027](https://github.com/morluto/rea/issues/4027).
 
-All 48 IPC boundary regressions pass, alongside shared projection/actions and
+All 50 IPC boundary regressions pass, alongside shared projection/actions and
 converted MCP schema checks. Real draw.io operation phases succeed.
 Every real capture still **fails overall provider cleanup**. These are distinct
 results; neither completed-task acceleration nor token savings is established.
@@ -388,3 +388,40 @@ applications exercise the synthetic custom-apply/iterator cases.
 
 The final documentation gate also passes six tasks and five README consistency
 cases. Source and unchanged ASAR hashes are checked again after validation.
+
+## Borrowed apply receivers
+
+Fresh review of `7541a900c` supplied the borrowed custom-method case
+`raw.apply.call(g, emitter, list)`: the plain emitter runs `g`, while the hook
+hard-coded its registered callback as the method receiver. The same hard-coded
+receiver also affected borrowed native apply. Both native differential controls
+fail before correction (48 passed, two failed of 50).
+
+Source `da04465fe` maps only the hook wrapper itself to the original listener
+when forwarding custom apply; other method receivers pass unchanged. Native
+apply uses its actual receiver, preserving both ordinary wrapper recording and
+borrowed-call dispatch. The hook does not fabricate a registered callback
+invocation when another callable is selected. The method-forwarding boundary is
+corrected directly; no new helper, state, tool or schema is added. All **70**
+hook/projection/actions cases pass (50 + 4 + 16). Shared schema/client, projection
+and verifier/oracle sources are byte-identical to the prior passing versions,
+so their checks are reused by verified hash.
+
+CI run `38943919946` is confirmed by the successful build checkout log and Git
+parents to use merge `98c14dfc01fe4698a50eedc8b1cd1ac9cd03267d`
+(head `7541a900c`, main `4838f4449`). Its fifth shard fails the same two firmware
+cleanup tests as the unmodified `9d940c2f2` base control. The relevant firmware
+source/test and package paths have no changes between these main revisions.
+The REST PR `base.sha` remains stale at `2c7583599`; it is not used as the CI
+identity. No firmware code/assertion or required-check bypass is included.
+
+The frozen-source unchanged draw.io operation completes recovery/insertion
+again with seven IPC events, SVG **0 → 2**, unsaved changes true and failed
+overall provider cleanup. Pipeline: **12.038 s wall, 6.662295 family CPU s,
+598,835,200 peak cgroup bytes**. This remains a partial workflow, not a speedup
+claim. Final static checks pass two uncached tasks in **108.067 s wall,
+106.996233 family CPU s and 4,430,647,296 peak cgroup bytes**, no OOM.
+All prior measurements remain unchanged under `borrowed_apply_followup`.
+
+The final documentation gate also passes six tasks and five README consistency
+cases. Current source digests are checked again after validation.

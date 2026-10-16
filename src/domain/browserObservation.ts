@@ -42,9 +42,14 @@ export const browserOriginSchema = z
 
 /** Already-normalized HTTP(S) origin retained in provider output. */
 export const recordedBrowserOriginSchema = z
-  .url()
-  .regex(/^https?:\/\/[^/?#@*]+$/u, {
-    message: "Expected one normalized HTTP(S) origin",
+  .string()
+  .superRefine((value, context) => {
+    const parsed = browserOriginSchema.safeParse(value);
+    if (parsed.success && parsed.data === value) return;
+    context.addIssue({
+      code: "custom",
+      message: "Expected one canonical HTTP(S) origin",
+    });
   });
 
 /** Recognize the URL API's bracketed IPv6 form and normalized bare literals. */

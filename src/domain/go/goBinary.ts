@@ -1,7 +1,32 @@
 import { z } from "zod";
+import {
+  BINARY_ARCHITECTURES,
+  type BinaryArchitecture,
+} from "../binaryTargetTypes.js";
 import { digestSchema } from "../digests.js";
 import { localPathStringSchema } from "../localPath.js";
 import { CANONICAL_BASE64_PATTERN } from "../stringPatterns.js";
+
+/**
+ * Project a Go-container architecture label onto its canonical Evidence subject
+ * family. Go and Rust reports share these labels; the report keeps the label.
+ */
+export const goArchitectureSubject = (
+  architecture: string,
+): BinaryArchitecture | undefined => {
+  switch (architecture) {
+    case "386":
+      return "x86";
+    case "amd64":
+      return "x86_64";
+    case "ppc":
+      return "powerpc";
+    default:
+      return BINARY_ARCHITECTURES.find(
+        (supported) => supported === architecture,
+      );
+  }
+};
 
 const sourceRangeSchema = z.strictObject({
   offset: z.number().int().nonnegative(),

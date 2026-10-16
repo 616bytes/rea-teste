@@ -70,6 +70,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "sub/dist%2Findex.html": "nested decoy",
       "sub/plain.html": "nested decoy",
       "sub/absent.html": "nested-only decoy",
+      "app/package.json": JSON.stringify({ main: "sub/main.cjs" }),
+      "app/sub/main.cjs": loadFileSource,
+      "app/dist%2Findex.html": "wrapped application target",
+      "app/plain.html": "wrapped application target",
+      "app/sub/dist%2Findex.html": "wrapped source decoy",
+      "app/sub/plain.html": "wrapped source decoy",
+      "app/sub/absent.html": "wrapped missing-target decoy",
     });
     const archiveSource = await createTestTempDirectory("rea-loadfile-asar-");
     await writeFixtureFiles(archiveSource, {
@@ -85,7 +92,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     await copyFile(join(root, "a.asar"), join(root, "b.asar"));
 
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
-    for (const [prefix, declared] of ["", "a.asar/", "b.asar/"].flatMap(
+    for (const [prefix, declared] of ["", "app/", "a.asar/", "b.asar/"].flatMap(
       (prefix) =>
         ["dist%2Findex.html", "plain.html", "absent.html"].map(
           (declared) => [prefix, declared] as const,

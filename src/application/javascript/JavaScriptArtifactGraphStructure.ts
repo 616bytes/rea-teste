@@ -17,6 +17,8 @@ import type {
 import type { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import {
   addArtifactContainsEdge,
+  applicationManifestPath,
+  dependencyManifest,
   addUnavailableStaticParseScope,
   artifactFileNodeKind,
   artifactLocalIdentity,
@@ -36,7 +38,6 @@ import {
   artifactPathResolutionProperties,
   resolveArtifactPathByContext,
 } from "./JavaScriptArtifactPathResolution.js";
-import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 interface PackageRoleInput {
   readonly packageNode: ApplicationNode;
@@ -529,24 +530,6 @@ export const addJavaScriptPackageNodes = (
   }
   return roots;
 };
-
-/** Dependency-only artifacts retain their inventory root. */
-const applicationManifestPath = (
-  context: JavaScriptArtifactGraphContext,
-): string | undefined =>
-  context.analysis.packages
-    .map(({ path }) => path)
-    .filter(
-      (path) => context.filesByPath.has(path) && !dependencyManifest(path),
-    )
-    .sort(
-      (left, right) =>
-        left.split("/").length - right.split("/").length ||
-        compareUnicodeCodePoints(left, right),
-    )[0];
-
-const dependencyManifest = (path: string): boolean =>
-  path.split("/").slice(0, -1).includes("node_modules");
 
 const createFileTarget = (
   context: JavaScriptArtifactGraphContext,

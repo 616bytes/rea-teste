@@ -6,6 +6,7 @@ import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascrip
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   addStaticInferenceEdge,
+  applicationRootPath,
   artifactLocalIdentity,
   chunkLookupKey,
   createElectronRoleNode,
@@ -339,12 +340,7 @@ const addDiscoveredRole = (
         ? {
             // Raw loadFile literals belong to the application, not its caller.
             runtimePathKind: "application-file" as const,
-            applicationRootPath:
-              context.fileSet.containers.find(
-                ({ sha256, path }) =>
-                  sha256 === input.file.container_sha256 &&
-                  input.file.path.startsWith(`${path}/`),
-              )?.path ?? "",
+            applicationRootPath: applicationRootPath(context, input.file),
           }
         : input.value.role === "renderer" &&
             input.value.resolution_context === "module-specifier"

@@ -1,6 +1,9 @@
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
+import {
+  compositeKey,
+  compareUnicodeCodePoints,
+} from "../../domain/unicodeCodePointOrder.js";
 import {
   completeApplicationCoverage,
   partialApplicationCoverage,
@@ -52,6 +55,51 @@ export interface JavaScriptArtifactGraphContext {
   readonly moduleNodes: Map<string, ApplicationNode>;
   readonly containerNodes: Map<string, ApplicationNode>;
 }
+
+/** Application manifests exclude dependency packages but retain nested app roots. */
+export const dependencyManifest = (path: string): boolean =>
+  path.split("/").slice(0, -1).includes("node_modules");
+
+/** Select a manifest within the inventory, or the enclosing source occurrence. */
+export const applicationManifestPath = (
+  context: JavaScriptArtifactGraphContext,
+  source?: JavaScriptArtifactFile,
+): string | undefined =>
+  context.analysis.packages
+    .map(({ path }) => path)
+    .filter((path) => {
+      const file = context.filesByPath.get(path);
+      if (file === undefined || dependencyManifest(path)) return false;
+      if (source === undefined) return true;
+      const root = path.slice(0, -"package.json".length);
+      return (
+        file.container_sha256 === source.container_sha256 &&
+        source.path.startsWith(root)
+      );
+    })
+    .sort(
+      (left, right) =>
+        (source === undefined ? 1 : -1) *
+          (left.split("/").length - right.split("/").length) ||
+        compareUnicodeCodePoints(left, right),
+    )[0];
+
+/** Resolve application-relative declarations from their owning package/container. */
+export const applicationRootPath = (
+  context: JavaScriptArtifactGraphContext,
+  source: JavaScriptArtifactFile,
+): string => {
+  const manifest = applicationManifestPath(context, source);
+  if (manifest !== undefined)
+    return manifest.slice(0, -"package.json".length).replace(/\/$/u, "");
+  return (
+    context.fileSet.containers.find(
+      ({ sha256, path }) =>
+        sha256 === source.container_sha256 &&
+        source.path.startsWith(`${path}/`),
+    )?.path ?? ""
+  );
+};
 
 /** Evidence coverage shape shared by reconstruction graph helpers. */
 export type JavaScriptArtifactGraphCoverage =

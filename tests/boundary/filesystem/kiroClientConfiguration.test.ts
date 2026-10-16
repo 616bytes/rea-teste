@@ -228,12 +228,13 @@ describe("Kiro strict JSON registration", () => {
 });
 
 describe("Kiro unloadable, empty and uninstalled mcp.json", () => {
+  const rea = JSON.stringify(registration);
   it.each([
-    ["a comment", '{\n  // note\n  "mcpServers": {}\n}\n'],
-    ["a trailing comma", '{ "mcpServers": { "other": { "command": "x" }, } }'],
-    ["a byte order mark", '\uFEFF{ "mcpServers": {} }'],
+    ["a comment", `{\n  // note\n  "mcpServers": { "rea": ${rea} }\n}\n`],
+    ["a trailing comma", `{ "mcpServers": { "rea": ${rea}, } }`],
+    ["a byte order mark", `\uFEFF{ "mcpServers": { "rea": ${rea} } }`],
   ])(
-    "refuses an mcp.json Kiro cannot load because of %s, without changing bytes",
+    "refuses an mcp.json Kiro cannot load because of %s in setup, doctor and uninstall, without changing bytes",
     async (_reason, original) => {
       const { home, client } = await kiroClient();
       await writeFile(client.configPath, original);
@@ -244,9 +245,15 @@ describe("Kiro unloadable, empty and uninstalled mcp.json", () => {
       expect(
         (await configureClientConfiguration(client, {}, command)).status,
       ).toBe("failed");
+      expect(await kiroStatus(home)).toMatchObject({ state: "invalid" });
+      expect(
+        await systemUninstallHost(home).removeClient(client),
+      ).toMatchObject({
+        status: "failed",
+        detail: expect.stringContaining("not valid JSON"),
+      });
       expect(await readFile(client.configPath, "utf8")).toBe(original);
       expect(await exists(`${client.configPath}.rea.backup`)).toBe(false);
-      expect(await kiroStatus(home)).toMatchObject({ state: "invalid" });
     },
   );
 

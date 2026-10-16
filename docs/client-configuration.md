@@ -324,7 +324,9 @@ default engine would not load; repair it and rerun. The V2 engine also skips
 the whole file when any server entry has a member of the wrong type, such as a
 string `timeout` or a non-array `disabledTools`; `kiro-cli mcp list` prints a
 `Failed to parse MCP config` warning naming the problem. Setup and doctor check
-REA's own entry for these cases and name the member to repair.
+REA's own entry for these cases and name the member to repair; they do not
+check other servers' entries, so if REA's tools are missing while doctor
+reports the registration aligned, look for that warning.
 
 Refreshing the registration keeps existing `disabledTools`, `timeout` and REA
 `env` values. It keeps `autoApprove` only when the existing `rea` entry is
@@ -334,7 +336,8 @@ and setup re-enables it. Setup writes the file directly rather than through
 `kiro-cli mcp add`, which requires a signed-in session and replaces an
 existing entry only with `--force`. Uninstall removes the `rea` entry and
 keeps the `mcpServers` table, even when it becomes empty, because Kiro skips a
-file without one.
+file without one. Like setup, uninstall leaves a file with comments, trailing
+commas or a BOM unchanged and asks you to repair it first.
 
 Setup writes only the user-level file. A workspace
 `<project>/.kiro/settings/mcp.json` and a custom agent's `mcpServers` take

@@ -38,7 +38,10 @@ import {
   spawnOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
 import { ghidraJavaEnvironment } from "./GhidraInstallation.js";
-import { ghidraJavaLaunch } from "./GhidraJavaLaunch.js";
+import {
+  ghidraJavaLaunch,
+  GhidraLaunchSupportError,
+} from "./GhidraJavaLaunch.js";
 import type { GhidraTransportKind } from "./GhidraTransport.js";
 import {
   snapshotGhidraExtensions,
@@ -464,9 +467,13 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           ...(capturedOutput === undefined ? {} : { capturedOutput }),
         },
       );
-      // Only the launcher's own cancellation checkpoints are cancellations; a
-      // physical failure keeps its identity even if the caller aborted later.
-      const cancelled = cause instanceof AnalysisCancelledError;
+      // Only producer-confirmed cancellations count: the launcher's own
+      // checkpoints and a LaunchSupport probe stopped by the signal. A physical
+      // failure keeps its identity even if the caller aborted later.
+      const cancelled =
+        cause instanceof AnalysisCancelledError ||
+        (cause instanceof GhidraLaunchSupportError &&
+          cause.cancellation !== undefined);
       const primary = cancelled
         ? new AnalysisCancelledError("open_binary", {
             cause: launchFailure,

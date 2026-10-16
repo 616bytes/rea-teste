@@ -4317,6 +4317,66 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "optional argument follows earlier wait",
+    "(async()=>{maybe?.(await 0,new Socket(URL));})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "optional member argument follows earlier wait",
+    "(async()=>{holder?.run(await 0,new Socket(URL));})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "optional argument cannot use later wait",
+    "(async()=>{maybe?.(new Socket(URL),await 0);})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "skippable optional arguments cannot delay following read",
+    "(async()=>{maybe?.(await 0);new Socket(URL);})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "null optional arguments cannot delay following read",
+    "(async()=>{null?.(await 0);new Socket(URL);})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "generator return argument follows consumed default wait",
+    "(async()=>{const[a=await 0,b]=(function*(){yield undefined;return new Socket(URL);})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "generator throw argument follows consumed default wait",
+    "(async()=>{const[a=await 0,b]=(function*(){yield undefined;throw new Socket(URL);})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "generator return before yield stays eager",
+    "(async()=>{const[a=await 0,b]=(function*(){return new Socket(URL);yield undefined;})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "generator return without default wait stays eager",
+    "const[a,b]=(function*(){yield undefined;return new Socket(URL);})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "generator close does not evaluate return tail",
+    "(async()=>{const[a=await 0]=(function*(){yield undefined;return new Socket(URL);})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "generator return discards later wait and endpoint",
+    "(async()=>{const[a=await 0,b]=(function*(){return;yield undefined;new Socket(URL);})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "generator throw discards later wait and endpoint",
+    "(async()=>{const[a=await 0,b]=(function*(){throw 0;yield undefined;new Socket(URL);})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
     "throw before wait cannot delay cleanup",
     "(async()=>{const[x=(null.value,await 0)]=(function*(){try{yield undefined;}finally{new Socket(URL);}})();})();const Socket=globalThis.WebSocket;",
     false,

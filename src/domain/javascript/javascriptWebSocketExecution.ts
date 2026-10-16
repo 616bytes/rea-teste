@@ -505,14 +505,6 @@ const webSocketPrecedingSuspension = (
       }
     }
   }
-  // Executed optional children follow the mandatory receiver/callee, even
-  // though skipped children cannot prove completion for following siblings.
-  if (
-    (t.isCallExpression(parent) || t.isOptionalCallExpression(parent)) &&
-    parent.arguments.includes(child as t.Expression) &&
-    javaScriptOptionalOperandsMayBeSkipped(parent)
-  )
-    return webSocketCompletedSuspension(parent.callee, state);
   if (
     t.isOptionalMemberExpression(parent) &&
     parent.computed &&
@@ -557,7 +549,15 @@ const webSocketPrecedingSuspension = (
   if (prefixes === undefined) {
     const indexed = new Map<t.Node, WebSocketSuspension>();
     let awaited: WebSocketSuspension | undefined;
-    for (const node of webSocketOrderedEvaluation(parent)) {
+    // Reaching any call argument proves that optional short-circuiting did not
+    // skip this call's argument list. Index earlier arguments once for reads
+    // inside the list, without making them mandatory for code after the call.
+    const operands =
+      (t.isCallExpression(parent) || t.isOptionalCallExpression(parent)) &&
+      javaScriptOptionalOperandsMayBeSkipped(parent)
+        ? [parent.callee, ...parent.arguments]
+        : webSocketOrderedEvaluation(parent);
+    for (const node of operands) {
       if (awaited !== undefined) indexed.set(node, awaited);
       awaited = webSocketCompletedSuspension(node, state) ?? awaited;
     }

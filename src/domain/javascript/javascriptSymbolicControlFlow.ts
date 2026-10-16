@@ -89,6 +89,10 @@ export const syntaxEvaluationOperands = (
   if (t.isBlockStatement(node)) return node.body;
   if (t.isSwitchCase(node)) return node.consequent;
   if (t.isExpressionStatement(node)) return [node.expression];
+  // Abrupt statements evaluate their argument before completing. Their block
+  // owner still decides whether any following statement can be reached.
+  if (t.isReturnStatement(node) || t.isThrowStatement(node))
+    return node.argument == null ? [] : [node.argument];
   if (t.isVariableDeclaration(node)) return node.declarations;
   if (t.isVariableDeclarator(node))
     return t.isNode(node.init) ? [node.init, node.id] : [];

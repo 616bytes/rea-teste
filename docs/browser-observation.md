@@ -336,8 +336,10 @@ their Network domain and nested-worker auto-attachment; worker requests pass
 the same origin policy as page requests, and workers on other origins are not
 enabled. Requests a worker sends before REA reaches it are unavailable, so
 short-lived workers can be partially observed. One capture attaches at most
-256 workers and tracks at most 50,000 worker requests; omitted workers and
-requests are counted as `resource_budget_exhausted`. A live worker that rejects
+256 workers and tracks at most 50,000 worker requests and WebSockets; omitted
+workers and requests are counted as `resource_budget_exhausted` under
+`network_requests`, and omitted WebSockets under `websocket_connections` and
+`websocket_frames`. A live worker that rejects
 these commands is reported as `provider_unavailable`. Service and shared worker
 requests are not observed.
 

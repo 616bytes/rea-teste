@@ -129,16 +129,25 @@ export class CdpWorkerNetworkObservation {
         )
           return;
         if (this.#requestSessions.size >= CDP_WORKER_NETWORK_LIMITS.requests) {
-          this.events.completeness.exclude(
-            "network_requests",
-            "resource_budget_exhausted",
-          );
+          this.#requestBudgetExhausted(event.method);
           return;
         }
         this.#requestSessions.set(requestId, event.sessionId);
       } else if (owner !== event.sessionId) return;
     }
     this.events.ingest(event);
+  }
+
+  /** Report an omitted request or WebSocket in the section callers read for it. */
+  #requestBudgetExhausted(method: string): void {
+    const { completeness } = this.events;
+    if (method !== "Network.webSocketCreated") {
+      completeness.exclude("network_requests", "resource_budget_exhausted");
+      return;
+    }
+    completeness.exclude("websocket_connections", "resource_budget_exhausted");
+    // The omitted connection's frames are never observed, so their count is unknown.
+    completeness.exclude("websocket_frames", "resource_budget_exhausted", null);
   }
 
   /**

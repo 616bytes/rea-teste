@@ -89,7 +89,7 @@ describe("CDP worker network admission", () => {
     );
   });
 
-  it("stops retaining worker requests past the request budget", async () => {
+  it("stops retaining worker requests and WebSockets past the request budget", async () => {
     const { events, workers } = observation();
     await workers.start();
     workers.ingest(attached("worker-0"));
@@ -101,11 +101,36 @@ describe("CDP worker network admission", () => {
     )
       workers.ingest(requested("worker-0", `request-${String(index)}`));
 
-    expect(events.network.size).toBe(CDP_WORKER_NETWORK_LIMITS.requests);
-    expect(budgetExclusion(events)).toEqual({
-      section: "network_requests",
-      reason: "resource_budget_exhausted",
-      count: 2,
+    workers.ingest({
+      sessionId: "worker-0",
+      method: "Network.webSocketCreated",
+      params: { requestId: "socket-0", url: "ws://127.0.0.1:43127/live" },
     });
+
+    expect(events.network.size).toBe(CDP_WORKER_NETWORK_LIMITS.requests);
+    expect(events.webSocketConnectionsById.size).toBe(0);
+    const { excluded, truncated_sections } = events.completeness.snapshot();
+    expect(excluded).toEqual(
+      expect.arrayContaining([
+        {
+          section: "network_requests",
+          reason: "resource_budget_exhausted",
+          count: 2,
+        },
+        {
+          section: "websocket_connections",
+          reason: "resource_budget_exhausted",
+          count: 1,
+        },
+        {
+          section: "websocket_frames",
+          reason: "resource_budget_exhausted",
+          count: null,
+        },
+      ]),
+    );
+    expect(truncated_sections).toEqual(
+      expect.arrayContaining(["websocket_connections", "websocket_frames"]),
+    );
   });
 });

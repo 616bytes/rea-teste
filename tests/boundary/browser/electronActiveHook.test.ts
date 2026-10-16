@@ -768,6 +768,93 @@ process.stdout.write(JSON.stringify({
   expect(invocations).toEqual(["decorated", "decorated"]);
 });
 
+it("keeps native removal traversal when an ipcMain observer prepends a listener", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-ipc-prepend-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-prepend-during-removal.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const scenario = (emitter) => {
+  const calls = [];
+  const removed = [];
+  const a = () => calls.push("a");
+  const b = () => calls.push("b");
+  const c = () => calls.push("c");
+  const replacement = () => calls.push("replacement");
+  const names = new Map([[a, "a"], [b, "b"], [c, "c"], [replacement, "replacement"]]);
+  let inserted = false;
+  emitter.on("removeListener", (channel, listener) => {
+    if (channel !== "ch") return;
+    removed.push(names.get(listener) ?? "unknown");
+    if (!inserted) {
+      inserted = true;
+      emitter.prependListener("ch", replacement);
+    }
+  });
+  emitter.on("ch", a);
+  emitter.on("ch", b);
+  emitter.on("ch", c);
+  emitter.removeAllListeners("ch");
+  const remaining = emitter.listeners("ch").map((listener) => names.get(listener));
+  emitter.emit("ch", { sender: { id: 9 } });
+  return { removed, remaining, calls };
+};
+process.stdout.write(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain) }) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const { plain, hooked } = JSON.parse(execution.stdout) as {
+    plain: Record<string, unknown>;
+    hooked: Record<string, unknown>;
+  };
+  expect(hooked).toEqual(plain);
+});
+
+it("does not evaluate listener accessors while classifying ipcMain wrappers", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-ipc-accessor-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-listener-accessor.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const event = { sender: { id: 9 } };
+const scenario = (emitter) => {
+  let reads = 0;
+  let calls = 0;
+  const listener = () => { calls += 1; };
+  Object.defineProperty(listener, "listener", { get() {
+    reads += 1;
+    throw new Error("listener metadata must not run during registration");
+  }});
+  let failure = null;
+  let registered = 0;
+  try {
+    emitter.on("accessor", listener);
+    emitter.emit("accessor", event);
+    registered = emitter.listenerCount("accessor");
+    emitter.removeAllListeners("accessor");
+  } catch (cause) { failure = cause.message; }
+  return { reads, calls, registered, failure };
+};
+process.stdout.write(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain) }) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const { plain, hooked } = JSON.parse(execution.stdout) as {
+    plain: Record<string, unknown>;
+    hooked: Record<string, unknown>;
+  };
+  expect(plain).toEqual({ reads: 0, calls: 1, registered: 1, failure: null });
+  expect(hooked).toEqual(plain);
+});
+
 it("isolates hook and exercise from ancestor Electron packages", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ancestor-");
   temporary.push(root);

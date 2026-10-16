@@ -359,9 +359,9 @@ const invokeObservedEventListener = (thisArg, channel, listener, args) => {
 };
 
 // Recording wrappers follow EventEmitter's own wrapper convention: `.listener`
-// names the caller's function. Native removeListener, listenerCount, listeners,
-// and the newListener/removeListener meta-events then resolve the wrapper to
-// the caller's function exactly as they resolve EventEmitter#once wrappers.
+// names the caller's function so native removal can match it. Node retains
+// ownership of listener traversal and meta-events; only hook-created "on"
+// wrappers passed to removeListener need translating to the raw function.
 // Only hook-created wrappers are tracked, by the registration they stand in
 // for: they already record, so patched on() registers them as is. An "on"
 // wrapper stands in for the caller's raw function and a "once" wrapper for
@@ -385,14 +385,20 @@ const reachesHookListenerWrapper = (listener) => {
   ) {
     if (hookListenerWrappers.has(candidate)) return true;
     visited.add(candidate);
-    candidate = candidate.listener;
+    // Inspect data links without evaluating application-owned accessors. A
+    // function whose metadata cannot be inspected is not a known hook wrapper.
+    try {
+      candidate = Object.getOwnPropertyDescriptor(candidate, "listener")?.value;
+    } catch {
+      return false;
+    }
   }
   return false;
 };
 
 const patchIpcMain = (ipcMain) => {
   if (ipcMain === null || ipcMain === undefined) return;
-  const { handle, on, once, removeAllListeners } = ipcMain;
+  const { handle, on, once, removeListener } = ipcMain;
   if (typeof handle === "function")
     ipcMain.handle = function patchedIpcMainHandle(channel, listener) {
       if (typeof listener !== "function")
@@ -448,33 +454,23 @@ const patchIpcMain = (ipcMain) => {
       this.on(channel, wrapped);
       return this;
     };
-  if (typeof removeAllListeners !== "function") return;
-  // Native removeAllListeners(channel) with removeListener observers removes
-  // the entries present at the call newest-first through removeListener, which
-  // reports its argument verbatim while several entries remain, and leaves
-  // listeners that observers add meanwhile registered. Remove only that
-  // snapshot, passing an "on" wrapper's original function as native passes
-  // the raw function it stands in for; once wrappers and other entries pass
-  // through unchanged, as native passes its once wrappers. The original keeps
-  // its no-observer fast path and the no-argument form, which re-enters this
-  // method once per channel, removes removeListener observers last, and then
-  // clears every channel.
-  ipcMain.removeAllListeners = function patchedIpcMainRemoveAllListeners(
-    ...args
+  if (typeof removeListener !== "function") return;
+  // Let native removeAllListeners retain its live-array traversal, including
+  // reentrant app registrations. Normalize only our raw "on" entries when it
+  // delegates to removeListener; native once entries remain unchanged.
+  ipcMain.removeListener = function patchedIpcMainRemoveListener(
+    channel,
+    listener,
   ) {
-    if (args.length === 0 || this.listenerCount("removeListener") === 0)
-      return removeAllListeners.apply(this, args);
-    const [channel] = args;
-    const entries = this.rawListeners(channel);
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const entry = entries[index];
-      this.removeListener(
-        channel,
-        hookListenerWrappers.get(entry) === "on" ? entry.listener : entry,
-      );
-    }
-    return this;
+    return removeListener.call(
+      this,
+      channel,
+      hookListenerWrappers.get(listener) === "on"
+        ? listener.listener
+        : listener,
+    );
   };
+  if (ipcMain.off === removeListener) ipcMain.off = ipcMain.removeListener;
 };
 
 const patchNavigationMethods = (webContents, contentsId) => {

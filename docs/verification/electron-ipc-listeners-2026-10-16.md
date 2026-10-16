@@ -4,7 +4,7 @@
 [#4389](https://github.com/morluto/rea/pull/4389), umbrella
 [#4027](https://github.com/morluto/rea/issues/4027).
 
-All 50 IPC boundary regressions pass, alongside shared projection/actions and
+All 57 IPC boundary regressions pass, alongside shared projection/actions and
 converted MCP schema checks. Real draw.io operation phases succeed.
 Every real capture still **fails overall provider cleanup**. These are distinct
 results; neither completed-task acceleration nor token savings is established.
@@ -425,3 +425,48 @@ All prior measurements remain unchanged under `borrowed_apply_followup`.
 
 The final documentation gate also passes six tasks and five README consistency
 cases. Current source digests are checked again after validation.
+
+## Listener-owner intrinsic lifetime
+
+Fresh review of `f5b489c1b` found that late application replacement of
+`Object.defineProperty` prevents the hook's new wrapper properties from being
+created, while a plain native emitter still registers/invokes its callbacks.
+Inspection of this same new registration/removal owner found its other late
+property/constructor lookups. Seven independent native controls replace
+`Object.defineProperty`, `Object.getOwnPropertyDescriptor`, `Object.create`,
+`Reflect.get`, `Reflect.set`, global `Set` or global `Proxy`; each fails before
+correction (50 passed, seven failed of 57). The controls include both on/once
+execution and complete removal, with globals restored after the scenario.
+
+Source `a9c5611d0` captures the owner's descriptor/property operations and private
+constructors before application startup. The private receiver uses a direct
+null-prototype object literal instead of looking up Object.create. All **77**
+hook/projection/actions cases pass (57 + 4 + 16). Application-owned callback
+methods and actual receivers retain their existing semantics. No tool, schema,
+state, target authority or general-purpose hardening layer is introduced; this
+is not complete JavaScript introspection equivalence. Unchanged schema/client,
+projection and verifier/oracle checks are reused by verified source hashes.
+
+The preceding CI run `38946503183` tests confirmed merge
+`fcd7a9d92a2e64d6eb96d4fabfed7fc7f44b0d45` (head `f5b489c1b`, main `4838f4449`).
+Its 36 jobs finish with 29 successes, the same two firmware failures causing
+three failed jobs including summaries, and four fail-fast cancellations. The
+fifth-shard log again names the two cases reproduced on untouched main. No
+firmware code/assertions or required checks are altered.
+
+Frozen-source real unchanged draw.io actions complete again with seven IPC
+events, SVG **0 → 2**, unsaved changes true, no deadline and failed overall
+provider cleanup. Pipeline wall is **11.429 s**. Observed payload-exit cgroup
+counters are 6.441029 CPU s and 550,363,136 peak bytes, but the observer still
+sees one additional scope descendant: **family resource observation is
+unverified**, not a complete-family performance measurement. The scope is later
+inactive/dead after external recovery; this does not verify provider cleanup.
+No identity or cleanup cause is inferred from the remaining PID.
+
+Final static checks pass two uncached tasks in **90.980 s wall, 90.119351 family
+CPU s and 4,338,749,440 peak cgroup bytes**, no OOM. Source identities, all seven
+failures and resource limitations are appended under `listener_intrinsics_followup`
+without replacing any previous measurements.
+
+The final docs gate passes six tasks and five README consistency cases; source
+digests are checked again after validation.

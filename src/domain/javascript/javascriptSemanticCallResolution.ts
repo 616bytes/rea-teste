@@ -16,7 +16,9 @@ import {
   MAX_CLASS_CANDIDATES,
   fieldProofIsSingle,
   getClassRegistry,
+  lookupSuperMethod,
   lookupUnitOneMethod,
+  proveGetterReceiver,
   proveUnitTwoReceiver,
 } from "./javascriptSemanticClassReceivers.js";
 import {
@@ -167,6 +169,48 @@ const resolveMemberCall = (
       reason: `Unsupported computed class method call target.`,
     };
   const registry = getClassRegistry(context.state);
+  const object = unwrapJavaScriptExpression(node.object).node;
+  if (t.isSuper(object)) {
+    const lookup = lookupSuperMethod(node, key, context.state, registry);
+    if (lookup.callableIds.length === 0)
+      return {
+        callableIds: [],
+        complete: false,
+        reason: lookup.reason,
+      };
+    return {
+      callableIds: [...lookup.callableIds],
+      complete: false,
+      reason: lookup.reason,
+    };
+  }
+  if (t.isCallExpression(object) || t.isOptionalCallExpression(object)) {
+    const proof = proveGetterReceiver(
+      object,
+      node,
+      context.state,
+      context.seenInitializers,
+      registry,
+    );
+    if (proof.status === "unknown")
+      return {
+        callableIds: [],
+        complete: false,
+        reason: proof.reason,
+      };
+    const lookup = lookupUnitOneMethod(proof.classes, key, registry);
+    if (lookup.callableIds.length === 0)
+      return {
+        callableIds: [],
+        complete: false,
+        reason: lookup.reason,
+      };
+    return {
+      callableIds: [...lookup.callableIds],
+      complete: false,
+      reason: `Class method ${key} resolves through a getter return.`,
+    };
+  }
   const proof = proveUnitTwoReceiver(
     node.object,
     node,

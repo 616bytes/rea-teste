@@ -13,6 +13,8 @@ import {
 } from "./javascriptSemanticState.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { semanticClassCandidates } from "./javascriptSemanticObjectReferences.js";
+import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
+import { SEMANTIC_GETTER_EXPANSION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
 /** One instance method definition retained for member-call lookup. */
@@ -532,12 +534,27 @@ export const lookupUnitOneMethod = (
   const owner = proven[0];
   const table = registry.methodsByClass.get(owner);
   const own = table?.get(key) ?? [];
-  if (own.length === 0)
+  if (own.length === 0) {
+    // Inherited methods resolve as candidates, never exact.
+    const baseIds = collectBaseIds(owner, key, registry);
+    if (baseIds.length === 0)
+      return {
+        callableIds: [],
+        complete: false,
+        reason: `Class method ${key} is not defined on the receiver class.`,
+      };
+    if (baseIds.length > MAX_CLASS_CANDIDATES)
+      return {
+        callableIds: [],
+        complete: false,
+        reason: `Class method ${key} exceeds the per-site candidate cap.`,
+      };
     return {
-      callableIds: [],
+      callableIds: [...baseIds],
       complete: false,
-      reason: `Class method ${key} is not defined on the receiver class.`,
+      reason: `Class method ${key} is inherited from a base class.`,
     };
+  }
   if (own.length > 1 || hasHierarchyOverride(owner, key, registry)) {
     const ids = collectHierarchyIds(owner, key, registry);
     return {
@@ -600,4 +617,197 @@ const collectHierarchyIds = (
 const capCandidates = (ids: readonly string[]): string[] => {
   if (ids.length > MAX_CLASS_CANDIDATES) return [];
   return [...ids];
+};
+
+const collectBaseIds = (
+  owner: t.ClassDeclaration | t.ClassExpression,
+  key: string,
+  registry: ClassRegistry,
+): string[] => {
+  const ids: string[] = [];
+  const seen = new Set<t.Node>([owner]);
+  const pending = [...(registry.superClasses.get(owner) ?? [])];
+  for (let cursor = 0; cursor < pending.length; cursor++) {
+    const base = pending[cursor];
+    if (base === undefined || seen.has(base)) continue;
+    seen.add(base);
+    const entries = registry.methodsByClass.get(base)?.get(key) ?? [];
+    for (const entry of entries) ids.push(entry.callableId);
+    for (const next of registry.superClasses.get(base) ?? [])
+      pending.push(next);
+  }
+  return [...new Set(ids)].sort();
+};
+
+/** Lookup `super.m()` through base candidates only, always ambiguous. */
+export const lookupSuperMethod = (
+  site: t.Node,
+  key: string,
+  state: JavaScriptSemanticAnalysisState,
+  registry: ClassRegistry,
+): {
+  readonly callableIds: readonly string[];
+  readonly complete: boolean;
+  readonly reason: string;
+} => {
+  const owner = enclosingInstanceClass(site, state);
+  if (owner === null)
+    return {
+      callableIds: [],
+      complete: false,
+      reason: `Super call ${key} has no enclosing class.`,
+    };
+  if (
+    registry.reassignedKeys.has(key) ||
+    registry.mixinSeen ||
+    registry.dynamicMemberWriteSeen ||
+    registry.computedMethodSeen
+  )
+    return {
+      callableIds: [],
+      complete: false,
+      reason: `Super method ${key} may have been reassigned or mixed in.`,
+    };
+  const ids = collectBaseIds(owner, key, registry);
+  if (ids.length === 0)
+    return {
+      callableIds: [],
+      complete: false,
+      reason: `Super method ${key} is not defined on a base class.`,
+    };
+  if (ids.length > MAX_CLASS_CANDIDATES)
+    return {
+      callableIds: [],
+      complete: false,
+      reason: `Super method ${key} exceeds the per-site candidate cap.`,
+    };
+  // Super dispatch stays a candidate even for one base definition.
+  return {
+    callableIds: [...ids],
+    complete: false,
+    reason: `Super method ${key} resolves through base candidates.`,
+  };
+};
+
+/** Prove one `this.g()` getter hop with depth-one return chaining. */
+export const proveGetterReceiver = (
+  call: t.CallExpression | t.OptionalCallExpression,
+  site: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  seenInitializers: ReadonlySet<JavaScriptSemanticInitializer>,
+  registry: ClassRegistry,
+): ReceiverProof => {
+  const callee = unwrapJavaScriptExpression(call.callee).node;
+  if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
+    return { status: "unknown", reason: "Unsupported getter call shape." };
+  const innerKey = semanticStaticPropertyKey(callee.property, callee.computed);
+  const holder = unwrapJavaScriptExpression(callee.object).node;
+  if (
+    innerKey === null ||
+    t.isPrivateName(callee.property) ||
+    !t.isThisExpression(holder)
+  )
+    return { status: "unknown", reason: "Unsupported getter call shape." };
+  const owner = enclosingInstanceClass(site, state);
+  if (owner === null)
+    return { status: "unknown", reason: "Getter call has no enclosing class." };
+  const table = registry.methodsByClass.get(owner)?.get(innerKey) ?? [];
+  if (table.length !== 1 || table[0] === undefined)
+    return {
+      status: "unknown",
+      reason: `Getter ${innerKey} has no single local method.`,
+    };
+  if (
+    registry.reassignedKeys.has(innerKey) ||
+    registry.mixinSeen ||
+    registry.dynamicMemberWriteSeen ||
+    registry.computedMethodSeen
+  )
+    return {
+      status: "unknown",
+      reason: `Getter ${innerKey} may have been reassigned or mixed in.`,
+    };
+  const returns = semanticCallableResultExpressions(table[0].methodNode);
+  if (returns.length === 0)
+    return {
+      status: "unknown",
+      reason: `Getter ${innerKey} has no return value.`,
+    };
+  if (returns.length > SEMANTIC_GETTER_EXPANSION_LIMIT) {
+    state.getterResourceLimits.add("getter-expansion");
+    return {
+      status: "unknown",
+      reason: `Getter ${innerKey} exceeds the getter expansion budget.`,
+    };
+  }
+  const classes: (t.ClassDeclaration | t.ClassExpression)[] = [];
+  for (const result of returns) {
+    if (result.node === null)
+      return {
+        status: "unknown",
+        reason: `Getter ${innerKey} has an empty return.`,
+      };
+    const proof = proveGetterReturn(
+      result.node,
+      owner,
+      state,
+      seenInitializers,
+      registry,
+    );
+    if (proof.status !== "proven") return proof;
+    for (const klass of proof.classes)
+      if (!classes.includes(klass)) classes.push(klass);
+    if (classes.length > MAX_CLASS_CANDIDATES)
+      return {
+        status: "unknown",
+        reason: `Getter ${innerKey} exceeds the per-site candidate cap.`,
+      };
+  }
+  return { status: "proven", classes };
+};
+
+// Depth-one return values: no further getter chaining, seen-set cycle guards
+// come from the identifier and class-candidate helpers.
+const proveGetterReturn = (
+  value: t.Node,
+  owner: t.ClassDeclaration | t.ClassExpression,
+  state: JavaScriptSemanticAnalysisState,
+  seenInitializers: ReadonlySet<JavaScriptSemanticInitializer>,
+  registry: ClassRegistry,
+): ReceiverProof => {
+  const expression = unwrapJavaScriptExpression(value).node;
+  if (t.isThisExpression(expression))
+    return { status: "proven", classes: [owner] };
+  if (t.isNewExpression(expression)) {
+    const callee = unwrapJavaScriptExpression(expression.callee).node;
+    const classes = semanticClassCandidates(callee, state);
+    return classes.length === 1 && classes[0] !== undefined
+      ? { status: "proven", classes: [classes[0]] }
+      : {
+          status: "unknown",
+          reason: "Getter return has no single local class.",
+        };
+  }
+  if (t.isIdentifier(expression))
+    return proveNewExpressionReceiver(expression, state, seenInitializers);
+  if (
+    t.isMemberExpression(expression) ||
+    t.isOptionalMemberExpression(expression)
+  ) {
+    const holder = unwrapJavaScriptExpression(expression.object).node;
+    const field = semanticStaticPropertyKey(
+      expression.property,
+      expression.computed,
+    );
+    if (!t.isThisExpression(holder) || field === null)
+      return { status: "unknown", reason: "Unsupported getter return shape." };
+    const info = registry.fieldMap.get(owner)?.get(field);
+    return info === undefined || info.unknown || info.classes.length === 0
+      ? {
+          status: "unknown",
+          reason: `Getter return this.${field} has no single class.`,
+        }
+      : { status: "proven", classes: info.classes };
+  }
+  return { status: "unknown", reason: "Unsupported getter return shape." };
 };

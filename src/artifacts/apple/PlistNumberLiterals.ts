@@ -126,6 +126,55 @@ export interface BinaryPlistNumberMetadata {
   readonly wideIntegers: readonly { offset: number; value: bigint }[];
 }
 
+const binaryObjectEnd = (
+  bytes: Buffer,
+  offset: number,
+  objectEnd: number,
+  referenceWidth: number,
+): number | undefined => {
+  const marker = bytes[offset];
+  if (marker === undefined) return undefined;
+  const type = marker >> 4;
+  let length = marker & 0x0f;
+  let cursor = offset + 1;
+  if (length === 0x0f && type !== 0 && type !== 8) {
+    const extendedMarker = bytes[cursor];
+    if (extendedMarker === undefined || extendedMarker >> 4 !== 1)
+      return undefined;
+    const width = 1 << (extendedMarker & 0x0f);
+    if (width > 8 || cursor + 1 + width > objectEnd) return undefined;
+    cursor += 1;
+    let extendedLength = 0n;
+    for (let index = 0; index < width; index += 1)
+      extendedLength =
+        (extendedLength << 8n) | BigInt(bytes[cursor + index] ?? 0);
+    if (extendedLength > BigInt(Number.MAX_SAFE_INTEGER)) return undefined;
+    length = Number(extendedLength);
+    cursor += width;
+  }
+  let payloadLength: number;
+  if (type === 0) payloadLength = 0;
+  else if (type === 1 || type === 2) {
+    if ((marker & 0x0f) > 4) return undefined;
+    payloadLength = 1 << (marker & 0x0f);
+  } else if (type === 3) {
+    if (marker !== 0x33) return undefined;
+    payloadLength = 8;
+  } else if (type === 4 || type === 5 || type === 7) {
+    payloadLength = length;
+  } else if (type === 6) {
+    payloadLength = length * 2;
+  } else if (type === 8) {
+    payloadLength = (marker & 0x0f) + 1;
+  } else if (type === 10 || type === 11 || type === 12) {
+    payloadLength = length * referenceWidth;
+  } else if (type === 13) {
+    payloadLength = length * 2 * referenceWidth;
+  } else return undefined;
+  const end = cursor + payloadLength;
+  return Number.isSafeInteger(end) && end <= objectEnd ? end : undefined;
+};
+
 /** Observe bounded binary number markers without changing primary decode acceptance. */
 export const scanBinaryPlistNumberLiterals = (
   bytes: Buffer,
@@ -151,6 +200,9 @@ export const scanBinaryPlistNumberLiterals = (
   if (countRaw > BigInt(capacity))
     return { literals: output.result(true), wideIntegers };
   const count = Number(countRaw);
+  const referenceWidth = bytes[trailer + 7] ?? 0;
+  if (![1, 2, 4, 8].includes(referenceWidth))
+    return { literals: output.result(true), wideIntegers };
   const unsigned = (offset: number): number | undefined => {
     if (offset < offsetTable || offset + offsetWidth > trailer)
       return undefined;
@@ -160,10 +212,24 @@ export const scanBinaryPlistNumberLiterals = (
     const value = view.getBigUint64(offset);
     return value > safeMaximum ? undefined : Number(value);
   };
+  const objectOffsets: number[] = [];
   for (let index = 0; index < count; index += 1) {
     const offset = unsigned(offsetTable + index * offsetWidth);
     if (offset === undefined || offset < 8 || offset >= offsetTable)
       return { literals: output.result(true), wideIntegers };
+    objectOffsets.push(offset);
+  }
+  const sortedOffsets = [...new Set(objectOffsets)].sort((a, b) => a - b);
+  for (let index = 0; index < sortedOffsets.length; index += 1) {
+    const offset = sortedOffsets[index];
+    if (offset === undefined) continue;
+    const nextOffset = sortedOffsets[index + 1] ?? offsetTable;
+    if (
+      binaryObjectEnd(bytes, offset, nextOffset, referenceWidth) === undefined
+    )
+      return { literals: output.result(true), wideIntegers: [] };
+  }
+  for (const offset of objectOffsets) {
     const marker = bytes[offset] ?? 0;
     const type = marker >> 4;
     if (type !== 1 && type !== 2) continue;

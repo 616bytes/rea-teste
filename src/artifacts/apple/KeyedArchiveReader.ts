@@ -68,6 +68,7 @@ export const decodeKeyedArchiveBytes = (
               )
             : new RangeError(message),
         bounds: "decoder",
+        numberProjection: true,
       })
     : undefined;
   const binaryNumberMetadata = binary

@@ -92,16 +92,20 @@ const hasLocalFileHeader = (bytes: Uint8Array): boolean =>
   bytes[2] === 0x03 &&
   bytes[3] === 0x04;
 
-/** Find the EOCD by scanning backward from the end over the permitted comment window. */
-const findEocd = (bytes: Uint8Array): number | null => {
+/**
+ * Every EOCD candidate in the permitted comment window whose comment ends
+ * exactly at the end of the archive, latest first.
+ */
+const eocdCandidates = (bytes: Uint8Array): number[] => {
   const dv = view(bytes);
+  const found: number[] = [];
   const earliest = Math.max(0, bytes.length - EOCD_MIN_SIZE - MAX_COMMENT);
   for (let at = bytes.length - EOCD_MIN_SIZE; at >= earliest; at -= 1) {
     if (dv.getUint32(at, true) !== EOCD_SIGNATURE) continue;
     const commentLength = dv.getUint16(at + 20, true);
-    if (at + EOCD_MIN_SIZE + commentLength === bytes.length) return at;
+    if (at + EOCD_MIN_SIZE + commentLength === bytes.length) found.push(at);
   }
-  return null;
+  return found;
 };
 
 /** Resolve the central-directory offset, following a Zip64 EOCD when present. */
@@ -164,7 +168,18 @@ export const parseZipTail = (
 ): Result<ZipTail, ApkSigningBlockError> => {
   if (bytes.length < EOCD_MIN_SIZE)
     return err({ kind: "not-a-zip", detail: "shorter than a ZIP EOCD record" });
-  const eocdOffset = findEocd(bytes);
+  const candidates = eocdCandidates(bytes);
+  // Two records that each end the archive exactly (one inside the other's
+  // comment) leave the archive's directory undetermined: whichever a reader
+  // picks, the other is attacker-placed. Refused, as apksigner does, rather
+  // than reporting signatures from a directory that may not be the archive's.
+  if (candidates.length > 1)
+    return err({
+      kind: "malformed-zip",
+      offset: candidates[0]!,
+      detail: `${String(candidates.length)} end-of-central-directory records each end the archive (one inside another's comment); the central directory is ambiguous`,
+    });
+  const eocdOffset = candidates[0] ?? null;
   if (eocdOffset === null)
     // A local-file header without an EOCD is a damaged/truncated archive, not
     // a different file type.

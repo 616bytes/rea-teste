@@ -286,4 +286,25 @@ describe("EOCD that cannot describe the archive", () => {
     if (tail.ok) return;
     expect(tail.error.kind).toBe("malformed-zip");
   });
+
+  it("refuses an archive whose comment holds a second, non-empty EOCD", () => {
+    const real = apkWithBlock([
+      { id: APK_BLOCK_ID.signatureV2, value: [1, 2, 3, 4] },
+    ]);
+    // A fake one-entry EOCD in the comment, pointing at a fake directory.
+    const fake = new Bytes()
+      .u32(0x06054b50)
+      .u16(0)
+      .u16(0)
+      .u16(1)
+      .u16(1)
+      .u32(4)
+      .u32(0)
+      .u16(0);
+    real[real.length - 2] = fake.b.length;
+    const tail = parseZipTail(Uint8Array.from([...real, ...fake.b]));
+    expect(tail.ok).toBe(false);
+    if (tail.ok) return;
+    expect(tail.error.kind).toBe("malformed-zip");
+  });
 });

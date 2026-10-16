@@ -379,6 +379,79 @@ describe("identifier-aliased intrinsic invocation members", () => {
   });
 });
 
+describe("captured invocation member identity", () => {
+  it("does not attribute a custom member alias to the intrinsic member", () => {
+    // `local` is the custom arrow function, not Function.prototype.call —
+    // writing through it must not reach the canonical member identity, or a
+    // later legitimate `Function.prototype.call.call` would turn opaque.
+    const { invocations, writes } = collectedWrites(
+      `const custom = {call: () => {}};
+      const local = custom.call;
+      local.call = () => {};
+      const metadata = {};
+      Function.prototype.call.call(Object.defineProperty,null,metadata,"x",{value:1});`,
+    );
+    expect(writes).not.toContainEqual([
+      "intrinsic",
+      "Function",
+      "prototype",
+      "call",
+      "call",
+    ]);
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    const result = analyzeJavaScriptStaticSource(
+      `const define = Object.defineProperty;
+      const custom = {call: () => {}};
+      const local = custom.call;
+      local.call = () => {};
+      ${CAPTURED_INTEROP} ${WINDOW}`,
+    );
+    expect(result.electron.browser_windows).toHaveLength(1);
+  });
+
+  it("rejects a captured member read replaced on its owner", () => {
+    // `change.call` is overwritten before capture, so `invoke` holds the
+    // replacement object — not Function.prototype.call — and the reflect
+    // call invokes `noop`, never the bound defineProperty.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      change.call = {call: noop};
+      const invoke = change.call;
+      Reflect.apply(invoke.call, change, [null, {value: customCreate}]);`,
+    );
+    expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
+    expect(invocations.at(-1)).not.toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+  });
+
+  it("follows a copied captured-member alias", () => {
+    // `copy` is a second stable alias of the captured member; the call still
+    // reaches the bound defineProperty and must keep its write.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const invoke = change.call;
+      const copy = invoke;
+      copy.call(change,null,{value:customCreate});`,
+    );
+    expect(invocations.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
+  });
+});
+
 describe("intrinsic invocation member effects", () => {
   it("retains a converted Electron window evaluated inside an opaque invocation's arguments", () => {
     const result = analyzeJavaScriptStaticSource(`

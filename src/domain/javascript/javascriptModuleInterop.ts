@@ -455,27 +455,48 @@ export const createSemanticModuleInterop = (
   // An alias initializer can hold a captured invocation member read, as in
   // `const invoke = bound.call`. The initializer stores the member's function
   // value at read time; follow it so the alias remains a usable callable.
+  // Zero-projection identifier aliases (`const copy = invoke`) are followed
+  // transitively with a cycle guard.
   const capturedInvocationMember = (
     node: t.Node,
   ): t.MemberExpression | t.OptionalMemberExpression | undefined => {
-    const current = unwrapJavaScriptExpression(node).node;
-    if (!t.isIdentifier(current)) return undefined;
-    const binding = resolveSemanticBindingState(state, current, current.name);
-    const initializer = semanticStableInitializer(binding, state);
-    if (
-      binding === undefined ||
-      initializer === undefined ||
-      initializer.projection.length !== 0 ||
-      (initializer.node.end ?? Infinity) >= (current.start ?? -1)
-    )
-      return undefined;
-    const member = unwrapJavaScriptExpression(initializer.node).node;
-    if (!t.isMemberExpression(member) && !t.isOptionalMemberExpression(member))
-      return undefined;
-    const key = semanticStaticPropertyKey(member.property, member.computed);
-    return key === "call" || key === "apply" || key === "bind"
-      ? member
-      : undefined;
+    const visited = new Set<string>();
+    let current = unwrapJavaScriptExpression(node).node;
+    for (;;) {
+      if (!t.isIdentifier(current)) return undefined;
+      const binding = resolveSemanticBindingState(state, current, current.name);
+      const initializer = semanticStableInitializer(binding, state);
+      if (
+        binding === undefined ||
+        initializer === undefined ||
+        initializer.projection.length !== 0 ||
+        (initializer.node.end ?? Infinity) >= (current.start ?? -1) ||
+        visited.has(binding.bindingId)
+      )
+        return undefined;
+      visited.add(binding.bindingId);
+      const next = unwrapJavaScriptExpression(initializer.node).node;
+      if (t.isIdentifier(next)) {
+        current = next;
+        continue;
+      }
+      if (!t.isMemberExpression(next) && !t.isOptionalMemberExpression(next))
+        return undefined;
+      const key = semanticStaticPropertyKey(next.property, next.computed);
+      if (key !== "call" && key !== "apply" && key !== "bind") return undefined;
+      // The canonical Function.prototype member identity holds only while
+      // the owner is a provable callable and its own member slot was not
+      // replaced before the read: an alias of `custom.call`, or of a member
+      // overwritten on its owner, does not hold the intrinsic function.
+      const ownerPath =
+        intrinsicPath(next.object) ?? boundIntrinsic(next.object)?.path;
+      if (
+        ownerPath === undefined ||
+        intrinsicReadChanged(next, [...ownerPath, key])
+      )
+        return undefined;
+      return next;
+    }
   };
 
   // The read side resolves an alias of `callable.call` to the stored member

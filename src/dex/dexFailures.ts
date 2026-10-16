@@ -153,8 +153,16 @@ export const dexFileFailure = (cause: unknown, path: string): AnalysisError => {
   });
 };
 
-/** Map a refused summary/detail to the shared error algebra. */
-export const mapDexWorkError = (error: DexWorkError): AnalysisError => {
+/**
+ * Map a refused summary/detail to the shared error algebra. `limitations` are
+ * facts about the members already read (e.g. unread trailing bytes) that a
+ * refusal must still carry.
+ */
+export const mapDexWorkError = (
+  error: DexWorkError,
+  limitations: readonly string[] = [],
+): AnalysisError => {
+  const context = limitations.length === 0 ? "" : ` ${limitations.join(" ")}`;
   switch (error.kind) {
     case "cancelled":
       return new AnalysisCancelledError(OPERATION);
@@ -162,7 +170,7 @@ export const mapDexWorkError = (error: DexWorkError): AnalysisError => {
       return new AnalysisResourceConstraintError(
         OPERATION,
         "cpu",
-        `Decoding a DEX member's debug metadata needs more than ${String(error.limit)} work units (proportional to its size); a well-formed DEX never does, so it was refused rather than run unbounded.`,
+        `Decoding a DEX member's debug metadata needs more than ${String(error.limit)} work units (proportional to its size); a well-formed DEX never does, so it was refused rather than run unbounded.${context}`,
         { max_work_units: error.limit },
       );
     case "malformed-class-data":
@@ -170,7 +178,7 @@ export const mapDexWorkError = (error: DexWorkError): AnalysisError => {
         {
           path: ["class_descriptor"],
           reason: "invalid_value",
-          message: `The selected class's class_data at byte ${String(error.classDataOff)} cannot be read; its methods' debug metadata is unknown.`,
+          message: `The selected class's class_data at byte ${String(error.classDataOff)} cannot be read; its methods' debug metadata is unknown.${context}`,
         },
       ]);
     case "unreadable-class-identity":
@@ -178,7 +186,7 @@ export const mapDexWorkError = (error: DexWorkError): AnalysisError => {
         {
           path: ["class_descriptor"],
           reason: "invalid_value",
-          message: `${String(error.count)} class_def entr${error.count === 1 ? "y has" : "ies have"} an unreadable type identity, so whether this DEX member defines the class (once) is unknown, not absent.`,
+          message: `${String(error.count)} class_def entr${error.count === 1 ? "y has" : "ies have"} an unreadable type identity, so whether this DEX member defines the class (once) is unknown, not absent.${context}`,
         },
       ]);
     case "duplicate-class-definition":
@@ -186,14 +194,14 @@ export const mapDexWorkError = (error: DexWorkError): AnalysisError => {
         {
           path: ["class_descriptor"],
           reason: "invalid_value",
-          message: `${String(error.count)} class_def entries declare the class in one DEX member; the DEX is malformed and the definition is ambiguous.`,
+          message: `${String(error.count)} class_def entries declare the class in one DEX member; the DEX is malformed and the definition is ambiguous.${context}`,
         },
       ]);
     case "output-budget-exceeded":
       return new AnalysisResourceConstraintError(
         OPERATION,
         "capacity",
-        `The class detail would serialise to about ${String(error.projectedBytes)} bytes, over the ${String(error.limit)}-byte output budget; refused before building it.`,
+        `The class detail would serialise to about ${String(error.projectedBytes)} bytes, over the ${String(error.limit)}-byte output budget; refused before building it.${context}`,
         { maximum_output_bytes: error.limit },
       );
   }

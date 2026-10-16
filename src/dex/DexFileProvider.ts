@@ -454,7 +454,8 @@ export class DexFileProvider implements DexDebugMetadataPort {
       };
       if (input.class_descriptor === undefined) {
         const summary = summarizeDex(parsed.value, buffer, work);
-        if (!summary.ok) return err(mapDexWorkError(summary.error));
+        if (!summary.ok)
+          return err(mapDexWorkError(summary.error, limitations));
         summaries.push({
           entry: source.entry,
           sha256: sha256(loaded),
@@ -470,7 +471,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
         work,
         DEX_LIMITS.outputBytes,
       );
-      if (!detail.ok) return err(mapDexWorkError(detail.error));
+      if (!detail.ok) return err(mapDexWorkError(detail.error, limitations));
       if (detail.value !== null)
         found.push({ entry: source.entry, detail: detail.value });
       // A second match is already ambiguous; reading further members is waste.

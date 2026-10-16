@@ -241,9 +241,16 @@ it("retries pending cleanup before acquiring a publisher temporary root", async 
     { ...process.env, XDG_CACHE_HOME: join(root, "cache") },
     async () => undefined,
   );
+  const originalClose = OwnedFileHandle.prototype.close;
+  const closeOwners: OwnedFileHandle[] = [];
+  let allowClose = false;
   const close = vi
     .spyOn(OwnedFileHandle.prototype, "close")
-    .mockRejectedValue(new Error("fixture close remains unavailable"));
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      closeOwners.push(this);
+      if (!allowClose) throw new Error("fixture close remains unavailable");
+      return originalClose.call(this);
+    });
   const createRoot = vi.spyOn(PrivateRuntimeRoot, "create");
   try {
     await expect(publisher.hashLauncher(path)).rejects.toMatchObject({
@@ -251,8 +258,29 @@ it("retries pending cleanup before acquiring a publisher temporary root", async 
     });
     await expect(
       publisher.retainVerifiedArchive({} as VerifiedLinuxHopperPackage, path),
-    ).rejects.toMatchObject({ cleanup: { resources: [path] } });
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        reason: "cleanup_failed",
+        cause: { cleanup: { resources: [path] } },
+      },
+    });
     expect(createRoot).not.toHaveBeenCalled();
+    expect(closeOwners).toHaveLength(4);
+    expect(closeOwners.every((owner) => owner === closeOwners[0])).toBe(true);
+
+    allowClose = true;
+    await expect(publisher.hashLauncher(path)).resolves.toMatch(
+      /^[a-f0-9]{64}$/u,
+    );
+    expect(closeOwners).toHaveLength(6);
+    expect(
+      closeOwners.slice(0, 5).every((owner) => owner === closeOwners[0]),
+    ).toBe(true);
+    expect(closeOwners[0]?.handle.fd).toBe(-1);
+    expect(createRoot).not.toHaveBeenCalled();
+    await publisher.close();
+    expect(closeOwners).toHaveLength(6);
   } finally {
     close.mockRestore();
     createRoot.mockRestore();

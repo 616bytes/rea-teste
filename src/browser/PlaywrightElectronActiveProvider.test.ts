@@ -173,6 +173,18 @@ it("identifies packaged executables correctly in executableContainsApplication",
   ).toBe(true);
   expect(
     await executableContainsApplication(
+      "/usr/lib/drawio/drawio",
+      "/usr/lib/drawio/resources/app",
+    ),
+  ).toBe(true);
+  expect(
+    await executableContainsApplication(
+      "/usr/lib/drawio/drawio",
+      "/usr/lib/drawio/resources/other-tool/index.js",
+    ),
+  ).toBe(false);
+  expect(
+    await executableContainsApplication(
       "/Applications/draw.io.app/Contents/MacOS/draw.io",
       "/Applications/draw.io.app/Contents/Resources/app.asar",
     ),
@@ -183,6 +195,24 @@ it("identifies packaged executables correctly in executableContainsApplication",
       "/Applications/draw.io.app",
     ),
   ).toBe(true);
+  expect(
+    await executableContainsApplication(
+      "/Applications/draw.io.app/Contents/MacOS/draw.io",
+      "/Applications/draw.io.app/Contents/Resources/separate-app",
+    ),
+  ).toBe(false);
+  expect(
+    await executableContainsApplication(
+      "/Applications/Electron.app/Contents/MacOS/Electron",
+      "/Applications/Electron.app/Contents/Resources/my-app",
+    ),
+  ).toBe(false);
+  expect(
+    await executableContainsApplication(
+      "/Applications/Electron.app/Contents/MacOS/Electron",
+      "/Applications/Electron.app/Contents/Resources/app.asar",
+    ),
+  ).toBe(false);
   expect(
     await executableContainsApplication(
       "/usr/bin/electron",

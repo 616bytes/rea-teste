@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { stat } from "node:fs/promises";
 import { basename, dirname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -43,7 +42,6 @@ import {
 import { projectElectronActiveCapture } from "./PlaywrightElectronActiveProjection.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
 import { assertNodeCliInspectArgumentsSupported } from "./PlaywrightElectronActiveFuses.js";
-import { isPathWithinRoot } from "../domain/localPath.js";
 
 const OPERATION = "capture_electron_scenario" as const;
 const STARTUP_TIMEOUT_MS = 60_000;
@@ -62,9 +60,10 @@ type ElectronPaths = {
 };
 
 /**
- * Determine whether the executable already packages or contains the target application,
- * meaning passing the application path as a CLI argument is unnecessary and would
- * cause packaged applications (such as draw.io) to treat the archive as an open-file argument.
+ * Determine whether the executable is a packaged application binary that already
+ * bundles and launches the target application entry point automatically without CLI arguments.
+ * Generic Electron binaries (such as `electron`, `electron.exe`, or `Electron.app`) and
+ * separate applications living under resource directories require passing the application path.
  */
 export const executableContainsApplication = async (
   executable: string,
@@ -75,56 +74,50 @@ export const executableContainsApplication = async (
   const normalizedExecutable = normalize(executable);
   const normalizedApplication = normalize(application);
   const exeDir = dirname(normalizedExecutable);
+  const exeBase = basename(normalizedExecutable)
+    .toLowerCase()
+    .replace(/\.exe$/, "");
 
-  const candidateResourceDirs = [
-    join(exeDir, "resources"),
-    join(exeDir, "Resources"),
+  // Generic stock Electron runner executables never package a target application.
+  if (exeBase === "electron") {
+    return false;
+  }
+
+  const candidateEntryPoints: string[] = [
+    join(exeDir, "resources", "app.asar"),
+    join(exeDir, "resources", "app"),
+    join(exeDir, "Resources", "app.asar"),
+    join(exeDir, "Resources", "app"),
   ];
-  const candidateBundleRoots: string[] = [];
 
   // macOS app bundle: <App>.app/Contents/MacOS/<exec>
   const parent = dirname(exeDir);
   const grandparent = dirname(parent);
   if (
     basename(exeDir).toLowerCase() === "macos" &&
-    basename(parent).toLowerCase() === "contents"
+    basename(parent).toLowerCase() === "contents" &&
+    basename(grandparent).toLowerCase().endsWith(".app")
   ) {
-    candidateResourceDirs.push(join(parent, "Resources"));
-    candidateResourceDirs.push(join(parent, "resources"));
-    if (basename(grandparent).toLowerCase().endsWith(".app")) {
-      candidateBundleRoots.push(grandparent);
+    // If the bundle itself is generic Electron.app, it is not a packaged app.
+    if (basename(grandparent).toLowerCase() === "electron.app") {
+      return false;
     }
+    candidateEntryPoints.push(
+      grandparent, // The .app bundle root itself
+      join(parent, "Resources", "app.asar"),
+      join(parent, "Resources", "app"),
+      join(parent, "resources", "app.asar"),
+      join(parent, "resources", "app"),
+    );
   }
 
-  // 1. Is the application structurally inside the executable's resources or app bundle?
-  if (
-    candidateResourceDirs.some((dir) =>
-      isPathWithinRoot(dir, normalizedApplication),
-    ) ||
-    candidateBundleRoots.some((root) =>
-      isPathWithinRoot(root, normalizedApplication),
-    )
-  ) {
-    return true;
-  }
+  const matches = (candidate: string) =>
+    process.platform === "win32" || process.platform === "darwin"
+      ? normalize(candidate).toLowerCase() ===
+        normalizedApplication.toLowerCase()
+      : normalize(candidate) === normalizedApplication;
 
-  // 2. Does the executable directory or bundle contain a packaged application on disk?
-  for (const resourcesDir of candidateResourceDirs) {
-    try {
-      const asarStat = await stat(join(resourcesDir, "app.asar"));
-      if (asarStat.isFile()) return true;
-    } catch {
-      // not present as asar file
-    }
-    try {
-      const appStat = await stat(join(resourcesDir, "app"));
-      if (appStat.isDirectory() || appStat.isFile()) return true;
-    } catch {
-      // not present as app directory
-    }
-  }
-
-  return false;
+  return candidateEntryPoints.some(matches);
 };
 
 /** Launch an owned Electron application through the official Playwright API. */

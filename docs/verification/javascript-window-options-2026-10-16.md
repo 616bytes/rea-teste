@@ -52,3 +52,21 @@ Apply the linked resource observer from the earlier Joplin record to each costly
 Codex review identified an introduced producer-ordering regression: inline windows were appended during traversal while deferred constants were appended afterward. The new mixed constant/inline/unresolved regression reproduced `[4, 3, 5, 6]` instead of source order `[3, 4, 5, 6]`. The producing collection now restores order from retained source offsets before module attribution and public graph consumers; no downstream adapter repair was added. A reused options object remains dynamic after it escapes to the first constructor.
 
 After the fix, all 49 targeted cases across five files passed, including the public CLI/MCP/fact-view workflow and capacity/identity cases. One additional real Joplin run at source revision `3fd71cba2` returned exactly the same complete answer and semantic fingerprint as the original candidate, with complete CLI/MCP view Evidence parity. It took 44.028 s at answer / 43.960 CPU s / 1,524,555,776 peak cgroup bytes, with the same 13,432 projected task tokens. This is a follow-up validation, not an additional paired latency comparison. The JSON stores its runtime and current source pins separately; the original trial receipts and historical source pins remain unchanged.
+
+## Shared query performance review follow-up
+
+The stored-alias example raised in review already returns unknown on the reviewed production code: the exact negative source case passes, and the public CLI returns one dynamic window with zero explicit preferences. The shared `reference-store` producer records the assignment escape before construction. No mutation rule was changed; the negative regression is retained.
+
+The repeated-effects cost was reproducible. Candidate discovery needed only lexical identity but collected full mutation reports; each later capture also materialized every effect before checking for a prior escape. The shared index now offers lexical-only lookup and an early-exit predicate. Windows and request analysis use those operations. The same owner still supplies complete effects to the require-source consumer, which needs filtered effect kinds; no second interpretation or persistent cache was added.
+
+The [preserved scaling control](../../experiments/analysis-efficiency/window-option-scaling.mjs) measures real production source analysis on synthetic capacity inputs; it is not a real-application or agent task. All samples and module hashes are retained. CPU medians across three sequential samples were:
+
+| Shared-options constructors | Before (CPU s) | After (CPU s) |
+| --------------------------- | -------------: | ------------: |
+| 256                         |        0.29703 |       0.17821 |
+| 512                         |        0.96105 |       0.08709 |
+| 1024                        |        4.41298 |       0.20032 |
+
+The first 256 sample is the first algorithm execution in each process; later rounds and larger sizes can use warmed V8 code. These medians mix that progression and do not establish cold-task scaling across applications. A deterministic regression separately bounds escaped-effect reads for 128 captures to at most 4N while requiring unindexed unknowns, a valid first capture and unknown reused contents. Timing is not a test gate. Reproduce the capacity control, after building each pinned checkout, with `node experiments/analysis-efficiency/window-option-scaling.mjs LABEL 256,512,1024` under the same resource observer.
+
+After this refactor, 107 cases across 10 focused files passed, including request CLI/MCP, require-source, worker-schema, identity, capacity and retained-fact workflows. A new real Joplin run at `9207ece2090208c272d2689c4002438ceda41145` preserves the exact whole answer and semantic fingerprint, including CLI/MCP parity and the same 13,432 projected task tokens. It measured 44.607s / 43.883 CPU s / 1,666,560,000 peak cgroup bytes. Thus the capacity improvement is clear for the tested pattern, while no general real-app speedup is claimed. The new stage stores current source/runtime pins and validation separately; all previous receipts remain unchanged.

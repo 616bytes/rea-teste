@@ -119,6 +119,48 @@ const fixture = (
 };
 const provenance = { path: "/fixture/app", sha256: "a".repeat(64) };
 
+const swiftConformanceSiblingsFixture = (emptyName?: "type" | "protocol") => {
+  const bytes = fixture();
+  const relative = (field: number, target: number) =>
+    bytes.writeInt32LE(target - field, field);
+  const pointer = (field: number, target: number) =>
+    bytes.writeBigUInt64LE(base + BigInt(target), field);
+  // Add three conformances beside the independently decoded Objective-C class.
+  bytes.writeUInt32LE(232, 20);
+  bytes.writeUInt32LE(232, 36);
+  bytes.writeUInt32LE(2, 96);
+  bytes.write("__swift5_proto", 184);
+  bytes.write("__DATA", 200);
+  pointer(216, 0xa00);
+  bytes.writeBigUInt64LE(12n, 224);
+  bytes.writeUInt32LE(0xa00, 232);
+  for (let index = 0; index < 3; index++) {
+    const descriptor = 0xa40 + index * 0x80;
+    const protocol = descriptor + 0x20;
+    const type = descriptor + 0x40;
+    const witness = descriptor + 0x60;
+    const typeName = 0xd00 + index * 0x80;
+    const protocolName = typeName + 0x40;
+    relative(0xa00 + index * 4, descriptor);
+    relative(descriptor, protocol);
+    relative(descriptor + 4, type);
+    relative(descriptor + 8, witness);
+    bytes.writeUInt32LE(3, protocol); // protocol context descriptor
+    relative(protocol + 8, protocolName);
+    bytes.writeUInt32LE(1, protocol + 16); // one witness requirement
+    bytes.writeUInt32LE(1, protocol + 24); // synchronous method
+    bytes.writeUInt32LE(17, type); // direct struct type descriptor
+    relative(type + 8, typeName);
+    pointer(witness, descriptor);
+    pointer(witness + 8, 0x700);
+    if (index !== 1 || emptyName !== "type")
+      bytes.write(`Type${index}\0`, typeName);
+    if (index !== 1 || emptyName !== "protocol")
+      bytes.write(`Protocol${index}\0`, protocolName);
+  }
+  return bytes;
+};
+
 const partialSiblingsFixture = (
   options: {
     readonly emptyMiddleClass?: boolean;
@@ -502,6 +544,57 @@ describe("malformed Objective-C property records", () => {
 });
 
 describe("malformed Apple dispatch metadata", () => {
+  it.each([undefined, "type", "protocol"] as const)(
+    "isolates a conformance with an empty %s name and retains its siblings",
+    (emptyName) => {
+      const result = decodeAppleDispatchMetadata(
+        swiftConformanceSiblingsFixture(emptyName),
+        100,
+        provenance,
+      );
+      const kept = emptyName === undefined ? [0, 1, 2] : [0, 2];
+      expect(
+        result.swift_conformances.map(({ type_name }) => type_name),
+      ).toEqual(kept.map((index) => `Type${index}`));
+      expect(
+        result.swift_conformances.map(({ protocol_name }) => protocol_name),
+      ).toEqual(kept.map((index) => `Protocol${index}`));
+      expect(result.swift_dispatch_slots.map(({ owner }) => owner)).toEqual(
+        kept.map((index) => `Type${index}: Protocol${index}`),
+      );
+      for (const conformance of result.swift_conformances) {
+        expect(conformance.decode.status).toBe("decoded");
+        expect(conformance.evidence[0]).toMatchObject({
+          artifact_path: provenance.path,
+          artifact_sha256: provenance.sha256,
+          location: conformance.location,
+        });
+      }
+      expect(result.objc_classes[0]?.name).toBe("Fixture");
+      expect(
+        result.coverage.find(
+          ({ facet }) => facet === "swift_conformances_static_witness_slots",
+        ),
+      ).toMatchObject({
+        status: emptyName === undefined ? "complete" : "partial",
+        examined: 3,
+        decoded: kept.length,
+        reason:
+          emptyName === undefined
+            ? null
+            : expect.stringContaining(
+                "conformance_decode_failed at 0x100000a04",
+              ),
+      });
+      if (emptyName !== undefined)
+        expect(
+          result.coverage.find(
+            ({ facet }) => facet === "swift_conformances_static_witness_slots",
+          )?.reason,
+        ).toContain(`empty ${emptyName} name`);
+    },
+  );
+
   it("retains valid class siblings when one class has an empty name", () => {
     const result = decodeAppleDispatchMetadata(
       partialSiblingsFixture({ emptyMiddleClass: true }),

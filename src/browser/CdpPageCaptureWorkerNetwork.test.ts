@@ -770,3 +770,126 @@ describe("CDP worker network metadata, attachment state and accepted hops", () =
     ).toBe(true);
   });
 });
+
+describe("CDP worker network retained strings", () => {
+  const admitted = async (options: Parameters<typeof observation>[0] = {}) => {
+    const created = observation(options);
+    await created.workers.start();
+    created.workers.ingest(attached("worker-0"));
+    await created.workers.settle();
+    return created;
+  };
+  const sixtyPercent = Math.ceil(
+    (CDP_WORKER_NETWORK_LIMITS.requestBytes * 3) / 5,
+  );
+
+  it("charges request methods and initiator URLs to the request budget", async () => {
+    for (const field of ["method", "initiator"] as const) {
+      const { events, workers } = await admitted();
+      for (const requestId of ["first", "second"])
+        workers.ingest({
+          sessionId: "worker-0",
+          method: "Network.requestWillBeSent",
+          params: {
+            requestId,
+            type: "Fetch",
+            request: {
+              url: `${origin}/data`,
+              method: field === "method" ? "M".repeat(sixtyPercent) : "GET",
+            },
+            initiator:
+              field === "initiator"
+                ? {
+                    type: "script",
+                    url: `${origin}/${"x".repeat(sixtyPercent)}`,
+                  }
+                : { type: "script" },
+          },
+        });
+
+      expect(events.network.has("first")).toBe(true);
+      expect(events.network.has("second")).toBe(false);
+      expect(events.completeness.snapshot().excluded).toContainEqual({
+        section: "network_requests",
+        reason: "resource_budget_exhausted",
+        count: 1,
+      });
+    }
+  });
+
+  it("charges response MIME types and kept header values to the metadata budget", async () => {
+    const { events, workers } = await admitted();
+    const respond = (requestId: string, response: Record<string, unknown>) => {
+      workers.ingest(requested("worker-0", requestId));
+      workers.ingest({
+        sessionId: "worker-0",
+        method: "Network.responseReceived",
+        params: {
+          requestId,
+          response: { url: `${origin}/data`, status: 200, ...response },
+        },
+      });
+    };
+    respond("long-type", {
+      mimeType: `text/${"x".repeat(CDP_WORKER_NETWORK_LIMITS.metadataBytes)}`,
+    });
+    respond("long-encoding", {
+      mimeType: "text/plain",
+      headers: {
+        "Content-Encoding": "x".repeat(CDP_WORKER_NETWORK_LIMITS.metadataBytes),
+      },
+    });
+    respond("small", {
+      mimeType: "text/plain",
+      headers: { "Content-Encoding": "gzip" },
+    });
+
+    expect(events.network.get("long-type")).toMatchObject({
+      status: 200,
+      mime_type: null,
+    });
+    const metadata = new Map(
+      events.responseMetadata.map((entry) => [entry.request_id, entry]),
+    );
+    expect(metadata.get("long-encoding")?.content_encoding).toBeNull();
+    expect(metadata.get("small")?.content_encoding).toBe("gzip");
+    expect(events.completeness.snapshot().excluded).toContainEqual({
+      section: "metadata",
+      reason: "resource_budget_exhausted",
+      count: 2,
+    });
+  });
+
+  it("keeps binary worker frames outside the shape payload budget", async () => {
+    const { events, workers } = await admitted({
+      includeWebSocketShapes: true,
+    });
+    workers.ingest({
+      sessionId: "worker-0",
+      method: "Network.webSocketCreated",
+      params: { requestId: "socket-0", url: "ws://127.0.0.1:43127/live" },
+    });
+    workers.ingest({
+      sessionId: "worker-0",
+      method: "Network.webSocketFrameReceived",
+      params: {
+        requestId: "socket-0",
+        timestamp: 0,
+        response: {
+          opcode: 2,
+          mask: false,
+          payloadData: Buffer.alloc(
+            CDP_WORKER_NETWORK_LIMITS.frameBytes + 3,
+          ).toString("base64"),
+        },
+      },
+    });
+
+    expect(
+      events.webSocketConnectionsById.get("socket-0")?.events,
+    ).toHaveLength(1);
+    expect(events.completeness.snapshot().dropped_events.websocket_frames).toBe(
+      0,
+    );
+  });
+});

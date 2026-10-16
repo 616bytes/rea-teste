@@ -112,7 +112,10 @@ export const consolePrimitive = (
   }
 };
 
-const BASE64 = /^(?:[A-Za-z\d+/]{4})*(?:[A-Za-z\d+/]{2}==|[A-Za-z\d+/]{3}=)?$/u;
+// With a length divisible by four, this matches the same canonical base64 as
+// a grouped pattern, but V8 checks it without backtracking. The grouped form
+// exhausted the stack on payloads of several megabytes.
+const BASE64 = /^[A-Za-z\d+/]*={0,2}$/u;
 
 export const decodeBase64 = (value: string): Buffer | undefined =>
   value.length % 4 === 0 && BASE64.test(value)

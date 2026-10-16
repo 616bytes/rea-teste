@@ -2,13 +2,20 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { BrowserExclusionReason } from "../domain/browserCompleteness.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import type { CdpCaptureEvents } from "./CdpCaptureEvents.js";
-import { admittedWebSocketUrl } from "./CdpCaptureEventHandlers.js";
-import { decodeBase64, isJsonContentType } from "./CdpCaptureEventHelpers.js";
+import {
+  admittedWebSocketUrl,
+  webSocketFrameOpcode,
+} from "./CdpCaptureEventHandlers.js";
+import {
+  decodeBase64,
+  initiatorLocation,
+  isJsonContentType,
+} from "./CdpCaptureEventHelpers.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import {
-  expandingMetadataBytes,
-  withoutExpandingMetadata,
+  retainedResponseBytes,
+  withoutRetainedResponseStrings,
 } from "./CdpSafeMetadata.js";
 import {
   admitRecords,
@@ -25,9 +32,9 @@ import {
  * request and frame bounds match the script metadata record bound, and the
  * byte bounds match the script metadata byte bound. Request bytes count each
  * retained URL plus, when a JSON request shape is inferred, its body; response
- * bytes count JSON response bodies read for shapes; metadata bytes count the
- * response headers whose parsed metadata grows with their size; frame bytes
- * count payloads when WebSocket shapes are inferred.
+ * bytes count JSON response bodies read for shapes; metadata bytes count
+ * response MIME types and the header values metadata keeps; frame bytes count
+ * text payloads when WebSocket shapes are inferred.
  */
 export const CDP_WORKER_NETWORK_LIMITS = {
   workers: 256,
@@ -195,13 +202,12 @@ export class CdpWorkerNetworkObservation {
         // Only frames of a connection the origin policy kept are retained.
         if (!this.events.webSocketConnectionsById.has(requestId)) return;
         // Shape inference retains names from the payload, so bound its bytes.
-        const payloadBytes = this.events.input.include_websocket_shapes
-          ? Buffer.byteLength(
-              cdpStringValue(
-                recordValue(recordValue(event.params)?.response)?.payloadData,
-              ) ?? "",
-            )
-          : 0;
+        const response = recordValue(recordValue(event.params)?.response);
+        const payloadBytes =
+          this.events.input.include_websocket_shapes &&
+          webSocketFrameOpcode(response) === 1
+            ? Buffer.byteLength(cdpStringValue(response?.payloadData) ?? "")
+            : 0;
         if (
           this.#workerFrames >= CDP_WORKER_NETWORK_LIMITS.frames ||
           this.#workerFrameBytes + payloadBytes >
@@ -277,8 +283,8 @@ export class CdpWorkerNetworkObservation {
   }
 
   /**
-   * Charge a response's expanding metadata headers. Past the budget, forward
-   * the response without them so its status and type are still recorded.
+   * Charge a response's retained strings. Past the budget, forward the
+   * response without them so its status is still recorded.
    */
   #withinMetadataBudget(event: CdpEvent): {
     readonly event: CdpEvent;
@@ -288,7 +294,7 @@ export class CdpWorkerNetworkObservation {
       return { event, metadataBytes: 0 };
     const params = recordValue(event.params);
     const response = recordValue(params?.response);
-    const bytes = expandingMetadataBytes(response?.headers);
+    const bytes = retainedResponseBytes(response);
     if (
       this.#workerMetadataBytes + bytes <=
       CDP_WORKER_NETWORK_LIMITS.metadataBytes
@@ -302,10 +308,7 @@ export class CdpWorkerNetworkObservation {
         ...event,
         params: {
           ...params,
-          response: {
-            ...response,
-            headers: withoutExpandingMetadata(response?.headers),
-          },
+          response: withoutRetainedResponseStrings(response),
         },
       },
       metadataBytes: 0,
@@ -373,7 +376,18 @@ export class CdpWorkerNetworkObservation {
       isJsonContentType(recordValue(request?.headers))
         ? (cdpStringValue(request?.postData) ?? "")
         : "";
-    return Buffer.byteLength(url) + Buffer.byteLength(body);
+    const initiator = initiatorLocation(recordValue(params?.initiator));
+    const redirect = recordValue(params?.redirectResponse);
+    // Every variable-length string the network record keeps for this hop.
+    return [
+      url,
+      body,
+      cdpStringValue(request?.method) ?? "",
+      cdpStringValue(params?.type) ?? "",
+      allowedSanitizedUrl(initiator?.url, this.allowedOrigins)?.url ?? "",
+      allowedSanitizedUrl(redirect?.url, this.allowedOrigins)?.url ?? "",
+      cdpStringValue(redirect?.mimeType) ?? "",
+    ].reduce((total, text) => total + Buffer.byteLength(text), 0);
   }
 
   /**

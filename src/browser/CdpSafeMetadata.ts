@@ -60,32 +60,38 @@ export const safeResponseMetadata = (
   };
 };
 
-/** Response headers whose parsed metadata grows with their value size. */
-const EXPANDING_METADATA_HEADERS: ReadonlySet<string> = new Set([
+/** Response headers whose values reach the retained metadata. */
+const RETAINED_METADATA_HEADERS: ReadonlySet<string> = new Set([
   "link",
   "content-security-policy",
   "permissions-policy",
+  "content-encoding",
+  "cross-origin-opener-policy",
+  "cross-origin-embedder-policy",
+  "cross-origin-resource-policy",
+  "x-content-type-options",
 ]);
 
-/** Bytes of the response headers whose parsed metadata grows with their size. */
-export const expandingMetadataBytes = (headers: unknown): number => {
-  let total = 0;
-  for (const [name, value] of normalizedHeaders(headers))
-    if (EXPANDING_METADATA_HEADERS.has(name)) total += Buffer.byteLength(value);
+/**
+ * Bytes of the response strings that reach output: the MIME type, kept in the
+ * network record and in metadata, and the header values metadata keeps.
+ */
+export const retainedResponseBytes = (
+  response: UnknownRecord | undefined,
+): number => {
+  let total = 2 * Buffer.byteLength(cdpStringValue(response?.mimeType) ?? "");
+  for (const [name, value] of normalizedHeaders(response?.headers))
+    if (RETAINED_METADATA_HEADERS.has(name)) total += Buffer.byteLength(value);
   return total;
 };
 
-/** Response headers without those whose parsed metadata grows with their size. */
-export const withoutExpandingMetadata = (
-  headers: unknown,
-): Readonly<Record<string, unknown>> =>
-  typeof headers !== "object" || headers === null || Array.isArray(headers)
-    ? {}
-    : Object.fromEntries(
-        Object.entries(headers).filter(
-          ([name]) => !EXPANDING_METADATA_HEADERS.has(name.toLowerCase()),
-        ),
-      );
+/** The response without the strings `retainedResponseBytes` counts. */
+export const withoutRetainedResponseStrings = (
+  response: UnknownRecord | undefined,
+): UnknownRecord => {
+  const { headers: _headers, mimeType: _mimeType, ...rest } = response ?? {};
+  return rest;
+};
 
 const normalizedHeaders = (value: unknown): ReadonlyMap<string, string> => {
   if (typeof value !== "object" || value === null || Array.isArray(value))

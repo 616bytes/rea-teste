@@ -496,6 +496,11 @@ const captureConsoleText = (
   };
 };
 
+/** The frame opcode REA records; text frames (1) feed shape inference. */
+export const webSocketFrameOpcode = (
+  response: UnknownRecord | undefined,
+): number => Math.max(0, Math.trunc(numberValue(response?.opcode) ?? 0));
+
 export const handleWebSocketFrame = (
   state: CdpCaptureEventsState,
   params: UnknownRecord,
@@ -507,7 +512,7 @@ export const handleWebSocketFrame = (
   if (connection === undefined) return;
   const response = recordValue(params.response);
   const payload = cdpStringValue(response?.payloadData) ?? "";
-  const opcode = Math.max(0, Math.trunc(numberValue(response?.opcode) ?? 0));
+  const opcode = webSocketFrameOpcode(response);
   const decoded = opcode === 1 ? undefined : decodeBase64(payload);
   if (opcode !== 1 && decoded === undefined)
     state.completeness.exclude("websocket_frames", "invalid_protocol_value");

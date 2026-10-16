@@ -337,11 +337,10 @@ the same origin policy as page requests, and workers on other origins are not
 enabled. Requests a worker sends before REA reaches it are unavailable, so
 short-lived workers can be partially observed. One capture attaches at most
 256 workers. It tracks at most 50,000 worker requests and WebSockets, holding
-8 MiB of their URLs plus JSON request bodies when JSON body shapes are
-captured, 8 MiB of worker JSON response bodies read for shapes, 8 MiB of
-worker `Link`, `Content-Security-Policy`, and `Permissions-Policy` response
-headers, and 50,000 worker WebSocket frames, holding 8 MiB of frame payload
-when WebSocket shapes are captured. A worker's `attached` value is its state
+8 MiB of their URLs, methods, initiator URLs, and redirect details plus JSON
+request bodies when JSON body shapes are captured, 8 MiB of worker JSON response bodies read for shapes, 8 MiB of
+worker response MIME types and kept header values, and 50,000 worker WebSocket
+frames, holding 8 MiB of text frame payload when WebSocket shapes are captured. A worker's `attached` value is its state
 before REA auto-attached; a worker that started later includes REA's own
 attachment, and the limitations say so. A worker REA does not observe, because of its origin,
 this limit, or a rejected command, is recorded under `network_requests`,

@@ -1785,7 +1785,10 @@ const addBinding = (input: AddBindingInput): void => {
   if (declarationKind !== undefined)
     binding.declarationKinds.add(declarationKind);
   binding.definitions.push({ kind, location: range(definitionNode) });
-  if (runtimeDeclaration && declarationExistsAtRuntime(declarationNode, state))
+  if (
+    runtimeDeclaration &&
+    declarationEstablishesRuntimeBinding(declarationNode, state)
+  )
     binding.runtimeDeclarations.push({
       kind,
       ...(declarationKind === undefined ? {} : { declarationKind }),
@@ -1806,7 +1809,9 @@ const addBinding = (input: AddBindingInput): void => {
   binding.runtimeImport ||= runtimeImport === true;
 };
 
-const declarationExistsAtRuntime = (
+// Transformed namespace members may execute, but this index does not establish
+// their visibility in the surrounding source scope. They cannot prove shadowing.
+const declarationEstablishesRuntimeBinding = (
   definition: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
@@ -1821,12 +1826,9 @@ const declarationExistsAtRuntime = (
     }
     pending.push(node);
     if (
-      ((t.isVariableDeclaration(node) ||
-        t.isClassDeclaration(node) ||
-        t.isTSModuleDeclaration(node)) &&
+      ((t.isVariableDeclaration(node) || t.isClassDeclaration(node)) &&
         node.declare === true) ||
-      (t.isTSModuleDeclaration(node) &&
-        (node.kind === "global" || t.isStringLiteral(node.id)))
+      t.isTSModuleDeclaration(node)
     ) {
       runtime = false;
       break;

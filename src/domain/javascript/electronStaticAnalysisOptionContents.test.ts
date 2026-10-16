@@ -15,6 +15,8 @@ it.each([
   "declare var arguments: any;",
   "declare class arguments {}",
   "declare namespace ambient { const arguments: any; }",
+  'import type {T} from "unloaded-type-only";',
+  'export type {T} from "unloaded-type-only";',
 ])(
   "does not treat erased declarations as runtime arguments shadows: %s",
   (declaration) => {
@@ -35,6 +37,51 @@ it.each([
     expect(
       analysis.electron.browser_windows[0]?.resolution_sources,
     ).toBeUndefined();
+  },
+);
+
+it.each(["fixture.cts", "fixture.mts"])(
+  "uses runtime module mode for mapped contents in %s",
+  (path) => {
+    const source = `
+    import type {T} from "unloaded-type-only";
+    const {BrowserWindow} = require("electron");
+    function open(parameter) {
+      const options = {webPreferences: {preload: "./safe.js"}, ...null};
+      parameter = options;
+      arguments[0].webPreferences.preload = "./changed.js";
+      new BrowserWindow(options);
+    }
+  `;
+    const parsed = parseJavaScriptSource(source, path);
+    if (parsed === null) throw new Error("Expected parsed source");
+    expect(parsed.program.sourceType).toBe("module");
+    expect(parsed.errors ?? []).toEqual([]);
+    const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+    expect(analysis.electron.browser_windows[0]?.preload_path).toBe(
+      path.endsWith(".mts") ? "./safe.js" : null,
+    );
+  },
+);
+
+it.each(["export const", "const"])(
+  "keeps transformed namespace scope uncertain during recovery (%s)",
+  (declaration) => {
+    const source = `
+    namespace Own { ${declaration} arguments = []; }
+    const {BrowserWindow} = require("electron");
+    const options = {webPreferences: {preload: "./safe.js"}, ...null};
+    exports = options;
+    arguments[0].webPreferences.preload = "./changed.js";
+    new BrowserWindow(options);
+  `;
+    const parsed = parseJavaScriptSource(source, "fixture.cts");
+    if (parsed === null) throw new Error("Expected recovered source");
+    expect(parsed.errors.length).toBeGreaterThan(0);
+    expect(
+      analyzeParsedJavaScriptStaticSource(source, parsed).electron
+        .browser_windows[0]?.preload_path,
+    ).toBeNull();
   },
 );
 

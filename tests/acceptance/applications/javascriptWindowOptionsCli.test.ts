@@ -9,12 +9,17 @@ import { analysisViewResultSchema } from "../../../src/domain/analysisView/analy
 
 const runtimeShadowFixtures = {
   ...Object.fromEntries(
-    ["const", "let"].map((kind) => [
-      `ambient-${kind}.cts`,
+    [
+      ["const", "declare const arguments: any;"],
+      ["let", "declare let arguments: any;"],
+      ["import", 'import type {T} from "unloaded-type-only";'],
+      ["export", 'export type {T} from "unloaded-type-only";'],
+    ].map(([name, declaration]) => [
+      `ambient-${name}.cts`,
       [
         'throw new Error("Static input must never execute");',
         'const {BrowserWindow} = require("electron");',
-        `declare ${kind} arguments: any;`,
+        declaration!,
         'const options = {webPreferences: {preload: "./safe.js"}, ...null};',
         "exports = options;",
         'arguments[0].webPreferences.preload = "./changed.js";',
@@ -22,6 +27,17 @@ const runtimeShadowFixtures = {
       ].join("\n"),
     ]),
   ),
+  "module.mts": [
+    'throw new Error("Static input must never execute");',
+    'import type {T} from "unloaded-type-only";',
+    'const {BrowserWindow} = require("electron");',
+    "function open(parameter) {",
+    'const options = {webPreferences: {preload: "./safe.js"}, ...null};',
+    "parameter = options;",
+    'arguments[0].webPreferences.preload = "./changed.js";',
+    "new BrowserWindow(options);",
+    "}",
+  ].join("\n"),
   "shadow.cjs": [
     'throw new Error("Static input must never execute");',
     'const {BrowserWindow} = require("electron");',
@@ -227,8 +243,8 @@ cliTest(
       mcpEvidence.normalized_result,
     );
     expect(result.summary).toMatchObject({
-      browser_windows: 12,
-      preload_entrypoints: 6,
+      browser_windows: 15,
+      preload_entrypoints: 7,
     });
     const windows = result.graph.nodes.filter(
       (node) => node.kind === "browser-window",
@@ -236,6 +252,8 @@ cliTest(
     for (const source of [
       "ambient-const.cts",
       "ambient-let.cts",
+      "ambient-import.cts",
+      "ambient-export.cts",
       "shadow.cjs",
     ]) {
       const window = windows.find(
@@ -284,7 +302,7 @@ cliTest(
         edge.evidence.extractor.operation ===
         "associate-browser-window-preload",
     );
-    expect(associations).toHaveLength(6);
+    expect(associations).toHaveLength(7);
     expect(
       associations.some((edge) =>
         windows

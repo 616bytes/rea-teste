@@ -9,6 +9,7 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { hasProvenJavaScriptModuleContext } from "./javascriptSourceParser.js";
 
 interface BindingProofExposure {
   readonly lexicalEval: boolean;
@@ -86,7 +87,7 @@ const sourceBindingProofExposure = (
     enter(node, parent) {
       callableStack.enter(node, parent);
       if (
-        state.program.sourceType === "script" &&
+        !hasProvenJavaScriptModuleContext(state.program) &&
         t.isThisExpression(node) &&
         mayExposeGlobalThis(node, state)
       )
@@ -102,7 +103,7 @@ const sourceBindingProofExposure = (
       if (GLOBAL_OBJECT_NAMES.has(node.name)) {
         const lookup = semanticBindingLookupAt(state, node, node.name);
         if (
-          state.program.sourceType === "script" &&
+          !hasProvenJavaScriptModuleContext(state.program) &&
           // A `with` lookup may still select the ambient global object.
           (lookup.kind !== "binding" ||
             lookup.binding.runtimeDeclarations.length === 0 ||
@@ -142,7 +143,7 @@ const mappedArgumentsScope = (
   if (scopeId === undefined) {
     scopeId =
       (t.isProgram(executionOwner)
-        ? executionOwner.sourceType === "script"
+        ? !hasProvenJavaScriptModuleContext(executionOwner)
         : runtimeFunctionParameters(executionOwner).every((parameter) =>
             t.isIdentifier(parameter),
           )) && !isStrictContext(executionOwner, state)
@@ -205,7 +206,7 @@ const isStrictContext = (
   while (current !== undefined) {
     if (
       t.isClass(current) ||
-      (t.isProgram(current) && current.sourceType === "module") ||
+      (t.isProgram(current) && hasProvenJavaScriptModuleContext(current)) ||
       (t.isProgram(current) &&
         current.directives.some(({ value }) => value.value === "use strict")) ||
       (t.isFunction(current) &&

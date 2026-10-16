@@ -1,7 +1,62 @@
 import { parse, type ParserOptions, type ParserPlugin } from "@babel/parser";
+import * as t from "@babel/types";
+import {
+  hasOnlyInlineTypeExportSpecifiers,
+  hasOnlyInlineTypeImportSpecifiers,
+  isTypeOnlyExportDeclaration,
+  isTypeOnlyImportDeclaration,
+} from "./javascriptModuleDeclaration.js";
 
 /** Babel AST produced by REA's inert JavaScript parser boundary. */
 export type ParsedJavaScriptSource = ReturnType<typeof parse>;
+
+// Babel's module classification includes erased TypeScript syntax. Keep the
+// runtime proof separate, including explicit filename mode, for every parser entry.
+const runtimeModuleByProgram = new WeakMap<t.Program, boolean>();
+
+/** External/synthetic ASTs without parser-owned mode facts do not prove ESM isolation. */
+export const hasProvenJavaScriptModuleContext = (program: t.Program): boolean =>
+  runtimeModuleByProgram.get(program) === true;
+
+const hasRuntimeModuleDeclaration = (program: t.Program): boolean =>
+  program.body.some((node) => {
+    if (t.isImportDeclaration(node))
+      return (
+        !isTypeOnlyImportDeclaration(node) &&
+        !hasOnlyInlineTypeImportSpecifiers(node)
+      );
+    if (t.isExportNamedDeclaration(node) || t.isExportAllDeclaration(node))
+      return (
+        !isTypeOnlyExportDeclaration(node) &&
+        (!t.isExportNamedDeclaration(node) ||
+          (!hasOnlyInlineTypeExportSpecifiers(node) &&
+            !(
+              node.declaration != null &&
+              "declare" in node.declaration &&
+              node.declaration.declare === true
+            )))
+      );
+    return (
+      t.isExportDefaultDeclaration(node) &&
+      !t.isTSInterfaceDeclaration(node.declaration)
+    );
+  });
+
+const parseWithRuntimeContext = (
+  source: string,
+  sourcePath: string | undefined,
+  options: ParserOptions,
+): ParsedJavaScriptSource => {
+  const file = parse(source, options);
+  runtimeModuleByProgram.set(
+    file.program,
+    isExplicitModuleSourcePath(sourcePath) ||
+      (!/\.c[jt]s$/iu.test(sourcePath ?? "") &&
+        file.program.sourceType === "module" &&
+        hasRuntimeModuleDeclaration(file.program)),
+  );
+  return file;
+};
 
 /**
  * Babel plugins for one source path. Single owner for TypeScript/JSX
@@ -82,7 +137,7 @@ export const parseRecoveredJavaScript = (
       delete normalizedOptions.allowNewTargetOutsideFunction;
     }
     return {
-      file: parse(source, {
+      file: parseWithRuntimeContext(source, sourcePath, {
         ...normalizedOptions,
         sourceType,
         errorRecovery: true,
@@ -90,14 +145,14 @@ export const parseRecoveredJavaScript = (
       moduleOnlyErrors: [],
     };
   }
-  const file = parse(source, {
+  const file = parseWithRuntimeContext(source, sourcePath, {
     ...options,
     sourceType: "unambiguous",
     errorRecovery: true,
   });
   if (file.program.sourceType !== "script" || file.errors.length === 0)
     return { file, moduleOnlyErrors: [] };
-  const script = parse(source, {
+  const script = parseWithRuntimeContext(source, sourcePath, {
     ...options,
     sourceType: "script",
     errorRecovery: true,
@@ -124,7 +179,7 @@ export const parseJavaScriptSource = (
       attachComment: false,
       plugins: parserPluginsForPath(sourcePath),
     };
-    const file = parse(source, {
+    const file = parseWithRuntimeContext(source, sourcePath, {
       ...options,
       // Inert artifact analysis retains module declarations even in .cjs assets.
       // Infer their syntax here; reference imports keep filename-mode diagnostics.
@@ -137,7 +192,10 @@ export const parseJavaScriptSource = (
     return commonjs &&
       file.program.sourceType === "script" &&
       file.errors.length > 0
-      ? parse(source, { ...options, sourceType: "commonjs" })
+      ? parseWithRuntimeContext(source, sourcePath, {
+          ...options,
+          sourceType: "commonjs",
+        })
       : file;
   } catch (cause: unknown) {
     // Unparseable source is represented by the null return.

@@ -81,7 +81,7 @@ export interface JavaScriptSemanticBindingState {
   readonly memberWrites: JavaScriptSemanticMemberEffect[];
   readonly escapedPaths: JavaScriptSemanticMemberEffect[];
   readonly definitions: JavaScriptSemanticDefinition[];
-  /** Runtime declarations alone can prove shadowing; erased source definitions remain above. */
+  /** Established runtime declarations in this indexed scope can prove shadowing; source definitions remain above. */
   readonly runtimeDeclarations: {
     readonly kind: JavaScriptSemanticDefinition["kind"];
     readonly declarationKind?:

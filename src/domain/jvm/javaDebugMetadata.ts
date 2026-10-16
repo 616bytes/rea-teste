@@ -139,13 +139,15 @@ const collectAttributes = (
 /**
  * Decode a fixed-stride table, merging every occurrence of a repeatable
  * attribute into one table. Reads up to each occurrence's self-declared count,
- * stopping early if its buffer runs short; a short read or trailing bytes mark
- * the whole table `malformed` while keeping every entry decoded before it.
+ * stopping early if its buffer runs short; a short read, trailing bytes, or an
+ * entry that violates its attribute's constraints (`valid`) marks the whole
+ * table `malformed` while keeping every entry decoded.
  */
 const decodeTable = <T>(
   infos: readonly Uint8Array[],
   stride: number,
   decodeEntry: (cursor: ByteCursor) => T,
+  valid: (entry: T) => boolean = () => true,
 ): DebugTable<T> => {
   if (infos.length === 0)
     return { presence: "absent", declaredCount: 0, entries: [] };
@@ -166,7 +168,9 @@ const decodeTable = <T>(
         short = true;
         break;
       }
-      entries.push(decodeEntry(cursor));
+      const entry = decodeEntry(cursor);
+      if (!valid(entry)) malformed = true;
+      entries.push(entry);
     }
     // A short read, or trailing bytes past the declared entries, is malformed
     // rather than silently ignored (JVMS fixes attribute_length exactly).
@@ -205,46 +209,68 @@ const decodeLocalVariableTable = (
   pool: readonly ConstantPoolEntry[],
   codeLength: number,
 ): DebugTable<LocalVariableEntry> =>
-  decodeTable(infos, 10, (cursor) => {
-    const startPc = u2(cursor);
-    const length = u2(cursor);
-    const nameIndex = u2(cursor);
-    const descriptorIndex = u2(cursor);
-    const slot = u2(cursor);
-    return {
-      startPc,
-      length,
-      nameIndex,
-      name: resolveConstantUtf8(pool, nameIndex),
-      descriptorIndex,
-      descriptor: resolveConstantUtf8(pool, descriptorIndex),
-      slot,
-      outOfRange: scopeOutOfRange(startPc, length, codeLength),
-    };
-  });
+  decodeTable(
+    infos,
+    10,
+    (cursor) => {
+      const startPc = u2(cursor);
+      const length = u2(cursor);
+      const nameIndex = u2(cursor);
+      const descriptorIndex = u2(cursor);
+      const slot = u2(cursor);
+      return {
+        startPc,
+        length,
+        nameIndex,
+        name: resolveConstantUtf8(pool, nameIndex),
+        descriptorIndex,
+        descriptor: resolveConstantUtf8(pool, descriptorIndex),
+        slot,
+        outOfRange: scopeOutOfRange(startPc, length, codeLength),
+      };
+    },
+    namesResolve,
+  );
+
+/**
+ * JVMS §4.7.13–14: name_index and descriptor/signature_index must each name a
+ * CONSTANT_Utf8 entry. An index that does not (0, out of range, or another
+ * constant kind) is kept as `null` and makes the table malformed.
+ */
+const namesResolve = (entry: {
+  readonly name: string | null;
+  readonly descriptor?: string | null;
+  readonly signature?: string | null;
+}): boolean =>
+  entry.name !== null && (entry.descriptor ?? entry.signature ?? null) !== null;
 
 const decodeLocalVariableTypeTable = (
   infos: readonly Uint8Array[],
   pool: readonly ConstantPoolEntry[],
   codeLength: number,
 ): DebugTable<LocalVariableTypeEntry> =>
-  decodeTable(infos, 10, (cursor) => {
-    const startPc = u2(cursor);
-    const length = u2(cursor);
-    const nameIndex = u2(cursor);
-    const signatureIndex = u2(cursor);
-    const slot = u2(cursor);
-    return {
-      startPc,
-      length,
-      nameIndex,
-      name: resolveConstantUtf8(pool, nameIndex),
-      signatureIndex,
-      signature: resolveConstantUtf8(pool, signatureIndex),
-      slot,
-      outOfRange: scopeOutOfRange(startPc, length, codeLength),
-    };
-  });
+  decodeTable(
+    infos,
+    10,
+    (cursor) => {
+      const startPc = u2(cursor);
+      const length = u2(cursor);
+      const nameIndex = u2(cursor);
+      const signatureIndex = u2(cursor);
+      const slot = u2(cursor);
+      return {
+        startPc,
+        length,
+        nameIndex,
+        name: resolveConstantUtf8(pool, nameIndex),
+        signatureIndex,
+        signature: resolveConstantUtf8(pool, signatureIndex),
+        slot,
+        outOfRange: scopeOutOfRange(startPc, length, codeLength),
+      };
+    },
+    namesResolve,
+  );
 
 /** Advance past the fixed Code header and exception table to its sub-attributes, keeping max_locals and code_length. */
 const seekCodeSubAttributes = (
@@ -502,15 +528,17 @@ export const decodeClassDebugMetadata = (
   if (sourceFileInfo !== null) {
     const cursor = new ByteCursor(sourceFileInfo);
     const indexResult = cursor.u2();
-    // SourceFile_attribute is a single u2 index (JVMS §4.7.10): a length other
-    // than exactly 2 bytes is malformed, not a usable name.
-    sourceFile =
+    // SourceFile_attribute is a single u2 index that must name a
+    // CONSTANT_Utf8 entry (JVMS §4.7.10): any other length or target is
+    // malformed, not a present attribute with an unknown name.
+    const name =
       indexResult.ok && sourceFileInfo.length === 2
-        ? {
-            presence: "present",
-            name: resolveConstantUtf8(cls.constantPool, indexResult.value),
-          }
-        : { presence: "malformed", name: null };
+        ? resolveConstantUtf8(cls.constantPool, indexResult.value)
+        : null;
+    sourceFile =
+      name === null
+        ? { presence: "malformed", name: null }
+        : { presence: "present", name };
   }
 
   const sdeInfo = findAttribute(cls.attributes, "SourceDebugExtension");

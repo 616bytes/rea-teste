@@ -498,3 +498,34 @@ describe("decodeClassDebugMetadata — readiness without locals", () => {
     expect(decodeOnly(new Blob().u2(0)).methods[0]!.maxLocals).toBeNull();
   });
 });
+
+describe("decodeClassDebugMetadata — constant references", () => {
+  const lvtWith = (nameIndex: number, descriptorIndex: number): number[] =>
+    new Blob().u2(1).u2(0).u2(1).u2(nameIndex).u2(descriptorIndex).u2(0).parts;
+
+  it("marks a SourceFile naming a non-Utf8 constant malformed", () => {
+    // Pool index 11 is a CONSTANT_Class, not a CONSTANT_Utf8.
+    const metadata = decodeOnly(
+      new Blob().u2(0),
+      new Blob().u2(1).attr(8, [0, 11]),
+    );
+    expect(metadata.sourceFile).toEqual({ presence: "malformed", name: null });
+  });
+
+  it.each([
+    ["a non-Utf8 name", 11, 7],
+    ["a zero descriptor index", 6, 0],
+  ])(
+    "marks a LocalVariableTable entry with %s malformed and keeps it",
+    (_case, nameIndex, descriptorIndex) => {
+      const code = codeAttrInfo(
+        subAttrs(1, new Blob().attr(5, lvtWith(nameIndex, descriptorIndex)))
+          .parts,
+      );
+      const method = decodeOnly(new Blob().u2(1).attr(3, code)).methods[0]!;
+      expect(method.localVariables.presence).toBe("malformed");
+      expect(method.localVariables.entries).toHaveLength(1);
+      expect(method.state).toBe("malformed");
+    },
+  );
+});

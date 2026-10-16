@@ -85,6 +85,11 @@ is reported as `absent` but does not make the method `partial`. When
 also mean the method has only compiler-synthetic locals, which `javac -g` does
 not name.
 
+A `SourceFile`, or a local-variable entry, whose constant-pool index does not
+name a `CONSTANT_Utf8` entry violates JVMS §4.7.10/§4.7.13–14: the attribute is
+reported `malformed`, and the entry is kept with a `null` name, descriptor, or
+signature.
+
 A table whose declared entry count exceeds its bytes is reported `malformed` with
 the entries recovered before the short read. When a later sibling inside the
 same `Code` attribute is malformed, tables framed before it are kept and tables

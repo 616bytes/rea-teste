@@ -36,6 +36,8 @@ result returns artifact path/digest/length, class identity, the bound debug
 facts, examined-vs-reported `coverage`, and `limitations`. Unresolved values are
 explicit — a name whose constant-pool index does not resolve is `null`, and a
 table's `presence` is `absent | present | malformed` — never guessed or omitted.
+An index that the JVMS requires to name a `CONSTANT_Utf8` entry and does not
+makes its `SourceFile` or local-variable table `malformed`.
 Supplied source bytes are never claimed to match a `SourceFile` name.
 
 ## Authority and overlap

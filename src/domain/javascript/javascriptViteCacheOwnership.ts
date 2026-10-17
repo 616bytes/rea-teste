@@ -239,9 +239,11 @@ function* indexCallExposuresSteps(
         : intrinsicValuePositions(path);
     // An admitted helper reads its proven parameters by value. Supplied table
     // and mapper arguments must not register as ordinary call escapes.
-    const readOnly = new Set(context.identities.readOnlyHelperArguments(call));
+    const readOnly = new Set(
+      yield* context.identities.readOnlyHelperArgumentsSteps(call),
+    );
     // An unproven indexes protocol runs the mapped reads through arbitrary
-    // code. Expose the selected table so later reads cannot trust it.
+    // code. Expose its mapped values through the selected-table family.
     const mappedTable = context.identities.helperMappedTableEscape(call);
     if (mappedTable !== undefined)
       exposures.push({ node: call, value: mappedTable });

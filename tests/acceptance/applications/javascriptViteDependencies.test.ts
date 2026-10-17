@@ -429,6 +429,27 @@ const allScenarios: readonly ViteScenario[] = [
     resolved: [],
     unknown: true,
   },
+  ...[
+    ["uninitialized", "let table;"],
+    ["conditional", "const table = runtimeFlag ? [null, {}] : undefined;"],
+    ["cyclic", "var table = other, other = table;"],
+  ].map(([name, declaration]): ViteScenario => ({
+    file: `custom-index-map-${name}-table.js`,
+    callSources: [
+      '__vite__mapDeps({map(read) { read(1).f[0] = "./last.js"; return []; }}, void 0, table)',
+      defaultCall,
+    ],
+    callOccurrences: [0, 1],
+    source: mapDependencies('["./first.js", m]', "[0]").replace(
+      defaultCall + ";",
+      declaration +
+        '\n__vite__mapDeps({map(read) { read(1).f[0] = "./last.js"; return []; }}, void 0, table); ' +
+        defaultCall +
+        ";",
+    ),
+    resolved: [],
+    unknown: true,
+  })),
   {
     file: "custom-index-map-independent-table.js",
     callSources: [

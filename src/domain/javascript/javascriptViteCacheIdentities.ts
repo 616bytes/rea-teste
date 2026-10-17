@@ -131,20 +131,22 @@ export class ViteCacheIdentities {
   }
 
   /** Parsed call facts distinguish read-only parameters from opaque calls. */
-  readOnlyHelperArguments(
+  *readOnlyHelperArgumentsSteps(
     call: t.CallExpression | t.OptionalCallExpression,
-  ): readonly t.Node[] {
+  ): Generator<void, readonly t.Node[]> {
     const proof = this.helperArgumentReads.get(call);
     if (
       proof === undefined ||
-      !proof.freshIndexes ||
       this.read(call.callee)?.allocation?.kind !== "helper"
     )
       return [];
     const reads: t.Node[] = [];
     // A mapped argument is read by value only when its proven container holds
     // plain data slots; accessors and spreads can hide unexamined writes.
-    if (proof.table !== undefined && this.plainDataSlots(proof.table))
+    if (
+      proof.table !== undefined &&
+      (yield* this.plainDataSlotsSteps(proof.table))
+    )
       reads.push(proof.table);
     const tableAllocation = proof.mapperTable?.fact?.allocation;
     const provided = proof.providedTable;
@@ -154,107 +156,48 @@ export class ViteCacheIdentities {
         providedDefaultInput(provided, provided.source.fact)) ||
         (tableAllocation != null &&
           tableAllocation.kind !== "foreign" &&
-          this.plainDataSlots(proof.mapper)))
+          (yield* this.plainDataSlotsSteps(proof.mapper))))
     )
       reads.push(proof.mapper);
     return reads;
   }
 
-  /**
-   * An unproven indexes protocol runs the mapped reads through arbitrary code.
-   * Returns the helper's cache table node to expose for such a call when the
-   * selected table can include the cache: a supplied table argument selects
-   * that table alone, and a supplied mapper keeps the cache out while its f
-   * slot is proven present and truthy.
-   */
+  /** Expose values reachable through the already selected table's mapping. */
   helperMappedTableEscape(
     call: t.CallExpression | t.OptionalCallExpression,
   ): t.Node | undefined {
-    const indexes = call.arguments[0];
-    const selection =
-      indexes === undefined
-        ? undefined
-        : unwrapJavaScriptExpression(indexes).node;
-    if (t.isArrayExpression(selection)) return undefined;
-    const owner = this.read(call.callee)?.owner;
-    if (typeof owner !== "string") return undefined;
-    const usesDefault = (node: t.Node | undefined): boolean =>
-      node === undefined || isJavaScriptViteDefaultUndefined(node, this.state);
-    const tableArgument = call.arguments[2];
-    if (tableArgument !== undefined && !usesDefault(tableArgument))
-      return undefined;
-    const mapperArgument = call.arguments[1];
+    const proof = this.helperArgumentReads.get(call);
     if (
-      mapperArgument !== undefined &&
-      !usesDefault(mapperArgument) &&
-      this.provesMapperSelectedTable(
-        unwrapJavaScriptExpression(mapperArgument).node,
-      )
+      proof === undefined ||
+      proof.freshIndexes ||
+      this.read(call.callee)?.allocation?.kind !== "helper"
     )
       return undefined;
-    return this.allocations.get(owner)?.seed?.allocation?.node;
+    // The result's family already joins selected slots and default choices.
+    // A custom indexes protocol can pass any of these values to arbitrary code.
+    return call;
   }
 
   /** Only array or plain data object literals keep mapped reads free of getters. */
-  private plainDataSlots(argument: t.Node | undefined): boolean {
+  private *plainDataSlotsSteps(
+    argument: t.Node | undefined,
+  ): Generator<void, boolean> {
     if (argument === undefined) return false;
     const node = this.read(argument)?.allocation?.node;
     if (t.isArrayExpression(node)) return true;
     if (!t.isObjectExpression(node)) return false;
-    return node.properties.every(
-      (property) =>
-        t.isObjectProperty(property) &&
-        !property.computed &&
-        !(
-          t.isIdentifier(property.key, { name: "__proto__" }) ||
-          t.isStringLiteral(property.key, { value: "__proto__" })
-        ),
-    );
-  }
-
-  /**
-   * Whether a supplied mapper keeps mapped reads on its own table: its f slot
-   * must be proven present and truthy, and no later spread may redefine it.
-   */
-  private provesMapperSelectedTable(mapper: t.Node): boolean {
-    if (!t.isObjectExpression(mapper)) return false;
-    let found = false;
-    for (const property of mapper.properties) {
-      if (t.isSpreadElement(property)) {
-        if (found) return false;
-        continue;
-      }
+    let examined = 0;
+    for (const property of node.properties) {
+      if (examined++ % 1024 === 0) yield;
       if (
         !t.isObjectProperty(property) ||
         property.computed ||
-        property.shorthand ||
-        !(
-          t.isIdentifier(property.key, { name: "f" }) ||
-          t.isStringLiteral(property.key, { value: "f" })
-        )
+        t.isIdentifier(property.key, { name: "__proto__" }) ||
+        t.isStringLiteral(property.key, { value: "__proto__" })
       )
-        continue;
-      // Duplicate keys resolve to the last value.
-      if (found) return false;
-      found = this.provesTruthySlot(property.value);
+        return false;
     }
-    return found;
-  }
-
-  /** Whether a property value is proven defined with a truthy plain value. */
-  private provesTruthySlot(node: t.Node): boolean {
-    return (
-      t.isArrayExpression(node) ||
-      t.isObjectExpression(node) ||
-      t.isFunction(node) ||
-      (t.isLiteral(node) &&
-        ((t.isBooleanLiteral(node) && node.value) ||
-          (t.isStringLiteral(node) && node.value.length > 0) ||
-          (t.isNumericLiteral(node) &&
-            node.value !== 0 &&
-            !Number.isNaN(node.value)) ||
-          t.isRegExpLiteral(node)))
-    );
+    return true;
   }
 
   /** propagate unexamined exposure through normalized aliases and contained values. */
@@ -671,6 +614,13 @@ export class ViteCacheIdentities {
     if (
       arguments_.slice(0, 3).some((argument) => t.isSpreadElement(argument))
     ) {
+      this.helperArgumentReads.set(call, {
+        freshIndexes,
+        table: undefined,
+        mapper: undefined,
+        providedTable: undefined,
+        mapperTable: undefined,
+      });
       const table = this.vertex({});
       table.seed = UNKNOWN;
       this.connect(table, { kind: "copy-family", source: cache });

@@ -789,10 +789,14 @@ def _within_response_limit(value: Any) -> bool:
                 size += len(current)
             else:
                 # Count UTF-8 bytes without allocating a copy of the whole output.
-                size += sum(
-                    len(current[start:start + 65536].encode("utf-8"))
-                    for start in range(0, len(current), 65536)
-                )
+                try:
+                    size += sum(
+                        len(current[start:start + 65536].encode("utf-8"))
+                        for start in range(0, len(current), 65536)
+                    )
+                except UnicodeEncodeError:
+                    # Unencodable output also needs the signed omission fallback.
+                    return False
             size += current.count('"') + current.count("\\")
             size += sum(5 for character in current if ord(character) < 0x20)
         elif isinstance(current, dict):

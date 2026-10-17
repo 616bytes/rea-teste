@@ -1,6 +1,58 @@
 import { expect, it } from "vitest";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
+const intrinsicReplacementForms = [
+  "Object.defineProperty(Reflect,'set',{value:bound});",
+  "Reflect.defineProperty(Reflect,'set',{value:bound});",
+  "Object.defineProperties(Reflect,{set:{value:bound}});",
+  "Object.assign(Reflect,{set:bound});",
+  "Reflect.set(Reflect,'set',bound);",
+  "Object.defineProperty.call(null,Reflect,'set',{value:bound});",
+  "Object.assign.apply(null,[Reflect,{set:bound}]);",
+  "const descriptor={value:bound}; Object.defineProperty(Reflect,'set',descriptor);",
+  "const properties={set:bound}; Object.assign(Reflect,properties);",
+];
+
+it.each(intrinsicReplacementForms)(
+  "follows native intrinsic replacement values: %s",
+  (replace) => {
+    for (const receiver of ["module", "{}"])
+      expect(
+        analyzeJavaScriptSemantics(`const bound=Reflect.set.bind(null,${receiver});
+          ${replace} Reflect.set('require',replacement);
+          require('fs').readFileSync('kept');`).configurationOperations.map(
+          ({ key }) => key,
+        ),
+      ).toEqual(receiver === "module" ? [] : ["kept"]);
+  },
+);
+
+it.each([
+  "Object.assign(Reflect,{other:bound});",
+  "Object.defineProperties(Reflect,{other:{value:bound}});",
+  "Object.defineProperty(Reflect,'other',{value:bound});",
+  "Reflect.set(Reflect,'set',bound,{});",
+])("keeps native intrinsic replacement slots distinct: %s", (replace) => {
+  expect(
+    analyzeJavaScriptSemantics(`const bound=Reflect.set.bind(null,module);
+      ${replace} Reflect.set({},'require',replacement);
+      require('fs').readFileSync('kept');`).configurationOperations.map(
+      ({ key }) => key,
+    ),
+  ).toEqual(["kept"]);
+});
+
+it.each(intrinsicReplacementForms)(
+  "keeps reads before native intrinsic replacement: %s",
+  (replace) => {
+    expect(
+      analyzeJavaScriptSemantics(`const bound=Reflect.set.bind(null,module);
+        Reflect.set({},'require',replacement); require('fs').readFileSync('kept');
+        ${replace}`).configurationOperations.map(({ key }) => key),
+    ).toEqual(["kept"]);
+  },
+);
+
 it.each([
   "Reflect.set(module);",
   "Reflect.set.call(null,module);",

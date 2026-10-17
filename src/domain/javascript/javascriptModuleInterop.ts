@@ -100,7 +100,13 @@ export const createSemanticModuleInterop = (
   // the exact prefix before any selector so unrelated slots are not rescanned.
   const assignedValues = new Map<
     string,
-    { node: t.AssignmentExpression; path: JavaScriptSemanticPropertyPath }[]
+    {
+      node:
+        | t.AssignmentExpression
+        | t.CallExpression
+        | t.OptionalCallExpression;
+      path: JavaScriptSemanticPropertyPath;
+    }[]
   >();
   const invalidatedBindings = new Map<string, boolean>();
   const invalidatedCalls = new WeakMap<t.Node, boolean>();
@@ -129,8 +135,10 @@ export const createSemanticModuleInterop = (
       node?.start ?? -Infinity,
     );
     if (
-      t.isAssignmentExpression(node) &&
-      ["=", "||=", "&&=", "??="].includes(node.operator) &&
+      ((t.isAssignmentExpression(node) &&
+        ["=", "||=", "&&=", "??="].includes(node.operator)) ||
+        t.isCallExpression(node) ||
+        t.isOptionalCallExpression(node)) &&
       path[0] === "intrinsic"
     ) {
       const selector = path.findIndex(
@@ -267,11 +275,62 @@ export const createSemanticModuleInterop = (
             value.node,
             state,
           ) !== "after"
-        )
-          result.push({
-            node: value.node.right,
-            path: capture.path.slice(value.path.length),
-          });
+        ) {
+          const suffix = capture.path.slice(value.path.length);
+          if (t.isAssignmentExpression(value.node)) {
+            result.push({ node: value.node.right, path: suffix });
+            continue;
+          }
+          // The same invocation owner supplies native arguments for call,
+          // apply and bind. Select only the written slot from copied maps or
+          // descriptors; exposing their other properties invents aliases.
+          const invocation = resolveJavaScriptIntrinsicInvocation(
+            value.node,
+            intrinsicPath,
+            boundIntrinsic,
+            intrinsicReadChanged,
+          );
+          const args = invocation?.arguments;
+          if (
+            invocation?.kind !== "known" ||
+            args === undefined ||
+            args.some(t.isSpreadElement)
+          )
+            continue;
+          const operation = invocation.path.join(".");
+          const key = capture.path[value.path.length - 1]!;
+          if (operation === "intrinsic.Object.assign") {
+            for (const source of args.slice(1))
+              result.push({ node: source, path: [key, ...suffix] });
+          } else if (
+            operation === "intrinsic.Object.defineProperties" &&
+            args[1] !== undefined
+          )
+            result.push({ node: args[1], path: [key, "value", ...suffix] });
+          else if (
+            [
+              "intrinsic.Object.defineProperty",
+              "intrinsic.Reflect.defineProperty",
+            ].includes(operation) &&
+            args[2] !== undefined
+          )
+            result.push({ node: args[2], path: ["value", ...suffix] });
+          else if (
+            operation === "intrinsic.Reflect.set" &&
+            args[2] !== undefined
+          ) {
+            // With an explicit receiver, the target's data slot is not replaced.
+            const receiver =
+              args[3] === undefined ? undefined : intrinsicPath(args[3]);
+            if (
+              args[3] === undefined ||
+              (receiver !== undefined &&
+                JSON.stringify(receiver) ===
+                  JSON.stringify(value.path.slice(0, -1)))
+            )
+              result.push({ node: args[2], path: suffix });
+          }
+        }
       }
     }
     return result;

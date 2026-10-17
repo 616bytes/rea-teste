@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, chmod, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -295,6 +295,91 @@ it("retries a retained input descriptor before admitting the next WABT operation
   } finally {
     fileCloseFailure.selectedPath = "";
     fileCloseFailure.failFirst = false;
+    await provider.close();
+  }
+});
+
+it("attributes selected-file failures to the original argument and index", async () => {
+  const root = await createTestTempDirectory("rea-wabt-selected-input-");
+  const path = join(root, "module.wasm");
+  const bytes = Buffer.from("0061736d01000000", "hex");
+  const glue = join(root, "glue.js");
+  const invalidGlue = join(root, "invalid.js");
+  const missing = join(root, "missing.js");
+  const directory = join(root, "directory");
+  await writeFile(path, bytes);
+  await writeFile(glue, 'fetch("./module.wasm");');
+  await writeFile(invalidGlue, Buffer.from([0xff]));
+  await mkdir(directory);
+  for (const tool of ["wasm-validate", "wasm-objdump", "wasm2wat"])
+    await writeFile(
+      join(root, tool + (process.platform === "win32" ? ".exe" : "")),
+      "source-owned executable seam",
+      { mode: 0o700 },
+    );
+  let runtimePath = "";
+  let probes = 0;
+  const provider = new WabtArtifactProvider(
+    { ...process.env, REA_WABT_BIN_DIRECTORY: root },
+    async (input) => {
+      expect(input.arguments).toEqual(["--version"]);
+      probes += 1;
+      return spawnOwnedProviderProcess({
+        ...input,
+        command: process.execPath,
+        arguments: ["-e", 'process.stdout.write("1.0.42\\n")'],
+        expectedCommand: null,
+      });
+    },
+    async () => {
+      const runtime = await PrivateRuntimeRoot.create({
+        prefix: "rea-wabt-selected-",
+      });
+      runtimePath = runtime.path;
+      return runtime;
+    },
+  );
+  try {
+    for (const [selected, gluePaths, candidatePaths, issuePath, message] of [
+      [path, [missing], [], ["glue_paths", 0], "ENOENT"],
+      [
+        path,
+        [],
+        [path, path, directory],
+        ["candidate_paths", 2],
+        "regular file",
+      ],
+      [path, [glue, invalidGlue], [], ["glue_paths", 1], "utf-8"],
+      [missing, [], [], ["path"], "ENOENT"],
+    ] as const) {
+      probes = 0;
+      const result = await provider.inspect({
+        path: selected,
+        glue_paths: [...gluePaths],
+        candidate_paths: [...candidatePaths],
+      });
+      if (result.ok) throw new Error("Expected selected-file rejection");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: issuePath,
+              reason: "invalid_value",
+              message: expect.stringContaining(message),
+            },
+          ],
+        },
+      });
+      expect(probes).toBe(3);
+      await expect(access(runtimePath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }
+    expect(await readFile(path)).toEqual(bytes);
+    expect(await readFile(glue, "utf8")).toBe('fetch("./module.wasm");');
+    expect(await readFile(invalidGlue)).toEqual(Buffer.from([0xff]));
+  } finally {
     await provider.close();
   }
 });

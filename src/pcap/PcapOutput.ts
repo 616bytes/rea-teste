@@ -27,6 +27,25 @@ export interface CapinfosMetadata {
   readonly sha256: string | null;
 }
 
+/**
+ * capinfos -S prints each packet timestamp as seconds since the Unix epoch
+ * with the capture's own fractional precision. Its default spelling is a
+ * zone-less local wall-clock time, so one capture reads differently on hosts
+ * in different time zones. Project the exact value to an RFC 3339 UTC
+ * instant, keeping every fractional digit. "n/a" (an empty capture), a
+ * wall-clock spelling and a pre-epoch or unrepresentable value stay unknown.
+ */
+const captureInstant = (value: string | undefined): string | null => {
+  const match = /^(\d+)(?:\.(\d+))?$/u.exec(value ?? "");
+  if (match === null) return null;
+  const seconds = Number(match[1]);
+  if (!Number.isSafeInteger(seconds)) return null;
+  const date = new Date(seconds * 1000);
+  if (Number.isNaN(date.getTime()) || date.getUTCFullYear() > 9999) return null;
+  const fraction = match[2] === undefined ? "" : `.${match[2]}`;
+  return `${date.toISOString().slice(0, 19)}${fraction}Z`;
+};
+
 /** capinfos -M with a C locale provides exact numbers instead of "20 k". */
 export const parseCapinfosOutput = (stdout: string): CapinfosMetadata => {
   const lines = new Map<string, string>();
@@ -66,12 +85,12 @@ export const parseCapinfosOutput = (stdout: string): CapinfosMetadata => {
     fileType,
     encapsulation,
     packetCount,
-    captureStart:
-      lines.get("Earliest packet time") ??
-      lines.get("First packet time") ??
-      null,
-    captureEnd:
-      lines.get("Latest packet time") ?? lines.get("Last packet time") ?? null,
+    captureStart: captureInstant(
+      lines.get("Earliest packet time") ?? lines.get("First packet time"),
+    ),
+    captureEnd: captureInstant(
+      lines.get("Latest packet time") ?? lines.get("Last packet time"),
+    ),
     captureDurationSeconds: duration === null ? null : Number(duration[1]),
     snapshotLength:
       snapshotLength !== null &&

@@ -99,7 +99,8 @@ const procedureCandidates = async (
   session: BinarySessionPort | undefined,
   document: string | undefined,
 ): Promise<readonly string[]> => {
-  const byAddress = new Map<string, string>();
+  const addresses = new Set<string>();
+  const addressesByName = new Map<string, Set<string>>();
   const input =
     document === undefined || document.length === 0 ? {} : { document };
   const result = await completionInventoryLookup(
@@ -114,20 +115,17 @@ const procedureCandidates = async (
       .array(z.object({ address: z.string(), value: z.string() }))
       .safeParse(result.value.result);
     if (parsed.success)
-      for (const item of parsed.data)
-        if (!byAddress.has(item.address))
-          byAddress.set(item.address, item.value);
+      for (const { address, value: name } of parsed.data) {
+        addresses.add(address);
+        const namedAddresses = addressesByName.get(name) ?? new Set<string>();
+        namedAddresses.add(address);
+        addressesByName.set(name, namedAddresses);
+      }
   }
 
-  const addressesByName = new Map<string, Set<string>>();
-  for (const [address, name] of byAddress) {
-    const addresses = addressesByName.get(name) ?? new Set<string>();
-    addresses.add(address);
-    addressesByName.set(name, addresses);
-  }
-  const candidates = [...byAddress.keys()];
-  for (const [name, addresses] of addressesByName)
-    if (addresses.size === 1 && name.length > 0) candidates.push(name);
+  const candidates = [...addresses];
+  for (const [name, namedAddresses] of addressesByName)
+    if (namedAddresses.size === 1 && name.length > 0) candidates.push(name);
   return candidates;
 };
 

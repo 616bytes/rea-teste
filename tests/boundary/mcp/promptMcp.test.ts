@@ -54,6 +54,58 @@ afterEach(async () => {
   );
 });
 
+it.each([false, true])(
+  "retains same-address procedure aliases (reversed: %s)",
+  async (reversed) => {
+    const rows = [
+      { address: "0x1000", value: "foo" },
+      { address: "0x1000", value: "bar" },
+      { address: "0x1000", value: "ambiguous" },
+      { address: "0x2000", value: "ambiguous" },
+      { address: "0x1000", value: "bar" },
+    ];
+    if (reversed) rows.reverse();
+    const client = await connect(
+      createServer({
+        kind: "fixed",
+        analysis: {
+          execute: async () =>
+            resultOk(
+              createAnalysisExecution(rows, {
+                id: "fixture",
+                name: "Fixture",
+                version: "1",
+              }),
+            ),
+        },
+      }),
+    );
+    const inventory = await client.callTool({
+      name: "list_procedures",
+      arguments: {},
+    });
+    expect(inventory.isError).not.toBe(true);
+    expect(inventory.structuredContent).toMatchObject({
+      normalized_result: rows,
+    });
+    for (const [value, values] of [
+      ["", ["0x1000", "0x2000", "bar", "foo"]],
+      ["BAR", ["bar"]],
+      ["foo", ["foo"]],
+      ["ambiguous", []],
+    ] as const) {
+      expect(
+        await client.complete({
+          ref: { type: "ref/prompt", name: "investigate_feature" },
+          argument: { name: "procedure", value },
+        }),
+      ).toEqual({
+        completion: { values, total: values.length, hasMore: false },
+      });
+    }
+  },
+);
+
 describe("guided prompts over MCP", () => {
   it("lists and renders all workflows without changing the tool inventory", async () => {
     const session = fixtureSession();

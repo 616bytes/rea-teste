@@ -1590,6 +1590,67 @@ it("retains exported constants and captures through CLI and MCP comparison", asy
   expect(await compareThroughStdioMcp(input)).toMatchObject(expected);
 }, 20_000);
 
+it.each([false, true])(
+  "preserves switch-case initialization order through CLI and MCP (skipped: %s)",
+  async (skipped) => {
+    const root = await createTestTempDirectory("rea-switch-lexical-read-cli-");
+    const roots = await writeComparisonSources(root, [
+      `export default function config(kind = "${skipped ? "y" : "x"}") {
+        switch (kind) {
+          case "x": const enabled = true;
+          ${skipped ? 'break; case "y":' : ""}
+            return { type: "config", enabled: true ? enabled : true };
+        }
+      }`,
+      `export default () => ({ type: "config", enabled: true });`,
+    ]);
+    if (skipped)
+      await expect(
+        runtimeDefaultExport(join(roots[0]!, "parser.mjs")),
+      ).rejects.toThrow("Cannot access 'enabled' before initialization");
+    else
+      expect(await runtimeDefaultExport(join(roots[0]!, "parser.mjs"))).toEqual(
+        { type: "config", enabled: true },
+      );
+    const [left, right] = await Promise.all(
+      roots.map((path) =>
+        runCli(["analyze-javascript-application", path, "--json"]),
+      ),
+    );
+    const input = {
+      left,
+      right,
+      left_module_path: "parser.mjs",
+      left_export_name: "default",
+      right_module_path: "parser.mjs",
+      right_export_name: "default",
+    };
+    const expected = {
+      normalized_result: {
+        summary: { added: 0, removed: 0, changed: 0, unknown: skipped ? 1 : 0 },
+        changes: skipped
+          ? [
+              expect.objectContaining({
+                path: "/enabled",
+                status: "unknown",
+                left: expect.objectContaining({ availability: "unknown" }),
+              }),
+            ]
+          : [],
+      },
+    };
+    expect(
+      await runCliWithRequestFile(
+        root,
+        "compare-javascript-export-shapes",
+        input,
+      ),
+    ).toMatchObject(expected);
+    expect(await compareThroughStdioMcp(input)).toMatchObject(expected);
+  },
+  20_000,
+);
+
 it.each(["const", "let"])(
   "preserves loop-body %s TDZ uncertainty and valid deferred captures through CLI and MCP",
   async (kind) => {

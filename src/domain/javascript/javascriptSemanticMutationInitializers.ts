@@ -100,8 +100,16 @@ const statementPosition = (
       ? enclosing
       : declaration;
   const parent = parents.get(owner);
-  if (!t.isProgram(parent) && !t.isBlockStatement(parent)) return null;
-  const index = parent.body.indexOf(owner);
+  // Separate case sequences prevent proving initialization through a skipped case.
+  const body = t.isSwitchCase(parent)
+    ? parent.consequent
+    : t.isProgram(parent) ||
+        t.isBlockStatement(parent) ||
+        t.isStaticBlock(parent)
+      ? parent.body
+      : undefined;
+  if (body === undefined) return null;
+  const index = body.indexOf(owner);
   const declarations = t.isVariableDeclaration(declaration)
     ? declaration.declarations
     : t.isForStatement(declaration) && t.isVariableDeclaration(declaration.init)
@@ -110,7 +118,7 @@ const statementPosition = (
   return index < 0
     ? null
     : {
-        body: parent.body,
+        body,
         index,
         declaratorIndex:
           declarations !== undefined && declarator !== undefined

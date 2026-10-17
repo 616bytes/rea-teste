@@ -327,6 +327,44 @@ describe("logical primitive unions", () => {
   });
 });
 
+describe("straight-line statement containers", () => {
+  it.each(["const", "let"])(
+    "orders %s reads within a switch case or static block",
+    (kind) => {
+      for (const container of [
+        (body: string) => `switch (kind) { case "x": ${body} }`,
+        (body: string) => `class Config { static { ${body} } }`,
+      ]) {
+        const initialized = analyzeJavaScriptSemantics(
+          container(
+            `${kind} enabled = true; const saved = true ? enabled : true;`,
+          ),
+        );
+        expect(
+          initialized.bindings.find(({ name }) => name === "saved")?.value,
+        ).toEqual({ status: "literal", value: true });
+        const future = analyzeJavaScriptSemantics(
+          container(
+            `const saved = true ? enabled : true; ${kind} enabled = true;`,
+          ),
+        );
+        expect(
+          future.bindings.find(({ name }) => name === "saved")?.value.status,
+        ).toBe("unknown");
+      }
+      const skipped = analyzeJavaScriptSemantics(`
+      switch (kind) {
+        case "x": ${kind} enabled = true; break;
+        case "y": const saved = true ? enabled : true;
+      }
+    `);
+      expect(
+        skipped.bindings.find(({ name }) => name === "saved")?.value.status,
+      ).toBe("unknown");
+    },
+  );
+});
+
 describe("exported lexical branch operands", () => {
   it.each(["const", "let"])(
     "orders exported %s declarations and their declarators",

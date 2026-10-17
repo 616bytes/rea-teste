@@ -1,6 +1,6 @@
+import { regularFileCancellation } from "../../filesystem/OwnedRegularFile.js";
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, mkdir, open, opendir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, opendir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { TextDecoder } from "node:util";
 import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
@@ -10,6 +10,11 @@ import {
   AnalysisOutputError,
   AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
+import {
+  NonRegularFileReadError,
+  openRegularFile,
+  RegularFileAdmissionFailure,
+} from "../../filesystem/RegularFile.js";
 import { RECOVERY_LIMITS } from "./WakaruRelease.js";
 
 const OPERATION = "recover_javascript_sources";
@@ -25,11 +30,30 @@ const scanRecoveryFile = async (
   consume: (chunk: Buffer) => void,
   signal?: AbortSignal,
 ) => {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  // A FIFO without a writer must be rejected before it can block the open.
+  const handle = await openRegularFile(path, {
+    symlinks: "reject",
+    signal,
+  }).catch((cause: unknown) => {
+    // A descriptor whose close failed stays owned by its error, even when
+    // cancellation was also requested.
+    if (cause instanceof RegularFileAdmissionFailure) throw cause;
+    const cancellation = regularFileCancellation(cause);
+    if (cancellation !== undefined)
+      throw new AnalysisCancelledError(OPERATION, {
+        cause: cancellation.reason,
+      });
+    if (cause instanceof NonRegularFileReadError)
+      throw new AnalysisOutputError(
+        OPERATION,
+        `Expected a regular file no larger than ${String(maximum)} bytes: ${path}`,
+      );
+    throw cause;
+  });
   const hash = createHash("sha256");
   try {
     const before = await handle.stat();
-    if (!before.isFile() || before.size > maximum)
+    if (before.size > maximum)
       throw new AnalysisOutputError(
         OPERATION,
         `Expected a regular file no larger than ${String(maximum)} bytes: ${path}`,

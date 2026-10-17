@@ -1,3 +1,5 @@
+import { ok as javaProbeOk } from "../domain/result.js";
+import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
 import { describe, expect, it } from "vitest";
 
 import { createTestBinarySession } from "../../tests/fixtures/binarySession.js";
@@ -43,15 +45,16 @@ const fixture = (version = "12.1.4", coverage?: RelationshipCoverage) => {
       readText: () =>
         `application.version=${version}\napplication.java.min=21\n`,
       executable: () => true,
-      probeJava: () => ({
-        osArch: "amd64",
-        osName: "Linux",
-        version: "21.0.11",
-        major: 21,
-        home: "/usr/lib/jvm/jdk-21",
-        bits: 64,
-        runtime: "jdk",
-      }),
+      probeJava: () =>
+        javaProbeOk<GhidraJavaObservation>({
+          osArch: "amd64",
+          osName: "Linux",
+          version: "21.0.11",
+          major: 21,
+          home: "/usr/lib/jvm/jdk-21",
+          bits: 64,
+          runtime: "jdk",
+        }),
     },
     (options) => ({
       start: async () =>
@@ -191,8 +194,18 @@ describe("Ghidra relationship coverage replay", () => {
 describe("Ghidra snapshot profile admission", () => {
   it.each([
     {
+      parameter: "function_boundary_observations",
+      current: "ghidra-function-boundary-limitations-v4",
+      legacy: "ghidra-function-boundary-limitations-v3",
+    },
+    {
       parameter: "instruction_references",
-      current: "exact-address-incoming-v1",
+      current: "exact-address-incoming-without-synthetic-entry-v2",
+      legacy: "exact-address-incoming-v1",
+    },
+    {
+      parameter: "instruction_references",
+      current: "exact-address-incoming-without-synthetic-entry-v2",
       legacy: undefined,
     },
     {

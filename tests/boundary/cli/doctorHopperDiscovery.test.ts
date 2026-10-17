@@ -45,6 +45,7 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
           ? {
               PATH: [join(home, "bin"), process.env.PATH ?? ""].join(delimiter),
               REA_HOPPER_LDD_TEST_MARKER: loaderMarker,
+              NODE_OPTIONS: `--import=${new URL("../../fixtures/hopperRejectionFeed.mjs", import.meta.url).href}`,
             }
           : {}),
         HOME: home,
@@ -62,7 +63,7 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
     expect(result.json).toMatchObject({
       healthy: hopperReady,
       environment_healthy: false,
-      ...(hopperReady ? { hopperPath: launcher } : {}),
+      hopperPath: launcher,
       checks: expect.arrayContaining([
         expect.objectContaining({
           name: "hopper",
@@ -83,7 +84,6 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
           : []),
       ]),
     });
-    if (!hopperReady) expect(result.json).not.toHaveProperty("hopperPath");
     await expect(access(launchMarker)).rejects.toMatchObject({
       code: "ENOENT",
     });

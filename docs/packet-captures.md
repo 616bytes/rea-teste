@@ -130,10 +130,14 @@ directory). MCP requires an absolute path. The key log is read once (at most
 workspace next to the capture copy. TShark receives the copy's absolute path as
 `-o tls.keylog_file:<private workspace>/tls-key-log` (one argv element, no
 shell), so `tool.arguments` names that private path. The copy's digest is
-rechecked after the run and the copy is deleted immediately afterwards, and on
-every failure after it was written, before workspace cleanup. A copy that
-cannot be deleted is reported as incomplete cleanup (path only, never contents)
-with any completed observation retained. No other `-o` preference is accepted.
+rechecked after the run and deletion is attempted immediately afterwards, and on
+every failure after it was written, before workspace cleanup. The bounded
+integrity check finishes before honoring a late abort, preserving completed
+redacted observations. If early deletion fails, the workspace owner removes the
+copy during final cleanup. If that also fails, incomplete cleanup reports the
+path and system code, never contents, with any completed observation retained;
+a successful retry clears the original error's pending cleanup state. No other
+`-o` preference is accepted.
 
 ```sh
 rea inspect-packet-capture /captures/electron.pcapng \

@@ -160,6 +160,8 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
         path: root.path,
         close: async () => {
           keyLogCopiesAtClose.push(existsSync(join(root.path, "tls-key-log")));
+          if (mode === "close-abort")
+            controller.abort({ request: "cancel during workspace close" });
           if (!mayClean) throw new Error("cleanup fixture failure");
           if (mode === "keylog-pin") await chmod(root.path, 0o700);
           await root.close();
@@ -408,6 +410,19 @@ it.each([
     );
     if (result.ok) throw new Error("Expected key-log run failure");
     expect(result.error._tag).toBe(tag);
+    if (mode === "keylog-wait" || mode === "keylog-abort")
+      expect(result.error.cause).toBe(f.controller.signal.reason);
+    if (mode === "keylog-abort")
+      expect(result.error.partialObservation).toMatchObject({
+        normalized_result: {
+          packets: [
+            { "frame.number": ["4"], "http2.headers.path": ["/v1/items"] },
+          ],
+          redactions: expect.arrayContaining([
+            expect.objectContaining({ field: "http2.headers.authorization" }),
+          ]),
+        },
+      });
     // A nonzero exit reports its output through adapter diagnostics.
     if (mode !== "keylog-abort")
       expect(
@@ -458,7 +473,7 @@ it("removes the key-log copy even when workspace cleanup fails and ownership is 
 });
 
 it.skipIf(process.getuid?.() === 0)(
-  "reports an unremovable key-log copy as incomplete cleanup with the completed observation",
+  "recovers an early key-log unlink failure when the workspace owner removes the copy",
   async () => {
     const f = await fixture("keylog-pin");
     const result = await f.service.inspect({
@@ -466,20 +481,20 @@ it.skipIf(process.getuid?.() === 0)(
       fields: keyLogFields,
       tls_key_log_path: f.keyLogPath,
     });
-    if (result.ok) throw new Error("Expected key-log cleanup failure");
-    expect(result.error.cleanupIncomplete).toBe(true);
-    expect(result.error.cleanupResources).toEqual(
-      expect.arrayContaining([expect.stringMatching(/tls-key-log$/u)]),
-    );
-    expect(result.error.partialObservation).toMatchObject({
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
       normalized_result: {
         packets: [
           { "frame.number": ["4"], "http2.headers.path": ["/v1/items"] },
         ],
       },
     });
-    expectNoKeyLogOrCredentialText(projectAnalysisError(result.error));
-    expectNoKeyLogOrCredentialText(result.error.partialObservation);
+    expectNoKeyLogOrCredentialText(result.value);
+    expect(
+      (await readdir(f.directory)).filter((name) =>
+        name.startsWith("decoder-"),
+      ),
+    ).toEqual([]);
   },
 );
 
@@ -546,6 +561,8 @@ it.each([
     );
     if (result.ok) throw new Error("Expected capture analysis failure");
     expect(result.error._tag).toBe(tag);
+    if (mode === "wait")
+      expect(result.error.cause).toBe(f.controller.signal.reason);
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(
       (await readdir(f.directory)).filter((name) =>
@@ -625,7 +642,7 @@ it("retains a completed observation when cancellation arrives at the service bou
       throw new Error("Unexpected field discovery call");
     },
     inspect: async () => {
-      f.controller.abort();
+      f.controller.abort({ request: "cancel at Evidence boundary" });
       return execution;
     },
     close: async () => {},
@@ -633,6 +650,7 @@ it("retains a completed observation when cancellation arrives at the service bou
   const result = await service.inspect(input, { signal: f.controller.signal });
   if (result.ok) throw new Error("Expected late cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(result.error.cause).toBe(f.controller.signal.reason);
   expect(result.error.partialObservation).toMatchObject({
     operation: "inspect_packet_capture",
     normalized_result: {
@@ -974,3 +992,36 @@ it("preserves discovery resource ownership through CLI shutdown retries", async 
     await f.service.close();
   }
 });
+
+it.each(
+  [false, true].flatMap((failsClose) =>
+    [false, true].map((discovery) => ({ failsClose, discovery })),
+  ),
+)(
+  "retains completed Evidence and exact cancellation during workspace close: %j",
+  async ({ failsClose, discovery }) => {
+    const f = await fixture("close-abort", failsClose);
+    const result = discovery
+      ? await f.service.inspectFields({}, { signal: f.controller.signal })
+      : await f.service.inspect(
+          { path: f.path, fields: ["ip.addr"] },
+          { signal: f.controller.signal },
+        );
+    if (result.ok) throw new Error("Expected finalization cancellation");
+    const primary = failsClose ? result.error.cleanupPrimary : result.error;
+    expect(primary).toMatchObject({ _tag: "AnalysisCancelledError" });
+    expect(primary?.cause).toBe(f.controller.signal.reason);
+    expect(result.error.partialObservation).toMatchObject({
+      operation: discovery ? "inspect_packet_fields" : "inspect_packet_capture",
+    });
+    expect(result.error.cleanupIncomplete).toBe(failsClose);
+    if (failsClose)
+      await expect(f.service.close()).rejects.toMatchObject({
+        cleanupIncomplete: true,
+      });
+    f.allowCleanup();
+    await f.service.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(primary?.cause).toBe(f.controller.signal.reason);
+  },
+);

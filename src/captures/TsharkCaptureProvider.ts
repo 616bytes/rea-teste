@@ -1,3 +1,4 @@
+import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
 import {
   type InspectPacketFieldsInput,
   packetFieldsCatalogSchema,
@@ -46,7 +47,6 @@ import {
 import { createEvidence } from "../domain/evidence.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   type InspectPacketCaptureInput,
   excludeTransportCredentialFields,
@@ -98,10 +98,15 @@ const withholdOutput = (failure: OwnedCommandFailure): OwnedCommandFailure =>
         failure.cleanupFailure,
         {
           ...(failure.cause === undefined ? {} : { cause: failure.cause }),
+          cancellation: failure.cancellation,
+          processError: failure.processError,
           ...(failure.cleanupResult === undefined
             ? {}
             : { cleanupResult: failure.cleanupResult }),
           collectionFailure: failure.collectionFailure,
+          ...(failure.preparationFailure === undefined
+            ? {}
+            : { preparationFailure: failure.preparationFailure }),
         },
         failure.resources,
         failure.cleanupOwner,
@@ -176,7 +181,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     // The private key-log copy holds session secrets; remove it as soon as the
     // decrypting run is verified, and on every failure after it was written.
     let keyLogCopy: string | undefined;
-    let keyLogCleanup: ProviderCleanupError | undefined;
+    let keyLogCleanup: { path: string; system_code: string } | undefined;
     let outputWithheld = false;
     const removeKeyLogCopy = async (): Promise<void> => {
       if (keyLogCopy === undefined) return;
@@ -189,19 +194,16 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           cause instanceof Error && "code" in cause
             ? String(cause.code)
             : "unknown";
-        keyLogCleanup = new ProviderCleanupError(
-          TSHARK_PROVIDER_IDENTITY.id,
-          [path],
-          {
-            reason: `Cannot remove the private TLS key log copy (${code}).`,
-            system_code: code,
-          },
-          { operation },
-        );
+        // The runtime root still owns this path. Its final close can recover
+        // the unlink failure; only that owner's outcome establishes cleanup.
+        keyLogCleanup = { path, system_code: code };
       }
     };
     try {
-      if (options?.signal?.aborted) throw new AnalysisCancelledError(operation);
+      if (options?.signal?.aborted)
+        throw new AnalysisCancelledError(operation, {
+          cause: options.signal.reason,
+        });
       await this.#resources.release();
       if (this.platform !== "linux")
         throw new Error(
@@ -231,7 +233,27 @@ export class TsharkCaptureProvider implements PacketCapturePort {
       effectiveLimits = await this.#resources.readLimits(limits);
       const limitArguments = prlimitArgumentVector(effectiveLimits, command);
       phase = "workspace";
-      root = await this.createRuntime();
+      const workspace = await this.createRuntime();
+      root = {
+        path: workspace.path,
+        close: async () => {
+          try {
+            await workspace.close();
+          } catch (cause: unknown) {
+            if (keyLogCleanup === undefined) throw cause;
+            throw new ProviderCleanupError(
+              TSHARK_PROVIDER_IDENTITY.id,
+              [workspace.path],
+              {
+                reason: cause instanceof Error ? cause.message : String(cause),
+                key_log_path: keyLogCleanup.path,
+                key_log_unlink_code: keyLogCleanup.system_code,
+              },
+              { operation, cause },
+            );
+          }
+        },
+      };
       this.#resources.retain(root, undefined);
       const snapshotPath = join(root.path, "capture");
       const configurationPath = join(root.path, "configuration");
@@ -460,7 +482,6 @@ export class TsharkCaptureProvider implements PacketCapturePort {
               await this.#resources.read(
                 keyLogSnapshotPath,
                 TLS_KEY_LOG_MAX_BYTES,
-                options?.signal,
               )
             ).sha256 !== keyLog.sha256
           )
@@ -538,7 +559,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
               ...(keyLog === undefined
                 ? []
                 : [
-                    "A private read-only copy of the caller's TLS key log was passed as tls.keylog_file and removed after the run; its secrets, client randoms and line text are not returned, and producer stdout/stderr text is withheld from diagnostics (sizes are kept). Key-log counts are not compared with recorded handshakes and do not establish that any session was decrypted. Known Authorization, Proxy-Authorization, Cookie and Set-Cookie fields are removed from returned frames and listed in redactions; header lines, generic header values and payload bytes can still contain credentials when selected.",
+                    "A private read-only copy of the caller's TLS key log was passed as tls.keylog_file; the workspace owns its removal and any cleanup retries. Its secrets, client randoms and line text are not returned, and producer stdout/stderr text is withheld from diagnostics (sizes are kept). Key-log counts are not compared with recorded handshakes and do not establish that any session was decrypted. Known Authorization, Proxy-Authorization, Cookie and Set-Cookie fields are removed from returned frames and listed in redactions; header lines, generic header values and payload bytes can still contain credentials when selected.",
                   ]),
             ],
           }),
@@ -576,22 +597,12 @@ export class TsharkCaptureProvider implements PacketCapturePort {
       });
     // Best effort on failure paths; the workspace owner retries on release.
     await removeKeyLogCopy();
-    if (keyLogCleanup !== undefined)
-      result = err(
-        result.ok
-          ? new ProviderCleanupError(
-              TSHARK_PROVIDER_IDENTITY.id,
-              keyLogCleanup.cleanupResources,
-              keyLogCleanup.diagnostics ?? {},
-              { operation, partialObservation: observation(result.value) },
-            )
-          : analysisErrorWithCleanupFailure(
-              result.error,
-              keyLogCleanup,
-              operation,
-            ),
-      );
-    return this.#resources.finish(result, observation, operation);
+    return this.#resources.finish(
+      result,
+      observation,
+      operation,
+      options?.signal,
+    );
   }
   #failure(
     cause: unknown,
@@ -610,16 +621,28 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     if (cause instanceof AnalysisError) return cause;
     if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
       return this.#resources.cleanupFailure(
-        cause.cleanup,
         cause,
+        (primary) =>
+          this.#failure(
+            primary,
+            phase,
+            path,
+            workspacePath,
+            effectiveLimits,
+            observedOutput,
+            operation,
+            limits,
+          ),
         observedOutput,
         operation,
       );
-    if (
-      (cause instanceof Error && cause.name === "AbortError") ||
-      (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    )
-      return new AnalysisCancelledError(operation, { cause });
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+      return new AnalysisCancelledError(operation, {
+        cause: artifactFileCancellationCause(cause),
+        ...(observedOutput === undefined
+          ? {}
+          : { capturedOutput: observedOutput }),
+      });
     if (cause instanceof FieldDiscoveryBudgetError)
       return new AnalysisResourceConstraintError(
         operation,

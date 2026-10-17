@@ -11,6 +11,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
+import { finishElectronBrowserWindowsSteps } from "./electronStaticAnalysisBrowser.js";
 import {
   detectVendors,
   failedJavaScriptStaticAnalysis,
@@ -21,6 +22,8 @@ import {
 import {
   addReference,
   addSourceMapDirectives,
+  finishPartialNetworkEndpoints,
+  finishSqliteStorageCalls,
   inspectCall,
   inspectRouteProperty,
   inspectRoleProperty,
@@ -51,11 +54,11 @@ import {
 } from "./javascriptSourceParser.js";
 
 import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
-import { semanticImportEqualsSpecifier } from "./javascriptSemanticProjection.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
   isTypeOnlyExportDeclaration,
   isTypeOnlyImportDeclaration,
+  semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
 
 /** Parse one JavaScript artifact and recover static structure only. */
@@ -89,18 +92,24 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     file.program,
     bindings,
   );
-  yield* traverseStaticSourceSteps(
-    file,
-    {
-      source,
-      accumulator,
-      vitePreloadDependencyTable: indexVitePreloadDependencyTable(file.program),
-      openReceiverFacts: receivers.openReceivers,
-      electronBindings: electronIdentity.bindings,
-      rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
-    },
-    bindings,
-  );
+  const findings: JavaScriptFindingContext = {
+    source,
+    accumulator,
+    vitePreloadDependencyTable: indexVitePreloadDependencyTable(file.program),
+    openReceiverFacts: receivers.openReceivers,
+    electronBindings: electronIdentity.bindings,
+    rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
+  };
+  yield* traverseStaticSourceSteps(file, findings, bindings);
+  yield* finishElectronBrowserWindowsSteps(findings, index);
+  if (
+    accumulator.pendingNetworkCalls.length > 0 ||
+    accumulator.pendingSqliteCalls.length > 0
+  ) {
+    yield* index.indexMemberMutationFactsSteps();
+    finishPartialNetworkEndpoints(findings, bindings, index);
+    finishSqliteStorageCalls(findings, bindings, index);
+  }
   accumulator.electronCallPaths = collectElectronWrappedCallPaths(
     file.program,
     bindings,

@@ -1,7 +1,7 @@
 import { expect, it as test } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { inspectKunaInstallation } from "../../../../src/kuna/KunaInstallation.js";
+import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaFileCloseOwner.js";
 import { KunaTargetCommands } from "../../../../src/kuna/KunaTargetCommands.js";
 import { fakeKunaCalls } from "./fakeKuna.js";
 import { session } from "./kunaSessionFixture.js";
@@ -25,7 +25,7 @@ it("reports output beyond REA's fixed buffer as a deterministic memory bound", a
       installation: installed.value,
       operation: "list_procedures",
       arguments: (input) => ["functions", input, "--json"],
-      timeoutMs: 10_000,
+      deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
       outputBytes: 100,
       signal: controller.signal,
     });
@@ -53,9 +53,38 @@ it("reports output beyond REA's fixed buffer as a deterministic memory bound", a
   }
 });
 
-it("reports a graph beyond REA's buffer once per session instead of rebuilding it", async () => {
+it("parses a graph larger than any fixed output buffer as it streams", async () => {
+  const padding = 40 * 1024 * 1024;
+  const { open } = await session("rea-kuna-graph-large-", {
+    graphPadding: padding,
+  });
+  const client = open();
+  try {
+    const result = await client.execute("procedure_callees", {
+      procedure: "main",
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        result: ["0x1040"],
+        rawResult: {
+          references: { kind: "kuna-call-graph", functions: 4, edges: 3 },
+        },
+      },
+    });
+    if (!result.ok) return;
+    expect(
+      (result.value.rawResult as { references: { bytes: number } }).references
+        .bytes,
+    ).toBeGreaterThan(padding);
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it("reports graph diagnostics beyond REA's buffer once per session instead of rebuilding it", async () => {
   const { kuna, open } = await session("rea-kuna-graph-overflow-", {
-    graph: "oversized",
+    graph: "noisy",
   });
   const client = open();
   try {
@@ -63,7 +92,7 @@ it("reports a graph beyond REA's buffer once per session instead of rebuilding i
       const result = await client.execute("procedure_callers", {
         procedure: "0x1000",
       });
-      if (result.ok) throw new Error("the oversized graph was admitted");
+      if (result.ok) throw new Error("the overflowing graph was admitted");
       expect(result.error).toMatchObject({
         _tag: "AnalysisResourceConstraintError",
         resource: "memory",
@@ -76,6 +105,44 @@ it("reports a graph beyond REA's buffer once per session instead of rebuilding i
         ({ argv }) => argv[0] === "decompile-graph",
       ),
     ).toHaveLength(1);
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it("says why Kuna cannot answer instead of a generic unavailable message", async () => {
+  const { open } = await session("rea-kuna-unavailable-reasons-");
+  const client = open();
+  try {
+    const cases = [
+      {
+        operation: "procedure_assembly",
+        parameters: { procedure: "0x2000" },
+        message:
+          "Kuna's export lists no code at 0x2000; import slots and data entries have no listing.",
+      },
+      {
+        operation: "procedure_callers",
+        parameters: { procedure: "0x1004" },
+        message:
+          "Kuna's graph has no function node at 0x1004; its relationships are unknown.",
+      },
+      {
+        operation: "list_segments",
+        parameters: {},
+        message:
+          "Kuna answers procedure and string queries, pseudocode, assembly and references; this operation needs another provider.",
+      },
+    ] as const;
+    for (const { operation, parameters, message } of cases) {
+      const result = await client.execute(operation, parameters);
+      if (result.ok) throw new Error(`${operation} unexpectedly succeeded`);
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "capability_unavailable",
+        message,
+        retryable: false,
+      });
+    }
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
   }

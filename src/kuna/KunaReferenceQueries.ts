@@ -1,7 +1,6 @@
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -9,11 +8,11 @@ import type { FunctionDossier } from "../domain/hopperValues.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { kunaProjectDeadline } from "./KunaConfiguration.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
 import {
-  KUNA_GRAPH_OUTPUT_BYTES,
   KUNA_XREF_OUTPUT_BYTES,
-  parseKunaCallGraph,
+  KunaCallGraphReader,
   parseKunaIncomingReferences,
   type KunaCallGraph,
   type KunaGraphNode,
@@ -21,6 +20,7 @@ import {
 } from "./KunaReferenceFiles.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
 import type { KunaPendingQuery, KunaQueryWork } from "./KunaQueryWork.js";
+import { kunaUnavailable } from "./KunaUnavailable.js";
 
 /** Charge raw JSON bytes conservatively; retained projections are smaller. */
 const XREF_CACHE_BYTES = 16 * 1024 * 1024;
@@ -94,7 +94,7 @@ export class KunaReferenceQueries {
   ): Promise<Result<KunaCallGraph, AnalysisError>> {
     if (this.#graphFailure !== undefined) return err(this.#graphFailure);
     if (this.#graph === undefined) {
-      if (this.#pendingGraph?.controller.signal.aborted === true) {
+      if (this.#pendingGraph?.signal.aborted === true) {
         const retired = await this.work.wait(
           this.#pendingGraph,
           signal,
@@ -103,38 +103,32 @@ export class KunaReferenceQueries {
         if (!retired.ok && !(retired.error instanceof AnalysisCancelledError))
           return retired;
         if (signal?.aborted === true)
-          return err(new AnalysisCancelledError(operation));
+          return err(
+            new AnalysisCancelledError(operation, { cause: signal?.reason }),
+          );
         return this.#loadGraph(installation, operation, signal);
       }
       if (this.#pendingGraph === undefined) {
         const pending = this.work.start<KunaCallGraph>(
-          async (producerSignal) => {
-            const run = await this.work.run({
-              installation,
-              operation: "kuna:call-graph",
-              arguments: (input) => [
-                "decompile-graph",
-                input,
-                "--functions",
-                "",
-              ],
-              timeoutMs: installation.configuration.projectTimeoutMs,
-              outputBytes: KUNA_GRAPH_OUTPUT_BYTES,
-              signal: producerSignal,
-            });
-            if (!run.ok) {
-              if (
-                run.error instanceof AnalysisResourceConstraintError &&
-                run.error.resource === "memory"
-              )
-                this.#graphFailure = run.error;
-              return run;
-            }
-            return this.#parsed(
-              parseKunaCallGraph(run.value.stdout.text, run.value.input),
-              "call graph",
-            );
-          },
+          (producerSignal) =>
+            this.work.scan(
+              {
+                installation,
+                operation: "kuna:call-graph",
+                arguments: (input) => [
+                  "decompile-graph",
+                  input,
+                  "--functions",
+                  "",
+                ],
+                deadline: kunaProjectDeadline(installation.configuration),
+              },
+              new KunaCallGraphReader(),
+              producerSignal,
+              (failure) => {
+                this.#graphFailure = failure;
+              },
+            ),
           (value) => {
             this.#graph = value;
           },
@@ -158,8 +152,7 @@ export class KunaReferenceQueries {
     const node = graph.nodes.get(address);
     if (node === undefined)
       return err(
-        new AnalysisCapabilityUnavailableError(
-          KUNA_PROVIDER_ID,
+        kunaUnavailable(
           operation,
           `Kuna's graph has no function node at ${address}; its relationships are unknown.`,
         ),
@@ -235,12 +228,14 @@ export class KunaReferenceQueries {
       return ok(cached);
     }
     let pending = this.#pendingXrefs.get(address);
-    if (pending?.controller.signal.aborted === true) {
+    if (pending?.signal.aborted === true) {
       const retired = await this.work.wait(pending, signal, "xrefs");
       if (!retired.ok && !(retired.error instanceof AnalysisCancelledError))
         return retired;
       if (signal?.aborted === true)
-        return err(new AnalysisCancelledError("xrefs"));
+        return err(
+          new AnalysisCancelledError("xrefs", { cause: signal?.reason }),
+        );
       return this.incoming(installation, address, signal);
     }
     if (pending === undefined) {
@@ -259,7 +254,7 @@ export class KunaReferenceQueries {
             installation,
             operation: "xrefs",
             arguments: (input) => ["xrefs", input, "--to", address, "--json"],
-            timeoutMs: installation.configuration.projectTimeoutMs,
+            deadline: kunaProjectDeadline(installation.configuration),
             outputBytes: KUNA_XREF_OUTPUT_BYTES,
             signal: producerSignal,
           });

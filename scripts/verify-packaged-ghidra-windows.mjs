@@ -28,6 +28,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { execNpm } from "./lib/verify-package-core.mjs";
 
 if (process.platform !== "win32" || process.arch !== "x64")
   throw new Error(
@@ -82,15 +83,10 @@ let packageRoot = resolve(packageRootArgument ?? ".");
 // package roots support an already-installed artifact without a second install.
 if (packageRootArgument === undefined) {
   try {
-    const npmEntry =
-      process.env.npm_execpath ??
-      join(dirname(process.execPath), "node_modules/npm/bin/npm-cli.js");
     const packed = JSON.parse(
       (
-        await exec(
-          process.execPath,
+        await execNpm(
           [
-            npmEntry,
             "pack",
             "--json",
             "--ignore-scripts",
@@ -107,10 +103,8 @@ if (packageRootArgument === undefined) {
       "The package lane must produce one artifact.",
     );
     const prefix = join(workspace, "installed");
-    await exec(
-      process.execPath,
+    await execNpm(
       [
-        npmEntry,
         "install",
         "--prefix",
         prefix,
@@ -448,15 +442,16 @@ try {
           return evidence.normalized_result;
         },
       );
-    const { GHIDRA_MUTATING_OPERATIONS, GHIDRA_SESSION_CAPABILITIES } =
-      await import(
-        pathToFileURL(join(packageRoot, "dist/ghidra/GhidraSessionValues.js"))
-      );
-    const expected = GHIDRA_SESSION_CAPABILITIES.filter(
-      (name) =>
-        name !== "ping" &&
-        name !== "shutdown" &&
-        !GHIDRA_MUTATING_OPERATIONS.has(name),
+    const { GHIDRA_MUTATING_OPERATIONS } = await import(
+      pathToFileURL(join(packageRoot, "dist/ghidra/GhidraSessionValues.js"))
+    );
+    const { GHIDRA_OPERATIONS } = await import(
+      pathToFileURL(
+        join(packageRoot, "dist/ghidra/GhidraProviderCapabilities.js"),
+      )
+    );
+    const expected = GHIDRA_OPERATIONS.filter(
+      (name) => !GHIDRA_MUTATING_OPERATIONS.has(name),
     );
     const expectedOperations = new Set([
       ...expected,

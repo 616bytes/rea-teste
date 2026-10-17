@@ -21,6 +21,7 @@ import type {
 } from "../application/javascript/ElectronActiveObservationPort.js";
 import type { ElectronActiveObservationResult } from "../domain/javascript/electronActiveObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -501,7 +502,21 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         cleanupCause instanceof ArtifactFileCleanupFailure ||
         cleanupCause instanceof ArtifactReaderFailure
       ) {
-        return err(providerError(cleanupCause));
+        const cleanupError = providerError(cleanupCause);
+        if (outcome.ok) {
+          cleanupError.retainPartialObservation({
+            kind: "electron-active-observation",
+            capture: outcome.value,
+          });
+          return err(cleanupError);
+        }
+        return err(
+          analysisErrorWithCleanupFailure(
+            outcome.error,
+            cleanupError,
+            OPERATION,
+          ),
+        );
       }
     }
     // Cleanup failures returned above keep precedence; a completed capture

@@ -118,16 +118,18 @@ const registerElectronActiveCommand = (
             const { createElectronScenarioProvider } =
               await import("../composition/electronScenario.js");
             const provider = createElectronScenarioProvider(environment);
-            try {
-              const result = await captureElectronScenario(
-                provider,
-                parsed.data,
-                { signal },
-              );
-              return result.ok ? result.value : cliError(result.error);
-            } finally {
-              await provider.close?.();
-            }
+            return await finishAnalysisCommand(
+              () => captureElectronScenario(provider, parsed.data, { signal }),
+              {
+                close: async () => {
+                  await provider.close?.();
+                },
+              },
+              provider.identity().id,
+              "capture_electron_scenario",
+              undefined,
+              signal,
+            );
           },
         ),
       ),

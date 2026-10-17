@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   parseAmStartOutput,
+  parseDumpsysPackageOutput,
   parseWmDensityOutput,
   parseWindowFocusOutput,
 } from "./AdbShellOutput.js";
@@ -163,6 +164,39 @@ describe("parseWindowFocusOutput declaration presence", () => {
         "mFocusedApp=ActivityRecord{current}",
       ],
     });
+  });
+});
+
+describe("parseDumpsysPackageOutput", () => {
+  it("reports unknown requested permissions when the package is null", () => {
+    expect(
+      parseDumpsysPackageOutput("Package [com.example] (abcdef):\n  pkg=null\n")
+        .requestedPermissions,
+    ).toBeNull();
+  });
+
+  it("reports unknown when package state and the permission section are absent", () => {
+    expect(
+      parseDumpsysPackageOutput(
+        "Package [com.example] (abcdef):\n  versionCode=45\n",
+      ).requestedPermissions,
+    ).toBeNull();
+  });
+
+  it("reports zero only for a confirmed loaded package without the section", () => {
+    expect(
+      parseDumpsysPackageOutput(
+        "Package [com.example] (abcdef):\n  pkg=Package{abcdef com.example}\n",
+      ).requestedPermissions,
+    ).toBe(0);
+  });
+
+  it("counts listed permissions when the section is available", () => {
+    expect(
+      parseDumpsysPackageOutput(
+        "Package [com.example] (abcdef):\n  requested permissions:\n    android.permission.INTERNET\n",
+      ).requestedPermissions,
+    ).toBe(1);
   });
 });
 

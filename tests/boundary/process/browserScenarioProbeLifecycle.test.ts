@@ -54,6 +54,21 @@ it("keeps the shared browser scenario provider open when the SDK discards its di
     .mockImplementation(async () => {
       if (!cleanupAllowed) throw cleanupFailure;
     });
+  const activeCleanupFailure = new Error("Fuse preflight cleanup failed");
+  const activeClose = vi.fn(async () => {
+    if (!cleanupAllowed) throw activeCleanupFailure;
+  });
+  const electronActiveObservation = {
+    identity: () => ({
+      id: "active-electron",
+      name: "Active Electron",
+      version: "1",
+    }),
+    capture: async () => {
+      throw new Error("Unexpected Electron capture");
+    },
+    close: activeClose,
+  };
   const factories: Parameters<RuntimeDependencies["serve"]>[0][] = [];
   const runtime: RuntimeDependencies = {
     env: {},
@@ -74,6 +89,7 @@ it("keeps the shared browser scenario provider open when the SDK discards its di
       browserObservation,
       browserScenarioCapture,
       electronObservation,
+      electronActiveObservation,
     }),
   });
   if (!transport.ok) throw new Error("Transport failed");
@@ -110,6 +126,7 @@ it("keeps the shared browser scenario provider open when the SDK discards its di
     expect(close).not.toHaveBeenCalled();
     expect(closeBrowser).not.toHaveBeenCalled();
     expect(closeElectron).not.toHaveBeenCalled();
+    expect(activeClose).not.toHaveBeenCalled();
 
     const attempts = await Promise.allSettled([
       transport.closeOptionalProviders(),
@@ -124,19 +141,22 @@ it("keeps the shared browser scenario provider open when the SDK discards its di
         expect(attempt.reason).toBeInstanceOf(AggregateError);
         if (!(attempt.reason instanceof AggregateError))
           throw new Error("Expected optional provider cleanup aggregate");
-        expect(attempt.reason.errors).toHaveLength(1);
+        expect(attempt.reason.errors).toHaveLength(2);
         expect(attempt.reason.errors[0]).toBe(cleanupFailure);
+        expect(attempt.reason.errors[1]).toBe(activeCleanupFailure);
       }
     }
     expect(close).toHaveBeenCalledTimes(1);
     expect(closeBrowser).toHaveBeenCalledTimes(1);
     expect(closeElectron).toHaveBeenCalledTimes(1);
+    expect(activeClose).toHaveBeenCalledTimes(1);
     cleanupAllowed = true;
     await transport.closeOptionalProviders();
     await transport.closeOptionalProviders();
     expect(close).toHaveBeenCalledTimes(1);
     expect(closeBrowser).toHaveBeenCalledTimes(1);
     expect(closeElectron).toHaveBeenCalledTimes(2);
+    expect(activeClose).toHaveBeenCalledTimes(2);
   } finally {
     cleanupAllowed = true;
     await transport.closeOptionalProviders();

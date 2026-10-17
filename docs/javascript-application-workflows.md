@@ -80,6 +80,65 @@ incompletely analyzed application. CLI `inspect-analysis-view` reads the same
 request from a JSON file; portable input uses `source.kind: "inline"` with the
 complete parent Evidence.
 
+## Retained file and native facts
+
+Read metadata, native inventory and unavailable processing scopes directly from
+retained application observations:
+
+```json
+{
+  "source": {
+    "kind": "retained-evidence",
+    "evidence_id": "ev_ACTUAL_PARENT_ID"
+  },
+  "view": {
+    "kind": "javascript-facts",
+    "where": { "paths": ["package.json", "build/Release/addon.node"] },
+    "property_keys": [
+      "name",
+      "version",
+      "bytes",
+      "availability",
+      "operation",
+      "analysis_status"
+    ],
+    "offset": 0,
+    "limit": 32
+  }
+}
+```
+
+Each row preserves its node identity, observation ID, source-map reference and
+original Evidence, including location, authority, confidence, coverage and
+limitations. `property_keys` selects exact retained property names; absent keys
+stay omitted and retained null values stay null. An empty list requests only
+identity/provenance. Observations are not merged into a single asserted fact.
+When property names are unknown, opt into
+`include_available_property_keys: true`. Each returned row then lists its
+original `available_property_keys`, without unselected values; combine this with
+`property_keys: []` for discovery only. The default is false, so known-field
+reads do not pay for field inventories. Keep node/observation IDs paired when
+combining rows; location-related observations need not belong to the same node.
+
+`where.paths` compares exact Evidence `artifact-path` values or `source-range`
+sources. Empty query strings remain valid selectors, though current location
+contracts require nonempty paths/sources. It does not inspect display labels or a
+property named `path`, normalize URLs, or reopen files. Omission includes unknown
+locations; an empty list matches none. Optional `where.kinds` filters original
+node kinds, with an empty list likewise matching none. Multiple locations of
+shared content remain separate rows with the same canonical node identity.
+
+These rows select application-graph observations. Semantic relationships and
+semantic unknown records remain in complete parent Evidence and trace tools.
+
+Rows follow retained node/observation order. The default offset/limit is 0/64;
+follow `coverage.next_offset`. Page totals count matching retained observations,
+while `source_coverage` preserves caller selection and application/semantic
+partial or unknown states. An empty or exhausted page does not establish absence
+outside examined coverage. Complete source Evidence remains available through
+export. CLI `inspect-analysis-view` and portable Evidence use the same contract
+and application implementation as MCP.
+
 ## Feature tracing
 
 Select one literal seed kind: node ID, route, string, API, IPC channel, module,
@@ -131,6 +190,9 @@ objects and captured methods retain their distinct identities. Recognized native
 filesystem and child-process calls preserve their exports receiver; replaced or
 unknown methods remain conservative. Writes that may replace `module.require`
 invalidate subsequent loader-derived effects, including computed keys and spreads.
+Descriptor checks use the write order at the call site. Reassigned Object/Reflect
+mutators retain references carried by their assigned values, including bound
+module receivers; saved functions and unrelated properties remain distinct.
 Local callback candidates do not establish a complete target set when a
 conditional write may leave a parameter, catch binding, or uninitialized
 variable unchanged. These calls retain candidate edges and dynamic uncertainty;
@@ -234,6 +296,16 @@ facts. Each item is `unchanged`, `added`, `removed`, `changed`, or `unknown`,
 and the result includes its basis, candidates, changed dimensions, Evidence
 links, limitations, and a `changed_from` graph containing all compared nodes,
 their observations, and relationships.
+
+A matched pair whose only differing dimension is `location` counts as
+`unchanged` when both input graphs have complete coverage. This includes an
+identical module shifted by an earlier bundle edit and a named IPC channel
+observed at a new offset. The item still reports `dimensions: ["location"]`
+and both node IDs; the graph retains both original observations and coordinates.
+Content, property, and complete relationship differences still count as
+`changed`. With incomplete coverage, relocation alone remains `unknown` and
+retains the location and coverage dimensions. Matching confidence is unchanged:
+an inferred pair is not promoted to exact identity by this classification.
 
 One-sided absence is `added` or `removed` only when the opposite input graph has
 complete coverage. With partial, unavailable, or truncated input, the same

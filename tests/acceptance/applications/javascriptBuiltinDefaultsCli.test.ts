@@ -14,6 +14,10 @@ const execute = promisify(execFile);
 
 const writeReceiverReviewSources = async (root: string): Promise<void> => {
   const sources = [
+    "const fs=require('fs'); Reflect.set(module,'require',replacement,{fs}); fs.readFileSync('wrapper-descriptor-before.json'); module.require=other;",
+    "Reflect.set=Reflect.set.bind(null,module); Reflect.set('require',replacement); require('fs').readFileSync('wrong-assigned-bound-set');",
+    "Object.assign=Object.assign.bind(null,module); Object.assign({require:replacement}); require('fs').readFileSync('wrong-assigned-bound-assign');",
+    "Reflect.set=Reflect.set.bind(null,{}); Reflect.set('require',replacement); require('fs').readFileSync('bound-separate.json');",
     "Object.create.call=()=>module; const r=Object.create.call(null,null); Reflect.set(r,'require',custom); require('fs').readFileSync('wrong-create');",
     "const fs=require('fs'); const r={fs,set hook(v){this.fs.readFileSync=custom;}}; Reflect.set(r,'hook',1); fs.readFileSync('wrong-setter');",
     "import fs = require('fs'); fs={}; fs={}; fs.readFileSync('wrong-entry');",
@@ -175,6 +179,7 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "allocated-before.json",
     "before-write.json",
     "before.json",
+    "bound-separate.json",
     "constructed-receiver.json",
     "direct.json",
     "escaped.json",
@@ -205,6 +210,7 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "timeline-first.json",
     "timeline-second.json",
     "wrapped-kept.json",
+    "wrapper-descriptor-before.json",
   ]);
   expect(
     result.semantic_graph.nodes.filter(({ kind }) => kind === "resource"),

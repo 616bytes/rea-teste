@@ -40,6 +40,7 @@ import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedRe
 import {
   semanticMutationInitializers,
   semanticBindingAtRead,
+  semanticEffectTiming,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticReferenceSourcesInactive,
@@ -177,6 +178,13 @@ export function* collectSemanticMemberMutationsSteps(
 ): Generator<void, void> {
   const parents = state.parentsByNode;
   const interop = createSemanticModuleInterop(state);
+  const wrapperDescriptorWrites = state.ambientWriteEffects.filter(
+    ({ path }) =>
+      path[0] === "commonjs-module" &&
+      path.length <= 2 &&
+      (path.length === 1 ||
+        semanticPropertyPathKeyMatches(path[1]!, "require")),
+  );
   const observablePaths = observableMutationPaths(state);
   const returnedReferences = createSemanticReturnedReferences(state);
   const recordedRequiredEffects = new Set<string>();
@@ -933,15 +941,14 @@ export function* collectSemanticMemberMutationsSteps(
           const wrapperRequireData =
             path[0] === "require" &&
             semanticCommonJsModuleObjectAt(target, state) &&
-            !state.ambientWriteEffects.some(
-              ({ path: write, node: effect }) =>
+            !wrapperDescriptorWrites.some(
+              ({ node: effect }) =>
                 effect !== node &&
-                write[0] === "commonjs-module" &&
-                write.length <= 2 &&
-                (write.length === 1 ||
-                  semanticPropertyPathKeyMatches(write[1]!, "require")),
+                semanticEffectTiming(node, effect, state) !== "after",
             ) &&
-            (state.ambientBindingWrites.get("module")?.length ?? 0) === 0;
+            !(state.ambientBindingWrites.get("module") ?? []).some(
+              (effect) => semanticEffectTiming(node, effect, state) !== "after",
+            );
           if (invokesSetter || path[0] === null) {
             // A setter can mutate shared children of its `this` receiver.
             markEscaped(target, node);

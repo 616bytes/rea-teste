@@ -1,5 +1,6 @@
 import { basename, join } from "node:path";
 import { realpath } from "node:fs/promises";
+import type { Writable } from "node:stream";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -44,6 +45,8 @@ export interface KunaTargetCommandRequest {
   readonly operation: string;
   readonly arguments: (input: string) => readonly string[];
   readonly outputBytes: number;
+  /** Parses stdout as it arrives instead of buffering it in the snapshot. */
+  readonly stdout?: Writable;
   readonly timeoutMs: number;
   readonly signal: AbortSignal;
   /** Admission remains owned until the native process is proven stopped. */
@@ -115,7 +118,10 @@ export class KunaTargetCommands {
           reportedTimeoutMs: request.timeoutMs,
           launcher: this.lifetime.launcher,
           retainFailedFileClose: (owner, resource) => {
-            const lease = new AnalysisCleanupLease(() => owner.close());
+            const lease = new AnalysisCleanupLease(
+              () => owner.close(),
+              [resource],
+            );
             this.#resources.retain({ kind: "lease", resource, lease });
             failedHashClose = { owner, lease };
           },

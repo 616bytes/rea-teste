@@ -629,3 +629,69 @@ it.each(["spawnSync", "execSync", "execFileSync"])(
     ]);
   },
 );
+
+it.each([
+  "module.require=other;",
+  "delete module.require;",
+  "Object.defineProperty(module,'require',{set(value){}});",
+  "module={};",
+])("keeps wrapper descriptor timing before later writes: %s", (later) => {
+  const ir = analyzeJavaScriptSemantics(`const fs=require('fs');
+    Reflect.set(module,'require',replacement,{fs});
+    fs.readFileSync('kept'); ${later}`);
+  expect(ir.configurationOperations.map(({ key }) => key)).toEqual(["kept"]);
+});
+
+it.each([
+  "const fs=require('fs'); Object.defineProperty(module,'require',{set(value){this.fs.readFileSync=custom;}}); Reflect.set(module,'require',replacement,{fs}); fs.readFileSync('wrong');",
+  "const fs=require('fs'); function run(){Reflect.set(module,'require',replacement,{fs}); fs.readFileSync('wrong');} Object.defineProperty(module,'require',{set(value){this.fs.readFileSync=custom;}}); run();",
+])("keeps uncertain wrapper descriptor timing conservative: %s", (source) => {
+  expect(analyzeJavaScriptSemantics(source).configurationOperations).toEqual(
+    [],
+  );
+});
+
+it.each([
+  "Reflect.set=Reflect.set.bind(null,module); Reflect.set('require',replacement);",
+  "Object.assign=Object.assign.bind(null,module); Object.assign({require:replacement});",
+  "const set=Reflect.set; Reflect.set=set.bind(null,module); Reflect.set('require',replacement);",
+  "Reflect.set=Reflect.set.bind(null,module); Reflect.set.call(null,'require',replacement);",
+  "Reflect.set=Reflect.set.bind(null,module); Reflect.set.apply(null,['require',replacement]);",
+  "const reflect=Reflect; reflect.set=Reflect.set.bind(null,module); Reflect.set('require',replacement);",
+  "Reflect.set=Reflect.set.bind(null,module); const set=Reflect.set; set('require',replacement);",
+  "globalThis.Reflect.set=Reflect.set.bind(null,module); Reflect.set('require',replacement);",
+  "const set=Reflect.set; globalThis.Reflect={set:set.bind(null,module)}; Reflect.set('require',replacement);",
+  "Reflect[key]=Reflect.set.bind(null,module); Reflect.set('require',replacement);",
+  "Reflect.set=Reflect.set.bind(null,module); Reflect.apply(Reflect.set,null,['require',replacement]);",
+  "Reflect.set=flag ? Reflect.set.bind(null,module) : other; Reflect.set('require',replacement);",
+  "Reflect.set=flag && Reflect.set.bind(null,module); Reflect.set('require',replacement);",
+  "Reflect.set=(0,Reflect.set.bind(null,module)); Reflect.set('require',replacement);",
+  "Reflect.set=holder=Reflect.set.bind(null,module); Reflect.set('require',replacement);",
+])(
+  "follows assigned intrinsic values carrying the wrapper module: %s",
+  (setup) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `${setup} require('fs').readFileSync('wrong');`,
+      ).configurationOperations,
+    ).toEqual([]);
+  },
+);
+
+it.each([
+  "Reflect.set=Reflect.set.bind(null,{}); Reflect.set('require',replacement); require('fs').readFileSync('kept');",
+  "Reflect.other=Reflect.set.bind(null,module); Reflect.set({},'require',replacement); require('fs').readFileSync('kept');",
+  "const set=Reflect.set; Reflect.set=Reflect.set.bind(null,module); set({},'require',replacement); require('fs').readFileSync('kept');",
+  "Reflect.set({},'require',replacement); require('fs').readFileSync('kept'); Reflect.set=Reflect.set.bind(null,module);",
+  "Reflect.set=(Reflect.set.bind(null,module),custom); Reflect.set({},'require',replacement); require('fs').readFileSync('kept');",
+  "Reflect.set=Reflect.set.bind(null,{}); function run(){Reflect.set('require',replacement); require('fs').readFileSync('kept');} run();",
+])(
+  "keeps unrelated or later assigned intrinsic values separate: %s",
+  (source) => {
+    expect(
+      analyzeJavaScriptSemantics(source).configurationOperations.map(
+        ({ key }) => key,
+      ),
+    ).toEqual(["kept"]);
+  },
+);

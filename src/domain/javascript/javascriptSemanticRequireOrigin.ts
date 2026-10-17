@@ -378,6 +378,11 @@ const writesModuleRequire = (
       coverage.retain(path);
       visited.set(value, coverage);
       examined.push({ node: value, path });
+      for (const reference of interop.intrinsicValueReferences(value))
+        pending.push({
+          node: reference.node,
+          path: [...reference.path, ...path],
+        });
       if (semanticCommonJsModuleObjectAt(value, state)) {
         if (path.length === 0) return true;
         const first = path[0];
@@ -439,6 +444,32 @@ const writesModuleRequire = (
             ...path,
           ],
         });
+      } else if (
+        t.isConditionalExpression(value) ||
+        t.isLogicalExpression(value)
+      ) {
+        pending.push(
+          {
+            node: t.isConditionalExpression(value)
+              ? value.consequent
+              : value.left,
+            path,
+          },
+          {
+            node: t.isConditionalExpression(value)
+              ? value.alternate
+              : value.right,
+            path,
+          },
+        );
+      } else if (t.isSequenceExpression(value)) {
+        const last = value.expressions.at(-1);
+        if (last !== undefined) pending.push({ node: last, path });
+      } else if (t.isAssignmentExpression(value)) {
+        if (["=", "||=", "&&=", "??="].includes(value.operator))
+          pending.push({ node: value.right, path });
+        if (["||=", "&&=", "??="].includes(value.operator))
+          pending.push({ node: value.left, path });
       } else if (t.isCallExpression(value) || t.isOptionalCallExpression(value))
         pending.push(...value.arguments.map((node) => ({ node, path: [] })));
     }

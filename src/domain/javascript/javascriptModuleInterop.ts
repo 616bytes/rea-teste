@@ -11,7 +11,10 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
-import { semanticTopLevelEffectIsOrderable } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticEffectTiming,
+  semanticTopLevelEffectIsOrderable,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   childNodes,
   javaScriptAstChildKeys,
@@ -26,6 +29,7 @@ import {
 } from "./javascriptIntrinsicInvocation.js";
 import {
   SemanticPropertyPathWriteIndex,
+  semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import {
@@ -92,6 +96,12 @@ export const createSemanticModuleInterop = (
   const calls = new WeakMap<t.Node, InteropOrigin>();
   const intrinsicBindings = new Map<string, readonly string[] | null>();
   const writes = new Map<string, SemanticPropertyPathWriteIndex>();
+  // Retain assigned values with their owning slot and write site. Bucket by
+  // the exact prefix before any selector so unrelated slots are not rescanned.
+  const assignedValues = new Map<
+    string,
+    { node: t.AssignmentExpression; path: JavaScriptSemanticPropertyPath }[]
+  >();
   const invalidatedBindings = new Map<string, boolean>();
   const invalidatedCalls = new WeakMap<t.Node, boolean>();
   const opaqueMutationPath = (node: t.Node): readonly string[] => {
@@ -118,6 +128,21 @@ export const createSemanticModuleInterop = (
       path[0] === "opaque-intrinsic" ? ["intrinsic"] : path,
       node?.start ?? -Infinity,
     );
+    if (
+      t.isAssignmentExpression(node) &&
+      ["=", "||=", "&&=", "??="].includes(node.operator) &&
+      path[0] === "intrinsic"
+    ) {
+      const selector = path.findIndex(
+        (key) => key === null || typeof key === "object",
+      );
+      const key = JSON.stringify(
+        (selector < 0 ? path : path.slice(0, selector)).map(String),
+      );
+      const values = assignedValues.get(key) ?? [];
+      values.push({ node, path });
+      assignedValues.set(key, values);
+    }
   };
   const changedBefore = (capture: t.Node, path: readonly string[]): boolean => {
     const scope = opaqueMutationPath(capture).join(".");
@@ -219,6 +244,37 @@ export const createSemanticModuleInterop = (
       suffixLength += initializer.projection.length;
       current = initializer.node;
     }
+  };
+
+  const intrinsicValueReferences = (
+    node: t.Node,
+  ): readonly { node: t.Node; path: JavaScriptSemanticPropertyPath }[] => {
+    const capture = capturedIntrinsic(node);
+    if (capture === undefined) return [];
+    const result: { node: t.Node; path: JavaScriptSemanticPropertyPath }[] = [];
+    for (let length = 0; length <= capture.path.length; length++) {
+      const values = assignedValues.get(
+        JSON.stringify(capture.path.slice(0, length)),
+      );
+      for (const value of values ?? []) {
+        if (
+          value.path.length <= capture.path.length &&
+          value.path.every((key, index) =>
+            semanticPropertyPathKeyMatches(key, capture.path[index]!),
+          ) &&
+          semanticEffectTiming(
+            capture.capturedAt ?? node,
+            value.node,
+            state,
+          ) !== "after"
+        )
+          result.push({
+            node: value.node.right,
+            path: capture.path.slice(value.path.length),
+          });
+      }
+    }
+    return result;
   };
 
   const staticString = (
@@ -727,6 +783,7 @@ export const createSemanticModuleInterop = (
     origin,
     callOrigin,
     intrinsicPath,
+    intrinsicValueReferences,
     intrinsicInvocation: (node: t.CallExpression | t.OptionalCallExpression) =>
       resolveJavaScriptIntrinsicInvocation(
         node,

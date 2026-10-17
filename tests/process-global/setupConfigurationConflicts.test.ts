@@ -1,4 +1,5 @@
 import {
+  chmod,
   lstat,
   readFile,
   readdir,
@@ -7,7 +8,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
 const writers = vi.hoisted(() => ({
@@ -203,17 +204,80 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it("merges concurrent setup requests from the latest file instead of racing stale snapshots", async () => {
-  const root = await createTestTempDirectory("rea-config-queued-");
+it.each(["absolute", "relative"])(
+  "merges queued setup requests using a %s path to the same configuration",
+  async (pathKind) => {
+    const root = await createTestTempDirectory("rea-config-queued-");
+    const path = join(root, "config.json");
+    const client = {
+      name: "cursor",
+      configPath: path,
+      format: "json",
+    } as const;
+    const results = await Promise.all([
+      configureClientConfiguration(client, { FIRST: "1" }),
+      configureClientConfiguration(
+        {
+          ...client,
+          configPath:
+            pathKind === "relative" ? relative(process.cwd(), path) : path,
+        },
+        { SECOND: "2" },
+      ),
+    ]);
+
+    expect(results.every((result) => result.status === "configured")).toBe(
+      true,
+    );
+    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
+      mcpServers: { rea: { env: { FIRST: "1", SECOND: "2" } } },
+    });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "preserves a concurrent permission change even when the configuration bytes match",
+  async () => {
+    const root = await createTestTempDirectory("rea-config-mode-conflict-");
+    const path = join(root, "config.json");
+    const original = "{}\n";
+    await writeFile(path, original, { mode: 0o600 });
+    writers.before = (target) => chmod(target, 0o640);
+
+    expect(
+      await configureClientConfiguration({
+        name: "cursor",
+        configPath: path,
+        format: "json",
+      }),
+    ).toMatchObject({ status: "failed", reason: "conflict" });
+    expect(await readFile(path, "utf8")).toBe(original);
+    expect((await lstat(path)).mode & 0o777).toBe(0o640);
+    expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
+  },
+);
+
+it("releases a failed setup transaction so a queued request can configure the file", async () => {
+  const root = await createTestTempDirectory("rea-config-queued-failure-");
   const path = join(root, "config.json");
   const client = { name: "cursor", configPath: path, format: "json" } as const;
-  const results = await Promise.all([
+  writers.before = async () => {
+    writers.before = undefined;
+    throw new Error("The first writer could not stage its configuration");
+  };
+
+  const [failed, queued] = await Promise.all([
     configureClientConfiguration(client, { FIRST: "1" }),
     configureClientConfiguration(client, { SECOND: "2" }),
   ]);
 
-  expect(results.every((result) => result.status === "configured")).toBe(true);
-  expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
-    mcpServers: { rea: { env: { FIRST: "1", SECOND: "2" } } },
+  expect(failed).toEqual({ status: "failed", reason: "write" });
+  expect(queued.status).toBe("configured");
+  expect(JSON.parse(await readFile(path, "utf8")).mcpServers.rea.env).toEqual({
+    SECOND: "2",
+  });
+  expect(await readdir(root)).toEqual(["config.json"]);
+  expect(await configureClientConfiguration(client)).toEqual({
+    status: "unchanged",
   });
 });

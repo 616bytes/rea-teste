@@ -1,5 +1,6 @@
 import type { Stats } from "node:fs";
 import { lstat, rm, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
 import { err, ok, type Result } from "../domain/result.js";
@@ -27,19 +28,19 @@ export const withClientConfigurationTransaction = async <Value>(
   path: string,
   operation: () => Promise<Value>,
 ): Promise<Value> => {
-  const previous = activeTransactions.get(path);
+  const key = resolve(path);
+  const previous = activeTransactions.get(key);
   let release!: () => void;
   const current = new Promise<void>((resolve) => {
     release = resolve;
   });
-  activeTransactions.set(path, current);
+  activeTransactions.set(key, current);
   await previous;
   try {
     return await operation();
   } finally {
     release();
-    if (activeTransactions.get(path) === current)
-      activeTransactions.delete(path);
+    if (activeTransactions.get(key) === current) activeTransactions.delete(key);
   }
 };
 

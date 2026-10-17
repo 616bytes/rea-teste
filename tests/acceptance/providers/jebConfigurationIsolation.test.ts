@@ -8,8 +8,8 @@ import { workspaceCliTest as test } from "../../support/cli/workspaceCliFixture.
 import type { TestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
 const isolatedEnvironment = (workspace: TestWorkspace) => ({
-  // Linux process supervision requires the host's procps ps during discovery.
-  PATH: process.platform === "linux" ? (process.env.PATH ?? "") : "",
+  // Discovery still needs the host's process-ownership prerequisites, such as ps.
+  PATH: process.env.PATH ?? "",
   HOME: workspace.home,
   USERPROFILE: workspace.home,
   APPDATA: workspace.path("appdata"),

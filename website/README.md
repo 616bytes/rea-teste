@@ -369,11 +369,16 @@ Three case-study previews lead to further investigations. The closing sections
 offer a guided first task and target-specific guides. FAQ, Discord and issue
 links each have their own line explaining their purpose.
 Every content page's header and footer link GitHub, Discord and X.
-A right-side table of contents stays visible at widths of 1440px and above.
-On narrower screens it becomes a sticky, native disclosure; selecting a link
-closes the menu and focuses the destination. The homepage script follows
-the reading position and marks the current link. Without JavaScript, the
-menu stays open and its fragment links remain usable.
+The hero figure is an isometric probe station drawn with the MIT-licensed kit
+in `figures/kit/`. `figures/probe-station/model.mjs` holds every value it
+shows, all taken from
+[evidence/calculator-and-dino.md](evidence/calculator-and-dino.md).
+`node website/figures/probe-station/build.mjs` writes the SVG between the
+`probe-station` markers in `public/index.html`, the stylesheet
+`public/assets/probe-station.css` and the script `public/assets/probe-station.js`;
+run the repository formatter on `public/index.html` afterwards. The SVG renders
+without JavaScript; the script lifts the needle, moves the stage to the next pad
+and updates the instrument, and reduced motion steps without movement.
 The comparison uses the same Calculator question on both sides: three
 selectable manual steps pair original instructions with an analyst illustration
 and thought bubbles; the agent side pairs a copyable question with an

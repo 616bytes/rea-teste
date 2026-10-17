@@ -75,7 +75,7 @@ msgstr "Bởi N0zoM1z0 * 10 tháng mười 2026"
 #: website/public/guides/browser/index.html:512
 #: website/public/guides/index.html:287
 #: website/public/guides/javascript/index.html:508
-#: website/public/guides/native/index.html:514 website/public/index.html:1322
+#: website/public/guides/native/index.html:514 website/public/index.html:9787
 #: website/public/showcase/aegis/index.html:813
 #: website/public/showcase/ctf/index.html:782
 #: website/public/showcase/dx-ball/index.html:790
@@ -152,7 +152,7 @@ msgstr ""
 #: website/public/guides/browser/index.html:110
 #: website/public/guides/index.html:110
 #: website/public/guides/javascript/index.html:110
-#: website/public/guides/native/index.html:110 website/public/index.html:112
+#: website/public/guides/native/index.html:110 website/public/index.html:114
 #: website/public/showcase/aegis/index.html:111
 #: website/public/showcase/ctf/index.html:110
 #: website/public/showcase/dx-ball/index.html:110
@@ -174,7 +174,7 @@ msgstr "Trang chủ REA"
 #: website/public/guides/browser/index.html:114
 #: website/public/guides/index.html:114
 #: website/public/guides/javascript/index.html:114
-#: website/public/guides/native/index.html:114 website/public/index.html:116
+#: website/public/guides/native/index.html:114 website/public/index.html:118
 #: website/public/showcase/aegis/index.html:115
 #: website/public/showcase/ctf/index.html:114
 #: website/public/showcase/dx-ball/index.html:114
@@ -196,7 +196,7 @@ msgstr "Điều hướng chính"
 #: website/public/guides/browser/index.html:133
 #: website/public/guides/index.html:133
 #: website/public/guides/javascript/index.html:133
-#: website/public/guides/native/index.html:133 website/public/index.html:135
+#: website/public/guides/native/index.html:133 website/public/index.html:137
 #: website/public/showcase/aegis/index.html:134
 #: website/public/showcase/ctf/index.html:133
 #: website/public/showcase/dx-ball/index.html:133
@@ -218,7 +218,7 @@ msgstr "REA TRÊN GitHub"
 #: website/public/guides/browser/index.html:153
 #: website/public/guides/index.html:153
 #: website/public/guides/javascript/index.html:153
-#: website/public/guides/native/index.html:153 website/public/index.html:155
+#: website/public/guides/native/index.html:153 website/public/index.html:157
 #: website/public/showcase/aegis/index.html:154
 #: website/public/showcase/ctf/index.html:153
 #: website/public/showcase/dx-ball/index.html:153
@@ -240,7 +240,7 @@ msgstr "Tham gia Discord của REA"
 #: website/public/guides/browser/index.html:172
 #: website/public/guides/index.html:172
 #: website/public/guides/javascript/index.html:172
-#: website/public/guides/native/index.html:172 website/public/index.html:174
+#: website/public/guides/native/index.html:172 website/public/index.html:176
 #: website/public/showcase/aegis/index.html:173
 #: website/public/showcase/ctf/index.html:172
 #: website/public/showcase/dx-ball/index.html:172
@@ -5558,75 +5558,29 @@ msgctxt "page:guides/native/index.html"
 msgid "Back to top"
 msgstr "Về đầu trang"
 
-#: website/public/index.html:107
+#: website/public/index.html:109
 msgctxt "page:index.html"
 msgid "Skip to content"
 msgstr "Bỏ qua nội dung"
 
-#: website/public/index.html:199 website/public/index.html:209
-#: website/public/index.html:207
-msgctxt "page:index.html"
-msgid "On this page"
-msgstr "Trên trang này"
-
-#: website/public/index.html:200 website/public/index.html:246
+#: website/public/index.html:8710
 msgctxt "page:index.html"
 msgid "Set up REA"
 msgstr "Thiết LẬP REA"
 
-#. {ph0}: <a href="#setup" aria-current="location">
-#. {ph1}: </a>
-#: website/public/index.html:211
-#, python-brace-format
-msgctxt "page:index.html"
-msgid "{ph0}Set up REA{ph1}"
-msgstr "{ph0}Thiết LẬP REA {ph1}"
-
-#. {ph0}: <a href="#dinosaur">
-#. {ph1}: </a>
-#: website/public/index.html:213
-#, python-brace-format
-msgctxt "page:index.html"
-msgid "{ph0}Dinosaur game{ph1}"
-msgstr "{ph0}Chơi Dinosaur miễn phí{ph1}"
-
-#. {ph0}: <a href="#calculator">
-#. {ph1}: </a>
-#: website/public/index.html:214
-#, python-brace-format
-msgctxt "page:index.html"
-msgid "{ph0}Calculator{ph1}"
-msgstr "{ph0}Máy tính{ph1}"
-
-#. {ph0}: <a href="#try-rea">
-#. {ph1}: </a>
-#: website/public/index.html:216
-#, python-brace-format
-msgctxt "page:index.html"
-msgid "{ph0}Try REA{ph1}"
-msgstr "{ph0}Thử REA {ph1}"
-
-#. {ph0}: <a href="#analyze">
-#. {ph1}: </a>
-#: website/public/index.html:217
-#, python-brace-format
-msgctxt "page:index.html"
-msgid "{ph0}Go deeper{ph1}"
-msgstr "{ph0}Tìm hiểu sâu hơn{ph1}"
-
-#: website/public/index.html:226
+#: website/public/index.html:203
 msgctxt "page:index.html"
 msgid "Reverse engineering, with your coding agent"
 msgstr "Kỹ thuật đảo ngược, với agent mã hóa của bạn"
 
 #. {ph0}: <br />
-#: website/public/index.html:227
+#: website/public/index.html:204
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "Find out how{ph0}software works."
 msgstr "Tìm hiểu cách{ph0}phần mềm hoạt động."
 
-#: website/public/index.html:247
+#: website/public/index.html:8712
 msgctxt "page:index.html"
 msgid "Copy this into your coding agent:"
 msgstr "Dán lời nhắc này vào trợ lý lập trình AI của bạn:"
@@ -5639,33 +5593,33 @@ msgstr "Dán lời nhắc này vào trợ lý lập trình AI của bạn:"
 #. {ph5}: <i>
 #. {ph6}: </i>
 #. {ph7}: </span >
-#: website/public/index.html:250
+#: website/public/index.html:8715
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
 msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Agent mã hóa của bạn"
 
-#: website/public/index.html:255 website/public/index.html:279
-#: website/public/index.html:612 website/public/index.html:693
-#: website/public/index.html:917 website/public/index.html:1229
-#: website/public/index.html:1257
+#: website/public/index.html:8720 website/public/index.html:8744
+#: website/public/index.html:9077 website/public/index.html:9158
+#: website/public/index.html:9382 website/public/index.html:9694
+#: website/public/index.html:9722
 msgctxt "page:index.html"
 msgid "Copy"
 msgstr "Sao chép"
 
-#: website/public/index.html:276
+#: website/public/index.html:8741
 msgctxt "page:index.html"
 msgid "Or run this in your terminal:"
 msgstr "Hoặc chạy lệnh này trong terminal:"
 
-#: website/public/index.html:288
+#: website/public/index.html:8753
 msgctxt "page:index.html"
 msgid "Approve the setup plan, then restart your agent."
 msgstr "Xem và chấp thuận kế hoạch cài đặt, rồi khởi động lại trợ lý."
 
 #. {ph0}: <span>
 #. {ph1}: </span>
-#: website/public/index.html:461
+#: website/public/index.html:8926
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}01{ph1} Decode branches"
@@ -5673,7 +5627,7 @@ msgstr "{ph0}01{ph1} Giải mã chi nhánh"
 
 #. {ph0}: <span>
 #. {ph1}: </span>
-#: website/public/index.html:469
+#: website/public/index.html:8934
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}02{ph1} Trace calls"
@@ -5681,7 +5635,7 @@ msgstr "{ph0}02{ph1} Theo dõi cuộc gọi"
 
 #. {ph0}: <span>
 #. {ph1}: </span>
-#: website/public/index.html:477
+#: website/public/index.html:8942
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}03{ph1} Recover the rule"
@@ -5691,20 +5645,20 @@ msgstr "{ph0}03{ph1} Khôi phục quy tắc"
 #. {ph1}: </span>
 #. {ph2}: <span class="assembly-disclosure" aria-hidden="true" >
 #. {ph3}: </span>
-#: website/public/index.html:488
+#: website/public/index.html:8953
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Original x64 · selected instructions{ph1} {ph2}{ph3}"
 msgstr "{ph0}Ban đầu x64 * lựa chọn hướng dẫn{ph1} {ph2}{ph3}"
 
-#: website/public/index.html:530
+#: website/public/index.html:8995
 msgctxt "page:index.html"
 msgid "01 · Which branch?"
 msgstr "01 * chi Nhánh Nào?"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/index.html:531
+#: website/public/index.html:8996
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -5714,29 +5668,29 @@ msgstr ""
 "“{ph0}0x5b? 0x5c?{ph1} Hai bước nhảy đến cùng một nơi. Những nhà khai thác "
 "này là gì?”"
 
-#: website/public/index.html:535
+#: website/public/index.html:9000
 msgctxt "page:index.html"
 msgid "Look up the command IDs, then label the branch."
 msgstr "Tra Cứu id lệnh, sau đó gắn nhãn nhánh."
 
-#: website/public/index.html:541
+#: website/public/index.html:9006
 msgctxt "page:index.html"
 msgid "Divide ÷"
 msgstr "Chia ÷"
 
-#: website/public/index.html:545
+#: website/public/index.html:9010
 msgctxt "page:index.html"
 msgid "Multiply ×"
 msgstr "Nhân ×"
 
-#: website/public/index.html:550
+#: website/public/index.html:9015
 msgctxt "page:index.html"
 msgid "02 · What do the calls do?"
 msgstr "02 · Các hàm được gọi làm gì?"
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
-#: website/public/index.html:551
+#: website/public/index.html:9016
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -5746,24 +5700,24 @@ msgstr ""
 "\"100 là rõ ràng. Các cuộc gọi chỉ là địa chỉ. {ph0}Cái nào phân chia? Giá "
 "trị nào đi vào?{ph1}”"
 
-#: website/public/index.html:557
+#: website/public/index.html:9022
 msgctxt "page:index.html"
 msgid "Inspect the helpers and trace the stored values."
 msgstr "Kiểm tra các chức năng trợ giúp và theo dõi các giá trị được lưu trữ."
 
-#: website/public/index.html:567
+#: website/public/index.html:9032
 msgctxt "page:index.html"
 msgid "Divide"
 msgstr "Chia"
 
-#: website/public/index.html:572
+#: website/public/index.html:9037
 msgctxt "page:index.html"
 msgid "03 · What is the rule?"
 msgstr "03 * quy tắc Là gì?"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/index.html:573
+#: website/public/index.html:9038
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -5773,19 +5727,19 @@ msgstr ""
 "\"Con đường này nhân với đầu vào khác. Vậy {ph0}10% có nghĩa là 10% của "
 "200{ph1} sau +.”"
 
-#: website/public/index.html:577
+#: website/public/index.html:9042
 msgctxt "page:index.html"
 msgid "Name the operands and check both operator paths."
 msgstr "Đặt tên cho các toán hạng và kiểm tra cả hai đường dẫn toán tử."
 
-#: website/public/index.html:593 website/public/index.html:520
+#: website/public/index.html:9058 website/public/index.html:8985
 msgctxt "page:index.html"
 msgid "Illustrative expert reasoning"
 msgstr "Lý luận chuyên gia minh họa"
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
-#: website/public/index.html:596
+#: website/public/index.html:9061
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -5803,87 +5757,87 @@ msgstr ""
 #. {ph5}: <i>
 #. {ph6}: </i>
 #. {ph7}: </span >
-#: website/public/index.html:607
+#: website/public/index.html:9072
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Example prompt · Calculator"
 msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Ví dụ nhắc · Máy tính"
 
-#: website/public/index.html:629
+#: website/public/index.html:9094
 msgctxt "page:index.html"
 msgid "Example answer · based on the findings"
 msgstr "Câu trả lời ví dụ · dựa trên những phát hiện"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/index.html:632
+#: website/public/index.html:9097
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
 "After +, the % button takes {ph0}a percentage of the first number.{ph1}"
 msgstr "Sau +, nút % mất {ph0}một tỷ lệ phần trăm của số đầu tiên.{ph1}"
 
-#: website/public/index.html:645
+#: website/public/index.html:9110
 msgctxt "page:index.html"
 msgid "REA supplies"
 msgstr "REA cung cấp"
 
-#: website/public/index.html:646
+#: website/public/index.html:9111
 msgctxt "page:index.html"
 msgid "The handler’s instructions, decompiled code and calls."
 msgstr "Hướng dẫn của trình xử lý, mã dịch ngược và các cuộc gọi."
 
-#: website/public/index.html:651
+#: website/public/index.html:9116
 msgctxt "page:index.html"
 msgid "Your agent explains"
 msgstr "Trợ lý giải thích"
 
-#: website/public/index.html:652
+#: website/public/index.html:9117
 msgctxt "page:index.html"
 msgid "Which branch applies, what it calculates and how to rebuild it."
 msgstr "Chi nhánh nào áp dụng, những gì nó tính toán và cách xây dựng lại nó."
 
-#: website/public/index.html:676
+#: website/public/index.html:9141
 msgctxt "page:index.html"
 msgid "Example 01 · Chrome’s dinosaur game"
 msgstr "Ví dụ 01 * Chrome ' s trò chơi khủng long"
 
-#: website/public/index.html:677
+#: website/public/index.html:9142
 msgctxt "page:index.html"
 msgid "Why does the dinosaur get faster?"
 msgstr "Vì sao khủng long chạy nhanh dần?"
 
-#: website/public/index.html:756
+#: website/public/index.html:9221
 msgctxt "page:index.html"
 msgid "Play"
 msgstr "Chơi"
 
-#: website/public/index.html:759
+#: website/public/index.html:9224
 msgctxt "page:index.html"
 msgid "Jump ↑"
 msgstr "Nhảy ↑"
 
-#: website/public/index.html:760
+#: website/public/index.html:9225
 msgctxt "page:index.html"
 msgid "Restart"
 msgstr "Chơi lại"
 
-#: website/public/index.html:763
+#: website/public/index.html:9228
 msgctxt "page:index.html"
 msgid "Speed"
 msgstr "Tốc độ"
 
-#: website/public/index.html:773
+#: website/public/index.html:9238
 msgctxt "page:index.html"
 msgid "Use the recovered acceleration rule"
 msgstr "Sử dụng quy tắc tăng tốc đã khôi phục"
 
-#: website/public/index.html:777
+#: website/public/index.html:9242
 msgctxt "page:index.html"
 msgid "Original rule: start at 6, then increase toward 13."
 msgstr "Quy tắc ban đầu: bắt đầu từ 6, sau đó tăng lên 13."
 
-#: website/public/index.html:780
+#: website/public/index.html:9245
 msgctxt "page:index.html"
 msgid "Move the slider to set your own speed. Space or Jump clears a cactus."
 msgstr ""
@@ -5896,7 +5850,7 @@ msgstr ""
 #. {ph3}: </span >
 #. {ph4}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph5}: </span>
-#: website/public/index.html:702
+#: website/public/index.html:9167
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -5910,7 +5864,7 @@ msgstr ""
 
 #. {ph0}: <a href="https://wayou.github.io/t-rex-runner/" >
 #. {ph1}: </a >
-#: website/public/index.html:800
+#: website/public/index.html:9265
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "Inspected target: {ph0}wayou’s Chromium-derived browser edition{ph1}."
@@ -5918,12 +5872,12 @@ msgstr ""
 "Mục tiêu được kiểm tra: {ph0}PHIÊN bản trình duyệt CÓ NGUỒN GỐC TỪ Chromium "
 "của wayou{ph1}."
 
-#: website/public/index.html:791
+#: website/public/index.html:9256
 msgctxt "page:index.html"
 msgid "Open the speed lab →"
 msgstr "Mở phòng thí nghiệm tốc độ →"
 
-#: website/public/index.html:822
+#: website/public/index.html:9287
 msgctxt "page:index.html"
 msgid "What each part does"
 msgstr "Mỗi phần làm gì"
@@ -5934,7 +5888,7 @@ msgstr "Mỗi phần làm gì"
 #. {ph3}: </span >
 #. {ph4}: <span class="flow-note" >
 #. {ph5}: </span >
-#: website/public/index.html:824
+#: website/public/index.html:9289
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -5950,7 +5904,7 @@ msgstr ""
 #. {ph3}: </span >
 #. {ph4}: <span class="flow-note" >
 #. {ph5}: </span >
-#: website/public/index.html:831
+#: website/public/index.html:9296
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -5967,7 +5921,7 @@ msgstr ""
 #. {ph3}: </span >
 #. {ph4}: <span class="flow-note" >
 #. {ph5}: </span >
-#: website/public/index.html:839
+#: website/public/index.html:9304
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -5977,13 +5931,13 @@ msgstr ""
 "{ph0}03 * Bạn{ph1}{ph2}Thay đổi tốc độ và chơi{ph3}{ph4}Hãy thử tăng tốc ban"
 " đầu, sau đó chọn tốc độ của riêng bạn.{ph5}"
 
-#: website/public/index.html:797
+#: website/public/index.html:9262
 msgctxt "page:index.html"
 msgid "See the script, checks and how to try the analysis"
 msgstr "Xem kịch bản, kiểm tra và cách thử phân tích"
 
 #. {ph0}: <code>index.js</code>
-#: website/public/index.html:849
+#: website/public/index.html:9314
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -5993,7 +5947,7 @@ msgstr ""
 "REA đã kiểm tra PHIÊN bản TRÌNH duyệt HTTP thông qua kết nối gỡ lỗi cục bộ "
 "và trả về đã tải {ph0}, bao gồm cả nguồn và tiêu hóa của nó."
 
-#: website/public/index.html:862
+#: website/public/index.html:9327
 msgctxt "page:index.html"
 msgid ""
 "We called the original game’s update function in a controlled browser check,"
@@ -6007,7 +5961,7 @@ msgstr ""
 
 #. {ph0}: <a href="examples/dino-lab/">
 #. {ph1}: </a>
-#: website/public/index.html:868
+#: website/public/index.html:9333
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -6023,7 +5977,7 @@ msgstr ""
 #. {ph1}: </a>
 #. {ph2}: <a href="https://wayou.github.io/t-rex-runner/" >
 #. {ph3}: </a >
-#: website/public/index.html:874
+#: website/public/index.html:9339
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -6041,7 +5995,7 @@ msgstr ""
 #. {ph1}: </a >
 #. {ph2}: <a href="assets/licenses/dinosaur.txt" >
 #. {ph3}: </a >
-#: website/public/index.html:883
+#: website/public/index.html:9348
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -6049,34 +6003,34 @@ msgid ""
 msgstr ""
 "{ph0}Kiểm tra mã tốc độ{ph1} · {ph2} Tác GIẢ Chromium * giấy phép BSD{ph3}"
 
-#: website/public/index.html:900
+#: website/public/index.html:9365
 msgctxt "page:index.html"
 msgid "Example 02 · Windows Calculator"
 msgstr "Ví dụ 02 * Windows Máy Tính"
 
-#: website/public/index.html:901
+#: website/public/index.html:9366
 msgctxt "page:index.html"
 msgid "Rebuild Calculator’s % button."
 msgstr "Dựng lại nút % của Máy tính."
 
-#: website/public/index.html:1006
+#: website/public/index.html:9471
 msgctxt "page:index.html"
 msgid "Reset"
 msgstr "Đặt lại"
 
-#: website/public/index.html:1014
+#: website/public/index.html:9479
 msgctxt "page:index.html"
 msgid "10% of 200 = 20. Then 200 + 20 = 220."
 msgstr "10% của 200 = 20. Sau đó, 200 + 20 = 220."
 
-#: website/public/index.html:1017
+#: website/public/index.html:9482
 msgctxt "page:index.html"
 msgid "Interactive illustration of the inspected percentage rule."
 msgstr "Minh họa tương tác của quy tắc phần trăm được kiểm tra."
 
 #. {ph0}: <code>previous = 200</code>
 #. {ph1}: <code>current = 10</code>
-#: website/public/index.html:1025
+#: website/public/index.html:9490
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "For this example, {ph0} and {ph1}."
@@ -6088,7 +6042,7 @@ msgstr "Đối với ví dụ này, {ph0} và {ph1}."
 #. {ph3}: </span >
 #. {ph4}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph5}: </span>
-#: website/public/index.html:926
+#: website/public/index.html:9391
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -6100,7 +6054,7 @@ msgstr ""
 "phục các quy tắc sau + và ×, sau đó xây dựng một máy tính nhỏ sử dụng cả "
 "hai.{ph3}{ph4}{ph5}"
 
-#: website/public/index.html:942
+#: website/public/index.html:9407
 msgctxt "page:index.html"
 msgid "With +"
 msgstr "Với +"
@@ -6108,13 +6062,13 @@ msgstr "Với +"
 #. {ph0}: <span>
 #. {ph1}: </span >
 #. {ph2}: <code>10% of 200 = 20 → 200 + 20 = 220</code>
-#: website/public/index.html:943
+#: website/public/index.html:9408
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Take 10% of the first number.{ph1}{ph2}"
 msgstr "{ph0}Lấy 10% số đầu tiên.{ph1}{ph2}"
 
-#: website/public/index.html:949
+#: website/public/index.html:9414
 msgctxt "page:index.html"
 msgid "With ×"
 msgstr "Với ×"
@@ -6122,13 +6076,13 @@ msgstr "Với ×"
 #. {ph0}: <span>
 #. {ph1}: </span>
 #. {ph2}: <code>200 × 0.1 = 20</code>
-#: website/public/index.html:950
+#: website/public/index.html:9415
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Turn 10% into 0.1.{ph1}{ph2}"
 msgstr "{ph0}Biến 10% thành 0,1.{ph1}{ph2}"
 
-#: website/public/index.html:1040
+#: website/public/index.html:9505
 msgctxt "page:index.html"
 msgid "From the installed app to a working % button"
 msgstr "Từ ứng dụng đã cài đặt đến nút % hoạt động"
@@ -6140,7 +6094,7 @@ msgstr "Từ ứng dụng đã cài đặt đến nút % hoạt động"
 #. {ph4}: <span class="flow-note" >
 #. {ph5}: <code>100</code>
 #. {ph6}: </span >
-#: website/public/index.html:1053
+#: website/public/index.html:9518
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -6157,7 +6111,7 @@ msgstr ""
 #. {ph3}: </span >
 #. {ph4}: <span class="flow-note" >
 #. {ph5}: </span >
-#: website/public/index.html:1061
+#: website/public/index.html:9526
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -6169,12 +6123,12 @@ msgstr ""
 "quy tắc{ph3}{ph4}Kiểm tra chéo nhánh với Nguồn Của Microsoft, sau đó thử + "
 "và × ở trên.{ph5}"
 
-#: website/public/index.html:1024
+#: website/public/index.html:9489
 msgctxt "page:index.html"
 msgid "See the real code and how the answer was checked"
 msgstr "Xem mã thực và câu trả lời đã được kiểm tra như thế nào"
 
-#: website/public/index.html:1096
+#: website/public/index.html:9561
 msgctxt "page:index.html"
 msgid ""
 "Inspected with REA 4.1.0: Windows Calculator 11.2508.4.0, x64. The readable "
@@ -6195,7 +6149,7 @@ msgstr ""
 #. {ph3}: </a >
 #. {ph4}: <a href="guides/native/">
 #. {ph5}: </a>
-#: website/public/index.html:1101
+#: website/public/index.html:9566
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -6205,17 +6159,17 @@ msgstr ""
 "{ph0}Thực hiện tỷ lệ phần trăm{ph1} · {ph2}Trường hợp thử nghiệm của "
 "Microsoft{ph3} · {ph4}Hướng dẫn thiết lập gốc{ph5}"
 
-#: website/public/index.html:1170
+#: website/public/index.html:9635
 msgctxt "page:index.html"
 msgid "Your first investigation"
 msgstr "Cuộc điều tra đầu tiên của bạn"
 
-#: website/public/index.html:1171
+#: website/public/index.html:9636
 msgctxt "page:index.html"
 msgid "Try REA on a small app."
 msgstr "Hãy thử REA trên một ứng dụng nhỏ."
 
-#: website/public/index.html:1172
+#: website/public/index.html:9637
 msgctxt "page:index.html"
 msgid ""
 "Download our Notes example, trace its CSV export, and check one changed "
@@ -6224,17 +6178,17 @@ msgstr ""
 "Tải Xuống Ví Dụ Ghi Chú của chúng tôi, theo dõi XUẤT CSV của NÓ và kiểm tra "
 "một đầu vào đã thay đổi."
 
-#: website/public/index.html:1177
+#: website/public/index.html:9642
 msgctxt "page:index.html"
 msgid "Try the guided example"
 msgstr "Hãy thử ví dụ hướng dẫn"
 
-#: website/public/index.html:1194
+#: website/public/index.html:9659
 msgctxt "page:index.html"
 msgid "Native binaries"
 msgstr "Chương trình mã máy"
 
-#: website/public/index.html:1195
+#: website/public/index.html:9660
 msgctxt "page:index.html"
 msgid ""
 "Inspect functions, strings, references and call relationships in executables"
@@ -6243,17 +6197,17 @@ msgstr ""
 "Kiểm tra các hàm, chuỗi, tham chiếu và mối quan hệ gọi hàm trong tệp thực "
 "thi và thư viện."
 
-#: website/public/index.html:1199
+#: website/public/index.html:9664
 msgctxt "page:index.html"
 msgid "Native analysis guide"
 msgstr "Phân tích hướng dẫn chương trình mã máy"
 
-#: website/public/index.html:1202
+#: website/public/index.html:9667
 msgctxt "page:index.html"
 msgid "JavaScript & Electron"
 msgstr "JavaScript & Electron"
 
-#: website/public/index.html:1203
+#: website/public/index.html:9668
 msgctxt "page:index.html"
 msgid ""
 "Map modules, routes, IPC and native dependencies from an application folder "
@@ -6262,17 +6216,17 @@ msgstr ""
 "Các mô-đun bản đồ, tuyến ĐƯỜNG, IPC và các phụ thuộc gốc từ thư mục ứng dụng"
 " hoặc KHO LƯU trữ ASAR."
 
-#: website/public/index.html:1207
+#: website/public/index.html:9672
 msgctxt "page:index.html"
 msgid "Application workflows"
 msgstr "Quy trình làm việc ứng dụng"
 
-#: website/public/index.html:1210
+#: website/public/index.html:9675
 msgctxt "page:index.html"
 msgid "Browser & runtime activity"
 msgstr "Hoạt động trình duyệt và thời gian chạy"
 
-#: website/public/index.html:1211
+#: website/public/index.html:9676
 msgctxt "page:index.html"
 msgid ""
 "Capture selected browser or process activity, then compare the results "
@@ -6281,12 +6235,12 @@ msgstr ""
 "Nắm bắt các trình duyệt được lựa chọn hoặc quá trình hoạt động, sau đó so "
 "sánh các kết quả trên chạy."
 
-#: website/public/index.html:1215
+#: website/public/index.html:9680
 msgctxt "page:index.html"
 msgid "Browser observation guide"
 msgstr "Hướng dẫn quan sát trình duyệt"
 
-#: website/public/index.html:1286
+#: website/public/index.html:9751
 msgctxt "page:index.html"
 msgid "Any questions?"
 msgstr "Bạn có câu hỏi?"
@@ -6305,27 +6259,27 @@ msgstr ""
 "Ứng dụng kỹ sư đảo ngược, nhị phân và hành vi trình duyệt với tác nhân mã "
 "hóa của bạn. Làm theo hướng dẫn rõ ràng và thử các ví dụ tương tác VỚI REA ."
 
-#: website/public/index.html:255
+#: website/public/index.html:8720
 msgctxt "page:index.html"
 msgid "Copy REA installation prompt"
 msgstr "Sao CHÉP lời nhắc cài ĐẶT REA"
 
-#: website/public/index.html:279
+#: website/public/index.html:8744
 msgctxt "page:index.html"
 msgid "Copy setup command"
 msgstr "Sao chép lệnh thiết lập"
 
-#: website/public/index.html:456
+#: website/public/index.html:8921
 msgctxt "page:index.html"
 msgid "Follow the manual Calculator analysis"
 msgstr "Thực hiện theo phân tích máy tính thủ công"
 
-#: website/public/index.html:612
+#: website/public/index.html:9077
 msgctxt "page:index.html"
 msgid "Copy Calculator percentage question"
 msgstr "Sao chép câu hỏi tỷ lệ phần Trăm máy Tính"
 
-#: website/public/index.html:746
+#: website/public/index.html:9211
 msgctxt "page:index.html"
 msgid ""
 "Dinosaur mini-game. Use the Jump button or press Space while the game is "
@@ -6334,22 +6288,22 @@ msgstr ""
 "Khủng long mini-game. Sử dụng Nút Nhảy hoặc Nhấn Không gian trong khi trò "
 "chơi được tập trung."
 
-#: website/public/index.html:693
+#: website/public/index.html:9158
 msgctxt "page:index.html"
 msgid "Copy dinosaur analysis prompt"
 msgstr "Sao chép dấu nhắc phân tích khủng long"
 
-#: website/public/index.html:963
+#: website/public/index.html:9428
 msgctxt "page:index.html"
 msgid "Choose the calculation"
 msgstr "Chọn tính toán"
 
-#: website/public/index.html:917
+#: website/public/index.html:9382
 msgctxt "page:index.html"
 msgid "Copy Calculator analysis prompt"
 msgstr "Sao chép lời nhắc phân tích máy tính"
 
-#: website/public/index.html:1322
+#: website/public/index.html:9787
 msgctxt "page:index.html"
 msgid "Back to top"
 msgstr "Về đầu trang"
@@ -10781,7 +10735,7 @@ msgstr "Khoảng cách tương tự: 256 ÷ 16 = 16 đơn vị góc = 22,5°"
 #: website/public/guides/browser/index.html:116
 #: website/public/guides/index.html:116
 #: website/public/guides/javascript/index.html:116
-#: website/public/guides/native/index.html:116 website/public/index.html:118
+#: website/public/guides/native/index.html:116 website/public/index.html:120
 #: website/public/showcase/aegis/index.html:117
 #: website/public/showcase/ctf/index.html:116
 #: website/public/showcase/dx-ball/index.html:116
@@ -10803,7 +10757,7 @@ msgstr "Ví dụ thực tế"
 #: website/public/guides/browser/index.html:117
 #: website/public/guides/index.html:117
 #: website/public/guides/javascript/index.html:117
-#: website/public/guides/native/index.html:117 website/public/index.html:119
+#: website/public/guides/native/index.html:117 website/public/index.html:121
 #: website/public/showcase/aegis/index.html:118
 #: website/public/showcase/ctf/index.html:117
 #: website/public/showcase/dx-ball/index.html:117
@@ -10825,7 +10779,7 @@ msgstr "Blog"
 #: website/public/guides/browser/index.html:115
 #: website/public/guides/index.html:115
 #: website/public/guides/javascript/index.html:115
-#: website/public/guides/native/index.html:115 website/public/index.html:117
+#: website/public/guides/native/index.html:115 website/public/index.html:119
 #: website/public/showcase/aegis/index.html:116
 #: website/public/showcase/ctf/index.html:115
 #: website/public/showcase/dx-ball/index.html:115
@@ -10847,7 +10801,7 @@ msgstr "Bắt đầu"
 #: website/public/guides/browser/index.html:118
 #: website/public/guides/index.html:118
 #: website/public/guides/javascript/index.html:118
-#: website/public/guides/native/index.html:118 website/public/index.html:120
+#: website/public/guides/native/index.html:118 website/public/index.html:122
 #: website/public/showcase/aegis/index.html:119
 #: website/public/showcase/ctf/index.html:118
 #: website/public/showcase/dx-ball/index.html:118
@@ -10869,7 +10823,7 @@ msgstr "Hướng dẫn"
 #: website/public/guides/browser/index.html:503
 #: website/public/guides/index.html:278
 #: website/public/guides/javascript/index.html:499
-#: website/public/guides/native/index.html:505 website/public/index.html:1313
+#: website/public/guides/native/index.html:505 website/public/index.html:9778
 #: website/public/showcase/aegis/index.html:804
 #: website/public/showcase/ctf/index.html:773
 #: website/public/showcase/dx-ball/index.html:781
@@ -10891,7 +10845,7 @@ msgstr "Mã nguồn"
 #: website/public/guides/browser/index.html:504
 #: website/public/guides/index.html:279
 #: website/public/guides/javascript/index.html:500
-#: website/public/guides/native/index.html:506 website/public/index.html:1314
+#: website/public/guides/native/index.html:506 website/public/index.html:9779
 #: website/public/showcase/aegis/index.html:805
 #: website/public/showcase/ctf/index.html:774
 #: website/public/showcase/dx-ball/index.html:782
@@ -10913,7 +10867,7 @@ msgstr "Giấy phép MIT"
 #: website/public/guides/browser/index.html:505
 #: website/public/guides/index.html:280
 #: website/public/guides/javascript/index.html:501
-#: website/public/guides/native/index.html:507 website/public/index.html:1315
+#: website/public/guides/native/index.html:507 website/public/index.html:9780
 #: website/public/showcase/aegis/index.html:806
 #: website/public/showcase/ctf/index.html:775
 #: website/public/showcase/dx-ball/index.html:783
@@ -10935,7 +10889,7 @@ msgstr "Tham gia cộng đồng"
 #: website/public/guides/browser/index.html:506
 #: website/public/guides/index.html:281
 #: website/public/guides/javascript/index.html:502
-#: website/public/guides/native/index.html:508 website/public/index.html:1316
+#: website/public/guides/native/index.html:508 website/public/index.html:9781
 #: website/public/showcase/aegis/index.html:807
 #: website/public/showcase/ctf/index.html:776
 #: website/public/showcase/dx-ball/index.html:784
@@ -11041,27 +10995,27 @@ msgctxt "page:guides/native/index.html"
 msgid "Recovered C · excerpt"
 msgstr "Phục Hồi C · trích Đoạn"
 
-#: website/public/index.html:1127
+#: website/public/index.html:9592
 msgctxt "page:index.html"
 msgid "Showcases →"
 msgstr "Giới thiệu →"
 
-#: website/public/index.html:856
+#: website/public/index.html:9321
 msgctxt "page:index.html"
 msgid "Selected settings from the inspected script"
 msgstr "Cài đặt đã chọn từ tập lệnh được kiểm tra"
 
-#: website/public/index.html:1031
+#: website/public/index.html:9496
 msgctxt "page:index.html"
 msgid "Readable summary of the % handler"
 msgstr "Tóm tắt có thể đọc được của trình xử lý %"
 
-#: website/public/index.html:1075
+#: website/public/index.html:9540
 msgctxt "page:index.html"
 msgid "REA · selected original instructions"
 msgstr "REA * hướng dẫn ban đầu được chọn"
 
-#: website/public/index.html:1086
+#: website/public/index.html:9551
 msgctxt "page:index.html"
 msgid "Operator IDs · Microsoft’s source"
 msgstr "Id nhà điều Hành * Nguồn Của Microsoft"
@@ -11471,7 +11425,7 @@ msgstr ""
 #. {ph4}: </span >
 #. {ph5}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph6}: </span>
-#: website/public/index.html:264
+#: website/public/index.html:8729
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -11692,7 +11646,7 @@ msgstr ""
 #. {ph0}: <span translate="no">Node.js</span>
 #. {ph1}: <a href="get-started/">
 #. {ph2}: </a>
-#: website/public/index.html:309
+#: website/public/index.html:8774
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -11709,7 +11663,7 @@ msgstr ""
 #. {ph4}: </span >
 #. {ph5}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph6}: </span>
-#: website/public/index.html:621
+#: website/public/index.html:9086
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -11720,7 +11674,7 @@ msgstr ""
 "220?{ph4}{ph5}{ph6}"
 
 #. {ph0}: <span translate="no">index.js</span>
-#: website/public/index.html:808
+#: website/public/index.html:9273
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "REA · loaded {ph0} · selected lines"
@@ -11734,7 +11688,7 @@ msgstr "REA · đã tải {ph0} * các dòng đã chọn"
 #. {ph5}: <span class="flow-note" >
 #. {ph6}: <code>ms-calculator:</code>
 #. {ph7}: </span >
-#: website/public/index.html:1044
+#: website/public/index.html:9509
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -13181,65 +13135,57 @@ msgstr ""
 "{ph0}Ghi chú bằng chứng chi tiết{ph1} bao gồm các kết quả so sánh và bối "
 "cảnh thử nghiệm."
 
-#. {ph0}: <a href="#showcases">
-#. {ph1}: </a>
-#: website/public/index.html:215
-#, python-brace-format
-msgctxt "page:index.html"
-msgid "{ph0}Showcases{ph1}"
-msgstr "{ph0}Ví dụ thực tế{ph1}"
-
-#: website/public/index.html:1121
+#: website/public/index.html:9586
 msgctxt "page:index.html"
 msgid "REA case studies."
 msgstr "REA nghiên cứu trường hợp."
 
-#: website/public/index.html:1131
+#: website/public/index.html:9596
 msgctxt "page:index.html"
 msgid "Android · APK analysis"
 msgstr "Android * PHÂN tích APK"
 
-#: website/public/index.html:1132
+#: website/public/index.html:9597
 msgctxt "page:index.html"
 msgid "How an authenticator generates a login code"
 msgstr "Cách trình xác thực tạo mã đăng nhập"
 
-#: website/public/index.html:1137
+#: website/public/index.html:9602
 msgctxt "page:index.html"
 msgid "Read the Android case study"
 msgstr "Đọc nghiên Cứu điển Hình Android"
 
-#: website/public/index.html:1142
+#: website/public/index.html:9607
 msgctxt "page:index.html"
 msgid "Electron · Feature tracing"
 msgstr "Electron * Tính năng truy tìm"
 
-#: website/public/index.html:1143
+#: website/public/index.html:9608
 msgctxt "page:index.html"
 msgid "How Notion copies text and HTML"
 msgstr "Notion sao chép văn bản và HTML như thế nào"
 
-#: website/public/index.html:1148
+#: website/public/index.html:9613
 msgctxt "page:index.html"
 msgid "Read the Notion case study"
 msgstr "Đọc nghiên CỨU điển HÌNH Notion"
 
-#: website/public/index.html:1153
+#: website/public/index.html:9618
 msgctxt "page:index.html"
 msgid "Native · Reconstruction"
 msgstr "Bản Địa · Tái Thiết"
 
-#: website/public/index.html:1154
+#: website/public/index.html:9619
 msgctxt "page:index.html"
 msgid "DX-Ball's sound-pan calculation"
 msgstr "DX-Ball ' s tính toán vị trí âm thanh trái/phải"
 
-#: website/public/index.html:1159
+#: website/public/index.html:9624
 msgctxt "page:index.html"
 msgid "Read the DX-Ball case study"
 msgstr "Đọc nghiên CỨU điển HÌNH DX-Ball"
 
-#: website/public/index.html:291
+#: website/public/index.html:8756
 msgctxt "page:index.html"
 msgid "Setup options"
 msgstr "Tùy chọn thiết lập"
@@ -14513,21 +14459,13 @@ msgid "Then check Ghidra and save its paths for your client:"
 msgstr "Sau đó kiểm tra Ghidra và lưu đường dẫn cho ứng dụng kết nối của bạn:"
 
 #. {ph0}: <span translate="no">200 + 10%</span>
-#: website/public/index.html:444
+#: website/public/index.html:8909
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "Why does Calculator give 220 for {ph0}?"
 msgstr "Vì sao {ph0} cho kết quả 220 trong Máy tính?"
 
-#. {ph0}: <a href="#what-is-re">
-#. {ph1}: </a>
-#: website/public/index.html:212
-#, python-brace-format
-msgctxt "page:index.html"
-msgid "{ph0}How it works{ph1}"
-msgstr "{ph0}Cách hoạt động{ph1}"
-
-#: website/public/index.html:228
+#: website/public/index.html:205
 msgctxt "page:index.html"
 msgid ""
 "Ask your coding agent about an app, a game or a website. REA gives it the "
@@ -14536,22 +14474,22 @@ msgstr ""
 "Hãy hỏi trợ lý lập trình của bạn về một ứng dụng, trò chơi hoặc trang web. "
 "REA cung cấp công cụ để trợ lý kiểm tra mã đằng sau câu trả lời."
 
-#: website/public/index.html:233
+#: website/public/index.html:210
 msgctxt "page:index.html"
 msgid "Get started"
 msgstr "Bắt đầu"
 
-#: website/public/index.html:234
+#: website/public/index.html:211
 msgctxt "page:index.html"
 msgid "See an example ↓"
 msgstr "Xem một ví dụ ↓"
 
-#: website/public/index.html:324
+#: website/public/index.html:8789
 msgctxt "page:index.html"
 msgid "How it works"
 msgstr "Cách hoạt động"
 
-#: website/public/index.html:326
+#: website/public/index.html:8791
 msgctxt "page:index.html"
 msgid ""
 "Reverse engineering means learning how software works by inspecting the "
@@ -14562,47 +14500,47 @@ msgstr ""
 "chính chương trình đó. Với REA, trợ lý có thể lần theo mã, giải thích một "
 "tính năng và giúp bạn xây dựng lại nó."
 
-#: website/public/index.html:428
+#: website/public/index.html:8893
 msgctxt "page:index.html"
 msgid "Ask about one feature"
 msgstr "Hỏi về một tính năng"
 
-#: website/public/index.html:429
+#: website/public/index.html:8894
 msgctxt "page:index.html"
 msgid "Give your agent a program or page and a question."
 msgstr "Đưa cho trợ lý một chương trình hoặc trang web cùng một câu hỏi."
 
-#: website/public/index.html:432
+#: website/public/index.html:8897
 msgctxt "page:index.html"
 msgid "Inspect the program"
 msgstr "Kiểm tra chương trình"
 
-#: website/public/index.html:433
+#: website/public/index.html:8898
 msgctxt "page:index.html"
 msgid "REA returns code, references and runtime observations."
 msgstr "REA trả về mã, các tham chiếu và quan sát khi chương trình chạy."
 
-#: website/public/index.html:436
+#: website/public/index.html:8901
 msgctxt "page:index.html"
 msgid "Explain it, then try a change"
 msgstr "Hiểu rồi thử thay đổi"
 
-#: website/public/index.html:437
+#: website/public/index.html:8902
 msgctxt "page:index.html"
 msgid "Your agent uses the findings to explain or rebuild the feature."
 msgstr "Trợ lý dùng các phát hiện để giải thích hoặc xây dựng lại tính năng."
 
-#: website/public/index.html:453
+#: website/public/index.html:8918
 msgctxt "page:index.html"
 msgid "Follow the instructions step by step"
 msgstr "Lần theo từng lệnh"
 
-#: website/public/index.html:604
+#: website/public/index.html:9069
 msgctxt "page:index.html"
 msgid "Ask your agent the same question"
 msgstr "Đặt cùng câu hỏi cho trợ lý"
 
-#: website/public/index.html:817
+#: website/public/index.html:9282
 msgctxt "page:index.html"
 msgid ""
 "Start at 6. Add 0.001 each update without a collision, while speed is below "
@@ -14611,7 +14549,7 @@ msgstr ""
 "Bắt đầu từ 6. Thêm 0.001 mỗi bản cập nhật mà không có va chạm, trong khi tốc"
 " độ thấp hơn 13."
 
-#: website/public/index.html:1122
+#: website/public/index.html:9587
 msgctxt "page:index.html"
 msgid ""
 "Explore a feature in a released app or game, with code and checked results."
@@ -14619,7 +14557,7 @@ msgstr ""
 "Khám phá một tính năng trong ứng dụng hoặc trò chơi đã phát hành, kèm mã và "
 "kết quả đã kiểm tra."
 
-#: website/public/index.html:1133
+#: website/public/index.html:9598
 msgctxt "page:index.html"
 msgid ""
 "Trace Aegis's six-digit login code through its released APK, then move a "
@@ -14628,7 +14566,7 @@ msgstr ""
 "Lần theo mã đăng nhập sáu chữ số của Aegis trong APK đã phát hành, rồi di "
 "chuyển đồng hồ minh họa để xem vì sao mã thay đổi mỗi 30 giây."
 
-#: website/public/index.html:1144
+#: website/public/index.html:9609
 msgctxt "page:index.html"
 msgid ""
 "Follow Notion's packaged JavaScript to the system clipboard and see how a "
@@ -14637,7 +14575,7 @@ msgstr ""
 "Lần theo JavaScript được đóng gói của Notion đến bộ nhớ tạm hệ thống để xem "
 "thao tác sao chép giữ lại dữ liệu khối phong phú như thế nào."
 
-#: website/public/index.html:1155
+#: website/public/index.html:9620
 msgctxt "page:index.html"
 msgid ""
 "Recover how a ball's position becomes left/right sound in a 1996 Windows "
@@ -14646,12 +14584,12 @@ msgstr ""
 "Khôi phục cách vị trí quả bóng tạo ra âm thanh bên trái hoặc phải trong một "
 "trò chơi Windows năm 1996."
 
-#: website/public/index.html:1186
+#: website/public/index.html:9651
 msgctxt "page:index.html"
 msgid "Choose your target."
 msgstr "Chọn mục tiêu của bạn."
 
-#: website/public/index.html:1187
+#: website/public/index.html:9652
 msgctxt "page:index.html"
 msgid ""
 "These guides cover setup and a first investigation for each kind of "
@@ -14662,7 +14600,7 @@ msgstr ""
 
 #. {ph0}: <a href="#calculator">
 #. {ph1}: </a>
-#: website/public/index.html:659
+#: website/public/index.html:9124
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -14680,13 +14618,13 @@ msgstr ""
 #. {ph5}: <i>
 #. {ph6}: </i>
 #. {ph7}: </span >
-#: website/public/index.html:1224
+#: website/public/index.html:9689
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Example prompt · Website"
 msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Ví dụ nhắc * Trang Web"
 
-#: website/public/index.html:1247
+#: website/public/index.html:9712
 msgctxt "page:index.html"
 msgid "Yes, this one."
 msgstr "Vâng, cái này."
@@ -14699,7 +14637,7 @@ msgstr "Vâng, cái này."
 #. {ph5}: <i>
 #. {ph6}: </i>
 #. {ph7}: </span >
-#: website/public/index.html:1252
+#: website/public/index.html:9717
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -14713,7 +14651,7 @@ msgstr ""
 #. {ph3}: </span >
 #. {ph4}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph5}: </span>
-#: website/public/index.html:1266
+#: website/public/index.html:9731
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -14727,18 +14665,18 @@ msgstr ""
 
 #. {ph0}: <a href="showcase/dx-ball/">
 #. {ph1}: </a>
-#: website/public/index.html:1275
+#: website/public/index.html:9740
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}See the DX-Ball case study →{ph1}"
 msgstr "{ph0}Xem nghiên cứu điển hình DX-Ball →{ph1}"
 
-#: website/public/index.html:1229
+#: website/public/index.html:9694
 msgctxt "page:index.html"
 msgid "Copy website project prompt"
 msgstr "Sao chép lời nhắc dự án trang web"
 
-#: website/public/index.html:1257
+#: website/public/index.html:9722
 msgctxt "page:index.html"
 msgid "Copy game reconstruction prompt"
 msgstr "Sao chép lời nhắc tái thiết trò chơi"
@@ -14750,7 +14688,7 @@ msgstr "Sao chép lời nhắc tái thiết trò chơi"
 #. {ph4}: </span >
 #. {ph5}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph6}: </span>
-#: website/public/index.html:1238
+#: website/public/index.html:9703
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -14762,7 +14700,7 @@ msgstr ""
 
 #. {ph0}: <a href="showcase/">
 #. {ph1}: </a>
-#: website/public/index.html:237
+#: website/public/index.html:214
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Showcases{ph1}: investigations and interactive demos."
@@ -14770,23 +14708,23 @@ msgstr "{ph0}Ví dụ →{ph1} — quá trình khảo sát và bản demo tươn
 
 #. {ph0}: <a href="blog/">
 #. {ph1}: </a>
-#: website/public/index.html:241
+#: website/public/index.html:218
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Blog{ph1}: methods and reconstruction notes."
 msgstr "{ph0}Blog →{ph1} — phương pháp và ghi chép về tái tạo phần mềm."
 
-#: website/public/index.html:443
+#: website/public/index.html:8908
 msgctxt "page:index.html"
 msgid "See the full Calculator investigation"
 msgstr "Xem toàn bộ khảo sát Máy tính"
 
-#: website/public/index.html:1219
+#: website/public/index.html:9684
 msgctxt "page:index.html"
 msgid "Try a larger project"
 msgstr "Thử một dự án lớn hơn"
 
-#: website/public/index.html:671
+#: website/public/index.html:9136
 msgctxt "page:index.html"
 msgid ""
 "Let’s try two examples: change a game’s speed, then rebuild Calculator’s % "
@@ -14795,7 +14733,7 @@ msgstr ""
 "Hãy thử hai ví dụ: thay đổi tốc độ của trò chơi, rồi dựng lại nút % của Máy "
 "tính."
 
-#: website/public/index.html:679
+#: website/public/index.html:9144
 msgctxt "page:index.html"
 msgid ""
 "The game gets faster as you run. To rebuild it with a speed control, we "
@@ -14804,7 +14742,7 @@ msgstr ""
 "Trò chơi tăng tốc khi bạn chạy. Để dựng lại nó với chức năng chỉnh tốc độ, "
 "trước hết ta cần biết tốc độ thay đổi thế nào."
 
-#: website/public/index.html:685
+#: website/public/index.html:9150
 msgctxt "page:index.html"
 msgid "1. Ask about the speed"
 msgstr "1. Hỏi về tốc độ"
@@ -14817,7 +14755,7 @@ msgstr "1. Hỏi về tốc độ"
 #. {ph5}: <i>
 #. {ph6}: </i>
 #. {ph7}: </span >
-#: website/public/index.html:688
+#: website/public/index.html:9153
 #, python-brace-format
 msgctxt "page:index.html"
 msgid ""
@@ -14825,12 +14763,12 @@ msgid ""
 msgstr ""
 "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Câu hỏi mẫu · Trò chơi khủng long"
 
-#: website/public/index.html:711
+#: website/public/index.html:9176
 msgctxt "page:index.html"
 msgid "2. Find the speed rule"
 msgstr "2. Tìm quy tắc tốc độ"
 
-#: website/public/index.html:712
+#: website/public/index.html:9177
 msgctxt "page:index.html"
 msgid ""
 "REA lets the agent read the game’s running code. The speed starts at 6 and "
@@ -14839,12 +14777,12 @@ msgstr ""
 "REA cho phép agent đọc mã của trò chơi đang chạy. Tốc độ bắt đầu ở 6 và tăng"
 " một chút mỗi lần cập nhật khi còn dưới 13."
 
-#: website/public/index.html:719
+#: website/public/index.html:9184
 msgctxt "page:index.html"
 msgid "3. Play the result"
 msgstr "3. Chơi thử kết quả"
 
-#: website/public/index.html:720
+#: website/public/index.html:9185
 msgctxt "page:index.html"
 msgid ""
 "We rebuilt that rule in the mini-game below and added a speed slider. Press "
@@ -14853,7 +14791,7 @@ msgstr ""
 "Chúng tôi dựng lại quy tắc đó trong trò chơi nhỏ bên dưới và thêm thanh "
 "trượt tốc độ. Bắt đầu chơi rồi chọn tốc độ của bạn."
 
-#: website/public/index.html:785
+#: website/public/index.html:9250
 msgctxt "page:index.html"
 msgid ""
 "Enable JavaScript to play. You can still read the rule and open the source "
@@ -14861,7 +14799,7 @@ msgid ""
 msgstr ""
 "Bật JavaScript để chơi. Bạn vẫn có thể đọc quy tắc và mở mã nguồn bên dưới."
 
-#: website/public/index.html:903
+#: website/public/index.html:9368
 msgctxt "page:index.html"
 msgid ""
 "The % button does different things after + and ×. Let’s find both rules and "
@@ -14870,7 +14808,7 @@ msgstr ""
 "Nút % hoạt động khác nhau sau + và ×. Hãy tìm cả hai quy tắc và thử trong "
 "một máy tính nhỏ."
 
-#: website/public/index.html:909
+#: website/public/index.html:9374
 msgctxt "page:index.html"
 msgid "1. Ask about the % button"
 msgstr "1. Hỏi về nút %"
@@ -14883,18 +14821,18 @@ msgstr "1. Hỏi về nút %"
 #. {ph5}: <i>
 #. {ph6}: </i>
 #. {ph7}: </span >
-#: website/public/index.html:912
+#: website/public/index.html:9377
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Example question · Calculator"
 msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Câu hỏi mẫu · Máy tính"
 
-#: website/public/index.html:935
+#: website/public/index.html:9400
 msgctxt "page:index.html"
 msgid "2. Find both rules"
 msgstr "2. Tìm cả hai quy tắc"
 
-#: website/public/index.html:936
+#: website/public/index.html:9401
 msgctxt "page:index.html"
 msgid ""
 "REA helps the agent read the code behind the % button. It applies two "
@@ -14902,12 +14840,12 @@ msgid ""
 msgstr ""
 "REA giúp agent đọc mã của nút %. Mã này áp dụng hai quy tắc khác nhau:"
 
-#: website/public/index.html:957
+#: website/public/index.html:9422
 msgctxt "page:index.html"
 msgid "3. Try the % button"
 msgstr "3. Thử nút %"
 
-#: website/public/index.html:958
+#: website/public/index.html:9423
 msgctxt "page:index.html"
 msgid "We recreated both rules below. Choose + or ×, press %, then press =."
 msgstr ""
@@ -14916,7 +14854,7 @@ msgstr ""
 
 #. {ph0}: <a href="faq/">
 #. {ph1}: </a>
-#: website/public/index.html:1288
+#: website/public/index.html:9753
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Read the FAQ{ph1} for setup and common questions."
@@ -14924,7 +14862,7 @@ msgstr "{ph0}Đọc FAQ{ph1} — thiết lập và các câu hỏi thường g�
 
 #. {ph0}: <a href="https://discord.gg/GkcryMnJDM">
 #. {ph1}: </a>
-#: website/public/index.html:1291
+#: website/public/index.html:9756
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Join Discord{ph1} to get help and discuss your investigations."
@@ -14934,13 +14872,13 @@ msgstr ""
 
 #. {ph0}: <a href="https://github.com/morluto/rea/issues/new/choose" >
 #. {ph1}: </a >
-#: website/public/index.html:1295
+#: website/public/index.html:9760
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Open a GitHub issue{ph1} to report a bug or request a feature."
 msgstr "{ph0}GitHub issues{ph1} — báo lỗi hoặc yêu cầu tính năng."
 
-#: website/public/index.html:292
+#: website/public/index.html:8757
 msgctxt "page:index.html"
 msgid "Setup for your platform:"
 msgstr "Thiết lập cho nền tảng của bạn:"
@@ -14948,7 +14886,7 @@ msgstr "Thiết lập cho nền tảng của bạn:"
 #. {ph0}: <a href="get-started/#curl-installation" >
 #. {ph1}: <span translate="no">curl</span>
 #. {ph2}: </a >
-#: website/public/index.html:303
+#: website/public/index.html:8768
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "Other install options: {ph0}{ph1} →{ph2}"
@@ -15040,8 +14978,8 @@ msgstr ""
 #: website/public/guides/javascript/index.html:120
 #: website/public/guides/javascript/index.html:498
 #: website/public/guides/native/index.html:120
-#: website/public/guides/native/index.html:504 website/public/index.html:122
-#: website/public/index.html:1312 website/public/showcase/aegis/index.html:121
+#: website/public/guides/native/index.html:504 website/public/index.html:124
+#: website/public/index.html:9777 website/public/showcase/aegis/index.html:121
 #: website/public/showcase/aegis/index.html:803
 #: website/public/showcase/ctf/index.html:120
 #: website/public/showcase/ctf/index.html:772
@@ -15150,6 +15088,65 @@ msgstr "Về đầu trang"
 msgctxt "runtime"
 msgid "Contributors: {count}"
 msgstr "Người đóng góp: {count}"
+
+#: website/public/index.html:224
+msgctxt "page:index.html"
+msgid "Probe station"
+msgstr "Trạm đầu dò"
+
+#: website/public/index.html:225
+msgctxt "page:index.html"
+msgid "Click to read the next pad"
+msgstr "Nhấp để đọc pad tiếp theo"
+
+#: website/public/index.html:230
+msgctxt "page:index.html"
+msgid ""
+"A probe station reads Calculator's percent rule pad by pad: the file, the "
+"function, two instructions and the result. Use the arrow keys to move the "
+"needle."
+msgstr ""
+"Trạm đầu dò đọc quy tắc phần trăm của Máy tính theo từng pad: tệp, hàm, hai "
+"lệnh và kết quả. Dùng phím mũi tên để di chuyển kim."
+
+#~ msgctxt "page:index.html"
+#~ msgid "On this page"
+#~ msgstr "Trên trang này"
+
+#, python-brace-format
+#~ msgctxt "page:index.html"
+#~ msgid "{ph0}Set up REA{ph1}"
+#~ msgstr "{ph0}Thiết LẬP REA {ph1}"
+
+#, python-brace-format
+#~ msgctxt "page:index.html"
+#~ msgid "{ph0}Dinosaur game{ph1}"
+#~ msgstr "{ph0}Chơi Dinosaur miễn phí{ph1}"
+
+#, python-brace-format
+#~ msgctxt "page:index.html"
+#~ msgid "{ph0}Calculator{ph1}"
+#~ msgstr "{ph0}Máy tính{ph1}"
+
+#, python-brace-format
+#~ msgctxt "page:index.html"
+#~ msgid "{ph0}Try REA{ph1}"
+#~ msgstr "{ph0}Thử REA {ph1}"
+
+#, python-brace-format
+#~ msgctxt "page:index.html"
+#~ msgid "{ph0}Go deeper{ph1}"
+#~ msgstr "{ph0}Tìm hiểu sâu hơn{ph1}"
+
+#, python-brace-format
+#~ msgctxt "page:index.html"
+#~ msgid "{ph0}Showcases{ph1}"
+#~ msgstr "{ph0}Ví dụ thực tế{ph1}"
+
+#, python-brace-format
+#~ msgctxt "page:index.html"
+#~ msgid "{ph0}How it works{ph1}"
+#~ msgstr "{ph0}Cách hoạt động{ph1}"
 
 #, python-brace-format
 #~ msgctxt "runtime"

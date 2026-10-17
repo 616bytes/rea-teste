@@ -85,13 +85,11 @@ prompt and the ordinary setup command. Then explain what reverse engineering
 means and what it lets someone do, before the worked examples.
 Begin each example with its goal and the reason to inspect that program.
 Name the actual evidence REA returned and what the agent did with it.
-Give long pages a short table of contents with concrete section names. Preserve
-the reading width: the homepage uses the side gutter when it has room,
-and a collapsible sticky menu on smaller screens. Highlight the current
-section, keep fragment links usable without JavaScript, and leave room above
-the destination for the sticky control. Make Get started the primary opening
-action. Keep short Showcases and Blog descriptions below the opening actions,
-with the original equal-width introduction and setup columns on desktop.
+Open the homepage with a short introduction beside the probe-station figure,
+then the setup section with the agent prompt and the terminal command side by
+side. Make Get started the primary opening action. Keep short Showcases and Blog
+descriptions below the opening actions as ruled rows. The sticky header leaves
+room above fragment targets; the homepage has no separate table of contents.
 Use a short introduction and one three-step overview before the examples.
 Let introductory prose wrap naturally across the container, independently of
 the narrower heading width. Add a brief transition before the worked examples.

@@ -446,50 +446,76 @@ const installationCoordinates = (
     applicationPropertiesPath === null
       ? undefined
       : host.readText(applicationPropertiesPath);
-  const javaCommand = (() => {
-    if (options.javaHome !== undefined)
-      return path.join(
+  const javaEnvironment = ghidraJavaEnvironment(
+    options.javaHome,
+    options.environment,
+    platform,
+  );
+  // Prefer the Homebrew prefix matching the process architecture.
+  const homebrewJavaCandidates = (): readonly string[] =>
+    (architecture === "arm64"
+      ? ["/opt/homebrew", "/usr/local"]
+      : ["/usr/local", "/opt/homebrew"]
+    )
+      .map((prefix) =>
+        path.join(
+          prefix,
+          "opt/openjdk/libexec/openjdk.jdk/Contents/Home/bin/java",
+        ),
+      )
+      .filter((candidate) => host.executable(candidate));
+  const selectedJava = ((): {
+    readonly command: string;
+    readonly probe:
+      | Result<GhidraJavaObservation, GhidraJavaProbeFailure>
+      | undefined;
+  } => {
+    if (options.javaHome !== undefined) {
+      const command = path.join(
         options.javaHome,
         "bin",
         platform === "win32" ? "java.exe" : "java",
       );
-    if (platform !== "darwin")
-      return platform === "win32" ? "java.exe" : "java";
+      // Relative JAVA_HOME is refused by configuration validation without execution.
+      return {
+        command,
+        probe: path.isAbsolute(options.javaHome)
+          ? host.probeJava(command, javaEnvironment)
+          : undefined,
+      };
+    }
+    if (platform !== "darwin") {
+      const command = platform === "win32" ? "java.exe" : "java";
+      return { command, probe: host.probeJava(command, javaEnvironment) };
+    }
     // Check the caller's PATH, never a file named java in the working directory.
     const javaOnPath = options.environment.PATH?.split(":").some(
       (directory) =>
         path.isAbsolute(directory) &&
         host.executable(path.join(directory, "java")),
     );
-    if (javaOnPath) return "java";
-    // Prefer the Homebrew prefix matching the process architecture.
-    const prefixes =
-      architecture === "arm64"
-        ? ["/opt/homebrew", "/usr/local"]
-        : ["/usr/local", "/opt/homebrew"];
-    return (
-      prefixes
-        .map((prefix) =>
-          path.join(
-            prefix,
-            "opt/openjdk/libexec/openjdk.jdk/Contents/Home/bin/java",
-          ),
-        )
-        .find((candidate) => host.executable(candidate)) ?? "java"
-    );
+    if (!javaOnPath) {
+      const command = homebrewJavaCandidates()[0] ?? "java";
+      return { command, probe: host.probeJava(command, javaEnvironment) };
+    }
+    const pathProbe = host.probeJava("java", javaEnvironment);
+    // Every Mac has /usr/bin/java. Without a registered JDK it is Apple's
+    // launcher stub, which exits nonzero; a keg-only Homebrew JDK must still
+    // be found then (#4657). A PATH java that runs keeps priority.
+    if (
+      pathProbe.ok ||
+      (pathProbe.error.code !== "runtime_missing" &&
+        pathProbe.error.code !== "runtime_unavailable")
+    )
+      return { command: "java", probe: pathProbe };
+    for (const candidate of homebrewJavaCandidates()) {
+      const probe = host.probeJava(candidate, javaEnvironment);
+      if (probe.ok) return { command: candidate, probe };
+    }
+    return { command: "java", probe: pathProbe };
   })();
-  // Relative JAVA_HOME is refused by configuration validation without execution.
-  const javaProbe =
-    options.javaHome === undefined || path.isAbsolute(options.javaHome)
-      ? host.probeJava(
-          javaCommand,
-          ghidraJavaEnvironment(
-            options.javaHome,
-            options.environment,
-            platform,
-          ),
-        )
-      : undefined;
+  const javaCommand = selectedJava.command;
+  const javaProbe = selectedJava.probe;
   return {
     installDir,
     applicationPropertiesPath,

@@ -1,6 +1,9 @@
 import { missingJavaProbe } from "./GhidraInstallation.fixture.js";
-import { ok as javaProbeOk } from "../domain/result.js";
-import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
+import { err, ok as javaProbeOk, type Result } from "../domain/result.js";
+import type {
+  GhidraJavaObservation,
+  GhidraJavaProbeFailure,
+} from "./GhidraJavaProbe.js";
 import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1482,8 +1485,68 @@ it.each([
       }),
     );
     expect(probed).toEqual([expected]);
+    // A PATH java that cannot run falls back to an executable Homebrew keg
+    // (#4657); none is installed here, so the PATH java stays selected.
     expect(
       checked.some((candidate) => candidate.includes("/opt/openjdk/")),
-    ).toBe(false);
+    ).toBe(platform === "darwin" && pathJava !== undefined);
   },
 );
+
+describe("macOS PATH java with a keg-only Homebrew JDK (#4657)", () => {
+  const keg = "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home";
+  const inspect = (
+    pathJavaProbe: Result<GhidraJavaObservation, GhidraJavaProbeFailure>,
+  ) => {
+    const probed: string[] = [];
+    const inspection = inspectGhidraInstallation(
+      {
+        environment: { PATH: "/usr/bin" },
+        installDir: INSTALL,
+        platform: "darwin",
+        architecture: "arm64",
+      },
+      host({
+        executable: (candidate) =>
+          candidate === "/usr/bin/java" ||
+          candidate === `${keg}/bin/java` ||
+          host().executable(candidate),
+        probeJava: (command) => {
+          probed.push(command);
+          return command === "java"
+            ? pathJavaProbe
+            : javaProbeOk({
+                ...JAVA,
+                home: keg,
+                osArch: "aarch64",
+                osName: "Mac OS X",
+              });
+        },
+      }),
+    );
+    return {
+      probed,
+      java: inspection.checks.find(({ name }) => name === "java"),
+    };
+  };
+
+  it("falls back to the keg when the PATH java is Apple's launcher stub", () => {
+    const { probed, java } = inspect(
+      err({
+        _tag: "GhidraJavaProbeFailure",
+        code: "runtime_unavailable",
+        detail: "java: Java exited 1",
+      }),
+    );
+    expect(probed).toEqual(["java", `${keg}/bin/java`]);
+    expect(java).toMatchObject({ status: "passed" });
+  });
+
+  it("keeps a PATH java that runs", () => {
+    const { probed, java } = inspect(
+      javaProbeOk({ ...JAVA, osArch: "aarch64", osName: "Mac OS X" }),
+    );
+    expect(probed).toEqual(["java"]);
+    expect(java).toMatchObject({ status: "passed" });
+  });
+});

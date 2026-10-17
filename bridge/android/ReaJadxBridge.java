@@ -132,6 +132,25 @@ class ReaJadxBridge {
     return result;
   }
 
+  private static final String MISSING_METHOD_BODY =
+      "// method exists but has no decompiled body (native/abstract)";
+
+  /** JADX inline comments name the method, not the overload, so an ambiguous name stays unknown. */
+  private String inlinedHolder(JadxSession current, ClassSnapshot cls, MethodSnapshot selected, String text) {
+    if (!MISSING_METHOD_BODY.equals(text)) return null;
+    long sameName = cls.methods().stream().filter(candidate -> candidate.name().equals(selected.name())).count();
+    if (sameName != 1) return null;
+    String needle = "renamed from: " + selected.name() + ",";
+    for (MethodSnapshot sibling : cls.methods()) {
+      if (sibling.shortId().equals(selected.shortId())) continue;
+      JavaMethod siblingMethod = method(cls, sibling);
+      String siblingText = current.getMethodBodySmart(
+          siblingMethod, current.getMaxSourceBytes(), false).getText();
+      if (siblingText.contains(needle)) return sibling.name();
+    }
+    return null;
+  }
+
   private JavaMethod method(ClassSnapshot cls, MethodSnapshot selected) {
     JavaMethod result = cls.node().searchMethodByShortId(selected.shortId());
     if (result == null) throw new IllegalArgumentException("Method identity no longer available: " + selected.shortId());
@@ -227,12 +246,21 @@ class ReaJadxBridge {
       int index = integer(args, "overload_index", 0);
       if (index >= overloads.size()) throw new InputFailure("overload_index", "overload_index out of range: " + index);
       JavaMethod method = method(cls, overloads.get(index));
-      JadxSession.SmartCode code = methodBody(current, cls, overloads.get(index), method);
-      return json(Map.of("class_name", cls.summary().get("full_name"),
-          "method_name", overloads.get(index).name(), "full_name", method.getFullName(),
-          "overload_index", index, "overload_count", overloads.size(),
-          "mode", code.getKind(), "fell_back", code.getFellBack(),
-          "markers", code.getMarkers(), "body", code.getText()));
+      MethodSnapshot selectedMethod = overloads.get(index);
+      JadxSession.SmartCode code = methodBody(current, cls, selectedMethod, method);
+      Map<String, Object> payload = new LinkedHashMap<>();
+      payload.put("class_name", cls.summary().get("full_name"));
+      payload.put("method_name", selectedMethod.name());
+      payload.put("full_name", method.getFullName());
+      payload.put("overload_index", index);
+      payload.put("overload_count", overloads.size());
+      payload.put("mode", code.getKind());
+      payload.put("fell_back", code.getFellBack());
+      payload.put("markers", code.getMarkers());
+      payload.put("body", code.getText());
+      String holder = inlinedHolder(current, cls, selectedMethod, code.getText());
+      if (holder != null) payload.put("inlined_holder", holder);
+      return json(payload);
     }
     List<JavaNode> uses;
     String target = string(args, "class_name");

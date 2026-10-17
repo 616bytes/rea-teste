@@ -150,8 +150,11 @@ The engine's smali fallback also joins same-name overloads; REA rejects that
 fallback for an overloaded method instead of attributing all bodies to one
 selected overload. A method with no decompiled body reports `body_status: "not_available"`.
 That text does not claim the method is native or abstract. When JADX's
-`inline-methods` pass left a `renamed from` comment on a sibling, the result
-names that sibling and adds the `inlined_method` marker.
+`inline-methods` pass left a `renamed from` comment on a sibling, and that
+method name is unique in the class, the result names that sibling and adds the
+`inlined_method` marker. The comment does not identify an overload, so a shared
+name leaves the holder unknown. The bridge reads those comments in process and
+returns only the holder name.
 
 Static initializers (`<clinit>`) return smali with the
 `static_initializer_disassembly` marker. Java decompilation can move their

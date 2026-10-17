@@ -264,8 +264,10 @@ const inspectMethod = async (
       `JADX ${JADX_RELEASE.version} smali fallback joins all same-name overloads for ${summary.full_name}.${request.input.method_name}; it cannot establish source for only overload ${index}.`,
     );
   const holder =
-    body.body === MISSING_METHOD_BODY
-      ? await inlinedHolder(tools, summary, selected.name, index)
+    body.body === MISSING_METHOD_BODY &&
+    methodsOf(summary).filter((method) => method.name === selected.name)
+      .length === 1
+      ? body.inlined_holder
       : undefined;
   const missing = body.body.length === 0 || body.body === MISSING_METHOD_BODY;
   const text =
@@ -286,30 +288,6 @@ const inspectMethod = async (
       holder === undefined ? body.markers : [...body.markers, "inlined_method"],
     source: normalizeJadxText(text),
   });
-};
-
-/** The sibling whose decompiled text says JADX merged this method into it. */
-const inlinedHolder = async (
-  tools: JadxToolPort,
-  summary: ClassSummary,
-  methodName: string,
-  overloadIndex: number,
-): Promise<string | undefined> => {
-  const needle = `renamed from: ${methodName},`;
-  for (const method of methodsOf(summary)) {
-    if (method.name === methodName && method.overload_index === overloadIndex)
-      continue;
-    const payload = jadxMethodSchema.parse(
-      await tools.json("get_method_body", {
-        class_name: summary.full_name,
-        method_name: method.name,
-        overload_index: method.overload_index,
-        smali_fallback: false,
-      }),
-    );
-    if (payload.body.includes(needle)) return method.name;
-  }
-  return undefined;
 };
 
 /** Normalize only the selected analyst outcome and reject ambiguous engine selectors. */

@@ -71,6 +71,7 @@ export const jadxMethodSchema = z.object({
   fell_back: z.boolean(),
   markers: z.array(z.string()),
   body: z.string(),
+  inlined_holder: z.string().min(1).optional(),
 });
 export const jadxXrefsSchema = z.object({
   target: z.string(),

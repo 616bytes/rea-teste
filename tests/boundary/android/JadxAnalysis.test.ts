@@ -403,19 +403,17 @@ it("names the sibling that holds a method JADX inlined", async () => {
         if (name === "get_class_summary")
           return Promise.resolve(inlinedSummary);
         const methodName = input.method_name;
-        if (methodName === "highlightText")
-          return Promise.resolve(
-            methodBody(
-              "highlightText",
-              "// method exists but has no decompiled body (native/abstract)",
-            ),
+        if (methodName !== "highlightText")
+          return Promise.reject(
+            new Error(`unexpected method ${String(methodName)}`),
           );
-        return Promise.resolve(
-          methodBody(
-            "m0lambda$checkHighlight",
-            "/* JADX INFO: renamed from: highlightText, reason: merged with bridge method [inline-methods] */\npublic void m0lambda$checkHighlight() {}",
+        return Promise.resolve({
+          ...methodBody(
+            "highlightText",
+            "// method exists but has no decompiled body (native/abstract)",
           ),
-        );
+          inlined_holder: "m0lambda$checkHighlight",
+        });
       },
       text: () => Promise.reject(new Error("unexpected text call")),
     },
@@ -436,5 +434,66 @@ it("names the sibling that holds a method JADX inlined", async () => {
     source: {
       text: "// JADX inlined this method into m0lambda$checkHighlight",
     },
+  });
+});
+
+it("does not name an inlined holder when the method name is overloaded", async () => {
+  const overloaded = {
+    ...summary,
+    methods: [
+      {
+        name: "highlightText",
+        signature: "highlightText(): void",
+        dex_descriptor: "()V",
+        is_constructor: false,
+        def_pos: 0,
+      },
+      {
+        name: "highlightText",
+        signature: "highlightText(int): void",
+        dex_descriptor: "(I)V",
+        is_constructor: false,
+        def_pos: 0,
+      },
+    ],
+  };
+  const calls: string[] = [];
+  const result = await analyzeJadxRequest(
+    {
+      json: (name, input) => {
+        calls.push(name);
+        if (name === "get_class_summary") return Promise.resolve(overloaded);
+        return Promise.resolve({
+          class_name: "fixture.Target",
+          method_name: "highlightText",
+          full_name: "fixture.Target.highlightText",
+          overload_index: input.overload_index,
+          overload_count: 2,
+          mode: "java",
+          fell_back: false,
+          markers: [],
+          body: "// method exists but has no decompiled body (native/abstract)",
+          inlined_holder: "m0lambda$checkHighlight",
+        });
+      },
+      text: () => Promise.reject(new Error("unexpected text call")),
+    },
+    {
+      operation: "inspect_android_method",
+      input: {
+        path: "/fixture.apk",
+        class_name: "fixture.Target",
+        method_name: "highlightText",
+        overload_index: 1,
+      },
+    },
+    {} as never,
+    engine,
+  );
+  expect(calls).toEqual(["get_class_summary", "get_method_body"]);
+  expect(result).toMatchObject({
+    body_status: "not_available",
+    markers: [],
+    source: { text: "// method exists but has no decompiled body" },
   });
 });

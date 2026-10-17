@@ -65,6 +65,11 @@ Setup আপনার agent-এ REA নিবন্ধন করে এবং �
 
 ## দ্রুত শুরু
 
+Linux-এ Ghidra, JADX, firmware tool চালু করা এবং static JavaScript/Electron
+বিশ্লেষণের জন্য process ownership যাচাইয়ে REA-এর `PATH`-এ একটি
+procps-সামঞ্জস্যপূর্ণ `ps` লাগে। পুনরুদ্ধারের ধাপ `docs/installation.md`-এর
+"Linux owned-process prerequisite" শিরোনামের নিচে আছে।
+
 ### আপনার agent সেট আপ করুন
 
 Node.js ও npm ইনস্টল থাকলে চালান:
@@ -190,7 +195,8 @@ interact করে; প্রতিটি runtime গাইডে এর প্�
 
 Native format ও host সমর্থন provider ভেদে আলাদা। দেখুন
 [Hopper ও Ghidra setup](../installation.md#hopper),
-[IDA গাইড](../ida-provider.md) (ঐচ্ছিক native MCP bridge-সহ) এবং
+[IDA গাইড](../ida-provider.md) (ঐচ্ছিক native MCP bridge-সহ),
+[Kuna decompiler গাইড](../kuna-provider.md) এবং
 [পরীক্ষামূলক Windows Ghidra সমর্থন](../windows-ghidra-p0.md)।
 Ghidra [16-bit DOS বিশ্লেষণ](../ghidra-dos.md)-ও সমর্থন করে।
 বড় বাইনারির জন্য `REA_GHIDRA_STARTUP_TIMEOUT_MS` বা `REA_HOPPER_STARTUP_TIMEOUT_MS`
@@ -329,7 +335,7 @@ Agent ব্যবহার করলে [setup রিফ্রেশ](#rea-আ�
 
 ## Star-এর ইতিহাস
 
-🎉 **200,000 GitHub star — সবাইকে ধন্যবাদ!**
+🎉 **250,000 GitHub star — সবাইকে ধন্যবাদ!**
 
 যাঁরা REA ব্যবহার করছেন, bug রিপোর্ট করছেন, ফিচারের অনুরোধ জানাচ্ছেন, build test করছেন এবং fix দিয়ে অবদান রাখছেন — সবাইকে ধন্যবাদ।
 

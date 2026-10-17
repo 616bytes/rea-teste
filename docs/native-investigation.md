@@ -261,6 +261,13 @@ Mach-O fixtures check each case against source-owned return values.
 
 ## Static inspection
 
+`inspect_plist.format` describes the selected source, not plutil's conversion
+format. Sources explicitly identified as XML, binary or JSON retain those
+labels. For generic text, a bounded source-prefix probe recognizes leading XML
+markup, including UTF-8 and BOM-marked UTF-16 sources. Unidentified text and
+OpenStep plists, including a data-only value such as `<deadbeef>`, report
+`unknown` even when plutil decodes their values through an XML conversion.
+
 `inspect_macho.selected_architecture` identifies the exact selected lipo slice
 and its `container_file_offset` in the input file. A thin Mach-O has a known
 offset of zero; an unknown universal-slice offset stays null. The Evidence
@@ -270,7 +277,9 @@ Mach-O image. Architecture
 `file_offset` values are container-relative. Entrypoint, segment and section
 `file_offset` values retain their source meaning and are relative to the
 selected Mach-O slice. Raw load-command fields retain their original values.
-Evidence locations map the LC_MAIN entrypoint and nonempty file-backed segment
+A field otool prints more than once, such as each `LC_BUILD_VERSION` tool, is
+keyed `name #n` in print order. Each `LC_LINKER_OPTION` string is keyed
+`string #n` and checked against the declared `count`. Evidence locations map the LC_MAIN entrypoint and nonempty file-backed segment
 ranges to container offsets by adding the observed slice offset. Zero-fill
 segments do not produce file ranges. When the selected slice's container offset
 is unknown, those mapped locations are omitted with an explicit limitation;
@@ -380,7 +389,10 @@ complete observation.
   missing or incomplete attribute metadata leaves `atomicity` and any
   unestablished read-only value null. A type attribute whose quoted class name
   never closes is incomplete and marks `objc_properties_categories` partial
-  with `property_attributes_incomplete`. `is_meta_class`, `is_root_class`, and
+  with `property_attributes_incomplete`. A property record that cannot be
+  decoded, such as one with an empty or unmapped name, is reported as
+  `property_decode_failed` at its entry address while sibling properties are
+  retained. `is_meta_class`, `is_root_class`, and
   `ivar_count` are also nullable when the selected provider exposes only symbol
   names. Class implementation methods have null `is_required` and `is_optional`
   fields because those facts apply to protocol declarations; decoded protocol
@@ -393,6 +405,10 @@ complete observation.
   coroutine tables, and inherited overrides, have explicit unsupported or
   partial coverage. Other providers retain the
   existing symbol-based inventory with its narrower coverage.
+  Symbols without a reported location remain in that inventory: Swift symbol
+  `address` and Objective-C `implementation_address` are null. An empty provider
+  address is retained as `reported_address` in the symbol's evidence, whose
+  location also remains unknown. Nonempty provider address syntax is preserved.
 
 ## Native desktop observation
 
@@ -409,7 +425,11 @@ decrement scrolling and text-value entry, or bounded waits. No global event
 injection is used. Unsupported AX actions fail explicitly. The result preserves
 ordered before/after captures and gaps; an action may have occurred before a
 post-action capture fails. Application state is left as-is; REA does not attempt
-to restore it.
+to restore it. Failed or cancelled scenarios return a typed error with the
+collected report in `partial_observation`, including ordered step outcomes.
+Cancellation preserves the caller's reason and remains observable through helper
+cleanup. A later abort does not replace an earlier helper or output failure.
+Cleanup failures retain their runtime owner until a confirmed cleanup retry.
 
 Scenarios accept caller-selected action lists and accessibility node counts.
 Individual waits cannot exceed the operation's 180-second deadline, and the
@@ -446,6 +466,11 @@ The run ends when the process exits, `max_events` entries are recorded,
 Bounded termination reports partial coverage. REA checks process termination
 using a launch-time OS start identity; if ownership or cleanup cannot be
 verified, the result or error preserves that uncertainty. The result reports:
+Launch errors keep the fact that LLDB created a process separate from whether
+it remains alive. An exited `SBProcess` is reported as exited only after LLDB
+confirms that state; unresolved ownership remains retained for cleanup retry.
+Cancellation observed while output and Evidence are finalized returns partial
+cancellation Evidence, even if the target has already exited.
 
 - the outcome, exit status and captured stdout/stderr (1 MiB kept per stream
   while excess bytes are drained and counted without growing capture files).
@@ -476,6 +501,11 @@ with partial coverage. Available output prefixes remain inline; their byte
 counts are observed lower bounds when final drain counters are unavailable.
 The original failure classification and cleanup uncertainty remain separate.
 An interrupted journal row is ignored with an explicit limitation.
+If the trace completed before cancellation or runtime-directory cleanup failed,
+the retained observation also keeps its exit status, termination proof, launch
+identity, breakpoint results and final stream counters. Those fields remain
+absent when the interrupted producer did not report them; partial coverage alone
+does not mean that every retained fact is incomplete.
 
 Only entries are observed: return values, floating-point and stack arguments,
 and inlined or `objc_direct` calls are not. The target runs with the current
@@ -492,7 +522,7 @@ is present. A denied trace reports the `debugger-attach-denied` reason.
 Install a Ghidra 12.1.x release and the 64-bit full JDK it declares, then configure REA to
 use them. Ghidra analysis supports Linux x64/arm64 and macOS x64/arm64; each installation requires
 the matching native decompiler. Experimental Windows x64 P0 admits native
-x86 and x86-64 PE applications and DLLs, plus explicitly selected
+x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, plus explicitly selected
 [raw NMOS 6502 images](raw-binary.md#nmos-6502) with a caller-supplied load address,
 on fixed local NTFS volumes. Other raw CPU families remain unsupported on Windows.
 The boundary uses bundled Job Object ownership, protected runtime DACLs, and
@@ -571,6 +601,18 @@ Value projection preserves serialized node kinds, IDs, references and pagination
 Exact and ambiguous value counts describe emitted root/object value instances;
 a root and an object may contain the same value. Archive digests identify the
 original bytes.
+
+Interface Builder's XML and binary plist archives use the same number metadata
+and exact-decimal representation for emitted node attributes. Projection follows
+object and connection classification, so archive IDs, UID links and graph counts
+keep their meaning. Precision limitations name the source document. Unsafe
+integer-literal counts cover the archive, including fields not emitted as node
+attributes; exact and ambiguous projection counts cover emitted attribute values.
+Integral reals stay numbers, and ambiguous or incompletely observed values retain
+explicit precision limitations. Before plist decoding, the existing aggregate
+decode budget reserves estimated room for number metadata and attribute
+projection; these estimates are not a hard process-memory bound. Native
+NIBArchive decoding is unchanged by this plist-specific representation.
 
 Dates are reported as `{ "$plist_type": "date", "iso8601": "<timestamp>" }`. A
 date the decoder cannot represent, such as an XML date with a year beyond 9999

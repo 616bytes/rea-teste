@@ -1,7 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "plist";
 
-import { omitPrototypeKeys, parseXmlPropertyList } from "./propertyListKeys.js";
+import {
+  decodeXmlText,
+  omitPrototypeKeys,
+  parseXmlPropertyList,
+} from "./propertyListKeys.js";
+
+it("preserves unknown named entities that collide with object prototype properties", () => {
+  expect(
+    decodeXmlText("&constructor; &toString; &valueOf; &hasOwnProperty;"),
+  ).toBe("&constructor; &toString; &valueOf; &hasOwnProperty;");
+  expect(decodeXmlText("&amp;&lt;&gt;&quot;&apos;&#65;&#x42;")).toBe(
+    "&<>\"'AB",
+  );
+});
 
 const plist = (body: string) =>
   `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0">${body}</plist>`;
@@ -96,6 +109,40 @@ it("preserves OpenStep dictionary and array autodetection", () => {
   expect(parseXmlPropertyList("(one, two)")).toEqual({
     value: ["one", "two"],
     omittedPrototypeKeys: 0,
+  });
+});
+
+it("counts OpenStep __proto__ keys the decoder silently drops", () => {
+  // Unquoted, quoted, escape-spelled, and object-valued keys all decode to
+  // __proto__; values, other keys, and `\137` (decoded as "137") do not.
+  const result = parseXmlPropertyList(
+    '{ __proto__ = a; "__proto__" = b; "\\_\\_proto__" = c; ' +
+      'nested = { "__proto__" = { polluted = yes; }; }; ' +
+      'kept = __proto__; list = (__proto__); "\\137_proto__" = d; }',
+  );
+  expect(result).toEqual({
+    value: {
+      nested: {},
+      kept: "__proto__",
+      list: ["__proto__"],
+      "137_proto__": "d",
+    },
+    omittedPrototypeKeys: 4,
+  });
+  const nested = (result.value as { nested: object }).nested;
+  expect(Object.getPrototypeOf(nested)).toBe(Object.prototype);
+});
+
+it("counts OpenStep compound keys that coerce to __proto__", () => {
+  // `obj[key]` coerces an array key to its comma-joined string.
+  expect(
+    parseXmlPropertyList(
+      '{ (__proto__) = a; (("__proto__")) = b; ("__pro", "to__") = c; ' +
+        "list = (__proto__); }",
+    ),
+  ).toEqual({
+    value: { "__pro,to__": "c", list: ["__proto__"] },
+    omittedPrototypeKeys: 2,
   });
 });
 

@@ -33,7 +33,11 @@ describe.skipIf(process.platform !== "darwin")(
     cliTest.for([
       ["Contents/Missing.plist", "no file exists there."],
       ["Contents/Folder.plist", "it is not a regular file."],
-      ["Contents/Text.plist", "plutil could not decode it as a property list"],
+      // plutil reports a failed `-o -` conversion on stdout; keep that text.
+      [
+        "Contents/Text.plist",
+        "plutil could not decode it as a property list (Property List error: Unexpected character n at line 1",
+      ],
     ] as const)(
       "reports why the selected %s cannot be inspected",
       async ([selected, reason], { cli }) => {

@@ -11,6 +11,7 @@ import {
   planIntegrationMaintenance,
 } from "../../src/application/UpdateMaintenance.js";
 import {
+  MAX_UPDATE_COMMAND_OUTPUT_BYTES,
   runUpdateCommand,
   systemUpdateHost,
 } from "../../src/application/UpdateRuntime.js";
@@ -408,6 +409,39 @@ describe("update subprocess boundaries", () => {
       process.env,
     );
     expect(result).toEqual(ok(`${"x".repeat(1024 * 1024)}${literal}`));
+  });
+
+  it("terminates the subprocess and reports an explicit error when output exceeds the collection limit", async () => {
+    const result = await runUpdateCommand(
+      [
+        process.execPath,
+        "-e",
+        'process.stdout.write("x".repeat(3 * 1024 * 1024))',
+      ],
+      process.env,
+    );
+    expect(result).toEqual(
+      err(
+        `Update command output exceeded the collection limit of ${String(MAX_UPDATE_COMMAND_OUTPUT_BYTES)} bytes.`,
+      ),
+    );
+  });
+
+  it("enforces a custom collection limit when supplied", async () => {
+    const result = await runUpdateCommand(
+      [
+        process.execPath,
+        "-e",
+        'while(true) process.stdout.write("excessive output chunk ");',
+      ],
+      process.env,
+      "structured",
+      undefined,
+      1024,
+    );
+    expect(result).toEqual(
+      err("Update command output exceeded the collection limit of 1024 bytes."),
+    );
   });
 
   it("reports actual stderr and launch failures", async () => {

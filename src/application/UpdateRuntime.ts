@@ -34,12 +34,16 @@ export interface BunInstallationHost {
   isFile(path: string): Promise<boolean>;
 }
 
+/** Maximum retained output bytes before an update subprocess is terminated. */
+export const MAX_UPDATE_COMMAND_OUTPUT_BYTES = 2 * 1024 * 1024;
+
 /** Run an updater subprocess with complete diagnostics and isolated machine output. */
 export const runUpdateCommand = (
   command: readonly string[],
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   output: UpdateOutput = "structured",
   workingDirectory: string | undefined = undefined,
+  maxOutputBytes: number = MAX_UPDATE_COMMAND_OUTPUT_BYTES,
 ): Promise<Result<string, string>> =>
   new Promise((resolveResult) => {
     const [executable, ...args] = command;
@@ -57,28 +61,50 @@ export const runUpdateCommand = (
     });
     let stdout = "";
     let stderr = "";
+    let observedBytes = 0;
+    let exceeded = false;
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
-    child.stdout?.on("data", (chunk: string) => {
-      stdout += chunk;
+    const onData = (stream: "stdout" | "stderr", chunk: string) => {
+      if (exceeded) return;
+      observedBytes += Buffer.byteLength(chunk, "utf8");
+      if (observedBytes > maxOutputBytes) {
+        exceeded = true;
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        child.kill();
+        return;
+      }
+      if (stream === "stdout") stdout += chunk;
+      else stderr += chunk;
       if (output === "human") process.stderr.write(chunk);
-    });
-    child.stderr?.on("data", (chunk: string) => {
-      stderr += chunk;
-      if (output === "human") process.stderr.write(chunk);
-    });
-    child.once("error", (cause) => resolveResult(err(cause.message)));
+    };
+    child.stdout?.on("data", (chunk: string) => onData("stdout", chunk));
+    child.stderr?.on("data", (chunk: string) => onData("stderr", chunk));
+    child.once("error", (cause) =>
+      resolveResult(
+        exceeded
+          ? err(
+              `Update command output exceeded the collection limit of ${String(maxOutputBytes)} bytes.`,
+            )
+          : err(cause.message),
+      ),
+    );
     child.once("close", (code, signal) =>
       resolveResult(
-        code === 0
-          ? ok(stdout.trim())
-          : err(
-              stderr.trim() ||
-                stdout.trim() ||
-                (signal === null
-                  ? `Process exited with code ${String(code)}.`
-                  : `Process terminated by ${signal}.`),
-            ),
+        exceeded
+          ? err(
+              `Update command output exceeded the collection limit of ${String(maxOutputBytes)} bytes.`,
+            )
+          : code === 0
+            ? ok(stdout.trim())
+            : err(
+                stderr.trim() ||
+                  stdout.trim() ||
+                  (signal === null
+                    ? `Process exited with code ${String(code)}.`
+                    : `Process terminated by ${signal}.`),
+              ),
       ),
     );
   });

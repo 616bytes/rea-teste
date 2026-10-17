@@ -259,3 +259,69 @@ it("keeps the shared target when no file operand is provided", async () => {
   if (result.ok) throw new Error("Expected a refusal");
   expect(result.error.message).toContain("at device: ");
 });
+
+it("names the local operand for a local-destination pull refusal", async () => {
+  const stderr =
+    "adb: error: failed to create file '/host/out/rea-attribute-sample.bin': Permission denied";
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("adb pull failed"), {
+      code: 1,
+      stdout: "",
+      stderr,
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "pull_adb_file",
+    "emulator-5554",
+    "/host/adb",
+    [],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+    {
+      fileTarget: "/data/local/tmp/rea-attribute-sample.bin",
+      localTarget: "/host/out/rea-attribute-sample.bin",
+    },
+  );
+  if (result.ok) throw new Error("Expected a path-specific pull refusal");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisUnsupportedTargetError",
+    operation: "pull_adb_file",
+    path: "/host/out/rea-attribute-sample.bin",
+    reason: stderr,
+  });
+  expect(result.error.message).toBe(
+    `Unsupported target for pull_adb_file at /host/out/rea-attribute-sample.bin: ${stderr}`,
+  );
+});
+
+it("keeps the device target when a pull refusal identifies both operands", async () => {
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("adb pull failed"), {
+      code: 1,
+      stdout: "",
+      stderr:
+        "adb: error: failed to copy '/data/local/tmp/rea-attribute-sample.bin' to '/host/out/rea-attribute-sample.bin': Permission denied",
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "pull_adb_file",
+    "emulator-5554",
+    "/host/adb",
+    [],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+    {
+      fileTarget: "/data/local/tmp/rea-attribute-sample.bin",
+      localTarget: "/host/out/rea-attribute-sample.bin",
+    },
+  );
+  if (result.ok) throw new Error("Expected a refusal");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisUnsupportedTargetError",
+    path: "emulator-5554",
+  });
+});

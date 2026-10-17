@@ -74,9 +74,16 @@ export interface AdbRunLimits {
 export interface AdbRunTargets {
   /**
    * Remote file operand named by path-specific refusals, such as a pull source
-   * that is missing or unreadable. Device-state refusals keep the device target.
+   * that is missing or unreadable. Referenced refusals name this operand in
+   * the refusal text; device-state refusals keep the device target.
    */
   readonly fileTarget?: string;
+  /**
+   * Host file operand named by path-specific refusals, such as a pull
+   * destination adb could not create or write. The refusal must identify this
+   * operand in its text for it to be reported.
+   */
+  readonly localTarget?: string;
 }
 
 /** Run one bounded adb invocation and keep its exact failure shape. */
@@ -146,17 +153,31 @@ export const runAdbCapture = async (
       /No such file or directory|Permission denied|read: Permission denied/iu.test(
         excerpt,
       )
-    )
+    ) {
+      const namesFile =
+        targets.fileTarget !== undefined &&
+        (excerpt.includes(targets.fileTarget) ||
+          excerpt.includes("remote object"));
+      const namesLocal =
+        targets.localTarget !== undefined &&
+        excerpt.includes(targets.localTarget);
+      const namedOperand =
+        namesFile === namesLocal
+          ? undefined
+          : namesFile
+            ? targets.fileTarget
+            : targets.localTarget;
       return err(
         new AnalysisUnsupportedTargetError(
           operation,
-          targets.fileTarget ?? targetPath,
+          namedOperand ?? targetPath,
           excerpt,
           {
             cause,
           },
         ),
       );
+    }
     if (failure.killed)
       return err(
         new AnalysisTimeoutError(operation, limits.timeoutMs, { cause }),

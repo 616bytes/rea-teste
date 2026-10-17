@@ -364,6 +364,10 @@ it.skipIf(process.platform === "win32")(
       `adb: error: failed to open '${remote}': Permission denied`,
     );
     const offlineAdb = await refuse("offline", "error: device offline");
+    const localAdb = await refuse(
+      "local",
+      "adb: error: failed to create file '$5': Permission denied",
+    );
     const successAdb = await workspace.write(
       "success-adb",
       `#!/bin/sh\nroot=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nprintf '%s\\n' "$*" >> "$root/calls-success"\n${versionProbe}if [ "$3" = pull ]; then\n  printf 'attribute bytes\\n' > "$5"\n  exit 0\nfi\nexit 91\n`,
@@ -391,10 +395,31 @@ it.skipIf(process.platform === "win32")(
       return { result, exitCode };
     };
 
-    for (const [name, adb] of [
-      ["missing", missingAdb],
-      ["permission", permissionAdb],
-      ["offline", offlineAdb],
+    for (const { name, adb, target, reasonContains } of [
+      {
+        name: "missing",
+        adb: missingAdb,
+        target: remote,
+        reasonContains: remote,
+      },
+      {
+        name: "permission",
+        adb: permissionAdb,
+        target: remote,
+        reasonContains: remote,
+      },
+      {
+        name: "offline",
+        adb: offlineAdb,
+        target: "emulator-5554",
+        reasonContains: "device offline",
+      },
+      {
+        name: "local",
+        adb: localAdb,
+        target: workspace.path("local-output/rea-attribute-sample.bin"),
+        reasonContains: workspace.path("local-output/rea-attribute-sample.bin"),
+      },
     ] as const) {
       const { result, exitCode } = await restorablePull(
         adb,
@@ -408,15 +433,11 @@ it.skipIf(process.platform === "win32")(
       };
       expect(output.code).toBe("unsupported_target");
       expect(output.details.operation).toBe("pull_adb_file");
+      expect(output.details.path).toBe(target);
       expect(output.details.reason).toEqual(
-        expect.stringContaining(name === "offline" ? "device offline" : remote),
+        expect.stringContaining(reasonContains),
       );
-      expect(output.details.path).toBe(
-        name === "offline" ? "emulator-5554" : remote,
-      );
-      expect(output.message).toContain(
-        name === "offline" ? "at emulator-5554" : `at ${remote}`,
-      );
+      expect(output.message).toContain(`at ${target}`);
       const calls = (await readFile(workspace.path(`calls-${name}`), "utf8"))
         .split("\n")
         .filter((line) => line !== "");

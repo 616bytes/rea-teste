@@ -707,6 +707,72 @@ cliTest("refuses a non-DEX file through the public CLI", async ({ cli }) => {
 });
 
 cliTest(
+  "refuses short non-DEX input as non-DEX and reports truncation only after DEX magic",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-dex-cli-short-");
+    const text = new TextEncoder().encode(
+      "REA triage decoy.\nThis is plain UTF-8 text, shorter than a DEX header.\n",
+    );
+    const refuse = async (path: string, entry?: string) => {
+      const result = await cli.run({
+        arguments: [
+          "inspect-dex-debug-metadata",
+          path,
+          ...(entry === undefined ? [] : ["--entry", entry]),
+          "--json",
+        ],
+      });
+      expect(result.exitCode, result.stderr).toBe(1);
+      // An invalid_request carries its reason in details.issues, not message.
+      return {
+        ...(result.json as { code: string }),
+        text: JSON.stringify(result.json),
+      };
+    };
+
+    const notDex: [string, Uint8Array][] = [
+      ["empty.dex", new Uint8Array(0)],
+      ["one.dex", new Uint8Array([0x50])],
+      ["three.dex", new Uint8Array([0xca, 0xfe, 0xba])],
+      ["decoy.bin", text],
+    ];
+    for (const [name, bytes] of notDex) {
+      const path = join(root, name);
+      await writeFile(path, bytes);
+      const refused = await refuse(path);
+      expect(refused).toMatchObject({ code: "unsupported_target" });
+      expect(refused.text).toContain("does not begin with the DEX magic");
+      expect(refused.text).not.toContain("DEX ended before");
+    }
+
+    const prefix = join(root, "prefix.dex");
+    await writeFile(prefix, debuggableDex().subarray(0, 6));
+    const truncated = await refuse(prefix);
+    expect(truncated).toMatchObject({ code: "invalid_request" });
+    expect(truncated.text).toContain("DEX ended before");
+
+    const apk = join(root, "short.apk");
+    await writeFile(
+      apk,
+      await zipArchive([
+        { name: "classes.dex", bytes: text },
+        { name: "classes2.dex", bytes: debuggableDex().subarray(0, 6) },
+      ]),
+    );
+    const member = await refuse(apk);
+    expect(member).toMatchObject({ code: "unsupported_target" });
+    expect(member.text).toContain(
+      `${apk}!classes.dex does not begin with the DEX magic`,
+    );
+    const memberPrefix = await refuse(apk, "classes2.dex");
+    expect(memberPrefix).toMatchObject({ code: "invalid_request" });
+    expect(memberPrefix.text).toContain(
+      `${apk}!classes2.dex: DEX ended before`,
+    );
+  },
+);
+
+cliTest(
   "answers the CLI's selection identically over stdio MCP, refuses malformed input, and keeps serving after a cancelled call",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-dex-mcp-");

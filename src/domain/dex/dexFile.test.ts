@@ -179,11 +179,49 @@ describe("parseDexFile framing", () => {
     }
   });
 
-  it("reports truncation rather than throwing on a short header", () => {
-    const result = parseDexFile(new Uint8Array(16));
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.kind).toBe("truncated");
+  it("reports truncation only for a short buffer that opens with DEX magic", () => {
+    const dex = minimalDex();
+    for (const length of [1, 4, 6, 7, 8, 16, 0x6f]) {
+      const result = parseDexFile(dex.subarray(0, length));
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toEqual({
+        kind: "truncated",
+        offset: 0,
+        need: 0x70,
+        have: length,
+      });
+    }
+  });
+
+  it("refuses short or empty non-dex input as bad-magic before any length check", () => {
+    const text = new TextEncoder().encode("REA triage decoy.\n");
+    const samples = [
+      new Uint8Array(0),
+      new Uint8Array([0x50]),
+      new Uint8Array([0xca, 0xfe, 0xba]),
+      new Uint8Array(16),
+      text,
+      new TextEncoder().encode("dex!035"),
+    ];
+    for (const bytes of samples) {
+      const result = parseDexFile(bytes);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toEqual({ kind: "bad-magic", offset: 0 });
+    }
+  });
+
+  it("names a short buffer's withdrawn version or cdex magic before its length", () => {
+    const version = parseDexFile(new TextEncoder().encode("dex\n036"));
+    expect(version.ok ? null : version.error).toEqual({
+      kind: "unsupported-version",
+      version: "036",
+    });
+    const compact = parseDexFile(new TextEncoder().encode("cdex001\0"));
+    expect(compact.ok ? null : compact.error.kind).toBe("compact-dex");
+    const nul = parseDexFile(new TextEncoder().encode("dex\n035x"));
+    expect(nul.ok ? null : nul.error).toEqual({ kind: "bad-magic", offset: 7 });
   });
 
   it("refuses an impossible class_defs count instead of allocating", () => {

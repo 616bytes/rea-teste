@@ -268,10 +268,42 @@ export interface DexCodeItem {
 const readVersion = (bytes: Uint8Array): string =>
   String.fromCharCode(bytes[4]!, bytes[5]!, bytes[6]!);
 
+/**
+ * Identify the 8-byte magic on whatever bytes are present, before any length
+ * check: input that does not open with DEX magic (including an empty file) is
+ * `bad-magic` however short it is, and only a buffer whose every present magic
+ * byte agrees can be reported as a truncated DEX.
+ */
+const checkMagic = (bytes: Uint8Array): DexFileParseError | null => {
+  // Compact dex ("cdex") shares the first three bytes; distinguish before magic.
+  if (
+    bytes.length >= 3 &&
+    bytes[0] === 0x63 &&
+    bytes[1] === 0x64 &&
+    bytes[2] === 0x65
+  )
+    return { kind: "compact-dex", offset: 0 };
+  if (bytes.length === 0) return { kind: "bad-magic", offset: 0 };
+  const prefix = Math.min(bytes.length, DEX_MAGIC_PREFIX.length);
+  for (let i = 0; i < prefix; i += 1)
+    if (bytes[i] !== DEX_MAGIC_PREFIX[i])
+      return { kind: "bad-magic", offset: 0 };
+  if (bytes.length > 7 && bytes[7] !== 0x00)
+    return { kind: "bad-magic", offset: 7 };
+  if (bytes.length >= 7) {
+    const version = readVersion(bytes);
+    if (!SUPPORTED_VERSIONS.has(version))
+      return { kind: "unsupported-version", version };
+  }
+  return null;
+};
+
 /** Frame a DEX file: validate the header, then read every `class_def_item`. */
 export const parseDexFile = (
   bytes: Uint8Array,
 ): Result<DexFile, DexFileParseError> => {
+  const magic = checkMagic(bytes);
+  if (magic) return err(magic);
   if (bytes.length < HEADER_SIZE_V40)
     return err({
       kind: "truncated",
@@ -279,18 +311,7 @@ export const parseDexFile = (
       need: HEADER_SIZE_V40,
       have: bytes.length,
     });
-
-  // Compact dex ("cdex") shares the first three bytes; distinguish before magic.
-  if (bytes[0] === 0x63 && bytes[1] === 0x64 && bytes[2] === 0x65)
-    return err({ kind: "compact-dex", offset: 0 });
-  for (let i = 0; i < DEX_MAGIC_PREFIX.length; i += 1)
-    if (bytes[i] !== DEX_MAGIC_PREFIX[i])
-      return err({ kind: "bad-magic", offset: 0 });
-  if (bytes[7] !== 0x00) return err({ kind: "bad-magic", offset: 7 });
-
   const version = readVersion(bytes);
-  if (!SUPPORTED_VERSIONS.has(version))
-    return err({ kind: "unsupported-version", version });
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const endian = view.getUint32(40, true);

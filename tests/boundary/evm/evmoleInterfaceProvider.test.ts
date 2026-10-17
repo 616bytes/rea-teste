@@ -729,7 +729,14 @@ it
     expect(evidence).toMatchObject({
       operation: "inspect_evm_interface",
       parameters: { path, encoding: "hex" },
-      subject: { path, sha256: expect.any(String) },
+      subject: {
+        local_path: path,
+        digest: {
+          sha256: createHash("sha256")
+            .update(await readFile(path))
+            .digest("hex"),
+        },
+      },
       provider: { id: "evmole-interface" },
       raw_result: { functions: [] },
       normalized_result: {

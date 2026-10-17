@@ -11,9 +11,8 @@ import { err, ok, type Result } from "../domain/result.js";
 import { kunaProjectDeadline } from "./KunaConfiguration.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
 import {
-  KUNA_GRAPH_OUTPUT_BYTES,
   KUNA_XREF_OUTPUT_BYTES,
-  parseKunaCallGraph,
+  KunaCallGraphReader,
   parseKunaIncomingReferences,
   type KunaCallGraph,
   type KunaGraphNode,
@@ -95,7 +94,7 @@ export class KunaReferenceQueries {
   ): Promise<Result<KunaCallGraph, AnalysisError>> {
     if (this.#graphFailure !== undefined) return err(this.#graphFailure);
     if (this.#graph === undefined) {
-      if (this.#pendingGraph?.controller.signal.aborted === true) {
+      if (this.#pendingGraph?.signal.aborted === true) {
         const retired = await this.work.wait(
           this.#pendingGraph,
           signal,
@@ -104,38 +103,32 @@ export class KunaReferenceQueries {
         if (!retired.ok && !(retired.error instanceof AnalysisCancelledError))
           return retired;
         if (signal?.aborted === true)
-          return err(new AnalysisCancelledError(operation));
+          return err(
+            new AnalysisCancelledError(operation, { cause: signal?.reason }),
+          );
         return this.#loadGraph(installation, operation, signal);
       }
       if (this.#pendingGraph === undefined) {
         const pending = this.work.start<KunaCallGraph>(
-          async (producerSignal) => {
-            const run = await this.work.run({
-              installation,
-              operation: "kuna:call-graph",
-              arguments: (input) => [
-                "decompile-graph",
-                input,
-                "--functions",
-                "",
-              ],
-              deadline: kunaProjectDeadline(installation.configuration),
-              outputBytes: KUNA_GRAPH_OUTPUT_BYTES,
-              signal: producerSignal,
-            });
-            if (!run.ok) {
-              if (
-                run.error instanceof AnalysisResourceConstraintError &&
-                run.error.resource === "memory"
-              )
-                this.#graphFailure = run.error;
-              return run;
-            }
-            return this.#parsed(
-              parseKunaCallGraph(run.value.stdout.text, run.value.input),
-              "call graph",
-            );
-          },
+          (producerSignal) =>
+            this.work.scan(
+              {
+                installation,
+                operation: "kuna:call-graph",
+                arguments: (input) => [
+                  "decompile-graph",
+                  input,
+                  "--functions",
+                  "",
+                ],
+                deadline: kunaProjectDeadline(installation.configuration),
+              },
+              new KunaCallGraphReader(),
+              producerSignal,
+              (failure) => {
+                this.#graphFailure = failure;
+              },
+            ),
           (value) => {
             this.#graph = value;
           },
@@ -235,12 +228,14 @@ export class KunaReferenceQueries {
       return ok(cached);
     }
     let pending = this.#pendingXrefs.get(address);
-    if (pending?.controller.signal.aborted === true) {
+    if (pending?.signal.aborted === true) {
       const retired = await this.work.wait(pending, signal, "xrefs");
       if (!retired.ok && !(retired.error instanceof AnalysisCancelledError))
         return retired;
       if (signal?.aborted === true)
-        return err(new AnalysisCancelledError("xrefs"));
+        return err(
+          new AnalysisCancelledError("xrefs", { cause: signal?.reason }),
+        );
       return this.incoming(installation, address, signal);
     }
     if (pending === undefined) {

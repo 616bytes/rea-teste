@@ -1,3 +1,8 @@
+import type {
+  AdbWindowFocusContext,
+  AdbWindowFocusObservation,
+} from "../domain/adb/adbDeviceAnalysis.js";
+
 /**
  * Parsers for fixed observation commands REA runs through `adb shell`.
  *
@@ -125,6 +130,7 @@ const SIZE_PAIR = /^Physical size:\s+(\d+)x(\d+)$/u;
 const SIZE_OVERRIDE = /^Override size:\s+(\d+)x(\d+)$/u;
 const DENSITY_PHYSICAL = /^Physical density:\s+(\d+)$/u;
 const DENSITY_OVERRIDE = /^Override density:\s+(\d+)$/u;
+const DENSITY_BARE = /^(\d+)$/u;
 
 /** Parse `wm size` output into physical and optional override sizes. */
 export const parseWmSizeOutput = (
@@ -153,7 +159,12 @@ export const parseWmSizeOutput = (
   return { physical, override };
 };
 
-/** Parse `wm density` output. Older builds print a bare number. */
+/**
+ * Parse `wm density` output. Current builds print labeled physical and
+ * optional override lines; older builds print the physical density as a
+ * bare number on its own line (morluto/rea#3942). A labeled declaration
+ * wins over a bare one so a mixed dump cannot downgrade the physical value.
+ */
 export const parseWmDensityOutput = (
   stdout: string,
 ): {
@@ -162,33 +173,88 @@ export const parseWmDensityOutput = (
 } => {
   let physical = null;
   let override = null;
+  let bare = null;
   for (const line of stdout.split(/\r?\n/u)) {
     const trimmed = line.trim();
     const physicalMatch = DENSITY_PHYSICAL.exec(trimmed);
     if (physicalMatch !== null) physical = Number(physicalMatch[1]!);
     const overrideMatch = DENSITY_OVERRIDE.exec(trimmed);
     if (overrideMatch !== null) override = Number(overrideMatch[1]!);
+    const bareMatch = DENSITY_BARE.exec(trimmed);
+    if (bareMatch !== null && bare === null) bare = Number(bareMatch[1]!);
   }
-  return { physical, override };
+  return { physical: physical ?? bare, override };
 };
 
-/** Parse focus declarations from `dumpsys window windows` or `displays`. */
+/** Own declaration identity and omission before deriving a singular summary. */
 export const parseWindowFocusOutput = (
   stdout: string,
-): {
-  focusedWindow: string | null;
-  focusedApp: string | null;
-} => {
-  let focusedWindow = null;
-  let focusedApp = null;
+): AdbWindowFocusObservation => {
+  const contexts: AdbWindowFocusContext[] = [];
+  const observedLines: string[] = [];
+  let current: AdbWindowFocusContext | undefined;
   for (const line of stdout.split(/\r?\n/u)) {
     const trimmed = line.trim();
-    if (focusedWindow === null && trimmed.startsWith("mCurrentFocus="))
-      focusedWindow = trimmed.slice("mCurrentFocus=".length).trim();
-    if (focusedApp === null && trimmed.startsWith("mFocusedApp="))
-      focusedApp = trimmed.slice("mFocusedApp=".length).trim();
+    if (trimmed.startsWith("Display:")) {
+      current = {
+        scope: "display",
+        display_id:
+          /^Display:\s+mDisplayId=(-?[0-9]+)(?:\s|$)/u.exec(trimmed)?.[1] ??
+          null,
+        header_line: line,
+        declarations: [],
+      };
+      contexts.push(current);
+      observedLines.push(line);
+      continue;
+    }
+    const field = trimmed.startsWith("mCurrentFocus=")
+      ? "mCurrentFocus"
+      : trimmed.startsWith("mFocusedApp=")
+        ? "mFocusedApp"
+        : undefined;
+    if (field === undefined) continue;
+    if (current === undefined) {
+      current = {
+        scope: "unscoped",
+        display_id: null,
+        header_line: null,
+        declarations: [],
+      };
+      contexts.push(current);
+    }
+    const value = trimmed.slice(field.length + 1).trim();
+    current.declarations.push({
+      field,
+      value: value === "null" ? null : value,
+      raw_line: line,
+    });
+    observedLines.push(line);
   }
-  return { focusedWindow, focusedApp };
+  const windows =
+    contexts.length === 1
+      ? contexts[0]!.declarations.filter(
+          ({ field }) => field === "mCurrentFocus",
+        )
+      : [];
+  const apps =
+    contexts.length === 1
+      ? contexts[0]!.declarations.filter(({ field }) => field === "mFocusedApp")
+      : [];
+  const declared = contexts.some(({ declarations }) => declarations.length > 0);
+  const summary = !declared
+    ? "unavailable"
+    : contexts.length === 1 && windows.length <= 1 && apps.length <= 1
+      ? "single_context"
+      : "ambiguous";
+  return {
+    focused_window:
+      summary === "single_context" ? (windows[0]?.value ?? null) : null,
+    focused_app: summary === "single_context" ? (apps[0]?.value ?? null) : null,
+    focus_summary: summary,
+    focus_contexts: contexts,
+    observed_lines: observedLines,
+  };
 };
 
 export interface AdbPackageDetails {

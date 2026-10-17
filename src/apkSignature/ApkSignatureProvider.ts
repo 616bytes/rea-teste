@@ -417,7 +417,17 @@ export class ApkSignatureProvider implements ApkSignaturePort {
       runtime_execution: "not-performed",
     };
 
-    const serialized = Buffer.byteLength(JSON.stringify(result));
+    const limitations = [
+      ...APK_SIGNATURE_LIMITATIONS,
+      ...(matcher.layoutPreventedRecompute() ? [LAYOUT_LIMITATION] : []),
+      ...(duplicates.count > 0 ? [duplicateEntriesLimitation(duplicates)] : []),
+      ...v1SignerNotes(v1Decoded),
+      ...derived.notes,
+    ];
+    // The budget covers everything emitted: limitations repeat archive names.
+    const serialized = Buffer.byteLength(
+      JSON.stringify({ result, limitations }),
+    );
     if (serialized > APK_SIGNATURE_LIMITS.outputBytes)
       return err(apkOutputBudgetError(serialized));
 
@@ -429,15 +439,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
       createAnalysisExecution(result, APK_SIGNATURE_PROVIDER_IDENTITY, {
         subject: { path: artifact.path, format, sha256: artifact.sha256 },
         locations: [{ kind: "artifact-path", path: artifact.path }],
-        limitations: [
-          ...APK_SIGNATURE_LIMITATIONS,
-          ...(matcher.layoutPreventedRecompute() ? [LAYOUT_LIMITATION] : []),
-          ...(duplicates.count > 0
-            ? [duplicateEntriesLimitation(duplicates)]
-            : []),
-          ...v1SignerNotes(v1Decoded),
-          ...derived.notes,
-        ],
+        limitations,
       }) as ApkSignatureExecution,
     );
   }

@@ -419,7 +419,22 @@ Use REA from llama.cpp's local Web UI through `llama-server`'s native stdio
 MCP support. REA supplies the analysis tools; llama.cpp runs your chosen model.
 It is not a replacement for a native analysis provider such as Ghidra or Hopper.
 
-Install REA using the [normal installation instructions](installation.md).
+Install REA in a persistent location so the configuration below can use a stable
+entrypoint. For a project-local installation, run this in your chosen directory:
+
+```bash
+npm install --save-exact rea-agents
+```
+
+Or install it globally:
+
+```bash
+npm install --global rea-agents
+```
+
+See [package runners and global installation](installation.md#package-runners-and-global-installation)
+for runtime requirements and installation options. Running `npx rea-agents setup`
+alone does not create either installation; do not use its temporary package-cache path.
 Use a llama.cpp build whose `llama-server --help` lists
 `--mcp-servers-config`; older builds without that option cannot use this route.
 The configuration below uses an already installed REA package, so tool discovery
@@ -433,18 +448,24 @@ Save a JSON file, for example `rea-mcp.json`:
     "rea": {
       "command": "/absolute/path/to/node",
       "args": ["/absolute/path/to/rea-agents/scripts/rea.mjs", "mcp"],
-      "timeout_ms": 60000
+      "timeout_ms": 450000
     }
   }
 }
 ```
 
-Replace both paths with your installation's actual paths. For a global npm
-installation, the script is under `$(npm root -g)/rea-agents/scripts/rea.mjs`.
+Replace both paths with your installation's actual paths. For a project-local npm
+installation, run `npm root` in that project; the script is under
+`$(npm root)/rea-agents/scripts/rea.mjs`. For a global installation, use
+`$(npm root -g)/rea-agents/scripts/rea.mjs` instead. Copy the resulting absolute
+path into the JSON; llama-server does not expand shell expressions there.
 `node -p process.execPath` prints the executable for your current Node.js.
 Use the version supported by REA. Preserve any other
 servers if you are adding REA to an existing configuration. `timeout_ms` is
-llama.cpp's per-tool-call timeout; increase it for analyses that need longer.
+llama.cpp's per-tool-call timeout, including cold engine startup. The example
+allows REA's default 330-second Ghidra startup budget plus 120 seconds for the
+operation. Increase it if you configure a longer provider allowance or need more
+operation time; see [provider deadlines](mcp-contracts.md#ghidra-first-query-deadlines-and-recovery).
 
 Start the server with your own tool-capable GGUF model:
 

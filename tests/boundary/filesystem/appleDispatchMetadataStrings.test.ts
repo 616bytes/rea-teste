@@ -6,6 +6,7 @@ import { expect, it } from "vitest";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { inspectAppleDispatchMetadata } from "../../../src/native/AppleDispatchMetadata.js";
+import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 import { machoWithPropertyAttributes } from "../../fixtures/objcPropertyMacho.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -34,7 +35,11 @@ it.each([
     await writeFile(path, bytes);
     const target = await parseBinaryTarget(path);
     if (!target.ok) throw target.error;
-    const metadata = await inspectAppleDispatchMetadata(target.value, 100);
+    const metadata = await withArtifactResourceScope((resources) =>
+      resources.run(() =>
+        inspectAppleDispatchMetadata(target.value, 100, resources),
+      ),
+    );
     expect(metadata.target_sha256).toBe(
       createHash("sha256").update(bytes).digest("hex"),
     );
@@ -84,7 +89,11 @@ it.each([
     await writeFile(path, bytes);
     const target = await parseBinaryTarget(path);
     if (!target.ok) throw target.error;
-    const metadata = await inspectAppleDispatchMetadata(target.value, 100);
+    const metadata = await withArtifactResourceScope((resources) =>
+      resources.run(() =>
+        inspectAppleDispatchMetadata(target.value, 100, resources),
+      ),
+    );
     expect(metadata.result.objc_classes).toMatchObject([
       { name: "Fixture", properties: [{ name: "second" }] },
     ]);

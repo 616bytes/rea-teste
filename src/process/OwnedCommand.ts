@@ -1,3 +1,4 @@
+import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
 import type { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
@@ -24,8 +25,17 @@ import {
 
 /** A short-lived command failed its lifecycle or complete-output contract. */
 export class OwnedCommandFailure extends Error {
+  readonly #cancellation: { readonly reason: unknown } | undefined;
+
+  /** Opaque caller reason observed by the owner, distinct from physical causes. */
+  get cancellation(): { readonly reason: unknown } | undefined {
+    return this.#cancellation;
+  }
   readonly cleanupResult: ProcessCleanupFailure | undefined;
   readonly collectionFailure: boolean;
+  readonly preparationFailure:
+    | DarwinProcessOwnershipInspectionError
+    | undefined;
 
   constructor(
     readonly reason: "cancelled" | "timeout" | "output-limit" | "process",
@@ -33,15 +43,22 @@ export class OwnedCommandFailure extends Error {
     readonly snapshot: ProviderProcessSnapshot | null = null,
     readonly cleanupFailure: string | null = null,
     options?: ErrorOptions & {
+      readonly cancellation?: { readonly reason: unknown } | undefined;
       readonly cleanupResult?: ProcessCleanupFailure;
       readonly collectionFailure?: boolean;
+      readonly preparationFailure?: DarwinProcessOwnershipInspectionError;
     },
     readonly resources: readonly string[] = [],
     readonly cleanupOwner?: ProviderProcessSupervisor,
   ) {
     super(message, options);
+    this.#cancellation =
+      options?.cancellation === undefined
+        ? undefined
+        : { reason: options.cancellation.reason };
     this.cleanupResult = options?.cleanupResult;
     this.collectionFailure = options?.collectionFailure ?? false;
+    this.preparationFailure = options?.preparationFailure;
   }
 }
 
@@ -92,6 +109,9 @@ export const runOwnedCommand = async (
     throw new OwnedCommandFailure(
       "cancelled",
       "Command cancelled before launch.",
+      null,
+      null,
+      { cancellation: { reason: callerSignal.reason } },
     );
   const deadline = new ProviderStartupDeadline(limits.timeoutMs, callerSignal);
   try {
@@ -129,6 +149,18 @@ const collectOwnedCommand = async (
       signal,
     });
   } catch (cause: unknown) {
+    // A caller's raw abort reason remains opaque even if it is a typed error.
+    const preparationFailure =
+      cause instanceof DarwinProcessOwnershipInspectionError &&
+      !(signal.aborted && cause === signal.reason)
+        ? cause
+        : undefined;
+    // Preparation owns its physical outcome and any retained helper resources.
+    if (
+      preparationFailure !== undefined &&
+      preparationFailure.cancellation === undefined
+    )
+      throw preparationFailure;
     const interruption = deadline.interruption;
     if (interruption !== undefined)
       throw new OwnedCommandFailure(
@@ -138,7 +170,15 @@ const collectOwnedCommand = async (
           : "Command deadline elapsed during ownership preparation.",
         null,
         null,
-        { cause },
+        {
+          cause,
+          ...(interruption === "cancelled"
+            ? {
+                cancellation: { reason: signal.reason },
+              }
+            : {}),
+          ...(preparationFailure === undefined ? {} : { preparationFailure }),
+        },
       );
     throw cause;
   }
@@ -182,6 +222,11 @@ const collectOwnedCommand = async (
           interruption === "cancelled"
             ? "Command cancelled."
             : "Command deadline elapsed.",
+          null,
+          null,
+          interruption === "cancelled"
+            ? { cancellation: { reason: signal.reason } }
+            : undefined,
         );
       if (exceeded)
         throw new OwnedCommandFailure(
@@ -206,6 +251,10 @@ const collectOwnedCommand = async (
           ? "Command cancelled."
           : "Command deadline elapsed.",
         snapshot,
+        null,
+        interruption === "cancelled"
+          ? { cancellation: { reason: signal.reason } }
+          : undefined,
       );
     if (exceeded)
       throw new OwnedCommandFailure(
@@ -257,7 +306,9 @@ const collectOwnedCommand = async (
       snapshot,
       stopped.reason,
       {
-        ...(failure === undefined ? {} : { cause: failure }),
+        ...(failure === undefined
+          ? {}
+          : { cause: failure, cancellation: failure.cancellation }),
         ...(stopped.cleanupResult === undefined
           ? {}
           : { cleanupResult: stopped.cleanupResult }),
@@ -276,6 +327,7 @@ const collectOwnedCommand = async (
       failure.cleanupFailure,
       {
         cause: failure,
+        cancellation: failure.cancellation,
         ...(failure.cleanupResult === undefined
           ? {}
           : { cleanupResult: failure.cleanupResult }),
@@ -284,7 +336,15 @@ const collectOwnedCommand = async (
       failure.resources,
     );
   if (callerSignal?.aborted)
-    throw new OwnedCommandFailure("cancelled", "Command cancelled.", snapshot);
+    throw new OwnedCommandFailure(
+      "cancelled",
+      "Command cancelled.",
+      snapshot,
+      null,
+      {
+        cancellation: { reason: callerSignal.reason },
+      },
+    );
   return snapshot;
 };
 

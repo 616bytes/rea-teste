@@ -96,7 +96,7 @@ it.each([
 );
 
 describe("cross-version source module identity", () => {
-  it("preserves exact module identity when sibling changes leave relationship alignment unresolved", async () => {
+  it("keeps exact source identity without claiming unchanged unresolved relationships", async () => {
     const root = await createTestTempDirectory("rea-source-module-sibling-");
     const versions = await Promise.all(
       ["left", "right"].map(async (name) => {
@@ -148,11 +148,6 @@ describe("cross-version source module identity", () => {
     );
     expect(item).toMatchObject({
       status: "unknown",
-      limitations: expect.arrayContaining([
-        expect.stringMatching(
-          /relationship target identity remains unresolved/iu,
-        ),
-      ]),
       right_node_id: rightModule.node_id,
       match: {
         status: "matched",
@@ -161,7 +156,14 @@ describe("cross-version source module identity", () => {
       },
     });
     expect(item?.dimensions).not.toContain("content");
-    expect(item?.dimensions).not.toContain("coverage");
+    expect(item?.dimensions).not.toContain("properties");
+    expect(item?.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /Incomplete graph coverage|Relationship target identity remains unresolved/,
+        ),
+      ]),
+    );
   });
 });
 

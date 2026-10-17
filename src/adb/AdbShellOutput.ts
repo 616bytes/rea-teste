@@ -267,7 +267,6 @@ export const parseDumpsysPackageOutput = (
       continue;
     }
     inPermissions = false;
-    if (line.trim() === "pkg=null") parsedPackageUnavailable = true;
     const match = DETAIL_LINE.exec(line);
     if (match === null) continue;
     const key = match[1]!;

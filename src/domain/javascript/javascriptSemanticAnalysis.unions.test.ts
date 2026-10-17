@@ -327,6 +327,105 @@ describe("logical primitive unions", () => {
   });
 });
 
+describe("loop branch source reads", () => {
+  it.each(["const", "let"])(
+    "keeps future loop-body %s reads uncertain while preserving initialized and deferred reads",
+    (kind) => {
+      const fields = `mode: enabled ? "on" : "off", logical: enabled || "fallback", selected: true ? enabled : 0`;
+      for (const loop of [
+        "for (let i = 0; i < 1; i++)",
+        "while (condition)",
+        "do",
+        "for (const item of [1])",
+        "for (const key in { one: 1 })",
+      ]) {
+        const statement = (body: string) =>
+          `${loop} { ${body} } ${loop === "do" ? "while (condition);" : ""}`;
+        for (const body of [
+          statement(`return { ${fields} }; ${kind} enabled = true;`),
+          `${statement(`return { ${fields} };`)} ${kind} enabled = true;`,
+        ]) {
+          const ir = analyzeJavaScriptSemantics(
+            `export function config() { ${body} }`,
+          );
+          expect(
+            ir.callables.find(({ name }) => name === "config")?.returnSites[0]
+              ?.value,
+          ).toMatchObject({
+            status: "object",
+            properties: expect.arrayContaining([
+              {
+                name: "mode",
+                presence: "present",
+                value: { status: "union", values: ["off", "on"] },
+              },
+              {
+                name: "logical",
+                presence: "present",
+                value: expect.objectContaining({ status: "ambiguous" }),
+              },
+              {
+                name: "selected",
+                presence: "present",
+                value: expect.objectContaining({ status: "unknown" }),
+              },
+            ]),
+          });
+        }
+        for (const source of [
+          `export function config() { ${statement(`${kind} enabled = true; return { ${fields} };`)} }`,
+          `export function config() { ${kind} enabled = true; ${statement(`return { ${fields} };`)} }`,
+          `export function config() { ${statement(`return { ${fields} };`)} } ${kind} enabled = true;`,
+        ]) {
+          const ir = analyzeJavaScriptSemantics(source);
+          expect(
+            ir.callables.find(({ name }) => name === "config")?.returnSites[0]
+              ?.value,
+          ).toMatchObject({
+            status: "object",
+            properties: expect.arrayContaining([
+              {
+                name: "mode",
+                presence: "present",
+                value: { status: "literal", value: "on" },
+              },
+              ...["logical", "selected"].map((name) => ({
+                name,
+                presence: "present",
+                value: { status: "literal", value: true },
+              })),
+            ]),
+          });
+        }
+      }
+    },
+  );
+
+  it.each(["const", "let"])(
+    "orders %s initializers in for headers without reading later declarators",
+    (kind) => {
+      const initialized = analyzeJavaScriptSemantics(`
+        export function config() {
+          for (${kind} enabled = true; condition;) { return enabled ? "on" : "off"; }
+        }
+      `);
+      expect(
+        initialized.callables.find(({ name }) => name === "config")
+          ?.returnSites[0]?.value,
+      ).toEqual({ status: "literal", value: "on" });
+      const future = analyzeJavaScriptSemantics(`
+        export function config() {
+          for (${kind} answer = enabled ? "on" : "off", enabled = true; condition;) { return answer; }
+        }
+      `);
+      expect(
+        future.callables.find(({ name }) => name === "config")?.returnSites[0]
+          ?.value,
+      ).toEqual({ status: "union", values: ["off", "on"] });
+    },
+  );
+});
+
 describe("branch selector source reads", () => {
   it("does not select a later initializer through direct, nested, or cached aliases", () => {
     for (const source of [

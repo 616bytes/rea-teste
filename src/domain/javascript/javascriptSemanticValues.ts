@@ -633,11 +633,7 @@ const evaluateExpressionValue = (
         binding.definitions.some(({ kind }) => kind === "assignment"))
         ? semanticBindingAtRead(binding, node, context.state.parentsByNode)
         : undefined;
-    if (
-      read?.status === "unresolved" &&
-      (binding.declarationKinds.has("var") ||
-        binding.definitions.some(({ kind }) => kind === "assignment"))
-    ) {
+    if (read?.status === "unresolved") {
       if (context.sourceRead === true)
         recordBindingDependency(binding, context);
       else {

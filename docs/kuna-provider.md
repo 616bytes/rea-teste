@@ -68,7 +68,7 @@ Single-function subprocess output and each cached source facet share a 16 MiB bu
 
 Results keep exact u64 virtual addresses, decoded text, native encoding, terminator status and byte length including any terminator. Kuna scans mapped sections or segments for runs of at least five characters; unterminated fragments can include instruction bytes. `all` includes ASCII, UTF-8 and the engine's Latin-range UTF-16LE reading. Other text, including short strings, non-Latin wide text and UTF-16BE, can remain undiscovered. An empty result does not prove absence.
 
-Use `search_strings` for the matching rows or `list_strings` with an exact address for that location. Literal and regex matching run in REA, preserving the existing case and ECMAScript Unicode semantics instead of substituting Kuna's different regex dialect. Procedure and string regex queries share one worker slot per session. Input projections are materialized only after admission, so queued queries retain no per-query inventory arrays. Close cancels and drains matching. Native metadata queries also share one admission slot, including references; a failed stop retains admission until cleanup is proven.
+Use `search_strings` for the matching rows or `list_strings` with an exact address for that location. The validated inventory is sorted by numeric address and encoding. Once cached, exact-address reads use binary search and return every encoding at that address without scanning the full inventory or retaining another lookup index. Literal and regex matching run in REA, preserving the existing case and ECMAScript Unicode semantics instead of substituting Kuna's different regex dialect. Procedure and string regex queries share one worker slot per session. Input projections are materialized only after admission, so queued queries retain no per-query inventory arrays. Close cancels and drains matching. Native metadata queries also share one admission slot, including references; a failed stop retains admission until cleanup is proven.
 
 `raw_result.strings` reports the source JSON digest/size, scanned scope, extraction policy, complete inventory count and selected count without copying unrequested text into the answer. Omit the address from `list_strings` to retrieve the complete inventory as Evidence; normal session retention and bundle export apply, including transport-capacity errors for oversized inline replies. These operations preserve their complete-result contracts and do not add paging. Function-referenced string facets in `analyze_function` remain unavailable; call `xrefs` explicitly when references to one returned string are needed.
 
@@ -91,6 +91,14 @@ Installation acquisition is shared, with independently cancellable caller waits.
 The final departing caller stops the probe and joins its cleanup; session close
 also stops and joins acquisition. A cleanly cancelled acquisition can be retried,
 while a retained cleanup failure blocks replacement until its owner is closed.
+Shared string and reference queries preserve caller cancellation reasons and
+join the final departing caller's command cleanup. A command cleanup error keeps
+its typed primary failure and captured output. Its live resource list follows
+both process and workspace ownership: proving process exit does not prove that
+the private workspace was removed, and retry updates earlier caller errors.
+If workspace setup fails, an unsuccessful rollback retains the original target
+or read failure together with its cleanup owner. Replacement stays blocked until
+that rollback is resolved; a clean rollback permits another setup attempt.
 
 ## Provenance and limitations
 

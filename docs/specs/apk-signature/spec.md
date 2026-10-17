@@ -22,13 +22,14 @@ code executes, no device or `adb`, no acquisition, no mutation.
   `subjectKeyIdentifier` plus its digest/signature algorithm OIDs. The signer
   `certificate` goes through the same X.509 owner as v2/v3; it is `null` when
   there is not exactly one `SignerInfo` or it names no carried certificate. A
-  block that cannot be read (including an encrypted entry or a local header
-  that disagrees with the central directory, as apksig checks) carries
+  block that cannot be read (including a local header that disagrees with
+  the central directory, as apksig checks) carries
   `decode_error`, never an absent signer; so does a signer whose block,
   `.SF` or `META-INF/MANIFEST.MF` name is duplicated. Duplicate names are
   found among all central-directory entries, as apksig rejects the v1
   signature for any of them ("Duplicate entry"), and a limitation names the
-  first few and counts the rest.
+  first few and counts the rest. As apksig does, the ZIP encryption flag is
+  ignored: the block is read and its decoding decides, with a limitation.
 - The APK Signing Block located from the ZIP end-of-central-directory (Zip64
   followed) and framed into id-value pairs; v2, v3 and v3.1 signers decoded:
   digests by signature-algorithm id, X.509 certificate DER, v3 min/max SDK,

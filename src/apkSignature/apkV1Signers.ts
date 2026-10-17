@@ -8,6 +8,7 @@ import { inflateRawSync } from "node:zlib";
 
 import type { ApkSignatureResult } from "../domain/apkSignature/apkSignatureReport.js";
 import {
+  centralDeclaresEncryption,
   localEntryData,
   type ApkV1SignerEntry,
 } from "../domain/apkSignature/apkV1Signature.js";
@@ -29,6 +30,8 @@ type V1Signer = ApkSignatureResult["schemes"]["v1"]["signers"][number];
 /** One v1 signer: its decoded SignedData, or why it could not be read. */
 export interface DecodedV1Signer {
   readonly entry: ApkV1SignerEntry;
+  /** The block's local or central header sets the encryption flag (bit 0). */
+  readonly declaresEncryption: boolean;
   readonly decoded:
     | { readonly ok: true; readonly value: ApkV1SignedData }
     | { readonly ok: false; readonly error: string };
@@ -73,11 +76,14 @@ export const decodeV1Signer = (
   entry: ApkV1SignerEntry,
   entriesEnd: number,
 ): DecodedV1Signer => {
+  const { block } = entry;
+  // The local header's flag is known only once it is located.
+  let declaresEncryption = centralDeclaresEncryption(block);
   const fail = (error: string): DecodedV1Signer => ({
     entry,
+    declaresEncryption,
     decoded: { ok: false, error },
   });
-  const { block } = entry;
   // apksig rejects the archive's v1 signature outright; which copy it would
   // read is not defined, so the signer stays unknown.
   if (entry.duplicate !== null)
@@ -87,15 +93,16 @@ export const decodeV1Signer = (
   // than as a size over the bound.
   const stored = localEntryData(bytes, block, entriesEnd);
   if (!stored.ok) return fail(stored.error.detail);
+  ({ declaresEncryption } = stored.value);
   if (block.uncompressedSize > limit)
     return fail(
       `signature block declares ${String(block.uncompressedSize)} bytes, over the ${String(limit)}-byte bound`,
     );
   let data: Uint8Array;
-  if (block.method === 0) data = stored.value;
+  if (block.method === 0) data = stored.value.data;
   else if (block.method === 8) {
     try {
-      data = inflateRawSync(stored.value, { maxOutputLength: limit });
+      data = inflateRawSync(stored.value.data, { maxOutputLength: limit });
     } catch (cause: unknown) {
       return fail(
         cause instanceof RangeError
@@ -110,7 +117,7 @@ export const decodeV1Signer = (
       `signature block holds ${String(data.length)} bytes, the central directory declares ${String(block.uncompressedSize)}`,
     );
   const signedData = decodeV1SignatureBlock(data);
-  if (signedData.ok) return { entry, decoded: signedData };
+  if (signedData.ok) return { entry, declaresEncryption, decoded: signedData };
   return fail(
     signedData.error.kind === "malformed-pkcs7"
       ? `malformed PKCS#7: ${signedData.error.detail}`
@@ -118,15 +125,20 @@ export const decodeV1Signer = (
   );
 };
 
-/** Facts about decoded v1 blocks that the report has no field for. */
+/** Facts about v1 blocks that the report has no field for. */
 export const v1SignerNotes = (signers: readonly DecodedV1Signer[]): string[] =>
-  signers.flatMap(({ entry, decoded }) =>
-    decoded.ok && decoded.value.trailingBytes > 0
+  signers.flatMap(({ entry, declaresEncryption, decoded }) => [
+    ...(declaresEncryption
+      ? [
+          `${entry.block.name}: the entry declares encryption (general-purpose flag bit 0); apksig ignores the flag, so its bytes were read as stored and the PKCS#7 decoding decides.`,
+        ]
+      : []),
+    ...(decoded.ok && decoded.value.trailingBytes > 0
       ? [
           `${entry.block.name}: ${String(decoded.value.trailingBytes)} bytes follow the PKCS#7 ContentInfo and were ignored, as apksig ignores them.`,
         ]
-      : [],
-  );
+      : []),
+  ]);
 
 /** Materialise one v1 signer's declared facts through the shared certificate owner. */
 export const v1SignerFacts = ({

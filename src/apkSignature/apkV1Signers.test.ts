@@ -40,6 +40,7 @@ const signerOf = (certificate: Uint8Array): DecodedV1Signer => {
         localHeaderOffset: 0,
       },
     },
+    declaresEncryption: false,
     decoded,
   };
 };

@@ -197,8 +197,37 @@ cliTest(
       await writeFile(path, bytes);
       return path;
     };
+    const flagEncrypted = (bytes: Buffer, central: number, local: number) => {
+      bytes.writeUInt16LE(bytes.readUInt16LE(central + 8) | 1, central + 8);
+      bytes.writeUInt16LE(bytes.readUInt16LE(local + 6) | 1, local + 6);
+    };
+    // apksig ignores the encryption flag: plain bytes still decode, and
+    // bytes that really are scrambled fail to decode.
+    const flagged = await mutated(
+      "encrypted-flag.apk",
+      (bytes, { central, local }) => {
+        flagEncrypted(bytes, central, local);
+      },
+    );
     const cases = [
       [await mutated("intact.apk", () => undefined), null],
+      [flagged, null],
+      [
+        await mutated("encrypted-bytes.apk", (bytes, { central, local }) => {
+          flagEncrypted(bytes, central, local);
+          const start =
+            local +
+            30 +
+            bytes.readUInt16LE(local + 26) +
+            bytes.readUInt16LE(local + 28);
+          for (let i = 0; i < bytes.readUInt32LE(local + 18); i += 1)
+            bytes.writeUInt8(
+              (bytes.readUInt8(start + i) ^ 0x5a) & 0xff,
+              start + i,
+            );
+        }),
+        /^(malformed PKCS#7: |signature block deflate stream is damaged)/,
+      ],
       [
         await mutated("local-size-plus1.apk", (bytes, { local }) => {
           bytes.writeUInt32LE(bytes.readUInt32LE(local + 18) + 1, local + 18);
@@ -210,13 +239,6 @@ cliTest(
           bytes.write("META-INF/CERT.XY", local + 30, "latin1");
         }),
         "local header name differs from the central directory's",
-      ],
-      [
-        await mutated("encrypted-flag.apk", (bytes, { central, local }) => {
-          bytes.writeUInt16LE(bytes.readUInt16LE(central + 8) | 1, central + 8);
-          bytes.writeUInt16LE(bytes.readUInt16LE(local + 6) | 1, local + 6);
-        }),
-        "entry is encrypted (general-purpose flag bit 0)",
       ],
       [
         await mutated("zip64-sentinel.apk", (bytes, { central }) => {
@@ -241,6 +263,18 @@ cliTest(
     ]);
     expect(paddedEvidence.limitations).toContain(
       `${block}: 2 bytes follow the PKCS#7 ContentInfo and were ignored, as apksig ignores them.`,
+    );
+
+    const flaggedResult = await cli.run({
+      arguments: ["inspect-apk-signature", flagged, "--json"],
+    });
+    expect(flaggedResult.exitCode, flaggedResult.stderr).toBe(0);
+    expect(
+      toolContract("inspect_apk_signature").outputSchema.parse(
+        flaggedResult.json,
+      ).limitations,
+    ).toContain(
+      `${block}: the entry declares encryption (general-purpose flag bit 0); apksig ignores the flag, so its bytes were read as stored and the PKCS#7 decoding decides.`,
     );
 
     for (const [path, decodeError] of cases) {

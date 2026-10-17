@@ -349,8 +349,18 @@ const ZIP64_SENTINEL = 0xffffffff;
 const FLAG_ENCRYPTED = 0x1;
 const FLAG_DATA_DESCRIPTOR = 0x8;
 
+/** The central directory sets the entry's encryption flag (bit 0). */
+export const centralDeclaresEncryption = (entry: ApkV1Entry): boolean =>
+  (entry.flags & FLAG_ENCRYPTED) !== 0;
+
 /** Why an entry's stored bytes could not be located. */
 export type ApkLocalEntryError = { readonly detail: string };
+
+/** An entry's stored bytes and whether either header sets the encryption flag. */
+export interface ApkLocalEntryData {
+  readonly data: Uint8Array;
+  readonly declaresEncryption: boolean;
+}
 
 const sameBytes = (a: Uint8Array, b: Uint8Array): boolean =>
   a.length === b.length && a.every((byte, i) => byte === b[i]);
@@ -363,13 +373,15 @@ const sameBytes = (a: Uint8Array, b: Uint8Array): boolean =>
  * LocalFileRecord does, the local header must agree with the central
  * directory on the name, the data-descriptor flag and (without a data
  * descriptor) the CRC-32 and both sizes: a disagreement leaves the entry's
- * bytes unknown, never read from one side. An encrypted entry is not read.
+ * bytes unknown, never read from one side. Like LocalFileRecord, the
+ * encryption flag (bit 0) does not stop the read; it is returned so the caller
+ * can say so, and bytes that really are encrypted fail to decode.
  */
 export const localEntryData = (
   bytes: Uint8Array,
   entry: ApkV1Entry,
   entriesEnd: number,
-): Result<Uint8Array, ApkLocalEntryError> => {
+): Result<ApkLocalEntryData, ApkLocalEntryError> => {
   if (
     entry.compressedSize === ZIP64_SENTINEL ||
     entry.uncompressedSize === ZIP64_SENTINEL ||
@@ -388,8 +400,6 @@ export const localEntryData = (
       detail: `local header signature mismatch at byte ${String(at)}`,
     });
   const flags = dv.getUint16(at + 6, true);
-  if (((entry.flags | flags) & FLAG_ENCRYPTED) !== 0)
-    return err({ detail: "entry is encrypted (general-purpose flag bit 0)" });
   const descriptor = (flags & FLAG_DATA_DESCRIPTOR) !== 0;
   if (descriptor !== ((entry.flags & FLAG_DATA_DESCRIPTOR) !== 0))
     return err({
@@ -423,5 +433,8 @@ export const localEntryData = (
     return err({
       detail: `entry data at byte ${String(start)} runs past the entries`,
     });
-  return ok(bytes.subarray(start, end));
+  return ok({
+    data: bytes.subarray(start, end),
+    declaresEncryption: ((entry.flags | flags) & FLAG_ENCRYPTED) !== 0,
+  });
 };

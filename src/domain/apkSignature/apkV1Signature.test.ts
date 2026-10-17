@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  centralDeclaresEncryption,
   centralDirectoryV1SignatureEntries,
   detectV1Signature,
   localEntryData,
@@ -361,7 +362,8 @@ describe("APK v1 signature block locations", () => {
   it("locates stored data through the local header, within the entry region", () => {
     const local = localRecord(block, data);
     const found = localEntryData(local, block, local.length);
-    expect(found.ok && [...found.value]).toEqual(data);
+    expect(found.ok && [...found.value.data]).toEqual(data);
+    expect(found.ok && found.value.declaresEncryption).toBe(false);
     expect(localEntryData(local, block, local.length - 1)).toEqual({
       ok: false,
       error: {
@@ -421,17 +423,17 @@ describe("APK v1 signature block locations", () => {
     ).toBeNull();
   });
 
-  it("does not read an encrypted entry", () => {
-    const encrypted = "entry is encrypted (general-purpose flag bit 0)";
+  it("reads an entry flagged as encrypted, as apksig ignores the flag", () => {
     const flagged = { ...block, flags: 0x1 };
-    expect(
-      localEntryData(localRecord(flagged, data), flagged, 64),
-    ).toMatchObject({ ok: false, error: { detail: encrypted } });
-    // Either header's flag is enough.
+    const both = localRecord(flagged, data);
+    const read = localEntryData(both, flagged, both.length);
+    expect(read.ok && [...read.value.data]).toEqual(data);
+    expect(read.ok && read.value.declaresEncryption).toBe(true);
+    expect(centralDeclaresEncryption(flagged)).toBe(true);
+    // Either header's flag is reported.
     const local = localRecord(block, data, { flags: 0x1 });
-    expect(localEntryData(local, block, local.length)).toMatchObject({
-      ok: false,
-      error: { detail: encrypted },
-    });
+    const localOnly = localEntryData(local, block, local.length);
+    expect(localOnly.ok && localOnly.value.declaresEncryption).toBe(true);
+    expect(centralDeclaresEncryption(block)).toBe(false);
   });
 });

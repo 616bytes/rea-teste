@@ -33,10 +33,13 @@ rea inspect-apk-signature /path/app.apk
   `certificate` is `null` when the block has more than one `SignerInfo` (with
   nothing verified there is no single signer) or names a certificate it does
   not carry. A block that cannot be read (malformed DER, an unsupported
-  compression method, Zip64 sizes, an encrypted entry, a local header that
-  disagrees with the central directory on the name, data-descriptor flag,
-  CRC-32 or a size, as apksig refuses it, or over a bound) keeps its names
-  and carries `decode_error`; it is never reported as an absent signer.
+  compression method, Zip64 sizes, a local header that disagrees with the
+  central directory on the name, data-descriptor flag, CRC-32 or a size, as
+  apksig refuses it, or over a bound) keeps its names and carries
+  `decode_error`; it is never reported as an absent signer. apksig ignores
+  the ZIP encryption flag (bit 0), so a block that sets it is read as stored:
+  the PKCS#7 decoding decides (bytes that really are encrypted fail to
+  decode), and a limitation names the block.
   apksig rejects the v1 signature of an archive whose central directory
   holds any name more than once ("Duplicate entry"). REA checks every entry:
   a limitation names the first few duplicates and counts the rest, and a

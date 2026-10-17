@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
@@ -235,67 +236,84 @@ cliTest(
   },
 );
 
-const earlyReturnCases = [
-  {
-    name: "conditional early return",
-    body: 'if(x)return;e.contextBridge.exposeInMainWorld("api",{copy:()=>e.ipcRenderer.send("x")});',
-    conditions: ["!(x)"],
-    coverage: "partial",
-  },
-  {
-    name: "equivalent nested branch",
-    body: 'if(!x){e.contextBridge.exposeInMainWorld("api",{copy:()=>e.ipcRenderer.send("x")});}',
-    conditions: ["!x"],
-    coverage: "partial",
-  },
-  {
-    name: "definite early return",
-    body: 'return;e.contextBridge.exposeInMainWorld("api",{copy:()=>e.ipcRenderer.send("x")});',
-    conditions: [],
-    coverage: "complete",
-  },
-  {
-    name: "unguarded exposure",
-    body: 'e.contextBridge.exposeInMainWorld("api",{copy:()=>e.ipcRenderer.send("x")});',
-    conditions: [],
-    coverage: "complete",
-  },
-] as const;
+cliTest(
+  "preserves early-return predicates on recovered bridge paths through CLI and stdio MCP",
+  async ({ cli }) => {
+    const cases = [
+      {
+        name: "conditional early return",
+        body: 'if(x)return;e.contextBridge.exposeInMainWorld("api",{copy:()=>e.ipcRenderer.send("x")});',
+        conditions: ["!(x)"],
+        coverage: "partial",
+      },
+      {
+        name: "equivalent nested branch",
+        body: 'if(!x){e.contextBridge.exposeInMainWorld("api",{copy:()=>e.ipcRenderer.send("x")});}',
+        conditions: ["!x"],
+        coverage: "partial",
+      },
+      {
+        name: "definite early return",
+        body: 'return;e.contextBridge.exposeInMainWorld("api",{copy:()=>e.ipcRenderer.send("x")});',
+        conditions: [],
+        coverage: "complete",
+      },
+      {
+        name: "unguarded exposure",
+        body: 'e.contextBridge.exposeInMainWorld("api",{copy:()=>e.ipcRenderer.send("x")});',
+        conditions: [],
+        coverage: "complete",
+      },
+    ] as const;
 
-cliTest.for(earlyReturnCases)(
-  "preserves $name predicates on recovered bridge paths through CLI and stdio MCP",
-  async (fixture, { cli }) => {
     for (const surface of ["CLI", "stdio MCP"] as const) {
-      const root = await createTestTempDirectory("rea-electron-early-return-");
-      await writeFixtureFiles(root, {
-        "index.js": `const e=require("electron");function f(x){${fixture.body}}f(globalThis.blocked);`,
-      });
-      const application = await analyzeJavaScriptDirectory(surface, cli, root);
-      const observations = application.graph.nodes.flatMap(
-        (node) => node.observations,
-      );
-      const terminal = observations.find(
-        (observation) =>
-          observation.properties.entry === "api.copy" &&
-          observation.properties.step_kind === "terminal",
-      );
-      if (fixture.name === "definite early return") {
-        expect(terminal).toBeUndefined();
-        continue;
+      const connection =
+        surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
+      const artifacts = new Set<string>();
+      for (const fixture of cases) {
+        const root = await createTestTempDirectory(
+          "rea-electron-early-return-",
+        );
+        await writeFixtureFiles(root, {
+          "index.js": `const e=require("electron");function f(x){${fixture.body}}f(globalThis.blocked);`,
+        });
+        const application = await analyzeJavaScriptDirectory(
+          surface,
+          cli,
+          root,
+          connection?.call,
+        );
+        expect(application.input_path).toBe(root);
+        expect(artifacts.has(application.root_artifact_sha256)).toBe(false);
+        artifacts.add(application.root_artifact_sha256);
+        const observations = application.graph.nodes.flatMap(
+          (node) => node.observations,
+        );
+        const terminal = observations.find(
+          (observation) =>
+            observation.properties.entry === "api.copy" &&
+            observation.properties.step_kind === "terminal",
+        );
+        if (fixture.name === "definite early return") {
+          expect(terminal).toBeUndefined();
+          continue;
+        }
+        const terminalEvidence =
+          callPathTerminalObservationSchema.parse(terminal);
+        expect(
+          terminalEvidence.properties.conditions.map(
+            ({ expression }) => expression,
+          ),
+        ).toEqual(fixture.conditions);
+        expect(terminalEvidence.evidence.coverage.status).toBe(
+          fixture.coverage,
+        );
+        expect(application.graph.coverage.status).toBe(fixture.coverage);
+        const source = observations.find(
+          (observation) => observation.properties.file_kind === "javascript",
+        );
+        expect(source?.properties.parse_status).toBe(fixture.coverage);
       }
-      const terminalEvidence =
-        callPathTerminalObservationSchema.parse(terminal);
-      expect(
-        terminalEvidence.properties.conditions.map(
-          ({ expression }) => expression,
-        ),
-      ).toEqual(fixture.conditions);
-      expect(terminalEvidence.evidence.coverage.status).toBe(fixture.coverage);
-      expect(application.graph.coverage.status).toBe(fixture.coverage);
-      const source = observations.find(
-        (observation) => observation.properties.file_kind === "javascript",
-      );
-      expect(source?.properties.parse_status).toBe(fixture.coverage);
     }
   },
 );
@@ -488,6 +506,8 @@ for (const surface of ["CLI", "stdio MCP"] as const) {
   cliTest(
     `retains explicit nested contextBridge members after an unknown spread through ${surface}`,
     async ({ cli }) => {
+      const connection =
+        surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
       const analyzeBridge = async (api: string) => {
         const root = await createTestTempDirectory(
           "rea-electron-spread-bridge-members-",
@@ -497,10 +517,20 @@ for (const surface of ["CLI", "stdio MCP"] as const) {
             const extra = getExtra();
             contextBridge.exposeInMainWorld("api", ${api});`,
         });
-        return analyzeJavaScriptDirectory(surface, cli, root);
+        const application = await analyzeJavaScriptDirectory(
+          surface,
+          cli,
+          root,
+          connection?.call,
+        );
+        expect(application.input_path).toBe(root);
+        return application;
       };
       const withSpread = await analyzeBridge("{ ...extra, a: { b: 1 }, c: 2 }");
       const control = await analyzeBridge("{ a: { b: 1 }, c: 2 }");
+      expect(control.root_artifact_sha256).not.toBe(
+        withSpread.root_artifact_sha256,
+      );
 
       const bridgeObservation = (application: typeof withSpread) =>
         application.graph.nodes

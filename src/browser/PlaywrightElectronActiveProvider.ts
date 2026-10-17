@@ -541,36 +541,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
           ],
         });
     }
-    try {
-      await this.#resources.retryCleanup();
-    } catch (cleanupCause: unknown) {
-      if (
-        cleanupCause instanceof ArtifactFileCleanupFailure ||
-        cleanupCause instanceof ArtifactReaderFailure
-      ) {
-        const cleanupError = providerError(cleanupCause);
-        if (outcome.ok) {
-          cleanupError.retainPartialObservation({
-            kind: "electron-active-observation",
-            capture: outcome.value,
-          });
-          return err(cleanupError);
-        }
-        if (
-          outcome.error instanceof BrowserObservationError &&
-          outcome.error.reason === "cleanup_failed"
-        ) {
-          return err(cleanupError);
-        }
-        return err(
-          analysisErrorWithCleanupFailure(
-            outcome.error,
-            cleanupError,
-            OPERATION,
-          ).bindCleanupDependencies([outcome.error, cleanupError]),
-        );
-      }
-    }
+
     // Cleanup failures returned above keep precedence; a completed capture
     // observed under late cancellation is retained as partial Evidence.
     if (outcome.ok && options.signal?.aborted === true)

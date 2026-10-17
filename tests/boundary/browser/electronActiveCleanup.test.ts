@@ -5,6 +5,7 @@ import {
   PlaywrightElectronActiveProvider,
   executableContainsApplication,
 } from "../../../src/browser/PlaywrightElectronActiveProvider.js";
+import { BrowserObservationError } from "../../../src/domain/browserObservationError.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { finishAnalysisCommand } from "../../../src/cli/finishAnalysisCommand.js";
 import { err } from "../../../src/domain/result.js";
@@ -43,16 +44,15 @@ describe("PlaywrightElectronActiveProvider cleanup retry", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected capture to fail");
 
-    expect(result.error).toBeInstanceOf(ProviderAdapterError);
+    expect(result.error).toBeInstanceOf(BrowserObservationError);
+    expect((result.error as BrowserObservationError).reason).toBe(
+      "cleanup_failed",
+    );
     expect(result.error.cleanupIncomplete).toBe(true);
-    expect(result.error.diagnostics).toBeDefined();
-    expect(result.error.diagnostics?.primary_error).toBeDefined();
-    expect(result.error.diagnostics?.cleanup_error).toBeDefined();
     expect(result.error.cleanupResources).toContain("/fake/app/package.json");
-    expect(result.error.cause).toBeInstanceOf(AggregateError);
+    expect(result.error.cause).toBeDefined();
 
-    const cleanupError = (result.error.cause as AggregateError).errors[1];
-    cleanupError.resolveCleanup();
+    result.error.resolveCleanup();
     expect(result.error.cleanupIncomplete).toBe(false);
   });
 

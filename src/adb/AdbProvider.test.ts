@@ -1280,6 +1280,26 @@ it("inspects the display and window focus", async () => {
   );
 });
 
+// Older builds print `wm density` as a bare number; the display projection
+// must keep it as the physical density (morluto/rea#3942).
+it("keeps a bare numeric wm density as the physical density", async () => {
+  const { binary } = await writeAdbStub(
+    shellStub({
+      "wm:size": "Physical size: 1080x2340\n",
+      "wm:density": "420\n",
+    }),
+  );
+  const display = await evidenceResult(providerOver(binary), {
+    operation: "inspect_adb_display",
+    input: { serial: "emulator-5554" },
+  });
+  expect(display).toMatchObject({
+    physical_size: { width: 1080, height: 2340 },
+    physical_density: 420,
+    override_density: null,
+  });
+});
+
 it("reads Android 16 focus declarations from displays when windows omits them", async () => {
   const { binary } = await writeAdbStub(
     shellStub({
@@ -1296,8 +1316,8 @@ it("reads Android 16 focus declarations from displays when windows omits them", 
     focused_window: "Window{abc u0 com.example/.Main}",
     focused_app: "ActivityRecord{def u0 com.example/.Main t1}",
     observed_lines: [
-      "Window{abc u0 com.example/.Main}",
-      "ActivityRecord{def u0 com.example/.Main t1}",
+      "mCurrentFocus=Window{abc u0 com.example/.Main}",
+      "mFocusedApp=ActivityRecord{def u0 com.example/.Main t1}",
     ],
   });
   const execution = await providerOver(binary).execute({
@@ -1333,6 +1353,41 @@ it("describes missing window focus as unknown after both sections omit declarati
     expect.stringContaining("focus is unknown"),
   );
 });
+
+it.each(["windows", "displays"])(
+  "preserves explicitly absent focus from %s without another fallback",
+  async (section) => {
+    const declarations = "  mCurrentFocus=null\n  mFocusedApp=null\n";
+    const { binary } = await writeAdbStub(
+      shellStub({
+        "dumpsys:window:windows":
+          section === "windows" ? declarations : "no focus\n",
+        ...(section === "displays"
+          ? { "dumpsys:window:displays": declarations }
+          : {}),
+      }),
+    );
+    const execution = await providerOver(binary).execute({
+      operation: "inspect_adb_window",
+      input: { serial: "emulator-5554" },
+    });
+    expect(execution.ok).toBe(true);
+    if (!execution.ok) throw execution.error;
+    expect(execution.value.result).toMatchObject({
+      focused_window: null,
+      focused_app: null,
+      observed_lines: ["  mCurrentFocus=null", "  mFocusedApp=null"],
+    });
+    expect(execution.value.limitations).toContain(
+      `Focus declarations were read from \`dumpsys window ${section}\``,
+    );
+    expect(
+      execution.value.limitations.some((line) =>
+        line.includes("focus is unknown"),
+      ),
+    ).toBe(false);
+  },
+);
 
 it("reads one settings value and reports device-side nulls", async () => {
   const { binary } = await writeAdbStub(shellStub({ "settings:get": "1\n" }));

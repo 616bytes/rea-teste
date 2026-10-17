@@ -40,6 +40,39 @@ WEBSITE = load_script("website")
 class WebsiteSearchChecks(unittest.TestCase):
     """Use authored pages and temporary fixtures to check the publishing boundary."""
 
+    def test_structured_identifiers_are_data_and_visible_fragment_links_remain_links(self):
+        page = VERIFY.HtmlReferences()
+        page.feed('<html><head><script id="rea-project-identity" type="application/ld+json">{"@id":"https://rea.tools/#software"}</script><script src="client.js">const endpoint = "https://rea.tools/#program-data";</script></head><body><code>https://rea.tools/#visible-example</code><a href="#real-link">Read</a></body></html>')
+        self.assertNotIn("#software", " ".join(page.text))
+        self.assertNotIn("#program-data", " ".join(page.text))
+        self.assertIn("https://rea.tools/#visible-example", " ".join(page.text))
+        self.assertEqual(page.references, ["client.js", "#real-link"])
+        self.assertEqual(json.loads(page.structured_data[0]["text"])["@id"], "https://rea.tools/#software")
+
+    def test_agent_index_tracks_metadata_and_excludes_drafts_and_other_languages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            site = Path(directory)
+            def page(name, lang="en", head="", title="A [guide]", description="A useful example"):
+                path = site / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(f'<html lang="{lang}"><head><title>{title}</title><meta name="description" content="{description}">{head}</head><body></body></html>')
+                return path
+            source = page("guide/index.html")
+            page("draft/index.html", head='<meta name="robots" content="noindex">')
+            page("fr/index.html", lang="fr")
+            page("fr/pending/index.html", head='<meta name="robots" content="noindex, follow">')
+            PREPARE.prepare_agent_index(site)
+            index = (site / "llms.txt").read_text()
+            self.assertIn("[A \\[guide\\]](https://rea.tools/guide/): A useful example", index)
+            self.assertNotIn("https://rea.tools/draft/", index)
+            self.assertNotIn("https://rea.tools/fr/", index)
+            source.unlink()
+            page("replacement/index.html", title="New title", description="New description")
+            PREPARE.prepare_agent_index(site)
+            index = (site / "llms.txt").read_text()
+            self.assertNotIn("https://rea.tools/guide/", index)
+            self.assertIn("[New title](https://rea.tools/replacement/): New description", index)
+
     def test_sitemap_tracks_added_moved_removed_and_nonindexable_pages(self):
         with tempfile.TemporaryDirectory() as directory:
             site = Path(directory)
@@ -86,6 +119,30 @@ class WebsiteSearchChecks(unittest.TestCase):
         self,
     ):
         cases = (
+            (
+                "index.html",
+                '"@context": "https://schema.org",',
+                '"@context": "https://schema.org",,',
+                "structured data is not valid JSON",
+            ),
+            (
+                "index.html",
+                '"codeRepository": "https://github.com/morluto/rea"',
+                '"codeRepository": "https://github.com/other/project"',
+                "structured data SoftwareSourceCode",
+            ),
+            (
+                "zh-CN/index.html",
+                '"@id": "https://rea.tools/#website"',
+                '"@id": "https://morluto.github.io/rea/#website"',
+                "structured data WebSite",
+            ),
+            (
+                "llms.txt",
+                "https://rea.tools/faq/",
+                "https://rea.tools/missing/",
+                "each indexable English page once",
+            ),
             (
                 "index.html",
                 'rel="canonical" href="https://rea.tools/"',
@@ -287,6 +344,8 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             page.write_text(source.replace('    <meta name="robots" content="noindex" />\n', ''))
             PREPARE.prepare_sitemap(site)
             self.assertIn("https://rea.tools/blog/new-example/", (site / "sitemap.xml").read_text())
+            PREPARE.prepare_project_identity(site, root / "website/templates/project-identity.json.tmpl")
+            PREPARE.prepare_agent_index(site)
             self.assertEqual(VERIFY.check_site(site)[3], [])
 
     def test_links_in_prompts_fragments_and_copy_controls_are_verified(self):
@@ -387,6 +446,7 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             (site / "guide.html").write_text('<html lang="en"><head><title>Guide</title><meta name="robots" content="noindex"></head><body><h1 id="answer">Answer</h1></body></html>')
             (site / "sitemap.xml").write_text('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"/>')
             (site / "robots.txt").write_text("User-agent: *\nAllow: /\nSitemap: https://rea.tools/sitemap.xml\n")
+            PREPARE.prepare_agent_index(site)
             alias = Path(directory) / "site-alias"
             alias.symlink_to(site, target_is_directory=True)
             # The tiny link fixture intentionally omits the social preview.

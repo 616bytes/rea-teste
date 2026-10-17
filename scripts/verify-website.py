@@ -2,6 +2,7 @@
 
 from html.parser import HTMLParser
 from pathlib import Path
+import json
 import re
 import struct
 import sys
@@ -102,9 +103,14 @@ class HtmlReferences(HTMLParser):
         self.h1_count = 0
         self.text = []
         self.copy_targets = []
+        self.structured_data = []
+        self.in_structured_data = False
+        self.raw_text_element = None
 
     def handle_starttag(self, tag, attrs):
         attributes = dict(attrs)
+        if tag in {"script", "style"}:
+            self.raw_text_element = tag
         if tag == "html":
             self.lang = attributes.get("lang")
             self.direction = attributes.get("dir")
@@ -114,6 +120,9 @@ class HtmlReferences(HTMLParser):
         if tag == "head":
             self.in_head = True
         if self.in_head:
+            if tag == "script" and attributes.get("type") == "application/ld+json":
+                self.structured_data.append({"id": attributes.get("id"), "text": ""})
+                self.in_structured_data = True
             if tag == "link" and attributes.get("rel") == "alternate" and attributes.get("hreflang"):
                 language = attributes["hreflang"]
                 if language in self.alternates:
@@ -150,13 +159,20 @@ class HtmlReferences(HTMLParser):
             self.copy_targets.append(attributes["data-copy"])
 
     def handle_endtag(self, tag):
+        if tag == self.raw_text_element:
+            self.raw_text_element = None
+        if tag == "script":
+            self.in_structured_data = False
         if tag == "head":
             self.in_head = False
         if tag == "title":
             self.in_title = False
 
     def handle_data(self, data):
-        self.text.append(data)
+        if self.raw_text_element is None:
+            self.text.append(data)
+        if self.in_structured_data:
+            self.structured_data[-1]["text"] += data
         if self.in_title:
             self.titles[-1] += data
 
@@ -166,6 +182,41 @@ class HtmlReferences(HTMLParser):
             self.meta.get("robots", []) + self.meta.get("googlebot", [])
         ).lower()
         return bool(set(re.split(r"[\s,]+", directives)) & {"noindex", "none"})
+
+
+def check_project_identity(label, page):
+    """Check the built page's project identity independently of its template."""
+    records = [item for item in page.structured_data if item["id"] == "rea-project-identity"]
+    if len(records) != 1:
+        return [f"{label}: needs one project structured data block"]
+    try:
+        document = json.loads(records[0]["text"])
+    except ValueError:
+        return [f"{label}: project structured data is not valid JSON"]
+    if not isinstance(document, dict) or document.get("@context") != "https://schema.org":
+        return [f"{label}: project structured data needs the schema.org context"]
+    graph = document.get("@graph")
+    if not isinstance(graph, list) or not all(isinstance(node, dict) for node in graph):
+        return [f"{label}: project structured data needs a graph of objects"]
+    expected = {
+        "WebSite": {
+            "@id": f"{SITE_ORIGIN}/#website", "url": f"{SITE_ORIGIN}/",
+            "name": "REA — Reverse Engineer Anything",
+            "mainEntity": {"@id": f"{SITE_ORIGIN}/#software"},
+        },
+        "SoftwareSourceCode": {
+            "@id": f"{SITE_ORIGIN}/#software", "url": f"{SITE_ORIGIN}/",
+            "name": "REA", "codeRepository": "https://github.com/morluto/rea",
+            "license": "https://github.com/morluto/rea/blob/main/LICENSE",
+            "programmingLanguage": "TypeScript", "runtimePlatform": "Node.js",
+        },
+    }
+    errors = []
+    for kind, facts in expected.items():
+        matching = [node for node in graph if node.get("@type") == kind]
+        if len(matching) != 1 or any(matching[0].get(key) != value for key, value in facts.items()):
+            errors.append(f"{label}: structured data {kind} must identify the canonical REA project")
+    return errors
 
 
 def check_search_metadata(site, pages):
@@ -195,6 +246,7 @@ def check_search_metadata(site, pages):
             )
         if page.noindex():
             continue
+        errors.extend(check_project_identity(label, page))
         url = page_url(site, path)
         indexable.add(url)
         if page.canonicals != [url]:
@@ -280,6 +332,15 @@ def check_search_metadata(site, pages):
         errors.append(
             f"sitemap.xml: cannot read sitemap ({error}); run scripts/prepare-website.py"
         )
+
+    agent_index = site / "llms.txt"
+    if not agent_index.is_file():
+        errors.append("llms.txt: generated English navigation index is missing")
+    else:
+        links = re.findall(r"^- \[(?:\\.|[^\]])*\]\((https://rea\.tools/[^)]*)\):", agent_index.read_text(encoding="utf-8"), re.MULTILINE)
+        english = {page_url(site, path) for path, page in pages.items() if page.lang == "en" and not page.noindex()}
+        if len(links) != len(set(links)) or set(links) != english:
+            errors.append("llms.txt: must link each indexable English page once and exclude drafts and language fallbacks")
 
     robots_path = site / "robots.txt"
     if not robots_path.is_file():

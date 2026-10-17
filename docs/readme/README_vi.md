@@ -259,6 +259,8 @@ Nếu dùng tác nhân, hãy hoàn tất [làm mới thiết lập](#cập-nhậ
 
 ## Tài liệu
 
+Để đọc các bài báo liên quan và phương pháp đánh giá, xem [danh sách tài liệu nghiên cứu](https://rea.tools/research/) (tiếng Anh).
+
 Bắt đầu với [hướng dẫn thực hành](https://rea.tools/vi/guides/) trên trang web. Để biết tùy chọn cụ thể, điều kiện tiên quyết và hợp đồng kết quả:
 
 - [Cài đặt và thiết lập](../installation.md): đăng ký tác nhân, cấu hình trình phân tích, cập nhật và gỡ cài đặt.

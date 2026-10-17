@@ -270,6 +270,8 @@ npx rea-agents@latest setup
 
 ## 문서
 
+관련 논문과 평가 방법은 [연구 문헌 목록](https://rea.tools/research/)(영문)을 참고하세요.
+
 웹사이트의 [실습 가이드](https://rea.tools/ko/guides/)부터 읽어 보세요. 정확한 옵션, 사전 요구 사항, 결과 계약은 다음 문서를 참고하세요.
 
 - [설치 및 설정](../installation.md): 에이전트 등록, 제공자 설정, 업데이트, 제거.

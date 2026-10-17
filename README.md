@@ -332,6 +332,7 @@ with your REA version, target type, steps to reproduce and error output.
 ## Documentation
 
 Start with the website's [worked guides](https://rea.tools/guides/).
+For related papers and evaluation methods, see the [research reading list](https://rea.tools/research/).
 For exact options, prerequisites and result contracts:
 
 - [Installation and setup](docs/installation.md): agent registration, provider configuration, updates and uninstall.

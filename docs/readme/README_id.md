@@ -282,6 +282,8 @@ Coba kembali tugas yang sama. Jika masalah masih terjadi, [buat issue](https://g
 
 ## Dokumentasi
 
+Untuk makalah terkait dan metode evaluasi, lihat [daftar bacaan penelitian](https://rea.tools/research/) (bahasa Inggris).
+
 Mulailah dengan [panduan praktik di situs web](https://rea.tools/id/guides/).
 
 Untuk mengetahui opsi, prasyarat, dan kontrak hasil secara tepat:

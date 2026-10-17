@@ -265,6 +265,8 @@ npx rea-agents@latest setup
 
 ## 文档
 
+相关论文与评估方法见[研究阅读清单](https://rea.tools/research/)（英文）。
+
 可以先阅读网站上的[实操指南](https://rea.tools/zh-CN/guides/)。具体选项、前提条件和结果契约见：
 
 - [安装与设置](../installation.md)：智能体注册、提供方配置、更新和卸载。

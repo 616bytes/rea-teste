@@ -74,6 +74,8 @@ export default defineConfig({
         collapsed: true,
         items: [
           { text: "MCP contracts", link: "/mcp-contracts" },
+          { text: "MCP ecosystem", link: "/mcp-ecosystem" },
+          { text: "Unreal MCP (upstream)", link: "/unreal-mcp" },
           { text: "Tool design", link: "/tool-design" },
           { text: "Testing", link: "/testing" },
           { text: "Client verification", link: "/client-verification" },

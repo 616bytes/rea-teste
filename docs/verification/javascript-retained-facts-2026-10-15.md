@@ -194,7 +194,7 @@ execution as unknown; the candidate still exported once. The one invalid
 disabled-host attempt (37.679 s / 5.070758 CPU s / 880,414,720 B) is preserved
 as a harness failure, with unavailable operation counts.
 
-Use the [specific artifact oracle](../../experiments/analysis-efficiency/javascript-facts-grade.py) on the compact JSON:
+Use the [specific artifact oracle](https://github.com/morluto/rea/blob/c884864876c2568d8567235737b32e3f5893751d/experiments/analysis-efficiency/javascript-facts-grade.py) on the compact JSON:
 
 ```sh
 python3 experiments/analysis-efficiency/javascript-facts-grade.py \

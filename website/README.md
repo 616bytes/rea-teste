@@ -183,6 +183,7 @@ describe its recorded investigation; update them only when repeating that work.
 - `public/faq/index.html`: concise answers about setup, updates, analysis and troubleshooting.
 - `public/contributors/index.html`: one searchable, alphabetical grid of GitHub contributors, with profile links and contribution guidance.
 - `public/guides/`: a guide hub and native, JavaScript/Electron and browser examples.
+- `public/research/`: a source-linked reading list on learned decompilation, datasets and behavioral verification, with publication status and REA's evidence boundaries.
 - `public/examples/`: downloadable Electron source and an interactive Notes browser app.
 - `public/assets/`: shared styles, interactions, favicon and explanatory figures.
 
@@ -227,6 +228,14 @@ Graph and Twitter fields and the canonical from those inputs and the file's
 route. Search results and link previews should follow the same clear, concise
 writing standard as the page.
 
+The build adds the canonical `WebSite` and `SoftwareSourceCode` in JSON-LD from
+`templates/project-identity.json.tmpl`. It links REA's full name, package name, source
+repository and license without inventing ratings, benchmark results or publication
+dates. These project identities are language-independent; page-specific titles,
+descriptions, canonicals and language alternatives remain owned by each page's
+existing metadata flow. This generated block is added after translation, so
+metadata updates do not rewrite the authored prose's translation line references.
+
 `scripts/prepare-website.py` renders `public/` and the PO catalogs into `_site/`,
 then scans `_site/**/*.html` and generates `_site/sitemap.xml` with absolute
 rea.tools URLs. An `index.html` maps to its
@@ -236,6 +245,13 @@ The two Notes example applications use `noindex`; their guides and the dinosaur
 lab remain indexable. Downloads, scripts and other non-HTML files are not listed.
 The sitemap has no guessed modification dates, priority or change frequency.
 It is ignored by Git and regenerated before checks and publication.
+
+The same build generates `_site/llms.txt` from the titles and descriptions of
+indexable English pages. New pages enter it automatically; drafts, target
+applications marked `noindex`, translations and pending language fallbacks do
+not. Edit the HTML metadata rather than this generated index. It is an optional
+navigation aid for agents, not a separate content source or a search-ranking
+mechanism. The verifier checks its complete route coverage alongside the sitemap.
 
 `public/robots.txt` allows crawling and names the canonical sitemap. Keep example
 applications crawlable so search engines can read their `noindex` directives.
@@ -268,12 +284,36 @@ python3 scripts/website.py check
 3. Inspect the homepage, a guide and a case study. Check crawl access, indexing
    and Google's selected canonical; inspect a GitHub Pages URL as well if that
    property is available. Track indexing and search performance there afterward.
+4. Confirm `/llms.txt` and the JSON-LD project identity match the deployed source.
+   Keep sitemap submission, successful crawling, indexing and search impressions
+   as separate observations. A submission acknowledgement is not proof of indexing.
 
 These Search Console checks require the property owner's access. Local checks
 verify the website inputs; Google's indexing reports show how they were used.
 See Google's [canonical guidance](https://developers.google.com/search/docs/crawling-indexing/consolidate-duplicate-urls)
 and [sitemap guidance](https://developers.google.com/search/docs/crawling-indexing/sitemaps/build-sitemap),
 and Cloudflare's [managed robots behavior](https://developers.cloudflare.com/bots/additional-configurations/managed-robots-txt/).
+
+### AI search discovery
+
+Google's [AI search guidance](https://developers.google.com/search/docs/fundamentals/ai-optimization-guide)
+uses the existing crawling, indexing and content-quality foundations. It explicitly
+does not use `llms.txt` for ranking and requires no special AI schema. Keep the
+website useful and source-backed: link original papers, identify what each check
+establishes, and connect readers to reproducible REA examples. Do not fabricate
+citations or imply that an upstream study evaluated REA.
+
+For ChatGPT search, [OpenAI's crawler documentation](https://developers.openai.com/api/docs/bots)
+distinguishes `OAI-SearchBot` from the training crawler `GPTBot`. Their robots
+controls are independent. The current wildcard rule allows crawling; review the
+served rules and CDN controls after deployment. A successful request using a
+bot-like User-Agent does not prove that real crawler IP ranges are allowed.
+
+Use the verified property owner's Search Console access to check indexing,
+selected canonicals and available generative AI reports. Metadata and content
+changes can improve clarity and eligibility; they cannot guarantee ranking,
+citations or inclusion in an AI answer. Keep private or login-protected research
+separate from public pages until its owner explicitly authorizes publication.
 
 ## Content
 

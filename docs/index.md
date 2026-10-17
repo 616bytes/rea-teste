@@ -65,4 +65,7 @@ For development, use [testing](testing.md), [client verification](client-verific
 conformance verifier. [The 6.2 migration](migration-6.2.md) records that release's
 compatibility changes; [the roadmap](roadmap.md) tracks future work.
 
+For upstream and community implementations, see the [MCP ecosystem survey](mcp-ecosystem.md)
+and the [Unreal MCP reference](unreal-mcp.md).
+
 ![REA inspecting a native binary in Hopper](./assets/rea-hopper-analysis.png)

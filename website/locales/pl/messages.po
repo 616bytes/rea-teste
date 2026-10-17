@@ -64,24 +64,25 @@ msgstr "Przez N0zoM1z0 * 10 października 2026"
 
 #. {ph0}: <span aria-hidden="true">
 #. {ph1}: </span>
-#: website/public/blog/index.html:248
-#: website/public/blog/reverse-engineering-models/index.html:887
-#: website/public/blog/touhou-reconstruction/index.html:1084
-#: website/public/contributors/index.html:1135
-#: website/public/examples/dino-lab/index.html:479
-#: website/public/faq/index.html:577
-#: website/public/first-investigation/index.html:538
-#: website/public/get-started/index.html:1821
-#: website/public/guides/browser/index.html:511
-#: website/public/guides/index.html:286
-#: website/public/guides/javascript/index.html:507
-#: website/public/guides/native/index.html:513 website/public/index.html:1226
-#: website/public/showcase/aegis/index.html:812
-#: website/public/showcase/ctf/index.html:781
-#: website/public/showcase/dx-ball/index.html:789
-#: website/public/showcase/index.html:321
-#: website/public/showcase/notion/index.html:635
-#: website/public/showcase/th04/index.html:804
+#: website/public/blog/index.html:250
+#: website/public/blog/reverse-engineering-models/index.html:889
+#: website/public/blog/touhou-reconstruction/index.html:1086
+#: website/public/contributors/index.html:1137
+#: website/public/examples/dino-lab/index.html:481
+#: website/public/faq/index.html:579
+#: website/public/first-investigation/index.html:540
+#: website/public/get-started/index.html:1823
+#: website/public/guides/browser/index.html:513
+#: website/public/guides/index.html:288
+#: website/public/guides/javascript/index.html:509
+#: website/public/guides/native/index.html:515 website/public/index.html:1228
+#: website/public/research/index.html:351
+#: website/public/showcase/aegis/index.html:814
+#: website/public/showcase/ctf/index.html:783
+#: website/public/showcase/dx-ball/index.html:791
+#: website/public/showcase/index.html:323
+#: website/public/showcase/notion/index.html:637
+#: website/public/showcase/th04/index.html:806
 #, python-brace-format
 msgctxt "shared"
 msgid "{ph0}↑{ph1} Top"
@@ -122,7 +123,9 @@ msgstr ""
 #: website/public/guides/javascript/index.html:90
 #: website/public/guides/native/index.html:77
 #: website/public/guides/native/index.html:90 website/public/index.html:77
-#: website/public/index.html:90 website/public/showcase/aegis/index.html:77
+#: website/public/index.html:90 website/public/research/index.html:77
+#: website/public/research/index.html:90
+#: website/public/showcase/aegis/index.html:77
 #: website/public/showcase/aegis/index.html:90
 #: website/public/showcase/ctf/index.html:77
 #: website/public/showcase/ctf/index.html:90
@@ -153,6 +156,7 @@ msgstr ""
 #: website/public/guides/index.html:110
 #: website/public/guides/javascript/index.html:110
 #: website/public/guides/native/index.html:110 website/public/index.html:112
+#: website/public/research/index.html:110
 #: website/public/showcase/aegis/index.html:111
 #: website/public/showcase/ctf/index.html:110
 #: website/public/showcase/dx-ball/index.html:110
@@ -175,6 +179,7 @@ msgstr "Strona główna REA"
 #: website/public/guides/index.html:114
 #: website/public/guides/javascript/index.html:114
 #: website/public/guides/native/index.html:114 website/public/index.html:116
+#: website/public/research/index.html:114
 #: website/public/showcase/aegis/index.html:115
 #: website/public/showcase/ctf/index.html:114
 #: website/public/showcase/dx-ball/index.html:114
@@ -197,6 +202,7 @@ msgstr "Główna nawigacja"
 #: website/public/guides/index.html:133
 #: website/public/guides/javascript/index.html:133
 #: website/public/guides/native/index.html:133 website/public/index.html:135
+#: website/public/research/index.html:133
 #: website/public/showcase/aegis/index.html:134
 #: website/public/showcase/ctf/index.html:133
 #: website/public/showcase/dx-ball/index.html:133
@@ -219,6 +225,7 @@ msgstr "REA na GitHub"
 #: website/public/guides/index.html:153
 #: website/public/guides/javascript/index.html:153
 #: website/public/guides/native/index.html:153 website/public/index.html:155
+#: website/public/research/index.html:153
 #: website/public/showcase/aegis/index.html:154
 #: website/public/showcase/ctf/index.html:153
 #: website/public/showcase/dx-ball/index.html:153
@@ -241,6 +248,7 @@ msgstr "Dołącz do REA na Discordzie"
 #: website/public/guides/index.html:172
 #: website/public/guides/javascript/index.html:172
 #: website/public/guides/native/index.html:172 website/public/index.html:174
+#: website/public/research/index.html:172
 #: website/public/showcase/aegis/index.html:173
 #: website/public/showcase/ctf/index.html:172
 #: website/public/showcase/dx-ball/index.html:172
@@ -251,7 +259,7 @@ msgctxt "shared"
 msgid "Follow REA on X"
 msgstr "Obserwuj REA na X"
 
-#: website/public/blog/index.html:248
+#: website/public/blog/index.html:250
 msgctxt "page:blog/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -1858,7 +1866,7 @@ msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "Touhou reconstruction essay"
 msgstr "Esej rekonstrukcyjny Touhou"
 
-#: website/public/blog/touhou-reconstruction/index.html:1084
+#: website/public/blog/touhou-reconstruction/index.html:1086
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -2256,7 +2264,7 @@ msgctxt "page:examples/dino-lab/index.html"
 msgid "Copy dinosaur analysis prompt"
 msgstr "Skopiuj monit o analizę dinozaurów"
 
-#: website/public/examples/dino-lab/index.html:479
+#: website/public/examples/dino-lab/index.html:481
 msgctxt "page:examples/dino-lab/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -2876,7 +2884,7 @@ msgctxt "page:faq/index.html"
 msgid "Copy scoped setup command"
 msgstr "Skopiuj polecenie konfiguracji z zakresem"
 
-#: website/public/faq/index.html:577
+#: website/public/faq/index.html:579
 msgctxt "page:faq/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -3251,7 +3259,7 @@ msgctxt "page:first-investigation/index.html"
 msgid "Copy formatter check command"
 msgstr "Skopiuj polecenie sprawdzania formatowania"
 
-#: website/public/first-investigation/index.html:538
+#: website/public/first-investigation/index.html:540
 msgctxt "page:first-investigation/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -3872,7 +3880,7 @@ msgctxt "page:get-started/index.html"
 msgid "Copy provider diagnosis command"
 msgstr "Kopiuj polecenie diagnozy dostawcy"
 
-#: website/public/get-started/index.html:1821
+#: website/public/get-started/index.html:1823
 msgctxt "page:get-started/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -4351,7 +4359,7 @@ msgctxt "page:guides/browser/index.html"
 msgid "Copy read the loaded scripts"
 msgstr "Kopiuj przeczytaj załadowane Skrypty"
 
-#: website/public/guides/browser/index.html:511
+#: website/public/guides/browser/index.html:513
 msgctxt "page:guides/browser/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -4500,7 +4508,7 @@ msgstr ""
 "Naucz się REA poprzez krótkie przykłady: natywne obliczenia, eksport "
 "Electron CSV i żądanie przeglądarki."
 
-#: website/public/guides/index.html:286
+#: website/public/guides/index.html:288
 msgctxt "page:guides/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -4957,7 +4965,7 @@ msgctxt "page:guides/javascript/index.html"
 msgid "Copy static application analysis"
 msgstr "Kopiuj statyczną analizę aplikacji"
 
-#: website/public/guides/javascript/index.html:507
+#: website/public/guides/javascript/index.html:509
 msgctxt "page:guides/javascript/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -5556,7 +5564,7 @@ msgctxt "page:guides/native/index.html"
 msgid "Copy function analysis"
 msgstr "Analiza funkcji kopiowania"
 
-#: website/public/guides/native/index.html:513
+#: website/public/guides/native/index.html:515
 msgctxt "page:guides/native/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -6352,7 +6360,7 @@ msgctxt "page:index.html"
 msgid "Copy Calculator analysis prompt"
 msgstr "Kopiuj monit o analizę kalkulatora"
 
-#: website/public/index.html:1226
+#: website/public/index.html:1228
 msgctxt "page:index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -7101,7 +7109,7 @@ msgctxt "page:showcase/aegis/index.html"
 msgid "Copy APK inspection command"
 msgstr "Skopiuj polecenie kontroli APK"
 
-#: website/public/showcase/aegis/index.html:812
+#: website/public/showcase/aegis/index.html:814
 msgctxt "page:showcase/aegis/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -7835,7 +7843,7 @@ msgctxt "page:showcase/ctf/index.html"
 msgid "Copy CTF solver commands"
 msgstr "Kopiuj polecenia CTF solver"
 
-#: website/public/showcase/ctf/index.html:781
+#: website/public/showcase/ctf/index.html:783
 msgctxt "page:showcase/ctf/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -8623,7 +8631,7 @@ msgctxt "page:showcase/dx-ball/index.html"
 msgid "Copy DX-Ball analysis command"
 msgstr "Skopiuj polecenie analizy DX-Ball"
 
-#: website/public/showcase/dx-ball/index.html:789
+#: website/public/showcase/dx-ball/index.html:791
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -8821,7 +8829,7 @@ msgstr ""
 "Android authenticator , DX-Ball , Notion, TH04 i kontroler flagi "
 "DownUnderCTF."
 
-#: website/public/showcase/index.html:321
+#: website/public/showcase/index.html:323
 msgctxt "page:showcase/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -9457,7 +9465,7 @@ msgctxt "page:showcase/notion/index.html"
 msgid "Restoring rich clipboard data on paste"
 msgstr "Przywracanie bogatych danych schowka po wklejeniu"
 
-#: website/public/showcase/notion/index.html:635
+#: website/public/showcase/notion/index.html:637
 msgctxt "page:showcase/notion/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -10302,7 +10310,7 @@ msgctxt "page:showcase/th04/index.html"
 msgid "Copy readable aimed-ring calculation"
 msgstr "Kopiuj czytelne wyliczenie pierścienia"
 
-#: website/public/showcase/th04/index.html:804
+#: website/public/showcase/th04/index.html:806
 msgctxt "page:showcase/th04/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -10801,6 +10809,7 @@ msgstr "Ten sam odstęp: 256 ÷ 16 = 16 jednostek kąta = 22,5°"
 #: website/public/guides/index.html:116
 #: website/public/guides/javascript/index.html:116
 #: website/public/guides/native/index.html:116 website/public/index.html:118
+#: website/public/research/index.html:116
 #: website/public/showcase/aegis/index.html:117
 #: website/public/showcase/ctf/index.html:116
 #: website/public/showcase/dx-ball/index.html:116
@@ -10823,6 +10832,7 @@ msgstr "Przykłady"
 #: website/public/guides/index.html:117
 #: website/public/guides/javascript/index.html:117
 #: website/public/guides/native/index.html:117 website/public/index.html:119
+#: website/public/research/index.html:117
 #: website/public/showcase/aegis/index.html:118
 #: website/public/showcase/ctf/index.html:117
 #: website/public/showcase/dx-ball/index.html:117
@@ -10845,6 +10855,7 @@ msgstr "Blog"
 #: website/public/guides/index.html:115
 #: website/public/guides/javascript/index.html:115
 #: website/public/guides/native/index.html:115 website/public/index.html:117
+#: website/public/research/index.html:115
 #: website/public/showcase/aegis/index.html:116
 #: website/public/showcase/ctf/index.html:115
 #: website/public/showcase/dx-ball/index.html:115
@@ -10867,6 +10878,7 @@ msgstr "Pierwsze kroki"
 #: website/public/guides/index.html:118
 #: website/public/guides/javascript/index.html:118
 #: website/public/guides/native/index.html:118 website/public/index.html:120
+#: website/public/research/index.html:118
 #: website/public/showcase/aegis/index.html:119
 #: website/public/showcase/ctf/index.html:118
 #: website/public/showcase/dx-ball/index.html:118
@@ -10876,50 +10888,6 @@ msgstr "Pierwsze kroki"
 msgctxt "shared"
 msgid "Guides"
 msgstr "Poradniki"
-
-#: website/public/blog/index.html:240
-#: website/public/blog/reverse-engineering-models/index.html:879
-#: website/public/blog/touhou-reconstruction/index.html:1076
-#: website/public/contributors/index.html:1127
-#: website/public/examples/dino-lab/index.html:471
-#: website/public/faq/index.html:569
-#: website/public/first-investigation/index.html:530
-#: website/public/get-started/index.html:1813
-#: website/public/guides/browser/index.html:503
-#: website/public/guides/index.html:278
-#: website/public/guides/javascript/index.html:499
-#: website/public/guides/native/index.html:505 website/public/index.html:1218
-#: website/public/showcase/aegis/index.html:804
-#: website/public/showcase/ctf/index.html:773
-#: website/public/showcase/dx-ball/index.html:781
-#: website/public/showcase/index.html:313
-#: website/public/showcase/notion/index.html:627
-#: website/public/showcase/th04/index.html:796
-msgctxt "shared"
-msgid "Source"
-msgstr "Kod źródłowy"
-
-#: website/public/blog/index.html:241
-#: website/public/blog/reverse-engineering-models/index.html:880
-#: website/public/blog/touhou-reconstruction/index.html:1077
-#: website/public/contributors/index.html:1128
-#: website/public/examples/dino-lab/index.html:472
-#: website/public/faq/index.html:570
-#: website/public/first-investigation/index.html:531
-#: website/public/get-started/index.html:1814
-#: website/public/guides/browser/index.html:504
-#: website/public/guides/index.html:279
-#: website/public/guides/javascript/index.html:500
-#: website/public/guides/native/index.html:506 website/public/index.html:1219
-#: website/public/showcase/aegis/index.html:805
-#: website/public/showcase/ctf/index.html:774
-#: website/public/showcase/dx-ball/index.html:782
-#: website/public/showcase/index.html:314
-#: website/public/showcase/notion/index.html:628
-#: website/public/showcase/th04/index.html:797
-msgctxt "shared"
-msgid "MIT license"
-msgstr "Licencja MIT"
 
 #: website/public/blog/index.html:242
 #: website/public/blog/reverse-engineering-models/index.html:881
@@ -10933,6 +10901,7 @@ msgstr "Licencja MIT"
 #: website/public/guides/index.html:280
 #: website/public/guides/javascript/index.html:501
 #: website/public/guides/native/index.html:507 website/public/index.html:1220
+#: website/public/research/index.html:343
 #: website/public/showcase/aegis/index.html:806
 #: website/public/showcase/ctf/index.html:775
 #: website/public/showcase/dx-ball/index.html:783
@@ -10940,8 +10909,8 @@ msgstr "Licencja MIT"
 #: website/public/showcase/notion/index.html:629
 #: website/public/showcase/th04/index.html:798
 msgctxt "shared"
-msgid "Join the community"
-msgstr "Dołącz do społeczności"
+msgid "Source"
+msgstr "Kod źródłowy"
 
 #: website/public/blog/index.html:243
 #: website/public/blog/reverse-engineering-models/index.html:882
@@ -10955,12 +10924,59 @@ msgstr "Dołącz do społeczności"
 #: website/public/guides/index.html:281
 #: website/public/guides/javascript/index.html:502
 #: website/public/guides/native/index.html:508 website/public/index.html:1221
+#: website/public/research/index.html:344
 #: website/public/showcase/aegis/index.html:807
 #: website/public/showcase/ctf/index.html:776
 #: website/public/showcase/dx-ball/index.html:784
 #: website/public/showcase/index.html:316
 #: website/public/showcase/notion/index.html:630
 #: website/public/showcase/th04/index.html:799
+msgctxt "shared"
+msgid "MIT license"
+msgstr "Licencja MIT"
+
+#: website/public/blog/index.html:244
+#: website/public/blog/reverse-engineering-models/index.html:883
+#: website/public/blog/touhou-reconstruction/index.html:1080
+#: website/public/contributors/index.html:1131
+#: website/public/examples/dino-lab/index.html:475
+#: website/public/faq/index.html:573
+#: website/public/first-investigation/index.html:534
+#: website/public/get-started/index.html:1817
+#: website/public/guides/browser/index.html:507
+#: website/public/guides/index.html:282
+#: website/public/guides/javascript/index.html:503
+#: website/public/guides/native/index.html:509 website/public/index.html:1222
+#: website/public/research/index.html:345
+#: website/public/showcase/aegis/index.html:808
+#: website/public/showcase/ctf/index.html:777
+#: website/public/showcase/dx-ball/index.html:785
+#: website/public/showcase/index.html:317
+#: website/public/showcase/notion/index.html:631
+#: website/public/showcase/th04/index.html:800
+msgctxt "shared"
+msgid "Join the community"
+msgstr "Dołącz do społeczności"
+
+#: website/public/blog/index.html:245
+#: website/public/blog/reverse-engineering-models/index.html:884
+#: website/public/blog/touhou-reconstruction/index.html:1081
+#: website/public/contributors/index.html:1132
+#: website/public/examples/dino-lab/index.html:476
+#: website/public/faq/index.html:574
+#: website/public/first-investigation/index.html:535
+#: website/public/get-started/index.html:1818
+#: website/public/guides/browser/index.html:508
+#: website/public/guides/index.html:283
+#: website/public/guides/javascript/index.html:504
+#: website/public/guides/native/index.html:510 website/public/index.html:1223
+#: website/public/research/index.html:346
+#: website/public/showcase/aegis/index.html:809
+#: website/public/showcase/ctf/index.html:778
+#: website/public/showcase/dx-ball/index.html:786
+#: website/public/showcase/index.html:318
+#: website/public/showcase/notion/index.html:632
+#: website/public/showcase/th04/index.html:801
 msgctxt "shared"
 msgid "Follow us on X"
 msgstr "Obserwuj na X"
@@ -13200,7 +13216,7 @@ msgctxt "page:blog/reverse-engineering-models/index.html"
 msgid "Selected reconstruction experiments"
 msgstr "Wybrane eksperymenty rekonstrukcyjne"
 
-#: website/public/blog/reverse-engineering-models/index.html:887
+#: website/public/blog/reverse-engineering-models/index.html:889
 msgctxt "page:blog/reverse-engineering-models/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -15092,7 +15108,9 @@ msgstr ""
 #: website/public/guides/javascript/index.html:498
 #: website/public/guides/native/index.html:120
 #: website/public/guides/native/index.html:504 website/public/index.html:122
-#: website/public/index.html:1217 website/public/showcase/aegis/index.html:121
+#: website/public/index.html:1217 website/public/research/index.html:120
+#: website/public/research/index.html:340
+#: website/public/showcase/aegis/index.html:121
 #: website/public/showcase/aegis/index.html:803
 #: website/public/showcase/ctf/index.html:120
 #: website/public/showcase/ctf/index.html:772
@@ -15192,7 +15210,7 @@ msgctxt "page:contributors/index.html"
 msgid "GitHub username"
 msgstr "Nazwa użytkownika GitHub"
 
-#: website/public/contributors/index.html:1135
+#: website/public/contributors/index.html:1137
 msgctxt "page:contributors/index.html"
 msgid "Back to top"
 msgstr "Do góry"
@@ -15202,6 +15220,268 @@ msgstr "Do góry"
 msgctxt "runtime"
 msgid "Contributors: {count}"
 msgstr "Współtwórcy: {count}"
+
+#: website/public/blog/index.html:240
+#: website/public/blog/reverse-engineering-models/index.html:879
+#: website/public/blog/touhou-reconstruction/index.html:1076
+#: website/public/contributors/index.html:1127
+#: website/public/examples/dino-lab/index.html:471
+#: website/public/faq/index.html:569
+#: website/public/first-investigation/index.html:530
+#: website/public/get-started/index.html:1813
+#: website/public/guides/browser/index.html:503
+#: website/public/guides/index.html:278
+#: website/public/guides/javascript/index.html:499
+#: website/public/guides/native/index.html:505 website/public/index.html:1218
+#: website/public/research/index.html:341
+#: website/public/showcase/aegis/index.html:804
+#: website/public/showcase/ctf/index.html:773
+#: website/public/showcase/dx-ball/index.html:781
+#: website/public/showcase/index.html:313
+#: website/public/showcase/notion/index.html:627
+#: website/public/showcase/th04/index.html:796
+msgctxt "shared"
+msgid "Research"
+msgstr "Badania"
+
+#: website/public/research/index.html:105
+msgctxt "page:research/index.html"
+msgid "Skip to content"
+msgstr ""
+
+#. {ph0}: <a href="../">
+#. {ph1}: </a>
+#: website/public/research/index.html:197
+#, python-brace-format
+msgctxt "page:research/index.html"
+msgid "{ph0}Home{ph1} / Research"
+msgstr ""
+
+#: website/public/research/index.html:198
+msgctxt "page:research/index.html"
+msgid "AI reverse engineering research and benchmarks."
+msgstr ""
+
+#: website/public/research/index.html:199 website/public/research/index.html:7
+msgctxt "page:research/index.html"
+msgid ""
+"Papers on LLM decompilation, binary-source datasets and behavioral "
+"verification, with links to REA case studies and their evidence."
+msgstr ""
+
+#: website/public/research/index.html:206
+msgctxt "page:research/index.html"
+msgid "What does a decompilation result establish?"
+msgstr ""
+
+#: website/public/research/index.html:207
+msgctxt "page:research/index.html"
+msgid ""
+"Readable code, a successful build, agreement on selected inputs and complete"
+" application behavior answer different questions. These papers examine parts"
+" of that progression. Their reported scores belong to their own experiments;"
+" they are not benchmark results for REA."
+msgstr ""
+
+#: website/public/research/index.html:214
+msgctxt "page:research/index.html"
+msgid ""
+"REA (Reverse Engineer Anything) is a local reverse-engineering CLI and MCP "
+"server. It gives an agent evidence from binaries, applications and runtime "
+"observations. The agent uses that evidence to explain behavior, propose a "
+"reconstruction and check it against the selected target."
+msgstr ""
+
+#. {ph0}: <time datetime="2026-10-16" translate="no">2026-10-16</time>
+#: website/public/research/index.html:221
+#, python-brace-format
+msgctxt "page:research/index.html"
+msgid ""
+"Sources checked on {ph0}. This reading list summarizes published abstracts "
+"and project descriptions; it does not reproduce the studies' experiments."
+msgstr ""
+
+#: website/public/research/index.html:229
+msgctxt "page:research/index.html"
+msgid "Models and iterative refinement"
+msgstr ""
+
+#: website/public/research/index.html:230
+msgctxt "page:research/index.html"
+msgid "Learning to decompile"
+msgstr ""
+
+#. {ph0}: <a href="https://aclanthology.org/2024.emnlp-main.203/" >
+#. {ph1}: </a >
+#: website/public/research/index.html:231
+#, python-brace-format
+msgctxt "page:research/index.html"
+msgid ""
+"{ph0}LLM4Decompile: Decompiling Binary Code with Large Language Models{ph1} "
+"(Tan et al., EMNLP 2024) studies models trained for direct decompilation and"
+" for refining Ghidra output. Its re-executability evaluations concern "
+"specified datasets and tests, not recovery of every behavior in an "
+"application."
+msgstr ""
+
+#: website/public/research/index.html:241
+msgctxt "page:research/index.html"
+msgid "Learning from program feedback"
+msgstr ""
+
+#. {ph0}: <a href="https://arxiv.org/abs/2606.16162v2" >
+#. {ph1}: </a >
+#: website/public/research/index.html:242
+#, python-brace-format
+msgctxt "page:research/index.html"
+msgid ""
+"{ph0}Binary Decompilation LLM with Feedback-Driven Multi-Turn "
+"Refinement{ph1} (Liu et al., 2026 preprint, version 2) introduces "
+"AutoDecompiler. It trains iterative revisions using compilation, execution "
+"and input/output feedback. This makes the quality of those checks part of "
+"the learning problem."
+msgstr ""
+
+#: website/public/research/index.html:252
+msgctxt "page:research/index.html"
+msgid "Separating validation stages"
+msgstr ""
+
+#. {ph0}: <a href="https://arxiv.org/abs/2604.23940" >
+#. {ph1}: </a >
+#: website/public/research/index.html:253
+#, python-brace-format
+msgctxt "page:research/index.html"
+msgid ""
+"{ph0}Constraint-Guided Multi-Agent Decompilation for Executable Binary "
+"Recovery{ph1} (Zhang et al., 2026 preprint) combines parsing, compilation "
+"and behavioral checks with iterative repair. Its use of generated tests is a"
+" reason to examine test coverage separately from build success."
+msgstr ""
+
+#: website/public/research/index.html:264
+msgctxt "page:research/index.html"
+msgid "Two benchmarks with similar names"
+msgstr ""
+
+#: website/public/research/index.html:265
+msgctxt "page:research/index.html"
+msgid "Decompiler evaluation in real programs"
+msgstr ""
+
+#. {ph0}: <a href="https://aclanthology.org/2025.findings-acl.1194/" >
+#. {ph1}: </a >
+#: website/public/research/index.html:266
+#, python-brace-format
+msgctxt "page:research/index.html"
+msgid ""
+"{ph0}DecompileBench: A Comprehensive Benchmark for Evaluating Decompilers in"
+" Real-World Scenarios{ph1} (Gao et al., Findings of ACL 2025) combines "
+"function extraction, runtime-aware validation and assessments of analyst "
+"usability. Functional correctness and readability are separate measurements."
+msgstr ""
+
+#: website/public/research/index.html:275
+msgctxt "page:research/index.html"
+msgid "Binary-to-source training data"
+msgstr ""
+
+#. {ph0}: <a href="https://arxiv.org/abs/2505.12668" >
+#. {ph1}: </a >
+#: website/public/research/index.html:276
+#, python-brace-format
+msgctxt "page:research/index.html"
+msgid ""
+"{ph0}Decompile-Bench: Million-Scale Binary-Source Function Pairs for Real-"
+"World Binary Decompilation{ph1} (Tan et al., 2025) focuses on large-scale "
+"paired data and evaluation for learned decompilers. Compiler settings and "
+"inlining complicate the correspondence between binary functions and their "
+"source. This is a different project from DecompileBench above."
+msgstr ""
+
+#: website/public/research/index.html:288
+msgctxt "page:research/index.html"
+msgid "Check beyond the supplied tests"
+msgstr ""
+
+#. {ph0}: <a href="https://arxiv.org/abs/2609.05370v1" >
+#. {ph1}: </a >
+#: website/public/research/index.html:289
+#, python-brace-format
+msgctxt "page:research/index.html"
+msgid ""
+"{ph0}When LLM Decompilers Recompile More and Preserve Less{ph1} (Liu, Raff "
+"and Micinski, 2026 preprint) introduces Decompile-Diverge, a differential-"
+"fuzzing oracle. It examines cases where a candidate builds and passes "
+"supplied tests but behaves differently on other inputs. Passing a fixed "
+"suite therefore needs a stated coverage boundary."
+msgstr ""
+
+#: website/public/research/index.html:299
+msgctxt "page:research/index.html"
+msgid ""
+"For a reconstruction, record the target version, inputs, compared outputs "
+"and unresolved paths. A binary match additionally needs the compiler context"
+" and exact compared extent. Keep those observations accessible alongside the"
+" explanation."
+msgstr ""
+
+#: website/public/research/index.html:307
+msgctxt "page:research/index.html"
+msgid "Follow the evidence in REA"
+msgstr ""
+
+#. {ph0}: <a href="../showcase/dx-ball/">
+#. {ph1}: </a>
+#: website/public/research/index.html:309
+#, python-brace-format
+msgctxt "page:research/index.html"
+msgid ""
+"{ph0}DX-Ball sound panning{ph1}: follow a native calculation into a "
+"reconstruction and its recorded checks."
+msgstr ""
+
+#. {ph0}: <a href="../showcase/notion/">
+#. {ph1}: </a>
+#: website/public/research/index.html:313
+#, python-brace-format
+msgctxt "page:research/index.html"
+msgid ""
+"{ph0}Notion's clipboard bridge{ph1}: trace behavior across Electron "
+"processes and inspect the supporting code."
+msgstr ""
+
+#. {ph0}: <a href="../blog/reverse-engineering-models/" >
+#. {ph1}: </a >
+#: website/public/research/index.html:318
+#, python-brace-format
+msgctxt "page:research/index.html"
+msgid ""
+"{ph0}General models and specialist models{ph1}: examine compiler context, "
+"experimental feedback and the limits of an oracle."
+msgstr ""
+
+#. {ph0}: <a href="../first-investigation/">
+#. {ph1}: </a>
+#. {ph2}: <a href="https://github.com/morluto/rea">
+#. {ph3}: </a>
+#: website/public/research/index.html:325
+#, python-brace-format
+msgctxt "page:research/index.html"
+msgid ""
+"Start with the {ph0}first investigation{ph1}, or use the {ph2}source "
+"repository{ph3} for contracts and reproducible development workflows."
+msgstr ""
+
+#: website/public/research/index.html:6
+msgctxt "page:research/index.html"
+msgid "AI Reverse Engineering Research and Benchmarks — REA"
+msgstr ""
+
+#: website/public/research/index.html:351
+msgctxt "page:research/index.html"
+msgid "Back to top"
+msgstr ""
 
 #, python-brace-format
 #~ msgctxt "runtime"

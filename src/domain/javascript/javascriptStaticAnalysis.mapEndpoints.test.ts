@@ -32,6 +32,9 @@ it.each([
   'function inspect() { const records = new Map(); return records.get("/accounts"); }',
   'const inspect = () => { const records = new Map(); const alias = records; return alias.delete("/accounts"); }',
   'const browser = window; browser.open("about:blank"); new Map().get("/accounts")',
+  'const box = {}; box.value = { name: "Alice" }; inspect(box); new Map().get("/accounts")',
+  'patch(() => ({ name: "Alice" })); new Map().get("/accounts")',
+  'const factory = { make() { return {}; } }; factory.make = () => ({}); patch(factory.make()); new Map().get("/accounts")',
 ])("omits a proven Map operation: %s", (source) => {
   expect(analyzeJavaScriptStaticSource(source).endpoints).toEqual([]);
 });
@@ -60,6 +63,11 @@ it.each([
   'function invoke() { window.open(); } window.open = patch; invoke(); new Map().get("/accounts")',
   'patch`prototype ${Map.prototype}`; new Map().get("/accounts")',
   'const box = { prototype: Map.prototype }; patch(box); new Map().get("/accounts")',
+  'patch((() => Map.prototype)()); new Map().get("/accounts")',
+  'patch(() => Map.prototype); new Map().get("/accounts")',
+  'const factory = { make() { return {}; } }; factory.make = () => Map.prototype; patch(factory.make()); new Map().get("/accounts")',
+  'function make() { return { prototype: Map.prototype }; } patch(make()); new Map().get("/accounts")',
+  'const factory = { prototype() { return Map.prototype; } }; patch(factory.prototype()); new Map().get("/accounts")',
   'patch([Map.prototype]); new Map().get("/accounts")',
   'Object.setPrototypeOf(Map.prototype, custom); new Map().get("/accounts")',
 ])("keeps unresolved lookup semantics as a candidate: %s", (source) => {
@@ -67,6 +75,24 @@ it.each([
     { kind: "network", value: "/accounts", interpretation: "candidate" },
   ]);
 });
+
+it.each([
+  "box.prototype = Map.prototype;",
+  'const alias = box; const prototype = Map.prototype; alias["prototype"] = prototype;',
+  "({ value: box.prototype } = { value: Map.prototype });",
+  "({ value: box.prototype = Map.prototype } = {});",
+  "for (box.prototype of [Map.prototype]) {}",
+])(
+  "retains prototype identities stored after container initialization: %s",
+  (store) => {
+    const source = `const box = {}; ${store}
+    function patch(b) { b.prototype.get = fetch; }
+    patch(box); new Map().get("/accounts");`;
+    expect(analyzeJavaScriptStaticSource(source).endpoints).toMatchObject([
+      { kind: "network", value: "/accounts", interpretation: "candidate" },
+    ]);
+  },
+);
 
 it.each([
   ['new Headers().get("content-type")', 0],

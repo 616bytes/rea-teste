@@ -48,6 +48,7 @@ import {
 } from "./javascriptSemanticValues.js";
 import {
   semanticBindingAtRead,
+  semanticEffectTiming,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
@@ -634,6 +635,14 @@ const isMapLookup = (
     !isUnmodifiedGlobalReference(receiver.callee, bindings, "Map")
   )
     return false;
+  // Direct eval can mutate shared prototypes even outside the receiver's scope.
+  for (const effects of bindings.opaqueEffects.byScope.values())
+    if (
+      effects.some(
+        (effect) => semanticEffectTiming(callee, effect, bindings) !== "after",
+      )
+    )
+      return false;
   return index === undefined && seen.size > 0 ? undefined : true;
 };
 

@@ -17,6 +17,8 @@ import {
 } from "./javascriptSemanticState.js";
 import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticMutationInitializers } from "./javascriptSemanticMutationInitializers.js";
+import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
+import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 
 const GLOBAL_OBJECT_NAMES = ["globalThis", "global", "window", "self"];
 
@@ -52,10 +54,12 @@ const createAmbientPathResolver = (
   possibleWrites: boolean,
 ) => {
   const cached = new WeakMap<t.Node, readonly AmbientPath[]>();
+  const returnedReferences = createSemanticReturnedReferences(state);
   return (
     node: t.Node,
     capture?: t.Node,
     escapedContents = false,
+    projection: AmbientProjection = [],
   ): readonly AmbientPath[] => {
     const prior = possibleWrites ? undefined : cached.get(node);
     if (prior !== undefined) return prior;
@@ -66,7 +70,7 @@ const createAmbientPathResolver = (
       node: t.Node;
       suffix: AmbientProjection;
       readsAtSelf?: true;
-    }[] = [{ node, suffix: [] }];
+    }[] = [{ node, suffix: projection }];
     // Join projections at their producing expression, rather than enumerating
     // alias histories. Each key can only widen to a wildcard, and conflicting
     // depths widen to unknown, so diamonds and cycles have finite state.
@@ -167,6 +171,37 @@ const createAmbientPathResolver = (
                     ...suffix,
                   ],
           });
+        continue;
+      }
+      if (
+        escapedContents &&
+        (t.isCallExpression(root) ||
+          t.isOptionalCallExpression(root) ||
+          t.isNewExpression(root) ||
+          t.isTaggedTemplateExpression(root) ||
+          t.isFunction(root) ||
+          t.isClass(root))
+      ) {
+        for (const source of returnedReferences(
+          t.isFunction(root) || t.isClass(root)
+            ? root
+            : t.isTaggedTemplateExpression(root)
+              ? root.tag
+              : root.callee,
+        ))
+          continueWith(
+            source.node,
+            suffix === undefined
+              ? undefined
+              : [
+                  ...source.projection.map((key) =>
+                    key === null || typeof key === "object"
+                      ? null
+                      : String(key),
+                  ),
+                  ...suffix,
+                ],
+          );
         continue;
       }
       if (possibleWrites && t.isConditionalExpression(root)) {
@@ -283,6 +318,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   const ambientReads = createAmbientPathResolver(state, false);
   const ambientWrites = createAmbientPathResolver(state, true);
   const browserReceiverMethods = new Set<string>();
+  const storedReferences = new WeakSet<t.Node>();
   const interop = createSemanticModuleInterop(state, {
     intrinsicPath: (node) => {
       const [path] = ambientReads(node);
@@ -301,6 +337,25 @@ export function* indexJavaScriptAmbientWritesSteps(
           isUnshadowedGlobal(root, state, root.name)
           ? [["global", root.name]]
           : [];
+      // Member stores expose selected references even when the container's later history is unknown.
+      if (!storedReferences.has(writeSite)) {
+        storedReferences.add(writeSite);
+        for (const source of semanticIterationSources(
+          writeSite,
+          state.parentsByNode.get(writeSite) ?? null,
+        )) {
+          if (source.kind !== "reference-store") continue;
+          for (const path of ambientWrites(
+            source.node,
+            writeSite,
+            true,
+            source.projection.map((key) =>
+              key === null || typeof key === "object" ? null : String(key),
+            ),
+          ))
+            state.ambientEscapes.retain([...path, null]);
+        }
+      }
       return ambientWrites(root, writeSite);
     },
     interop.intrinsicInvocation,

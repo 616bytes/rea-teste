@@ -42,7 +42,18 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
   );
   await writeFile(
     join(root, "escaped.mjs"),
-    'patch(Map.prototype); new Map().get("/escaped");',
+    `const box = {};
+    box.prototype = Map.prototype;
+    function patch(b) { b.prototype.get = fetch; }
+    patch(box); new Map().get("/escaped");`,
+  );
+  await writeFile(
+    join(root, "returned.mjs"),
+    'patch((() => Map.prototype)()); new Map().get("/returned");',
+  );
+  await writeFile(
+    join(root, "opaque.mjs"),
+    'eval("Map.prototype.get = fetch"); new Map().get("/opaque");',
   );
   const { stdout } = await execute(
     process.execPath,
@@ -61,16 +72,25 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
         )
         .sort(),
     )
-    .toEqual(["/api/items", "/escaped", "/network", "session"]);
-  const escaped = result.graph.nodes.find(
-    ({ kind, observations }) =>
-      kind === "endpoint" &&
-      observations.some(({ properties }) => properties.value === "/escaped"),
-  );
-  expect(escaped?.observations[0]).toMatchObject({
-    properties: { interpretation: "candidate" },
-    evidence: { state: "inferred", confidence: "low" },
-  });
+    .toEqual([
+      "/api/items",
+      "/escaped",
+      "/network",
+      "/opaque",
+      "/returned",
+      "session",
+    ]);
+  for (const value of ["/escaped", "/opaque", "/returned"]) {
+    const escaped = result.graph.nodes.find(
+      ({ kind, observations }) =>
+        kind === "endpoint" &&
+        observations.some(({ properties }) => properties.value === value),
+    );
+    expect(escaped?.observations[0]).toMatchObject({
+      properties: { interpretation: "candidate" },
+      evidence: { state: "inferred", confidence: "low" },
+    });
+  }
   const lookup = result.graph.nodes.find(
     ({ kind, observations }) =>
       kind === "endpoint" &&

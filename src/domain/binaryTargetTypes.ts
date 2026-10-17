@@ -8,10 +8,21 @@ export const BINARY_ARCHITECTURES = [
   "arm64",
   "mips",
   "6502",
+  "65816",
   "riscv",
   "powerpc",
 ] as const;
 export type BinaryArchitecture = (typeof BINARY_ARCHITECTURES)[number];
+
+/**
+ * Families admitted only by explicit raw-binary selection. Header detection
+ * never yields them, so detected targets and Evidence subjects exclude them.
+ */
+export const RAW_ONLY_ARCHITECTURES = [
+  "6502",
+  "65816",
+] as const satisfies readonly BinaryArchitecture[];
+export type RawOnlyArchitecture = (typeof RAW_ONLY_ARCHITECTURES)[number];
 
 /**
  * ELF header facts for a family whose ISA and ABI are not established by the
@@ -51,7 +62,7 @@ export const isElfMetadataArchitecture = (
 /** Recognized family with no ELF metadata member; the header alone is the fact. */
 export type HeaderArchitecture = Exclude<
   BinaryArchitecture,
-  ElfMetadataArchitecture | "6502"
+  ElfMetadataArchitecture | RawOnlyArchitecture
 >;
 
 /** Raw ELF facts; family recognition does not establish ISA or ABI support. */

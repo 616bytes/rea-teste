@@ -140,6 +140,19 @@ it("still refuses a locale the apktool input owner refuses", async () => {
   expect(result.requests).toEqual([]);
 });
 
+it("refuses the r-prefixed three-digit region that no Android table carries", async () => {
+  const result = await invoke([
+    "decode-android-resources",
+    "/targets/app.apk",
+    "--locale",
+    "en-r419",
+    "--json",
+  ]);
+
+  expect(result.exitCode).not.toBe(0);
+  expect(result.requests).toEqual([]);
+});
+
 it("forwards --no-strings with --locale preserving caller options", async () => {
   const result = await invoke([
     "decode-android-resources",

@@ -8,7 +8,7 @@ import {
 it.each([
   "de",
   "pt-rBR",
-  "en-r419",
+  "b+es+419",
   "b+sr+Latn",
   "b+zh+Hans+CN",
   "b+sr+Latn+RS+REVISED",
@@ -31,6 +31,7 @@ it.each([
   "v21",
   "pt-BR",
   "en-419",
+  "en-r419",
   "unknown_CONFIGURATION",
   "",
 ])(
@@ -45,7 +46,8 @@ it.each([
 
 it.each([
   ["pt-BR", "pt-rBR"],
-  ["en-419", "en-r419"],
+  ["en-419", "b+en+419"],
+  ["fil-419", "b+fil+419"],
   ["pt-rBR", "pt-rBR"],
   ["b+zh+Hans+CN", "b+zh+Hans+CN"],
 ])(
@@ -56,6 +58,7 @@ it.each([
 );
 
 it.each([
+  "en-r419",
   "b+fil+Latn+419+ABCDEFGH+US",
   "b+sr+Latn+RS+REVISED-v21",
   "../values-fr",

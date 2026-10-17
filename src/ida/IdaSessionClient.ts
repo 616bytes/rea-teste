@@ -23,7 +23,14 @@ import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { IdaConfiguration } from "./IdaConfiguration.js";
 import { idaProtocol } from "./IdaConfiguration.js";
-import type { IdaMcpConnection } from "./IdaMcpConnection.js";
+import { IdaToolRejection, type IdaMcpConnection } from "./IdaMcpConnection.js";
+import {
+  hexRaysCloseSchema,
+  hexRaysListSchema,
+  hexRaysOpenSchema,
+  hexRaysTools,
+  runHexRaysQuery,
+} from "./IdaHexRaysProtocol.js";
 import { nativeTools } from "./IdaNativeProtocol.js";
 import { readSettledHealth } from "./IdaBusyHealth.js";
 import { isX86OnlyTarget } from "./IdaCallGraph.js";
@@ -104,6 +111,13 @@ interface UpstreamSession {
   readonly is_active: boolean | null;
 }
 
+/** One upstream inventory row in the database-supervisor vocabulary. */
+type InventoriedSession = UpstreamSession & {
+  readonly owned: boolean;
+  readonly input_path: string;
+  readonly is_active: boolean;
+};
+
 /** A failed cleanup retains its private workspace and reports the remaining resource. */
 class IdaCleanupError extends ProviderAdapterError {
   override readonly cleanupIncomplete = true;
@@ -160,6 +174,8 @@ export class IdaSessionClient implements AnalysisClient {
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
   #workspace: IdaWorkspace | undefined;
   #database: string | undefined;
+  /** The upstream session id this client requested or was assigned; unknown before then. */
+  #expectedSession: string | undefined;
   #databaseCloseCompleted = false;
   #openAttempted = false;
   #openCompleted = false;
@@ -343,11 +359,26 @@ export class IdaSessionClient implements AnalysisClient {
   }
 
   #runner(options: ExecutionOptions | undefined): IdaOperationRunner {
+    const protocol = idaProtocol(this.config);
+    const database = this.#database;
     return new IdaOperationRunner(
       this.connection,
-      idaProtocol(this.config),
-      this.#database,
+      // Hex-Rays answers database-supervisor reads through its query bridge.
+      protocol === "hexrays" ? "modern" : protocol,
+      database,
       {
+        ...(protocol === "hexrays" && database !== undefined
+          ? {
+              invoke: (tool, args) =>
+                runHexRaysQuery(
+                  this.connection,
+                  database,
+                  tool,
+                  args,
+                  this.config.timeoutMs,
+                ),
+            }
+          : {}),
         signal: options?.signal,
         selectorOrigin: options?.selectorOrigin,
         x86Only: isX86OnlyTarget(this.target),
@@ -564,18 +595,27 @@ export class IdaSessionClient implements AnalysisClient {
   }
 
   async #initialize(): Promise<void> {
+    const protocol = idaProtocol(this.config);
     const tools = new Set(await this.connection.connect());
-    this.#callGraphAdvertised = tools.has("callgraph");
-    this.#surveyAdvertised = tools.has("survey_binary");
+    // REA's query bridge implements both reads for the Hex-Rays profile.
+    this.#callGraphAdvertised =
+      protocol === "hexrays" || tools.has("callgraph");
+    this.#surveyAdvertised =
+      protocol === "hexrays" || tools.has("survey_binary");
     const expected =
-      this.config.protocol === "native"
+      protocol === "native"
         ? nativeTools
-        : this.config.mode === "attached"
-          ? legacyTools
-          : modernTools;
+        : protocol === "hexrays"
+          ? hexRaysTools
+          : this.config.mode === "attached"
+            ? legacyTools
+            : modernTools;
     const missing = expected.filter((name) => !tools.has(name));
     if (missing.length > 0) {
-      const summary = `IDA MCP ${this.config.protocol === "native" ? "native attached" : this.config.mode} compatibility profile is missing tools: ${missing.join(", ")}. Native attached mode requires the native IDA MCP tool catalog; legacy attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile. See docs/ida-provider.md.`;
+      const summary =
+        protocol === "hexrays"
+          ? `IDA MCP Hex-Rays compatibility profile is missing tools: ${missing.join(", ")}. The Hex-Rays profile requires the official Hex-Rays IDA MCP tool catalog. See docs/ida-provider.md.`
+          : `IDA MCP ${this.config.protocol === "native" ? "native attached" : this.config.mode} compatibility profile is missing tools: ${missing.join(", ")}. Native attached mode requires the native IDA MCP tool catalog; legacy attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile. See docs/ida-provider.md.`;
       // The caller cannot act on a profile mismatch it never sees, so the
       // missing names travel as adapter diagnostics rather than a bare message.
       throw new ProviderAdapterError("ida", "initialize", {
@@ -584,8 +624,8 @@ export class IdaSessionClient implements AnalysisClient {
           reason: summary,
           mode: this.config.mode,
           expected_profile:
-            this.config.protocol === "native"
-              ? "native"
+            protocol === "native" || protocol === "hexrays"
+              ? protocol
               : this.config.mode === "attached"
                 ? "legacy-1.4"
                 : "database-supervisor",
@@ -601,58 +641,118 @@ export class IdaSessionClient implements AnalysisClient {
         this.config.workspaceRoot,
       );
       await this.#workspace.copyInput();
-      this.#openAttempted = true;
-      const raw = await this.connection.call("idb_open", {
-        input_path: this.#workspace.inputPath,
-        mode: "force_headless",
-        run_auto_analysis: true,
-        build_caches: true,
-        init_hexrays: true,
-        preferred_session_id: this.#workspace.sessionId,
-      });
-      this.#openCompleted = true;
-      // A completed but malformed/positive open may still own a live Worker.
-      // Only an explicit producer rejection keeps the old no-worker branch.
-      this.#openRejected = rejectedOpenDatabaseSchema.safeParse(raw).success;
-      this.#lifecycle.push(raw);
-      const opened = openDatabaseSchema.parse(raw);
-      if (
-        !sameIdaHostPath(opened.session.input_path, this.#workspace.inputPath)
-      )
-        throw new AnalysisProtocolError(
-          "IDA opened a different input than the private admitted target copy.",
-        );
-      if (opened.session.session_id !== this.#workspace.sessionId)
-        throw new AnalysisProtocolError(
-          "IDA returned an adopted or unexpected session instead of the requested private worker.",
-        );
-      const inventory = databaseListSchema.parse(
-        await this.connection.call("idb_list", {}),
-      );
-      this.#lifecycle.push(jsonValueSchema.parse(inventory));
       const workspace = this.#workspace;
+      this.#openAttempted = true;
+      const session =
+        protocol === "hexrays"
+          ? await this.#openHexRays(workspace)
+          : await this.#openSupervisor(workspace);
+      const inventory = await this.#inventory();
+      this.#lifecycle.push(inventory.raw);
       this.#recordBlockingSessions(
         inventory.sessions.filter(
           (entry) =>
-            entry.session_id === workspace.sessionId ||
+            entry.session_id === session ||
             sameIdaHostPath(entry.input_path, workspace.inputPath),
         ),
       );
       const entry = inventory.sessions.find(
-        ({ session_id }) => session_id === opened.session.session_id,
+        ({ session_id }) => session_id === session,
       );
       if (
         entry?.owned !== true ||
         entry.backend !== "worker" ||
         entry.is_active !== true ||
-        !sameIdaHostPath(entry.input_path, this.#workspace.inputPath)
+        !sameIdaHostPath(entry.input_path, workspace.inputPath)
       )
         throw new AnalysisProtocolError(
           "IDA did not return an active owned headless worker for the private input copy.",
         );
-      this.#database = opened.session.session_id;
+      this.#database = session;
     }
     this.#ready = true;
+  }
+
+  /** Request the private worker from a database supervisor; returns its session id. */
+  async #openSupervisor(workspace: IdaWorkspace): Promise<string> {
+    this.#expectedSession = workspace.sessionId;
+    const raw = await this.connection.call("idb_open", {
+      input_path: workspace.inputPath,
+      mode: "force_headless",
+      run_auto_analysis: true,
+      build_caches: true,
+      init_hexrays: true,
+      preferred_session_id: workspace.sessionId,
+    });
+    this.#openCompleted = true;
+    // A completed but malformed/positive open may still own a live Worker.
+    // Only an explicit producer rejection keeps the old no-worker branch.
+    this.#openRejected = rejectedOpenDatabaseSchema.safeParse(raw).success;
+    this.#lifecycle.push(raw);
+    const opened = openDatabaseSchema.parse(raw);
+    if (!sameIdaHostPath(opened.session.input_path, workspace.inputPath))
+      throw new AnalysisProtocolError(
+        "IDA opened a different input than the private admitted target copy.",
+      );
+    if (opened.session.session_id !== workspace.sessionId)
+      throw new AnalysisProtocolError(
+        "IDA returned an adopted or unexpected session instead of the requested private worker.",
+      );
+    return opened.session.session_id;
+  }
+
+  /**
+   * Lease an idalib worker for the private input copy. Hex-Rays assigns the
+   * instance id, so the binding is the returned id plus its inventory row.
+   */
+  async #openHexRays(workspace: IdaWorkspace): Promise<string> {
+    let raw: JsonValue;
+    try {
+      raw = await this.connection.call("open_database", {
+        path: workspace.inputPath,
+        set_current: false,
+      });
+    } catch (cause: unknown) {
+      // A tool error is a completed, explicit rejection; anything else leaves
+      // the open's outcome unknown and the workspace retained.
+      if (cause instanceof IdaToolRejection) {
+        this.#openCompleted = true;
+        this.#openRejected = true;
+      }
+      throw cause;
+    }
+    this.#openCompleted = true;
+    this.#lifecycle.push(raw);
+    const opened = hexRaysOpenSchema.parse(raw);
+    this.#expectedSession = opened.instance_id;
+    if (opened.backend !== "idalib")
+      throw new AnalysisProtocolError(
+        "IDA attached a GUI database instead of a private idalib worker for the private input copy.",
+      );
+    return opened.instance_id;
+  }
+
+  /** Upstream session inventory, normalized to the database-supervisor vocabulary. */
+  async #inventory(): Promise<{
+    readonly raw: JsonValue;
+    readonly sessions: readonly InventoriedSession[];
+  }> {
+    if (idaProtocol(this.config) !== "hexrays") {
+      const raw = await this.connection.call("idb_list", {});
+      return { raw, sessions: databaseListSchema.parse(raw).sessions };
+    }
+    const raw = await this.connection.call("list_databases", {});
+    return {
+      raw,
+      // REA's stdio server holds an instance id only for leases it opened.
+      sessions: hexRaysListSchema.parse(raw).instances.map((entry) => ({
+        session_id: entry.instance_id ?? "",
+        backend: entry.backend === "gui" ? "gui" : "worker",
+        owned: entry.instance_id !== null,
+        input_path: entry.path,
+        is_active: entry.status === "current" || entry.status === "attached",
+      })),
+    };
   }
 
   async #nativeMetadata(): Promise<JsonValue> {
@@ -690,11 +790,23 @@ export class IdaSessionClient implements AnalysisClient {
         throw new AnalysisProtocolError(
           "IDA headless session has no database binding.",
         );
-      const raw = await readSettledHealth(this.connection, {
-        database: this.#database,
-        timeoutMs: this.config.timeoutMs,
-        signal: options?.signal,
-      });
+      // Hex-Rays execute_python waits for initial auto-analysis before running.
+      const raw =
+        idaProtocol(this.config) === "hexrays"
+          ? (
+              await runHexRaysQuery(
+                this.connection,
+                this.#database,
+                "server_health",
+                {},
+                this.config.timeoutMs,
+              )
+            ).result
+          : await readSettledHealth(this.connection, {
+              database: this.#database,
+              timeoutMs: this.config.timeoutMs,
+              signal: options?.signal,
+            });
       const metadata = modernHealthSchema.parse(raw);
       this.#metadata = raw;
       onObserved?.(raw);
@@ -756,7 +868,7 @@ export class IdaSessionClient implements AnalysisClient {
       ? []
       : [
           {
-            session_id: this.#workspace.sessionId,
+            session_id: this.#expectedSession ?? "",
             backend: "worker",
             owned: null,
             input_path: null,
@@ -793,7 +905,23 @@ export class IdaSessionClient implements AnalysisClient {
     return entries.length > 0;
   }
 
-  async #closeDatabase(database: string): Promise<void> {
+  /** Release the session; false when upstream rejected the release and only inventory can settle it. */
+  async #closeDatabase(database: string): Promise<boolean> {
+    if (idaProtocol(this.config) === "hexrays") {
+      try {
+        hexRaysCloseSchema.parse(
+          await this.connection.call("close_database", {
+            instance_id: database,
+          }),
+        );
+        return true;
+      } catch (cause: unknown) {
+        // A rejected release, such as an already reaped or busy lease, is
+        // settled by the inventory read that follows and retried otherwise.
+        if (!(cause instanceof IdaToolRejection)) throw cause;
+        return false;
+      }
+    }
     const response = await this.connection.call("idb_close", {
       database,
       save: false,
@@ -802,7 +930,7 @@ export class IdaSessionClient implements AnalysisClient {
     if (!closed.success) {
       if (!absentDatabaseCloseSchema(database).safeParse(response).success)
         throw closed.error;
-      return;
+      return true;
     }
     if (
       closed.data.session_id !== database ||
@@ -813,6 +941,7 @@ export class IdaSessionClient implements AnalysisClient {
       throw new AnalysisProtocolError(
         "IDA database close did not confirm the requested owned, unsaved session release.",
       );
+    return true;
   }
 
   async #closeOnce(): Promise<Result<null, AnalysisError>> {
@@ -822,15 +951,18 @@ export class IdaSessionClient implements AnalysisClient {
     try {
       if (this.#workspace !== undefined && this.#openAttempted) {
         if (this.#database === undefined) {
-          const inventory = databaseListSchema.parse(
-            await this.connection.call("idb_list", {}),
-          );
+          const inventory = await this.#inventory();
           const workspace = this.#workspace;
+          const expected = this.#expectedSession;
+          // REA's own Hex-Rays stdio server leases only what REA opened, so a
+          // late lease on the private input is REA's even without a reply id.
+          const adoptByPath =
+            expected === undefined && idaProtocol(this.config) === "hexrays";
           this.#database = inventory.sessions.find(
             (entry) =>
               entry.owned &&
               entry.backend === "worker" &&
-              entry.session_id === workspace.sessionId &&
+              (entry.session_id === expected || adoptByPath) &&
               sameIdaHostPath(entry.input_path, workspace.inputPath),
           )?.session_id;
           // Every same-input session and any entry under the requested ID,
@@ -839,7 +971,7 @@ export class IdaSessionClient implements AnalysisClient {
           const blocked = this.#recordBlockingSessions(
             inventory.sessions.filter(
               (entry) =>
-                entry.session_id === workspace.sessionId ||
+                entry.session_id === expected ||
                 sameIdaHostPath(entry.input_path, workspace.inputPath),
             ),
           );
@@ -857,14 +989,14 @@ export class IdaSessionClient implements AnalysisClient {
             );
         }
         if (this.#database !== undefined) {
-          if (!this.#databaseCloseCompleted) {
-            await this.#closeDatabase(this.#database);
+          if (
+            !this.#databaseCloseCompleted &&
+            (await this.#closeDatabase(this.#database))
+          ) {
             this.#databaseCloseCompleted = true;
             this.#forgetReleasedSession(this.#database);
           }
-          const inventory = databaseListSchema.parse(
-            await this.connection.call("idb_list", {}),
-          );
+          const inventory = await this.#inventory();
           const remaining = inventory.sessions.filter(
             (entry) =>
               entry.session_id === this.#database ||
@@ -877,6 +1009,8 @@ export class IdaSessionClient implements AnalysisClient {
             throw new AnalysisProtocolError(
               "IDA worker remains registered after close.",
             );
+          // An unconfirmed close is settled once inventory shows the release.
+          this.#databaseCloseCompleted = true;
           this.#database = undefined;
         }
         if (!this.#openCompleted)

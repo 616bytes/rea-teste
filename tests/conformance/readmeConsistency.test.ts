@@ -81,3 +81,32 @@ describe("onboarding documentation product facts", () => {
     }
   });
 });
+
+describe("provider documentation", () => {
+  it("lists every ID accepted by `doctor --provider`", async () => {
+    const source = await readFile(
+      resolve("src/application/DoctorProviderIds.ts"),
+      "utf8",
+    );
+    const providerIds = [...source.matchAll(/^[ \t]*"([a-z0-9-]+)",?$/gmu)].map(
+      (match) => match[1] ?? "",
+    );
+    const cliGuide = await readFile(resolve("docs/cli.md"), "utf8");
+    const providerParagraph = cliGuide
+      .split(/\n[ \t]*\n/u)
+      .find((paragraph) =>
+        paragraph.includes("rea doctor --provider ID --json"),
+      );
+
+    expect(providerIds).not.toHaveLength(0);
+    expect(providerParagraph).toBeDefined();
+    const words = providerParagraph?.toLowerCase().match(/[a-z0-9-]+/gu) ?? [];
+    for (const providerId of providerIds)
+      expect(words, `documented provider ID: ${providerId}`).toContain(
+        providerId,
+      );
+    expect(providerParagraph).toContain(
+      "[Kuna provider guide](kuna-provider.md)",
+    );
+  });
+});

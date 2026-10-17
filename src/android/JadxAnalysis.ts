@@ -190,6 +190,9 @@ const searchClasses = async (
   });
 };
 
+const MISSING_METHOD_BODY =
+  "// method exists but has no decompiled body (native/abstract)";
+
 const matchingMethods = (
   summary: ClassSummary,
   request: Extract<
@@ -223,8 +226,8 @@ const inspectMethod = async (
       `Select one of ${candidates.length} overloads: ${candidates.map((method) => `${method.overload_index}: ${method.reported_signature}`).join("; ")}`,
     );
   const index = request.input.overload_index ?? 0;
-  const selected = candidates[index];
-  if (selected === undefined)
+  const selected =
+    candidates[index] ??
     inputFailure(
       request,
       "overload_index",
@@ -259,21 +262,30 @@ const inspectMethod = async (
       request.operation,
       `JADX ${JADX_RELEASE.version} smali fallback joins all same-name overloads for ${summary.full_name}.${request.input.method_name}; it cannot establish source for only overload ${index}.`,
     );
+  const holder =
+    body.body === MISSING_METHOD_BODY &&
+    methodsOf(summary).filter((method) => method.name === selected.name)
+      .length === 1
+      ? body.inlined_holder
+      : undefined;
+  const missing = body.body.length === 0 || body.body === MISSING_METHOD_BODY;
+  const text =
+    holder !== undefined
+      ? `// JADX inlined this method into ${holder}`
+      : body.body === MISSING_METHOD_BODY
+        ? "// method exists but has no decompiled body"
+        : body.body;
   return androidResultSchemas.inspect_android_method.parse({
     engine,
     class_name: summary.full_name,
     method: selected,
     overload_count: candidates.length,
     representation: body.mode,
-    body_status:
-      body.body.length === 0 ||
-      body.body ===
-        "// method exists but has no decompiled body (native/abstract)"
-        ? "not_available"
-        : "available",
+    body_status: missing ? "not_available" : "available",
     fell_back: body.fell_back,
-    markers: body.markers,
-    source: normalizeJadxText(body.body),
+    markers:
+      holder === undefined ? body.markers : [...body.markers, "inlined_method"],
+    source: normalizeJadxText(text),
   });
 };
 

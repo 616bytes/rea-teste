@@ -10,26 +10,29 @@ import {
 } from "../../../src/contracts/errorSchemas.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 
-cliTest.skipIf(process.platform === "win32")(
-  "projects accepted Hopper regex operation through CLI commands and the native bridge with exact request context",
-  async ({ cli, processes }) => {
-    const root = await createTestTempDirectory("rea-hopper-regex-cli-");
-    const launcher = join(root, "fake-hopper.mjs"),
-      target = join(root, "sample");
-    await copyFile(
-      fileURLToPath(
-        new URL("../../fixtures/hopperRegexCliLauncher.mjs", import.meta.url),
-      ),
-      launcher,
-    );
-    await chmod(launcher, 0o700);
-    await copyFile("/usr/bin/true", target);
-    for (const kind of ["strings", "procedures"] as const)
-      for (const mode of [
-        "capability_unavailable",
-        "bridge_exception",
-        "valid",
-      ] as const) {
+for (const kind of ["strings", "procedures"] as const)
+  for (const mode of [
+    "capability_unavailable",
+    "bridge_exception",
+    "valid",
+  ] as const)
+    cliTest.skipIf(process.platform === "win32")(
+      `projects Hopper ${kind} ${mode} through CLI commands and the native bridge with exact request context`,
+      async ({ cli, processes }) => {
+        const root = await createTestTempDirectory("rea-hopper-regex-cli-");
+        const launcher = join(root, "fake-hopper.mjs"),
+          target = join(root, "sample");
+        await copyFile(
+          fileURLToPath(
+            new URL(
+              "../../fixtures/hopperRegexCliLauncher.mjs",
+              import.meta.url,
+            ),
+          ),
+          launcher,
+        );
+        await chmod(launcher, 0o700);
+        await copyFile("/usr/bin/true", target);
         const home = join(root, `${kind}-${mode}`),
           trace = join(home, "trace");
         await mkdir(home);
@@ -75,8 +78,9 @@ cliTest.skipIf(process.platform === "win32")(
                 ],
                 { env: request.environment },
               );
+        expect(result.stderr).toBe("");
+        expect(result.stdout, JSON.stringify(result)).not.toBe("");
         const run = { ...result, json: JSON.parse(result.stdout) as unknown };
-        expect(run.stderr).toBe("");
         expect((await readFile(trace, "utf8")).trim().split("\n")).toEqual([
           "health",
           `list_${kind}`,
@@ -114,6 +118,5 @@ cliTest.skipIf(process.platform === "win32")(
           if (mode === "bridge_exception")
             expect(error.message).toContain(`search_${kind}`);
         }
-      }
-  },
-);
+      },
+    );

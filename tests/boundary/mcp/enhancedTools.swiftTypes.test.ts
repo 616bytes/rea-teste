@@ -161,9 +161,14 @@ describe("Swift classification through MCP", () => {
 
 describe("Unresolved Swift contexts through MCP", () => {
   it("keeps unresolved substituted contexts out of nominal categories", async () => {
-    // Reported swiftc spellings from #4296, supplied by a controlled provider.
+    // Issue/review spellings and ABI-derived controls from a controlled provider.
     // These are not observations from a real Swift/Hopper run in this test.
     const unresolved = [
+      "$s1M1WVAASHRzlE1fyyF",
+      "$s1M1WVAASiRszlE1fyyF",
+      "$s1M1WVAA5Other1CVRszlE1fyyF",
+      // Unsupported pack-marker requirements keep context ownership unknown.
+      "$s1M1WVAARvzlE1fyyF",
       "_$s1M7WrapperVAASQRzlE4sameySbxF",
       "_$s1M3BoxVAARi_zrlE1vxvM",
       "_$s1M3BoxVAARi_zrlE1vxvr.resume.0",
@@ -171,6 +176,11 @@ describe("Unresolved Swift contexts through MCP", () => {
       "_$s1M3BoxVAARi_zrlE1vACyxGx_tcfC",
     ];
     const structs = [
+      // Identifier substitutions can name properties/functions in the nominal.
+      "$s1M1WVAASivg",
+      "$s1M1WVABSivg",
+      "$s1M1WVAASiyF",
+      "$s1M1WVAA5Other1CVvg",
       "_$s1M7WrapperV1vxvg",
       "_$s1M7WrapperVMa",
       "_$s1M7WrapperV1vACyxGx_tcfC",
@@ -211,7 +221,7 @@ describe("Unresolved Swift contexts through MCP", () => {
         );
       },
     });
-    for (const category of [undefined, "structs"] as const) {
+    for (const category of ["structs", undefined] as const) {
       const result = await client.callTool({
         name: "analyze_swift_types",
         arguments: category === undefined ? {} : { category },
@@ -285,10 +295,8 @@ describe("Unresolved Swift contexts through MCP", () => {
 });
 
 describe("Substituted Swift contexts through MCP", () => {
-  // These expectations preserve baseline nominal-prefix classification, even
-  // for malformed/unsupported tails. This classifier is not a Swift validator.
-  // Witness-malformation negatives were introduced only by this PR; none were
-  // upstream guarantees. Only recognized extension contexts discard the prefix.
+  // Preserve nominal-prefix evidence for witness/entity tails without validating
+  // their bodies. Generic-context uncertainty is covered separately above.
   it.each([
     // Reported async/resume regressions and ABI-derived private/punycode names.
     ["$s5Async1SVAA1PA2aDP1fyyYaFTWTQ0_", "structs"],

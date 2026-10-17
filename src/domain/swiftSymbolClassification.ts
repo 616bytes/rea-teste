@@ -18,8 +18,8 @@ const NOMINAL_CATEGORIES: ReadonlyMap<string, SwiftTypeCategory> = new Map([
 
 /**
  * Decode literal module/nominal prefixes, stopping at supported substituted
- * extension contexts. Unsupported tails retain the nominal prefix category;
- * this is deliberately not full mangling validation or extension decoding.
+ * extension contexts. Unresolved generic contexts cannot establish nominal
+ * ownership; other tails are not subjected to full mangling validation.
  */
 export const classifySwiftSymbol = (
   name: string,
@@ -51,7 +51,7 @@ export const classifySwiftSymbol = (
         };
         if (
           category !== null &&
-          isSubstitutedExtensionContext(mangling, cursor, substitutions)
+          readSubstitutedContext(mangling, cursor, substitutions) !== "nominal"
         )
           category = null;
       }
@@ -81,57 +81,84 @@ type SubstitutionCursor = {
   continuing: boolean;
 };
 
+type SubstitutedContext = "extension" | "nominal" | "unresolved";
+
 /**
- * Recognize only module + [supported generic signature] + E, at token
- * boundaries. See Swift ABI Mangling.rst: Declaration Contexts and Generics.
- * Witness bodies and global wrappers are intentionally never inspected.
+ * Read module + [generic signature] + E at ABI token boundaries. A requirement
+ * we cannot decode leaves context identity unresolved, not proven nominal.
+ * Protocol-conformance/entity tails are left alone: this is not a demangler or
+ * a witness-body validator. See Swift ABI Mangling.rst, Generics.
  */
-const isSubstitutedExtensionContext = (
+const readSubstitutedContext = (
   mangling: string,
   cursor: SubstitutionCursor,
   substitutions: readonly ("identifier" | "nominal")[],
-): boolean => {
+): SubstitutedContext => {
   const module = readSubstitution(mangling, cursor);
   if (module === undefined || substitutions[module] !== "identifier")
-    return false;
+    return "nominal";
   const atBoundary = () => cursor.remaining === 0 && !cursor.continuing;
-  if (atBoundary() && mangling.charAt(cursor.offset) === "E") return true;
+  const terminatedContext = (): SubstitutedContext =>
+    mangling.charAt(cursor.offset + 1) === "E" ? "extension" : "nominal";
+  if (atBoundary() && mangling.charAt(cursor.offset) === "E")
+    return "extension";
+  let genericContext = false;
   for (;;) {
     if (atBoundary()) {
       // Single-parameter and explicit parameter-count signature terminators.
-      if (mangling.charAt(cursor.offset) === "l")
-        return mangling.charAt(cursor.offset + 1) === "E";
+      if (mangling.charAt(cursor.offset) === "l") return terminatedContext();
       if (mangling.charAt(cursor.offset) === "r") {
         cursor.offset++;
         while (mangling.charAt(cursor.offset) !== "l") {
           if (mangling.charAt(cursor.offset) === "z") cursor.offset++;
           else {
             const end = indexEnd(mangling, cursor.offset);
-            if (end === undefined) return false;
+            if (end === undefined) return "unresolved";
             cursor.offset = end;
           }
         }
-        return mangling.charAt(cursor.offset + 1) === "E";
+        return terminatedContext();
       }
-      if (mangling.startsWith("Ri", cursor.offset)) {
+      const kind = mangling.charAt(cursor.offset);
+      if (kind === "R") {
+        // Inverse requirements have an extra index before the parameter index.
+        if (!mangling.startsWith("Ri", cursor.offset)) return "unresolved";
         const end = indexEnd(mangling, cursor.offset + 2);
-        if (end === undefined) return false;
+        if (end === undefined) return "unresolved";
         cursor.offset = end;
-      } else if (mangling.startsWith("SQR", cursor.offset)) {
-        // SQ is the standard Equatable protocol substitution.
-        cursor.offset += 3;
-      } else if (!readProtocolRequirement(mangling, cursor, substitutions))
-        return false;
-    } else if (!readProtocolRequirement(mangling, cursor, substitutions))
-      return false;
+      } else if (kind === "S") {
+        // Standard substitutions are S + optional repetition + type code;
+        // the second family uses c + code. Do not whitelist individual types.
+        const token = /^S(?:[1-9][0-9]*)?(?:c[A-Za-z]|[A-Za-z])/u.exec(
+          mangling.slice(cursor.offset),
+        )?.[0];
+        if (token === undefined) return "unresolved";
+        cursor.offset += token.length;
+        // Protocol, base-class, same-type and same-shape requirements share
+        // a parameter-index boundary. Other requirement forms stay unknown.
+        const requirement = /^R(?:[bsh])?/u.exec(
+          mangling.slice(cursor.offset),
+        )?.[0];
+        // The initial identifier substitution may instead be a declaration
+        // name (identifier ::= substitution), followed by its member type.
+        // A type operand alone does not establish a generic context; require
+        // a requirement operator before discarding nominal-prefix evidence.
+        if (requirement === undefined)
+          return genericContext ? "unresolved" : "nominal";
+        cursor.offset += requirement.length;
+      } else if (!readNamedRequirement(mangling, cursor, substitutions))
+        return genericContext ? "unresolved" : "nominal";
+    } else if (!readNamedRequirement(mangling, cursor, substitutions))
+      return genericContext ? "unresolved" : "nominal";
+    genericContext = true;
     const end = genericParamIndexEnd(mangling, cursor.offset);
-    if (end === undefined) return false;
+    if (end === undefined) return "unresolved";
     cursor.offset = end;
   }
 };
 
-/** Only a module identifier/reference and literal protocol name followed by R. */
-const readProtocolRequirement = (
+/** Read a literal protocol/type operand and its requirement operator only. */
+const readNamedRequirement = (
   mangling: string,
   cursor: SubstitutionCursor,
   substitutions: readonly ("identifier" | "nominal")[],
@@ -150,9 +177,20 @@ const readProtocolRequirement = (
     cursor.offset = end;
   }
   if (cursor.remaining !== 0 || cursor.continuing) return false;
-  const end = identifierEnd(mangling, cursor.offset);
-  if (end === undefined || mangling.charAt(end) !== "R") return false;
-  cursor.offset = end + 1;
+  let end = identifierEnd(mangling, cursor.offset);
+  if (end === undefined) return false;
+  // A named type can contain nested literal nominals. Their markers belong to
+  // the operand; a following R operator establishes the generic requirement.
+  while (NOMINAL_CATEGORIES.has(mangling.charAt(end))) {
+    cursor.offset = end + 1;
+    if (mangling.charAt(cursor.offset) === "R") break;
+    end = identifierEnd(mangling, cursor.offset);
+    if (end === undefined) return false;
+  }
+  if (mangling.charAt(end) === "R") cursor.offset = end;
+  const requirement = /^R(?:[bsh])?/u.exec(mangling.slice(cursor.offset))?.[0];
+  if (requirement === undefined) return false;
+  cursor.offset += requirement.length;
   return true;
 };
 

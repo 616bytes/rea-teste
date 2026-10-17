@@ -47,6 +47,7 @@ export interface ClassRegistry {
   readonly replacementIds: ReadonlyMap<string, readonly string[]>;
   readonly decoratedClasses: ReadonlySet<t.Node>;
   readonly decoratedMethods: ReadonlySet<t.Node>;
+  readonly unresolvedSupers: ReadonlySet<t.Node>;
 }
 
 /** Single-constructor field writes; multiple or unknown writes never prove exact. */
@@ -156,13 +157,15 @@ const buildClassMethodRegistry = (
     t.Node,
     readonly (t.ClassDeclaration | t.ClassExpression)[]
   >();
+  const unresolvedSupers = new Set<t.Node>();
   for (const klass of classes) {
     if (klass.superClass == null) {
       superClasses.set(klass, []);
       continue;
     }
-    // Memoized superclass walks use their own seen set inside the helper.
-    superClasses.set(klass, semanticClassCandidates(klass.superClass, state));
+    const bases = semanticClassCandidates(klass.superClass, state);
+    superClasses.set(klass, bases);
+    if (bases.length === 0) unresolvedSupers.add(klass);
   }
   const reassignedKeys = new Set<string>();
   const poisonedFields = new Set<string>();
@@ -182,7 +185,12 @@ const buildClassMethodRegistry = (
         continue;
       const field = semanticStaticPropertyKey(member.key, member.computed);
       if (field === null) continue;
-      const resolved = classesForNewValue(member.value, state, superClasses);
+      const resolved = classesForNewValue(
+        member.value,
+        state,
+        superClasses,
+        unresolvedSupers,
+      );
       fieldWrites.push({
         owner: klass,
         field,
@@ -222,11 +230,12 @@ const buildClassMethodRegistry = (
             assignmentIsDefiniteConstructorInit(node, state);
           if (definiteFieldWrite && key !== null) {
             const owner = enclosingInstanceClass(node, state);
-            if (owner !== null) {
+            if (owner !== null && !constructorCallsThisBefore(node, state)) {
               const resolved = classesForNewValue(
                 node.right,
                 state,
                 superClasses,
+                unresolvedSupers,
               );
               fieldWrites.push({
                 owner,
@@ -239,14 +248,47 @@ const buildClassMethodRegistry = (
         }
       }
       if (
+        (t.isUnaryExpression(node) && node.operator === "delete") ||
+        t.isUpdateExpression(node)
+      ) {
+        const target = unwrapJavaScriptExpression(
+          t.isUnaryExpression(node) ? node.argument : node.argument,
+        ).node;
+        if (
+          t.isMemberExpression(target) ||
+          t.isOptionalMemberExpression(target)
+        ) {
+          const key = semanticStaticPropertyKey(
+            target.property,
+            target.computed,
+          );
+          if (key === null) dynamicMemberWriteSeen = true;
+          else reassignedKeys.add(key);
+        }
+      }
+      if (t.isAssignmentExpression(node))
+        for (const member of memberWritesInPattern(node.left))
+          if (member !== unwrapJavaScriptExpression(node.left).node) {
+            const key = semanticStaticPropertyKey(
+              member.property,
+              member.computed,
+            );
+            if (key === null) dynamicMemberWriteSeen = true;
+            else reassignedKeys.add(key);
+          }
+      if (
         t.isCallExpression(node) &&
         t.isMemberExpression(node.callee) &&
         !node.callee.computed &&
         t.isIdentifier(node.callee.object, { name: "Object" }) &&
-        t.isIdentifier(node.callee.property, { name: "assign" }) &&
-        assignsOntoClassShape(node.arguments[0], state)
-      )
-        mixinSeen = true;
+        t.isIdentifier(node.callee.property, { name: "assign" })
+      ) {
+        if (assignsOntoClassShape(node.arguments[0], state)) mixinSeen = true;
+        else if (isConstructedInstance(node.arguments[0], state))
+          poisonAssignedKeys(node.arguments.slice(1), reassignedKeys, () => {
+            dynamicMemberWriteSeen = true;
+          });
+      }
     },
   });
   return {
@@ -264,6 +306,7 @@ const buildClassMethodRegistry = (
     replacementIds,
     decoratedClasses,
     decoratedMethods,
+    unresolvedSupers,
   };
 };
 
@@ -274,6 +317,7 @@ const classesForNewValue = (
     t.Node,
     readonly (t.ClassDeclaration | t.ClassExpression)[]
   >,
+  unresolvedSupers: ReadonlySet<t.Node>,
 ): {
   readonly classes: readonly (t.ClassDeclaration | t.ClassExpression)[];
   readonly unknown: boolean;
@@ -287,7 +331,10 @@ const classesForNewValue = (
   if (
     classes.length === 0 ||
     classes.some((klass) =>
-      constructorMayReplaceInstance(klass, { superClasses: supers }),
+      constructorMayReplaceInstance(klass, {
+        superClasses: supers,
+        unresolvedSupers,
+      }),
     )
   )
     return { classes: [], unknown: true };
@@ -297,8 +344,11 @@ const classesForNewValue = (
 const newCalleeIsFullyLocal = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  seen: Set<t.Node> = new Set(),
 ): boolean => {
   const expression = unwrapJavaScriptExpression(callee).node;
+  if (seen.has(expression)) return false;
+  seen.add(expression);
   if (
     t.isConditionalExpression(expression) ||
     t.isLogicalExpression(expression)
@@ -308,7 +358,7 @@ const newCalleeIsFullyLocal = (
       : [expression.left, expression.right];
     return arms.every((arm) => {
       const local = semanticClassCandidates(arm, state);
-      return local.length > 0 && newCalleeIsFullyLocal(arm, state);
+      return local.length > 0 && newCalleeIsFullyLocal(arm, state, seen);
     });
   }
   if (t.isClass(expression)) return true;
@@ -321,7 +371,13 @@ const newCalleeIsFullyLocal = (
     expression.name,
   );
   if (binding === undefined || binding.kind === "import") return false;
-  return semanticClassCandidates(expression, state).length > 0;
+  if (binding.initializers.length === 0)
+    return semanticClassCandidates(expression, state).length === 1;
+  if (binding.initializers.length !== 1) return false;
+  const only = binding.initializers[0];
+  return only === undefined
+    ? false
+    : newCalleeIsFullyLocal(only.node, state, seen);
 };
 
 const constructorMayReplaceInstance = (
@@ -331,9 +387,11 @@ const constructorMayReplaceInstance = (
       t.Node,
       readonly (t.ClassDeclaration | t.ClassExpression)[]
     >;
+    readonly unresolvedSupers?: ReadonlySet<t.Node>;
   },
   seen: Set<t.Node> = new Set(),
 ): boolean => {
+  if (registry.unresolvedSupers?.has(klass) === true) return true;
   if (seen.has(klass)) return false;
   seen.add(klass);
   for (const member of klass.body.body) {
@@ -387,6 +445,111 @@ const callableIdForValue = (value: t.Node): string | null => {
   return null;
 };
 
+const constructorCallsThisBefore = (
+  assignment: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let constructor: t.ClassMethod | undefined;
+  let current = state.parentsByNode.get(assignment);
+  while (current !== undefined) {
+    if (t.isClassMethod(current) && current.kind === "constructor") {
+      constructor = current;
+      break;
+    }
+    current = state.parentsByNode.get(current);
+  }
+  if (constructor === undefined) return false;
+  let called = false;
+  const walk = (node: t.Node): boolean => {
+    if (node === assignment) return true;
+    if (
+      t.isCallExpression(node) &&
+      (t.isMemberExpression(node.callee) ||
+        t.isOptionalMemberExpression(node.callee)) &&
+      t.isThisExpression(unwrapJavaScriptExpression(node.callee.object).node)
+    )
+      called = true;
+    if ((t.isFunction(node) || t.isClass(node)) && node !== constructor)
+      return false;
+    const keys = t.VISITOR_KEYS[node.type] ?? [];
+    for (const key of keys) {
+      const child = (node as unknown as Record<string, unknown>)[key];
+      if (Array.isArray(child)) {
+        for (const entry of child)
+          if (t.isNode(entry) && walk(entry)) return true;
+      } else if (t.isNode(child) && walk(child)) return true;
+    }
+    return false;
+  };
+  walk(constructor.body);
+  return called;
+};
+
+const memberWritesInPattern = (
+  node: t.Node,
+): (t.MemberExpression | t.OptionalMemberExpression)[] => {
+  const found: (t.MemberExpression | t.OptionalMemberExpression)[] = [];
+  const walk = (current: t.Node) => {
+    if (t.isMemberExpression(current) || t.isOptionalMemberExpression(current))
+      found.push(current);
+    if (t.isFunction(current) || t.isClass(current)) return;
+    const keys = t.VISITOR_KEYS[current.type] ?? [];
+    for (const key of keys) {
+      const child = (current as unknown as Record<string, unknown>)[key];
+      if (Array.isArray(child)) {
+        for (const entry of child) if (t.isNode(entry)) walk(entry);
+      } else if (t.isNode(child)) walk(child);
+    }
+  };
+  walk(node);
+  return found;
+};
+
+const isConstructedInstance = (
+  target: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (target === undefined) return false;
+  const expression = unwrapJavaScriptExpression(target).node;
+  if (t.isNewExpression(expression)) return true;
+  if (!t.isIdentifier(expression)) return false;
+  const binding = resolveSemanticBindingState(
+    state,
+    expression,
+    expression.name,
+  );
+  if (binding === undefined || binding.initializers.length !== 1) return false;
+  const only = binding.initializers[0];
+  return (
+    only !== undefined &&
+    t.isNewExpression(unwrapJavaScriptExpression(only.node).node)
+  );
+};
+
+const poisonAssignedKeys = (
+  sources: readonly (t.Node | null | undefined)[],
+  reassignedKeys: Set<string>,
+  markDynamic: () => void,
+): void => {
+  for (const source of sources) {
+    if (source === undefined || source === null) continue;
+    const expression = unwrapJavaScriptExpression(source).node;
+    if (!t.isObjectExpression(expression)) {
+      markDynamic();
+      continue;
+    }
+    for (const property of expression.properties) {
+      if (t.isSpreadElement(property) || !t.isObjectProperty(property)) {
+        markDynamic();
+        continue;
+      }
+      const key = semanticStaticPropertyKey(property.key, property.computed);
+      if (key === null) markDynamic();
+      else reassignedKeys.add(key);
+    }
+  }
+};
+
 const assignmentIsDefiniteConstructorInit = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -404,8 +567,7 @@ const assignmentIsDefiniteConstructorInit = (
     )
       return false;
     if (t.isClassMethod(current) && current.kind === "constructor") return true;
-    if (t.isFunction(current) && !t.isArrowFunctionExpression(current))
-      return false;
+    if (t.isFunction(current)) return false;
     current = state.parentsByNode.get(current);
   }
   return false;
@@ -642,6 +804,16 @@ const methodIsHidden = (
   const own = registry.methodsByClass.get(owner)?.get(key) ?? [];
   if (own.some((entry) => registry.decoratedMethods.has(entry.methodNode)))
     return true;
+  const ancestors = new Set<t.Node>();
+  const pending = [...(registry.superClasses.get(owner) ?? [])];
+  for (let cursor = 0; cursor < pending.length; cursor++) {
+    const base = pending[cursor];
+    if (base === undefined || ancestors.has(base)) continue;
+    ancestors.add(base);
+    if (registry.hiddenKeys.get(base)?.has(key) === true) return true;
+    for (const next of registry.superClasses.get(base) ?? [])
+      pending.push(next);
+  }
   return descendantClasses(owner, registry).some(
     (child) => registry.hiddenKeys.get(child)?.has(key) === true,
   );
@@ -963,6 +1135,11 @@ export const proveGetterReceiver = (
       status: "unknown",
       reason: `Getter ${innerKey} has no single local method.`,
     };
+  if (methodIsHidden(owner, innerKey, registry))
+    return {
+      status: "unknown",
+      reason: `Getter ${innerKey} is hidden by a field, accessor, or decorator.`,
+    };
   if (table[0].methodNode.async || table[0].methodNode.generator)
     return {
       status: "unknown",
@@ -1071,6 +1248,11 @@ const proveGetterReturn = (
     );
     if (!t.isThisExpression(holder) || field === null)
       return { status: "unknown", reason: "Unsupported getter return shape." };
+    if (registry.poisonedFields.has(field))
+      return {
+        status: "unknown",
+        reason: `Getter return this.${field} may be replaced before the read.`,
+      };
     const info = registry.fieldMap.get(owner)?.get(field);
     return info === undefined || info.unknown || info.classes.length === 0
       ? {

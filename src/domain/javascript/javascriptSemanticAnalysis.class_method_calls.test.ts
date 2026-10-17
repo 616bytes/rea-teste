@@ -430,7 +430,9 @@ describe("JavaScript semantic analysis: class method call negatives", () => {
       checkNegative(source, reason, resolution, candidates);
     },
   );
+});
 
+describe("JavaScript semantic analysis: fail-closed member edges", () => {
   it("does not mark a shadowed instance field exact", () => {
     const ir = analyzeJavaScriptSemantics(
       [
@@ -549,7 +551,9 @@ describe("JavaScript semantic analysis: class method call negatives", () => {
     expect(site).toHaveLength(1);
     expect(site[0]?.resolution).toBe("unresolved");
   });
+});
 
+describe("JavaScript semantic analysis: fail-closed review edges", () => {
   it("does not mark a decorated method exact", () => {
     const ir = analyzeJavaScriptSemantics(
       [
@@ -571,5 +575,130 @@ describe("JavaScript semantic analysis: class method call negatives", () => {
     const site = callSitesOnLine(ir, 1);
     expect(site).toHaveLength(1);
     expect(site[0]?.resolution).toBe("unresolved");
+  });
+
+  it("does not prove an aliased constructor with an imported arm", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        'import { Imported } from "./imported.js";',
+        "class Local { load() { return 1; } }",
+        "const flag = true;",
+        "const K = flag ? Local : Imported;",
+        "const x = new K();",
+        "x.load();",
+      ].join("\n"),
+    );
+    const site = callSitesOnLine(ir, 6);
+    expect(site).toHaveLength(1);
+    expect(site[0]?.resolution).toBe("unresolved");
+  });
+
+  it("does not prove a class whose base constructor is unseen", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        'import Base from "./base.js";',
+        "class Derived extends Base { load() { return 1; } }",
+        "const x = new Derived();",
+        "x.load();",
+      ].join("\n"),
+    );
+    const site = callSitesOnLine(ir, 4);
+    expect(site).toHaveLength(1);
+    expect(site[0]?.resolution).toBe("unresolved");
+  });
+
+  it("does not treat an uncalled constructor arrow as a field write", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        "class Backend { load() { return 1; } }",
+        "class Consumer {",
+        "  constructor() { const setup = () => { this.store = new Backend(); }; }",
+        "  run() { this.store.load(); }",
+        "}",
+      ].join("\n"),
+    );
+    const site = callSitesOnLine(ir, 4);
+    expect(site).toHaveLength(1);
+    expect(site[0]?.resolution).toBe("unresolved");
+  });
+
+  it("does not prove a method hidden by a base field", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        "class Base { load = () => 2; }",
+        "class Derived extends Base { load() { return 1; } }",
+        "const x = new Derived();",
+        "x.load();",
+      ].join("\n"),
+    );
+    const site = callSitesOnLine(ir, 4);
+    expect(site).toHaveLength(1);
+    expect(site[0]?.resolution).toBe("unresolved");
+  });
+
+  it("does not keep a deleted prototype method exact", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        "class Backend { load() { return 1; } }",
+        "const x = new Backend();",
+        "delete Backend.prototype.load;",
+        "x.load();",
+      ].join("\n"),
+    );
+    const site = callSitesOnLine(ir, 4);
+    expect(site).toHaveLength(1);
+    expect(site[0]?.resolution).not.toBe("exact");
+  });
+
+  it("does not keep the original method after an instance mixin", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        "class Backend { load() { return 1; } }",
+        "const x = new Backend();",
+        "Object.assign(x, { load() { return 2; } });",
+        "x.load();",
+      ].join("\n"),
+    );
+    const site = callSitesOnLine(ir, 4);
+    expect(site).toHaveLength(1);
+    expect(site[0]?.resolution).not.toBe("exact");
+  });
+
+  it("does not follow a helper hidden by a field", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        "class Backend { load() { return 1; } }",
+        "class Consumer {",
+        "  helper() { return new Backend(); }",
+        "  helper = () => null;",
+        "  run() { this.helper().load(); }",
+        "}",
+      ].join("\n"),
+    );
+    const load = onlyCallable(ir, "load");
+    expect(
+      ir.callSites.some(({ calleeCallableIds }) =>
+        calleeCallableIds.includes(load.callableId),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not revive a poisoned field through a helper return", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        "class Backend { load() { return 1; } }",
+        "class Consumer {",
+        "  store = new Backend();",
+        "  helper() { return this.store; }",
+        "  run() { this.store = null; this.helper().load(); }",
+        "}",
+      ].join("\n"),
+    );
+    const load = onlyCallable(ir, "load");
+    expect(
+      ir.callSites.some(({ calleeCallableIds }) =>
+        calleeCallableIds.includes(load.callableId),
+      ),
+    ).toBe(false);
   });
 });

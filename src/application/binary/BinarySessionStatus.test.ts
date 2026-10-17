@@ -6,6 +6,7 @@ import type {
 } from "../AnalysisProvider.js";
 import {
   expandProviderCapabilities,
+  sessionProvider,
   type ProviderCapabilitySet,
 } from "../../contracts/toolOutputSchemaPrimitives.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
@@ -16,16 +17,10 @@ import type {
 } from "./SessionProviderRouter.js";
 import { binarySessionStatus } from "./BinarySessionStatus.js";
 
-type ProjectedStatus = {
-  capabilities: ProviderCapabilitySet[];
-  analysis_provider_candidates: {
-    provider: ProviderIdentity;
-    availability: unknown;
-    target_support: unknown;
-    selected: boolean;
-    capabilities: ProviderCapabilitySet[];
-  }[];
-};
+const projectedStatusSchema = sessionProvider.pick({
+  capabilities: true,
+  analysis_provider_candidates: true,
+});
 
 const providerA: ProviderIdentity = {
   id: "provider-a",
@@ -124,25 +119,33 @@ const project = async (
     string,
     { readonly reason: string }
   > = new Map(),
-): Promise<ProjectedStatus> => {
-  const route = {
+) => {
+  const route: SessionProviderRoute = {
+    identity: providerA,
+    profile: null,
+    selection: undefined,
+    createClient: () => {
+      throw new Error("Projection does not create clients");
+    },
     capabilities: new Map(
       routeCapabilities.map((capability) => [capability.operation, capability]),
     ),
     binding: null,
-  } as unknown as SessionProviderRoute;
-  const router = {
+  };
+  const router: Pick<SessionProviderRouter, "candidateStatuses"> = {
     candidateStatuses: async () => candidates,
-  } as unknown as SessionProviderRouter;
-  return (await binarySessionStatus({
-    target: undefined,
-    route,
-    router,
-    runtimeUnavailability,
-    runId: undefined,
-    runtimeLineageSnapshots: [],
-    requestActivitySnapshots: [],
-  })) as unknown as ProjectedStatus;
+  };
+  return projectedStatusSchema.parse(
+    await binarySessionStatus({
+      target: undefined,
+      route,
+      router,
+      runtimeUnavailability,
+      runId: undefined,
+      runtimeLineageSnapshots: [],
+      requestActivitySnapshots: [],
+    }),
+  );
 };
 
 const expandCanonicalCapabilities = (sets: readonly ProviderCapabilitySet[]) =>

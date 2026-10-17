@@ -35,11 +35,18 @@ assert.ok(
 );
 const config = parseConfig(process.env);
 if (!config.ok) throw config.error;
-const installation = inspectGhidraInstallation({
+// Installation inspection retains file handles with a caller-owned closer.
+const inspectionResources = [];
+const installation = await inspectGhidraInstallation({
   environment: process.env,
   installDir: config.value.ghidraInstallDir,
   javaHome: config.value.ghidraJavaHome,
+  resourceOwner: {
+    retain: (owner) => inspectionResources.push(owner),
+    run: (operation) => operation(),
+  },
 });
+await Promise.all(inspectionResources.map((owner) => owner.close()));
 assert.equal(installation.status, "available", JSON.stringify(installation));
 assert.equal(installation.providerVersion, SUPPORTED_GHIDRA_VERSION);
 const fixtures = fileURLToPath(
@@ -133,6 +140,10 @@ try {
     assert.ok(probe.checks.includes("independent_entry_preserved"));
     assert.ok(probe.checks.includes("propagated_flag_repaired_rea_tls_outer"));
     assert.ok(probe.checks.includes("recovered_pseudocode"));
+    for (const symbol of ["_Znwm", "__cxa_guard_acquire"]) {
+      assert.ok(probe.checks.includes(`returning_import_${symbol}`), symbol);
+      assert.ok(probe.checks.includes(`recovered_body_${symbol}`), symbol);
+    }
   } finally {
     const stopped = await supervisor.stop();
     cleaned = stopped.status === "verified-cleanup";
@@ -160,7 +171,7 @@ try {
   assert.ok(profile.value.profile);
   assert.equal(
     profile.value.profile.parameters.no_return_repair,
-    "returning-imports-decoded-return-v2",
+    "returning-imports-decoded-return-v3",
   );
   const client = provider.createClient(target.value, profile.value.profile);
   cleaned = false;

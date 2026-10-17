@@ -70,6 +70,8 @@ export interface FakeOptions {
   readonly malformedEventShapeOnMethod?: string;
   readonly closeOnMethod?: string;
   readonly hangOnMethod?: string;
+  /** Leave matching commands unanswered, as an unresponsive but open target. */
+  readonly hangOnCommand?: (command: FakeCdpCommand) => boolean;
   readonly unsupportedMethods?: readonly string[];
   readonly transitionalFrameReads?: number;
   readonly attachedFrameUrl?: string;
@@ -97,6 +99,12 @@ export interface FakeOptions {
   readonly dedicatedWorkerRequests?: boolean;
   /** Terminate the dedicated worker after its requests and emit a stale event. */
   readonly terminateDedicatedWorker?: boolean;
+  /**
+   * Announce a starting dedicated worker's script request on the page
+   * session and finish it on the worker session with encodedDataLength -1,
+   * as Chromium does when handing the request to the flattened session.
+   */
+  readonly workerStartsDuringCapture?: boolean;
   readonly binaryWebSocketEvent?: boolean;
   /** Emit an allowed WebSocket creation without any frames in the capture window. */
   readonly webSocketWithoutFrames?: boolean;

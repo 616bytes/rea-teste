@@ -109,3 +109,30 @@ it("preserves worker attribution across redirect continuations and responses", (
     encoded_data_length: 14,
   });
 });
+
+it("keeps another session's completion off a request it did not start", () => {
+  const state = events();
+  state.ingest({
+    method: "Network.requestWillBeSent",
+    params: {
+      requestId: "worker-script",
+      request: { url: `${origin}/dedicated-worker.js`, method: "GET" },
+      initiator: { type: "script" },
+      timestamp: 1,
+    },
+  });
+  // Chromium hands a starting worker's script request to the flattened
+  // worker session and finishes it there with no usable encoded length.
+  state.ingest(
+    {
+      method: "Network.loadingFinished",
+      params: { requestId: "worker-script", encodedDataLength: -1 },
+    },
+    { worker_target_id: "worker-target-1" },
+  );
+
+  expect(state.network.get("worker-script")?.encoded_data_length).toBe(null);
+  expect(state.completeness.snapshot().unavailable_sections).not.toContain(
+    "network_requests",
+  );
+});

@@ -11,7 +11,11 @@ import type {
 } from "./CdpCaptureEventTypes.js";
 import * as handlers from "./CdpCaptureEventHandlers.js";
 import { isJsonMediaType } from "./CdpCaptureEventHelpers.js";
-import { cdpStringValue, recordValue } from "./CdpCaptureValues.js";
+import {
+  cdpStringValue,
+  recordValue,
+  type UnknownRecord,
+} from "./CdpCaptureValues.js";
 
 export interface ResponseBodyCandidate {
   readonly requestId: string;
@@ -157,7 +161,8 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
         handlers.handleResponseReceived(this, params);
         break;
       case "Network.loadingFinished":
-        handlers.handleLoadingFinished(this, params);
+        if (this.#requestStartedBySource(params, source))
+          handlers.handleLoadingFinished(this, params);
         break;
       case "Runtime.consoleAPICalled":
         handlers.handleConsoleAPICalled(this, params);
@@ -250,5 +255,25 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     );
     if (this.malformedRedirectRequestIds.has(candidate.requestId)) return;
     bodyShapes.ingestResponseBodyShape(this, candidate.requestId, value);
+  }
+
+  /**
+   * A request's completion belongs to the session that announced it.
+   * Chromium can hand a starting worker's script request from the page
+   * session to the flattened worker session and finish it there with
+   * encodedDataLength -1; applying that completion would mark the request's
+   * section unavailable as malformed protocol data.
+   */
+  #requestStartedBySource(
+    params: UnknownRecord,
+    source: CdpNetworkEventSource | undefined,
+  ): boolean {
+    const requestId = cdpStringValue(params.requestId);
+    const current =
+      requestId === undefined ? undefined : this.network.get(requestId);
+    return (
+      current === undefined ||
+      current.worker_target_id === (source?.worker_target_id ?? null)
+    );
   }
 }

@@ -5,9 +5,19 @@ import type { FakeCdpCommand, FakeOptions } from "./fakeCdpBrowserTypes.js";
 /** Flattened session and target identity of the fake dedicated worker. */
 export const DEDICATED_WORKER_SESSION_ID = "worker-session-1";
 export const DEDICATED_WORKER_TARGET_ID = "worker-attached-1";
+/** Request the page session announces before the worker session finishes it. */
+export const WORKER_SCRIPT_REQUEST_ID = "worker-script-request";
 const ROGUE_WORKER_SESSION_ID = "rogue-worker-session";
 /** Session the fake assigns to the attached page target. */
 const PAGE_SESSION_ID = "session-1";
+
+const dedicatedWorkerTargetInfo = (port: number) => ({
+  targetId: DEDICATED_WORKER_TARGET_ID,
+  type: "worker",
+  title: "Dedicated worker",
+  url: `http://127.0.0.1:${String(port)}/dedicated-worker.js`,
+  attached: true,
+});
 
 export const emitEvents = (
   socket: WebSocket,
@@ -30,6 +40,10 @@ const emitWorkerSessionEvents = (
   port: number,
   options: FakeOptions,
 ): void => {
+  if (options.workerStartsDuringCapture === true) {
+    emitWorkerStartupHandoff(socket, command, port);
+    return;
+  }
   if (options.dedicatedWorkerRequests !== true) return;
   if (
     command.method === "Target.setAutoAttach" &&
@@ -37,13 +51,7 @@ const emitWorkerSessionEvents = (
   ) {
     event(socket, "Target.attachedToTarget", command.sessionId, {
       sessionId: DEDICATED_WORKER_SESSION_ID,
-      targetInfo: {
-        targetId: DEDICATED_WORKER_TARGET_ID,
-        type: "worker",
-        title: "Dedicated worker",
-        url: `http://127.0.0.1:${String(port)}/dedicated-worker.js`,
-        attached: true,
-      },
+      targetInfo: dedicatedWorkerTargetInfo(port),
       waitingForDebugger: false,
     });
     return;
@@ -96,6 +104,54 @@ const emitWorkerSessionEvents = (
       initiator: { type: "other" },
     });
   }
+};
+
+/**
+ * Chromium can announce a starting dedicated worker's script request on the
+ * page session and finish that same request on the flattened worker session
+ * with encodedDataLength -1 once the worker owns the fetch.
+ */
+const emitWorkerStartupHandoff = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  port: number,
+): void => {
+  if (
+    command.method === "Network.enable" &&
+    command.sessionId === PAGE_SESSION_ID
+  ) {
+    event(socket, "Network.requestWillBeSent", PAGE_SESSION_ID, {
+      requestId: WORKER_SCRIPT_REQUEST_ID,
+      type: "Script",
+      request: {
+        url: `http://127.0.0.1:${String(port)}/dedicated-worker.js`,
+        method: "GET",
+      },
+      initiator: { type: "other" },
+      timestamp: 8,
+    });
+    return;
+  }
+  if (
+    command.method === "Target.setAutoAttach" &&
+    command.params.autoAttach === true
+  ) {
+    event(socket, "Target.attachedToTarget", command.sessionId, {
+      sessionId: DEDICATED_WORKER_SESSION_ID,
+      targetInfo: dedicatedWorkerTargetInfo(port),
+      waitingForDebugger: false,
+    });
+    return;
+  }
+  if (
+    command.method === "Network.enable" &&
+    command.sessionId === DEDICATED_WORKER_SESSION_ID
+  )
+    event(socket, "Network.loadingFinished", DEDICATED_WORKER_SESSION_ID, {
+      requestId: WORKER_SCRIPT_REQUEST_ID,
+      encodedDataLength: -1,
+      timestamp: 9,
+    });
 };
 
 const webMcpToolAnnotations = {

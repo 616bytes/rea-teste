@@ -12,6 +12,25 @@ const WORKER_FILTER = [
   { exclude: true },
 ] as const;
 
+/** An admitted worker session and the signal its detach fires. */
+interface AdmittedWorkerSession {
+  readonly targetId: string;
+  readonly detach: AbortController;
+}
+
+/**
+ * Bind one command to the capture's cancellation and a worker session's
+ * detach signal, so commands to an exited worker settle immediately instead
+ * of waiting out a transport deadline Chromium will never answer.
+ */
+export const workerCommandSignal = (
+  capture: AbortSignal | undefined,
+  workerDetach: AbortSignal,
+): AbortSignal =>
+  capture === undefined
+    ? workerDetach
+    : AbortSignal.any([capture, workerDetach]);
+
 /**
  * Multiplexes Network events from dedicated worker sessions that Chromium
  * flattens onto the page connection. Attaching a session never pauses or
@@ -23,7 +42,7 @@ export class CdpPageCaptureWorkerSessions {
   readonly #context: CaptureContext;
   readonly #limitations: string[];
   readonly #completeness: CdpCaptureCompleteness;
-  readonly #workerTargets = new Map<string, string>();
+  readonly #workerTargets = new Map<string, AdmittedWorkerSession>();
   readonly #pendingEnables = new Set<Promise<void>>();
   #failure: { readonly cause: unknown } | undefined;
 
@@ -67,17 +86,25 @@ export class CdpPageCaptureWorkerSessions {
 
   /** Worker attribution for events observed on one admitted worker session. */
   sourceFor(sessionId: string | undefined): CdpNetworkEventSource | undefined {
-    const workerTargetId =
+    const worker =
       sessionId === undefined ? undefined : this.#workerTargets.get(sessionId);
-    return workerTargetId === undefined
+    return worker === undefined
       ? undefined
-      : { worker_target_id: workerTargetId };
+      : { worker_target_id: worker.targetId };
   }
 
-  /** Session that currently observes the identified worker, if still attached. */
-  sessionFor(workerTargetId: string): string | undefined {
-    for (const [sessionId, targetId] of this.#workerTargets)
-      if (targetId === workerTargetId) return sessionId;
+  /**
+   * Session and detach signal that currently observe the identified worker,
+   * if that worker is still attached.
+   */
+  admittedWorker(
+    workerTargetId: string,
+  ):
+    | { readonly sessionId: string; readonly detachSignal: AbortSignal }
+    | undefined {
+    for (const [sessionId, worker] of this.#workerTargets)
+      if (worker.targetId === workerTargetId)
+        return { sessionId, detachSignal: worker.detach.signal };
     return undefined;
   }
 
@@ -94,32 +121,56 @@ export class CdpPageCaptureWorkerSessions {
 
   /**
    * Stop admitting workers and release the sessions this capture attached.
-   * Best effort per command: the owning page-session detach and transport
+   * One short deadline bounds the whole sequence when the browser keeps its
+   * socket open but stops replying, as `cleanupCdpTargetCommands` bounds the
+   * page session's cleanup; the owning page-session detach and transport
    * close remain the definitive release boundary.
    */
   async release(): Promise<void> {
     await this.settle().catch(() => undefined);
-    for (const sessionId of [...this.#workerTargets.keys()]) {
+    const cleanup = new AbortController();
+    const domainSignal =
+      this.#context.signal === undefined
+        ? cleanup.signal
+        : AbortSignal.any([cleanup.signal, this.#context.signal]);
+    const timeout = setTimeout(() => cleanup.abort(), 1_000);
+    timeout.unref();
+    try {
+      if (this.#context.signal?.aborted !== true)
+        for (const sessionId of [...this.#workerTargets.keys()]) {
+          if (domainSignal.aborted) break;
+          await sendBestEffort(
+            this.#context.connection,
+            "Network.disable",
+            {},
+            sessionId,
+            domainSignal,
+          );
+        }
+      // Cancellation skips optional worker shutdown but still releases the
+      // attached sessions using the independent, bounded cleanup signal.
+      for (const sessionId of [...this.#workerTargets.keys()]) {
+        if (cleanup.signal.aborted) break;
+        await sendBestEffort(
+          this.#context.connection,
+          "Target.detachFromTarget",
+          { sessionId },
+          undefined,
+          cleanup.signal,
+        );
+      }
+      this.#workerTargets.clear();
       await sendBestEffort(
         this.#context.connection,
-        "Network.disable",
-        {},
-        sessionId,
+        "Target.setAutoAttach",
+        { autoAttach: false, filter: WORKER_FILTER },
+        this.#context.sessionId,
+        cleanup.signal,
       );
-      await sendBestEffort(
-        this.#context.connection,
-        "Target.detachFromTarget",
-        { sessionId },
-        undefined,
-      );
+    } finally {
+      clearTimeout(timeout);
+      cleanup.abort();
     }
-    this.#workerTargets.clear();
-    await sendBestEffort(
-      this.#context.connection,
-      "Target.setAutoAttach",
-      { autoAttach: false, filter: WORKER_FILTER },
-      this.#context.sessionId,
-    );
   }
 
   #admitWorkerSession(params: unknown): void {
@@ -140,8 +191,12 @@ export class CdpPageCaptureWorkerSessions {
       return;
     }
     if (this.#workerTargets.has(workerSessionId)) return;
-    this.#workerTargets.set(workerSessionId, workerTargetId);
-    const enabling = this.#enableWorkerNetwork(workerSessionId);
+    const worker: AdmittedWorkerSession = {
+      targetId: workerTargetId,
+      detach: new AbortController(),
+    };
+    this.#workerTargets.set(workerSessionId, worker);
+    const enabling = this.#enableWorkerNetwork(workerSessionId, worker);
     this.#pendingEnables.add(enabling);
     void enabling.then(
       () => this.#pendingEnables.delete(enabling),
@@ -149,21 +204,26 @@ export class CdpPageCaptureWorkerSessions {
     );
   }
 
-  async #enableWorkerNetwork(workerSessionId: string): Promise<void> {
+  async #enableWorkerNetwork(
+    workerSessionId: string,
+    worker: AdmittedWorkerSession,
+  ): Promise<void> {
     try {
       await this.#context.connection.send(
         "Network.enable",
         {},
         workerSessionId,
-        this.#context.signal,
+        workerCommandSignal(this.#context.signal, worker.detach.signal),
       );
     } catch (cause: unknown) {
       if (
-        cause instanceof CdpCommandRejection &&
-        cause.code === -32_001 &&
-        cause.reportedMessage === "Session with given id not found."
+        worker.detach.signal.aborted ||
+        (cause instanceof CdpCommandRejection &&
+          cause.code === -32_001 &&
+          cause.reportedMessage === "Session with given id not found.")
       ) {
-        // The worker terminated between attach and enable; nothing to observe.
+        // The worker exited around the enable; nothing of it remains
+        // observable, so keep the page capture intact.
         this.#workerTargets.delete(workerSessionId);
         return;
       }
@@ -173,7 +233,13 @@ export class CdpPageCaptureWorkerSessions {
 
   #releaseWorkerSession(params: unknown): void {
     const sessionId = cdpStringValue(recordValue(params)?.sessionId);
-    if (sessionId !== undefined) this.#workerTargets.delete(sessionId);
+    if (sessionId === undefined) return;
+    const worker = this.#workerTargets.get(sessionId);
+    if (worker === undefined) return;
+    this.#workerTargets.delete(sessionId);
+    // Chromium leaves commands sent to a detached flat session unanswered;
+    // aborting settles them now rather than at the transport deadline.
+    worker.detach.abort();
   }
 }
 
@@ -182,11 +248,12 @@ const sendBestEffort = async (
   method: string,
   params: Readonly<Record<string, unknown>>,
   sessionId: string | undefined,
+  signal: AbortSignal,
 ): Promise<void> => {
   try {
-    await connection.send(method, params, sessionId);
+    await connection.send(method, params, sessionId, signal);
   } catch {
-    // Best-effort release; the page-session detach and socket close own the
-    // definitive boundary.
+    // Best-effort release under the shared cleanup deadline; the
+    // page-session detach and socket close own the definitive boundary.
   }
 };

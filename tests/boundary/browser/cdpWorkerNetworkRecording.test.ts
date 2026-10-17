@@ -1,16 +1,19 @@
 import { expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import {
   DEDICATED_WORKER_SESSION_ID,
   DEDICATED_WORKER_TARGET_ID,
+  WORKER_SCRIPT_REQUEST_ID,
   startFakeCdpBrowser,
 } from "../../fixtures/fakeCdpBrowser.js";
+import type { FakeCdpCommand } from "../../fixtures/fakeCdpBrowserTypes.js";
 
-const inspect = async (
-  browser: Awaited<ReturnType<typeof startFakeCdpBrowser>>,
-) =>
+type FakeBrowser = Awaited<ReturnType<typeof startFakeCdpBrowser>>;
+
+const inspect = async (browser: FakeBrowser) =>
   await new CdpBrowserProvider().inspectPage(
     inspectWebPageInputSchema.parse({
       cdp_endpoint: browser.endpoint,
@@ -19,6 +22,25 @@ const inspect = async (
       observation_ms: 20,
     }),
   );
+
+const waitForCommand = async (
+  browser: FakeBrowser,
+  matches: (command: FakeCdpCommand) => boolean,
+): Promise<void> => {
+  while (!browser.commands.some(matches))
+    await new Promise((resolve) => setTimeout(resolve, 5));
+};
+
+const detachDedicatedWorker = (browser: FakeBrowser): void => {
+  browser.emitEvent({
+    method: "Target.detachedFromTarget",
+    sessionId: "session-1",
+    params: {
+      sessionId: DEDICATED_WORKER_SESSION_ID,
+      targetId: DEDICATED_WORKER_TARGET_ID,
+    },
+  });
+};
 
 it("records dedicated worker requests from their flattened CDP session", async () => {
   const browser = await startFakeCdpBrowser({
@@ -178,6 +200,216 @@ it("retains worker requests after their worker terminates mid-capture", async ()
           sessionId === DEDICATED_WORKER_SESSION_ID,
       ),
     ).toBe(false);
+  } finally {
+    await browser.close();
+  }
+});
+
+it("preserves the inspection when a worker exits while its enable is pending", async () => {
+  const browser = await startFakeCdpBrowser({
+    dedicatedWorkerRequests: true,
+    hangOnCommand: (command) =>
+      command.method === "Network.enable" &&
+      command.sessionId === DEDICATED_WORKER_SESSION_ID,
+  });
+  try {
+    const pending = inspect(browser);
+    await waitForCommand(
+      browser,
+      (command) =>
+        command.method === "Network.enable" &&
+        command.sessionId === DEDICATED_WORKER_SESSION_ID,
+    );
+    detachDedicatedWorker(browser);
+    const result = await pending;
+    if (!result.ok) throw result.error;
+    expect(
+      result.value.network.requests.some(
+        ({ request_id }) => request_id === "worker-request-1",
+      ),
+    ).toBe(false);
+    expect(
+      result.value.network.requests.some(
+        ({ request_id }) => request_id === "request-1",
+      ),
+    ).toBe(true);
+  } finally {
+    await browser.close();
+  }
+});
+
+it("reports the worker body unavailable when the worker exits during the read", async () => {
+  const browser = await startFakeCdpBrowser({
+    dedicatedWorkerRequests: true,
+    hangOnCommand: (command) =>
+      command.method === "Network.getResponseBody" &&
+      command.sessionId === DEDICATED_WORKER_SESSION_ID,
+  });
+  try {
+    const pending = new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 20,
+        include_json_body_shapes: true,
+      }),
+    );
+    await waitForCommand(
+      browser,
+      (command) =>
+        command.method === "Network.getResponseBody" &&
+        command.sessionId === DEDICATED_WORKER_SESSION_ID,
+    );
+    detachDedicatedWorker(browser);
+    const result = await pending;
+    if (!result.ok) throw result.error;
+    const workerRequest = result.value.network.requests.find(
+      ({ request_id }) => request_id === "worker-request-1",
+    );
+    expect(workerRequest).toMatchObject({
+      body_shapes: { status: "unavailable" },
+    });
+    expect(result.value.limitations).toContainEqual(
+      expect.stringContaining("the issuing worker session detached"),
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+it("bounds worker session cleanup when the browser stops replying", async () => {
+  const browser = await startFakeCdpBrowser({
+    dedicatedWorkerRequests: true,
+    hangOnCommand: (command) =>
+      (command.method === "Network.disable" &&
+        command.sessionId === DEDICATED_WORKER_SESSION_ID) ||
+      (command.method === "Target.detachFromTarget" &&
+        command.params.sessionId === DEDICATED_WORKER_SESSION_ID) ||
+      (command.method === "Target.setAutoAttach" &&
+        command.params.autoAttach === false),
+  });
+  try {
+    const startedAt = Date.now();
+    const result = await inspect(browser);
+    const elapsedMs = Date.now() - startedAt;
+    if (!result.ok) throw result.error;
+    expect(
+      result.value.network.requests.find(
+        ({ request_id }) => request_id === "worker-request-1",
+      ),
+    ).toMatchObject({ worker_target_id: DEDICATED_WORKER_TARGET_ID });
+    expect(elapsedMs).toBeLessThan(10_000);
+  } finally {
+    await browser.close();
+  }
+});
+
+it("does not wait on worker cleanup after cancellation", async () => {
+  const browser = await startFakeCdpBrowser({
+    dedicatedWorkerRequests: true,
+    hangOnCommand: (command) =>
+      (command.method === "Network.disable" &&
+        command.sessionId === DEDICATED_WORKER_SESSION_ID) ||
+      (command.method === "Target.detachFromTarget" &&
+        command.params.sessionId === DEDICATED_WORKER_SESSION_ID) ||
+      (command.method === "Target.setAutoAttach" &&
+        command.params.autoAttach === false),
+  });
+  const cancel = new AbortController();
+  try {
+    const pending = new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 20,
+      }),
+      { signal: cancel.signal },
+    );
+    await waitForCommand(
+      browser,
+      (command) =>
+        command.method === "Network.enable" &&
+        command.sessionId === DEDICATED_WORKER_SESSION_ID,
+    );
+    const startedAt = Date.now();
+    cancel.abort();
+    const result = await pending;
+    const elapsedMs = Date.now() - startedAt;
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(elapsedMs).toBeLessThan(10_000);
+  } finally {
+    await browser.close();
+  }
+});
+
+it("fails the inspection when a worker admitted during later reads fails to enable", async () => {
+  const browser = await startFakeCdpBrowser({
+    commandEvents: (command, origin) =>
+      command.method === "Target.getTargets"
+        ? [
+            {
+              method: "Target.attachedToTarget",
+              sessionId: "session-1",
+              params: {
+                sessionId: "late-worker-session",
+                targetInfo: {
+                  targetId: "late-worker-attached-1",
+                  type: "worker",
+                  title: "Late dedicated worker",
+                  url: `${origin}/late-worker.js`,
+                  attached: true,
+                },
+                waitingForDebugger: false,
+              },
+            },
+          ]
+        : undefined,
+    commandError: (command) =>
+      command.method === "Network.enable" &&
+      command.sessionId === "late-worker-session"
+        ? { code: -32_000, message: "Worker network state unavailable" }
+        : undefined,
+  });
+  try {
+    const result = await inspect(browser);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      command: "Network.enable",
+      code: -32_000,
+    });
+  } finally {
+    await browser.close();
+  }
+});
+
+it("keeps a worker's startup script request intact when its completion moves to the worker session", async () => {
+  const browser = await startFakeCdpBrowser({
+    workerStartsDuringCapture: true,
+  });
+  try {
+    const result = await inspect(browser);
+    if (!result.ok) throw result.error;
+    const scriptRequest = result.value.network.requests.find(
+      ({ request_id }) => request_id === WORKER_SCRIPT_REQUEST_ID,
+    );
+    expect(scriptRequest).toMatchObject({
+      worker_target_id: null,
+      encoded_data_length: null,
+    });
+    expect(result.value.completeness.unavailable_sections).not.toContain(
+      "network_requests",
+    );
+    expect(result.value.completeness.excluded).not.toContainEqual(
+      expect.objectContaining({
+        section: "network_requests",
+        reason: "invalid_protocol_value",
+      }),
+    );
   } finally {
     await browser.close();
   }

@@ -27,7 +27,10 @@ import {
 } from "./CdpCaptureValues.js";
 import { captureScripts } from "./CdpPageCaptureScripts.js";
 import { captureWorkers } from "./CdpPageCaptureWorkers.js";
-import { CdpPageCaptureWorkerSessions } from "./CdpPageCaptureWorkerSessions.js";
+import {
+  CdpPageCaptureWorkerSessions,
+  workerCommandSignal,
+} from "./CdpPageCaptureWorkerSessions.js";
 import type { WebSourceMapRequest } from "./WebSourceMapFetcher.js";
 
 export interface CaptureContext {
@@ -189,6 +192,11 @@ const captureAuthorizedPage = async (
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   if (state.events.navigationDuringCapture || completedUrl !== attachedUrl)
     throw new BrowserObservationError("inspect_web_page", "target_changed");
+  // The worker listener stays active through the reads above, so workers
+  // admitted after the observation window settle again here; a late enable
+  // failure surfaces with its own cause instead of vanishing into the
+  // best-effort release.
+  await state.workerSessions.settle();
   // Body IDs were enumerated before asynchronous CDP reads. Events remain
   // enabled through the final capture, so account for eligible responses that
   // arrived while those reads were pending.
@@ -222,11 +230,13 @@ const captureJsonResponseBodies = async (
       state.events.responseBodyUnavailable(candidate);
       continue;
     }
-    // Worker requests exist only in the issuing worker's Network domain.
+    // Worker requests exist only in the issuing worker's Network domain, and
+    // a worker exit must settle the read promptly instead of waiting out the
+    // transport deadline Chromium leaves unanswered.
     const workerSession =
       current.worker_target_id === null
         ? undefined
-        : state.workerSessions.sessionFor(current.worker_target_id);
+        : state.workerSessions.admittedWorker(current.worker_target_id);
     if (current.worker_target_id !== null && workerSession === undefined) {
       state.events.responseBodyUnavailable(candidate);
       state.limitations.push(
@@ -239,17 +249,31 @@ const captureJsonResponseBodies = async (
       result = await optionalCdpCommand(
         workerSession === undefined
           ? state.context
-          : { ...state.context, sessionId: workerSession },
+          : {
+              ...state.context,
+              sessionId: workerSession.sessionId,
+              signal: workerCommandSignal(
+                state.context.signal,
+                workerSession.detachSignal,
+              ),
+            },
         "Network.getResponseBody",
         { requestId: candidate.requestId },
         state.limitations,
       );
     } catch (cause: unknown) {
+      if (workerSession?.detachSignal.aborted === true) {
+        state.events.responseBodyUnavailable(candidate);
+        state.limitations.push(
+          `Response body unavailable for request ${candidate.requestId}: the issuing worker session detached before the body was read.`,
+        );
+        continue;
+      }
       if (
         !(cause instanceof CdpCommandRejection) ||
         cause.command !== "Network.getResponseBody" ||
         cause.reportedMessage === null ||
-        !rejectedResponseBodyRead(cause.code, workerSession)
+        !rejectedResponseBodyRead(cause.code, workerSession?.sessionId)
       )
         throw cause;
       state.events.responseBodyUnavailable(candidate);

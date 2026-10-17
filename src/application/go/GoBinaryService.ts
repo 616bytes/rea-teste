@@ -8,8 +8,8 @@ import {
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { BINARY_ARCHITECTURES } from "../../domain/binaryTargetTypes.js";
 import {
+  goArchitectureSubject,
   goBinarySchema,
   inspectGoBinaryInputSchema,
 } from "../../domain/go/goBinary.js";
@@ -18,18 +18,6 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 const OPERATION = "inspect_go_binary";
-const architectureForSubject = (architecture: string) => {
-  switch (architecture) {
-    case "386":
-      return "x86";
-    case "amd64":
-      return "x86_64";
-    default:
-      return BINARY_ARCHITECTURES.find(
-        (supported) => supported === architecture,
-      );
-  }
-};
 
 /** Shared exact input validation and artifact-bound Evidence for CLI and MCP. */
 export class GoBinaryService {
@@ -74,7 +62,7 @@ export class GoBinaryService {
         ),
       );
     const value = report.data;
-    const architecture = architectureForSubject(value.architecture);
+    const architecture = goArchitectureSubject(value.architecture);
     return completeProviderEvidence(
       createEvidence(
         {

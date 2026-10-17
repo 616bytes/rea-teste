@@ -34,6 +34,7 @@ import {
 import {
   assertScenarioCapture,
   browserScenario,
+  runScenarioComparisonCli,
   runScenarioCli,
   scenarioProfiles,
   verifyScenarioFailureEvidence,
@@ -311,6 +312,75 @@ try {
     endpoint,
     target,
   );
+  process.stderr.write("Browser verifier: demo portfolio comparison\n");
+  const demoCaptures = [];
+  for (const variant of ["baseline", "changed"]) {
+    demoCaptures.push(
+      await runScenarioCli({
+        browser: { mode: "launch", executable_path: executable },
+        start_url: { url: `${site.origin}/portfolio-demo?variant=${variant}` },
+        actions: [
+          {
+            step_id: "export",
+            action: "click",
+            locator: { kind: "css", selector: "#export" },
+          },
+          {
+            step_id: "result-ready",
+            action: "wait_for",
+            locator: {
+              kind: "css",
+              selector: "#result[data-state='ready']",
+            },
+            state: "visible",
+          },
+        ],
+        capture: { at_end: ["dom", "accessibility", "url"] },
+      }),
+    );
+    const capture = demoCaptures.at(-1).normalized_result;
+    if (
+      capture.steps.length !== 3 ||
+      capture.steps.some(({ status }) => status !== "completed")
+    )
+      throw new Error("Demo scenario did not complete every declared step");
+    const final = capture.steps.at(-1);
+    if (
+      final === undefined ||
+      ["dom", "accessibility", "url"].some(
+        (artifact) => final.artifacts[artifact]?.state !== "captured",
+      )
+    )
+      throw new Error("Demo scenario did not capture every requested artifact");
+    const dom = final.artifacts.dom;
+    const observedResult =
+      dom?.state === "captured"
+        ? dom.value.text.match(
+            /<output\b[^>]*\bid=["']result["'][^>]*>([^<]*)<\/output>/iu,
+          )?.[1]
+        : undefined;
+    const expectedResult =
+      variant === "changed" ? "Exported 3 notes" : "Exported 2 notes";
+    if (observedResult !== expectedResult)
+      throw new Error(
+        `Demo ${variant} captured output was ${JSON.stringify(observedResult)}, expected ${JSON.stringify(expectedResult)}`,
+      );
+  }
+  const demoComparison = await runScenarioComparisonCli(...demoCaptures);
+  const demoComparisonResult = demoComparison.normalized_result;
+  if (
+    demoComparisonResult?.overall_status !== "changed" ||
+    demoComparisonResult.alignment.status !== "aligned" ||
+    !demoComparisonResult.steps.some((step) =>
+      step.artifact_diffs.some(
+        (artifact) =>
+          artifact.artifact === "dom" && artifact.status === "changed",
+      ),
+    )
+  )
+    throw new Error(
+      `Real browser captures did not establish the deliberate result change: ${JSON.stringify(demoComparison)}`,
+    );
   const launchedScenario = await createBrowserScenarioProvider(
     process.env,
   ).captureScenario(
@@ -413,6 +483,24 @@ try {
     scenarioEnvironment,
     scenarioStorage,
     scenarioServiceWorkers,
+    demoPortfolioComparison: {
+      mocked: false,
+      baseline: "Exported 2 notes",
+      changed: "Exported 3 notes",
+      alignment: demoComparisonResult.alignment.status,
+      overall_status: demoComparisonResult.overall_status,
+      changed_dom_artifacts: demoComparisonResult.steps.reduce(
+        (count, step) =>
+          count +
+          step.artifact_diffs.filter(
+            (artifact) =>
+              artifact.artifact === "dom" && artifact.status === "changed",
+          ).length,
+        0,
+      ),
+      cleanup: "provider-owned profiles terminated; comparison inputs removed",
+      cli: true,
+    },
     verified: true,
   };
 } catch (cause) {

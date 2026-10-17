@@ -734,6 +734,7 @@ cliTest(
       ["empty.dex", new Uint8Array(0)],
       ["one.dex", new Uint8Array([0x50])],
       ["three.dex", new Uint8Array([0xca, 0xfe, 0xba])],
+      ["cde.dex", new TextEncoder().encode("cde")],
       ["decoy.bin", text],
     ];
     for (const [name, bytes] of notDex) {
@@ -750,6 +751,7 @@ cliTest(
     const truncated = await refuse(prefix);
     expect(truncated).toMatchObject({ code: "invalid_request" });
     expect(truncated.text).toContain("DEX ended before");
+    expect(truncated.text).toContain("112 bytes needed there, 6 present");
 
     const apk = join(root, "short.apk");
     await writeFile(

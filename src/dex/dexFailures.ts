@@ -95,7 +95,7 @@ export const mapDexParseError = (
     case "truncated":
       return inputError(
         "invalid_format",
-        `${path}: DEX ended before a structure completed at byte ${String(error.offset)}.${context}`,
+        `${path}: DEX ended before a structure completed at byte ${String(error.offset)} (${String(error.need)} bytes needed there, ${String(error.have)} present).${context}`,
       );
     case "budget-exceeded":
       return inputError(

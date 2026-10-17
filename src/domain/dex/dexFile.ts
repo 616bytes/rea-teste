@@ -275,12 +275,14 @@ const readVersion = (bytes: Uint8Array): string =>
  * byte agrees can be reported as a truncated DEX.
  */
 const checkMagic = (bytes: Uint8Array): DexFileParseError | null => {
-  // Compact dex ("cdex") shares the first three bytes; distinguish before magic.
+  // Compact dex opens with the 4-byte magic "cdex" (ART compact_dex_file.cc);
+  // name it only when all four bytes are present.
   if (
-    bytes.length >= 3 &&
+    bytes.length >= 4 &&
     bytes[0] === 0x63 &&
     bytes[1] === 0x64 &&
-    bytes[2] === 0x65
+    bytes[2] === 0x65 &&
+    bytes[3] === 0x78
   )
     return { kind: "compact-dex", offset: 0 };
   if (bytes.length === 0) return { kind: "bad-magic", offset: 0 };

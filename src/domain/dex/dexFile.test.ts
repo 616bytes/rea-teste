@@ -154,11 +154,21 @@ describe("parseDexFile framing", () => {
 
   it("refuses compact dex (cdex) with its own reason", () => {
     const bytes = minimalDex();
-    bytes.set([0x63, 0x64, 0x65, 0x0a], 0); // "cde\n"
+    bytes.set([0x63, 0x64, 0x65, 0x78], 0); // "cdex"
     const result = parseDexFile(bytes);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("compact-dex");
+  });
+
+  it("names compact dex only from its full 4-byte magic", () => {
+    for (const text of ["cde", "cde\n", "cdeX is not compact dex"]) {
+      const result = parseDexFile(new TextEncoder().encode(text));
+      expect(result.ok ? null : result.error).toEqual({
+        kind: "bad-magic",
+        offset: 0,
+      });
+    }
   });
 
   it("refuses a reverse-endian file distinctly from an unsupported version", () => {

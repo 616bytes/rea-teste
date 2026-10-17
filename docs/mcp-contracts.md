@@ -393,14 +393,30 @@ concrete version, selection source, and complete analysis profile through
 choices return typed selection details. A selected provider is never replaced
 automatically after a runtime failure.
 
-Every successful target transition allocates `binary_session.analysis_run.run_id`
-before any provider startup. `process_lineage` is `not_observed` until a dynamic
-provider starts, then becomes `snapshots` with every started provider's identity
+Each provider client receives `binary_session.analysis_run.run_id` before any
+provider startup, including clients whose startup fails. `process_lineage` is
+`not_observed` until a dynamic provider starts, then becomes `snapshots` with
+every started provider's identity
 and retained ownership observation. Each observation records `observed_at` and
 is `unavailable` with a reason when ownership could not be revalidated, or
 `verified` with launcher PID, parent PID, process group, and descendants observed
 at that bounded check. These are historical snapshots, not live process
 inventories, and do not claim that no short-lived descendant existed.
+
+`binary_session.cleanup_pending` reports whether the session retains a provider
+client, session file resource, or provider-candidate resource whose cleanup
+has not succeeded. It can be true with
+`open: false`; target retirement does not establish resource release. For a
+retained provider client, health, activity, and lineage remain available under
+its original `analysis_run.run_id` where the provider supplies them.
+Successful provider cleanup clears the retained run;
+a replacement client receives a fresh run ID. Follow the cleanup error's
+reported resources and recovery action before reopening; a missing health
+observation does not establish an idle provider.
+File cleanup can also remain after snapshot publication or after profile
+inspection fails or is cancelled before a provider client exists. If no client
+remains, no provider run or health observation is available; follow the cleanup
+error's reported resources.
 
 ## Progress and cancellation
 
@@ -419,6 +435,9 @@ Provider calls receive the request cancellation signal. Artifact traversal,
 hashing, version comparisons, Hopper requests, and process capture
 check the same signal. Cancellation is distinct from timeout. A cleanup failure
 uses `cleanup_incomplete` and lists only the owned resource kinds that remain.
+Once those owners confirm cleanup, composed failures recover their original
+typed primary outcome and recovery guidance. Historical composition diagnostics
+remain in `details.cleanup_history`, separate from the primary diagnostics.
 An atomic Evidence bundle or snapshot write can publish its complete output
 before staging cleanup fails. In that case, `details.published: true`,
 `details.published_path`, and `details.bytes` retain the publication receipt.
@@ -428,11 +447,24 @@ Native call tracing and process capture retain available observations in
 `details.partial_observation` on failure, including when cleanup succeeds.
 The observation reports its partial coverage; cleanup details describe host
 state separately from the execution failure.
+For these tools, cancellation observed during result finalization or owned
+cleanup also returns typed cancellation with the available observations.
+A normal target exit does not establish request completion. Incomplete cleanup
+still takes precedence and retains its resource diagnostics.
 A process capture that fails during a finalization interval keeps every signal
 attempt and its delivery result in `details.partial_observation`, with
 `elapsed_ms` and `exit_code` null when no exit was observed.
 Derived comparisons and reconstruction verification yield before computation
 and before publication, so cancellation cannot race with successful Evidence.
+
+Bundle recovery requires a recorded Evidence ID. Some provider errors carry
+typed raw observations in `details.partial_observation` instead of Evidence.
+Those raw observations are not recorded in the Evidence bundle. If the SDK
+suppresses the error reply after client cancellation, Evidence tools cannot
+recover them. An empty bundle does not prove that no partial work or side
+effect occurred; output receipts and cleanup observations remain distinct.
+The broader retention decision is tracked in
+[#4276](https://github.com/morluto/rea/issues/4276).
 
 `analyze_javascript_application` also yields between reconstruction phases and
 during graph/result sealing, cross-graph binding checks, Evidence JSON validation,
@@ -492,12 +524,40 @@ analysis runtime. These failures are reported at the operation that needs
 them. A configured provider or an endpoint alone does not establish that a
 target is supported.
 
+Composite Hopper regex searches report failures against the accepted
+`search_strings` or `search_procedures` operation. The underlying inventory
+method and request ID remain in `details.diagnostics.provider_request`, with
+the bridge error code and diagnostic type when available. Reattribution
+preserves the failure class, captured output, and live cleanup ownership.
+
 Evidence bundles, snapshots, and extraction use the paths and output behavior
 declared by their tools. Artifact extraction materializes the selected regular
 files into a fresh REA-chosen temporary directory and reports its path.
 
 `analyze_javascript_application` reads the supplied local directory or ASAR path
-and returns its result and Evidence inline.
+and returns its result and Evidence inline. Its owned analysis worker and private
+temporary source files are declared as `launchesProcess` and `writesFilesystem`,
+including for a single JavaScript source. This internal analysis does not execute
+the supplied application code.
+
+## Static Ghidra bytes and source mappings
+
+`read_bytes` returns initialized analysis memory, including loader fixups, rather
+than live process memory. Check `returned_bytes` and `complete` before decoding:
+reads stop at unmapped or uninitialized bytes. Missing bytes are unknown; do not
+pad an incomplete read with zeros and treat the result as an observation.
+
+`list_segments` reports memory-block initialization and address-space facts.
+`address_to_file_offset` maps one address through the provider's source-byte
+mapping. A successful start-address mapping does not establish that an entire
+range is contiguous in the original file, or that its bytes equal analysis
+memory after loader fixups. Uninitialized, missing, and ambiguous mappings fail
+explicitly; preserve the reported failure rather than guessing an offset.
+
+For constructor-populated pointer or resource slots, a static zero is not proof
+of a later null value. Inspect the slot's `xrefs` and the writer's assembly or
+pseudocode, retaining uncertainty about execution order and runtime values.
+These operations inspect static evidence and do not execute the target.
 
 ## Ghidra first-query deadlines and recovery
 
@@ -690,6 +750,20 @@ advertised schema to reject an incomplete group. Tests validate the schemas
 after SDK conversion and check advertised validation and actual calls.
 Individual model APIs can impose additional nesting limits; complete producer
 captures can exceed ten structural levels.
+
+Boolean literal constraints in input schemas are relaxed only in this
+advertisement. For example, a boolean `const` is presented as `type: boolean`;
+an affected `not` is omitted, conditional predicates and their branches are
+omitted together, pure boolean-literal `oneOf` branches collapse to a boolean,
+and other affected `oneOf` branches are presented as `anyOf` to retain branch
+guidance without making overlapping widened branches reject inputs.
+This can make the advertised schema accept inputs the canonical contract
+rejects. The MCP handler still validates every call with the canonical
+contract. The Gemini CLI verifier checks the outgoing
+`parametersJsonSchema` and canonical contract examples against that declaration
+using a loopback model fixture; it does not establish live Google API or
+OpenCode client behavior. Set `REA_VERIFY_GEMINI_SCHEMA_PROFILE=compact` to
+verify the compact advertisement through the same client boundary.
 
 ### Compact input schema profile
 

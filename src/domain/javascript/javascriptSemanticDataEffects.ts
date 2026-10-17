@@ -8,21 +8,25 @@ import type {
 } from "./javascriptSemanticIr.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
+  readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  recordSemanticValueLimit,
   resolveSemanticBindingState,
   semanticResolutionBlocked,
+  semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   builtinDataEffectMethod as builtinMethod,
   dataEffectArgumentBindingId as argumentBindingId,
   dataEffectLiteralString as literalString,
   dataEffectMemberCallee as memberCallee,
-  dataEffectPrimitive as primitiveValue,
   isSemanticProcessObject as isProcessObject,
   outerDataEffectBinding as outerAssignedBinding,
   assignedSemanticResultBindings,
@@ -31,6 +35,8 @@ import {
   type DataEffectTraversalContext as TraversalContext,
 } from "./javascriptSemanticDataEffectHelpers.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
+import { semanticPrimitiveSet } from "./javascriptSemanticPrimitives.js";
+import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
 
 interface DataEffectAnalysis {
   readonly configurationOperations: readonly JavaScriptSemanticConfigurationOperation[];
@@ -175,6 +181,11 @@ const collectDefaults = (
     const source = unwrapJavaScriptExpression(node.left).node;
     const candidate = configurationsByNode.get(source);
     if (candidate === undefined) return;
+    const literal = readExactJavaScriptLiteral(node.right);
+    const value: JavaScriptSemanticValue = literal.found
+      ? semanticPrimitiveSet([literal.value])
+      : { status: "unknown", reason: "Default is not an exact primitive." };
+    recordSemanticValueLimit(context.state, value);
     output.push({
       configId: `config:default:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
       kind: "default",
@@ -183,8 +194,11 @@ const collectDefaults = (
       resultBindingId: outerAssignedBinding(node, context),
       key: candidate.operation.key,
       sourceConfigId: candidate.operation.configId,
-      value: primitiveValue(node.right),
-      resolution: primitiveValue(node.right) === null ? "partial" : "complete",
+      value: value.status === "literal" ? value.value : null,
+      ...(value.status === "unknown" && value.resourceLimit !== undefined
+        ? { valueResourceLimit: value.resourceLimit }
+        : {}),
+      resolution: value.status === "literal" ? "complete" : "partial",
     });
   });
   return output;
@@ -230,6 +244,21 @@ const collectRequests = (
   });
   return output;
 };
+
+/**
+ * Any other write (assignment, update, loop or destructuring target) can
+ * replace the response before this read. A sole write that can be skipped or
+ * runs after the read leaves an incoming value possible.
+ */
+const soleWriteReachesRead = (
+  binding: JavaScriptSemanticBindingState | undefined,
+  read: t.Node,
+  context: TraversalContext,
+): boolean =>
+  binding?.initializers.length === 1 &&
+  (semanticStableInitializer(binding, context.state) !== undefined ||
+    semanticBindingAtRead(binding, read, context.state.parentsByNode)
+      .hasDefiniteInitializer);
 
 const collectResponseConsumers = (
   program: t.Program,
@@ -279,9 +308,7 @@ const collectResponseConsumers = (
       )
         ? linked[0]
         : undefined;
-    // Any other write (assignment, update, loop or destructuring target) can
-    // replace the response before this read, so its endpoint stays unknown.
-    const soleWrite = binding?.initializers.length === 1;
+    const soleWrite = soleWriteReachesRead(binding, member.object, context);
     output.push({
       requestId: `response:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
       kind: "response-consumer",

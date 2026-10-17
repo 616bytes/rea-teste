@@ -1,6 +1,6 @@
 <div align="center" dir="rtl">
 
-[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · [Ελληνικά](README_el.md) · **کوردی**
+[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · **کوردی**
 
 # REA: ئەندازیاریی پێچەوانە بۆ هەر شتێک
 
@@ -177,7 +177,7 @@ REA پێویستی بە Node.js 22.x (>=22.19)، 24.x (>=24.11) یان 26+ لە�
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-فۆرماتە ڕەسەنەکان و پشتگیریی سیستەمی خانەخوێ بەپێی دابینکەر جیاوازن. سەیری [ڕێکخستنی Hopper و Ghidra](../../docs/installation.md#hopper)، [ڕێبەری IDA](../../docs/ida-provider.md) (لەگەڵ پردێکی MCP ـی ڕەسەنی ئارەزوومەندانە) و [پشتگیریی تاقیکاریی Ghidra لە Windows](../../docs/windows-ghidra-p0.md) بکە. Ghidra هەروەها پشتگیریی [شیکاریی DOS ـی ١٦ بیتی](../../docs/ghidra-dos.md) دەکات. بۆ باینەرییە گەورەکان، ماوەی دەستپێکردنی دابینکەر بە `REA_GHIDRA_STARTUP_TIMEOUT_MS` یان `REA_HOPPER_STARTUP_TIMEOUT_MS` زیاد بکە. بۆ هەڵبژاردنی دابینکەر، سەیری [ڕێبەری CLI](../../docs/cli.md#choose-a-provider) بکە. بۆ ئەو تایبەتمەندییانەی دوای دوایین وەشانی npm زیاد کراون، [بەردەستبوونی وەشانەکان](../../docs/installation.md#released-package-and-main) بپشکنە.
+فۆرماتە ڕەسەنەکان و پشتگیریی سیستەمی خانەخوێ بەپێی دابینکەر جیاوازن. سەیری [ڕێکخستنی Hopper و Ghidra](../../docs/installation.md#hopper)، [ڕێبەری IDA](../../docs/ida-provider.md) (لەگەڵ پردێکی MCP ـی ڕەسەنی ئارەزوومەندانە)، [ڕێبەری دیکۆمپایلەری Kuna](../../docs/kuna-provider.md) و [پشتگیریی تاقیکاریی Ghidra لە Windows](../../docs/windows-ghidra-p0.md) بکە. Ghidra هەروەها پشتگیریی [شیکاریی DOS ـی ١٦ بیتی](../../docs/ghidra-dos.md) دەکات. بۆ باینەرییە گەورەکان، ماوەی دەستپێکردنی دابینکەر بە `REA_GHIDRA_STARTUP_TIMEOUT_MS` یان `REA_HOPPER_STARTUP_TIMEOUT_MS` زیاد بکە. بۆ هەڵبژاردنی دابینکەر، سەیری [ڕێبەری CLI](../../docs/cli.md#choose-a-provider) بکە. بۆ ئەو تایبەتمەندییانەی دوای دوایین وەشانی npm زیاد کراون، [بەردەستبوونی وەشانەکان](../../docs/installation.md#released-package-and-main) بپشکنە.
 
 ## نموونە کردارییەکان
 
@@ -288,7 +288,7 @@ npx rea-agents@latest setup
 
 ## مێژووی ئەستێرەکان
 
-🎉 **٢٥٠٬٠٠٠ ئەستێرەی GitHub — سوپاس!**
+🎉 **٣٠٠٬٠٠٠ ئەستێرەی GitHub — سوپاس!**
 
 سوپاس بۆ هەموو ئەوانەی REA بەکاردەهێنن، هەڵە ڕاپۆرت دەکەن، داوای تایبەتمەندی دەکەن، build ـەکان تاقی دەکەنەوە و بە چاکسازی بەشداری دەکەن.
 

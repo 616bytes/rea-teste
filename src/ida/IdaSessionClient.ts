@@ -39,6 +39,7 @@ import {
   type IdaRawObservation,
 } from "./IdaOperationRunner.js";
 import {
+  IDA_DATABASE_TARGET_LIMITATION,
   IDA_LIMITATIONS,
   IDA_OPERATIONS,
   IDA_PROVIDER_IDENTITY,
@@ -344,7 +345,7 @@ export class IdaSessionClient implements AnalysisClient {
             observations: jsonValueSchema.parse(runner.raw),
             ...this.#healthEvidence(),
           },
-          limitations: [...IDA_LIMITATIONS, ...runner.limitations],
+          limitations: [...this.#limitations(), ...runner.limitations],
           ...(runner.relationshipCoverage === undefined
             ? {}
             : { relationshipCoverage: runner.relationshipCoverage }),
@@ -396,6 +397,12 @@ export class IdaSessionClient implements AnalysisClient {
     );
   }
 
+  #limitations(): readonly string[] {
+    return this.target.kind === "database"
+      ? [...IDA_LIMITATIONS, IDA_DATABASE_TARGET_LIMITATION]
+      : IDA_LIMITATIONS;
+  }
+
   #health(metadata: JsonValue) {
     return ok(
       createAnalysisExecution(
@@ -409,7 +416,7 @@ export class IdaSessionClient implements AnalysisClient {
         },
         IDA_PROVIDER_IDENTITY,
         {
-          limitations: IDA_LIMITATIONS,
+          limitations: this.#limitations(),
           ...(this.profile === undefined
             ? {}
             : { analysisProfile: this.profile }),
@@ -529,7 +536,7 @@ export class IdaSessionClient implements AnalysisClient {
           confidence: "observed",
           authority: "external-service",
           limitations: [
-            ...IDA_LIMITATIONS,
+            ...this.#limitations(),
             ...runner.limitations,
             "The requested IDA operation failed after these completed upstream replies; the partial Evidence does not establish a complete result.",
             "Replies are bound to the selected target only by the pre-operation identity check unless post_operation_identity_check is verified.",
@@ -840,10 +847,16 @@ export class IdaSessionClient implements AnalysisClient {
       const metadata = modernHealthSchema.parse(raw);
       this.#metadata = raw;
       onObserved?.(raw);
+      // A database records the input it was created from and is rewritten by
+      // its worker, so the private copy is bound by the opened database path;
+      // copyInput already verified the bytes it admitted.
       if (
-        !sameIdaHostPath(metadata.input_path, this.#workspace.inputPath) ||
-        (await idaFileDigest(this.#workspace.inputPath)) !==
-          this.#workspace.inputSha256
+        this.target.kind === "database"
+          ? metadata.idb_path === null ||
+            !sameIdaHostPath(metadata.idb_path, this.#workspace.inputPath)
+          : !sameIdaHostPath(metadata.input_path, this.#workspace.inputPath) ||
+            (await idaFileDigest(this.#workspace.inputPath)) !==
+              this.#workspace.inputSha256
       )
         throw new AnalysisProtocolError(
           "IDA headless input identity changed after target admission.",

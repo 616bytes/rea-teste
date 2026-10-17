@@ -73,6 +73,7 @@ def health():
     return {
         "status": "ok",
         "input_path": ida_nalt.get_input_file_path(),
+        "input_sha256": (ida_nalt.retrieve_input_file_sha256() or b"").hex() or None,
         "idb_path": ida_loader.get_path(ida_loader.PATH_TYPE_IDB) or None,
         "imagebase": _hex(ida_nalt.get_imagebase()),
         "auto_analysis_ready": bool(ida_auto.auto_is_ok()),

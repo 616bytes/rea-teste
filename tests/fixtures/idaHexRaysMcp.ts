@@ -1,3 +1,4 @@
+import { appendFile } from "node:fs/promises";
 import { z } from "zod";
 import type { BinaryTarget } from "../../src/domain/binaryTargetTypes.js";
 import { jsonValueSchema, type JsonValue } from "../../src/domain/jsonValue.js";
@@ -38,6 +39,12 @@ export class RecordingHexRaysIdaMcp implements IdaMcpConnection {
   loseOpenReply: { leased: boolean } | undefined;
   /** Reject close_database; `keepLease` leaves the worker registered. */
   rejectClose: { keepLease: boolean } | undefined;
+  /**
+   * Input path an opened database records. When set, an open is treated as an
+   * existing database: health reports this input and the opened path as the
+   * database, and releasing the lease repacks the opened file like idalib.
+   */
+  recordedInputPath: string | undefined;
   /** Engine output reported beside every execute_python result. */
   engineOutput = { stdout: "", stderr: "" };
   closes = 0;
@@ -72,7 +79,9 @@ export class RecordingHexRaysIdaMcp implements IdaMcpConnection {
         const instance_id = `lease${(this.#nextId += 1)}`;
         if (this.loseOpenReply?.leased !== false)
           this.leases.set(instance_id, { path, backend: this.openBackend });
-        this.reads.inputPath = path;
+        this.reads.inputPath = this.recordedInputPath ?? path;
+        this.reads.idbPath =
+          this.recordedInputPath === undefined ? undefined : path;
         if (this.loseOpenReply !== undefined)
           throw new Error("Fixture transport lost the open reply");
         return {
@@ -108,10 +117,13 @@ export class RecordingHexRaysIdaMcp implements IdaMcpConnection {
             `IDA MCP tool failed: unknown database instance: ${id}`,
           );
         }
-        if (!this.leases.delete(id))
+        const lease = this.leases.get(id);
+        if (lease === undefined || !this.leases.delete(id))
           throw new IdaToolRejection(
             `IDA MCP tool failed: unknown database instance: ${id}`,
           );
+        if (this.recordedInputPath !== undefined)
+          await appendFile(lease.path, "repacked");
         return { closed: true };
       }
       case "execute_python": {

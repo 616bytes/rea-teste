@@ -125,12 +125,34 @@ export class IdaProvider implements AnalysisProviderCandidate {
         } lane. Select a supported Ghidra profile instead.`,
         diagnostics,
       };
+    if (target.kind === "database") {
+      const config = this.#configuration();
+      if (target.databaseEngine !== "ida")
+        return {
+          status: "unsupported",
+          code: "target_format_unsupported",
+          reason:
+            "IDA opens only IDA .idb/.i64 databases. Select the original input binary or an IDA database.",
+          diagnostics,
+        };
+      // Only a Hex-Rays lease opens a private database copy; attached GUIs and
+      // database supervisors have no verified route for an existing database.
+      if (!config.ok || config.value.protocol !== "hexrays")
+        return {
+          status: "unsupported",
+          code: "target_kind_unsupported",
+          reason:
+            'Opening an existing IDA database requires the "hexrays" headless registration. Select the original input binary with this registration.',
+          diagnostics,
+        };
+      return { status: "supported", code: null, reason: null, diagnostics };
+    }
     if (target.kind !== "executable")
       return {
         status: "unsupported",
         code: "target_kind_unsupported",
         reason:
-          "IDA MCP integration admits executable inputs, not analysis databases. Select the original input binary.",
+          "IDA MCP integration admits executable inputs and IDA databases. Select the original input binary.",
         diagnostics,
       };
     if (target.format === "raw-binary")

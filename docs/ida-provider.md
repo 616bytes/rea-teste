@@ -42,7 +42,7 @@ rea function /absolute/path/to/program main --json
 rea decompile /absolute/path/to/program main --json
 ```
 
-Open the **original input binary** in REA, not an `.idb` or `.i64` database. Its SHA-256 must match IDA's recorded input hash. REA checks the attached identity and image base around each analysis request. A mismatch or target switch fails with recovery guidance. The original input must remain readable by REA; WSL can use its mounted alias while the GUI runs on Windows.
+In attached mode, open the **original input binary** in REA, not an `.idb` or `.i64` database. Its SHA-256 must match IDA's recorded input hash. REA checks the attached identity and image base around each analysis request. A mismatch or target switch fails with recovery guidance. The original input must remain readable by REA; WSL can use its mounted alias while the GUI runs on Windows.
 
 REA's close operation releases its MCP connection or proxy. It never saves or closes the existing GUI database. External edits remain visible because results are live and are not replayed from snapshots. These checks do not lock the GUI or prove that the database is unpatched.
 
@@ -122,6 +122,12 @@ The `hexrays` protocol drives the [Hex-Rays IDA MCP](https://github.com/HexRaysS
 The profile is headless and stdio only. Hex-Rays database leases belong to the MCP server process, so REA's own stdio child is what makes a lease provably REA's. Attached and HTTP Hex-Rays registrations are rejected, and analyzing a database already open in the IDA GUI is not supported. A registration that omits `protocol` but reaches a Hex-Rays server fails at startup with `advertised_tools` and a recovery naming the `hexrays` registration. Use the command from your working Hex-Rays installation, such as its Claude Code plugin's `uv run ... ida-mcp stdio` form.
 
 REA copies and verifies the input in a private workspace as for the database supervisor, then calls `open_database` on that copy with `set_current: false`. Hex-Rays assigns the instance id; REA binds the session only when the reply reports an `idalib` backend and `list_databases` shows that id leased for the private input. A GUI database is refused, and the open is treated as unverified.
+
+### Start from an existing IDA database
+
+The `hexrays` profile also opens an existing `.idb` or `.i64`, so analysis starts from its saved names, types and comments instead of a fresh auto-analysis. Pass the database itself to `open_binary` with `provider_id: "ida"`. REA identifies an IDA database by its `IDA1`/`IDA2` signature, not its suffix, and copies the whole file into the private workspace before opening the copy. The copy matters: idalib repacks a database when its last lease is released, even without a save, so opening the selected file directly would rewrite it. The selected database is only read.
+
+The session is bound to the copy's opened database path (`idb_path`), because a database reports the input it was created from as `input_path`; health also reports the `input_sha256` IDA recorded for that input. Results reflect the database's saved content: unsaved changes held by another IDA session, including an unpacked `.id0`/`.id1` set beside it, are not included. Evidence subjects identify the database file, not the input binary. Attached and database-supervisor registrations reject database targets, and Hopper rejects IDA databases.
 
 Hex-Rays MCP exposes database reads only through `execute_python`. REA therefore sends one fixed, read-only query module, [`bridge/ida/hexrays_queries.py`](../bridge/ida/hexrays_queries.py), followed by a single `_rea_query(name, arguments_json)` call. The module answers the same database-supervisor reads REA already validates: health, function inventory and lookup, strings, paged pseudocode and assembly, callees, a depth-zero call graph, xrefs to an address, and a minimal segment survey. Caller-supplied text only ever reaches the module as JSON data, never as Python source, and REA forwards no other Python. Each observation records `execute_python` as the upstream tool, plus the query name, its arguments, and the module's SHA-256 instead of its body. The health reads behind each operation's identity checks are kept the same way, as `health_observations` beside the parsed metadata. Call scans skip data items inside functions.
 

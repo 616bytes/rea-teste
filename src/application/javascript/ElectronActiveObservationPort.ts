@@ -20,4 +20,5 @@ export interface ElectronActiveObservationPort {
     input: CanonicalElectronActiveObservationInput,
     options?: ExecutionOptions,
   ): Promise<Result<ElectronActiveObservationResult, AnalysisError>>;
+  close?(): Promise<void>;
 }

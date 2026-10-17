@@ -117,12 +117,17 @@ const registerElectronActiveCommand = (
               await import("../application/javascript/ElectronActiveObservationService.js");
             const { createElectronScenarioProvider } =
               await import("../composition/electronScenario.js");
-            const result = await captureElectronScenario(
-              createElectronScenarioProvider(environment),
-              parsed.data,
-              { signal },
-            );
-            return result.ok ? result.value : cliError(result.error);
+            const provider = createElectronScenarioProvider(environment);
+            try {
+              const result = await captureElectronScenario(
+                provider,
+                parsed.data,
+                { signal },
+              );
+              return result.ok ? result.value : cliError(result.error);
+            } finally {
+              await provider.close?.();
+            }
           },
         ),
       ),

@@ -103,7 +103,7 @@ const isBundledAppEntry = async (
   application: string,
   isDarwinOrWin: boolean,
   signal?: AbortSignal,
-  resourceScope?: ArtifactResourceScope,
+  resourceScope: ArtifactResourceScope = new ArtifactResourceScope(),
   fileSystem?: StableArtifactFileSystem,
 ): Promise<boolean> => {
   const normRoot = normalize(root);
@@ -170,7 +170,7 @@ export const executableContainsApplication = async (
   executable: string,
   application: string,
   signal?: AbortSignal,
-  resourceScope?: ArtifactResourceScope,
+  resourceScope: ArtifactResourceScope = new ArtifactResourceScope(),
   fileSystem?: StableArtifactFileSystem,
 ): Promise<boolean> => {
   if (executable === application) return true;
@@ -493,6 +493,16 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
             ),
           ],
         });
+    }
+    try {
+      await this.#resources.retryCleanup();
+    } catch (cleanupCause: unknown) {
+      if (
+        cleanupCause instanceof ArtifactFileCleanupFailure ||
+        cleanupCause instanceof ArtifactReaderFailure
+      ) {
+        return err(providerError(cleanupCause));
+      }
     }
     // Cleanup failures returned above keep precedence; a completed capture
     // observed under late cancellation is retained as partial Evidence.

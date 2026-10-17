@@ -435,6 +435,9 @@ Provider calls receive the request cancellation signal. Artifact traversal,
 hashing, version comparisons, Hopper requests, and process capture
 check the same signal. Cancellation is distinct from timeout. A cleanup failure
 uses `cleanup_incomplete` and lists only the owned resource kinds that remain.
+Once those owners confirm cleanup, composed failures recover their original
+typed primary outcome and recovery guidance. Historical composition diagnostics
+remain in `details.cleanup_history`, separate from the primary diagnostics.
 An atomic Evidence bundle or snapshot write can publish its complete output
 before staging cleanup fails. In that case, `details.published: true`,
 `details.published_path`, and `details.bytes` retain the publication receipt.
@@ -520,6 +523,12 @@ Screen Recording, or native mounting; provider tools require their selected
 analysis runtime. These failures are reported at the operation that needs
 them. A configured provider or an endpoint alone does not establish that a
 target is supported.
+
+Composite Hopper regex searches report failures against the accepted
+`search_strings` or `search_procedures` operation. The underlying inventory
+method and request ID remain in `details.diagnostics.provider_request`, with
+the bridge error code and diagnostic type when available. Reattribution
+preserves the failure class, captured output, and live cleanup ownership.
 
 Evidence bundles, snapshots, and extraction use the paths and output behavior
 declared by their tools. Artifact extraction materializes the selected regular

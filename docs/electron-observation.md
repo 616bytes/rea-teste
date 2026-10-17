@@ -114,6 +114,11 @@ window, remains pending until cancelled. After cancellation, the final state
 read has 5 seconds before REA keeps the initial snapshot instead; the
 cancellation keeps the caller's reason and records that expiry in its
 diagnostics.
+Blocked synchronous shell APIs keep their return contracts:
+`showItemInFolder` returns `undefined` and `writeShortcutLink` returns `false`.
+Their `shell-attempt` events record the blocked phase and argument shapes;
+neither result means the requested host operation occurred. The existing
+`openExternal` and `openPath` blocks continue to reject their promises.
 CLI SIGINT/SIGTERM requests cancellation and awaits owned-process cleanup.
 Window IDs, URLs, and cached titles come from one main-process Electron snapshot,
 so a crashed renderer does not require a successful renderer-side title query.
@@ -129,12 +134,29 @@ Cleanup uncertainty does not authorize signaling unrelated processes.
 
 Main-process IPC recording keeps original-function removal for `on` and `once`
 registrations and records a fired `once` callback once. Native Node.js owns
-removal order and traversal, including listeners registered by removal observers;
+`once` registration, firing and callable dispatch as well as removal order and
+traversal, including listeners registered by removal observers;
 the hook translates only its own recording wrappers at the removal boundary.
 Wrapper metadata uses weak keys and does not retain removed registrations.
 Wrapper metadata operations, private collection methods and traversal constructors are captured
 before target startup; later replacement of their global bindings does not
 change listener registration or removal.
+
+Native runtimes differ in whether `once` consults callback `.call` or `.apply`.
+The hook observes actual callback entry without imposing another runtime's
+property reads or argument-list representation. Application methods selected by
+native dispatch keep their original receiver and argument-list object; opaque
+methods produce a `custom-call` or `custom-apply` observation gap when callback
+execution cannot be established.
+
+If native wrapper creation or registration-method lookup could expose private
+instrumentation through an application getter, setter or Proxy, registration
+stays native and unwrapped. The `once-metadata` observation gap identifies that
+unobserved registration attempt; it does not prove registration or delivery. The original callback,
+metadata writes and native method receivers are preserved, including when
+registration fails. Later registrations resume normal observation. Non-callable
+`call`/`apply` properties produce failed observation gaps when native dispatch reads
+them; callback entry is not fabricated.
 
 An `on` listener's application-defined `.apply` receives the original argument-list
 object unchanged. Borrowing the exposed method preserves its dynamic receiver.

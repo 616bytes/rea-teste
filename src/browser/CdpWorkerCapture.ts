@@ -711,6 +711,11 @@ export class CdpWorkerCapture {
           "invalid_protocol_value",
         );
       }
+      if (
+        clients === null &&
+        !this.#versionsByTarget.get(id)?.some((value) => value.clients !== null)
+      )
+        this.pageEvents.completeness.unavailable("workers");
       const lifecycle: Observation["lifecycle"][number] = {
         event: "version",
         observed_at: new Date().toISOString(),

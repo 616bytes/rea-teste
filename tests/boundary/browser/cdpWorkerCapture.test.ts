@@ -1834,6 +1834,10 @@ it.each([
           .filter((event) => event.event === "version")
           .map((event) => event.controls_page),
       ).toEqual([true, null]);
+    if (order === "before-unknown")
+      expect(result.value.completeness.unavailable_sections).not.toContain(
+        "workers",
+      );
     if (order === "before-revoked") {
       expect(observation?.ownership).toBe("service_worker_client");
       expect(
@@ -2167,10 +2171,30 @@ it.each([
   },
 );
 
-it.each(["page", "worker", "service", "inventory", "legacy", "none"] as const)(
+it.each([
+  "page",
+  "worker",
+  "service",
+  "clients",
+  "inventory",
+  "legacy",
+  "none",
+] as const)(
   "keeps script absence unknown after failed %s discovery",
   async (failed) => {
     const { provider, input } = await fixture({
+      commandEvents: (command) =>
+        failed === "clients" && command.method === "ServiceWorker.enable"
+          ? [
+              {
+                method: "ServiceWorker.workerVersionUpdated",
+                sessionId: "session-1",
+                params: {
+                  versions: [{ targetId: "service", status: "activated" }],
+                },
+              },
+            ]
+          : undefined,
       commandError: (c) =>
         (
           failed === "service"
@@ -2178,6 +2202,7 @@ it.each(["page", "worker", "service", "inventory", "legacy", "none"] as const)(
             : failed === "inventory"
               ? c.method === "Target.getTargets"
               : failed !== "none" &&
+                failed !== "clients" &&
                 failed !== "legacy" &&
                 c.method === "Target.setAutoAttach" &&
                 c.params.autoAttach === true &&

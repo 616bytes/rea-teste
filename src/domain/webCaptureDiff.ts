@@ -310,6 +310,11 @@ const redirectComparableFields = [
 type NetworkMetadataField =
   | (typeof networkResponseFields)[number]
   | (typeof redirectMetadataFields)[number];
+type NetworkMetadataValue = string | number | boolean | null;
+type NetworkMetadataCounts = Map<
+  string,
+  Map<NetworkMetadataField, Map<NetworkMetadataValue, number>>
+>;
 
 const networkResponseValue = (
   request: Pick<
@@ -335,41 +340,80 @@ const sharedNetworkMetadata = (
 ): {
   readonly fields: ReadonlyMap<string, ReadonlySet<NetworkMetadataField>>;
   readonly complete: boolean;
+  readonly differences: ReadonlySet<string>;
 } => {
   const shared = new Map<string, Set<NetworkMetadataField>>();
+  const counts: readonly [NetworkMetadataCounts, NetworkMetadataCounts] = [
+    new Map(),
+    new Map(),
+  ];
+  const owners = new Map<string, string>();
   let complete = true;
   const retainKnownFields = <Field extends NetworkMetadataField>(
+    observations: NetworkMetadataCounts,
     identity: string,
     value: (field: Field) => string | number | boolean | null,
     required: readonly Field[],
     comparable: readonly Field[] = required,
   ): void => {
     const fields = shared.get(identity) ?? new Set(comparable);
-    for (const field of comparable)
-      if (value(field) === null) {
+    const observed = observations.get(identity) ?? new Map();
+    for (const field of comparable) {
+      const fact = value(field);
+      const values = observed.get(field) ?? new Map();
+      values.set(fact, (values.get(fact) ?? 0) + 1);
+      observed.set(field, values);
+      if (fact === null) {
         fields.delete(field);
         if (required.includes(field)) complete = false;
       }
+    }
+    observations.set(identity, observed);
     shared.set(identity, fields);
   };
-  for (const inspection of [before, after])
+  for (const [inspection, observations] of [
+    [before, counts[0]],
+    [after, counts[1]],
+  ] as const)
     for (const request of inspection.network.requests) {
       const identity = networkIdentity(request);
+      owners.set(identity, identity);
       retainKnownFields(
+        observations,
         identity,
         (field) => networkResponseValue(request, field),
         requiredNetworkResponseFields,
         networkResponseFields,
       );
-      for (const [index, redirect] of (request.redirects ?? []).entries())
+      for (const [index, redirect] of (request.redirects ?? []).entries()) {
+        const redirectIdentity = redirectNetworkIdentity(identity, index);
+        owners.set(redirectIdentity, identity);
         retainKnownFields(
-          redirectNetworkIdentity(identity, index),
+          observations,
+          redirectIdentity,
           (field) => networkResponseValue(redirect, field),
           redirectMetadataFields,
           redirectComparableFields,
         );
+      }
     }
-  return { fields: shared, complete };
+  const differences = new Set<string>();
+  // Unknown values can match any known value, but cannot erase its observed
+  // multiplicity. Compare lower bounds in both directions without pairing
+  // repeated requests by their unstable IDs or order.
+  for (const [left, right] of [counts, [counts[1], counts[0]]] as const)
+    for (const [identity, fields] of left)
+      for (const [field, values] of fields) {
+        const peer = right.get(identity)?.get(field);
+        if (peer === undefined) continue;
+        for (const [value, count] of values)
+          if (
+            value !== null &&
+            count > (peer.get(value) ?? 0) + (peer.get(null) ?? 0)
+          )
+            differences.add(owners.get(identity)!);
+      }
+  return { fields: shared, complete, differences };
 };
 
 const redirectNetworkIdentity = (identity: string, index: number): string =>
@@ -499,6 +543,26 @@ const networkDimension = (
         ? requestsComplete
         : identity.startsWith("ws_") && webSocketInventoryComplete,
   );
+  if (requestsComplete) {
+    const changes = new Map(
+      compared.changes.map((change) => [change.identity, change]),
+    );
+    for (const identity of metadata.differences)
+      if (
+        !requestIdentities.ambiguousIdentities.has(identity) &&
+        !changes.has(identity)
+      )
+        changes.set(identity, { identity, change: "modified" });
+    if (changes.size > 0)
+      return {
+        status: "changed",
+        total_changes: changes.size,
+        changes: [...changes.values()].sort((a, b) =>
+          compareUnicodeCodePoints(a.identity, b.identity),
+        ),
+        reason: null,
+      };
+  }
   if (metadata.complete) return compared;
   const responseEvidenceReason =
     "HTTP response or redirect status, MIME type, byte count, or resource-type evidence is incomplete.";

@@ -89,6 +89,73 @@ it.each([
   },
 );
 
+describe("partial response metadata in repeated requests", () => {
+  it.each(["response", "redirect"] as const)(
+    "retains known %s values and counts across unknown peers",
+    (location) => {
+      for (const field of [
+        "service_worker",
+        "disk_cache",
+        "service_worker_response_source",
+      ] as const) {
+        const known =
+          field === "service_worker_response_source" ? "network" : false;
+        const other =
+          field === "service_worker_response_source" ? "cache-storage" : true;
+        const capture = (values: readonly (string | boolean | null)[]) => {
+          const result = redirectCapture("Document");
+          const template = result.network.requests[0]!;
+          result.network.requests = values.map((value, index) => {
+            const request = structuredClone(template);
+            request.request_id = `request-${String(index)}`;
+            const response =
+              location === "response" ? request : request.redirects![0]!;
+            response.response_source = {
+              service_worker: null,
+              disk_cache: null,
+              service_worker_response_source: null,
+              [field]: value,
+            };
+            return request;
+          });
+          return result;
+        };
+        for (const [left, right, changed] of [
+          [[null, known], [other, other], true],
+          [[null, known], [other, known], false],
+          [[known, known, null], [known, other, other], true],
+          [[known, known, null], [known, other, null], false],
+          [[null, known], [known, null], false],
+        ] as const) {
+          const before = capture(left);
+          const after = capture(right);
+          for (const [a, b] of [
+            [before, after],
+            [after, before],
+          ]) {
+            expect(compare(a!, b!)).toMatchObject({
+              status: changed ? "changed" : "unchanged",
+              total_changes: changed ? 1 : 0,
+            });
+          }
+          // Missing rows can contain the otherwise unmatched known value.
+          if (changed) {
+            before.completeness.unavailable_sections.push("network_requests");
+            expect(compare(before, after)).toMatchObject({
+              status: "unknown",
+              total_changes: 0,
+            });
+            expect(compare(after, before)).toMatchObject({
+              status: "unknown",
+              total_changes: 0,
+            });
+          }
+        }
+      }
+    },
+  );
+});
+
 describe("nullable redirect resource types", () => {
   it.each([true, false])(
     "retains uncertainty when a redirect type is omitted (reversed=%s)",

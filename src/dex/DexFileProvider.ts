@@ -56,6 +56,7 @@ import {
   mapDexParseError,
   mapDexWorkError,
 } from "./dexFailures.js";
+import { displayName, displayNote } from "./dexDisplayText.js";
 import { selectDexMembers } from "./dexMemberSelection.js";
 import { DEX_LIMITS, DEX_PROVIDER_IDENTITY } from "./DexFileRelease.js";
 
@@ -79,6 +80,44 @@ interface MemberSource {
   readonly label: string;
   /** What the archive reader observed about this member (e.g. its stored name). */
   readonly limitations?: readonly string[];
+}
+
+/**
+ * Carries the archive reader's notes on the members read into `limitations`,
+ * each shortened past its display bound and all within one byte budget; notes
+ * past the budget are counted, never silently dropped.
+ */
+class ReaderNotes {
+  #bytes = 0;
+  #omitted = 0;
+  readonly #omittedMembers = new Set<string>();
+
+  constructor(readonly limitations: string[]) {}
+
+  carry(label: string, notes: readonly string[]): void {
+    for (const raw of notes) {
+      const note = displayNote(raw);
+      if (this.limitations.includes(note)) continue;
+      const cost = Buffer.byteLength(note, "utf8");
+      if (this.#bytes + cost <= DEX_LIMITS.readerNotesBytes) {
+        this.#bytes += cost;
+        this.limitations.push(note);
+      } else {
+        this.#omitted += 1;
+        this.#omittedMembers.add(label);
+      }
+    }
+  }
+
+  /** The limitations so far, closed by the count of notes not carried. */
+  facts(): string[] {
+    return this.#omitted === 0
+      ? this.limitations
+      : [
+          ...this.limitations,
+          `${String(this.#omitted)} further archive-reader note(s) on ${String(this.#omittedMembers.size)} member(s) read were omitted to bound the output; inspect fewer members with entry to see them.`,
+        ];
+  }
 }
 
 /** Stated once, before the per-member counts of unread trailing bytes. */
@@ -291,7 +330,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
     const findings = await this.#analyse(
       selected.value.members.map(({ entry, member }) => ({
         entry,
-        label: `${path}!${entry}`,
+        label: `${path}!${displayName(entry)}`,
         limitations: member.limitations,
         load: () =>
           readArchiveMember(reader, member, DEX_LIMITS.inputBytes, signal),
@@ -331,14 +370,14 @@ export class DexFileProvider implements DexDebugMetadataPort {
     const summaries: DexSummaryMember[] = [];
     const found: { entry: string | null; detail: DexClassDetail }[] = [];
     const limitations: string[] = [...selectionFacts];
+    const notes = new ReaderNotes(limitations);
     for (const source of sources) {
       if (signal?.aborted) return err(dexCancelled(signal));
       const loaded = await source.load();
-      for (const note of source.limitations ?? [])
-        if (!limitations.includes(note)) limitations.push(note);
+      notes.carry(source.label, source.limitations ?? []);
       const parsed = parseDexFile(loaded);
       if (!parsed.ok)
-        return err(mapDexParseError(parsed.error, source.label, limitations));
+        return err(mapDexParseError(parsed.error, source.label, notes.facts()));
       // Analysis reads only the bytes the header frames; identity (SHA-256,
       // size) stays over the selected bytes.
       const buffer = parsed.value.framed;
@@ -364,7 +403,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
         const summary = await summarizeDex(parsed.value, buffer, work);
         if (!summary.ok)
           return err(
-            mapDexWorkError(summary.error, source.label, limitations, signal),
+            mapDexWorkError(summary.error, source.label, notes.facts(), signal),
           );
         summaries.push({
           entry: source.entry,
@@ -383,17 +422,18 @@ export class DexFileProvider implements DexDebugMetadataPort {
       );
       if (!detail.ok)
         return err(
-          mapDexWorkError(detail.error, source.label, limitations, signal),
+          mapDexWorkError(detail.error, source.label, notes.facts(), signal),
         );
       if (detail.value !== null)
         found.push({ entry: source.entry, detail: detail.value });
       // A second match is already ambiguous; reading further members is waste.
       if (found.length > 1) break;
     }
+    const facts = notes.facts();
     return ok(
       input.class_descriptor === undefined
-        ? { mode: "summary", members: summaries, limitations }
-        : { mode: "detail", found, limitations },
+        ? { mode: "summary", members: summaries, limitations: facts }
+        : { mode: "detail", found, limitations: facts },
     );
   }
 
@@ -468,8 +508,11 @@ export class DexFileProvider implements DexDebugMetadataPort {
     path: string,
     limitations: readonly string[],
   ): AnalysisResourceConstraintError | undefined {
+    // The Evidence envelope repeats `limitations` beside the result, so both
+    // copies are emitted and both are counted.
     if (
-      Buffer.byteLength(JSON.stringify(result), "utf8") <=
+      Buffer.byteLength(JSON.stringify(result), "utf8") +
+        Buffer.byteLength(JSON.stringify(result.limitations), "utf8") <=
       DEX_LIMITS.outputBytes
     )
       return undefined;

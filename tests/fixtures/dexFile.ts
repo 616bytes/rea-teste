@@ -166,10 +166,14 @@ const unicodePathField = (raw: string, unicode: string): Uint8Array => {
   return field;
 };
 
+/** External attributes of a member stored with a unix symbolic-link mode (0o120777). */
+export const SYMLINK_ATTRIBUTES = (0o120777 * 0x10000) >>> 0;
+
 /**
  * An in-memory APK/ZIP holding `members` under their exact stored names, in
- * order; `unicodePath` adds an Info-ZIP Unicode Path field naming the member
- * differently, and `externalFileAttributes` overrides its attributes.
+ * order, repeats included; `unicodePath` adds an Info-ZIP Unicode Path field
+ * naming the member differently, `externalFileAttributes` overrides its
+ * attributes (e.g. {@link SYMLINK_ATTRIBUTES}), and `password` encrypts it.
  */
 export const zipArchive = async (
   members: readonly {
@@ -177,6 +181,7 @@ export const zipArchive = async (
     readonly bytes: Uint8Array;
     readonly unicodePath?: string;
     readonly externalFileAttributes?: number;
+    readonly password?: string;
   }[],
 ): Promise<Uint8Array> => {
   // Unflagged stored names, as Info-ZIP writes beside a Unicode Path field.
@@ -186,8 +191,22 @@ export const zipArchive = async (
       ? { useUnicodeFileNames: false }
       : {},
   );
-  for (const member of members)
-    await writer.add(member.name, new Uint8ArrayReader(member.bytes), {
+  // zip.js refuses a repeated name, so a repeat is written under a unique
+  // placeholder of the same byte length and renamed in the output.
+  const seen = new Set<string>();
+  const renames: { readonly from: Buffer; readonly to: Buffer }[] = [];
+  for (const member of members) {
+    let written = member.name;
+    if (seen.has(member.name)) {
+      const to = Buffer.from(member.name, "utf8");
+      const tag = `~dup${String(renames.length)}~`;
+      if (tag.length > to.length)
+        throw new Error(`Name too short to repeat: ${member.name}`);
+      written = tag.padEnd(to.length, "~");
+      renames.push({ from: Buffer.from(written, "utf8"), to });
+    }
+    seen.add(member.name);
+    await writer.add(written, new Uint8ArrayReader(member.bytes), {
       ...(member.unicodePath === undefined
         ? {}
         : {
@@ -198,6 +217,17 @@ export const zipArchive = async (
       ...(member.externalFileAttributes === undefined
         ? {}
         : { externalFileAttributes: member.externalFileAttributes }),
+      ...(member.password === undefined ? {} : { password: member.password }),
     });
-  return writer.close();
+  }
+  const archive = Buffer.from(await writer.close());
+  // Each placeholder occurs in its local header and central-directory record.
+  for (const { from, to } of renames)
+    for (
+      let at = archive.indexOf(from);
+      at !== -1;
+      at = archive.indexOf(from, at + from.length)
+    )
+      to.copy(archive, at);
+  return new Uint8Array(archive);
 };

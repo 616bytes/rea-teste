@@ -22,6 +22,18 @@ export const DEX_LIMITS = {
    */
   maxNamedCanonicalMembers: 128,
   /**
+   * UTF-8 bytes of member names one note or refusal spells out; the rest are
+   * counted. A stored name can be ~64 KiB, so a count cap alone lets 128 names
+   * reach megabytes.
+   */
+  namedMembersBytes: 4 * 1024,
+  /** UTF-16 code units of one member name quoted in prose; longer is shortened, marked. */
+  nameDisplayChars: 160,
+  /** UTF-16 code units of one archive-reader note carried into `limitations`. */
+  noteDisplayChars: 1024,
+  /** UTF-8 bytes of archive-reader notes carried into `limitations`; further notes are counted. */
+  readerNotesBytes: 8 * 1024,
+  /**
    * Work units (debug opcodes, parameter-name reads, class_data entries walked)
    * allowed per member, per byte of that member. Each opcode, encoded_field and
    * encoded_method is at least one byte, class_data is walked twice, and a debug

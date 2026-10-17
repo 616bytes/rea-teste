@@ -5,7 +5,8 @@
  * does (a leading `./` is optional in `entry`, and the exactly stored
  * spelling wins when the archive holds several); the Info-ZIP Unicode Path
  * name is never consulted. Canonical members Android would not load are named
- * (never silently dropped) on the summary and on every selection refusal.
+ * (never silently dropped) on the summary and on every selection refusal,
+ * within a byte budget past which they are counted.
  */
 import type { ArtifactEntry } from "../artifacts/ArtifactReader.js";
 import type { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
@@ -22,6 +23,7 @@ import {
   multidexIndex,
   multidexName,
 } from "./dexEntry.js";
+import { displayName, NamedMembers } from "./dexDisplayText.js";
 import { DEX_LIMITS } from "./DexFileRelease.js";
 
 const OPERATION = "inspect_dex_debug_metadata";
@@ -42,18 +44,28 @@ export interface DexMemberSelection {
 interface ArchiveListing {
   /** Openable members: the requested name, or canonical names within the cap. */
   readonly candidates: readonly Candidate[];
-  /** Occurrences by the requested name, or by exact stored canonical name. */
+  /**
+   * Occurrences, symbolic-link members included, by the requested name or by
+   * exact stored canonical name.
+   */
   readonly occurrences: ReadonlyMap<string, number>;
-  /** Members stored exactly as the caller spelled `entry`. */
+  /** Members (symbolic links included) stored exactly as the caller spelled `entry`. */
   readonly exactOccurrences: number;
-  /** Stored spellings matching the requested name (bounded), and how many were not kept. */
-  readonly spellings: ReadonlySet<string>;
-  readonly unnamedSpellings: number;
+  /** Whether a member stored exactly as `entry` is a symbolic link. */
+  readonly exactSymlink: boolean;
+  /** Stored spellings matching the requested name, bounded for display. */
+  readonly spellings: NamedMembers;
   /** ZIP directory members (stored with a trailing `/`) matching the requested name. */
   readonly directories: number;
-  /** Canonical names by stored spelling (bounded), and how many were not kept. */
-  readonly canonical: ReadonlySet<string>;
-  readonly unnamedCanonical: number;
+  /** Symbolic-link members matching the requested name. */
+  readonly symlinks: number;
+  /**
+   * Exactly stored canonical names within the member cap held by
+   * symbolic-link members; only those inside the auto-loaded run matter.
+   */
+  readonly symlinkRoots: ReadonlySet<string>;
+  /** Canonical names by stored spelling, bounded for display. */
+  readonly canonical: NamedMembers;
   /**
    * Length of the contiguous run of exactly stored canonical names from
    * `classes.dex`: the members Android auto-loads, counted over the whole
@@ -85,6 +97,12 @@ const entryError = (message: string): AnalysisInputError =>
  * other spellings of the same name cannot crowd it out. Canonical names past
  * the cap, and the spellings of a requested name, are remembered by name
  * only, bounded.
+ *
+ * A member stored with a symbolic-link unix mode is never opened (the shared
+ * reader does not read link members), but it is counted where ART would see
+ * it: ART ignores the mode and loads its bytes, so it holds its place in the
+ * auto-loaded run and answers `entry`, and its debug metadata is unavailable,
+ * not absent.
  */
 const listArchive = async (
   reader: ZipArtifactReader,
@@ -95,11 +113,12 @@ const listArchive = async (
   const candidates: Candidate[] = [];
   const occurrences = new Map<string, number>();
   let exactOccurrences = 0;
-  const spellings = new Set<string>();
-  let unnamedSpellings = 0;
+  let exactSymlink = false;
+  const spellings = new NamedMembers(true);
   let directories = 0;
-  const canonical = new Set<string>();
-  let unnamedCanonical = 0;
+  let symlinks = 0;
+  const symlinkRoots = new Set<string>();
+  const canonical = new NamedMembers(false);
   // Load positions of exactly stored canonical names, one bit each (~36 KiB).
   const exactPositions = new Uint8Array(Math.ceil(MAX_CANONICAL_RECORDS / 8));
   // ART (libziparchive) finds members by their raw central-directory name and
@@ -110,11 +129,7 @@ const listArchive = async (
       return normalizeArchiveMemberPath(stored) === requested;
     const index = multidexIndex(normalizeArchiveMemberPath(stored));
     if (index === null) return false;
-    if (canonical.has(stored)) {
-      // A repeat of a named member costs nothing more to remember.
-    } else if (canonical.size < DEX_LIMITS.maxNamedCanonicalMembers)
-      canonical.add(stored);
-    else unnamedCanonical += 1;
+    canonical.add(stored);
     // Only an exactly stored canonical name is auto-loaded, so a member
     // stored as `./classes.dex` is not (it stays selectable).
     if (multidexIndex(stored) === null) return false;
@@ -132,22 +147,25 @@ const listArchive = async (
         directories += 1;
       return false;
     }
-    if (member.kind !== "file" || !wanted(stored)) return false;
+    const symlink = member.kind === "symlink";
+    if ((member.kind !== "file" && !symlink) || !wanted(stored)) return false;
     // Every occurrence is counted for the report; two are enough to keep.
     const key = requested ?? stored;
     const seen = (occurrences.get(key) ?? 0) + 1;
     occurrences.set(key, seen);
     let exact = false;
     if (requested !== undefined) {
-      if (spellings.has(stored)) {
-        // A repeated spelling is already named.
-      } else if (spellings.size < DEX_LIMITS.maxNamedCanonicalMembers)
-        spellings.add(stored);
-      else unnamedSpellings += 1;
+      spellings.add(stored);
       if (stored === entry) {
         exactOccurrences += 1;
+        exactSymlink ||= symlink;
         exact = exactOccurrences <= 2;
       }
+    }
+    if (symlink) {
+      if (requested === undefined) symlinkRoots.add(stored);
+      else symlinks += 1;
+      return false;
     }
     if (seen > 2 && !exact) return false;
     candidates.push({ entry: stored, member });
@@ -165,11 +183,12 @@ const listArchive = async (
     candidates,
     occurrences,
     exactOccurrences,
+    exactSymlink,
     spellings,
-    unnamedSpellings,
     directories,
+    symlinks,
+    symlinkRoots,
     canonical,
-    unnamedCanonical,
     autoLoaded,
   };
 };
@@ -188,7 +207,8 @@ const skippedMembersNote = (
   path: string,
   listing: ArchiveListing,
 ): string | undefined => {
-  const skipped = [...listing.canonical]
+  const { canonical } = listing;
+  const skipped = [...canonical.names]
     .filter((name) => !isAutoLoaded(name, listing))
     .sort(
       (a, b) =>
@@ -197,14 +217,14 @@ const skippedMembersNote = (
     );
   // Every auto-loaded position has an exactly stored entry; those not named
   // were counted among the unnamed ones.
-  const namedLoaded = listing.canonical.size - skipped.length;
+  const namedLoaded = canonical.names.size - skipped.length;
   const more = Math.max(
     0,
-    listing.unnamedCanonical - (listing.autoLoaded - namedLoaded),
+    canonical.unnamed - (listing.autoLoaded - namedLoaded),
   );
   if (skipped.length === 0 && more === 0) return undefined;
   const names = [
-    ...skipped,
+    ...skipped.map((name) => canonical.display(name)),
     ...(more === 0 ? [] : [`${String(more)} more canonical DEX member(s)`]),
   ].join(", ");
   return `${path} also holds ${names}, which Android does not auto-load: it loads classes.dex, classes2.dex, ... only while each is present under its exact stored name. Select ${skipped.length + more === 1 ? "it" : "one"} with entry.`;
@@ -238,6 +258,25 @@ const resolveAutoLoaded = (
         path,
         withSkipped(
           `${path} has encrypted root DEX member(s) (${encrypted.map((m) => m.entry).join(", ")}); their debug metadata is unavailable, not absent.`,
+        ),
+        {
+          remediationAction:
+            "Select a readable member with entry to inspect it alone.",
+        },
+      ),
+    );
+  // ART ignores the unix mode and loads a link member's bytes; truncating the
+  // run before it would report a shorter sequence than Android loads.
+  const linked = [...listing.symlinkRoots]
+    .filter((name) => isAutoLoaded(name, listing))
+    .sort((a, b) => (multidexIndex(a) ?? 0) - (multidexIndex(b) ?? 0));
+  if (linked.length > 0)
+    return err(
+      new AnalysisUnsupportedTargetError(
+        OPERATION,
+        path,
+        withSkipped(
+          `${path} has root DEX member(s) stored with a symbolic-link mode (${linked.join(", ")}), which Android loads but REA does not read; their debug metadata is unavailable, not absent.`,
         ),
         {
           remediationAction:
@@ -290,13 +329,22 @@ const resolveAutoLoaded = (
 };
 
 /** The stored spellings that answer a requested name, for a refusal. */
-const spellingsOf = (listing: ArchiveListing): string =>
+const spellingsOf = ({ spellings }: ArchiveListing): string =>
   [
-    ...[...listing.spellings].map((name) => JSON.stringify(name)),
-    ...(listing.unnamedSpellings === 0
+    ...[...spellings.names].map((name) => spellings.display(name)),
+    ...(spellings.unnamed === 0
       ? []
-      : [`${String(listing.unnamedSpellings)} more`]),
+      : [
+          `${String(spellings.unnamed)} more member(s) under spellings not named here`,
+        ]),
   ].join(", ");
+
+const symlinkRefusal = (path: string, entry: string): AnalysisError =>
+  new AnalysisUnsupportedTargetError(
+    OPERATION,
+    path,
+    `The selected entry ${displayName(entry, true)} is stored with a symbolic-link mode, which REA does not read; its debug metadata is unavailable, not absent.`,
+  );
 
 /**
  * The one member the caller selected with `entry`: the member stored exactly
@@ -309,37 +357,44 @@ const resolveRequested = (
   requested: string,
   listing: ArchiveListing,
 ): Result<DexMemberSelection, AnalysisError> => {
-  if (listing.candidates.length === 0)
-    return listing.directories > 0
-      ? err(
-          new AnalysisUnsupportedTargetError(
-            OPERATION,
-            path,
-            `The selected entry ${entry} is stored as a ZIP directory, which REA does not read as member bytes; its debug metadata is unavailable, not absent.`,
-          ),
-        )
-      : err(entryError(`No member ${requested} exists in ${path}.`));
   if (listing.exactOccurrences > 1)
     return err(
       entryError(
-        `${path} holds ${String(listing.exactOccurrences)} members stored as ${JSON.stringify(entry)}; the identity is ambiguous.`,
+        `${path} holds ${String(listing.exactOccurrences)} members stored as ${displayName(entry, true)}; the identity is ambiguous.`,
       ),
     );
+  if (listing.exactSymlink) return err(symlinkRefusal(path, entry));
   const exact = listing.candidates.filter((m) => m.entry === entry);
   const matches = exact.length === 1 ? exact : listing.candidates;
-  if (matches.length > 1)
+  if (matches.length + (exact.length === 1 ? 0 : listing.symlinks) > 1)
     return err(
       entryError(
-        `${path} holds ${String(listing.occurrences.get(requested) ?? 0)} members named ${requested} (stored as ${spellingsOf(listing)}); the identity is ambiguous. Select one by its exact stored name.`,
+        `${path} holds ${String(listing.occurrences.get(requested) ?? 0)} members named ${displayName(requested)} (stored as ${spellingsOf(listing)}); the identity is ambiguous. Select one by its exact stored name.`,
       ),
     );
-  const only = matches[0]!;
+  const only = matches[0];
+  if (only === undefined)
+    return listing.symlinks > 0
+      ? err(symlinkRefusal(path, entry))
+      : listing.directories > 0
+        ? err(
+            new AnalysisUnsupportedTargetError(
+              OPERATION,
+              path,
+              `The selected entry ${displayName(entry)} is stored as a ZIP directory, which REA does not read as member bytes; its debug metadata is unavailable, not absent.`,
+            ),
+          )
+        : err(
+            entryError(
+              `No member ${displayName(requested)} exists in ${path}.`,
+            ),
+          );
   if (only.member.encrypted)
     return err(
       new AnalysisUnsupportedTargetError(
         OPERATION,
         path,
-        `The selected member ${only.entry} is encrypted and cannot be read without a key; unavailable, not absent.`,
+        `The selected member ${displayName(only.entry)} is encrypted and cannot be read without a key; unavailable, not absent.`,
       ),
     );
   return ok({ members: [only] });

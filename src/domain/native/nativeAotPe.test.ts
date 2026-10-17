@@ -160,6 +160,78 @@ describe("read-only NativeAOT PE parser", () => {
   });
 });
 
+describe("NativeAOT PE header extent enforcement", () => {
+  it("rejects probe reads that straddle the end of SizeOfHeaders", () => {
+    const bytes = nativeAotPeFixture();
+    const header = 0x600;
+    // TypeManagerIndirection (204) at preferred base + 0x3fc reads 8 bytes, straddling SizeOfHeaders (0x400).
+    bytes.writeUInt32LE(204, header + 40);
+    bytes.writeBigUInt64LE(0x140000000n + 0x3fcn, header + 48);
+    bytes.writeBigUInt64LE(0x140000000n + 0x3fcn + 8n, header + 56);
+    expect(
+      parseNativeAotPe(bytes, nativeAotPeDigest(bytes), SUMMARY_BUDGET).summary,
+    ).toMatchObject({ status: "not_applicable" });
+  });
+
+  it("rejects an optional header smaller than required mapping field extents", () => {
+    const bytes = nativeAotPeFixture();
+    const peOffset = 0x80;
+    const optional = peOffset + 24;
+    bytes.writeUInt16LE(56, peOffset + 20);
+    const oldSectionTable = optional + 0xf0;
+    const newSectionTable = optional + 56;
+    bytes.copy(bytes, newSectionTable, oldSectionTable, oldSectionTable + 80);
+    expect(
+      parseNativeAotPe(bytes, nativeAotPeDigest(bytes), SUMMARY_BUDGET).summary,
+    ).toMatchObject({
+      status: "not_applicable",
+      reason: "Unsupported PE image extent",
+    });
+  });
+
+  it("admits probe reads and optional headers that end exactly at declared header extents", () => {
+    const straddleBytes = nativeAotPeFixture();
+    const header = 0x600;
+    // 0x3f8 + 8 = 0x400 ends exactly at SizeOfHeaders.
+    straddleBytes.writeUInt32LE(204, header + 40);
+    straddleBytes.writeBigUInt64LE(0x140000000n + 0x3f8n, header + 48);
+    straddleBytes.writeBigUInt64LE(0x140000000n + 0x3f8n + 8n, header + 56);
+    expect(
+      parseNativeAotPe(
+        straddleBytes,
+        nativeAotPeDigest(straddleBytes),
+        SUMMARY_BUDGET,
+      ).summary,
+    ).toMatchObject({
+      status: "complete",
+      header_address: "0x140002000",
+    });
+
+    const exactOptionalBytes = nativeAotPeFixture();
+    const peOffset = 0x80;
+    const optional = peOffset + 24;
+    exactOptionalBytes.writeUInt16LE(64, peOffset + 20);
+    const oldSectionTable = optional + 0xf0;
+    const newSectionTable = optional + 64;
+    exactOptionalBytes.copy(
+      exactOptionalBytes,
+      newSectionTable,
+      oldSectionTable,
+      oldSectionTable + 80,
+    );
+    expect(
+      parseNativeAotPe(
+        exactOptionalBytes,
+        nativeAotPeDigest(exactOptionalBytes),
+        SUMMARY_BUDGET,
+      ).summary,
+    ).toMatchObject({
+      status: "complete",
+      header_address: "0x140002000",
+    });
+  });
+});
+
 describe("NativeAOT PE signature admission", () => {
   it.each([
     ["MZ", "Not a PE image"],

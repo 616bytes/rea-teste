@@ -402,6 +402,7 @@ class PeImage {
     const magic = this.#u16(optional);
     if (magic !== 0x20b || this.#machine !== 0x8664)
       throw new Error("Only x64 PE32+ is supported");
+    if (optionalSize < 64) throw new Error("Unsupported PE image extent");
     this.imageBase = this.#u64(optional + 24);
     this.sizeOfImage = this.#u32(optional + 56);
     this.#sizeOfHeaders = this.#u32(optional + 60);
@@ -454,7 +455,10 @@ class PeImage {
     const rva = address - this.imageBase;
     if (rva > BigInt(Number.MAX_SAFE_INTEGER)) return null;
     const relative = Number(rva);
-    if (relative < this.#sizeOfHeaders && relative <= this.#bytes.length - size)
+    if (
+      relative <= this.#sizeOfHeaders - size &&
+      relative <= this.#bytes.length - size
+    )
       return this.#bytes.subarray(relative, relative + size);
     for (const section of this.sections) {
       if (this.#budget !== undefined && !this.#budget.consumeWork(1))

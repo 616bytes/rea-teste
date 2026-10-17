@@ -11,6 +11,7 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import type { JavaScriptIntrinsicInvocation } from "./javascriptElectronMemberWrites.js";
+import { isJavaScriptViteDefaultUndefined } from "./javascriptViteHelper.js";
 
 import {
   FOREIGN,
@@ -27,6 +28,14 @@ import {
   viteCacheObjectOperation,
 } from "./javascriptViteCacheProperties.js";
 type Key = string | null;
+type DefaultInput = Extract<Input, { kind: "default" }>;
+
+const providedDefaultInput = (
+  input: DefaultInput,
+  source: ViteCacheIdentity | undefined,
+): boolean =>
+  input.defined ||
+  (source?.allocation != null && source.allocation.kind !== "foreign");
 
 const OBJECT_TARGET_RESULTS = new Set([
   "assign",
@@ -74,6 +83,18 @@ export class ViteCacheIdentities {
     t.CallExpression | t.OptionalCallExpression,
     Vertex
   >();
+  private readonly defaultChoices: { target: Vertex; input: DefaultInput }[] =
+    [];
+  private readonly helperArgumentReads = new WeakMap<
+    t.CallExpression | t.OptionalCallExpression,
+    {
+      readonly freshIndexes: boolean;
+      readonly table: t.Node | undefined;
+      readonly mapper: t.Node | undefined;
+      readonly providedTable: DefaultInput | undefined;
+      readonly mapperTable: Vertex | undefined;
+    }
+  >();
   ambiguousCacheFamily = false;
   private readonly reads = new Map<Vertex, Map<Key, Map<t.Node, Vertex>>>();
   private readonly pending: Vertex[] = [];
@@ -109,6 +130,31 @@ export class ViteCacheIdentities {
     return this.vertices.get(node)?.fact;
   }
 
+  /** Parsed call facts distinguish read-only parameters from opaque calls. */
+  readOnlyHelperArguments(
+    call: t.CallExpression | t.OptionalCallExpression,
+  ): readonly t.Node[] {
+    const proof = this.helperArgumentReads.get(call);
+    if (
+      proof === undefined ||
+      !proof.freshIndexes ||
+      this.read(call.callee)?.allocation?.kind !== "helper"
+    )
+      return [];
+    const reads: t.Node[] = [];
+    if (proof.table !== undefined) reads.push(proof.table);
+    const tableAllocation = proof.mapperTable?.fact?.allocation;
+    const provided = proof.providedTable;
+    if (
+      proof.mapper !== undefined &&
+      ((provided !== undefined &&
+        providedDefaultInput(provided, provided.source.fact)) ||
+        (tableAllocation != null && tableAllocation.kind !== "foreign"))
+    )
+      reads.push(proof.mapper);
+    return reads;
+  }
+
   /** propagate unexamined exposure through normalized aliases and contained values. */
   *escapedAllocationsSteps(
     nodes: readonly t.Node[],
@@ -137,6 +183,11 @@ export class ViteCacheIdentities {
       for (const input of vertex.inputs) {
         if (examined++ % 1024 === 0) yield;
         retain(input.source);
+        if (
+          input.kind === "default" &&
+          !providedDefaultInput(input, input.source.fact)
+        )
+          retain(input.fallback);
       }
     }
     return allocations;
@@ -323,73 +374,72 @@ export class ViteCacheIdentities {
 
   *solveSteps(): Generator<void> {
     let examined = 0;
+    let defaultsCursor = 0;
+    const unresolvedDefaults = new Set<DefaultInput>();
     for (const vertex of this.vertices.values()) {
       if (examined++ % 1024 === 0) yield;
       this.enqueue(vertex);
     }
     let cursor = 0;
-    while (this.normalizeQueue.length > 0 || cursor < this.pending.length) {
-      yield* this.normalizeSteps();
-      const vertex = this.pending[cursor++];
-      if (vertex === undefined) continue;
-      this.queued.delete(vertex);
-      if (cursor % 1024 === 0) yield;
-      let incoming = vertex.seed;
-      for (const input of vertex.inputs) {
-        if (examined++ % 1024 === 0) yield;
-        const source = input.source.fact;
-        if (source === undefined) continue;
-        const value =
-          input.kind === "helper-result"
-            ? yield* this.helperResultSteps(source, input, vertex)
-            : input.kind === "select"
-              ? yield* this.selectSteps(source, input, vertex)
-              : input.kind === "alias"
-                ? source
-                : {
-                    allocation: vertex.seed?.allocation ?? null,
-                    owner:
-                      input.kind === "copy-family" &&
-                      source.allocation?.kind === "cache"
-                        ? source.children
-                        : source.owner,
-                    children:
-                      input.kind === "copy-family" &&
-                      source.allocation?.kind === "cache"
-                        ? source.children
-                        : source.owner,
-                  };
-        if (value !== undefined) incoming = joinIdentity(incoming, value);
-      }
-      if (incoming === undefined) continue;
-      const next = joinIdentity(vertex.fact, incoming);
-      if (next === vertex.fact) continue;
-      vertex.fact = next;
-      if (next.allocation?.kind === "cache" && next.owner === null)
-        this.ambiguousCacheFamily = true;
-      if (this.snapshots)
-        for (const write of this.writeReceivers.get(vertex) ?? []) {
+    for (;;) {
+      while (this.normalizeQueue.length > 0 || cursor < this.pending.length) {
+        yield* this.normalizeSteps();
+        const vertex = this.pending[cursor++];
+        if (vertex === undefined) continue;
+        this.queued.delete(vertex);
+        if (cursor % 1024 === 0) yield;
+        let incoming = vertex.seed;
+        for (const input of vertex.inputs) {
           if (examined++ % 1024 === 0) yield;
-          if (
-            this.retainedWrites.get(write) === next.allocation ||
-            (next.allocation?.kind !== "container" &&
-              next.allocation?.kind !== "cache" &&
-              next.allocation?.kind !== "helper")
-          )
-            continue;
-          this.retainedWrites.set(write, next.allocation);
-          this.properties.retainLateWrite(next.allocation, write);
-          const container = this.allocationVertices.get(next.allocation);
-          if (container !== undefined && write.value !== undefined)
-            this.connect(container, {
-              kind: "family",
-              source: this.normalize(write.value),
-            });
+          const value = yield* this.inputValueSteps(
+            input,
+            vertex,
+            unresolvedDefaults,
+          );
+          if (value !== undefined) incoming = joinIdentity(incoming, value);
         }
-      for (const listener of vertex.listeners) {
-        if (examined++ % 1024 === 0) yield;
-        this.enqueue(listener);
+        if (incoming === undefined) continue;
+        const next = joinIdentity(vertex.fact, incoming);
+        if (next === vertex.fact) continue;
+        vertex.fact = next;
+        if (next.allocation?.kind === "cache" && next.owner === null)
+          this.ambiguousCacheFamily = true;
+        if (this.snapshots)
+          for (const write of this.writeReceivers.get(vertex) ?? []) {
+            if (examined++ % 1024 === 0) yield;
+            if (
+              this.retainedWrites.get(write) === next.allocation ||
+              (next.allocation?.kind !== "container" &&
+                next.allocation?.kind !== "cache" &&
+                next.allocation?.kind !== "helper")
+            )
+              continue;
+            this.retainedWrites.set(write, next.allocation);
+            this.properties.retainLateWrite(next.allocation, write);
+            const container = this.allocationVertices.get(next.allocation);
+            if (container !== undefined && write.value !== undefined)
+              this.connect(container, {
+                kind: "family",
+                source: this.normalize(write.value),
+              });
+          }
+        for (const listener of vertex.listeners) {
+          if (examined++ % 1024 === 0) yield;
+          this.enqueue(listener);
+        }
       }
+      // A bottom alias cycle is still an unproven argument, not proof that its
+      // default is absent. Widen only after ready arguments reached a fixed point.
+      while (defaultsCursor < this.defaultChoices.length) {
+        if (examined++ % 1024 === 0) yield;
+        const choice = this.defaultChoices[defaultsCursor++];
+        if (choice !== undefined && choice.input.source.fact === undefined) {
+          unresolvedDefaults.add(choice.input);
+          this.enqueue(choice.target);
+        }
+      }
+      if (cursor === this.pending.length && this.normalizeQueue.length === 0)
+        break;
     }
     this.pending.length = 0;
     this.queued.clear();
@@ -402,6 +452,39 @@ export class ViteCacheIdentities {
       this.vertices.set(key, vertex);
     }
     return vertex;
+  }
+
+  private *inputValueSteps(
+    input: Input,
+    vertex: Vertex,
+    unresolvedDefaults: ReadonlySet<DefaultInput>,
+  ): Generator<void, ViteCacheIdentity | undefined> {
+    const source =
+      input.source.fact ??
+      (input.kind === "default" && unresolvedDefaults.has(input)
+        ? UNKNOWN
+        : undefined);
+    if (source === undefined) return undefined;
+    if (input.kind === "default")
+      return providedDefaultInput(input, source)
+        ? source
+        : input.fallback.fact === undefined
+          ? undefined
+          : joinIdentity(source, input.fallback.fact);
+    if (input.kind === "helper-result")
+      return yield* this.helperResultSteps(source, input, vertex);
+    if (input.kind === "select")
+      return yield* this.selectSteps(source, input, vertex);
+    if (input.kind === "alias") return source;
+    const owner =
+      input.kind === "copy-family" && source.allocation?.kind === "cache"
+        ? source.children
+        : source.owner;
+    return {
+      allocation: vertex.seed?.allocation ?? null,
+      owner,
+      children: owner,
+    };
   }
 
   private *helperResultSteps(
@@ -423,6 +506,12 @@ export class ViteCacheIdentities {
         indexes === undefined
           ? undefined
           : unwrapJavaScriptExpression(indexes).node;
+      const table = yield* this.helperTableSteps(
+        input.call,
+        cache,
+        owner,
+        t.isArrayExpression(selection),
+      );
       const keys: (string | null | undefined)[] = [];
       let unknownFrom: number | undefined = t.isArrayExpression(selection)
         ? undefined
@@ -445,17 +534,17 @@ export class ViteCacheIdentities {
           else
             this.connect(result, {
               kind: "family",
-              source: this.project(cache, [key], input.call),
+              source: this.project(table, [key], input.call),
             });
         }
       }
       if (uncertain)
-        this.connect(result, { kind: "copy-family", source: cache });
+        this.connect(result, { kind: "copy-family", source: table });
       const allocation: ViteCacheAllocation = {
         kind: "container",
         node: input.call,
         helperResult: {
-          cache,
+          table,
           keys,
           unknownFrom,
           read: input.call,
@@ -470,6 +559,92 @@ export class ViteCacheIdentities {
     return result.fact;
   }
 
+  private *helperTableSteps(
+    call: t.CallExpression | t.OptionalCallExpression,
+    cache: Vertex,
+    owner: string,
+    freshIndexes: boolean,
+  ): Generator<void, Vertex> {
+    const arguments_ = call.arguments;
+    if (
+      arguments_.slice(0, 3).some((argument) => t.isSpreadElement(argument))
+    ) {
+      const table = this.vertex({});
+      table.seed = UNKNOWN;
+      this.connect(table, { kind: "copy-family", source: cache });
+      let examined = 0;
+      for (const argument of arguments_) {
+        if (examined++ % 1024 === 0) yield;
+        this.connect(table, {
+          kind: "family",
+          source: this.normalize(
+            t.isSpreadElement(argument) ? argument.argument : argument,
+          ),
+        });
+      }
+      return table;
+    }
+    const usesDefault = (node: t.Node | undefined): boolean =>
+      node === undefined || isJavaScriptViteDefaultUndefined(node, this.state);
+    const mapperArgument = arguments_[1];
+    let fallback = cache;
+    let mapperTable: Vertex | undefined;
+    if (mapperArgument !== undefined && !usesDefault(mapperArgument)) {
+      const mapper = this.defaultChoice(
+        this.normalize(mapperArgument),
+        this.vertex(owner),
+        mapperArgument,
+      ).vertex;
+      const contextual = this.vertex({});
+      contextual.seed = UNKNOWN;
+      this.connect(contextual, { kind: "copy-family", source: cache });
+      this.connect(contextual, { kind: "family", source: mapper });
+      // A provided mapper can already own a table. Its unproven initializer
+      // context retains sharing without pretending its m parameter is default.
+      mapperTable = this.project(mapper, ["f"], call);
+      fallback = this.defaultChoice(mapperTable, contextual).vertex;
+    }
+    const tableArgument = arguments_[2];
+    const provided =
+      tableArgument === undefined || usesDefault(tableArgument)
+        ? undefined
+        : this.defaultChoice(
+            this.normalize(tableArgument),
+            fallback,
+            tableArgument,
+          );
+    this.helperArgumentReads.set(call, {
+      freshIndexes,
+      table: provided === undefined ? undefined : tableArgument,
+      mapper: mapperArgument,
+      providedTable: provided?.input,
+      mapperTable,
+    });
+    return provided?.vertex ?? fallback;
+  }
+
+  private defaultChoice(
+    source: Vertex,
+    fallback: Vertex,
+    node?: t.Node,
+  ): { vertex: Vertex; input: DefaultInput } {
+    const selected = this.vertex({});
+    const input: DefaultInput = {
+      kind: "default",
+      source,
+      fallback,
+      defined:
+        node !== undefined &&
+        (t.isLiteral(node) ||
+          t.isArrayExpression(node) ||
+          t.isObjectExpression(node) ||
+          t.isFunction(node) ||
+          t.isClass(node)),
+    };
+    this.connect(selected, input);
+    return { vertex: selected, input };
+  }
+
   private enqueue(vertex: Vertex): void {
     if (this.queued.has(vertex)) return;
     this.queued.add(vertex);
@@ -479,6 +654,10 @@ export class ViteCacheIdentities {
   private connect(target: Vertex, input: Input): void {
     target.inputs.push(input);
     input.source.listeners.add(target);
+    if (input.kind === "default") {
+      input.fallback.listeners.add(target);
+      this.defaultChoices.push({ target, input });
+    }
     this.enqueue(target);
   }
 

@@ -237,6 +237,9 @@ function* indexCallExposuresSteps(
           path === "intrinsic.Object.defineProperties"))
         ? undefined
         : intrinsicValuePositions(path);
+    // An admitted helper reads its proven parameters by value. Supplied table
+    // and mapper arguments must not register as ordinary call escapes.
+    const readOnly = new Set(context.identities.readOnlyHelperArguments(call));
     for (let index = 0; index < values.length; index++) {
       if (examined++ % 1024 === 0) yield;
       if (selected !== undefined && !selected.has(index)) continue;
@@ -248,6 +251,11 @@ function* indexCallExposuresSteps(
       )
         continue;
       const value = values[index];
+      if (
+        value !== undefined &&
+        readOnly.has(t.isSpreadElement(value) ? value.argument : value)
+      )
+        continue;
       if (
         path === "intrinsic.Object.assign" &&
         value !== undefined &&

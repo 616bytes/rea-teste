@@ -321,6 +321,96 @@ const allScenarios: readonly ViteScenario[] = [
     resolved: [],
     unknown: true,
   },
+  ...[
+    {
+      file: "returned-explicit-independent-table.js",
+      setup: "",
+      call: "__vite__mapDeps([1], void 0, [null, {}])",
+      kept: true,
+    },
+    {
+      file: "returned-explicit-independent-table-alias.js",
+      setup: "const table = [null, {}];",
+      call: "__vite__mapDeps([1], void 0, table)",
+      kept: true,
+    },
+    {
+      file: "returned-explicit-shared-helper-table.js",
+      setup: "",
+      call: "__vite__mapDeps([1], void 0, [null, __vite__mapDeps])",
+      kept: false,
+    },
+    {
+      file: "returned-shadowed-undefined-table.js",
+      setup: "const undefined = runtimeTable;",
+      call: "__vite__mapDeps([1], void 0, undefined)",
+      kept: false,
+    },
+    {
+      file: "returned-conditional-default-table.js",
+      setup: "const table = runtimeChoice ? void 0 : [null, {}];",
+      call: "__vite__mapDeps([1], void 0, table)",
+      kept: false,
+    },
+    {
+      file: "returned-explicit-mapper-independent-table.js",
+      setup: "",
+      call: "__vite__mapDeps([1], {}, [null, {}])",
+      kept: true,
+    },
+    {
+      file: "returned-explicit-independent-mapper-cache.js",
+      setup: "const mapper = {f: [null, {}]};",
+      call: "__vite__mapDeps([1], mapper)",
+      kept: true,
+    },
+    {
+      file: "returned-unproven-mapper-cache.js",
+      setup: "",
+      call: "__vite__mapDeps([1], runtimeMapper)",
+      kept: false,
+    },
+  ].map(({ file, setup, call, kept }): ViteScenario => ({
+    file,
+    callSources: [call, defaultCall],
+    callOccurrences: [0, 1],
+    ...(kept ? { unknownCallOccurrences: [0] } : {}),
+    source: mapDependencies('["./first.js", m]', "[0]").replace(
+      defaultCall + ";",
+      setup +
+        " const alias = " +
+        call +
+        "[0]; alias.f = []; " +
+        defaultCall +
+        ";",
+    ),
+    resolved: kept ? ["first.js"] : [],
+    unknown: true,
+  })),
+  {
+    file: "returned-cyclic-table-default.js",
+    callSources: ["__vite__mapDeps([1], void 0, a)", defaultCall],
+    callOccurrences: [0, 1],
+    source: mapDependencies('["./first.js", m]', "[0]").replace(
+      defaultCall + ";",
+      'var a = b, b = a; const alias = __vite__mapDeps([1], void 0, a)[0]; alias.f[0] = "./last.js"; __vite__mapDeps([0]);',
+    ),
+    resolved: [],
+    unknown: true,
+  },
+  {
+    file: "custom-index-map-override-table-cache-mutation.js",
+    callSources: [
+      defaultCall,
+      '__vite__mapDeps({map(fn) { fn(1).f[0] = "./last.js"; return []; }}, void 0, [null, __vite__mapDeps])',
+    ],
+    callOccurrences: [0, 1, 2],
+    source:
+      mapDependencies('["./first.js", m]', "[0]") +
+      '\n__vite__mapDeps({map(fn) { fn(1).f[0] = "./last.js"; return []; }}, void 0, [null, __vite__mapDeps]); __vite__mapDeps([0]);',
+    resolved: [],
+    unknown: true,
+  },
   {
     file: "returned-independent-table-object.js",
     callSources: ["__vite__mapDeps([1])", defaultCall],

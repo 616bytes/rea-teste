@@ -479,7 +479,7 @@ export class ViteCacheProperties {
         else if (!uncertain && typeof tableKey === "string")
           this.graph.connect(slot, {
             kind: "select",
-            source: mapped.cache,
+            source: mapped.table,
             key: tableKey,
             read: mapped.read,
           });

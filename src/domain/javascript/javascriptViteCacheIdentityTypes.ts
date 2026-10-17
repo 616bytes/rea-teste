@@ -15,7 +15,7 @@ export interface ViteCacheAllocation {
     readonly initializer: Initializer;
   };
   readonly helperResult?: {
-    readonly cache: Vertex;
+    readonly table: Vertex;
     readonly keys: readonly (string | null | undefined)[];
     readonly unknownFrom: number | undefined;
     readonly read: t.Node;
@@ -40,6 +40,12 @@ export interface Vertex {
 }
 
 export type Input =
+  | {
+      readonly kind: "default";
+      readonly source: Vertex;
+      readonly fallback: Vertex;
+      readonly defined: boolean;
+    }
   | {
       readonly kind: "helper-result";
       readonly source: Vertex;

@@ -24,6 +24,15 @@ missing launcher reports `capability_unavailable` with the
 `binary_session` uses the same host probe for tool availability; it does not
 validate a particular APK or guarantee that the selected input can be decoded.
 
+Client inspection and decode results disclose CVE-2024-21633 when the
+reported version predates its upstream 2.9.2 fix. This advisory-specific
+limitation preserves older supported distribution builds. A launcher version
+does not prove the decoder's contents, downstream backports, or overall safety;
+verify the selected decoder's patches before decoding untrusted APKs. See the
+[upstream advisories](https://github.com/iBotPeaches/Apktool/security/advisories),
+including the Windows follow-up and later regression; the compatibility floor
+above is not a security recommendation.
+
 On Windows, a `.bat` or `.cmd` launcher (such as Chocolatey's `apktool.bat`)
 runs through an explicit `cmd.exe /d /s /c` call. That call has no AutoRun,
 no delayed expansion, and quotes every argument. A launcher path that
@@ -52,6 +61,8 @@ select Android's `values-pt-rBR`; Android qualifiers such as `pt-rBR` and
 
 - **An owned APK snapshot is digested and decoded.** `target.sha256` and
   `target.bytes` bind the observation to the exact APK that was decoded.
+  The Evidence subject carries the same snapshot digest and caller-selected
+  path, including when the original file changes during decoding.
 - **Metadata comes from apktool.yml as apktool printed it.** Version codes
   keep their own spelling (`'7'` versus `7`); `package_name` is read from
   the decoded manifest, not inferred.
@@ -61,7 +72,18 @@ select Android's `values-pt-rBR`; Android qualifiers such as `pt-rBR` and
   entries containing nested markup (`<b>`, `<xliff:g>`) are counted as
   unparsed rather than flattened — the limitation names the count. The
   default table is bounded to 2000 entries with partial coverage when more
-  exist; `locales` lists every `values-<locale>` that has a strings table.
+  exist. `locales` lists observed regular `strings.xml` tables whose exact
+  `values-<locale>` directory is selectable by the request's locale grammar.
+  Locale suffixes allow up to 23 ASCII characters, derived from Apktool's
+  language, script, region, and variant fields; for example,
+  `b+sr+Latn+RS+REVISED` selects that exact table.
+  Other table directories, including combined qualifiers such as
+  `values-en-rUS-v21` and `values-mcc310-fr`, are named in limitations with
+  their source spelling. They are not advertised as selectable locales;
+  REA does not infer Android's runtime resource matching. Non-regular
+  strings-table paths are disclosed with partial coverage. Discovery uses
+  the same bounded traversal as the file count; filesystem failures remain
+  failures rather than being interpreted as missing tables.
 - **Smali is skipped by design** (`apktool d --no-src`): Java-source
   recovery belongs to the JADX family. Resource smali edits and rebuild are
   a follow-up lane with mutation authority.
@@ -81,9 +103,11 @@ select Android's `values-pt-rBR`; Android qualifiers such as `pt-rBR` and
   coverage and an explicit limit, rather than reported as missing.
 - `decoded_file_count` is capped at 100,000 files; the cap is reported in
   the limitations when hit.
-- Apktool's own decode failures (`AndrolibException`, directory traversal
-  refusals) surface as `unsupported_target` with apktool's reason preserved
-  verbatim.
+- An ordinary nonzero decode exit surfaces as `unsupported_target` naming
+  the caller-selected APK, with Apktool's diagnostic and captured output.
+  Launcher startup, ownership preparation, signal termination and incomplete
+  output collection remain provider failures; they do not establish that the
+  selected APK is unsupported.
 
 ## Real verification
 

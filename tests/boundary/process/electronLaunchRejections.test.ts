@@ -12,6 +12,7 @@ import {
 const script = `
 import { PlaywrightElectronActiveProvider } from "./dist/browser/PlaywrightElectronActiveProvider.js";
 import { electronActiveObservationInputSchema } from "./dist/domain/javascript/electronActiveObservation.js";
+import { projectAnalysisError } from "./dist/domain/analysisErrorProjection.js";
 
 const [scenario, executable, root] = JSON.parse(process.argv[1]);
 let observedRejections = 0;
@@ -114,9 +115,8 @@ console.log(JSON.stringify({
   during,
   after: process.listenerCount("unhandledRejection"),
   observedRejections,
-  reasons: results.map((result) => result.ok ? null : result.error.reason ?? null),
+  failures: results.map((result) => result.ok ? null : projectAnalysisError(result.error)),
   ok: results.map((result) => result.ok),
-  causeReasons: results.map((result) => result.ok ? null : result.error.cause?.reason ?? null),
   cleanupResources: results.map((result) => result.ok ? null : result.error.cleanupResources ?? null),
   causes: results.map((result) => result.ok ? null : String(result.error.cause?.message).split("\\n")[0]),
 }));
@@ -133,8 +133,7 @@ type Outcome = {
   readonly ok: readonly boolean[];
   readonly causes: readonly (string | null)[];
   readonly observedRejections: number;
-  readonly reasons: readonly (string | null)[];
-  readonly causeReasons: readonly (string | null)[];
+  readonly failures: readonly unknown[];
   readonly cleanupResources: readonly (readonly string[] | null)[];
 };
 
@@ -304,16 +303,21 @@ processTest(
     expect(observed.observedRejections).toBe(3);
     expect(observed.ok).toEqual([false, false, false, false, false]);
     expect(observed.causes[0]).toBe("electron.launch: alpha failed");
-    expect(observed.reasons).toEqual([
-      null,
-      "cleanup_failed",
-      "cleanup_failed",
-      "cleanup_failed",
-      "cleanup_failed",
-    ]);
-    expect(observed.causeReasons).toEqual([
-      null,
-      ...Array.from({ length: 4 }, () => "process_ownership_unavailable"),
+    expect(observed.failures).toMatchObject([
+      { code: "execution_failure" },
+      ...Array.from({ length: 4 }, () => ({
+        code: "cleanup_incomplete",
+        details: {
+          cleanup: "incomplete",
+          resources: ["owned_process_group"],
+          diagnostics: {
+            primary_error: {
+              details: { reason: "process_ownership_unavailable" },
+            },
+            cleanup_error: { details: { reason: "cleanup_failed" } },
+          },
+        },
+      })),
     ]);
     expect(observed.cleanupResources).toEqual([
       [],

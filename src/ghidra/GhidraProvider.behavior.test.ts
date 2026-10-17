@@ -464,6 +464,37 @@ describe("Ghidra raw-binary profile", () => {
       code: "target_format_unsupported",
     });
   });
+  it("binds raw SH-4 to the little-endian SuperH4 language outside Windows P0", async () => {
+    const target: BinaryTarget = {
+      path: "/tmp/sh4.bin",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "raw-binary",
+      architecture: "sh4",
+      availableArchitectures: ["sh4"],
+      entryPoint: "0x8c010000",
+      entryPointSource: "0x8c010000",
+    };
+    const ghidra = provider();
+    expect(ghidra.inspectTargetSupport(target).status).toBe("supported");
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    if (!resolved.ok) throw resolved.error;
+    expect(resolved.value.profile?.parameters).toMatchObject({
+      target_format: "raw-binary",
+      architecture: "sh4",
+      loader: "BinaryLoader",
+      language_id: "SuperH4:LE:32:default",
+      compiler_spec_id: "default",
+      language_selection: "caller-supplied-v1",
+      entry_point: "0x8c010000",
+    });
+    expect(
+      provider(installationHost("win32")).inspectTargetSupport(target),
+    ).toMatchObject({
+      status: "unsupported",
+      code: "target_format_unsupported",
+    });
+  });
 });
 
 describe("Ghidra Mach-O slice support", () => {

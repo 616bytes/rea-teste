@@ -225,6 +225,59 @@ describe("m68k raw-binary admission", () => {
   );
 });
 
+describe("SH-4 raw-binary admission", () => {
+  it("admits even SH-4 entries up to the 32-bit address boundary", () => {
+    for (const [entryPoint, fileBytes] of [
+      ["0x0", 8],
+      ["0x8c010000", 8],
+      ["0xfffffffe", 2],
+    ] as const) {
+      const result = admitRawBinary({
+        architecture: "sh4",
+        entryPoint,
+        fileBytes,
+      });
+      if (!result.ok) throw new Error(result.error.reason);
+      expect(result.value).toEqual({
+        architecture: "sh4",
+        entryPoint,
+        entryPointSource: entryPoint,
+      });
+    }
+  });
+  it.each(["0x1", "0x8c010001", "0xffffffff"])(
+    "rejects the odd SH-4 entry %s before provider selection",
+    (entryPoint) => {
+      expect(
+        admitRawBinary({ architecture: "sh4", entryPoint, fileBytes: 2 }),
+      ).toEqual({
+        ok: false,
+        error: {
+          reason: `raw-binary sh4 entry_point ${entryPoint} must be 2-byte aligned`,
+          constraint: "load_selection_rejected",
+        },
+      });
+    },
+  );
+  it.each([
+    ["0x100000000", 2],
+    ["0xfffffffe", 4],
+  ])(
+    "rejects an SH-4 mapping at %s with %i bytes that exceeds 32 bits",
+    (entryPoint, fileBytes) => {
+      expect(
+        admitRawBinary({ architecture: "sh4", entryPoint, fileBytes }),
+      ).toEqual({
+        ok: false,
+        error: {
+          reason: `raw-binary mapping from ${entryPoint} must fit in the sh4 address width`,
+          constraint: "load_selection_rejected",
+        },
+      });
+    },
+  );
+});
+
 describe("raw-binary selection pairing", () => {
   it("requires architecture and entry with format=raw-binary", () => {
     expect(rawBinarySelectionError({ format: "raw-binary" })).toBe(

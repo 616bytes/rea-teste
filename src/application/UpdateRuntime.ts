@@ -37,6 +37,9 @@ export interface BunInstallationHost {
 /** Maximum retained output bytes before an update subprocess is terminated. */
 export const MAX_UPDATE_COMMAND_OUTPUT_BYTES = 2 * 1024 * 1024;
 
+/** Grace period before an uncooperative update subprocess is escalated to SIGKILL. */
+export const DEFAULT_UPDATE_TERMINATION_GRACE_MS = 1_000;
+
 /** Run an updater subprocess with complete diagnostics and isolated machine output. */
 export const runUpdateCommand = (
   command: readonly string[],
@@ -44,6 +47,7 @@ export const runUpdateCommand = (
   output: UpdateOutput = "structured",
   workingDirectory: string | undefined = undefined,
   maxOutputBytes: number = MAX_UPDATE_COMMAND_OUTPUT_BYTES,
+  terminationGraceMs: number = DEFAULT_UPDATE_TERMINATION_GRACE_MS,
 ): Promise<Result<string, string>> =>
   new Promise((resolveResult) => {
     const [executable, ...args] = command;
@@ -63,35 +67,102 @@ export const runUpdateCommand = (
     let stderr = "";
     let observedBytes = 0;
     let exceeded = false;
-    child.stdout?.setEncoding("utf8");
-    child.stderr?.setEncoding("utf8");
-    const onData = (stream: "stdout" | "stderr", chunk: string) => {
+    let settled = false;
+    let killTimer: NodeJS.Timeout | undefined;
+
+    const clearKillTimer = (): void => {
+      if (killTimer !== undefined) {
+        clearTimeout(killTimer);
+        killTimer = undefined;
+      }
+    };
+
+    const cleanup = (): void => {
+      clearKillTimer();
+      child.removeListener("error", onError);
+      child.removeListener("close", onClose);
+      child.removeListener("exit", onExit);
+      child.stdout?.removeListener("data", onStdoutData);
+      child.stderr?.removeListener("data", onStderrData);
+    };
+
+    const settle = (result: Result<string, string>): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolveResult(result);
+    };
+
+    const onExit = (): void => {
+      clearKillTimer();
+    };
+
+    const terminate = (): void => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // Subprocess may have already terminated.
+      }
+      if (child.exitCode === null && child.signalCode === null) {
+        if (terminationGraceMs <= 0) {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // Subprocess may have already terminated.
+          }
+        } else {
+          killTimer = setTimeout(() => {
+            if (child.exitCode === null && child.signalCode === null) {
+              try {
+                child.kill("SIGKILL");
+              } catch {
+                // Subprocess may have already terminated.
+              }
+            }
+          }, terminationGraceMs);
+          killTimer.unref?.();
+        }
+      }
+    };
+
+    const onData = (stream: "stdout" | "stderr", chunk: string): void => {
       if (exceeded) return;
       observedBytes += Buffer.byteLength(chunk, "utf8");
       if (observedBytes > maxOutputBytes) {
         exceeded = true;
         child.stdout?.destroy();
         child.stderr?.destroy();
-        child.kill();
+        terminate();
         return;
       }
       if (stream === "stdout") stdout += chunk;
       else stderr += chunk;
       if (output === "human") process.stderr.write(chunk);
     };
-    child.stdout?.on("data", (chunk: string) => onData("stdout", chunk));
-    child.stderr?.on("data", (chunk: string) => onData("stderr", chunk));
-    child.once("error", (cause) =>
-      resolveResult(
+
+    const onStdoutData = (chunk: string): void => onData("stdout", chunk);
+    const onStderrData = (chunk: string): void => onData("stderr", chunk);
+
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", onStdoutData);
+    child.stderr?.on("data", onStderrData);
+
+    const onError = (cause: Error): void =>
+      settle(
         exceeded
           ? err(
               `Update command output exceeded the collection limit of ${String(maxOutputBytes)} bytes.`,
             )
           : err(cause.message),
-      ),
-    );
-    child.once("close", (code, signal) =>
-      resolveResult(
+      );
+
+    const onClose = (
+      code: number | null,
+      signal: NodeJS.Signals | null,
+    ): void =>
+      settle(
         exceeded
           ? err(
               `Update command output exceeded the collection limit of ${String(maxOutputBytes)} bytes.`,
@@ -105,8 +176,11 @@ export const runUpdateCommand = (
                     ? `Process exited with code ${String(code)}.`
                     : `Process terminated by ${signal}.`),
               ),
-      ),
-    );
+      );
+
+    child.once("exit", onExit);
+    child.once("error", onError);
+    child.once("close", onClose);
   });
 
 const requireCommandOutput = async (

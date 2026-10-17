@@ -12,6 +12,10 @@ for (const argument of arguments_)
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRoot = join(root, ".agents/skills/reverse-engineer-anything");
 const outputRoot = join(root, "skills/reverse-engineer-anything");
+const packOutputRoot = join(
+  root,
+  "rea-agent-skills-pack/skills/reverse-engineer-anything",
+);
 const check = arguments_.has("--check");
 const current = (
   await readFile(join(sourceRoot, "SKILL.md"), "utf8")
@@ -64,6 +68,29 @@ if (
 )
   throw new Error(
     "Generated skill file inventory drifted; run npm run docs:generate",
+  );
+
+// Keep the standalone skills pack synchronized with the same authored source.
+if (!check) await rm(packOutputRoot, { recursive: true, force: true });
+for (const relativePath of paths) {
+  const path = join(packOutputRoot, relativePath);
+  if (!check) await mkdir(dirname(path), { recursive: true });
+  await ensureGeneratedFile({
+    path,
+    source: (await readFile(join(sourceRoot, relativePath), "utf8")).replaceAll(
+      "\r\n",
+      "\n",
+    ),
+    check,
+    generateCommand: "npm run docs:generate",
+  });
+}
+if (
+  check &&
+  JSON.stringify(await filePaths(packOutputRoot)) !== JSON.stringify(paths)
+)
+  throw new Error(
+    "Skills pack inventory drifted; run npm run docs:generate",
   );
 
 async function filePaths(directory, prefix = "") {

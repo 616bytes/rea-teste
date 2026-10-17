@@ -153,7 +153,17 @@ it("waits for an aborted pre-session hash before retrying its late close owner",
     const preview = await previewWork;
     expect(preview).toMatchObject({
       ok: false,
-      error: { _tag: "ProviderAdapterError", cleanupIncomplete: true },
+      error: {
+        _tag: "AnalysisCancelledError",
+        cleanupIncomplete: true,
+      },
+    });
+    if (preview.ok) throw new Error("Cancelled profile unexpectedly passed");
+    expect(preview.error.cause).toBe(controller.signal.reason);
+    expect(preview.error.cleanupResources).toEqual([fixture.kuna]);
+    expect(projectAnalysisError(preview.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { execution_failure: "cancelled" },
     });
 
     const firstClose = await closing;
@@ -162,13 +172,17 @@ it("waits for an aborted pre-session hash before retrying its late close owner",
       error: { cleanupIncomplete: true },
     });
     expect(binary.status()).toMatchObject({ cleanup_pending: true });
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(close.mock.contexts[1]).toBe(close.mock.contexts[0]);
 
     close.mockRestore();
     expect(await binary.close()).toEqual({ ok: true, value: null });
     expect(binary.status()).toMatchObject({ cleanup_pending: false });
-    if (preview.ok || firstClose.ok)
-      throw new Error("Cleanup unexpectedly succeeded");
+    if (firstClose.ok) throw new Error("Cleanup unexpectedly succeeded");
     expect(preview.error.cleanupIncomplete).toBe(false);
+    const recovered = projectAnalysisError(preview.error);
+    expect(recovered.code).toBe("cancelled");
+    expect(recovered.details?.resources).toBeUndefined();
     expect(firstClose.error.cleanupIncomplete).toBe(false);
   } finally {
     releaseClose();

@@ -40,21 +40,25 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
     (cache.open as any)("fixture-cache");
   `,
   );
-  await writeFile(
-    join(root, "escaped.mjs"),
-    `const box = {};
+  for (const [name, source] of Object.entries({
+    "escaped.mjs": `const box = {};
     box.prototype = Map.prototype;
     function patch(b) { b.prototype.get = fetch; }
     patch(box); new Map().get("/escaped");`,
-  );
-  await writeFile(
-    join(root, "returned.mjs"),
-    'patch((() => Map.prototype)()); new Map().get("/returned");',
-  );
-  await writeFile(
-    join(root, "opaque.mjs"),
-    'eval("Map.prototype.get = fetch"); new Map().get("/opaque");',
-  );
+    "returned.mjs":
+      'patch((() => Map.prototype)()); new Map().get("/returned");',
+    "opaque.mjs":
+      'eval("Map.prototype.get = fetch"); new Map().get("/opaque");',
+    "private.mjs":
+      'const box = {}; box.prototype = Map.prototype; new Map().get("/private");',
+    "returned-write.mjs":
+      'const prototype = (() => Map.prototype)(); prototype.get = fetch; new Map().get("/returned-write");',
+    "prototype.mjs":
+      'Object.getPrototypeOf(new Map()).get = fetch; new Map().get("/prototype");',
+    "indirect.mjs":
+      'globalThis.eval("Map.prototype.get = fetch"); new Map().get("/indirect");',
+  }))
+    await writeFile(join(root, name), source);
   const { stdout } = await execute(
     process.execPath,
     ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
@@ -75,12 +79,22 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
     .toEqual([
       "/api/items",
       "/escaped",
+      "/indirect",
       "/network",
       "/opaque",
+      "/prototype",
       "/returned",
+      "/returned-write",
       "session",
     ]);
-  for (const value of ["/escaped", "/opaque", "/returned"]) {
+  for (const value of [
+    "/escaped",
+    "/indirect",
+    "/opaque",
+    "/prototype",
+    "/returned",
+    "/returned-write",
+  ]) {
     const escaped = result.graph.nodes.find(
       ({ kind, observations }) =>
         kind === "endpoint" &&

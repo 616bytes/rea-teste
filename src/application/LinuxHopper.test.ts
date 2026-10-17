@@ -275,7 +275,7 @@ describe("Linux Hopper package installation", () => {
         launcherPath: "/opt/hopper/bin/Hopper",
       });
       expect(host.installed).toEqual([
-        { family, archive: `/tmp/rea test/hopper.${family}` },
+        { family, archive: join("/tmp/rea test", `hopper.${family}`) },
       ]);
       expect(host.cleaned).toEqual(["/tmp/rea test"]);
     },

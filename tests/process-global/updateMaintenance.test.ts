@@ -486,7 +486,8 @@ describe("Bun global installation update", () => {
           `appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, cwd: process.cwd(), globalDirectory: process.env.BUN_INSTALL_GLOBAL_DIR }) + "\\n");`,
           `if (JSON.stringify(args) === '["--version"]') console.log(${JSON.stringify(bunVersion)});`,
           `else if (JSON.stringify(args) === ${JSON.stringify(JSON.stringify(["info", PRODUCT_IDENTITY.packageName, "dist-tags.latest", "--json"]))}) process.stdout.write('"3.3.0"\\n');`,
-          `else if (JSON.stringify(args) === ${JSON.stringify(JSON.stringify(["add", "--global", "--ignore-scripts", `${PRODUCT_IDENTITY.packageName}@3.3.0`]))}) writeFileSync(${JSON.stringify(versionPath)}, "3.3.0");`,
+          // noisy installs must finish and verify; their logs are not complete metadata.
+          `else if (JSON.stringify(args) === ${JSON.stringify(JSON.stringify(["add", "--global", "--ignore-scripts", `${PRODUCT_IDENTITY.packageName}@3.3.0`]))}) { process.stdout.write('x'.repeat(3 * 1024 * 1024)); process.stderr.write('y'.repeat(3 * 1024 * 1024)); writeFileSync(${JSON.stringify(versionPath)}, "3.3.0"); }`,
           "else process.exitCode = 2;",
           "",
         ].join("\n"),

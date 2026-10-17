@@ -20,6 +20,11 @@ import {
 } from "./Update.js";
 import { planIntegrationMaintenance } from "./UpdateMaintenance.js";
 import { withoutPackageRunnerIdentity } from "./ClientRegistrationIdentity.js";
+import { collectBoundedCommandOutput } from "../process/ExecFileBoundedOutput.js";
+
+// metadata remains complete; install logs need only bounded failure diagnostics.
+const COMPLETE_OUTPUT_BYTES = 2 * 1024 * 1024;
+const INSTALL_DIAGNOSTIC_BYTES = 64 * 1024;
 
 /** npm filesystem queries used to identify the installation being updated. */
 export interface NpmInstallationHost {
@@ -34,54 +39,47 @@ export interface BunInstallationHost {
   isFile(path: string): Promise<boolean>;
 }
 
-/** Run an updater subprocess with complete diagnostics and isolated machine output. */
-export const runUpdateCommand = (
+/** drain updater commands with bounded diagnostics and isolated machine output. */
+export const runUpdateCommand = async (
   command: readonly string[],
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   output: UpdateOutput = "structured",
   workingDirectory: string | undefined = undefined,
-): Promise<Result<string, string>> =>
-  new Promise((resolveResult) => {
-    const [executable, ...args] = command;
-    if (executable === undefined) {
-      resolveResult(err("No executable supplied."));
-      return;
-    }
-    // A fresh installed entry point must not inherit a package runner's invocation identity.
-    const environment = withoutPackageRunnerIdentity(selectedEnvironment);
-    const child = spawn(executable, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: environment,
-      windowsHide: true,
-      ...(workingDirectory === undefined ? {} : { cwd: workingDirectory }),
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.setEncoding("utf8");
-    child.stderr?.setEncoding("utf8");
-    child.stdout?.on("data", (chunk: string) => {
-      stdout += chunk;
-      if (output === "human") process.stderr.write(chunk);
-    });
-    child.stderr?.on("data", (chunk: string) => {
-      stderr += chunk;
-      if (output === "human") process.stderr.write(chunk);
-    });
-    child.once("error", (cause) => resolveResult(err(cause.message)));
-    child.once("close", (code, signal) =>
-      resolveResult(
-        code === 0
-          ? ok(stdout.trim())
-          : err(
-              stderr.trim() ||
-                stdout.trim() ||
-                (signal === null
-                  ? `Process exited with code ${String(code)}.`
-                  : `Process terminated by ${signal}.`),
-            ),
-      ),
-    );
+  capture: "complete" | "diagnostics" = "complete",
+): Promise<Result<string, string>> => {
+  const [executable, ...args] = command;
+  if (executable === undefined) {
+    return err("no executable supplied.");
+  }
+  // A fresh installed entry point must not inherit a package runner's invocation identity.
+  const environment = withoutPackageRunnerIdentity(selectedEnvironment);
+  const child = spawn(executable, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: environment,
+    windowsHide: true,
+    ...(workingDirectory === undefined ? {} : { cwd: workingDirectory }),
   });
+  const limit =
+    capture === "complete" ? COMPLETE_OUTPUT_BYTES : INSTALL_DIAGNOSTIC_BYTES;
+  const result = await collectBoundedCommandOutput(child, {
+    limit,
+    ...(output === "human" ? { forward: process.stderr } : {}),
+  });
+  if (result.failure !== undefined) return err(result.failure.message);
+  const exit = `process exited with status ${String(result.exitCode)}.`;
+  if (result.exitCode !== 0)
+    return err(
+      (result.stderr.trim() || result.stdout.trim() || exit) +
+        (result.outputTruncated
+          ? `\noutput budget exceeded; diagnostics are incomplete; ${exit}`
+          : ""),
+    );
+  if (capture === "complete" && result.outputTruncated)
+    return err(
+      `update command output budget exceeded (${String(limit)} bytes per stream; stdout ${String(result.stdoutBytes)} bytes, stderr ${String(result.stderrBytes)} bytes); complete metadata is unavailable; ${exit}`,
+    );
+  return ok(result.stdout.trim());
+};
 
 const requireCommandOutput = async (
   command: readonly string[],
@@ -346,6 +344,7 @@ export const systemUpdateHost = (
         context.environment,
         output,
         context.workingDirectory,
+        "diagnostics",
       );
       return result.ok ? ok(undefined) : result;
     },

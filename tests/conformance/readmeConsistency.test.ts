@@ -102,7 +102,7 @@ describe("provider documentation", () => {
     expect(providerParagraph).toBeDefined();
     const words = providerParagraph?.toLowerCase().match(/[a-z0-9-]+/gu) ?? [];
     for (const providerId of providerIds)
-      expect(words, `documented provider ID: ${providerId}`).toContain(
+      expect(words, "documented provider ID: " + providerId).toContain(
         providerId,
       );
     expect(providerParagraph).toContain(

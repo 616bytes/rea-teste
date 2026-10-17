@@ -108,7 +108,7 @@ Headless cleanup uses the upstream database lifecycle. Abruptly terminating REA,
 
 ## Use the official Hex-Rays IDA MCP
 
-The `hexrays` protocol drives the [Hex-Rays IDA MCP](https://github.com/HexRaysSA/ida-mcp) headlessly. It requires IDA Pro with idalib and an existing Hex-Rays MCP installation; REA installs neither. Register it as a stdio server:
+The `hexrays` protocol drives the [Hex-Rays IDA MCP](https://github.com/HexRaysSA/ida-mcp) headlessly. Upstream requires IDA 9.4 or later with idalib and Python 3.11 or later, with `uv` and Git on `PATH`; REA installs none of them. Register the server for stdio:
 
 ```json
 {
@@ -119,7 +119,7 @@ The `hexrays` protocol drives the [Hex-Rays IDA MCP](https://github.com/HexRaysS
 }
 ```
 
-The profile is headless and stdio only. Hex-Rays database leases belong to the MCP server process, so REA's own stdio child is what makes a lease provably REA's. Attached, HTTP, and protocol-less Hex-Rays registrations are rejected. Use the command from your working Hex-Rays installation, such as its Claude Code plugin's `uv run ... ida-mcp stdio` form.
+The profile is headless and stdio only. Hex-Rays database leases belong to the MCP server process, so REA's own stdio child is what makes a lease provably REA's. Attached and HTTP Hex-Rays registrations are rejected, and analyzing a database already open in the IDA GUI is not supported. A registration that omits `protocol` but reaches a Hex-Rays server fails at startup with `advertised_tools` and a recovery naming the `hexrays` registration. Use the command from your working Hex-Rays installation, such as its Claude Code plugin's `uv run ... ida-mcp stdio` form.
 
 REA copies and verifies the input in a private workspace as for the database supervisor, then calls `open_database` on that copy with `set_current: false`. Hex-Rays assigns the instance id; REA binds the session only when the reply reports an `idalib` backend and `list_databases` shows that id leased for the private input. A GUI database is refused, and the open is treated as unverified.
 
@@ -127,7 +127,7 @@ Hex-Rays MCP exposes database reads only through `execute_python`. REA therefore
 
 `execute_python` waits for initial auto-analysis, so readiness is checked before the first read. Function sizes are enclosing spans, as with other IDA profiles. Strings come from IDA's default string list. Xrefs exclude ordinary flow from the preceding instruction. Callees on x86-only targets report every direct code or pointer target of a call instruction: targets inside a function are internal and resolve to that function, and imports, pointer slots, and code outside every function are reported by address as external. Indirect calls without a reference remain unknown. Other targets use the processor-neutral call graph and report function entries only. Direct callers remain unavailable for the same reason as in the database-supervisor profile. The observed Hex-Rays MCP does not truncate or preview `execute_python` results, and REA keeps every page to 100 items or fewer. Nonempty engine stdout and stderr are retained in the observation.
 
-On close, REA releases its lease with `close_database`, then requires `list_databases` to show neither its instance id nor its private input. The Hex-Rays MCP packs the private copy's database when the final lease is released. That write stays inside the private workspace, which REA then removes. A rejected `close_database` counts as a release only once inventory confirms it; otherwise the workspace is retained and a later close retries the release. An explicit rejection of `open_database` with no listed lease removes the workspace. When the open reply is lost, REA adopts and releases a lease its own server lists for the private input, but still retains the workspace because the open request may not have stopped. A GUI database is never released or closed.
+On close, REA releases its lease with `close_database`, then requires `list_databases` to show neither its instance id nor its private input. The Hex-Rays MCP packs the private copy's database when the final lease is released. That write stays inside the private workspace, which REA then removes. A rejected `close_database` counts as a release only once inventory confirms it; otherwise the workspace is retained and a later close retries the release. An explicit rejection of `open_database` with no listed lease removes the workspace. When the open reply is lost, REA adopts and releases a lease its own server lists for the private input, but still retains the workspace because the open request may not have stopped. A GUI database is never released or closed. The Hex-Rays MCP also writes per-session JSONL traces of its tool calls under `~/.idapro/mcp/sessions/`; REA neither creates nor removes them.
 
 ## Connect an agent once
 

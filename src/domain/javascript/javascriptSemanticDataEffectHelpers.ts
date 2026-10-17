@@ -995,6 +995,7 @@ export const semanticBuiltinSlotChanged = (
   ]);
   return builtinModuleEffects(identity.specifier, state, true).some(
     ({ path, node }) =>
+      node !== capture &&
       affectsBuiltinPath(path, identity.path) &&
       !semanticTopLevelEffectFollowsCapture(capture, node, state.parentsByNode),
   );

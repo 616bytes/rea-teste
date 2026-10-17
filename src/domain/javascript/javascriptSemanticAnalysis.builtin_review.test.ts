@@ -1,6 +1,87 @@
 import { expect, it } from "vitest";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
+it.each([
+  "Object.defineProperty(fs,'statSync',{set(v){this.cp.spawn=custom;}});",
+  "Reflect.defineProperty(fs,'statSync',{set(v){this.cp.spawn=custom;}});",
+  "Object.defineProperties(fs,{statSync:{set(v){this.cp.spawn=custom;}}});",
+  "const alias=fs; Object.defineProperty(alias,'statSync',{set(v){this.cp.spawn=custom;}});",
+  "configure(fs);",
+])("revisits deferred Reflect descriptor proof: %s", (install) => {
+  const ir = analyzeJavaScriptSemantics(`const cp=require('child_process');
+    const fs=require('fs');
+    function run(){Reflect.set(fs,'statSync',1,{cp}); cp.spawn('wrong');}
+    ${install} run();`);
+  expect(ir.childProcessSpawns).toEqual([]);
+});
+
+it.each([
+  "Reflect.set.call(null,fs,'statSync',1,{cp});",
+  "Reflect.set.apply(null,[fs,'statSync',1,{cp}]);",
+  "const set=Reflect.set; set(fs,'statSync',1,{cp});",
+])("retains deferred descriptor effects through %s", (invoke) => {
+  expect(
+    analyzeJavaScriptSemantics(`const cp=require('child_process');
+    const fs=require('fs'); const run=()=>{${invoke} cp.spawn('wrong');};
+    Object.defineProperty(fs,'statSync',{set(v){this.cp.spawn=custom;}});
+    run();`).childProcessSpawns,
+  ).toEqual([]);
+});
+
+it.each([
+  "Reflect.set(fs,'statSync',1,{cp}); cp.spawn('kept'); Object.defineProperty(fs,'statSync',{set(v){this.cp.spawn=custom;}});",
+  "function run(){Reflect.set(fs,'statSync',1,{cp}); cp.spawn('kept');} Object.defineProperty(fs,'unrelated',{set(v){this.cp.spawn=custom;}}); run();",
+  "function run(){Reflect.set(fs,'statSync',1,{cp}); cp.spawn('kept');} run();",
+])("preserves independently proven Reflect data writes: %s", (body) => {
+  expect(
+    analyzeJavaScriptSemantics(`const cp=require('child_process');
+    const fs=require('fs'); ${body}`).childProcessSpawns.map(
+      ({ method }) => method,
+    ),
+  ).toEqual(["spawn"]);
+});
+
+it.each([
+  "box.owner=module;",
+  "const alias=box; alias.owner=module;",
+  "box['owner']=module;",
+  "box[key]=module;",
+  "Reflect.set(box,'owner',module);",
+  "Object.defineProperty(box,'owner',{value:module});",
+  "Object.defineProperties(box,{owner:{value:module}});",
+  "Object.assign(box,{owner:module});",
+])("retains wrapper exposure through written local properties: %s", (write) => {
+  expect(
+    analyzeJavaScriptSemantics(`const box={}; ${write}
+    Object.assign=(target,value)=>{value.require=replacement};
+    Object.assign({},box.owner); require('fs').readFileSync('wrong');
+  `).configurationOperations,
+  ).toEqual([]);
+});
+
+it.each([
+  "const box={}; const saved=box; box.owner=module; Object.assign({},saved.owner);",
+  "const box={}; function run(){Object.assign({},box.owner);} box.owner=module; run();",
+  "const box={child:{}}; box.child.owner=module; Object.assign({},box.child);",
+  "const box={}; Object.assign({},box.owner); box.owner=module; Object.assign({},box.owner);",
+])("retains shared local object exposure at its use: %s", (body) => {
+  expect(
+    analyzeJavaScriptSemantics(`Object.assign=(target,value)=>{(value.owner ?? value).require=replacement};
+    ${body} require('fs').readFileSync('wrong');`).configurationOperations,
+  ).toEqual([]);
+});
+
+it.each([
+  "const box={owner:{}}; box.other=module; Object.assign({},box.owner); require('fs').readFileSync('kept');",
+  "const box={owner:{}}; Object.assign({},box.owner); require('fs').readFileSync('kept'); box.owner=module;",
+  "const box={owner:{}}; const saved=box.owner; box.owner=module; Object.assign({},saved); require('fs').readFileSync('kept');",
+])("keeps written local exposure scoped to the read: %s", (body) => {
+  expect(
+    analyzeJavaScriptSemantics(`Object.assign=(target,value)=>{value.require=replacement};
+    ${body}`).configurationOperations.map(({ key }) => key),
+  ).toEqual(["kept"]);
+});
+
 const intrinsicReplacementForms = [
   "Object.defineProperty(Reflect,'set',{value:bound});",
   "Reflect.defineProperty(Reflect,'set',{value:bound});",

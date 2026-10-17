@@ -273,6 +273,13 @@ const moduleRequireWrites = new WeakMap<
   readonly t.Node[]
 >();
 
+/** Member collection can discover stored module exposure after an earlier query. */
+export const clearSemanticRequireWriteCache = (
+  state: JavaScriptSemanticAnalysisState,
+): void => {
+  moduleRequireWrites.delete(state);
+};
+
 /** Resolve the CommonJS wrapper module identity through ordered aliases. */
 export const semanticCommonJsModuleObjectAt = (
   node: t.Node,
@@ -363,25 +370,64 @@ const writesModuleRequire = (
   // only fully explored module-free node/projection pairs; a partial walk that
   // found exposure cannot establish anything about its other visited nodes.
   const moduleFree = new WeakMap<t.Node, SemanticPropertyPathCoverage>();
-  const exposesModule = (nodes: readonly t.Node[]): boolean => {
-    const pending: { node: t.Node; path: JavaScriptSemanticPropertyPath }[] =
-      nodes.map((node) => ({ node, path: [] }));
-    const visited = new WeakMap<t.Node, SemanticPropertyPathCoverage>();
+  const exposesModule = (nodes: readonly t.Node[], call: t.Node): boolean => {
+    const pending: {
+      node: t.Node;
+      path: JavaScriptSemanticPropertyPath;
+      readAt?: t.Node;
+    }[] = nodes.map((node) => ({ node, path: [] }));
+    const visited = new WeakMap<
+      t.Node,
+      Map<t.Node, SemanticPropertyPathCoverage>
+    >();
+    let timeDependent = false;
     const examined: { node: t.Node; path: JavaScriptSemanticPropertyPath }[] =
       [];
     while (pending.length > 0) {
-      const { node: source, path } = pending.pop()!;
+      const { node: source, path, readAt: capturedAt } = pending.pop()!;
       const value = unwrapJavaScriptExpression(source).node;
+      const readAt = capturedAt ?? value;
+      const binding = t.isIdentifier(value)
+        ? resolveSemanticBindingState(state, value, value.name)
+        : undefined;
+      for (const effect of binding?.memberWrites ?? []) {
+        if (
+          !effect.path.slice(0, path.length).every((key, index) => {
+            const selected = path[index];
+            return (
+              selected === null ||
+              typeof selected === "object" ||
+              semanticPropertyPathKeyMatches(key, String(selected))
+            );
+          })
+        )
+          continue;
+        // A saved object remains shared; a saved property value retains its
+        // earlier capture. Such timing-dependent proofs cannot be reused at
+        // another alias use merely because they reached the same initializer.
+        timeDependent = true;
+        if (
+          effect.node !== call &&
+          effect.node !== state.parentsByNode.get(readAt) &&
+          semanticEffectTiming(readAt, effect.node, state) !== "after"
+        )
+          return true;
+      }
       if (moduleFree.get(value)?.covers(path)) continue;
-      const coverage = visited.get(value) ?? new SemanticPropertyPathCoverage();
+      const captures =
+        visited.get(value) ?? new Map<t.Node, SemanticPropertyPathCoverage>();
+      const coverage =
+        captures.get(readAt) ?? new SemanticPropertyPathCoverage();
       if (coverage.covers(path)) continue;
       coverage.retain(path);
-      visited.set(value, coverage);
+      captures.set(readAt, coverage);
+      visited.set(value, captures);
       examined.push({ node: value, path });
       for (const reference of interop.intrinsicValueReferences(value))
         pending.push({
           node: reference.node,
           path: [...reference.path, ...path],
+          readAt: reference.node,
         });
       if (semanticCommonJsModuleObjectAt(value, state)) {
         if (path.length === 0) return true;
@@ -395,8 +441,10 @@ const writesModuleRequire = (
         return true;
       }
       if (t.isIdentifier(value)) {
-        const binding = resolveSemanticBindingState(state, value, value.name);
-        if (binding !== undefined)
+        if (binding !== undefined) {
+          // Initializers do not prove a subsequently changed property module-free.
+          // Consume the alias-aware effect owner, preserving unrelated slots,
+          // earlier saved values and the current call's own argument exposure.
           for (const initializer of semanticBindingAtRead(
             binding,
             value,
@@ -404,6 +452,10 @@ const writesModuleRequire = (
           ).binding.initializers)
             pending.push({
               node: initializer.node,
+              readAt:
+                initializer.projection.length > 0 && path.length === 0
+                  ? initializer.node
+                  : readAt,
               path: [
                 ...initializer.projection.map((key) =>
                   key === null ? null : String(key),
@@ -411,8 +463,9 @@ const writesModuleRequire = (
                 ...path,
               ],
             });
+        }
       } else if (t.isSpreadElement(value))
-        pending.push({ node: value.argument, path });
+        pending.push({ node: value.argument, path, readAt });
       else if (t.isArrayExpression(value)) {
         const [key, ...remaining] = path;
         const shifted = value.elements.some(t.isSpreadElement);
@@ -429,16 +482,22 @@ const writesModuleRequire = (
             pending.push({
               node: element,
               path: key === undefined ? [] : remaining,
+              readAt,
             });
         }
       } else if (t.isObjectExpression(value)) {
-        pending.push(...semanticObjectPropertyReferences(value, path, state));
+        pending.push(
+          ...semanticObjectPropertyReferences(value, path, state).map(
+            (reference) => ({ ...reference, readAt }),
+          ),
+        );
       } else if (
         t.isMemberExpression(value) ||
         t.isOptionalMemberExpression(value)
       ) {
         pending.push({
           node: value.object,
+          readAt: path.length === 0 ? value : readAt,
           path: [
             semanticStaticPropertyKey(value.property, value.computed),
             ...path,
@@ -454,25 +513,30 @@ const writesModuleRequire = (
               ? value.consequent
               : value.left,
             path,
+            readAt,
           },
           {
             node: t.isConditionalExpression(value)
               ? value.alternate
               : value.right,
             path,
+            readAt,
           },
         );
       } else if (t.isSequenceExpression(value)) {
         const last = value.expressions.at(-1);
-        if (last !== undefined) pending.push({ node: last, path });
+        if (last !== undefined) pending.push({ node: last, path, readAt });
       } else if (t.isAssignmentExpression(value)) {
         if (["=", "||=", "&&=", "??="].includes(value.operator))
-          pending.push({ node: value.right, path });
+          pending.push({ node: value.right, path, readAt });
         if (["||=", "&&=", "??="].includes(value.operator))
-          pending.push({ node: value.left, path });
+          pending.push({ node: value.left, path, readAt });
       } else if (t.isCallExpression(value) || t.isOptionalCallExpression(value))
-        pending.push(...value.arguments.map((node) => ({ node, path: [] })));
+        pending.push(
+          ...value.arguments.map((node) => ({ node, path: [], readAt })),
+        );
     }
+    if (timeDependent) return false;
     for (const { node, path } of examined) {
       const coverage =
         moduleFree.get(node) ?? new SemanticPropertyPathCoverage();
@@ -534,7 +598,7 @@ const writesModuleRequire = (
           // An overwritten callable does not retain native mutator argument
           // semantics. Preserve any module reference supplied directly,
           // through call/apply containers or a captured bound argument.
-          if (exposesModule([...node.arguments, node.callee]))
+          if (exposesModule([...node.arguments, node.callee], node))
             writes.push(node);
           return;
         }

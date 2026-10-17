@@ -56,6 +56,12 @@ const probeHost =
             launcher: (spawn) =>
               spawnOwnedProviderProcess({
                 ...spawn,
+                // The native Windows process owner passes the selected environment
+                // verbatim; Node needs SystemRoot to initialize its crypto runtime.
+                hostEnvironment: {
+                  SystemRoot: process.env.SystemRoot,
+                  ...spawn.hostEnvironment,
+                },
                 command: process.execPath,
                 arguments: [`${command}.cjs`, ...spawn.arguments],
               }),

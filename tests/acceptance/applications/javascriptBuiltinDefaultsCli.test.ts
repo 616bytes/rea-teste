@@ -236,6 +236,18 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
 
 it("excludes monkey-patched CommonJS effects from CLI and MCP evidence", async () => {
   const root = await createTestTempDirectory("rea-builtin-mutated-");
+  await writeFile(
+    join(root, "deferred-setter.cjs"),
+    `const cp=require('child_process'); const fs=require('fs');
+    function run(){Reflect.set(fs,'statSync',1,{cp}); cp.spawn('wrong');}
+    Object.defineProperty(fs,'statSync',{set(v){this.cp.spawn=custom;}}); run();`,
+  );
+  await writeFile(
+    join(root, "stored-loader.cjs"),
+    `Object.assign=(target,value)=>{value.require=replacement};
+    const box={}; const saved=box; box.owner=module;
+    Object.assign({},saved.owner); require('fs').readFileSync('wrong');`,
+  );
   for (const [index, mutation] of [
     "Object.assign(module, {[key]: replacement});",
     "Object.assign(module, {...replacement});",

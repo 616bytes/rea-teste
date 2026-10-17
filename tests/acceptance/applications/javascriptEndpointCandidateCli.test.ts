@@ -20,6 +20,9 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
     import * as vscode from "vscode";
     client.post("session");
     (client.get as any)("/api/items");
+    const records = new Map([["/accounts", { name: "Alice" }]]);
+    console.log(records.get("/accounts"));
+    fetch("/network");
     (new Headers().get as any)("content-type");
     (new URLSearchParams() as any).delete("q");
     ((vscode.workspace.getConfiguration("editor") as any).get as any)("tabSize");
@@ -49,7 +52,25 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
         )
         .sort(),
     )
-    .toEqual(["/api/items", "session"]);
+    .toEqual(["/api/items", "/network", "session"]);
+  const lookup = result.graph.nodes.find(
+    ({ kind, observations }) =>
+      kind === "endpoint" &&
+      observations.some(({ properties }) => properties.value === "/api/items"),
+  );
+  expect(lookup?.observations[0]).toMatchObject({
+    properties: { interpretation: "candidate" },
+    evidence: { state: "inferred", confidence: "low" },
+  });
+  const request = result.graph.nodes.find(
+    ({ kind, observations }) =>
+      kind === "endpoint" &&
+      observations.some(({ properties }) => properties.value === "/network"),
+  );
+  expect(request?.observations[0]?.evidence).toMatchObject({
+    state: "observed",
+    confidence: "exact",
+  });
   expect(
     result.graph.nodes
       .filter(({ kind }) => kind === "storage")

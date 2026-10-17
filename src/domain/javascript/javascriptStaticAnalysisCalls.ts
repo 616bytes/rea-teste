@@ -469,6 +469,18 @@ const inspectEndpointCall = (
   // A local or shadowed function with a familiar network name is not a known
   // browser request API. Do not let the literal fallback turn it into one.
   if (isNetworkRequestSpelling(name)) return;
+  if (first !== undefined && /(?:^|\.)(?:get|delete)$/u.test(name)) {
+    context.accumulator.pendingNetworkCalls.push({ node, name });
+    return;
+  }
+  inspectLiteralEndpointCall(node, name, context);
+};
+
+const inspectLiteralEndpointCall = (
+  node: JavaScriptCallLike,
+  name: string,
+  context: FindingContext,
+): void => {
   const receiverFact = context.openReceiverFacts?.get(node.start ?? -1);
   const endpoint = endpointArgumentHelper(
     name,
@@ -528,6 +540,11 @@ export const finishPartialNetworkEndpoints = (
   index: JavaScriptBindingIndex,
 ): void => {
   for (const { node, name } of context.accumulator.pendingNetworkCalls) {
+    if (!isKnownNetworkRequest(node, bindings)) {
+      if (!isMapLookup(node, bindings, index))
+        inspectLiteralEndpointCall(node, name, context);
+      continue;
+    }
     const target = argumentNode(node.arguments[0]);
     if (target === undefined) continue;
     const resolved = resolvedRequestTarget(target, node, bindings, index);
@@ -543,6 +560,53 @@ export const finishPartialNetworkEndpoints = (
   context.accumulator.pendingNetworkCalls.length = 0;
   context.accumulator.endpoints.sort(
     (left, right) => left.offset - right.offset,
+  );
+};
+
+/** A URL-shaped Map key is still a lookup when its receiver and method are unchanged. */
+const isMapLookup = (
+  node: JavaScriptCallLike,
+  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
+): boolean => {
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
+    return false;
+  const method = semanticStaticPropertyName(callee.property, callee.computed);
+  if (method !== "get" && method !== "delete") return false;
+  if (
+    ["Map", "Object"].some((owner) =>
+      bindings.ambientWrites.covers(["global", owner, "prototype", method]),
+    )
+  )
+    return false;
+  let receiver = unwrapJavaScriptExpression(callee.object).node;
+  const seen = new Set<string>();
+  while (t.isIdentifier(receiver)) {
+    if (
+      index.referenceMayHaveChangedAt(node, receiver, [method]) ||
+      index.referenceMayHaveChangedAt(node, receiver, ["__proto__"])
+    )
+      return false;
+    const binding = index.bindingForReferenceAt(receiver);
+    if (binding === undefined || seen.has(binding.bindingId)) return false;
+    seen.add(binding.bindingId);
+    const initializer = semanticStableInitializer(binding, bindings);
+    if (
+      initializer === undefined ||
+      initializer.projection.length !== 0 ||
+      !semanticTopLevelEffectFollowsCapture(
+        initializer.node,
+        node,
+        bindings.parentsByNode,
+      )
+    )
+      return false;
+    receiver = unwrapJavaScriptExpression(initializer.node).node;
+  }
+  return (
+    t.isNewExpression(receiver) &&
+    isUnmodifiedGlobalReference(receiver.callee, bindings, "Map")
   );
 };
 

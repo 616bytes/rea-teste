@@ -232,7 +232,13 @@ export const publishFirmwareExtraction = async (context: {
             cause instanceof Error ? cause.message : String(cause),
         },
         {
-          cause: cleanupCause,
+          cause:
+            cause !== undefined && cause !== cleanupCause
+              ? new AggregateError(
+                  [cause, cleanupCause],
+                  `${cleanupCause instanceof Error ? cleanupCause.message : String(cleanupCause)}; previous error: ${cause instanceof Error ? cause.message : String(cause)}`,
+                )
+              : cleanupCause,
           operation: "extract_firmware",
           ...(publishedResult === undefined
             ? {}

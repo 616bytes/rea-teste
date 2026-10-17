@@ -363,17 +363,26 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         await systemProcessOwnershipHost.captureBaseline?.(options.signal);
       if (options.signal?.aborted)
         throw new BrowserObservationError(OPERATION, "cancelled");
-      const containsApp = await runWithExecutionLimits(
-        executableContainsApplication(
-          paths.executable,
-          paths.application,
-          options.signal,
-          this.#resources,
-          this.#fileSystem,
-        ),
+      const manifestCheck = executableContainsApplication(
+        paths.executable,
+        paths.application,
         options.signal,
-        startupDeadline,
+        this.#resources,
+        this.#fileSystem,
       );
+      let containsApp: boolean;
+      try {
+        containsApp = await runWithExecutionLimits(
+          manifestCheck,
+          options.signal,
+          startupDeadline,
+        );
+      } catch (interruption: unknown) {
+        // A startup interruption cannot abandon an admitted manifest descriptor's
+        // final close. Its physical/cleanup failure takes precedence over the race.
+        await manifestCheck;
+        throw interruption;
+      }
       const launchOptions: Parameters<typeof electron.launch>[0] = {
         executablePath: paths.executable,
         cwd: paths.root,

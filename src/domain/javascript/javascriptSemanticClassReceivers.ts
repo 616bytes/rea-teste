@@ -42,6 +42,11 @@ export interface ClassRegistry {
   readonly dynamicMemberWriteSeen: boolean;
   readonly mixinSeen: boolean;
   readonly fieldMap: ReadonlyMap<t.Node, ReadonlyMap<string, ClassFieldInfo>>;
+  readonly hiddenKeys: ReadonlyMap<t.Node, ReadonlySet<string>>;
+  readonly poisonedFields: ReadonlySet<string>;
+  readonly replacementIds: ReadonlyMap<string, readonly string[]>;
+  readonly decoratedClasses: ReadonlySet<t.Node>;
+  readonly decoratedMethods: ReadonlySet<t.Node>;
 }
 
 /** Single-constructor field writes; multiple or unknown writes never prove exact. */
@@ -86,13 +91,19 @@ const buildClassMethodRegistry = (
   const classes: (t.ClassDeclaration | t.ClassExpression)[] = [];
   const methodsByClass = new Map<t.Node, Map<string, ClassMethodEntry[]>>();
   const methodsByKey = new Map<string, ClassMethodEntry[]>();
+  const hiddenKeys = new Map<t.Node, Set<string>>();
+  const decoratedClasses = new Set<t.Node>();
+  const decoratedMethods = new Set<t.Node>();
   let computedMethodSeen = false;
   traverseJavaScriptAst(state.program, {
     enter: (node) => {
       if (!t.isClass(node)) return;
       classes.push(node);
+      if ((node.decorators?.length ?? 0) > 0) decoratedClasses.add(node);
       const table = new Map<string, ClassMethodEntry[]>();
+      const hidden = new Set<string>();
       methodsByClass.set(node, table);
+      hiddenKeys.set(node, hidden);
       for (const member of node.body.body) {
         if (!t.isClassMethod(member)) continue;
         const key = semanticStaticPropertyKey(member.key, member.computed);
@@ -100,6 +111,14 @@ const buildClassMethodRegistry = (
           computedMethodSeen = true;
           continue;
         }
+        if ((member.decorators?.length ?? 0) > 0) decoratedMethods.add(member);
+        if (
+          !member.static &&
+          (member.kind === "get" || member.kind === "set") &&
+          !t.isPrivateName(member.key) &&
+          key !== null
+        )
+          hidden.add(key);
         if (
           member.static ||
           member.kind !== "method" ||
@@ -123,13 +142,13 @@ const buildClassMethodRegistry = (
         methodsByKey.set(key, grouped);
       }
       // A computed class property with an unknown key may install any method.
+      // A concrete instance field or accessor hides the prototype method.
       for (const member of node.body.body) {
-        if (
-          t.isClassProperty(member) &&
-          member.computed &&
-          semanticStaticPropertyKey(member.key, true) === null
-        )
-          computedMethodSeen = true;
+        if (!t.isClassProperty(member) || member.static) continue;
+        if (t.isPrivateName(member.key)) continue;
+        const key = semanticStaticPropertyKey(member.key, member.computed);
+        if (key === null) computedMethodSeen = true;
+        else hidden.add(key);
       }
     },
   });
@@ -146,6 +165,8 @@ const buildClassMethodRegistry = (
     superClasses.set(klass, semanticClassCandidates(klass.superClass, state));
   }
   const reassignedKeys = new Set<string>();
+  const poisonedFields = new Set<string>();
+  const replacementIds = new Map<string, string[]>();
   let dynamicMemberWriteSeen = false;
   let mixinSeen = false;
   const fieldWrites: {
@@ -161,7 +182,7 @@ const buildClassMethodRegistry = (
         continue;
       const field = semanticStaticPropertyKey(member.key, member.computed);
       if (field === null) continue;
-      const resolved = classesForNewValue(member.value, state);
+      const resolved = classesForNewValue(member.value, state, superClasses);
       fieldWrites.push({
         owner: klass,
         field,
@@ -172,7 +193,7 @@ const buildClassMethodRegistry = (
   }
   traverseJavaScriptAst(state.program, {
     enter: (node) => {
-      if (t.isAssignmentExpression(node) && node.operator === "=") {
+      if (t.isAssignmentExpression(node)) {
         const target = unwrapJavaScriptExpression(node.left).node;
         if (
           t.isMemberExpression(target) ||
@@ -183,25 +204,38 @@ const buildClassMethodRegistry = (
             target.computed,
           );
           if (key === null) dynamicMemberWriteSeen = true;
-          else reassignedKeys.add(key);
-          // Single `this.f = new C()` writes prove the field receiver.
+          else {
+            reassignedKeys.add(key);
+            const replacement = callableIdForValue(node.right);
+            if (replacement !== null) {
+              const ids = replacementIds.get(key) ?? [];
+              ids.push(replacement);
+              replacementIds.set(key, ids);
+            }
+          }
           const object = unwrapJavaScriptExpression(target.object).node;
-          if (
+          const definiteFieldWrite =
+            node.operator === "=" &&
             key !== null &&
             t.isThisExpression(object) &&
-            !t.isPrivateName(target.property)
-          ) {
+            !t.isPrivateName(target.property) &&
+            assignmentIsDefiniteConstructorInit(node, state);
+          if (definiteFieldWrite && key !== null) {
             const owner = enclosingInstanceClass(node, state);
             if (owner !== null) {
-              const resolved = classesForNewValue(node.right, state);
+              const resolved = classesForNewValue(
+                node.right,
+                state,
+                superClasses,
+              );
               fieldWrites.push({
                 owner,
                 field: key,
                 classes: resolved.classes,
                 unknown: resolved.unknown,
               });
-            }
-          }
+            } else poisonedFields.add(key);
+          } else if (key !== null) poisonedFields.add(key);
         }
       }
       if (
@@ -209,7 +243,8 @@ const buildClassMethodRegistry = (
         t.isMemberExpression(node.callee) &&
         !node.callee.computed &&
         t.isIdentifier(node.callee.object, { name: "Object" }) &&
-        t.isIdentifier(node.callee.property, { name: "assign" })
+        t.isIdentifier(node.callee.property, { name: "assign" }) &&
+        assignsOntoClassShape(node.arguments[0], state)
       )
         mixinSeen = true;
     },
@@ -224,12 +259,21 @@ const buildClassMethodRegistry = (
     dynamicMemberWriteSeen,
     mixinSeen,
     fieldMap: indexFieldMap(fieldWrites),
+    hiddenKeys,
+    poisonedFields,
+    replacementIds,
+    decoratedClasses,
+    decoratedMethods,
   };
 };
 
 const classesForNewValue = (
   value: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  supers: ReadonlyMap<
+    t.Node,
+    readonly (t.ClassDeclaration | t.ClassExpression)[]
+  >,
 ): {
   readonly classes: readonly (t.ClassDeclaration | t.ClassExpression)[];
   readonly unknown: boolean;
@@ -237,10 +281,154 @@ const classesForNewValue = (
   const unwrapped = unwrapJavaScriptExpression(value).node;
   if (!t.isNewExpression(unwrapped)) return { classes: [], unknown: true };
   const callee = unwrapJavaScriptExpression(unwrapped.callee).node;
+  if (!newCalleeIsFullyLocal(callee, state))
+    return { classes: [], unknown: true };
   const classes = semanticClassCandidates(callee, state);
-  return classes.length === 0
-    ? { classes: [], unknown: true }
-    : { classes, unknown: false };
+  if (
+    classes.length === 0 ||
+    classes.some((klass) =>
+      constructorMayReplaceInstance(klass, { superClasses: supers }),
+    )
+  )
+    return { classes: [], unknown: true };
+  return { classes, unknown: false };
+};
+
+const newCalleeIsFullyLocal = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const expression = unwrapJavaScriptExpression(callee).node;
+  if (
+    t.isConditionalExpression(expression) ||
+    t.isLogicalExpression(expression)
+  ) {
+    const arms = t.isConditionalExpression(expression)
+      ? [expression.consequent, expression.alternate]
+      : [expression.left, expression.right];
+    return arms.every((arm) => {
+      const local = semanticClassCandidates(arm, state);
+      return local.length > 0 && newCalleeIsFullyLocal(arm, state);
+    });
+  }
+  if (t.isClass(expression)) return true;
+  if (!t.isIdentifier(expression)) {
+    return semanticClassCandidates(expression, state).length > 0;
+  }
+  const binding = resolveSemanticBindingState(
+    state,
+    expression,
+    expression.name,
+  );
+  if (binding === undefined || binding.kind === "import") return false;
+  return semanticClassCandidates(expression, state).length > 0;
+};
+
+const constructorMayReplaceInstance = (
+  klass: t.ClassDeclaration | t.ClassExpression,
+  registry: {
+    readonly superClasses: ReadonlyMap<
+      t.Node,
+      readonly (t.ClassDeclaration | t.ClassExpression)[]
+    >;
+  },
+  seen: Set<t.Node> = new Set(),
+): boolean => {
+  if (seen.has(klass)) return false;
+  seen.add(klass);
+  for (const member of klass.body.body) {
+    if (
+      t.isClassMethod(member) &&
+      member.kind === "constructor" &&
+      constructorReturnsObject(member.body)
+    )
+      return true;
+  }
+  for (const base of registry.superClasses.get(klass) ?? [])
+    if (constructorMayReplaceInstance(base, registry, seen)) return true;
+  return false;
+};
+
+const constructorReturnsObject = (body: t.BlockStatement): boolean => {
+  const pending: t.Node[] = [...body.body];
+  for (let cursor = 0; cursor < pending.length; cursor++) {
+    const node = pending[cursor];
+    if (node === undefined || t.isFunction(node) || t.isClass(node)) continue;
+    if (t.isReturnStatement(node)) {
+      if (node.argument == null) continue;
+      const value = unwrapJavaScriptExpression(node.argument).node;
+      const keepsInstance =
+        t.isThisExpression(value) ||
+        t.isLiteral(value) ||
+        t.isTemplateLiteral(value) ||
+        (t.isIdentifier(value) && value.name === "undefined");
+      if (!keepsInstance) return true;
+      continue;
+    }
+    const keys = t.VISITOR_KEYS[node.type] ?? [];
+    for (const key of keys) {
+      const child = (node as unknown as Record<string, unknown>)[key];
+      if (Array.isArray(child)) {
+        for (const entry of child) if (t.isNode(entry)) pending.push(entry);
+      } else if (t.isNode(child)) pending.push(child);
+    }
+  }
+  return false;
+};
+
+const callableIdForValue = (value: t.Node): string | null => {
+  const node = unwrapJavaScriptExpression(value).node;
+  if (
+    t.isFunctionExpression(node) ||
+    t.isArrowFunctionExpression(node) ||
+    t.isClassExpression(node)
+  )
+    return semanticCallableIdForNode(node);
+  return null;
+};
+
+const assignmentIsDefiniteConstructorInit = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let current = state.parentsByNode.get(node);
+  while (current !== undefined) {
+    if (
+      t.isIfStatement(current) ||
+      t.isSwitchStatement(current) ||
+      t.isLoop(current) ||
+      t.isConditionalExpression(current) ||
+      t.isLogicalExpression(current) ||
+      t.isTryStatement(current) ||
+      t.isCatchClause(current)
+    )
+      return false;
+    if (t.isClassMethod(current) && current.kind === "constructor") return true;
+    if (t.isFunction(current) && !t.isArrowFunctionExpression(current))
+      return false;
+    current = state.parentsByNode.get(current);
+  }
+  return false;
+};
+
+const assignsOntoClassShape = (
+  target: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (target === undefined) return false;
+  const expression = unwrapJavaScriptExpression(target).node;
+  if (t.isThisExpression(expression)) return true;
+  if (
+    (t.isMemberExpression(expression) ||
+      t.isOptionalMemberExpression(expression)) &&
+    semanticStaticPropertyKey(expression.property, expression.computed) ===
+      "prototype"
+  )
+    return true;
+  return (
+    t.isIdentifier(expression) &&
+    semanticClassCandidates(expression, state).length > 0
+  );
 };
 
 interface FieldWrite {
@@ -290,6 +478,7 @@ export const enclosingInstanceClass = (
   let staticMethod = false;
   let current = state.parentsByNode.get(site);
   while (current !== undefined) {
+    if (t.isStaticBlock(current)) return null;
     if (t.isClass(current)) return staticMethod ? null : current;
     if (t.isClassMethod(current) || t.isClassPrivateMethod(current)) {
       if (current.static) staticMethod = true;
@@ -382,11 +571,21 @@ const proveNewExpressionReceiver = (
       reason: `Member receiver ${expression.name} is not constructed with new.`,
     };
   const callee = unwrapJavaScriptExpression(init.callee).node;
+  if (!newCalleeIsFullyLocal(callee, state))
+    return {
+      status: "unknown",
+      reason: `Member receiver ${expression.name} has no single local class.`,
+    };
   const classes = semanticClassCandidates(callee, state);
   if (classes.length !== 1 || classes[0] === undefined)
     return {
       status: "unknown",
       reason: `Member receiver ${expression.name} has no single local class.`,
+    };
+  if (constructorMayReplaceInstance(classes[0], getClassRegistry(state)))
+    return {
+      status: "unknown",
+      reason: `Member receiver ${expression.name} may be replaced by its constructor.`,
     };
   return { status: "proven", classes: [classes[0]] };
 };
@@ -403,15 +602,49 @@ const hasHierarchyOverride = (
     if (table?.get(key) !== undefined && table.get(key)?.length !== 0)
       return true;
   }
-  for (const candidate of registry.allClasses) {
-    if (candidate === proven) continue;
-    const supers = registry.superClasses.get(candidate) ?? [];
-    if (!supers.includes(proven)) continue;
+  for (const candidate of descendantClasses(proven, registry)) {
     const table = registry.methodsByClass.get(candidate);
     if (table?.get(key) !== undefined && table.get(key)?.length !== 0)
       return true;
   }
   return false;
+};
+
+const descendantClasses = (
+  proven: t.ClassDeclaration | t.ClassExpression,
+  registry: ClassRegistry,
+): (t.ClassDeclaration | t.ClassExpression)[] => {
+  const found: (t.ClassDeclaration | t.ClassExpression)[] = [];
+  const seen = new Set<t.Node>([proven]);
+  const pending = [proven];
+  for (let cursor = 0; cursor < pending.length; cursor++) {
+    const current = pending[cursor];
+    if (current === undefined) continue;
+    for (const candidate of registry.allClasses) {
+      if (seen.has(candidate)) continue;
+      const supers = registry.superClasses.get(candidate) ?? [];
+      if (!supers.includes(current)) continue;
+      seen.add(candidate);
+      pending.push(candidate);
+      found.push(candidate);
+    }
+  }
+  return found;
+};
+
+const methodIsHidden = (
+  owner: t.ClassDeclaration | t.ClassExpression,
+  key: string,
+  registry: ClassRegistry,
+): boolean => {
+  if (registry.decoratedClasses.has(owner)) return true;
+  if (registry.hiddenKeys.get(owner)?.has(key) === true) return true;
+  const own = registry.methodsByClass.get(owner)?.get(key) ?? [];
+  if (own.some((entry) => registry.decoratedMethods.has(entry.methodNode)))
+    return true;
+  return descendantClasses(owner, registry).some(
+    (child) => registry.hiddenKeys.get(child)?.has(key) === true,
+  );
 };
 
 /** Prove `this.f` single-constructor field receivers alongside Unit 1 shapes. */
@@ -443,6 +676,11 @@ export const proveUnitTwoReceiver = (
     return direct;
   const owner = enclosingInstanceClass(site, state);
   if (owner === null) return direct;
+  if (registry.poisonedFields.has(field))
+    return {
+      status: "unknown",
+      reason: `Member receiver this.${field} may be replaced before the read.`,
+    };
   const info = registry.fieldMap.get(owner)?.get(field);
   if (info === undefined || info.unknown || info.classes.length === 0)
     return {
@@ -492,21 +730,25 @@ export const lookupUnitOneMethod = (
     registry.dynamicMemberWriteSeen ||
     registry.computedMethodSeen
   ) {
-    const ids = collectOwnIds(proven, key, registry);
-    if (ids.length === 0)
+    const ids = [
+      ...collectOwnIds(proven, key, registry),
+      ...(registry.replacementIds.get(key) ?? []),
+    ];
+    const unique = [...new Set(ids)].sort();
+    if (unique.length === 0)
       return {
         callableIds: [],
         complete: false,
         reason: `Class method ${key} may have been reassigned or mixed in.`,
       };
-    if (ids.length > MAX_CLASS_CANDIDATES)
+    if (unique.length > MAX_CLASS_CANDIDATES)
       return {
         callableIds: [],
         complete: false,
         reason: `Class method ${key} exceeds the per-site candidate cap.`,
       };
     return {
-      callableIds: [...ids],
+      callableIds: unique,
       complete: false,
       reason: `Class method ${key} may have been reassigned or mixed in.`,
     };
@@ -555,6 +797,12 @@ export const lookupUnitOneMethod = (
       reason: `Class method ${key} is inherited from a base class.`,
     };
   }
+  if (methodIsHidden(owner, key, registry))
+    return {
+      callableIds: [],
+      complete: false,
+      reason: `Class method ${key} is hidden by a field, accessor, or decorator.`,
+    };
   if (own.length > 1 || hasHierarchyOverride(owner, key, registry)) {
     const ids = collectHierarchyIds(owner, key, registry);
     return {
@@ -588,6 +836,7 @@ const collectOwnIds = (
   for (const owner of proven) {
     const entries = registry.methodsByClass.get(owner)?.get(key) ?? [];
     for (const entry of entries) ids.push(entry.callableId);
+    ids.push(...collectBaseIds(owner, key, registry));
   }
   return [...new Set(ids)].sort();
 };
@@ -604,10 +853,7 @@ const collectHierarchyIds = (
     const entries = registry.methodsByClass.get(base)?.get(key) ?? [];
     for (const entry of entries) ids.push(entry.callableId);
   }
-  for (const candidate of registry.allClasses) {
-    if (candidate === proven) continue;
-    const supers = registry.superClasses.get(candidate) ?? [];
-    if (!supers.includes(proven)) continue;
+  for (const candidate of descendantClasses(proven, registry)) {
     const entries = registry.methodsByClass.get(candidate)?.get(key) ?? [];
     for (const entry of entries) ids.push(entry.callableId);
   }
@@ -717,6 +963,21 @@ export const proveGetterReceiver = (
       status: "unknown",
       reason: `Getter ${innerKey} has no single local method.`,
     };
+  if (table[0].methodNode.async || table[0].methodNode.generator)
+    return {
+      status: "unknown",
+      reason: `Getter ${innerKey} result is wrapped.`,
+    };
+  if (
+    descendantClasses(owner, registry).some(
+      (child) =>
+        (registry.methodsByClass.get(child)?.get(innerKey)?.length ?? 0) > 0,
+    )
+  )
+    return {
+      status: "unknown",
+      reason: `Getter ${innerKey} may be overridden.`,
+    };
   if (
     registry.reassignedKeys.has(innerKey) ||
     registry.mixinSeen ||
@@ -780,13 +1041,22 @@ const proveGetterReturn = (
     return { status: "proven", classes: [owner] };
   if (t.isNewExpression(expression)) {
     const callee = unwrapJavaScriptExpression(expression.callee).node;
+    if (!newCalleeIsFullyLocal(callee, state))
+      return {
+        status: "unknown",
+        reason: "Getter return has no single local class.",
+      };
     const classes = semanticClassCandidates(callee, state);
-    return classes.length === 1 && classes[0] !== undefined
-      ? { status: "proven", classes: [classes[0]] }
-      : {
-          status: "unknown",
-          reason: "Getter return has no single local class.",
-        };
+    if (
+      classes.length !== 1 ||
+      classes[0] === undefined ||
+      constructorMayReplaceInstance(classes[0], registry)
+    )
+      return {
+        status: "unknown",
+        reason: "Getter return has no single local class.",
+      };
+    return { status: "proven", classes: [classes[0]] };
   }
   if (t.isIdentifier(expression))
     return proveNewExpressionReceiver(expression, state, seenInitializers);

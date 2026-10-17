@@ -89,6 +89,7 @@ const CLASS_METHOD_NEGATIVES = [
     ].join("\n"),
     /overrides or duplicate/iu,
     "ambiguous",
+    "named-load",
   ],
   [
     "second field write stays ambiguous",
@@ -102,6 +103,7 @@ const CLASS_METHOD_NEGATIVES = [
     ].join("\n"),
     /multiple field writes/iu,
     "ambiguous",
+    "named-load",
   ],
   [
     "prototype reassignment stays ambiguous",
@@ -113,6 +115,7 @@ const CLASS_METHOD_NEGATIVES = [
     ].join("\n"),
     /reassigned or mixed/iu,
     "ambiguous",
+    "named-load-and-functions",
   ],
   [
     "instance reassignment stays ambiguous",
@@ -124,6 +127,7 @@ const CLASS_METHOD_NEGATIVES = [
     ].join("\n"),
     /reassigned or mixed/iu,
     "ambiguous",
+    "named-load-and-functions",
   ],
   [
     "computed method key stays ambiguous",
@@ -135,6 +139,7 @@ const CLASS_METHOD_NEGATIVES = [
     ].join("\n"),
     /reassigned or mixed/iu,
     "ambiguous",
+    "named-load",
   ],
   [
     "computed call key stays unresolved",
@@ -146,6 +151,7 @@ const CLASS_METHOD_NEGATIVES = [
     ].join("\n"),
     /computed/iu,
     "unresolved",
+    "none",
   ],
   [
     "Object.assign mixin stays ambiguous",
@@ -157,6 +163,7 @@ const CLASS_METHOD_NEGATIVES = [
     ].join("\n"),
     /reassigned or mixed/iu,
     "ambiguous",
+    "named-load",
   ],
   [
     "imported class receiver stays unresolved",
@@ -167,6 +174,7 @@ const CLASS_METHOD_NEGATIVES = [
     ].join("\n"),
     /no single local class/iu,
     "unresolved",
+    "none",
   ],
   [
     "parameter receiver stays unresolved",
@@ -176,6 +184,7 @@ const CLASS_METHOD_NEGATIVES = [
     ].join("\n"),
     /not a stable const/iu,
     "unresolved",
+    "none",
   ],
   [
     "let reassigned receiver stays unresolved",
@@ -186,6 +195,7 @@ const CLASS_METHOD_NEGATIVES = [
     ].join("\n"),
     /not a stable const/iu,
     "unresolved",
+    "none",
   ],
   [
     "getter returning two classes stays ambiguous",
@@ -199,6 +209,7 @@ const CLASS_METHOD_NEGATIVES = [
     ].join("\n"),
     /through a getter return/iu,
     "ambiguous",
+    "named-load",
   ],
   [
     "getter returning external value stays unresolved",
@@ -210,6 +221,7 @@ const CLASS_METHOD_NEGATIVES = [
     ].join("\n"),
     /Unresolved member receiver external/iu,
     "unresolved",
+    "none",
   ],
   [
     "deep receiver chains stay unresolved",
@@ -222,40 +234,83 @@ const CLASS_METHOD_NEGATIVES = [
     ].join("\n"),
     /Unsupported/iu,
     "unresolved",
+    "none",
   ],
 ] as const;
+
+const memberCallSites = (
+  source: string,
+  ir: ReturnType<typeof analyzeJavaScriptSemantics>,
+  name: string,
+) => {
+  const parsed = parseJavaScriptSource(source, "repro.js");
+  if (parsed === null) throw new Error("Expected valid fixture");
+  const positions = new Set<string>();
+  traverseJavaScriptAst(parsed.program, {
+    enter(node) {
+      if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+        return;
+      const callee = node.callee;
+      if (
+        (t.isMemberExpression(callee) ||
+          t.isOptionalMemberExpression(callee)) &&
+        !callee.computed &&
+        t.isIdentifier(callee.property, { name }) &&
+        callee.loc !== null &&
+        callee.loc !== undefined
+      )
+        positions.add(
+          `${String(callee.loc.start.line)}:${String(callee.loc.start.column)}:${String(callee.loc.end.column)}`,
+        );
+    },
+  });
+  return ir.callSites.filter(
+    (site) =>
+      site.kind === "call" &&
+      positions.has(
+        `${String(site.calleeLocation.start.line)}:${String(site.calleeLocation.start.column)}:${String(site.calleeLocation.end.column)}`,
+      ),
+  );
+};
+
+const expectedCandidateIds = (
+  ir: ReturnType<typeof analyzeJavaScriptSemantics>,
+  candidates: "none" | "named-load" | "named-load-and-functions",
+): string[] => {
+  if (candidates === "none") return [];
+  const ids = ir.callables
+    .filter((callable) => callable.name === "load")
+    .map((callable) => callable.callableId);
+  if (candidates === "named-load-and-functions") {
+    for (const callable of ir.callables)
+      if (callable.kind === "function" && callable.name === null)
+        ids.push(callable.callableId);
+  }
+  return ids.sort();
+};
 
 const checkNegative = (
   source: string,
   reason: RegExp,
   resolution: "ambiguous" | "unresolved",
+  candidates: "none" | "named-load" | "named-load-and-functions",
 ): void => {
   const ir = analyzeJavaScriptSemantics(source);
-  const calls = ir.callSites.filter(({ kind }) => kind === "call");
-  expect(calls.length).toBeGreaterThan(0);
-  const loadIds = new Set(
-    ir.callables
-      .filter(({ name }) => name === "load" || name === "helper")
-      .map(({ callableId }) => callableId),
-  );
-  const targets = calls.filter(
-    ({ calleeCallableIds }) =>
-      calleeCallableIds.some((id) => loadIds.has(id)) ||
-      calleeCallableIds.length === 0,
-  );
-  expect(targets.length).toBeGreaterThan(0);
-  for (const target of targets) {
-    if (target.calleeCallableIds.length === 0) {
-      expect(target.resolution).toBe("unresolved");
-    } else if (
-      target.calleeCallableIds.some((id) =>
-        ir.callables.some(
-          (callable) => callable.callableId === id && callable.name === "load",
-        ),
-      )
-    ) {
-      expect(target.resolution).not.toBe("exact");
-      expect(target.resolution).toBe(resolution);
+  const named = memberCallSites(source, ir, "load");
+  // Computed calls have no static name; they are the only call in that fixture.
+  const intended =
+    named.length > 0
+      ? named
+      : ir.callSites.filter((site) => site.kind === "call");
+  expect(intended.length).toBeGreaterThan(0);
+  const expectedIds = expectedCandidateIds(ir, candidates);
+  for (const target of intended) {
+    expect(target.resolution).toBe(resolution);
+    if (resolution === "ambiguous") {
+      expect(target.calleeCallableIds.length).toBeGreaterThan(0);
+      expect([...target.calleeCallableIds].sort()).toEqual(expectedIds);
+    } else {
+      expect(target.calleeCallableIds).toEqual([]);
     }
   }
   expect(ir.frontiers).toEqual(
@@ -371,8 +426,150 @@ describe("JavaScript semantic analysis: class method calls for #4437", () => {
 describe("JavaScript semantic analysis: class method call negatives", () => {
   it.each(CLASS_METHOD_NEGATIVES)(
     "never resolves exact for %s",
-    (_name, source, reason, resolution) => {
-      checkNegative(source, reason, resolution);
+    (_name, source, reason, resolution, candidates) => {
+      checkNegative(source, reason, resolution, candidates);
     },
   );
+
+  it("does not mark a shadowed instance field exact", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        "class Backend { load() { return 1; } load = () => 2; }",
+        "const x = new Backend();",
+        "x.load();",
+      ].join("\n"),
+    );
+    const site = callSitesOnLine(ir, 3);
+    expect(site).toHaveLength(1);
+    expect(site[0]?.resolution).toBe("unresolved");
+    expect(site[0]?.calleeCallableIds).toEqual([]);
+  });
+
+  it("does not mark a constructor-replaced instance exact", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        "class Backend { constructor() { return { load() {} }; } load() { return 1; } }",
+        "const x = new Backend();",
+        "x.load();",
+      ].join("\n"),
+    );
+    const site = callSitesOnLine(ir, 3);
+    expect(site).toHaveLength(1);
+    expect(site[0]?.resolution).toBe("unresolved");
+  });
+
+  it("does not prove a field written only in an ordinary method", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        "class Backend { load() { return 1; } }",
+        "class Consumer {",
+        "  run() { this.store.load(); }",
+        "  setup() { this.store = new Backend(); }",
+        "}",
+      ].join("\n"),
+    );
+    const site = callSitesOnLine(ir, 3);
+    expect(site).toHaveLength(1);
+    expect(site[0]?.resolution).toBe("unresolved");
+  });
+
+  it("does not keep a stale field target after an alias write", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        "class A { load() { return 1; } }",
+        "class B { load() { return 2; } }",
+        "class Consumer {",
+        "  store = new A();",
+        "  run() { const self = this; self.store = new B(); this.store.load(); }",
+        "}",
+      ].join("\n"),
+    );
+    const site = callSitesOnLine(ir, 5);
+    expect(site).toHaveLength(1);
+    expect(site[0]?.resolution).toBe("unresolved");
+  });
+
+  it("does not treat a transitive override as exact", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        "class A { load() { return 1; } run() { this.load(); } }",
+        "class B extends A {}",
+        "class C extends B { load() { return 2; } }",
+      ].join("\n"),
+    );
+    const site = callSitesOnLine(ir, 1);
+    expect(site).toHaveLength(1);
+    expect(site[0]?.resolution).toBe("ambiguous");
+    expect(site[0]?.calleeCallableIds.length).toBeGreaterThan(1);
+  });
+
+  it("does not invent a caller through an async helper", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        "class Backend { load() { return 1; } }",
+        "class Consumer {",
+        "  async helper() { return new Backend(); }",
+        "  run() { this.helper().load(); }",
+        "}",
+      ].join("\n"),
+    );
+    const load = onlyCallable(ir, "load");
+    expect(
+      ir.callSites.some(({ calleeCallableIds }) =>
+        calleeCallableIds.includes(load.callableId),
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps an exact call beside an unrelated Object.assign", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        "class Backend { load() { return 1; } run() { this.load(); } }",
+        "Object.assign({}, { extra: 1 });",
+      ].join("\n"),
+    );
+    const load = onlyCallable(ir, "load");
+    expect(callSitesOnLine(ir, 1)[0]).toMatchObject({
+      resolution: "exact",
+      calleeCallableIds: [load.callableId],
+    });
+  });
+
+  it("does not prove a conditional imported constructor", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        'import { Imported } from "./imported.js";',
+        "class Local { load() { return 1; } }",
+        "const flag = true;",
+        "const x = new (flag ? Local : Imported)();",
+        "x.load();",
+      ].join("\n"),
+    );
+    const site = callSitesOnLine(ir, 5);
+    expect(site).toHaveLength(1);
+    expect(site[0]?.resolution).toBe("unresolved");
+  });
+
+  it("does not mark a decorated method exact", () => {
+    const ir = analyzeJavaScriptSemantics(
+      [
+        "function replace(target) { return target; }",
+        "class Backend { @replace load() { return 1; } }",
+        "const x = new Backend();",
+        "x.load();",
+      ].join("\n"),
+    );
+    const site = callSitesOnLine(ir, 4);
+    expect(site).toHaveLength(1);
+    expect(site[0]?.resolution).not.toBe("exact");
+  });
+
+  it("does not treat static-block this as an instance receiver", () => {
+    const ir = analyzeJavaScriptSemantics(
+      "class Backend { static load() { return 1; } load() { return 2; } static { this.load(); } }",
+    );
+    const site = callSitesOnLine(ir, 1);
+    expect(site).toHaveLength(1);
+    expect(site[0]?.resolution).toBe("unresolved");
+  });
 });

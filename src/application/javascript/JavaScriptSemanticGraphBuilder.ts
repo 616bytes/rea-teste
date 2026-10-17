@@ -313,7 +313,7 @@ export const createJavaScriptSemanticGraphProjection = (
         "Function fingerprints are static candidates; equal digests can remain ambiguous and do not prove behavioral equivalence.",
         "Event extraction covers EventEmitter-style literal registrations, removals, and dispatch candidates; dynamic names remain unknown.",
         "Timer extraction covers global or node:timers scheduling and exact local-handle cancellation.",
-        "Child-process extraction covers asynchronous node:child_process creation, literal argv/env/stdio options, exit/error listeners, and kill signals.",
+        "Child-process extraction covers asynchronous and synchronous node:child_process creation, literal argv/env/stdio options, and exit/error listeners and kill signals on asynchronous handles.",
         "Configuration extraction covers process.env, process.argv, node:fs reads, and direct logical defaults.",
         "Request extraction covers fetch, WebSocket, node:http/node:https construction, direct option fields, and exact local response consumers.",
         "Boundary extraction covers unshadowed JSON/global coercions plus parse and validation method candidates.",

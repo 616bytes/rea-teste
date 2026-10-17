@@ -265,10 +265,17 @@ export interface JavaScriptSemanticTimerOperation {
   readonly resolution: "complete" | "partial" | "unresolved";
 }
 
-/** One explicit asynchronous node:child_process creation candidate. */
+/** One explicit node:child_process creation candidate. */
 export interface JavaScriptSemanticChildProcessSpawn {
   readonly processId: string;
-  readonly method: "spawn" | "exec" | "execFile" | "fork";
+  readonly method:
+    | "spawn"
+    | "exec"
+    | "execFile"
+    | "fork"
+    | "execSync"
+    | "spawnSync"
+    | "execFileSync";
   readonly location: JavaScriptSourceRange;
   readonly ownerCallableId: string | null;
   readonly resultBindingId: string | null;

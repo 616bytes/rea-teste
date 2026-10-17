@@ -30,7 +30,21 @@ import {
   semanticProjectedBindingFacts,
 } from "./javascriptSemanticDataEffectHelpers.js";
 
-const CHILD_PROCESS_METHODS = ["spawn", "exec", "execFile", "fork"] as const;
+const CHILD_PROCESS_METHODS = [
+  "spawn",
+  "exec",
+  "execFile",
+  "fork",
+  "execSync",
+  "spawnSync",
+  "execFileSync",
+] as const;
+// Synchronous methods return the completed output, not a ChildProcess handle.
+const SYNCHRONOUS_CHILD_PROCESS_METHODS: ReadonlySet<string> = new Set([
+  "execSync",
+  "spawnSync",
+  "execFileSync",
+]);
 const CHILD_LISTENER_METHODS = ["on", "once", "addListener"] as const;
 
 interface ChildProcessAnalysis {
@@ -56,7 +70,7 @@ interface ChildInteractionContext {
   readonly spawnsByBinding: ReadonlyMap<string, readonly SpawnCandidate[]>;
 }
 
-/** Recover explicit asynchronous node:child_process ownership candidates. */
+/** Recover explicit node:child_process creation and ownership candidates. */
 export const collectJavaScriptSemanticChildProcesses = (
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
@@ -156,6 +170,7 @@ const collectInteractions = (
   const spawnByNode = new WeakMap<t.Node, SpawnCandidate>();
   const spawnsByBinding = new Map<string, SpawnCandidate[]>();
   for (const spawn of spawns) {
+    if (SYNCHRONOUS_CHILD_PROCESS_METHODS.has(spawn.method)) continue;
     spawnByNode.set(spawn.node, spawn);
     const ids = [
       ...(spawn.resultBindingId === null ? [] : [spawn.resultBindingId]),
@@ -370,7 +385,7 @@ const spawnOptions = (candidate: SpawnCandidate): t.ObjectExpression | null => {
   const args = candidate.node.arguments;
 
   const value =
-    candidate.method === "exec"
+    candidate.method === "exec" || candidate.method === "execSync"
       ? args[1]
       : t.isObjectExpression(args[1])
         ? args[1]
@@ -379,7 +394,8 @@ const spawnOptions = (candidate: SpawnCandidate): t.ObjectExpression | null => {
   return t.isObjectExpression(value) ? value : null;
 };
 const spawnArgvCount = (candidate: SpawnCandidate): number | null => {
-  if (candidate.method === "exec") return null;
+  if (candidate.method === "exec" || candidate.method === "execSync")
+    return null;
   const args = candidate.node.arguments[1];
   return t.isArrayExpression(args) &&
     !args.elements.some((element) => t.isSpreadElement(element))

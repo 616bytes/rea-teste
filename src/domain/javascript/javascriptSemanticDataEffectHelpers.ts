@@ -607,7 +607,15 @@ const BUILTIN_RECEIVER_METHODS: Readonly<Record<string, ReadonlySet<string>>> =
     tls: new Set(BUILTIN_RESOURCE_METHODS.tls),
     http: new Set(["request", "get"]),
     https: new Set(["request", "get"]),
-    child_process: new Set(["spawn", "exec", "execFile", "fork"]),
+    child_process: new Set([
+      "spawn",
+      "exec",
+      "execFile",
+      "fork",
+      "execSync",
+      "spawnSync",
+      "execFileSync",
+    ]),
     process: new Set(["cwd", "uptime", "hrtime", "nextTick"]),
     timers: new Set([
       "setTimeout",

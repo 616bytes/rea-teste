@@ -103,9 +103,10 @@ that every class or engine operation will load successfully. Discovery limits
 each ZIP metadata read to 8 MiB before allocation; a larger directory reports
 the exhausted read budget and the selected JAR path.
 
-The current metadata bridge is verified on macOS arm64 with OpenJDK 21 and the
-public Appium ApiDemos fixture. The POSIX adapter also supports Linux; the new
-bridge has not yet undergone real verification on Linux/JDK 25.
+The filtered class-page bridge (protocol 2) is verified on Linux x86-64 with
+Temurin 21, public Appium ApiDemos 6.0.18 and NewPipe 0.29.1 APKs. Earlier
+metadata-bridge records covered macOS arm64/OpenJDK 21 and Windows x64/JDK 21;
+this protocol revision has not been rerun on those hosts or Linux/JDK 25.
 Windows x64 uses an owned Job Object with bidirectional stdio, atomic job
 assignment and kill-on-owner-close. Real Windows verification uses JDK 21 and
 the pinned JADX 0.7.1 JAR; see the real verification lane below.
@@ -163,7 +164,10 @@ the same source byte limit and explicit truncation reporting.
   permissions and class/resource counts. Summary fields are extracted by the
   upstream engine and should be checked against the retained XML when needed.
   Signature verification is explicitly `not_performed`.
-- Class search consumes all pages and checks their counts. An empty `query`
+- Class search filters the engine's cached top-level names before transferring
+  pages, then follows contiguous inventory positions without rescanning earlier
+  rows. It checks selection, scope, examined ranges and counts before reporting
+  complete coverage. Complete producer replies stay in Evidence; an empty `query`
   inventories all class-name rows; class names are decompiler representations.
   Repeated names remain repeated in `matches` so the inventory row count and
   producer evidence stay visible. `duplicate_names` identifies matching names
@@ -233,8 +237,12 @@ rea project-android-application-graph '{"inventory_evidence":[<inventory_artifac
 ```
 
 The projection reports exact component paths and hashes, runtime-family hints,
-and path-based bridge hypotheses. It does not decode DEX or claim observed
-runtime calls. Framework hints match complete native library names, such as
+and path-based bridge hypotheses. File and slice occurrences supply component
+endpoints; directory trees and symlinks retain their identities in the source
+inventory without being classified as code files. It does not decode DEX or
+claim observed runtime calls. DEX/JVM runtime hints summarize the classified
+bytecode component lists. Framework hints match complete native library names,
+such as
 `libreactnativejni.so`, `libreactnative.so`, `libhermes.so`,
 `libhermes_executor.so`, `libflutter.so`, and `libunity.so`; unrelated names
 such as `libcommunity.so` and `libreactivity.so` do not identify those families.

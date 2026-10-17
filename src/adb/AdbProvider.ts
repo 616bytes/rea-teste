@@ -1537,7 +1537,8 @@ export class AdbProvider {
               pkg_flags: details.pkgFlags,
               requested_permissions_count: details.requestedPermissions,
               coverage:
-                details.versionCode === null && details.versionName === null
+                details.requestedPermissions === null ||
+                (details.versionCode === null && details.versionName === null)
                   ? "partial"
                   : "complete",
             },
@@ -1545,7 +1546,8 @@ export class AdbProvider {
             {
               limitations: [
                 "Fields are a fixed projection of dumpsys package output; version-dependent sections are ignored rather than guessed",
-                "requested_permissions_count counts the listed requested permissions section only",
+                "requested_permissions_count counts the listed requested permissions section; an absent section is zero only when dumpsys confirms a loaded parsed package",
+                "A null requested_permissions_count means dumpsys reported pkg=null or did not establish that an omitted permission section is an empty inventory",
               ],
             },
           ),
@@ -1736,38 +1738,30 @@ export class AdbProvider {
         );
       }
       case "inspect_adb_window": {
-        let section = "windows";
+        let section: "windows" | "displays" = "windows";
         const ran = await shell(["dumpsys", "window", section], {
           timeoutMs: SHELL_TIMEOUT_MS,
           maxOutputBytes: DUMPSYS_WINDOW_MAX_OUTPUT_BYTES,
         });
         if (!ran.ok) return ran;
-        let { focusedWindow, focusedApp } = parseWindowFocusOutput(
-          ran.value.stdout,
-        );
-        if (focusedWindow === null && focusedApp === null) {
+        let focus = parseWindowFocusOutput(ran.value.stdout);
+        if (focus.focus_summary === "unavailable") {
           section = "displays";
           const fallback = await shell(["dumpsys", "window", section], {
             timeoutMs: SHELL_TIMEOUT_MS,
             maxOutputBytes: DUMPSYS_WINDOW_MAX_OUTPUT_BYTES,
           });
           if (!fallback.ok) return fallback;
-          ({ focusedWindow, focusedApp } = parseWindowFocusOutput(
-            fallback.value.stdout,
-          ));
+          focus = parseWindowFocusOutput(fallback.value.stdout);
         }
-        const declared = focusedWindow !== null || focusedApp !== null;
+        const declared = focus.focus_summary !== "unavailable";
         return ok(
           createAnalysisExecution(
             {
               client,
               serial: request.input.serial,
-              focused_window: focusedWindow?.value ?? null,
-              focused_app: focusedApp?.value ?? null,
-              observed_lines: [
-                ...(focusedWindow === null ? [] : [focusedWindow.rawLine]),
-                ...(focusedApp === null ? [] : [focusedApp.rawLine]),
-              ],
+              source_section: section,
+              ...focus,
             },
             provider,
             {
@@ -1776,6 +1770,11 @@ export class AdbProvider {
                 declared
                   ? `Focus declarations were read from \`dumpsys window ${section}\``
                   : "Neither `dumpsys window windows` nor `dumpsys window displays` declared mCurrentFocus or mFocusedApp; focus is unknown, not absent",
+                ...(focus.focus_summary === "ambiguous"
+                  ? [
+                      "Multiple focus contexts or repeated declarations prevent a singular focus summary; inspect focus_contexts for every declaration",
+                    ]
+                  : []),
               ],
             },
           ),

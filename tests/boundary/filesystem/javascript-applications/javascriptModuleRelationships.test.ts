@@ -96,7 +96,7 @@ it.each([
 );
 
 describe("cross-version source module identity", () => {
-  it("keeps a source module unchanged when only a sibling file changes", async () => {
+  it("preserves exact module identity when sibling changes leave relationship alignment unresolved", async () => {
     const root = await createTestTempDirectory("rea-source-module-sibling-");
     const versions = await Promise.all(
       ["left", "right"].map(async (name) => {
@@ -143,12 +143,16 @@ describe("cross-version source module identity", () => {
       rightNativeEvidence: [],
     });
 
-    expect(
-      comparison.items.find(
-        ({ left_node_id }) => left_node_id === leftModule.node_id,
-      ),
-    ).toMatchObject({
-      status: "unchanged",
+    const item = comparison.items.find(
+      ({ left_node_id }) => left_node_id === leftModule.node_id,
+    );
+    expect(item).toMatchObject({
+      status: "unknown",
+      limitations: expect.arrayContaining([
+        expect.stringMatching(
+          /relationship target identity remains unresolved/iu,
+        ),
+      ]),
       right_node_id: rightModule.node_id,
       match: {
         status: "matched",
@@ -156,6 +160,8 @@ describe("cross-version source module identity", () => {
         confidence: "exact",
       },
     });
+    expect(item?.dimensions).not.toContain("content");
+    expect(item?.dimensions).not.toContain("coverage");
   });
 });
 

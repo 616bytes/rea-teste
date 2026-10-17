@@ -1,3 +1,6 @@
+import { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";
+import { ok as javaProbeOk } from "../domain/result.js";
+import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
 import type { GhidraSeedReport } from "./GhidraAnalysisSeeds.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -50,16 +53,17 @@ const installationHost = (
   architecture: "x64",
   readText: () => "application.version=12.1.4\napplication.java.min=21\n",
   executable: () => true,
-  probeJava: () => ({
-    osArch: "amd64",
-    osName: platform === "win32" ? "Windows 11" : "Linux",
-    version: "21.0.11",
-    major: 21,
-    home: "/usr/lib/jvm/jdk-21",
-    bits: 64,
-    runtime: "jdk",
-    vmName: "OpenJDK 64-Bit Server VM",
-  }),
+  probeJava: () =>
+    javaProbeOk<GhidraJavaObservation>({
+      osArch: "amd64",
+      osName: platform === "win32" ? "Windows 11" : "Linux",
+      version: "21.0.11",
+      major: 21,
+      home: "/usr/lib/jvm/jdk-21",
+      bits: 64,
+      runtime: "jdk",
+      vmName: "OpenJDK 64-Bit Server VM",
+    }),
 });
 
 const provider = (
@@ -85,6 +89,69 @@ const createElfClient = async (ghidra: GhidraProvider) => {
     throw new Error("Expected a bound Ghidra profile");
   return ghidra.createClient(target, resolved.value.profile);
 };
+
+it.each(["readiness", "client"] as const)(
+  "keeps completed Java prerequisite failure primary across late cancellation in %s",
+  async (consumer) => {
+    const controller = new AbortController();
+    const reason = { request: "late Java cancellation" };
+    let armed = false;
+    let nativeCreates = 0;
+    const base = installationHost();
+    const ghidra = provider(
+      {
+        ...base,
+        probeJava: (command, environment, options) => {
+          if (!armed) return base.probeJava(command, environment, options);
+          controller.abort(reason);
+          return err({
+            _tag: "GhidraJavaProbeFailure",
+            code: "version_unresolved",
+            detail: "completed invalid Java report",
+          });
+        },
+      },
+      () => {
+        nativeCreates++;
+        throw new Error("A failed prerequisite cannot create a native client");
+      },
+    );
+    const client =
+      consumer === "client" ? await createElfClient(ghidra) : undefined;
+    armed = true;
+    try {
+      if (client === undefined) {
+        const availability = await ghidra.inspectAvailability({
+          signal: controller.signal,
+        });
+        expect(availability).toMatchObject({
+          status: "unavailable",
+          diagnostics: { java_probe_failure: { code: "version_unresolved" } },
+        });
+      } else {
+        const result = await client.execute(
+          "analyze_function",
+          {},
+          { signal: controller.signal },
+        );
+        if (result.ok)
+          throw new Error("Expected physical prerequisite failure");
+        expect(result.error).toMatchObject({
+          _tag: "ProviderAdapterError",
+          operation: "analyze_function",
+          diagnostics: { java_probe_failure: { code: "version_unresolved" } },
+        });
+        expect(projectAnalysisError(result.error).code).toBe(
+          "execution_failure",
+        );
+      }
+      expect(nativeCreates).toBe(0);
+    } finally {
+      await client?.close();
+      await ghidra.closeOwnedResources();
+    }
+  },
+);
 
 it.each([
   "program-info-v1",
@@ -149,6 +216,32 @@ it.each([
   },
 );
 
+it("carries the inspected release identity into the production launcher", async () => {
+  const launchers: GhidraHeadlessLauncher[] = [];
+  const ghidra = provider(
+    {
+      ...installationHost(),
+      readText: () =>
+        "application.version=12.1.4\napplication.release.name=PUBLIC\napplication.java.min=21\n",
+    },
+    (options) => {
+      launchers.push(options.launcher as GhidraHeadlessLauncher);
+      return {
+        start: () => Promise.resolve(ok(sessionInfo())),
+        callTool: () => Promise.resolve(ok(null)),
+        close: () => Promise.resolve(ok(null)),
+      };
+    },
+  );
+  const client = await createElfClient(ghidra);
+  expect(launchers).toHaveLength(0);
+  expect((await client.execute("health", {})).ok).toBe(true);
+  expect(launchers[0]?.options).toMatchObject({
+    configurationDirectoryName: "ghidra_12.1.4_PUBLIC",
+  });
+  await client.close();
+});
+
 describe("Ghidra provider", () => {
   it("commits DOS loader and real-mode language while retaining the CPU family", async () => {
     const ghidra = provider();
@@ -178,13 +271,13 @@ describe("Ghidra provider", () => {
     const windows = provider(installationHost("win32"));
     expect(windows.inspectTargetSupport(target).status).toBe("unsupported");
   });
-  it("discovers the exact installation once without launching Ghidra", () => {
+  it("re-observes the exact installation for each fresh task without launching Ghidra", async () => {
     let probeCount = 0;
     const host: GhidraInstallationHost = {
       ...installationHost(),
       probeJava: () => {
         probeCount += 1;
-        return {
+        return javaProbeOk<GhidraJavaObservation>({
           osArch: "amd64",
           osName: "Linux",
           version: "21.0.11",
@@ -192,7 +285,7 @@ describe("Ghidra provider", () => {
           home: "/usr/lib/jvm/jdk-21",
           bits: 64,
           runtime: "jdk",
-        };
+        });
       },
     };
     const ghidra = provider(host);
@@ -217,7 +310,7 @@ describe("Ghidra provider", () => {
         }),
       ]),
     );
-    expect(ghidra.inspectAvailability()).toMatchObject({
+    expect(await ghidra.inspectAvailability()).toMatchObject({
       status: "available",
       diagnostics: {
         install_dir: INSTALL,
@@ -225,8 +318,10 @@ describe("Ghidra provider", () => {
         java_version: "21.0.11",
       },
     });
-    expect(ghidra.inspectAvailability()).toMatchObject({ status: "available" });
-    expect(probeCount).toBe(1);
+    expect(await ghidra.inspectAvailability()).toMatchObject({
+      status: "available",
+    });
+    expect(probeCount).toBe(2);
   });
 
   it("separates target kind, format, and concrete architecture", () => {
@@ -337,6 +432,37 @@ describe("Ghidra raw-binary profile", () => {
     );
     const windows = provider(installationHost("win32"));
     expect(windows.inspectTargetSupport(target).status).toBe("unsupported");
+  });
+  it("binds raw m68k to the big-endian 68000 language outside Windows P0", async () => {
+    const target: BinaryTarget = {
+      path: "/tmp/m68k.bin",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "raw-binary",
+      architecture: "m68k",
+      availableArchitectures: ["m68k"],
+      entryPoint: "0x1000",
+      entryPointSource: "0x00001000",
+    };
+    const ghidra = provider();
+    expect(ghidra.inspectTargetSupport(target).status).toBe("supported");
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    if (!resolved.ok) throw resolved.error;
+    expect(resolved.value.profile?.parameters).toMatchObject({
+      target_format: "raw-binary",
+      architecture: "m68k",
+      loader: "BinaryLoader",
+      language_id: "68000:BE:32:default",
+      compiler_spec_id: "default",
+      language_selection: "caller-supplied-v1",
+      entry_point: "0x1000",
+    });
+    expect(
+      provider(installationHost("win32")).inspectTargetSupport(target),
+    ).toMatchObject({
+      status: "unsupported",
+      code: "target_format_unsupported",
+    });
   });
 });
 
@@ -508,7 +634,7 @@ describe("Ghidra platform support", () => {
 });
 
 describe("Ghidra Windows platform support", () => {
-  it("keeps Windows P0 unavailable until native isolation authority exists", () => {
+  it("keeps Windows P0 unavailable until native isolation authority exists", async () => {
     const native = vi
       .spyOn(nativeLoader, "systemWindowsNativeAuthority")
       .mockReturnValue({
@@ -531,7 +657,7 @@ describe("Ghidra Windows platform support", () => {
           },
         },
       );
-    expect(ghidra.inspectAvailability()).toMatchObject({
+    expect(await ghidra.inspectAvailability()).toMatchObject({
       status: "unavailable",
       code: "runtime_missing",
       reason: expect.stringContaining(
@@ -636,7 +762,7 @@ describe("Windows Ghidra native failure diagnostics", () => {
             managed: false,
           },
         });
-      expect(ghidra.inspectAvailability()).toMatchObject({
+      expect(await ghidra.inspectAvailability()).toMatchObject({
         status: "unavailable",
         code,
         reason: expect.stringContaining(
@@ -2237,15 +2363,16 @@ describe("compatible Ghidra builds", () => {
         ...installationHost(),
         readText: () =>
           "application.version=12.1.2\napplication.java.min=21\napplication.java.max=\n",
-        probeJava: () => ({
-          osArch: "amd64",
-          osName: "Linux",
-          version: "27",
-          major: 27,
-          home: "/usr/lib/jvm/java-27-openjdk",
-          bits: 64,
-          runtime: "jdk",
-        }),
+        probeJava: () =>
+          javaProbeOk<GhidraJavaObservation>({
+            osArch: "amd64",
+            osName: "Linux",
+            version: "27",
+            major: 27,
+            home: "/usr/lib/jvm/java-27-openjdk",
+            bits: 64,
+            runtime: "jdk",
+          }),
       },
       () => ({
         start: () =>
@@ -2283,7 +2410,7 @@ describe("compatible Ghidra builds", () => {
     );
     const health = await client.execute("health", {});
     const procedures = await client.execute("list_procedures", {});
-    expect(ghidra.inspectAvailability()).toMatchObject({
+    expect(await ghidra.inspectAvailability()).toMatchObject({
       status: "available",
       diagnostics: { provider_version: "12.1.2", java_version: "27" },
     });
@@ -2341,6 +2468,64 @@ it("projects Ghidra startup failure and its incomplete cleanup together", async 
         },
       },
     });
+});
+
+describe("Ghidra deadline guidance", () => {
+  const timedOut = async (phase: "start" | "request", message: string) => {
+    const failure = new GhidraSessionError(
+      "timeout",
+      message,
+      { failure_kind: "timeout" },
+      { timeoutMs: 250 },
+    );
+    const ghidra = provider(installationHost(), () => ({
+      start: async () => (phase === "start" ? err(failure) : ok(sessionInfo())),
+      callTool: async () => err(failure),
+      close: async () => ok(null),
+    }));
+    const target = executableTarget("elf", "x86_64");
+    const profile = await ghidra.resolveAnalysisProfile(target);
+    if (!profile.ok || profile.value.profile === null)
+      throw new Error("Expected Ghidra analysis profile");
+    const result = await ghidra
+      .createClient(target, profile.value.profile)
+      .execute("list_documents", {});
+    if (result.ok) throw new Error("Expected a Ghidra timeout");
+    return projectAnalysisError(result.error);
+  };
+
+  it("names the startup deadline setting and its value when startup times out", async () => {
+    const projected = await timedOut(
+      "start",
+      "Ghidra startup deadline elapsed",
+    );
+    expect(projected).toMatchObject({
+      code: "provider_timeout",
+      details: { timeout_ms: 250 },
+    });
+    expect(projected.message).toContain(
+      "250 ms startup deadline (REA_GHIDRA_STARTUP_TIMEOUT_MS)",
+    );
+    expect(projected.remediation.action).toContain(
+      "REA_GHIDRA_STARTUP_TIMEOUT_MS above 250",
+    );
+    expect(projected.remediation.action).toContain(
+      "REA_GHIDRA_DISABLED_ANALYZERS",
+    );
+    expect(projected.remediation.action).not.toContain("rea doctor");
+  });
+
+  it("keeps generic guidance for a bridge request deadline", async () => {
+    const projected = await timedOut(
+      "request",
+      "Ghidra bridge request timed out",
+    );
+    expect(projected.code).toBe("provider_timeout");
+    expect(projected.message).not.toContain("REA_GHIDRA_STARTUP_TIMEOUT_MS");
+    expect(projected.remediation.action).not.toContain(
+      "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+    );
+  });
 });
 
 describe("Ghidra analysis seeds and configured language", () => {
@@ -2591,6 +2776,8 @@ describe("Ghidra disabled analyzer options", () => {
       analysis_options: { disabled_analyzers: ["Decompiler Switch Analysis"] },
     });
     const client = ghidra.createClient(target, resolved.value.profile);
+    expect(launchers).toHaveLength(0);
+    expect((await client.execute("health", {})).ok).toBe(true);
     expect(launchers).toHaveLength(1);
     expect(launchers[0]?.options).toMatchObject({
       disabledAnalyzers: ["Decompiler Switch Analysis"],
@@ -2942,4 +3129,111 @@ describe("Ghidra OOME error projection", () => {
     });
     expect(projected.code).not.toBe("resource_constraint");
   });
+});
+
+it("reuses readiness only inside its active task and provider lifetime", async () => {
+  let probes = 0;
+  let version = "21.0.11";
+  const base = installationHost();
+  const ghidra = provider({
+    ...base,
+    probeJava: async (command, environment, options) => {
+      probes++;
+      const observed = await base.probeJava(command, environment, options);
+      return observed.ok
+        ? javaProbeOk({ ...observed.value, version })
+        : observed;
+    },
+  });
+  const scope = new ProviderInspectionScope();
+  try {
+    expect((await ghidra.inspectAvailability({ scope })).status).toBe(
+      "available",
+    );
+    expect(
+      (
+        await ghidra.resolveAnalysisProfile(executableTarget("elf", "x86_64"), {
+          scope,
+        })
+      ).ok,
+    ).toBe(true);
+    expect(probes).toBe(1);
+    version = "21.0.12";
+    expect(await ghidra.closeOwnedResources()).toMatchObject({ ok: true });
+    expect(
+      (await ghidra.inspectAvailability({ scope })).diagnostics.java_version,
+    ).toBe(version);
+    expect(probes).toBe(2);
+    scope.close();
+    version = "21.0.13";
+    expect(
+      (await ghidra.inspectAvailability({ scope })).diagnostics.java_version,
+    ).toBe(version);
+    expect(probes).toBe(3);
+  } finally {
+    scope.close();
+    await ghidra.closeOwnedResources();
+  }
+});
+
+it("refuses a changed installation before creating a target-bound native client", async () => {
+  let release = "12.1.4",
+    nativeCreates = 0;
+  const ghidra = provider(
+    {
+      ...installationHost(),
+      readText: () =>
+        `application.version=${release}\napplication.java.min=21\n`,
+    },
+    () => {
+      nativeCreates++;
+      throw new Error("Changed installation must not create a native client");
+    },
+  );
+  const target = executableTarget("elf", "x86_64");
+  const resolved = await ghidra.resolveAnalysisProfile(target);
+  if (!resolved.ok || resolved.value.profile === null)
+    throw new Error("Expected initial profile");
+  const client = ghidra.createClient(target, resolved.value.profile);
+  release = "12.1.5";
+  try {
+    const result = await client.execute("analyze_function", {});
+    if (result.ok) throw new Error("Changed installation was admitted");
+    expect(result.error).toMatchObject({
+      operation: "analyze_function",
+      diagnostics: {
+        selected_provider_version: "12.1.4",
+        current_installation: { provider_version: "12.1.5" },
+      },
+    });
+    expect(client.reuseReadiness?.()).toBe("blocked");
+    expect(nativeCreates).toBe(0);
+  } finally {
+    await client.close();
+    await ghidra.closeOwnedResources();
+  }
+});
+
+it("rejects an absent profile before probing Java and attributes it to the requested operation", async () => {
+  let probes = 0;
+  const base = installationHost();
+  const ghidra = provider({
+    ...base,
+    probeJava: (...args) => {
+      probes++;
+      return base.probeJava(...args);
+    },
+  });
+  const client = ghidra.createClient(executableTarget("elf", "x86_64"));
+  try {
+    const result = await client.execute("analyze_function", {});
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "ProviderAdapterError", operation: "analyze_function" },
+    });
+    expect(probes).toBe(0);
+  } finally {
+    await client.close();
+    await ghidra.closeOwnedResources();
+  }
 });

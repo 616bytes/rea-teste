@@ -1,17 +1,28 @@
 import { z } from "zod";
 
+/**
+ * GNU objdump facets of one artifact. The dynamic facets answer which shared
+ * libraries an executable needs (private_headers lists DT_NEEDED) and which
+ * functions it imports (dynamic_symbols, dynamic_relocations); stripped
+ * binaries keep these when their static symbol and relocation tables are gone.
+ */
+export const OBJDUMP_ARTIFACT_OPERATIONS = [
+  "file_headers",
+  "private_headers",
+  "section_headers",
+  "symbols",
+  "dynamic_symbols",
+  "relocations",
+  "dynamic_relocations",
+  "dwarf",
+  "disassemble",
+  "disassemble_all",
+] as const;
+
 const objdumpArtifactInputSchema = z
   .object({
     path: z.string().min(1),
-    operation: z.enum([
-      "file_headers",
-      "section_headers",
-      "symbols",
-      "relocations",
-      "dwarf",
-      "disassemble",
-      "disassemble_all",
-    ]),
+    operation: z.enum(OBJDUMP_ARTIFACT_OPERATIONS),
     follow_debug_links: z.boolean().default(false),
   })
   .strict();

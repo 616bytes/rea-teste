@@ -672,7 +672,9 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
 it("advertises a resource-id pattern valid in unicode-sets mode", () => {
   const advertised = z.toJSONSchema(
     androidInputSchemas.trace_android_resource_references,
-  ) as { properties: { resource_ids: { items: { pattern: string } } } };
+  ) as unknown as {
+    properties: { resource_ids: { items: { pattern: string } } };
+  };
   const source = advertised.properties.resource_ids.items.pattern;
   expect(() => new RegExp(source, "v")).not.toThrow();
   expect(new RegExp(source, "v").test("com.example:some-type/login")).toBe(

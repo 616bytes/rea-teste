@@ -76,10 +76,7 @@ import {
   electronMemberPath,
   ELECTRON_MODULE,
 } from "./javascriptElectronMemberWrites.js";
-import {
-  KEYED_COLLECTION_CONSTRUCTORS,
-  range,
-} from "./javascriptStaticAnalysisHelpers.js";
+import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticCoverage } from "./javascriptSemanticCoverage.js";
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
 import {
@@ -393,9 +390,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
 
 /**
  * Receiver identity facts for the overloaded `.open` syntax, plus
- * `configuration` for `.get` reads of a `getConfiguration(...)` result and
- * `keyed-collection` for get/delete reads of a resolved built-in collection
- * binding.
+ * `configuration` for `.get` reads of a `getConfiguration(...)` result.
  */
 export type JavaScriptOpenReceiverFact =
   | "window"
@@ -405,8 +400,7 @@ export type JavaScriptOpenReceiverFact =
   | "local-indexed-db"
   | "local-cache-storage"
   | "configuration"
-  | "extension-state"
-  | "keyed-collection";
+  | "extension-state";
 
 /** Lexical receiver identities that select static endpoint interpretations. */
 export interface JavaScriptReceiverFacts {
@@ -519,22 +513,11 @@ function* classifyDefinitionReceiversSteps(
       return;
     const object = unwrapJavaScriptExpression(callee.object).node;
     const method = semanticStaticPropertyKey(callee.property, callee.computed);
-    if (method === "get" || method === "delete") {
-      const keyedCollection = isResolvedKeyedCollectionReceiver(
-        state,
-        node,
-        object,
-      );
-      if (method === "get") {
-        if (isConfigurationReceiver(state, object))
-          facts.set(node.start ?? -1, "configuration");
-        else if (isExtensionStateMember(object))
-          extensionStateReads.push(node.start ?? -1);
-        else if (keyedCollection)
-          facts.set(node.start ?? -1, "keyed-collection");
-        return;
-      }
-      if (keyedCollection) facts.set(node.start ?? -1, "keyed-collection");
+    if (method === "get") {
+      if (isConfigurationReceiver(state, object))
+        facts.set(node.start ?? -1, "configuration");
+      else if (isExtensionStateMember(object))
+        extensionStateReads.push(node.start ?? -1);
       return;
     }
     if (method !== "open" || !t.isIdentifier(object)) return;
@@ -695,64 +678,6 @@ const isConfigurationAccessorCall = (
  * initializer. Minifiers emit `let` for such bindings, so declaration kind
  * alone does not decide.
  */
-/**
- * Whether a get/delete receiver resolves to a built-in keyed collection: an
- * immutable binding whose stable initializer constructs one, possibly through
- * one identifier alias. Resolution is shadowing-aware, so a lexical or
- * ambiguous constructor spelling never selects the built-in semantics;
- * unresolved receivers keep the spelling-based interpretation.
- */
-const isResolvedKeyedCollectionReceiver = (
-  state: JavaScriptSemanticAnalysisState,
-  node: t.Node,
-  receiver: t.Node,
-): boolean =>
-  t.isIdentifier(receiver) &&
-  resolveKeyedCollectionBinding(state, node, receiver.name, 1);
-
-const resolveKeyedCollectionBinding = (
-  state: JavaScriptSemanticAnalysisState,
-  node: t.Node,
-  name: string,
-  aliasDepth: number,
-): boolean => {
-  const binding = resolveSemanticBindingState(state, node, name);
-  if (
-    binding === undefined ||
-    binding.mutable ||
-    binding.initializers.length !== 1
-  )
-    return false;
-  const initializer = semanticStableInitializer(binding, state);
-  if (initializer === undefined || initializer.projection.length !== 0)
-    return false;
-  if (isKeyedCollectionConstruction(initializer.node, state)) return true;
-  if (aliasDepth === 0) return false;
-  const alias = unwrapJavaScriptExpression(initializer.node).node;
-  return (
-    t.isIdentifier(alias) &&
-    resolveKeyedCollectionBinding(state, alias, alias.name, aliasDepth - 1)
-  );
-};
-
-/** Confirm that an initializer constructs a built-in keyed collection. */
-const isKeyedCollectionConstruction = (
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  const expression = unwrapJavaScriptExpression(node).node;
-  if (!t.isNewExpression(expression)) return false;
-  const constructor = unwrapJavaScriptExpression(expression.callee).node;
-  if (!t.isIdentifier(constructor)) return false;
-  if (
-    resolveSemanticBindingState(state, constructor, constructor.name) !==
-      undefined ||
-    semanticResolutionBlocked(state, constructor, constructor.name)
-  )
-    return false;
-  return KEYED_COLLECTION_CONSTRUCTORS.has(constructor.name);
-};
-
 const isConfigurationReceiver = (
   state: JavaScriptSemanticAnalysisState,
   receiver: t.Node,

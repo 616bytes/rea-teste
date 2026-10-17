@@ -98,12 +98,64 @@ it("omits resolved keyed-collection receivers from network classification", () =
       interpretation ?? null,
     ]),
   ).toEqual([
+    // records.get is the first observable read of a never-escaped binding:
+    // suppressed. records.delete and aliased.get run after the earlier call
+    // escaped the receiver, so they keep the previous classification.
+    ["/settings", null],
+    ["./accounts", null],
     ["/a", null],
     ["/changed", null],
     ["/conditional", null],
     ["/not-a-keyed-method", null],
     ["/local-constructor", null],
   ]);
+});
+
+it("retains overwritten keyed-collection methods and re-pointed constructors", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    const records = new Map();
+    records.get = client.get.bind(client);
+    records.get("/accounts");
+    const owned = new Map();
+    owned.delete("q");
+    owned.delete = client.delete.bind(client);
+    owned.delete("/settings");
+    const aliased = records;
+    aliased.get("./accounts");
+    globalThis.Map = ApiClient;
+    const remapped = new Map();
+    remapped.get("/api");
+  `);
+  expect(analysis.parse_error_count).toBe(0);
+  expect(analysis.parse_status).toBe("complete");
+  expect(
+    analysis.endpoints.map(({ value, mechanism }) => [value, mechanism]),
+  ).toEqual([
+    // Every read keeps its previous classification: the method overrides or
+    // the overwritten globalThis.Map constructor invalidate the keyed-collection
+    // resolution for each call site. Endpoints sort by source offset, and the
+    // suppressed, non-literal candidate "q" survives the earlier "records"
+    // method escape through the override itself.
+    ["/accounts", "call:records.get"],
+    ["q", "call:owned.delete"],
+    ["/settings", "call:owned.delete"],
+    ["./accounts", "call:aliased.get"],
+    ["/api", "call:remapped.get"],
+  ]);
+});
+
+it("retains uncalled deferred reads for mutated methods after timing boundaries", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    const later = new Map();
+    later.get("/before");
+    later.get = client.get.bind(client);
+    later.get("/after");
+  `);
+  expect(analysis.parse_error_count).toBe(0);
+  expect(analysis.parse_status).toBe("complete");
+  expect(
+    analysis.endpoints.map(({ value, mechanism }) => [value, mechanism]),
+  ).toEqual([["/after", "call:later.get"]]);
 });
 
 it("retains uncertainty and module evidence for wrapped get receivers", () => {

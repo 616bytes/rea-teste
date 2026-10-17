@@ -50,6 +50,11 @@ export interface JavaScriptAnalysisAccumulator {
       | t.NewExpression;
     readonly name: string;
   }[];
+  /** Resolved keyed-collection reads held until mutation facts are indexed. */
+  readonly pendingKeyedCollectionReads: {
+    readonly node: t.CallExpression | t.OptionalCallExpression;
+    readonly name: string;
+  }[];
   readonly storage: LocatedJavaScriptFinding<JavaScriptStaticStorage>[];
   readonly roles: LocatedJavaScriptFinding<JavaScriptRolePath>[];
   readonly sourceMaps: JavaScriptStaticAnalysis["source_map_urls"][number][];
@@ -116,6 +121,7 @@ export const createJavaScriptAnalysisAccumulator = (
   references: [],
   endpoints: [],
   pendingNetworkCalls: [],
+  pendingKeyedCollectionReads: [],
   storage: [],
   roles: [],
   sourceMaps: [],

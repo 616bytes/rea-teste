@@ -22,6 +22,7 @@ import {
 import {
   addReference,
   addSourceMapDirectives,
+  finishKeyedCollectionReads,
   finishPartialNetworkEndpoints,
   inspectCall,
   inspectRouteProperty,
@@ -101,9 +102,13 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
   };
   yield* traverseStaticSourceSteps(file, findings, bindings);
   yield* finishElectronBrowserWindowsSteps(findings, index);
-  if (accumulator.pendingNetworkCalls.length > 0) {
+  if (
+    accumulator.pendingNetworkCalls.length > 0 ||
+    accumulator.pendingKeyedCollectionReads.length > 0
+  ) {
     yield* index.indexMemberMutationFactsSteps();
     finishPartialNetworkEndpoints(findings, bindings, index);
+    finishKeyedCollectionReads(findings, bindings, index);
   }
   accumulator.electronCallPaths = collectElectronWrappedCallPaths(
     file.program,

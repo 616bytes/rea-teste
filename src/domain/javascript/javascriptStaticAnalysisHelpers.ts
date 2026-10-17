@@ -644,16 +644,12 @@ export const endpointArgument = (
     const value = stringValue(args[0]);
     // Only get and delete also belong to the keyed-collection APIs, whose
     // keys are header, field, and parameter names rather than URLs or paths.
-    // Configuration `get` reads setting keys. A resolved keyed-collection
-    // receiver fact proves the built-in identity: its built-in methods take
-    // keys of any shape and cannot observe a network endpoint.
-    const resolvedKeyedCollection = receiverFact === "keyed-collection";
+    // Configuration `get` reads setting keys.
     if (value === undefined) return undefined;
     if (
       (method === "get" || method === "delete") &&
-      (!isRequestUrlOrPathLiteral(value) || resolvedKeyedCollection) &&
+      !isRequestUrlOrPathLiteral(value) &&
       (isKeyedCollectionReceiver(callee) ||
-        resolvedKeyedCollection ||
         (method === "get" &&
           (receiverFact === "configuration" ||
             receiverFact === "extension-state")))

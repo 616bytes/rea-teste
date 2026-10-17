@@ -5,11 +5,15 @@ import writeFileAtomic from "write-file-atomic";
 
 import { err, ok, type Result } from "../domain/result.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import { sameRegularFileState } from "../filesystem/RegularFile.js";
+import {
+  RegularFileChangedError,
+  sameRegularFileState,
+} from "../filesystem/RegularFile.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import {
   readRegularFileTextSnapshot,
   RegularFileCleanupFailure,
+  InvalidUtf8FileError,
   type RegularFileTextSnapshot,
 } from "./RegularFileRead.js";
 
@@ -103,7 +107,7 @@ export class ClientConfigurationTransaction {
           );
         if (resolved !== this.path)
           throw new ClientConfigurationConflict(this.path);
-        const current = await readSnapshot(this.path);
+        const current = await this.readCurrentSnapshot();
         if (
           this.snapshot === undefined
             ? current !== undefined
@@ -117,8 +121,26 @@ export class ClientConfigurationTransaction {
     });
   }
 
+  private async readCurrentSnapshot(): Promise<
+    RegularFileTextSnapshot | undefined
+  > {
+    try {
+      return await readSnapshot(this.path);
+    } catch (cause: unknown) {
+      // Validation follows a valid original snapshot or our valid installed text.
+      // Changed reads and invalid replacement bytes therefore establish conflict.
+      if (
+        cause instanceof RegularFileChangedError ||
+        cause instanceof InvalidUtf8FileError
+      )
+        throw new ClientConfigurationConflict(this.path);
+      // Retain cleanup owners and genuine I/O failures with their original cause.
+      throw cause;
+    }
+  }
+
   async readInstalled(): Promise<string> {
-    const current = await readSnapshot(this.path);
+    const current = await this.readCurrentSnapshot();
     const installed = this.#installed;
     if (
       installed === undefined ||

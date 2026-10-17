@@ -14,6 +14,7 @@ import { afterEach, expect, it, vi } from "vitest";
 const writers = vi.hoisted(() => ({
   before: undefined as undefined | ((path: string) => Promise<void>),
   after: undefined as undefined | ((path: string) => Promise<void>),
+  duringRead: undefined as undefined | (() => Promise<void>),
 }));
 
 vi.mock("write-file-atomic", async (importOriginal) => {
@@ -30,13 +31,80 @@ vi.mock("write-file-atomic", async (importOriginal) => {
   };
 });
 
+vi.mock("../../src/process/BoundedFileBytes.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../../src/process/BoundedFileBytes.js")
+    >();
+  return {
+    ...actual,
+    readBoundedFileBytes: async (
+      ...args: Parameters<typeof actual.readBoundedFileBytes>
+    ) => {
+      const bytes = await actual.readBoundedFileBytes(...args);
+      const mutation = writers.duringRead;
+      writers.duringRead = undefined;
+      await mutation?.();
+      return bytes;
+    },
+  };
+});
+
 import { configureClientConfiguration } from "../../src/application/SetupClientConfiguration.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 afterEach(() => {
   writers.before = undefined;
   writers.after = undefined;
+  writers.duringRead = undefined;
 });
+
+it("reports a conflict when a file changes while the freshness snapshot is being read", async () => {
+  const root = await createTestTempDirectory("rea-config-read-conflict-");
+  const path = join(root, "config.json");
+  const changed = '{"external":"changed during read"}\n';
+  await writeFile(path, "{}\n");
+  writers.before = async (target) => {
+    writers.duringRead = () => writeFile(target, changed);
+  };
+
+  expect(
+    await configureClientConfiguration({
+      name: "cursor",
+      configPath: path,
+      format: "json",
+    }),
+  ).toMatchObject({ status: "failed", reason: "conflict" });
+  expect(await readFile(path, "utf8")).toBe(changed);
+});
+
+it.each(["before", "after"] as const)(
+  "preserves an invalid UTF-8 replacement written %s installation and reports a conflict",
+  async (phase) => {
+    const root = await createTestTempDirectory(
+      "rea-config-invalid-replacement-",
+    );
+    const path = join(root, "config.json");
+    const original = "{}\n";
+    const changed = Buffer.from([0xff, 0xfe]);
+    await writeFile(path, original);
+    writers[phase] = (target) => writeFile(target, changed);
+
+    expect(
+      await configureClientConfiguration({
+        name: "cursor",
+        configPath: path,
+        format: "json",
+      }),
+    ).toMatchObject({ status: "failed", reason: "conflict" });
+    expect(await readFile(path)).toEqual(changed);
+    expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
+    expect(await readdir(root)).toEqual([
+      "config.json",
+      "config.json.rea.backup",
+    ]);
+  },
+);
 
 it("preserves an unrelated concurrent edit when a matching recovery backup already exists", async () => {
   const root = await createTestTempDirectory("rea-config-conflict-");

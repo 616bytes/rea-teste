@@ -7,14 +7,34 @@ const producerSchema = z.array(
   z.object({ _source: z.object({ layers: packetFieldsSchema }) }),
 );
 export const parsePacketOutput = (text: string, fields: readonly string[]) => {
-  const decoded: unknown = JSON.parse(text);
-  const packets = producerSchema
-    .parse(decoded)
-    .map((packet) => packet._source.layers);
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(text);
+  } catch (cause) {
+    throw new AnalysisOutputError(
+      "inspect_packet_capture",
+      `TShark returned invalid JSON: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+  }
+  const parsed = producerSchema.safeParse(decoded);
+  if (!parsed.success) {
+    throw new AnalysisOutputError(
+      "inspect_packet_capture",
+      `TShark output schema violation: ${parsed.error.message}`,
+    );
+  }
+  const packets = parsed.data.map((packet) => packet._source.layers);
   const selected = new Set(["frame.number", ...fields]);
   let previous = 0n;
   for (const packet of packets) {
-    const frame = BigInt(packet["frame.number"][0]);
+    const rawFrame = packet["frame.number"]?.[0];
+    if (rawFrame === undefined || !/^\d+$/.test(rawFrame)) {
+      throw new AnalysisOutputError(
+        "inspect_packet_capture",
+        "TShark returned missing or invalid frame number.",
+      );
+    }
+    const frame = BigInt(rawFrame);
     if (
       frame <= previous ||
       Object.keys(packet).some((name) => !selected.has(name))

@@ -1,6 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { mkdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import type { StableArtifactFileSystem } from "../artifacts/readStableArtifact.js";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
@@ -1025,3 +1028,75 @@ it.each(["process", "transport"] as const)(
     expect(application.close).toHaveBeenCalledOnce();
   },
 );
+
+it("retains open descriptor owner in resource scope when package.json close fails", async () => {
+  const dir = await createTestTempDirectory("pkg-close-test-");
+  const pkgPath = join(dir, "resources", "app", "package.json");
+  await mkdir(dirname(pkgPath), { recursive: true });
+  await writeFile(pkgPath, JSON.stringify({ main: "main.js" }));
+
+  let allowClose = false;
+  const fileSystem: StableArtifactFileSystem = {
+    lstat: (selected: string) => lstat(selected, { bigint: true }),
+    open: async (p, flags) => {
+      const handle = await open(p, flags);
+      const nativeClose = handle.close.bind(handle);
+      handle.close = async () => {
+        if (!allowClose) throw new Error("simulated close failure");
+        await nativeClose();
+      };
+      return handle;
+    },
+  };
+
+  const scope = new ArtifactResourceScope();
+  const exePath = join(dir, "my-app");
+  const appPath = join(dir, "resources", "app", "main.js");
+
+  await expect(
+    executableContainsApplication(
+      exePath,
+      appPath,
+      undefined,
+      scope,
+      fileSystem,
+    ),
+  ).rejects.toBeInstanceOf(ArtifactFileCleanupFailure);
+
+  expect(scope.hasPending).toBe(true);
+
+  // Releasing close allows scope cleanup retry to succeed
+  allowClose = true;
+  await scope.close();
+  expect(scope.hasPending).toBe(false);
+
+  // Test provider capture reporting cleanup_failed with its own scope
+  const providerScope = new ArtifactResourceScope();
+  allowClose = false;
+  const provider = new PlaywrightElectronActiveProvider(
+    {},
+    undefined,
+    undefined,
+    providerScope,
+    fileSystem,
+  );
+  const result = await provider.capture({
+    ...electronActiveObservationInputSchema.parse({
+      executable_path: exePath,
+      application_path: appPath,
+    }),
+    application_root: dir,
+  });
+
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected failure");
+  expect(result.error).toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "cleanup_failed",
+  });
+  expect(providerScope.hasPending).toBe(true);
+
+  allowClose = true;
+  await provider.close();
+  expect(providerScope.hasPending).toBe(false);
+});

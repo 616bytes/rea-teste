@@ -50,7 +50,16 @@ import { projectElectronActiveCapture } from "./PlaywrightElectronActiveProjecti
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
 import { assertNodeCliInspectArgumentsSupported } from "./PlaywrightElectronActiveFuses.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  readStableArtifact,
+  type StableArtifactFileSystem,
+} from "../artifacts/readStableArtifact.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactFileCleanupFailure,
+  bindArtifactFileCleanup,
+} from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 
 const OPERATION = "capture_electron_scenario" as const;
 const STARTUP_TIMEOUT_MS = 60_000;
@@ -94,6 +103,8 @@ const isBundledAppEntry = async (
   application: string,
   isDarwinOrWin: boolean,
   signal?: AbortSignal,
+  resourceScope?: ArtifactResourceScope,
+  fileSystem?: StableArtifactFileSystem,
 ): Promise<boolean> => {
   const normRoot = normalize(root);
   const normApp = normalize(application);
@@ -118,7 +129,13 @@ const isBundledAppEntry = async (
   // Try reading package.json using bounded, non-blocking regular-file reader
   try {
     const pkgPath = join(normRoot, "package.json");
-    const snapshot = await readStableArtifact(pkgPath, 64 * 1024, signal);
+    const snapshot = await readStableArtifact(
+      pkgPath,
+      64 * 1024,
+      signal,
+      fileSystem,
+      resourceScope,
+    );
     const pkg = JSON.parse(snapshot.bytes.toString("utf-8")) as {
       main?: unknown;
     };
@@ -130,7 +147,13 @@ const isBundledAppEntry = async (
     return isDarwinOrWin
       ? resolvedEntry.toLowerCase() === normApp.toLowerCase()
       : resolvedEntry === normApp;
-  } catch {
+  } catch (cause) {
+    if (
+      cause instanceof ArtifactFileCleanupFailure ||
+      (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
+    ) {
+      throw cause;
+    }
     // If package.json is missing, unreadable, or not a regular file,
     // match conventional Electron entry file patterns, distinguishing them from other scripts.
     return isRecognizedEntryName(normApp);
@@ -147,6 +170,8 @@ export const executableContainsApplication = async (
   executable: string,
   application: string,
   signal?: AbortSignal,
+  resourceScope?: ArtifactResourceScope,
+  fileSystem?: StableArtifactFileSystem,
 ): Promise<boolean> => {
   if (executable === application) return true;
 
@@ -212,6 +237,8 @@ export const executableContainsApplication = async (
         normalizedApplication,
         isDarwinOrWin,
         signal,
+        resourceScope,
+        fileSystem,
       )
     ) {
       return true;
@@ -223,13 +250,25 @@ export const executableContainsApplication = async (
 
 /** Launch an owned Electron application through the official Playwright API. */
 export class PlaywrightElectronActiveProvider implements ElectronActiveObservationPort {
+  readonly #resources: ArtifactResourceScope;
+  readonly #fileSystem: StableArtifactFileSystem | undefined;
+
   constructor(
     private readonly environment: Readonly<Record<string, string | undefined>>,
     // Load Playwright only when a capture launches; MCP startup stays off its module graph.
     private readonly launch: typeof electron.launch = async (options) =>
       (await import("playwright-core"))._electron.launch(options),
     private readonly readFuseImage: typeof readElectronFuseImage = readElectronFuseImage,
-  ) {}
+    resources?: ArtifactResourceScope,
+    fileSystem?: StableArtifactFileSystem,
+  ) {
+    this.#resources = resources ?? new ArtifactResourceScope();
+    this.#fileSystem = fileSystem;
+  }
+
+  async close(): Promise<void> {
+    await this.#resources.close();
+  }
 
   identity(): ProviderIdentity {
     return PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY;
@@ -277,6 +316,8 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
           paths.executable,
           paths.application,
           options.signal,
+          this.#resources,
+          this.#fileSystem,
         ),
         options.signal,
         startupDeadline,
@@ -700,16 +741,28 @@ const containLaunchRejections = async <T>(
   }
 };
 
-const providerError = (cause: unknown): AnalysisError =>
-  cause instanceof AnalysisError
-    ? cause
-    : new ProviderAdapterError(
-        PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY.id,
-        OPERATION,
-        {
-          cause,
-          diagnostics: {
-            message: cause instanceof Error ? cause.message : String(cause),
-          },
-        },
-      );
+const providerError = (cause: unknown): AnalysisError => {
+  if (cause instanceof AnalysisError) return cause;
+  if (
+    cause instanceof ArtifactFileCleanupFailure ||
+    (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
+  ) {
+    const error = new BrowserObservationError(OPERATION, "cleanup_failed", {
+      cause,
+      cleanup: cause.cleanup,
+      detail: `Electron application entry manifest cleanup failed: ${cause.cleanup?.reason ?? cause.message}`,
+    });
+    bindArtifactFileCleanup(cause, error);
+    return error;
+  }
+  return new ProviderAdapterError(
+    PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY.id,
+    OPERATION,
+    {
+      cause,
+      diagnostics: {
+        message: cause instanceof Error ? cause.message : String(cause),
+      },
+    },
+  );
+};

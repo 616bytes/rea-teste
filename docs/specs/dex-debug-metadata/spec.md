@@ -49,9 +49,19 @@ In an archive the requested member is selected explicitly by `entry`, or the
 members Android auto-loads are summarized (`classes.dex`, `classes2.dex`, … by
 exact stored name, up to the first missing one; canonical members after a gap
 are named in `limitations`). Both match the raw stored name, as ART does, never
-an Info-ZIP Unicode Path name, and report the member under its stored name; a
-duplicate member, or a `class_descriptor` present in more than one member, is
-refused as ambiguous rather than guessed.
+an Info-ZIP Unicode Path name, and report the member under its stored name.
+`entry` may omit a leading `./`; when several stored spellings match, the one
+stored exactly as spelled is read, and with none exact the request is refused,
+naming the spellings. An `entry` stored as a ZIP directory is unavailable, not
+absent. A duplicate member, or a `class_descriptor` present in more than one
+member, is refused as ambiguous rather than guessed.
+
+Known differences from ART: REA does not run ART's verifier, so cross-list
+index repeats (an instance and a static field, a virtual and a direct method),
+access-flag and list placement, and code-presence rules are not checked, and a
+`class_data` ART rejects can still be reported. ART's `IsValidEntryName`
+refuses a whole APK when any member name contains NUL or, without the UTF-8
+flag, invalid UTF-8; REA does not.
 
 ## Authority and overlap
 

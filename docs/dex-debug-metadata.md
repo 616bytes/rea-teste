@@ -115,7 +115,11 @@ Limits and refusals a caller can meet:
   auto-loaded; select it with `entry`. As in ART, both read the raw stored
   name and ignore an Info-ZIP Unicode Path name: `entry` matches the stored
   name (a leading `./` is optional) and each member is reported under its
-  stored name. What the archive reader notes about a member it reads (a
+  stored name. When several stored spellings match (`classes2.dex` and
+  `./classes2.dex`), the one stored exactly as `entry` is spelled is read;
+  with none exact, the request is refused and names the stored spellings. An
+  `entry` stored as a ZIP directory (`classes.dex/`) is refused as unavailable,
+  not absent. What the archive reader notes about a member it reads (a
   differing Unicode Path name, directory attributes on a file) is carried into
   `limitations`. Canonical members Android would not load are named in
   `limitations` and on any selection refusal. More than 64 auto-loaded members
@@ -129,6 +133,16 @@ Limits and refusals a caller can meet:
   definition of the requested class, malformed `class_data` or an inconsistent
   `code_item` leaves the answer unknown (an explicit refusal or `unknown`
   readiness), never "absent" or "stripped".
+- **No ART verifier.** REA decodes `class_data` but does not run ART's
+  verifier: an index repeated across lists (an instance and a static field, a
+  virtual and a direct method), access flags inconsistent with a member's list,
+  and code-presence rules (abstract or native methods with code, concrete ones
+  without) are not checked, so a `class_data` ART would reject can still be
+  reported.
+- **Archive name validation (known difference).** ART's `IsValidEntryName`
+  refuses a whole APK when any member name contains NUL or, without the UTF-8
+  flag, invalid UTF-8. REA does not refuse such an APK; it reads the selected
+  or auto-loaded DEX members regardless of the other members' names.
 - **Budgets.** Decoding work is proportional to each member's size; output is
   bounded to 8 MiB and projected before the report is built. Exceeding either is
   refused, naming the member. Size refusals report their own bound: the 64 MiB

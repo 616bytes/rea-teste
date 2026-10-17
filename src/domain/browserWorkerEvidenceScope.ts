@@ -7,7 +7,7 @@ import {
 } from "./browserObservation.js";
 import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 
-/** Shared selection and origin consistency boundary for retained worker Evidence. */
+/** Shared page and worker selection/origin boundary for retained browser Evidence. */
 export const browserWorkerEvidenceScopeSchema = z
   .object({
     parameters: z.object({
@@ -16,10 +16,45 @@ export const browserWorkerEvidenceScopeSchema = z
       allowed_origins: browserAllowedOriginsSchema,
       worker_target_ids: browserWorkerTargetIdsSchema,
     }),
-    normalized_result: webPageInspectionSchema.pick({ workers: true }),
+    normalized_result: webPageInspectionSchema.pick({
+      target: true,
+      scripts: true,
+      workers: true,
+    }),
   })
   .superRefine(({ parameters, normalized_result }, context) => {
     const allowed = new Set(parameters.allowed_origins);
+    const { target, scripts } = normalized_result;
+    if (target.target_id !== parameters.target_id)
+      context.addIssue({
+        code: "custom",
+        path: ["normalized_result", "target", "target_id"],
+        message:
+          "Browser Evidence target disagrees with its recorded selection",
+      });
+    const sanitizedTarget = sanitizeBrowserUrl(target.url);
+    if (sanitizedTarget.url !== target.url)
+      context.addIssue({
+        code: "custom",
+        path: ["normalized_result", "target", "url"],
+        message: "Browser Evidence URL must be sanitized",
+      });
+    if (sanitizedTarget.origin !== target.origin || !allowed.has(target.origin))
+      context.addIssue({
+        code: "custom",
+        path: ["normalized_result", "target"],
+        message: "Browser Evidence target is outside its recorded origin scope",
+      });
+    if (
+      !parameters.include_script_sources &&
+      scripts.items.some(({ source }) => source.included)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["normalized_result", "scripts"],
+        message:
+          "Browser Evidence contains source without source-capture selection",
+      });
     const retained = new Set(
       normalized_result.workers
         .filter((worker) => worker.observation !== undefined)

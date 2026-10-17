@@ -874,52 +874,54 @@ const scriptsDimension = (
   );
   const workerScriptIdentity = (targetId: string, scriptId: string) =>
     `worker:${compositeKey([targetId, scriptId])}`;
-  const includedSources = (inspection: WebPageInspection) =>
-    new Set(
+  const workerScripts = (inspection: WebPageInspection) =>
+    new Map(
       selectedWorkers(inspection).flatMap((worker) =>
-        (worker.observation?.scripts ?? [])
-          .filter((script) => script.source.included)
-          .map((script) =>
-            workerScriptIdentity(worker.target_id, script.script_id),
-          ),
+        (worker.observation?.scripts ?? []).map(
+          (script) =>
+            [
+              workerScriptIdentity(worker.target_id, script.script_id),
+              script,
+            ] as const,
+        ),
       ),
     );
-  const beforeSources = includedSources(before),
-    afterSources = includedSources(after);
-  const fingerprints = (inspection: WebPageInspection) => {
+  const beforeScripts = workerScripts(before),
+    afterScripts = workerScripts(after);
+  const fingerprints = (
+    inspection: WebPageInspection,
+    ownScripts: ReturnType<typeof workerScripts>,
+    peerScripts: ReturnType<typeof workerScripts>,
+  ) => {
     const result = new Map(
       keyed(
         inspection.scripts.items.map(scriptProjection),
         (item) => item.script_key,
       ),
     );
-    for (const worker of selectedWorkers(inspection))
-      for (const script of worker.observation?.scripts ?? [])
-        result.set(
-          workerScriptIdentity(worker.target_id, script.script_id),
-          digestCanonicalValue({
-            url: script.url,
-            cdp_hash: script.cdp_hash,
-            is_module: script.is_module,
-            language: script.language,
-            length: script.length ?? null,
-            source_map_url: script.source_map_url,
-            ...(script.source.included &&
-            beforeSources.has(
-              workerScriptIdentity(worker.target_id, script.script_id),
-            ) &&
-            afterSources.has(
-              workerScriptIdentity(worker.target_id, script.script_id),
-            )
-              ? { source_sha256: script.source.artifact.sha256 }
-              : {}),
-          }),
-        );
+    for (const [identity, script] of ownScripts) {
+      const peer = peerScripts.get(identity);
+      result.set(
+        identity,
+        digestCanonicalValue({
+          url: script.url,
+          ...Object.fromEntries(
+            (["cdp_hash", "length", "is_module", "language"] as const)
+              .filter((key) => script[key] != null && peer?.[key] != null)
+              .map((key) => [key, script[key]]),
+          ),
+          source_map_url: script.source_map_url,
+          ...(script.source.included && peer?.source.included
+            ? { source_sha256: script.source.artifact.sha256 }
+            : {}),
+        }),
+      );
+    }
     return result;
   };
   return compareDimension(
-    fingerprints(before),
-    fingerprints(after),
+    fingerprints(before, beforeScripts, afterScripts),
+    fingerprints(after, afterScripts, beforeScripts),
     pageComplete && workerComplete,
     "Page or worker script inventory was incomplete in at least one observation.",
     (identity) =>

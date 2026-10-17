@@ -31,6 +31,116 @@ import {
 
 const source = 'postMessage("worker 🧪");';
 
+it.each(["length", "cdp_hash", "is_module", "language"] as const)(
+  "compares worker metadata only when mutually known: %s",
+  async (field) => {
+    const { provider, input } = await fixture();
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    const before = captured.value;
+    before.workers = before.workers.filter(
+      (worker) => worker.target_id === "own",
+    );
+    for (const coverage of [
+      before.completeness,
+      before.workers[0]!.observation!.completeness,
+    ]) {
+      coverage.policy_filtered_sections = [];
+      coverage.attach_limited_sections = [];
+      coverage.truncated_sections = [];
+      coverage.unavailable_sections = [];
+      coverage.dropped_events.scripts = 0;
+    }
+    const first =
+      field === "length" ? 0 : field === "is_module" ? false : "first";
+    const second =
+      field === "length" ? 1 : field === "is_module" ? true : "second";
+    Object.assign(before.workers[0]!.observation!.scripts[0]!, {
+      [field]: first,
+    });
+    const after = structuredClone(before);
+    const script = after.workers[0]!.observation!.scripts[0]!;
+    const compare = (left = before, right = after) =>
+      compareWebCaptures({
+        before: { inspection: left, webmcp: null },
+        after: { inspection: right, webmcp: null },
+      });
+    for (const complete of [true, false]) {
+      if (!complete) after.completeness.unavailable_sections.push("scripts");
+      Object.assign(script, { [field]: null });
+      for (const [left, right] of [
+        [before, after],
+        [after, before],
+      ] as const) {
+        expect(compare(left, right).dimensions.scripts).toMatchObject({
+          status: complete ? "unchanged" : "unknown",
+          total_changes: 0,
+        });
+        expect(compare(left, right).overall_status).not.toBe("changed");
+      }
+      if (field === "length") {
+        delete script.length;
+        expect(compare().dimensions.scripts.total_changes).toBe(0);
+        expect(compare(after, before).dimensions.scripts.total_changes).toBe(0);
+      }
+      Object.assign(script, { [field]: second });
+      expect(compare().dimensions.scripts).toMatchObject({
+        status: "changed",
+        total_changes: 1,
+      });
+    }
+  },
+);
+
+it.each([
+  "target",
+  "origin",
+  "origin-url",
+  "unsanitized-page",
+  "page-source-selection",
+])(
+  "rejects inconsistent captured page Evidence in both consumers: %s",
+  async (mismatch) => {
+    const { provider, input } = await fixture();
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    for (const keepWorkers of [true, false]) {
+      const inspection = structuredClone(captured.value);
+      if (!keepWorkers || mismatch === "page-source-selection")
+        inspection.workers = [];
+      if (mismatch === "target") inspection.target.target_id = "different-page";
+      if (mismatch === "origin") {
+        inspection.target.origin = "https://foreign.example";
+        inspection.target.url = "https://foreign.example/page";
+      }
+      if (mismatch === "origin-url")
+        inspection.target.url = "https://foreign.example/page";
+      if (mismatch === "unsanitized-page") {
+        const url = new URL(inspection.target.url);
+        url.username = "user";
+        inspection.target.url = url.href;
+      }
+      const evidence = createBrowserEvidence(
+        "inspect_web_page",
+        {
+          ...input,
+          allowed_origins: [captured.value.target.origin],
+          include_script_sources:
+            mismatch === "page-source-selection"
+              ? false
+              : input.include_script_sources,
+        },
+        inspection,
+        provider.identity(),
+      );
+      expect(() => parseEvidence(evidence)).not.toThrow();
+      expect(() => parseRuntimeCaptures([evidence])).toThrow();
+      expect(() => selectScriptCapture(evidence)).toThrow();
+      expect(() => selectScriptCapture(inspection)).not.toThrow();
+    }
+  },
+);
+
 it.each(["WebAssembly", "JavaScript", undefined, "Other"])(
   "respects worker script language before reading or matching: %s",
   async (scriptLanguage) => {
@@ -2220,6 +2330,10 @@ it.each(["cdp_hash", "is_module", "source_map_url"] as const)(
     const { provider, input } = await fixture();
     const captured = await provider.inspectPage(input);
     if (!captured.ok) throw captured.error;
+    if (field === "is_module")
+      captured.value.workers.find(
+        (w) => w.target_id === "own",
+      )!.observation!.scripts[0]!.is_module = false;
     const before = captured.value,
       after = structuredClone(before);
     const observation = after.workers.find(
@@ -2461,6 +2575,10 @@ it.each([
   "unsanitized",
   "missing-selection",
   "missing-observation",
+  "page-target",
+  "page-origin",
+  "page-source-selection",
+  "page-unsanitized",
 ] as const)(
   "rejects inconsistent worker Evidence through CLI and MCP without publishing: %s",
   async (mismatch) => {
@@ -2473,6 +2591,16 @@ it.each([
     );
     const { call, client } = await connectLocalToolsMcp();
     const inspection = structuredClone(captured.value);
+    if (mismatch === "page-target")
+      inspection.target.target_id = "different-page";
+    if (mismatch === "page-origin")
+      inspection.target.url = "https://foreign.example/page";
+    if (mismatch === "page-source-selection") inspection.workers = [];
+    if (mismatch === "page-unsanitized") {
+      const url = new URL(inspection.target.url);
+      url.username = "user";
+      inspection.target.url = url.href;
+    }
     if (mismatch === "missing-selection")
       inspection.workers = inspection.workers.filter(
         (w) => w.target_id !== "shared",
@@ -2502,12 +2630,13 @@ it.each([
     }
     const evidence = createBrowserEvidence(
       "inspect_web_page",
-      mismatch === "source-selection"
+      mismatch === "source-selection" || mismatch === "page-source-selection"
         ? { ...selected, include_script_sources: false }
         : mismatch === "origin" ||
             mismatch === "unsanitized" ||
             mismatch === "missing-selection" ||
-            mismatch === "missing-observation"
+            mismatch === "missing-observation" ||
+            mismatch.startsWith("page-")
           ? selected
           : input,
       inspection,

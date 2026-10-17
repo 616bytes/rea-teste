@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import {
-  browserAllowedOriginsSchema,
   browserEndpointSchema,
   recordedBrowserObservationEndpointSchema,
 } from "../browserObservation.js";
@@ -189,14 +188,7 @@ const parseBrowserCapture = (
     evidence,
     {
       kind: "browser",
-      targetId: inspection.target.target_id,
-      targetOrigin: inspection.target.origin,
-      workers: inspection.workers,
-      sourceIncluded:
-        inspection.scripts.items.some(({ source }) => source.included) ||
-        inspection.workers.some((worker) =>
-          worker.observation?.scripts.some(({ source }) => source.included),
-        ),
+      inspection,
     },
     path,
   );
@@ -448,10 +440,7 @@ const assertRuntimeParameters = (
   expected:
     | {
         readonly kind: "browser";
-        readonly targetId: string;
-        readonly targetOrigin: string;
-        readonly workers: WebPageInspection["workers"];
-        readonly sourceIncluded: boolean;
+        readonly inspection: WebPageInspection;
       }
     | {
         readonly kind: "electron";
@@ -465,39 +454,22 @@ const assertRuntimeParameters = (
     include_script_sources: z.boolean(),
   };
   if (expected.kind === "browser") {
-    const parameters = parseAtPath(
+    parseAtPath(
       (value) =>
         z
           .object({
-            ...common,
             cdp_endpoint: recordedBrowserObservationEndpointSchema,
-            allowed_origins: browserAllowedOriginsSchema,
           })
           .passthrough()
           .parse(value),
       evidence.parameters,
       [...path, "parameters"],
     );
-    if (parameters.target_id !== expected.targetId)
-      throw invalidInput(
-        [...path, "parameters", "target_id"],
-        "Runtime Evidence target disagrees with its captured result",
-      );
-    if (!parameters.allowed_origins.includes(expected.targetOrigin))
-      throw invalidInput(
-        [...path, "parameters", "allowed_origins"],
-        "Browser Evidence target is outside its recorded origin scope",
-      );
-    if (expected.sourceIncluded && !parameters.include_script_sources)
-      throw invalidInput(
-        [...path, "parameters", "include_script_sources"],
-        "Runtime Evidence contains source without source-capture selection",
-      );
     parseAtPath(
       (value) => browserWorkerEvidenceScopeSchema.parse(value),
       {
         parameters: evidence.parameters,
-        normalized_result: { workers: expected.workers },
+        normalized_result: expected.inspection,
       },
       path,
     );

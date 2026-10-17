@@ -50,6 +50,28 @@ it.each([
   },
 );
 
+it.each([
+  ["i386 PE32", 0x014c, "pe32", "x86"],
+  ["ARM64 PE32+", 0xaa64, "pe32-plus", "arm64"],
+  ["AMD64 machine with PE32 magic", 0x8664, "pe32", null],
+  ["ReadyToRun Linux override", 0x8664 ^ 0x7b79, "pe32-plus", null],
+  ["unknown machine", 0x01f0, "pe32", null],
+] as const)(
+  "names the subject architecture from the COFF machine: %s",
+  async (_case, machine, format, architecture) => {
+    const report = await observedReport();
+    report.machine = machine;
+    report.format = format;
+    const service = new PeResourcesService({
+      identity: PE_RESOURCES_PROVIDER,
+      inspect: () => Promise.resolve(ok(report)),
+    });
+    const result = await service.inspect({ path: report.artifact.path });
+    if (!result.ok) throw result.error;
+    expect(result.value.subject?.architecture ?? null).toBe(architecture);
+  },
+);
+
 it("retains a completed observation on late cancellation and keeps output errors primary", async () => {
   const report = await observedReport();
   const controller = new AbortController();

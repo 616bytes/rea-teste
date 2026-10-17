@@ -15,6 +15,10 @@ import {
   type PeResourceIdentity,
 } from "../../domain/native/peResources.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
+import {
+  decodePeMachine,
+  type PeArchitecture,
+} from "../../domain/peMachine.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
@@ -69,12 +73,14 @@ export class PeResourcesService {
         ),
       );
     const value = report.data;
+    const architecture = subjectArchitecture(value);
     return completeProviderEvidence(
       createEvidence(
         {
           path: value.artifact.path,
           format: "pe",
           sha256: value.artifact.sha256,
+          ...(architecture === undefined ? {} : { architecture }),
         },
         this.provider.identity,
         {
@@ -90,6 +96,23 @@ export class PeResourcesService {
     );
   }
 }
+
+/**
+ * Name the subject architecture from the reported COFF machine. The resource
+ * reader does not inspect the CLI header, so a ReadyToRun OS-override machine
+ * or an optional-header magic that contradicts the machine stays unknown.
+ */
+const subjectArchitecture = (
+  report: PeResources,
+): PeArchitecture | undefined => {
+  const machine = decodePeMachine(report.machine);
+  if (machine === undefined || machine.nativeOsOverride) return undefined;
+  const wide =
+    machine.architecture === "x86_64" || machine.architecture === "arm64";
+  return wide === (report.format === "pe32-plus")
+    ? machine.architecture
+    : undefined;
+};
 
 /** Check cross-field invariants before provider output becomes public Evidence. */
 const validReport = (

@@ -220,6 +220,7 @@ const expectPeInventoriesAcrossAdapters = async (
     expect(evidence.subject?.digest).toMatchObject({
       sha256: createHash("sha256").update(fixture.bytes).digest("hex"),
     });
+    expect(evidence.subject?.architecture).toBe(plus ? "x86_64" : "x86");
     expect(report.coverage).toMatchObject({
       status: "complete",
       resources: 5,

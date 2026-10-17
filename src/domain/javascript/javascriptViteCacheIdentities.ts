@@ -142,17 +142,39 @@ export class ViteCacheIdentities {
     )
       return [];
     const reads: t.Node[] = [];
-    if (proof.table !== undefined) reads.push(proof.table);
+    // A mapped argument is read by value only when its proven container holds
+    // plain data slots; accessors and spreads can hide unexamined writes.
+    if (proof.table !== undefined && this.plainDataSlots(proof.table))
+      reads.push(proof.table);
     const tableAllocation = proof.mapperTable?.fact?.allocation;
     const provided = proof.providedTable;
     if (
       proof.mapper !== undefined &&
       ((provided !== undefined &&
         providedDefaultInput(provided, provided.source.fact)) ||
-        (tableAllocation != null && tableAllocation.kind !== "foreign"))
+        (tableAllocation != null &&
+          tableAllocation.kind !== "foreign" &&
+          this.plainDataSlots(proof.mapper)))
     )
       reads.push(proof.mapper);
     return reads;
+  }
+
+  /** Only array or plain data object literals keep mapped reads free of getters. */
+  private plainDataSlots(argument: t.Node | undefined): boolean {
+    if (argument === undefined) return false;
+    const node = this.read(argument)?.allocation?.node;
+    if (t.isArrayExpression(node)) return true;
+    if (!t.isObjectExpression(node)) return false;
+    return node.properties.every(
+      (property) =>
+        t.isObjectProperty(property) &&
+        !property.computed &&
+        !(
+          t.isIdentifier(property.key, { name: "__proto__" }) ||
+          t.isStringLiteral(property.key, { value: "__proto__" })
+        ),
+    );
   }
 
   /** propagate unexamined exposure through normalized aliases and contained values. */

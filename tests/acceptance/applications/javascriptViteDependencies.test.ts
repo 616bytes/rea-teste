@@ -388,6 +388,32 @@ const allScenarios: readonly ViteScenario[] = [
     unknown: true,
   })),
   {
+    file: "returned-supplied-table-getter-slot.js",
+    callSources: ["__vite__mapDeps([0], void 0, table)", defaultCall],
+    callOccurrences: [0, 1],
+    source: mapDependencies('["./first.js", m]', "[0]").replace(
+      defaultCall + ";",
+      'const table = {cache: __vite__mapDeps.f,\n  get 0() { this.cache[0] = "./last.js"; return 0; }};\n__vite__mapDeps([0], void 0, table); ' +
+        defaultCall +
+        ";",
+    ),
+    resolved: [],
+    unknown: true,
+  },
+  {
+    file: "returned-mapper-getter-slot.js",
+    callSources: ["__vite__mapDeps([0], mapper)", defaultCall],
+    callOccurrences: [0, 1],
+    source: mapDependencies('["./first.js", m]', "[0]").replace(
+      defaultCall + ";",
+      'const mapper = {cache: __vite__mapDeps.f,\n  get f() { this.cache[0] = "./last.js"; return [null, {}]; }};\n__vite__mapDeps([0], mapper); ' +
+        defaultCall +
+        ";",
+    ),
+    resolved: [],
+    unknown: true,
+  },
+  {
     file: "returned-cyclic-table-default.js",
     callSources: ["__vite__mapDeps([1], void 0, a)", defaultCall],
     callOccurrences: [0, 1],

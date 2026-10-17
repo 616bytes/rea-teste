@@ -144,6 +144,36 @@ distinction: it closes and deletes provider-owned profiles, but only disconnects
 from an external CDP browser. Real-browser verification checks both outcomes and
 confirms that an attached external browser remains alive.
 
+That cleanup requires REA to remain running. Abrupt termination, including
+Windows process-tree termination or POSIX `SIGKILL`, can leave the launch
+profile and Playwright artifacts behind. A profile can retain cookies, history,
+cache and origin storage. Later REA runs currently do not reclaim these paths.
+Playwright 1.58.2 can also leave an artifacts directory when launch preparation
+fails before a browser process exists, such as for a missing executable.
+POSIX wrappers can request awaited cancellation with `SIGINT` or `SIGTERM`;
+Windows process termination is not an equivalent graceful-cancellation channel.
+Do not identify owned artifacts by directory prefix or creation time alone.
+See [#4659](https://github.com/morluto/rea/issues/4659) for the remaining recovery
+and wrapper-cancellation work.
+
+Keeping that browser alive does not guarantee its emulation state survives.
+Chromium can clear caller-owned `navigator.platform` emulation when a page CDP
+session disconnects, including sessions that sent no emulation commands. REA
+cannot snapshot the other client's complete user-agent/client-hint settings and
+does not replay a partial reconstruction. Use launch mode to keep this effect
+inside a provider-owned browser, or have the external owning client reapply its
+complete configuration after capture. Connected captures report this limitation;
+see [issue #4089](https://github.com/morluto/rea/issues/4089).
+
+`environment.locale` sets Intl formatting in both modes. Launch also sets
+`navigator.language`, `navigator.languages`, and the request `Accept-Language`.
+Connect preserves the caller's page and request languages; every attached
+capture identifies this locale limitation, including retained partial
+observations. Use launch mode when the application must select the requested
+language through navigator values or request headers. Artifact completeness
+covers the selected observations, not equivalence of launch and connect
+language environments.
+
 HTTP(S) URLs may include ordinary query values and fragments directly. Use
 ordered structured query entries when a value needs to reference a declared
 environment-backed secret. Form, storage, and cookie values are either literal

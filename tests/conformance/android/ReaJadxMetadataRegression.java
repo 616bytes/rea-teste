@@ -42,6 +42,44 @@ public class ReaJadxMetadataRegression {
     return value;
   }
 
+  private static void verifyClassPages(Method handle, Object bridge, List<String> inventory)
+      throws Exception {
+    int pages = 0;
+    boolean nonzeroOffset = false;
+    for (String query : List.of("", ".", "ApiDemos", "REA_ABSENT_83f1e89d")) {
+      int limit = query.equals("ApiDemos") ? 1 : 17;
+      List<String> expected = inventory.stream().filter(name -> name.contains(query)).toList();
+      List<String> actual = new ArrayList<>();
+      int offset = 0;
+      do {
+        JsonObject input = new JsonObject();
+        input.addProperty("query", query);
+        input.addProperty("offset", offset);
+        input.addProperty("limit", limit);
+        JsonObject page = call(handle, bridge, "list_classes", input);
+        require(page.get("scope").getAsString().equals("top_level"), "Class scope changed");
+        require(page.get("total_classes").getAsInt() == inventory.size(), "Inventory count changed");
+        require(page.get("offset").getAsInt() == offset && page.get("limit").getAsInt() == limit,
+            "Page selection changed");
+        int next = page.get("next_offset").getAsInt();
+        require(next > offset && next <= inventory.size(), "Inventory cursor did not advance");
+        List<String> selected = new ArrayList<>();
+        for (JsonElement name : page.getAsJsonArray("items")) selected.add(name.getAsString());
+        require(selected.size() <= limit, "Matching page exceeded limit");
+        require(selected.equals(inventory.subList(offset, next).stream()
+            .filter(name -> name.contains(query)).toList()), "Page omitted or reordered matching rows");
+        require(next == inventory.size() || selected.size() == limit, "Page stopped before filling");
+        actual.addAll(selected);
+        nonzeroOffset |= offset > 0;
+        offset = next;
+        pages++;
+      } while (offset < inventory.size());
+      require(actual.equals(expected), "Combined class pages differ from the native inventory");
+    }
+    require(nonzeroOffset, "Fixture did not exercise later native class pages");
+    System.out.println("CLASS_SEARCH_REGRESSION_PASS pages=" + pages + " nonzero=true");
+  }
+
   private static Path initializerFixture(String sources, String output) throws Exception {
     Path directory = Path.of(output);
     SmaliOptions options = new SmaliOptions();
@@ -50,7 +88,9 @@ public class ReaJadxMetadataRegression {
     options.outputDexFile = directory.resolve("initializers.dex").toString();
     require(Smali.assemble(options, List.of(
         Path.of(sources, "InitializationPolicy.smali").toString(),
-        Path.of(sources, "MixedInitialization.smali").toString())), "Initializer fixture assembly failed");
+        Path.of(sources, "MixedInitialization.smali").toString(),
+        Path.of(sources, "NativeOverload.smali").toString(),
+        Path.of(sources, "AbstractShape.smali").toString())), "Initializer fixture assembly failed");
     Path apk = directory.resolve("initializers.apk");
     try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(apk))) {
       zip.putNextEntry(new ZipEntry("classes.dex"));
@@ -178,6 +218,7 @@ public class ReaJadxMetadataRegression {
     JsonObject ordinary = call(handle, bridge, "get_method_body", methodArguments(classNames[1], "touch"));
     require(ordinary.get("mode").getAsString().equals("java") && ordinary.get("body").getAsString().contains("COUNT"),
         "Ordinary executable method no longer produces Java");
+    verifyNoBodyMethods(handle, bridge, holder.current());
 
     SessionConfig bounded = new SessionConfig(96, 0, 90000L, 1, List.of(), List.of(), 64, ResourceMode.FULL);
     BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
@@ -192,6 +233,36 @@ public class ReaJadxMetadataRegression {
     String prefix = partial.get("body").getAsString().split("\n\n\\.\\.\\. \\[truncated:", 2)[0];
     require(prefix.getBytes(StandardCharsets.UTF_8).length <= 96, "Initializer text exceeded its byte limit");
     System.out.println("INITIALIZER_REGRESSION_PASS folded=2 bounded=true");
+  }
+
+  private static void verifyNoBodyMethods(Method handle, Object bridge, JadxSession session) throws Exception {
+    String[][] cases = {
+        { "fixture.NativeOverload", "readBuffer", "native_method" },
+        { "fixture.AbstractShape", "area", "abstract_method" },
+        { "fixture.NativeOverload", "zLastNative", "native_method" }
+    };
+    for (String[] selected : cases) {
+      JsonObject input = methodArguments(selected[0], selected[1]);
+      ClassNode owner = session.getClasses().stream().filter(cls -> cls.getFullName().equals(selected[0]))
+          .findFirst().orElseThrow().getClassNode();
+      ProcessState beforeState = owner.getState();
+      JsonObject before = call(handle, bridge, "get_method_body", input);
+      require(owner.getState() == beforeState, "No-code inspection generated class source");
+      require(before.get("body").getAsString().isEmpty(), "No-code method included source: " + before);
+      require(before.get("mode").getAsString().equals("java") && !before.get("fell_back").getAsBoolean(),
+          "No-code method claimed disassembly or fallback: " + before);
+      require(before.getAsJsonArray("markers").equals(JsonParser.parseString("[\"" + selected[2] + "\"]")),
+          "No-code method lost its parsed access-flag reason: " + before);
+      boolean nativeClass = selected[0].equals("fixture.NativeOverload");
+      JsonObject executable = methodArguments(selected[0], nativeClass ? "readBuffer" : "describe");
+      if (nativeClass) executable.addProperty("overload_index", 1);
+      String text = call(handle, bridge, "get_method_body", executable).get("body").getAsString();
+      require(nativeClass ? text.contains("readBuffer(byteBuffer, 0)") : text.contains("neighbour-member"),
+          "Executable neighbour lost its own source: " + text);
+      require(before.equals(call(handle, bridge, "get_method_body", input)),
+          "Code generation changed the frozen body-absence fact");
+    }
+    System.out.println("NO_BODY_REGRESSION_PASS native=true abstract=true frozen=true");
   }
 
   public static void main(String[] args) throws Exception {
@@ -214,6 +285,7 @@ public class ReaJadxMetadataRegression {
       Object bridge = constructor.newInstance(holder);
       Method handle = bridgeType.getDeclaredMethod("handle", String.class, kotlinx.serialization.json.JsonObject.class);
       handle.setAccessible(true);
+      verifyClassPages(handle, bridge, session.getClassFqns());
       JsonObject apiArgs = arguments("io.appium.android.apis.ApiDemos");
       JsonObject apiSummary = call(handle, bridge, "get_class_summary", apiArgs);
       for (var entry : states.entrySet()) require(entry.getKey().getState() == entry.getValue(),

@@ -1,5 +1,20 @@
 import * as t from "@babel/types";
 
+/** Declaration syntax that establishes no runtime value, regardless of export form. */
+export const isErasedJavaScriptDeclaration = (node: t.Node): boolean =>
+  t.isTSInterfaceDeclaration(node) ||
+  t.isTSTypeAliasDeclaration(node) ||
+  t.isTSDeclareFunction(node) ||
+  ((t.isVariableDeclaration(node) ||
+    t.isClassDeclaration(node) ||
+    t.isTSEnumDeclaration(node) ||
+    t.isTSModuleDeclaration(node)) &&
+    node.declare === true);
+
+/** Namespace/enum lowering introduces runtime scopes absent from this source index. */
+export const isUnmodeledJavaScriptRuntimeScope = (node: t.Node): boolean =>
+  t.isTSModuleDeclaration(node) || t.isTSEnumDeclaration(node);
+
 /** Whether TypeScript explicitly erases this entire import declaration. */
 export const isTypeOnlyImportDeclaration = (
   node: t.ImportDeclaration,
@@ -15,6 +30,19 @@ export const isTypeOnlyExportDeclaration = (
     (t.isTSInterfaceDeclaration(node.declaration) ||
       t.isTSTypeAliasDeclaration(node.declaration) ||
       t.isTSDeclareFunction(node.declaration)));
+
+/**
+ * Runtime external-module target for a value import-equals declaration;
+ * `import type X = require("m")` is erased and declares no dependency.
+ */
+export const semanticImportEqualsSpecifier = (
+  node: t.TSImportEqualsDeclaration,
+): string | null =>
+  node.importKind !== "type" &&
+  t.isTSExternalModuleReference(node.moduleReference) &&
+  t.isStringLiteral(node.moduleReference.expression)
+    ? node.moduleReference.expression.value
+    : null;
 
 /** Whether this import binding is explicitly type-only. */
 export const isTypeOnlyImportSpecifier = (node: t.ImportSpecifier): boolean =>

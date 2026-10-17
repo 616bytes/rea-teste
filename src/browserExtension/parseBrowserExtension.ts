@@ -8,6 +8,8 @@ import {
   type FileEntry,
 } from "@zip.js/zip.js";
 
+import { zipArchiveFaultKind } from "../artifacts/ZipArtifactReader.js";
+
 import {
   browserExtensionSchema,
   type BrowserExtensionReport,
@@ -41,6 +43,13 @@ const KNOWN_KEYS = new Set([
   "externally_connectable",
 ]);
 
+/** Which caller or projection bound a limit failure refers to. */
+export type BrowserExtensionLimit =
+  | "max_entries"
+  | "max_manifest_bytes"
+  | "max_file_bytes"
+  | "fixed";
+
 /** A package or manifest failed a format or budget boundary before a report existed. */
 export class BrowserExtensionParseError extends Error {
   constructor(
@@ -48,6 +57,7 @@ export class BrowserExtensionParseError extends Error {
     readonly resource: "file-size" | "capacity" | null,
     message: string,
     readonly limits?: Readonly<Record<string, number>>,
+    readonly limit: BrowserExtensionLimit = "fixed",
   ) {
     super(message);
     this.name = "BrowserExtensionParseError";
@@ -95,18 +105,37 @@ const limitError = (
   resource: "file-size" | "capacity",
   message: string,
   limits: Readonly<Record<string, number>>,
+  limit: BrowserExtensionParseError["limit"] = resource === "file-size"
+    ? "max_manifest_bytes"
+    : "fixed",
 ): BrowserExtensionParseError =>
-  new BrowserExtensionParseError("limit", resource, message, limits);
+  new BrowserExtensionParseError("limit", resource, message, limits, limit);
+
+const zipParseError = (cause: unknown): unknown => {
+  if (
+    cause instanceof BrowserExtensionParseError ||
+    (cause instanceof DOMException && cause.name === "AbortError")
+  )
+    return cause;
+  const kind = zipArchiveFaultKind(cause);
+  if (kind === undefined || !(cause instanceof Error)) return cause;
+  return formatError(
+    kind === "format"
+      ? `ZIP archive is malformed: ${cause.message}`
+      : `ZIP archive uses an unsupported feature: ${cause.message}`,
+  );
+};
 
 const stringField = (
   value: unknown,
   label: string,
+  maxLength = 8192,
 ): string | null => {
   if (value === undefined) return null;
   if (typeof value !== "string")
     throw formatError(`${label} is not a string.`);
-  if (value.length > 8192)
-    throw formatError(`${label} exceeds 8192 characters.`);
+  if (value.length > maxLength)
+    throw formatError(`${label} exceeds ${String(maxLength)} characters.`);
   return value;
 };
 
@@ -136,6 +165,21 @@ const messageKeysIn = (value: string | null): string[] => {
 const unique = (values: readonly string[]): string[] => [
   ...new Set(values.filter((value) => value !== "")),
 ];
+
+const boundedList = (
+  values: readonly string[],
+  max: number,
+  label: string,
+): string[] => {
+  if (values.length > max)
+    throw limitError(
+      "capacity",
+      `${label} exceeds ${String(max)} entries.`,
+      { max_items: max, observed_items: values.length },
+      "fixed",
+    );
+  return [...values];
+};
 
 interface ContainerFacts {
   readonly format: "crx2" | "crx3" | "zip";
@@ -220,20 +264,30 @@ const readManifestEntry = async (
   abortIfNeeded(signal);
   const reader = new ZipReader(new Uint8ArrayReader(zip));
   try {
-    const entries = await reader.getEntries();
+    const entries: Entry[] = [];
+    let observed = 0;
+    for await (const entry of reader.getEntriesGenerator()) {
+      abortIfNeeded(signal);
+      observed += 1;
+      if (observed > input.max_entries)
+        throw limitError(
+          "capacity",
+          `ZIP central directory exceeded ${String(input.max_entries)} entries.`,
+          { max_entries: input.max_entries, observed_entries: observed },
+          "max_entries",
+        );
+      entries.push(entry);
+    }
     abortIfNeeded(signal);
-    if (entries.length > input.max_entries)
-      throw limitError(
-        "capacity",
-        `ZIP central directory has ${String(entries.length)} entries.`,
-        { max_entries: input.max_entries, observed_entries: entries.length },
-      );
-    const exact = entries.find((entry) => entry.filename === "manifest.json");
+    const roots = entries.filter((entry) => entry.filename === "manifest.json");
+    if (roots.length > 1)
+      throw formatError("The archive has multiple root manifest.json entries.");
+    const exact = roots[0];
     const nested = entries.filter((entry) =>
       entry.filename.endsWith("/manifest.json"),
     );
     if (exact === undefined) {
-      const observed =
+      const observedPaths =
         nested.length === 0
           ? "no manifest.json entry"
           : `nested ${nested
@@ -241,7 +295,7 @@ const readManifestEntry = async (
               .map((entry) => entry.filename)
               .join(", ")}`;
       throw formatError(
-        `The archive has no root manifest.json (${observed}).`,
+        `The archive has no root manifest.json (${observedPaths}).`,
       );
     }
     const selected = fileEntry(exact);
@@ -255,16 +309,26 @@ const readManifestEntry = async (
           max_manifest_bytes: input.max_manifest_bytes,
           declared_bytes: selected.uncompressedSize,
         },
+        "max_manifest_bytes",
       );
-    const bytes = await selected.getData(new Uint8ArrayWriter());
+    const bytes = await selected.getData(new Uint8ArrayWriter(), {
+      ...(signal === undefined ? {} : { signal }),
+      checkSignature: true,
+    });
     abortIfNeeded(signal);
     if (bytes.length > input.max_manifest_bytes)
       throw limitError(
         "file-size",
         `manifest.json expanded to ${String(bytes.length)} bytes.`,
-        { max_manifest_bytes: input.max_manifest_bytes, observed_bytes: bytes.length },
+        {
+          max_manifest_bytes: input.max_manifest_bytes,
+          observed_bytes: bytes.length,
+        },
+        "max_manifest_bytes",
       );
     return { path: "manifest.json", bytes };
+  } catch (cause) {
+    throw zipParseError(cause);
   } finally {
     await reader.close();
   }
@@ -349,13 +413,13 @@ const contentSecurityPolicy = (value: unknown) => {
   const extensionPages = stringField(
     record.extension_pages,
     "content_security_policy.extension_pages",
+    65536,
   );
   const sandbox = stringField(
     record.sandbox,
     "content_security_policy.sandbox",
+    65536,
   );
-  if (extensionPages !== null && extensionPages.length > 65536)
-    throw formatError("content_security_policy.extension_pages is too long.");
   return {
     kind: "object" as const,
     extension_pages: extensionPages,
@@ -494,11 +558,15 @@ const projectManifest = (
     version: stringField(manifest.version, "version"),
     description,
     default_locale: stringField(manifest.default_locale, "default_locale"),
-    message_keys: unique([
-      ...messageKeysIn(name),
-      ...messageKeysIn(description),
-      ...actionTitle,
-    ]).slice(0, 64),
+    message_keys: boundedList(
+      unique([
+        ...messageKeysIn(name),
+        ...messageKeysIn(description),
+        ...actionTitle,
+      ]),
+      64,
+      "message keys",
+    ),
     permissions: stringArray(manifest.permissions, "permissions"),
     optional_permissions: stringArray(
       manifest.optional_permissions,
@@ -518,10 +586,11 @@ const projectManifest = (
     ),
     incognito: stringField(manifest.incognito, "incognito"),
     side_panel: manifest.side_panel !== undefined,
-    commands:
-      commands === null
-        ? []
-        : Object.keys(commands).slice(0, 10000),
+    commands: boundedList(
+      commands === null ? [] : Object.keys(commands),
+      10000,
+      "commands",
+    ),
     web_accessible_resources: webAccessibleResources(
       manifest.web_accessible_resources,
     ),
@@ -600,6 +669,16 @@ export const parseBrowserExtension = async (
     if (base !== "manifest.json")
       throw formatError(
         "The file is not a CRX or ZIP package, and it is not named manifest.json.",
+      );
+    if (bytes.length > input.max_manifest_bytes)
+      throw limitError(
+        "file-size",
+        `manifest.json contains ${String(bytes.length)} bytes.`,
+        {
+          max_manifest_bytes: input.max_manifest_bytes,
+          observed_bytes: bytes.length,
+        },
+        "max_manifest_bytes",
       );
   }
   const manifest = projectManifest(manifestBytes.bytes, manifestBytes.path);

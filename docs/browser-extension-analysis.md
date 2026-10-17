@@ -37,9 +37,9 @@ Pass the CRX, XPI, ZIP, or the unpacked `manifest.json`.
 | ZIP local-file header | ZIP or XPI. Suffix is not required. |
 | UTF-8 JSON file named `manifest.json` | Unpacked manifest. Other files in the directory are not opened. |
 
-The ZIP payload must contain a root `manifest.json`. A nested
-`addon/manifest.json` is reported as a format failure, including up to three
-observed nested paths. Encrypted manifest entries are not read. Only store and
+The ZIP payload must contain exactly one root `manifest.json`. A nested
+`addon/manifest.json` or a second root `manifest.json` is a format failure.
+Nested paths are named, up to three. Encrypted manifest entries are not read. Only store and
 deflate entries that the bundled ZIP reader can expand are accepted. Other
 archive members, including extension JavaScript, HTML, and `_locales`, stay
 unexamined.

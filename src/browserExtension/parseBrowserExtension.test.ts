@@ -65,6 +65,68 @@ const storedZip = (name: string, data: Buffer): Buffer => {
   return Buffer.concat([local, central, end]);
 };
 
+const storedZipEntries = (files: readonly (readonly [string, Buffer])[]): Buffer => {
+  const locals: Buffer[] = [];
+  const centrals: Buffer[] = [];
+  let offset = 0;
+  for (const [name, data] of files) {
+    const nameBytes = Buffer.from(name);
+    const checksum = crc32(data) >>> 0;
+    const local = Buffer.concat([
+      u32(0x04034b50),
+      u16(20),
+      u16(0),
+      u16(0),
+      u16(0),
+      u16(0),
+      u32(checksum),
+      u32(data.length),
+      u32(data.length),
+      u16(nameBytes.length),
+      u16(0),
+      nameBytes,
+      data,
+    ]);
+    locals.push(local);
+    centrals.push(
+      Buffer.concat([
+        u32(0x02014b50),
+        u16(20),
+        u16(20),
+        u16(0),
+        u16(0),
+        u16(0),
+        u16(0),
+        u32(checksum),
+        u32(data.length),
+        u32(data.length),
+        u16(nameBytes.length),
+        u16(0),
+        u16(0),
+        u16(0),
+        u16(0),
+        u32(0),
+        u32(offset),
+        nameBytes,
+      ]),
+    );
+    offset += local.length;
+  }
+  const central = Buffer.concat(centrals);
+  return Buffer.concat([
+    Buffer.concat(locals),
+    central,
+    u32(0x06054b50),
+    u16(0),
+    u16(0),
+    u16(files.length),
+    u16(files.length),
+    u32(central.length),
+    u32(offset),
+    u16(0),
+  ]);
+};
+
 const crx3 = (zip: Buffer, header = Buffer.from([0x0a])): Buffer =>
   Buffer.concat([
     Buffer.from("Cr24"),
@@ -216,6 +278,42 @@ describe("parseBrowserExtension", () => {
         { path: input.path, sha256: "b".repeat(64), bytes: zip.length },
         { ...input, max_entries: 0 },
       ),
-    ).rejects.toMatchObject({ code: "limit", resource: "capacity" });
+    ).rejects.toMatchObject({ code: "limit", resource: "capacity", limit: "max_entries" });
+  });
+
+  it("rejects duplicate root manifests, oversized unpacked manifests, silent truncation, and short object policies", async () => {
+    const first = manifest({ manifest_version: 3, name: "One", permissions: ["storage"] });
+    const second = manifest({ manifest_version: 3, name: "Two", permissions: ["tabs"] });
+    const duplicate = storedZipEntries([
+      ["manifest.json", first],
+      ["manifest.json", second],
+    ]);
+    await expect(inspect(duplicate)).rejects.toThrow(/multiple root manifest.json/);
+    const raw = manifest({ manifest_version: 3, name: "Big" });
+    await expect(
+      parseBrowserExtension(
+        raw,
+        { path: "/work/manifest.json", sha256: "c".repeat(64), bytes: raw.length },
+        { ...input, path: "/work/manifest.json", max_manifest_bytes: 8 },
+      ),
+    ).rejects.toMatchObject({ code: "limit", limit: "max_manifest_bytes" });
+    const keys = Array.from({ length: 65 }, (_, index) => `__MSG_k${String(index)}__`).join(" ");
+    await expect(
+      inspect(storedZip("manifest.json", manifest({ manifest_version: 3, description: keys })), "/work/manifest.json"),
+    ).rejects.toMatchObject({ code: "limit", limit: "fixed" });
+    const policy = "script-src 'self' ".padEnd(9000, "a");
+    const report = await inspect(
+      storedZip(
+        "manifest.json",
+        manifest({
+          manifest_version: 3,
+          content_security_policy: { extension_pages: policy },
+        }),
+      ),
+    );
+    expect(report.manifest.content_security_policy).toMatchObject({
+      kind: "object",
+      extension_pages: policy,
+    });
   });
 });

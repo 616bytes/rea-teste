@@ -25,6 +25,7 @@ import {
 } from "../domain/browserExtension/browserExtension.js";
 import { err, ok } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { zipArchiveFaultKind } from "../artifacts/ZipArtifactReader.js";
 import { BROWSER_EXTENSION_PROVIDER } from "../application/InvestigationProviders.js";
 import {
   BrowserExtensionParseError,
@@ -91,17 +92,22 @@ export class BrowserExtensionProvider implements BrowserExtensionPort {
 }
 
 const budgetRemediation = (
-  resource: "file-size" | "capacity",
+  cause: BrowserExtensionParseError,
   input: InspectBrowserExtensionInput,
 ): string => {
-  if (resource === "capacity")
+  if (cause.limit === "fixed")
+    return "This manifest field exceeds a fixed projection limit. Select a smaller manifest. Caller byte and entry budgets do not apply.";
+  if (cause.limit === "max_entries")
     return input.max_entries >= MAX_BROWSER_EXTENSION_ENTRIES
       ? `The archive exceeds the ${String(MAX_BROWSER_EXTENSION_ENTRIES)}-entry ceiling this operation accepts.`
       : `Raise max_entries above ${String(input.max_entries)} or select a smaller archive.`;
-  return input.max_file_bytes >= MAX_BROWSER_EXTENSION_FILE_BYTES ||
-    input.max_manifest_bytes >= MAX_BROWSER_EXTENSION_MANIFEST_BYTES
-    ? "The package or manifest exceeds the ceiling this operation accepts."
-    : `Raise max_file_bytes above ${String(input.max_file_bytes)} or max_manifest_bytes above ${String(input.max_manifest_bytes)}, or select a smaller package.`;
+  if (cause.limit === "max_manifest_bytes")
+    return input.max_manifest_bytes >= MAX_BROWSER_EXTENSION_MANIFEST_BYTES
+      ? `manifest.json exceeds the ${String(MAX_BROWSER_EXTENSION_MANIFEST_BYTES)}-byte ceiling.`
+      : `Raise max_manifest_bytes above ${String(input.max_manifest_bytes)} or select a smaller manifest.`;
+  return input.max_file_bytes >= MAX_BROWSER_EXTENSION_FILE_BYTES
+    ? `The package exceeds the ${String(MAX_BROWSER_EXTENSION_FILE_BYTES)}-byte ceiling.`
+    : `Raise max_file_bytes above ${String(input.max_file_bytes)} or select a smaller package.`;
 };
 
 const failurePrimary = (
@@ -123,7 +129,7 @@ const failurePrimary = (
         {
           cause,
           retryable: false,
-          remediationAction: budgetRemediation(cause.resource, input),
+          remediationAction: budgetRemediation(cause, input),
         },
       );
     return new AnalysisInputError(OPERATION, { cause, userMessage: cause.message }, [
@@ -158,7 +164,10 @@ const failurePrimary = (
             ? {}
             : {
                 retryable: false,
-                remediationAction: budgetRemediation("file-size", input),
+                remediationAction:
+                  input.max_file_bytes >= MAX_BROWSER_EXTENSION_FILE_BYTES
+                    ? `The package exceeds the ${String(MAX_BROWSER_EXTENSION_FILE_BYTES)}-byte ceiling.`
+                    : `Raise max_file_bytes above ${String(input.max_file_bytes)} or select a smaller package.`,
               }),
         },
       );
@@ -187,6 +196,22 @@ const failurePrimary = (
   }
   if (cause instanceof DOMException && cause.name === "AbortError")
     return new AnalysisCancelledError(OPERATION, { cause });
+  const zipFault = zipArchiveFaultKind(cause);
+  if (zipFault !== undefined && cause instanceof Error)
+    return new AnalysisInputError(
+      OPERATION,
+      { cause, userMessage: cause.message },
+      [
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message:
+            zipFault === "format"
+              ? `ZIP archive is malformed: ${cause.message}`
+              : `ZIP archive uses an unsupported feature: ${cause.message}`,
+        },
+      ],
+    );
   return new ArtifactOperationError(
     OPERATION,
     cause instanceof ArtifactReaderFailure ? cause.reason : "io",

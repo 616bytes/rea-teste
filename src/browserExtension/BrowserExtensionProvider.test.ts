@@ -17,7 +17,6 @@ const u32 = (value: number): Buffer => {
   bytes.writeUInt32LE(value);
   return bytes;
 };
-
 const storedZip = (name: string, data: Buffer): Buffer => {
   const nameBytes = Buffer.from(name);
   const checksum = crc32(data) >>> 0;
@@ -113,6 +112,54 @@ describe("BrowserExtensionProvider", () => {
       if (!evidence.ok) return;
       expect(evidence.value.subject?.format).toBe("file");
       expect(evidence.value.operation).toBe("inspect_browser_extension");
+    } finally {
+      await provider.close();
+    }
+  });
+
+  it("reports a truncated ZIP as a format failure, not a file-access failure", async () => {
+    const root = await createTestTempDirectory("rea-browser-extension-badzip-");
+    const path = join(root, "broken.zip");
+    await writeFile(path, Buffer.from("PK\x03\x04"));
+    const provider = new BrowserExtensionProvider();
+    try {
+      const result = await provider.inspect({
+        path,
+        max_file_bytes: 67108864,
+        max_manifest_bytes: 2097152,
+        max_entries: 20,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error._tag).toBe("AnalysisInputError");
+    } finally {
+      await provider.close();
+    }
+  });
+
+  it("does not tell a fixed manifest limit to raise max_entries", async () => {
+    const root = await createTestTempDirectory("rea-browser-extension-limit-");
+    const scripts = Array.from({ length: 1001 }, () => ({ matches: ["https://example.com/*"] }));
+    const zip = storedZip(
+      "manifest.json",
+      Buffer.from(JSON.stringify({ manifest_version: 3, content_scripts: scripts })),
+    );
+    const path = join(root, "too-many.zip");
+    await writeFile(path, zip);
+    const provider = new BrowserExtensionProvider();
+    try {
+      const result = await provider.inspect({
+        path,
+        max_file_bytes: 67108864,
+        max_manifest_bytes: 2097152,
+        max_entries: 20,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+      expect(result.error).toMatchObject({
+        remediationAction: expect.not.stringContaining("max_entries"),
+      });
     } finally {
       await provider.close();
     }

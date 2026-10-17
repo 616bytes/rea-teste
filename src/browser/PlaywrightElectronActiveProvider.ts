@@ -147,22 +147,29 @@ const isBundledAppEntry = async (
     };
     const declaredMain =
       typeof pkg.main === "string" && pkg.main.trim().length > 0
-        ? pkg.main.trim()
+        ? pkg.main
         : "index.js";
     const resolvedEntry = normalize(resolve(normRoot, declaredMain));
     return isDarwinOrWin
       ? resolvedEntry.toLowerCase() === normApp.toLowerCase()
       : resolvedEntry === normApp;
   } catch (cause) {
-    if (signal?.aborted) return false;
     if (
       cause instanceof ArtifactFileCleanupFailure ||
       (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
     ) {
       throw cause;
     }
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      cause.reason === "cancelled"
+    ) {
+      if (signal?.aborted) return false;
+      throw cause;
+    }
     // If package.json is missing, match conventional Electron entry file patterns.
     if (isMissing(cause)) {
+      if (signal?.aborted) return false;
       return isRecognizedEntryName(normApp);
     }
     // If package.json exists but is unreadable, oversized, or invalid, report the uncertain entry

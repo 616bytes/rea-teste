@@ -270,6 +270,68 @@ it("identifies packaged executables correctly in executableContainsApplication",
   ).toBe(true);
 });
 
+it("preserves exact filename whitespace in declared package.json main entry", async () => {
+  const dir = await createTestTempDirectory("rea-electron-main-whitespace-");
+  const appDir = join(dir, "resources", "app");
+  await mkdir(appDir, { recursive: true });
+  await writeFile(
+    join(appDir, "package.json"),
+    JSON.stringify({ main: "main .js" }),
+  );
+
+  const exePath = join(dir, "my-app");
+  const matchingAppPath = join(appDir, "main .js");
+  const trimmedAppPath = join(appDir, "main.js");
+
+  expect(await executableContainsApplication(exePath, matchingAppPath)).toBe(
+    true,
+  );
+  expect(await executableContainsApplication(exePath, trimmedAppPath)).toBe(
+    false,
+  );
+});
+
+it("preserves manifest integrity error across late cancellation", async () => {
+  const dir = await createTestTempDirectory("rea-electron-manifest-cancel-");
+  const appDir = join(dir, "resources", "app");
+  await mkdir(appDir, { recursive: true });
+  await writeFile(join(appDir, "package.json"), "{}");
+
+  const exePath = join(dir, "my-app");
+  const appPath = join(appDir, "index.js");
+
+  const controller = new AbortController();
+  const fileSystem: StableArtifactFileSystem = {
+    lstat: (selected: string) => lstat(selected, { bigint: true }),
+    open: async (p, flags) => {
+      const handle = await open(p, flags);
+      if (p.endsWith("package.json")) {
+        const nativeClose = handle.close.bind(handle);
+        handle.read = async () => {
+          throw new Error("simulated read I/O error");
+        };
+        handle.close = async () => {
+          controller.abort();
+          await nativeClose();
+        };
+      }
+      return handle;
+    },
+  };
+
+  await expect(
+    executableContainsApplication(
+      exePath,
+      appPath,
+      controller.signal,
+      new ArtifactResourceScope(),
+      fileSystem,
+    ),
+  ).rejects.toMatchObject({
+    reason: "target_not_allowed",
+  });
+});
+
 it("passes required Windows runtime variables without inheriting unrelated values", () => {
   expect(
     safeElectronEnvironment(

@@ -1,5 +1,6 @@
 import { readdirSync, renameSync, writeFileSync } from "node:fs";
 import { mkdir, open, rm } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import * as fs from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -13,7 +14,11 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { writeTextParts } from "../../../src/application/JsonFiles.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const allocation = vi.hoisted(() => ({ deferred: false }));
+const allocation = vi.hoisted(() => ({
+  deferred: false,
+  statFailure: false,
+  staged: [] as FileHandle[],
+}));
 
 // FAT and exFAT on macOS report a placeholder file ID for an empty file and
 // assign its cluster-derived ID when the first write allocates storage.
@@ -25,12 +30,15 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     open: async (...args: Parameters<typeof filesystem.open>) => {
       const handle = await filesystem.open(...args);
       if (
-        !allocation.deferred ||
+        !(allocation.deferred || allocation.statFailure) ||
         !basename(dirname(String(args[0]))).startsWith(".rea-write-")
       )
         return handle;
+      allocation.staged.push(handle);
       const stat = handle.stat.bind(handle);
       handle.stat = (async () => {
+        if (allocation.statFailure)
+          throw new Error("injected staged descriptor stat failure");
         const stats = await stat();
         if (stats.size === 0) stats.ino = Number.MAX_SAFE_INTEGER;
         return stats;
@@ -38,6 +46,51 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       return handle;
     },
   };
+});
+
+it("closes the descriptor and retains staged content when its final identity is unknown", async () => {
+  const root = await createTestTempDirectory("rea-json-identity-unknown-");
+  const resources = new ArtifactResourceScope();
+  const destination = join(root, "unverified.json");
+  allocation.statFailure = true;
+  allocation.staged = [];
+  try {
+    const result = await writeTextParts(
+      ["owned bytes"],
+      destination,
+      false,
+      resources,
+    );
+    if (result.ok) throw new Error("Expected unverified publication failure");
+    expect(allocation.staged).toHaveLength(1);
+    expect(allocation.staged[0]!.fd).toBe(-1);
+    expect(result.error).toBeInstanceOf(EvidenceFileError);
+    expect(result.error.published).toBeUndefined();
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cause).toMatchObject({
+      outcome: {
+        ok: false,
+        error: { message: "Cannot verify staged file identity" },
+      },
+    });
+    const stage = result.error.cleanupResources[0];
+    if (stage === undefined) throw new Error("Expected retained staging");
+    expect(stage).toContain(".rea-write-");
+    expect(await fs.readFile(join(stage, "content"), "utf8")).toBe(
+      "owned bytes",
+    );
+    await expect(fs.access(destination)).rejects.toThrow();
+    // A closed descriptor cannot re-establish identity, so retry stays incomplete.
+    await expect(resources.close()).rejects.toThrow();
+    expect(await fs.readFile(join(stage, "content"), "utf8")).toBe(
+      "owned bytes",
+    );
+  } finally {
+    allocation.statFailure = false;
+    allocation.staged = [];
+    await resources.close().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 it.each([false, true])(

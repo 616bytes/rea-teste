@@ -1,5 +1,3 @@
-import { fileURLToPath } from "node:url";
-
 import { describe, expect, it } from "vitest";
 
 import type { InspectElectronPageInput } from "../domain/javascript/electronObservation.js";
@@ -9,7 +7,7 @@ import type { CdpEndpointTarget } from "./CdpEndpoint.js";
 import { captureElectronWorkers } from "./CdpElectronWorkers.js";
 
 /** `authorizedElectronFile` only admits a file the host can resolve. */
-const localFileUrl = `file://${fileURLToPath(import.meta.url)}`;
+const localFileUrl = import.meta.url;
 
 const workerTarget = (
   over: Readonly<Record<string, unknown>> = {},

@@ -2,6 +2,56 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
 it.each([
+  "box.owner=1;",
+  "box.owner={nested:1};",
+  "const value={nested:1}; box.owner=value;",
+  "const alias=box; alias.owner=1;",
+  "box.child={owner:1};",
+  "box.owner=box;",
+  "box.owner ||= 1;",
+  "Reflect.set(box,'owner',1);",
+  "Reflect.set.call(null,box,'owner',1);",
+  "Object.assign(box,{owner:1});",
+  "Object.assign(box,{owner:{nested:1}});",
+  "Object.defineProperty(box,'owner',{value:1});",
+  "Reflect.defineProperty(box,'owner',{value:1});",
+  "Object.defineProperties(box,{owner:{value:1}});",
+])("keeps module-free values written to local properties: %s", (write) => {
+  expect(
+    analyzeJavaScriptSemantics(`const box={}; ${write}
+      Object.assign=custom; Object.assign({},box.owner,box.child);
+      require('fs').readFileSync('kept');`).configurationOperations.map(
+      ({ key }) => key,
+    ),
+  ).toEqual(["kept"]);
+});
+
+it.each([
+  "const value={owner:module}; box.owner=value;",
+  "const value={}; box.owner=value; value.owner=module;",
+  "box.child={owner:module};",
+  "box.owner=box; box.child=module;",
+  "box.owner ||= module;",
+  "Object.assign(box,{owner:1},{owner:module});",
+  "Object.defineProperties(box,{owner:{value:1},owner:{value:module}});",
+  "Object.defineProperties(box,{owner:{value:1},[key]:{value:module}});",
+  "Object.defineProperty(box,'owner',{get(){return module;}});",
+  "Object.assign(box,{get owner(){return module;}});",
+  "function getOwner(){return module;} box.owner=getOwner();",
+  "box.owner=()=>module;",
+  "box.owner=unknown;",
+])(
+  "retains module-bearing values through local property writes: %s",
+  (write) => {
+    expect(
+      analyzeJavaScriptSemantics(`const box={}; ${write}
+      Object.assign=custom; Object.assign({},box.owner,box.child);
+      require('fs').readFileSync('wrong');`).configurationOperations,
+    ).toEqual([]);
+  },
+);
+
+it.each([
   "Object.defineProperty(fs,'statSync',{set(v){this.cp.spawn=custom;}});",
   "Reflect.defineProperty(fs,'statSync',{set(v){this.cp.spawn=custom;}});",
   "Object.defineProperties(fs,{statSync:{set(v){this.cp.spawn=custom;}}});",

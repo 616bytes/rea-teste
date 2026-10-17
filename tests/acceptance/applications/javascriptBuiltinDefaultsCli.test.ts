@@ -14,6 +14,8 @@ const execute = promisify(execFile);
 
 const writeReceiverReviewSources = async (root: string): Promise<void> => {
   const sources = [
+    "const box={}; box.owner=1; Object.assign=custom; Object.assign({},box.owner); require('fs').readFileSync('harmless-written.json');",
+    "const box={}; Object.defineProperties(box,{owner:{value:1}}); Object.assign=custom; Object.assign({},box.owner); require('fs').readFileSync('harmless-descriptor.json');",
     "Object.defineProperty(Reflect,'set',{value:Reflect.set.bind(null,module)}); Reflect.set('require',replacement); require('fs').readFileSync('wrong-descriptor-bound');",
     "Object.assign(Reflect,{set:Reflect.set.bind(null,module)}); Reflect.set('require',replacement); require('fs').readFileSync('wrong-copied-bound');",
     "Object.assign(Reflect,{other:Reflect.set.bind(null,module)}); Reflect.set({},'require',replacement); require('fs').readFileSync('copied-unrelated.json');",
@@ -188,6 +190,8 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "direct.json",
     "escaped.json",
     "glob-kept.json",
+    "harmless-descriptor.json",
+    "harmless-written.json",
     "later.json",
     "loader-after.json",
     "loader-before.json",

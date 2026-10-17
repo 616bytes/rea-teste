@@ -370,13 +370,110 @@ const writesModuleRequire = (
   // only fully explored module-free node/projection pairs; a partial walk that
   // found exposure cannot establish anything about its other visited nodes.
   const moduleFree = new WeakMap<t.Node, SemanticPropertyPathCoverage>();
+  const plainObject = (
+    source: t.Node | undefined,
+    seen = new Set<string>(),
+  ): t.ObjectExpression | undefined => {
+    if (source === undefined) return undefined;
+    const value = unwrapJavaScriptExpression(source).node;
+    if (t.isObjectExpression(value))
+      return value.properties.every(t.isObjectProperty) ? value : undefined;
+    if (!t.isIdentifier(value)) return undefined;
+    const binding = resolveSemanticBindingState(state, value, value.name);
+    if (
+      binding === undefined ||
+      seen.has(binding.bindingId) ||
+      binding.memberWrites.length > 0 ||
+      binding.escapedPaths.length > 0
+    )
+      return undefined;
+    const initializer = semanticStableInitializer(binding, state);
+    return initializer?.projection.length === 0
+      ? plainObject(initializer.node, new Set(seen).add(binding.bindingId))
+      : undefined;
+  };
+  // Member effects already own aliases, selected paths and ordering. Follow
+  // their assigned values instead of treating every write as the wrapper.
+  // Accessors and unproven descriptor/source maps remain conservative.
+  const writtenValues = (
+    mutation: t.Node | undefined,
+    key: string,
+  ):
+    | readonly { node: t.Node; path: JavaScriptSemanticPropertyPath }[]
+    | undefined => {
+    if (t.isAssignmentExpression(mutation))
+      return ["=", "||=", "&&=", "??="].includes(mutation.operator)
+        ? [{ node: mutation.right, path: [] }]
+        : undefined;
+    if (!t.isCallExpression(mutation) && !t.isOptionalCallExpression(mutation))
+      return undefined;
+    const invocation = interop.intrinsicInvocation(mutation);
+    const args = invocation?.arguments;
+    if (
+      invocation?.kind !== "known" ||
+      args === undefined ||
+      args.some(t.isSpreadElement)
+    )
+      return undefined;
+    const operation = invocation.path.join(".");
+    if (operation === "intrinsic.Reflect.set" && args[2] !== undefined)
+      return [{ node: args[2], path: [] }];
+    if (operation === "intrinsic.Object.assign")
+      return args.slice(1).every((source) => plainObject(source) !== undefined)
+        ? args.slice(1).map((node) => ({ node, path: [key] }))
+        : undefined;
+    let descriptor: t.Node | undefined;
+    if (operation === "intrinsic.Object.defineProperties") {
+      const properties = plainObject(args[1]);
+      if (
+        properties?.properties.some(
+          (property) =>
+            !t.isObjectProperty(property) ||
+            semanticStaticPropertyKey(property.key, property.computed) === null,
+        )
+      )
+        return undefined;
+      const selected = properties?.properties.findLast(
+        (property) =>
+          t.isObjectProperty(property) &&
+          semanticStaticPropertyKey(property.key, property.computed) === key,
+      );
+      if (t.isObjectProperty(selected)) descriptor = selected.value;
+    } else if (
+      [
+        "intrinsic.Object.defineProperty",
+        "intrinsic.Reflect.defineProperty",
+      ].includes(operation)
+    )
+      descriptor = args[2];
+    const data = plainObject(descriptor);
+    if (
+      data === undefined ||
+      !data.properties.every(
+        (property) =>
+          t.isObjectProperty(property) &&
+          ["value", "writable", "enumerable", "configurable"].includes(
+            semanticStaticPropertyKey(property.key, property.computed) ?? "",
+          ),
+      )
+    )
+      return undefined;
+    return [{ node: data, path: ["value"] }];
+  };
   const exposesModule = (nodes: readonly t.Node[], call: t.Node): boolean => {
     const pending: {
       node: t.Node;
       path: JavaScriptSemanticPropertyPath;
       readAt?: t.Node;
+      // Discharging a recorded write requires a positive module-free proof;
+      // unknown call results and closures must retain the original uncertainty.
+      written?: true;
     }[] = nodes.map((node) => ({ node, path: [] }));
     const visited = new WeakMap<
+      t.Node,
+      Map<t.Node, SemanticPropertyPathCoverage>
+    >();
+    const writtenVisited = new WeakMap<
       t.Node,
       Map<t.Node, SemanticPropertyPathCoverage>
     >();
@@ -384,9 +481,23 @@ const writesModuleRequire = (
     const examined: { node: t.Node; path: JavaScriptSemanticPropertyPath }[] =
       [];
     while (pending.length > 0) {
-      const { node: source, path, readAt: capturedAt } = pending.pop()!;
+      const {
+        node: source,
+        path,
+        readAt: capturedAt,
+        written,
+      } = pending.pop()!;
       const value = unwrapJavaScriptExpression(source).node;
       const readAt = capturedAt ?? value;
+      const traversal = written ? writtenVisited : visited;
+      const captures =
+        traversal.get(value) ?? new Map<t.Node, SemanticPropertyPathCoverage>();
+      const coverage =
+        captures.get(readAt) ?? new SemanticPropertyPathCoverage();
+      if (coverage.covers(path)) continue;
+      coverage.retain(path);
+      captures.set(readAt, coverage);
+      traversal.set(value, captures);
       const binding = t.isIdentifier(value)
         ? resolveSemanticBindingState(state, value, value.name)
         : undefined;
@@ -410,24 +521,31 @@ const writesModuleRequire = (
           effect.node !== call &&
           effect.node !== state.parentsByNode.get(readAt) &&
           semanticEffectTiming(readAt, effect.node, state) !== "after"
-        )
-          return true;
+        ) {
+          const key = effect.path.at(-1);
+          const values =
+            effect.path.every((part) => typeof part === "string") &&
+            typeof key === "string"
+              ? writtenValues(effect.node, key)
+              : undefined;
+          if (values === undefined) return true;
+          for (const reference of values)
+            pending.push({
+              node: reference.node,
+              path: [...reference.path, ...path.slice(effect.path.length)],
+              readAt,
+              written: true,
+            });
+        }
       }
-      if (moduleFree.get(value)?.covers(path)) continue;
-      const captures =
-        visited.get(value) ?? new Map<t.Node, SemanticPropertyPathCoverage>();
-      const coverage =
-        captures.get(readAt) ?? new SemanticPropertyPathCoverage();
-      if (coverage.covers(path)) continue;
-      coverage.retain(path);
-      captures.set(readAt, coverage);
-      visited.set(value, captures);
+      if (!written && moduleFree.get(value)?.covers(path)) continue;
       examined.push({ node: value, path });
       for (const reference of interop.intrinsicValueReferences(value))
         pending.push({
           node: reference.node,
           path: [...reference.path, ...path],
           readAt: reference.node,
+          ...(written ? { written } : {}),
         });
       if (semanticCommonJsModuleObjectAt(value, state)) {
         if (path.length === 0) return true;
@@ -441,6 +559,12 @@ const writesModuleRequire = (
         return true;
       }
       if (t.isIdentifier(value)) {
+        if (
+          written &&
+          (binding === undefined || binding.initializers.length === 0) &&
+          !isUnshadowedGlobal(value, state, "undefined")
+        )
+          return true;
         if (binding !== undefined) {
           // Initializers do not prove a subsequently changed property module-free.
           // Consume the alias-aware effect owner, preserving unrelated slots,
@@ -462,10 +586,16 @@ const writesModuleRequire = (
                 ),
                 ...path,
               ],
+              ...(written ? { written } : {}),
             });
         }
       } else if (t.isSpreadElement(value))
-        pending.push({ node: value.argument, path, readAt });
+        pending.push({
+          node: value.argument,
+          path,
+          readAt,
+          ...(written ? { written } : {}),
+        });
       else if (t.isArrayExpression(value)) {
         const [key, ...remaining] = path;
         const shifted = value.elements.some(t.isSpreadElement);
@@ -483,12 +613,17 @@ const writesModuleRequire = (
               node: element,
               path: key === undefined ? [] : remaining,
               readAt,
+              ...(written ? { written } : {}),
             });
         }
       } else if (t.isObjectExpression(value)) {
         pending.push(
           ...semanticObjectPropertyReferences(value, path, state).map(
-            (reference) => ({ ...reference, readAt }),
+            (reference) => ({
+              ...reference,
+              readAt,
+              ...(written ? { written } : {}),
+            }),
           ),
         );
       } else if (
@@ -502,6 +637,7 @@ const writesModuleRequire = (
             semanticStaticPropertyKey(value.property, value.computed),
             ...path,
           ],
+          ...(written ? { written } : {}),
         });
       } else if (
         t.isConditionalExpression(value) ||
@@ -514,6 +650,7 @@ const writesModuleRequire = (
               : value.left,
             path,
             readAt,
+            ...(written ? { written } : {}),
           },
           {
             node: t.isConditionalExpression(value)
@@ -521,20 +658,50 @@ const writesModuleRequire = (
               : value.right,
             path,
             readAt,
+            ...(written ? { written } : {}),
           },
         );
       } else if (t.isSequenceExpression(value)) {
         const last = value.expressions.at(-1);
-        if (last !== undefined) pending.push({ node: last, path, readAt });
+        if (last !== undefined)
+          pending.push({
+            node: last,
+            path,
+            readAt,
+            ...(written ? { written } : {}),
+          });
       } else if (t.isAssignmentExpression(value)) {
         if (["=", "||=", "&&=", "??="].includes(value.operator))
-          pending.push({ node: value.right, path, readAt });
+          pending.push({
+            node: value.right,
+            path,
+            readAt,
+            ...(written ? { written } : {}),
+          });
         if (["||=", "&&=", "??="].includes(value.operator))
-          pending.push({ node: value.left, path, readAt });
-      } else if (t.isCallExpression(value) || t.isOptionalCallExpression(value))
+          pending.push({
+            node: value.left,
+            path,
+            readAt,
+            ...(written ? { written } : {}),
+          });
+      } else if (
+        t.isCallExpression(value) ||
+        t.isOptionalCallExpression(value)
+      ) {
+        if (written) return true;
         pending.push(
           ...value.arguments.map((node) => ({ node, path: [], readAt })),
         );
+      } else if (
+        written &&
+        !readExactJavaScriptLiteral(value).found &&
+        !t.isUnaryExpression(value) &&
+        !t.isBinaryExpression(value) &&
+        !t.isTemplateLiteral(value) &&
+        !t.isUpdateExpression(value)
+      )
+        return true;
     }
     if (timeDependent) return false;
     for (const { node, path } of examined) {

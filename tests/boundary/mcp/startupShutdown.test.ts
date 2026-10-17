@@ -7,7 +7,9 @@ import type {
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
+  AnalysisTimeoutError,
 } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { run } from "../../../src/main.js";
 import { MCP_SHUTDOWN_FAILED } from "../../../src/main/messages.js";
@@ -211,6 +213,77 @@ it("reports a failed startup shutdown once and retains its handler for a retry",
   expect(clientCloses).toBe(3);
   expect(await session.status()).toMatchObject({ open: false });
 });
+
+it.each([
+  ["succeeds", false],
+  ["fails", true],
+] as const)(
+  "reports an open failure that preceded a shutdown request whose cleanup %s",
+  async (_label, cleanupFails) => {
+    const [target] = await createBinarySessionTargets();
+    const openFailure = new AnalysisTimeoutError("health", 1_000);
+    const closeStarted = createDeferred<void>();
+    const releaseClose = createDeferred<void>();
+    let closeFails = cleanupFails;
+    let clientCloses = 0;
+    const session = createTestBinarySession((): AnalysisClient => ({
+      execute: async () => err(openFailure),
+      close: async () => {
+        clientCloses += 1;
+        closeStarted.resolve();
+        await releaseClose.promise;
+        return closeFails
+          ? err(new AnalysisOutputError("close", "fixture close failed"))
+          : ok(null);
+      },
+    }));
+    const requests: Array<() => void> = [];
+    const unregistrations: string[] = [];
+    const output: string[] = [];
+    const unregistered = createDeferred<void>();
+    const running = run(
+      runtime({
+        env: { HOPPER_TARGET_PATH: target, HOPPER_TARGET_KIND: "database" },
+        createSession: () => session,
+        registerShutdown: (handler) => {
+          requests.push(handler);
+          return () => {
+            unregistrations.push("shutdown");
+            unregistered.resolve();
+          };
+        },
+        requests,
+        unregistrations,
+        output,
+      }),
+    );
+
+    // The request arrives while the session finalizes the failed open.
+    await closeStarted.promise;
+    requests[0]?.();
+    releaseClose.resolve();
+
+    await expect(running).resolves.toBe(1);
+    expect(output).toContain(`${projectAnalysisError(openFailure).message}
+`);
+    expect(
+      output.includes(`${MCP_SHUTDOWN_FAILED}
+`),
+    ).toBe(cleanupFails);
+    if (!cleanupFails) {
+      expect(unregistrations).toEqual(["shutdown"]);
+      return;
+    }
+    // The failed shutdown keeps its handler, so a repeated request retries.
+    expect(unregistrations).toEqual([]);
+    const attempts = clientCloses;
+    closeFails = false;
+    requests[0]?.();
+    await unregistered.promise;
+    expect(clientCloses).toBe(attempts + 1);
+    expect(await session.status()).toMatchObject({ open: false });
+  },
+);
 
 it("closes the session and unregisters when startup throws unexpectedly", async () => {
   const session = createTestBinarySession((): AnalysisClient => ({

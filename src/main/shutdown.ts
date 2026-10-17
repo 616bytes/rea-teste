@@ -120,11 +120,12 @@ export const createShutdown = (input: {
         return 1;
       return reportShutdown();
     },
-    // Startup failed and closed its own resources; stop handling process events.
+    // Startup failed and closed its own resources; stop handling process events
+    // unless a shutdown that raced it failed and retains owners for a retry.
     release: async () => {
       await settleInFlight();
       startupSettled = true;
-      unregisterOnce();
+      if (!lastAttemptFailed) unregisterOnce();
     },
   };
 };

@@ -55,7 +55,8 @@ export const run = async (
     environment,
   );
   // Handle signals before the initial open: provider children run detached,
-  // so default signal termination would leave them behind.
+  // so default signal termination would leave them behind. Stdin EOF is seen
+  // only once the transport reads stdin, after startup.
   const lifecycle = createShutdown({ session, dependencies, serverLogger });
   try {
     const opened = await openInitialTarget(session, config.value, {

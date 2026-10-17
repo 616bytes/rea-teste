@@ -960,10 +960,11 @@ export REA_GHIDRA_EXISTING_PROJECT=/absolute/path/to/project
 export REA_GHIDRA_EXISTING_PROGRAM=target-abcd1234.dll
 ```
 
-`REA_GHIDRA_EXISTING_PROJECT` names a directory holding the project as
-`rea-project.grez` or `rea-project.rep`; `REA_GHIDRA_EXISTING_PROGRAM` names the
-imported program selected with `-process`. Both must be set together and cannot
-be combined with `REA_GHIDRA_LANGUAGE_ID`, `REA_GHIDRA_COMPILER_SPEC_ID`,
+`REA_GHIDRA_EXISTING_PROJECT` names a directory holding an expanded project
+(`rea-project.gpr` and `rea-project.rep`); `REA_GHIDRA_EXISTING_PROGRAM` names
+the imported program selected with `-process`. A packed `rea-project.grez` is
+not opened by the headless `-process` launch. Both must be set together and
+cannot be combined with `REA_GHIDRA_LANGUAGE_ID`, `REA_GHIDRA_COMPILER_SPEC_ID`,
 `REA_GHIDRA_SEED_FILE`, or `REA_GHIDRA_DISABLED_ANALYZERS`, which apply only to
 a fresh import.
 

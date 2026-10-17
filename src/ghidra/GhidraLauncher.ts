@@ -891,9 +891,11 @@ const createGhidraRuntimeDirectories = async (
 /**
  * Copy a caller-owned pre-imported project into the owned runtime's project
  * root so the headless open reads the copy and never mutates the original.
- * The invocation selects the fixed project name `rea-project`, so a caller
- * directory without `rea-project.grez` or `rea-project.rep` is rejected here
- * with its reason instead of failing inside Ghidra with an opaque message.
+ * The invocation opens the fixed name `rea-project` with `-process`, which
+ * reads an expanded project (`rea-project.gpr` plus a `rea-project.rep`
+ * directory). A packed `rea-project.grez` is not restored by that launch, so a
+ * caller directory without the expanded pair is rejected here with its reason
+ * instead of failing inside Ghidra with an opaque message.
  */
 export const copyExistingGhidraProject = async (
   sourcePath: string,
@@ -914,14 +916,14 @@ export const copyExistingGhidraProject = async (
       `Existing Ghidra project must be a regular directory: ${sourcePath}`,
     );
   const entries = (await readdir(sourcePath)).filter((entry) =>
-    ["rea-project.gpr", "rea-project.grez", "rea-project.rep"].includes(entry),
+    ["rea-project.gpr", "rea-project.rep"].includes(entry),
   );
   if (
-    !entries.includes("rea-project.grez") &&
+    !entries.includes("rea-project.gpr") ||
     !entries.includes("rea-project.rep")
   )
     throw new Error(
-      `Existing Ghidra project directory must hold rea-project.grez or rea-project.rep: ${sourcePath}`,
+      `Existing Ghidra project directory must hold an expanded project (rea-project.gpr and rea-project.rep); the headless -process launch does not open a packed rea-project.grez: ${sourcePath}`,
     );
   // Sequential streaming gives cancellation ownership to this copy operation.
   // A rejected copy has settled its streams before launch cleanup removes it.
@@ -943,7 +945,7 @@ export const copyExistingGhidraProject = async (
           await pipeline(
             handle.createReadStream({ autoClose: false }),
             createWriteStream(to, { flags: "wx", mode: 0o600 }),
-            (signal === undefined ? {} : { signal }),
+            signal === undefined ? {} : { signal },
           );
         },
         { symlinks: "reject", signal },

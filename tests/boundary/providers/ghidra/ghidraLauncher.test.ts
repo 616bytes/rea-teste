@@ -622,7 +622,7 @@ const launchExistingProject = async (
 
 describe("Ghidra existing project launcher", () => {
   it.skipIf(process.platform === "win32")(
-    "copies the caller's project into the owned runtime before launching",
+    "copies the caller's expanded project into the owned runtime before launching",
     async () => {
       const parent = await createTestTempDirectory("rea-launcher-test-");
       const runtime = await createGhidraTestRuntime(parent);
@@ -631,8 +631,9 @@ describe("Ghidra existing project launcher", () => {
       await mkdir(join(sourceProject, "rea-project.rep"), {
         recursive: true,
       });
-      const archive = join(sourceProject, "rea-project.grez");
-      await writeFile(archive, "pre-imported");
+      await writeFile(join(sourceProject, "rea-project.gpr"), "project-marker");
+      // A packed archive beside the expanded project is ignored, not copied.
+      await writeFile(join(sourceProject, "rea-project.grez"), "pre-imported");
       await writeFile(
         join(sourceProject, "rea-project.rep", "marker"),
         "recursive",
@@ -652,26 +653,64 @@ describe("Ghidra existing project launcher", () => {
         expectOptions(spawned[0]?.arguments ?? [], [["-process", "game.exe"]]);
         expect(spawned[0]?.arguments).toContain("-noanalysis");
         expect(spawned[0]?.arguments).toContain("-readOnly");
-        // Copy-first: the owned runtime holds the copy before Ghidra starts.
+        // Copy-first: the owned runtime holds the expanded copy before Ghidra
+        // starts, and never carries the packed archive.
         expect(
-          await readFile(join(runtime.path, "project", "rea-project.grez"), {
+          await readFile(join(runtime.path, "project", "rea-project.gpr"), {
             encoding: "utf8",
           }),
-        ).toBe("pre-imported");
+        ).toBe("project-marker");
         expect(
           await readFile(
             join(runtime.path, "project", "rea-project.rep", "marker"),
             { encoding: "utf8" },
           ),
         ).toBe("recursive");
+        await expect(
+          access(join(runtime.path, "project", "rea-project.grez")),
+        ).rejects.toMatchObject({ code: "ENOENT" });
         // The caller's original project files stay untouched.
-        expect(await readFile(archive, { encoding: "utf8" })).toBe(
-          "pre-imported",
-        );
-        expect((await stat(archive)).isFile()).toBe(true);
+        expect(
+          await readFile(join(sourceProject, "rea-project.gpr"), {
+            encoding: "utf8",
+          }),
+        ).toBe("project-marker");
+        expect(
+          await readFile(join(sourceProject, "rea-project.grez"), {
+            encoding: "utf8",
+          }),
+        ).toBe("pre-imported");
       } finally {
         await launched.value.cleanup?.();
       }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a packed project that the headless -process launch cannot open",
+    async () => {
+      const parent = await createTestTempDirectory("rea-launcher-test-");
+      const runtime = await createGhidraTestRuntime(parent);
+      runtimes.push(runtime);
+      // A directory holding only a packed rea-project.grez would be copied but
+      // never restored into an expanded project, so the launch must reject it.
+      const sourceProject = join(parent, "user-project");
+      await mkdir(sourceProject, { recursive: true });
+      await writeFile(join(sourceProject, "rea-project.grez"), "packed");
+      const spawned: OwnedProviderProcessSpawnOptions[] = [];
+      const launched = await launchExistingProject(
+        runtime.path,
+        parent,
+        sourceProject,
+        spawned,
+      );
+      expect(launched.ok).toBe(false);
+      if (launched.ok) throw new Error("launch unexpectedly succeeded");
+      expect(String(launched.error.cause)).toMatch(/packed rea-project\.grez/u);
+      expect(spawned).toHaveLength(0);
+      await expect(
+        access(join(runtime.path, "project", "rea-project.grez")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     },
   );
 
@@ -702,9 +741,9 @@ describe("Ghidra existing project launcher", () => {
       const parent = await createTestTempDirectory("rea-launcher-test-");
       const runtime = await createGhidraTestRuntime(parent);
       runtimes.push(runtime);
-      // The headless open selects the project by the fixed name; a caller
-      // directory holding any other project file must fail with its reason
-      // instead of spawning into an opaque Ghidra error.
+      // The headless open selects the expanded project by the fixed name; a
+      // caller directory holding any other project file must fail with its
+      // reason instead of spawning into an opaque Ghidra error.
       const sourceProject = join(parent, "user-project");
       await mkdir(sourceProject, { recursive: true });
       await writeFile(join(sourceProject, "other-project.grez"), "mislabeled");
@@ -717,7 +756,7 @@ describe("Ghidra existing project launcher", () => {
       );
       expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
-      expect(String(launched.error.cause)).toMatch(/rea-project\.grez/u);
+      expect(String(launched.error.cause)).toMatch(/expanded project/u);
       expect(spawned).toHaveLength(0);
       // Nothing from the rejected project was copied into the owned runtime.
       await expect(

@@ -2,6 +2,7 @@ import { registerCaptureCommands } from "./cli/captureCommands.js";
 import { registerSignalCommands } from "./cli/signalCommands.js";
 import { registerWasmCommands } from "./cli/wasmCommands.js";
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
+import { mergeUserConfig, readUserConfig } from "./config/userConfig.js";
 import { createDirectAnalysis } from "./composition/directAnalysis.js";
 import { registerEvmCommands } from "./cli/evmCommands.js";
 import { registerGoCommands } from "./cli/goCommands.js";
@@ -51,6 +52,31 @@ import {
 } from "./cli/cliResultOutput.js";
 import { registerReverseEngineeringCommands } from "./cli/reverseEngineeringCommands.js";
 import { registerCutterCommands } from "./cli/cutterCommands.js";
+
+/**
+ * Overlay the user config file onto a raw environment before the CLI is
+ * created. The production dispatcher (scripts/rea.mjs) calls this so env
+ * vars keep winning (`env > config file > auto-detect`) while tests can
+ * keep injecting a plain environment dictionary.
+ */
+export const environmentWithUserConfig = async (
+  selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
+): Promise<
+  | { ok: true; environment: Readonly<NodeJS.ProcessEnv> }
+  | { ok: false; error: string }
+> => {
+  const contents = await readUserConfig(selectedEnvironment);
+  const merged = mergeUserConfig(
+    snapshotEnvironment(selectedEnvironment),
+    contents,
+  );
+  if (!merged.ok)
+    return {
+      ok: false,
+      error: projectAnalysisError(merged.error).message,
+    };
+  return { ok: true, environment: merged.value };
+};
 
 /** Describe CLI settings that are invalid before any command runs, as MCP does. */
 export const cliConfigurationError = (

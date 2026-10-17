@@ -18,6 +18,7 @@ export const CLI_COMMANDS = Object.freeze({
   decompile: "decompile",
   setup: "setup",
   doctor: "doctor",
+  config: "config",
   uninstall: "uninstall",
   update: "update",
   xrefs: "xrefs",

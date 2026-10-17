@@ -565,5 +565,49 @@
   "pilot_failures": [
     "Private pilot oracle read view.item instead of view.items; corrected before the committed SDK cohorts. No product failure inferred."
   ],
-  "decision": "Existing query APIs suffice for these bounded questions; no general token/time advantage established. Separate imported immutable-format validation optimization is tracked in #4810."
+  "decision": "Existing query APIs suffice for these bounded questions; no general token/time advantage established. Separate imported immutable-format validation optimization is tracked in #4810.",
+  "review_followup_verification": {
+    "review-mixed-native": {
+      "status": "passed",
+      "checks": {
+        "heads_checked": 64,
+        "pages": 32,
+        "revised_unknown_id": "unk_057c8f2dbf30ec98851a66ee054366bc6e2e168874581e6f99cb80673d0ff9b8",
+        "revision_checked": 2,
+        "stale_update_rejected": true,
+        "tampered_import_rejected_atomically": true,
+        "unknowns_after_close": 0,
+        "old_reference_refused": true
+      },
+      "original_records_preserved": true,
+      "elapsed_seconds": 18.444,
+      "cpu_seconds": 18.16515,
+      "peak_family_mib": 1401.6328125,
+      "oom_events_at_payload_exit": 0,
+      "payload_cleanup_verified": true
+    },
+    "review-mixed-javascript": {
+      "status": "passed",
+      "checks": {
+        "heads_checked": 64,
+        "pages": 32,
+        "revised_unknown_id": "unk_057c8f2dbf30ec98851a66ee054366bc6e2e168874581e6f99cb80673d0ff9b8",
+        "revision_checked": 2,
+        "stale_update_rejected": true,
+        "tampered_import_rejected_atomically": true,
+        "unknowns_after_close": 0,
+        "old_reference_refused": true
+      },
+      "original_records_preserved": true,
+      "elapsed_seconds": 27.617,
+      "cpu_seconds": 27.275299,
+      "peak_family_mib": 1444.30859375,
+      "oom_events_at_payload_exit": 0,
+      "payload_cleanup_verified": true
+    },
+    "deterministic_receipt_tests": {
+      "passed": 4,
+      "scope": "Rejected SDK call, protocol error, receipt-write failure, simultaneous call/write failure; not real-provider evidence"
+    }
+  }
 }

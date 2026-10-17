@@ -173,3 +173,18 @@ for the selected source. Repeat with `--delivery complete`; use
 `agent-trial.py --mode direct` supports the same four enabled names; its success
 exit only establishes client completion. Grade original IDs/digests, exact
 facts, coverage and Unknowns from the retained transcript and final answer.
+
+For a privately supplied authentic mixed bundle, add `--verify-mixed`. Besides
+the normal source query and original-record round trip, this pages every current
+head in `javascript-semantic-followup`, checks the current updated revision,
+submits a deliberately stale update and a tampered copy of the bundle, verifies
+atomic refusal, then checks Unknown/reference lifetime after close. The bundle
+must contain genuine follow-ups and at least one updated head. The checkpoint's
+64-head bundle passed this mode for both source scenarios. Its extra verification
+costs are separate from the original SDK comparison rows above.
+
+Rejected SDK calls are recorded before propagating the original failure, with
+request, phase and elapsed time. Reply bytes stay null when no usable reply was
+received. Receipt-write failures remain distinct; simultaneous call/write
+failures retain both causes. Deterministic failure tests run with
+`python3 -m unittest discover -s experiments/analysis-efficiency -p test_retained_queries.py`.

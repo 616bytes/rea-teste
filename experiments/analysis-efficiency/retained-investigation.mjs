@@ -22,6 +22,12 @@ import {
   requireMcpOperationResult,
   requireMcpToolError,
 } from "../../scripts/lib/mcp-verifier-results.mjs";
+import { createRetainedQueryCaller } from "./retained-query-calls.mjs";
+import {
+  verifyMixedRetainedHistory,
+  verifyMixedRetainedClosure,
+  retainedUnknownHeads,
+} from "./retained-mixed-verification.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -35,6 +41,7 @@ const { values } = parseArgs({
     scenario: { type: "string" },
     delivery: { type: "string" },
     output: { type: "string" },
+    "verify-mixed": { type: "boolean", default: false },
   },
 });
 for (const key of ["runtime-root", "bundle", "output"])
@@ -57,15 +64,7 @@ const operation =
     : "analyze_javascript_application";
 assert.equal(source?.operation, operation);
 const unknownDomain = `retained-${values.scenario}`;
-const heads = new Map();
-for (const unknown of original.unknowns) {
-  const previous = heads.get(unknown.unknown_id);
-  if (previous === undefined || previous.revision < unknown.revision)
-    heads.set(unknown.unknown_id, unknown);
-}
-const expectedUnknowns = [...heads.values()]
-  .filter((unknown) => unknown.domain === unknownDomain)
-  .sort((left, right) => left.unknown_id.localeCompare(right.unknown_id, "en"));
+const expectedUnknowns = retainedUnknownHeads(original.unknowns, unknownDomain);
 // These oracles check selected original facts, not producer discovery completeness.
 const expectedRows =
   values.scenario === "native"
@@ -132,29 +131,17 @@ const report = {
   source_evidence_id: source.evidence_id,
   scenario: values.scenario,
   delivery: values.delivery,
+  verify_mixed: values["verify-mixed"],
   calls: [],
   status: "running",
 };
-const call = async (name, input, phase) => {
-  const start = performance.now();
-  const reply = await client.callTool(
-    { name, arguments: input },
-    { timeout: 300000 },
-  );
-  report.calls.push({
-    name,
-    input,
-    phase,
-    elapsed_ms: performance.now() - start,
-    reply_bytes: Buffer.byteLength(JSON.stringify(reply)),
-    is_error: reply.isError === true,
-  });
+const call = createRetainedQueryCaller(client, async (receipt, event) => {
+  report.calls.push(receipt);
   await appendFile(
     join(output, "transcript.jsonl"),
-    JSON.stringify({ name, input, phase, reply }) + "\n",
+    JSON.stringify(event) + "\n",
   );
-  return reply;
-};
+});
 const result = (reply, name) => requireMcpOperationResult(reply, name);
 try {
   await client.connect(transport);
@@ -272,6 +259,13 @@ try {
   }
   assert.equal(new Set(answers).size, 1);
   report.answer_sha256 = answers[0];
+  if (values["verify-mixed"])
+    report.mixed_verification = await verifyMixedRetainedHistory({
+      call,
+      original,
+      sourceId: source.evidence_id,
+      output,
+    });
   const roundtrip = join(output, "roundtrip.json");
   result(
     await call("export_evidence_bundle", { path: roundtrip }, "export"),
@@ -292,6 +286,11 @@ try {
   );
   assert.equal(closed.total_retained_records, 0);
   report.close_cleared_records = true;
+  if (values["verify-mixed"])
+    Object.assign(
+      report.mixed_verification,
+      await verifyMixedRetainedClosure(call, source.evidence_id),
+    );
   assert.equal(digest(await readFile(values.bundle)), report.bundle_sha256);
   report.status = "passed";
 } catch (cause) {

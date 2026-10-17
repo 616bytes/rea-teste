@@ -243,6 +243,36 @@ cliTest(
       `${block}: 2 bytes follow the PKCS#7 ContentInfo and were ignored, as apksig ignores them.`,
     );
 
+    for (const [path, decodeError] of cases) {
+      const result = await cli.run({
+        arguments: ["inspect-apk-signature", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const report = toolContract("inspect_apk_signature").outputSchema.parse(
+        result.json,
+      ).normalized_result;
+      const [signer, ...rest] = report.schemes.v1.signers;
+      expect(rest, path).toEqual([]);
+      if (decodeError === null) {
+        expect(signer?.decode_error, path).toBeNull();
+        expect(signer?.certificate?.sha256_fingerprint, path).toBe(LEAF_SHA256);
+        continue;
+      }
+      // Unknown, not absent: the signer stays listed without a certificate.
+      expect(report.schemes.v1.present, path).toBe(true);
+      expect(signer?.certificate, path).toBeNull();
+      if (typeof decodeError === "string")
+        expect(signer?.decode_error, path).toBe(decodeError);
+      else expect(signer?.decode_error, path).toMatch(decodeError);
+    }
+  },
+);
+
+cliTest(
+  "flags any duplicate central-directory name as apksig rejects it",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apk-v1-duplicate-");
+    const block = "META-INF/CERT.EC";
     // Two blocks with one name: apksig rejects the v1 signature
     // ("Duplicate entry"); REA keeps one signer for the name, unknown.
     const duplicated = join(root, "duplicate-names.apk");
@@ -279,30 +309,61 @@ cliTest(
       ],
     });
     expect(duplicatedEvidence.limitations.join(" ")).toContain(
-      `more than one entry named ${block}`,
+      `holds 1 name more than once (${block})`,
     );
 
-    for (const [path, decodeError] of cases) {
-      const result = await cli.run({
+    // apksig rejects the v1 signature for any duplicate name: a duplicated
+    // manifest makes every signer unknown, and a duplicate outside the signing
+    // names is reported while the signers stay as declared.
+    const renamed = async (name: string, from: string, to: string) => {
+      const archive = Buffer.from(
+        await zipWith(
+          [
+            { name: "classes.dex", data: "dex" },
+            { name: "classes.dey", data: "dex2" },
+            { name: "META-INF/MANIFEST.MF", data: "Manifest-Version: 1.0" },
+            { name: "META-INF/MANIFEST.MX", data: "Manifest-Version: 1.0" },
+            { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
+            { name: block, data: OPENSSL_BLOCK_ISSUER_SERIAL },
+          ],
+          { dataDescriptor: false },
+        ),
+      );
+      const at = zipEntryOffsets(archive, from);
+      archive.write(to, at.central + 46, "latin1");
+      archive.write(to, at.local + 30, "latin1");
+      const path = join(root, name);
+      await writeFile(path, archive);
+      const run = await cli.run({
         arguments: ["inspect-apk-signature", path, "--json"],
       });
-      expect(result.exitCode, result.stderr).toBe(0);
-      const report = toolContract("inspect_apk_signature").outputSchema.parse(
-        result.json,
-      ).normalized_result;
-      const [signer, ...rest] = report.schemes.v1.signers;
-      expect(rest, path).toEqual([]);
-      if (decodeError === null) {
-        expect(signer?.decode_error, path).toBeNull();
-        expect(signer?.certificate?.sha256_fingerprint, path).toBe(LEAF_SHA256);
-        continue;
-      }
-      // Unknown, not absent: the signer stays listed without a certificate.
-      expect(report.schemes.v1.present, path).toBe(true);
-      expect(signer?.certificate, path).toBeNull();
-      if (typeof decodeError === "string")
-        expect(signer?.decode_error, path).toBe(decodeError);
-      else expect(signer?.decode_error, path).toMatch(decodeError);
-    }
+      expect(run.exitCode, run.stderr).toBe(0);
+      return toolContract("inspect_apk_signature").outputSchema.parse(run.json);
+    };
+    const manifestTwice = await renamed(
+      "duplicate-manifest.apk",
+      "META-INF/MANIFEST.MX",
+      "META-INF/MANIFEST.MF",
+    );
+    expect(manifestTwice.normalized_result.schemes.v1.signers).toMatchObject([
+      {
+        certificate: null,
+        decode_error: "duplicate entry: META-INF/MANIFEST.MF",
+      },
+    ]);
+    expect(manifestTwice.limitations.join(" ")).toContain(
+      "holds 1 name more than once (META-INF/MANIFEST.MF)",
+    );
+    const dexTwice = await renamed(
+      "duplicate-dex.apk",
+      "classes.dey",
+      "classes.dex",
+    );
+    expect(dexTwice.normalized_result.schemes.v1.signers).toMatchObject([
+      { certificate: { sha256_fingerprint: LEAF_SHA256 }, decode_error: null },
+    ]);
+    expect(dexTwice.limitations.join(" ")).toContain(
+      'holds 1 name more than once (classes.dex); apksig rejects the v1 signature of an archive with any duplicate entry ("Duplicate entry")',
+    );
   },
 );

@@ -11,8 +11,9 @@
  * declared directory extent and entry count; a record running past it is a
  * tagged error rather than a silently shorter list. Only the signing-relevant
  * `META-INF/` names are decoded and retained, capped at a format-justified
- * count, so memory does not grow with the archive's total entry count (up to
- * ~11M records in a 512 MiB Zip64 file).
+ * count. Duplicate names are found among all records, as apksig rejects a v1
+ * signature for any of them, with 12 bytes of typed-array state per record
+ * (up to ~11M records in a 512 MiB Zip64 file) and only a few names decoded.
  */
 import { type Result, err, ok } from "../result.js";
 
@@ -42,6 +43,9 @@ export const MAX_V1_SIGNATURE_ENTRIES = 4096;
  * 10; more only multiplies work and output, so the report is refused.
  */
 export const MAX_V1_SIGNERS = 32;
+
+/** Duplicated central-directory names decoded for the report; the rest are counted. */
+export const MAX_DUPLICATE_NAME_SAMPLE = 5;
 
 const META_INF = "META-INF/";
 const MANIFEST = "META-INF/MANIFEST.MF";
@@ -95,8 +99,9 @@ export interface ApkV1SignerEntry {
   /** The first central-directory entry with the block's name. */
   readonly block: ApkV1Entry;
   /**
-   * The block or `.SF` name the central directory holds more than once, which
-   * apksig rejects ("Duplicate entry"); null when both are unique.
+   * The block, `.SF` or `META-INF/MANIFEST.MF` name the central directory
+   * holds more than once, which apksig rejects ("Duplicate entry"); null when
+   * all three are unique.
    */
   readonly duplicate: string | null;
 }
@@ -111,29 +116,131 @@ export interface ApkV1Signature {
   readonly blockFiles: readonly string[];
   /** Blocks paired with their `.SF` file, one per block name, in central-directory order. */
   readonly signers: readonly ApkV1SignerEntry[];
-  /** Signing-relevant names the central directory holds more than once. */
-  readonly duplicateNames: readonly string[];
 }
 
 const NAME_DECODER = new TextDecoder("utf-8", { fatal: false });
 
+/** Names the central directory holds more than once, among all of its records. */
+export interface ApkDuplicateNames {
+  /** Distinct duplicated names. */
+  readonly count: number;
+  /** The first few, in central-directory order of their first occurrence. */
+  readonly sample: readonly string[];
+}
+
+/** The signing-relevant entries plus the duplicate names of the whole directory. */
+export interface ApkCentralDirectoryScan {
+  readonly entries: readonly ApkV1Entry[];
+  readonly duplicates: ApkDuplicateNames;
+}
+
+/** Byte order of two stored names. */
+const compareNames = (
+  bytes: Uint8Array,
+  starts: Uint32Array,
+  lengths: Uint16Array,
+  a: number,
+  b: number,
+): number => {
+  const as = starts[a] ?? 0;
+  const bs = starts[b] ?? 0;
+  const al = lengths[a] ?? 0;
+  const bl = lengths[b] ?? 0;
+  for (let k = 0; k < Math.min(al, bl); k += 1) {
+    const d = (bytes[as + k] ?? 0) - (bytes[bs + k] ?? 0);
+    if (d !== 0) return d;
+  }
+  return al - bl;
+};
+
+/** 2^24 records exceed any central directory in a 512 MiB archive (46 bytes each). */
+const INDEX_BITS = 2 ** 24;
+
+/**
+ * Names stored more than once, compared byte for byte (apksig compares the
+ * decoded names). Each record's name is hashed into the high bits of one
+ * sortable number with its index in the low bits; only records whose hashes
+ * collide are compared, so the work is O(n log n) even for crafted collisions.
+ */
+const duplicateNames = (
+  bytes: Uint8Array,
+  starts: Uint32Array,
+  lengths: Uint16Array,
+  count: number,
+): ApkDuplicateNames => {
+  const keys = new Float64Array(count);
+  for (let i = 0; i < count; i += 1) {
+    const start = starts[i] ?? 0;
+    const stop = start + (lengths[i] ?? 0);
+    let hash = 0x811c9dc5;
+    for (let k = start; k < stop; k += 1)
+      hash = Math.imul(hash ^ (bytes[k] ?? 0), 0x01000193);
+    // 29 hash bits and 24 index bits stay within a double's exact integers.
+    keys[i] = (hash >>> 3) * INDEX_BITS + i;
+  }
+  keys.sort();
+  const firsts: number[] = [];
+  for (let run = 0; run < count;) {
+    const hash = Math.floor((keys[run] ?? 0) / INDEX_BITS);
+    let stop = run + 1;
+    while (stop < count && Math.floor((keys[stop] ?? 0) / INDEX_BITS) === hash)
+      stop += 1;
+    if (stop - run > 1) {
+      const group = Array.from(
+        keys.subarray(run, stop),
+        (key) => key % INDEX_BITS,
+      ).sort((a, b) => compareNames(bytes, starts, lengths, a, b) || a - b);
+      // Sorted by name, then record order: the first of each run of equal
+      // names is that name's first occurrence.
+      let previousSame = false;
+      for (let k = 1; k < group.length; k += 1) {
+        const previous = group[k - 1] ?? 0;
+        const same =
+          compareNames(bytes, starts, lengths, previous, group[k] ?? 0) === 0;
+        if (same && !previousSame) firsts.push(previous);
+        previousSame = same;
+      }
+    }
+    run = stop;
+  }
+  firsts.sort((a, b) => a - b);
+  return {
+    count: firsts.length,
+    sample: firsts.slice(0, MAX_DUPLICATE_NAME_SAMPLE).map((i) => {
+      const start = starts[i] ?? 0;
+      return NAME_DECODER.decode(
+        bytes.subarray(start, start + (lengths[i] ?? 0)),
+      );
+    }),
+  };
+};
+
 /**
  * Walk every central-directory record within the declared extent and count,
- * returning only the `META-INF/` names that take part in v1 signing. A record that runs past the
- * declared extent is an error, not a silently shorter list: a partial walk
- * would turn "unknown" into "absent".
+ * returning the `META-INF/` names that take part in v1 signing and the names
+ * held more than once. A record that runs past the declared extent is an
+ * error, not a silently shorter list: a partial walk would turn "unknown"
+ * into "absent".
  */
 export const centralDirectoryV1SignatureEntries = (
   bytes: Uint8Array,
   centralDirectoryOffset: number,
   centralDirectorySize: number,
   totalEntries: number,
-): Result<ApkV1Entry[], ApkCentralDirectoryError> => {
+): Result<ApkCentralDirectoryScan, ApkCentralDirectoryError> => {
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const end = Math.min(
     bytes.length,
     centralDirectoryOffset + centralDirectorySize,
   );
+  // A record takes at least its fixed bytes, so the walk fails before a
+  // declared count past this capacity is reached.
+  const capacity = Math.min(
+    totalEntries,
+    Math.max(0, Math.floor((end - centralDirectoryOffset) / CD_FIXED_SIZE)),
+  );
+  const starts = new Uint32Array(capacity);
+  const lengths = new Uint16Array(capacity);
   const entries: ApkV1Entry[] = [];
   let at = centralDirectoryOffset;
   for (let i = 0; i < totalEntries; i += 1) {
@@ -159,6 +266,8 @@ export const centralDirectoryV1SignatureEntries = (
         offset: nameStart,
         detail: "central-directory file name runs past the directory",
       });
+    starts[i] = nameStart;
+    lengths[i] = nameLength;
     if (startsWithMetaInf(bytes, nameStart, nameLength)) {
       const rawName = bytes.subarray(nameStart, nameStart + nameLength);
       const name = NAME_DECODER.decode(rawName);
@@ -191,7 +300,10 @@ export const centralDirectoryV1SignatureEntries = (
       offset: at,
       detail: `${String(end - at)} bytes of the declared central directory remain after ${String(totalEntries)} records`,
     });
-  return ok(entries);
+  return ok({
+    entries,
+    duplicates: duplicateNames(bytes, starts, lengths, capacity),
+  });
 };
 
 /** Classify central-directory entries into the v1 (JAR) signing facts. */
@@ -215,8 +327,11 @@ export const detectV1Signature = (
     const signatureFile = signatureFileFor(block.name);
     if (!sfNames.has(signatureFile) || paired.has(block.name)) return [];
     paired.add(block.name);
+    // apksig reads every signer's manifest, so a duplicate one affects them all.
     const duplicate =
-      [block.name, signatureFile].find((name) => duplicates.has(name)) ?? null;
+      [block.name, signatureFile, MANIFEST].find((name) =>
+        duplicates.has(name),
+      ) ?? null;
     return [{ signatureFile, block, duplicate }];
   });
   return {
@@ -225,7 +340,6 @@ export const detectV1Signature = (
     signatureFiles,
     blockFiles: blocks.map((block) => block.name),
     signers,
-    duplicateNames: [...duplicates],
   };
 };
 

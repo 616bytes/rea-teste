@@ -37,10 +37,13 @@ rea inspect-apk-signature /path/app.apk
   disagrees with the central directory on the name, data-descriptor flag,
   CRC-32 or a size, as apksig refuses it, or over a bound) keeps its names
   and carries `decode_error`; it is never reported as an absent signer.
-  A signing name (`MANIFEST.MF`, `.SF` or a block) the central directory
-  holds more than once, which apksig rejects as a "Duplicate entry", leaves
-  one signer per block name with `decode_error` `duplicate entry: <name>`,
-  and a limitation names the duplicates; other entries are not checked.
+  apksig rejects the v1 signature of an archive whose central directory
+  holds any name more than once ("Duplicate entry"). REA checks every entry:
+  a limitation names the first few duplicates and counts the rest, and a
+  signer whose block, `.SF` or `META-INF/MANIFEST.MF` name is duplicated
+  (one signer per block name) carries `decode_error`
+  `duplicate entry: <name>`, so a duplicated manifest marks every signer.
+  A duplicate outside those names leaves the signers as declared.
   Bytes after the block's `ContentInfo` are ignored, as apksig's BER parser
   ignores them, and a limitation names the block and their count.
 - **Per signer:** the certificate's **SHA-256 fingerprint over the raw embedded
@@ -125,7 +128,8 @@ serialized size is then checked against an 8 MiB output budget (the exact check
 is authoritative); an over-budget report is refused, not truncated.
 
 Peak memory is about 2.5 times the file size: the shared stable reader keeps
-its read chunks and then concatenates them. A 500 MiB APK measured 1.25 GiB
+its read chunks and then concatenates them. The duplicate-name check adds 12
+bytes per central-directory record and decodes only the names it reports. A 500 MiB APK measured 1.25 GiB
 peak resident memory through the CLI, so an archive at the 512 MiB cap needs
 about 1.3 GB.
 

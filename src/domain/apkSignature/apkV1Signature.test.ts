@@ -4,6 +4,7 @@ import {
   centralDirectoryV1SignatureEntries,
   detectV1Signature,
   localEntryData,
+  MAX_DUPLICATE_NAME_SAMPLE,
   MAX_V1_SIGNATURE_ENTRIES,
   type ApkV1Entry,
 } from "./apkV1Signature.js";
@@ -60,7 +61,7 @@ describe("APK v1 (JAR) signature detection", () => {
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.map((e) => e.name)).toEqual([
+    expect(result.value.entries.map((e) => e.name)).toEqual([
       "META-INF/MANIFEST.MF",
       "META-INF/CERT.SF",
       "META-INF/CERT.RSA",
@@ -86,7 +87,6 @@ describe("APK v1 (JAR) signature detection", () => {
           duplicate: null,
         },
       ],
-      duplicateNames: [],
     });
     // A block without its own .SF partner is not a v1 signer.
     expect(
@@ -136,7 +136,8 @@ describe("APK v1 (JAR) signature detection", () => {
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    const v1 = detectV1Signature(result.value);
+    const v1 = detectV1Signature(result.value.entries);
+    expect(result.value.duplicates).toEqual({ count: 0, sample: [] });
     expect(v1).toMatchObject({
       present: true,
       hasManifest: true,
@@ -185,6 +186,72 @@ describe("APK v1 (JAR) signature detection", () => {
 });
 
 describe("APK v1 duplicate signing names", () => {
+  const scan = (all: readonly string[]) => {
+    const bytes = centralDirectory(all);
+    const result = centralDirectoryV1SignatureEntries(
+      bytes,
+      0,
+      bytes.length,
+      all.length,
+    );
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    return result.value;
+  };
+
+  it("finds duplicate names among all records, as apksig rejects any of them", () => {
+    expect(
+      scan([
+        "classes.dex",
+        "res/a.xml",
+        "META-INF/CERT.SF",
+        "res/a.xml",
+        "classes.dex",
+        "classes.dex",
+        "Classes.dex",
+        "res/a.xm",
+      ]).duplicates,
+    ).toEqual({ count: 2, sample: ["classes.dex", "res/a.xml"] });
+  });
+
+  it("decodes only the first few duplicate names, in first-occurrence order", () => {
+    const names = Array.from(
+      { length: MAX_DUPLICATE_NAME_SAMPLE + 3 },
+      (_, i) => `assets/f${String(i)}`,
+    );
+    const { duplicates } = scan([...names, ...[...names].reverse()]);
+    expect(duplicates).toEqual({
+      count: names.length,
+      sample: names.slice(0, MAX_DUPLICATE_NAME_SAMPLE),
+    });
+  });
+
+  it("compares the names whose hashes collide instead of trusting the hash", () => {
+    // These two distinct names share their 29-bit FNV-1a sort hash.
+    const [a, b] = ["res/c52831", "res/c112929"];
+    expect(scan([a, b]).duplicates).toEqual({ count: 0, sample: [] });
+    expect(scan([b, a, "x", b, a]).duplicates).toEqual({
+      count: 2,
+      sample: [b, a],
+    });
+  });
+
+  it("marks every signer when the manifest is duplicated", () => {
+    const v1 = detectV1Signature(
+      entries([
+        "META-INF/MANIFEST.MF",
+        "META-INF/A.SF",
+        "META-INF/A.RSA",
+        "META-INF/B.SF",
+        "META-INF/B.EC",
+        "META-INF/MANIFEST.MF",
+      ]),
+    );
+    expect(v1.signers.map(({ duplicate }) => duplicate)).toEqual([
+      "META-INF/MANIFEST.MF",
+      "META-INF/MANIFEST.MF",
+    ]);
+  });
+
   it("flags duplicate signing names and keeps one signer per block name", () => {
     const v1 = detectV1Signature(
       entries([
@@ -200,16 +267,12 @@ describe("APK v1 duplicate signing names", () => {
         "META-INF/MANIFEST.MF",
       ]),
     );
-    expect(v1.duplicateNames).toEqual([
-      "META-INF/CERT.RSA",
-      "META-INF/TWO.SF",
-      "META-INF/MANIFEST.MF",
-    ]);
     expect(
       v1.signers.map(({ block, duplicate }) => [block.name, duplicate]),
     ).toEqual([
       ["META-INF/CERT.RSA", "META-INF/CERT.RSA"],
-      ["META-INF/OK.EC", null],
+      // The duplicated manifest affects every signer.
+      ["META-INF/OK.EC", "META-INF/MANIFEST.MF"],
       ["META-INF/TWO.DSA", "META-INF/TWO.SF"],
     ]);
     // The observed names stay as the central directory lists them.
@@ -239,7 +302,7 @@ describe("APK v1 signature block locations", () => {
       bytes.length,
       1,
     );
-    expect(result.ok && result.value).toEqual([
+    expect(result.ok && result.value.entries).toEqual([
       {
         name: "META-INF/CERT.RSA",
         rawName: new TextEncoder().encode("META-INF/CERT.RSA"),

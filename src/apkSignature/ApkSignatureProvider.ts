@@ -47,6 +47,7 @@ import {
   centralDirectoryV1SignatureEntries,
   detectV1Signature,
   MAX_V1_SIGNERS,
+  type ApkDuplicateNames,
   type ApkV1Signature,
 } from "../domain/apkSignature/apkV1Signature.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -277,8 +278,14 @@ const postureSigner = (signer: Signer | SignerV3): ApkPostureSigner => {
 };
 
 /** Why apksig would reject the v1 signature of an archive with duplicate names. */
-const duplicateEntriesLimitation = (names: readonly string[]): string =>
-  `The central directory holds more than one entry named ${names.join(", ")}; apksig rejects such a v1 signature ("Duplicate entry"), so the affected v1 signers are not decoded. Duplicates are checked among the v1 signing entries (MANIFEST.MF, .SF and signature blocks) only.`;
+const duplicateEntriesLimitation = ({
+  count,
+  sample,
+}: ApkDuplicateNames): string => {
+  const more = count - sample.length;
+  const listed = `${sample.join(", ")}${more > 0 ? ` and ${String(more)} more` : ""}`;
+  return `The central directory holds ${String(count)} ${count === 1 ? "name" : "names"} more than once (${listed}); apksig rejects the v1 signature of an archive with any duplicate entry ("Duplicate entry"). A v1 signer whose signature block, .SF or META-INF/MANIFEST.MF name is duplicated carries decode_error; other v1 signers are reported as declared.`;
+};
 
 const LAYOUT_LIMITATION =
   "The content digest was not recomputed because the central directory is not immediately followed by the end-of-central-directory record (declared size mismatch or an intervening Zip64 record); matches_apk is null for those digests.";
@@ -346,7 +353,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
 
     const v1Read = readV1(bytes, tail.value, block.value);
     if (!v1Read.ok) return v1Read;
-    const { v1, decoded: v1Decoded } = v1Read.value;
+    const { v1, decoded: v1Decoded, duplicates } = v1Read.value;
 
     const v2 = decodeScheme(block.value, APK_BLOCK_ID.signatureV2, "v2");
     if (!v2.ok) return err(v2.error);
@@ -431,8 +438,8 @@ export class ApkSignatureProvider implements ApkSignaturePort {
         limitations: [
           ...APK_SIGNATURE_LIMITATIONS,
           ...(matcher.layoutPreventedRecompute() ? [LAYOUT_LIMITATION] : []),
-          ...(v1.duplicateNames.length > 0
-            ? [duplicateEntriesLimitation(v1.duplicateNames)]
+          ...(duplicates.count > 0
+            ? [duplicateEntriesLimitation(duplicates)]
             : []),
           ...v1SignerNotes(v1Decoded),
           ...derived.notes,
@@ -451,7 +458,11 @@ const readV1 = (
   tail: ZipTail,
   block: ApkSigningBlock | null,
 ): Result<
-  { readonly v1: ApkV1Signature; readonly decoded: DecodedV1Signer[] },
+  {
+    readonly v1: ApkV1Signature;
+    readonly decoded: DecodedV1Signer[];
+    readonly duplicates: ApkDuplicateNames;
+  },
   AnalysisError
 > => {
   const entries = centralDirectoryV1SignatureEntries(
@@ -461,13 +472,14 @@ const readV1 = (
     tail.totalEntries,
   );
   if (!entries.ok) return err(mapCentralDirectoryError(entries.error));
-  const v1 = detectV1Signature(entries.value);
+  const v1 = detectV1Signature(entries.value.entries);
   if (v1.signers.length > MAX_V1_SIGNERS)
     return err(v1SignerCapacityError(MAX_V1_SIGNERS));
   // Entry data lies before the signing block, or the directory without one.
   const entriesEnd = block?.blockStart ?? tail.centralDirectoryOffset;
   return ok({
     v1,
+    duplicates: entries.value.duplicates,
     decoded: v1.signers.map((signer) =>
       decodeV1Signer(bytes, signer, entriesEnd),
     ),

@@ -23,6 +23,7 @@ const isolatedEnvironment = (workspace: TestWorkspace) => ({
     : {}),
   HOPPER_LAUNCHER_PATH: workspace.path("missing-hopper"),
   REA_LOG_LEVEL: "silent",
+  REA_JEB_MCP_URL: "http://127.0.0.1:8425/mcp/",
   REA_JEB_MCP_TIMEOUT_MS: "1.5",
 });
 
@@ -53,6 +54,43 @@ test("keeps compiled CLI discovery usable while JEB rejects its malformed timeou
   expect(refusal.json).toMatchObject({
     code: "configuration_invalid",
     details: { settings: [{ setting: "REA_JEB_MCP_TIMEOUT_MS" }] },
+  });
+  const doctor = await cli.run({
+    arguments: ["doctor", "--provider", "jeb", "--json"],
+    environment,
+  });
+  expect(doctor.exitCode, doctor.stderr).toBe(1);
+  expect(doctor.json).toMatchObject({
+    healthy: false,
+    providerInspections: expect.arrayContaining([
+      expect.objectContaining({
+        id: "jeb",
+        configured: true,
+        available: false,
+        registrationEnvironment: {
+          REA_JEB_MCP_URL: environment.REA_JEB_MCP_URL,
+        },
+      }),
+    ]),
+    checks: expect.arrayContaining([
+      expect.objectContaining({
+        name: "jeb-request-timeout",
+        ok: false,
+        classification: "config_drift",
+        detail: "REA_JEB_MCP_TIMEOUT_MS: must be a positive decimal integer",
+      }),
+    ]),
+  });
+  const validDoctor = await cli.run({
+    arguments: ["doctor", "--provider", "jeb", "--json"],
+    environment: { ...environment, REA_JEB_MCP_TIMEOUT_MS: "900000" },
+  });
+  expect(validDoctor.exitCode, validDoctor.stderr).toBe(0);
+  expect(validDoctor.json).toMatchObject({
+    healthy: true,
+    providerInspections: expect.arrayContaining([
+      expect.objectContaining({ id: "jeb", configured: true, available: true }),
+    ]),
   });
 });
 

@@ -6,7 +6,7 @@ REA exposes JEB-backed project, unit, and decompilation inspection through the C
 
 Start a JEB client that serves MCP and point REA at it:
 
-- Default endpoint: `http://127.0.0.1:8425/mcp`. Override with `REA_JEB_MCP_URL` (absolute `http`/`https` URL with literal host `127.0.0.1` or `[::1]`; redirects, remote hosts, credentials, query strings, and fragments are rejected rather than silently dropped).
+- Default endpoint: `http://127.0.0.1:8425/mcp`. Override with `REA_JEB_MCP_URL` (absolute `http`/`https` URL with literal host `127.0.0.1` or `[::1]` and path exactly `/mcp` or `/mcp/`; redirects, remote hosts, credentials, other paths, query strings, and fragments are rejected rather than silently dropped).
 - In the JEB GUI client, start the MCP server from the _File_ menu (or via the VIBRE assistant).
 - Headless, use JEB's documented programmatic route (`JebMcpServerInstance` from the JEB API) with the JEB client on your classpath; JEB 5.48's `-c` headless mode does not accept `--mcp` directly.
 
@@ -56,3 +56,32 @@ All four are read-only with respect to the target file; only `open_jeb_project` 
 - An unreachable endpoint is a provider-availability failure with recovery guidance; REA does not retry or spawn the engine.
 
 Real-engine verification lives in the JEB lane described in [testing.md](testing.md); mock transport tests do not establish real-engine compatibility.
+
+## Connect an agent once
+
+Add the endpoint to the **REA** MCP entry's environment:
+
+```json
+{
+  "mcpServers": {
+    "rea": {
+      "command": "npx",
+      "args": ["-y", "rea-agents@<version-with-jeb>", "mcp"],
+      "env": {
+        "REA_JEB_MCP_URL": "http://127.0.0.1:8425/mcp"
+      }
+    }
+  }
+}
+```
+
+Use a package version that actually includes this adapter; repository main can be ahead of the npm release. After reconnecting, call:
+
+```json
+{"name":"inspect_jeb_client","arguments":{}}
+{"name":"open_jeb_project","arguments":{"path":"/artifact/path/on/the/engine/host"}}
+{"name":"list_jeb_units","arguments":{"index":0,"count":50}}
+{"name":"decompile_jeb_item","arguments":{"item_address":"0x1000","item_kind":"method"}}
+```
+
+For guided registration, set `REA_JEB_MCP_URL` before `rea setup --client <client>`. Setup includes that endpoint reference in its reviewed plan and preserves it after approval. `rea doctor --provider jeb --json` validates the endpoint and any selected `REA_JEB_MCP_TIMEOUT_MS` without starting JEB and explicitly leaves engine availability and project binding for analysis.

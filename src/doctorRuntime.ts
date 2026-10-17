@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 import { inspectJadxProvider } from "./android/JadxDoctor.js";
 import { inspectSystemGhidraProvider } from "./ghidra/GhidraDoctor.js";
 import { inspectIdaRegistration } from "./ida/IdaDoctor.js";
+import { inspectJebRegistration } from "./jeb/JebDoctor.js";
 import { inspectKunaProvider } from "./kuna/KunaDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
-import { parseJebMcpEndpoint } from "./jeb/JebMcpEndpoint.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
 
@@ -18,17 +18,12 @@ export const createSystemDoctorHost = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
   signal?: AbortSignal,
 ): DoctorHost => {
-  const selectedJebEndpoint = environment.REA_JEB_MCP_URL;
-  const selectedJebRegistrationEnvironment: Readonly<Record<string, string>> =
-    selectedJebEndpoint !== undefined &&
-    selectedJebEndpoint.length > 0 &&
-    parseJebMcpEndpoint(selectedJebEndpoint).ok
-      ? { REA_JEB_MCP_URL: selectedJebEndpoint }
-      : {};
+  const jebRegistration = inspectJebRegistration(environment);
   return systemDoctorHost({
     environment,
     ...(signal === undefined ? {} : { signal }),
-    providerRegistrationEnvironment: () => selectedJebRegistrationEnvironment,
+    providerRegistrationEnvironment: () =>
+      jebRegistration.registrationEnvironment,
     resolveProviderRequestBudget: (
       analysisProvider,
       registrationEnvironment,
@@ -51,6 +46,7 @@ export const createSystemDoctorHost = (
         inspectionSignal,
       ),
       inspectIdaRegistration(environment.REA_IDA_MCP_CONFIG),
+      jebRegistration,
       await inspectJadxProvider(environment),
       await inspectKunaProvider(environment, process.platform, {
         fileCloseResources,

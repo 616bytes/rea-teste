@@ -13,6 +13,91 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { writeTextParts } from "../../../src/application/JsonFiles.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+const allocation = vi.hoisted(() => ({ deferred: false }));
+
+// FAT and exFAT on macOS report a placeholder file ID for an empty file and
+// assign its cluster-derived ID when the first write allocates storage.
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const filesystem = await importOriginal<typeof import("node:fs/promises")>();
+  const { basename, dirname } = await import("node:path");
+  return {
+    ...filesystem,
+    open: async (...args: Parameters<typeof filesystem.open>) => {
+      const handle = await filesystem.open(...args);
+      if (
+        !allocation.deferred ||
+        !basename(dirname(String(args[0]))).startsWith(".rea-write-")
+      )
+        return handle;
+      const stat = handle.stat.bind(handle);
+      handle.stat = (async () => {
+        const stats = await stat();
+        if (stats.size === 0) stats.ino = Number.MAX_SAFE_INTEGER;
+        return stats;
+      }) as typeof handle.stat;
+      return handle;
+    },
+  };
+});
+
+it.each([false, true])(
+  "publishes when the staged file ID is assigned by its first write (overwrite: %s)",
+  async (overwrite) => {
+    const root = await createTestTempDirectory("rea-json-deferred-id-");
+    const resources = new ArtifactResourceScope();
+    const destination = join(root, "bundle.json");
+    allocation.deferred = true;
+    try {
+      if (overwrite) writeFileSync(destination, "previous");
+      const result = await writeTextParts(
+        ["canonical ", "output"],
+        destination,
+        overwrite,
+        resources,
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value).toEqual({ path: destination, bytes: 16 });
+      expect(await fs.readFile(destination, "utf8")).toBe("canonical output");
+      expect(requireStages(root)).toEqual([]);
+    } finally {
+      allocation.deferred = false;
+      await resources.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it("removes cancelled staging after the first write assigned its file ID", async () => {
+  const root = await createTestTempDirectory("rea-json-deferred-cancel-");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const destination = join(root, "cancelled.json");
+  allocation.deferred = true;
+  try {
+    function* cancelledAfterFirstWrite(): Generator<string> {
+      yield "partial";
+      controller.abort();
+      yield "must not publish";
+    }
+    const result = await writeTextParts(
+      cancelledAfterFirstWrite(),
+      destination,
+      false,
+      resources,
+      { signal: controller.signal, operation: "export_evidence_bundle" },
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    await expect(fs.access(destination)).rejects.toThrow();
+    expect(requireStages(root)).toEqual([]);
+  } finally {
+    allocation.deferred = false;
+    await resources.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("reports committed output when post-publication staging cleanup remains owned", async () => {
   const root = await createTestTempDirectory("rea-json-write-");
   const resources = new ArtifactResourceScope();
@@ -173,7 +258,7 @@ it("retains a failed file close owner and retries before removing its stage", as
     if (closeAttempts === 1) throw new Error("injected close failure");
     await actualClose();
   });
-  await owner.setFile(new OwnedFileHandle(handle));
+  owner.setFile(new OwnedFileHandle(handle));
   const resources = new ArtifactResourceScope();
   const stagedOwner = {
     kind: "staged-output" as const,
@@ -218,7 +303,7 @@ it("retains cleanup when its staging directory was renamed", async () => {
   const path = join(directory, "content");
   const handle = await open(path, "wx", 0o600);
   const owner = await OwnedStagedOutput.create(directory);
-  await owner.setFile(new OwnedFileHandle(handle));
+  owner.setFile(new OwnedFileHandle(handle));
   const resources = new ArtifactResourceScope();
   const stagedOwner = {
     kind: "staged-output" as const,
@@ -249,7 +334,7 @@ it("retains cleanup when owned staged content was renamed", async () => {
   await mkdir(directory);
   const handle = await open(content, "wx", 0o600);
   const owner = await OwnedStagedOutput.create(directory);
-  await owner.setFile(new OwnedFileHandle(handle));
+  owner.setFile(new OwnedFileHandle(handle));
   const resources = new ArtifactResourceScope();
   const stagedOwner = {
     kind: "staged-output" as const,

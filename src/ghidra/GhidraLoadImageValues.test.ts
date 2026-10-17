@@ -5,6 +5,69 @@ import { fixtureDosLoadImage } from "./GhidraLoadImage.fixture.js";
 import { nativeLoadImageObservationSchema } from "../domain/native/nativeLoadImage.js";
 import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
 
+const hash = (bytes: Buffer): string =>
+  createHash("sha256").update(bytes).digest("hex");
+
+/**
+ * Relocations at module offsets 9 then 8, with observations measured from
+ * Ghidra 12.1.4: the second fixup rewrites the first record's low byte.
+ */
+const overlappingRelocationLoadImage = () => {
+  const fixture = fixtureDosLoadImage();
+  // One more header paragraph holds the second relocation record.
+  const bytes = Buffer.concat([
+    fixture.bytes.subarray(0, 32),
+    Buffer.alloc(16),
+    fixture.bytes.subarray(32),
+  ]);
+  bytes.writeUInt16LE(176, 2);
+  bytes.writeUInt16LE(2, 6);
+  bytes.writeUInt16LE(3, 8);
+  bytes.writeUInt32LE(9, 28);
+  bytes.writeUInt32LE(8, 32);
+  expect(bytes.subarray(56, 59).toString("hex")).toBe("000400");
+  const modified = Buffer.from(bytes);
+  modified.write("001410", 56, "hex");
+  const observation = structuredClone(fixture.observation);
+  Object.assign(observation.source_files[0] ?? {}, {
+    size: bytes.length,
+    original_sha256: hash(bytes),
+    modified_sha256: hash(modified),
+  });
+  Object.assign(observation.mappings[0] ?? {}, {
+    end: "HEADER:0x2f",
+    length: 48,
+    sha256: hash(bytes.subarray(0, 48)),
+  });
+  Object.assign(observation.mappings[1] ?? {}, {
+    file_offset: 48,
+    sha256: hash(modified.subarray(48, 176)),
+  });
+  observation.relocations = [
+    {
+      address: "0x10009",
+      segment: 0x1000,
+      offset: 9,
+      status: "APPLIED",
+      type: 0,
+      values: [0, 9, 0x1004],
+      original_bytes_hex: "0400",
+      memory_bytes_hex: "1410",
+    },
+    {
+      address: "0x10008",
+      segment: 0x1000,
+      offset: 8,
+      status: "APPLIED",
+      type: 0,
+      values: [0, 8, 0x1400],
+      original_bytes_hex: "0004",
+      memory_bytes_hex: "0014",
+    },
+  ];
+  return { bytes, sha256: hash(bytes), observation };
+};
+
 const damage: ReadonlyArray<
   readonly [string, (observation: NativeLoadImageObservation) => void]
 > = [
@@ -351,5 +414,43 @@ describe("independent DOS MZ import verification", () => {
         mappings: [{ ...mapping, file_offset: Number.MAX_SAFE_INTEGER + 1 }],
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("overlapping DOS MZ relocations", () => {
+  it("compares overlapping relocation windows with the final loaded bytes", () => {
+    const fixture = overlappingRelocationLoadImage();
+    const result = attestGhidraDosLoadImage(
+      fixture.bytes,
+      fixture.sha256,
+      fixture.observation,
+    );
+    if (!result.ok || result.value.status === "unsupported")
+      throw new Error("Expected MZ verification checks");
+    expect(result.value.checks.filter((check) => !check.matched)).toEqual([]);
+    expect(result.value).toMatchObject({
+      status: "verified",
+      header_bytes: 48,
+      observations: {
+        relocations: [{ address: "0x10009" }, { address: "0x10008" }],
+      },
+    });
+
+    const intermediate = overlappingRelocationLoadImage();
+    const first = intermediate.observation.relocations[0];
+    if (first === undefined) throw new Error("Missing first relocation");
+    first.memory_bytes_hex = "0410";
+    const rejected = attestGhidraDosLoadImage(
+      intermediate.bytes,
+      intermediate.sha256,
+      intermediate.observation,
+    );
+    if (!rejected.ok || rejected.value.status === "unsupported")
+      throw new Error("Expected MZ verification checks");
+    expect(
+      rejected.value.checks
+        .filter((check) => !check.matched)
+        .map(({ name }) => name),
+    ).toEqual(["relocation_records"]);
   });
 });

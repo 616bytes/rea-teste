@@ -8,10 +8,10 @@ import {
   boundedExpression,
   electronCalleePath,
   electronStaticValue,
-  objectProperty,
 } from "./electronStaticAnalysisValues.js";
 import {
   semanticStaticPropertyName,
+  staticObjectProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
@@ -108,7 +108,7 @@ const inspectPrivilegedSchemes = (
   const entries = t.isArrayExpression(list) ? list.elements : [list];
   for (const [index, entry] of entries.entries()) {
     const candidate = typeless(entry ?? undefined);
-    const scheme = objectProperty(candidate, "scheme");
+    const scheme = staticObjectProperty(candidate, "scheme");
     addProtocol(context, {
       node,
       // Each present entry keeps its own range; holes share the call's.
@@ -131,7 +131,7 @@ const enabledPrivileges = (
   entry: t.Node | undefined,
   context: JavaScriptFindingContext,
 ): readonly string[] | null => {
-  const lookup = objectProperty(entry, "privileges");
+  const lookup = staticObjectProperty(entry, "privileges");
   if (lookup.status === "missing") return [];
   const privileges =
     lookup.status === "explicit" ? typeless(lookup.property.value) : undefined;

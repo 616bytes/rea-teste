@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "42"
+  version: "43"
 ---
 
 # REA
@@ -59,7 +59,7 @@ availability have different remedies; avoid repeating setup for all of them.
    absent, inspect the client's MCP launch error rather than repeating setup.
 
 REA setup never installs or upgrades Node.js, npm, Homebrew, Java, Ghidra, IDA,
-JADX, Binwalk, or Unblob. Use existing prerequisites; do not install unrelated
+JADX, Kuna, Binwalk, or Unblob. Use existing prerequisites; do not install unrelated
 software to repair
 MCP registration. For an unsupported client, use manual stdio registration
 with a version-pinned `rea-agents` package or continue through the CLI.
@@ -79,7 +79,7 @@ is within the authorized scope, use `npx -y rea-agents@latest` in its place.
 Configuration repair starts with a read-only setup plan; show paths, backups and
 skill replacement before applying authorized changes. Preserve existing approval
 and target-execution boundaries. REA setup never installs or upgrades unrelated
-software, including Node.js, npm, Homebrew, Java, Ghidra, IDA, JADX, Binwalk or Unblob.
+software, including Node.js, npm, Homebrew, Java, Ghidra, IDA, JADX, Kuna, Binwalk or Unblob.
 
 ## Route the target first
 
@@ -215,6 +215,20 @@ after opening; IDA does not supply `binary_overview`. Consult session availabili
 when composing broader workflows. Modern direct callers and unsupported dossier
 facets remain unknown; live IDA results are not replayed from snapshots.
 
+With `REA_KUNA_COMMAND` configured, `provider_id: "kuna"` answers procedure
+lists, lookups, pseudocode, assembly and `analyze_function` from Kuna's cached
+whole-program export. Callers/callees use a separate body-free graph shared by
+the session; `xrefs` returns exact-address incoming sites and filters forwarding
+aliases. These queries and inventory lookups do not trigger a C export. Indirect
+targets remain unknown and can make relationship coverage partial. Reference
+caches expire on close; a fresh CLI process repeats the native reference walk.
+Typed references, CFG, raw-memory tools and annotations remain unsupported. A cold first
+answer can come from a single-function run (its limitations say so); assembly
+waits for the export. For pseudocode and assembly, `raw_result.source` names the
+cached `.c`/`.asm` file and byte span, which you may search directly instead of
+calling per function. See the
+[Kuna provider guide](https://github.com/morluto/rea/blob/main/docs/kuna-provider.md).
+
 If the user says only "my app" without a name, path, or target already selected
 for this task, ask which app before searching for artifacts. Paths in unrelated
 saved reports and nearby test fixtures do not select the user's target. Resolve
@@ -258,16 +272,11 @@ output also streams without a single MCP frame.
 When the retained parent ID is unknown, use `get_evidence_bundle` with
 `detail: "summary"` and exact filters for operation, target SHA-256,
 analysis-profile digest or canonical procedure address. Select its returned
-Evidence ID for the next view instead of requesting the complete bundle. For
-large discovery results, supply `offset` and `limit`, then follow
-`pagination.next_offset` until null. Filters apply before paging;
-`matching_records` counts every match. Omitted paging keeps all matching records.
-Finish discovery before adding view Evidence, or filter a stable producer
-operation: new matching records can shift offsets in the live ledger.
+Evidence ID for the next view instead of requesting the complete bundle.
 `retention: "complete-record"` means the whole record is stored; native
 value-flow truncation and unknown metadata remain separate. For an exported
 portable bundle, use `rea inspect-evidence-bundle` with JSON containing `path`,
-`detail: "summary"` and the same `filters`, `offset` and `limit`. Reading that file still requires
+`detail: "summary"` and the same `filters`. Reading that file still requires
 validating its full contents within the local memory budget.
 
 A client can also truncate a successful tool result without a REA transport
@@ -337,7 +346,7 @@ as complete while required questions remain open.
   [references/runtime-observation.md](references/runtime-observation.md)
 - Captured browser script export, source-map locations, and module attribution:
   [references/web-feature-attribution.md](references/web-feature-attribution.md)
-- Evidence paging, comparisons, residual unknowns, and exporting or resuming an investigation:
+- Evidence discovery, comparisons, residual unknowns, and investigation handoff:
   [references/evidence-workflows.md](references/evidence-workflows.md)
 
 ## Finish the task

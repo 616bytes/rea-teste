@@ -4,11 +4,9 @@ import { jsonParts } from "../domain/jsonSerialization.js";
 import {
   SQLITE_ROW_LIMIT_DEFAULT,
   sqliteSchemaScope,
-  sqliteVisibleColumnNames,
   type InspectSqliteDatabaseInput,
   type SqliteDatabase,
   type SqliteValue,
-  type SqliteRowSelection,
 } from "../domain/sqlite/sqliteDatabase.js";
 import {
   SQLITE_DATABASE_LIMITS,
@@ -37,10 +35,10 @@ const tableRow = z.object({
 });
 const columnRow = z.object({
   cid: natural,
-  name: z.string(),
-  type: z.string(),
+  name: z.instanceof(Uint8Array),
+  type: z.instanceof(Uint8Array),
   notnull: z.bigint(),
-  dflt_value: z.string().nullable(),
+  dflt_value: z.instanceof(Uint8Array).nullable(),
   pk: natural,
   hidden: z
     .bigint()
@@ -63,7 +61,7 @@ type DatabaseEncoding = z.output<typeof encodingSchema>;
 type Inspection = Pick<
   SqliteDatabase,
   "engine" | "database_encoding" | "schema" | "rows" | "limitations"
-> & { readonly row_selection: SqliteRowSelection | null };
+>;
 type SelectedTableFacts = Pick<
   SqliteDatabase["schema"]["tables"][number],
   "name" | "kind" | "columns"
@@ -188,27 +186,46 @@ const cell = (
 const readColumns = (
   db: DatabaseSync,
   name: string,
-  budget: OutputBudget,
+  context: {
+    readonly budget: OutputBudget;
+    readonly encoding: DatabaseEncoding;
+    readonly selectedColumns?: readonly string[] | undefined;
+  },
 ): SqliteDatabase["schema"]["tables"][number]["columns"] => {
+  const { budget, encoding, selectedColumns } = context;
   const columns: SqliteDatabase["schema"]["tables"][number]["columns"] = [];
-  // Direct PRAGMA syntax cannot be shadowed by a stored table or view.
+  // This private read-only connection has an empty temp schema. Qualifying the
+  // built-in there prevents stored main tables/views from shadowing it; the
+  // final argument selects main's metadata. Decode bytes before names become
+  // SQL identifiers. Inventory-only row subsets compare exact encoded names
+  // first, so an unrelated malformed identifier cannot alias a requested one.
+  const selection =
+    selectedColumns === undefined
+      ? ""
+      : ` WHERE CAST(name AS BLOB) IN (${selectedColumns.map(() => "CAST(? AS BLOB)").join(", ")})`;
   for (const raw of db
-    .prepare(`PRAGMA main.table_xinfo(${quoteIdentifier(name)})`)
-    .iterate()) {
+    .prepare(
+      `SELECT cid, CAST(name AS BLOB) AS name, CAST(type AS BLOB) AS type, "notnull", CAST(dflt_value AS BLOB) AS dflt_value, pk, hidden FROM temp.pragma_table_xinfo(?, 'main')${selection}`,
+    )
+    .iterate(name, ...(selectedColumns ?? []))) {
     const value = columnRow.parse(raw);
     const column = {
       cid: value.cid,
-      name: value.name,
-      declared_type: value.type,
+      name: decodeSchemaText(value.name, encoding, "column name"),
+      declared_type: decodeSchemaText(value.type, encoding, "column type"),
       not_null: value.notnull !== 0n,
-      default_sql: value.dflt_value,
+      default_sql:
+        value.dflt_value === null
+          ? null
+          : decodeSchemaText(value.dflt_value, encoding, "column default"),
       primary_key_position: value.pk,
       hidden: value.hidden,
     };
     budget.retain(column);
     columns.push(column);
   }
-  return columns;
+  // Sort only retained facts, without copying untrusted text into native sorter records.
+  return columns.sort((left, right) => left.cid - right.cid);
 };
 
 const readSchema = (
@@ -357,11 +374,11 @@ const readSchema = (
         listed.type !== "virtual" &&
         (scope !== "inventory" || input.table === value.name)
       ) {
-        const columns = readColumns(
-          db,
-          value.name,
-          scope === "inventory" ? new OutputBudget() : budget,
-        );
+        const columns = readColumns(db, value.name, {
+          budget: scope === "inventory" ? new OutputBudget() : budget,
+          encoding,
+          selectedColumns: scope === "inventory" ? input.columns : undefined,
+        });
         if (input.table === value.name)
           selectedTable = { name: table.name, kind: table.kind, columns };
         if (scope !== "inventory") table.columns = columns;
@@ -425,7 +442,9 @@ const readRows = (
       `Rows from ${table.kind} table ${input.table} are outside the ordinary-table inspection profile.`,
     );
   const limit = input.row_limit ?? SQLITE_ROW_LIMIT_DEFAULT;
-  const visibleColumns = sqliteVisibleColumnNames(table.columns);
+  const visibleColumns = table.columns
+    .filter((column) => column.hidden !== 1)
+    .map((column) => column.name);
   const columns = input.columns ?? visibleColumns;
   const available = new Set(visibleColumns);
   for (const name of columns)
@@ -538,20 +557,11 @@ export const inspectSqliteDatabaseSnapshot = (
       limitations,
       encoding,
     });
-    const rowSelection =
-      selectedTable === undefined
-        ? null
-        : {
-            table: selectedTable.name,
-            visible_columns: sqliteVisibleColumnNames(selectedTable.columns),
-          };
-    budget.retain(rowSelection);
     return {
       engine: { name: "SQLite", version },
       database_encoding: encoding,
       schema,
       rows: readRows(db, input, selectedTable, { encoding, budget }),
-      row_selection: rowSelection,
       limitations,
     };
   } finally {

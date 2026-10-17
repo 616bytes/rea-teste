@@ -93,20 +93,23 @@ off work when the observations must survive the current session:
    IDs, the answered question, competing explanations, coverage gaps and next
    useful probe. Reference the bundle rather than copying complete payloads
    into the handoff. Preserve any external captures or exported source/map
-   files needed by later tools; a bundle does not recreate those files.
+   files needed by later tools; a bundle does not recreate those files. Raw
+   `details.partial_observation` without a recorded Evidence ID is not bundled;
+   preserve received error receipts separately. An empty bundle does not prove
+   that no partial work or side effect occurred.
 3. In the destination MCP session, open the intended target first only if the
    next operation requires an active target. Then call `import_evidence_bundle`
    with the saved absolute path. Import validates IDs, manifests and unknown
    revision history before merging atomically; it does not select a target,
    restore an analysis database, start a provider, or refresh runtime facts.
 4. Discover imported records with `get_evidence_bundle` using
-   `{"detail":"summary","filters":{"operation":"analyze_javascript_application"},"limit":50}`,
-   adding an exact target SHA-256 when several artifacts are present. Follow
-   `result.pagination.next_offset` only when more matches are needed, keeping
-   the same filters and limit. Finish discovery before producing derived views
-   that could change the live ledger's ordering. Use returned IDs for supported
-   retained views and `list_unknowns` for current heads. Recheck any claimed
-   resolution with `verify_unknown_resolution`.
+   `{"detail":"summary","filters":{"operation":"analyze_javascript_application"}}`,
+   adding an exact target SHA-256 when several artifacts are present. Summary
+   returns all matching metadata; it does not accept `offset` or `limit`. If
+   the result exceeds transport limits, narrow the filters or inspect the
+   exported bundle locally. Use returned IDs for supported retained views and
+   `list_unknowns` for current heads. Recheck any claimed resolution with
+   `verify_unknown_resolution`.
 
 The handoff is usable when the selected records and unknown heads can be read
 in the destination session and any next required external artifact is

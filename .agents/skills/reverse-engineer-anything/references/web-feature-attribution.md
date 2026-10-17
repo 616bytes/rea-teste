@@ -42,7 +42,11 @@ CDP script ID. Check `content.state`, `content.sha256`, `content.bytes`, and the
 source identity: `script_key`/`frame_id` for page scripts, or
 `transaction_id`/event sequence references for scenario responses. Preserve
 `source_evidence_id`, `capture_sha256` and manifest identity in the evidence chain.
-Multiple entries sharing a URL remain separate candidates.
+Multiple entries sharing a URL remain separate candidates. Scenario bytes come
+from Playwright's `Response.body()`, which may reload the request URL with
+credentials when CDP has no body. Transaction/event references therefore do not
+verify that those bytes came from the original network transaction. Preserve
+this [source-body limitation](https://github.com/morluto/rea/blob/main/docs/website-script-export.md).
 
 If `analysis_input` is non-null, pass that returned object to
 `analyze_javascript_application` when local file/module inventory is needed.

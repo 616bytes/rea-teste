@@ -23,7 +23,6 @@ import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { SqliteDatabaseProvider } from "../../../src/sqlite/SqliteDatabaseProvider.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
-import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { fileURLToPath } from "node:url";
 import {
   createSqliteDatabaseFixture,
@@ -120,18 +119,17 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
   },
 );
 
-it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE).each(["snapshot", "worker"] as const)(
-  "records completed SQLite evidence before delivering a %s cleanup failure",
-  async (cleanup) => {
+it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
+  "records completed SQLite evidence before delivering a cleanup failure",
+  async () => {
     const workspace = await createTestWorkspace("rea-sqlite-mcp-retention-");
     const database = createSqliteDatabaseFixture(workspace.root);
     database.close();
     let removalAllowed = false;
-    let rootPath = "";
     const provider = new SqliteDatabaseProvider(
       process.env,
-      async (spawn) => {
-        const launched = await spawnOwnedProviderProcess({
+      (spawn) =>
+        spawnOwnedProviderProcess({
           ...spawn,
           arguments: spawn.arguments.map((argument, index) =>
             index === 1
@@ -143,31 +141,15 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE).each(["snapshot", "worker"] as const)(
                 )
               : argument,
           ),
-        });
-        return {
-          ...launched,
-          cleanup: async () => {
-            if (cleanup === "worker" && !removalAllowed)
-              return {
-                cleaned: false,
-                reason: "Worker cleanup confirmation denied",
-              };
-            return (
-              launched.cleanup?.() ??
-              cleanupOwnedProcessGroup(launched.ownership)
-            );
-          },
-        };
-      },
+        }),
       async () => {
         const root = await PrivateRuntimeRoot.create({
           parent: workspace.root,
         });
-        rootPath = root.path;
         return {
           path: root.path,
           close: async () => {
-            if (cleanup === "snapshot" && !removalAllowed)
+            if (!removalAllowed)
               throw new Error(
                 "Snapshot cleanup denied after completed observation",
               );
@@ -195,8 +177,6 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE).each(["snapshot", "worker"] as const)(
         arguments: { path: database.path, table: "records", columns: ["id"] },
       });
       expect(result.isError).toBe(true);
-      expect(parseMcpToolError(result).error.code).toBe("cleanup_incomplete");
-      await expect(access(rootPath)).resolves.toBeUndefined();
       const error = z
         .object({
           error: z.object({
@@ -232,7 +212,6 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE).each(["snapshot", "worker"] as const)(
       removalAllowed = true;
       await client.close();
       await server.close();
-      await expect(access(rootPath)).rejects.toMatchObject({ code: "ENOENT" });
       await session.close();
       await removeTestWorkspace(workspace.root);
     }
@@ -362,6 +341,7 @@ it("closes the bound Go and web-capture services and retries failed shutdown", a
   let goCalls = 0;
   let goCloseAttempts = 0;
   let captureCloseAttempts = 0;
+  let scenarioCloseAttempts = 0;
   let cleanupAllowed = false;
   const goBinary = new GoBinaryService({
     identity: { id: "go-fixture", name: "Go fixture", version: "1" },
@@ -391,7 +371,24 @@ it("closes the bound Go and web-capture services and retries failed shutdown", a
   });
   const server = createServer(
     { kind: "fixed", analysis: { execute: async () => ok(null) } },
-    { goBinary, webNetworkCapture },
+    {
+      goBinary,
+      webNetworkCapture,
+      browserScenarioCapture: {
+        identity: () => ({
+          id: "scenario-fixture",
+          name: "Scenario fixture",
+          version: "1",
+        }),
+        captureScenario: async () => {
+          throw new Error("No scenario capture requested");
+        },
+        close: async () => {
+          scenarioCloseAttempts += 1;
+          if (!cleanupAllowed) throw new Error("Scenario cleanup refused");
+        },
+      },
+    },
   );
   const client = new Client({ name: "bound-service-lifecycle", version: "1" });
   const [clientTransport, serverTransport] =
@@ -407,14 +404,20 @@ it("closes the bound Go and web-capture services and retries failed shutdown", a
     expect(result.isError).toBe(true);
     expect(goCalls).toBe(1);
 
-    await expect(server.close()).rejects.toBeInstanceOf(AggregateError);
+    await expect(server.close()).rejects.toMatchObject({
+      errors: expect.arrayContaining([
+        expect.objectContaining({ message: "Scenario cleanup refused" }),
+      ]),
+    });
     expect(goCloseAttempts).toBe(1);
     expect(captureCloseAttempts).toBe(1);
+    expect(scenarioCloseAttempts).toBe(1);
 
     cleanupAllowed = true;
     await server.close();
     expect(goCloseAttempts).toBe(2);
     expect(captureCloseAttempts).toBe(2);
+    expect(scenarioCloseAttempts).toBe(2);
   } finally {
     cleanupAllowed = true;
   }

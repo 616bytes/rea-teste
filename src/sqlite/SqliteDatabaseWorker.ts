@@ -21,14 +21,12 @@ const main = async (): Promise<void> => {
   );
   let reply: unknown;
   try {
-    const { row_selection, ...inspection } = inspectSqliteDatabaseSnapshot(
-      request.snapshot_path,
-      request.input,
-    );
     reply = {
       ok: true,
-      inspection,
-      row_selection,
+      inspection: inspectSqliteDatabaseSnapshot(
+        request.snapshot_path,
+        request.input,
+      ),
     };
   } catch (cause: unknown) {
     const code =

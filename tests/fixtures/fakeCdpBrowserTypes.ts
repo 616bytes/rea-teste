@@ -97,6 +97,12 @@ export interface FakeOptions {
    * enabled, and emit its Network traffic after its Network.enable.
    */
   readonly dedicatedWorkerRequests?: boolean;
+  /**
+   * Also flatten one nested dedicated worker — a worker started by the
+   * dedicated worker — attaching it when the parent worker session
+   * subscribes, and emit its Network traffic after its Network.enable.
+   */
+  readonly nestedWorkerRequests?: boolean;
   /** Terminate the dedicated worker after its requests and emit a stale event. */
   readonly terminateDedicatedWorker?: boolean;
   /**

@@ -136,6 +136,21 @@ try {
     throw new Error(
       "Real Chrome dedicated worker requests were not recorded with worker attribution",
     );
+  // The dedicated worker starts another worker; its requests must be recorded
+  // with the nested worker's own target attribution, not dropped or misfiled.
+  if (
+    !workerRequests.some((request) =>
+      request.url.includes("token=nested-worker-network-secret-value"),
+    ) ||
+    observed.value.network.requests.some(
+      (request) =>
+        request.url.includes("token=nested-worker-network-secret-value") &&
+        request.worker_target_id === null,
+    )
+  )
+    throw new Error(
+      "Real Chrome nested worker requests were not recorded with worker attribution",
+    );
   const domDestinations = await verifyBrowserDomDestinations({
     cdp_endpoint: endpoint,
     target_id: target,

@@ -95,8 +95,11 @@ export const capturePage = async (
     events.completeness,
   );
   const removeListener = context.connection.onEvent((event) => {
+    // A worker's child-attach notifications arrive on that worker's own
+    // flattened session, so every event first passes the worker multiplexer,
+    // which reacts only to Target attach and detach methods.
+    workerSessions.observe(event);
     if (event.sessionId === context.sessionId) {
-      workerSessions.observe(event);
       events.ingest(event);
       return;
     }
@@ -188,15 +191,19 @@ const captureAuthorizedPage = async (
     operation: context.operation,
   });
   const completedUrl = mainFrameUrl(completedFrameResult) ?? "";
-  if (state.events.originViolation)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-  if (state.events.navigationDuringCapture || completedUrl !== attachedUrl)
-    throw new BrowserObservationError("inspect_web_page", "target_changed");
+  assertDocumentUnchanged(state, completedUrl, attachedUrl);
   // The worker listener stays active through the reads above, so workers
   // admitted after the observation window settle again here; a late enable
   // failure surfaces with its own cause instead of vanishing into the
-  // best-effort release.
+  // best-effort release. Admission closes first: a page that keeps starting
+  // workers would otherwise extend this drain indefinitely.
+  state.workerSessions.stopAdmitting();
   await state.workerSessions.settle();
+  // The settle waits asynchronously with the page listener still attached, so
+  // a navigation that lands while it drains fails the inspection exactly like
+  // one observed before the reads, instead of returning evidence from two
+  // documents.
+  assertDocumentUnchanged(state, completedUrl, attachedUrl);
   // Body IDs were enumerated before asynchronous CDP reads. Events remain
   // enabled through the final capture, so account for eligible responses that
   // arrived while those reads were pending.
@@ -215,6 +222,23 @@ const captureAuthorizedPage = async (
     }),
     sourceMapRequests: scripts.sourceMapRequests,
   };
+};
+
+/**
+ * The captured inventory must describe exactly one authorized document. A
+ * main-frame navigation observed at any point — during the observation
+ * window, the final reads, or the worker settle that drains after them —
+ * fails the inspection instead of merging two documents' evidence.
+ */
+const assertDocumentUnchanged = (
+  state: CaptureState,
+  currentUrl: string,
+  attachedUrl: string,
+): void => {
+  if (state.events.originViolation)
+    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+  if (state.events.navigationDuringCapture || currentUrl !== attachedUrl)
+    throw new BrowserObservationError("inspect_web_page", "target_changed");
 };
 
 const captureJsonResponseBodies = async (

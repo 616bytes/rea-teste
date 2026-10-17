@@ -5,6 +5,9 @@ import type { FakeCdpCommand, FakeOptions } from "./fakeCdpBrowserTypes.js";
 /** Flattened session and target identity of the fake dedicated worker. */
 export const DEDICATED_WORKER_SESSION_ID = "worker-session-1";
 export const DEDICATED_WORKER_TARGET_ID = "worker-attached-1";
+/** Flattened session and target identity of the worker it starts. */
+export const NESTED_WORKER_SESSION_ID = "worker-session-2";
+export const NESTED_WORKER_TARGET_ID = "worker-attached-2";
 /** Request the page session announces before the worker session finishes it. */
 export const WORKER_SCRIPT_REQUEST_ID = "worker-script-request";
 const ROGUE_WORKER_SESSION_ID = "rogue-worker-session";
@@ -16,6 +19,14 @@ const dedicatedWorkerTargetInfo = (port: number) => ({
   type: "worker",
   title: "Dedicated worker",
   url: `http://127.0.0.1:${String(port)}/dedicated-worker.js`,
+  attached: true,
+});
+
+const nestedWorkerTargetInfo = (port: number) => ({
+  targetId: NESTED_WORKER_TARGET_ID,
+  type: "worker",
+  title: "Nested dedicated worker",
+  url: `http://127.0.0.1:${String(port)}/nested-worker.js`,
   attached: true,
 });
 
@@ -44,16 +55,34 @@ const emitWorkerSessionEvents = (
     emitWorkerStartupHandoff(socket, command, port);
     return;
   }
-  if (options.dedicatedWorkerRequests !== true) return;
+  if (
+    options.dedicatedWorkerRequests !== true &&
+    options.nestedWorkerRequests !== true
+  )
+    return;
   if (
     command.method === "Target.setAutoAttach" &&
     command.params.autoAttach === true
   ) {
-    event(socket, "Target.attachedToTarget", command.sessionId, {
-      sessionId: DEDICATED_WORKER_SESSION_ID,
-      targetInfo: dedicatedWorkerTargetInfo(port),
-      waitingForDebugger: false,
-    });
+    if (command.sessionId === PAGE_SESSION_ID) {
+      event(socket, "Target.attachedToTarget", PAGE_SESSION_ID, {
+        sessionId: DEDICATED_WORKER_SESSION_ID,
+        targetInfo: dedicatedWorkerTargetInfo(port),
+        waitingForDebugger: false,
+      });
+      return;
+    }
+    // Auto-attach does not recurse: the worker's own subscription attaches
+    // the worker it started, announced on the worker's flattened session.
+    if (
+      options.nestedWorkerRequests === true &&
+      command.sessionId === DEDICATED_WORKER_SESSION_ID
+    )
+      event(socket, "Target.attachedToTarget", DEDICATED_WORKER_SESSION_ID, {
+        sessionId: NESTED_WORKER_SESSION_ID,
+        targetInfo: nestedWorkerTargetInfo(port),
+        waitingForDebugger: false,
+      });
     return;
   }
   if (command.method !== "Network.enable") return;
@@ -90,6 +119,28 @@ const emitWorkerSessionEvents = (
         initiator: { type: "script" },
       });
     }
+    return;
+  }
+  if (
+    options.nestedWorkerRequests === true &&
+    command.sessionId === NESTED_WORKER_SESSION_ID
+  ) {
+    const url = `http://127.0.0.1:${String(port)}/nested-worker-api?token=nested-worker-secret`;
+    event(socket, "Network.requestWillBeSent", NESTED_WORKER_SESSION_ID, {
+      requestId: "nested-worker-request-1",
+      type: "Fetch",
+      request: { url, method: "GET" },
+      initiator: { type: "script" },
+      timestamp: 10,
+    });
+    event(socket, "Network.responseReceived", NESTED_WORKER_SESSION_ID, {
+      requestId: "nested-worker-request-1",
+      response: { url, status: 200, mimeType: "application/json" },
+    });
+    event(socket, "Network.loadingFinished", NESTED_WORKER_SESSION_ID, {
+      requestId: "nested-worker-request-1",
+      encodedDataLength: 21,
+    });
     return;
   }
   if (command.sessionId === PAGE_SESSION_ID) {
@@ -134,7 +185,8 @@ const emitWorkerStartupHandoff = (
   }
   if (
     command.method === "Target.setAutoAttach" &&
-    command.params.autoAttach === true
+    command.params.autoAttach === true &&
+    command.sessionId === PAGE_SESSION_ID
   ) {
     event(socket, "Target.attachedToTarget", command.sessionId, {
       sessionId: DEDICATED_WORKER_SESSION_ID,
@@ -585,8 +637,12 @@ const emitNetworkEvents = (
   options: FakeOptions,
 ): void => {
   if (command.method !== "Network.enable") return;
-  // The worker session's traffic is owned by emitWorkerSessionEvents.
-  if (command.sessionId === DEDICATED_WORKER_SESSION_ID) return;
+  // Worker sessions' traffic is owned by emitWorkerSessionEvents.
+  if (
+    command.sessionId === DEDICATED_WORKER_SESSION_ID ||
+    command.sessionId === NESTED_WORKER_SESSION_ID
+  )
+    return;
   if (options.navigateDuringObservationUrl !== undefined)
     event(socket, "Page.frameNavigated", command.sessionId, {
       frame: {

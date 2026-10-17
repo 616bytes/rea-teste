@@ -281,7 +281,7 @@ are reported in the result.
 
 Call `list_browser_targets` first because target IDs are browser-instance-specific. REA rechecks the selected target's current type and origin immediately before attaching. Without an origin filter, discovery lists all eligible pages; an individual capture defaults to the selected page's current origin.
 
-REA establishes a main-frame origin boundary before enabling Runtime, Debugger, or Network observation, rechecks it before document capture, and validates it again afterward. If the main frame navigates during final capture, REA discards the mixed result and returns `target_changed`.
+REA establishes a main-frame origin boundary before enabling Runtime, Debugger, or Network observation, rechecks it before document capture, and validates it again afterward — including after worker sessions settle. If the main frame navigates during final capture, REA discards the mixed result and returns `target_changed`.
 
 ## Data minimization
 
@@ -300,12 +300,14 @@ REA retains local observation data and removes only URL userinfo credentials, ex
 - Accessibility structure and roles are retained by default, while names and descriptions require `include_accessibility_text: true`.
 - Network observations retain method, status, MIME type, size, type, initiator stack location, and complete URLs with userinfo credentials removed. Redirects reported by CDP are attached as ordered `redirects` on the one request ID, with the prior request URL, CDP response URL, method/type, response status/MIME/encoded length, request timestamp, and the next `requestWillBeSent` event timestamp. CDP delivers `redirectResponse` with that next request event, so the latter is an event boundary rather than an exact response timestamp. Redirect response headers and bodies are discarded; hops outside the selected origins are discarded with the request chain. Headers are discarded after an allowlisted projection of length/encoding, structured CSP/Link/policy fields, and untrusted agent hints. Cookies and authorization headers are never retained.
   Requests issued by the page's dedicated workers are recorded with the
-  `worker_target_id` of their flattened CDP worker session; requests observed on
-  the page session report `worker_target_id: null`. A worker that terminates
-  during the window keeps its already recorded requests attributed even though
-  the terminal worker inventory in `workers` may no longer list it. Selected
-  JSON body shapes for worker requests are read through the issuing worker
-  session and are reported unavailable when that session detaches first.
+  `worker_target_id` of their flattened CDP worker session, including workers
+  those workers start, which attach through their parent worker's session;
+  requests observed on the page session report `worker_target_id: null`. A
+  worker that terminates during the window keeps its already recorded requests
+  attributed even though the terminal worker inventory in `workers` may no
+  longer list it. Selected JSON body shapes for worker requests are read
+  through the issuing worker session and are reported unavailable when that
+  session detaches first.
 - Request/response bodies are not requested or parsed by default. When selected, only allowed-origin JSON media types are read, converted immediately to complete value-free typed paths, types and observation counts, and discarded. Each path segment is either `{ "kind": "property", "name": "raw property name" }` or `{ "kind": "array-element" }`; array-element types include primitives and nested arrays. Literal `*` properties remain distinct from array elements. `Network.getResponseBody` is never sent unless JSON body shape capture is selected. Comparison uses body shapes only when both captures selected them, and compares request/response shapes only where both observations provide those facts. Unavailable or truncated selected coverage makes equivalence unknown; observed differences still report changed.
   For normalized passive inputs with complete request inventories on both sides,
   request additions and removals remain observable even when selected body shapes,
@@ -343,11 +345,15 @@ Frames, resources, scripts, events, and workers outside the selected origin scop
 Retained workers include validated opener-target and parent-frame IDs when CDP
 provides them; these relationships do not expand the exact-origin boundary or
 prove static module ownership. During the observation window REA attaches one
-flattened CDP session per dedicated worker to observe its network traffic;
-attaching never pauses the worker, and the sessions are released with the page
-session when the capture ends. Browsers without flattened worker attachment
-report worker network activity as attach-limited instead of recording silent
-zero counts.
+flattened CDP session per dedicated worker to observe its network traffic, and
+each admitted worker session subscribes to its own worker children the same
+way, so nested dedicated workers are observed recursively; attaching never
+pauses a worker, and the sessions are released with the page session when the
+capture ends. Workers started after the capture stops admitting worker
+sessions, and sessions whose enabling does not settle within the capture's
+bounded worker wait, are reported as attach-limited rather than recorded as
+silent zero counts. Browsers without flattened worker attachment report worker
+network activity as attach-limited the same way.
 
 ## Completeness and limits
 

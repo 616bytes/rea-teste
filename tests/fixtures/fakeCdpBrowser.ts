@@ -19,6 +19,8 @@ export type { FakeCdpBrowser, FakeOptions } from "./fakeCdpBrowserTypes.js";
 export {
   DEDICATED_WORKER_SESSION_ID,
   DEDICATED_WORKER_TARGET_ID,
+  NESTED_WORKER_SESSION_ID,
+  NESTED_WORKER_TARGET_ID,
   WORKER_SCRIPT_REQUEST_ID,
 } from "./fakeCdpBrowserEvents.js";
 /** Start a real HTTP/WebSocket fake at the same seams as a user-owned browser. */

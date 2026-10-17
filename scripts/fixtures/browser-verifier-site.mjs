@@ -135,6 +135,12 @@ export async function startBrowserVerifierSite() {
       response.end(dedicatedWorkerScript(port));
       return;
     }
+    if (request.url?.startsWith("/nested-worker.js") === true) {
+      response.setHeader("content-type", "text/javascript");
+      response.setHeader("cache-control", "no-store");
+      response.end(nestedWorkerScript());
+      return;
+    }
     if (request.url?.startsWith("/worker-api") === true) {
       response.setHeader("content-type", "application/json");
       response.setHeader("cache-control", "no-store");
@@ -268,10 +274,20 @@ const browserScript = (port) => `
 `;
 
 const dedicatedWorkerScript = (port) => `
+  // A dedicated worker starting another worker exercises nested worker
+  // attachment; page-session auto-attach alone never reaches this child.
+  const nestedWorker = new Worker("/nested-worker.js");
   const observe = () =>
     fetch("/worker-api?token=worker-network-secret-value", { cache: "no-store" })
       .then((response) => postMessage(\`worker-fetch-\${response.status}\`))
       .catch(() => postMessage("worker-fetch-failed"));
+  observe();
+  setInterval(observe, 200);
+`;
+
+const nestedWorkerScript = () => `
+  const observe = () =>
+    fetch("/worker-api?token=nested-worker-network-secret-value", { cache: "no-store" }).catch(() => {});
   observe();
   setInterval(observe, 200);
 `;

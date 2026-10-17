@@ -6,6 +6,8 @@ import { inspectWebPageInputSchema } from "../../../src/domain/browserObservatio
 import {
   DEDICATED_WORKER_SESSION_ID,
   DEDICATED_WORKER_TARGET_ID,
+  NESTED_WORKER_SESSION_ID,
+  NESTED_WORKER_TARGET_ID,
   WORKER_SCRIPT_REQUEST_ID,
   startFakeCdpBrowser,
 } from "../../fixtures/fakeCdpBrowser.js";
@@ -28,6 +30,17 @@ const waitForCommand = async (
   matches: (command: FakeCdpCommand) => boolean,
 ): Promise<void> => {
   while (!browser.commands.some(matches))
+    await new Promise((resolve) => setTimeout(resolve, 5));
+};
+
+const waitForFrameTreeReads = async (
+  browser: FakeBrowser,
+  count: number,
+): Promise<void> => {
+  while (
+    browser.commands.filter((command) => command.method === "Page.getFrameTree")
+      .length < count
+  )
     await new Promise((resolve) => setTimeout(resolve, 5));
 };
 
@@ -434,6 +447,266 @@ it("keeps page capture working when worker auto-attach is unavailable", async ()
     expect(result.value.completeness.attach_limited_sections).toContain(
       "workers",
     );
+  } finally {
+    await browser.close();
+  }
+});
+
+it("records nested worker requests through the parent worker's session", async () => {
+  const browser = await startFakeCdpBrowser({
+    nestedWorkerRequests: true,
+  });
+  try {
+    const result = await inspect(browser);
+    if (!result.ok) throw result.error;
+
+    // The worker started by the dedicated worker contributes its own
+    // attributed request instead of silently vanishing.
+    const nestedRequest = result.value.network.requests.find(
+      ({ request_id }) => request_id === "nested-worker-request-1",
+    );
+    expect(nestedRequest).toMatchObject({
+      url: `${browser.allowedOrigin}/nested-worker-api?token=nested-worker-secret`,
+      worker_target_id: NESTED_WORKER_TARGET_ID,
+      status: 200,
+      mime_type: "application/json",
+    });
+    const directRequest = result.value.network.requests.find(
+      ({ request_id }) => request_id === "worker-request-1",
+    );
+    expect(directRequest?.worker_target_id).toBe(DEDICATED_WORKER_TARGET_ID);
+    expect(result.value.workers).toContainEqual(
+      expect.objectContaining({ target_id: NESTED_WORKER_TARGET_ID }),
+    );
+    // The parent worker session subscribes to its own children, and the
+    // nested session is observed and released like its parent.
+    expect(browser.commands).toContainEqual(
+      expect.objectContaining({
+        method: "Target.setAutoAttach",
+        sessionId: DEDICATED_WORKER_SESSION_ID,
+        params: expect.objectContaining({
+          autoAttach: true,
+          waitForDebuggerOnStart: false,
+          flatten: true,
+        }),
+      }),
+    );
+    expect(
+      browser.commands.filter(
+        ({ method, sessionId }) =>
+          method === "Network.enable" && sessionId === NESTED_WORKER_SESSION_ID,
+      ),
+    ).toHaveLength(1);
+    expect(browser.commands).toContainEqual(
+      expect.objectContaining({
+        method: "Network.disable",
+        sessionId: NESTED_WORKER_SESSION_ID,
+      }),
+    );
+    expect(browser.commands).toContainEqual(
+      expect.objectContaining({
+        method: "Target.detachFromTarget",
+        params: { sessionId: NESTED_WORKER_SESSION_ID },
+      }),
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+it("bounds the worker settle when the page keeps starting workers", async () => {
+  const churnSessionId = (index: number) => `worker-churn-${String(index)}`;
+  const browser = await startFakeCdpBrowser({
+    dedicatedWorkerRequests: true,
+    hangOnCommand: (command) =>
+      command.method === "Network.enable" &&
+      (command.sessionId === DEDICATED_WORKER_SESSION_ID ||
+        (command.sessionId?.startsWith("worker-churn-") ?? false)),
+  });
+  try {
+    const startedAt = Date.now();
+    const pending = inspect(browser);
+    // Each newly admitted worker extends the pending enable drain while the
+    // earlier enables stay unanswered.
+    for (let index = 0; index < 8; index += 1) {
+      await waitForCommand(
+        browser,
+        (command) =>
+          command.method === "Network.enable" &&
+          command.sessionId ===
+            (index === 0 ? DEDICATED_WORKER_SESSION_ID : churnSessionId(index)),
+      );
+      browser.emitEvent({
+        method: "Target.attachedToTarget",
+        sessionId: "session-1",
+        params: {
+          sessionId: churnSessionId(index + 1),
+          targetInfo: {
+            targetId: `worker-churn-target-${String(index + 1)}`,
+            type: "worker",
+            title: `Churn worker ${String(index + 1)}`,
+            url: `${browser.allowedOrigin}/churn-worker.js`,
+            attached: true,
+          },
+          waitingForDebugger: false,
+        },
+      });
+    }
+    const result = await pending;
+    const elapsedMs = Date.now() - startedAt;
+    if (!result.ok) throw result.error;
+    // The capture still returns its page evidence within a bounded wait.
+    expect(elapsedMs).toBeLessThan(10_000);
+    expect(
+      result.value.network.requests.find(
+        ({ request_id }) => request_id === "request-1",
+      ),
+    ).toBeDefined();
+    expect(result.value.completeness.attach_limited_sections).toContain(
+      "workers",
+    );
+    expect(result.value.limitations).toContainEqual(
+      expect.stringContaining("did not settle"),
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+it("reports workers started after the admission cutoff as unobserved", async () => {
+  const browser = await startFakeCdpBrowser({
+    commandEvents: (command, origin) =>
+      command.method === "Target.getTargets"
+        ? [
+            {
+              method: "Target.attachedToTarget",
+              sessionId: "session-1",
+              params: {
+                sessionId: "late-worker-session",
+                targetInfo: {
+                  targetId: "late-worker-attached-1",
+                  type: "worker",
+                  title: "Late dedicated worker",
+                  url: `${origin}/late-worker.js`,
+                  attached: true,
+                },
+                waitingForDebugger: false,
+              },
+            },
+          ]
+        : undefined,
+    hangOnCommand: (command) =>
+      command.method === "Network.enable" &&
+      command.sessionId === "late-worker-session",
+  });
+  try {
+    const pending = inspect(browser);
+    // The late worker's unanswered enable parks the final settle after the
+    // capture stopped admitting; a worker arriving then is counted, not
+    // observed.
+    await waitForCommand(
+      browser,
+      (command) =>
+        command.method === "Network.enable" &&
+        command.sessionId === "late-worker-session",
+    );
+    await waitForFrameTreeReads(browser, 3);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    browser.emitEvent({
+      method: "Target.attachedToTarget",
+      sessionId: "session-1",
+      params: {
+        sessionId: "worker-after-cutoff",
+        targetInfo: {
+          targetId: "worker-after-cutoff-target",
+          type: "worker",
+          title: "Worker after cutoff",
+          url: `${browser.allowedOrigin}/after-cutoff-worker.js`,
+          attached: true,
+        },
+        waitingForDebugger: false,
+      },
+    });
+    const result = await pending;
+    if (!result.ok) throw result.error;
+    expect(
+      browser.commands.some(
+        ({ method, sessionId }) =>
+          method === "Network.enable" && sessionId === "worker-after-cutoff",
+      ),
+    ).toBe(false);
+    expect(result.value.limitations).toContainEqual(
+      expect.stringContaining("stopped admitting worker sessions"),
+    );
+    expect(result.value.completeness.attach_limited_sections).toContain(
+      "workers",
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+it("fails the inspection when the page navigates during the final worker settle", async () => {
+  const browser = await startFakeCdpBrowser({
+    commandEvents: (command, origin) =>
+      command.method === "Target.getTargets"
+        ? [
+            {
+              method: "Target.attachedToTarget",
+              sessionId: "session-1",
+              params: {
+                sessionId: "late-worker-session",
+                targetInfo: {
+                  targetId: "late-worker-attached-1",
+                  type: "worker",
+                  title: "Late dedicated worker",
+                  url: `${origin}/late-worker.js`,
+                  attached: true,
+                },
+                waitingForDebugger: false,
+              },
+            },
+          ]
+        : undefined,
+    hangOnCommand: (command) =>
+      command.method === "Network.enable" &&
+      command.sessionId === "late-worker-session",
+  });
+  try {
+    const pending = inspect(browser);
+    await waitForCommand(
+      browser,
+      (command) =>
+        command.method === "Network.enable" &&
+        command.sessionId === "late-worker-session",
+    );
+    // The late enable keeps the final settle open after the page checks have
+    // already passed; park there before navigating the main frame.
+    await waitForFrameTreeReads(browser, 3);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    browser.emitEvent({
+      method: "Page.frameNavigated",
+      sessionId: "session-1",
+      params: {
+        frame: {
+          id: "frame-main",
+          loaderId: "loader-during-settle",
+          url: `${browser.allowedOrigin}/moved-during-settle`,
+        },
+      },
+    });
+    browser.emitEvent({
+      method: "Target.detachedFromTarget",
+      sessionId: "session-1",
+      params: {
+        sessionId: "late-worker-session",
+        targetId: "late-worker-attached-1",
+      },
+    });
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({ reason: "target_changed" });
   } finally {
     await browser.close();
   }

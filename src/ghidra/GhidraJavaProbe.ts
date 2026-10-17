@@ -14,6 +14,7 @@ import {
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
+import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 import { constants, accessSync, statSync } from "node:fs";
 import { posix, win32 } from "node:path";
@@ -138,6 +139,44 @@ export const probeGhidraJava = async (
   }
 };
 
+/**
+ * Prepare ownership inspection before the probe deadline starts. Native
+ * preparation has its own bounded compiler lifecycle, and a cold Swift SDK
+ * cache can take longer than the five-second probe. Failures keep the shapes
+ * runOwnedCommand reports for preparation inside its deadline.
+ */
+const prepareOwnershipBeforeDeadline = async (
+  signal: AbortSignal | undefined,
+): Promise<void> => {
+  try {
+    await prepareProcessOwnershipInspection(signal);
+  } catch (cause: unknown) {
+    // A caller's raw abort reason remains opaque even if it is a typed error.
+    const preparationFailure =
+      cause instanceof DarwinProcessOwnershipInspectionError &&
+      !(signal?.aborted === true && cause === signal.reason)
+        ? cause
+        : undefined;
+    if (
+      preparationFailure !== undefined &&
+      preparationFailure.cancellation === undefined
+    )
+      throw preparationFailure;
+    if (signal?.aborted !== true) throw cause;
+    throw new OwnedCommandFailure(
+      "cancelled",
+      "Command cancelled during ownership preparation.",
+      null,
+      null,
+      {
+        cause,
+        cancellation: { reason: signal.reason },
+        ...(preparationFailure === undefined ? {} : { preparationFailure }),
+      },
+    );
+  }
+};
+
 /** Own a bounded prerequisite process, its interpretation, and exact cleanup retries. */
 const observeGhidraJava = async (
   command: string,
@@ -150,6 +189,7 @@ const observeGhidraJava = async (
     | Result<GhidraJavaObservation, GhidraJavaProbeFailure>
     | undefined;
   try {
+    await prepareOwnershipBeforeDeadline(options.signal);
     await runOwnedCommand(
       {
         command,

@@ -2,6 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { DOCTOR_PROVIDER_IDS } from "../../src/application/DoctorProviderIds.js";
 import { PRODUCT_IDENTITY } from "../../src/identity.js";
 
 const jsonExamples = (content: string): unknown[] =>
@@ -84,13 +85,6 @@ describe("onboarding documentation product facts", () => {
 
 describe("provider documentation", () => {
   it("lists every ID accepted by `doctor --provider`", async () => {
-    const source = await readFile(
-      resolve("src/application/DoctorProviderIds.ts"),
-      "utf8",
-    );
-    const providerIds = [...source.matchAll(/^[ \t]*"([a-z0-9-]+)",?$/gmu)].map(
-      (match) => match[1] ?? "",
-    );
     const cliGuide = await readFile(resolve("docs/cli.md"), "utf8");
     const providerParagraph = cliGuide
       .split(/\n[ \t]*\n/u)
@@ -98,10 +92,10 @@ describe("provider documentation", () => {
         paragraph.includes("rea doctor --provider ID --json"),
       );
 
-    expect(providerIds).not.toHaveLength(0);
+    expect(DOCTOR_PROVIDER_IDS).not.toHaveLength(0);
     expect(providerParagraph).toBeDefined();
     const words = providerParagraph?.toLowerCase().match(/[a-z0-9-]+/gu) ?? [];
-    for (const providerId of providerIds)
+    for (const providerId of DOCTOR_PROVIDER_IDS)
       expect(words, "documented provider ID: " + providerId).toContain(
         providerId,
       );

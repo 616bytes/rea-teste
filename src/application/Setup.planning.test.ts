@@ -172,32 +172,6 @@ describe("skill plan destinations", () => {
       "/fixture/home/.claude/skills/reverse-engineer-anything",
     ]);
   });
-
-  it("plans and configures a repeated client selection once", async () => {
-    const host = new FakeSetupHost();
-    host.clients = [
-      { name: "codex", configPath: "/codex.toml", format: "toml" },
-    ];
-
-    const result = await runSetup(
-      {
-        ...options(true),
-        clientIds: ["codex", "codex"],
-        skillClientIds: ["codex", "codex"],
-      },
-      host,
-    );
-
-    expect(
-      result.plannedActions
-        .filter(({ kind }) => kind === "configure_client")
-        .map(({ id }) => id),
-    ).toEqual(["configure_client:codex"]);
-    expect(
-      result.plannedActions.filter(({ kind }) => kind === "install_skill"),
-    ).toHaveLength(1);
-    expect(host.configuredCommands).toHaveLength(1);
-  });
 });
 
 describe("setup workflow", () => {

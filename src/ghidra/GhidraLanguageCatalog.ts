@@ -81,7 +81,16 @@ export const parseGhidraLanguageDefinitions = (
 ): readonly GhidraLanguageDefinition[] => {
   const definitions: GhidraLanguageDefinition[] = [];
   const document = new DOMParser({
-    onError: onWarningStopParsing,
+    onError: (level, message) => {
+      // U+FFFD is a legal XML character. The catalog's fatal UTF-8 decoder
+      // already rejects invalid bytes; this warning alone is not malformed XML.
+      if (
+        level === "warning" &&
+        message.startsWith("Unicode replacement character detected")
+      )
+        return;
+      onWarningStopParsing();
+    },
   }).parseFromString(text, "application/xml");
   const root = document.documentElement;
   if (root?.tagName !== "language_definitions")
@@ -167,7 +176,9 @@ export const readGhidraLanguageCatalog = async (
       // XML 1.0 section 4.3.3: a leading UTF-8 BOM is an encoding signature,
       // not document content; TextDecoder consumes it, Buffer#toString does not.
       definitions.push(
-        ...parseGhidraLanguageDefinitions(new TextDecoder().decode(bytes)),
+        ...parseGhidraLanguageDefinitions(
+          new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+        ),
       );
     }
   }

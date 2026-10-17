@@ -3,20 +3,25 @@ import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { access, chmod, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { PassThrough } from "node:stream";
-import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import pino from "pino";
 import type { Logger } from "pino";
 import type { ProgressUpdate } from "../../../../src/application/ProgressReporter.js";
 
-import { ok } from "../../../../src/domain/result.js";
+import { err, ok } from "../../../../src/domain/result.js";
+import * as GhidraTransport from "../../../../src/ghidra/GhidraTransport.js";
 import { GhidraClient } from "../../../../src/ghidra/GhidraClient.js";
+import { ProviderRunLineage } from "../../../../src/process/ProviderRunLineage.js";
+import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { GHIDRA_PROCESS_DIAGNOSTIC_BYTES } from "../../../../src/ghidra/GhidraDiagnostics.js";
-import { GhidraHeadlessLauncher } from "../../../../src/ghidra/GhidraLauncher.js";
+import {
+  GhidraHeadlessLauncher,
+  GhidraLaunchError,
+} from "../../../../src/ghidra/GhidraLauncher.js";
 import type { GhidraDiagnostic } from "../../../../src/ghidra/GhidraClientTypes.js";
 import type {
   GhidraLaunchSession,
@@ -30,10 +35,10 @@ import {
 } from "../../../../src/ghidra/GhidraSessionValues.js";
 import { waitForExit as waitForChildExit } from "../../../support/process/processFixture.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-
-const fixturePath = fileURLToPath(
-  new URL("../../../fixtures/fakeGhidra.mjs", import.meta.url),
-);
+import {
+  GhidraFixtureLauncher as FixtureLauncher,
+  ghidraFixturePath as fixturePath,
+} from "./ghidraClient.fixture.js";
 
 const PROFILE_DIGEST = "a".repeat(64);
 const PROVIDER_VERSION = "12.1.4";
@@ -42,84 +47,6 @@ const TARGET_SHA256 = createHash("sha256")
   .digest("hex");
 const HOST_TRANSPORT: GhidraTransportKind =
   process.platform === "win32" ? "authenticated-loopback-tcp" : "unix-socket";
-
-type FixtureMode =
-  | "reject_first_connection"
-  | "reject_all_connections"
-  | "success"
-  | "fragmented"
-  | "oversized_result"
-  | "wrong_identity"
-  | "malformed"
-  | "contradictory"
-  | "future_id"
-  | "analysis_timeout"
-  | "remote_error"
-  | "shutdown_error"
-  | "invalid_shutdown_ack"
-  | "hang_after_start"
-  | "hang_tools"
-  | "exit_tools"
-  | "silent"
-  | "exit"
-  | "old_oom_then_malformed"
-  | "diagnostic_output";
-
-class FixtureLauncher implements GhidraLauncher {
-  #notifyStarted: ((child: ChildProcess) => void) | undefined;
-  readonly started = new Promise<ChildProcess>((resolve) => {
-    this.#notifyStarted = resolve;
-  });
-  readonly runtimeRoots: string[] = [];
-  readonly endpointPaths: string[] = [];
-  readonly tokens: string[] = [];
-  readonly processes: ChildProcess[] = [];
-  readonly requests: string[] = [];
-
-  constructor(readonly mode: FixtureMode = "success") {}
-
-  async launch(session: GhidraLaunchSession) {
-    this.runtimeRoots.push(session.runtimeRoot);
-    this.endpointPaths.push(session.endpointPath);
-    this.tokens.push(session.token);
-    const projectRoot = join(session.runtimeRoot, "project");
-    await mkdir(projectRoot, { recursive: true });
-    const process_ = spawn(process.execPath, [fixturePath], {
-      stdio: ["ignore", "pipe", "pipe", "ipc"],
-      env: {
-        ...process.env,
-        REA_GHIDRA_FIXTURE_CONFIG: JSON.stringify({
-          endpointPath: session.endpointPath,
-          token: session.token,
-          runId: session.runId,
-          providerVersion: session.providerVersion,
-          profileDigest: session.profileDigest,
-          targetSha256: session.targetSha256,
-          transport: session.transport,
-          mode: this.mode,
-        }),
-      },
-    });
-    process_.on("message", (value: unknown) => {
-      if (
-        typeof value === "object" &&
-        value !== null &&
-        "method" in value &&
-        typeof value.method === "string"
-      )
-        this.requests.push(value.method);
-    });
-    this.processes.push(process_);
-    process_.once("spawn", () => this.#notifyStarted?.(process_));
-    return ok({
-      process: process_,
-      ownsProcessLifetime: true as const,
-      projectRoot,
-      ghidraLogPath: join(session.runtimeRoot, "ghidra.log"),
-      scriptLogPath: join(session.runtimeRoot, "script.log"),
-    });
-  }
-}
 
 const preExitedProcessLauncher = (options: {
   readonly output: string;
@@ -560,49 +487,374 @@ describe("GhidraClient", () => {
   });
 });
 
-describe("GhidraClient startup lifecycle", () => {
-  it("applies one startup deadline and removes the private runtime", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    const launcher = new FixtureLauncher("silent");
-    const client = clientFor(launcher, { startupTimeoutMs: 30 });
-
-    const pending = client.start();
-    const child = await launcher.started;
-    await vi.advanceTimersByTimeAsync(30);
-    const result = await vi.waitFor(() => pending, { timeout: 10_000 });
-    vi.useRealTimers();
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: { kind: "timeout", timeoutMs: 30 },
+it("reports owner closure to live startup callers without cancelling their signals", async () => {
+  let entered: (() => void) | undefined;
+  let release: (() => void) | undefined;
+  const pending = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const original = ProviderRunLineage.prototype.observe;
+  const observe = vi
+    .spyOn(ProviderRunLineage.prototype, "observe")
+    .mockImplementationOnce(async function (this: ProviderRunLineage, launch) {
+      entered?.();
+      await gate;
+      await original.call(this, launch);
     });
-    await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+  const client = clientFor(new FixtureLauncher(), {
+    startupTimeoutMs: 10_000,
+  });
+  const controllers = [new AbortController(), new AbortController()];
+  const waits = controllers.map(({ signal }) => client.start(signal));
+  try {
+    await pending;
+    const closing = client.close();
+    release?.();
+    for (const wait of waits)
+      await expect(wait).resolves.toMatchObject({
+        ok: false,
+        error: {
+          kind: "process",
+          message: "Ghidra session closed during startup",
+        },
+      });
+    await expect(closing).resolves.toEqual({ ok: true, value: null });
+    expect(controllers.every(({ signal }) => !signal.aborted)).toBe(true);
+    expect(client.isReady()).toBe(false);
+  } finally {
+    release?.();
     await client.close();
-    await expect(waitForExit(child)).resolves.toBe(true);
+    observe.mockRestore();
+  }
+});
+
+it.skipIf(process.platform === "win32")(
+  "retains a failed socket-root cleanup owner and the original startup error",
+  async () => {
+    const parent = join(
+      await createTestTempDirectory("rea-ghidra-socket-retry-"),
+      "long-".repeat(20),
+    );
+    await mkdir(parent);
+    const roots = new Set<PrivateRuntimeRoot>();
+    const originalCreate = PrivateRuntimeRoot.create;
+    const originalClose = PrivateRuntimeRoot.prototype.close;
+    let allowCleanup = false;
+    const create = vi
+      .spyOn(PrivateRuntimeRoot, "create")
+      .mockImplementation(async (options) => {
+        const root = await originalCreate.call(
+          PrivateRuntimeRoot,
+          options?.prefix === "rea-ghidra-" ? { ...options, parent } : options,
+        );
+        roots.add(root);
+        return root;
+      });
+    const close = vi
+      .spyOn(PrivateRuntimeRoot.prototype, "close")
+      .mockImplementation(async function (this: PrivateRuntimeRoot) {
+        if (
+          !allowCleanup &&
+          basename(this.path).startsWith("rea-ghidra-socket-")
+        )
+          throw new Error("Socket root cleanup denied");
+        await originalClose.call(this);
+      });
+    const launcher = new FixtureLauncher();
+    const controller = new AbortController();
+    const client = clientFor({
+      async launch(session) {
+        const launched = await launcher.launch(session);
+        if (launcher.processes.length === 1) controller.abort();
+        return launched;
+      },
+    });
+    try {
+      const first = await client.start(controller.signal);
+      expect(first).toMatchObject({
+        ok: false,
+        error: {
+          kind: "cancelled",
+          cleanupFailure: { cleanupIncomplete: true },
+        },
+      });
+      if (first.ok) throw new Error("Expected retained cleanup");
+      const socketRoot = [...roots].find(({ path }) =>
+        basename(path).startsWith("rea-ghidra-socket-"),
+      );
+      if (socketRoot === undefined)
+        throw new Error("Expected a separate socket root");
+      await expect(
+        access(launcher.runtimeRoots[0] ?? ""),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(socketRoot.path)).resolves.toBeUndefined();
+      const retry = await client.start();
+      if (retry.ok) throw new Error("Restart lost the retained socket root");
+      expect(retry.error).toBe(first.error);
+      expect(launcher.processes).toHaveLength(1);
+      expect(client.operationHealthSnapshot()).toMatchObject({
+        state: "unknown",
+        retryAction: "unknown",
+      });
+      allowCleanup = true;
+      await expect(client.close()).resolves.toEqual({
+        ok: true,
+        value: null,
+      });
+      await expect(access(socketRoot.path)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(client.start()).resolves.toMatchObject({ ok: true });
+      expect(launcher.processes).toHaveLength(2);
+    } finally {
+      allowCleanup = true;
+      await client.close();
+      for (const root of roots) await originalClose.call(root);
+      create.mockRestore();
+      close.mockRestore();
+    }
+  },
+);
+
+it.each([0, 1])(
+  "cancels startup waiter %s without interrupting its peer",
+  async (cancelledIndex) => {
+    let entered: (() => void) | undefined;
+    let release: (() => void) | undefined;
+    const launchPending = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const launchGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const launcher = new FixtureLauncher();
+    const client = clientFor(
+      {
+        async launch(session) {
+          entered?.();
+          await launchGate;
+          return launcher.launch(session);
+        },
+      },
+      { startupTimeoutMs: 10_000 },
+    );
+    const controllers = [new AbortController(), new AbortController()];
+    const waits = controllers.map(({ signal }) => client.start(signal));
+    try {
+      await launchPending;
+      let cancelled: Awaited<ReturnType<GhidraClient["start"]>> | undefined;
+      void waits[cancelledIndex]?.then((result) => {
+        cancelled = result;
+      });
+      controllers[cancelledIndex]?.abort();
+      await vi.waitFor(() =>
+        expect(cancelled).toMatchObject({
+          ok: false,
+          error: { kind: "cancelled" },
+        }),
+      );
+      expect(launcher.processes).toHaveLength(0);
+      release?.();
+      await expect(waits[1 - cancelledIndex]).resolves.toMatchObject({
+        ok: true,
+      });
+      expect(launcher.processes).toHaveLength(1);
+      expect(client.isReady()).toBe(true);
+    } finally {
+      release?.();
+      await Promise.all(waits);
+    }
+  },
+);
+
+it("retains startup failure and cleans up when lineage observation rejects", async () => {
+  const cause = new TypeError("Lineage reader rejected");
+  const observe = vi.spyOn(ProviderRunLineage.prototype, "observe");
+  onTestFinished(() => observe.mockRestore());
+  observe.mockRejectedValueOnce(cause);
+  const launcher = new FixtureLauncher();
+  const client = clientFor(launcher);
+
+  const result = await client.start();
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      kind: "start",
+      message: "Ghidra process lineage observation failed",
+    },
+  });
+  if (result.ok) throw new Error("Expected lineage observation failure");
+  expect(result.error.cause).toBe(cause);
+  const child = launcher.processes[0];
+  if (child === undefined) throw new Error("fixture child was not launched");
+  await expect(waitForChildExit(child, 5_000)).resolves.toBe(true);
+  await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect(client.isReady()).toBe(false);
+  await expect(client.start()).resolves.toMatchObject({ ok: true });
+  expect(launcher.processes).toHaveLength(2);
+});
+
+it("cleans up when the final waiter cancels during lineage observation", async () => {
+  let markObservationPending: (() => void) | undefined;
+  const observationPending = new Promise<void>((resolve) => {
+    markObservationPending = resolve;
+  });
+  let releaseObservation: (() => void) | undefined;
+  const observationGate = new Promise<void>((resolve) => {
+    releaseObservation = resolve;
+  });
+  const originalObserve = ProviderRunLineage.prototype.observe;
+  const observe = vi.spyOn(ProviderRunLineage.prototype, "observe");
+  onTestFinished(() => observe.mockRestore());
+  observe.mockImplementationOnce(async function (
+    this: ProviderRunLineage,
+    launch,
+  ) {
+    markObservationPending?.();
+    await observationGate;
+    return await originalObserve.call(this, launch);
   });
 
-  it("cancels startup promptly and leaves no project or process", async () => {
-    const launcher = new FixtureLauncher("silent");
-    const client = clientFor(launcher, { startupTimeoutMs: 10_000 });
-    const controller = new AbortController();
-    const pending = client.start(controller.signal);
-    const process_ = await launcher.started;
-    controller.abort();
+  const launcher = new FixtureLauncher();
+  const client = clientFor(launcher);
+  const controller = new AbortController();
+  const starting = client.start(controller.signal);
+  await observationPending;
+  const child = launcher.processes[0];
+  if (child === undefined) throw new Error("fixture child was not launched");
 
-    const result = await pending;
+  controller.abort();
+  releaseObservation?.();
 
-    expect(result).toMatchObject({ ok: false, error: { kind: "cancelled" } });
-    await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
-      code: "ENOENT",
+  await expect(starting).resolves.toMatchObject({
+    ok: false,
+    error: { kind: "cancelled" },
+  });
+  await expect(waitForChildExit(child, 5_000)).resolves.toBe(true);
+  await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  await expect(client.callToolIfReady("list_strings", {})).resolves.toBe(
+    undefined,
+  );
+
+  await expect(client.start()).resolves.toMatchObject({ ok: true });
+  expect(launcher.processes).toHaveLength(2);
+});
+
+it("cancels a retry waiter without taking ownership of startup cleanup", async () => {
+  let markLaunchPending: (() => void) | undefined;
+  const launchPending = new Promise<void>((resolve) => {
+    markLaunchPending = resolve;
+  });
+  let releaseLaunch: (() => void) | undefined;
+  const launchGate = new Promise<void>((resolve) => {
+    releaseLaunch = resolve;
+  });
+  let markStartupAborted: (() => void) | undefined;
+  const startupAborted = new Promise<void>((resolve) => {
+    markStartupAborted = resolve;
+  });
+  const launcher = new FixtureLauncher();
+  const client = clientFor({
+    async launch(session, options) {
+      options?.signal?.addEventListener("abort", () => markStartupAborted?.(), {
+        once: true,
+      });
+      markLaunchPending?.();
+      await launchGate;
+      return launcher.launch(session);
+    },
+  });
+  const firstController = new AbortController();
+  const first = client.start(firstController.signal);
+  let retry: ReturnType<typeof client.start> | undefined;
+  try {
+    await launchPending;
+    firstController.abort();
+    // The retry starts after the shared owner has observed the final departure.
+    await startupAborted;
+
+    const retryController = new AbortController();
+    retry = client.start(retryController.signal);
+    retryController.abort();
+    await expect(retry).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "cancelled" },
     });
-    await client.close();
-    await expect(waitForExit(process_)).resolves.toBe(true);
+  } finally {
+    releaseLaunch?.();
+    await Promise.allSettled([first, retry]);
+  }
+  await expect(first).resolves.toMatchObject({
+    ok: false,
+    error: { kind: "cancelled" },
+  });
+  expect(launcher.processes).toHaveLength(1);
+  const child = launcher.processes[0];
+  if (child === undefined) throw new Error("fixture child was not launched");
+  await expect(waitForChildExit(child, 5_000)).resolves.toBe(true);
+  await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
+    code: "ENOENT",
   });
 });
 
+it("applies one startup deadline and removes the private runtime", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const launcher = new FixtureLauncher("silent");
+  const client = clientFor(launcher, { startupTimeoutMs: 30 });
+
+  const pending = client.start();
+  const child = await launcher.started;
+  await vi.advanceTimersByTimeAsync(30);
+  const result = await vi.waitFor(() => pending, { timeout: 10_000 });
+  vi.useRealTimers();
+
+  expect(result).toMatchObject({
+    ok: false,
+    error: { kind: "timeout", timeoutMs: 30 },
+  });
+  await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  await client.close();
+  await expect(waitForExit(child)).resolves.toBe(true);
+});
+
+it("cancels startup promptly and leaves no project or process", async () => {
+  const launcher = new FixtureLauncher("silent");
+  const client = clientFor(launcher, { startupTimeoutMs: 10_000 });
+  const controller = new AbortController();
+  const pending = client.start(controller.signal);
+  const process_ = await launcher.started;
+  controller.abort();
+
+  const result = await pending;
+
+  expect(result).toMatchObject({ ok: false, error: { kind: "cancelled" } });
+  await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  await client.close();
+  await expect(waitForExit(process_)).resolves.toBe(true);
+});
+
 describe("GhidraClient established requests", () => {
+  it("preserves an expired ping deadline through the request queue", async () => {
+    const client = clientFor(new FixtureLauncher());
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+
+    await expect(client.ping({ timeoutMs: 0 })).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "timeout", timeoutMs: 0 },
+    });
+  });
+
   it("fails an established function request when the provider process exits", async () => {
     const client = clientFor(new FixtureLauncher("exit_tools"));
     await expect(client.start()).resolves.toMatchObject({ ok: true });
@@ -1010,7 +1262,7 @@ describe("GhidraClient process output drain before startup failure", () => {
     });
   });
 
-  it("keeps caller cancellation primary when cancellation wins during output drain", async () => {
+  it("preserves an observed process exit when cancellation interrupts diagnostic drain", async () => {
     const { launcher, finishOutput } = preExitedProcessLauncher({
       output: oomeOutput,
       closeOutput: true,
@@ -1031,7 +1283,11 @@ describe("GhidraClient process output drain before startup failure", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error.kind).toBe("cancelled");
+    expect(result.error.kind).toBe("process");
+    expect(result.error.diagnostics).toMatchObject({
+      exit_code: 73,
+      output_incomplete: true,
+    });
   });
 });
 
@@ -1233,6 +1489,7 @@ describe.skipIf(process.platform === "win32")(
           environment: process.env,
           javaHome: join(root, "jdk"),
           analyzeHeadlessPath: "/unused/ghidra/support/analyzeHeadless",
+          configurationDirectoryName: "ghidra_12.1.4_PUBLIC",
           bridgeScriptPath: "/unused/rea/ReaGhidraBridge.java",
           spawnProcess: async ({ runId }) => {
             const spawned = spawn(
@@ -1348,4 +1605,164 @@ it("bounds retries when loopback preauthentication keeps failing", async () => {
   await expect(waitForChildExit(launcher.processes[0]!, 5_000)).resolves.toBe(
     true,
   );
+});
+
+it.each([null, "caller stopped", new Error("caller stopped")])(
+  "preserves exact active and queued request cancellation reasons %j",
+  async (reason) => {
+    const launcher = new FixtureLauncher("hang_tools");
+    const client = clientFor(launcher);
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+    const activeController = new AbortController();
+    const active = client.callTool(
+      "procedure_pseudo_code",
+      { document: null, procedure: "fixture_main" },
+      { signal: activeController.signal },
+    );
+    await vi.waitFor(() =>
+      expect(launcher.requests).toContain("procedure_pseudo_code"),
+    );
+    const queuedController = new AbortController();
+    const queued = client.callTool(
+      "procedure_info",
+      {},
+      { signal: queuedController.signal },
+    );
+    queuedController.abort(reason);
+    const queuedResult = await queued;
+    activeController.abort(reason);
+    const activeResult = await active;
+    for (const result of [queuedResult, activeResult]) {
+      if (result.ok) throw new Error("Expected request cancellation");
+      expect(result.error.kind).toBe("cancelled");
+      expect(result.error.cancellation?.reason).toBe(reason);
+    }
+    expect(await waitForExit(launcher.processes[0])).toBe(true);
+    await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
+
+it("preserves the observed protocol failure when cancellation interrupts request diagnostic drain", async () => {
+  const controller = new AbortController();
+  let abortScheduled = false;
+  const logger = pino(
+    {
+      level: "warn",
+      hooks: {
+        logMethod(args, method) {
+          const fields = args[0];
+          if (
+            typeof fields === "object" &&
+            fields !== null &&
+            "method" in fields &&
+            fields.method === "list_procedures" &&
+            !abortScheduled
+          ) {
+            abortScheduled = true;
+            setImmediate(() => controller.abort(null));
+          }
+          method.apply(this, args);
+        },
+      },
+    },
+    { write: () => {} },
+  );
+  const launcher = new FixtureLauncher("old_oom_then_malformed");
+  const client = clientFor(launcher, { logger });
+  await expect(client.start()).resolves.toMatchObject({ ok: true });
+  await expect(client.callTool("list_documents", {})).resolves.toMatchObject({
+    ok: true,
+  });
+  const result = await client.callTool(
+    "list_procedures",
+    {},
+    { signal: controller.signal },
+  );
+  expect(abortScheduled).toBe(true);
+  if (result.ok) throw new Error("Expected protocol failure");
+  expect(result.error.kind).toBe("protocol");
+  expect(result.error.diagnostics).toMatchObject({
+    failure_output: { complete: false },
+  });
+  expect(await waitForExit(launcher.processes[0])).toBe(true);
+  await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+it.each([null, "caller stopped", new Error("caller stopped")])(
+  "retains the exact reason during startup endpoint polling %j",
+  async (reason) => {
+    const observed = vi.spyOn(GhidraTransport, "observeGhidraEndpoint");
+    onTestFinished(() => observed.mockRestore());
+    const launcher = new FixtureLauncher("silent");
+    const client = clientFor(launcher, { startupTimeoutMs: 10000 });
+    const controller = new AbortController();
+    const pending = client.start(controller.signal);
+    await vi.waitFor(() => expect(observed).toHaveBeenCalled());
+    controller.abort(reason);
+    const result = await pending;
+    if (result.ok) throw new Error("Expected startup cancellation");
+    expect(result.error.kind).toBe("cancelled");
+    expect(result.error.cancellation?.reason).toBe(reason);
+    expect(await waitForExit(launcher.processes[0])).toBe(true);
+    await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
+
+it("preserves a handshake protocol error observed before the final startup caller cancels", async () => {
+  const controller = new AbortController();
+  let cancelled = false;
+  const logger = pino(
+    {
+      level: "warn",
+      hooks: {
+        logMethod(args, method) {
+          const fields = args[0];
+          if (
+            typeof fields === "object" &&
+            fields !== null &&
+            "method" in fields &&
+            fields.method === "ping" &&
+            !cancelled
+          ) {
+            cancelled = true;
+            controller.abort(null);
+          }
+          method.apply(this, args);
+        },
+      },
+    },
+    { write: () => {} },
+  );
+  const launcher = new FixtureLauncher("malformed");
+  const client = clientFor(launcher, { logger });
+  const result = await client.start(controller.signal);
+  expect(cancelled).toBe(true);
+  if (result.ok) throw new Error("Expected handshake protocol failure");
+  expect(result.error.kind).toBe("protocol");
+  expect(await waitForExit(launcher.processes[0])).toBe(true);
+  await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+it("redacts the transport credential when refreshing startup diagnostics", async () => {
+  let token = "";
+  const client = clientFor({
+    launch: async (session) => {
+      token = session.token;
+      return err(new GhidraLaunchError(`Launcher refused ${token}`));
+    },
+  });
+  const result = await client.start();
+  if (result.ok) throw new Error("Expected launcher refusal");
+  expect(token.length).toBeGreaterThan(0);
+  expect(result.error.message).toContain("[REDACTED]");
+  expect(result.error.message).not.toContain(token);
+  expect(JSON.stringify(result.error.diagnostics)).not.toContain(token);
 });

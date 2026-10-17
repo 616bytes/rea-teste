@@ -13,6 +13,7 @@ export const analysisErrorWithCleanupFailure = (
     cleanup instanceof ProviderAdapterError ? cleanup.providerId : "rea",
     operation,
     {
+      cleanupPrimary: primary,
       cause: new AggregateError(
         [primary, cleanup],
         "Analysis failed and cleanup remains incomplete.",
@@ -30,7 +31,7 @@ export const analysisErrorWithCleanupFailure = (
         reason: projected.message,
         resources: [
           ...new Set([
-            ...primary.cleanupResources,
+            ...(primary.cleanupIncomplete ? primary.cleanupResources : []),
             ...cleanup.cleanupResources,
           ]),
         ],

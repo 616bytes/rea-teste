@@ -12,6 +12,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { createIdaDiagnosticRedactor } from "./IdaDiagnosticRedactor.js";
 import { decodeIdaToolResult } from "./IdaMcpConnection.js";
+import { IDA_PROVIDER_IDENTITY } from "./IdaProviderCapabilities.js";
 import type { AnalysisOperation } from "../application/AnalysisProvider.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 
@@ -326,17 +327,14 @@ it("retains the session analysis profile when an operation fails after a complet
         content: [{ type: "text", text: "Decompiler failed" }],
       });
   };
-  const profile = createAnalysisProfile(
-    { id: "ida", name: "IDA Pro (via MCP)", version: "headless" },
-    {
-      mode: "headless",
-      protocol: "modern",
-      compatibility_profile: "database-supervisor",
-      database_revision: null,
-      cache_policy: "live",
-      registration_digest: "a".repeat(64),
-    },
-  );
+  const profile = createAnalysisProfile(IDA_PROVIDER_IDENTITY, {
+    mode: "headless",
+    protocol: "modern",
+    compatibility_profile: "database-supervisor",
+    database_revision: null,
+    cache_policy: "live",
+    registration_digest: "a".repeat(64),
+  });
   const client = new IdaSessionClient(
     {
       command: "fixture",

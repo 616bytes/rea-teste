@@ -27,6 +27,8 @@ import {
   NATIVE_UI_OUTPUT_WEIGHT,
 } from "./NativeUiOutputBudget.js";
 
+const NATIVE_UI_OBSERVATION_TIMEOUT_MS = 180_000;
+
 const helper = fileURLToPath(
   new URL("../../bridge/native/ReaNativeUI.swift", import.meta.url),
 );
@@ -102,8 +104,11 @@ const observeWithHelper = async (
       : [];
   const signal =
     options.signal === undefined
-      ? AbortSignal.timeout(180_000)
-      : AbortSignal.any([options.signal, AbortSignal.timeout(180_000)]);
+      ? AbortSignal.timeout(NATIVE_UI_OBSERVATION_TIMEOUT_MS)
+      : AbortSignal.any([
+          options.signal,
+          AbortSignal.timeout(NATIVE_UI_OBSERVATION_TIMEOUT_MS),
+        ]);
   const invoke = options.invoke;
   let launchTime: number | undefined;
   let outputBytes = 0;

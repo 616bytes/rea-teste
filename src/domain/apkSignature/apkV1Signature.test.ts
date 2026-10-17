@@ -11,7 +11,10 @@ import {
 /** A central-directory entry with no stored data. */
 const entry = (name: string): ApkV1Entry => ({
   name,
+  rawName: new TextEncoder().encode(name),
+  flags: 0,
   method: 0,
+  crc32: 0,
   compressedSize: 0,
   uncompressedSize: 0,
   localHeaderOffset: 0,
@@ -183,7 +186,9 @@ describe("APK v1 signature block locations", () => {
   it("keeps each record's data location for its signature block", () => {
     const record = cdRecord("META-INF/CERT.RSA");
     const view = new DataView(Uint8Array.from(record).buffer);
+    view.setUint16(8, 0x0808, true);
     view.setUint16(10, 8, true);
+    view.setUint32(16, 0xdeadbeef, true);
     view.setUint32(20, 70, true);
     view.setUint32(24, 90, true);
     view.setUint32(42, 1234, true);
@@ -197,7 +202,10 @@ describe("APK v1 signature block locations", () => {
     expect(result.ok && result.value).toEqual([
       {
         name: "META-INF/CERT.RSA",
+        rawName: new TextEncoder().encode("META-INF/CERT.RSA"),
+        flags: 0x0808,
         method: 8,
+        crc32: 0xdeadbeef,
         compressedSize: 70,
         uncompressedSize: 90,
         localHeaderOffset: 1234,
@@ -205,31 +213,122 @@ describe("APK v1 signature block locations", () => {
     ]);
   });
 
-  it("locates stored data through the local header, within the entry region", () => {
-    const local = new Uint8Array(30 + 3 + 4);
+  /** A local file header for `block`, then `extra` and the stored data. */
+  const localRecord = (
+    block: ApkV1Entry,
+    data: readonly number[],
+    override: {
+      readonly flags?: number;
+      readonly crc32?: number;
+      readonly compressedSize?: number;
+      readonly uncompressedSize?: number;
+      readonly name?: string;
+    } = {},
+  ): Uint8Array => {
+    const name =
+      override.name === undefined
+        ? block.rawName
+        : new TextEncoder().encode(override.name);
+    const local = new Uint8Array(30 + name.length + 3 + data.length);
     const view = new DataView(local.buffer);
     view.setUint32(0, 0x04034b50, true);
-    view.setUint16(26, 3, true);
-    local.set([9, 8, 7, 6], 33);
-    const block = { ...entry("META-INF/A.RSA"), compressedSize: 4 };
+    view.setUint16(6, override.flags ?? block.flags, true);
+    view.setUint32(14, override.crc32 ?? block.crc32, true);
+    view.setUint32(18, override.compressedSize ?? block.compressedSize, true);
+    view.setUint32(
+      22,
+      override.uncompressedSize ?? block.uncompressedSize,
+      true,
+    );
+    view.setUint16(26, name.length, true);
+    view.setUint16(28, 3, true);
+    local.set(name, 30);
+    local.set(data, 30 + name.length + 3);
+    return local;
+  };
+  const block: ApkV1Entry = {
+    ...entry("META-INF/A.RSA"),
+    crc32: 0x01020304,
+    compressedSize: 4,
+    uncompressedSize: 4,
+  };
+  const data = [9, 8, 7, 6];
+  const dataStart = 30 + block.rawName.length + 3;
+
+  it("locates stored data through the local header, within the entry region", () => {
+    const local = localRecord(block, data);
     const found = localEntryData(local, block, local.length);
-    expect(found.ok && [...found.value]).toEqual([9, 8, 7, 6]);
+    expect(found.ok && [...found.value]).toEqual(data);
     expect(localEntryData(local, block, local.length - 1)).toEqual({
       ok: false,
-      error: { detail: "entry data at byte 33 runs past the entries" },
+      error: {
+        detail: `entry data at byte ${String(dataStart)} runs past the entries`,
+      },
     });
     expect(
       localEntryData(local, { ...block, localHeaderOffset: 1 }, local.length),
     ).toMatchObject({ ok: false });
+  });
+
+  it("names Zip64 sizes as unread before any other check", () => {
+    const local = localRecord(block, data);
+    for (const field of ["compressedSize", "uncompressedSize"] as const)
+      expect(
+        localEntryData(local, { ...block, [field]: 0xffffffff }, local.length),
+      ).toEqual({
+        ok: false,
+        error: { detail: "Zip64 entry sizes are not read" },
+      });
+  });
+
+  it("leaves the data unknown when the local header disagrees with the central directory", () => {
+    const refusal = (local: Uint8Array, entry: ApkV1Entry = block) => {
+      const found = localEntryData(local, entry, local.length);
+      return found.ok ? null : found.error.detail;
+    };
+    expect(refusal(localRecord(block, data, { compressedSize: 5 }))).toBe(
+      "local header compressed size 5 differs from the central directory's 4",
+    );
+    expect(refusal(localRecord(block, data, { uncompressedSize: 3 }))).toBe(
+      "local header uncompressed size 3 differs from the central directory's 4",
+    );
+    expect(refusal(localRecord(block, data, { crc32: 7 }))).toBe(
+      "local header CRC-32 7 differs from the central directory's 16909060",
+    );
+    expect(refusal(localRecord(block, data, { name: "META-INF/A.XYZ" }))).toBe(
+      "local header name differs from the central directory's",
+    );
+    expect(refusal(localRecord(block, data, { name: "META-INF/A.RS" }))).toBe(
+      "local header name differs from the central directory's",
+    );
+    expect(refusal(localRecord(block, data, { flags: 0x8 }))).toBe(
+      "local header and central directory disagree on the data-descriptor flag",
+    );
+    // With a data descriptor on both sides the local sizes are not declared.
+    const described = { ...block, flags: 0x8 };
     expect(
-      localEntryData(
-        local,
-        { ...block, compressedSize: 0xffffffff },
-        local.length,
+      refusal(
+        localRecord(described, data, {
+          crc32: 0,
+          compressedSize: 0,
+          uncompressedSize: 0,
+        }),
+        described,
       ),
-    ).toEqual({
+    ).toBeNull();
+  });
+
+  it("does not read an encrypted entry", () => {
+    const encrypted = "entry is encrypted (general-purpose flag bit 0)";
+    const flagged = { ...block, flags: 0x1 };
+    expect(
+      localEntryData(localRecord(flagged, data), flagged, 64),
+    ).toMatchObject({ ok: false, error: { detail: encrypted } });
+    // Either header's flag is enough.
+    const local = localRecord(block, data, { flags: 0x1 });
+    expect(localEntryData(local, block, local.length)).toMatchObject({
       ok: false,
-      error: { detail: "Zip64 entry sizes are not read" },
+      error: { detail: encrypted },
     });
   });
 });

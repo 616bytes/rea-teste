@@ -62,12 +62,14 @@ export const decodeV1Signer = (
   });
   const { block } = entry;
   const limit = APK_SIGNATURE_LIMITS.v1BlockBytes;
+  // Locating reads no data, and names a Zip64 sentinel size as such rather
+  // than as a size over the bound.
+  const stored = localEntryData(bytes, block, entriesEnd);
+  if (!stored.ok) return fail(stored.error.detail);
   if (block.uncompressedSize > limit)
     return fail(
       `signature block declares ${String(block.uncompressedSize)} bytes, over the ${String(limit)}-byte bound`,
     );
-  const stored = localEntryData(bytes, block, entriesEnd);
-  if (!stored.ok) return fail(stored.error.detail);
   let data: Uint8Array;
   if (block.method === 0) data = stored.value;
   else if (block.method === 8) {

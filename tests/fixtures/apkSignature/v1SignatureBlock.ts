@@ -145,15 +145,22 @@ export const signedDataBlock = (options: {
     ),
   );
 
-/** A v1-signed archive: each entry stored or deflated as requested. */
+/**
+ * A v1-signed archive: each entry stored or deflated as requested. Local
+ * headers defer their sizes to a data descriptor unless `dataDescriptor` is
+ * false, as apksigner writes them.
+ */
 export const zipWith = async (
   entries: readonly {
     readonly name: string;
     readonly data: Uint8Array | string;
     readonly stored?: boolean;
   }[],
+  options: { readonly dataDescriptor?: boolean } = {},
 ): Promise<Uint8Array> => {
-  const writer = new ZipWriter(new Uint8ArrayWriter());
+  const writer = new ZipWriter(new Uint8ArrayWriter(), {
+    dataDescriptor: options.dataDescriptor ?? true,
+  });
   for (const entry of entries)
     await writer.add(
       entry.name,
@@ -266,4 +273,28 @@ export const v3SchemeValue = (
     lp(Buffer.concat(attributes)),
   ]);
   return Uint8Array.from(lp(lp(lp(signedData))));
+};
+
+/** The central-directory record and local header offsets of the entry `name`. */
+export const zipEntryOffsets = (
+  zip: Uint8Array,
+  name: string,
+): { readonly central: number; readonly local: number } => {
+  const bytes = Buffer.from(zip.buffer, zip.byteOffset, zip.byteLength);
+  const encoded = Buffer.from(name);
+  for (
+    let at = bytes.readUInt32LE(bytes.length - 22 + 16);
+    bytes.readUInt32LE(at) === 0x02014b50;
+    at +=
+      46 +
+      bytes.readUInt16LE(at + 28) +
+      bytes.readUInt16LE(at + 30) +
+      bytes.readUInt16LE(at + 32)
+  )
+    if (
+      bytes.readUInt16LE(at + 28) === encoded.length &&
+      bytes.subarray(at + 46, at + 46 + encoded.length).equals(encoded)
+    )
+      return { central: at, local: bytes.readUInt32LE(at + 42) };
+  throw new Error(`fixture ZIP has no entry ${name}`);
 };

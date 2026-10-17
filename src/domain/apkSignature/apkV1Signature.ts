@@ -77,8 +77,13 @@ const isV1SignatureName = (name: string): boolean =>
 /** A signing-relevant central-directory entry and where its data is stored. */
 export interface ApkV1Entry {
   readonly name: string;
+  /** The name exactly as the central directory stores it (a view, not a copy). */
+  readonly rawName: Uint8Array;
+  /** General-purpose bit flags (bit 0 encrypted, bit 3 data descriptor). */
+  readonly flags: number;
   /** ZIP compression method (0 stored, 8 deflate). */
   readonly method: number;
+  readonly crc32: number;
   readonly compressedSize: number;
   readonly uncompressedSize: number;
   readonly localHeaderOffset: number;
@@ -147,9 +152,8 @@ export const centralDirectoryV1SignatureEntries = (
         detail: "central-directory file name runs past the directory",
       });
     if (startsWithMetaInf(bytes, nameStart, nameLength)) {
-      const name = NAME_DECODER.decode(
-        bytes.subarray(nameStart, nameStart + nameLength),
-      );
+      const rawName = bytes.subarray(nameStart, nameStart + nameLength);
+      const name = NAME_DECODER.decode(rawName);
       if (isV1SignatureName(name)) {
         if (entries.length >= MAX_V1_SIGNATURE_ENTRIES)
           return err({
@@ -159,7 +163,10 @@ export const centralDirectoryV1SignatureEntries = (
           });
         entries.push({
           name,
+          rawName,
+          flags: dv.getUint16(at + 8, true),
           method: dv.getUint16(at + 10, true),
+          crc32: dv.getUint32(at + 16, true),
           compressedSize: dv.getUint32(at + 20, true),
           uncompressedSize: dv.getUint32(at + 24, true),
           localHeaderOffset: dv.getUint32(at + 42, true),
@@ -206,15 +213,24 @@ export const detectV1Signature = (
 const LOCAL_SIGNATURE = 0x04034b50;
 const LOCAL_FIXED_SIZE = 30;
 const ZIP64_SENTINEL = 0xffffffff;
+const FLAG_ENCRYPTED = 0x1;
+const FLAG_DATA_DESCRIPTOR = 0x8;
 
 /** Why an entry's stored bytes could not be located. */
 export type ApkLocalEntryError = { readonly detail: string };
+
+const sameBytes = (a: Uint8Array, b: Uint8Array): boolean =>
+  a.length === b.length && a.every((byte, i) => byte === b[i]);
 
 /**
  * Locate an entry's stored (possibly compressed) bytes through its local file
  * header. The data must lie within the archive's entry region (before the
  * signing block or central directory) and its declared sizes must be read
- * directly, so Zip64-sized entries are reported, not guessed.
+ * directly, so Zip64-sized entries are reported, not guessed. As apksig's
+ * LocalFileRecord does, the local header must agree with the central
+ * directory on the name, the data-descriptor flag and (without a data
+ * descriptor) the CRC-32 and both sizes: a disagreement leaves the entry's
+ * bytes unknown, never read from one side. An encrypted entry is not read.
  */
 export const localEntryData = (
   bytes: Uint8Array,
@@ -238,11 +254,37 @@ export const localEntryData = (
     return err({
       detail: `local header signature mismatch at byte ${String(at)}`,
     });
-  const start =
-    at +
-    LOCAL_FIXED_SIZE +
-    dv.getUint16(at + 26, true) +
-    dv.getUint16(at + 28, true);
+  const flags = dv.getUint16(at + 6, true);
+  if (((entry.flags | flags) & FLAG_ENCRYPTED) !== 0)
+    return err({ detail: "entry is encrypted (general-purpose flag bit 0)" });
+  const descriptor = (flags & FLAG_DATA_DESCRIPTOR) !== 0;
+  if (descriptor !== ((entry.flags & FLAG_DATA_DESCRIPTOR) !== 0))
+    return err({
+      detail:
+        "local header and central directory disagree on the data-descriptor flag",
+    });
+  if (!descriptor)
+    for (const [field, offset, expected] of [
+      ["CRC-32", 14, entry.crc32],
+      ["compressed size", 18, entry.compressedSize],
+      ["uncompressed size", 22, entry.uncompressedSize],
+    ] as const) {
+      const local = dv.getUint32(at + offset, true);
+      if (local !== expected)
+        return err({
+          detail: `local header ${field} ${String(local)} differs from the central directory's ${String(expected)}`,
+        });
+    }
+  const nameLength = dv.getUint16(at + 26, true);
+  const nameStart = at + LOCAL_FIXED_SIZE;
+  if (
+    nameStart + nameLength > limit ||
+    !sameBytes(bytes.subarray(nameStart, nameStart + nameLength), entry.rawName)
+  )
+    return err({
+      detail: "local header name differs from the central directory's",
+    });
+  const start = nameStart + nameLength + dv.getUint16(at + 28, true);
   const end = start + entry.compressedSize;
   if (end > limit)
     return err({

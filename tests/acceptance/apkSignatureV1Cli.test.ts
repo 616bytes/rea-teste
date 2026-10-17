@@ -20,6 +20,7 @@ import {
   v2SchemeValue,
   v3SchemeValue,
   withSigningBlock,
+  zipEntryOffsets,
   zipWith,
 } from "../fixtures/apkSignature/v1SignatureBlock.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -156,6 +157,84 @@ cliTest(
       await client.close();
       await server.close();
       await session.close();
+    }
+  },
+);
+
+cliTest(
+  "keeps a v1 signer unknown where apksig refuses its signature block entry",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apk-v1-entry-");
+    const block = "META-INF/CERT.EC";
+    // apksigner writes local headers with sizes, not data descriptors.
+    const signed = await zipWith(
+      [
+        { name: "classes.dex", data: "dex" },
+        { name: "META-INF/MANIFEST.MF", data: "Manifest-Version: 1.0" },
+        { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
+        { name: block, data: OPENSSL_BLOCK_ISSUER_SERIAL },
+      ],
+      { dataDescriptor: false },
+    );
+    const mutated = async (
+      name: string,
+      mutate: (bytes: Buffer, at: { central: number; local: number }) => void,
+    ) => {
+      const bytes = Buffer.from(signed);
+      mutate(bytes, zipEntryOffsets(signed, block));
+      const path = join(root, name);
+      await writeFile(path, bytes);
+      return path;
+    };
+    const cases = [
+      [await mutated("intact.apk", () => undefined), null],
+      [
+        await mutated("local-size-plus1.apk", (bytes, { local }) => {
+          bytes.writeUInt32LE(bytes.readUInt32LE(local + 18) + 1, local + 18);
+        }),
+        /^local header compressed size \d+ differs from the central directory's \d+$/,
+      ],
+      [
+        await mutated("local-name-differs.apk", (bytes, { local }) => {
+          bytes.write("META-INF/CERT.XY", local + 30, "latin1");
+        }),
+        "local header name differs from the central directory's",
+      ],
+      [
+        await mutated("encrypted-flag.apk", (bytes, { central, local }) => {
+          bytes.writeUInt16LE(bytes.readUInt16LE(central + 8) | 1, central + 8);
+          bytes.writeUInt16LE(bytes.readUInt16LE(local + 6) | 1, local + 6);
+        }),
+        "entry is encrypted (general-purpose flag bit 0)",
+      ],
+      [
+        await mutated("zip64-sentinel.apk", (bytes, { central }) => {
+          bytes.writeUInt32LE(0xffffffff, central + 24);
+        }),
+        "Zip64 entry sizes are not read",
+      ],
+    ] as const;
+    for (const [path, decodeError] of cases) {
+      const result = await cli.run({
+        arguments: ["inspect-apk-signature", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const report = toolContract("inspect_apk_signature").outputSchema.parse(
+        result.json,
+      ).normalized_result;
+      const [signer, ...rest] = report.schemes.v1.signers;
+      expect(rest, path).toEqual([]);
+      if (decodeError === null) {
+        expect(signer?.decode_error, path).toBeNull();
+        expect(signer?.certificate?.sha256_fingerprint, path).toBe(LEAF_SHA256);
+        continue;
+      }
+      // Unknown, not absent: the signer stays listed without a certificate.
+      expect(report.schemes.v1.present, path).toBe(true);
+      expect(signer?.certificate, path).toBeNull();
+      if (typeof decodeError === "string")
+        expect(signer?.decode_error, path).toBe(decodeError);
+      else expect(signer?.decode_error, path).toMatch(decodeError);
     }
   },
 );

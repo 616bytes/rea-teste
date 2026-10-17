@@ -437,6 +437,12 @@ export class ViteCacheProperties {
   ): boolean {
     return (
       write === latest ||
+      // Updates and compound assignments read their old LHS value before
+      // storing the result. Their own write cannot change that snapshot.
+      (t.isUpdateExpression(write.node) && write.node.argument === read) ||
+      (t.isAssignmentExpression(write.node) &&
+        write.node.operator !== "=" &&
+        write.node.left === read) ||
       semanticReadPrecedesWrite(read, write.node, this.state.parentsByNode) ||
       (latest !== undefined &&
         semanticWritePrecedesRead(

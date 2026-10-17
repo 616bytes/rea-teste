@@ -354,13 +354,21 @@ const loweredParameterDefault = (
 ): LoweredParameterDefault | undefined => {
   if (!t.isConditionalExpression(node)) return undefined;
   const { test } = node;
-  if (
-    !t.isLogicalExpression(test, { operator: "&&" }) ||
-    !t.isBinaryExpression(test.left, { operator: ">" }) ||
-    !isNamedMember(test.left.left, "arguments", "length") ||
-    !t.isNumericLiteral(test.left.right, { value: index }) ||
-    !isArgumentIndex(node.consequent, index)
-  )
+  if (!t.isLogicalExpression(test, { operator: "&&" })) return undefined;
+  // Minifiers can reverse only the length comparison, so both orientations
+  // describe the same required-argument guard.
+  const lengthComparison = t.isBinaryExpression(test.left)
+    ? test.left
+    : undefined;
+  if (lengthComparison === undefined) return undefined;
+  const lengthGuard =
+    (lengthComparison.operator === ">" &&
+      isNamedMember(lengthComparison.left, "arguments", "length") &&
+      t.isNumericLiteral(lengthComparison.right, { value: index })) ||
+    (lengthComparison.operator === "<" &&
+      isNamedMember(lengthComparison.right, "arguments", "length") &&
+      t.isNumericLiteral(lengthComparison.left, { value: index }));
+  if (!lengthGuard || !isArgumentIndex(node.consequent, index))
     return undefined;
   const exactUndefined = comparedDefaultUndefined(
     test.right,

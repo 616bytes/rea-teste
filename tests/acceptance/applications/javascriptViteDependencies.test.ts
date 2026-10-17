@@ -446,6 +446,67 @@ const allScenarios: readonly ViteScenario[] = [
     unknown: false,
   },
   {
+    file: "babel-es5-reversed-length.js",
+    callSource: "__vite__mapDeps([0, 1, 2])",
+    source: babelEs5
+      .replace(
+        "arguments.length > 1 && arguments[1] !== undefined",
+        "1 < arguments.length && void 0 !== arguments[1]",
+      )
+      .replace(
+        "arguments.length > 2 && arguments[2] !== undefined",
+        "2 < arguments.length && void 0 !== arguments[2]",
+      ),
+    resolved: ["café.js", "nested/dep.js", "bracket].js"],
+    unknown: false,
+  },
+  ...[
+    {
+      file: "babel-es5-reversed-length-undefined-right.js",
+      sentinel: "arguments[$index] !== undefined",
+    },
+    {
+      file: "babel-es5-reversed-length-undefined-left.js",
+      sentinel: "undefined !== arguments[$index]",
+    },
+    {
+      file: "babel-es5-reversed-length-void-right.js",
+      sentinel: "arguments[$index] !== void 0",
+    },
+  ].map(({ file, sentinel }): ViteScenario => ({
+    file,
+    callSource: "__vite__mapDeps([0, 1, 2])",
+    source: babelEs5
+      .replace(
+        "arguments.length > 1 && arguments[1] !== undefined",
+        "1 < arguments.length && " + sentinel.replace("$index", "1"),
+      )
+      .replace(
+        "arguments.length > 2 && arguments[2] !== undefined",
+        "2 < arguments.length && " + sentinel.replace("$index", "2"),
+      ),
+    resolved: ["café.js", "nested/dep.js", "bracket].js"],
+    unknown: false,
+  })),
+  ...[
+    {
+      file: "babel-es5-off-by-one-length.js",
+      guard: "arguments.length >= $index",
+    },
+    {
+      file: "babel-es5-reversed-off-by-one-length.js",
+      guard: "$index >= arguments.length",
+    },
+  ].map(({ file, guard }): ViteScenario => ({
+    file,
+    callSource: "__vite__mapDeps([0, 1, 2])",
+    source: babelEs5
+      .replace("arguments.length > 1", guard.replace("$index", "1"))
+      .replace("arguments.length > 2", guard.replace("$index", "2")),
+    resolved: [],
+    unknown: false,
+  })),
+  {
     file: "babel-shadowed-guard.js",
     callSource: "__vite__mapDeps([0, 1, 2])",
     source: "{\nconst undefined = runtimeSentinel;\n" + babelEs5 + "\n}",
@@ -675,6 +736,37 @@ const allScenarios: readonly ViteScenario[] = [
         '__vite__mapDeps([0]); function mutate(cache) { cache[0] = "./last.js"; } mutate(...[__vite__mapDeps.f]);',
     },
     {
+      file: "assigned-spread-argument-positions.js",
+      mutation:
+        '__vite__mapDeps([0]); const args = [{}, __vite__mapDeps]; const copy = Object.assign(...args); copy.f[0] = "./last.js";',
+    },
+    {
+      file: "assigned-trailing-spread-source.js",
+      mutation:
+        '__vite__mapDeps([0]); const args = [__vite__mapDeps]; const copy = Object.assign({}, ...args); copy.f[0] = "./last.js";',
+    },
+    {
+      file: "frozen-spread-returned-helper.js",
+      mutation:
+        '__vite__mapDeps([0]); const alias = Object.freeze(...[__vite__mapDeps]); alias.f[0] = "./last.js";',
+    },
+    {
+      file: "reflect-delete-spread-key-coercion.js",
+      mutation:
+        '__vite__mapDeps([0]); const key = {cache: __vite__mapDeps.f, toString() { this.cache[0] = "./last.js"; return "unused"; }}; const args = [{}, key]; Reflect.deleteProperty(...args);',
+    },
+    {
+      file: "created-spread-prototype.js",
+      mutation:
+        '__vite__mapDeps([0]); const child = Object.create(...[__vite__mapDeps]); child.f[0] = "./last.js";',
+    },
+    {
+      file: "independent-assigned-spread-arguments.js",
+      mutation:
+        '__vite__mapDeps([0]); const copy = Object.assign(...[{}, {f: []}]); copy.f[0] = "./last.js";',
+      kept: true,
+    },
+    {
       file: "independent-tagged-template-argument.js",
       mutation:
         '__vite__mapDeps([0]); function mutate(_strings, cache) { cache[0] = "./last.js"; } mutate`${[]}`;',
@@ -704,6 +796,112 @@ const allScenarios: readonly ViteScenario[] = [
       file: "unary-cache-coercion.js",
       mutation:
         '__vite__mapDeps([0]); const cache = __vite__mapDeps.f; cache.valueOf = function() { this[0] = "./last.js"; return 1; }; +cache;',
+    },
+    {
+      file: "update-valueof-coercion.js",
+      mutation:
+        '__vite__mapDeps([0]); const cache = __vite__mapDeps.f; cache.self = cache; cache.valueOf = function () { this[0] = "./last.js"; return 0; }; cache.self++;',
+    },
+    {
+      file: "decrement-valueof-coercion.js",
+      mutation:
+        '__vite__mapDeps([0]); const cache = __vite__mapDeps.f; cache.self = cache; cache.valueOf = function () { this[0] = "./last.js"; return 0; }; cache.self--;',
+    },
+    {
+      file: "compound-addition-valueof-coercion.js",
+      mutation:
+        '__vite__mapDeps([0]); const cache = __vite__mapDeps.f; cache.self = cache; cache.valueOf = function () { this[0] = "./last.js"; return 0; }; cache.self += 1;',
+    },
+    {
+      file: "compound-arithmetic-valueof-coercion.js",
+      mutation:
+        '__vite__mapDeps([0]); const cache = __vite__mapDeps.f; cache.self = cache; cache.valueOf = function () { this[0] = "./last.js"; return 1; }; cache.self *= 2;',
+    },
+    {
+      file: "compound-right-hand-container-coercion.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {cache: __vite__mapDeps.f, valueOf() { this.cache[0] = "./last.js"; return 1; }}; let count = 0; count += box;',
+    },
+    {
+      file: "logical-assignment-cache-storage.js",
+      mutation:
+        '__vite__mapDeps([0]); const box = {}; box.cache ||= __vite__mapDeps.f; box.cache[0] = "./last.js";',
+    },
+    {
+      file: "compound-slot-coercion.js",
+      mutation:
+        '__vite__mapDeps([0]); const cache = __vite__mapDeps.f; cache[0] += "";',
+    },
+    {
+      file: "thrown-cache-escape.js",
+      mutation:
+        '__vite__mapDeps([0]); try { throw __vite__mapDeps.f; } catch (cache) { cache[0] = "./last.js"; }',
+    },
+    {
+      file: "thrown-helper-escape.js",
+      mutation:
+        '__vite__mapDeps([0]); try { throw __vite__mapDeps; } catch (helper) { helper.f[0] = "./last.js"; }',
+    },
+    {
+      file: "thrown-cache-wrapper-escape.js",
+      mutation:
+        '__vite__mapDeps([0]); try { throw {cache: __vite__mapDeps.f}; } catch (box) { box.cache[0] = "./last.js"; }',
+    },
+    {
+      file: "independent-thrown-value.js",
+      mutation:
+        '__vite__mapDeps([0]); try { throw []; } catch (cache) { cache[0] = "./last.js"; }',
+      kept: true,
+    },
+    {
+      file: "class-field-cache-storage.js",
+      mutation:
+        '__vite__mapDeps([0]); const Box = class { static cache = __vite__mapDeps.f }; Box.cache[0] = "./last.js";',
+    },
+    {
+      file: "instance-class-field-cache-storage.js",
+      mutation:
+        '__vite__mapDeps([0]); class Box { cache = __vite__mapDeps.f; } const box = new Box(); box.cache[0] = "./last.js";',
+    },
+    {
+      file: "private-instance-class-field-cache-storage.js",
+      mutation:
+        '__vite__mapDeps([0]); class Box { #cache = __vite__mapDeps.f; mutate() { this.#cache[0] = "./last.js"; } } new Box().mutate();',
+    },
+    {
+      file: "private-static-class-field-cache-storage.js",
+      mutation:
+        '__vite__mapDeps([0]); class Box { static #cache = __vite__mapDeps.f; static mutate() { this.#cache[0] = "./last.js"; } } Box.mutate();',
+    },
+    {
+      file: "independent-private-class-field.js",
+      mutation:
+        '__vite__mapDeps([0]); class Box { #cache = []; mutate() { this.#cache[0] = "./last.js"; } } new Box().mutate();',
+      kept: true,
+    },
+    {
+      file: "independent-class-field.js",
+      mutation:
+        '__vite__mapDeps([0]); const Box = class { static cache = [] }; Box.cache[0] = "./last.js";',
+      kept: true,
+    },
+    ...["field = 0", "method() {}"].map((member) => ({
+      file: `class-computed-${member.startsWith("field") ? "field" : "method"}-key-coercion.js`,
+      mutation:
+        '__vite__mapDeps([0]); const key = {cache: __vite__mapDeps.f, toString() { this.cache[0] = "./last.js"; return "slot"; }}; class Box { [key]' +
+        (member.startsWith("field") ? " = 0;" : "() {}") +
+        " }",
+    })),
+    {
+      file: "independent-counter-update.js",
+      mutation: "__vite__mapDeps([0]); const box = {count: 0}; box.count++;",
+      kept: true,
+    },
+    {
+      file: "cache-metadata-counter-update.js",
+      mutation:
+        "__vite__mapDeps([0]); const cache = __vite__mapDeps.f; cache.count = 0; cache.count++;",
+      kept: true,
     },
     {
       file: "computed-key-container-coercion.js",
@@ -1005,6 +1203,22 @@ const allScenarios: readonly ViteScenario[] = [
       file: "reflect-applied-cache-escape.js",
       mutation:
         '__vite__mapDeps([0]); function mutate(cache) { cache[0] = "./last.js"; } Reflect.apply(mutate, null, [__vite__mapDeps.f]);',
+    },
+    {
+      file: "bound-assign-applied-shared-cache.js",
+      mutation:
+        '__vite__mapDeps([0]); const args = [{}, __vite__mapDeps]; const copy = Object.assign.bind(null).apply(null, args); copy.f[0] = "./last.js";',
+    },
+    {
+      file: "bound-assign-reflect-applied-shared-cache.js",
+      mutation:
+        '__vite__mapDeps([0]); const args = [__vite__mapDeps]; const copy = Reflect.apply(Object.assign.bind(null, {}), null, args); copy.f[0] = "./last.js";',
+    },
+    {
+      file: "independent-bound-assign-apply.js",
+      mutation:
+        '__vite__mapDeps([0]); const args = [{}, {f: []}]; const copy = Object.assign.bind(null).apply(null, args); copy.f[0] = "./last.js";',
+      kept: true,
     },
     {
       file: "assigned-target-cache.js",

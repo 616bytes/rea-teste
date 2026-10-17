@@ -136,9 +136,9 @@ export const resolveJavaScriptIntrinsicInvocation = (
       receiver = bound.receiver;
       explicitReceiver = true;
       arguments_ =
-        bound.arguments === undefined
+        bound.arguments === undefined || arguments_ === undefined
           ? undefined
-          : [...bound.arguments, ...(arguments_ ?? [])];
+          : [...bound.arguments, ...arguments_];
     }
     const method = path.length > 3 ? path.at(-1) : undefined;
     if (method === "call" || method === "apply") {

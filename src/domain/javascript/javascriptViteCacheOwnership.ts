@@ -210,10 +210,21 @@ function* indexCallExposuresSteps(
       invocation?.kind === "known"
         ? (invocation.arguments ?? call.arguments)
         : call.arguments;
+    // A known callable does not prove argument positions when a spread can
+    // supply several slots, including both a destination and a cache source.
+    let positionsKnown = invocation?.arguments !== undefined;
+    if (positionsKnown)
+      for (const value of values) {
+        if (examined++ % 1024 === 0) yield;
+        if (t.isSpreadElement(value)) {
+          positionsKnown = false;
+          break;
+        }
+      }
     // An unproven descriptor can install accessors whose receiver effects are
     // invisible to the property-write collector (including named metadata).
     const selected =
-      invocation?.arguments === undefined ||
+      !positionsKnown ||
       (!context.dataDefinitions.has(call) &&
         (path === "intrinsic.Object.defineProperty" ||
           path === "intrinsic.Reflect.defineProperty" ||
@@ -223,8 +234,13 @@ function* indexCallExposuresSteps(
     for (let index = 0; index < values.length; index++) {
       if (examined++ % 1024 === 0) yield;
       if (selected !== undefined && !selected.has(index)) continue;
-      if (path === "intrinsic.Object.assign" && index === 0) continue;
-      if (path === "intrinsic.Object.create" && index === 0) continue;
+      if (
+        positionsKnown &&
+        index === 0 &&
+        (path === "intrinsic.Object.assign" ||
+          path === "intrinsic.Object.create")
+      )
+        continue;
       const value = values[index];
       if (
         path === "intrinsic.Object.assign" &&
@@ -567,8 +583,30 @@ function* indexCacheEffectsSteps(
       }
       // These operations can invoke user-defined coercion or thenable hooks.
       if (t.isAwaitExpression(node)) expose(node, node.argument);
+      if (t.isThrowStatement(node) && node.argument != null)
+        expose(node, node.argument);
       if (t.isUnaryExpression(node) && ["+", "-", "~"].includes(node.operator))
         expose(node, node.argument);
+      if (t.isUpdateExpression(node)) {
+        // Reading the previous value invokes coercion hooks on shared caches.
+        expose(node, node.argument);
+      }
+      // Arithmetic assignments coerce both operands. Logical assignments can
+      // transfer their RHS into a slot without a proven replacement identity.
+      if (t.isAssignmentExpression(node) && node.operator !== "=") {
+        if (!["&&=", "||=", "??="].includes(node.operator))
+          expose(node, node.left);
+        expose(node, node.right);
+      }
+      // Class field initializers can store a shared cache behind a class
+      // allocation that the identity owner treats as foreign.
+      if (
+        (t.isClassProperty(node) ||
+          t.isClassPrivateProperty(node) ||
+          t.isClassAccessorProperty(node)) &&
+        node.value != null
+      )
+        expose(node, node.value);
       if (
         t.isBinaryExpression(node) &&
         !["===", "!=="].includes(node.operator)
@@ -580,7 +618,10 @@ function* indexCacheEffectsSteps(
         (t.isMemberExpression(node) ||
           t.isOptionalMemberExpression(node) ||
           t.isObjectProperty(node) ||
-          t.isObjectMethod(node)) &&
+          t.isObjectMethod(node) ||
+          t.isClassProperty(node) ||
+          t.isClassAccessorProperty(node) ||
+          t.isClassMethod(node)) &&
         node.computed
       )
         expose(

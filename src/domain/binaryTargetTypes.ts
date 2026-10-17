@@ -231,7 +231,8 @@ export type BinaryTarget =
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {
         readonly kind: "artifact";
-        readonly format: "plist" | "javascript" | "source-map";
+        /** NE images are inspected statically; no session provider loads them. */
+        readonly format: "plist" | "javascript" | "source-map" | "ne";
       });
 
 /** Whether an executable target contains a thin or universal Mach-O image. */

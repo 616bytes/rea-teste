@@ -60,6 +60,7 @@ export const CLI_COMMANDS = Object.freeze({
   inspectGoBinary: "inspect-go-binary",
   inspectRustBinary: "inspect-rust-binary",
   inspectPeResources: "inspect-pe-resources",
+  inspectNeExecutable: "inspect-ne-executable",
   inspectAnalysisView: "inspect-analysis-view",
   listFridaDevices: "list-frida-devices",
   listFridaProcesses: "list-frida-processes",

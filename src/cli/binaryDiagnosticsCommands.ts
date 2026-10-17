@@ -3,6 +3,7 @@ import {
   createRecordedCrashService,
   createBinaryLayoutService,
   createPeResourcesService,
+  createNeExecutableService,
 } from "../composition/binaryDiagnostics.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
@@ -10,6 +11,7 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { inspectPeResourcesInputSchema } from "../domain/native/peResources.js";
+import { inspectNeExecutableInputSchema } from "../domain/native/neExecutable.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -48,6 +50,40 @@ export const registerBinaryDiagnosticsCommands = (
               pe,
               "rea-pe-resources",
               "inspect_pe_resources",
+            ),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectNeExecutable, {
+    description:
+      "Inspect a 16-bit NE image's header, segments, resources, names, module references and entries",
+    args: z.object({
+      path: z.string().describe("Local NE (Windows 3.x/OS/2) image"),
+    }),
+    options: z.object({
+      maxFileBytes: inspectNeExecutableInputSchema.shape.max_file_bytes,
+      maxRows: inspectNeExecutableInputSchema.shape.max_rows,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const ne = createNeExecutableService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectNeExecutable,
+          async () =>
+            finishAnalysisCommand(
+              () =>
+                ne.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_rows: options.maxRows,
+                  },
+                  { signal },
+                ),
+              ne,
+              "rea-ne-executable",
+              "inspect_ne_executable",
             ),
         );
       }),

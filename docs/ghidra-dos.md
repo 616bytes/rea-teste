@@ -26,7 +26,10 @@ same admitted target and provider semantics.
 The classifier validates MZ page counts, initialized module length, header and
 relocation-table bounds, relocation destinations, and the initialized entry
 point. It distinguishes DOS load-module and relocation bytes from the Windows
-new-header field. PE remains PE; NE, LE, and LX declarations are explicitly
+new-header field. PE remains PE. An NE declaration resolves as an `ne`
+artifact for the portable
+[`inspect_ne_executable`](binary-diagnostics.md#portable-ne-executables)
+operation rather than a Ghidra session; LE and LX declarations are explicitly
 unsupported. A damaged declared Windows header does not silently become DOS.
 Inventory classification returns `unknown` when its bounded prefix cannot
 establish the format; this is distinct from the complete target admission check.

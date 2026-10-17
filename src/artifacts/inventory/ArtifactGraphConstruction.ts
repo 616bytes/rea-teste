@@ -567,6 +567,12 @@ export const classifyArtifactBytes = (
         windowsOffset <= prefix.length - 4
       )
         return "pe";
+      if (
+        windowsHeader.signature === "NE" &&
+        windowsOffset >= 64 &&
+        windowsOffset <= prefix.length - 2
+      )
+        return "ne";
       return "unknown";
     }
     if (parseDosMzHeader(prefix, fileSize).ok) return "dos-mz";

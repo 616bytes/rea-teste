@@ -328,6 +328,14 @@ const detectArtifactFormat = async (
   // Binary plists, including keyed archives, often use other extensions.
   if (hasBinaryPlistSignature(magic.subarray(0, observed.bytesRead)))
     return "plist";
+  if (
+    await declaresNeHeader(
+      handle,
+      magic.subarray(0, observed.bytesRead),
+      signal,
+    )
+  )
+    return "ne";
   const named = namedArtifactFormat(lower);
   if (named !== undefined) return named;
   if (
@@ -380,6 +388,44 @@ const detectArtifactFormat = async (
       );
   }
   return undefined;
+};
+
+/** Whether an MZ image declares an NE new header, reading its signature if it lies past the prefix. */
+const declaresNeHeader = async (
+  handle: FileHandle,
+  prefix: Buffer,
+  signal?: AbortSignal,
+): Promise<boolean> => {
+  if (prefix.length < 2 || prefix[0] !== 0x4d || prefix[1] !== 0x5a)
+    return false;
+  const { size } = await handle.stat();
+  throwIfTargetResolutionCancelled(signal);
+  let header = observeMzWindowsHeader(prefix, size);
+  if (
+    header.state === "signature-needed" ||
+    (header.state === "declared" && header.signature === "unobserved")
+  ) {
+    const signature = Buffer.alloc(
+      Math.max(0, Math.min(4, size - header.offset)),
+    );
+    const read = await handle.read(
+      signature,
+      0,
+      signature.length,
+      header.offset,
+    );
+    throwIfTargetResolutionCancelled(signal);
+    header = observeMzWindowsHeader(
+      prefix,
+      size,
+      signature.subarray(0, read.bytesRead),
+    );
+  }
+  return (
+    header.state === "declared" &&
+    header.signature === "NE" &&
+    header.offset >= 64
+  );
 };
 
 const namedArtifactFormat = (

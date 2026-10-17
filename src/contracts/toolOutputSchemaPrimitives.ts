@@ -59,6 +59,7 @@ export const targetFormatSchema = z.enum([
   "pe",
   "dos-mz",
   "dos-com",
+  "ne",
   "raw-binary",
   ...ZIP_PACKAGE_FORMATS,
   "asar",

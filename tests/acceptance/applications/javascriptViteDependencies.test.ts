@@ -450,6 +450,27 @@ const allScenarios: readonly ViteScenario[] = [
     resolved: [],
     unknown: true,
   })),
+  ...[false, true].map((independent): ViteScenario => {
+    const call =
+      '__vite__mapDeps({map(read) { Object.defineProperty(read("__proto__"), "cache", {get() { return this; }}); read("cache")[0] = "./last.js"; return []; }}' +
+      (independent ? ', void 0, ["./other.js"]' : "") +
+      ")";
+    return {
+      file: `custom-index-map-inherited-${independent ? "independent" : "default"}-table.js`,
+      callSources: [defaultCall, call],
+      callOccurrences: [0, 1, 2],
+      ...(independent ? { unknownCallOccurrences: [1] } : {}),
+      source:
+        mapDependencies('["./first.js"]', "[0]") +
+        "\n" +
+        call +
+        "; " +
+        defaultCall +
+        ";",
+      resolved: independent ? ["first.js", "first.js"] : [],
+      unknown: true,
+    };
+  }),
   {
     file: "custom-index-map-independent-table.js",
     callSources: [

@@ -62,6 +62,14 @@ export type Input =
       readonly read: t.Node;
     };
 
+/** Exposure can refer directly to an already normalized selected-table value. */
+export type ViteCacheValue = t.Node | Vertex;
+
+export interface ViteCacheExposure {
+  readonly node: t.Node;
+  readonly value: ViteCacheValue;
+}
+
 export interface ViteCacheWrite {
   readonly node: t.Node;
   readonly receiver: t.Node;

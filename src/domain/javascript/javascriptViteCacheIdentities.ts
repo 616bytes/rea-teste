@@ -19,6 +19,8 @@ import {
   type ViteCacheAllocation,
   type ViteCacheIdentity,
   type ViteCacheWrite,
+  type ViteCacheValue,
+  type ViteCacheExposure,
   type Vertex,
   type VertexKey,
   type Input,
@@ -126,8 +128,8 @@ export class ViteCacheIdentities {
     });
   }
 
-  read(node: t.Node): ViteCacheIdentity | undefined {
-    return this.vertices.get(node)?.fact;
+  read(node: ViteCacheValue): ViteCacheIdentity | undefined {
+    return ("inputs" in node ? node : this.vertices.get(node))?.fact;
   }
 
   /** Parsed call facts distinguish read-only parameters from opaque calls. */
@@ -162,10 +164,10 @@ export class ViteCacheIdentities {
     return reads;
   }
 
-  /** Expose values reachable through the already selected table's mapping. */
+  /** Expose the selected table when arbitrary keys can reach inherited accessors. */
   helperMappedTableEscape(
     call: t.CallExpression | t.OptionalCallExpression,
-  ): t.Node | undefined {
+  ): Vertex | undefined {
     const proof = this.helperArgumentReads.get(call);
     if (
       proof === undefined ||
@@ -173,9 +175,9 @@ export class ViteCacheIdentities {
       this.read(call.callee)?.allocation?.kind !== "helper"
     )
       return undefined;
-    // The result's family already joins selected slots and default choices.
-    // A custom indexes protocol can pass any of these values to arbitrary code.
-    return call;
+    // Inherited getters can return their receiver, exposing the table itself.
+    // Keep its default-choice joins and allocation identity, not only children.
+    return this.helperResults.get(call)?.seed?.allocation?.helperResult?.table;
   }
 
   /** Only array or plain data object literals keep mapped reads free of getters. */
@@ -202,7 +204,7 @@ export class ViteCacheIdentities {
 
   /** propagate unexamined exposure through normalized aliases and contained values. */
   *escapedAllocationsSteps(
-    nodes: readonly t.Node[],
+    nodes: readonly ViteCacheValue[],
   ): Generator<void, ReadonlySet<ViteCacheAllocation>> {
     const allocations = new Set<ViteCacheAllocation>();
     const seen = new Set<Vertex>();
@@ -216,7 +218,7 @@ export class ViteCacheIdentities {
     };
     for (const node of nodes) {
       if (examined++ % 1024 === 0) yield;
-      const vertex = this.vertices.get(node);
+      const vertex = "inputs" in node ? node : this.vertices.get(node);
       if (vertex !== undefined) retain(vertex);
     }
     for (let index = 0; index < pending.length; index++) {
@@ -358,7 +360,7 @@ export class ViteCacheIdentities {
   /** index local slot effects before the snapshot pass; effects remain source facts. */
   *retainSnapshotsSteps(
     writes: readonly ViteCacheWrite[],
-    escapes: readonly { readonly node: t.Node; readonly value: t.Node }[],
+    escapes: readonly ViteCacheExposure[],
   ): Generator<void> {
     let examined = 0;
     for (const write of writes) {

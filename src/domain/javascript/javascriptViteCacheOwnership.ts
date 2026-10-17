@@ -23,6 +23,8 @@ import type {
   ViteCacheAllocation,
   ViteCacheIdentity,
   ViteCacheWrite,
+  ViteCacheExposure as CacheExposure,
+  ViteCacheValue,
 } from "./javascriptViteCacheIdentityTypes.js";
 import { semanticObjectPropertyReferencesSteps } from "./javascriptSemanticObjectReferences.js";
 
@@ -194,8 +196,8 @@ type Interop = ReturnType<typeof createSemanticModuleInterop>;
 function* indexCallExposuresSteps(
   calls: readonly Call[],
   context: CacheEffectContext,
-): Generator<void, { readonly node: t.Node; readonly value: t.Node }[]> {
-  const exposures: { readonly node: t.Node; readonly value: t.Node }[] = [];
+): Generator<void, CacheExposure[]> {
+  const exposures: CacheExposure[] = [];
   let examined = 0;
   for (const call of calls) {
     if (examined++ % 1024 === 0) yield;
@@ -243,7 +245,7 @@ function* indexCallExposuresSteps(
       yield* context.identities.readOnlyHelperArgumentsSteps(call),
     );
     // An unproven indexes protocol runs the mapped reads through arbitrary
-    // code. Expose its mapped values through the selected-table family.
+    // code. Expose the selected table, including possible inherited accessors.
     const mappedTable = context.identities.helperMappedTableEscape(call);
     if (mappedTable !== undefined)
       exposures.push({ node: call, value: mappedTable });
@@ -351,7 +353,7 @@ function* unsafeAssignmentTargetsSteps(
   },
   context: CacheEffectContext,
 ): Generator<void, ReadonlySet<ViteCacheAllocation>> {
-  const inputs: t.Node[] = [];
+  const inputs: ViteCacheValue[] = [];
   let examined = 0;
   for (const write of events.writes) {
     if (examined++ % 1024 === 0) yield;
@@ -525,11 +527,6 @@ interface CacheEffectContext {
   readonly dataDefinitions: ReadonlySet<Call>;
   readonly admittedNodes: WeakSet<t.Node>;
   unsafeTargets: ReadonlySet<ViteCacheAllocation>;
-}
-
-interface CacheExposure {
-  readonly node: t.Node;
-  readonly value: t.Node;
 }
 
 function* indexCacheEffectsSteps(

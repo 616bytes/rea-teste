@@ -2,6 +2,7 @@ import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, vi } from "vitest";
+import type { AnalysisErrorProjection } from "../../../src/domain/analysisErrorProjection.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
@@ -14,6 +15,7 @@ import { PlaywrightElectronActiveProvider } from "./dist/browser/PlaywrightElect
 import { electronActiveObservationInputSchema } from "./dist/domain/javascript/electronActiveObservation.js";
 import { BrowserObservationError } from "./dist/domain/browserObservationError.js";
 import { ProviderAdapterError } from "./dist/domain/providerAdapterError.js";
+import { projectAnalysisError } from "./dist/domain/analysisErrorProjection.js";
 
 const [scenario, executable, root] = JSON.parse(process.argv[1]);
 let observedRejections = 0;
@@ -123,8 +125,6 @@ const cleanupComposition = (result) => {
     cleanupReason: cleanup instanceof BrowserObservationError ? cleanup.reason : null,
     primaryCleanupIncomplete: primary instanceof BrowserObservationError ? primary.cleanupIncomplete : null,
     cleanupIncomplete: result.error.cleanupIncomplete && cleanup instanceof BrowserObservationError && cleanup.cleanupIncomplete,
-    projectedPrimaryReason: result.error.diagnostics?.primary_error?.details?.reason,
-    projectedCleanupCode: result.error.diagnostics?.cleanup_error?.code,
   };
 };
 console.log(JSON.stringify({
@@ -132,10 +132,9 @@ console.log(JSON.stringify({
   during,
   after: process.listenerCount("unhandledRejection"),
   observedRejections,
+  errors: results.map((result) => result.ok ? null : projectAnalysisError(result.error)),
   ok: results.map((result) => result.ok),
   compositions: results.map(cleanupComposition),
-  cleanupResources: results.map((result) => result.ok ? null : result.error.cleanupResources ?? null),
-  causes: results.map((result) => result.ok ? null : String(result.error.cause?.message).split("\\n")[0]),
 }));
 `;
 
@@ -148,7 +147,7 @@ type Outcome = {
   readonly during: number;
   readonly after: number;
   readonly ok: readonly boolean[];
-  readonly causes: readonly (string | null)[];
+  readonly errors: readonly (AnalysisErrorProjection | null)[];
   readonly observedRejections: number;
   readonly compositions: readonly ({
     readonly errorCount: number;
@@ -157,10 +156,7 @@ type Outcome = {
     readonly cleanupReason: string | null;
     readonly primaryCleanupIncomplete: boolean | null;
     readonly cleanupIncomplete: boolean;
-    readonly projectedPrimaryReason: string;
-    readonly projectedCleanupCode: string;
   } | null)[];
-  readonly cleanupResources: readonly (readonly string[] | null)[];
 };
 
 const run = async (
@@ -201,7 +197,17 @@ processTest(
       during: outcome(result).before + 1,
       after: outcome(result).before,
       ok: [false],
-      causes: ["electron.launch: Process failed to launch!"],
+      errors: [
+        {
+          details: {
+            diagnostics: {
+              message: expect.stringContaining(
+                "electron.launch: Process failed to launch!",
+              ),
+            },
+          },
+        },
+      ],
     });
   },
 );
@@ -223,7 +229,17 @@ processTest.skipIf(process.platform === "win32")(
     expect(result.exitCode, result.stderr).toBe(0);
     expect(outcome(result)).toMatchObject({
       ok: [false],
-      causes: ["electron.launch: Process failed to launch!"],
+      errors: [
+        {
+          details: {
+            diagnostics: {
+              message: expect.stringContaining(
+                "electron.launch: Process failed to launch!",
+              ),
+            },
+          },
+        },
+      ],
     });
     expect(outcome(result).after).toBe(outcome(result).before);
   },
@@ -253,7 +269,17 @@ processTest(
     expect(outcome(result)).toMatchObject({
       observedRejections: 1,
       ok: [false],
-      causes: ["electron.launch: Process failed to launch!"],
+      errors: [
+        {
+          details: {
+            diagnostics: {
+              message: expect.stringContaining(
+                "electron.launch: Process failed to launch!",
+              ),
+            },
+          },
+        },
+      ],
     });
   },
 );
@@ -328,7 +354,6 @@ processTest(
     expect(observed.after).toBe(observed.before);
     expect(observed.observedRejections).toBe(3);
     expect(observed.ok).toEqual([false, false, false, false, false]);
-    expect(observed.causes[0]).toBe("electron.launch: alpha failed");
     expect(observed.compositions).toEqual([
       null,
       ...Array.from({ length: 4 }, () => ({
@@ -338,13 +363,39 @@ processTest(
         cleanupReason: "cleanup_failed",
         primaryCleanupIncomplete: false,
         cleanupIncomplete: true,
-        projectedPrimaryReason: "process_ownership_unavailable",
-        projectedCleanupCode: "cleanup_incomplete",
       })),
     ]);
-    expect(observed.cleanupResources).toEqual([
-      [],
-      ...Array.from({ length: 4 }, () => ["owned_process_group"]),
+    expect(observed.errors).toMatchObject([
+      {
+        details: {
+          diagnostics: {
+            message: expect.stringContaining("electron.launch: alpha failed"),
+          },
+        },
+      },
+      ...Array.from({ length: 4 }, () => ({
+        code: "cleanup_incomplete",
+        details: {
+          cleanup: "incomplete",
+          resources: ["owned_process_group"],
+          diagnostics: {
+            primary_error: {
+              code: "unreadable_output",
+              details: {
+                reason: "process_ownership_unavailable",
+              },
+            },
+            cleanup_error: {
+              code: "cleanup_incomplete",
+              details: {
+                reason: "cleanup_failed",
+                cleanup: "incomplete",
+                resources: ["owned_process_group"],
+              },
+            },
+          },
+        },
+      })),
     ]);
   },
 );

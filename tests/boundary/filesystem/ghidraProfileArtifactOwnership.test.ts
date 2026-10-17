@@ -7,6 +7,7 @@ import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
 import { ghidraProfileInstallationHost } from "../../../src/ghidra/GhidraInstallation.fixture.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { STARTUP_OWNER_CLOSED } from "../../../src/process/SharedStartupAttempt.js";
 import { readFile, rename, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -323,7 +324,7 @@ it.each(["seed", "extension"] as const)(
   },
 );
 
-it("joins whole provider resolution before shutdown and gates the next admission", async () => {
+it("joins cancelled profile resolution before shutdown and gates the next admission", async () => {
   const root = await createTestTempDirectory("rea-profile-completion-");
   const jar = join(root, "extension.jar");
   const seed = join(root, "seeds.tsv");
@@ -365,7 +366,13 @@ it("joins whole provider resolution before shutdown and gates the next admission
     expect(opens).toBe(count);
     expect(provider.hasPendingOwnedResources()).toBe(true);
     release.resolve();
-    expect((await resolving).ok).toBe(true);
+    expect(await resolving).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        cause: STARTUP_OWNER_CLOSED,
+      },
+    });
     expect(await closing).toEqual({ ok: true, value: null });
     expect((await next).ok).toBe(true);
     expect(provider.hasPendingOwnedResources()).toBe(false);

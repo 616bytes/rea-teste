@@ -1200,7 +1200,13 @@ const projectPrimarySessionError = (
   return new ProviderAdapterError("ghidra", operation, context);
 };
 
-/** Project only OOME evidence captured during the operation that failed. */
+/**
+ * Project OOME evidence captured during the operation that failed. When the
+ * diagnostic budget dropped operation output, an OutOfMemoryError printed
+ * after truncation cannot be confirmed from retained text; report that a
+ * memory cause cannot be ruled out instead of falling back to the generic
+ * failure.
+ */
 const projectObservedJvmMemoryFailure = (
   operation: AnalysisOperation,
   failure: GhidraSessionError,
@@ -1235,8 +1241,22 @@ const projectObservedJvmMemoryFailure = (
       ? value.text
       : "";
   const output = `${streamText(scoped.stdout)}\n${streamText(scoped.stderr)}`;
-  if (!/java\.lang\.OutOfMemoryError(?:\s*:|\b)/u.test(output))
-    return undefined;
+  if (!/java\.lang\.OutOfMemoryError(?:\s*:|\b)/u.test(output)) {
+    // Bytes past the diagnostic budget are counted but dropped, so an OOME
+    // line printed after truncation would never reach the retained text.
+    if (scoped.complete !== false) return undefined;
+    return new AnalysisResourceConstraintError(
+      operation,
+      "memory",
+      "Ghidra's operation-scoped process output was truncated at the diagnostic budget, so a java.lang.OutOfMemoryError later in the output cannot be ruled out. This is unconfirmed evidence, not a diagnosed allocation failure.",
+      null,
+      {
+        ...context,
+        remediationAction:
+          "If the host has available memory, consider increasing GHIDRA_HEADLESS_MAXMEM or disabling expensive analyzers with REA_GHIDRA_DISABLED_ANALYZERS, then retry.",
+      },
+    );
+  }
   const threadCapacity = /unable to create native thread/iu.test(output);
   const heapExhaustion = /Java heap space|GC overhead limit exceeded/iu.test(
     output,

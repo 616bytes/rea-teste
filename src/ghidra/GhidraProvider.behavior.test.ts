@@ -3131,6 +3131,21 @@ describe("Ghidra OOME error projection", () => {
   });
 });
 
+describe("Ghidra OOME truncated-output projection", () => {
+  it("reports an unconfirmed memory cause when operation output was truncated", async () => {
+    const projected = await projectFailure("process", {
+      stdout: output(""),
+      stderr: output(""),
+      // The diagnostic budget dropped the operation's tail, so an OOME line
+      // printed after truncation cannot be confirmed from retained text.
+      failure_output: { ...failureOutput("", ""), complete: false },
+    });
+    expect(projected.code).toBe("resource_constraint");
+    expect(projected.details).toMatchObject({ resource: "memory" });
+    expect(projected.remediation.action).toContain("GHIDRA_HEADLESS_MAXMEM");
+  });
+});
+
 it("reuses readiness only inside its active task and provider lifetime", async () => {
   let probes = 0;
   let version = "21.0.11";

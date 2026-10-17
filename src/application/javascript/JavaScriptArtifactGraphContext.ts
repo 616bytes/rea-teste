@@ -61,6 +61,8 @@ export interface JavaScriptArtifactGraphContext {
   /** Gap origins retain possible owners separately from proven source owners. */
   readonly applicationModuleGapSources: Map<string, Set<string>>;
   readonly applicationPossibleRootsByContainer: Map<string, Set<string>>;
+  /** Sources whose admitted JavaScript parse examined their module imports. */
+  readonly applicationModuleImportsExamined: ReadonlySet<string>;
 }
 
 /** Application manifests exclude dependency packages but retain nested app roots. */
@@ -152,7 +154,6 @@ export const applicationRootPath = (
     if (
       entryRoots === undefined &&
       (metadata.main_status === "declared" ||
-        metadata.renderer !== null ||
         defaultEntry?.container_sha256 === source.container_sha256)
     )
       addApplicationRootCandidate(roots, root);

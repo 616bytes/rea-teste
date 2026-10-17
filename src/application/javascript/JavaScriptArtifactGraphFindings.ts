@@ -48,12 +48,11 @@ interface FindingInput<Value> {
 }
 
 interface ResolvedReference {
-  readonly targetIsJson?: true;
+  readonly targetImportsUnexamined?: true;
   readonly path: string | null;
   readonly file: JavaScriptArtifactFile | null;
   readonly node: ApplicationNode | null;
   readonly limitations: readonly string[];
-  readonly resolutionStatus?: string;
   readonly resolution?: ArtifactPathResolution;
 }
 
@@ -156,8 +155,7 @@ const addReference = (
       input.value.kind === "require") &&
     (input.value.specifier === null ||
       resolved === null ||
-      (resolved.resolutionStatus === "unavailable" &&
-        resolved.targetIsJson !== true))
+      resolved.targetImportsUnexamined === true)
   ) {
     const container = applicationContainerIdentity(context.fileSet, input.file);
     const gaps =
@@ -193,7 +191,7 @@ const addReference = (
             declared_specifier: input.value.specifier,
             expression: input.value.expression,
             resolved_path: resolved?.path ?? null,
-            resolution_status: resolved?.resolutionStatus ?? null,
+            resolution_status: resolved?.resolution?.resolution_status ?? null,
             ...artifactPathResolutionProperties(resolved?.resolution),
           },
           evidence: staticInferenceEvidence({
@@ -216,7 +214,7 @@ const addReference = (
       relation: "loads",
       properties: {
         kind: input.value.kind,
-        resolution_status: resolved?.resolutionStatus ?? null,
+        resolution_status: resolved?.resolution?.resolution_status ?? null,
         ...artifactPathResolutionProperties(resolved?.resolution),
       },
       limitations: resolved?.limitations ?? [],
@@ -265,7 +263,7 @@ const addReference = (
             )
           : null,
       resolved_path: resolved?.path ?? null,
-      resolution_status: resolved?.resolutionStatus ?? null,
+      resolution_status: resolved?.resolution?.resolution_status ?? null,
       ...artifactPathResolutionProperties(resolved?.resolution),
     },
     ...(resolved === null ? {} : { limitations: resolved.limitations }),
@@ -604,16 +602,24 @@ const resolveReference = (
           : {}),
       });
   const path = resolution.resolved_path;
+  const targetPath = path ?? resolution.candidate_path;
+  const targetKind =
+    targetPath === undefined
+      ? undefined
+      : (
+          context.filesByPath.get(targetPath) ??
+          context.unanalyzedFiles?.get(targetPath)
+        )?.kind;
+  // Resolving bytes does not prove that the loader's module imports were read.
+  // Only an exact JSON loader target can be inert without JavaScript analysis.
+  const targetIsJson =
+    targetPath !== undefined && isJsonModuleTarget(targetPath, targetKind);
+  const targetImportsUnexamined =
+    !targetIsJson &&
+    (resolution.resolution_status === "unavailable" ||
+      (path !== null && !context.applicationModuleImportsExamined.has(path)));
   if (path === null) {
     const source = context.filesByPath.get(sourcePath);
-    const targetKind =
-      resolution.candidate_path === undefined
-        ? undefined
-        : context.unanalyzedFiles?.get(resolution.candidate_path)?.kind;
-    // Inventory kinds are case-folded; the loader's extension dispatch is not.
-    const targetIsJson =
-      resolution.candidate_path !== undefined &&
-      isJsonModuleTarget(resolution.candidate_path, targetKind);
     return source === undefined
       ? null
       : {
@@ -629,8 +635,9 @@ const resolveReference = (
                 resolution,
               ),
           limitations: resolution.limitations,
-          resolutionStatus: resolution.resolution_status,
-          ...(targetIsJson ? { targetIsJson: true as const } : {}),
+          ...(targetImportsUnexamined
+            ? { targetImportsUnexamined: true as const }
+            : {}),
           resolution,
         };
   }
@@ -643,7 +650,9 @@ const resolveReference = (
         file,
         node,
         limitations: resolution.limitations,
-        resolutionStatus: resolution.resolution_status,
+        ...(targetImportsUnexamined
+          ? { targetImportsUnexamined: true as const }
+          : {}),
         resolution,
       };
 };

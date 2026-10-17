@@ -98,28 +98,38 @@ it.each([
   "unavailable-main",
   "unavailable-default-main",
   "unavailable-json-main",
+  "resolved-html",
+  "resolved-uppercase-json",
+  "resolved-json",
+  "resolved-package-json",
+  "resolved-html-main",
+  "unavailable-package-metadata",
 ] as const)(
-  "distinguishes hidden imports from inert unavailable data through %s",
+  "distinguishes hidden imports from inert data through %s",
   async (omission) => {
     const root = await createTestTempDirectory("rea-competing-gap-");
-    const targetPath =
-      omission === "unavailable-default-main"
-        ? "b/index.js"
-        : omission === "unavailable-json-main"
-          ? "b/config.json"
-          : omission === "unavailable-main"
-            ? "b/main.cjs"
-            : omission === "unavailable-json"
-              ? "b/config.json"
-              : omission === "unavailable-package-json"
-                ? "b/node_modules/pkg/package.json"
-                : omission === "unavailable-uppercase-json"
-                  ? "shared/bridge.JSON"
-                  : "shared/bridge.cjs";
-    const inertJson =
-      omission === "unavailable-json" ||
-      omission === "unavailable-package-json" ||
-      omission === "unavailable-json-main";
+    const targetPaths: Partial<Record<typeof omission, string>> = {
+      "unavailable-default-main": "b/index.js",
+      "unavailable-json-main": "b/config.json",
+      "unavailable-main": "b/main.cjs",
+      "unavailable-json": "b/config.json",
+      "unavailable-package-json": "b/node_modules/pkg/package.json",
+      "unavailable-uppercase-json": "shared/bridge.JSON",
+      "resolved-html": "shared/bridge.html",
+      "resolved-uppercase-json": "shared/bridge.JSON",
+      "resolved-json": "b/config.json",
+      "resolved-package-json": "b/node_modules/pkg/package.json",
+      "resolved-html-main": "b/main.html",
+      "unavailable-package-metadata": "b/node_modules/pkg/package.json",
+    };
+    const targetPath = targetPaths[omission] ?? "shared/bridge.cjs";
+    const inertJson = [
+      "unavailable-json",
+      "unavailable-package-json",
+      "unavailable-json-main",
+      "resolved-json",
+      "resolved-package-json",
+    ].includes(omission);
     await writeFixtureFiles(root, {
       "a/package.json": JSON.stringify({ main: "main.cjs" }),
       "b/package.json": JSON.stringify(
@@ -127,22 +137,29 @@ it.each([
           ? {}
           : {
               main:
-                omission === "unavailable-json-main"
-                  ? "config.json"
-                  : "main.cjs",
+                omission === "resolved-html-main"
+                  ? "main.html"
+                  : omission === "unavailable-json-main"
+                    ? "config.json"
+                    : "main.cjs",
             },
       ),
       "b/index.js": 'require("../shared/window.cjs");',
+      "b/main.html": 'require("../shared/window.cjs");',
       "a/main.cjs": 'require("../shared/window.cjs");',
       "b/main.cjs":
-        omission === "unavailable-main"
-          ? 'require("../shared/window.cjs");'
-          : omission === "dynamic"
-            ? "require(process.env.CHILD);"
-            : `require(${JSON.stringify(targetPath.startsWith("b/") ? `./${targetPath.slice(2)}` : `../${targetPath}`)});`,
+        omission === "unavailable-package-metadata"
+          ? 'require("pkg");'
+          : omission === "unavailable-main"
+            ? 'require("../shared/window.cjs");'
+            : omission === "dynamic"
+              ? "require(process.env.CHILD);"
+              : `require(${JSON.stringify(targetPath.startsWith("b/") ? `./${targetPath.slice(2)}` : `../${targetPath}`)});`,
       "b/config.json": "{}",
       "b/node_modules/pkg/package.json": "{}",
+      "b/node_modules/pkg/index.js": 'require("../../../shared/window.cjs");',
       "shared/bridge.JSON": 'require("./window.cjs");',
+      "shared/bridge.html": 'require("./window.cjs");',
       "shared/bridge.cjs": 'require("./window.cjs");',
       "shared/window.cjs":
         'const {BrowserWindow} = require("electron"); const w = new BrowserWindow(); w.loadFile("index.html");',

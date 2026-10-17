@@ -646,21 +646,23 @@ const addPackageRole = (
     directoryPaths: context.directoryPaths,
     unanalyzedFiles: context.unanalyzedFiles,
   });
-  if (resolution.resolution_status === "resolved")
-    registerPackageEntrypointOwner(
-      context,
-      input.packageFile,
-      resolution.resolved_path,
-    );
-  else if (
-    resolution.resolution_status === "unavailable" &&
-    resolution.candidate_path !== undefined &&
-    !isJsonModuleTarget(
-      resolution.candidate_path,
-      context.unanalyzedFiles?.get(resolution.candidate_path)?.kind,
+  if (input.kind === "electron-main") {
+    if (resolution.resolution_status === "resolved")
+      registerPackageEntrypointOwner(
+        context,
+        input.packageFile,
+        resolution.resolved_path,
+      );
+    else if (
+      resolution.resolution_status === "unavailable" &&
+      resolution.candidate_path !== undefined &&
+      !isJsonModuleTarget(
+        resolution.candidate_path,
+        context.unanalyzedFiles?.get(resolution.candidate_path)?.kind,
+      )
     )
-  )
-    registerPossiblePackageOwner(context, input.packageFile);
+      registerPossiblePackageOwner(context, input.packageFile);
+  }
   const role = createElectronRoleNode(context, {
     kind: input.kind,
     anchor: input.packageFile,
@@ -706,6 +708,11 @@ const registerPackageEntrypointOwner = (
     context.applicationRootsBySource.get(sourcePath) ?? new Set<string>();
   addApplicationRootCandidate(roots, packageRoot(packageFile));
   context.applicationRootsBySource.set(sourcePath, roots);
+  if (
+    !context.applicationModuleImportsExamined.has(sourcePath) &&
+    !isJsonModuleTarget(sourcePath, context.filesByPath.get(sourcePath)?.kind)
+  )
+    registerPossiblePackageOwner(context, packageFile);
 };
 
 const packageRoot = (file: JavaScriptArtifactFile): string =>

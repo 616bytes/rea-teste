@@ -97,7 +97,13 @@ export const createSemanticReturnedReferences = (
           ...selected.referenceInitializers,
         ]) {
           const initializerPath = [...initializer.projection, ...projection];
-          if (initializerPath.length > maxProjectionEntries) continue;
+          if (initializerPath.length > maxProjectionEntries) {
+            // Untrackable depth degrades to the empty projection instead of
+            // dropping the branch: the empty path over-selects properties
+            // downstream, so the reference is kept conservatively.
+            pending.push({ node: initializer.node, path: [] });
+            continue;
+          }
           pending.push({ node: initializer.node, path: initializerPath });
         }
       } else if (
@@ -169,7 +175,10 @@ export const createSemanticReturnedReferences = (
         const [key, ...path] = projection;
         for (const member of node.body.body) {
           if (t.isClassMethod(member)) {
+            // A discarded wildcard projection could have selected any member,
+            // so unknown-projection navigation visits every method and value.
             if (
+              wildcard ||
               (projection.length === 0 && member.kind === "constructor") ||
               (key !== undefined &&
                 (key === null ||
@@ -181,10 +190,11 @@ export const createSemanticReturnedReferences = (
             t.isClassProperty(member) &&
             member.value !== null &&
             member.value !== undefined &&
-            key !== undefined &&
-            (key === null ||
-              semanticStaticPropertyKey(member.key, member.computed) ===
-                String(key))
+            (wildcard ||
+              (key !== undefined &&
+                (key === null ||
+                  semanticStaticPropertyKey(member.key, member.computed) ===
+                    String(key))))
           )
             pending.push({ ...item, node: member.value, path });
         }

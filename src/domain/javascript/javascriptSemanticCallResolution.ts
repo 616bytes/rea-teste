@@ -34,6 +34,8 @@ export interface CallResolutionMemory {
     JavaScriptSemanticBindingState,
     BindingResolutionEntry
   >;
+  /** Provisional bindings only: settlement scans this instead of all entries. */
+  readonly provisional: Set<JavaScriptSemanticBindingState>;
 }
 
 type BindingResolutionEntry =
@@ -66,6 +68,7 @@ export interface ResolveLocalCallablesInput {
 
 export const createCallResolutionMemory = (): CallResolutionMemory => ({
   bindings: new Map(),
+  provisional: new Set(),
 });
 
 /** Resolve local callable candidates without following dynamic properties. */
@@ -200,12 +203,17 @@ const bindingResolution = (
   const resolution = computeBindingResolution(binding, context);
   // Cycle-crossing expansions start provisional: branches cut by re-entry
   // gain their full contribution once the re-entered binding settles.
-  context.memory.bindings.set(
-    binding,
-    resolution.cycleDependent
-      ? { status: "provisional", resolution }
-      : { status: "settled", resolution },
-  );
+  if (resolution.cycleDependent) {
+    context.memory.bindings.set(binding, {
+      status: "provisional",
+      resolution,
+    });
+    context.memory.provisional.add(binding);
+  } else
+    context.memory.bindings.set(binding, {
+      status: "settled",
+      resolution,
+    });
   return resolution;
 };
 
@@ -253,18 +261,18 @@ const settleMemory = (base: {
 }): boolean => {
   let changed = false;
   for (;;) {
-    const provisional = [...base.memory.bindings].filter(
-      (
-        pair,
-      ): pair is [
-        JavaScriptSemanticBindingState,
-        Extract<BindingResolutionEntry, { status: "provisional" }>,
-      ] => pair[1].status === "provisional",
+    if (base.memory.provisional.size === 0) return changed;
+    const provisional = [...base.memory.provisional].map(
+      (binding) => [binding, base.memory.bindings.get(binding)] as const,
     );
-    if (provisional.length === 0) return changed;
     let passChanged = false;
     for (const [binding, entry] of provisional) {
-      if (base.memory.bindings.get(binding) !== entry) continue;
+      if (
+        entry === undefined ||
+        entry.status !== "provisional" ||
+        base.memory.bindings.get(binding) !== entry
+      )
+        continue;
       // Fresh read cache: cached per-read results derived from earlier
       // candidate sets must not feed the recompute.
       const fresh = computeBindingResolution(binding, {
@@ -280,11 +288,15 @@ const settleMemory = (base: {
       }
     }
     if (!passChanged) {
-      for (const [binding, entry] of provisional)
-        base.memory.bindings.set(binding, {
-          status: "settled",
-          resolution: entry.resolution,
-        });
+      for (const binding of base.memory.provisional) {
+        const entry = base.memory.bindings.get(binding);
+        if (entry !== undefined && entry.status !== "computing")
+          base.memory.bindings.set(binding, {
+            status: "settled",
+            resolution: entry.resolution,
+          });
+      }
+      base.memory.provisional.clear();
       return changed;
     }
     changed = true;

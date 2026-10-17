@@ -167,6 +167,50 @@ function choose(flag){
   expect(large).toBeLessThan(3 * small);
 });
 
+it("degrades over-deep projections to unknown selection instead of dropping them", () => {
+  const depth = 130;
+  const open = Array.from({ length: depth }, (_, i) => `p${i + 1}:{`).join("");
+  const close = "}".repeat(depth);
+  const context = indexed(`function target(){return {};}
+function choose(){
+  const container = {${open}v: target${close}};
+  let {${open}v: fn${close}} = container;
+  return fn();
+}`);
+  const choose = context.state.program.body[1];
+  if (!t.isFunctionDeclaration(choose)) throw new Error("Missing choose");
+  const last = choose.body.body.at(-1);
+  if (!t.isReturnStatement(last) || !t.isCallExpression(last.argument))
+    throw new Error("Missing call");
+  const references = createSemanticReturnedReferences(context.state)(
+    last.argument.callee,
+  );
+  expect(references.length).toBeGreaterThan(0);
+});
+
+it("keeps class members reachable when expansion degrades to unknown projections", () => {
+  const depth = 20_001;
+  const aliases = Array.from(
+    { length: depth },
+    (_, i) => `const b${i + 1} = b${i};`,
+  ).join("\n");
+  const context = indexed(`class Gate { static make(){return {};} }
+function choose(){
+  const b0 = Gate;
+  ${aliases}
+  return b${depth}.make();
+}`);
+  const choose = context.state.program.body[1];
+  if (!t.isFunctionDeclaration(choose)) throw new Error("Missing choose");
+  const last = choose.body.body.at(-1);
+  if (!t.isReturnStatement(last) || !t.isCallExpression(last.argument))
+    throw new Error("Missing call");
+  const references = createSemanticReturnedReferences(context.state)(
+    last.argument.callee,
+  );
+  expect(references.length).toBeGreaterThan(0);
+});
+
 it.each([
   ["if(flag){cb=fallback;cb();}", true],
   ["if(flag)cb=fallback;cb();", false],

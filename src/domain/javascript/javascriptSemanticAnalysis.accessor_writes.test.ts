@@ -113,6 +113,18 @@ it("keeps array element members unknown after a write through an element setter"
       export function observe() {
         const state = { list: [{ value: 1, set update(next) { this.value = next; } }] };
         state.list[0].update = 2;
+        return state.list[0].value;
+      }
+    `),
+  ).toMatchObject({ status: "unknown" });
+});
+
+it("keeps array element object unknown after a write through an element setter", () => {
+  expect(
+    returned(`
+      export function observe() {
+        const state = { list: [{ value: 1, set update(next) { this.value = next; } }] };
+        state.list[0].update = 2;
         return state.list[0];
       }
     `),
@@ -125,10 +137,18 @@ it("keeps direct array element members unknown after a write through an element 
       export function observe() {
         const arr = [{ value: 1, set update(next) { this.value = next; } }];
         arr[0].update = 2;
-        return arr[0];
+        return { value: arr[0].value };
       }
     `),
-  ).toMatchObject({ status: "unknown" });
+  ).toMatchObject({
+    status: "object",
+    properties: expect.arrayContaining([
+      expect.objectContaining({
+        name: "value",
+        value: expect.objectContaining({ status: "unknown" }),
+      }),
+    ]),
+  });
 });
 
 it("keeps sibling literals when array element property written is an ordinary data property", () => {
@@ -137,16 +157,19 @@ it("keeps sibling literals when array element property written is an ordinary da
       export function observe() {
         const state = { list: [{ value: 1, update: 0 }] };
         state.list[0].update = 2;
-        return state.list[0];
+        return state.list[0].value;
       }
     `),
-  ).toMatchObject({
-    status: "object",
-    properties: expect.arrayContaining([
-      expect.objectContaining({
-        name: "value",
-        value: { status: "literal", value: 1 },
-      }),
-    ]),
-  });
+  ).toMatchObject({ status: "literal", value: 1 });
+});
+
+it("keeps sibling literals when an array element setter is present but unassigned", () => {
+  expect(
+    returned(`
+      export function observe() {
+        const state = { list: [{ value: 1, set update(next) { this.value = next; } }] };
+        return state.list[0].value;
+      }
+    `),
+  ).toMatchObject({ status: "literal", value: 1 });
 });

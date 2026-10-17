@@ -1,3 +1,4 @@
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type {
   AnalysisProfileResolution,
   ProviderIdentity,
@@ -63,12 +64,15 @@ export const resolveGhidraAnalysisProfile = async (
   target: BinaryTarget,
   identity: ProviderIdentity,
   installation: GhidraInstallationInspection,
+  resources: ArtifactResourceScope,
   signal?: AbortSignal,
   languageOverride?: GhidraLanguageOverride,
   disabledAnalyzers?: readonly string[],
 ): Promise<Result<AnalysisProfileResolution, AnalysisError>> => {
   if (signal?.aborted === true)
-    return Promise.resolve(err(new AnalysisCancelledError("open_binary")));
+    return Promise.resolve(
+      err(new AnalysisCancelledError("open_binary", { cause: signal.reason })),
+    );
   if (target.kind !== "executable")
     return Promise.resolve(ok({ profile: null }));
   if (installation.status === "unavailable")
@@ -96,7 +100,7 @@ export const resolveGhidraAnalysisProfile = async (
       ),
     );
   const pspExtension = isGhidraPspTarget(target)
-    ? await resolveGhidraPspExtension(installation, signal)
+    ? await resolveGhidraPspExtension(installation, resources, signal)
     : null;
   if (pspExtension !== null && !pspExtension.ok) return pspExtension;
   const provider = { ...identity, version: installation.providerVersion };
@@ -226,6 +230,17 @@ export const resolveGhidraAnalysisProfile = async (
         import_mode: "ephemeral-source-immutable",
         ...(target.format === "pe"
           ? { pdb_observations: "program-info-v5" }
+          : {}),
+        ...(installation.platform === "win32" &&
+        target.format === "pe" &&
+        (target.architecture === "arm" || target.architecture === "arm64")
+          ? {
+              windows_arm_pe_import:
+                selectedLanguage === undefined
+                  ? "loader-selected-language-v1"
+                  : "explicit-language-v1",
+              windows_arm_pe_machine: target.peMachine ?? null,
+            }
           : {}),
         annotation_policy: "atomic-function-entry-metadata-v1",
         load_image_observations: "source-mappings-entry-context-v2",

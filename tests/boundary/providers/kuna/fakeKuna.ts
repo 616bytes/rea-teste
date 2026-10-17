@@ -8,11 +8,18 @@ export interface FakeKunaFunction {
   readonly error?: string;
 }
 
+export interface FakeKunaString {
+  readonly address: number;
+  readonly text: string;
+  readonly encoding?: "ascii" | "utf8" | "utf16";
+  readonly terminated?: boolean;
+}
+
 /** Scripted behavior of the fake `kuna` executable for one test. */
 export interface FakeKunaBehavior {
   /** Text printed by `--version`; `exit` fails the probe instead. */
   readonly version?:
-    | { readonly stdout: string }
+    | { readonly stdout: string; readonly gate?: string }
     | { readonly exit: number }
     | { readonly ignoreTerm: true };
   readonly inventory?: "ok" | "not-json" | "hang";
@@ -23,7 +30,9 @@ export interface FakeKunaBehavior {
     | "hang"
     | "miscounted"
     | "silent"
-    | "block-manifest";
+    | "block-manifest"
+    /** Writes more than REA's 8 MiB export output buffer before its summary. */
+    | "noisy";
   readonly functions?: readonly FakeKunaFunction[];
   /** Extra `.asm` bytes, for capacity tests. */
   readonly asmPadding?: number;
@@ -32,15 +41,40 @@ export interface FakeKunaBehavior {
   readonly decompile?: "ok" | "hang";
   /** Milliseconds one `decompile --addr` run takes before printing. */
   readonly decompileDelayMs?: number;
+  /** Extra comment bytes in each `decompile --addr` text, for retention budgets. */
+  readonly decompilePadding?: number;
   /** Milliseconds `functions --json` takes before printing. */
   readonly inventoryDelayMs?: number;
   /** Milliseconds the export takes before writing its files. */
   readonly delayMs?: number;
-  readonly graph?: "ok" | "hang" | "not-json" | "miscounted" | "with-bodies";
+  /** `noisy` writes more diagnostics than REA buffers (8 MiB) before the graph. */
+  readonly graph?:
+    | "ok"
+    | "hang"
+    | "not-json"
+    | "miscounted"
+    | "with-bodies"
+    | "noisy";
   readonly graphIndirectCalls?: boolean;
+  /** Bytes of an extra root member in the graph JSON. */
+  readonly graphPadding?: number;
   readonly xrefs?: "ok" | "hang" | "not-json";
   readonly referenceDelayMs?: number;
   readonly referencePadding?: number;
+  /** `invalid-then-hang` writes a contradictory first row, then never finishes. */
+  readonly strings?:
+    | "ok"
+    | "hang"
+    | "not-json"
+    | "miscounted"
+    | "exit-failure"
+    | "invalid-then-hang";
+  readonly stringRows?: readonly FakeKunaString[];
+  readonly stringDelayMs?: number;
+  /** Bytes of an extra root member in the string JSON. */
+  readonly stringPadding?: number;
+  /** Bytes written to stderr before the string JSON. */
+  readonly stringStderrBytes?: number;
 }
 
 /**
@@ -61,7 +95,13 @@ if (args[0] === "--version") {
   const version = behavior.version ?? { stdout: "kuna 1.833\n" };
   if ("exit" in version) { process.stderr.write("version probe failed\n"); process.exit(version.exit); }
   if ("ignoreTerm" in version) { process.on("SIGTERM", () => {}); hang(); }
-  else process.stdout.write(version.stdout);
+  else if (version.gate) {
+    const waiting = setInterval(() => {
+      if (!fs.existsSync(version.gate)) return;
+      clearInterval(waiting);
+      process.stdout.write(version.stdout);
+    }, 10);
+  } else process.stdout.write(version.stdout);
 } else if (args[0] === "functions") {
   const mode = behavior.inventory ?? "ok";
   if (mode === "hang") hang();
@@ -70,17 +110,30 @@ if (args[0] === "--version") {
     const listed = [...functions, ...(behavior.inventoryImports === false ? [] : [{ name: "puts", addr: "0x2000" }])].map((fn) => ({ name: fn.name, address: parseInt(fn.addr, 16), address_hex: fn.addr, aliases: [], object_location: null, size: fn.name === "puts" ? 0 : 16 }));
     setTimeout(() => process.stdout.write(JSON.stringify({ binary: args[1], count: listed.length, total: listed.length, error: null, functions: listed }, null, 2) + "\n"), behavior.inventoryDelayMs ?? 0);
   }
+} else if (args[0] === "strings") {
+  if (behavior.strings === "exit-failure") { process.stderr.write("fixture string scan failed\n"); process.exit(7); }
+  else if (behavior.strings === "hang") hang();
+  else if (behavior.strings === "not-json") process.stdout.write("not string JSON");
+  else if (behavior.strings === "invalid-then-hang") { process.stdout.write('{"binary":' + JSON.stringify(args[1]) + ',"strings":[{"address":12288,"address_hex":"0x3001"}'); hang(); }
+  else {
+    if (behavior.stringStderrBytes) process.stderr.write(Buffer.alloc(behavior.stringStderrBytes, 0x78));
+    if (!args.includes("--no-xrefs") || args[args.indexOf("--encoding") + 1] !== "all") throw new Error("strings must skip reference analysis and include all supported encodings");
+    const rows = (behavior.stringRows ?? [{ address: 12288, text: "REA fixture prompt" }, { address: 12320, text: "Δelta", encoding: "utf8", terminated: false }]).map((item) => ({ address: item.address, address_hex: "0x" + item.address.toString(16), text: item.text, length: [...item.text].length, byte_length: Buffer.byteLength(item.text, item.encoding === "utf16" ? "utf16le" : "utf8") + (item.terminated === false ? 0 : item.encoding === "utf16" ? 2 : 1), nul_terminated: item.terminated !== false, encoding: item.encoding ?? "ascii", section: ".rodata", xrefs_count: 0, functions: [] }));
+    const document = { binary: args[1], encoding: "all", min_length: 5, filter: null, section: null, termination: "any", scanned: "sections", xrefs: false, count: rows.length + (behavior.strings === "miscounted" ? 1 : 0), strings: rows, padding: "x".repeat(behavior.stringPadding ?? 0) };
+    setTimeout(() => process.stdout.write(JSON.stringify(document)), behavior.stringDelayMs ?? 0);
+  }
 } else if (args[0] === "decompile-graph") {
   if (behavior.graph === "hang") hang();
   else if (behavior.graph === "not-json") process.stdout.write("not graph JSON");
   else {
+    if (behavior.graph === "noisy") process.stderr.write(Buffer.alloc(9 * 1024 * 1024, 0x78));
     if (args[args.indexOf("--functions") + 1] !== "") throw new Error("graph must request no bodies");
     const nodes = [...functions, { name: "puts", addr: "0x2000" }].map((fn) => ({ address: parseInt(fn.addr, 16), name: fn.name, kind: "normal", hasIndirectCalls: behavior.graphIndirectCalls !== false && fn === functions[0], forwardsTo: null, codeC: behavior.graph === "with-bodies" ? "unrequested code" : null, assembly: null, error: null }));
     const edges = [];
     if (functions[1]) edges.push({ callerAddress: nodes[0].address, calleeAddress: nodes[1].address, kind: "call", calleeOrder: 0 });
     if (functions[2]) edges.push({ callerAddress: nodes[0].address, calleeAddress: nodes[2].address, kind: functions[2].error ? "jump" : "call", calleeOrder: 1 });
     if (functions[1]?.name === "parse") edges.push({ callerAddress: nodes[1].address, calleeAddress: 8192, kind: "call", calleeOrder: 0 });
-    setTimeout(() => process.stdout.write(JSON.stringify({ schemaVersion: 4, binary: { sourcePath: args[1], functionCount: nodes.length + (behavior.graph === "miscounted" ? 1 : 0), edgeCount: edges.length }, functions: nodes, edges })), behavior.referenceDelayMs ?? 0);
+    setTimeout(() => process.stdout.write(JSON.stringify({ schemaVersion: 4, binary: { sourcePath: args[1], functionCount: nodes.length + (behavior.graph === "miscounted" ? 1 : 0), edgeCount: edges.length }, functions: nodes, edges, padding: "x".repeat(behavior.graphPadding ?? 0) })), behavior.referenceDelayMs ?? 0);
   }
 } else if (args[0] === "xrefs") {
   if (behavior.xrefs === "hang") hang();
@@ -120,6 +173,7 @@ if (args[0] === "--version") {
     if (mode === "block-manifest") fs.mkdirSync(path.join(output, "..", "manifest.json"));
     const failed = functions.filter((fn) => fn.error !== undefined).length;
     const reported = mode === "miscounted" ? functions.length + 1 : functions.length - failed;
+    if (mode === "noisy") process.stdout.write(Buffer.alloc(9 * 1024 * 1024, 0x20));
     if (mode !== "silent") process.stdout.write("wrote " + output + ": " + stem + ".c (" + c.length + " bytes); functions: " + reported + " ok, " + failed + " failed\n");
   }, behavior.delayMs ?? 0);
 } else if (args[0] === "decompile") {
@@ -128,7 +182,8 @@ if (args[0] === "--version") {
   if (behavior.decompile === "hang") hang();
   else if (fn === undefined) { process.stderr.write("error: no function at " + args[2] + "\n"); process.exit(1); }
   else setTimeout(() => {
-    process.stdout.write("int " + fn.name + "(void) // single-function\n{\n  return 0;\n}\n");
+    const padding = behavior.decompilePadding === undefined ? "" : "/*" + "x".repeat(behavior.decompilePadding) + "*/\n";
+    process.stdout.write("int " + fn.name + "(void) // single-function\n" + padding + "{\n  return 0;\n}\n");
     fs.appendFileSync(__filename + ".exits", JSON.stringify({ pid: process.pid, at: Date.now() }) + "\n");
   }, behavior.decompileDelayMs ?? 0);
 } else {

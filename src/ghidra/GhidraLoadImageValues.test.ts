@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { attestGhidraDosLoadImage } from "./GhidraLoadImageValues.js";
 import {
+  compareDosFixture,
   fixtureDosLoadImage,
   fixtureOverlappingDosLoadImage,
 } from "./GhidraLoadImage.fixture.js";
@@ -217,7 +217,7 @@ const damage: ReadonlyArray<
 describe("independent DOS MZ import verification", () => {
   it("verifies every initialized source byte while retaining overlay and BSS scope", () => {
     const fixture = fixtureDosLoadImage();
-    const result = attestGhidraDosLoadImage(
+    const result = compareDosFixture(
       fixture.bytes,
       fixture.sha256,
       fixture.observation,
@@ -246,7 +246,7 @@ describe("independent DOS MZ import verification", () => {
     (_name, mutate) => {
       const fixture = fixtureDosLoadImage();
       mutate(fixture.observation);
-      const result = attestGhidraDosLoadImage(
+      const result = compareDosFixture(
         fixture.bytes,
         fixture.sha256,
         fixture.observation,
@@ -266,7 +266,7 @@ describe("independent DOS MZ import verification", () => {
     const mapping = fixture.observation.mappings[1];
     if (mapping === undefined) throw new Error("Missing module mapping");
     mapping.sha256 = "f".repeat(64);
-    const result = attestGhidraDosLoadImage(
+    const result = compareDosFixture(
       fixture.bytes,
       fixture.sha256,
       fixture.observation,
@@ -287,11 +287,7 @@ describe("independent DOS MZ import verification", () => {
     const fixture = fixtureDosLoadImage();
     fixture.observation.mappings.reverse();
     expect(
-      attestGhidraDosLoadImage(
-        fixture.bytes,
-        fixture.sha256,
-        fixture.observation,
-      ),
+      compareDosFixture(fixture.bytes, fixture.sha256, fixture.observation),
     ).toMatchObject({ ok: true, value: { status: "verified" } });
   });
 
@@ -303,11 +299,7 @@ describe("independent DOS MZ import verification", () => {
     relocation.segment = 0x0fff;
     relocation.offset = 25;
     expect(
-      attestGhidraDosLoadImage(
-        fixture.bytes,
-        fixture.sha256,
-        fixture.observation,
-      ),
+      compareDosFixture(fixture.bytes, fixture.sha256, fixture.observation),
     ).toMatchObject({
       ok: true,
       value: {
@@ -325,15 +317,11 @@ describe("independent DOS MZ import verification", () => {
     const fixture = fixtureDosLoadImage();
     fixture.bytes[0] = 0;
     expect(
-      attestGhidraDosLoadImage(
-        fixture.bytes,
-        fixture.sha256,
-        fixture.observation,
-      ),
+      compareDosFixture(fixture.bytes, fixture.sha256, fixture.observation),
     ).toMatchObject({ ok: false, error: expect.stringContaining("digest") });
     const digest = createHash("sha256").update(fixture.bytes).digest("hex");
     expect(
-      attestGhidraDosLoadImage(fixture.bytes, digest, fixture.observation),
+      compareDosFixture(fixture.bytes, digest, fixture.observation),
     ).toMatchObject({ ok: false, error: expect.stringContaining("MZ header") });
   });
 
@@ -360,7 +348,7 @@ describe("independent DOS MZ import verification", () => {
 describe("overlapping DOS MZ relocations", () => {
   it("compares each relocation window with the final loaded memory", () => {
     const fixture = fixtureOverlappingDosLoadImage();
-    const result = attestGhidraDosLoadImage(
+    const result = compareDosFixture(
       fixture.bytes,
       fixture.sha256,
       fixture.observation,
@@ -384,7 +372,7 @@ describe("overlapping DOS MZ relocations", () => {
     const first = fixture.observation.relocations[0];
     if (first === undefined) throw new Error("Missing first relocation");
     first.memory_bytes_hex = "0010";
-    const result = attestGhidraDosLoadImage(
+    const result = compareDosFixture(
       fixture.bytes,
       fixture.sha256,
       fixture.observation,

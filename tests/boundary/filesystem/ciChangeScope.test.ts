@@ -275,6 +275,7 @@ it.each([
   "tests/boundary/providers/RizinDebugSessionReviewRegressions.test.ts",
   "tests/boundary/mcp/gdbCancellationMcp.test.ts",
   "tests/boundary/mcp/rizinDebuggerCancellationMcp.test.ts",
+  "tests/boundary/mcp/rizinPendingOutput.test.ts",
   "tests/composition/reverseEngineeringAdmission.test.ts",
   "tests/support/reverseEngineeringMcpHarness.ts",
   "tests/support/reverseEngineeringCompositionEdgeCases.ts",
@@ -653,8 +654,34 @@ it.each([
     },
   ],
   [
+    "scripts/verify-ghidra-bridge-sources.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "src/ghidra/GhidraBridgeSources.ts",
+    { code: true, ghidra_bridge: true, runtime: true, package: true },
+  ],
+  [
+    "src/ghidra/GhidraJavaProperties.ts",
+    { code: true, ghidra_bridge: true, runtime: true, package: false },
+  ],
+  [
+    "src/ghidra/GhidraReleasePolicy.ts",
+    { code: true, ghidra_bridge: true, runtime: true },
+  ],
+  [
+    ".github/workflows/ghidra-bridge-sources.yml",
+    { code: false, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "bridge/ghidra/Example.java",
-    { code: true, runtime: true, package: false, apple: false },
+    {
+      code: true,
+      runtime: true,
+      ghidra_bridge: true,
+      package: false,
+      apple: false,
+    },
   ],
   [
     "src/native/AppleExample.ts",
@@ -698,6 +725,39 @@ it.each([
     { code: true, package: true, runtime: true, apple: false },
   ],
   [
+    "scripts/verify-packed-bridge.mjs",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      apple: false,
+      evm: false,
+      browser: false,
+    },
+  ],
+  [
+    "scripts/verify-packed-bridge.d.mts",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      apple: false,
+      evm: false,
+      browser: false,
+    },
+  ],
+  [
+    "tests/boundary/process/packedBridgeVerification.test.ts",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      apple: false,
+      evm: false,
+      browser: false,
+    },
+  ],
+  [
     "src/process/ProcessOwnership.test.ts",
     { code: true, package: true, apple: false, evm: false, browser: false },
   ],
@@ -732,7 +792,10 @@ it.each([
     "src/domain/analysisErrorProjection.ts",
     { code: true, sqlite: true, runtime: true },
   ],
-  ["src/domain/javascript/example.ts", { code: true, sqlite: false }],
+  [
+    "src/domain/javascript/example.ts",
+    { code: true, sqlite: false, ghidra_bridge: false },
+  ],
 ])("selects the appropriate lanes for %s", async (path, expected) => {
   const { directory, base } = await fixture();
   const head = await change(directory, [path]);
@@ -831,6 +894,7 @@ it.each([
   ["web_runtime", "real-web-runtime"],
   ["web_source_map", "real-web-source-map"],
   ["nativeaot", "nativeaot-fixtures"],
+  ["ghidra_bridge", "ghidra-bridge-sources"],
   ["website", "website-check"],
 ])(
   "routes %s through the selector without a duplicate PR trigger",

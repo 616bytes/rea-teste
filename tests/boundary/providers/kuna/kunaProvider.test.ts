@@ -15,6 +15,11 @@ import { expect, it as test, vi } from "vitest";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../../../src/domain/jsonValue.js";
 import type { KunaProcessLauncher } from "../../../../src/kuna/KunaCommand.js";
+import type { AnalysisError } from "../../../../src/domain/analysisErrorBase.js";
+import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
+import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
+import { composeBinarySession } from "../../../../src/application/binary/BinarySessionComposition.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "../../../../src/kuna/KunaLimits.js";
 import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
@@ -93,6 +98,86 @@ it("discovers configuration without probing and admits only verified targets", a
   ).toMatchObject({
     code: "architecture_unsupported",
   });
+});
+
+it("waits for an aborted pre-session hash before retrying its late close owner", async () => {
+  const fixture = await session("rea-kuna-profile-hash-owner-");
+  const binary = composeBinarySession(
+    new AnalysisProviderRegistry([fixture.provider], "kuna"),
+  );
+  const nativeClose = OwnedFileHandle.prototype.close;
+  let closeCalls = 0;
+  let enteredClose!: () => void;
+  let releaseClose!: () => void;
+  const closeEntered = new Promise<void>((resolve) => {
+    enteredClose = resolve;
+  });
+  const closeGate = new Promise<void>((resolve) => {
+    releaseClose = resolve;
+  });
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      closeCalls += 1;
+      if (closeCalls === 1) {
+        enteredClose();
+        await closeGate;
+      }
+      if (closeCalls <= 2)
+        throw new Error("injected Kuna profile close failure");
+      return nativeClose.call(this);
+    });
+  try {
+    const controller = new AbortController();
+    let previewSettled = false;
+    const previewWork = binary
+      .previewTarget(fixture.target, {
+        signal: controller.signal,
+      })
+      .then((result) => {
+        previewSettled = true;
+        return result;
+      });
+    await closeEntered;
+    controller.abort();
+    let closeSettled = false;
+    const closing = binary.close().then((result) => {
+      closeSettled = true;
+      return result;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(previewSettled).toBe(false);
+    expect(closeSettled).toBe(false);
+    expect(await binary.status()).toMatchObject({ cleanup_pending: true });
+    releaseClose();
+    const preview = await previewWork;
+    expect(preview).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cleanupIncomplete: true },
+    });
+    if (preview.ok) throw new Error("Cancellation unexpectedly succeeded");
+    expect(preview.error.cause).toBe(controller.signal.reason);
+    expect(preview.error.cleanupResources).toContain(fixture.kuna);
+
+    const firstClose = await closing;
+    expect(firstClose).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    expect(await binary.status()).toMatchObject({ cleanup_pending: true });
+
+    close.mockRestore();
+    expect(await binary.close()).toEqual({ ok: true, value: null });
+    expect(await binary.status()).toMatchObject({ cleanup_pending: false });
+    if (preview.ok || firstClose.ok)
+      throw new Error("Cleanup unexpectedly succeeded");
+    expect(preview.error.cleanupIncomplete).toBe(false);
+    expect(firstClose.error.cleanupIncomplete).toBe(false);
+  } finally {
+    releaseClose();
+    close.mockRestore();
+    await binary.close();
+  }
 });
 
 it("commits the observed Kuna release and digest to the analysis profile", async () => {
@@ -530,9 +615,7 @@ it("refuses another document, an unsupported operation and a replaced executable
       document: "/other/program",
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
-  expect(
-    await client.execute("search_strings", { pattern: "unused" }),
-  ).toMatchObject({
+  expect(await client.execute("list_segments", {})).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisCapabilityUnavailableError" },
   });
@@ -753,6 +836,98 @@ it("reports a failed export as failed rather than building", async () => {
   });
   await client.close();
 });
+
+it.each([
+  {
+    name: "export deadline",
+    behavior: { project: "hang" } as const,
+    environment: { REA_KUNA_PROJECT_TIMEOUT_MS: "300" },
+    cause: "AnalysisTimeoutError",
+    next: "To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above 300 ms or raise REA_KUNA_JOBS in the environment that starts REA. REA reads Kuna settings when it starts, so restart REA, then reopen the target.",
+    details: {
+      timeout_ms: 300,
+      captured_output: { truncated: expect.any(Boolean) },
+    },
+  },
+  {
+    name: "Kuna failure",
+    behavior: { project: "exit-failure" } as const,
+    environment: {},
+    cause: "ProviderAdapterError",
+    next: "To retry, resolve the reported failure, then reopen the target.",
+    details: { captured_output: { exit_code: 1 } },
+  },
+  {
+    name: "cache capacity",
+    behavior: { asmPadding: 2 * 1024 ** 2 },
+    environment: { REA_KUNA_CACHE_MAX_BYTES: String(1024 ** 2) },
+    cause: "AnalysisResourceConstraintError",
+    next: "Raise REA_KUNA_CACHE_MAX_BYTES above the export size, or analyze this target with another provider. REA reads Kuna settings when it starts, so restart REA, then reopen the target.",
+    details: {
+      resource: "capacity",
+      reported_limits: {
+        cache_max_bytes: 1024 ** 2,
+        export_bytes: expect.any(Number),
+      },
+    },
+  },
+  {
+    // A fixed output buffer is no setting, so no restart is suggested.
+    name: "fixed output buffer",
+    behavior: { project: "noisy" } as const,
+    environment: {},
+    cause: "AnalysisResourceConstraintError",
+    next: "REA buffers at most 8388608 bytes of kuna decompile-project output, so repeating this request for this target fails the same way. Use another provider for it.",
+    details: {
+      resource: "memory",
+      reported_limits: { output_limit_bytes: 8 * 1024 ** 2 },
+    },
+  },
+])(
+  "reports a failed export as not retryable in its session ($name)",
+  async ({ behavior, environment, cause, next, details }) => {
+    const { open } = await session(
+      "rea-kuna-export-unavailable-",
+      behavior,
+      environment,
+    );
+    const client = open();
+    try {
+      for (const operation of [
+        "procedure_assembly",
+        "analyze_function",
+      ] as const) {
+        const result = await client.execute(operation, { procedure: "main" });
+        if (result.ok) throw new Error(`${operation} unexpectedly succeeded`);
+        expect(result.error).toMatchObject({
+          _tag: "AnalysisCapabilityUnavailableError",
+          retryable: false,
+        });
+        expect(result.error.userMessage?.endsWith(next)).toBe(true);
+        const failure = result.error.cause as AnalysisError;
+        expect(failure._tag).toBe(cause);
+        // Callers see only the top-level projection; the export failure's own
+        // projected code and details travel whole inside it.
+        const exported = projectAnalysisError(failure);
+        const projected = projectAnalysisError(result.error);
+        expect(projected).toMatchObject({
+          code: "capability_unavailable",
+          retryable: false,
+          details: {
+            diagnostics: {
+              export_error: cause,
+              export_code: exported.code,
+              export_details: exported.details,
+            },
+          },
+        });
+        expect(exported.details).toMatchObject(details);
+      }
+    } finally {
+      expect(await client.close()).toEqual({ ok: true, value: null });
+    }
+  },
+);
 
 it("lets one caller stop waiting for the shared inventory without failing another", async () => {
   const { open } = await session("rea-kuna-shared-inventory-", {

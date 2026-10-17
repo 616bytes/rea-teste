@@ -59,7 +59,7 @@ export const androidInputSchemas = {
           .string()
           .max(512)
           .regex(
-            /^(?:[A-Za-z][A-Za-z0-9_.]*:)?[a-z][a-z0-9_-]*\/[A-Za-z0-9_.$]+$/u,
+            /^(?:[A-Za-z][A-Za-z0-9_.]*:)?[a-z][a-z0-9_\x2d]*\/[A-Za-z0-9_.$]+$/u,
             "Resource must be [package:]type/name, as uiautomator reports resource-id",
           ),
       )

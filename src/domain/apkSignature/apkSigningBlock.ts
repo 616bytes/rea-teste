@@ -61,6 +61,12 @@ export interface ZipTail {
   readonly centralDirectoryOffset: number;
   readonly centralDirectorySize: number;
   readonly totalEntries: number;
+  /**
+   * The classic EOCD record's 16-bit entry count. apksig takes the record
+   * count from this field alone (it ignores a Zip64 record), so it reads only
+   * this many records when Zip64 declares more.
+   */
+  readonly classicEntryCount: number;
 }
 
 export interface ApkSigningBlockPair {
@@ -222,6 +228,7 @@ export const parseZipTail = (
     centralDirectoryOffset: cd.value.offset,
     centralDirectorySize: cd.value.size,
     totalEntries: cd.value.entries,
+    classicEntryCount: view(bytes).getUint16(eocdOffset + 10, true),
   });
 };
 

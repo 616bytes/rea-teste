@@ -46,11 +46,28 @@ rea inspect-apk-signature /path/app.apk
   decode), and a limitation names the block.
   apksig rejects the v1 signature of an archive whose central directory
   holds any name more than once ("Duplicate entry"). REA checks every entry:
-  a limitation names the first few duplicates and counts the rest, and a
+  a limitation names the first few duplicates (JSON-quoted; a name over 256
+  bytes is cut there and its stored length given) and counts the rest, and a
   signer whose block, `.SF` or `META-INF/MANIFEST.MF` name is duplicated
   (one signer per block name) carries `decode_error`
   `duplicate entry: <name>`, so a duplicated manifest marks every signer.
   A duplicate outside those names leaves the signers as declared.
+  Names are compared as apksig compares them, as Java strings decoded from
+  UTF-8: malformed bytes become U+FFFD, so `dup\xff` and `dup\xfe` are one
+  name (apksigner: `Duplicate entry: dup�`). REA reproduces Java's
+  replacement rather than WHATWG `TextDecoder`'s; the two differ for encoded
+  surrogates (`ED A0..BF`), which Java replaces as one unit. This was checked
+  against OpenJDK 25's `new String(bytes, UTF_8)` on 300,039 malformed and
+  well-formed sequences; other Java runtimes are not checked. The same
+  decoding names v1 entries and compares a local header's name with the
+  central directory's. apksig takes the record count from the classic
+  end-of-central-directory record's 16-bit field and ignores a Zip64 count,
+  so it reads only the first 65,535 records of a larger directory: the
+  limitation then says so, counts as duplicates for apksig only names whose
+  second copy lies within those records, and names separately those
+  duplicated only past them. REA still reads v1 signing entries, and flags
+  duplicated signing names, from every record, so past record 65,535 it
+  reports signers apksig would not see.
   Bytes after the block's `ContentInfo` are ignored, as apksig's BER parser
   ignores them, and a limitation names the block and their count.
 - **Per signer:** the certificate's **SHA-256 fingerprint over the raw embedded
@@ -137,8 +154,10 @@ archive names) is then checked against an 8 MiB output budget (the exact check
 is authoritative); an over-budget report is refused, not truncated.
 
 Peak memory is about 2.5 times the file size: the shared stable reader keeps
-its read chunks and then concatenates them. The duplicate-name check adds 12
-bytes per central-directory record and decodes only the names it reports. A 500 MiB APK measured 1.25 GiB
+its read chunks and then concatenates them. The duplicate-name check adds 15
+bytes per central-directory record, re-encodes only malformed names (one unit
+at a time, without copying well-formed ones) and decodes only the names it
+reports. A 500 MiB APK measured 1.25 GiB
 peak resident memory through the CLI, so an archive at the 512 MiB cap needs
 about 1.3 GB.
 

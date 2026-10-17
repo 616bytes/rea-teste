@@ -243,6 +243,8 @@ describe("Zip64 end-of-central-directory", () => {
     expect(tail.ok).toBe(true);
     if (!tail.ok) return;
     expect(tail.value.totalEntries).toBe(70000);
+    // apksig reads only the classic count.
+    expect(tail.value.classicEntryCount).toBe(0xffff);
   });
 
   it("keeps exactly 65,535 entries when no Zip64 record exists", () => {

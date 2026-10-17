@@ -47,6 +47,8 @@ import {
   centralDirectoryV1SignatureEntries,
   detectV1Signature,
   MAX_V1_SIGNERS,
+  type ApkDuplicateName,
+  type ApkDuplicateNameSample,
   type ApkDuplicateNames,
   type ApkV1Signature,
 } from "../domain/apkSignature/apkV1Signature.js";
@@ -271,14 +273,49 @@ const postureSigner = (signer: Signer | SignerV3): ApkPostureSigner => {
   };
 };
 
-/** Why apksig would reject the v1 signature of an archive with duplicate names. */
-const duplicateEntriesLimitation = ({
-  count,
-  sample,
-}: ApkDuplicateNames): string => {
+/** Longest name prefix a limitation quotes; the stored length is stated past it. */
+const NAME_DISPLAY_BYTES = 256;
+
+/**
+ * A duplicated name as a limitation shows it: JSON-quoted, and cut at a
+ * UTF-8 boundary within NAME_DISPLAY_BYTES with its stored length.
+ */
+const displayName = ({ name, storedBytes }: ApkDuplicateName): string => {
+  const encoded = Buffer.from(name, "utf8");
+  if (encoded.length <= NAME_DISPLAY_BYTES) return JSON.stringify(name);
+  let cut = NAME_DISPLAY_BYTES;
+  while (cut > 0 && ((encoded[cut] ?? 0) & 0xc0) === 0x80) cut -= 1;
+  const prefix = encoded.subarray(0, cut).toString("utf8");
+  return `${JSON.stringify(prefix)}… (${String(storedBytes)}-byte name)`;
+};
+
+const listed = ({ count, sample }: ApkDuplicateNameSample): string => {
   const more = count - sample.length;
-  const listed = `${sample.join(", ")}${more > 0 ? ` and ${String(more)} more` : ""}`;
-  return `The central directory holds ${String(count)} ${count === 1 ? "name" : "names"} more than once (${listed}); apksig rejects the v1 signature of an archive with any duplicate entry ("Duplicate entry"). A v1 signer whose signature block, .SF or META-INF/MANIFEST.MF name is duplicated carries decode_error; other v1 signers are reported as declared.`;
+  return `${sample.map(displayName).join(", ")}${more > 0 ? ` and ${String(more)} more` : ""}`;
+};
+
+const plural = (count: number): string =>
+  `${String(count)} ${count === 1 ? "name" : "names"}`;
+
+/** Why apksig would reject the v1 signature of an archive with duplicate names. */
+const duplicateEntriesLimitation = (
+  duplicates: ApkDuplicateNames,
+): string | null => {
+  const { count, records, apksigRecords, unread } = duplicates;
+  if (count === 0 && unread.count === 0) return null;
+  const partial = apksigRecords < records;
+  const scope = partial
+    ? `apksig reads only the first ${String(apksigRecords)} of the ${String(records)} central-directory records (it takes the count from the classic end-of-central-directory record's 16-bit field and ignores the Zip64 count). `
+    : "";
+  const within =
+    count > 0
+      ? `${partial ? "Among those, the" : "The"} central directory holds ${plural(count)} more than once (${listed(duplicates)}); apksig rejects the v1 signature of an archive with any duplicate entry ("Duplicate entry"). A v1 signer whose signature block, .SF or META-INF/MANIFEST.MF name is duplicated carries decode_error; other v1 signers are reported as declared.`
+      : "";
+  const beyond =
+    unread.count > 0
+      ? `${count > 0 ? " " : ""}${plural(unread.count)} (${listed(unread)}) ${unread.count === 1 ? "is" : "are"} duplicated only by records past those, which apksig does not read.`
+      : "";
+  return `${scope}${within}${beyond}`;
 };
 
 const LAYOUT_LIMITATION =
@@ -420,7 +457,9 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     const limitations = [
       ...APK_SIGNATURE_LIMITATIONS,
       ...(matcher.layoutPreventedRecompute() ? [LAYOUT_LIMITATION] : []),
-      ...(duplicates.count > 0 ? [duplicateEntriesLimitation(duplicates)] : []),
+      ...[duplicateEntriesLimitation(duplicates)].filter(
+        (note): note is string => note !== null,
+      ),
       ...v1SignerNotes(v1Decoded),
       ...derived.notes,
     ];
@@ -466,6 +505,7 @@ const readV1 = (
     tail.centralDirectoryOffset,
     tail.centralDirectorySize,
     tail.totalEntries,
+    tail.classicEntryCount,
   );
   if (!entries.ok) return err(mapCentralDirectoryError(entries.error));
   const v1 = detectV1Signature(entries.value.entries);

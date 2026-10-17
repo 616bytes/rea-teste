@@ -393,7 +393,7 @@ cliTest(
       ],
     });
     expect(duplicatedEvidence.limitations.join(" ")).toContain(
-      `holds 1 name more than once (${block})`,
+      `holds 1 name more than once ("${block}")`,
     );
 
     // apksig rejects the v1 signature for any duplicate name: a duplicated
@@ -436,7 +436,7 @@ cliTest(
       },
     ]);
     expect(manifestTwice.limitations.join(" ")).toContain(
-      "holds 1 name more than once (META-INF/MANIFEST.MF)",
+      'holds 1 name more than once ("META-INF/MANIFEST.MF")',
     );
     const dexTwice = await renamed(
       "duplicate-dex.apk",
@@ -447,7 +447,143 @@ cliTest(
       { certificate: { sha256_fingerprint: LEAF_SHA256 }, decode_error: null },
     ]);
     expect(dexTwice.limitations.join(" ")).toContain(
-      'holds 1 name more than once (classes.dex); apksig rejects the v1 signature of an archive with any duplicate entry ("Duplicate entry")',
+      'holds 1 name more than once ("classes.dex"); apksig rejects the v1 signature of an archive with any duplicate entry ("Duplicate entry")',
     );
+  },
+);
+
+/** A central directory with no entry data, ended by a classic or Zip64 EOCD. */
+const directoryOnly = (names: readonly Buffer[]): Buffer => {
+  const cd = Buffer.concat(
+    names.flatMap((name) => {
+      const fixed = Buffer.alloc(46);
+      fixed.writeUInt32LE(0x02014b50, 0);
+      fixed.writeUInt16LE(name.length, 28);
+      return [fixed, name];
+    }),
+  );
+  const zip64 = names.length > 0xfffe;
+  const tail: Buffer[] = [];
+  if (zip64) {
+    const record = Buffer.alloc(56);
+    record.writeUInt32LE(0x06064b50, 0);
+    record.writeBigUInt64LE(44n, 4);
+    record.writeBigUInt64LE(BigInt(names.length), 24);
+    record.writeBigUInt64LE(BigInt(names.length), 32);
+    record.writeBigUInt64LE(BigInt(cd.length), 40);
+    const locator = Buffer.alloc(20);
+    locator.writeUInt32LE(0x07064b50, 0);
+    locator.writeBigUInt64LE(BigInt(cd.length), 8);
+    locator.writeUInt32LE(1, 16);
+    tail.push(record, locator);
+  }
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(Math.min(names.length, 0xffff), 8);
+  eocd.writeUInt16LE(Math.min(names.length, 0xffff), 10);
+  eocd.writeUInt32LE(cd.length, 12);
+  return Buffer.concat([cd, ...tail, eocd]);
+};
+
+cliTest(
+  "names duplicates as apksig decodes and counts them, quoted and bounded",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apk-duplicate-names-");
+    const limitationsOf = async (name: string, names: readonly Buffer[]) => {
+      const path = join(root, name);
+      await writeFile(path, directoryOnly(names));
+      const run = await cli.run({
+        arguments: ["inspect-apk-signature", path, "--json"],
+      });
+      expect(run.exitCode, run.stderr).toBe(0);
+      const { limitations } = toolContract(
+        "inspect_apk_signature",
+      ).outputSchema.parse(run.json);
+      for (const note of limitations) expect(note.length).toBeLessThan(4096);
+      return limitations.filter(
+        (note) => note.includes("records") || note.includes("more than once"),
+      );
+    };
+    const latin1 = (text: string) => Buffer.from(text, "latin1");
+
+    // apksigner: "Duplicate entry: dup\uFFFD" (Java decodes both as dup + U+FFFD).
+    expect(
+      await limitationsOf("malformed.apk", [
+        latin1("dup\xff"),
+        latin1("dup\xfe"),
+      ]),
+    ).toEqual([
+      expect.stringContaining('holds 1 name more than once ("dup\uFFFD")'),
+    ]);
+    // apksigner: "Duplicate entry: " (the empty name).
+    expect(
+      await limitationsOf("empty.apk", [Buffer.alloc(0), Buffer.alloc(0)]),
+    ).toEqual([expect.stringContaining('holds 1 name more than once ("");')]);
+
+    // Long names are cut at 256 bytes with their stored length; the count stays exact.
+    const long = [
+      "L".repeat(0xffff),
+      ...[..."ABCDEF"].map((c) => c.repeat(60_000)),
+    ].flatMap((name) => [latin1(name), latin1(name)]);
+    const [longNote] = await limitationsOf("long.apk", long);
+    expect(longNote).toContain(
+      `holds 7 names more than once ("${"L".repeat(256)}"… (65535-byte name), "${"A".repeat(256)}"… (60000-byte name),`,
+    );
+    expect(longNote).toContain(
+      "… (60000-byte name) and 2 more); apksig rejects",
+    );
+
+    // apksig reads only the classic EOCD's 65,535 records of a Zip64 directory.
+    const many = Array.from({ length: 70_000 }, (_, i) =>
+      latin1(`f${String(i)}`),
+    );
+    const zip64 = await limitationsOf("zip64.apk", [
+      ...many,
+      latin1("f0"),
+      latin1("f0"),
+      latin1("f1"),
+      latin1("f69999"),
+    ]);
+    expect(zip64).toEqual([
+      'apksig reads only the first 65535 of the 70004 central-directory records (it takes the count from the classic end-of-central-directory record\'s 16-bit field and ignores the Zip64 count). 3 names ("f0", "f1", "f69999") are duplicated only by records past those, which apksig does not read.',
+    ]);
+  },
+);
+
+cliTest(
+  "reads a v1 block whose local and central names differ only in malformed bytes Java decodes alike",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apk-v1-malformed-name-");
+    // apksig compares the decoded names: CERT\xff and CERT\xfe are both
+    // CERT + U+FFFD, which also pairs the block with CERT�.SF.
+    const archive = Buffer.from(
+      await zipWith(
+        [
+          { name: "META-INF/CERT�.SF", data: "Signature-Version: 1.0" },
+          { name: "META-INF/CERTX.EC", data: OPENSSL_BLOCK_ISSUER_SERIAL },
+        ],
+        { dataDescriptor: false },
+      ),
+    );
+    const at = zipEntryOffsets(archive, "META-INF/CERTX.EC");
+    archive.write("META-INF/CERT\xff.EC", at.central + 46, "latin1");
+    archive.write("META-INF/CERT\xfe.EC", at.local + 30, "latin1");
+    const path = join(root, "malformed-name.apk");
+    await writeFile(path, archive);
+    const run = await cli.run({
+      arguments: ["inspect-apk-signature", path, "--json"],
+    });
+    expect(run.exitCode, run.stderr).toBe(0);
+    expect(
+      toolContract("inspect_apk_signature").outputSchema.parse(run.json)
+        .normalized_result.schemes.v1.signers,
+    ).toMatchObject([
+      {
+        signature_file: "META-INF/CERT�.SF",
+        block_file: "META-INF/CERT�.EC",
+        certificate: { sha256_fingerprint: LEAF_SHA256 },
+        decode_error: null,
+      },
+    ]);
   },
 );

@@ -24,8 +24,9 @@ const entry = (name: string): ApkV1Entry => ({
 const entries = (names: readonly string[]): ApkV1Entry[] => names.map(entry);
 
 /** A central-directory file header (46 fixed bytes) for one entry name. */
-const cdRecord = (name: string): number[] => {
-  const nameBytes = [...name].map((c) => c.charCodeAt(0));
+const cdRecord = (name: string | readonly number[]): number[] => {
+  const nameBytes =
+    typeof name === "string" ? [...name].map((c) => c.charCodeAt(0)) : name;
   const buf = new Uint8Array(46);
   const view = new DataView(buf.buffer);
   view.setUint32(0, 0x02014b50, true); // signature
@@ -33,8 +34,15 @@ const cdRecord = (name: string): number[] => {
   return [...buf, ...nameBytes];
 };
 
-const centralDirectory = (names: readonly string[]): Uint8Array =>
-  Uint8Array.from(names.flatMap((name) => cdRecord(name)));
+const centralDirectory = (
+  names: readonly (string | readonly number[])[],
+): Uint8Array => Uint8Array.from(names.flatMap((name) => cdRecord(name)));
+
+/** Duplicate-name samples for ASCII names. */
+const named = (names: readonly string[]) =>
+  names.map((name) => ({ name, storedBytes: name.length }));
+
+const NO_DUPLICATES = { count: 0, sample: [] };
 
 describe("APK v1 (JAR) signature detection", () => {
   const names = [
@@ -138,7 +146,12 @@ describe("APK v1 (JAR) signature detection", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const v1 = detectV1Signature(result.value.entries);
-    expect(result.value.duplicates).toEqual({ count: 0, sample: [] });
+    expect(result.value.duplicates).toEqual({
+      ...NO_DUPLICATES,
+      records: names.length,
+      apksigRecords: names.length,
+      unread: NO_DUPLICATES,
+    });
     expect(v1).toMatchObject({
       present: true,
       hasManifest: true,
@@ -187,13 +200,17 @@ describe("APK v1 (JAR) signature detection", () => {
 });
 
 describe("APK v1 duplicate signing names", () => {
-  const scan = (all: readonly string[]) => {
+  const scan = (
+    all: readonly (string | readonly number[])[],
+    apksigRecords = all.length,
+  ) => {
     const bytes = centralDirectory(all);
     const result = centralDirectoryV1SignatureEntries(
       bytes,
       0,
       bytes.length,
       all.length,
+      apksigRecords,
     );
     if (!result.ok) throw new Error(JSON.stringify(result.error));
     return result.value;
@@ -211,7 +228,11 @@ describe("APK v1 duplicate signing names", () => {
         "Classes.dex",
         "res/a.xm",
       ]).duplicates,
-    ).toEqual({ count: 2, sample: ["classes.dex", "res/a.xml"] });
+    ).toMatchObject({
+      count: 2,
+      sample: named(["classes.dex", "res/a.xml"]),
+      unread: NO_DUPLICATES,
+    });
   });
 
   it("decodes only the first few duplicate names, in first-occurrence order", () => {
@@ -220,19 +241,52 @@ describe("APK v1 duplicate signing names", () => {
       (_, i) => `assets/f${String(i)}`,
     );
     const { duplicates } = scan([...names, ...[...names].reverse()]);
-    expect(duplicates).toEqual({
+    expect(duplicates).toMatchObject({
       count: names.length,
-      sample: names.slice(0, MAX_DUPLICATE_NAME_SAMPLE),
+      sample: named(names.slice(0, MAX_DUPLICATE_NAME_SAMPLE)),
     });
   });
 
   it("compares the names whose hashes collide instead of trusting the hash", () => {
     // These two distinct names share their 29-bit FNV-1a sort hash.
     const [a, b] = ["res/c52831", "res/c112929"];
-    expect(scan([a, b]).duplicates).toEqual({ count: 0, sample: [] });
-    expect(scan([b, a, "x", b, a]).duplicates).toEqual({
+    expect(scan([a, b]).duplicates).toMatchObject(NO_DUPLICATES);
+    expect(scan([b, a, "x", b, a]).duplicates).toMatchObject({
       count: 2,
-      sample: [b, a],
+      sample: named([b, a]),
+    });
+  });
+
+  it("compares malformed names as apksig's Java decoding does", () => {
+    const dup = [0x64, 0x75, 0x70];
+    // dup\xff, dup\xfe and dup + U+FFFD all decode to "dup\uFFFD"; an encoded
+    // surrogate is one replacement for Java (three for WHATWG's TextDecoder).
+    const { duplicates } = scan([
+      [...dup, 0xff],
+      "x",
+      [...dup, 0xfe],
+      [...dup, 0xef, 0xbf, 0xbd],
+      [0x78, 0xed, 0xa0, 0x80],
+      [0x78, 0xff],
+      [0x78, 0xff, 0xff],
+    ]);
+    expect(duplicates).toMatchObject({
+      count: 2,
+      sample: [
+        { name: "dup\uFFFD", storedBytes: 4 },
+        { name: "x\uFFFD", storedBytes: 4 },
+      ],
+    });
+  });
+
+  it("counts for apksig only duplicates within the records apksig reads", () => {
+    // apksig reads the classic 16-bit count (3 here) of a Zip64 directory.
+    expect(scan(["a", "b", "a", "c", "b", "c", "a"], 3).duplicates).toEqual({
+      count: 1,
+      sample: named(["a"]),
+      records: 7,
+      apksigRecords: 3,
+      unread: { count: 2, sample: named(["b", "c"]) },
     });
   });
 

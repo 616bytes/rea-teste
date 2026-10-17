@@ -10,12 +10,21 @@
  * Dependency-free and bounded: central-directory records are walked within the
  * declared directory extent and entry count; a record running past it is a
  * tagged error rather than a silently shorter list. Only the signing-relevant
- * `META-INF/` names are decoded and retained, capped at a format-justified
- * count. Duplicate names are found among all records, as apksig rejects a v1
- * signature for any of them, with 12 bytes of typed-array state per record
- * (up to ~11M records in a 512 MiB Zip64 file) and only a few names decoded.
+ * `META-INF/` names are decoded (as Java decodes them) and retained, capped at
+ * a format-justified count. Duplicate names are found among all records, as
+ * apksig rejects a v1 signature for any of them, with 15 bytes of typed-array
+ * state per record (up to ~11M records in a 512 MiB Zip64 file) and only a few
+ * names decoded.
  */
 import { type Result, err, ok } from "../result.js";
+import {
+  canonicalNameHash,
+  compareCanonicalNames,
+  decodeZipName,
+  isCanonicalZipName,
+  sameZipName,
+  type StoredZipName,
+} from "./zipEntryName.js";
 
 const CD_SIGNATURE = 0x02014b50;
 const CD_FIXED_SIZE = 46;
@@ -118,14 +127,32 @@ export interface ApkV1Signature {
   readonly signers: readonly ApkV1SignerEntry[];
 }
 
-const NAME_DECODER = new TextDecoder("utf-8", { fatal: false });
+/** A duplicated name as apksig decodes it, with its stored length. */
+export interface ApkDuplicateName {
+  readonly name: string;
+  /** The name's length as the central directory stores it. */
+  readonly storedBytes: number;
+}
 
-/** Names the central directory holds more than once, among all of its records. */
-export interface ApkDuplicateNames {
-  /** Distinct duplicated names. */
+/** Distinct duplicated names: how many, and the first few. */
+export interface ApkDuplicateNameSample {
   readonly count: number;
   /** The first few, in central-directory order of their first occurrence. */
-  readonly sample: readonly string[];
+  readonly sample: readonly ApkDuplicateName[];
+}
+
+/**
+ * Names the central directory holds more than once, as apksig sees them:
+ * `count`/`sample` cover the records apksig reads; `unread` names those
+ * whose second copy lies only past them (a Zip64 count above the classic
+ * end-of-central-directory record's 16-bit count, which apksig never sees).
+ */
+export interface ApkDuplicateNames extends ApkDuplicateNameSample {
+  /** Records walked: every record the end-of-central-directory declares. */
+  readonly records: number;
+  /** Records apksig reads (the classic 16-bit count, at most `records`). */
+  readonly apksigRecords: number;
+  readonly unread: ApkDuplicateNameSample;
 }
 
 /** The signing-relevant entries plus the duplicate names of the whole directory. */
@@ -134,8 +161,8 @@ export interface ApkCentralDirectoryScan {
   readonly duplicates: ApkDuplicateNames;
 }
 
-/** Byte order of two stored names. */
-const compareNames = (
+/** Byte order of two stored well-formed names, compared in place. */
+const compareStoredNames = (
   bytes: Uint8Array,
   starts: Uint32Array,
   lengths: Uint16Array,
@@ -157,29 +184,44 @@ const compareNames = (
 const INDEX_BITS = 2 ** 24;
 
 /**
- * Names stored more than once, compared byte for byte (apksig compares the
- * decoded names). Each record's name is hashed into the high bits of one
- * sortable number with its index in the low bits; only records whose hashes
- * collide are compared, so the work is O(n log n) even for crafted collisions.
+ * Names stored more than once, compared as apksig compares the decoded
+ * names: by their canonical bytes (see zipEntryName.ts), which are the stored
+ * bytes of every well-formed name. Each record's name is hashed into the high
+ * bits of one sortable number with its index in the low bits; only records
+ * whose hashes collide are compared, so the work is O(n log n) even for
+ * crafted collisions. A name counts for apksig when its second copy lies
+ * within the records apksig reads.
  */
 const duplicateNames = (
   bytes: Uint8Array,
   starts: Uint32Array,
   lengths: Uint16Array,
   count: number,
+  apksigRecords: number,
 ): ApkDuplicateNames => {
+  const wellFormed = new Uint8Array(count);
   const keys = new Float64Array(count);
   for (let i = 0; i < count; i += 1) {
     const start = starts[i] ?? 0;
     const stop = start + (lengths[i] ?? 0);
-    let hash = 0x811c9dc5;
-    for (let k = start; k < stop; k += 1)
-      hash = Math.imul(hash ^ (bytes[k] ?? 0), 0x01000193);
+    const canonical = isCanonicalZipName(bytes, start, stop);
+    wellFormed[i] = canonical ? 1 : 0;
+    const hash = canonicalNameHash(bytes, start, stop, canonical);
     // 29 hash bits and 24 index bits stay within a double's exact integers.
     keys[i] = (hash >>> 3) * INDEX_BITS + i;
   }
   keys.sort();
-  const firsts: number[] = [];
+  const stored = (i: number): StoredZipName => {
+    const start = starts[i] ?? 0;
+    return { bytes, start, stop: start + (lengths[i] ?? 0) };
+  };
+  // Well-formed names are their own canonical bytes: compared in place.
+  const compare = (a: number, b: number): number =>
+    wellFormed[a] === 1 && wellFormed[b] === 1
+      ? compareStoredNames(bytes, starts, lengths, a, b)
+      : compareCanonicalNames(stored(a), stored(b));
+  const seen: number[] = [];
+  const unread: number[] = [];
   for (let run = 0; run < count;) {
     const hash = Math.floor((keys[run] ?? 0) / INDEX_BITS);
     let stop = run + 1;
@@ -189,29 +231,40 @@ const duplicateNames = (
       const group = Array.from(
         keys.subarray(run, stop),
         (key) => key % INDEX_BITS,
-      ).sort((a, b) => compareNames(bytes, starts, lengths, a, b) || a - b);
-      // Sorted by name, then record order: the first of each run of equal
-      // names is that name's first occurrence.
+      ).sort((a, b) => compare(a, b) || a - b);
+      // Sorted by name, then record order: the first two of each run of equal
+      // names are that name's first and second occurrences.
       let previousSame = false;
       for (let k = 1; k < group.length; k += 1) {
-        const previous = group[k - 1] ?? 0;
-        const same =
-          compareNames(bytes, starts, lengths, previous, group[k] ?? 0) === 0;
-        if (same && !previousSame) firsts.push(previous);
+        const first = group[k - 1] ?? 0;
+        const second = group[k] ?? 0;
+        const same = compare(first, second) === 0;
+        if (same && !previousSame)
+          (second < apksigRecords ? seen : unread).push(first);
         previousSame = same;
       }
     }
     run = stop;
   }
-  firsts.sort((a, b) => a - b);
+  const sampled = (firsts: number[]): ApkDuplicateNameSample => {
+    firsts.sort((a, b) => a - b);
+    return {
+      count: firsts.length,
+      sample: firsts.slice(0, MAX_DUPLICATE_NAME_SAMPLE).map((i) => {
+        const start = starts[i] ?? 0;
+        const storedBytes = lengths[i] ?? 0;
+        return {
+          name: decodeZipName(bytes.subarray(start, start + storedBytes)),
+          storedBytes,
+        };
+      }),
+    };
+  };
   return {
-    count: firsts.length,
-    sample: firsts.slice(0, MAX_DUPLICATE_NAME_SAMPLE).map((i) => {
-      const start = starts[i] ?? 0;
-      return NAME_DECODER.decode(
-        bytes.subarray(start, start + (lengths[i] ?? 0)),
-      );
-    }),
+    ...sampled(seen),
+    records: count,
+    apksigRecords: Math.min(apksigRecords, count),
+    unread: sampled(unread),
   };
 };
 
@@ -220,13 +273,15 @@ const duplicateNames = (
  * returning the `META-INF/` names that take part in v1 signing and the names
  * held more than once. A record that runs past the declared extent is an
  * error, not a silently shorter list: a partial walk would turn "unknown"
- * into "absent".
+ * into "absent". `apksigRecords` is how many leading records apksig reads
+ * (the classic end-of-central-directory count); it defaults to all of them.
  */
 export const centralDirectoryV1SignatureEntries = (
   bytes: Uint8Array,
   centralDirectoryOffset: number,
   centralDirectorySize: number,
   totalEntries: number,
+  apksigRecords: number = totalEntries,
 ): Result<ApkCentralDirectoryScan, ApkCentralDirectoryError> => {
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const end = Math.min(
@@ -270,7 +325,7 @@ export const centralDirectoryV1SignatureEntries = (
     lengths[i] = nameLength;
     if (startsWithMetaInf(bytes, nameStart, nameLength)) {
       const rawName = bytes.subarray(nameStart, nameStart + nameLength);
-      const name = NAME_DECODER.decode(rawName);
+      const name = decodeZipName(rawName);
       if (isV1SignatureName(name)) {
         if (entries.length >= MAX_V1_SIGNATURE_ENTRIES)
           return err({
@@ -302,7 +357,7 @@ export const centralDirectoryV1SignatureEntries = (
     });
   return ok({
     entries,
-    duplicates: duplicateNames(bytes, starts, lengths, capacity),
+    duplicates: duplicateNames(bytes, starts, lengths, capacity, apksigRecords),
   });
 };
 
@@ -362,16 +417,14 @@ export interface ApkLocalEntryData {
   readonly declaresEncryption: boolean;
 }
 
-const sameBytes = (a: Uint8Array, b: Uint8Array): boolean =>
-  a.length === b.length && a.every((byte, i) => byte === b[i]);
-
 /**
  * Locate an entry's stored (possibly compressed) bytes through its local file
  * header. The data must lie within the archive's entry region (before the
  * signing block or central directory) and its declared sizes must be read
  * directly, so Zip64-sized entries are reported, not guessed. As apksig's
  * LocalFileRecord does, the local header must agree with the central
- * directory on the name, the data-descriptor flag and (without a data
+ * directory on the name (compared as decoded, as apksig compares them), the
+ * data-descriptor flag and (without a data
  * descriptor) the CRC-32 and both sizes: a disagreement leaves the entry's
  * bytes unknown, never read from one side. Like LocalFileRecord, the
  * encryption flag (bit 0) does not stop the read; it is returned so the caller
@@ -422,7 +475,10 @@ export const localEntryData = (
   const nameStart = at + LOCAL_FIXED_SIZE;
   if (
     nameStart + nameLength > limit ||
-    !sameBytes(bytes.subarray(nameStart, nameStart + nameLength), entry.rawName)
+    !sameZipName(
+      bytes.subarray(nameStart, nameStart + nameLength),
+      entry.rawName,
+    )
   )
     return err({
       detail: "local header name differs from the central directory's",

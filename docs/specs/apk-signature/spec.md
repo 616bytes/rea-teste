@@ -31,7 +31,12 @@ code executes, no device or `adb`, no acquisition, no mutation.
   `.SF` or `META-INF/MANIFEST.MF` name is duplicated. Duplicate names are
   found among all central-directory entries, as apksig rejects the v1
   signature for any of them ("Duplicate entry"), and a limitation names the
-  first few and counts the rest. As apksig does, the ZIP encryption flag is
+  first few (JSON-quoted, cut at 256 bytes with the stored length) and counts
+  the rest. Names are compared as apksig's Java UTF-8 decoding makes them, so
+  malformed bytes that decode to the same string are duplicates; where Zip64
+  declares more records than the classic end-of-central-directory count that
+  apksig reads, duplicates only past those records are named separately. As
+  apksig does, the ZIP encryption flag is
   ignored: the block is read and its decoding decides, with a limitation.
 - The APK Signing Block located from the ZIP end-of-central-directory (Zip64
   followed) and framed into id-value pairs; v2, v3 and v3.1 signers decoded:

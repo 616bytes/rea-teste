@@ -607,45 +607,32 @@ describe("ApkSignatureProvider failure surfaces", () => {
 
 describe("ApkSignatureProvider output budget", () => {
   it("counts the limitations, which repeat archive names, in the output budget", async () => {
-    // Central-directory records only: names whose JSON escapes are 6 bytes
-    // per byte, as unpaired .SF names in the result and as duplicate names
-    // only in a limitation.
-    const longName = (prefix: string, suffix: string): Buffer =>
-      Buffer.concat([
-        Buffer.from(prefix, "latin1"),
-        Buffer.alloc(0xffff - prefix.length - suffix.length, 1),
-        Buffer.from(suffix, "latin1"),
-      ]);
-    const archive = (duplicated: number): Uint8Array => {
-      const names = [
-        ...Array.from({ length: 17 }, (_, i) =>
-          longName("META-INF/", `${String(i).padStart(2, "0")}.SF`),
-        ),
-        ...Array.from({ length: duplicated }, (_, i) =>
-          longName("res/", String(i)),
-        ).flatMap((name) => [name, name]),
-      ];
-      const cd = Buffer.concat(
-        names.flatMap((name) => {
-          const fixed = Buffer.alloc(46);
-          fixed.writeUInt32LE(0x02014b50, 0);
-          fixed.writeUInt16LE(name.length, 28);
-          return [fixed, name];
-        }),
+    // Five signers whose names escape to 6 JSON bytes per byte: the report
+    // alone fits, and the trailing-bytes note per signer, which repeats the
+    // block name, takes the emitted output past the budget.
+    const archive = (trailing: number): Promise<Uint8Array> =>
+      zipWith(
+        Array.from({ length: 5 }, (_, i) => {
+          const stem = `META-INF/${"\u0001".repeat(65_000)}${String(i)}`;
+          return [
+            { name: `${stem}.SF`, data: "Signature-Version: 1.0" },
+            {
+              name: `${stem}.RSA`,
+              data: Uint8Array.from([
+                ...OPENSSL_BLOCK_ISSUER_SERIAL,
+                ...new Array<number>(trailing).fill(0),
+              ]),
+            },
+          ];
+        }).flat(),
+        { dataDescriptor: false },
       );
-      const eocd = Buffer.alloc(22);
-      eocd.writeUInt32LE(0x06054b50, 0);
-      eocd.writeUInt16LE(names.length, 8);
-      eocd.writeUInt16LE(names.length, 10);
-      eocd.writeUInt32LE(cd.length, 12);
-      return Uint8Array.from(Buffer.concat([cd, eocd]));
-    };
     const fits = await provider.inspect({
-      path: await write("names.apk", archive(0)),
+      path: await write("names.apk", await archive(0)),
     });
     expect(fits.ok, fits.ok ? "" : fits.error.message).toBe(true);
     const over = await provider.inspect({
-      path: await write("names-duplicated.apk", archive(5)),
+      path: await write("names-noted.apk", await archive(2)),
     });
     expect(over.ok).toBe(false);
     if (over.ok) return;

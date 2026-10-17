@@ -268,7 +268,147 @@ cliTest(
     ]);
     const neither = await inspect(cli, twin, "././classes2.dex");
     expect(neither.json).toMatchObject({ code: "invalid_request" });
-    expect(prose(neither.json)).toContain("holds 2 members named classes2.dex");
+    expect(prose(neither.json)).toContain(
+      String.raw`holds 2 members named \"classes2.dex\" (stored as \"classes2.dex\" (symbolic-link mode; REA does not read it), \"./classes2.dex\")`,
+    );
+  },
+);
+
+cliTest(
+  "marks skipped symbolic-link members as unreadable and never advises selecting them",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-dex-link-note-");
+    const link = {
+      bytes: debuggableDex(),
+      externalFileAttributes: SYMLINK_ATTRIBUTES,
+    };
+    const noteOf = async (
+      members: Parameters<typeof zipArchive>[0],
+    ): Promise<string> => {
+      const apk = join(
+        root,
+        `${String(members.length)}-${String(Math.random()).slice(2)}.apk`,
+      );
+      await writeFile(apk, await zipArchive(members));
+      const summary = await inspect(cli, apk);
+      expect(summary.exitCode, summary.stdout).toBe(0);
+      return evidenceOf(summary.json).normalized_result.limitations.join(" ");
+    };
+    const mark = "(symbolic-link mode; REA does not read it)";
+    // After a gap, under its exact name: entry would refuse it as a link.
+    const afterGap = await noteOf([
+      { name: "classes.dex", bytes: debuggableDex() },
+      { name: "classes3.dex", ...link },
+    ]);
+    expect(afterGap).toContain(`also holds classes3.dex ${mark}, which`);
+    expect(afterGap).not.toContain("with entry");
+    // Under a ./ spelling Android does not auto-load.
+    const dotted = await noteOf([
+      { name: "./classes.dex", ...link },
+      { name: "classes.dex", bytes: debuggableDex() },
+    ]);
+    expect(dotted).toContain(`also holds ./classes.dex ${mark}, which`);
+    expect(dotted).not.toContain("with entry");
+    // Beside a readable skipped member, only that one is advised.
+    const mixed = await noteOf([
+      { name: "classes.dex", bytes: debuggableDex() },
+      { name: "classes3.dex", ...link },
+      { name: "classes4.dex", bytes: debuggableDex() },
+    ]);
+    expect(mixed).toContain(
+      `also holds classes3.dex ${mark}, classes4.dex, which`,
+    );
+    expect(mixed).toContain("Select the readable one with entry.");
+  },
+);
+
+cliTest(
+  "refuses a name duplicated by a link member as ambiguous, whether auto-loaded or selected",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-dex-link-twin-");
+    const link = {
+      bytes: debuggableDex(),
+      externalFileAttributes: SYMLINK_ATTRIBUTES,
+    };
+    for (const [members, name] of [
+      [
+        [
+          { name: "classes.dex", bytes: debuggableDex() },
+          { name: "classes.dex", ...link },
+        ],
+        "classes.dex",
+      ],
+      [
+        [
+          { name: "classes.dex", bytes: debuggableDex() },
+          { name: "classes2.dex", bytes: debuggableDex() },
+          { name: "classes2.dex", ...link },
+        ],
+        "classes2.dex",
+      ],
+    ] as const) {
+      const apk = join(root, `${name}.apk`);
+      await writeFile(apk, await zipArchive([...members]));
+      for (const entry of [undefined, name]) {
+        const refused = await inspect(cli, apk, entry);
+        expect(refused.exitCode, refused.stdout).toBe(1);
+        expect(refused.json).toMatchObject({ code: "invalid_request" });
+        expect(prose(refused.json)).toContain("the identity is ambiguous");
+      }
+    }
+  },
+);
+
+cliTest(
+  "refuses an entry that names nothing and bounds caller names in refusals by characters",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-dex-names-");
+    const apk = join(root, "app.apk");
+    await writeFile(
+      apk,
+      await zipArchive([{ name: "classes.dex", bytes: debuggableDex() }]),
+    );
+    for (const entry of ["./", "././"]) {
+      const empty = await inspect(cli, apk, entry);
+      expect(empty.exitCode, empty.stdout).toBe(1);
+      expect(empty.json).toMatchObject({ code: "invalid_request" });
+      expect(prose(empty.json)).toContain(
+        String.raw`The entry ${JSON.stringify(JSON.stringify(entry)).slice(1, -1)} names no archive member`,
+      );
+    }
+    const missing = await inspect(cli, apk, "classes9.dex");
+    expect(prose(missing.json)).toContain(
+      String.raw`No member \"classes9.dex\" exists`,
+    );
+    // 200 astral characters: the marker counts characters, not UTF-16 units.
+    const astral = await inspect(cli, apk, `${"\u{1F600}".repeat(200)}.dex`);
+    expect(astral.json).toMatchObject({ code: "invalid_request" });
+    expect(prose(astral.json)).toContain(
+      "(name shortened: 82 of 204 characters shown)",
+    );
+  },
+);
+
+cliTest(
+  "looks up a long class_descriptor whole but shows it bounded in the refusal over MCP",
+  async () => {
+    const root = await createTestTempDirectory("rea-dex-descriptor-");
+    const apk = join(root, "app.apk");
+    await writeFile(
+      apk,
+      await zipArchive([{ name: "classes.dex", bytes: debuggableDex() }]),
+    );
+    const { call } = await connectLocalToolsMcp();
+    const descriptor = `L${"a".repeat(1024 * 1024)};`;
+    const notFound = await call(TOOL, {
+      path: apk,
+      class_descriptor: descriptor,
+    });
+    expect(notFound.isError).toBe(true);
+    const text = JSON.stringify(notFound.content);
+    expect(text.length).toBeLessThan(16 * 1024);
+    expect(text).toContain("invalid_request");
+    expect(text).toContain("name shortened: 160 of 1048578 characters shown");
   },
 );
 
@@ -376,12 +516,15 @@ cliTest(
     const refused = await inspect(cli, crowd, "classes2.dex");
     expect(refused.json).toMatchObject({ code: "invalid_request" });
     const message = prose(refused.json);
-    expect(message).toContain("holds 63 members named classes2.dex");
+    expect(message).toContain(
+      String.raw`holds 63 members named \"classes2.dex\"`,
+    );
     const more =
       /, (\d+) more member\(s\) under spellings not named here\)/u.exec(
         message,
       );
-    const named = message.split(String.raw`classes2.dex\"`).length - 1;
+    // Every quoted spelling, less the requested name itself.
+    const named = message.split(String.raw`classes2.dex\"`).length - 2;
     expect(Number(more?.[1]) + named).toBe(63);
     expect(message).not.toContain(JSON.stringify(spelled(61)).slice(1, -1));
   },

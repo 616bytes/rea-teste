@@ -124,12 +124,14 @@ const listArchive = async (
   // ART (libziparchive) finds members by their raw central-directory name and
   // ignores the Info-ZIP Unicode Path field, so the stored name, not the
   // logical path, decides eligibility and is the member's reported identity.
-  const wanted = (stored: string): boolean => {
+  const wanted = (stored: string, symlink: boolean): boolean => {
     if (requested !== undefined)
       return normalizeArchiveMemberPath(stored) === requested;
     const index = multidexIndex(normalizeArchiveMemberPath(stored));
     if (index === null) return false;
-    canonical.add(stored);
+    // Named with its link status, so a note never advises selecting a member
+    // REA cannot read, whatever its spelling.
+    canonical.add(stored, symlink);
     // Only an exactly stored canonical name is auto-loaded, so a member
     // stored as `./classes.dex` is not (it stays selectable).
     if (multidexIndex(stored) === null) return false;
@@ -148,14 +150,15 @@ const listArchive = async (
       return false;
     }
     const symlink = member.kind === "symlink";
-    if ((member.kind !== "file" && !symlink) || !wanted(stored)) return false;
+    if ((member.kind !== "file" && !symlink) || !wanted(stored, symlink))
+      return false;
     // Every occurrence is counted for the report; two are enough to keep.
     const key = requested ?? stored;
     const seen = (occurrences.get(key) ?? 0) + 1;
     occurrences.set(key, seen);
     let exact = false;
     if (requested !== undefined) {
-      spellings.add(stored);
+      spellings.add(stored, symlink);
       if (stored === entry) {
         exactOccurrences += 1;
         exactSymlink ||= symlink;
@@ -208,7 +211,7 @@ const skippedMembersNote = (
   listing: ArchiveListing,
 ): string | undefined => {
   const { canonical } = listing;
-  const skipped = [...canonical.names]
+  const skipped = canonical.names
     .filter((name) => !isAutoLoaded(name, listing))
     .sort(
       (a, b) =>
@@ -217,7 +220,7 @@ const skippedMembersNote = (
     );
   // Every auto-loaded position has an exactly stored entry; those not named
   // were counted among the unnamed ones.
-  const namedLoaded = canonical.names.size - skipped.length;
+  const namedLoaded = canonical.names.length - skipped.length;
   const more = Math.max(
     0,
     canonical.unnamed - (listing.autoLoaded - namedLoaded),
@@ -227,7 +230,16 @@ const skippedMembersNote = (
     ...skipped.map((name) => canonical.display(name)),
     ...(more === 0 ? [] : [`${String(more)} more canonical DEX member(s)`]),
   ].join(", ");
-  return `${path} also holds ${names}, which Android does not auto-load: it loads classes.dex, classes2.dex, ... only while each is present under its exact stored name. Select ${skipped.length + more === 1 ? "it" : "one"} with entry.`;
+  // Advise entry only for members REA can read (unnamed ones may be either).
+  const readable =
+    skipped.filter((name) => !canonical.isSymlink(name)).length + more;
+  const pick = (): string => {
+    if (readable === skipped.length + more)
+      return readable === 1 ? "it" : "one";
+    return readable === 1 && more === 0 ? "the readable one" : "a readable one";
+  };
+  const advice = readable === 0 ? "" : ` Select ${pick()} with entry.`;
+  return `${path} also holds ${names}, which Android does not auto-load: it loads classes.dex, classes2.dex, ... only while each is present under its exact stored name.${advice}`;
 };
 
 /** The auto-loaded sequence, refused when it cannot be read as promised. */
@@ -248,6 +260,21 @@ const resolveAutoLoaded = (
   const skippedNote = skippedMembersNote(path, listing);
   const withSkipped = (message: string): string =>
     skippedNote === undefined ? message : `${message} ${skippedNote}`;
+  // A reported entry must identify exactly one member. Checked first, over
+  // every auto-loaded position (link members included, which ART loads too),
+  // so the run refuses a duplicated name as `entry` does for that name.
+  const ambiguous = Array.from(
+    { length: Math.min(listing.autoLoaded, DEX_LIMITS.maxDexMembers + 1) },
+    (_, index) => multidexName(index),
+  ).find((name) => (listing.occurrences.get(name) ?? 0) > 1);
+  if (ambiguous !== undefined)
+    return err(
+      entryError(
+        withSkipped(
+          `${path} holds ${String(listing.occurrences.get(ambiguous))} members named ${ambiguous}; the identity is ambiguous.`,
+        ),
+      ),
+    );
   // Every root member is promised, so one that cannot be read is refused,
   // never silently skipped (that would turn unknown into absent).
   const encrypted = matches.filter((m) => m.member.encrypted);
@@ -282,18 +309,6 @@ const resolveAutoLoaded = (
           remediationAction:
             "Select a readable member with entry to inspect it alone.",
         },
-      ),
-    );
-  // A reported entry must identify exactly one member.
-  const ambiguous = sequence.find(
-    (name) => (listing.occurrences.get(name) ?? 0) > 1,
-  );
-  if (ambiguous !== undefined)
-    return err(
-      entryError(
-        withSkipped(
-          `${path} holds ${String(listing.occurrences.get(ambiguous))} members named ${ambiguous}; the identity is ambiguous.`,
-        ),
       ),
     );
   if (matches.length === 0)
@@ -331,7 +346,7 @@ const resolveAutoLoaded = (
 /** The stored spellings that answer a requested name, for a refusal. */
 const spellingsOf = ({ spellings }: ArchiveListing): string =>
   [
-    ...[...spellings.names].map((name) => spellings.display(name)),
+    ...spellings.names.map((name) => spellings.display(name)),
     ...(spellings.unnamed === 0
       ? []
       : [
@@ -369,7 +384,7 @@ const resolveRequested = (
   if (matches.length + (exact.length === 1 ? 0 : listing.symlinks) > 1)
     return err(
       entryError(
-        `${path} holds ${String(listing.occurrences.get(requested) ?? 0)} members named ${displayName(requested)} (stored as ${spellingsOf(listing)}); the identity is ambiguous. Select one by its exact stored name.`,
+        `${path} holds ${String(listing.occurrences.get(requested) ?? 0)} members named ${displayName(requested, true)} (stored as ${spellingsOf(listing)}); the identity is ambiguous. Select one by its exact stored name.`,
       ),
     );
   const only = matches[0];
@@ -381,12 +396,12 @@ const resolveRequested = (
             new AnalysisUnsupportedTargetError(
               OPERATION,
               path,
-              `The selected entry ${displayName(entry)} is stored as a ZIP directory, which REA does not read as member bytes; its debug metadata is unavailable, not absent.`,
+              `The selected entry ${displayName(entry, true)} is stored as a ZIP directory, which REA does not read as member bytes; its debug metadata is unavailable, not absent.`,
             ),
           )
         : err(
             entryError(
-              `No member ${displayName(requested)} exists in ${path}.`,
+              `No member ${displayName(requested, true)} exists in ${path}.`,
             ),
           );
   if (only.member.encrypted)
@@ -394,7 +409,7 @@ const resolveRequested = (
       new AnalysisUnsupportedTargetError(
         OPERATION,
         path,
-        `The selected member ${displayName(only.entry)} is encrypted and cannot be read without a key; unavailable, not absent.`,
+        `The selected member ${displayName(only.entry, true)} is encrypted and cannot be read without a key; unavailable, not absent.`,
       ),
     );
   return ok({ members: [only] });
@@ -407,10 +422,23 @@ export const selectDexMembers = async (
   path: string,
   signal: AbortSignal | undefined,
 ): Promise<Result<DexMemberSelection, AnalysisError>> => {
-  const requested =
-    entry === undefined ? undefined : normalizeArchiveMemberPath(entry);
-  const listing = await listArchive(reader, entry, requested, signal);
-  return entry === undefined || requested === undefined
-    ? resolveAutoLoaded(path, listing)
-    : resolveRequested(path, entry, requested, listing);
+  if (entry === undefined)
+    return resolveAutoLoaded(
+      path,
+      await listArchive(reader, undefined, undefined, signal),
+    );
+  const requested = normalizeArchiveMemberPath(entry);
+  // Only leading `./` segments are removed, so nothing else names no member.
+  if (requested === "")
+    return err(
+      entryError(
+        `The entry ${displayName(entry, true)} names no archive member: nothing remains after its leading "./" segments. Select a member by its stored name, e.g. classes2.dex.`,
+      ),
+    );
+  return resolveRequested(
+    path,
+    entry,
+    requested,
+    await listArchive(reader, entry, requested, signal),
+  );
 };

@@ -484,18 +484,20 @@ export class DexFileProvider implements DexDebugMetadataPort {
   ): Result<DexDebugMetadataResult, AnalysisError> {
     // Facts about what was (not) read must reach the caller on refusals too.
     const context = limitations.length === 0 ? "" : ` ${limitations.join(" ")}`;
+    // Prose shows the caller's descriptor bounded; the lookup used it whole.
+    const shown = displayName(descriptor, true);
     if (found.length === 0)
       return err(
         this.#inputError(
           "class_descriptor",
-          `No class ${descriptor} exists in the selected DEX member(s).${context}`,
+          `No class ${shown} exists in the selected DEX member(s).${context}`,
         ),
       );
     if (found.length > 1)
       return err(
         this.#inputError(
           "class_descriptor",
-          `Class ${descriptor} appears in more than one dex member; select one with entry.${context}`,
+          `Class ${shown} appears in more than one dex member; select one with entry.${context}`,
         ),
       );
     return ok(

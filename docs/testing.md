@@ -530,9 +530,13 @@ Native package jobs, the Windows curated lane, and the Apple artifact lane reuse
 the same workflow's Turbo cache for portable compiled JavaScript, skills, and
 catalogs. The producer stages only the completed `test:prepare` task hashes into
 `.cache/ci-build-cache/`, preserving their archives, metadata, and available manifests.
-Missing required entries fail publication; older cross-run entries stay in the
-original cache. The Windows lane relies on the Linux static job for typechecking. They retain the normal build and prepack
-commands, which restore matching outputs or rebuild on a cache miss. Native
+Turbo may evict entries, including during a later dry plan. Missing archives or
+metadata omit that entire optional cache entry; `snapshot-report.json` records
+missed tasks and keeps even an empty cache artifact uploadable. Malformed plans,
+non-file entries, and physical I/O failures still fail publication and remove
+partial output. Older cross-run entries stay in the original cache.
+The Windows lane relies on the Linux static job for typechecking. Consumer jobs
+retain their normal build and prepack commands, which restore matching outputs or rebuild on a cache miss. Native
 artifacts, dependency installs, package archives, and runtime verification remain
 host-local. Keep platform-dependent outputs out of this shared cache.
 

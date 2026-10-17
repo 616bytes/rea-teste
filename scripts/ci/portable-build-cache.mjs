@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { copyFile, lstat, mkdir, rm } from "node:fs/promises";
+import { copyFile, lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -29,38 +29,72 @@ function readTasks() {
   return tasks;
 }
 
+// Cache retention is owned by Turbo and may evict companions at any time.
+// Publish only complete task entries; missing entries are ordinary cache misses.
+async function copyTaskCache(hash) {
+  const copied = [];
+  let bytes = 0;
+  try {
+    for (const suffix of [".tar.zst", "-meta.json", "-manifest.json"]) {
+      const name = `${hash}${suffix}`;
+      const source = join(".turbo/cache", name);
+      const entry = await lstat(source).catch((error) => {
+        if (suffix === "-manifest.json" && error.code === "ENOENT")
+          return undefined;
+        throw error;
+      });
+      if (entry === undefined) continue;
+      if (!entry.isFile())
+        throw new Error(
+          `Portable build cache entry must be a regular file: ${source}`,
+        );
+      copied.push(name);
+      await copyFile(source, join(output, name));
+      bytes += entry.size;
+    }
+    return { files: copied.length, bytes };
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    // A vanished companion must not leave an orphan archive eligible for reuse.
+    for (const name of copied) await rm(join(output, name), { force: true });
+    return undefined;
+  }
+}
+
 async function snapshot(tasks) {
   await mkdir(output, { recursive: true });
   let files = 0;
   let bytes = 0;
+  const cached = new Set();
   try {
     for (const hash of new Set(tasks.map((task) => task.hash))) {
-      for (const suffix of [".tar.zst", "-meta.json", "-manifest.json"]) {
-        const name = `${hash}${suffix}`;
-        const source = join(".turbo/cache", name);
-        const entry = await lstat(source).catch((error) => {
-          // Manifests are not present in every supported local cache entry.
-          if (suffix === "-manifest.json" && error.code === "ENOENT")
-            return undefined;
-          throw error;
-        });
-        if (!entry) continue;
-        if (!entry.isFile())
-          throw new Error(
-            `Portable build cache entry must be a regular file: ${source}`,
-          );
-        await copyFile(source, join(output, name));
-        files++;
-        bytes += entry.size;
-      }
+      const entry = await copyTaskCache(hash);
+      if (entry === undefined) continue;
+      cached.add(hash);
+      files += entry.files;
+      bytes += entry.bytes;
     }
+    const report = {
+      tasks: tasks.length,
+      cachedTasks: tasks.filter(({ hash }) => cached.has(hash)).length,
+      missingTasks: tasks
+        .filter(({ hash }) => !cached.has(hash))
+        .map(({ taskId }) => taskId),
+      files,
+      bytes,
+      path: output,
+    };
+    // Keep an uploadable report even when every optional entry was evicted.
+    // Consumers still run their required preparation and rebuild on cache misses.
+    await writeFile(
+      join(output, "snapshot-report.json"),
+      JSON.stringify(report) + "\n",
+    );
+    console.log(JSON.stringify(report));
   } catch (error) {
     await rm(output, { recursive: true, force: true });
     throw error;
   }
-  console.log(
-    JSON.stringify({ tasks: tasks.length, files, bytes, path: output }),
-  );
 }
 
 const [mode, ...extra] = process.argv.slice(2);

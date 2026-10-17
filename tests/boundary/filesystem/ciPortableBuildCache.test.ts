@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  cp,
   mkdir,
   readFile,
   readdir,
@@ -21,6 +22,7 @@ const second = { taskId: "artifacts:skills", hash: "fedcba9876543210" };
 const plan = { tasks: [first, second] };
 const prefix = "rea-portable-build-v2-Linux-X64-toolchain";
 const output = ".cache/ci-build-cache";
+const reportName = "snapshot-report.json";
 
 function run(root: string, mode: "key" | "snapshot", input: unknown = plan) {
   const result = spawnSync(process.execPath, [script, mode], {
@@ -52,7 +54,9 @@ async function entry(root: string, hash: string, manifest = true) {
 }
 
 async function inventory(root: string, path: string) {
-  const files = (await readdir(join(root, path))).sort();
+  const files = (await readdir(join(root, path)))
+    .filter((name) => name !== reportName)
+    .sort();
   return Promise.all(
     files.map(async (name) => [
       name,
@@ -131,18 +135,48 @@ it("rejects malformed or ambiguous plans in both commands and removes stale publ
   }
 });
 
-it("fails publication on a cold cache, missing companions or non-file entries, including after a partial copy", async () => {
+it("reports cold or evicted task entries without publishing incomplete companions", async () => {
   const root = await fixture();
-  expect(run(root, "snapshot").status).not.toBe(0);
-  await expect(readdir(join(root, output))).rejects.toMatchObject({
-    code: "ENOENT",
+  const cold = run(root, "snapshot");
+  expect(cold.status, cold.stderr).toBe(0);
+  expect(await inventory(root, output)).toEqual([]);
+  expect(
+    JSON.parse(await readFile(join(root, output, reportName), "utf8")),
+  ).toMatchObject({
+    missingTasks: [first.taskId, second.taskId],
   });
+  await entry(root, first.hash);
+  for (const suffix of [".tar.zst", "-meta.json"]) {
+    await entry(root, second.hash);
+    await rm(join(root, ".turbo/cache", `${second.hash}${suffix}`));
+    const result = run(root, "snapshot");
+    expect(result.status, result.stderr).toBe(0);
+    expect(await inventory(root, output)).toEqual(
+      (await inventory(root, ".turbo/cache")).filter(([name]) =>
+        name?.startsWith(first.hash),
+      ),
+    );
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      tasks: 2,
+      cachedTasks: 1,
+      missingTasks: [second.taskId],
+    });
+    expect(
+      JSON.parse(await readFile(join(root, output, reportName), "utf8")),
+    ).toMatchObject({
+      missingTasks: [second.taskId],
+    });
+  }
+});
+
+it("fails publication on non-file entries and removes any earlier partial snapshot", async () => {
+  const root = await fixture();
   await entry(root, first.hash);
   for (const suffix of [".tar.zst", "-meta.json", "-manifest.json"]) {
     await entry(root, second.hash);
     const path = join(root, ".turbo/cache", `${second.hash}${suffix}`);
     await rm(path);
-    if (suffix === "-manifest.json") await mkdir(path);
+    await mkdir(path);
     const result = run(root, "snapshot");
     expect(result.status, result.stderr).not.toBe(0);
     await expect(readdir(join(root, output))).rejects.toMatchObject({
@@ -174,3 +208,74 @@ it.skipIf(process.platform === "win32")(
     }
   },
 );
+
+it("rebuilds actual Turbo outputs after restoring a report-only cache artifact", async () => {
+  const root = await fixture();
+  await writeFile(
+    join(root, ".gitignore"),
+    ".turbo/\nout/\n.build-count\n.cache/\n",
+  );
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({
+      name: "portable-cache-consumer",
+      private: true,
+      packageManager: "npm@11.16.0",
+      scripts: { build: "node build.mjs" },
+    }),
+  );
+  await writeFile(
+    join(root, "package-lock.json"),
+    JSON.stringify({
+      name: "portable-cache-consumer",
+      lockfileVersion: 3,
+      packages: {},
+    }),
+  );
+  await writeFile(
+    join(root, "turbo.json"),
+    JSON.stringify({ tasks: { build: { outputs: ["out/**"] } } }),
+  );
+  await writeFile(
+    join(root, "build.mjs"),
+    `
+    import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+    mkdirSync("out", { recursive: true });
+    writeFileSync("out/result.json", JSON.stringify({ value: 42 }));
+    writeFileSync(".build-count", String(existsSync(".build-count") ? Number(readFileSync(".build-count", "utf8")) + 1 : 1));
+  `,
+  );
+  const turbo = fileURLToPath(
+    new URL("../../../node_modules/turbo/bin/turbo", import.meta.url),
+  );
+  const build = (...extra: string[]) => {
+    const result = spawnSync(
+      process.execPath,
+      [turbo, "run", "build", "--cache-dir=.turbo/cache", ...extra],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, TURBO_TELEMETRY_DISABLED: "1" },
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    return result;
+  };
+  const tasks = JSON.parse(build("--dry=json").stdout);
+  expect(tasks.tasks).toHaveLength(1);
+  build();
+  await rm(join(root, ".turbo/cache"), { recursive: true });
+  await rm(join(root, "out"), { recursive: true });
+  expect(run(root, "snapshot", tasks).status).toBe(0);
+  expect(await readdir(join(root, output))).toEqual([reportName]);
+  await cp(join(root, output), join(root, ".turbo/cache"), { recursive: true });
+  expect(JSON.parse(build("--dry=json").stdout).tasks[0].hash).toBe(
+    tasks.tasks[0].hash,
+  );
+  build();
+  expect(
+    JSON.parse(await readFile(join(root, "out/result.json"), "utf8")),
+  ).toEqual({ value: 42 });
+  expect(await readFile(join(root, ".build-count"), "utf8")).toBe("2");
+});

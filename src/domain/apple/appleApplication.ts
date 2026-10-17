@@ -28,7 +28,11 @@ import {
   bridgeCandidateCoverageSchema,
   projectCartesianCandidates,
 } from "../bridgeCandidateProjection.js";
-import { projectionDigest } from "../mobileApplicationGraphProjection.js";
+import {
+  projectionDigest,
+  unavailableComponentSchema,
+  unavailableComponents,
+} from "../mobileApplicationGraphProjection.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
@@ -63,6 +67,7 @@ export const appleApplicationProjectionResultSchema = z.strictObject({
     ),
     helpers: z.array(appleComponentSchema),
   }),
+  unavailable_components: z.array(unavailableComponentSchema),
   symlinks: z.array(pathSchema),
   runtime_families: z.array(
     z.enum([
@@ -154,6 +159,11 @@ export const projectAppleApplication = (
     roots,
     rootFormat,
   );
+  const unavailable = attributeComponents(
+    unavailableComponents(inventory),
+    roots,
+    rootFormat,
+  );
   const bundles = detectBundles(entries, roots);
   const classified = classifyComponents(entries, all, roots);
   const runtimeFamilies = identifyRuntimeFamilies(all);
@@ -181,7 +191,8 @@ export const projectAppleApplication = (
       bundles,
       sidecars: entries.some(({ path }) => isSidecar(path)),
       symlinks: entries.some(({ kind }) => kind === "symlink"),
-      unattributed,
+      unattributed: unattributed + unavailable.unattributed,
+      unavailable: unavailable.all.length > 0,
       bridgeCandidateCoverage: bridgeProjection.coverage,
     }),
   ];
@@ -195,6 +206,7 @@ export const projectAppleApplication = (
     application_roots: roots,
     bundles,
     components: classified,
+    unavailable_components: unavailable.all,
     symlinks: entries
       .filter(({ kind }) => kind === "symlink")
       .map(({ path }) => path)
@@ -204,7 +216,9 @@ export const projectAppleApplication = (
     bridge_candidate_coverage: bridgeProjection.coverage,
     coverage: {
       status:
-        complete && bridgeProjection.coverage.status === "complete"
+        complete &&
+        unavailable.all.length === 0 &&
+        bridgeProjection.coverage.status === "complete"
           ? ("complete-within-inventory" as const)
           : ("partial" as const),
       inventory_complete: inventory.complete,
@@ -227,11 +241,11 @@ export const appleProjectionId = (projection: unknown): string =>
  * ZIP, and DMG inventories can hold installers and other siblings, so only
  * components inside an application root are attributed to it.
  */
-const attributeComponents = (
-  inventoried: readonly Component[],
+const attributeComponents = <Entry extends { readonly path: string }>(
+  inventoried: readonly Entry[],
   roots: readonly string[],
   rootFormat: RootFormat,
-): { readonly all: Component[]; readonly unattributed: number } => {
+): { readonly all: Entry[]; readonly unattributed: number } => {
   const visible = inventoried.filter(({ path }) => !isSidecar(path));
   if (rootFormat === "ipa") return { all: visible, unattributed: 0 };
   const all = visible.filter(({ path }) =>
@@ -402,6 +416,7 @@ const projectionLimitations = (facts: {
   readonly sidecars: boolean;
   readonly symlinks: boolean;
   readonly unattributed: number;
+  readonly unavailable: boolean;
   readonly bridgeCandidateCoverage: AppleApplicationProjectionResult["bridge_candidate_coverage"];
 }): string[] => [
   ...(!facts.complete
@@ -443,6 +458,11 @@ const projectionLimitations = (facts: {
   ...(facts.bridgeCandidateCoverage.status === "partial"
     ? [
         `Bridge candidate pairs exceeded the projection safety budget; ${facts.bridgeCandidateCoverage.omitted_candidates} hypotheses are omitted. Component arrays still include every component from the supplied inventory pages.`,
+      ]
+    : []),
+  ...(facts.unavailable
+    ? [
+        "Some inventoried occurrences have no authenticated content identity. Their paths and limitations are retained in unavailable_components; component absence is unknown.",
       ]
     : []),
   "Bundle roles follow path conventions. Read each info_plist_path with inspect_plist for CFBundleExecutable, identifiers, and declared services.",

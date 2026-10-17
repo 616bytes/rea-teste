@@ -59,6 +59,11 @@ complete authenticated inventory, and `partial` otherwise. A partial result
 states that absence is unknown. Component arrays remain complete when candidate
 hypotheses are omitted; component arrays still include every component from
 the supplied inventory pages, and overall coverage is `partial` in that case.
+Inventoried files whose bytes were not read, such as encrypted archive members,
+have no content identity. They are listed in `unavailable_components` with
+their path, format, encryption flag, and limitations rather than in a component
+category; overall coverage is `partial` and a limitation states that component
+absence is unknown.
 
 ## Application roots
 

@@ -17,6 +17,9 @@ import {
   type InspectElectronFusesInput,
 } from "../domain/electron/electronFuses.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ZodError } from "zod";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
@@ -87,6 +90,49 @@ export class ElectronFuseProvider implements ElectronFusePort {
   }
 }
 
+/**
+ * A rejected descriptor close keeps its exact owner and must never replace
+ * the read outcome or be classified as a read permission failure. Report the
+ * primary error with its own classification and incomplete cleanup as a
+ * separate, truthful error.
+ */
+const cleanupIncompleteFor = (
+  cause: RegularFileCleanupFailure,
+  path: string,
+  signal?: AbortSignal,
+): AnalysisError => {
+  const cleanup = new ProviderCleanupError(
+    ELECTRON_FUSE_PROVIDER_IDENTITY.id,
+    [cause.path],
+    {
+      reason:
+        cause.cleanupCause instanceof Error
+          ? cause.cleanupCause.message
+          : String(cause.cleanupCause),
+      retention: cause.retention.kind,
+    },
+    { operation: OPERATION, cause },
+  );
+  if (cause.outcome.kind === "failed")
+    return analysisErrorWithCleanupFailure(
+      failureFor(cause.outcome.cause, path, signal),
+      cleanup,
+      OPERATION,
+    );
+  return analysisErrorWithCleanupFailure(
+    new ProviderAdapterError(ELECTRON_FUSE_PROVIDER_IDENTITY.id, OPERATION, {
+      cause,
+      diagnostics: {
+        path,
+        reason:
+          "The file was read, but the descriptor close could not be confirmed, so the report was discarded to keep cleanup truthful.",
+      },
+    }),
+    cleanup,
+    OPERATION,
+  );
+};
+
 const failureFor = (
   cause: unknown,
   path: string,
@@ -124,6 +170,8 @@ const failureFor = (
     return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
       cause,
     });
+  if (cause instanceof RegularFileCleanupFailure)
+    return cleanupIncompleteFor(cause, path, signal);
   if (cause instanceof NonRegularFileReadError)
     return new AnalysisInputError(OPERATION, { cause }, [
       {

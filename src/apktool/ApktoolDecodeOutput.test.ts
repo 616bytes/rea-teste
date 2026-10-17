@@ -35,10 +35,81 @@ const REAL_YML = [
 describe("parseApktoolYml", () => {
   it("projects version and SDK facts from a real apktool.yml", () => {
     expect(parseApktoolYml(REAL_YML)).toEqual({
+      packageName: null,
       versionName: "1.2.3",
       versionCode: "7",
       minSdkVersion: "24",
       targetSdkVersion: "34",
+    });
+  });
+
+  it("projects package identity from packageInfo when present", () => {
+    expect(
+      parseApktoolYml(
+        [
+          "!!brut.androlib.meta.MetaInfo",
+          "packageInfo:",
+          "  cur_package: org.rea.modern",
+          "  orig_package: org.rea.modern",
+          "versionInfo:",
+          "  versionName: 1.0.0",
+          "  versionCode: 1",
+          "",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      packageName: "org.rea.modern",
+      versionName: "1.0.0",
+      versionCode: "1",
+      minSdkVersion: null,
+      targetSdkVersion: null,
+    });
+  });
+
+  it("prefers cur_package over orig_package and renameManifestPackage", () => {
+    expect(
+      parseApktoolYml(
+        [
+          "!!brut.androlib.meta.MetaInfo",
+          "packageInfo:",
+          "  cur_package: org.rea.renamed",
+          "  orig_package: org.rea.original",
+          "  renameManifestPackage: org.rea.target",
+          "",
+        ].join("\n"),
+      ),
+    ).toMatchObject({
+      packageName: "org.rea.renamed",
+    });
+  });
+
+  it("treats empty package fields as omitted and falls through to null", () => {
+    expect(
+      parseApktoolYml(
+        [
+          "!!brut.androlib.meta.MetaInfo",
+          "packageInfo:",
+          "  cur_package: ''",
+          "  orig_package: 'org.rea.fallback'",
+          "",
+        ].join("\n"),
+      ),
+    ).toMatchObject({
+      packageName: "org.rea.fallback",
+    });
+
+    expect(
+      parseApktoolYml(
+        [
+          "!!brut.androlib.meta.MetaInfo",
+          "packageInfo:",
+          "  cur_package: ''",
+          "  orig_package: ''",
+          "",
+        ].join("\n"),
+      ),
+    ).toMatchObject({
+      packageName: null,
     });
   });
 
@@ -48,6 +119,7 @@ describe("parseApktoolYml", () => {
         '!!brut.androlib.meta.MetaInfo\nversionInfo:\n  versionName: "2.0.0"\n  versionCode: 45\n',
       ),
     ).toEqual({
+      packageName: null,
       versionName: "2.0.0",
       versionCode: "45",
       minSdkVersion: null,
@@ -73,6 +145,7 @@ describe("parseApktoolYml", () => {
         ].join("\n"),
       ),
     ).toEqual({
+      packageName: null,
       versionName: "01.2.3",
       versionCode: "045",
       minSdkVersion: "24",
@@ -91,6 +164,7 @@ describe("parseApktoolYml", () => {
         ].join("\n"),
       ),
     ).toEqual({
+      packageName: null,
       versionName: "null",
       versionCode: "0045",
       minSdkVersion: null,
@@ -100,6 +174,7 @@ describe("parseApktoolYml", () => {
 
   it("reports null facts for unrelated YAML", () => {
     expect(parseApktoolYml("version: 2.7.0\n")).toEqual({
+      packageName: null,
       versionName: null,
       versionCode: null,
       minSdkVersion: null,

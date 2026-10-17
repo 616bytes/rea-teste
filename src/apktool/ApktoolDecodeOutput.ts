@@ -13,6 +13,7 @@ import {
 
 /** Project only the Apktool metadata fields REA publishes. */
 export interface ApktoolMetadata {
+  readonly packageName: string | null;
   readonly versionName: string | null;
   readonly versionCode: string | null;
   readonly minSdkVersion: string | null;
@@ -44,6 +45,12 @@ export const parseApktoolYml = (yml: string): ApktoolMetadata => {
   if (!isMap(document.contents))
     throw new TypeError("apktool.yml root must be an Apktool metadata mapping");
   return {
+    packageName:
+      yamlScalar(document, ["packageInfo", "cur_package"], yml) ||
+      yamlScalar(document, ["packageInfo", "orig_package"], yml) ||
+      yamlScalar(document, ["packageInfo", "renameManifestPackage"], yml) ||
+      yamlScalar(document, ["renameManifestPackage"], yml) ||
+      null,
     versionName: yamlScalar(document, ["versionInfo", "versionName"], yml),
     versionCode: yamlScalar(document, ["versionInfo", "versionCode"], yml),
     minSdkVersion: yamlScalar(document, ["sdkInfo", "minSdkVersion"], yml),

@@ -746,10 +746,11 @@ export class ApktoolProvider {
         signal,
       );
       const manifest = manifestRead.text;
-      const packageName =
+      const manifestPackage =
         manifest === null || manifestRead.truncated
           ? null
           : parseManifestPackage(manifest);
+      const packageName = manifestPackage ?? metadata.packageName;
       const stringsDirectory =
         input.locale === undefined
           ? "values"

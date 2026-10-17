@@ -601,11 +601,20 @@ describe("streamed CLI TOON output", () => {
     };
   };
 
+  const scalars = {
+    none: null,
+    blank: "",
+    off: false,
+    zero: 0,
+    note: "first\nsecond",
+  };
+
   it.each([
     [[]],
     [["--format", "toon"]],
     [["--full-output"]],
     [["--filter-output", "methods"]],
+    ...Object.keys(scalars).map((key) => [["--filter-output", key]]),
   ])("writes the same TOON document as Incur for %j", async (options) => {
     const argv = ["inspect-managed-members", "fixture.dll", ...options];
     for (const value of [
@@ -617,8 +626,10 @@ describe("streamed CLI TOON output", () => {
         ],
         flags: ["static", "public"],
         empty: {},
+        ...scalars,
       },
       {},
+      ...Object.values(scalars),
     ]) {
       const streamed = await serve(argv, value, true);
       const incur = await serve(argv, value, false);

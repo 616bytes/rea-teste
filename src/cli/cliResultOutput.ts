@@ -277,12 +277,12 @@ export const createCliResultOutput = (
 
 /**
  * Incur's TOON document without a document-sized string: each encoded line and
- * its newline. An empty encoding writes nothing, as Incur does.
+ * its newline. Incur's formatter keeps ownership of the bounded non-object
+ * rules, and any empty encoding writes nothing, as Incur does.
  */
 function* toonOutputParts(value: unknown): Generator<string> {
-  if (value === null || value === undefined) return;
-  if (typeof value !== "object") {
-    const text = String(value);
+  if (typeof value !== "object" || value === null) {
+    const text = Formatter.format(value, "toon");
     if (text !== "") yield `${text}\n`;
     return;
   }

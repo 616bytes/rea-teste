@@ -1,9 +1,34 @@
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   BOUNDED_PRODUCER_LIMITS,
   clampLinuxResourceLimits,
   prlimitArgumentVector,
+  readLinuxResourceLimits,
 } from "./LinuxResourceLimits.js";
+
+const kernel = vi.hoisted(() => ({ path: "", denied: false }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const filesystem = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...filesystem,
+    open: async (...args: Parameters<typeof filesystem.open>) => {
+      if (args[0] !== "/proc/self/limits" || kernel.path === "")
+        return filesystem.open(...args);
+      const file = await filesystem.open(kernel.path, args[1], args[2]);
+      const close = file.close.bind(file);
+      file.close = async () => {
+        if (kernel.denied) throw new Error("Kernel descriptor close denied");
+        await close();
+      };
+      return file;
+    },
+  };
+});
 const configured = {
   address_space_bytes: 1073741824,
   file_bytes: 67108864,
@@ -80,3 +105,44 @@ it("pairs each effective ceiling with itself before the producer argv", () => {
     "/bin/producer",
   ]);
 });
+
+it.each(["completed", "failed"] as const)(
+  "retains the exact kernel cleanup lease and %s read outcome through retry",
+  async (outcome) => {
+    const directory = await createTestTempDirectory("rea-kernel-limits-");
+    kernel.path = join(directory, "limits");
+    kernel.denied = true;
+    const scope = new ArtifactResourceScope();
+    onTestFinished(async () => {
+      kernel.denied = false;
+      await scope.close();
+      kernel.path = "";
+    });
+    await writeFile(
+      kernel.path,
+      outcome === "completed" ? report("unlimited unlimited") : "invalid",
+    );
+    const failure: unknown = await readLinuxResourceLimits(
+      configured,
+      scope,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ArtifactFileCleanupFailure);
+    if (!(failure instanceof ArtifactFileCleanupFailure))
+      throw new Error("Expected exact descriptor cleanup ownership");
+    const physical = failure.fileCleanupFailure;
+    expect(physical.outcome.kind).toBe(outcome);
+    if (physical.outcome.kind === "completed")
+      expect(physical.outcome.value).toEqual(configured);
+    else expect(physical.outcome.cause).toBeInstanceOf(Error);
+    expect(physical.owner.handle.fd).toBeGreaterThanOrEqual(0);
+    await expect(scope.retryCleanup()).rejects.toMatchObject({
+      cleanupLeases: [failure.cleanupLease],
+    });
+    kernel.denied = false;
+    await scope.retryCleanup();
+    expect(failure.cleanupLease.released).toBe(true);
+    expect(physical.owner.handle.fd).toBe(-1);
+    expect(scope.hasPending).toBe(false);
+    expect(failure.fileCleanupFailure).toBe(physical);
+  },
+);

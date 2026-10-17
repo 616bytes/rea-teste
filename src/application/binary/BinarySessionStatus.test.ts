@@ -6,8 +6,8 @@ import type {
 } from "../AnalysisProvider.js";
 import {
   expandProviderCapabilities,
-  type ProviderCapabilitySet,
   sessionProvider,
+  type ProviderCapabilitySet,
 } from "../../contracts/toolOutputSchemaPrimitives.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { AnalysisProviderCandidateStatus } from "./AnalysisProviderRegistry.js";
@@ -120,15 +120,21 @@ const project = async (
     { readonly reason: string }
   > = new Map(),
 ) => {
-  const route = {
+  const route: SessionProviderRoute = {
+    identity: providerA,
+    profile: null,
+    selection: undefined,
+    createClient: () => {
+      throw new Error("Projection does not create clients");
+    },
     capabilities: new Map(
       routeCapabilities.map((capability) => [capability.operation, capability]),
     ),
     binding: null,
-  } as unknown as SessionProviderRoute;
-  const router = {
+  };
+  const router: Pick<SessionProviderRouter, "candidateStatuses"> = {
     candidateStatuses: async () => candidates,
-  } as unknown as SessionProviderRouter;
+  };
   return projectedStatusSchema.parse(
     await binarySessionStatus({
       target: undefined,
@@ -319,7 +325,7 @@ const expectedExpandedCandidateCapabilities = [
   ],
 ];
 
-describe("binary session provider capability projection", async () => {
+describe("binary session provider capability projection", () => {
   it("preserves provider scope and route overlays while factoring exact prefixes", async () => {
     const selectedBefore = structuredClone(selectedCapabilities);
     const otherBefore = structuredClone(otherCapabilities);

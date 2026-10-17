@@ -377,11 +377,21 @@ export class ViteCacheIdentities {
     yield* this.properties.retainRestrictionsSteps();
     for (const escape of escapes) {
       if (examined++ % 1024 === 0) yield;
-      const allocation = this.read(escape.value)?.allocation;
-      if (allocation?.kind !== "container") continue;
-      const retained = this.properties.escapes.get(allocation) ?? [];
-      retained.push(escape.node);
-      this.properties.escapes.set(allocation, retained);
+      const source =
+        "inputs" in escape.value
+          ? escape.value
+          : this.vertices.get(escape.value);
+      const allocation = source?.fact?.allocation;
+      if (source === undefined || allocation?.kind !== "container") continue;
+      let retained = this.properties.escapes.get(allocation);
+      if (retained === undefined) {
+        const family = this.vertex({});
+        family.seed = UNKNOWN;
+        retained = { nodes: [], family };
+        this.properties.escapes.set(allocation, retained);
+      }
+      retained.nodes.push(escape.node);
+      this.connect(retained.family, { kind: "family", source });
     }
     this.snapshots = true;
     this.reads.clear();

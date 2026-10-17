@@ -472,6 +472,46 @@ const allScenarios: readonly ViteScenario[] = [
     };
   }),
   {
+    file: "custom-index-map-independent-later-slot-write.js",
+    callSources: [
+      defaultCall,
+      "__vite__mapDeps({map(read) { return []; }}, void 0, table)",
+    ],
+    callOccurrences: [0, 1, 2],
+    unknownCallOccurrences: [1],
+    source:
+      mapDependencies('["./first.js"]', "[0]") +
+      "\nconst table = [null, {}]; __vite__mapDeps({map(read) { return []; }}, void 0, table); table[1].x = 1; __vite__mapDeps([0]);",
+    resolved: ["first.js", "first.js"],
+    unknown: true,
+  },
+  {
+    file: "opaque-independent-later-slot-write.js",
+    callSource: defaultCall,
+    callOccurrences: [0, 1],
+    source:
+      mapDependencies('["./first.js"]', "[0]") +
+      "\nconst table = [null, {}]; opaque(table); table[1].x = 1; __vite__mapDeps([0]);",
+    resolved: ["first.js", "first.js"],
+    unknown: false,
+  },
+  {
+    file: "custom-index-map-shared-later-slot-write-owner-scope.js",
+    callSources: [
+      defaultCall,
+      "__vite__mapDeps({map(read) { return []; }}, void 0, table)",
+    ],
+    callOccurrences: [0, 1, 2],
+    unknownCallOccurrences: [0, 1],
+    source:
+      mapDependencies('["./first.js"]', "[0]") +
+      "\nconst table = [null, __vite__mapDeps]; __vite__mapDeps({map(read) { return []; }}, void 0, table); table[1].x = 1;\n{\n" +
+      mapDependencies('["./last.js"]', "[0]") +
+      "\n}",
+    resolved: ["last.js"],
+    unknown: true,
+  },
+  {
     file: "custom-index-map-independent-table.js",
     callSources: [
       "__vite__mapDeps({map(read) { return []; }}, void 0, [null, {}])",

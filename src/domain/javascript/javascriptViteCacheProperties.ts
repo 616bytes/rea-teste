@@ -59,7 +59,10 @@ export class ViteCacheProperties {
     Map<string, Map<t.Node, Vertex>>
   >();
   readonly writes = new Map<ViteCacheAllocation, ViteCacheWrite[]>();
-  readonly escapes = new Map<ViteCacheAllocation, t.Node[]>();
+  readonly escapes = new Map<
+    ViteCacheAllocation,
+    { readonly nodes: t.Node[]; readonly family: Vertex }
+  >();
   private readonly restrictions = new Map<
     ViteCacheAllocation,
     Map<Key, Set<t.Node>>
@@ -276,11 +279,20 @@ export class ViteCacheProperties {
       }
     }
     let examined = 0;
-    for (const escape of this.escapes.get(allocation) ?? []) {
-      if (examined++ % 1024 === 0) yield;
-      if (!semanticReadPrecedesWrite(read, escape, this.state.parentsByNode))
-        base.seed = { allocation: null, owner: null };
-    }
+    const escaped = this.escapes.get(allocation);
+    if (escaped !== undefined)
+      for (const escape of escaped.nodes) {
+        if (examined++ % 1024 === 0) yield;
+        if (
+          !semanticReadPrecedesWrite(read, escape, this.state.parentsByNode)
+        ) {
+          // contents may change, but only owners reachable by this exposure are
+          // introduced. one shared family bounds edges across repeated reads.
+          base.seed = UNKNOWN;
+          this.graph.connect(base, { kind: "family", source: escaped.family });
+          break;
+        }
+      }
     this.graph.enqueue(base);
     return base;
   }

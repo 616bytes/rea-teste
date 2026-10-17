@@ -8,6 +8,7 @@ import { expect } from "vitest";
 import { keyedArchiveResultSchema } from "../../../src/domain/apple/keyedArchive.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest.for(["xml", "binary"] as const)(
@@ -44,7 +45,12 @@ cliTest.for(["xml", "binary"] as const)(
     const run = async (arguments_: readonly string[] = []) => {
       const output = await cli.run({
         arguments: ["inspect-keyed-archive", path, ...arguments_, "--json"],
-        environment: { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" },
+        environment: {
+          HOME: root,
+          USERPROFILE: root,
+          REA_LOG_LEVEL: "silent",
+          REA_ANALYSIS_PROVIDER: "auto",
+        },
       });
       expect(output.exitCode, output.stderr).toBe(0);
       return keyedArchiveResultSchema.parse(
@@ -52,6 +58,19 @@ cliTest.for(["xml", "binary"] as const)(
       );
     };
     const result = await run();
+    const { call } = await connectLocalToolsMcp({
+      HOME: root,
+      USERPROFILE: root,
+    });
+    const opened = await call("open_binary", { path });
+    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+    const mcp = await call("inspect_keyed_archive", {});
+    expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
+    expect(
+      keyedArchiveResultSchema.parse(
+        parseEvidence(mcp.structuredContent).normalized_result,
+      ),
+    ).toEqual(result);
     expect(result.archive_sha256).toBe(digest);
     expect(result.archive_format).toBe(
       format === "binary" ? "binary-plist" : "xml-plist",
@@ -133,5 +152,48 @@ cliTest.for(["xml", "binary"] as const)(
       }),
     ]);
     expect(await readFile(path)).toEqual(bytes);
+  },
+);
+
+cliTest(
+  "rejects scalar top dictionaries through the public CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-keyed-scalar-top-");
+    const { call } = await connectLocalToolsMcp({
+      HOME: root,
+      USERPROFILE: root,
+    });
+    for (const format of ["xml", "binary"]) {
+      const archive = {
+        $archiver: "NSKeyedArchiver",
+        $version: 100000,
+        $objects: ["$null"],
+        $top: new Uint8Array([0]),
+      };
+      const path = join(root, format + ".plist");
+      await writeFile(
+        path,
+        Buffer.from(format === "xml" ? build(archive) : buildBinary(archive)),
+      );
+      const output = await cli.run({
+        arguments: ["inspect-keyed-archive", path, "--json"],
+        environment: { HOME: root, USERPROFILE: root },
+      });
+      expect(output.exitCode).toBe(1);
+      expect(output.json).toMatchObject({
+        code: "artifact_operation_failed",
+        details: {
+          reason: "format",
+          detail: expect.stringContaining("Keyed archive has no $top roots"),
+        },
+      });
+      const opened = await call("open_binary", { path });
+      expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+      const reply = await call("inspect_keyed_archive", {});
+      expect(reply.isError).toBe(true);
+      expect(JSON.stringify(reply)).toContain(
+        "Keyed archive has no $top roots",
+      );
+    }
   },
 );

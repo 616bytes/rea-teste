@@ -1,3 +1,4 @@
+import { types } from "node:util";
 import { z } from "zod";
 
 import type { JsonValue } from "../jsonValue.js";
@@ -43,14 +44,19 @@ export const projectPlistValue = (
       throw new RangeError(
         `Plist exceeds ${String(MAX_PLIST_DEPTH)} nesting levels`,
       );
+    if (item !== null && typeof item === "object" && types.isProxy(item))
+      throw new TypeError("Plist values cannot contain proxies");
     if (item instanceof Uint8Array)
       return scalar({
         $plist_type: "data",
         base64: Buffer.from(item).toString("base64"),
       });
     if (item instanceof Date) {
-      if (!Number.isNaN(item.getTime()))
-        return scalar({ $plist_type: "date", iso8601: item.toISOString() });
+      if (!Number.isNaN(Date.prototype.getTime.call(item)))
+        return scalar({
+          $plist_type: "date",
+          iso8601: Date.prototype.toISOString.call(item),
+        });
       unknownDateCount += 1;
       return scalar({ $plist_type: "date", iso8601: null });
     }
@@ -58,15 +64,31 @@ export const projectPlistValue = (
       unknownRealCount += 1;
       return scalar({ $plist_type: "real", value: null });
     }
-    if (Array.isArray(item))
-      return item.map((entry: unknown) => project(entry, depth + 1));
-    if (item !== null && typeof item === "object")
-      return Object.fromEntries(
-        Object.entries(item).map(([key, entry]) => [
-          key,
-          project(entry, depth + 1),
-        ]),
-      );
+    if (Array.isArray(item)) {
+      const result: JsonValue[] = [];
+      for (let index = 0; index < item.length; index++) {
+        const descriptor = Object.getOwnPropertyDescriptor(item, index);
+        if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
+          throw new TypeError(
+            "Plist arrays require dense data properties without accessors",
+          );
+        result.push(project(descriptor.value, depth + 1));
+      }
+      return result;
+    }
+    if (item !== null && typeof item === "object") {
+      const entries: [string, JsonValue][] = [];
+      for (const key of Reflect.ownKeys(item)) {
+        const descriptor = Object.getOwnPropertyDescriptor(item, key);
+        if (descriptor?.enumerable !== true) continue;
+        if (typeof key !== "string" || !Object.hasOwn(descriptor, "value"))
+          throw new TypeError(
+            "Plist dictionary entries require string keys and data properties",
+          );
+        entries.push([key, project(descriptor.value, depth + 1)]);
+      }
+      return Object.fromEntries(entries);
+    }
     return z.union([z.string(), z.number(), z.boolean(), z.null()]).parse(item);
   };
   const projected = project(value, 0);

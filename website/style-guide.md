@@ -234,12 +234,15 @@ The shared stylesheet defines the site. Its core colors are:
 
 | Token      | Light     | Dark      | Use                              |
 | ---------- | --------- | --------- | -------------------------------- |
-| `--page`   | `#ffffff` | `#1e1e2e` | Page background                  |
-| `--ink`    | `#20252b` | `#cdd6f4` | Main text                        |
-| `--muted`  | `#5b6570` | `#a6adc8` | Secondary text                   |
-| `--line`   | `#e0e5e9` | `#45475a` | Section and component boundaries |
-| `--soft`   | `#f4f6f8` | `#181825` | Code and supporting surfaces     |
-| `--accent` | `#294f82` | `#89b4fa` | Links and meaningful highlights  |
+| `--page`   | `#f7f6f2` | `#151513` | Page background                  |
+| `--ink`    | `#1b1a17` | `#ecebe5` | Main text                        |
+| `--muted`  | `#67635a` | `#a39f95` | Secondary text                   |
+| `--line`   | `#e2dfd6` | `#34322d` | Section and component boundaries |
+| `--soft`   | `#efede7` | `#1d1c19` | Code and supporting surfaces     |
+| `--accent` | `#2f54c8` | `#8ea9ff` | Links and meaningful highlights  |
+
+Neutrals carry a slight warm bias in both themes; the blue accent is the only
+saturated color. A new fixed color should come from the same warm family.
 
 The header's sun/moon button switches between light and dark. On the first visit,
 the site follows the system preference; a manual choice is saved for later visits
@@ -247,19 +250,30 @@ and shared across pages and languages on that host. Without JavaScript, the site
 uses the light palette and hides the switch.
 
 `assets/theme.js` applies the choice before styles load and owns theme changes.
-The stylesheet scopes the dark palette to `data-theme="dark"` on the root,
-using [Catppuccin Mocha](https://github.com/catppuccin/palette) colors (MIT).
+The stylesheet scopes the dark palette to `data-theme="dark"` on the root.
 Any new fixed color needs a dark counterpart in that section. Keep selector
 specificity unchanged with `:where()` when scoping component rules.
 Embedded SVGs inherit the page's `color-scheme`; canvas demos listen for
 `website-theme-change` to redraw. Check both themes, including a manual choice
 that differs from the system preference.
 
-Use the system sans-serif stack for prose and the shared monospace stack for
-code. The content container is at most 1080px wide, with article text limited to
+Use Geist for prose and Geist Mono for code. Both are self-hosted variable
+fonts in `assets/fonts/` under the SIL Open Font License; system fonts follow in
+each stack, and the CJK, Thai and right-to-left stacks keep their local faces. The content container is at most 1080px wide, with article text limited to
 760px. The header has its own 1320px container so navigation and utility controls
 fit together. At 1100px and below, navigation moves to a separate row. Reuse the
 existing heading sizes, line heights, section spacing and component classes.
+
+### Logo
+
+`assets/brand/wordmark.svg` is the REA wordmark: three letters on a 40-unit
+grid with an 8-unit stroke. The R's leg is set apart from its bowl, showing a
+program taken apart. `assets/brand/mark.svg` is the R alone, for the favicon and
+small square spaces. Use the wordmark where the name should be read and the
+mark only where the wordmark does not fit; never place them side by side, which
+reads as "R REA". Draw both in `--ink` or `--page`, without effects, outlines or
+other colors. Inline copies in the header and footer templates use
+`currentColor` so they follow the theme.
 
 Whitespace separates ideas. Thin rules identify sections. Headings establish
 hierarchy. The blue accent identifies something useful. Keep these elements

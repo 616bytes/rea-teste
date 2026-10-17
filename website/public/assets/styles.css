@@ -2068,6 +2068,7 @@ pre code {
   top: var(--y);
   inset-inline: 0;
   display: grid;
+  justify-items: start;
   gap: 0.1rem;
   margin: 0;
   padding-inline-start: 1.75rem;
@@ -2082,6 +2083,7 @@ pre code {
   border-top: 1px solid var(--line);
 }
 .exploded-callouts code {
+  max-width: 100%;
   overflow: hidden;
   color: var(--muted);
   font-size: 0.78rem;

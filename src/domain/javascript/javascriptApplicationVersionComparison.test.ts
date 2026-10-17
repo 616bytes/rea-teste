@@ -296,9 +296,6 @@ describe("application version comparison relocation", () => {
       dimensions: ["location"],
       match: { status: "matched", basis: "exact-content-digest" },
     });
-    expect(item?.limitations).toContain(
-      "Exact content is identical on both sides; only the recorded byte location differs (bundle relocation).",
-    );
     expect(result.summary).toMatchObject({ unchanged: 1, changed: 0 });
     // Content-digest pairs share one node_id by construction, so
     // changedFromEdge skips them on identity alone; edge coverage for

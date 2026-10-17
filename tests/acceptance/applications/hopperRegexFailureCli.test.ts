@@ -11,8 +11,8 @@ import {
 import { parseEvidence } from "../../../src/domain/evidence.js";
 
 cliTest.skipIf(process.platform === "win32")(
-  "projects accepted Hopper regex operation through the public CLI with exact bridge request context",
-  async ({ cli }) => {
+  "projects accepted Hopper regex operation through CLI commands and the native bridge with exact request context",
+  async ({ cli, processes }) => {
     const root = await createTestTempDirectory("rea-hopper-regex-cli-");
     const launcher = join(root, "fake-hopper.mjs"),
       target = join(root, "sample");
@@ -33,7 +33,7 @@ cliTest.skipIf(process.platform === "win32")(
         const home = join(root, `${kind}-${mode}`),
           trace = join(home, "trace");
         await mkdir(home);
-        const run = await cli.run({
+        const request = {
           arguments: [
             "search",
             target,
@@ -55,7 +55,27 @@ cliTest.skipIf(process.platform === "win32")(
             REA_TEST_HOPPER_REGEX_MODE: mode,
             REA_TEST_HOPPER_TRACE: trace,
           },
-        });
+        };
+        // The Linux production launcher requires a verified Hopper package,
+        // not a Node protocol fixture. Use the existing platform injection at
+        // the composition boundary; retain the public executable on macOS.
+        const result =
+          process.platform === "darwin"
+            ? await cli.run(request)
+            : await processes.run(
+                process.execPath,
+                [
+                  fileURLToPath(
+                    new URL(
+                      "../../fixtures/hopperRegexCliComposition.mjs",
+                      import.meta.url,
+                    ),
+                  ),
+                  ...request.arguments,
+                ],
+                { env: request.environment },
+              );
+        const run = { ...result, json: JSON.parse(result.stdout) as unknown };
         expect(run.stderr).toBe("");
         expect((await readFile(trace, "utf8")).trim().split("\n")).toEqual([
           "health",

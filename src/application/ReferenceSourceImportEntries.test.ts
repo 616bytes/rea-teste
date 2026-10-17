@@ -366,20 +366,64 @@ it("resolves query and fragment ESM requests to the inventoried pathname (#3916)
     );
 });
 
-it("prefers an inventoried filename that contains the literal suffix", () => {
-  expect(
-    relationshipsOf([
-      ["main.ts", 'import "./dep?raw";\n'],
-      ["dep?raw.ts", "export const value = 1;\n"],
-      ["dep.ts", "export const value = 2;\n"],
-    ]),
-  ).toContainEqual(
+it("resolves an ESM query to the pathname even when a literal-suffix filename is inventoried", () => {
+  const relationships = relationshipsOf([
+    ["main.mjs", 'import "./dep.mjs?v=1";\n'],
+    ["dep.mjs", "export const value = 1;\n"],
+    ["dep.mjs?v=1", "export const value = 2;\n"],
+  ]);
+  expect(relationships).toContainEqual(
     expect.objectContaining({
-      from_path: "main.ts",
-      to: "dep?raw.ts",
+      from_path: "main.mjs",
+      to: "dep.mjs",
       resolution: "internal",
     }),
   );
+  expect(relationships).not.toContainEqual(
+    expect.objectContaining({ to: "dep.mjs?v=1" }),
+  );
+});
+
+it("decodes percent-encoded ESM pathnames to literal filenames", () => {
+  const relationships = relationshipsOf([
+    [
+      "main.mjs",
+      'import "./dep.mjs%3Fv=1";\n' +
+        'import "./name%3Fq.mjs?v=2";\n' +
+        'import "./a%20b.mjs";\n',
+    ],
+    ["dep.mjs", "export const value = 1;\n"],
+    ["dep.mjs?v=1", "export const value = 2;\n"],
+    ["name?q.mjs", "export const value = 3;\n"],
+    ["a b.mjs", "export const value = 4;\n"],
+  ]);
+  for (const to of ["dep.mjs?v=1", "name?q.mjs", "a b.mjs"])
+    expect(relationships).toContainEqual(
+      expect.objectContaining({
+        from_path: "main.mjs",
+        to,
+        resolution: "internal",
+      }),
+    );
+  expect(relationships).not.toContainEqual(
+    expect.objectContaining({ to: "dep.mjs" }),
+  );
+});
+
+it("leaves ESM pathnames Node rejects unresolved with their source spelling", () => {
+  const relationships = relationshipsOf([
+    ["main.mjs", 'import "./sub%2Fx.mjs";\nimport "./100%.mjs";\n'],
+    ["sub/x.mjs", "export const value = 1;\n"],
+    ["100%.mjs", "export const value = 2;\n"],
+  ]);
+  for (const to of ["sub%2Fx.mjs", "100%.mjs"])
+    expect(relationships).toContainEqual(
+      expect.objectContaining({
+        from_path: "main.mjs",
+        to,
+        resolution: "unresolved",
+      }),
+    );
 });
 
 it("keeps an unmatched query-bearing ESM request unresolved", () => {
@@ -405,5 +449,29 @@ it("does not strip a query from a CommonJS require specifier", () => {
       from_path: "main.cjs",
       resolution: "unresolved",
     }),
+  );
+});
+
+it("keeps CommonJS require specifiers literal", () => {
+  expect(
+    relationshipsOf([
+      ["main.cjs", 'require("./dep.js?v=1");\nrequire("./a%20b.js");\n'],
+      ["dep.js", "module.exports = 1;\n"],
+      ["dep.js?v=1", "module.exports = 2;\n"],
+      ["a b.js", "module.exports = 3;\n"],
+    ]),
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        from_path: "main.cjs",
+        to: "dep.js?v=1",
+        resolution: "internal",
+      }),
+      expect.objectContaining({
+        from_path: "main.cjs",
+        to: "a%20b.js",
+        resolution: "unresolved",
+      }),
+    ]),
   );
 });

@@ -479,12 +479,10 @@ const collectCommonJsExport = (
   const exportedName = commonJsExportName(node.left, state);
   if (exportedName === undefined) return;
   if (receiverEffect === "detached") return;
-  // Simple assignment chains yield their rightmost assigned value. Compound
-  // and logical writes also depend on the previous value, so remain unknown.
-  let value =
+  // Compound and logical writes also depend on the previous value, so remain
+  // unknown.
+  const value =
     node.operator === "=" && receiverEffect !== "uncertain" ? node.right : null;
-  while (t.isAssignmentExpression(value, { operator: "=" }))
-    value = value.right;
   addCommonJsExport(node, state, exportedName, value);
 };
 
@@ -508,8 +506,12 @@ const addCommonJsExport = (
   node: CommonJsExportSite,
   state: JavaScriptSemanticAnalysisState,
   exportedName: string,
-  value: t.Node | null,
+  exported: t.Node | null,
 ): void => {
+  // Simple assignment chains yield their rightmost assigned value.
+  let value = exported;
+  while (t.isAssignmentExpression(value, { operator: "=" }))
+    value = value.right;
   const required =
     value === null ? undefined : semanticRequireOrigin(value, state);
   const origin = required?.origin;

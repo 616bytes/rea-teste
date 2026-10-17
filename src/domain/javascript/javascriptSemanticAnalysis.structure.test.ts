@@ -595,6 +595,8 @@ describe("CommonJS exports defined with Object.defineProperty", () => {
     ['require("./parser")', "parse"],
     ['require("./parser").parse', "parse"],
     ["parse", "parse"],
+    ['holder.parse = require("./parser").parse', "parse"],
+    ["first = second = () => 1", "parse"],
   ])(
     "links a data descriptor value %s like the equivalent assignment",
     (value, name) => {

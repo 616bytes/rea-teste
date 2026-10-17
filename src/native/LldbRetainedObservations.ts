@@ -1,11 +1,33 @@
-import { open } from "node:fs/promises";
+import { open, type FileHandle } from "node:fs/promises";
 
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import {
+  withOwnedFileHandle,
+  RegularFileCleanupFailure,
+} from "../filesystem/OwnedRegularFile.js";
 import { nativeCallEventSchema } from "../domain/native/nativeCallObservation.js";
 import type { NativeCallPartialObservation } from "../domain/native/nativeCallPartialObservation.js";
 
 /** Maximum journal size enforced by the LLDB bridge. */
 export const LLDB_OBSERVATION_JOURNAL_MAX_BYTES = 8 * 1024 * 1024;
 const MAX_CAPTURE_BYTES = 1024 * 1024;
+
+export interface OwnedReadbackOptions {
+  readonly retainFailedClose?: (
+    path: string,
+    owner: OwnedFileHandle,
+    cause: unknown,
+  ) => void;
+  readonly signal?: AbortSignal;
+}
+
+export type OwnedReadResult<T> =
+  | {
+      readonly kind: "completed";
+      readonly value: T;
+      readonly cleanupFailure?: unknown;
+    }
+  | { readonly kind: "missing"; readonly cause: unknown };
 
 export interface ParsedLldbJournal {
   readonly events: ReturnType<typeof nativeCallEventSchema.parse>[];
@@ -18,6 +40,7 @@ export interface PartialCaptureRead {
     NativeCallPartialObservation["process"]["stdout"]
   >;
   readonly limitations: readonly string[];
+  readonly cleanupFailure?: unknown;
 }
 
 /** Join safely retained journal and process evidence into its failure contract. */
@@ -153,45 +176,101 @@ export const readBoundedPrefix = async (
   return { buffer, bytesRead };
 };
 
-const readPrefix = (
-  handle: Awaited<ReturnType<typeof open>>,
-  requestedBytes: number,
-) =>
+const readPrefix = (handle: FileHandle, requestedBytes: number) =>
   readBoundedPrefix(
     requestedBytes,
     async (buffer, offset, length, position) =>
       (await handle.read(buffer, offset, length, position)).bytesRead,
   );
 
+/**
+ * Open and read an owned regular file in the LLDB runtime, ensuring the descriptor
+ * is tracked through final close and unconfirmed close failures are preserved.
+ */
+export const readOwnedFile = async <T>(
+  path: string,
+  options: OwnedReadbackOptions | undefined,
+  operation: (handle: FileHandle) => Promise<T>,
+): Promise<OwnedReadResult<T>> => {
+  let handle: FileHandle;
+  try {
+    handle = await open(path, "r");
+  } catch (cause: unknown) {
+    if (
+      cause instanceof Error &&
+      "code" in cause &&
+      (cause.code === "ENOENT" || cause.code === "ENOTDIR")
+    ) {
+      return { kind: "missing", cause };
+    }
+    throw cause;
+  }
+  const owner = new OwnedFileHandle(handle);
+  try {
+    const value = await withOwnedFileHandle(
+      path,
+      owner,
+      options?.signal === undefined ? {} : { signal: options.signal },
+      operation,
+    );
+    return { kind: "completed", value };
+  } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure) {
+      options?.retainFailedClose?.(path, cause.owner, cause.cleanupCause);
+      if (cause.outcome.kind === "completed") {
+        return {
+          kind: "completed",
+          value: cause.outcome.value as T,
+          cleanupFailure: cause.cleanupCause,
+        };
+      }
+      throw cause.outcome.cause;
+    }
+    throw cause;
+  }
+};
+
 /** Read at most the bridge's journal bound, checking size before allocation. */
 export const readLldbObservationJournal = async (
   path: string,
+  options?: OwnedReadbackOptions,
 ): Promise<{
   readonly parsed: ParsedLldbJournal;
   readonly limitations: string[];
+  readonly cleanupFailure?: unknown;
 }> => {
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    handle = await open(path, "r");
-    const { size } = await handle.stat();
-    const length = Math.min(size, LLDB_OBSERVATION_JOURNAL_MAX_BYTES);
-    const { buffer, bytesRead } = await readPrefix(handle, length);
-    const parsed = parseLldbObservationJournal(buffer.subarray(0, bytesRead));
-    const limitations = [
-      ...(size > LLDB_OBSERVATION_JOURNAL_MAX_BYTES
-        ? [
-            "The observation journal exceeded 8 MiB; only its bounded prefix was read.",
-          ]
-        : []),
-      ...(bytesRead < length
-        ? [
-            "The observation journal became shorter while being read; the available prefix was parsed.",
-          ]
-        : []),
-    ];
+    const result = await readOwnedFile(path, options, async (handle) => {
+      const { size } = await handle.stat();
+      const length = Math.min(size, LLDB_OBSERVATION_JOURNAL_MAX_BYTES);
+      const { buffer, bytesRead } = await readPrefix(handle, length);
+      const parsed = parseLldbObservationJournal(buffer.subarray(0, bytesRead));
+      const limitations = [
+        ...(size > LLDB_OBSERVATION_JOURNAL_MAX_BYTES
+          ? [
+              "The observation journal exceeded 8 MiB; only its bounded prefix was read.",
+            ]
+          : []),
+        ...(bytesRead < length
+          ? [
+              "The observation journal became shorter while being read; the available prefix was parsed.",
+            ]
+          : []),
+      ];
+      return { parsed, limitations };
+    });
+    if (result.kind === "missing") {
+      return {
+        parsed: { events: [], otherStops: [], limitations: [] },
+        limitations: [
+          `The observation journal could not be read: ${result.cause instanceof Error ? result.cause.message : String(result.cause)}`,
+        ],
+      };
+    }
     return {
-      parsed,
-      limitations,
+      parsed: result.value.parsed,
+      limitations: result.value.limitations,
+      cleanupFailure: result.cleanupFailure,
     };
   } catch (cause: unknown) {
     return {
@@ -200,38 +279,43 @@ export const readLldbObservationJournal = async (
         `The observation journal could not be read: ${cause instanceof Error ? cause.message : String(cause)}`,
       ],
     };
-  } finally {
-    await handle?.close().catch(() => undefined);
   }
 };
 
 /** Retain an available output prefix without claiming an unreported total. */
 export const readPartialCapture = async (
   path: string,
+  options?: OwnedReadbackOptions,
 ): Promise<PartialCaptureRead | null> => {
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    handle = await open(path, "r");
-    const { size } = await handle.stat();
-    const length = Math.min(size, MAX_CAPTURE_BYTES);
-    const { buffer, bytesRead } = await readPrefix(handle, length);
+    const result = await readOwnedFile(path, options, async (handle) => {
+      const { size } = await handle.stat();
+      const length = Math.min(size, MAX_CAPTURE_BYTES);
+      const { buffer, bytesRead } = await readPrefix(handle, length);
+      return {
+        capture: {
+          text: buffer.subarray(0, bytesRead).toString("utf8"),
+          bytes: Math.max(size, bytesRead),
+          truncated: true,
+          complete: false,
+        },
+        limitations:
+          bytesRead < length
+            ? [
+                "A target output capture became shorter while being read; its retained prefix may be incomplete.",
+              ]
+            : [],
+      };
+    });
+    if (result.kind === "missing") {
+      return null;
+    }
     return {
-      capture: {
-        text: buffer.subarray(0, bytesRead).toString("utf8"),
-        bytes: Math.max(size, bytesRead),
-        truncated: true,
-        complete: false,
-      },
-      limitations:
-        bytesRead < length
-          ? [
-              "A target output capture became shorter while being read; its retained prefix may be incomplete.",
-            ]
-          : [],
+      capture: result.value.capture,
+      limitations: result.value.limitations,
+      cleanupFailure: result.cleanupFailure,
     };
   } catch {
     return null;
-  } finally {
-    await handle?.close().catch(() => undefined);
   }
 };

@@ -16,6 +16,7 @@ import { NativeCommandFailure } from "../../../../src/native/CommandRunner.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import { createDeferred } from "../../../fixtures/binarySession.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
+import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import {
   NativeFixtureRunner,
   nativeMachoTarget,
@@ -344,6 +345,86 @@ describe("LLDB failure retention through the production tracer", () => {
       code: "cleanup_incomplete",
       details: { execution_failure: "evidence_integrity_mismatch" },
     });
+  });
+});
+
+describe("LLDB journal descriptor cleanup retention", () => {
+  it("retains journal descriptor cleanup after a cancelled run", async () => {
+    let runtime: string | undefined;
+    let journalPath: string | undefined;
+    const tracer = new LldbCallTracer(
+      {},
+      async (_executable, arguments_) => {
+        const { config } = await configFromArguments(arguments_);
+        runtime = dirname(config.result_path);
+        journalPath = config.observation_path;
+        await writeFile(
+          config.observation_path,
+          `${JSON.stringify({ kind: "other-stop", reason: "controlled-stop" })}\n`,
+        );
+        await writeFile(config.stdout_capture_path, "captured prefix");
+        return {
+          kind: "cancelled",
+          targetLaunched: false,
+          exitCode: null,
+          output: "",
+          targetIdentity: undefined,
+          cleanupFailure: undefined,
+        };
+      },
+      async () => ok(fakeTool),
+    );
+
+    const originalClose = OwnedFileHandle.prototype.close;
+    let failJournalClose = true;
+    const closeSpy = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (failJournalClose) {
+          throw new Error("journal handle close failed");
+        }
+        return originalClose.call(this);
+      });
+    onTestFinished(() => {
+      closeSpy.mockRestore();
+    });
+
+    try {
+      const result = await tracer.trace(request);
+      if (result.ok) throw new Error("expected cancellation");
+      expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+      expect(result.error.partialObservation).toMatchObject({
+        coverage: { status: "partial", reason: "cancelled" },
+        process: {
+          other_stops: ["controlled-stop"],
+          stdout: { text: "captured prefix", complete: false },
+        },
+      });
+      const projected = projectAnalysisError(result.error);
+      expect(projected.code).toBe("cleanup_incomplete");
+      expect(projected.details).toMatchObject({
+        cleanup: "incomplete",
+        resources: expect.arrayContaining([journalPath, runtime]),
+      });
+      expect(runtime).toBeDefined();
+      if (runtime !== undefined) await access(runtime);
+
+      const retry = await tracer.trace(request);
+      if (retry.ok) throw new Error("expected blocked replacement trace");
+      expect(projectAnalysisError(retry.error).code).toBe("cleanup_incomplete");
+
+      failJournalClose = false;
+
+      const closeResult = await tracer.close();
+      expect(closeResult.ok).toBe(true);
+      if (runtime !== undefined) {
+        await expect(access(runtime)).rejects.toThrow();
+      }
+    } finally {
+      if (runtime !== undefined) {
+        await rm(runtime, { recursive: true, force: true });
+      }
+    }
   });
 });
 

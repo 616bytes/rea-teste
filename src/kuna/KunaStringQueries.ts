@@ -11,12 +11,14 @@ import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js"
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { normalizeKunaAddress } from "./KunaAddress.js";
+import { kunaProjectDeadline } from "./KunaConfiguration.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
 import type { KunaPendingQuery, KunaQueryWork } from "./KunaQueryWork.js";
 import { kunaQueryFailureForCaller } from "./KunaQueryErrors.js";
 import { KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
 import {
   KunaStringInventoryReader,
+  kunaStringsAtAddress,
   type KunaStringInventory,
   type KunaStringItem,
 } from "./KunaStringInventory.js";
@@ -76,7 +78,7 @@ export class KunaStringQueries {
     const available = inventory.value.items;
     let items: KunaStringItem[] | undefined;
     if (address !== undefined)
-      items = available.filter((item) => item.address === address);
+      items = kunaStringsAtAddress(inventory.value, address);
     if (query?.success === true) {
       if (query.data.mode === "regex") {
         const matched = await this.work.match({
@@ -147,7 +149,7 @@ export class KunaStringQueries {
                 "any",
                 "--no-xrefs",
               ],
-              timeoutMs: installation.configuration.projectTimeoutMs,
+              deadline: kunaProjectDeadline(installation.configuration),
             },
             new KunaStringInventoryReader(),
             producerSignal,

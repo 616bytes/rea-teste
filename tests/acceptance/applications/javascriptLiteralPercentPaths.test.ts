@@ -253,11 +253,13 @@ cliTest.for(
         }),
         "other-owner/dist%2Findex.html": "unselected competing page",
       });
-    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root, [
-      "package.json",
-      ...(selectedOwner ? ["external-app/package.json"] : []),
-      source,
-    ]);
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root, {
+      sourcePaths: [
+        "package.json",
+        ...(selectedOwner ? ["external-app/package.json"] : []),
+        source,
+      ],
+    });
     const roles = graph.nodes.filter(
       ({ kind, observations }) =>
         kind === "electron-renderer" &&
@@ -293,13 +295,15 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
   async (surface, { cli }) => {
     const root = await createTestTempDirectory("rea-selected-asar-owner-");
     await writeRuntimeFixture(root);
-    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root, [
-      "a.asar/package.json",
-      "a.asar/sub/package.json",
-      "a.asar/external-app/package.json",
-      "a.asar/sub/main.cjs",
-      "a.asar/shared/main.cjs",
-    ]);
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root, {
+      sourcePaths: [
+        "a.asar/package.json",
+        "a.asar/sub/package.json",
+        "a.asar/external-app/package.json",
+        "a.asar/sub/main.cjs",
+        "a.asar/shared/main.cjs",
+      ],
+    });
     const roles = graph.nodes.filter(
       ({ kind }) => kind === "electron-renderer",
     );
@@ -354,10 +358,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "shared/index.html": "valid sibling page",
       "escape.html": "escape decoy",
     });
-    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root, [
-      "app/package.json",
-      "app/main.cjs",
-    ]);
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root, {
+      sourcePaths: ["app/package.json", "app/main.cjs"],
+    });
     const roles = graph.nodes.filter(
       ({ kind }) => kind === "electron-renderer",
     );

@@ -21,12 +21,20 @@ export const runNodeJsonControl = async (
   return JSON.parse(stdout) as unknown;
 };
 
-/** Analyze a directory through a public adapter and validate its result contract. */
+/** Analyze a directory; a supplied MCP caller reuses its test-owned connection. */
 export const analyzeJavaScriptDirectory = async (
   surface: "CLI" | "stdio MCP",
   cli: TestCli,
   root: string,
-  sourcePaths: readonly string[] = [],
+  {
+    sourcePaths = [],
+    mcpCall,
+  }: {
+    readonly sourcePaths?: readonly string[];
+    readonly mcpCall?:
+      | Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"]
+      | undefined;
+  } = {},
 ) => {
   let document: unknown;
   if (surface === "CLI") {
@@ -43,7 +51,7 @@ export const analyzeJavaScriptDirectory = async (
     expect(response.exitCode, response.stderr).toBe(0);
     document = response.json;
   } else {
-    const { call } = await connectLocalToolsMcp();
+    const call = mcpCall ?? (await connectLocalToolsMcp()).call;
     const response = await call("analyze_javascript_application", {
       input_path: root,
       format: "directory",

@@ -3131,18 +3131,42 @@ describe("Ghidra OOME error projection", () => {
   });
 });
 
-describe("Ghidra OOME truncated-output projection", () => {
-  it("reports an unconfirmed memory cause when operation output was truncated", async () => {
+describe("Ghidra OOME beyond the retention budget", () => {
+  it("projects an observed OOME line that the retained text omits", async () => {
     const projected = await projectFailure("process", {
       stdout: output(""),
       stderr: output(""),
-      // The diagnostic budget dropped the operation's tail, so an OOME line
-      // printed after truncation cannot be confirmed from retained text.
-      failure_output: { ...failureOutput("", ""), complete: false },
+      failure_output: {
+        ...failureOutput("", ""),
+        complete: false,
+        observed_oome: [
+          {
+            stream: "stderr",
+            offset: 9_000_000,
+            line: "ERROR Abort due to Headless analyzer error: Java heap space (HeadlessAnalyzer) java.lang.OutOfMemoryError: Java heap space",
+          },
+        ],
+      },
+      configured_jvm_max_heap: "4G",
     });
-    expect(projected.code).toBe("resource_constraint");
-    expect(projected.details).toMatchObject({ resource: "memory" });
-    expect(projected.remediation.action).toContain("GHIDRA_HEADLESS_MAXMEM");
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "memory",
+        reported_limits: { configured_jvm_max_heap: "4G" },
+      },
+    });
+    expect(projected.message).toContain("Java heap space");
+  });
+
+  it("keeps the original failure when incomplete output shows no OOME", async () => {
+    const projected = await projectFailure("process", {
+      stdout: output(""),
+      stderr: output(""),
+      failure_output: { ...failureOutput("", ""), complete: false },
+      configured_jvm_max_heap: "4G",
+    });
+    expect(projected.code).toBe("execution_failure");
   });
 });
 

@@ -33,7 +33,54 @@ const run = async (operation, input) => {
     failures += 1;
     return null;
   }
+  if (operation === "decode_android_resources") {
+    const evidence = result.value;
+    const target = evidence.normalized_result.target;
+    check(
+      "resource Evidence preserves the decoded APK subject identity",
+      evidence.subject?.digest.sha256 === target.sha256 &&
+        evidence.subject?.local_path === target.path &&
+        evidence.subject?.format === "apk",
+    );
+  }
   return result.value.normalized_result;
+};
+
+const verifyLocaleTables = async (decoded, apk) => {
+  if (decoded.locales.length === 0) return;
+  const locale = await run("decode_android_resources", {
+    path: apk,
+    include_strings: true,
+    locale: decoded.locales[0],
+  });
+  if (locale !== null) {
+    check(
+      `locale table projected for ${String(decoded.locales[0])}`,
+      Array.isArray(locale.strings),
+      `${locale.strings.length} string(s)`,
+    );
+  }
+  const selectedLocales = decoded.locales.slice(0, 2);
+  const batched = await run("decode_android_resources", {
+    path: apk,
+    include_strings: true,
+    locales: selectedLocales,
+  });
+  if (batched !== null) {
+    const expectedLocales = [null, ...selectedLocales];
+    const hasExpectedTables =
+      Array.isArray(batched.string_tables) &&
+      expectedLocales.every((expected) =>
+        batched.string_tables.some(
+          (table) => table.locale === expected && table.status === "present",
+        ),
+      );
+    check(
+      "batched string tables projected with expected locales and status",
+      hasExpectedTables,
+      `${String(batched.string_tables?.length)} table(s) present`,
+    );
+  }
 };
 
 try {
@@ -81,19 +128,7 @@ try {
         decoded.strings.length > 0,
         `${decoded.strings.length} string(s)`,
       );
-      if (decoded.locales.length > 0) {
-        const locale = await run("decode_android_resources", {
-          path: options.apk,
-          include_strings: true,
-          locale: decoded.locales[0],
-        });
-        if (locale !== null)
-          check(
-            `locale table projected for ${String(decoded.locales[0])}`,
-            Array.isArray(locale.strings),
-            `${locale.strings.length} string(s)`,
-          );
-      }
+      await verifyLocaleTables(decoded, options.apk);
     }
   }
 } catch (cause) {

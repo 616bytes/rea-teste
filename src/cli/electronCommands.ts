@@ -41,7 +41,6 @@ const registerElectronFuseCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  const service = createElectronFuseService();
   cli.command(CLI_COMMANDS.inspectElectronFuses, {
     description:
       "Inspect packaged Electron fuse bytes without launching the application",
@@ -55,11 +54,19 @@ const registerElectronFuseCommand = (
     run: ({ args }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectElectronFuses, async () => {
-          const result = await service.inspect(
-            { path: absoluteElectronFusePath(args.path) },
-            { signal },
+          const service = createElectronFuseService();
+          return finishAnalysisCommand(
+            () =>
+              service.inspect(
+                { path: absoluteElectronFusePath(args.path) },
+                { signal },
+              ),
+            service,
+            service.provider.identity.id,
+            "inspect_electron_fuses",
+            undefined,
+            signal,
           );
-          return result.ok ? result.value : projectAnalysisError(result.error);
         }),
       ),
   });
@@ -118,7 +125,7 @@ const registerElectronActiveCommand = (
             const { createElectronScenarioProvider } =
               await import("../composition/electronScenario.js");
             const provider = createElectronScenarioProvider(environment);
-            return await finishAnalysisCommand(
+            const result = await finishAnalysisCommand(
               () => captureElectronScenario(provider, parsed.data, { signal }),
               {
                 close: async () => {
@@ -130,6 +137,9 @@ const registerElectronActiveCommand = (
               undefined,
               signal,
             );
+            return "code" in result
+              ? { error: "Electron analysis failed", ...result }
+              : result;
           },
         ),
       ),
@@ -284,6 +294,15 @@ const registerJavaScriptApplicationCommand = (
                 : {
                     max_semantic_nodes_per_file:
                       options.maxSemanticNodesPerFile,
+                  }),
+              ...(options.maxSemanticUnknowns === undefined
+                ? {}
+                : { max_semantic_unknowns: options.maxSemanticUnknowns }),
+              ...(options.maxSemanticUnknownsPerFile === undefined
+                ? {}
+                : {
+                    max_semantic_unknowns_per_file:
+                      options.maxSemanticUnknownsPerFile,
                   }),
               ...(options.sourcePath === undefined
                 ? {}

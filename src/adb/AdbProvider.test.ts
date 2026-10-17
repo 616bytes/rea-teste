@@ -1115,8 +1115,52 @@ if [ "$1" = "-s" ]; then printf '%s\\n' "$3" >> "${stubRoot}/calls"; printf '%s\
     // Existence is unknown, so nothing is claimed about the path and no push runs.
     expect(projected).toMatchObject({ code: "unsupported_target" });
     expect(projected.message).toContain(state);
+    expect(projected.message).toContain("at emulator-5554");
+    expect(projected.details).toMatchObject({
+      operation: "push_adb_file",
+      path: "emulator-5554",
+      reason: stderr,
+    });
     expect(projected.message).not.toContain("already exists");
     expect(await readFile(join(root, "calls"), "utf8")).toBe("shell\n");
+  },
+);
+
+it.each([
+  ["offline", "error: device offline"],
+  ["unauthorized", "error: device unauthorized"],
+] as const)(
+  "reports the %s device state against the serial when the push transfer fails",
+  async (state, stderr) => {
+    const { binary, root } = await writeAdbStub(
+      (stubRoot) => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$3" = "shell" ]; then exit 1; fi
+printf '%s\\n' "$3" >> "${stubRoot}/calls"
+printf '%s\\n' "${stderr}" >&2
+exit 1`,
+    );
+    const localFile = join(root, "payload.bin");
+    await writeFile(localFile, "x");
+    const projected = await refusedBy(providerOver(binary), {
+      operation: "push_adb_file",
+      input: {
+        serial: "emulator-5554",
+        local_path: localFile,
+        device_path: "/data/local/tmp/payload.bin",
+        overwrite: false,
+      },
+    });
+    // The probe cleanly established absence, so the transfer refusal credits
+    // the selected device rather than the destination.
+    expect(projected).toMatchObject({ code: "unsupported_target" });
+    expect(projected.message).toContain(state);
+    expect(projected.message).toContain("at emulator-5554");
+    expect(projected.details).toMatchObject({
+      operation: "push_adb_file",
+      path: "emulator-5554",
+      reason: stderr,
+    });
+    expect(await readFile(join(root, "calls"), "utf8")).toBe("push\n");
   },
 );
 

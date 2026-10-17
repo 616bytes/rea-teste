@@ -3,7 +3,11 @@ import {
   ExecFileOutputCancelledError,
   execFileBytes,
 } from "../process/ExecFileOutput.js";
-import { probeAdbPathExistence, runAdbCapture } from "./AdbCommand.js";
+import {
+  probeAdbPathExistence,
+  runAdbCapture,
+  type AdbRunTargets,
+} from "./AdbCommand.js";
 
 vi.mock("../process/ExecFileOutput.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../process/ExecFileOutput.js")>()),
@@ -170,5 +174,94 @@ it("keeps a physical failure even when the later abort reason is that same error
   expect(result).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisProtocolError", cause: failure },
+  });
+});
+
+const refusedPush = async (stderr: string, targets?: AdbRunTargets) => {
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("adb push failed"), {
+      code: 1,
+      stdout: "",
+      stderr,
+      signal: null,
+      killed: false,
+    }),
+  );
+  return runAdbCapture(
+    "push_adb_file",
+    "/sdcard/rea-repro/sample.bin",
+    "/host/adb",
+    [],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+    targets,
+  );
+};
+
+it.each(["error: device offline", "unauthorized device stub"] as const)(
+  "credits the device target for a push device state refusal: %s",
+  async (stderr) => {
+    const result = await refusedPush(stderr, { deviceTarget: "probe-device" });
+    if (result.ok) throw new Error("Expected a device state refusal");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisUnsupportedTargetError",
+      operation: "push_adb_file",
+      path: "probe-device",
+      reason: stderr,
+    });
+    expect(result.error.message).toBe(
+      `Unsupported target for push_adb_file at probe-device: ${stderr}`,
+    );
+  },
+);
+
+it("keeps the destination path for a push path specific refusal", async () => {
+  const result = await refusedPush(
+    "adb: error: failed to write '/sdcard/rea-repro/sample.bin': Permission denied",
+    { deviceTarget: "probe-device" },
+  );
+  if (result.ok) throw new Error("Expected a path specific refusal");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisUnsupportedTargetError",
+    operation: "push_adb_file",
+    path: "/sdcard/rea-repro/sample.bin",
+    reason:
+      "adb: error: failed to write '/sdcard/rea-repro/sample.bin': Permission denied",
+  });
+});
+
+it("keeps the target path when no device target is given", async () => {
+  const result = await refusedPush("error: device offline");
+  if (result.ok) throw new Error("Expected a device state refusal");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisUnsupportedTargetError",
+    path: "/sdcard/rea-repro/sample.bin",
+  });
+});
+
+it("credits the device target when an existence probe refuses the device state", async () => {
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("probe failed"), {
+      code: 1,
+      stdout: "",
+      stderr: "error: device offline",
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await probeAdbPathExistence(
+    "push_adb_file",
+    "probe-device",
+    "/sdcard/rea-repro/sample.bin",
+    "/host/adb",
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+    { deviceTarget: "probe-device" },
+  );
+  if (result.ok) throw new Error("Expected a device state refusal");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisUnsupportedTargetError",
+    path: "probe-device",
+    reason: "error: device offline",
   });
 });

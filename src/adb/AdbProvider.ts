@@ -2411,6 +2411,7 @@ export class AdbProvider {
           selection.binary,
           { timeoutMs: SETTINGS_TIMEOUT_MS, maxOutputBytes: 1024 },
           signal,
+          { deviceTarget: input.serial },
         );
         if (!existsProbe.ok) return existsProbe;
         const deviceExists = existsProbe.value;
@@ -2428,6 +2429,7 @@ export class AdbProvider {
           adbArguments(input.serial, ["push", digest.path, input.device_path]),
           { timeoutMs: PULL_TIMEOUT_MS, maxOutputBytes: PULL_MAX_OUTPUT_BYTES },
           signal,
+          { deviceTarget: input.serial },
         );
         if (!pushed.ok) return pushed;
         const receipt = (
@@ -2462,6 +2464,7 @@ export class AdbProvider {
           adbArguments(input.serial, ["shell", "sha256sum", input.device_path]),
           { timeoutMs: SHELL_TIMEOUT_MS, maxOutputBytes: 1024 },
           signal,
+          { deviceTarget: input.serial },
         );
         if (!deviceDigest.ok) {
           const cancelled =

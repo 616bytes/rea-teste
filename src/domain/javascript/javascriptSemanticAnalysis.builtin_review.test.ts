@@ -35,10 +35,14 @@ it.each([
   "const holder={child:{}}; const saved=holder.child; box.owner=saved; holder.child.owner=module;",
   "const holder={child:{}}; Object.assign(box,{owner:holder.child}); holder.child.owner=module;",
   "const holder={child:{}}; Object.defineProperty(box,'owner',{value:holder.child}); holder.child.owner=module;",
+  "const holder={child:{}}; const saved=holder.child; box.owner=saved; holder.child={}; saved.owner=module;",
+  "const holder={child:{}}; const saved=holder.child; box.owner=saved; holder.child={}; holder.child=saved; holder.child.owner=module;",
+  "const holder={child:{}}; box.owner=holder.child; if (unknown) holder.child={}; holder.child.owner=module;",
   "Object.prototype.value=module; Object.defineProperty(box,'owner',{writable:true});",
   "Object.prototype.value=module; Reflect.defineProperty(box,'owner',{writable:true});",
   "Object.prototype.value=module; Object.defineProperties(box,{owner:{writable:true}});",
   "const prototype=Object.prototype; prototype.value=module; Object.defineProperty(box,'owner',{writable:true});",
+  "function install(){Object.defineProperty(box,'owner',{writable:true});} Object.prototype.value=module; install();",
   "box.child={owner:module};",
   "box.owner=box; box.child=module;",
   "box.owner ||= module;",
@@ -136,6 +140,11 @@ it.each([
   "const box={owner:{}}; Object.assign({},box.owner); require('fs').readFileSync('kept'); box.owner=module;",
   "const box={owner:{}}; const saved=box.owner; box.owner=module; Object.assign({},saved); require('fs').readFileSync('kept');",
   "const holder={child:{}}; const box={}; box.owner=holder.child; holder.child=module; Object.assign({},box.owner); require('fs').readFileSync('kept');",
+  "const holder={child:{}}; const box={}; box.owner=holder.child; holder.child={}; holder.child.owner=module; Object.assign({},box.owner); require('fs').readFileSync('kept');",
+  "const holder={child:{}}; const box={}; box.owner=holder.child; const alias=holder; alias.child={}; holder.child.owner=module; Object.assign({},box.owner); require('fs').readFileSync('kept');",
+  "const holder={child:{}}; const box={}; box.owner=holder.child; holder.child={}; const replacement=holder.child; replacement.owner=module; Object.assign({},box.owner); require('fs').readFileSync('kept');",
+  "const holder={child:{}}; const box={}; box.owner=holder.child; Object.defineProperty(holder,'child',{value:{}}); holder.child.owner=module; Object.assign({},box.owner); require('fs').readFileSync('kept');",
+  "const box={}; Object.defineProperty(box,'owner',{writable:true}); Object.prototype.value=module; Object.assign({},box.owner); require('fs').readFileSync('kept');",
   "const holder={child:{}}; const box={}; box.owner=holder.child; Object.assign({},box.owner); require('fs').readFileSync('kept'); holder.child.owner=module;",
 ])("keeps written local exposure scoped to the read: %s", (body) => {
   expect(
@@ -143,6 +152,22 @@ it.each([
     ${body}`).configurationOperations.map(({ key }) => key),
   ).toEqual(["kept"]);
 });
+
+it.each([
+  "Object.defineProperty(box,'owner',{writable:true});",
+  "Reflect.defineProperty(box,'owner',{writable:true});",
+  "Object.defineProperties(box,{owner:{writable:true}});",
+])(
+  "keeps descriptor lookup ordered before later prototype writes: %s",
+  (write) => {
+    expect(
+      analyzeJavaScriptSemantics(`const box={}; ${write}
+    Object.assign=custom; Object.assign({},box.owner);
+    require('fs').readFileSync('kept'); Object.prototype.value=module;
+  `).configurationOperations.map(({ key }) => key),
+    ).toEqual(["kept"]);
+  },
+);
 
 const intrinsicReplacementForms = [
   "Object.defineProperty(Reflect,'set',{value:bound});",

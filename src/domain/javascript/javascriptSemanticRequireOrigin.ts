@@ -12,6 +12,8 @@ import {
   semanticResolutionBlocked,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticMemberEffect,
 } from "./javascriptSemanticState.js";
 import {
   readExactJavaScriptLiteral,
@@ -31,6 +33,7 @@ import {
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { semanticBranchMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
 
 export interface JavaScriptRequireOrigin {
   readonly origin: JavaScriptModuleOrigin;
@@ -395,6 +398,30 @@ const writesModuleRequire = (
   // Member effects already own aliases, selected paths and ordering. Follow
   // their assigned values instead of treating every write as the wrapper.
   // Accessors and unproven descriptor/source maps remain conservative.
+  const descriptorPrototypeWrites = new Map<
+    string,
+    readonly JavaScriptSemanticMemberEffect[]
+  >();
+  const inheritedDescriptorFieldChanged = (
+    field: string,
+    at: t.Node,
+  ): boolean => {
+    let effects = descriptorPrototypeWrites.get(field);
+    if (effects === undefined) {
+      const selected = ["global", "Object", "prototype", field];
+      effects = state.ambientWriteEffects.filter(
+        ({ path }) =>
+          path.length <= selected.length &&
+          path.every((key, index) =>
+            semanticPropertyPathKeyMatches(key, selected[index]!),
+          ),
+      );
+      descriptorPrototypeWrites.set(field, effects);
+    }
+    return effects.some(
+      ({ node }) => semanticEffectTiming(at, node, state) !== "after",
+    );
+  };
   const writtenValues = (
     mutation: t.Node | undefined,
     key: string,
@@ -476,10 +503,237 @@ const writesModuleRequire = (
             semanticStaticPropertyKey(property.key, property.computed) ===
               field,
         ) &&
-        state.ambientWrites.covers(["global", "Object", "prototype", field])
+        inheritedDescriptorFieldChanged(field, mutation)
       )
         return undefined;
     return [{ node: data, path: ["value"] }];
+  };
+  // Resolve only ordered, exact literal allocations. Unknown aliases, getters,
+  // conditional replacements and computed slots cannot prove distinct owners.
+  const definiteReplacements = new WeakMap<t.Node, boolean>();
+  const isDefiniteReplacement = (node: t.Node | undefined): boolean => {
+    if (node === undefined) return false;
+    const cached = definiteReplacements.get(node);
+    if (cached !== undefined) return cached;
+    let definite =
+      t.isCallExpression(node) ||
+      t.isAssignmentExpression(node, { operator: "=" });
+    let child = node;
+    for (
+      let parent = state.parentsByNode.get(child);
+      definite && parent !== undefined && !t.isFunction(parent);
+      parent = state.parentsByNode.get(child)
+    ) {
+      if (semanticBranchMayBeSkipped(parent, child)) definite = false;
+      child = parent;
+    }
+    definiteReplacements.set(node, definite);
+    return definite;
+  };
+  const allocationWriteIndices = new WeakMap<
+    JavaScriptSemanticBindingState,
+    {
+      exact: Map<string, JavaScriptSemanticMemberEffect[]>;
+      unknown: JavaScriptSemanticMemberEffect[];
+    }
+  >();
+  const allocationWritesAtPath = (
+    binding: JavaScriptSemanticBindingState,
+    path: JavaScriptSemanticPropertyPath,
+  ): readonly JavaScriptSemanticMemberEffect[] => {
+    let index = allocationWriteIndices.get(binding);
+    if (index === undefined) {
+      index = { exact: new Map(), unknown: [] };
+      for (const effect of binding.memberWrites) {
+        if (effect.path.some((key) => key === null || typeof key === "object"))
+          index.unknown.push(effect);
+        else {
+          const key = JSON.stringify(effect.path.map(String));
+          const values = index.exact.get(key) ?? [];
+          values.push(effect);
+          index.exact.set(key, values);
+        }
+      }
+      allocationWriteIndices.set(binding, index);
+    }
+    const effects = [...index.unknown];
+    for (let length = 0; length <= path.length; length++)
+      effects.push(
+        ...(index.exact.get(
+          JSON.stringify(path.slice(0, length).map(String)),
+        ) ?? []),
+      );
+    return effects;
+  };
+  const literalAllocation = (
+    source: t.Node,
+    path: JavaScriptSemanticPropertyPath,
+    at: t.Node,
+  ): t.Node | undefined => {
+    const seen = new Set<t.Node>();
+    while (true) {
+      const value = unwrapJavaScriptExpression(source).node;
+      if (
+        seen.has(value) ||
+        path.some((key) => key === null || typeof key === "object")
+      )
+        return undefined;
+      seen.add(value);
+      if (t.isMemberExpression(value) || t.isOptionalMemberExpression(value)) {
+        const key = semanticStaticPropertyKey(value.property, value.computed);
+        if (key === null) return undefined;
+        source = value.object;
+        path = [key, ...path];
+        continue;
+      }
+      if (t.isIdentifier(value)) {
+        const binding = resolveSemanticBindingState(state, value, value.name);
+        if (binding === undefined) return undefined;
+        let latest: JavaScriptSemanticMemberEffect | undefined;
+        if (path.length > 0)
+          for (const effect of allocationWritesAtPath(binding, path)) {
+            if (
+              effect.path.length > path.length ||
+              !effect.path.every((key, index) =>
+                semanticPropertyPathKeyMatches(key, String(path[index])),
+              )
+            )
+              continue;
+            const timing = semanticEffectTiming(at, effect.node, state);
+            if (timing === "after") continue;
+            if (
+              timing !== "before" ||
+              !isDefiniteReplacement(effect.node) ||
+              effect.path.some((key) => typeof key !== "string")
+            )
+              return undefined;
+            if (latest === undefined) latest = effect;
+            else {
+              const order = semanticEffectTiming(
+                latest.node!,
+                effect.node,
+                state,
+              );
+              if (order === "unknown") return undefined;
+              if (order === "after") latest = effect;
+            }
+          }
+        if (latest !== undefined) {
+          const references = writtenValues(
+            latest.node,
+            String(latest.path.at(-1)),
+          );
+          if (references?.length !== 1) return undefined;
+          const reference = references[0]!;
+          source = reference.node;
+          path = [...reference.path, ...path.slice(latest.path.length)];
+          at = latest.node!;
+          continue;
+        }
+        const snapshot = semanticBindingAtRead(
+          binding,
+          at,
+          state.parentsByNode,
+        );
+        if (
+          snapshot.status !== "ordered" ||
+          snapshot.binding.initializers.length !== 1 ||
+          snapshot.binding.referenceInitializers.length !== 0
+        )
+          return undefined;
+        const initializer = snapshot.binding.initializers[0]!;
+        const initial = unwrapJavaScriptExpression(initializer.node).node;
+        // A saved child followed by another selection needs separate capture and
+        // use clocks; leave that unresolved instead of assigning it a new owner.
+        if (
+          path.length > 0 &&
+          (initializer.projection.length > 0 ||
+            t.isMemberExpression(initial) ||
+            t.isOptionalMemberExpression(initial))
+        )
+          return undefined;
+        source = initializer.node;
+        if (path.length === 0) at = initializer.node;
+        path = [...initializer.projection, ...path];
+        continue;
+      }
+      if (t.isObjectExpression(value)) {
+        if (path.length === 0) return value;
+        if (
+          !value.properties.every(
+            (property) =>
+              t.isObjectProperty(property) &&
+              semanticStaticPropertyKey(property.key, property.computed) !==
+                null,
+          )
+        )
+          return undefined;
+        const property = value.properties.findLast(
+          (property) =>
+            t.isObjectProperty(property) &&
+            semanticStaticPropertyKey(property.key, property.computed) ===
+              String(path[0]),
+        );
+        if (!t.isObjectProperty(property)) return undefined;
+        source = property.value;
+        path = path.slice(1);
+        continue;
+      }
+      if (t.isArrayExpression(value) && path.length === 0) return value;
+      return undefined;
+    }
+  };
+  const writesSeparateChild = (
+    source: t.Node,
+    path: JavaScriptSemanticPropertyPath,
+    capturedAt: t.Node,
+    effect: JavaScriptSemanticMemberEffect,
+  ): boolean => {
+    if (
+      path.length === 0 ||
+      effect.path.length <= path.length ||
+      effect.path.some((key) => typeof key !== "string")
+    )
+      return false;
+    const mutation = effect.node;
+    let receiver: t.Node | undefined;
+    if (
+      t.isAssignmentExpression(mutation) &&
+      (t.isMemberExpression(mutation.left) ||
+        t.isOptionalMemberExpression(mutation.left))
+    )
+      receiver = mutation.left.object;
+    else if (
+      t.isCallExpression(mutation) ||
+      t.isOptionalCallExpression(mutation)
+    ) {
+      const invocation = interop.intrinsicInvocation(mutation);
+      if (
+        invocation?.kind === "known" &&
+        [
+          "intrinsic.Object.assign",
+          "intrinsic.Object.defineProperty",
+          "intrinsic.Object.defineProperties",
+          "intrinsic.Reflect.defineProperty",
+        ].includes(invocation.path.join("."))
+      )
+        receiver = invocation.arguments?.[0];
+    }
+    for (
+      let remaining = effect.path.length - path.length - 1;
+      remaining > 0 && receiver !== undefined;
+      remaining--
+    ) {
+      const value = unwrapJavaScriptExpression(receiver).node;
+      receiver =
+        t.isMemberExpression(value) || t.isOptionalMemberExpression(value)
+          ? value.object
+          : undefined;
+    }
+    if (receiver === undefined) return false;
+    const saved = literalAllocation(source, path, capturedAt);
+    const written = literalAllocation(receiver, [], receiver);
+    return saved !== undefined && written !== undefined && saved !== written;
   };
   const exposesModule = (nodes: readonly t.Node[], call: t.Node): boolean => {
     const pending: {
@@ -546,7 +800,8 @@ const writesModuleRequire = (
             effect.path.length > path.length ? call : readAt,
             effect.node,
             state,
-          ) !== "after"
+          ) !== "after" &&
+          !writesSeparateChild(value, path, readAt, effect)
         ) {
           const key = effect.path.at(-1);
           const values =

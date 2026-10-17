@@ -25,6 +25,7 @@ interface StatementPosition {
 interface BindingReadPosition {
   readonly position: StatementPosition | null;
   readonly repeating: boolean;
+  readonly outer: BindingReadPosition | null;
 }
 
 interface ExpressionSiblings {
@@ -592,7 +593,7 @@ const bindingReadPosition = (
     path.push(current);
     const parent = parents.get(current);
     if (t.isLoop(parent)) {
-      result = { position: null, repeating: true };
+      result = { position: null, repeating: true, outer: null };
       break;
     }
     if (
@@ -600,7 +601,7 @@ const bindingReadPosition = (
       t.isFunction(parent) ||
       delayedInstanceFieldValue(parent, current)
     ) {
-      result = { position: null, repeating: false };
+      result = { position: null, repeating: false, outer: null };
       break;
     }
     current = parent;
@@ -621,7 +622,7 @@ const bindingReadPosition = (
     )
       position = statementPosition(parent, parents);
     if (position !== null && position !== result.position)
-      result = { ...result, position };
+      result = { position, repeating: result.repeating, outer: result };
     cache.set(node, result);
   }
   return result;
@@ -655,7 +656,17 @@ export const semanticBindingAtRead = (
         ? null
         : initializerPosition(reference, parents, true)
       : initializerPosition(initializer, parents);
-  const { position, repeating } = bindingReadPosition(read, parents);
+  let readPosition = bindingReadPosition(read, parents);
+  // A nested block executes at its containing statement. Retain those cached
+  // ancestor positions so outer declarations can be ordered without crossing
+  // a deferred function, instance field, or repeating activation.
+  while (
+    sourcePosition !== null &&
+    readPosition.position?.body !== sourcePosition.body &&
+    readPosition.outer !== null
+  )
+    readPosition = readPosition.outer;
+  const { position, repeating } = readPosition;
   // Coverage and latest-value selection are independent. A preceding write
   // can cover entry even when another write's order remains unknown.
   const hasDefiniteInitializer =

@@ -72,6 +72,49 @@ it("indexes capture-sensitive bindings once across independent binding queries",
   expect(large).toBeLessThan(3 * small);
 });
 
+it("bounds sensitivity checks across independent queries with many effectful objects", () => {
+  const measure = (width: number) => {
+    const parsed = parseJavaScriptSource(
+      Array.from(
+        { length: width },
+        (_, index) => `
+        const object${index} = { value: 1 }; mutate(object${index});
+        const x${index} = ${index + 1}; const y${index} = true ? x${index} : 0;
+      `,
+      ).join("\n"),
+      "effectful-independent-branches.js",
+    );
+    if (parsed === null) throw new Error("Expected parsed source");
+    const steps = indexJavaScriptBindingsSteps(parsed.program);
+    let step = steps.next();
+    while (step.done !== true) step = steps.next();
+    const state = step.value;
+    const effects = collectSemanticMemberMutationsSteps(parsed.program, state);
+    let effect = effects.next();
+    while (effect.done !== true) effect = effects.next();
+    const bindings = [...state.bindingsById.values()].filter(({ name }) =>
+      name.startsWith("y"),
+    );
+    const membership = vi.spyOn(SemanticDependencyProofs.prototype, "has");
+    const overlap = vi.spyOn(SemanticDependencyProofs.prototype, "overlaps");
+    try {
+      for (const [index, binding] of bindings.entries())
+        expect(evaluateSemanticBinding(binding, state)).toEqual({
+          status: "literal",
+          value: index + 1,
+        });
+      return membership.mock.calls.length + overlap.mock.calls.length;
+    } finally {
+      membership.mockRestore();
+      overlap.mockRestore();
+    }
+  };
+  const small = measure(32);
+  const large = measure(64);
+  expect(small).toBeGreaterThan(0);
+  expect(large).toBeLessThan(3 * small);
+});
+
 it("refreshes capture sensitivity when the effect producer invalidates values", () => {
   const parsed = parseJavaScriptSource(
     `
@@ -511,9 +554,17 @@ it("uses immutable exact identity proofs and shares unchanged union branches", (
   expect(proofs.has(undefined, "a")).toBe(false);
   expect(proofs.intersects(abc, new Map([["d", 0]]))).toBe(false);
   expect(proofs.intersects(abc, new Map([["c", 0]]))).toBe(true);
+  expect(proofs.overlaps(abc, proofs.binding("d"))).toBe(false);
+  expect(proofs.overlaps(abc, proofs.union(c, proofs.binding("d")))).toBe(true);
+  expect(proofs.overlaps(undefined, abc)).toBe(false);
+  expect(proofs.overlaps(abc, undefined)).toBe(false);
+  expect(proofs.overlaps(abc, abc)).toBe(true);
   const single = new SemanticDependencyProofs(["only"]);
   expect(single.has(single.binding("only"), "only")).toBe(true);
   expect(single.has(undefined, "only")).toBe(false);
+  expect(single.overlaps(single.binding("only"), single.binding("only"))).toBe(
+    true,
+  );
   expect(() => proofs.binding("unindexed")).toThrow(
     "Unindexed semantic dependency",
   );

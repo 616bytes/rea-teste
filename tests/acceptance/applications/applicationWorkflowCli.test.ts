@@ -1437,6 +1437,67 @@ describe("application workflow CLI and MCP constant branches", () => {
   }, 20_000);
 });
 
+it("preserves nested-block lexical TDZ uncertainty through CLI and MCP", async () => {
+  const root = await createTestTempDirectory("rea-block-lexical-read-cli-");
+  const roots = await writeComparisonSources(root, [
+    `export default function config() {
+      { { return { type: "config", mode: enabled ? "on" : "off",
+          logical: enabled || "fallback", selected: true ? enabled : 0 }; } }
+      const enabled = true;
+    }`,
+    `export default () => ({ type: "config", mode: "on", logical: true, selected: true });`,
+  ]);
+  await expect(
+    runtimeDefaultExport(join(roots[0]!, "parser.mjs")),
+  ).rejects.toThrow("Cannot access 'enabled' before initialization");
+  expect(await runtimeDefaultExport(join(roots[1]!, "parser.mjs"))).toEqual({
+    type: "config",
+    mode: "on",
+    logical: true,
+    selected: true,
+  });
+  const [left, right] = await Promise.all(
+    roots.map((path) =>
+      runCli(["analyze-javascript-application", path, "--json"]),
+    ),
+  );
+  const input = {
+    left,
+    right,
+    left_module_path: "parser.mjs",
+    left_export_name: "default",
+    right_module_path: "parser.mjs",
+    right_export_name: "default",
+  };
+  const expected = {
+    normalized_result: {
+      summary: { added: 0, removed: 0, changed: 1, unknown: 2 },
+      changes: expect.arrayContaining([
+        expect.objectContaining({
+          path: "/mode",
+          status: "changed",
+          left: { availability: "union", values: ["off", "on"] },
+        }),
+        ...["/logical", "/selected"].map((path) =>
+          expect.objectContaining({
+            path,
+            status: "unknown",
+            left: expect.objectContaining({ availability: "unknown" }),
+          }),
+        ),
+      ]),
+    },
+  };
+  expect(
+    await runCliWithRequestFile(
+      root,
+      "compare-javascript-export-shapes",
+      input,
+    ),
+  ).toMatchObject(expected);
+  expect(await compareThroughStdioMcp(input)).toMatchObject(expected);
+}, 20_000);
+
 it("keeps selected operands and unordered lexical writes uncertain through CLI and MCP", async () => {
   const root = await createTestTempDirectory("rea-branch-operands-cli-");
   const roots = await writeComparisonSources(root, [

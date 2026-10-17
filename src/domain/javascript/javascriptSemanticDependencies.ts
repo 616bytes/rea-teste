@@ -55,11 +55,24 @@ export class SemanticDependencyProofs {
 
   intersects(
     proof: SemanticDependencyProof,
-    active: ReadonlyMap<string, number> | ReadonlySet<string>,
+    active: ReadonlyMap<string, number>,
   ): boolean {
     for (const binding of active.keys())
       if (this.has(proof, binding)) return true;
     return false;
+  }
+
+  /** Visit only shared identity paths, bounded by the smaller proof's trie. */
+  overlaps(
+    first: SemanticDependencyProof,
+    second: SemanticDependencyProof,
+  ): boolean {
+    if (first === undefined || second === undefined) return false;
+    if (first === second || first === true || second === true) return true;
+    return (
+      this.overlaps(first.zero, second.zero) ||
+      this.overlaps(first.one, second.one)
+    );
   }
 
   has(proof: SemanticDependencyProof, binding: string): boolean {

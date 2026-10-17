@@ -347,6 +347,35 @@ describe("branch selector source reads", () => {
       });
   });
 
+  it.each(["const", "let"])(
+    "orders outer %s initializers against nested block reads",
+    (kind) => {
+      for (const [expression, expected, value] of [
+        [
+          'enabled ? "on" : "off"',
+          { status: "union", values: ["off", "on"] },
+          "on",
+        ],
+        ['enabled || "fallback"', { status: "ambiguous" }, true],
+        ['true ? enabled : "off"', { status: "unknown" }, true],
+      ] as const) {
+        const future = analyzeJavaScriptSemantics(`
+          let answer; { { answer = ${expression}; } }
+          ${kind} enabled = true; export { answer };
+        `);
+        expect(topLevelBinding(future, "answer").value).toMatchObject(expected);
+        const preceding = analyzeJavaScriptSemantics(`
+          ${kind} enabled = true;
+          let answer; { { answer = ${expression}; } } export { answer };
+        `);
+        expect(topLevelBinding(preceding, "answer").value).toEqual({
+          status: "literal",
+          value,
+        });
+      }
+    },
+  );
+
   it("keeps all logical selectors uncertain before their initializer executes", () => {
     for (const operator of ["||", "&&", "??"])
       for (const source of [

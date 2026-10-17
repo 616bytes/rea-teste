@@ -148,7 +148,7 @@ const primitiveBindingValuesByState = new WeakMap<
 /** Effect-derived membership is shared by every value query for this state. */
 const captureSensitiveBindingsByState = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  ReadonlySet<string>
+  SemanticDependencyProof
 >();
 
 const primitiveExpressionValuesByState = new WeakMap<
@@ -314,13 +314,16 @@ const collectEvaluationDependencies = <T>(
 
 const captureSensitiveBindingsFor = (
   context: EvaluationContext,
-): ReadonlySet<string> => {
-  const existing = captureSensitiveBindingsByState.get(context.state);
-  if (existing !== undefined) return existing;
-  const bindings = new Set<string>();
+): SemanticDependencyProof => {
+  if (captureSensitiveBindingsByState.has(context.state))
+    return captureSensitiveBindingsByState.get(context.state);
+  let bindings: SemanticDependencyProof;
   for (const binding of context.state.bindingsById.values())
     if (binding.memberWrites.length > 0 || binding.escapedPaths.length > 0)
-      bindings.add(binding.bindingId);
+      bindings = context.memo.dependencies.union(
+        bindings,
+        context.memo.dependencies.binding(binding.bindingId),
+      );
   captureSensitiveBindingsByState.set(context.state, bindings);
   return bindings;
 };
@@ -563,7 +566,7 @@ const evaluateBinding = (
       depthDependent,
       captureIndependent:
         context.sourceRead === true &&
-        !context.memo.dependencies.intersects(
+        !context.memo.dependencies.overlaps(
           evaluated.dependencies,
           captureSensitiveBindingsFor(context),
         ),

@@ -273,7 +273,11 @@ it.each(["not-json", "miscounted", "with-bodies"] as const)(
         await client.execute("procedure_callees", { procedure: "main" }),
       ).toMatchObject({
         ok: false,
-        error: { _tag: "AnalysisOutputError", operation: "kuna:call-graph" },
+        error: {
+          _tag: "AnalysisOutputError",
+          operation: "procedure_callees",
+          diagnostics: { producer_operation: "kuna:call-graph" },
+        },
       });
       await setFakeKunaBehavior(kuna, { functions: FUNCTIONS });
       expect(

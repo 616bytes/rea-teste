@@ -328,6 +328,44 @@ cliTest.for([0, 2])(
 );
 
 cliTest(
+  "CLI keeps dropped script identities unknown without conflating other event loss",
+  async ({ cli }) => {
+    const before = scriptCapture("export let x = 1;\n");
+    const after = scriptCapture("export let x = 2;\n");
+    const droppedBefore = structuredClone(before);
+    const droppedAfter = structuredClone(after);
+    droppedBefore.inspection.completeness.dropped_events.scripts = 1;
+    droppedAfter.inspection.completeness.dropped_events.scripts = 1;
+    const networkDrop = structuredClone(after);
+    networkDrop.inspection.completeness.dropped_events.network_requests = 1;
+    const paths = await writeCaptures([
+      before,
+      after,
+      droppedBefore,
+      droppedAfter,
+      networkDrop,
+    ]);
+    for (const [left, right] of [
+      [2, 3],
+      [3, 2],
+      [0, 3],
+      [3, 0],
+      [2, 1],
+      [1, 2],
+      [2, 2],
+    ] as const) {
+      expect(
+        await compareScripts(cli, paths[left]!, paths[right]!),
+      ).toMatchObject({ status: "unknown", total_changes: 0, changes: [] });
+    }
+    expect(await compareScripts(cli, paths[0]!, paths[4]!)).toMatchObject({
+      status: "changed",
+      total_changes: 1,
+    });
+  },
+);
+
+cliTest(
   "CLI keeps missing script membership unknown while preserving known metadata changes",
   async ({ cli }) => {
     const complete = scriptCapture(null, "producer-hash");

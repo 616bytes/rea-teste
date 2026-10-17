@@ -211,7 +211,7 @@ const scriptDimension = (
 ): Dimension => {
   const inventoryComplete = [before, after].every(
     (inspection) =>
-      sectionsComplete(inspection, ["scripts"]) &&
+      eventInventoryComplete(inspection, ["scripts"]) &&
       inspection.scripts.total === inspection.scripts.items.length,
   );
   return compareWebCaptureScripts(
@@ -358,9 +358,10 @@ const sharedNetworkMetadata = (
 const redirectNetworkIdentity = (identity: string, index: number): string =>
   compositeKey([identity, "redirect", index]);
 /** Section lists and per-kind dropped counts independently limit absence evidence. */
-const networkInventoryComplete = (
+const eventInventoryComplete = (
   inspection: WebPageInspection,
   sections: readonly (
+    | "scripts"
     | "network_requests"
     | "websocket_connections"
     | "websocket_frames"
@@ -376,10 +377,10 @@ const networkDimension = (
   after: WebPageInspection,
 ): Dimension => {
   const requestsComplete = [before, after].every((inspection) =>
-    networkInventoryComplete(inspection, ["network_requests"]),
+    eventInventoryComplete(inspection, ["network_requests"]),
   );
   const webSocketInventoryComplete = [before, after].every((inspection) =>
-    networkInventoryComplete(inspection, [
+    eventInventoryComplete(inspection, [
       "websocket_connections",
       "websocket_frames",
     ]),

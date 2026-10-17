@@ -234,9 +234,9 @@ const selectPackageMain = (
   // package, and a trailing separator does not make the entry a directory.
   if (posix.isAbsolute(manifest.main))
     return { to: posix.normalize(manifest.main), resolution: "unresolved" };
-  const target = posix
-    .normalize(posix.join(packageDirectory, manifest.main))
-    .replace(/(?<=.)\/+$/u, "");
+  // Joining "." strips the trailing separator run with path semantics; a
+  // lookbehind regex kept separators behind line terminators (main "lib\n/").
+  const target = posix.join(posix.join(packageDirectory, manifest.main), ".");
   // Node would load a declared entry outside the imported root.
   if (logicalPathEscapesRoot(target))
     return { to: target, resolution: "unresolved" };

@@ -1623,8 +1623,8 @@ msgid ""
 "and matching records were reviewed on 13 October 2026."
 msgstr ""
 "Shembujt përshkruajnë krahasimet historike të nivelit të funksionit të "
-"regjistruara në kryerjet e lidhura. Kontrollet gjatë gjithë kohës së lojës "
-"janë momente të veçanta. Burimi dhe të dhënat përkatëse u rishikuan më 13 "
+"regjistruara në kryerjet e lidhura. Kontrollet e lojës së plotë gjatë ekzekutimit "
+"janë etapa të veçanta. Burimi dhe të dhënat përkatëse u rishikuan më 13 "
 "tetor 2026."
 
 #. {ph0}: <code>gpt-dots</code>
@@ -2179,7 +2179,7 @@ msgid ""
 msgstr ""
 "Një port rindërtimi i luajtshëm Linux u krye më 24 gusht, afërsisht "
 "njëmbëdhjetë ditë pas fillimit të vazhdimit. Pasoi një botim në internet. "
-"Lëshimi origjinal Linux 64-bit mbërriti më 30 gusht."
+"Versioni native 64-bit për Linux u publikua më 30 gusht."
 
 #: website/public/blog/touhou-reconstruction/index.html:445
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -2210,8 +2210,8 @@ msgid ""
 msgstr ""
 "Kjo i bëri kontrollet e referencës në qendër të punës. Unë i quaj "
 "{ph0}orakuj{ph1}. Një krahasim i kodit mund të na tregojë nëse një funksion "
-"i rindërtuar riprodhon udhëzimet origjinale. Një kontroll kohëzgjatjeje mund"
-" të na tregojë nëse një rrugë e ushtruar arrin gjendjen e pritur. Agjenti "
+"i rindërtuar riprodhon udhëzimet origjinale. Një kontroll gjatë ekzekutimit "
+"mund të na tregojë nëse një rrugë e testuar arrin gjendjen e pritur. Agjenti "
 "propozon një shpjegim dhe e teston atë; një mospërputhje i jep asaj diçka "
 "specifike për t'u hetuar."
 
@@ -2239,8 +2239,8 @@ msgid ""
 "auto-collection. The reconstructed source checked player power against "
 "{ph0}. The original used {ph1}, the maximum-power threshold."
 msgstr ""
-"Në shtator, një defekt i raportuar nga një portë Switch në rrjedhën e "
-"poshtme çoi në grumbullimin automatik të artikujve. Burimi i rindërtuar "
+"Në shtator, një defekt i raportuar në një portim për Switch, të bazuar në "
+"rindërtimin tonë, na çoi te grumbullimi automatik i artikujve. Burimi i rindërtuar "
 "kontrolloi fuqinë e luajtësit kundrejt {ph0}. Origjinali përdori {ph1}, "
 "pragun maksimal të fuqisë."
 
@@ -2407,7 +2407,7 @@ msgid ""
 "The rise of grifters (AI decompilations and ports) in this space taking from"
 " our work paints a bad image for future decompilation efforts…"
 msgstr ""
-"Rritja e grifterëve (dekompilimet dhe portat e AI) në këtë hapësirë, duke "
+"Rritja e grifterëve (dekompilimet dhe portimet me AI) në këtë hapësirë, duke "
 "marrë nga puna jonë, jep një imazh të keq për përpjekjet e ardhshme të "
 "dekompilimit…"
 
@@ -2880,9 +2880,9 @@ msgid ""
 "environment, such as a native 64-bit build. The reconstructed original-"
 "platform game remains a reference for comparing how the port behaves."
 msgstr ""
-"{ph0}Bëni portën moderne.{ph1} Zhvendosni sjelljen e vendosur në mjedisin e "
-"ri, si p.sh. një ndërtim origjinal 64-bit. Loja e rindërtuar e platformës "
-"origjinale mbetet një referencë për të krahasuar mënyrën se si sillet porti."
+"{ph0}Krijoni portimin modern.{ph1} Zhvendosni sjelljen e verifikuar në mjedisin e "
+"ri, si p.sh. një ndërtim native 64-bit. Loja e rindërtuar për platformën "
+"origjinale mbetet një referencë për të krahasuar sjelljen e portimit."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -3650,7 +3650,7 @@ msgid ""
 "scheduling disabled. Compare those recorded speeds with a replay of the "
 "recovered rule."
 msgstr ""
-"Ne e quajtëm funksionin e përditësimit të lojës origjinale me pengesa dhe "
+"Ne e thirrëm funksionin e përditësimit të lojës origjinale me pengesat dhe "
 "planifikimin automatik të çaktivizuar. Krahasoni ato shpejtësi të "
 "regjistruara me një përsëritje të rregullit të rikuperuar."
 
@@ -4930,7 +4930,7 @@ msgid ""
 "a packaged Electron app.{ph3}"
 msgstr ""
 "{ph0}Si Notion kopjon tekstin dhe HTML-në{ph1}{ph2}Ndiq një veçori të "
-"kujtesës në një aplikacion të paketuar Electron.{ph3}"
+"kujtesës së fragmenteve në një aplikacion të paketuar Electron.{ph3}"
 
 #. {ph0}: <a href="../showcase/dx-ball/" >
 #. {ph1}: </a >
@@ -5938,7 +5938,7 @@ msgid ""
 "Example prompt. Give your agent the debugging endpoint, {ph0}, and the page "
 "URL. Let it start the capture before you click."
 msgstr ""
-"Shembull i shpejtë. Jepini agjentit tuaj pikën përfundimtare të korrigjimit,"
+"Shembull kërkese. Jepini agjentit tuaj pikën përfundimtare të korrigjimit,"
 " {ph0} dhe URL-në e faqes. Lëreni të fillojë kapjen përpara se të klikoni."
 
 #: website/public/guides/browser/index.html:332
@@ -6235,7 +6235,7 @@ msgid ""
 "Analyze a native function, an Electron export or a browser request. Each "
 "guide includes a prompt, code and results."
 msgstr ""
-"Analizoni një funksion origjinal, një eksport Electron ose një kërkesë të "
+"Analizoni një funksion native, një eksport Electron ose një kërkesë të "
 "shfletuesit. Çdo udhëzues përfshin një kërkesë, kod dhe rezultate."
 
 #: website/public/guides/index.html:210
@@ -6408,7 +6408,7 @@ msgid ""
 "CSV export and a browser request."
 msgstr ""
 "Mësoni REA përmes shembujve të shkurtër të punuar: një llogaritje "
-"origjinale, një eksportim CSV Electron dhe një kërkesë shfletuesi."
+"native, një eksportim CSV Electron dhe një kërkesë shfletuesi."
 
 #: website/public/guides/index.html:290
 msgctxt "page:guides/index.html"
@@ -6650,7 +6650,7 @@ msgid ""
 "Example prompt. Include the absolute path to the application folder or "
 "{ph0}."
 msgstr ""
-"Shembull i shpejtë. Përfshi shtegun absolut për në dosjen e aplikacionit ose"
+"Shembull kërkese. Përfshi shtegun absolut për në dosjen e aplikacionit ose"
 " {ph0}."
 
 #: website/public/guides/javascript/index.html:305
@@ -6859,8 +6859,8 @@ msgid ""
 "{ph0}Follow a native function{ph1}{ph2}Continue into a binary when a feature"
 " depends on native code.{ph3}"
 msgstr ""
-"{ph0}Ndiqni një funksion origjinal{ph1}{ph2}Vazhdo në një binar kur një "
-"veçori varet nga kodi nativë.{ph3}"
+"{ph0}Ndiqni një funksion native{ph1}{ph2}Vazhdoni në një binar kur një "
+"veçori varet nga kodi native.{ph3}"
 
 #: website/public/guides/javascript/index.html:6
 msgctxt "page:guides/javascript/index.html"
@@ -6916,7 +6916,7 @@ msgstr "Kaloni te përmbajtja"
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}Home{ph1} / {ph2}Guides{ph3} / Native analysis"
-msgstr "{ph0}Shtëpia{ph1} / {ph2}Udhëzuesit{ph3} / Analiza origjinale"
+msgstr "{ph0}Shtëpia{ph1} / {ph2}Udhëzuesit{ph3} / Analiza native"
 
 #. {ph0}: <br />
 #: website/public/guides/native/index.html:204
@@ -7214,7 +7214,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "See {ph0}Set up native analysis{ph1} for the steps."
-msgstr "Shikoni {ph0}Konfiguro analizën origjinale{ph1} për hapat."
+msgstr "Shikoni {ph0}Konfiguro analizën native{ph1} për hapat."
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -7259,7 +7259,7 @@ msgid ""
 "executable. REA doesn't include DX-Ball, so use your own copy, or ask the "
 "same kind of question about another small Windows program you have."
 msgstr ""
-"Shembull i shpejtë. Jepini agjentit tuaj shtegun për në DX-Ball 1.07 tuaj "
+"Shembull kërkese. Jepini agjentit tuaj shtegun për në DX-Ball 1.07 tuaj "
 "lokal të ekzekutueshëm. REA nuk përfshin DX-Ball, prandaj përdorni kopjen "
 "tuaj ose bëni të njëjtën pyetje në lidhje me një program tjetër të vogël "
 "Windows që keni."
@@ -7489,7 +7489,7 @@ msgid ""
 "Recover a native calculation with REA: inspect instructions, follow a "
 "caller, read constants and check reconstructed C."
 msgstr ""
-"Rikuperoni një llogaritje origjinale me REA: inspektoni udhëzimet, ndiqni "
+"Rikuperoni një llogaritje në kod native me REA: inspektoni udhëzimet, ndiqni "
 "një thirrës, lexoni konstantet dhe kontrolloni C të rindërtuar."
 
 #: website/public/guides/native/index.html:211
@@ -8013,7 +8013,7 @@ msgstr ""
 #: website/public/index.html:706
 msgctxt "page:index.html"
 msgid "See the script, checks and how to try the analysis"
-msgstr "Shihni skenarin, kontrollet dhe si të provoni analizën"
+msgstr "Shihni skriptin, kontrollet dhe si të provoni analizën"
 
 #. {ph0}: <code>index.js</code>
 #: website/public/index.html:758
@@ -8024,8 +8024,8 @@ msgid ""
 "and returned the loaded {ph0}, including its source and digest."
 msgstr ""
 "REA inspektoi edicionin e shfletuesit HTTP nëpërmjet një lidhjeje korrigjimi"
-" lokal dhe ktheu {ph0} të ngarkuar, duke përfshirë burimin dhe përmbledhjen "
-"e tij."
+" lokal dhe ktheu {ph0} të ngarkuar, duke përfshirë kodin burimor dhe hash-in "
+"e përmbajtjes së tij."
 
 #: website/public/index.html:765
 msgctxt "page:index.html"
@@ -8039,8 +8039,8 @@ msgid ""
 " with obstacles and automatic scheduling disabled. After 4,000 updates, "
 "speed was 10.0; after 10,000, it was 13.0, rounded to one decimal."
 msgstr ""
-"Ne e quajtëm funksionin e përditësimit të lojës origjinale në një kontroll "
-"të kontrolluar të shfletuesit, me pengesa dhe planifikim automatik të "
+"Ne e thirrëm funksionin e përditësimit të lojës origjinale në një test "
+"të kontrolluar në shfletues, me pengesat dhe planifikimin automatik të "
 "çaktivizuar. Pas 4000 përditësimeve, shpejtësia ishte 10.0; pas 10,000, "
 "ishte 13.0, i rrumbullakosur në një dhjetore."
 
@@ -8416,7 +8416,7 @@ msgid ""
 "Map modules, routes, IPC and native dependencies from an application folder "
 "or ASAR archive."
 msgstr ""
-"Modulet e hartës, itineraret, IPC dhe varësitë native nga një dosje "
+"Hartëzoni modulet, itineraret, IPC dhe varësitë native nga një dosje "
 "aplikacioni ose arkiv ASAR."
 
 #: website/public/index.html:1116
@@ -9570,7 +9570,7 @@ msgid ""
 "An example prompt, with the downloaded challenge available locally and a "
 "native analysis provider connected."
 msgstr ""
-"Një shembull i shpejtë, me sfidën e shkarkuar të disponueshme në nivel lokal"
+"Një shembull kërkese, me sfidën e shkarkuar të disponueshme në nivel lokal"
 " dhe një ofrues të analizës native të lidhur."
 
 #: website/public/showcase/ctf/index.html:306
@@ -10025,9 +10025,9 @@ msgid ""
 "Solving needs Python and {ph0}. Running the original executable needs Linux "
 "x86-64."
 msgstr ""
-"Skenari printon një flamur kandidat; ngjiteni atë në kërkesën e programit. "
-"Zgjidhja e nevojave Python dhe {ph0}. Ekzekutimi origjinal i ekzekutueshëm "
-"ka nevojë për Linux x86-64."
+"Skripti printon një flamur kandidat; ngjiteni atë kur programi ta kërkojë. "
+"Për zgjidhjen nevojiten Python dhe {ph0}. Për të ekzekutuar skedarin "
+"origjinal të ekzekutueshëm nevojitet Linux x86-64."
 
 #: website/public/showcase/ctf/index.html:763
 msgctxt "page:showcase/ctf/index.html"
@@ -11139,7 +11139,7 @@ msgid ""
 "rich block data connected to a copy."
 msgstr ""
 "Gjurmoni një API të faqes përmes paketimit të Notion JavaScript. Ndiqni "
-"mbështjellësit e tij IPC në kujtesën e sistemit, më pas shikoni se si një "
+"mbështjellësit e tij IPC deri te kujtesa e fragmenteve të sistemit, më pas shikoni se si një "
 "shënues i vogël HTML mban të dhënat e pasura të bllokut të lidhur me një "
 "kopje."
 
@@ -11226,9 +11226,9 @@ msgid ""
 "The guides walk through a native calculation, an Electron export and a "
 "browser request. Each starts with a prompt and a concrete target."
 msgstr ""
-"Udhëzuesit kalojnë nëpër një llogaritje origjinale, një eksport Electron dhe"
-" një kërkesë të shfletuesit. Secili fillon me një objektiv të shpejtë dhe "
-"konkret."
+"Udhëzuesit shpjegojnë një llogaritje në kod native, një eksport Electron dhe"
+" një kërkesë të shfletuesit. Secili fillon me një kërkesë për agjentin dhe "
+"një objektiv konkret."
 
 #: website/public/showcase/index.html:307
 msgctxt "page:showcase/index.html"
@@ -11288,7 +11288,7 @@ msgid ""
 "process, to Electron's clipboard writer."
 msgstr ""
 "Gjurmoni një thirrje në kujtesën e fragmenteve nga API-ja e faqes së Notion,"
-" përmes ngarkimit paraprak dhe procesit kryesor, te shkruesi i kujtesës së "
+" përmes ngarkimit paraprak dhe procesit kryesor, te shkruesi i kujtesës së fragmenteve të "
 "Electron."
 
 #: website/public/showcase/notion/index.html:210
@@ -11397,7 +11397,7 @@ msgstr "Në këtë rast studimi"
 #, python-brace-format
 msgctxt "page:showcase/notion/index.html"
 msgid "{ph0}Follow the clipboard bridge{ph1}"
-msgstr "{ph0}Ndiq urën e kujtesës{ph1}"
+msgstr "{ph0}Ndiq urën e kujtesës së fragmenteve{ph1}"
 
 #. {ph0}: <a href="#rich-clipboard">
 #. {ph1}: </a>
@@ -11470,7 +11470,7 @@ msgid ""
 "system clipboard. Show the code at each step.{ph3}{ph4}{ph5}"
 msgstr ""
 "{ph0}›{ph1}{ph2}Përdorni REA për të gjurmuar se si Notion kopjon tekstin dhe"
-" HTML në kujtesën e sistemit. Shfaq kodin në çdo hap.{ph3}{ph4}{ph5}"
+" HTML në kujtesën e fragmenteve të sistemit. Shfaq kodin në çdo hap.{ph3}{ph4}{ph5}"
 
 #: website/public/showcase/notion/index.html:296
 msgctxt "page:showcase/notion/index.html"
@@ -11536,7 +11536,7 @@ msgid ""
 "agent something precise to look for in the main bundle. The four excerpts "
 "below show the route it connects."
 msgstr ""
-"Agjenti hap ato vendndodhje, gjen anëtarin e kujtesës në API-në e mbledhur "
+"Agjenti hap ato vendndodhje, gjen anëtarin e kujtesës së fragmenteve në API-në e mbledhur "
 "dhe lexon {ph0}. Faqja e saj e thirrjeve furnizon {ph1}. Ky emër i jep "
 "agjentit diçka të saktë për të kërkuar në paketën kryesore. Katër fragmentet"
 " e mëposhtme tregojnë rrugën që lidh."
@@ -11635,7 +11635,7 @@ msgstr "Gjeni shkrimin dhe kontrollin e dërguesit të tij"
 #, python-brace-format
 msgctxt "page:showcase/notion/index.html"
 msgid "{ph0} · clipboard receiver"
-msgstr "{ph0} · marrës i kujtesës"
+msgstr "{ph0} · marrës i kujtesës së fragmenteve"
 
 #: website/public/showcase/notion/index.html:457
 msgctxt "page:showcase/notion/index.html"
@@ -11673,7 +11673,7 @@ msgstr "Lidhje HTML për të dhënat e ruajtura të bllokut"
 #: website/public/showcase/notion/index.html:479
 msgctxt "page:showcase/notion/index.html"
 msgid "Sent to the system clipboard"
-msgstr "Dërguar në kujtesën e kujtesës së sistemit"
+msgstr "Dërguar në kujtesën e fragmenteve të sistemit"
 
 #: website/public/showcase/notion/index.html:487
 msgctxt "page:showcase/notion/index.html"
@@ -11809,7 +11809,7 @@ msgid ""
 "unrelated code; the sender-check helper is shown with its underlying {ph2} "
 "call."
 msgstr ""
-"Ura e kujtesës vjen nga {ph0} e Notion Desktop 7.6.1: parangarkimi i skedës "
+"Ura e kujtesës së fragmenteve vjen nga {ph0} e Notion Desktop 7.6.1: parangarkimi i skedës "
 "dhe {ph1}. Fragmentet zgjerojnë emrat e variablave të minuar dhe heqin kodin"
 " e palidhur; ndihmësi i kontrollit të dërguesit shfaqet me thirrjen e tij "
 "themelore {ph2}."
@@ -11828,7 +11828,7 @@ msgid ""
 "harnesses; their outputs describe those probes rather than a captured "
 "desktop UI session."
 msgstr ""
-"Shembujt e kujtesës virtuale dhe Markdown vijnë nga asetet e uebit të "
+"Shembujt e kujtesës virtuale të fragmenteve dhe Markdown vijnë nga asetet e uebit të "
 "ruajtura në memorie më 13 korrik 2026, duke përfshirë modulet {ph0}, {ph1}, "
 "{ph2} dhe {ph3}. Këto pasuri kanë versionin e tyre. Sondat e ruajtura "
 "ekzekutuan module të nxjerra dhe parzmore të vogla; rezultatet e tyre "
@@ -11889,7 +11889,7 @@ msgid ""
 "{ph0}DX-Ball reconstruction{ph1}{ph2}Follow native instructions to a checked"
 " C function.{ph3}"
 msgstr ""
-"Rindërtimi i {ph0}DX-Ball{ph1}{ph2}Ndiq udhëzimet origjinale për një "
+"Rindërtimi i {ph0}DX-Ball{ph1}{ph2}Ndiq udhëzimet në kod native deri te një "
 "funksion të kontrolluar C.{ph3}"
 
 #: website/public/showcase/notion/index.html:616
@@ -11909,7 +11909,7 @@ msgid ""
 "main process, with short code excerpts and a look at its rich clipboard "
 "format."
 msgstr ""
-"Ndiqni API-në e kujtesës së Notion përmes ngarkimit paraprak të Electron, "
+"Ndiqni API-në e kujtesës së fragmenteve të Notion përmes ngarkimit paraprak të Electron, "
 "mbështjellësve IPC dhe procesit kryesor, me fragmente të shkurtra të kodit "
 "dhe një vështrim në formatin e tij të pasur të kujtesës së fragmenteve."
 
@@ -14315,7 +14315,7 @@ msgstr "{ph0}macOS · Apple silic{ph1}"
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Linux arm64 · native build instructions{ph1}"
-msgstr "{ph0}Linux arm64 · udhëzime ndërtimi origjinal{ph1}"
+msgstr "{ph0}Linux arm64 · udhëzime për ndërtimin native{ph1}"
 
 #: website/public/get-started/index.html:1206
 msgctxt "page:get-started/index.html"
@@ -14392,7 +14392,7 @@ msgid ""
 "build{ph1} or a release containing those changes. npm {ph2} does not include"
 " them."
 msgstr ""
-"Profili pa kokë macOS dhe ura origjinale e GUI-së kërkojnë një ndërtim "
+"Profili pa kokë macOS dhe ura native e GUI-së kërkojnë një ndërtim "
 "burimi {ph0}REA{ph1} ose një version që përmban këto ndryshime. npm {ph2} "
 "nuk i përfshin ato."
 
@@ -15152,7 +15152,7 @@ msgid ""
 "Follow Notion's packaged JavaScript to the system clipboard and see how a "
 "copy preserves rich block data."
 msgstr ""
-"Ndiqni JavaScript të paketuara të Notion në kujtesën e sistemit dhe shikoni "
+"Ndiqni JavaScript të paketuara të Notion deri te kujtesa e fragmenteve të sistemit dhe shikoni "
 "se si një kopje ruan të dhënat e pasura të bllokut."
 
 #: website/public/index.html:1057

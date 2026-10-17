@@ -80,9 +80,10 @@ which the package redirects in the same way. When it finds that redirected
 view, the app is running, so setup and uninstall refuse to change Claude
 Desktop's configuration; rerun them from a terminal that Claude Desktop did not
 start. If the package keeps no private roaming file at all, setup and
-uninstall cannot rule that out and also refuse; with Claude Desktop fully
-quit, add or remove REA's entry in the `%APPDATA%` file by hand. Doctor reads
-the same file from either kind of process.
+uninstall cannot rule that out and also refuse. With Claude Desktop fully
+quit, add REA's entry by hand to the file setup names, which is the one the
+app reads, or remove it from both the private copy and the `%APPDATA%` file.
+Doctor reads the same file from either kind of process.
 
 The same process also writes everything under `%APPDATA%` and
 `%LOCALAPPDATA%` into the package's private storage, where other apps never

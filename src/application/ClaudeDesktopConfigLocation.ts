@@ -14,12 +14,14 @@ const PROCESS_VIEW_PROBES = 8;
 
 /**
  * Bounds of the walk through the package's private roaming root when Claude
- * Desktop's own folder holds no private file: directories listed, their
- * depth, and files taken from one directory before moving on, so the probes
- * spread across folders instead of filling up from the first one.
+ * Desktop's own folder holds no private file: directories listed or waiting
+ * to be listed, their depth, entries inspected in all, and files taken from
+ * one directory before moving on, so the probes spread across folders instead
+ * of filling up from the first one.
  */
 const ROAMING_DIRECTORY_LIMIT = 64;
 const ROAMING_DEPTH_LIMIT = 4;
+const ROAMING_ENTRY_LIMIT = 1024;
 const PROBES_PER_DIRECTORY = 2;
 
 /**
@@ -175,6 +177,8 @@ const processView = (
       view = "direct";
     } catch (cause: unknown) {
       if (!isMissing(cause)) return "unknown";
+      // A private file deleted meanwhile is missing from a redirected view too.
+      if (!isPrivateFile(fileSystem, privateRoaming, probe)) continue;
       view = "direct";
     }
   }
@@ -203,8 +207,10 @@ const claudeFolderProbes = (
 
 /**
  * Private files anywhere under the roaming root, breadth first and within the
- * walk's bounds. Directories that cannot be listed are skipped, and links are
- * not followed.
+ * walk's bounds. Directories that cannot be listed are skipped, links are not
+ * followed, and an entry is inspected only while the directory still needs a
+ * file or the queue has room for a folder. A walk that runs out of budget
+ * keeps the files it found; with none, the view stays unknown.
  */
 const roamingProbes = (
   fileSystem: ClaudeDesktopLocationFileSystem,
@@ -214,9 +220,12 @@ const roamingProbes = (
   const queue: { readonly path: string; readonly depth: number }[] = [
     { path: "", depth: 0 },
   ];
+  let inspected = 0;
   for (
     let listed = 0;
-    listed < ROAMING_DIRECTORY_LIMIT && probes.length < PROCESS_VIEW_PROBES;
+    listed < ROAMING_DIRECTORY_LIMIT &&
+    probes.length < PROCESS_VIEW_PROBES &&
+    inspected < ROAMING_ENTRY_LIMIT;
     listed++
   ) {
     const directory = queue.shift();
@@ -233,13 +242,20 @@ const roamingProbes = (
     }
     let taken = 0;
     for (const name of names) {
+      const wantsFile = taken < PROBES_PER_DIRECTORY;
+      const wantsFolder =
+        directory.depth < ROAMING_DEPTH_LIMIT &&
+        listed + queue.length < ROAMING_DIRECTORY_LIMIT - 1;
+      if ((!wantsFile && !wantsFolder) || inspected === ROAMING_ENTRY_LIMIT)
+        break;
+      inspected += 1;
       const path = join(directory.path, name);
       const entry = entryKind(fileSystem, join(privateRoaming, path));
-      if (entry === "file" && taken < PROBES_PER_DIRECTORY) {
+      if (entry === "file" && wantsFile) {
         probes.push(path);
         taken += 1;
         if (probes.length === PROCESS_VIEW_PROBES) break;
-      } else if (entry === "directory" && directory.depth < ROAMING_DEPTH_LIMIT)
+      } else if (entry === "directory" && wantsFolder)
         queue.push({ path, depth: directory.depth + 1 });
     }
   }

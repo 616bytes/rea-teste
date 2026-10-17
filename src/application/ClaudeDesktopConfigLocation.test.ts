@@ -239,6 +239,26 @@ describe("Claude Desktop MSIX process view from other roaming folders", () => {
     expect(viewOf(fileSystem)).toBe("direct");
   });
 
+  it("does not count a private file deleted during the comparison as a direct view", () => {
+    const fileSystem = roamingFileSystem([telemetry], (path) => path);
+    let deleted = false;
+    const view = viewOf({
+      ...fileSystem,
+      realpath: (path) => {
+        if (path !== join(env.APPDATA, telemetry)) return path;
+        // A redirected view loses the file between the two comparisons.
+        deleted = true;
+        throw failure("ENOENT");
+      },
+      lstat: (path) => {
+        if (deleted && path === join(privateRoaming, telemetry))
+          throw failure("ENOENT");
+        return fileSystem.lstat(path);
+      },
+    });
+    expect(view).toBe("unknown");
+  });
+
   it("skips a folder that cannot be listed and decides from another", () => {
     const fileSystem = roamingFileSystem(
       [join("Microsoft", "locked", "x"), telemetry],
@@ -288,6 +308,24 @@ describe("Claude Desktop MSIX process view from other roaming folders", () => {
 
   it("keeps the view unknown when the roaming root has no private file", () => {
     expect(viewOf(roamingFileSystem([], (path) => path))).toBe("unknown");
+  });
+
+  it("stops inspecting entries once its budget is spent", () => {
+    const folders = Array.from({ length: 1500 }, (_, index) =>
+      join(`folder-${String(index).padStart(4, "0")}`, "file"),
+    );
+    const fileSystem = roamingFileSystem(folders, (path) => path);
+    let inspected = 0;
+    const view = viewOf({
+      ...fileSystem,
+      lstat: (path) => {
+        if (dirname(path) === privateRoaming) inspected += 1;
+        return fileSystem.lstat(path);
+      },
+    });
+    // The root lists only folders, so the budget runs out before any file.
+    expect(view).toBe("unknown");
+    expect(inspected).toBe(1024);
   });
 });
 

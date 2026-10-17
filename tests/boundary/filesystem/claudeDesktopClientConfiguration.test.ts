@@ -503,7 +503,8 @@ describe("MSIX Claude Desktop registration lifecycle", () => {
 
 describe("MSIX Claude Desktop uninstall", () => {
   it("refuses uninstall when the package view is unknown", async () => {
-    const { home, env, appDataConfig, container } = await windowsProfile();
+    const { home, env, appDataConfig, container, privateConfig } =
+      await windowsProfile();
     await mkdir(container, { recursive: true });
     await writeJson(appDataConfig, { mcpServers: { rea: reaEntry } });
 
@@ -518,7 +519,7 @@ describe("MSIX Claude Desktop uninstall", () => {
         name: "claude_desktop",
         status: "failed",
         detail: expect.stringContaining(
-          `Remove REA's entry from ${appDataConfig} by hand`,
+          `Remove REA's entry by hand from each of ${privateConfig} and ${appDataConfig} that has one`,
         ),
       }),
     );

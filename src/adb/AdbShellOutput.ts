@@ -250,6 +250,7 @@ export const parseDumpsysPackageOutput = (
   };
   let inPermissions = false;
   let permissions = 0;
+  let packageIsNull = false;
   for (const line of stdout.split(/\r?\n/u)) {
     if (line.trim().startsWith("requested permissions:")) {
       inPermissions = true;
@@ -268,7 +269,8 @@ export const parseDumpsysPackageOutput = (
     if (match === null) continue;
     const key = match[1]!;
     const value = match[2]!.trim();
-    if (key === "versionName" && details.versionName === null)
+    if (key === "pkg" && value === "null") packageIsNull = true;
+    else if (key === "versionName" && details.versionName === null)
       details.versionName = value === "" ? null : value;
     else if (key === "versionCode" && details.versionCode === null) {
       const parsed = /^(-?\d+)/u.exec(value);
@@ -288,7 +290,10 @@ export const parseDumpsysPackageOutput = (
     } else if (key === "pkgFlags" && details.pkgFlags === null)
       details.pkgFlags = value === "" ? null : value;
   }
-  return { ...details, requestedPermissions: permissions };
+  return {
+    ...details,
+    requestedPermissions: packageIsNull ? null : permissions,
+  };
 };
 
 /**

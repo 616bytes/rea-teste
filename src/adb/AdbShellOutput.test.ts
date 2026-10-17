@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   parseAmStartOutput,
+  parseDumpsysPackageOutput,
   parseWmDensityOutput,
   parseWindowFocusOutput,
 } from "./AdbShellOutput.js";
@@ -32,6 +33,23 @@ describe("parseWindowFocusOutput", () => {
         rawLine: "mFocusedApp=ActivityRecord{current}",
       },
     });
+  });
+});
+
+describe("parseDumpsysPackageOutput", () => {
+  it("reports unknown requested permissions when the package is null", () => {
+    expect(
+      parseDumpsysPackageOutput("Package [com.example] (abcdef):\n  pkg=null\n")
+        .requestedPermissions,
+    ).toBeNull();
+  });
+
+  it("counts listed permissions when package data is available", () => {
+    expect(
+      parseDumpsysPackageOutput(
+        "Package [com.example] (abcdef):\n  requested permissions:\n    android.permission.INTERNET\n",
+      ).requestedPermissions,
+    ).toBe(1);
   });
 });
 

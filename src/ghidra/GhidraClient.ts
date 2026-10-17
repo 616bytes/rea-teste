@@ -24,6 +24,7 @@ import {
 } from "../process/SharedStartupAttempt.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
+import { ProviderResponseLines } from "../process/ProviderResponseLines.js";
 import { ProviderRunLineage } from "../process/ProviderRunLineage.js";
 import {
   type ProviderProcessDiagnostic,
@@ -45,7 +46,6 @@ import {
   GHIDRA_PROCESS_DIAGNOSTIC_BYTES,
 } from "./GhidraDiagnostics.js";
 import { GhidraLaunchError, type GhidraLaunch } from "./GhidraLauncher.js";
-import { GhidraResponseBuffer } from "./GhidraResponseBuffer.js";
 import { GhidraResponseRouter } from "./GhidraResponseRouter.js";
 import { GhidraRequestQueue } from "./GhidraRequestQueue.js";
 import {
@@ -153,8 +153,12 @@ export class GhidraClient {
       }),
     protocolFailure: (message, cause) => this.#abortProtocol(message, cause),
   });
-  readonly #responseBuffer = new GhidraResponseBuffer({
-    onLine: (line) => this.#responseRouter.route(line),
+  readonly #responseBuffer = new ProviderResponseLines({
+    onLine: (line) => {
+      this.#responseRouter.route(line);
+      return true;
+    },
+    onOverflow: () => this.#failOversizedResponse(),
   });
   readonly #onSocketData = (chunk: string): void =>
     this.#responseBuffer.push(chunk);
@@ -1107,6 +1111,19 @@ export class GhidraClient {
   #abortProtocol(message: string, cause?: Error): void {
     this.#failAll(this.#failure("protocol", message, cause));
     this.#socket?.destroy();
+  }
+
+  /** Requests are serial, so a sole pending request owns an oversized reply. */
+  #failOversizedResponse(): boolean {
+    const message =
+      "Ghidra response line exceeds the runtime string length limit";
+    const id = this.#nextId - 1;
+    if (this.#pending.size === 1 && this.#pending.has(id)) {
+      this.#pending.settle(id, err(this.#failure("resource", message)));
+      return true;
+    }
+    this.#abortProtocol(message);
+    return false;
   }
 
   #failAll(error: GhidraSessionError): void {

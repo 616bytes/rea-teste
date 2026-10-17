@@ -1,4 +1,5 @@
 import { hasCfbSignature } from "../domain/cfbFormat.js";
+import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { constants, type Stats } from "node:fs";
 import { createHash } from "node:crypto";
 import {
@@ -8,7 +9,7 @@ import {
   stat,
   type FileHandle,
 } from "node:fs/promises";
-import { extname, isAbsolute, resolve } from "node:path";
+import { extname } from "node:path";
 
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import {
@@ -53,6 +54,7 @@ import {
   type ExecutableMetadata,
 } from "../domain/binaryTarget.js";
 import type { PeCodeViewRecord } from "../domain/binaryTargetTypes.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 const XML_PLIST_PROBE_CHUNK_BYTES = 64 * 1024;
 
@@ -81,7 +83,7 @@ export const parseBinaryTarget = async (
   const cwd = options.cwd ?? process.cwd();
   const hostArchitecture = options.hostArchitecture ?? process.arch;
   const { targetKind, formatHint, signal, architecture, entryPoint } = options;
-  const candidate = isAbsolute(input) ? input : resolve(cwd, input);
+  const candidate = absoluteCallerPath(input, { cwd });
   try {
     throwIfTargetResolutionCancelled(signal);
     await access(candidate, constants.R_OK);
@@ -224,6 +226,13 @@ export const parseBinaryTarget = async (
     }
   } catch (cause: unknown) {
     if (cause instanceof AnalysisCancelledError) return err(cause);
+    const cancellation = regularFileCancellation(cause);
+    if (cancellation !== undefined)
+      return err(
+        new AnalysisCancelledError("resolve_binary_target", {
+          cause: cancellation.reason,
+        }),
+      );
     if (signal?.aborted === true && cause === signal.reason)
       return err(
         new AnalysisCancelledError("resolve_binary_target", { cause }),

@@ -28,6 +28,7 @@ import {
 } from "./ClientRegistrationIdentity.js";
 import {
   clientEvidencePaths,
+  clientOwnershipEvidencePaths,
   manualRegistrationRemediation,
   supportedClients,
 } from "./SupportedClients.js";
@@ -99,6 +100,15 @@ interface ClientRegistrationReadOptions {
   readonly platform?: NodeJS.Platform;
   readonly environment?: NodeJS.ProcessEnv;
   readonly resources?: ArtifactResourceScope;
+  readonly selectedClientIds?: readonly string[];
+  /**
+   * Which evidence authorises inspection. `readiness` inspects a client whose
+   * product applicability is established, plus clients the caller selected
+   * explicitly. `ownership` also inspects shared registration storage, because
+   * a version-pinned registration REA wrote must be refreshed even when the
+   * product profile is absent.
+   */
+  readonly evidence?: "readiness" | "ownership";
   readonly resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
 }
 
@@ -136,6 +146,7 @@ export const readClientRegistrationInspections = async (
     options.platform,
     options.environment,
   )) {
+    const selected = options.selectedClientIds?.includes(client.name) === true;
     if (client.configPathError !== undefined) {
       record({
         client: client.name,
@@ -146,7 +157,13 @@ export const readClientRegistrationInspections = async (
       });
       continue;
     }
-    if (!(await clientEvidencePresent(client))) continue;
+    if (
+      !(await clientEvidencePresent(client, {
+        selected,
+        ownership: options.evidence === "ownership",
+      }))
+    )
+      continue;
     const manualRemediation = manualRegistrationRemediation(client.name);
     if (client.format === "unsupported") {
       if (manualRemediation !== undefined)
@@ -323,7 +340,13 @@ const registrationActivation = (
   (client.format !== "grok" && registration.disabled === true) ||
   (registration.enabled === false &&
     !clientServerForcedEnabled(parsed, PRODUCT_IDENTITY.mcpServerKey)) ||
-  ((parsed.dialect === "zcode" || parsed.dialect === "zcode_fallback") &&
+  // Shared registration storage doubles as ZCode's fallback, so its
+  // `enable: false` activation fact binds every reader of that storage.
+  // Maintenance must not drop the flag by rewriting the row as another
+  // product's registration and silently re-enabling it.
+  ((parsed.dialect === "zcode" ||
+    parsed.dialect === "zcode_fallback" ||
+    client.sharedRegistration === true) &&
     registration.enable === false) ||
   clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey)
     ? "disabled"
@@ -575,9 +598,19 @@ const unavailableStatus = (
   remediation: remediation(client),
 });
 
-const clientEvidencePresent = async (client: SetupClient): Promise<boolean> => {
-  for (const path of clientEvidencePaths(client))
-    if (await exists(path)) return true;
+const clientEvidencePresent = async (
+  client: SetupClient,
+  evidence: { readonly selected: boolean; readonly ownership: boolean },
+): Promise<boolean> => {
+  // An explicit selection authorises the read outright: the caller named this
+  // client, so an unreadable config must surface as unreadable instead of
+  // collapsing to absence. The probes below serve automatic discovery only.
+  if (evidence.selected) return true;
+  const paths = [
+    ...clientEvidencePaths(client),
+    ...(evidence.ownership ? clientOwnershipEvidencePaths(client) : []),
+  ];
+  for (const path of paths) if (await exists(path)) return true;
   return false;
 };
 

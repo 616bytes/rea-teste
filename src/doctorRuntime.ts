@@ -6,6 +6,8 @@ import {
 import { fileURLToPath } from "node:url";
 import { inspectJadxProvider } from "./android/JadxDoctor.js";
 import { inspectSystemGhidraProvider } from "./ghidra/GhidraDoctor.js";
+import { inspectBinaryNinjaRegistration } from "./binaryNinja/BinaryNinjaDoctor.js";
+import { readBinaryNinjaConfiguration } from "./binaryNinja/BinaryNinjaConfiguration.js";
 import { inspectIdaRegistration } from "./ida/IdaDoctor.js";
 import { inspectKunaProvider } from "./kuna/KunaDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
@@ -33,6 +35,14 @@ export const createSystemDoctorHost = (
       analysisProvider,
       registrationEnvironment,
     ) => {
+      if (analysisProvider === "binary-ninja") {
+        const path = registrationEnvironment.REA_BINARY_NINJA_MCP_CONFIG;
+        if (path === undefined) return ok(undefined);
+        const registration = readBinaryNinjaConfiguration(path);
+        return registration.ok
+          ? ok(registration.value.timeoutMs)
+          : registration;
+      }
       if (analysisProvider !== "ida" && analysisProvider !== "auto")
         return ok(undefined);
       const path = registrationEnvironment.REA_IDA_MCP_CONFIG;
@@ -51,6 +61,7 @@ export const createSystemDoctorHost = (
         inspectionSignal,
       ),
       inspectIdaRegistration(environment.REA_IDA_MCP_CONFIG),
+      inspectBinaryNinjaRegistration(environment.REA_BINARY_NINJA_MCP_CONFIG),
       await inspectJadxProvider(
         environment,
         fileCloseResources,

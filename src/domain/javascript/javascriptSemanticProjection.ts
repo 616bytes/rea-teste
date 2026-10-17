@@ -25,6 +25,7 @@ import {
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   propertyName,
+  semanticFinalObjectProperty,
   semanticStaticPropertyKey,
   semanticWrappedWriteSite,
   semanticWriteSiteReadsFirst,
@@ -39,8 +40,10 @@ import {
   semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
 import {
+  commonJsDefinedExport,
   commonJsExportName,
   type CommonJsExportReceiverEffect,
+  type CommonJsExportSite,
 } from "./javascriptCommonJsExportReceivers.js";
 
 interface CollectCallableInput {
@@ -83,7 +86,7 @@ export const collectSemanticModuleLink = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   commonJsReceivers: ReadonlyMap<
-    t.AssignmentExpression,
+    CommonJsExportSite,
     CommonJsExportReceiverEffect
   >,
 ): void => {
@@ -120,7 +123,10 @@ export const collectSemanticModuleLink = (
   else if (t.isVariableDeclarator(node)) collectRequireLink(node, state);
   else if (t.isAssignmentExpression(node))
     collectCommonJsExport(node, state, commonJsReceivers.get(node));
-  else if (t.isCallExpression(node)) collectUnboundRequireLink(node, state);
+  else if (t.isCallExpression(node)) {
+    collectDefinedCommonJsExport(node, state, commonJsReceivers.get(node));
+    collectUnboundRequireLink(node, state);
+  }
 };
 
 const collectImportEquals = (
@@ -479,6 +485,31 @@ const collectCommonJsExport = (
     node.operator === "=" && receiverEffect !== "uncertain" ? node.right : null;
   while (t.isAssignmentExpression(value, { operator: "=" }))
     value = value.right;
+  addCommonJsExport(node, state, exportedName, value);
+};
+
+const collectDefinedCommonJsExport = (
+  node: t.CallExpression,
+  state: JavaScriptSemanticAnalysisState,
+  receiverEffect: CommonJsExportReceiverEffect | undefined,
+): void => {
+  const defined = commonJsDefinedExport(node, state);
+  if (defined === undefined || receiverEffect === "detached") return;
+  // A data descriptor exports its value; an accessor's result stays unknown.
+  const descriptor = unwrapJavaScriptExpression(defined.descriptor).node;
+  const value =
+    receiverEffect !== "uncertain" && t.isObjectExpression(descriptor)
+      ? (semanticFinalObjectProperty(descriptor, "value") ?? null)
+      : null;
+  addCommonJsExport(node, state, defined.exportedName, value);
+};
+
+const addCommonJsExport = (
+  node: CommonJsExportSite,
+  state: JavaScriptSemanticAnalysisState,
+  exportedName: string,
+  value: t.Node | null,
+): void => {
   const required =
     value === null ? undefined : semanticRequireOrigin(value, state);
   const origin = required?.origin;

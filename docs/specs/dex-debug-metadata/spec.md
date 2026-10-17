@@ -63,11 +63,14 @@ access-flag and list placement, and code-presence rules are not checked, and a
 refuses a whole APK when any central-directory name contains NUL or is not
 valid UTF-8, with or without the UTF-8 flag; REA refuses invalid UTF-8 only in
 a name that sets the flag, decodes an unflagged name as CP437, and tolerates
-NUL. ART loads a `classes*.dex` stored with a symbolic-link unix mode; REA does
-not read link members, so one in the auto-loaded run, or selected by `entry`,
-is refused as unavailable, not absent. Names in notes and refusals are bounded
-(128 names or 4 KiB, a 160-character name display, 8 KiB of reader notes) and
-the rest counted; reported `entry` identities are never shortened.
+NUL. ART loads a `classes*.dex` stored with a symbolic-link unix mode; REA
+recognises one from external attributes carrying that mode (not from the
+made-by host) and does not read it, so one in the auto-loaded run, or selected
+by `entry`, is refused as unavailable, not absent, and a skipped one is named
+as unreadable rather than offered for `entry`. Names in notes and refusals are
+bounded (128 names or 4 KiB, a 160-UTF-16-unit name display, 8 KiB of reader
+notes) and the rest counted; reported `entry` identities and the looked-up
+`class_descriptor` are never shortened.
 
 ## Authority and overlap
 

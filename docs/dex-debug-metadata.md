@@ -121,13 +121,16 @@ Limits and refusals a caller can meet:
   `entry` stored as a ZIP directory (`classes.dex/`) is refused as unavailable,
   not absent. What the archive reader notes about a member it reads (a
   differing Unicode Path name, directory attributes on a file) is carried into
-  `limitations`, each note shortened past 1,024 characters and all within
+  `limitations`, each note shortened past 1,024 UTF-16 code units and all within
   8 KiB; further notes are counted. Canonical members Android would not load
   are named in `limitations` and on any selection refusal. Named members and
   spellings stop at 128 names or 4 KiB and the rest are counted as members; a
-  name longer than 160 characters is shortened in that prose, with a marker,
-  while the reported `entry` stays the exact stored name. More than 64
-  auto-loaded members is refused; select one with `entry`.
+  name (or caller `class_descriptor`) longer than 160 UTF-16 code units is
+  shortened in that prose by its two ends, with a marker counting characters,
+  while the reported `entry` stays the exact stored name and the lookup uses
+  the caller's value whole. An `entry` that is empty once its leading `./`
+  segments are removed is refused as invalid. More than 64 auto-loaded members
+  is refused; select one with `entry`.
 - **`file_size` framing.** A header `file_size` larger than the bytes present,
   or smaller than the 0x70-byte header, is refused. When it is smaller than the
   member, analysis reads only the first `file_size` bytes (as ART on Android 15+
@@ -151,12 +154,18 @@ Limits and refusals a caller can meet:
   tolerates NUL, so it reads DEX members of an APK ART would refuse.
 - **Symbolic-link members (known difference).** ART ignores a member's unix
   mode and loads a `classes*.dex` stored with a symbolic-link mode as DEX
-  bytes. REA does not read link members: such a member inside the auto-loaded
-  run refuses the summary, and selecting it with `entry` is refused, each as
-  unavailable rather than absent.
-- **Budgets.** Decoding work is proportional to each member's size; output is
-  bounded to 8 MiB, counting both copies of `limitations` the Evidence carries,
-  and projected before the report is built. Exceeding either is refused,
+  bytes. REA recognises a link member from external attributes carrying a
+  symbolic-link mode (the shared reader does not consult the made-by host) and
+  does not read it: such a member inside the auto-loaded run refuses the
+  summary, and selecting it with `entry` is refused, each as unavailable rather
+  than absent. A link member Android skips is named with a
+  "symbolic-link mode; REA does not read it" mark, and the note advises
+  `entry` only for members REA can read. A name stored both as a link and as a
+  file is ambiguous, refused alike with or without `entry`.
+- **Budgets.** Decoding work is proportional to each member's size; the result
+  and its repeated `limitations` (the copy the Evidence carries beside it) are
+  bounded to 8 MiB, projected before the report is built; the rest of the
+  Evidence envelope is not counted. Exceeding either is refused,
   naming the member. Size refusals report their own bound: the 64 MiB DEX
   member, the 512 MiB archive, the 16 MiB archive-metadata read, or the
   archive's decompression budget.

@@ -649,9 +649,7 @@ it
   "retains captured warnings after a successful worker: %s",
   async (scenario) => {
     const { path } = await fixture();
-    const sourceSha256 = createHash("sha256")
-      .update(await readFile(path))
-      .digest("hex");
+    const source = await readFile(path);
     const controller = new AbortController();
     const reason = { requested: "stop during root removal" };
     let denyClose =
@@ -729,10 +727,14 @@ it
           : { diagnostics: { captured_output: output } },
     });
     const evidence = parseEvidence(result.error.partialObservation);
+    expect(evidence.subject?.local_path).toBe(path);
+    expect(evidence.subject?.digest.sha256).toBe(
+      createHash("sha256").update(source).digest("hex"),
+    );
+    expect(await readFile(path)).toEqual(source);
     expect(evidence).toMatchObject({
       operation: "inspect_evm_interface",
       parameters: { path, encoding: "hex" },
-      subject: { local_path: path, digest: { sha256: sourceSha256 } },
       provider: { id: "evmole-interface" },
       raw_result: { functions: [] },
       normalized_result: {

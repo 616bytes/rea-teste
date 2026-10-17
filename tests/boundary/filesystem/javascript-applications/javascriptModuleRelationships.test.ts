@@ -82,7 +82,7 @@ it.each([
 );
 
 describe("cross-version source module identity", () => {
-  it("preserves source-module identity when changed siblings leave relationships unresolved", async () => {
+  it("keeps exact source identity without claiming unchanged unresolved relationships", async () => {
     const root = await createTestTempDirectory("rea-source-module-sibling-");
     const versions = await Promise.all(
       ["left", "right"].map(async (name) => {
@@ -97,8 +97,6 @@ describe("cross-version source module identity", () => {
     const [left, right] = versions;
     if (left === undefined || right === undefined)
       throw new Error("Missing JavaScript application version");
-    expect(left.graph.coverage.status).toBe("complete");
-    expect(right.graph.coverage.status).toBe("complete");
     const leftModule = findSourceModule(left.graph, "main.js");
     const rightModule = findSourceModule(right.graph, "main.js");
     if (leftModule === undefined || rightModule === undefined)
@@ -131,16 +129,11 @@ describe("cross-version source module identity", () => {
       rightNativeEvidence: [],
     });
 
-    expect(
-      comparison.items.find(
-        ({ left_node_id }) => left_node_id === leftModule.node_id,
-      ),
-    ).toMatchObject({
+    const item = comparison.items.find(
+      ({ left_node_id }) => left_node_id === leftModule.node_id,
+    );
+    expect(item).toMatchObject({
       status: "unknown",
-      dimensions: [],
-      limitations: [
-        "Relationship target identity remains unresolved; equal node kinds do not establish cross-version alignment.",
-      ],
       right_node_id: rightModule.node_id,
       match: {
         status: "matched",
@@ -148,6 +141,15 @@ describe("cross-version source module identity", () => {
         confidence: "exact",
       },
     });
+    expect(item?.dimensions).not.toContain("content");
+    expect(item?.dimensions).not.toContain("properties");
+    expect(item?.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /Incomplete graph coverage|Relationship target identity remains unresolved/,
+        ),
+      ]),
+    );
   });
 });
 

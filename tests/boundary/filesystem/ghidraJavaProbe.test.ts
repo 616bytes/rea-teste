@@ -3,6 +3,7 @@ import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 
 import { mkdir, writeFile, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 
@@ -58,10 +59,12 @@ const probeHost =
                 ...spawn,
                 command: process.execPath,
                 arguments: [`${command}.cjs`, ...spawn.arguments],
-                // Node needs the Windows system directory to initialize CSPRNG.
+                // The controlled Node prerequisite needs Windows runtime state.
                 hostEnvironment: {
-                  ...spawn.hostEnvironment,
                   SystemRoot: process.env.SystemRoot,
+                  TEMP: tmpdir(),
+                  TMP: tmpdir(),
+                  ...spawn.hostEnvironment,
                 },
               }),
           }),

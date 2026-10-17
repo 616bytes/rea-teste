@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { PlaywrightElectronActiveProvider } from "../../../src/browser/PlaywrightElectronActiveProvider.js";
+import {
+  PlaywrightElectronActiveProvider,
+  executableContainsApplication,
+} from "../../../src/browser/PlaywrightElectronActiveProvider.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { finishAnalysisCommand } from "../../../src/cli/finishAnalysisCommand.js";
 import { err } from "../../../src/domain/result.js";
@@ -105,5 +108,24 @@ describe("PlaywrightElectronActiveProvider cleanup retry", () => {
         },
       },
     });
+  });
+
+  it("restricts package-less fallback detection to package-root default entrypoint", async () => {
+    const root = "/opt/app";
+    const executable = "/opt/app/my-app";
+
+    // Direct root entry: recognized
+    const isRootEntry = await executableContainsApplication(
+      executable,
+      "/opt/app/resources/app/index.js",
+    );
+    expect(isRootEntry).toBe(true);
+
+    // Nested entry with recognized basename: not recognized as the default bundle entry
+    const isNestedEntry = await executableContainsApplication(
+      executable,
+      "/opt/app/resources/app/plugins/index.js",
+    );
+    expect(isNestedEntry).toBe(false);
   });
 });

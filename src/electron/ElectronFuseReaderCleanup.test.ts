@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnalysisAccessDeniedError } from "../domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { elfFuseImage } from "../../tests/fixtures/electron/fuseImage.js";
@@ -81,6 +82,29 @@ const writeElfImage = async (root: string, name: string): Promise<string> => {
   return path;
 };
 
+/**
+ * Walk the error cause graph for the retained cleanup failure. The provider
+ * reports cleanup through nested AggregateError causes, so a direct `.cause`
+ * read cannot reach it.
+ */
+const findRegularFileCleanupFailure = (
+  error: unknown,
+): RegularFileCleanupFailure | undefined => {
+  const seen = new Set<unknown>();
+  const queue: unknown[] = [error];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current === null || typeof current !== "object" || seen.has(current))
+      continue;
+    seen.add(current);
+    if (current instanceof RegularFileCleanupFailure) return current;
+    const nested = current as { errors?: unknown[]; cause?: unknown };
+    if (Array.isArray(nested.errors)) queue.push(...nested.errors);
+    if (nested.cause !== undefined) queue.push(nested.cause);
+  }
+  return undefined;
+};
+
 describe("electron fuse final-close failures", () => {
   it("keeps the primary read error when the final close rejects", async () => {
     const root = await createTestTempDirectory("rea-fuse-close-fault-");
@@ -139,5 +163,104 @@ describe("electron fuse final-close failures", () => {
 
     expect(image.format).toBe("elf");
     expect(image.slices).toHaveLength(1);
+  });
+
+  it("reports the primary read diagnostic with incomplete cleanup when read and close both fail", async () => {
+    const root = await createTestTempDirectory("rea-fuse-combined-fault-");
+    const path = await writeElfImage(root, "app.elf");
+    const readFailure = Object.assign(new Error("physical read failure"), {
+      code: "EIO",
+    });
+    const closeFailure = Object.assign(
+      new Error("close rejected; descriptor still live"),
+      { code: "EACCES" },
+    );
+    armFaults(path, { readFailure, closeFailure });
+
+    const result = await new ElectronFuseProvider().inspect({ path });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected an error result");
+    // The close errno must not replace the original read classification.
+    expect(result.error).not.toBeInstanceOf(AnalysisAccessDeniedError);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toContain(path);
+    expect(JSON.stringify(result.error.diagnostics)).toContain(
+      "physical read failure",
+    );
+    // Ownership of the still-live descriptor is retained in the cause chain.
+    const cleanupFailure = findRegularFileCleanupFailure(result.error);
+    expect(cleanupFailure?.owner.handle).toBe(openedHandles[0]);
+  });
+
+  it("keeps incomplete cleanup and the descriptor owner when cancellation races the faulted close", async () => {
+    const root = await createTestTempDirectory("rea-fuse-cancel-close-");
+    const path = await writeElfImage(root, "app.elf");
+    const controller = new AbortController();
+    const abortReason = new Error("test abort during final close");
+    const closeFailure = Object.assign(
+      new Error("close rejected; descriptor still live"),
+      { code: "EACCES" },
+    );
+    // Synchronize the abort with the finalization boundary itself: the abort
+    // fires inside the faulted close, so no fixed delay is involved.
+    mockOpen.mockImplementation(
+      async (openPath: unknown, ...rest: unknown[]): Promise<FileHandle> => {
+        const handle = await passthroughOpen(openPath, ...rest);
+        if (String(openPath) === path) {
+          originalCloses.set(handle, handle.close.bind(handle));
+          handle.close = (async () => {
+            controller.abort(abortReason);
+            throw closeFailure;
+          }) as unknown as FileHandle["close"];
+          openedHandles.push(handle);
+        }
+        return handle;
+      },
+    );
+
+    const result = await new ElectronFuseProvider().inspect(
+      { path },
+      { signal: controller.signal },
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected an error result");
+    // Typed cancellation composed with the incomplete-cleanup report instead
+    // of a bare cancellation that would drop the descriptor owner.
+    const aggregate = result.error.cause as AggregateError | undefined;
+    expect(aggregate).toBeInstanceOf(AggregateError);
+    expect(aggregate?.errors[0]).toBeInstanceOf(AnalysisCancelledError);
+    expect((aggregate?.errors[0] as Error | undefined)?.cause).toBe(
+      abortReason,
+    );
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toContain(path);
+    const cleanupFailure = findRegularFileCleanupFailure(result.error);
+    expect(cleanupFailure?.owner.handle).toBe(openedHandles[0]);
+    expect(() => fstatSync(openedHandles[0]?.fd ?? -1)).not.toThrow();
+  });
+
+  it("retains the completed fuse evidence as a partial observation when only the close fails", async () => {
+    const root = await createTestTempDirectory("rea-fuse-partial-evidence-");
+    const path = await writeElfImage(root, "app.elf");
+    const closeFailure = Object.assign(
+      new Error("close rejected; descriptor still live"),
+      { code: "EACCES" },
+    );
+    armFaults(path, { closeFailure });
+
+    const result = await new ElectronFuseProvider().inspect({ path });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected an error result");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    // The successfully read fuse evidence survives as an explicitly partial
+    // observation instead of being discarded with the report.
+    const partial = result.error.partialObservation;
+    expect(partial).toBeDefined();
+    const serialized = JSON.stringify(partial);
+    expect(serialized).toContain("Partial observation");
+    expect(serialized).toContain("electron-fuses");
   });
 });

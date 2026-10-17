@@ -9,22 +9,27 @@ import { promisify } from "node:util";
 const execute = promisify(execFile);
 
 /** Build and independently inspect a source-owned ELF; never execute it. */
-export async function buildRiscvFixture(directory, bits) {
+export async function buildRiscvFixture(directory, bits, { pie = false } = {}) {
   assert.ok(bits === 32 || bits === 64);
   const compiler = process.env.REA_RISCV_CLANG ?? "clang";
   const linker = process.env.REA_RISCV_LLD ?? "ld.lld";
   const reader = process.env.REA_RISCV_READELF ?? "llvm-readelf";
   const source = fileURLToPath(new URL("../c/riscv.c", import.meta.url));
   const probe = fileURLToPath(new URL("./riscv-probe.S", import.meta.url));
-  const path = join(directory, `rv${bits}.elf`);
+  const path = join(directory, pie ? `rv${bits}-pie.elf` : `rv${bits}.elf`);
+  const interpreter =
+    bits === 32
+      ? "/lib/ld-linux-riscv32-ilp32d.so.1"
+      : "/lib/ld-linux-riscv64-lp64d.so.1";
   const args = [
     `--target=riscv${bits}-unknown-elf`,
     `-march=rv${bits}imafdc`,
     `-mabi=${bits === 32 ? "ilp32d" : "lp64d"}`,
     `--ld-path=${linker}`,
     "-nostdlib",
-    "-static",
-    "-fno-pic",
+    ...(pie
+      ? ["-fPIE", "-pie", `-Wl,--dynamic-linker=${interpreter}`]
+      : ["-static", "-fno-pic"]),
     "-O0",
     "-g",
     "-Wl,-e,rea_riscv_entry",
@@ -51,7 +56,10 @@ export async function buildRiscvFixture(directory, bits) {
   };
   assert.equal(field(/^\s*Class:\s*(.+)$/gmu, "class"), `ELF${bits}`);
   assert.match(field(/^\s*Data:\s*(.+)$/gmu, "byte order"), /little endian/u);
-  assert.match(field(/^\s*Type:\s*(.+)$/gmu, "type"), /^EXEC\b/u);
+  assert.match(
+    field(/^\s*Type:\s*(.+)$/gmu, "type"),
+    pie ? /^DYN\b/u : /^EXEC\b/u,
+  );
   assert.match(field(/^\s*Machine:\s*(.+)$/gmu, "machine"), /^RISC-V\b/u);
   const flags = Number(field(/^\s*Flags:\s*(0x[\da-f]+).*$/gmu, "flags"));
   assert.equal(flags, 5, "Compiler did not declare RVC and double-float ABI");
@@ -77,7 +85,13 @@ export async function buildRiscvFixture(directory, bits) {
     sha256: createHash("sha256")
       .update(await readFile(path))
       .digest("hex"),
-    riscv: { elfClass: bits, byteOrder: "little", type: 2, flags },
+    riscv: {
+      elfClass: bits,
+      byteOrder: "little",
+      type: pie ? 3 : 2,
+      flags,
+      ...(pie ? { hasInterpreter: true } : {}),
+    },
     symbols,
     toolchain: {
       compiler: { command: compiler, version: compilerVersion.stdout.trim() },

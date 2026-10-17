@@ -546,7 +546,42 @@ const readExecutableMetadata = async (
       }
     }
   }
-  const parsed = parseExecutableHeader(bytes, hostArchitecture, fileSize);
+  let elfBuffer = bytes;
+  if (
+    bytes.length >= 4 &&
+    bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
+  ) {
+    const is64 = bytes[4] === 2;
+    const little = bytes[5] === 1;
+    const minHdr = is64 ? 64 : 52;
+    if (bytes.length >= minHdr) {
+      const phoff = is64
+        ? Number(little ? bytes.readBigUInt64LE(32) : bytes.readBigUInt64BE(32))
+        : little
+          ? bytes.readUInt32LE(28)
+          : bytes.readUInt32BE(28);
+      const phentsize = little
+        ? bytes.readUInt16LE(is64 ? 54 : 42)
+        : bytes.readUInt16BE(is64 ? 54 : 42);
+      const phnum = little
+        ? bytes.readUInt16LE(is64 ? 56 : 44)
+        : bytes.readUInt16BE(is64 ? 56 : 44);
+      const phTableEnd = phoff + phnum * phentsize;
+      if (
+        phnum > 0 &&
+        phnum !== 0xffff &&
+        phTableEnd > bytes.length &&
+        phTableEnd <= fileSize &&
+        phTableEnd <= 65536
+      ) {
+        const header = Buffer.alloc(phTableEnd);
+        const headerRead = await handle.read(header, 0, header.length, 0);
+        throwIfTargetResolutionCancelled(signal);
+        elfBuffer = header.subarray(0, headerRead.bytesRead);
+      }
+    }
+  }
+  const parsed = parseExecutableHeader(elfBuffer, hostArchitecture, fileSize);
   if (
     !parsed.ok ||
     parsed.value.architecture !== "mips" ||

@@ -3367,20 +3367,53 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return body.find() ? pseudocode.substring(0, body.start()) : pseudocode;
     }
 
+    /** Rendered warning identity; keeps the word-offset cut so sub-word warnings stay distinct. */
+    private static String removedBlockIdentity(Matcher matcher) {
+        return matcher.group(1) + ",0x" + matcher.group(2) +
+            (matcher.group(3) == null ? "" : "+" + matcher.group(3));
+    }
+
+    /**
+     * Header lines the caller authored rather than the decompiler. Ghidra passes the
+     * entry-point plate comment to the decompiler as a "header" comment
+     * (DecompileCallback.encodeHeaderComment), and PrintC::emitCommentFuncHeader prints
+     * it through the same line renderer as the decompiler's own warning headers. No
+     * other caller comment reaches the header with default options. This reproduces
+     * PrintLanguage::emitLineComment for that one comment: C comment delimiters around
+     * the text, '\r' dropped, tabs printed as spaces, and '\n' starting a new line.
+     */
+    private Map<String, Integer> callerAuthoredRemovalWarnings(Function function) {
+        Map<String, Integer> authored = new HashMap<>();
+        if (!decompiler.getOptions().isHeadCommentIncluded()) return authored;
+        String plate = currentProgram.getListing()
+            .getComment(CommentType.PLATE, function.getEntryPoint());
+        if (plate == null) return authored;
+        String rendered = "/* " + plate.replace("\r", "").replace('\t', ' ') + " */";
+        Matcher matcher = DECOMPILER_REMOVED_BLOCK.matcher(decompiledHeader(rendered));
+        while (matcher.find()) authored.merge(removedBlockIdentity(matcher), 1, Integer::sum);
+        return authored;
+    }
+
     private RemovedBlocks decompilerRemovedBlocks(Function function, String pseudocode) throws Exception {
         BasicBlockModel model = new BasicBlockModel(currentProgram, false);
         TreeMap<Address, JsonObject> removed = new TreeMap<>();
         List<String> unmapped = new ArrayList<>();
+        Map<String, Integer> authored = callerAuthoredRemovalWarnings(function);
         Matcher matcher = DECOMPILER_REMOVED_BLOCK.matcher(decompiledHeader(pseudocode));
         while (matcher.find()) {
             monitor.checkCancelled();
+            String identity = removedBlockIdentity(matcher);
+            // Each caller-authored line accounts for one rendered match; a decompiler
+            // warning with the same text is rendered separately and still counts.
+            int callerLines = authored.getOrDefault(identity, 0);
+            if (callerLines > 0) {
+                authored.put(identity, callerLines - 1);
+                continue;
+            }
             Address start = decompilerWarningAddress(
                 matcher.group(1), matcher.group(2), matcher.group(3));
             if (start == null || !function.getBody().contains(start)) {
-                // Keep the word-offset cut so distinct sub-word warnings stay distinct.
-                String warning = matcher.group(1) + ",0x" + matcher.group(2) +
-                    (matcher.group(3) == null ? "" : "+" + matcher.group(3));
-                if (!unmapped.contains(warning)) unmapped.add(warning);
+                if (!unmapped.contains(identity)) unmapped.add(identity);
                 continue;
             }
             if (removed.containsKey(start)) {

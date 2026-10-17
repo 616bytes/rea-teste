@@ -430,6 +430,40 @@ const allScenarios: readonly ViteScenario[] = [
     unknown: true,
   },
   {
+    file: "custom-index-map-independent-table.js",
+    callSources: [
+      "__vite__mapDeps({map(read) { return []; }}, void 0, [null, {}])",
+      defaultCall,
+    ],
+    callOccurrences: [0, 1],
+    unknownCallOccurrences: [0],
+    source: mapDependencies('["./first.js", m]', "[0]").replace(
+      defaultCall + ";",
+      "__vite__mapDeps({map(read) { return []; }}, void 0, [null, {}]); " +
+        defaultCall +
+        ";",
+    ),
+    resolved: ["first.js"],
+    unknown: true,
+  },
+  {
+    file: "custom-index-map-independent-mapper.js",
+    callSources: [
+      "__vite__mapDeps({map(read) { return []; }}, {f: [null, {}]})",
+      defaultCall,
+    ],
+    callOccurrences: [0, 1],
+    unknownCallOccurrences: [0],
+    source: mapDependencies('["./first.js", m]', "[0]").replace(
+      defaultCall + ";",
+      "__vite__mapDeps({map(read) { return []; }}, {f: [null, {}]}); " +
+        defaultCall +
+        ";",
+    ),
+    resolved: ["first.js"],
+    unknown: true,
+  },
+  {
     file: "inert-negative-index-entry.js",
     callSource: "__vite__mapDeps([0, -1, 1])",
     source: mapDependencies('["./first.js", "./last.js"]', "[0, -1, 1]"),

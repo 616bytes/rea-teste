@@ -160,6 +160,41 @@ export class ViteCacheIdentities {
     return reads;
   }
 
+  /**
+   * An unproven indexes protocol runs the mapped reads through arbitrary code.
+   * Returns the helper's cache table node to expose for such a call when the
+   * selected table can include the cache: a supplied table argument selects
+   * that table alone, and a supplied mapper keeps the cache out while its f
+   * slot is proven present and truthy.
+   */
+  helperMappedTableEscape(
+    call: t.CallExpression | t.OptionalCallExpression,
+  ): t.Node | undefined {
+    const indexes = call.arguments[0];
+    const selection =
+      indexes === undefined
+        ? undefined
+        : unwrapJavaScriptExpression(indexes).node;
+    if (t.isArrayExpression(selection)) return undefined;
+    const owner = this.read(call.callee)?.owner;
+    if (typeof owner !== "string") return undefined;
+    const usesDefault = (node: t.Node | undefined): boolean =>
+      node === undefined || isJavaScriptViteDefaultUndefined(node, this.state);
+    const tableArgument = call.arguments[2];
+    if (tableArgument !== undefined && !usesDefault(tableArgument))
+      return undefined;
+    const mapperArgument = call.arguments[1];
+    if (
+      mapperArgument !== undefined &&
+      !usesDefault(mapperArgument) &&
+      this.provesMapperSelectedTable(
+        unwrapJavaScriptExpression(mapperArgument).node,
+      )
+    )
+      return undefined;
+    return this.allocations.get(owner)?.seed?.allocation?.node;
+  }
+
   /** Only array or plain data object literals keep mapped reads free of getters. */
   private plainDataSlots(argument: t.Node | undefined): boolean {
     if (argument === undefined) return false;
@@ -174,6 +209,51 @@ export class ViteCacheIdentities {
           t.isIdentifier(property.key, { name: "__proto__" }) ||
           t.isStringLiteral(property.key, { value: "__proto__" })
         ),
+    );
+  }
+
+  /**
+   * Whether a supplied mapper keeps mapped reads on its own table: its f slot
+   * must be proven present and truthy, and no later spread may redefine it.
+   */
+  private provesMapperSelectedTable(mapper: t.Node): boolean {
+    if (!t.isObjectExpression(mapper)) return false;
+    let found = false;
+    for (const property of mapper.properties) {
+      if (t.isSpreadElement(property)) {
+        if (found) return false;
+        continue;
+      }
+      if (
+        !t.isObjectProperty(property) ||
+        property.computed ||
+        property.shorthand ||
+        !(
+          t.isIdentifier(property.key, { name: "f" }) ||
+          t.isStringLiteral(property.key, { value: "f" })
+        )
+      )
+        continue;
+      // Duplicate keys resolve to the last value.
+      if (found) return false;
+      found = this.provesTruthySlot(property.value);
+    }
+    return found;
+  }
+
+  /** Whether a property value is proven defined with a truthy plain value. */
+  private provesTruthySlot(node: t.Node): boolean {
+    return (
+      t.isArrayExpression(node) ||
+      t.isObjectExpression(node) ||
+      t.isFunction(node) ||
+      (t.isLiteral(node) &&
+        ((t.isBooleanLiteral(node) && node.value) ||
+          (t.isStringLiteral(node) && node.value.length > 0) ||
+          (t.isNumericLiteral(node) &&
+            node.value !== 0 &&
+            !Number.isNaN(node.value)) ||
+          t.isRegExpLiteral(node)))
     );
   }
 

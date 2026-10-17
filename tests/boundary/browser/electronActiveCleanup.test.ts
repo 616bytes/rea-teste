@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { PlaywrightElectronActiveProvider } from "../../../src/browser/PlaywrightElectronActiveProvider.js";
+import {
+  PlaywrightElectronActiveProvider,
+  executableContainsApplication,
+} from "../../../src/browser/PlaywrightElectronActiveProvider.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { finishAnalysisCommand } from "../../../src/cli/finishAnalysisCommand.js";
 import { err } from "../../../src/domain/result.js";
@@ -104,6 +107,42 @@ describe("PlaywrightElectronActiveProvider cleanup retry", () => {
           }),
         },
       },
+    });
+  });
+
+  it("rejects launch when package.json manifest cannot be verified instead of guessing arguments", async () => {
+    const executable = "/opt/app/my-app";
+    const appEntry = "/opt/app/resources/app/dist/main.js";
+
+    const fileSystem = {
+      lstat: async (path: string) => {
+        if (path === "/opt/app/resources/app/package.json") {
+          return {
+            isFile: () => true,
+            isSymbolicLink: () => true,
+            size: 100n,
+            dev: 1,
+            ino: 1,
+          } as any;
+        }
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      },
+      open: async () => {
+        throw new Error("unexpected open");
+      },
+    };
+
+    await expect(
+      executableContainsApplication(
+        executable,
+        appEntry,
+        undefined,
+        new ArtifactResourceScope(),
+        fileSystem as any,
+      ),
+    ).rejects.toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "target_not_allowed",
     });
   });
 });

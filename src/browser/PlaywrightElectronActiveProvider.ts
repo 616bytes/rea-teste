@@ -99,6 +99,12 @@ const isRecognizedEntryName = (filePath: string): boolean => {
   return false;
 };
 
+const isMissing = (cause: unknown): boolean =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "code" in cause &&
+  cause.code === "ENOENT";
+
 const isBundledAppEntry = async (
   root: string,
   application: string,
@@ -107,6 +113,8 @@ const isBundledAppEntry = async (
   resourceScope: ArtifactResourceScope = new ArtifactResourceScope(),
   fileSystem?: StableArtifactFileSystem,
 ): Promise<boolean> => {
+  if (signal?.aborted) return false;
+
   const normRoot = normalize(root);
   const normApp = normalize(application);
 
@@ -127,9 +135,9 @@ const isBundledAppEntry = async (
     return true;
   }
 
+  const pkgPath = join(normRoot, "package.json");
   // Try reading package.json using bounded, non-blocking regular-file reader
   try {
-    const pkgPath = join(normRoot, "package.json");
     const snapshot = await readStableArtifact(
       pkgPath,
       64 * 1024,
@@ -149,15 +157,23 @@ const isBundledAppEntry = async (
       ? resolvedEntry.toLowerCase() === normApp.toLowerCase()
       : resolvedEntry === normApp;
   } catch (cause) {
+    if (signal?.aborted) return false;
     if (
       cause instanceof ArtifactFileCleanupFailure ||
       (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
     ) {
       throw cause;
     }
-    // If package.json is missing, unreadable, or not a regular file,
-    // match conventional Electron entry file patterns, distinguishing them from other scripts.
-    return isRecognizedEntryName(normApp);
+    // If package.json is missing, match conventional Electron entry file patterns.
+    if (isMissing(cause)) {
+      return isRecognizedEntryName(normApp);
+    }
+    // If package.json exists but is unreadable, oversized, or invalid, report the uncertain entry
+    // rather than launching with a guessed argument.
+    throw new BrowserObservationError(OPERATION, "target_not_allowed", {
+      cause,
+      detail: `Bundled application package manifest could not be verified: ${pkgPath}`,
+    });
   }
 };
 
@@ -508,6 +524,12 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
             kind: "electron-active-observation",
             capture: outcome.value,
           });
+          return err(cleanupError);
+        }
+        if (
+          outcome.error instanceof BrowserObservationError &&
+          outcome.error.reason === "cleanup_failed"
+        ) {
           return err(cleanupError);
         }
         return err(

@@ -13,7 +13,6 @@ import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { join } from "node:path";
 
 import writeFileAtomic from "write-file-atomic";
-import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
@@ -22,7 +21,7 @@ import {
   readSkillFile,
   skillDestinations,
 } from "./SetupSkill.js";
-import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
+import { isOwnedClientRegistrationEntry } from "./ClientRegistrationIdentity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { dshDocument } from "./DshCordisPatch.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
@@ -432,10 +431,18 @@ const clientRegistrationRemoval = (
     removeNative:
       (parsed.dialect === "dsh" && dshDocument(parsed.document).carriesEntry) ||
       (Object.hasOwn(parsed.servers, name) &&
-        isOwnedRegistration(parsed.servers[name], client)),
+        isOwnedClientRegistrationEntry(
+          parsed.servers[name],
+          client.format,
+          CURRENT_ENTRYPOINT_PATH,
+        )),
     legacyPath:
       legacyPath !== undefined &&
-      isOwnedRegistration(parsed.legacyServers[name], client)
+      isOwnedClientRegistrationEntry(
+        parsed.legacyServers[name],
+        client.format,
+        CURRENT_ENTRYPOINT_PATH,
+      )
         ? legacyPath
         : undefined,
   };
@@ -592,26 +599,6 @@ const resolveUninstallConfigPath = async (
       "failed",
       "Configuration path could not be safely verified. Check its permissions and, if it is a symbolic link, verify that the link resolves to a regular file owned by the current user, then rerun uninstall.",
     )
-  );
-};
-
-/** Ownership rule for persistent MCP registrations created by REA setup. */
-const isOwnedRegistration = (value: unknown, client: SetupClient): boolean => {
-  if (client.format === "opencode") {
-    const parsed = z
-      .object({ type: z.literal("local"), command: z.array(z.string()).min(1) })
-      .passthrough()
-      .safeParse(value);
-    if (!parsed.success) return false;
-    const command = parsed.data.command;
-    return isOwnedClientRegistrationCommand(command, CURRENT_ENTRYPOINT_PATH);
-  }
-  const parsed = registrationSchema.safeParse(value);
-  if (!parsed.success) return false;
-  const { command, args } = parsed.data;
-  return isOwnedClientRegistrationCommand(
-    [command, ...args],
-    CURRENT_ENTRYPOINT_PATH,
   );
 };
 
@@ -998,8 +985,5 @@ const uninstallStatusPriority = (status: UninstallItem["status"]): number => {
     }
   }
 };
-const registrationSchema = z
-  .object({ command: z.string(), args: z.array(z.string()) })
-  .passthrough();
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";

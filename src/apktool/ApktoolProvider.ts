@@ -165,6 +165,7 @@ const probeCleanupFailure = (
 
 const runApktool = async (
   operation: string,
+  targetPath: string,
   selection: ApktoolCommandSelection,
   arguments_: readonly string[],
   limits: DecodeLimits,
@@ -267,7 +268,7 @@ const runApktool = async (
     return err(
       new AnalysisUnsupportedTargetError(
         operation,
-        selection.command,
+        targetPath,
         output?.stderr.text.trim().slice(0, STDERR_EXCERPT_BYTES) ||
           `apktool exited with code ${String(output?.exitCode ?? "unknown")} for ${operation}`,
         {
@@ -703,6 +704,7 @@ export class ApktoolProvider {
       await mkdir(framework);
       const decoded = await runApktool(
         operation,
+        input.path,
         selection,
         [
           "d",

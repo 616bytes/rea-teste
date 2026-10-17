@@ -390,6 +390,7 @@ it("reports apktool's own refusal for undecodable targets", async () => {
   });
   expect(projected).toMatchObject({ code: "unsupported_target" });
   expect(projected.message).toContain("Could not decode");
+  expect(projected.message).toContain("probe.apk");
 });
 
 it("reports a missing launcher as a capability gap with recovery", async () => {

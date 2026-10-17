@@ -156,11 +156,8 @@ const isBundledAppEntry = async (
       throw cause;
     }
     // If package.json is missing, unreadable, or not a regular file,
-    // restrict fallback detection to conventional entry files at the package root.
-    const isDirectChild = isDarwinOrWin
-      ? dirname(normApp).toLowerCase() === normRoot.toLowerCase()
-      : dirname(normApp) === normRoot;
-    return isDirectChild && isRecognizedEntryName(normApp);
+    // match conventional Electron entry file patterns, distinguishing them from other scripts.
+    return isRecognizedEntryName(normApp);
   }
 };
 

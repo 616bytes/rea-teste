@@ -1,5 +1,6 @@
 import * as t from "@babel/types";
 
+import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import { semanticClassCandidates } from "./javascriptSemanticObjectReferences.js";
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
@@ -78,9 +79,21 @@ const receiverBoundary = (
       return undefined;
     if (t.isClassMethod(parent) || t.isClassPrivateMethod(parent))
       return classReceiver(parent, state);
-    const container = state.parentsByNode.get(parent);
+    let value: t.Node = parent;
+    let container = state.parentsByNode.get(value);
+    while (
+      container !== undefined &&
+      "expression" in container &&
+      container.expression === value
+    ) {
+      value = container;
+      container = state.parentsByNode.get(value);
+    }
+    // Normalize the property value once to prove transparent containment;
+    // walking expression parents first avoids repeatedly unwrapping deep chains.
     const object =
-      t.isObjectProperty(container) && container.value === parent
+      t.isObjectProperty(container) &&
+      unwrapJavaScriptExpression(container.value).node === parent
         ? state.parentsByNode.get(container)
         : container;
     return { owner: t.isObjectExpression(object) ? object : parent };

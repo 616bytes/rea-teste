@@ -99,6 +99,27 @@ it("keeps object methods together but object arrow properties in the enclosing s
   ]);
 });
 
+it("retains wrapped object functions without adopting arrows or computed-key functions", () => {
+  const listener = `(((function () { this.on('ready', handler); }) as Function)!) satisfies Function`;
+  expect(
+    emitters(`
+      this.on('outer', handler);
+      const object = {
+        listen: ${listener},
+        dispatch() { this.emit('ready'); },
+        arrow: (() => this.emit('outer')) as Function,
+        [${listener}]: 0,
+      };
+      const other = { dispatch() { this.emit('ready'); } };
+  `),
+  ).toEqual([
+    ["on:partial", "emit:partial"],
+    ["on:partial", "emit:partial"],
+    ["on:partial"],
+    ["emit:partial"],
+  ]);
+});
+
 it("evaluates decorators, computed keys and heritage in the enclosing receiver", () => {
   expect(
     emitters(`function install() {

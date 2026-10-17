@@ -10,7 +10,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
-  "scopes this event identities and retains uncertain inheritance through CLI and stdio MCP",
+  "preserves this event scopes, inheritance candidates and wrapped object functions through CLI and stdio MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-this-emitters-");
     await writeFile(
@@ -24,6 +24,15 @@ cliTest(
     class Base { run() { this.on('inherited', () => {}); } }
     class Other { run() { this.on('inherited', () => {}); } }
     class Child extends (flag ? Base : Other) { run() { this.emit('inherited'); } }
+  `,
+    );
+    await writeFile(
+      join(root, "wrapped.ts"),
+      `
+    const wrapped = {
+      listen: (function () { this.on('wrapped', () => {}); }) as Function,
+      dispatch: (<Function>(function () { this.emit('wrapped'); }))! satisfies Function,
+    };
   `,
     );
     const response = await cli.run({
@@ -104,6 +113,19 @@ cliTest(
       expect(
         inheritedRelations.every((r) => r.resolution === "candidate"),
       ).toBe(true);
+      const wrapped = graph.nodes.filter(
+        (n) => n.kind === "event" && n.properties.event_name === "wrapped",
+      );
+      expect(wrapped).toHaveLength(1);
+      expect(
+        eventRelations
+          .filter(
+            (r) =>
+              r.source_node_id === wrapped[0]?.node_id ||
+              r.target_node_id === wrapped[0]?.node_id,
+          )
+          .map((r) => r.resolution),
+      ).toEqual(["candidate", "candidate"]);
       await client.ping();
     } finally {
       await client.close();

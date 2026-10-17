@@ -16,6 +16,7 @@ import { logCliCommand } from "../../../src/cliLogging.js";
 import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
 import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
 import { silentLogger } from "../../../src/logger.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
 
 const collect = async (
   value: unknown,
@@ -559,6 +560,115 @@ describe("CLI result output surface", () => {
       },
       meta: { command: "inspect-managed-members" },
     });
+  }, 60_000);
+});
+
+describe("streamed CLI TOON output", () => {
+  const serve = async (
+    argv: readonly string[],
+    value: JsonValue,
+    stream: boolean,
+  ): Promise<{ readonly text: string; readonly exitCode: number }> => {
+    const chunks: Buffer[] = [];
+    let fallback = "";
+    let exitCode = 0;
+    const output = stream
+      ? createCliResultOutput(
+          argv,
+          new Writable({
+            write(chunk: Buffer, _encoding, callback) {
+              chunks.push(chunk);
+              callback();
+            },
+          }),
+        )
+      : undefined;
+    const cli = Cli.create("rea-output-test", { sync: false });
+    registerManagedCommands(cli, silentLogger, async () => value);
+    if (output !== undefined) streamCliCommandResults(cli, output);
+    await cli.serve([...argv], {
+      stdout: (text) => {
+        if (output?.handled !== true) fallback += text;
+      },
+      exit: (code) => {
+        exitCode = code;
+      },
+    });
+    const text = fallback + Buffer.concat(chunks).toString("utf8");
+    return {
+      text: text.replace(/duration: \d+ms/gu, "duration: <ms>"),
+      exitCode,
+    };
+  };
+
+  it.each([
+    [[]],
+    [["--format", "toon"]],
+    [["--full-output"]],
+    [["--filter-output", "methods"]],
+  ])("writes the same TOON document as Incur for %j", async (options) => {
+    const argv = ["inspect-managed-members", "fixture.dll", ...options];
+    for (const value of [
+      {
+        assembly: "Fixture",
+        methods: [
+          { name: "Run", token: 100663297 },
+          { name: "Stop\nNow", token: 100663298 },
+        ],
+        flags: ["static", "public"],
+        empty: {},
+      },
+      {},
+    ]) {
+      const streamed = await serve(argv, value, true);
+      const incur = await serve(argv, value, false);
+      expect(streamed).toEqual(incur);
+    }
+  });
+
+  it("streams TOON output past the engine string limit", async () => {
+    const leaf = "x".repeat(64 * 1024);
+    const row = `  ${leaf}\n`;
+    const count = Math.ceil(constants.MAX_STRING_LENGTH / row.length) + 1;
+    const header = `methods[${count}]{name}:\n`;
+    const expected = createHash("sha256").update(header);
+    for (let index = 0; index < count; index += 1) expected.update(row);
+    const expectedBytes = header.length + count * row.length;
+    expect(expectedBytes).toBeGreaterThan(constants.MAX_STRING_LENGTH);
+
+    const actual = createHash("sha256");
+    let bytes = 0;
+    const argv = ["inspect-managed-members", "fixture.dll"];
+    const output = createCliResultOutput(
+      argv,
+      new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          bytes += chunk.length;
+          actual.update(chunk);
+          callback();
+        },
+      }),
+    );
+    if (output === undefined) throw new Error("Missing TOON output surface");
+    const cli = Cli.create("rea-output-test", { sync: false });
+    registerManagedCommands(cli, silentLogger, async () => ({
+      methods: Array.from({ length: count }, () => ({ name: leaf })),
+    }));
+    streamCliCommandResults(cli, output);
+    let exitCode = 0;
+    let fallbackBytes = 0;
+    await cli.serve(argv, {
+      stdout: (text) => {
+        if (!output.handled) fallbackBytes += text.length;
+      },
+      exit: (code) => {
+        exitCode = code;
+      },
+    });
+    expect(exitCode).toBe(0);
+    expect(fallbackBytes).toBe(0);
+    expect(bytes).toBe(expectedBytes);
+    expect(actual.digest("hex")).toBe(expected.digest("hex"));
   }, 60_000);
 });
 

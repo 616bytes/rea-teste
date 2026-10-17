@@ -1,6 +1,7 @@
 import { constants } from "node:buffer";
 import type { Writable } from "node:stream";
 
+import { encodeLines } from "@toon-format/toon";
 import { Cli, Filter, Formatter } from "incur";
 import { estimateTokenCount, sliceByTokens } from "tokenx";
 
@@ -10,6 +11,7 @@ import {
 } from "../cliOutput.js";
 import { cliOperationFailurePayload } from "../cliLogging.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { bufferedJsonParts } from "../domain/jsonSerialization.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
@@ -139,10 +141,22 @@ export const createCliResultOutput = (
       const filtered: unknown = options.filterOutput
         ? Filter.apply(value, Filter.parse(options.filterOutput))
         : value;
-      // Leave successful YAML and bare YAML rendering to Incur. The custom
-      // boundary is needed only for a full failure envelope, whose error
-      // sentinel otherwise drops category, remediation, and details.
-      if (format !== "json" && format !== "jsonl" && failure === undefined)
+      // TOON is written line by line unless a token window or count needs
+      // Incur's complete string. Leave successful YAML and Markdown rendering
+      // to Incur. The custom boundary is otherwise needed only for a full
+      // failure envelope, whose error sentinel drops category, remediation,
+      // and details.
+      const streamToon =
+        format === "toon" &&
+        !options.tokenCount &&
+        options.tokenLimit === undefined &&
+        options.tokenOffset === undefined;
+      if (
+        format !== "json" &&
+        format !== "jsonl" &&
+        !streamToon &&
+        failure === undefined
+      )
         return false;
       if (options.tokenCount) {
         // Incur/tokenx materialize JSON. Measure its UTF-16 expansion before
@@ -227,7 +241,14 @@ export const createCliResultOutput = (
       // document from Incur's error formatter.
       handled = true;
       try {
-        if (failure !== undefined && format !== "json" && format !== "jsonl") {
+        if (streamToon) {
+          for (const part of bufferedJsonParts(toonOutputParts(document)))
+            await writeOutputText(destination, part);
+        } else if (
+          failure !== undefined &&
+          format !== "json" &&
+          format !== "jsonl"
+        ) {
           // Incur's error sentinel only carries code/message/retryable. Render
           // the full caller-visible failure at this output boundary.
           await writeOutputText(
@@ -253,6 +274,20 @@ export const createCliResultOutput = (
     },
   };
 };
+
+/**
+ * Incur's TOON document without a document-sized string: each encoded line and
+ * its newline. An empty encoding writes nothing, as Incur does.
+ */
+function* toonOutputParts(value: unknown): Generator<string> {
+  if (value === null || value === undefined) return;
+  if (typeof value !== "object") {
+    const text = String(value);
+    if (text !== "") yield `${text}\n`;
+    return;
+  }
+  for (const line of encodeLines(value)) yield `${line}\n`;
+}
 
 const fullFailureEnvelope = (
   failure: unknown,

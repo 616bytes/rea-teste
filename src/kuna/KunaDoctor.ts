@@ -7,6 +7,8 @@ import type {
   DoctorProviderInspection,
 } from "../application/Doctor.js";
 import { readKunaConfiguration } from "./KunaConfiguration.js";
+import type { FileCloseResourceOwner } from "../application/AnalysisProvider.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
   inspectKunaInstallation,
   type KunaReadinessFailure,
@@ -33,10 +35,37 @@ const REGISTRATION_SETTINGS = [
 export const inspectKunaProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform = process.platform,
+  options: {
+    readonly fileCloseResources: FileCloseResourceOwner;
+  },
 ): Promise<DoctorProviderInspection> => {
-  const installation = await inspectKunaInstallation(environment, {
-    platform,
-  });
+  let installation: Awaited<ReturnType<typeof inspectKunaInstallation>>;
+  try {
+    installation = await inspectKunaInstallation(environment, {
+      platform,
+      fileCloseResources: options.fileCloseResources,
+    });
+  } catch (cause: unknown) {
+    if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
+    return {
+      id: KUNA_PROVIDER_ID,
+      configured: environment.REA_KUNA_COMMAND !== undefined,
+      available: false,
+      providerVersion: null,
+      registrationEnvironment: {},
+      checks: [
+        {
+          name: "installation",
+          ok: false,
+          code: "cleanup_incomplete",
+          detail: `Kuna installation inspection could not confirm file cleanup: ${cause instanceof Error ? cause.message : String(cause)}`,
+          remediation: null,
+          classification: "config_drift",
+          details: { cleanup_incomplete: true },
+        },
+      ],
+    };
+  }
   const configured =
     environment.REA_KUNA_COMMAND !== undefined &&
     environment.REA_KUNA_COMMAND.length > 0;

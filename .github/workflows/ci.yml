@@ -140,6 +140,11 @@ jobs:
       - name: Validate workflow syntax and expressions
         if: needs.changes.outputs.workflows == 'true'
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes=
+      # Code tiers run this source-only policy test in their existing shards.
+      # Workflow-only changes need the guard, without preparing runtime artifacts.
+      - name: Check action pins for workflow-only changes
+        if: needs.changes.outputs.workflows == 'true' && needs.changes.outputs.code != 'true'
+        run: node scripts/run-exact-tests.mjs run tests/boundary/filesystem/workflowActionPinning.test.ts
       - name: Record static task source and execution identity
         continue-on-error: true
         if: needs.changes.outputs.code == 'true'
@@ -352,10 +357,15 @@ jobs:
       # test:prepare caches only portable JS, skill, and catalog outputs.
       # Native package jobs still run their build and prepack checks; Turbo
       # restores matching outputs or rebuilds when their inputs differ.
+      - name: Stage current portable build task cache
+        shell: bash
+        run: |
+          npm run --silent test:prepare -- --dry=json |
+            node scripts/ci/portable-build-cache.mjs snapshot
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rea-build-cache
-          path: .turbo/cache/
+          path: .cache/ci-build-cache/
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
@@ -705,12 +715,12 @@ jobs:
         with:
           name: rea-build-cache
           path: .turbo/cache/
-      - run: npm run build:cached
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: windows-native-controls
           path: native/windows/build/
       - run: npm run verify:windows-native:artifact
+      - run: npm run build:cached
       - name: Record named Windows host capabilities
         run: node scripts/windows-capabilities.mjs | Out-File -Encoding utf8NoBOM windows-capabilities.json
       - name: Validate Windows host capability report
@@ -743,6 +753,7 @@ jobs:
           tests/boundary/filesystem/webScriptManifestPaths.test.ts
           tests/boundary/process/ProcessEvidence.host.test.ts
           tests/boundary/process/packageNpmInvocation.test.ts
+          tests/boundary/process/packedBridgeVerification.test.ts
           tests/boundary/process/windowsOutputCapture.test.ts
           tests/acceptance/webModuleCli.test.ts
           tests/acceptance/webSourceLocationCli.test.ts
@@ -765,6 +776,8 @@ jobs:
           src/process/ProcessOwnership.validation.test.ts
           src/application/Update.test.ts
           tests/process-global/updateMaintenance.test.ts
+          tests/process-global/runnerCancellation.test.ts
+          tests/process-global/windowsOwnedCommand.test.ts
           tests/conformance/providers/ghidra/realGhidraWindowsWorkflow.test.ts
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:

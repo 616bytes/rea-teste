@@ -6,20 +6,21 @@ import {
   inspectApkSignatureInputSchema,
 } from "./apkSignatureReport.js";
 
-describe("deriveApkPosture", () => {
-  const base = {
-    v1Present: false,
-    v2Present: false,
-    v3Present: false,
-    v31Present: false,
-    sourceStampPresent: false,
-    rotationPresent: false,
-    schemeSignerFingerprints: [] as (string | null)[][],
-    lineageFingerprints: [] as string[],
-    lineageUnknown: false,
-    selfConsistent: null,
-  };
+const base = {
+  v1Present: false,
+  v2Present: false,
+  v3Present: false,
+  v31Present: false,
+  sourceStampPresent: false,
+  rotationPresent: false,
+  schemeSignerFingerprints: [] as (string | null)[][],
+  v1SignerFingerprints: [] as (string | null)[],
+  lineageFingerprints: [] as string[],
+  lineageUnknown: false,
+  selfConsistent: null,
+};
 
+describe("deriveApkPosture", () => {
   it("flags v1-only when only JAR signing is present", () => {
     const p = deriveApkPosture({ ...base, v1Present: true });
     expect(p.v1_only).toBe(true);
@@ -158,5 +159,48 @@ describe("deriveApkPosture", () => {
     ).toBe(false);
     // The result schema rejects unknown keys (sanity that strictObject holds).
     expect(apkSignatureResultSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe("deriveApkPosture v1 comparison", () => {
+  it("compares v1 signers with the lowest block scheme that has signers", () => {
+    const v1 = (
+      v1SignerFingerprints: (string | null)[],
+      schemeSignerFingerprints: (string | null)[][],
+    ) =>
+      deriveApkPosture({
+        ...base,
+        v1Present: true,
+        v2Present: schemeSignerFingerprints[0]?.length !== 0,
+        v3Present: true,
+        schemeSignerFingerprints,
+        v1SignerFingerprints,
+      }).v1_signers_match_block_signers;
+    expect(v1(["aa"], [["aa"], ["aa"], []])).toBe(true);
+    // A rotated v3 signer does not hide that v1 and v2 agree.
+    expect(v1(["old"], [["old"], ["new"], []])).toBe(true);
+    // The JAR signature naming another key is a mismatch, not agreement.
+    expect(v1(["other"], [["aa"], ["aa"], []])).toBe(false);
+    // Without v2 the comparison falls to v3.
+    expect(v1(["aa"], [[], ["aa"], []])).toBe(true);
+    expect(v1(["aa", "bb"], [["aa"], [], []])).toBe(false);
+    // Unknown identity on either side stays unknown.
+    expect(v1([null], [["aa"], [], []])).toBeNull();
+    expect(v1(["aa"], [[null], [], []])).toBeNull();
+    // v1-only or no v1: nothing to compare.
+    expect(
+      deriveApkPosture({
+        ...base,
+        v1Present: true,
+        v1SignerFingerprints: ["aa"],
+      }).v1_signers_match_block_signers,
+    ).toBeNull();
+    expect(
+      deriveApkPosture({
+        ...base,
+        v2Present: true,
+        schemeSignerFingerprints: [["aa"]],
+      }).v1_signers_match_block_signers,
+    ).toBeNull();
   });
 });

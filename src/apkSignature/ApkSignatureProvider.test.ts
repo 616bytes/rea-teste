@@ -6,12 +6,36 @@ import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import {
+  APK_SIGNATURE_V2_ID,
+  LEAF_CERTIFICATE,
+  LEAF_SHA256,
+  LEAF_SUBJECT,
+  OID_ECDSA_SHA256,
+  OID_SHA256,
+  OPENSSL_BLOCK_ISSUER_SERIAL,
+  ROOT_CERTIFICATE,
+  ROOT_SHA256,
+  signedDataBlock,
+  signerInfo,
+  v2SchemeValue,
+  withSigningBlock,
+  zipWith,
+} from "../../tests/fixtures/apkSignature/v1SignatureBlock.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ApkSignatureProvider } from "./ApkSignatureProvider.js";
 import { apkSignatureFailure } from "./apkSignatureFailures.js";
 
+type V1Signer = {
+  signature_file: string;
+  block_file: string;
+  certificate: { sha256_fingerprint: string; subject: string | null } | null;
+  certificates: { sha256_fingerprint: string; subject: string | null }[];
+  signer_infos: Record<string, unknown>[];
+  decode_error: string | null;
+};
 type Report = {
-  schemes: Record<
+  schemes: { v1: { present: boolean; signers: V1Signer[] } } & Record<
     string,
     {
       present: boolean;
@@ -163,21 +187,51 @@ describe("ApkSignatureProvider without the Android SDK", () => {
     expect(r.posture.v1_only).toBe(false);
   });
 
-  it("detects v1-only signing from META-INF entries", async () => {
-    const r = await reportOf(
-      await write(
-        "v1.apk",
-        await zipOf([
-          "classes.dex",
-          "META-INF/MANIFEST.MF",
-          "META-INF/CERT.SF",
-          "META-INF/CERT.RSA",
-        ]),
-      ),
-    );
-    expect(r.schemes.v1!.present).toBe(true);
-    expect(r.posture.v1_only).toBe(true);
-    expect(r.posture.strongest_scheme).toBe("v1");
+  it("detects v1-only signing and names the signer certificate its block declares", async () => {
+    for (const stored of [false, true]) {
+      const r = await reportOf(
+        await write(
+          `v1-${String(stored)}.apk`,
+          await zipWith([
+            { name: "classes.dex", data: "x" },
+            { name: "META-INF/MANIFEST.MF", data: "Manifest-Version: 1.0" },
+            { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
+            {
+              name: "META-INF/CERT.EC",
+              data: OPENSSL_BLOCK_ISSUER_SERIAL,
+              stored,
+            },
+          ]),
+        ),
+      );
+      expect(r.schemes.v1.present).toBe(true);
+      expect(r.posture.v1_only).toBe(true);
+      expect(r.posture.strongest_scheme).toBe("v1");
+      expect(r.posture.v1_signers_match_block_signers).toBeNull();
+      const [signer] = r.schemes.v1.signers;
+      expect(signer).toMatchObject({
+        signature_file: "META-INF/CERT.SF",
+        block_file: "META-INF/CERT.EC",
+        certificate: {
+          sha256_fingerprint: LEAF_SHA256,
+          subject: LEAF_SUBJECT,
+          public_key_algorithm: "ec",
+        },
+        certificates: [
+          { sha256_fingerprint: LEAF_SHA256, subject: LEAF_SUBJECT },
+          { sha256_fingerprint: ROOT_SHA256 },
+        ],
+        signer_infos: [
+          {
+            identified_by: "issuer-and-serial",
+            certificate_sha256: LEAF_SHA256,
+            digest_algorithm_oid: OID_SHA256,
+            signature_algorithm_oid: OID_ECDSA_SHA256,
+          },
+        ],
+        decode_error: null,
+      });
+    }
   });
 
   it("decodes a v2 signer, keeps an unparseable certificate null, and flags a digest mismatch", async () => {
@@ -253,15 +307,132 @@ describe("ApkSignatureProvider declared facts", () => {
         await zipOf(["META-INF/a/CERT.SF", "META-INF/a/CERT.RSA"]),
       ),
     );
-    expect(nested.schemes.v1!.present).toBe(true);
+    expect(nested.schemes.v1.present).toBe(true);
+    expect(nested.schemes.v1.signers).toMatchObject([
+      {
+        signature_file: "META-INF/a/CERT.SF",
+        block_file: "META-INF/a/CERT.RSA",
+      },
+    ]);
     const unpaired = await reportOf(
       await write(
         "v1-unpaired.apk",
         await zipOf(["META-INF/RSA1.SF", "META-INF/OTHER.RSA"]),
       ),
     );
-    expect(unpaired.schemes.v1!.present).toBe(false);
+    expect(unpaired.schemes.v1.present).toBe(false);
+    expect(unpaired.schemes.v1.signers).toEqual([]);
     expect(unpaired.posture.v1_only).toBe(false);
+  });
+});
+
+describe("ApkSignatureProvider v1 signers", () => {
+  it("compares the v1 signer with the v2 signer and reports a mismatch", async () => {
+    const v1Zip = await zipWith([
+      { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
+      { name: "META-INF/CERT.EC", data: OPENSSL_BLOCK_ISSUER_SERIAL },
+    ]);
+    const same = await reportOf(
+      await write(
+        "v1-v2-same.apk",
+        withSigningBlock(v1Zip, [
+          { id: APK_SIGNATURE_V2_ID, value: v2SchemeValue(LEAF_CERTIFICATE) },
+        ]),
+      ),
+    );
+    expect(same.schemes.v1.signers[0]?.certificate?.sha256_fingerprint).toBe(
+      LEAF_SHA256,
+    );
+    expect(same.posture.v1_signers_match_block_signers).toBe(true);
+    const other = await reportOf(
+      await write(
+        "v1-v2-other.apk",
+        withSigningBlock(v1Zip, [
+          { id: APK_SIGNATURE_V2_ID, value: v2SchemeValue(ROOT_CERTIFICATE) },
+        ]),
+      ),
+    );
+    expect(other.posture.v1_signers_match_block_signers).toBe(false);
+  });
+
+  it("keeps a damaged or ambiguous v1 block as an explicit unknown", async () => {
+    const twoSigners = signedDataBlock({
+      certificates: [LEAF_CERTIFICATE, ROOT_CERTIFICATE],
+      signerInfos: [
+        signerInfo({ names: LEAF_CERTIFICATE }),
+        signerInfo({ names: ROOT_CERTIFICATE }),
+      ],
+    });
+    const r = await reportOf(
+      await write(
+        "v1-damaged.apk",
+        withSigningBlock(
+          await zipWith([
+            { name: "META-INF/A.SF", data: "Signature-Version: 1.0" },
+            { name: "META-INF/A.RSA", data: "not pkcs7" },
+            { name: "META-INF/B.SF", data: "Signature-Version: 1.0" },
+            { name: "META-INF/B.EC", data: twoSigners },
+            { name: "META-INF/C.SF", data: "Signature-Version: 1.0" },
+            {
+              name: "META-INF/C.DSA",
+              data: new Uint8Array(2 * 1024 * 1024),
+            },
+          ]),
+          [{ id: APK_SIGNATURE_V2_ID, value: v2SchemeValue(LEAF_CERTIFICATE) }],
+        ),
+      ),
+    );
+    const [damaged, ambiguous, oversized] = r.schemes.v1.signers;
+    expect(damaged).toMatchObject({
+      block_file: "META-INF/A.RSA",
+      certificate: null,
+      certificates: [],
+      decode_error: expect.stringContaining("malformed PKCS#7") as string,
+    });
+    // Two SignerInfos and nothing verified: no single signer certificate.
+    expect(ambiguous?.certificate).toBeNull();
+    expect(ambiguous?.signer_infos.map((i) => i.certificate_sha256)).toEqual([
+      LEAF_SHA256,
+      ROOT_SHA256,
+    ]);
+    expect(oversized?.decode_error).toContain("over the 1048576-byte bound");
+    expect(r.posture.v1_signers_match_block_signers).toBeNull();
+  });
+
+  it("bounds inflation by the per-block limit, not by the declared size", async () => {
+    const zip = Buffer.from(
+      await zipWith([
+        { name: "META-INF/D.SF", data: "x" },
+        { name: "META-INF/D.RSA", data: new Uint8Array(2 * 1024 * 1024) },
+        { name: "META-INF/E.SF", data: "x" },
+        { name: "META-INF/E.RSA", data: OPENSSL_BLOCK_ISSUER_SERIAL },
+      ]),
+    );
+    // Under-declare both uncompressed sizes in the central directory.
+    const cdOffset = zip.readUInt32LE(zip.length - 22 + 16);
+    for (const name of ["META-INF/D.RSA", "META-INF/E.RSA"]) {
+      const at = zip.indexOf(Buffer.from(name), cdOffset) - 46;
+      zip.writeUInt32LE(100, at + 24);
+    }
+    const r = await reportOf(await write("v1-bomb.apk", zip));
+    expect(r.schemes.v1.signers.map((signer) => signer.decode_error)).toEqual([
+      "signature block inflates past the 1048576-byte bound",
+      `signature block holds ${String(OPENSSL_BLOCK_ISSUER_SERIAL.length)} bytes, the central directory declares 100`,
+    ]);
+  });
+
+  it("refuses more v1 signers than a signed archive carries", async () => {
+    const names = Array.from({ length: 33 }, (_, i) => [
+      { name: `META-INF/S${String(i)}.SF`, data: "x" },
+      { name: `META-INF/S${String(i)}.RSA`, data: "x" },
+    ]).flat();
+    const result = await provider.inspect({
+      path: await write("v1-many.apk", await zipWith(names)),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(result.error.message).toContain("more than 32 v1 signature blocks");
   });
 });
 

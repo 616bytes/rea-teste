@@ -1,4 +1,4 @@
-import { createHash, X509Certificate } from "node:crypto";
+import { createHash } from "node:crypto";
 
 import { createAnalysisExecution } from "../application/AnalysisProvider.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
@@ -43,8 +43,10 @@ import {
   type HashFactory,
 } from "../domain/apkSignature/apkContentDigest.js";
 import {
-  centralDirectoryV1SignatureNames,
+  centralDirectoryV1SignatureEntries,
   detectV1Signature,
+  MAX_V1_SIGNERS,
+  type ApkV1Signature,
 } from "../domain/apkSignature/apkV1Signature.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { zipPackageFormatForPath } from "../domain/zipPackageFormat.js";
@@ -54,47 +56,28 @@ import {
   mapApkBlockError,
   mapApkSchemeError,
   mapCentralDirectoryError,
+  v1SignerCapacityError,
 } from "./apkSignatureFailures.js";
 import {
   APK_SIGNATURE_LIMITS,
   APK_SIGNATURE_PROVIDER_IDENTITY,
 } from "./ApkSignatureRelease.js";
+import {
+  certificateBytes,
+  certificateFacts,
+  type Certificate,
+} from "./apkCertificateFacts.js";
+import {
+  decodeV1Signer,
+  projectedV1SignerBytes,
+  v1SignerFacts,
+  type DecodedV1Signer,
+} from "./apkV1Signers.js";
 
 const OPERATION = "inspect_apk_signature";
 
-type Certificate =
-  ApkSignatureResult["schemes"]["v2"]["signers"][number]["certificate"];
 type Signer = ApkSignatureResult["schemes"]["v2"]["signers"][number];
 type SignerV3 = ApkSignatureResult["schemes"]["v3"]["signers"][number];
-
-/** SHA-256 over the raw embedded DER — exactly what apksig/apksigner hash. */
-const derFingerprint = (der: Uint8Array): string =>
-  createHash("sha256").update(der).digest("hex");
-
-/** Each fact is read independently so one unsupported field does not hide the rest. */
-const attempt = <T>(read: () => T): T | null => {
-  try {
-    return read();
-  } catch {
-    return null;
-  }
-};
-
-/** Identity is the raw-DER fingerprint; parsed X.509 facts are null when unreadable. */
-const certificateFacts = (der: Uint8Array): Certificate => {
-  const cert = attempt(() => new X509Certificate(Buffer.from(der)));
-  return {
-    sha256_fingerprint: derFingerprint(der),
-    subject: cert?.subject ?? null,
-    issuer: cert?.issuer ?? null,
-    serial_number: cert?.serialNumber ?? null,
-    not_before: cert ? attempt(() => cert.validFromDate.toISOString()) : null,
-    not_after: cert ? attempt(() => cert.validToDate.toISOString()) : null,
-    public_key_algorithm: cert
-      ? attempt(() => cert.publicKey.asymmetricKeyType ?? null)
-      : null,
-  };
-};
 
 /** Compares a signed digest with the recomputed content digest; null when not computable. */
 interface DigestMatcher {
@@ -186,17 +169,13 @@ const lineageOf = (
     : nodes;
 };
 
-/**
- * Estimated serialized size of one certificate's facts. RFC 2253-escaped DNs
- * can reach ~2.6x the DER once JSON-escaped, hence 3x; this is an admission
- * estimate — the exact serialized re-check below is authoritative.
- */
-const certificateBytes = (der: Uint8Array | undefined): number =>
-  256 + 3 * (der?.length ?? 0);
-
 /** Project the result size from decoded counts before materialising any of it. */
-const projectedOutputBytes = (schemes: readonly DecodedScheme[]): number => {
+const projectedOutputBytes = (
+  schemes: readonly DecodedScheme[],
+  v1: readonly DecodedV1Signer[],
+): number => {
   let total = 4096;
+  for (const signer of v1) total += projectedV1SignerBytes(signer);
   for (const scheme of schemes)
     for (const { signer, rotation } of scheme.signers) {
       total += 128 + certificateBytes(signer.certificates[0]);
@@ -340,14 +319,9 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     const block = locateApkSigningBlock(bytes, tail.value);
     if (!block.ok) return err(mapApkBlockError(block.error, artifact.path));
 
-    const names = centralDirectoryV1SignatureNames(
-      bytes,
-      tail.value.centralDirectoryOffset,
-      tail.value.centralDirectorySize,
-      tail.value.totalEntries,
-    );
-    if (!names.ok) return err(mapCentralDirectoryError(names.error));
-    const v1 = detectV1Signature(names.value);
+    const v1Read = readV1(bytes, tail.value, block.value);
+    if (!v1Read.ok) return v1Read;
+    const { v1, decoded: v1Decoded } = v1Read.value;
 
     const v2 = decodeScheme(block.value, APK_BLOCK_ID.signatureV2, "v2");
     if (!v2.ok) return err(v2.error);
@@ -357,7 +331,10 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     if (!v31.ok) return err(v31.error);
 
     // Account for representation expansion before allocating the report.
-    const projected = projectedOutputBytes([v2.value, v3.value, v31.value]);
+    const projected = projectedOutputBytes(
+      [v2.value, v3.value, v31.value],
+      v1Decoded,
+    );
     if (projected > APK_SIGNATURE_LIMITS.outputBytes)
       return err(apkOutputBudgetError(projected));
 
@@ -366,6 +343,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
       tail.value,
       block.value?.blockStart ?? null,
     );
+    const v1signers = v1Decoded.map(v1SignerFacts);
     const v2signers = v2.value.signers.map((s) =>
       baseSigner(s.signer, matcher),
     );
@@ -391,6 +369,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
           has_manifest: v1.hasManifest,
           signature_files: [...v1.signatureFiles],
           block_files: [...v1.blockFiles],
+          signers: v1signers,
         },
         v2: { present: v2.value.present, signers: v2signers },
         v3: { present: v3.value.present, signers: v3signers },
@@ -407,6 +386,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
         schemeSignerFingerprints: [v2signers, v3signers, v31signers].map(
           signerFingerprintsOf,
         ),
+        v1SignerFingerprints: signerFingerprintsOf(v1signers),
         lineageFingerprints,
         lineageUnknown,
         selfConsistent: selfConsistency([
@@ -437,6 +417,38 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     );
   }
 }
+
+/**
+ * v1 signing from the central directory, with each paired block decoded. A
+ * directory that cannot be walked leaves v1 unknown and is refused.
+ */
+const readV1 = (
+  bytes: Uint8Array,
+  tail: ZipTail,
+  block: ApkSigningBlock | null,
+): Result<
+  { readonly v1: ApkV1Signature; readonly decoded: DecodedV1Signer[] },
+  AnalysisError
+> => {
+  const entries = centralDirectoryV1SignatureEntries(
+    bytes,
+    tail.centralDirectoryOffset,
+    tail.centralDirectorySize,
+    tail.totalEntries,
+  );
+  if (!entries.ok) return err(mapCentralDirectoryError(entries.error));
+  const v1 = detectV1Signature(entries.value);
+  if (v1.signers.length > MAX_V1_SIGNERS)
+    return err(v1SignerCapacityError(MAX_V1_SIGNERS));
+  // Entry data lies before the signing block, or the directory without one.
+  const entriesEnd = block?.blockStart ?? tail.centralDirectoryOffset;
+  return ok({
+    v1,
+    decoded: v1.signers.map((signer) =>
+      decodeV1Signer(bytes, signer, entriesEnd),
+    ),
+  });
+};
 
 /** The declared stamp certificate, preferring the V2 stamp block as apksig does. */
 const sourceStampFacts = (

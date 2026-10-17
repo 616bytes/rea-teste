@@ -98,6 +98,15 @@ export const mapCentralDirectoryError = (
         `Malformed ZIP central directory at byte ${String(error.offset)}: ${error.detail}.`,
       );
 
+/** More v1 signers than a signed APK carries: refused rather than decoded. */
+export const v1SignerCapacityError = (limit: number): AnalysisError =>
+  new AnalysisResourceConstraintError(
+    OPERATION,
+    "capacity",
+    `The archive pairs more than ${String(limit)} v1 signature blocks with .SF files.`,
+    { max_v1_signers: limit },
+  );
+
 /** The decoded result would exceed the inline output budget. */
 export const apkOutputBudgetError = (projectedBytes: number): AnalysisError =>
   new AnalysisResourceConstraintError(

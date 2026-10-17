@@ -156,7 +156,7 @@ explicit path or endpoint and do not need it.
   See the [WASM guide](https://github.com/morluto/rea/blob/main/docs/wasm-artifacts.md).
 - Explicit local Android APK (or ZIP/AAB) signing: `inspect_apk_signature`.
   Reports which schemes are present (v1 JAR, v2, v3, v3.1), each signer's
-  certificate SHA-256 fingerprint, v3 key-rotation lineage, source stamp, and
+  certificate SHA-256 fingerprint (v1 included, from its PKCS#7 block), v3 key-rotation lineage, source stamp, and
   whether each signed digest still matches the bytes (self-consistency). This
   is identity and integrity, not a trust or authenticity verdict.
   See the [APK signature guide](https://github.com/morluto/rea/blob/main/docs/apk-signature.md).

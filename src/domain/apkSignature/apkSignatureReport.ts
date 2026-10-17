@@ -87,6 +87,40 @@ const signerV3 = signer.extend({
   }),
 });
 
+/**
+ * A v1 (JAR) signer: one signature block, its `.SF` partner and what the
+ * block's PKCS#7 SignedData declares. Nothing is verified.
+ */
+const v1Signer = z.strictObject({
+  signature_file: z.string(),
+  block_file: z.string(),
+  /**
+   * The certificate the block's one SignerInfo names (by issuerAndSerialNumber
+   * or subjectKeyIdentifier), with the same facts as a v2/v3 signer. Null when
+   * the block could not be decoded, has other than one SignerInfo, or its
+   * SignerInfo names no certificate the block carries (identity unknown).
+   */
+  certificate,
+  /** Every certificate the SignedData carries, in block order. */
+  certificates: z.array(
+    z.strictObject({
+      sha256_fingerprint: digest,
+      subject: z.string().nullable(),
+    }),
+  ),
+  signer_infos: z.array(
+    z.strictObject({
+      identified_by: z.enum(["issuer-and-serial", "subject-key-identifier"]),
+      /** The named certificate's fingerprint; null when none in the block matches. */
+      certificate_sha256: digest.nullable(),
+      digest_algorithm_oid: z.string(),
+      signature_algorithm_oid: z.string(),
+    }),
+  ),
+  /** Why the block could not be read (malformed, unsupported or over a bound); never silently empty. */
+  decode_error: z.string().nullable(),
+});
+
 const SCHEME = z.enum(["none", "v1", "v2", "v3", "v3.1"]);
 
 export const apkSignatureResultSchema = z.strictObject({
@@ -102,6 +136,8 @@ export const apkSignatureResultSchema = z.strictObject({
       has_manifest: z.boolean(),
       signature_files: z.array(z.string()),
       block_files: z.array(z.string()),
+      /** Signature blocks paired with their `.SF` file, in central-directory order. */
+      signers: z.array(v1Signer),
     }),
     v2: z.strictObject({ present: z.boolean(), signers: z.array(signer) }),
     v3: z.strictObject({ present: z.boolean(), signers: z.array(signerV3) }),
@@ -142,6 +178,13 @@ export const apkSignatureResultSchema = z.strictObject({
      * a declared lineage could not be decoded.
      */
     signer_change_declared_by_rotation: z.boolean().nullable(),
+    /**
+     * Observed: the set of v1 signer certificates equals the signer set of the
+     * lowest present block scheme with signers (v2, else v3, else v3.1). False
+     * is notable: the JAR signature names a different key. Null when v1 or a
+     * block scheme is absent, or any signer's identity is unknown.
+     */
+    v1_signers_match_block_signers: z.boolean().nullable(),
     rotation_present: z.boolean(),
     source_stamp_present: z.boolean(),
     strongest_scheme: SCHEME,
@@ -159,7 +202,8 @@ export const APK_SIGNATURE_LIMITATIONS: readonly string[] = [
   "Static structural inspection only. No Android code executes, no device or adb is involved, and odex/vdex/oat/cdex are not read.",
   "No signature is verified: signer, rotation-lineage and source-stamp signatures are NOT cryptographically checked, and certificate chains, revocation and authenticity are NOT evaluated. Certificates and lineages are what the APK declares.",
   "matches_apk and self_consistent only show that the declared content digest equals the digest of the current bytes. This is not a signature verification: anyone who changes the bytes can recompute the digest and write it into the signed data. SHA-256 identifies the exact bytes, not the producer.",
-  "Not read: v1 signer certificates (PKCS#7), v4 .apk.idsig, verity digests (matches_apk null), and the v1 X-Android-APK-Signed marker, so v1_only cannot distinguish a v1-only APK from one whose v2/v3 block was removed.",
+  "v1 signers are what each signature block's PKCS#7 SignedData declares: its signatures, the .SF and MANIFEST.MF digests and entry coverage are NOT verified.",
+  "Not read: v4 .apk.idsig, verity digests (matches_apk null), and the v1 X-Android-APK-Signed marker, so v1_only cannot distinguish a v1-only APK from one whose v2/v3 block was removed.",
 ];
 
 /** Inputs to the pure posture derivation (scheme presence + agreement facts). */
@@ -175,6 +219,8 @@ export interface ApkPostureInput {
    * `null` for a signer that carries no certificate (identity unknown).
    */
   readonly schemeSignerFingerprints: readonly (readonly (string | null)[])[];
+  /** Per v1 signer, the certificate its SignerInfo names; `null` when unknown. */
+  readonly v1SignerFingerprints: readonly (string | null)[];
   /** Fingerprints of every certificate in the declared v3/v3.1 rotation lineage(s). */
   readonly lineageFingerprints: readonly string[];
   /** True when any declared v3/v3.1 lineage could not be decoded. */
@@ -196,6 +242,19 @@ const signerChangeDeclared = (
   if (signers.size <= 1) return false;
   if ([...signers].every((fp) => lineage.has(fp))) return true;
   return lineageUnknown ? null : false;
+};
+
+/** v1 against the lowest block scheme with signers; unknown identity stays unknown. */
+const v1MatchesBlockSigners = (
+  v1: readonly (string | null)[],
+  blockSets: readonly (readonly (string | null)[])[],
+): boolean | null => {
+  const lowest = blockSets[0];
+  if (v1.length === 0 || lowest === undefined) return null;
+  if (v1.includes(null) || lowest.includes(null)) return null;
+  return (
+    setKey(v1 as readonly string[]) === setKey(lowest as readonly string[])
+  );
 };
 
 /** Derive the conservative signing posture from observed and declared scheme facts. */
@@ -233,6 +292,9 @@ export const deriveApkPosture = (
       lineage,
       input.lineageUnknown,
     ),
+    v1_signers_match_block_signers: input.v1Present
+      ? v1MatchesBlockSigners(input.v1SignerFingerprints, sets)
+      : null,
     rotation_present: input.rotationPresent,
     source_stamp_present: input.sourceStampPresent,
     strongest_scheme: strongest,

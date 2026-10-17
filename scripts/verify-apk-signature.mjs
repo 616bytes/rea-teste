@@ -174,6 +174,13 @@ const oracleVerify = async (apk) => {
     return { verifies: false };
   }
 };
+/** The JDK's view of the v1 (JAR) signer certificates, leaf first per signer. */
+const oracleJarSigners = async (apk) => {
+  const { stdout } = await run(keytool, ["-printcert", "-jarfile", apk]);
+  return [...stdout.matchAll(/SHA256: ([0-9A-F:]{95})/g)].map((m) =>
+    m[1].replaceAll(":", "").toLowerCase(),
+  );
+};
 const oracleLineage = async (apk) => {
   const { stdout } = await run(apksigner, [
     "lineage",
@@ -381,6 +388,50 @@ try {
   assert.equal(v1Report.schemes.v2.present, false);
   assert.equal(v1Report.posture.v1_only, true);
   assert.equal(v1Report.posture.strongest_scheme, "v1");
+  /** REA's declared v1 signer must be the certificate apksigner and keytool name. */
+  const assertV1Signer = async (apk, report, expected) => {
+    const [signer, ...rest] = report.schemes.v1.signers;
+    assert.equal(rest.length, 0, "one v1 signer");
+    assert.equal(signer.decode_error, null, signer.decode_error ?? "");
+    assert.equal(signer.certificate?.sha256_fingerprint, expected);
+    assert.deepEqual(
+      signer.certificates.map((c) => c.sha256_fingerprint),
+      await oracleJarSigners(apk),
+      "REA v1 certificates must equal keytool -printcert -jarfile",
+    );
+    assert.equal(signer.signer_infos[0]?.certificate_sha256, expected);
+    assert.ok(signer.certificate?.subject, "v1 signer subject");
+  };
+  await assertV1Signer(v1only, v1Report, v1Oracle.signerSha256);
+  assert.equal(v1Report.posture.v1_signers_match_block_signers, null);
+
+  // 2b) v1 with an EC key: the block is CERT.EC (or the alias-named .EC).
+  const v1ec = join(workspace, "v1ec.apk");
+  await run(apksigner, [
+    "sign",
+    ...ks("k2"),
+    "--v2-signing-enabled",
+    "false",
+    "--v3-signing-enabled",
+    "false",
+    "--out",
+    v1ec,
+    legacyBase,
+  ]);
+  const v1ecOracle = await oracleVerify(v1ec);
+  const v1ecReport = await inspectBoth(v1ec);
+  assert.ok(v1ecReport.schemes.v1.signers[0].block_file.endsWith(".EC"));
+  await assertV1Signer(v1ec, v1ecReport, v1ecOracle.signerSha256);
+
+  // 2c) Default signing of a legacy-target APK carries v1, v2 and v3 with one
+  //     key: the v1 signer equals the block signers.
+  const legacyFull = join(workspace, "legacy-full.apk");
+  await run(apksigner, ["sign", ...ks("k1"), "--out", legacyFull, legacyBase]);
+  const legacyOracle = await oracleVerify(legacyFull);
+  assert.equal(legacyOracle.v1, true, "oracle should verify v1 too");
+  const legacyReport = await inspectBoth(legacyFull);
+  await assertV1Signer(legacyFull, legacyReport, legacyOracle.signerSha256);
+  assert.equal(legacyReport.posture.v1_signers_match_block_signers, true);
 
   // 3) Key rotation: lineage certificates and a signer change the APK declares.
   const lineage = join(workspace, "lineage.bin");
@@ -426,6 +477,35 @@ try {
       (n) => n.capabilities.installed_data,
     ),
     [true, true],
+  );
+
+  // 3a) Rotation on a legacy-target APK: v1 and v2 keep the old key, v3 the
+  //     new one. v1 is compared with v2 (the lowest block scheme), so the
+  //     rotation does not read as a JAR-signer mismatch.
+  const rotatedLegacy = join(workspace, "rotated-legacy.apk");
+  await run(apksigner, [
+    "sign",
+    ...ks("k1"),
+    "--next-signer",
+    ...ks("k2"),
+    "--lineage",
+    lineage,
+    "--rotation-min-sdk-version",
+    "28",
+    "--out",
+    rotatedLegacy,
+    legacyBase,
+  ]);
+  const rotatedLegacyReport = await inspectBoth(rotatedLegacy);
+  await assertV1Signer(
+    rotatedLegacy,
+    rotatedLegacyReport,
+    fullOracle.signerSha256,
+  );
+  assert.equal(rotatedLegacyReport.posture.schemes_agree_on_signer, false);
+  assert.equal(
+    rotatedLegacyReport.posture.v1_signers_match_block_signers,
+    true,
   );
 
   // 3b) Rotation targeting SDK 33 is carried by v3.1; v3 keeps the original signer.

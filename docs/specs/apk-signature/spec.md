@@ -16,6 +16,13 @@ code executes, no device or `adb`, no acquisition, no mutation.
 - v1 (JAR) signing detected from the central directory as apksig selects it:
   `META-INF/` entries at any depth ending in `.SF` or `.RSA`/`.DSA`/`.EC`
   (case-sensitive), present only when a block has its matching `.SF`.
+- Each paired v1 block's PKCS#7 `SignedData` read with bounded DER (BER
+  indefinite lengths accepted): every carried certificate, and per
+  `SignerInfo` the certificate it names by `issuerAndSerialNumber` or
+  `subjectKeyIdentifier` plus its digest/signature algorithm OIDs. The signer
+  `certificate` goes through the same X.509 owner as v2/v3; it is `null` when
+  there is not exactly one `SignerInfo` or it names no carried certificate. A
+  block that cannot be read carries `decode_error`, never an absent signer.
 - The APK Signing Block located from the ZIP end-of-central-directory (Zip64
   followed) and framed into id-value pairs; v2, v3 and v3.1 signers decoded:
   digests by signature-algorithm id, X.509 certificate DER, v3 min/max SDK,
@@ -38,7 +45,9 @@ code executes, no device or `adb`, no acquisition, no mutation.
   `schemes_agree_on_signer` compares each block scheme's signer certificate
   _set_; `signer_change_declared_by_rotation` says whether every differing
   signer appears in a declared lineage (`null` when identity or a needed
-  lineage is unknown). Also `v1_only` (which cannot distinguish a v1-only APK
+  lineage is unknown); `v1_signers_match_block_signers` compares the v1
+  signer set with the lowest block scheme that has signers (v2, else v3,
+  else v3.1), `null` when either side's identity is unknown. Also `v1_only` (which cannot distinguish a v1-only APK
   from one whose v2/v3 block was removed, since `X-Android-APK-Signed` is not
   read), strongest scheme, rotation and source-stamp presence.
 - Unknown is never reported as absent: a central directory that cannot be
@@ -56,9 +65,12 @@ claim. A full verifier would be a separate scope decision.
 
 One bounded read of the archive (512 MiB cap, no-follow, change-detected).
 Every ZIP-tail and signing-block size/offset is checked against the buffer.
-Signers per scheme and lineage nodes are capped at 32 (format-justified: one
-node per rotation, one v3 signer per SDK range); pairs and per-signer elements
-at 4096. The result size is projected from decoded counts before
+Signers per scheme, v1 signers and lineage nodes are capped at 32
+(format-justified: one node per rotation, one v3 signer per SDK range; apksig
+accepts at most 10 v1 signers); pairs and per-signer elements at 4096. Each v1
+block inflates to at most 1 MiB (bounded by the inflater, not by the declared
+size), and its DER is read within 32 nesting levels and 65,536 elements, with
+at most 32 certificates and 32 `SignerInfo`s. The result size is projected from decoded counts before
 materialisation (an estimate), and the exact serialized size is checked against
 the 8 MiB output budget (authoritative); over-budget is a capacity refusal, not
 truncation. The content digest is
@@ -71,9 +83,9 @@ a follow-up).
 ## Verification
 
 `npm run verify:apk-signature` (Android SDK `apksigner` + `aapt2`, JDK
-`keytool`): builds a real minimal APK, signs default v2+v3, v1-only, a rotated
-lineage, rotation carried by v3.1, a source stamp and a copy with one changed byte, and cross-checks REA against `apksigner verify` and
-`apksigner lineage` through CLI and MCP in Evidence parity, with the advertised
+`keytool`): builds a real minimal APK, signs default v2+v3, v1-only (RSA and
+EC), v1+v2+v3 on a legacy target, a rotated lineage with and without v1, rotation carried by v3.1, a source stamp and a copy with one changed byte, and cross-checks REA against `apksigner verify`,
+`apksigner lineage` and `keytool -printcert -jarfile` through CLI and MCP in Evidence parity, with the advertised
 schema validated. SDK-free unit and adapter tests cover framing (including Zip64
 and damaged archives), signer and lineage decoding with caps, the digest
 algorithm (including a pooled-Buffer regression), set-based posture, the output

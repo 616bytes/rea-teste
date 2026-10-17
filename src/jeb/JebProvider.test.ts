@@ -11,6 +11,7 @@ import {
   AnalysisInputError,
   AnalysisProtocolError,
   AnalysisCancelledError,
+  AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jebResultSchemas } from "../domain/jeb/jebAnalysis.js";
@@ -392,9 +393,14 @@ it("forwards in-flight cancellation to the MCP call", async () => {
     async call(_name, _args, signal) {
       entered();
       await new Promise<void>((_resolve, reject) =>
-        signal!.addEventListener("abort", () => reject(signal!.reason), {
-          once: true,
-        }),
+        signal!.addEventListener(
+          "abort",
+          () =>
+            reject(
+              new AnalysisCancelledError(_name, { cause: signal!.reason }),
+            ),
+          { once: true },
+        ),
       );
       return {};
     },
@@ -407,7 +413,10 @@ it("forwards in-flight cancellation to the MCP call", async () => {
   controller.abort();
   const result = await pending;
   expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  if (!result.ok) {
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(controller.signal.reason);
+  }
 });
 
 it("refreshes cached unknown metadata only through an explicit information probe", async () => {
@@ -478,6 +487,32 @@ it("keeps concurrent client inspections bound to their own parsed metadata", asy
         },
       });
     }
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves provider-authored timeout guidance when projecting the requested operation", async () => {
+  const reason = new Error("selected deadline elapsed");
+  const timeout = new AnalysisTimeoutError("list_units", 123, {
+    cause: reason,
+    userMessage: "The selected MCP request budget elapsed.",
+    remediationAction: "Increase the selected MCP request budget.",
+  });
+  const provider = providerWith(scriptedConnection({ list_units: timeout }));
+  try {
+    const result = await provider.execute({
+      operation: "list_jeb_units",
+      input: { count: 2, index: 0 },
+    });
+    if (result.ok) throw new Error("Timed-out request passed");
+    expect(result.error).toMatchObject({
+      operation: "list_jeb_units",
+      timeoutMs: 123,
+      userMessage: timeout.userMessage,
+      remediationAction: timeout.remediationAction,
+    });
+    expect(result.error.cause).toBe(reason);
   } finally {
     await provider.close();
   }

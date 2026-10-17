@@ -379,11 +379,6 @@ installation both use npm's configured registry. Bun global updates require
 Bun 1.2.17 or later, which introduced `bun info`. The updater checks `bun --version`
 first and stops with an instruction to upgrade Bun manually if the version is
 older or cannot be parsed; it does not upgrade Bun itself.
-metadata queries retain at most 2 MiB per output stream and fail explicitly if
-the reply exceeds that budget. installation commands drain to completion and
-retain 64 KiB of head/tail diagnostics per stream, marking omitted output on
-failure. terminal mode streams the complete output to stderr with backpressure;
-JSON output stays isolated from package-manager logs.
 For supported Bun global installations, `bun info` and
 `bun add --global --ignore-scripts` use Bun's configured registry
 and run inside the owning Bun global directory (`BUN_INSTALL_GLOBAL_DIR`, else

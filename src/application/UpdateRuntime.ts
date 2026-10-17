@@ -3,6 +3,8 @@ import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import spawn from "cross-spawn";
+import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
+import { UpdateCommandProgress } from "./UpdateCommandProgress.js";
 import { lt, valid } from "semver";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
@@ -20,11 +22,6 @@ import {
 } from "./Update.js";
 import { planIntegrationMaintenance } from "./UpdateMaintenance.js";
 import { withoutPackageRunnerIdentity } from "./ClientRegistrationIdentity.js";
-import { collectBoundedCommandOutput } from "../process/ExecFileBoundedOutput.js";
-
-// metadata remains complete; install logs need only bounded failure diagnostics.
-const COMPLETE_OUTPUT_BYTES = 2 * 1024 * 1024;
-const INSTALL_DIAGNOSTIC_BYTES = 64 * 1024;
 
 /** npm filesystem queries used to identify the installation being updated. */
 export interface NpmInstallationHost {
@@ -39,19 +36,33 @@ export interface BunInstallationHost {
   isFile(path: string): Promise<boolean>;
 }
 
-/** drain updater commands with bounded diagnostics and isolated machine output. */
-export const runUpdateCommand = async (
+/** Aggregate raw-byte retention policy for package-manager replies and diagnostics. */
+export const UPDATE_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
+
+/** Complete metadata queries share launch and collection with diagnostic-only installs. */
+export const runUpdateCommand = (
   command: readonly string[],
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   output: UpdateOutput = "structured",
   workingDirectory: string | undefined = undefined,
-  capture: "complete" | "diagnostics" = "complete",
+): Promise<Result<string, string>> =>
+  runUpdateProcess(
+    command,
+    selectedEnvironment,
+    output,
+    workingDirectory,
+    "complete",
+  );
+
+const runUpdateProcess = async (
+  command: readonly string[],
+  selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
+  output: UpdateOutput,
+  workingDirectory: string | undefined,
+  retention: "complete" | "diagnostics",
 ): Promise<Result<string, string>> => {
   const [executable, ...args] = command;
-  if (executable === undefined) {
-    return err("no executable supplied.");
-  }
-  // A fresh installed entry point must not inherit a package runner's invocation identity.
+  if (executable === undefined) return err("No executable supplied.");
   const environment = withoutPackageRunnerIdentity(selectedEnvironment);
   const child = spawn(executable, args, {
     stdio: ["ignore", "pipe", "pipe"],
@@ -59,26 +70,65 @@ export const runUpdateCommand = async (
     windowsHide: true,
     ...(workingDirectory === undefined ? {} : { cwd: workingDirectory }),
   });
-  const limit =
-    capture === "complete" ? COMPLETE_OUTPUT_BYTES : INSTALL_DIAGNOSTIC_BYTES;
-  const result = await collectBoundedCommandOutput(child, {
-    limit,
-    ...(output === "human" ? { forward: process.stderr } : {}),
-  });
-  if (result.failure !== undefined) return err(result.failure.message);
-  const exit = `process exited with status ${String(result.exitCode)}.`;
-  if (result.exitCode !== 0)
-    return err(
-      (result.stderr.trim() || result.stdout.trim() || exit) +
-        (result.outputTruncated
-          ? `\noutput budget exceeded; diagnostics are incomplete; ${exit}`
-          : ""),
-    );
-  if (capture === "complete" && result.outputTruncated)
-    return err(
-      `update command output budget exceeded (${String(limit)} bytes per stream; stdout ${String(result.stdoutBytes)} bytes, stderr ${String(result.stderrBytes)} bytes); complete metadata is unavailable; ${exit}`,
-    );
-  return ok(result.stdout.trim());
+  let processFailure: string | undefined;
+  const supervisor = new ProviderProcessSupervisor(
+    { process: child, ownsProcessLifetime: true },
+    {
+      maxDiagnosticBytes: UPDATE_COMMAND_OUTPUT_BYTES,
+      onDiagnostic: (event) => {
+        if (event.type === "error") processFailure ??= event.message;
+      },
+    },
+  );
+  const progress =
+    output === "human" ? new UpdateCommandProgress(process.stderr) : undefined;
+  if (progress !== undefined) {
+    for (const stream of [child.stdout, child.stderr])
+      if (stream !== null) progress.pipe(stream);
+  }
+  try {
+    // Drain even an oversized reply. Verbosity must not interrupt a package install.
+    // Keep the existing launch/signal policy; this collector owns no process-tree authority.
+    await supervisor.waitForOutputClose();
+    const progressFailure = await progress?.close();
+    const snapshot = supervisor.snapshot();
+    if (processFailure !== undefined) return err(processFailure);
+    if (snapshot.outputIncomplete === true)
+      return err("Update command output did not close completely.");
+    if (retention === "complete" && snapshot.diagnosticTruncated === true)
+      return err(
+        `Update command output exceeded the ${UPDATE_COMMAND_OUTPUT_BYTES}-byte complete-output retention budget; reply was not accepted.`,
+      );
+    if (snapshot.exitCode !== 0 || snapshot.signal !== null) {
+      const detail =
+        snapshot.stderr.text.trim() ||
+        snapshot.stdout.text.trim() ||
+        (typeof snapshot.signal === "string"
+          ? `Process terminated by ${snapshot.signal}.`
+          : typeof snapshot.exitCode === "number"
+            ? `Process exited with code ${snapshot.exitCode}.`
+            : "Update command failed without a recorded exit status.");
+      return err(
+        snapshot.diagnosticTruncated
+          ? `${detail}\n[Update diagnostics truncated at ${UPDATE_COMMAND_OUTPUT_BYTES} bytes; later output omitted.]`
+          : detail,
+      );
+    }
+    if (
+      retention === "complete" &&
+      (snapshot.stdout.invalidUtf8 || snapshot.stderr.invalidUtf8)
+    )
+      return err(
+        "Update command returned invalid UTF-8; complete output is unavailable.",
+      );
+    if (progressFailure !== undefined)
+      return err(`Update progress output failed: ${progressFailure.message}`);
+    return ok(retention === "diagnostics" ? "" : snapshot.stdout.text.trim());
+  } finally {
+    // Reached only after physical close; no child or inherited pipe remains pending.
+    supervisor.dispose();
+    await progress?.close();
+  }
 };
 
 const requireCommandOutput = async (
@@ -339,7 +389,7 @@ export const systemUpdateHost = (
     },
     installVersion: async (installation, version, output) => {
       const context = packageManagerContext(installation, environment);
-      const result = await runUpdateCommand(
+      const result = await runUpdateProcess(
         updateInstallCommand(installation, version),
         context.environment,
         output,

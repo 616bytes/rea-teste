@@ -105,8 +105,6 @@ export interface LinuxPackageInstallFailure {
   readonly stderr: string;
   /** Whether the command produced more output than was retained. */
   readonly outputTruncated: boolean;
-  /** a physical exit can succeed while collecting its diagnostics fails. */
-  readonly collectionFailure?: string;
 }
 
 /** Whether the package-manager step installed the verified package. */
@@ -519,7 +517,7 @@ const installSystemPackage = async (
         limit: PACKAGE_MANAGER_OUTPUT_BYTES,
       },
     );
-    if (output.exitCode !== 0 || output.failure !== undefined) {
+    if (output.exitCode !== 0) {
       return {
         status: "failed",
         failure: {
@@ -530,9 +528,6 @@ const installSystemPackage = async (
           stdout: output.stdout,
           stderr: output.stderr,
           outputTruncated: output.outputTruncated,
-          ...(output.failure === undefined
-            ? {}
-            : { collectionFailure: output.failure.message }),
         },
       };
     }

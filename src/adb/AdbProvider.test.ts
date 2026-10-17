@@ -845,6 +845,16 @@ it.each([
   ],
   ["pull_adb_file", "error: device unauthorized", "emulator-5554"],
   [
+    "pull_adb_file",
+    "* daemon not running. starting it now on port 5037 *\r\n* daemon started successfully *\r\nerror: device offline",
+    "emulator-5554",
+  ],
+  [
+    "pull_adb_file",
+    "* daemon started successfully *\r\nerror: device 'emulator-5554' not found",
+    "emulator-5554",
+  ],
+  [
     "push_adb_file",
     "adb: error: connect failed: device offline",
     "emulator-5554",
@@ -859,7 +869,7 @@ it.each([
 if [ "$1" != "-s" ] || [ "$2" != "emulator-5554" ]; then exit 91; fi
 if [ "$3" = "shell" ] && [ "$4" = "test" ] && [ "$6" = "/sdcard/unauthorized.bin" ]; then exit 1; fi
 if [ "$3:$4" = "pull:/sdcard/unauthorized.bin" ] || [ "$3:$5" = "push:/sdcard/unauthorized.bin" ]; then
-  printf '%s\\n' '${reason}' >&2
+  printf '%s\\n' '${reason.replaceAll("'", "'\\''")}' >&2
   exit 1
 fi
 exit 91`,

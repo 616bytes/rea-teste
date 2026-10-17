@@ -17,6 +17,7 @@ import {
   type ExecFileOutputFailure,
 } from "../process/ExecFileOutput.js";
 import { packageChangeFailureReason } from "./AdbShellOutput.js";
+import { isSuccessfulDaemonStartNotice } from "./AdbDeviceOutput.js";
 
 const STDERR_EXCERPT_BYTES = 512;
 
@@ -124,11 +125,20 @@ export const runAdbCapture = async (
       );
     const excerpt = failure.stderr.trim().slice(0, STDERR_EXCERPT_BYTES);
     // Device-state words inside a reported file name are not device verdicts.
-    const diagnostic = excerpt
-      .replace(
-        /^(?:\* daemon (?:not running; starting now at [^\r\n]*|started successfully)\r?\n)*/u,
-        "",
+    const diagnosticLines = excerpt.split(/\r?\n/u);
+    while (diagnosticLines.length > 0) {
+      const line = diagnosticLines[0]!.trimEnd();
+      if (
+        !isSuccessfulDaemonStartNotice(line) &&
+        !/^\* daemon not running(?:; starting now at [^\r\n]*|\. starting it now on port \d+ \*)$/u.test(
+          line,
+        )
       )
+        break;
+      diagnosticLines.shift();
+    }
+    const diagnostic = diagnosticLines
+      .join("\n")
       .replace(
         /^(?:adb:\s*)?(?:error:\s*)?(?:(?:failed to get feature set|connect failed):\s*)?/iu,
         "",

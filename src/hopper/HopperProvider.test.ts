@@ -66,4 +66,25 @@ describe("Hopper provider capabilities", () => {
       expect(support.reason).toContain("Ghidra");
     }
   });
+  it("declines SPARC targets with a Ghidra-directed reason", () => {
+    const config = parseConfig({});
+    if (!config.ok) throw new Error("expected valid configuration");
+    const provider = new HopperProvider(config.value, silentLogger, {});
+    const support = provider.inspectTargetSupport({
+      path: "/tmp/sparcv9-bin",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "elf",
+      architecture: "sparc",
+      availableArchitectures: ["sparc"],
+    });
+    expect(support).toMatchObject({
+      status: "unsupported",
+      code: "architecture_unsupported",
+      reason: expect.stringContaining("SPARC"),
+    });
+    if (support.status === "unsupported") {
+      expect(support.reason).toContain("Ghidra");
+    }
+  });
 });

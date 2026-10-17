@@ -40,6 +40,9 @@ it.each([
   'let box = {}; const first = box; box = {}; box.p = Map.prototype; patch(first); new Map().get("/accounts")',
   'const box = {}; box.a = {}; box.a.p = Map.prototype; box.safe = {}; patch(box.safe); new Map().get("/accounts")',
   'const records = new Map(); records.get = fetch; new Map().get("/accounts")',
+  'const holder = { get prototype() { return Map.prototype; } }; new Map().get("/accounts")',
+  'const holder = { get selected() { return {}; }, get other() { return Map.prototype; } }; holder.selected.get = fetch; new Map().get("/accounts")',
+  'function Map() {} new Map().constructor.prototype.get = fetch; globalThis.Map.prototype; new globalThis.Map().get("/accounts")',
   'const factory = { make() { return {}; } }; factory.make = () => ({}); patch(factory.make()); new Map().get("/accounts")',
 ])("omits a proven Map operation: %s", (source) => {
   expect(analyzeJavaScriptStaticSource(source).endpoints).toEqual([]);
@@ -78,6 +81,13 @@ it.each([
   'function expose(box) { box.prototype = Map.prototype; } new Map().get("/accounts")',
   'const factory = { make() { return Map.prototype; } }; factory.make().get = fetch; new Map().get("/accounts")',
   'new Map().__proto__.get = fetch; new Map().get("/accounts")',
+  'new Map().constructor.prototype.get = fetch; new Map().get("/accounts")',
+  'Object.getPrototypeOf(new Map()).constructor.prototype.get = fetch; new Map().get("/accounts")',
+  'const holder = { get prototype() { return Map.prototype; } }; holder.prototype.get = fetch; new Map().get("/accounts")',
+  'const holder = { get ["prototype"]() { return { nested: Map.prototype }; } }; holder.prototype.nested.get = fetch; new Map().get("/accounts")',
+  'const holder = { get prototype() { return Map.prototype; } }; patch(holder); new Map().get("/accounts")',
+  'function store() { box.child.prototype = Map.prototype; } const box = {}; const inner = {}; box.child = inner; store(); patch(inner); new Map().get("/accounts")',
+  'function store() { box.child.next.prototype = Map.prototype; } const box = {}; const middle = {}; const inner = {}; middle.next = inner; box.child = middle; store(); patch(inner); new Map().get("/accounts")',
   'const records = new Map(); Object.getPrototypeOf(records).get = fetch; new Map().get("/accounts")',
   'const getPrototype = Reflect.getPrototypeOf; getPrototype(new Map()).get = fetch; new Map().get("/accounts")',
   'patch(() => Map.prototype); new Map().get("/accounts")',

@@ -15,6 +15,8 @@ import {
 
 /** One source owns sites and the minimal scope tree reaching them; O(AST) storage. */
 export interface JavaScriptOpaqueScopeEffects {
+  /** Cheap source evidence collected with declarations, before alias queries. */
+  mayReferenceGlobalEval: boolean;
   readonly sites: WeakSet<t.Node>;
   readonly sloppySites: WeakSet<t.Node>;
   readonly byScope: Map<string, t.CallExpression[]>;
@@ -24,34 +26,14 @@ export interface JavaScriptOpaqueScopeEffects {
 
 export const indexSemanticOpaqueEffects = (
   candidates: readonly {
-    node: t.CallExpression | t.OptionalCallExpression;
+    node: t.CallExpression;
     scopeId: string;
   }[],
   state: JavaScriptSemanticAnalysisState,
 ): void => {
-  if (candidates.length === 0) return;
-  const ambientPaths = createAmbientPathResolver(state, true);
-  let invocationSite: t.Node | undefined;
-  const interop = createSemanticModuleInterop(state, {
-    intrinsicPath: (node) => {
-      const paths = ambientPaths(node, invocationSite);
-      const path = paths.find((path) => path[1] === "eval") ?? paths[0];
-      if (path?.[0] !== "global" || path.some((key) => key === null))
-        return undefined;
-      // Keep the global callable owner for generic call/apply/bind resolution.
-      return path[1] === "eval"
-        ? ["intrinsic", ...(path as readonly string[])]
-        : ["intrinsic", ...(path.slice(1) as readonly string[])];
-    },
-  });
   for (const { node, scopeId } of candidates) {
-    invocationSite = node;
-    const invocation = interop.intrinsicInvocation(node);
-    if (invocation?.path.join(".") === "intrinsic.global.eval")
-      state.opaqueEffects.globalSites.push(node);
     const callee = unwrapJavaScriptExpression(node.callee).node;
-    if (!t.isCallExpression(node) || !isUnshadowedGlobal(callee, state, "eval"))
-      continue;
+    if (!isUnshadowedGlobal(callee, state, "eval")) continue;
     state.opaqueEffects.sites.add(node);
     if (!strictEval(node, state)) state.opaqueEffects.sloppySites.add(node);
     const sites = state.opaqueEffects.byScope.get(scopeId) ?? [];
@@ -68,6 +50,35 @@ export const indexSemanticOpaqueEffects = (
       scope = state.scopesById.get(scope.parentScopeId);
     }
   }
+};
+
+/** The existing ambient invocation walk owns global effects; ordinary sources
+ * neither retain a second call list nor create another alias resolver. */
+export const createSemanticOpaqueGlobalObserver = (
+  state: JavaScriptSemanticAnalysisState,
+): ((node: t.Node) => void) | undefined => {
+  if (!state.opaqueEffects.mayReferenceGlobalEval) return undefined;
+  const ambientPaths = createAmbientPathResolver(state, true);
+  let invocationSite: t.Node | undefined;
+  const interop = createSemanticModuleInterop(state, {
+    intrinsicPath: (node) => {
+      const paths = ambientPaths(node, invocationSite);
+      const path = paths.find((path) => path[1] === "eval") ?? paths[0];
+      if (path?.[0] !== "global" || path.some((key) => key === null))
+        return undefined;
+      // Keep the global callable owner for generic call/apply/bind resolution.
+      return path[1] === "eval"
+        ? ["intrinsic", ...(path as readonly string[])]
+        : ["intrinsic", ...(path.slice(1) as readonly string[])];
+    },
+  });
+  return (node) => {
+    if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
+    invocationSite = node;
+    const invocation = interop.intrinsicInvocation(node);
+    if (invocation?.path.join(".") === "intrinsic.global.eval")
+      state.opaqueEffects.globalSites.push(node);
+  };
 };
 
 /** Indirect eval can change globals, but cannot rebind its caller's locals. */

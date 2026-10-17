@@ -12,6 +12,8 @@ it.each([
   'function patch() { eval("Map.prototype.get = fetch"); } patch(); new Map().get("/accounts");',
   'for (const item of [1, 2]) { new Map().get("/accounts"); eval("Map.prototype.get = fetch"); }',
   'const run = eval; run("Map.prototype.get = fetch"); new Map().get("/accounts");',
+  'let run; (run = eval)("Map.prototype.get = fetch"); new Map().get("/accounts");',
+  'let run; (run = globalThis.eval)("Map.prototype.get = fetch"); new Map().get("/accounts");',
   '(0, eval)("Map.prototype.get = fetch"); new Map().get("/accounts");',
   'globalThis.eval("Map.prototype.get = fetch"); new Map().get("/accounts");',
   'eval?.("Map.prototype.get = fetch"); new Map().get("/accounts");',
@@ -20,6 +22,12 @@ it.each([
   'const { eval: run } = globalThis; run("Map.prototype.get = fetch"); new Map().get("/accounts");',
   'eval.call(null, "Map.prototype.get = fetch"); new Map().get("/accounts");',
   'const run = eval.bind(null); run("Map.prototype.get = fetch"); new Map().get("/accounts");',
+  'globalThis["ev" + "al"]("Map.prototype.get = fetch"); new Map().get("/accounts");',
+  'const { ["eval"]: run } = globalThis; run("Map.prototype.get = fetch"); new Map().get("/accounts");',
+  'const root = globalThis; const run = root["eval"]; run("Map.prototype.get = fetch"); new Map().get("/accounts");',
+  'function invoke() { run("Map.prototype.get = fetch"); } const run = eval; invoke(); new Map().get("/accounts");',
+  'function getRun() { return eval; } getRun()("Map.prototype.get = fetch"); new Map().get("/accounts");',
+  'Reflect.apply(eval, null, ["Map.prototype.get = fetch"]); new Map().get("/accounts");',
 ])(
   "keeps a Map lookup after possible opaque mutation as a candidate: %s",
   (source) => {

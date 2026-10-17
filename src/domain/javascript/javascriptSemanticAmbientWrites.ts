@@ -47,13 +47,19 @@ type AmbientPath = readonly (string | null)[];
 /** Undefined means a cyclic or conflicting projection can select any depth. */
 type AmbientProjection = AmbientPath | undefined;
 
-interface AmbientStoredReference {
-  readonly path: AmbientProjection;
-  readonly source: SemanticIterationSource;
-}
+const joinAmbientProjection = (
+  left: AmbientProjection,
+  right: AmbientProjection,
+): AmbientProjection =>
+  left === undefined || right === undefined || left.length !== right.length
+    ? undefined
+    : left.map((key, index) => (key === right[index] ? key : null));
 
 interface AmbientReferenceFacts {
-  readonly stores: WeakMap<t.Node, AmbientStoredReference[]>;
+  readonly stores: WeakMap<
+    t.Node,
+    Map<SemanticIterationSource, AmbientProjection>
+  >;
   readonly prototypeTarget: (node: t.Node) => t.Node | undefined;
   readonly freshObject: (node: t.Node) => boolean;
 }
@@ -95,6 +101,15 @@ export const createAmbientPathResolver = (
       let canonical = canonicalAmbientPath(path);
       for (;;) {
         result.set(JSON.stringify(canonical), canonical);
+        if (
+          possibleWrites &&
+          canonical[0] === "global" &&
+          canonical[2] === "prototype" &&
+          canonical[3] === "constructor"
+        ) {
+          canonical = ["global", canonical[1] ?? null, ...canonical.slice(4)];
+          continue;
+        }
         // An unknown key may select a global self reference as well as a
         // distinct property. Retain both possible object identities for writes.
         if (
@@ -138,13 +153,29 @@ export const createAmbientPathResolver = (
           suffix: path,
           ...(current.readsAtSelf && { readsAtSelf: true }),
         });
+      const continueReturned = (callee: t.Node, path: AmbientProjection) => {
+        for (const source of returnedReferences(callee))
+          continueWith(
+            source.node,
+            path === undefined
+              ? undefined
+              : [
+                  ...source.projection.map((key) =>
+                    key === null || typeof key === "object"
+                      ? null
+                      : String(key),
+                  ),
+                  ...path,
+                ],
+          );
+      };
       if (!t.isIdentifier(root) && facts?.freshObject(root)) {
         localIdentity?.(root, suffix);
-        for (const stored of facts?.stores.get(root) ?? []) {
+        for (const [source, path] of facts?.stores.get(root) ?? []) {
           const selected =
             suffix === undefined ||
-            stored.path === undefined ||
-            stored.path.every(
+            path === undefined ||
+            path.every(
               (key, index) =>
                 index >= suffix.length ||
                 key === null ||
@@ -154,23 +185,23 @@ export const createAmbientPathResolver = (
           if (
             !selected ||
             (suffix !== undefined &&
-              stored.path !== undefined &&
-              suffix.length < stored.path.length &&
+              path !== undefined &&
+              suffix.length < path.length &&
               !escapedContents)
           )
             continue;
           const remaining =
-            suffix === undefined || stored.path === undefined
+            suffix === undefined || path === undefined
               ? undefined
-              : suffix.slice(stored.path.length);
+              : suffix.slice(path.length);
           pending.push({
-            node: stored.source.node,
+            node: source.node,
             readsAtSelf: true,
             suffix:
               remaining === undefined
                 ? undefined
                 : [
-                    ...stored.source.projection.map((key) =>
+                    ...source.projection.map((key) =>
                       key === null || typeof key === "object"
                         ? null
                         : String(key),
@@ -234,9 +265,14 @@ export const createAmbientPathResolver = (
       if (
         possibleWrites &&
         t.isNewExpression(root) &&
-        suffix?.[0] === "__proto__"
+        (suffix?.[0] === "__proto__" || suffix?.[0] === "constructor")
       ) {
-        continueWith(root.callee, ["prototype", ...suffix.slice(1)]);
+        continueWith(
+          root.callee,
+          suffix[0] === "__proto__"
+            ? ["prototype", ...suffix.slice(1)]
+            : suffix.slice(1),
+        );
         continue;
       }
       const prototypeTarget = possibleWrites
@@ -257,26 +293,14 @@ export const createAmbientPathResolver = (
           t.isTaggedTemplateExpression(root) ||
           (escapedContents && (t.isFunction(root) || t.isClass(root))))
       ) {
-        for (const source of returnedReferences(
+        continueReturned(
           t.isFunction(root) || t.isClass(root)
             ? root
             : t.isTaggedTemplateExpression(root)
               ? root.tag
               : root.callee,
-        ))
-          continueWith(
-            source.node,
-            suffix === undefined
-              ? undefined
-              : [
-                  ...source.projection.map((key) =>
-                    key === null || typeof key === "object"
-                      ? null
-                      : String(key),
-                  ),
-                  ...suffix,
-                ],
-          );
+          suffix,
+        );
         continue;
       }
       if (possibleWrites && t.isConditionalExpression(root)) {
@@ -294,6 +318,14 @@ export const createAmbientPathResolver = (
         if (value !== undefined) continueWith(value);
         continue;
       }
+      if (
+        possibleWrites &&
+        t.isAssignmentExpression(root) &&
+        root.operator === "="
+      ) {
+        continueWith(root.right);
+        continue;
+      }
       const key = suffix?.[0];
       // Container escapes reuse the finite worklist, including alias cycles.
       if (escapedContents && suffix?.length === 0) {
@@ -306,6 +338,8 @@ export const createAmbientPathResolver = (
               t.isExpression(property.value)
             )
               continueWith(property.value, []);
+            else if (t.isObjectMethod(property) && property.kind === "get")
+              continueReturned(property, []);
           continue;
         }
         if (t.isArrayExpression(root)) {
@@ -321,8 +355,9 @@ export const createAmbientPathResolver = (
           for (const property of root.properties) {
             if (t.isSpreadElement(property)) continueWith(property.argument);
             else if (
-              t.isObjectProperty(property) &&
-              t.isExpression(property.value)
+              (t.isObjectProperty(property) &&
+                t.isExpression(property.value)) ||
+              (t.isObjectMethod(property) && property.kind === "get")
             ) {
               const ownKey = semanticStaticPropertyKey(
                 property.key,
@@ -334,7 +369,10 @@ export const createAmbientPathResolver = (
                 ownKey === null ||
                 ownKey === key
               )
-                continueWith(property.value, suffix?.slice(1));
+                if (t.isObjectMethod(property))
+                  continueReturned(property, suffix?.slice(1));
+                else if (t.isExpression(property.value))
+                  continueWith(property.value, suffix?.slice(1));
             }
           }
         } else if (
@@ -394,6 +432,7 @@ export const createAmbientPathResolver = (
 export function* indexJavaScriptAmbientWritesSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
+  observeOpaqueInvocation?: (node: t.Node) => void,
 ): Generator<void> {
   const ambientReads = createAmbientPathResolver(state, false);
   const browserReceiverMethods = new Set<string>();
@@ -407,7 +446,10 @@ export function* indexJavaScriptAmbientWritesSteps(
     browserReceiver: boolean;
     projection?: AmbientProjection;
   }[] = [];
-  const stores = new WeakMap<t.Node, AmbientStoredReference[]>();
+  const stores = new WeakMap<
+    t.Node,
+    Map<SemanticIterationSource, AmbientProjection>
+  >();
   const interop = createSemanticModuleInterop(state, {
     intrinsicPath: (node) => {
       const [path] = ambientReads(node);
@@ -466,6 +508,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       writes.push({ node, path });
     },
     (node, invocation) => {
+      observeOpaqueInvocation?.(node);
       // Escaping objects can change contents without replacing their identity.
       const retainEscape = (target: t.Node, browserReceiver = false) => {
         escapes.push({ target, node, browserReceiver });
@@ -501,19 +544,61 @@ export function* indexJavaScriptAmbientWritesSteps(
       }
     },
   );
+  const pendingStores = new Set(storedReferences);
+  const dependents = new WeakMap<t.Node, Set<SemanticIterationSource>>();
+  while (pendingStores.size > 0) {
+    const source = pendingStores.values().next().value;
+    if (source === undefined) break;
+    pendingStores.delete(source);
+    if (source.target === undefined) continue;
+    const identities = new Map<t.Node, AmbientProjection>();
+    ambientWrites(source.target, source.mutation, false, [], (node, path) => {
+      const users = dependents.get(node) ?? new Set<SemanticIterationSource>();
+      users.add(source);
+      dependents.set(node, users);
+      identities.set(
+        node,
+        identities.has(node)
+          ? joinAmbientProjection(identities.get(node), path)
+          : path,
+      );
+    });
+    // Publish only completed queries; each source/root projection can only widen.
+    for (const [node, path] of identities) {
+      const entries =
+        stores.get(node) ??
+        new Map<SemanticIterationSource, AmbientProjection>();
+      const previous = entries.get(source);
+      const joined = entries.has(source)
+        ? joinAmbientProjection(previous, path)
+        : path;
+      if (
+        entries.has(source) &&
+        (previous === undefined ||
+          (joined !== undefined &&
+            previous.every((key, index) => key === joined[index])))
+      )
+        continue;
+      entries.set(source, joined);
+      stores.set(node, entries);
+      for (const dependent of dependents.get(node) ?? [])
+        pendingStores.add(dependent);
+    }
+    yield;
+  }
   for (const source of storedReferences) {
     if (source.target === undefined) continue;
-    const identities: { node: t.Node; path: AmbientProjection }[] = [];
-    ambientWrites(source.target, source.mutation, false, [], (node, path) => {
-      identities.push({ node, path });
-    });
-    const ambient = ambientWrites(source.target.object, source.mutation);
-    for (const { node, path } of identities) {
-      const entries = stores.get(node) ?? [];
-      entries.push({ path, source });
-      stores.set(node, entries);
-    }
-    if (identities.length === 0 || ambient.length > 0)
+    let local = false;
+    const ambient = ambientWrites(
+      source.target.object,
+      source.mutation,
+      false,
+      [],
+      () => {
+        local = true;
+      },
+    );
+    if (!local || ambient.length > 0)
       escapes.push({
         node: source.mutation,
         target: source.node,

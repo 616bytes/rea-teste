@@ -1,4 +1,5 @@
 import {
+  createSemanticOpaqueGlobalObserver,
   indexSemanticOpaqueEffects,
   semanticOpaqueBindingEffects,
   semanticBindingCanBeRebound,
@@ -169,7 +170,13 @@ function* indexSemanticAmbientWritesSteps(
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, void> {
   if (indexedAmbientWriteStates.has(state)) return;
-  yield* indexJavaScriptAmbientWritesSteps(state.program, state);
+  yield* indexJavaScriptAmbientWritesSteps(
+    state.program,
+    state,
+    createSemanticOpaqueGlobalObserver(state),
+  );
+  if (state.opaqueEffects.globalSites.length > 0)
+    clearSemanticValueCaches(state);
   indexedAmbientWriteStates.add(state);
 }
 
@@ -919,6 +926,7 @@ const createState = (
   return {
     program,
     opaqueEffects: {
+      mayReferenceGlobalEval: false,
       sites: new WeakSet(),
       sloppySites: new WeakSet(),
       byScope: new Map(),
@@ -951,6 +959,14 @@ const createState = (
   };
 };
 
+const globalEvalRoots = new Set([
+  "eval",
+  "globalThis",
+  "global",
+  "window",
+  "self",
+]);
+
 function* collectDefinitionsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
@@ -965,7 +981,7 @@ function* collectDefinitionsSteps(
     readonly conditionallySkipped: boolean;
   }[] = [];
   const opaqueCandidates: {
-    node: t.CallExpression | t.OptionalCallExpression;
+    node: t.CallExpression;
     scopeId: string;
   }[] = [];
   let needsPrototypeFacts = false;
@@ -1045,7 +1061,16 @@ function* collectDefinitionsSteps(
         state,
       });
       bindInnerDeclaration(node, parent, scope, state);
-      if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
+      // Every supported global eval origin starts with one of these decoded
+      // identifiers, including computed properties and destructured aliases.
+      if (t.isIdentifier(node) && globalEvalRoots.has(node.name))
+        state.opaqueEffects.mayReferenceGlobalEval = true;
+      if (
+        t.isCallExpression(node) &&
+        t.isIdentifier(unwrapJavaScriptExpression(node.callee).node, {
+          name: "eval",
+        })
+      )
         opaqueCandidates.push({ node, scopeId: scope.scopeId });
       if (
         t.isVariableDeclarator(node) &&
@@ -1096,8 +1121,7 @@ function* collectDefinitionsSteps(
           copyParameterToBody({ identifier, body, scope, state });
   }
   indexSemanticOpaqueEffects(opaqueCandidates, state);
-  if (state.opaqueEffects.globalSites.length > 0)
-    clearSemanticValueCaches(state);
+  if (state.opaqueEffects.byScope.size > 0) clearSemanticValueCaches(state);
 }
 
 type PrototypeOwner = "Object" | "Array" | "String";

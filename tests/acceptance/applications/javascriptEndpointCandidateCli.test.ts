@@ -57,6 +57,14 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
       'Object.getPrototypeOf(new Map()).get = fetch; new Map().get("/prototype");',
     "indirect.mjs":
       'globalThis.eval("Map.prototype.get = fetch"); new Map().get("/indirect");',
+    "late-link.mjs":
+      'function store() { box.child.prototype = Map.prototype; } const box = {}; const inner = {}; box.child = inner; store(); patch(inner); new Map().get("/late-link");',
+    "constructor.mjs":
+      'new Map().constructor.prototype.get = fetch; new Map().get("/constructor");',
+    "getter.mjs":
+      'const holder = { get prototype() { return Map.prototype; } }; holder.prototype.get = fetch; new Map().get("/getter");',
+    "assignment.mjs":
+      'let run; (run = eval)("Map.prototype.get = fetch"); new Map().get("/assignment");',
   }))
     await writeFile(join(root, name), source);
   const { stdout } = await execute(
@@ -78,8 +86,12 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
     )
     .toEqual([
       "/api/items",
+      "/assignment",
+      "/constructor",
       "/escaped",
+      "/getter",
       "/indirect",
+      "/late-link",
       "/network",
       "/opaque",
       "/prototype",
@@ -88,8 +100,13 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
       "session",
     ]);
   for (const value of [
+    "/api/items",
+    "/assignment",
+    "/constructor",
     "/escaped",
+    "/getter",
     "/indirect",
+    "/late-link",
     "/opaque",
     "/prototype",
     "/returned",
@@ -105,15 +122,6 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
       evidence: { state: "inferred", confidence: "low" },
     });
   }
-  const lookup = result.graph.nodes.find(
-    ({ kind, observations }) =>
-      kind === "endpoint" &&
-      observations.some(({ properties }) => properties.value === "/api/items"),
-  );
-  expect(lookup?.observations[0]).toMatchObject({
-    properties: { interpretation: "candidate" },
-    evidence: { state: "inferred", confidence: "low" },
-  });
   const request = result.graph.nodes.find(
     ({ kind, observations }) =>
       kind === "endpoint" &&

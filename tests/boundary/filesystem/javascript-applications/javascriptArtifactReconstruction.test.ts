@@ -104,6 +104,7 @@ it.each([
   "resolved-package-json",
   "resolved-html-main",
   "unavailable-package-metadata",
+  "unavailable-directory-main",
 ] as const)(
   "distinguishes hidden imports from inert data through %s",
   async (omission) => {
@@ -121,6 +122,7 @@ it.each([
       "resolved-package-json": "b/node_modules/pkg/package.json",
       "resolved-html-main": "b/main.html",
       "unavailable-package-metadata": "b/node_modules/pkg/package.json",
+      "unavailable-directory-main": "b/node_modules/pkg/package.json",
     };
     const targetPath = targetPaths[omission] ?? "shared/bridge.cjs";
     const inertJson = [
@@ -137,11 +139,13 @@ it.each([
           ? {}
           : {
               main:
-                omission === "resolved-html-main"
-                  ? "main.html"
-                  : omission === "unavailable-json-main"
-                    ? "config.json"
-                    : "main.cjs",
+                omission === "unavailable-directory-main"
+                  ? "node_modules/pkg"
+                  : omission === "resolved-html-main"
+                    ? "main.html"
+                    : omission === "unavailable-json-main"
+                      ? "config.json"
+                      : "main.cjs",
             },
       ),
       "b/index.js": 'require("../shared/window.cjs");',

@@ -655,10 +655,12 @@ const addPackageRole = (
       );
     else if (
       resolution.resolution_status === "unavailable" &&
-      resolution.candidate_path !== undefined &&
-      !isJsonModuleTarget(
-        resolution.candidate_path,
-        context.unanalyzedFiles?.get(resolution.candidate_path)?.kind,
+      !(
+        resolution.candidate_path !== undefined &&
+        isJsonModuleTarget(
+          resolution.candidate_path,
+          context.unanalyzedFiles?.get(resolution.candidate_path)?.kind,
+        )
       )
     )
       registerPossiblePackageOwner(context, input.packageFile);

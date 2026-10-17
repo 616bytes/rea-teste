@@ -120,6 +120,12 @@
     "dir": "ltr"
   },
   {
+    "code": "ml",
+    "name": "മലയാളം",
+    "readme": "docs/readme/README_ml.md",
+    "dir": "ltr"
+  },
+  {
     "code": "bn",
     "name": "বাংলা",
     "readme": "docs/readme/README_bn.md",

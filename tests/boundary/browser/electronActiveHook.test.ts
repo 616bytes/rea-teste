@@ -56,7 +56,13 @@ const utilityProcess = {
     return child;
   },
 };
-const shell = { openExternal: () => Promise.resolve(), openPath: () => Promise.resolve() };
+globalThis.__nativeShellCalls = [];
+const shell = {
+  openExternal: () => Promise.resolve(),
+  openPath: () => Promise.resolve(),
+  showItemInFolder: (path) => { globalThis.__nativeShellCalls.push(["showItemInFolder", path]); },
+  writeShortcutLink: (path) => { globalThis.__nativeShellCalls.push(["writeShortcutLink", path]); return true; },
+};
 const createSession = () => {
   const value = new EventEmitter();
   value.setPermissionRequestHandler = () => undefined;
@@ -217,6 +223,60 @@ it("retains active hook evidence within its event-retention budget", async () =>
       }),
     ]),
   );
+});
+
+it("blocks synchronous shell effects with their native return contracts and retains argument shapes only", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-shell-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "shell.cjs");
+  await writeFile(
+    script,
+    `const { shell } = require("electron");
+const revealed = shell.showItemInFolder("/host/secret-folder/file.txt");
+const written = shell.writeShortcutLink("C:\\\\Users\\\\host\\\\app.lnk", "create", { target: "C:\\\\payload.exe" });
+const snapshot = globalThis.__reaElectronActiveSnapshot();
+process.stdout.write(JSON.stringify({
+  revealed: revealed === undefined ? "undefined" : revealed,
+  written,
+  native_calls: globalThis.__nativeShellCalls,
+  snapshot,
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const result = JSON.parse(execution.stdout.trim()) as {
+    readonly revealed: string;
+    readonly written: boolean;
+    readonly native_calls: readonly unknown[];
+    readonly snapshot: {
+      readonly hook_error: boolean;
+      readonly events: readonly Record<string, unknown>[];
+    };
+  };
+  expect(result.revealed).toBe("undefined");
+  expect(result.written).toBe(false);
+  expect(result.native_calls).toEqual([]);
+  expect(result.snapshot.hook_error).toBe(false);
+  const attempts = result.snapshot.events.filter(
+    (event) => event.kind === "shell-attempt",
+  );
+  expect(attempts).toEqual([
+    expect.objectContaining({
+      event: "showItemInFolder",
+      phase: "blocked",
+      argument_shapes: ["string"],
+    }),
+    expect.objectContaining({
+      event: "writeShortcutLink",
+      phase: "blocked",
+      argument_shapes: ["string", "string", "object"],
+    }),
+  ]);
+  expect(JSON.stringify(result.snapshot)).not.toContain("secret-folder");
+  expect(JSON.stringify(result.snapshot)).not.toContain("payload.exe");
+  electronActiveTimelineEventSchema.array().parse(result.snapshot.events);
 });
 
 it("classifies a dropped browser preload as preload configuration at capture", async () => {
@@ -880,6 +940,70 @@ process.stdout.write(JSON.stringify({ plain: scenario(new EventEmitter()), hooke
   expect(hooked).toEqual(plain);
 });
 
+it("matches native once dispatch and retains only established invocations", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-native-once-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "electron-once-runtime.mjs");
+  await copyFile(
+    fileURLToPath(
+      new URL(
+        "../../../experiments/analysis-efficiency/electron-once-runtime.mjs",
+        import.meta.url,
+      ),
+    ),
+    script,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const result = JSON.parse(execution.stdout) as {
+    cases: number;
+    disagreements: number;
+    rows: readonly {
+      mode: string;
+      native: Record<string, unknown>;
+      hooked: Record<string, unknown> & { body_calls: number };
+      observation: readonly { kind: string; event: string | null }[];
+    }[];
+  };
+  expect(result.cases).toBe(39);
+  expect(result.disagreements).toBe(0);
+  for (const row of result.rows) {
+    expect(row.hooked, row.mode).toEqual(row.native);
+    const invocations = row.observation.filter(
+      (event) => event.kind === "main-event-invocation",
+    );
+    if (
+      row.mode === "inherited-listener-setter" ||
+      row.mode === "on-getter-listener-setter" ||
+      row.mode.startsWith("on-getter-native-alias")
+    ) {
+      expect(invocations).toEqual([]);
+      expect(row.observation).toEqual([
+        {
+          kind: "ipc-observation-gap",
+          event: "once-metadata",
+          error: row.mode === "on-getter-native-alias-throws",
+        },
+      ]);
+    } else {
+      expect(invocations.length, row.mode).toBe(row.hooked.body_calls);
+      if (row.hooked.body_calls === 0)
+        expect(
+          row.observation.some((event) => event.kind === "ipc-observation-gap"),
+          row.mode,
+        ).toBe(true);
+      if (row.mode.includes("non-callable") && row.hooked.body_calls === 0)
+        expect(row.observation, row.mode).toEqual([
+          expect.objectContaining({
+            kind: "ipc-observation-gap",
+            error: true,
+          }),
+        ]);
+    }
+  }
+});
+
 it.each(["single-on", "multiple-on", "empty-once", "event-once"])(
   "preserves native callable method reads during %s dispatch",
   async (mode) => {
@@ -925,16 +1049,11 @@ console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenar
       plain: Record<string, unknown>;
       hooked: Record<string, unknown>;
     };
-    expect(plain).toEqual({
-      calls: mode === "multiple-on" ? ["first", "second"] : [],
-      reads:
-        mode === "multiple-on"
-          ? []
-          : [mode === "empty-once" ? "call" : "apply"],
-      failure:
-        mode === "multiple-on" ? null : "application invocation metadata",
-      remaining: mode === "multiple-on" ? 2 : mode === "single-on" ? 1 : 0,
-    });
+    // The native dependency owns whether it consults call/apply. Compare the
+    // complete trace rather than requiring one pinned Node implementation.
+    expect(plain.remaining).toBe(
+      mode === "multiple-on" ? 2 : mode === "single-on" ? 1 : 0,
+    );
     expect(hooked).toEqual(plain);
   },
 );
@@ -1034,7 +1153,9 @@ console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenar
   };
   expect(plain).toEqual({
     calls: 1,
-    argumentObject: true,
+    // Newer runtimes bypass custom apply entirely. If native calls it, the
+    // callback's guard still requires its exact Arguments representation.
+    argumentObject: expect.any(Boolean),
     correctReceiver: true,
     failure: null,
     remaining: 0,

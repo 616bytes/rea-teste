@@ -4,6 +4,7 @@ import {
   allowedSanitizedUrl,
   admitRecords,
   numberValue,
+  resourceContentSize,
   recordValue,
   recordsValue,
   requiredRecord,
@@ -134,12 +135,8 @@ export const captureResources = (
       completeness?.exclude("resources", "invalid_protocol_value");
       continue;
     }
-    const rawContentSize = numberValue(resource.contentSize);
-    const contentSize =
-      rawContentSize !== undefined && rawContentSize >= 0
-        ? rawContentSize
-        : null;
-    if (resource.contentSize !== undefined && contentSize === null)
+    const contentSize = resourceContentSize(resource.contentSize);
+    if (!contentSize.ok)
       completeness?.exclude("resources", "invalid_protocol_value");
     items.push({
       rawUrl: cdpStringValue(resource.url) ?? "",
@@ -147,7 +144,7 @@ export const captureResources = (
       origin: url.origin,
       type,
       mime_type: mimeType,
-      content_size: contentSize,
+      content_size: contentSize.ok ? contentSize.value : null,
     });
   }
   return { items };

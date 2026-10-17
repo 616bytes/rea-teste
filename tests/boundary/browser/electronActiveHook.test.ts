@@ -2245,6 +2245,327 @@ process.stdout.write(JSON.stringify({
   expect(result.hooked).toEqual(result.plain);
 });
 
+it("keeps registrations a swallowing removeListener decorator preserves during ipcMain removeAllListeners", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-removal-swallow-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "removal-swallow.cjs");
+  await writeFile(
+    script,
+    `const { EventEmitter } = require("node:events");
+const { ipcMain } = require("electron");
+// Verified against plain Node: a removeListener decorator that returns
+// without removing keeps the registration whenever a removeListener
+// meta-listener forces removeAllListeners through per-entry dispatch;
+// without the meta-listener removeAllListeners never consults
+// removeListener and clears the channel outright. The hook must keep
+// both outcomes, including the decorator's translated observation.
+const scenario = (emitter, metaListener) => {
+  const calls = [];
+  const listener = () => { calls.push("call"); };
+  if (metaListener) emitter.on("removeListener", () => {});
+  emitter.on("ch", listener);
+  const seen = [];
+  emitter.removeListener = function swallowingDecorator(channel, candidate) {
+    if (channel === "ch") seen.push(candidate === listener);
+    return this;
+  };
+  const returned = emitter.removeAllListeners("ch");
+  emitter.emit("ch", {});
+  return {
+    seen,
+    returns_emitter: returned === emitter,
+    remaining: emitter.listenerCount("ch"),
+    calls: calls.length,
+  };
+};
+process.stdout.write(JSON.stringify({
+  withoutMetaListener: { plain: scenario(new EventEmitter(), false), hooked: scenario(ipcMain, false) },
+  withMetaListener: { plain: scenario(new EventEmitter(), true), hooked: scenario(ipcMain, true) },
+  hook_error: globalThis.__reaElectronActiveSnapshot().hook_error,
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const result = JSON.parse(
+    execution.stdout.trim().split("\n").at(-1) ?? "null",
+  ) as {
+    readonly withoutMetaListener: {
+      readonly plain: {
+        readonly seen: readonly boolean[];
+        readonly returns_emitter: boolean;
+        readonly remaining: number;
+        readonly calls: number;
+      };
+      readonly hooked: {
+        readonly seen: readonly boolean[];
+        readonly returns_emitter: boolean;
+        readonly remaining: number;
+        readonly calls: number;
+      };
+    };
+    readonly withMetaListener: {
+      readonly plain: {
+        readonly seen: readonly boolean[];
+        readonly returns_emitter: boolean;
+        readonly remaining: number;
+        readonly calls: number;
+      };
+      readonly hooked: {
+        readonly seen: readonly boolean[];
+        readonly returns_emitter: boolean;
+        readonly remaining: number;
+        readonly calls: number;
+      };
+    };
+    readonly hook_error: boolean;
+  };
+  expect(result.hook_error).toBe(false);
+  // Without a removeListener meta-listener, plain removeAllListeners clears
+  // the channel without ever consulting the decorator.
+  expect(result.withoutMetaListener.plain).toEqual({
+    seen: [],
+    returns_emitter: true,
+    remaining: 0,
+    calls: 0,
+  });
+  expect(result.withoutMetaListener.hooked).toEqual(
+    result.withoutMetaListener.plain,
+  );
+  // With the meta-listener dispatching through the app's removeListener, a
+  // swallowing decorator keeps the registration and its callback running.
+  expect(result.withMetaListener.plain).toEqual({
+    seen: [true],
+    returns_emitter: true,
+    remaining: 1,
+    calls: 1,
+  });
+  expect(result.withMetaListener.hooked).toEqual(result.withMetaListener.plain);
+});
+
+it("completes removal of a shifted ipcMain wrapper after a decorator prepends during traversal", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-removal-prepend-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "removal-prepend.cjs");
+  await writeFile(
+    script,
+    `const { EventEmitter } = require("node:events");
+const { ipcMain } = require("electron");
+// Mutated metadata plus a decorator that prepends during the traversal:
+// the pinned slot would no longer name the wrapper, so completion must
+// re-find it by identity on the live list instead of trusting a position.
+const scenario = (emitter) => {
+  const calls = [];
+  const listener = () => { calls.push("listener"); };
+  const prepended = () => { calls.push("prepended"); };
+  const nativeRemove = emitter.removeListener;
+  const seen = [];
+  let prependedOnce = false;
+  emitter.on("removeListener", () => {});
+  emitter.on("ch", listener);
+  emitter.rawListeners("ch")[0].listener = () => {};
+  emitter.removeListener = function prependingDecorator(channel, candidate) {
+    if (channel === "ch") {
+      seen.push(candidate === listener);
+      if (!prependedOnce) {
+        prependedOnce = true;
+        emitter.prependListener("ch", prepended);
+      }
+    }
+    return Reflect.apply(nativeRemove, this, arguments);
+  };
+  emitter.removeAllListeners("ch");
+  emitter.removeListener = nativeRemove;
+  emitter.emit("ch", {});
+  return {
+    seen,
+    remaining: emitter.listenerCount("ch"),
+    listeners: emitter.listeners("ch").map((entry) => entry === prepended),
+    calls,
+  };
+};
+process.stdout.write(JSON.stringify({
+  plain: scenario(new EventEmitter()),
+  hooked: scenario(ipcMain),
+  hook_error: globalThis.__reaElectronActiveSnapshot().hook_error,
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const result = JSON.parse(
+    execution.stdout.trim().split("\n").at(-1) ?? "null",
+  ) as {
+    readonly plain: {
+      readonly seen: readonly boolean[];
+      readonly remaining: number;
+      readonly listeners: readonly boolean[];
+      readonly calls: readonly string[];
+    };
+    readonly hooked: {
+      readonly seen: readonly boolean[];
+      readonly remaining: number;
+      readonly listeners: readonly boolean[];
+      readonly calls: readonly string[];
+    };
+    readonly hook_error: boolean;
+  };
+  expect(result.hook_error).toBe(false);
+  // The prepended listener survives; the shifted registration is still
+  // removed through its mutated metadata.
+  expect(result.plain).toEqual({
+    seen: [true],
+    remaining: 1,
+    listeners: [true],
+    calls: ["prepended"],
+  });
+  expect(result.hooked).toEqual(result.plain);
+});
+
+it("completes original-channel ipcMain removal when a decorator re-registers the entry on another channel", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-removal-cross-channel-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "removal-cross-channel.cjs");
+  await writeFile(
+    script,
+    `const { EventEmitter } = require("node:events");
+const { ipcMain } = require("electron");
+// A decorator saves the raw entry, re-registers it on ANOTHER channel
+// during the translated removal, then forwards. The re-registration is a
+// separate registration: it must not disable completion for the original
+// channel, whose registration plain still removes.
+const scenario = (emitter) => {
+  const calls = [];
+  const listener = () => { calls.push("call"); };
+  const nativeRemove = emitter.removeListener;
+  emitter.on("removeListener", () => {});
+  emitter.on("ch", listener);
+  const saved = emitter.rawListeners("ch")[0];
+  emitter.rawListeners("ch")[0].listener = () => {};
+  emitter.removeListener = function crossChannelDecorator(channel) {
+    if (channel === "ch") emitter.on("other", saved);
+    return Reflect.apply(nativeRemove, this, arguments);
+  };
+  emitter.removeAllListeners("ch");
+  emitter.removeListener = nativeRemove;
+  emitter.emit("other", {});
+  return {
+    ch: emitter.listenerCount("ch"),
+    other: emitter.listenerCount("other"),
+    calls,
+  };
+};
+process.stdout.write(JSON.stringify({
+  plain: scenario(new EventEmitter()),
+  hooked: scenario(ipcMain),
+  hook_error: globalThis.__reaElectronActiveSnapshot().hook_error,
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const result = JSON.parse(
+    execution.stdout.trim().split("\n").at(-1) ?? "null",
+  ) as {
+    readonly plain: {
+      readonly ch: number;
+      readonly other: number;
+      readonly calls: readonly string[];
+    };
+    readonly hooked: {
+      readonly ch: number;
+      readonly other: number;
+      readonly calls: readonly string[];
+    };
+    readonly hook_error: boolean;
+  };
+  expect(result.hook_error).toBe(false);
+  // The original channel is cleared while the other-channel registration
+  // keeps running the callback.
+  expect(result.plain).toEqual({ ch: 0, other: 1, calls: ["call"] });
+  expect(result.hooked).toEqual(result.plain);
+});
+
+it("avoids listener-list scans for ordinary decorated ipcMain removals", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-removal-scans-",
+  );
+  temporary.push(root);
+  // The fixture counts every rawListeners() call: the hook captures this
+  // counting wrapper as its native rawListeners, so the counter observes
+  // exactly the listener-list copies completion can make.
+  await writeElectronFixture(
+    root,
+    `const { EventEmitter } = require("node:events");
+const ipcMain = new EventEmitter();
+ipcMain.handlers = new Map();
+ipcMain.handle = (channel, listener) => ipcMain.handlers.set(channel, listener);
+let rawListenersCalls = 0;
+const nativeRawListeners = ipcMain.rawListeners;
+ipcMain.rawListeners = function countedRawListeners(channel) {
+  rawListenersCalls += 1;
+  return Reflect.apply(nativeRawListeners, this, arguments);
+};
+module.exports = { ipcMain, rawListenersCalls: () => rawListenersCalls };
+`,
+  );
+  const script = join(root, "removal-scans.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain, rawListenersCalls } = require("electron");
+const register = (count) => {
+  for (let index = 0; index < count; index += 1)
+    ipcMain.on("ch", () => undefined);
+};
+const nativeRemove = ipcMain.removeListener;
+ipcMain.on("removeListener", () => {});
+register(64);
+ipcMain.removeListener = function forwardingDecorator(channel, listener) {
+  return Reflect.apply(nativeRemove, this, arguments);
+};
+const ordinaryBefore = rawListenersCalls();
+ipcMain.removeAllListeners("ch");
+const ordinaryScans = rawListenersCalls() - ordinaryBefore;
+const ordinaryRemaining = ipcMain.listenerCount("ch");
+register(64);
+// The application's own inspection call is excluded from the measurement.
+ipcMain.rawListeners("ch")[63].listener = () => {};
+const missBefore = rawListenersCalls();
+ipcMain.removeAllListeners("ch");
+const missScans = rawListenersCalls() - missBefore;
+process.stdout.write(JSON.stringify({
+  ordinaryScans,
+  ordinaryRemaining,
+  missScans,
+  missRemaining: ipcMain.listenerCount("ch"),
+  hook_error: globalThis.__reaElectronActiveSnapshot().hook_error,
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  expect(
+    JSON.parse(execution.stdout.trim().split("\n").at(-1) ?? "null"),
+  ).toEqual({
+    // Sixty-four successful decorated removals perform zero full-list
+    // snapshots; a single metadata miss performs exactly one rescan.
+    ordinaryScans: 0,
+    ordinaryRemaining: 0,
+    missScans: 1,
+    missRemaining: 0,
+    hook_error: false,
+  });
+});
+
 it("preserves fatal process termination after recording uncaught exceptions", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-fatal-");
   temporary.push(root);

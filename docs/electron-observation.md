@@ -118,10 +118,20 @@ function. A hook-maintained registry, not the mutable raw-listener metadata,
 owns the callback identity, so application mutation of `.listener` cannot
 defeat removal; when mutated metadata breaks the application's own native
 match, the hook completes removal by wrapper identity without rewriting public
-metadata. Completion is scoped to the removal it translates: the raw-listener
-slot observed before the translated call must still hold that wrapper and no
-observer may have re-registered it meanwhile, so one removal request removes
-exactly one registration and a deliberately restored wrapper survives.
+metadata. Completion is scoped to the removal it translates and gated by an
+O(1) native listener-count check, so ordinary removals never copy or rescan
+the listener list: completion runs only when the translated call removed no
+registration, the wrapper is still registered by identity on a re-read of the
+live list (observers that prepend during traversal cannot shield it), and the
+wrapper's data `.listener` still defeats a native match for the translated
+callback — survival with metadata that still names the callback is a decorator
+that chose not to remove, which a plain EventEmitter keeps. A wrapper
+re-registered on the same channel during its own removal is a deliberate
+restore and survives; registering it on another channel is a separate
+registration whose original-channel completion stays armed. One removal
+request removes exactly one registration. A decorator that swallows a removal
+whose metadata was already mutated away from the callback is indistinguishable
+from a forwarded native miss and is completed like one.
 Application accessors installed as entry metadata stay
 untranslated: they execute during the application's own native removal
 exactly as for a bare entry, preserving plain EventEmitter parity for

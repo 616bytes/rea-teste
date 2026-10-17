@@ -44,6 +44,101 @@ const engine = {
   heap_limit_mib: null,
 };
 
+it("pages filtered matches independently of the examined inventory and preserves cross-page duplicates", async () => {
+  const names = Array.from({ length: 5000 }, (_, i) => `fixture.Target${i}`);
+  names[0] = "fixture.TargetDuplicate";
+  names[4096] = "fixture.TargetDuplicate";
+  const calls: Record<string, unknown>[] = [];
+  const tools: JadxToolPort = {
+    json: (name, input) => {
+      expect(name).toBe("list_classes");
+      calls.push({ ...input });
+      const offset = Number(input.offset);
+      return Promise.resolve({
+        scope: "top_level",
+        total_classes: 10000,
+        total: names.length,
+        offset,
+        limit: 4096,
+        items: names.slice(offset, offset + 4096),
+      });
+    },
+    text: () => Promise.reject(new Error("unexpected text call")),
+  };
+  const result = await analyzeJadxRequest(
+    tools,
+    {
+      operation: "search_android_classes",
+      input: { path: "/fixture.apk", query: "Target" },
+    },
+    {
+      state: "LOADED",
+      apk_path: "/snapshot.apk",
+      class_count: 10000,
+      resource_count: 0,
+      threads: 1,
+      resources: "full",
+    },
+    engine,
+  );
+  expect(calls).toEqual([
+    { query: "Target", offset: 0, limit: 4096 },
+    { query: "Target", offset: 4096, limit: 4096 },
+  ]);
+  expect(result).toMatchObject({
+    total_classes: 10000,
+    matches: names,
+    duplicate_names: [{ name: "fixture.TargetDuplicate", occurrences: 2 }],
+    coverage: "complete",
+  });
+});
+
+it.each([
+  { name: "inventory scope", query: "Target", page: { scope: "all_dex" } },
+  { name: "inventory total", query: "Target", page: { total_classes: 9 } },
+  { name: "impossible match total", query: "Target", page: { total: 11 } },
+  { name: "offset identity", query: "Target", page: { offset: 1 } },
+  { name: "requested page size", query: "Target", page: { limit: 1 } },
+  { name: "nonmatching row", query: "Target", page: { items: ["Other"] } },
+  { name: "premature empty page", query: "Target", page: { items: [] } },
+  { name: "empty-query completeness", query: "", page: {} },
+])(
+  "refuses changed $name instead of reporting complete search coverage",
+  async ({ query, page }) => {
+    const tools: JadxToolPort = {
+      json: () =>
+        Promise.resolve({
+          scope: "top_level",
+          total_classes: 10,
+          total: 1,
+          offset: 0,
+          limit: 4096,
+          items: ["fixture.Target"],
+          ...page,
+        }),
+      text: () => Promise.reject(new Error("unexpected text call")),
+    };
+    await expect(
+      analyzeJadxRequest(
+        tools,
+        {
+          operation: "search_android_classes",
+          input: { path: "/fixture.apk", query },
+        },
+        {
+          state: "LOADED",
+          apk_path: "/snapshot.apk",
+          class_count: 10,
+          resource_count: 0,
+          threads: 1,
+          resources: "full",
+        },
+        engine,
+      ),
+    ).rejects.toThrow();
+  },
+);
+
 it("requires explicit direct invoke coverage state in result evidence", () => {
   const result = {
     engine,

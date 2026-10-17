@@ -36,6 +36,8 @@ export const jadxAppSchema = z.object({
   permissions: z.array(z.string()),
 });
 export const jadxClassPageSchema = z.object({
+  scope: z.literal("top_level"),
+  total_classes: count,
   total: count,
   offset: count,
   limit: count,

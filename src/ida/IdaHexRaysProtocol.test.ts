@@ -132,6 +132,52 @@ describe("Hex-Rays query line", () => {
   );
 });
 
+describe("Hex-Rays IDA MCP startup profile", () => {
+  it("names the Hex-Rays profile when the catalog lacks execute_python", async () => {
+    const { producer, client } = await fixture();
+    producer.tools = ["open_database", "list_databases", "close_database"];
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("expected a profile mismatch");
+    expect(projectAnalysisError(result.error).details).toMatchObject({
+      diagnostics: {
+        mode: "headless",
+        expected_profile: "hexrays",
+        missing_tools: ["execute_python"],
+      },
+    });
+    expect(producer.calls).toEqual([]);
+  });
+
+  it("names the Hex-Rays registration when another profile meets its catalog", async () => {
+    const { root, target } = await createIdaTarget();
+    roots.push(root);
+    const producer = new RecordingHexRaysIdaMcp(target);
+    const client = new IdaSessionClient(
+      {
+        command: "ida-mcp",
+        args: ["stdio"],
+        env: {},
+        mode: "headless",
+        timeoutMs: 1000,
+        workspaceRoot: root,
+      },
+      target,
+      producer,
+    );
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("expected a profile mismatch");
+    expect(result.error.userMessage).toContain('"protocol": "hexrays"');
+    expect(projectAnalysisError(result.error).details).toMatchObject({
+      diagnostics: {
+        expected_profile: "database-supervisor",
+        advertised_tools: [...producer.tools].sort(),
+        recovery: expect.stringContaining('"protocol": "hexrays"'),
+      },
+    });
+    expect(producer.calls).toEqual([]);
+  });
+});
+
 describe("Hex-Rays IDA MCP session", () => {
   it("leases a private idalib worker, answers reads through the query bridge, and releases it", async () => {
     const { root, target, producer, client } = await fixture();
@@ -193,21 +239,6 @@ describe("Hex-Rays IDA MCP session", () => {
     producer.peers = [{ path: "/elsewhere/peer.bin", backend: "idalib" }];
     expect((await client.execute("list_procedures", {})).ok).toBe(true);
     expect((await client.close()).ok).toBe(true);
-  });
-
-  it("names the Hex-Rays profile when the catalog lacks execute_python", async () => {
-    const { producer, client } = await fixture();
-    producer.tools = ["open_database", "list_databases", "close_database"];
-    const result = await client.execute("list_procedures", {});
-    if (result.ok) throw new Error("expected a profile mismatch");
-    expect(projectAnalysisError(result.error).details).toMatchObject({
-      diagnostics: {
-        mode: "headless",
-        expected_profile: "hexrays",
-        missing_tools: ["execute_python"],
-      },
-    });
-    expect(producer.calls).toEqual([]);
   });
 
   it("refuses a GUI database and retains the workspace it cannot prove released", async () => {

@@ -612,10 +612,17 @@ export class IdaSessionClient implements AnalysisClient {
             : modernTools;
     const missing = expected.filter((name) => !tools.has(name));
     if (missing.length > 0) {
+      // A registration for another profile can still point at the official
+      // server; name the registration that fits instead of a reinstall.
+      const servesHexRays =
+        protocol !== "hexrays" && hexRaysTools.every((name) => tools.has(name));
+      const hexRaysHint = servesHexRays
+        ? ' This server serves the Hex-Rays IDA MCP catalog; register it with "mode": "headless" and "protocol": "hexrays".'
+        : "";
       const summary =
         protocol === "hexrays"
           ? `IDA MCP Hex-Rays compatibility profile is missing tools: ${missing.join(", ")}. The Hex-Rays profile requires the official Hex-Rays IDA MCP tool catalog. See docs/ida-provider.md.`
-          : `IDA MCP ${this.config.protocol === "native" ? "native attached" : this.config.mode} compatibility profile is missing tools: ${missing.join(", ")}. Native attached mode requires the native IDA MCP tool catalog; legacy attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile. See docs/ida-provider.md.`;
+          : `IDA MCP ${this.config.protocol === "native" ? "native attached" : this.config.mode} compatibility profile is missing tools: ${missing.join(", ")}. Native attached mode requires the native IDA MCP tool catalog; legacy attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile.${hexRaysHint} See docs/ida-provider.md.`;
       // The caller cannot act on a profile mismatch it never sees, so the
       // missing names travel as adapter diagnostics rather than a bare message.
       throw new ProviderAdapterError("ida", "initialize", {
@@ -630,8 +637,10 @@ export class IdaSessionClient implements AnalysisClient {
                 ? "legacy-1.4"
                 : "database-supervisor",
           missing_tools: [...missing],
-          recovery:
-            "Install an IDA MCP build that serves the selected profile; see docs/ida-provider.md.",
+          advertised_tools: [...tools].sort(),
+          recovery: servesHexRays
+            ? 'Set "mode": "headless" and "protocol": "hexrays" in the registration; see docs/ida-provider.md.'
+            : "Install an IDA MCP build that serves the selected profile; see docs/ida-provider.md.",
         },
       });
     }

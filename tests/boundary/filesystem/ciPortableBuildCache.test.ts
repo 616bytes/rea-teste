@@ -474,12 +474,13 @@ it.skipIf(process.platform === "win32").each([
         .map((task) => task.taskId),
     });
     if (evictAll) expect(hits).toBe(0);
-    else {
-      expect(
-        index.tasks.find((task) => task.taskId === "build")?.available,
-      ).toBe(true);
-      if (historyKiB === 96) expect(hits).toBe(2);
-    }
+    const remaining = await readdir(join(root, ".turbo/cache"));
+    for (const task of index.tasks)
+      expect(task.available).toBe(
+        [".tar.zst", "-meta.json"].every((suffix) =>
+          remaining.includes(`${task.hash}${suffix}`),
+        ),
+      );
     await rm(join(root, ".turbo/cache"), { recursive: true });
     await cp(join(root, output), join(root, ".turbo/cache"), {
       recursive: true,

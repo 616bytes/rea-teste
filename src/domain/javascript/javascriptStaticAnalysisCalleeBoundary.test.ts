@@ -158,6 +158,33 @@ it("retains uncalled deferred reads for mutated methods after timing boundaries"
   ).toEqual([["/after", "call:later.get"]]);
 });
 
+it("retains reads after built-in prototype method and object overrides", () => {
+  const methodOverride = analyzeJavaScriptStaticSource(`
+    Map.prototype.get = client.get.bind(client);
+    const shared = new Map();
+    shared.get("/api");
+  `);
+  expect(methodOverride.parse_error_count).toBe(0);
+  expect(methodOverride.parse_status).toBe("complete");
+  expect(
+    methodOverride.endpoints.map(({ value, mechanism }) => [value, mechanism]),
+  ).toEqual([["/api", "call:shared.get"]]);
+
+  const prototypeOverride = analyzeJavaScriptStaticSource(`
+    Map.prototype = new Fake();
+    const replaced = new Map();
+    replaced.get("/override");
+  `);
+  expect(prototypeOverride.parse_error_count).toBe(0);
+  expect(prototypeOverride.parse_status).toBe("complete");
+  expect(
+    prototypeOverride.endpoints.map(({ value, mechanism }) => [
+      value,
+      mechanism,
+    ]),
+  ).toEqual([["/override", "call:replaced.get"]]);
+});
+
 it("retains uncertainty and module evidence for wrapped get receivers", () => {
   const analysis = analyzeJavaScriptStaticSource(`
     const vscode = otherLibrary;

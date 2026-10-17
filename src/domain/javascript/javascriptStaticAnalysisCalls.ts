@@ -43,7 +43,10 @@ import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticAmbientWrites.js";
-import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import {
+  evaluateSemanticExpression,
+  evaluateSemanticExpressionProvenance,
+} from "./javascriptSemanticValues.js";
 import { semanticTopLevelEffectFollowsCapture } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticFactoryLoaderMemberAt,
@@ -470,11 +473,12 @@ const inspectEndpointCall = (
   // A local or shadowed function with a familiar network name is not a known
   // browser request API. Do not let the literal fallback turn it into one.
   if (isNetworkRequestSpelling(name)) return;
+  const gateMethod = keyedReadMethod(name);
   if (
     !t.isNewExpression(node) &&
     first !== undefined &&
-    keyedReadMethod(name) !== undefined &&
-    isResolvedKeyedCollectionReceiver(bindings, node.callee)
+    gateMethod !== undefined &&
+    isResolvedKeyedCollectionReceiver(bindings, node.callee, gateMethod)
   ) {
     // The receiver resolves to a built-in keyed collection during this
     // traversal, but its own methods are only provably unmodified after the
@@ -605,7 +609,7 @@ const keyedCollectionReadChanged = (
 ): boolean => {
   const method = keyedReadMethod(name);
   if (method === undefined) return true;
-  const chain = keyedCollectionChain(bindings, node.callee);
+  const chain = keyedCollectionChain(bindings, node.callee, method);
   if (chain === undefined) return true;
   for (const reference of chain) {
     if (index.referenceMayHaveChangedAt(node, reference, [method])) return true;
@@ -629,12 +633,14 @@ const keyedReadMethod = (name: string): "get" | "delete" | undefined =>
 const isResolvedKeyedCollectionReceiver = (
   bindings: JavaScriptSemanticAnalysisState,
   callee: t.Node,
-): boolean => keyedCollectionChain(bindings, callee) !== undefined;
+  method: "get" | "delete",
+): boolean => keyedCollectionChain(bindings, callee, method) !== undefined;
 
 /** Reference identifiers from the receiver to its keyed-collection initializer. */
 const keyedCollectionChain = (
   bindings: JavaScriptSemanticAnalysisState,
   callee: t.Node,
+  method: "get" | "delete",
 ): readonly t.Identifier[] | undefined => {
   const member = unwrapJavaScriptExpression(callee).node;
   if (!t.isMemberExpression(member) && !t.isOptionalMemberExpression(member))
@@ -658,7 +664,8 @@ const keyedCollectionChain = (
     if (initializer === undefined || initializer.projection.length !== 0)
       return undefined;
     const expression = unwrapJavaScriptExpression(initializer.node).node;
-    if (isKeyedCollectionConstruction(expression, bindings)) return chain;
+    if (isKeyedCollectionConstruction(expression, bindings, method))
+      return chain;
     if (hop === 1 || !t.isIdentifier(expression)) return undefined;
     current = expression;
     chain.push(current);
@@ -670,6 +677,7 @@ const keyedCollectionChain = (
 const isKeyedCollectionConstruction = (
   expression: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
+  method: "get" | "delete",
 ): boolean => {
   const construction = unwrapJavaScriptExpression(expression).node;
   if (!t.isNewExpression(construction)) return false;
@@ -677,7 +685,16 @@ const isKeyedCollectionConstruction = (
   return (
     t.isIdentifier(constructor) &&
     KEYED_COLLECTION_CONSTRUCTORS.has(constructor.name) &&
-    isUnmodifiedGlobalReference(constructor, bindings, constructor.name)
+    isUnmodifiedGlobalReference(constructor, bindings, constructor.name) &&
+    // A prototype override replaces the built-in method for every instance,
+    // so an unmodified constructor alone does not prove the built-in method.
+    !bindings.ambientWrites.covers([
+      "global",
+      constructor.name,
+      "prototype",
+      method,
+    ]) &&
+    !bindings.ambientWrites.covers(["global", constructor.name, "prototype"])
   );
 };
 
@@ -882,6 +899,10 @@ const inspectStorageCall = (
   first: string | undefined,
   context: FindingContext,
 ): void => {
+  if (name === "Database" || name.endsWith(".Database")) {
+    context.accumulator.pendingSqliteCalls.push({ node, name });
+    return;
+  }
   const receiverFact = context.openReceiverFacts?.get(node.start ?? -1);
   const storage =
     receiverFact === "local" ||
@@ -906,6 +927,53 @@ const inspectStorageCall = (
       location: range(node),
     },
   });
+};
+
+/** Constructor spelling selects a candidate; source provenance owns certainty. */
+export const finishSqliteStorageCalls = (
+  context: FindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
+): void => {
+  for (const { node, name } of context.accumulator.pendingSqliteCalls) {
+    const callee = unwrapJavaScriptExpression(node.callee).node;
+    const provenance = evaluateSemanticExpressionProvenance(callee, bindings);
+    const changed = index.referenceMayHaveChangedAt(node, callee);
+    if (!changed && t.isIdentifier(callee) && provenance.status === "local")
+      continue;
+    const origin =
+      provenance.status === "module" ? provenance.origins[0] : undefined;
+    const path = origin?.importedPath;
+    const imported = origin?.resolutionMode !== "require";
+    const known =
+      !changed &&
+      origin !== undefined &&
+      ((origin.specifier === "better-sqlite3" &&
+        ((origin.resolutionMode === "require" && path?.length === 0) ||
+          (imported && path?.length === 1 && path[0] === "default"))) ||
+        (origin.specifier === "sqlite3" &&
+          ((path?.length === 1 && path[0] === "Database") ||
+            (imported &&
+              path?.length === 2 &&
+              (path[0] === "default" || path[0] === "*") &&
+              path[1] === "Database"))));
+    const first = stringValue(node.arguments[0]);
+    addLocatedFinding(context, {
+      collection: context.accumulator.storage,
+      key: `storage\0sqlite\0${known ? "api" : "candidate"}\0${first ?? ""}`,
+      node,
+      value: {
+        kind: "sqlite",
+        name: first ?? null,
+        mechanism: `call:${name}`,
+        ...(known ? {} : { interpretation: "candidate" as const }),
+        module_key: null,
+        location: range(node),
+      },
+    });
+  }
+  context.accumulator.pendingSqliteCalls.length = 0;
+  context.accumulator.storage.sort((left, right) => left.offset - right.offset);
 };
 
 export const addReference = (

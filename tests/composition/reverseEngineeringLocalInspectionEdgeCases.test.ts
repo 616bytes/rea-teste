@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 import { createArtifact } from "../support/reverseEngineeringCompositionFixtures.js";
 
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 
 import { TestReverseEngineeringService as ReverseEngineeringService } from "../support/reverseEngineeringService.js";
 

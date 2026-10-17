@@ -7,7 +7,6 @@ import type {
 } from "../AnalysisProvider.js";
 import { createAnalysisExecution } from "../AnalysisProvider.js";
 import { LazyAnalysisProvider } from "./LazyAnalysisProvider.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { ok as resultOk } from "../../domain/result.js";
 
 const identity: ProviderIdentity = {

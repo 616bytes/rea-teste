@@ -486,7 +486,7 @@ describe("guided prompt completion lifecycle", () => {
   }, 10_000);
 });
 
-const createWarmCompletionFixture = async (target: string) => {
+const createWarmCompletionFixture = async (_target: string) => {
   const identity = {
     id: "deep-fixture",
     name: "Deep fixture provider",

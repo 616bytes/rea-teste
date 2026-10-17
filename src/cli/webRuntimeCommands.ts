@@ -1,6 +1,5 @@
 import { Cli, z } from "incur";
 import { createWebRuntimeService } from "../composition/webRuntime.js";
-import { browserCliError } from "../cliBrowserContext.js";
 import {
   browserScopeOptions,
   observationDuration,

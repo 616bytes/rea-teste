@@ -87,7 +87,7 @@ export const verifyKunaStrings = async ({
   cacheRoot,
   nativeStrings,
   expectedStrings = [],
-  fileCloseResources,
+  fileCloseResources: _fileCloseResources,
 }) => {
   const expected = await nativeStrings();
   if (expectedStrings.length > 0)

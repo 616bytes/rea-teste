@@ -8,7 +8,6 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { WasmArtifactService } from "../../../src/application/wasm/WasmArtifactService.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { wasmArtifactSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { createHash } from "node:crypto";

@@ -1,5 +1,10 @@
 import { expect, it } from "vitest";
-import { binaryLayoutSchema, type BinaryLayout } from "./binaryLayout.js";
+import {
+  binaryLayoutPayloadSchema,
+  binaryLayoutSchema,
+  type BinaryLayout,
+} from "./binaryLayout.js";
+import { binaryLayoutAarch64Payload } from "../../../tests/fixtures/binaryDiagnostics/layoutAarch64Payload.js";
 
 const report = () => ({
   artifact: { path: "/fixture.elf", sha256: "a".repeat(64), bytes: 128 },
@@ -73,6 +78,7 @@ it.each([
   "wrong-index",
   "noncanonical-base64",
   "wrong-machine",
+  "wrong-machine-bits",
   "outside-elf64",
 ])("rejects a malformed source representation: %s", (problem) => {
   const value = report();
@@ -81,11 +87,50 @@ it.each([
   if (problem === "file-backed-outside") section.file_backing = "file";
   if (problem === "header-outside") section.header_location.offset = "0x80";
   if (problem === "wrong-index") section.index = 1;
-  if (problem === "wrong-machine") value.architecture.machine = "EM_AARCH64";
+  if (problem === "wrong-machine") value.architecture.machine = "EM_SPARC";
+  if (problem === "wrong-machine-bits") value.architecture.machine = "EM_386";
   if (problem === "outside-elf64")
     value.entry_point.reported_value = "0x10000000000000000";
   if (problem === "noncanonical-base64") section.name.bytes_base64 = "AR==";
   expect(binaryLayoutSchema.safeParse(value).success).toBe(false);
+});
+
+it.each([
+  ["EM_386", 32, "little"],
+  ["EM_X86_64", 64, "little"],
+  ["EM_ARM", 32, "little"],
+  ["EM_AARCH64", 64, "little"],
+  ["EM_MIPS", 32, "big"],
+  ["EM_MIPS", 64, "little"],
+  ["EM_PPC", 32, "big"],
+  ["EM_PPC64", 64, "big"],
+  ["EM_RISCV", 32, "little"],
+  ["EM_RISCV", 64, "little"],
+] as const)(
+  "admits the %s %s-bit %s-endian layout profile",
+  (machine, bits, byte_order) => {
+    const value = report();
+    value.architecture = { machine, bits, byte_order };
+    expect(binaryLayoutSchema.safeParse(value).success).toBe(true);
+  },
+);
+
+it("accepts a real pwntools bridge reply for AArch64", () => {
+  const payload = binaryLayoutPayloadSchema.parse(binaryLayoutAarch64Payload);
+  expect(payload.architecture).toEqual({
+    machine: "EM_AARCH64",
+    bits: 64,
+    byte_order: "little",
+  });
+  expect(payload.sections).toHaveLength(6);
+  expect(payload.symbols).toHaveLength(2);
+  expect(payload.relocations).toHaveLength(1);
+  const full = binaryLayoutSchema.parse({
+    ...binaryLayoutAarch64Payload,
+    artifact: { path: "/fixture.elf", sha256: "a".repeat(64), bytes: 656 },
+    diagnostics: { stdout: "", stderr: "", truncated: false },
+  });
+  expect(full.architecture.machine).toBe("EM_AARCH64");
 });
 
 it.each([

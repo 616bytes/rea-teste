@@ -16,6 +16,22 @@ PROFILE = "pwntools@4.15.0;pyelftools@0.33;unicorn@2.1.2"
 PACKAGES = {"pwntools": "4.15.0", "pyelftools": "0.33", "unicorn": "2.1.2"}
 OUTPUT_BYTES = 64 * 1024 * 1024
 
+# e_machine values the layout profile decodes; pwntools 4.15.0 arch names follow.
+ADMITTED_MACHINES = {
+    3: "EM_386",
+    8: "EM_MIPS",
+    20: "EM_PPC",
+    21: "EM_PPC64",
+    40: "EM_ARM",
+    62: "EM_X86_64",
+    183: "EM_AARCH64",
+    243: "EM_RISCV",
+}
+ADMITTED_ARCHES = {
+    "amd64", "aarch64", "i386", "arm", "riscv32", "riscv64",
+    "mips", "mips64", "powerpc", "powerpc64",
+}
+
 
 class LayoutFailure(Exception):
     def __init__(self, reason, message):
@@ -116,13 +132,20 @@ def inspect_elf(path, cache):
         raise LayoutFailure("format", "Selected object does not contain an ELF header.")
     if len(content) < 16:
         raise LayoutFailure("format", "Selected ELF identification is truncated.")
-    if content[4] != 2 or content[5] != 1:
-        raise LayoutFailure("unsupported-target", "Initial layout profile requires ELF64 little-endian objects.")
-    if len(content) < 64:
-        raise LayoutFailure("format", "Selected ELF64 header is truncated.")
-    if int.from_bytes(content[18:20], "little") != 62:
-        raise LayoutFailure("unsupported-target", "Initial layout profile requires x86-64 ELF objects.")
-    if int.from_bytes(content[16:18], "little") not in (1, 2, 3):
+    elf_class = content[4]
+    elf_data = content[5]
+    if elf_class not in (1, 2):
+        raise LayoutFailure("unsupported-target", "Layout profile requires 32-bit or 64-bit ELF objects.")
+    if elf_data not in (1, 2):
+        raise LayoutFailure("unsupported-target", "Layout profile requires little-endian or big-endian ELF objects.")
+    header_size = 64 if elf_class == 2 else 52
+    if len(content) < header_size:
+        raise LayoutFailure("format", "Selected ELF header is truncated.")
+    byte_order = "little" if elf_data == 1 else "big"
+    machine = int.from_bytes(content[18:20], byte_order)
+    if machine not in ADMITTED_MACHINES:
+        raise LayoutFailure("unsupported-target", "Layout profile requires an admitted machine (" + ", ".join(sorted(ADMITTED_MACHINES.values())) + "); observed e_machine " + str(machine) + ".")
+    if int.from_bytes(content[16:18], byte_order) not in (1, 2, 3):
         raise LayoutFailure("unsupported-target", "Selected ELF type is outside the EXEC/DYN/REL layout profile; recorded core analysis is separate.")
     from pwnlib.context import context
     with context.local(cache_dir=str(cache), log_level="warning"):
@@ -168,8 +191,8 @@ def inspect_elf(path, cache):
                         if type is None or section.header.sh_type == type)
         try:
             image = LayoutELF(str(path), checksec=False)
-            if image.arch != "amd64" or image.bits != 64 or image.endian != "little":
-                raise LayoutFailure("unsupported-target", "Initial layout profile requires x86-64 ELF64 little-endian objects.")
+            if image.arch not in ADMITTED_ARCHES:
+                raise LayoutFailure("unsupported-target", "Layout profile requires an admitted pwntools architecture; observed " + repr(image.arch) + ".")
             if image.header.e_type not in ("ET_EXEC", "ET_DYN", "ET_REL"):
                 raise LayoutFailure("unsupported-target", "Selected ELF type is outside the EXEC/DYN/REL layout profile; recorded core analysis is separate.")
             length = len(content)
@@ -191,7 +214,7 @@ def inspect_elf(path, cache):
                 })
                 if h.sh_type in ("SHT_SYMTAB", "SHT_DYNSYM"):
                     if h.sh_entsize < image.structs.Elf_Sym.sizeof():
-                        raise LayoutFailure("format", "ELF symbol entry is smaller than the decoded Elf64_Sym structure.")
+                        raise LayoutFailure("format", "ELF symbol entry is smaller than the decoded native symbol structure.")
                     if h.sh_link >= len(all_sections) or all_sections[h.sh_link].header.sh_type != "SHT_STRTAB":
                         raise LayoutFailure("format", f"ELF symbol table {index} links to invalid string table {h.sh_link}.")
                     strings = all_sections[h.sh_link]
@@ -295,6 +318,7 @@ def inspect_elf(path, cache):
                     "GOT/PLT are derived upstream convenience maps; PLT inference can emulate selected instructions in Unicorn. They do not establish target runtime behavior; aliases may collapse and warnings may indicate incomplete coverage. Their completeness is unknown.",
                     "Mitigations are upstream static heuristics, not runtime protection. ET_DYN does not prove an executable; absent canary symbols do not prove every function unprotected.",
                     "This profile inspects ELF EXEC/DYN/REL layout only. It does not analyze recorded cores, resolve loaded libraries, launch the target as a host process or start a debugger.",
+                    "Admitted machines are EM_386, EM_X86_64, EM_ARM, EM_AARCH64, EM_MIPS, EM_PPC, EM_PPC64 and EM_RISCV, in 32-bit or 64-bit little-endian or big-endian ELF as produced; other machines are rejected without partial success.",
                     "Symbol/relocation inventories reflect original section tables. A sectionless image can still report dynamic dependency names; missing tables do not prove absence of dynamic symbols or relocations.",
                     *(["Absent section-name table: section-dependent RELRO/canary heuristics may be incomplete; protection coverage is unknown."] if all_sections and section_name_index == 0 else []),
                     *(["Sectionless images lack the .dynamic section and symbol tables used by upstream heuristics. RELRO/canary indicators may be incomplete; their values remain reported static candidates, with protection coverage unknown."] if not all_sections else []),

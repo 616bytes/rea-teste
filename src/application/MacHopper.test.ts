@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   installMacHopper,
-  installMacHopperBundle,
   type MacHopperBundleVerification,
   type MacHopperBundleInstallResult,
   type MacHopperInstallHost,

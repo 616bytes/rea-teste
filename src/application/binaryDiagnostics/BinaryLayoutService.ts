@@ -11,12 +11,26 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectBinaryLayoutInputSchema,
   binaryLayoutSchema,
+  type BinaryLayoutMachine,
 } from "../../domain/native/binaryLayout.js";
+import type { BinaryArchitecture } from "../../domain/binaryTargetTypes.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 const OPERATION = "inspect_binary_layout";
+
+/** Evidence subject architecture for each admitted ELF machine. */
+const machineArchitectures: Record<BinaryLayoutMachine, BinaryArchitecture> = {
+  EM_386: "x86",
+  EM_X86_64: "x86_64",
+  EM_ARM: "arm",
+  EM_AARCH64: "arm64",
+  EM_MIPS: "mips",
+  EM_PPC: "powerpc",
+  EM_PPC64: "powerpc",
+  EM_RISCV: "riscv",
+};
 
 /** Shared CLI/MCP validation and Evidence composition for offline layout inspection. */
 export class BinaryLayoutService {
@@ -95,7 +109,7 @@ export class BinaryLayoutService {
         {
           path: value.artifact.path,
           format: "elf",
-          architecture: "x86_64",
+          architecture: machineArchitectures[value.architecture.machine],
           sha256: value.artifact.sha256,
         },
         this.provider.identity,

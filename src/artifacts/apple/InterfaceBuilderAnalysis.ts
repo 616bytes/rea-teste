@@ -39,7 +39,6 @@ import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 import {
   decodeBinaryPlistNumbers,
   scanBinaryPlistNumberLiterals,
-  xmlPlistNumberLiterals,
 } from "./PlistNumberLiterals.js";
 import type { PlistNumberLiterals } from "../../domain/apple/plistNumbers.js";
 import {
@@ -753,11 +752,12 @@ const decodePlist = (
   const binaryNumberMetadata = binary
     ? scanBinaryPlistNumberLiterals(bytes)
     : undefined;
-  const { value, omittedPrototypeKeys } = binary
+  const { value, omittedPrototypeKeys, numberLiterals } = binary
     ? {
         value: parseBinary(
           decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
         ),
+        numberLiterals: binaryNumberMetadata!.literals,
         omittedPrototypeKeys: binaryPrototypeKeyObserved ? null : 0,
       }
     : parseXmlWithinDecodeBudget(xmlText ?? decodeXmlPlistText(bytes));
@@ -766,8 +766,6 @@ const decodePlist = (
     value: projected.value,
     omittedPrototypeKeys,
     unknownDateCount: projected.unknownDateCount,
-    numberLiterals: binary
-      ? binaryNumberMetadata!.literals
-      : xmlPlistNumberLiterals(xmlText ?? decodeXmlPlistText(bytes)),
+    numberLiterals,
   };
 };

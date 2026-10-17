@@ -10,6 +10,42 @@ export interface PlistNumberLiterals {
   readonly incomplete: boolean;
 }
 
+/** Collect exact number facts from a format owner. */
+export const createPlistNumberCollector = () => {
+  const integers = new Map<number, Set<string>>();
+  const reals = new Set<number>();
+  let unsafeIntegerLiterals = 0;
+  let incompleteMetadata = false;
+  return {
+    integer: (literal: string) => {
+      if (!/^[+-]?\d+$/u.test(literal)) {
+        incompleteMetadata = true;
+        return;
+      }
+      const rounded = Number(literal);
+      if (Number.isSafeInteger(rounded)) return;
+      unsafeIntegerLiterals += 1;
+      // Exact decimal metadata needs only sign/zero normalization. A BigInt
+      // round trip adds costly arbitrary-precision work for long source integers.
+      const digits = literal.replace(/^[+-]?0*/u, "");
+      const decimal = literal.startsWith("-") ? `-${digits}` : digits;
+      integers.set(rounded, (integers.get(rounded) ?? new Set()).add(decimal));
+    },
+    real: (value: number) => {
+      reals.add(value);
+    },
+    markIncomplete: () => {
+      incompleteMetadata = true;
+    },
+    result: (incomplete = false): PlistNumberLiterals => ({
+      incomplete: incomplete || incompleteMetadata,
+      integers,
+      reals,
+      unsafeIntegerLiterals,
+    }),
+  };
+};
+
 /** Preserve unambiguous exact integers; disclose rounded or unclassified numbers. */
 export const createPlistNumberProjection = (literals: PlistNumberLiterals) => {
   let exactIntegerCount = 0;

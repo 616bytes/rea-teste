@@ -49,6 +49,9 @@ cliTest.for(scenarios)(
           safe: 42,
           children: [{ CF$UID: 2 }],
           ...(scenario.includes("collision") ? { other: "__OTHER__" } : {}),
+          ...(scenario === "XML"
+            ? { mixedReal: "__MIXED_REAL__", cdataReal: "__CDATA_REAL__" }
+            : {}),
         },
         { $class: { CF$UID: 3 }, label: "Child" },
         { $classname: "UIView", $classes: ["UIView", "NSObject"] },
@@ -59,6 +62,14 @@ cliTest.for(scenarios)(
         ? Buffer.from(buildBinary(source))
         : Buffer.from(
             build(source)
+              .replace(
+                "<string>__MIXED_REAL__</string>",
+                "<real>1<![CDATA[.25]]></real>",
+              )
+              .replace(
+                "<string>__CDATA_REAL__</string>",
+                "<real><![CDATA[1.25]]></real>",
+              )
               .replace(
                 "<string>__INTEGER__</string>",
                 scenario === "real"
@@ -113,6 +124,7 @@ cliTest.for(scenarios)(
             ? { $plist_type: "integer", decimal: "9007199254740993" }
             : 9007199254740992,
         safe: 42,
+        ...(scenario === "XML" ? { mixedReal: 1.25, cdataReal: 1.25 } : {}),
         children: [{ archiveUID: 2, className: "UIView" }],
         interface_builder_object_id: "1",
         class_name: "UIView",

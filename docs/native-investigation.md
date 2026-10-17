@@ -324,12 +324,16 @@ complete observation.
   shared/cyclic references, class descriptors, raw serialized fields and
   malformed/unresolved/nil references. Missing fields stay absent; unknown
   classes are preserved. Select `root`, `offset` and `limit` explicitly.
+  Object `kind` describes the decoded archive value: data, dates and numbers
+  remain `scalar` when their JSON value uses a `$plist_type` wrapper. An actual
+  dictionary with the same fields remains `dictionary`.
   UID 0 cannot distinguish conditional nil from ordinary nil. Limits are
   64 MiB of input, 200,000 objects/references and 128 nesting levels.
   XML dictionary entries decoded as `__proto__` are omitted with an explicit
   count because REA results cannot represent that key. XML tag whitespace and
-  comments do not change that handling. Other values and the original archive
-  digest are preserved; key interpretation follows the pinned plist decoder.
+  comments do not change that handling. XML key names combine their text and
+  CDATA segments without trimming or expanding literal CDATA entities. Other
+  values and the original archive digest are preserved.
 - `decode_interface_builder` / `rea decode-interface-builder <app>` reads
   compiled storyboard and nib resources into objects, outlets, actions,
   connections and controller/class names. A full app graph is often several
@@ -425,7 +429,11 @@ decrement scrolling and text-value entry, or bounded waits. No global event
 injection is used. Unsupported AX actions fail explicitly. The result preserves
 ordered before/after captures and gaps; an action may have occurred before a
 post-action capture fails. Application state is left as-is; REA does not attempt
-to restore it.
+to restore it. Failed or cancelled scenarios return a typed error with the
+collected report in `partial_observation`, including ordered step outcomes.
+Cancellation preserves the caller's reason and remains observable through helper
+cleanup. A later abort does not replace an earlier helper or output failure.
+Cleanup failures retain their runtime owner until a confirmed cleanup retry.
 
 Scenarios accept caller-selected action lists and accessibility node counts.
 Individual waits cannot exceed the operation's 180-second deadline, and the

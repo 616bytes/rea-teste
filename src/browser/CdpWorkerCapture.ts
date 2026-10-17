@@ -711,10 +711,9 @@ export class CdpWorkerCapture {
           "invalid_protocol_value",
         );
       }
-      if (
-        clients === null &&
-        !this.#versionsByTarget.get(id)?.some((value) => value.clients !== null)
-      )
+      // A missing first snapshot records a permanent discovery gap. Later
+      // incomplete updates need neither revoke prior clients nor rescan history.
+      if (clients === null && !this.#versionsByTarget.has(id))
         this.pageEvents.completeness.unavailable("workers");
       const lifecycle: Observation["lifecycle"][number] = {
         event: "version",

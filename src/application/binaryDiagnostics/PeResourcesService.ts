@@ -20,7 +20,7 @@ import {
   peOptionalHeaderMagic,
   type PeArchitecture,
 } from "../../domain/peMachine.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 /** Shared caller validation, output parsing and Evidence provenance for CLI/MCP. */

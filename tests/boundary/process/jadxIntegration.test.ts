@@ -27,7 +27,6 @@ it("retains a failed input hash descriptor until provider shutdown retries it", 
   const { service, apk, provider, launches } = await setup();
   const closeCause = new Error("fixture source hash close unavailable");
   const owners: OwnedFileHandle[] = [];
-  const originalClose = OwnedFileHandle.prototype.close;
   const close = vi
     .spyOn(OwnedFileHandle.prototype, "close")
     .mockImplementationOnce(async function (this: OwnedFileHandle) {

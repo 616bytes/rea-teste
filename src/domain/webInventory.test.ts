@@ -161,7 +161,7 @@ describe("captured web resource reconciliation", () => {
       content_size: 1_024,
     };
     const resources = stableWebResources(
-      [resource].map(({ rawUrl: _, ...r }) => r),
+      [resource].map(({ rawUrl: _rawUrl, ...r }) => r),
     );
     const reconcile = createCapturedWebScriptReconciler(
       [resource, resource, resource],
@@ -185,7 +185,7 @@ describe("captured web resource reconciliation", () => {
       content_size,
     }));
     const resources = stableWebResources(
-      rawResources.map(({ rawUrl: _, ...r }) => r),
+      rawResources.map(({ rawUrl: _rawUrl, ...r }) => r),
     );
     const reconcile = createCapturedWebScriptReconciler(
       rawResources,

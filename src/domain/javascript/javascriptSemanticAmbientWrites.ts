@@ -1,9 +1,6 @@
 import * as t from "@babel/types";
 
-import {
-  semanticStaticPropertyKey,
-  unwrapJavaScriptExpression,
-} from "./javascriptAstValues.js";
+import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
 import {
   collectJavaScriptIdentityWritesSteps,
   electronMemberPath,

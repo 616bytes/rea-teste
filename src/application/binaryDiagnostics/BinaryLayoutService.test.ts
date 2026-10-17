@@ -48,6 +48,35 @@ it("records the decoded layout once in its Evidence", async () => {
   expect(evidence.raw_result).toBeNull();
 });
 
+it.each([
+  ["EM_386", 32, "x86"],
+  ["EM_X86_64", 64, "x86_64"],
+  ["EM_ARM", 32, "arm"],
+  ["EM_AARCH64", 64, "arm64"],
+  ["EM_MIPS", 32, "mips"],
+  ["EM_PPC", 32, "powerpc"],
+  ["EM_PPC64", 64, "powerpc"],
+  ["EM_RISCV", 64, "riscv"],
+] as const)(
+  "projects machine %s to Evidence architecture %s",
+  async (machine, bits, architecture) => {
+    const layout = binaryLayoutFixture();
+    layout.architecture = { machine, bits, byte_order: "little" };
+    const service = new BinaryLayoutService({
+      inspectAndClose(input, options) {
+        return this.inspect(input, options);
+      },
+      identity: BINARY_LAYOUT_TEST_PROVIDER,
+      inspect: () => Promise.resolve(ok(layout)),
+    });
+    const result = await service.inspect({ path: layout.artifact.path });
+    if (!result.ok) throw result.error;
+    expect(parseEvidence(result.value).subject?.architecture).toBe(
+      architecture,
+    );
+  },
+);
+
 it("preserves a provider's actionable unsupported reason", async () => {
   const failure = new AnalysisCapabilityUnavailableError(
     "fixture-layout",

@@ -14,7 +14,7 @@ import {
   inspectGoBinaryInputSchema,
 } from "../../domain/go/goBinary.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 const OPERATION = "inspect_go_binary";

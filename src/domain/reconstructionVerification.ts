@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
-import { z } from "zod";
 
 import { artifactComparisonResultSchema } from "./artifactComparison.js";
 import { parseArtifactInventoryEvidence } from "./artifactInventoryEvidence.js";

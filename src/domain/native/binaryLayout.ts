@@ -22,6 +22,38 @@ export const inspectBinaryLayoutInputSchema = z.strictObject({
   ),
 });
 
+/** Machines the layout profile decodes; mirrors bridge/pwntools/layout_impl.py. */
+export const binaryLayoutMachines = [
+  "EM_386",
+  "EM_X86_64",
+  "EM_ARM",
+  "EM_AARCH64",
+  "EM_MIPS",
+  "EM_PPC",
+  "EM_PPC64",
+  "EM_RISCV",
+] as const;
+export type BinaryLayoutMachine = (typeof binaryLayoutMachines)[number];
+
+/** Shared architecture block for layout evidence and its summary view. */
+export const binaryLayoutArchitectureSchema = z.strictObject({
+  machine: z.enum(binaryLayoutMachines),
+  bits: z.union([z.literal(32), z.literal(64)]),
+  byte_order: z.enum(["little", "big"]),
+});
+
+/** Word sizes each admitted machine is produced in. */
+const machineBits: Record<BinaryLayoutMachine, readonly (32 | 64)[]> = {
+  EM_386: [32],
+  EM_X86_64: [64],
+  EM_ARM: [32],
+  EM_AARCH64: [64],
+  EM_MIPS: [32, 64],
+  EM_PPC: [32],
+  EM_PPC64: [64],
+  EM_RISCV: [32, 64],
+};
+
 /** File and linked-image evidence; numeric ELF values never pass through unsafe JSON numbers. */
 const binaryLayoutObjectSchema = z.strictObject({
   artifact: z.strictObject({
@@ -30,11 +62,7 @@ const binaryLayoutObjectSchema = z.strictObject({
     bytes: index,
   }),
   format: z.literal("elf"),
-  architecture: z.strictObject({
-    machine: z.literal("EM_X86_64"),
-    bits: z.literal(64),
-    byte_order: z.literal("little"),
-  }),
+  architecture: binaryLayoutArchitectureSchema,
   image_type: z.enum(["ET_EXEC", "ET_DYN", "ET_REL"]),
   entry_point: z.strictObject({
     reported_value: unsignedHex,
@@ -237,6 +265,14 @@ export const binaryLayoutSchema = binaryLayoutObjectSchema.superRefine(
         path: ["entry_point", "meaning"],
         message:
           "Entry meaning must distinguish zero/unused fields from an actual linked address.",
+      });
+    if (
+      !machineBits[value.architecture.machine].includes(value.architecture.bits)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["architecture", "bits"],
+        message: "Reported word size is not produced for the reported machine.",
       });
     for (const [index, section] of value.sections.entries()) {
       if (

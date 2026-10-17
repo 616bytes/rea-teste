@@ -17,7 +17,6 @@ import {
 import {
   clearSemanticValueCaches,
   evaluateSemanticBinding,
-  evaluateSemanticExpression,
 } from "./javascriptSemanticValues.js";
 import { semanticContainer } from "./javascriptSemanticSlots.js";
 import {

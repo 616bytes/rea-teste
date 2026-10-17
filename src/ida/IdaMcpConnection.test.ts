@@ -258,7 +258,6 @@ it("preserves the SDK request timeout as a typed IDA timeout", async () => {
 
 it("bounds a stalled health poll by the remaining readiness deadline", async () => {
   const timeoutMs = 800;
-  const pendingCall = vi.fn();
   let clockNow = 0;
   const clock = {
     now: () => clockNow,

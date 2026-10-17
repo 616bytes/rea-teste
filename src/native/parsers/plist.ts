@@ -161,6 +161,14 @@ export const parsePlistJson = (
  */
 export const parsePlistXml = (
   output: string,
+  options: {
+    /**
+     * The format of the plist the XML was converted from. Only XML source text
+     * carries CFPropertyList's non-finite spellings as observed values; a
+     * binary double spelled by plutil's conversion stays an explicit unknown.
+     */
+    readonly sourceFormat?: "xml" | "binary" | "json" | "unknown";
+  } = {},
 ): Result<ParsedPlist, AnalysisOutputError> => {
   let projected: ProjectedPlistValue;
   let omittedPrototypeKeys: number;
@@ -169,7 +177,12 @@ export const parsePlistXml = (
     const decoded = parseXmlPropertyList(output);
     omittedPrototypeKeys = decoded.omittedPrototypeKeys;
     literals = decoded.numberLiterals;
-    projected = projectPlistValue(decoded.value);
+    projected = projectPlistValue(decoded.value, undefined, {
+      spelledNonFiniteReals:
+        options.sourceFormat === undefined || options.sourceFormat === "xml"
+          ? "observed"
+          : "unknown",
+    });
   } catch (cause: unknown) {
     return err(
       new AnalysisOutputError(

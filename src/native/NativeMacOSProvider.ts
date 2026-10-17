@@ -173,8 +173,7 @@ class NativeMacOSClient implements AnalysisClient {
     private readonly tracer: NativeCallTracer,
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
     private readonly privateRuntimeRootFactory:
-      | SignatureRuntimeRootFactory
-      | undefined,
+      SignatureRuntimeRootFactory | undefined,
   ) {}
 
   async execute(
@@ -828,18 +827,6 @@ class NativeMacOSClient implements AnalysisClient {
                 `plutil could not decode it as a property list (${plutilDiagnostic(xml.value.stderr, plist.value)})`,
               ),
             );
-          const parsed =
-            xml === undefined
-              ? parsePlistJson(json.value.stdout)
-              : jsonDecoded
-                ? parsePlistJson(json.value.stdout, xml.value.stdout)
-                : parsePlistXml(xml.value.stdout);
-          if (!parsed.ok) return parsed;
-          const provenance = [
-            classified.value,
-            json.value,
-            ...(xml === undefined ? [] : [xml.value]),
-          ].map((item) => invocation(item, plist.value, "$PLIST"));
           const converted = xml?.value ?? json.value;
           const format = await plistSourceFormat(classified.value.stdout, {
             ...fileInput,
@@ -854,6 +841,22 @@ class NativeMacOSClient implements AnalysisClient {
             },
           });
           if (!format.ok) return format;
+          // The XML conversion of a binary plist spells its non-finite reals;
+          // only XML source text carries such a spelling as an observed value.
+          const parsed =
+            xml === undefined
+              ? parsePlistJson(json.value.stdout)
+              : jsonDecoded
+                ? parsePlistJson(json.value.stdout, xml.value.stdout)
+                : parsePlistXml(xml.value.stdout, {
+                    sourceFormat: format.value,
+                  });
+          if (!parsed.ok) return parsed;
+          const provenance = [
+            classified.value,
+            json.value,
+            ...(xml === undefined ? [] : [xml.value]),
+          ].map((item) => invocation(item, plist.value, "$PLIST"));
           const result = inspectPlistSchema.parse({
             format: format.value,
             value: parsed.value.value,

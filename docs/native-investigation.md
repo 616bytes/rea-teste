@@ -342,7 +342,7 @@ complete observation.
   summary keeps every decoded document and node/edge/coverage counts and
   retains the complete Evidence; page rows with `inspect_analysis_view`
   `view: {kind: "interface-builder", collection: "nodes", document:
-  "Contents/Resources/Base.lproj/MainMenu.nib", offset: 0, limit: 64}`.
+"Contents/Resources/Base.lproj/MainMenu.nib", offset: 0, limit: 64}`.
   `document` selects rows whose evidence names that exact
   `documents[].relative_path` (nodes and edges only); `source_truncated` keeps
   graph incompleteness visible on every page. `verify:interface-builder` compiles
@@ -641,7 +641,9 @@ reals (`nan`, `+infinity`, `-infinity`, and the parser's `infinity`, `inf`,
 the sign and spelling preserved. A non-finite number without such a spelling,
 such as a binary plist double or XML text the decoder could not read as a
 number, is reported as `{ "$plist_type": "real", "value": null }`. Both are
-counted in separate limitations.
+counted in separate limitations. When `inspect_plist` decodes a binary plist
+through plutil's XML conversion, the spelling in that XML is the converter's,
+so the value stays `null`.
 
 ## Locate a byte signature
 

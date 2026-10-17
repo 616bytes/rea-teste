@@ -61,7 +61,16 @@ export const projectPlistValue = (
   value: unknown,
   /** Observe generated wrappers before consumers classify the JSON value tree. */
   onWrappedScalar?: (value: Record<string, JsonValue>) => void,
+  options: {
+    /**
+     * How a spelled non-finite real is reported: `observed` when the spelling
+     * is the source text, `unknown` when a conversion produced it, such as
+     * plutil's XML rendering of a binary plist double, which carries no spelling.
+     */
+    readonly spelledNonFiniteReals?: "observed" | "unknown";
+  } = {},
 ): ProjectedPlistValue => {
+  const spelledNonFiniteReals = options.spelledNonFiniteReals ?? "observed";
   let nonFiniteRealCount = 0;
   let unknownRealCount = 0;
   let negativeZeroRealCount = 0;
@@ -83,6 +92,10 @@ export const projectPlistValue = (
         base64: Buffer.from(item).toString("base64"),
       });
     if (item instanceof PlistNonFiniteReal) {
+      if (spelledNonFiniteReals === "unknown") {
+        unknownRealCount += 1;
+        return scalar({ $plist_type: "real", value: null });
+      }
       nonFiniteRealCount += 1;
       return scalar({ $plist_type: "real", value: item.spelling });
     }

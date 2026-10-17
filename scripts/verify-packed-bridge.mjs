@@ -23,7 +23,10 @@ export async function verifyPackedBridge({ tarball, packedFiles }) {
     [
       "import ast, sys, tarfile",
       "with tarfile.open(sys.argv[1]) as archive:",
-      "    with archive.extractfile(sys.argv[2]) as source:",
+      "    member = archive.getmember(sys.argv[2])",
+      "    if not member.isfile():",
+      "        raise ValueError(f'{member.name} is not a regular file')",
+      "    with archive.extractfile(member) as source:",
       "        ast.parse(source.read().decode('utf-8'), filename=sys.argv[2])",
     ].join("\n"),
     tarball,

@@ -128,15 +128,19 @@ const runSetupWorkflow = async (
     options.installSkill === undefined;
   const interactiveSelection =
     confirm !== undefined && !options.structured && clientSelectionAllowed;
-  let selectedClientIds = options.allDetectedClients
-    ? discovery.detectedClientIds
-    : (options.clientIds ??
-      options.readinessScope?.clients ??
-      discovery.defaultClientIds);
-  let selectedSkillClientIds =
+  // Repeated selections name one client; planning each copy would duplicate actions.
+  let selectedClientIds = uniqueIds(
+    options.allDetectedClients
+      ? discovery.detectedClientIds
+      : (options.clientIds ??
+          options.readinessScope?.clients ??
+          discovery.defaultClientIds),
+  );
+  let selectedSkillClientIds = uniqueIds(
     options.skillClientIds ??
-    options.readinessScope?.skillClients ??
-    selectedClientIds;
+      options.readinessScope?.skillClients ??
+      selectedClientIds,
+  );
   let skillNeedsInstall = await host.skillNeedsInstall(selectedSkillClientIds);
   let skillSelected =
     options.installSkill === true ||
@@ -499,6 +503,10 @@ const setupFailure = async (
     remediation,
   };
 };
+
+const uniqueIds = (ids: readonly string[]): readonly string[] => [
+  ...new Set(ids),
+];
 
 const emitProgress = (options: SetupOptions, event: SetupProgressEvent): void =>
   options.onProgress?.(event);

@@ -159,8 +159,14 @@ export const projectAppleApplication = (
     roots,
     rootFormat,
   );
+  // Symlinks never carry content identity; they are reported by path in `symlinks`.
   const unavailable = attributeComponents(
-    unavailableComponents(inventory),
+    unavailableComponents({
+      ...inventory,
+      occurrences: inventory.occurrences.filter(
+        ({ entry_kind: kind }) => kind !== "symlink",
+      ),
+    }),
     roots,
     rootFormat,
   );

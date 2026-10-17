@@ -223,28 +223,39 @@ describe("Apple application projection", () => {
   });
 });
 
-it("retains an encrypted IPA native library as unknown component evidence", async () => {
-  const root = await createTestTempDirectory("rea-apple-encrypted-");
-  const path = join(root, "Encrypted.ipa");
+const ENCRYPTED = { password: "fixture-only" };
+// A Unix symlink entry, which ZIP inventory reports without content identity.
+const SYMLINK = {
+  msDosCompatible: false,
+  versionMadeBy: 0x0314,
+  externalFileAttributes: 0o120777 * 0x10000,
+};
+
+async function projectArchive(
+  name: string,
+  members: readonly (readonly [string, object?])[],
+) {
+  const root = await createTestTempDirectory("rea-apple-unread-");
+  const path = join(root, name);
   const writer = new ZipWriter(new Uint8ArrayWriter());
-  await writer.add(
-    "Payload/Fixture.app/Info.plist",
-    new TextReader("<plist><dict/></plist>"),
-  );
-  await writer.add(
-    "Payload/Fixture.app/libentry.dylib",
-    new TextReader("encrypted native library"),
-    { password: "fixture-only" },
-  );
+  for (const [member, options = {}] of members)
+    await writer.add(member, new TextReader("fixture"), options);
   await writeFile(path, await writer.close());
   const inventory = parseEvidence(
     await runProviderAnalysis(path, "inventory_artifact", {}),
   );
-  const projection = appleApplicationProjectionResultSchema.parse(
+  return appleApplicationProjectionResultSchema.parse(
     requireSuccessfulProjection(
       projectAppleApplicationEvidence({ inventory_evidence: [inventory] }),
     ).normalized_result,
   );
+}
+
+it("retains an encrypted IPA native library as unknown component evidence", async () => {
+  const projection = await projectArchive("Encrypted.ipa", [
+    ["Payload/Fixture.app/Info.plist"],
+    ["Payload/Fixture.app/libentry.dylib", ENCRYPTED],
+  ]);
 
   expect(projection.components.native_libraries).toEqual([]);
   expect(projection.unavailable_components).toEqual([
@@ -262,6 +273,43 @@ it("retains an encrypted IPA native library as unknown component evidence", asyn
   expect(projection.limitations).toContainEqual(
     expect.stringContaining("component absence is unknown"),
   );
+});
+
+it("keeps symlinks out of unavailable components", async () => {
+  const projection = await projectArchive("Linked.zip", [
+    ["Fixture.app/Contents/Info.plist"],
+    [
+      "Fixture.app/Contents/Frameworks/Core.framework/Versions/Current",
+      SYMLINK,
+    ],
+  ]);
+
+  expect(projection.symlinks).toEqual([
+    "Fixture.app/Contents/Frameworks/Core.framework/Versions/Current",
+  ]);
+  expect(projection.unavailable_components).toEqual([]);
+  expect(projection.coverage.status).toBe("complete-within-inventory");
+});
+
+it("applies application-root and sidecar rules to unread entries", async () => {
+  const projection = await projectArchive("Unread.zip", [
+    ["Fixture.app/Contents/Info.plist"],
+    ["Fixture.app/Contents/MacOS/Fixture", ENCRYPTED],
+    ["Fixture.app/Contents/._Info.plist", ENCRYPTED],
+    ["Installer/setup.pkg", ENCRYPTED],
+  ]);
+
+  expect(projection.application_roots).toEqual(["Fixture.app"]);
+  expect(projection.unavailable_components.map(({ path }) => path)).toEqual([
+    "Fixture.app/Contents/MacOS/Fixture",
+  ]);
+  expect(projection.limitations).toContain(
+    "1 inventoried entries outside every application root are not attributed to the application.",
+  );
+  expect(projection.coverage).toEqual({
+    status: "partial",
+    inventory_complete: true,
+  });
 });
 
 describe("macOS application projection", () => {

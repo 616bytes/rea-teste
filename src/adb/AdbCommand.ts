@@ -154,13 +154,25 @@ export const runAdbCapture = async (
         excerpt,
       )
     ) {
+      // adb wraps the failing operand in single quotes, so quoted token
+      // equality decides the named operand when one path is a substring of
+      // the other. Equal pull operands share one identity: a refusal naming
+      // that path keeps the file identity over the device target, while
+      // refusals naming both distinct operands stay at the device target.
+      const quotedFailure = /'[^'\n]{1,1024}'/u.test(excerpt);
+      const sameIdentity =
+        targets.fileTarget !== undefined &&
+        targets.fileTarget === targets.localTarget;
       const namesFile =
         targets.fileTarget !== undefined &&
-        (excerpt.includes(targets.fileTarget) ||
-          excerpt.includes("remote object"));
+        (excerpt.includes("remote object") ||
+          excerpt.includes(`'${targets.fileTarget}'`) ||
+          (!quotedFailure && excerpt.includes(targets.fileTarget)));
       const namesLocal =
         targets.localTarget !== undefined &&
-        excerpt.includes(targets.localTarget);
+        !sameIdentity &&
+        (excerpt.includes(`'${targets.localTarget}'`) ||
+          (!quotedFailure && excerpt.includes(targets.localTarget)));
       const namedOperand =
         namesFile === namesLocal
           ? undefined

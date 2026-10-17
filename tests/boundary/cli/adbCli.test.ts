@@ -483,3 +483,51 @@ it.skipIf(process.platform === "win32")(
     ]);
   },
 );
+
+it.skipIf(process.platform === "win32")(
+  "keeps the file identity when pull operands share one path",
+  async () => {
+    const workspace = await createTestWorkspace("rea-adb-pull-samedest-");
+    onTestFinished(() => removeTestWorkspace(workspace.root));
+    const devicePath = `${workspace.path("samedest")}/rea-attribute-sample.bin`;
+    const versionProbe =
+      'if [ "$1" = version ]; then\n' +
+      "  printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\nInstalled as %s\\n' \"$0\"\n" +
+      "  exit 0\nfi\n";
+    const adb = await workspace.write(
+      "refuse-samedest",
+      `#!/bin/sh\nroot=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nprintf '%s\\n' "$*" >> "$root/calls"\n${versionProbe}if [ "$3" = pull ]; then\n  printf '%s' "adb: error: cannot stat remote object '$4': No such file or directory" >&2\n  exit 1\nfi\nexit 91\n`,
+    );
+    await chmod(adb, 0o755);
+    const previousExitCode = process.exitCode;
+    const result = await serve(
+      [
+        "pull-adb-file",
+        "emulator-5554",
+        devicePath,
+        "--output-directory",
+        workspace.path("samedest"),
+        "--json",
+      ],
+      { REA_ADB_PATH: adb },
+    );
+    const exitCode = process.exitCode;
+    process.exitCode = previousExitCode;
+    expect(exitCode).toBe(1);
+    const refusal = JSON.parse(result.stdout) as {
+      code: string;
+      message: string;
+      details: { operation: string; path: string; reason: string };
+    };
+    expect(refusal.code).toBe("unsupported_target");
+    expect(refusal.details.operation).toBe("pull_adb_file");
+    expect(refusal.details.path).toBe(devicePath);
+    expect(refusal.details.reason).toEqual(expect.stringContaining(devicePath));
+    expect(refusal.message).toContain(`at ${devicePath}`);
+    const calls = (await readFile(workspace.path("calls"), "utf8"))
+      .split("\n")
+      .filter((line) => line !== "");
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toBe(`-s emulator-5554 pull ${devicePath} ${devicePath}`);
+  },
+);

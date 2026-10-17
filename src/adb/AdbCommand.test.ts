@@ -325,3 +325,68 @@ it("keeps the device target when a pull refusal identifies both operands", async
     path: "emulator-5554",
   });
 });
+
+it("keeps the file identity when pull operands share one path", async () => {
+  const sharedPath = "/host/out/rea-attribute-sample.bin";
+  const stderr = `adb: error: cannot stat remote object '${sharedPath}': No such file or directory`;
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("adb pull failed"), {
+      code: 1,
+      stdout: "",
+      stderr,
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "pull_adb_file",
+    "emulator-5554",
+    "/host/adb",
+    [],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+    { fileTarget: sharedPath, localTarget: sharedPath },
+  );
+  if (result.ok) throw new Error("Expected a path-specific pull refusal");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisUnsupportedTargetError",
+    operation: "pull_adb_file",
+    path: sharedPath,
+    reason: stderr,
+  });
+  expect(result.error.message).toBe(
+    `Unsupported target for pull_adb_file at ${sharedPath}: ${stderr}`,
+  );
+});
+
+it("names the remote file when a destination path shares its prefix", async () => {
+  const stderr =
+    "adb: error: failed to open '/data/local/tmp/rea-attribute-sample.bin': Permission denied";
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("adb pull failed"), {
+      code: 1,
+      stdout: "",
+      stderr,
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "pull_adb_file",
+    "emulator-5554",
+    "/host/adb",
+    [],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+    {
+      fileTarget: "/data/local/tmp/rea-attribute-sample.bin",
+      localTarget: "/data",
+    },
+  );
+  if (result.ok) throw new Error("Expected a path-specific pull refusal");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisUnsupportedTargetError",
+    path: "/data/local/tmp/rea-attribute-sample.bin",
+    reason: stderr,
+  });
+});

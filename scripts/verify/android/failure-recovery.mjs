@@ -106,6 +106,7 @@ export async function verifyAndroidFailureRecovery({
       },
       {
         label: "missing java",
+        missingLauncher: process.platform !== "win32",
         env: { ...withoutJavaHome, PATH: empty },
         observation:
           process.platform === "win32" ? "Cannot find java.exe" : "ENOENT",
@@ -154,11 +155,19 @@ export async function verifyAndroidFailureRecovery({
       );
       assert.match(
         failure.message,
-        scenario.jarFailure ? /REA_JADX_MCP_JAR/u : /full JDK/u,
+        scenario.jarFailure
+          ? /REA_JADX_MCP_JAR/u
+          : scenario.missingLauncher
+            ? /Cannot inspect selected Java runtime .*spawn java ENOENT/u
+            : /full JDK/u,
       );
       assert.match(
         failure.remediation.action,
-        scenario.jarFailure ? /jadx-headless-mcp/u : /java --list-modules/u,
+        scenario.jarFailure
+          ? /jadx-headless-mcp/u
+          : scenario.missingLauncher
+            ? /Review the selected launcher and retained diagnostics/u
+            : /java --list-modules/u,
       );
       if (scenario.jarFailure)
         assert.doesNotMatch(failure.message, /Select a full JDK/u);

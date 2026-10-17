@@ -1,3 +1,6 @@
+import { bindArtifactFileCleanup } from "./ArtifactFileOperation.js";
+import { ArtifactResourceRetryFailure } from "./ArtifactResourceScope.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { expect, it } from "vitest";
 
 import { err } from "../domain/result.js";
@@ -42,7 +45,7 @@ it("waits for admitted operations and shares concurrent close", async () => {
   expect(closed).toBe(true);
 });
 
-it("retains the same failed reader owner and retries before admitting work", async () => {
+it("retains the same failed reader owner in a retry failure and retries before admitting work", async () => {
   const scope = new ArtifactResourceScope();
   let closeAttempts = 0;
   const reader = {
@@ -59,6 +62,7 @@ it("retains the same failed reader owner and retries before admitting work", asy
   await expect(scope.run(async () => "must not run")).rejects.toMatchObject({
     reason: "unavailable",
     message: "Artifact cleanup remains incomplete: fixture reader",
+    failedOwners: [owner],
   });
   expect(closeAttempts).toBe(2);
   await expect(scope.close()).rejects.toMatchObject({
@@ -67,6 +71,47 @@ it("retains the same failed reader owner and retries before admitting work", asy
   expect(closeAttempts).toBe(3);
   await scope.close();
   expect(closeAttempts).toBe(4);
+});
+
+it("reports only owners whose cleanup failed during a mixed retry", async () => {
+  const scope = new ArtifactResourceScope();
+  let firstAttempts = 0;
+  let secondAttempts = 0;
+  const first = {
+    kind: "lease" as const,
+    resource: "first lease",
+    lease: {
+      async release() {
+        firstAttempts += 1;
+        if (firstAttempts === 1) throw new Error("first initial close");
+      },
+    },
+  };
+  const second = {
+    kind: "lease" as const,
+    resource: "second lease",
+    lease: {
+      async release() {
+        secondAttempts += 1;
+        if (secondAttempts < 3) throw new Error("second close still denied");
+      },
+    },
+  };
+  expect(await scope.release(first)).toMatchObject({ kind: "failed" });
+  expect(await scope.release(second)).toMatchObject({ kind: "failed" });
+  expect(scope.cleanupResources).toEqual(["first lease", "second lease"]);
+
+  await expect(scope.retryCleanup()).rejects.toMatchObject({
+    failedOwners: [second],
+    cleanup: { resources: ["second lease"] },
+  });
+  expect(firstAttempts).toBe(2);
+  expect(secondAttempts).toBe(2);
+  expect(scope.cleanupResources).toEqual(["second lease"]);
+  await scope.close();
+  expect(firstAttempts).toBe(2);
+  expect(secondAttempts).toBe(3);
+  expect(scope.cleanupResources).toEqual([]);
 });
 
 it("retains a failed source analyzer until shutdown can verify its release", async () => {
@@ -111,4 +156,42 @@ it("retains a failed source analyzer until shutdown can verify its release", asy
   });
   releaseAllowed = true;
   await scope.close();
+});
+
+it("retains a canonical retry lease for a plain cleanup capability", async () => {
+  const scope = new ArtifactResourceScope();
+  let denied = true;
+  let closes = 0;
+  const owner = {
+    kind: "lease",
+    resource: "plain cleanup owner",
+    lease: {
+      release: async () => {
+        closes++;
+        if (denied) throw new Error("close denied");
+      },
+    },
+  } as const;
+  try {
+    expect(await scope.release(owner)).toMatchObject({ kind: "failed" });
+    const retry: unknown = await scope
+      .retryCleanup()
+      .catch((cause: unknown) => cause);
+    if (!(retry instanceof ArtifactResourceRetryFailure))
+      throw new Error("Expected exact failed owners");
+    expect(retry.cleanupLeases).toHaveLength(1);
+    const failure = new ProviderCleanupError("fixture", [owner.resource], {
+      reason: "close denied",
+    });
+    bindArtifactFileCleanup(retry, failure);
+    expect(failure.cleanupIncomplete).toBe(true);
+    denied = false;
+    await scope.close();
+    expect(failure.cleanupIncomplete).toBe(false);
+    expect(failure.cleanupResources).toEqual([]);
+    expect(closes).toBe(3);
+  } finally {
+    denied = false;
+    await scope.close();
+  }
 });

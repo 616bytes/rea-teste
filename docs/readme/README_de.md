@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · **Deutsch** · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md)
 
 # REA: Alles reverse-engineeren
 
@@ -166,7 +166,7 @@ Statische JavaScript- und .NET-Untersuchungen lesen die bereitgestellten Dateien
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Native Formate und unterstützte Hostsysteme unterscheiden sich je nach Provider. Siehe [Hopper- und Ghidra-Einrichtung](../installation.md#hopper), den [IDA-Leitfaden](../ida-provider.md) und die [experimentelle Ghidra-Unterstützung unter Windows](../windows-ghidra-p0.md). Ghidra unterstützt auch [16-Bit-DOS-Analyse](../ghidra-dos.md). Die Provider-Auswahl beschreibt der [CLI-Leitfaden](../cli.md#choose-a-provider). Prüfe die [Verfügbarkeit in Releases](../installation.md#released-package-and-main) für Funktionen, die seit der neuesten npm-Version hinzugekommen sind.
+Native Formate und unterstützte Hostsysteme unterscheiden sich je nach Provider. Siehe [Hopper- und Ghidra-Einrichtung](../installation.md#hopper), den [IDA-Leitfaden](../ida-provider.md), [Kuna](../kuna-provider.md) und die [experimentelle Ghidra-Unterstützung unter Windows](../windows-ghidra-p0.md). Ghidra unterstützt auch [16-Bit-DOS-Analyse](../ghidra-dos.md). Die Provider-Auswahl beschreibt der [CLI-Leitfaden](../cli.md#choose-a-provider). Prüfe die [Verfügbarkeit in Releases](../installation.md#released-package-and-main) für Funktionen, die seit der neuesten npm-Version hinzugekommen sind.
 
 ## Fallstudien
 
@@ -272,7 +272,7 @@ Melde Sicherheitslücken gemäß [SECURITY.md](../../SECURITY.md).
 
 ## Sternverlauf
 
-🎉 **200.000 GitHub-Sterne – vielen Dank!**
+🎉 **300.000 GitHub-Sterne – vielen Dank!**
 
 Danke an alle, die REA nutzen, Fehler melden, Funktionswünsche äußern, Builds testen und Fehlerbehebungen beitragen.
 

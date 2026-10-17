@@ -6,11 +6,11 @@ import {
   AnalysisInputError,
   AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
-import { projectPlistValue } from "../../domain/apple/plistValue.js";
+import { unknownDateLimitation } from "../../domain/apple/plistValue.js";
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
 import {
-  binaryPlistNumberLiterals,
-  xmlPlistNumberLiterals,
+  decodeBinaryPlistNumbers,
+  scanBinaryPlistNumberLiterals,
 } from "./PlistNumberLiterals.js";
 import {
   omittedPrototypeKeysLimitation,
@@ -64,26 +64,29 @@ export const decodeKeyedArchiveBytes = (
               )
             : new RangeError(message),
         bounds: "decoder",
+        numberProjection: true,
       })
+    : undefined;
+  const binaryNumberMetadata = binary
+    ? scanBinaryPlistNumberLiterals(bytes)
     : undefined;
   const parsed =
     binaryExpansion !== undefined
       ? {
-          value: parseBinary(bytes),
+          value: parseBinary(
+            decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
+          ),
+          numberLiterals: binaryNumberMetadata!.literals,
           omittedPrototypeKeys: binaryExpansion.binaryPrototypeKeyObserved
             ? null
             : 0,
         }
       : parseXmlPropertyList(xmlText ?? "");
-  const { value: plistValue, unknownRealCount } = projectPlistValue(
+  const { unknownRealCount, unknownDateCount, ...graph } = projectKeyedArchive(
     parsed.value,
+    selection,
   );
-  const graph = projectKeyedArchive(plistValue, selection);
-  const numbers = createPlistNumberProjection(
-    binary
-      ? binaryPlistNumberLiterals(bytes)
-      : xmlPlistNumberLiterals(xmlText ?? ""),
-  );
+  const numbers = createPlistNumberProjection(parsed.numberLiterals);
   // Classify the serialized graph before projecting values to typed decimals.
   // Numeric IDs, node kinds, references and pagination retain their original meaning.
   const roots = Object.fromEntries(
@@ -112,6 +115,9 @@ export const decodeKeyedArchiveBytes = (
         : [
             `${String(unknownRealCount)} non-finite real value(s) are reported as { "$plist_type": "real", "value": null } because JSON evidence cannot preserve NaN vs infinity.`,
           ]),
+      ...(unknownDateCount === 0
+        ? []
+        : [unknownDateLimitation(unknownDateCount)]),
     ],
   };
 };

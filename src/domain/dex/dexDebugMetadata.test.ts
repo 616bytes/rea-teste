@@ -139,6 +139,29 @@ describe("dexDebugMetadata unreadable structures", () => {
     expect(result.value.unreadable.classData).toBe(1);
     expect(result.value.readiness).toBe("unknown");
   });
+
+  it("reads class_data at the end of the file or cut off mid-header as unreadable", async () => {
+    for (const back of [0, 1, 2]) {
+      const bytes = debuggableDex();
+      const view = new DataView(
+        bytes.buffer,
+        bytes.byteOffset,
+        bytes.byteLength,
+      );
+      const classDefsOff = view.getUint32(100, true);
+      // At EOF, or one/two bytes before it: too few bytes for the four counts.
+      bytes.fill(0, bytes.length - back);
+      view.setUint32(classDefsOff + 24, bytes.length - back, true);
+      const parsed = parseDexFile(bytes);
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) return;
+      const result = await summarizeDex(parsed.value, bytes, work());
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.unreadable.classData).toBe(1);
+      expect(result.value.readiness).toBe("unknown");
+    }
+  });
 });
 
 /** Byte offsets of the fixture's class_def, class_data, code_item and debug_info. */

@@ -63,6 +63,51 @@ const createProvider = (
   ...overrides,
 });
 
+it("projects internal device identifiers onto the shared device contract", async () => {
+  const service = new FridaInstrumentationService(
+    createProvider({
+      async listDevices() {
+        return {
+          ok: true,
+          value: {
+            devices: [
+              { deviceId: "local", name: "Local System", type: "local" },
+              { deviceId: "remote-device", name: "endpoint", type: "remote" },
+            ],
+            cleanupError: "late disconnect",
+          },
+        };
+      },
+    }),
+  );
+  const result = await service.listDevices();
+  if (!result.ok) throw result.error;
+  expect(result.value).toEqual({
+    devices: [
+      { device_id: "local", name: "Local System", type: "local" },
+      { device_id: "remote-device", name: "endpoint", type: "remote" },
+    ],
+    cleanupError: "late disconnect",
+  });
+});
+
+it("returns the provider's device-discovery failure unchanged", async () => {
+  const error = new AnalysisCapabilityUnavailableError(
+    "frida",
+    "list_frida_devices",
+    "device enumeration refused",
+  );
+  const service = new FridaInstrumentationService(
+    createProvider({
+      async listDevices() {
+        return { ok: false, error };
+      },
+    }),
+  );
+  const result = await service.listDevices();
+  expect(result).toEqual({ ok: false, error });
+});
+
 it.each(["startSession", "instrument"] as const)(
   "does not start Frida when %s receives an already-cancelled signal",
   async (method) => {

@@ -4,6 +4,7 @@ import { createCli } from "../../../src/cli.js";
 import type { FridaInstrumentationPort } from "../../../src/application/frida/FridaInstrumentationPort.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { FridaInstrumentationManager } from "../../../src/frida/FridaInstrumentationManager.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
 
 it("maps one-shot Frida CLI target, script, duration, and remote options", async () => {
   const calls: unknown[] = [];
@@ -207,12 +208,18 @@ it("awaits failed startup cleanup and retains the primary error if cleanup still
 
 it("preserves observed devices when CLI provider cleanup fails", async () => {
   const provider: FridaInstrumentationPort = new FridaInstrumentationManager();
-  const devices = [
-    { deviceId: "remote-device", name: "selected endpoint", type: "remote" },
-  ];
   provider.listDevices = async () => ({
     ok: true,
-    value: { devices, cleanupError: null },
+    value: {
+      devices: [
+        {
+          deviceId: "remote-device",
+          name: "selected endpoint",
+          type: "remote",
+        },
+      ],
+      cleanupError: null,
+    },
   });
   provider.closeAll = async () => {
     throw new Error("remote removal failed");
@@ -231,8 +238,53 @@ it("preserves observed devices when CLI provider cleanup fails", async () => {
   const output: unknown = JSON.parse(stdout);
   expect(output).toMatchObject({
     code: "cleanup_incomplete",
-    details: { diagnostics: { partial_observation: { devices } } },
+    details: {
+      diagnostics: {
+        partial_observation: {
+          devices: [
+            {
+              device_id: "remote-device",
+              name: "selected endpoint",
+              type: "remote",
+            },
+          ],
+        },
+      },
+    },
   });
+});
+
+it("returns CLI device records in the shared MCP device contract shape", async () => {
+  const provider: FridaInstrumentationPort = new FridaInstrumentationManager();
+  provider.listDevices = async () => ({
+    ok: true,
+    value: {
+      devices: [{ deviceId: "fixture-local", name: "Fixture", type: "local" }],
+      cleanupError: null,
+    },
+  });
+  let stdout = "";
+  let exitCode = 0;
+  await createCli({}, undefined, provider).serve(
+    ["list-frida-devices", "--json"],
+    {
+      env: {},
+      exit: (code) => {
+        exitCode = code;
+      },
+      stdout: (text) => {
+        stdout += text;
+      },
+    },
+  );
+  expect(exitCode).toBe(0);
+  const output: unknown = JSON.parse(stdout);
+  expect(output).toEqual({
+    devices: [{ device_id: "fixture-local", name: "Fixture", type: "local" }],
+    cleanup_error: null,
+  });
+  const contract = toolContract("list_frida_devices");
+  expect(contract.outputSchema.safeParse(output).success).toBe(true);
 });
 
 it.each([

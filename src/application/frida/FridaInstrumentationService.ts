@@ -14,6 +14,7 @@ import {
 import { err, ok, type Result } from "../../domain/result.js";
 import { FridaScriptLoadCancelledError } from "./FridaInstrumentationPort.js";
 import type {
+  FridaDeviceObservation,
   FridaDeviceSelector,
   FridaInstrumentationPort,
   FridaRemoteConnection,
@@ -90,8 +91,14 @@ export class FridaInstrumentationService {
     this.#provider = provider;
   }
 
-  listDevices(remote?: FridaRemoteConnection) {
-    return this.#provider.listDevices(remote);
+  async listDevices(remote?: FridaRemoteConnection) {
+    const result = await this.#provider.listDevices(remote);
+    return result.ok
+      ? ok({
+          devices: result.value.devices.map(deviceOutput),
+          cleanupError: result.value.cleanupError,
+        })
+      : result;
   }
 
   listProcesses(selector: FridaDeviceSelector) {
@@ -454,6 +461,13 @@ export const withRecoveredFridaCleanup = (
         },
       )
     : error;
+
+/** Project internal device observations onto the shared caller-facing contract. */
+const deviceOutput = (device: FridaDeviceObservation) => ({
+  device_id: device.deviceId,
+  name: device.name,
+  type: device.type,
+});
 
 const scriptOutput = (script: FridaScriptObservation) => ({
   script_id: script.scriptId,

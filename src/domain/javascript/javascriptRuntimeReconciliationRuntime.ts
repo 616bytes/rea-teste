@@ -1,5 +1,6 @@
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import type { WebPageInspection } from "../browserObservationSchemas.js";
+import { supportsJavaScriptSource } from "../browserScriptLanguage.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   createJavaScriptApplicationEdge,
@@ -272,44 +273,47 @@ const workerEntities = (
     const coverage = workerScriptCoverage(observation);
     return [
       entity,
-      ...observation.scripts.map((script) => {
-        const key = `worker_script_${digestCanonicalValue([worker.target_id, script.script_id], "Worker script identity")}`;
-        return runtimeEntity(capture, {
-          kind: "script",
-          nodeKind: "runtime-script-instance",
-          runtimeKey: key,
-          targetKey: worker.target_id,
-          frameKey: null,
-          scriptKey: key,
-          sourceMapUrl: script.source_map_url,
-          parentWorkerKey: worker.target_id,
-          owningPageTargetId: entity.owningPageTargetId,
-          location: { kind: "url", value: script.url },
-          staticKind: "javascript",
-          sourceSha256: script.source.included
-            ? script.source.artifact.sha256
-            : null,
-          label: script.url,
-          properties: {
-            location: script.url,
-            script_id: script.script_id,
-            worker_target_id: worker.target_id,
-            execution_context_id: script.execution_context_id,
-            cdp_hash: script.cdp_hash,
-            is_module: script.is_module,
-            language: script.language,
-            source_map_url: script.source_map_url,
-            source_sha256: script.source.included
+      ...observation.scripts
+        .filter((script) => supportsJavaScriptSource(script.language))
+        .map((script) => {
+          const key = `worker_script_${digestCanonicalValue([worker.target_id, script.script_id], "Worker script identity")}`;
+          return runtimeEntity(capture, {
+            kind: "script",
+            nodeKind: "runtime-script-instance",
+            runtimeKey: key,
+            targetKey: worker.target_id,
+            frameKey: null,
+            scriptKey: key,
+            sourceMapUrl: script.source_map_url,
+            parentWorkerKey: worker.target_id,
+            owningPageTargetId: entity.owningPageTargetId,
+            location: { kind: "url", value: script.url },
+            staticKind: "javascript",
+            sourceSha256: script.source.included
               ? script.source.artifact.sha256
               : null,
-          },
-          section: "scripts",
-          coverage,
-          ...(script.source.included
-            ? { artifactSha256: script.source.artifact.sha256 }
-            : {}),
-        });
-      }),
+            label: script.url,
+            properties: {
+              location: script.url,
+              script_id: script.script_id,
+              worker_target_id: worker.target_id,
+              execution_context_id: script.execution_context_id,
+              cdp_hash: script.cdp_hash,
+              is_module: script.is_module,
+              language: script.language,
+              length: script.length ?? null,
+              source_map_url: script.source_map_url,
+              source_sha256: script.source.included
+                ? script.source.artifact.sha256
+                : null,
+            },
+            section: "scripts",
+            coverage,
+            ...(script.source.included
+              ? { artifactSha256: script.source.artifact.sha256 }
+              : {}),
+          });
+        }),
     ];
   });
 

@@ -902,6 +902,7 @@ const scriptsDimension = (
             cdp_hash: script.cdp_hash,
             is_module: script.is_module,
             language: script.language,
+            length: script.length ?? null,
             source_map_url: script.source_map_url,
             ...(script.source.included &&
             beforeSources.has(

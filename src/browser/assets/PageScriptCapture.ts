@@ -1,5 +1,6 @@
 import type { WebPageInspection } from "../../domain/browserObservationSchemas.js";
 import type { CapturedWebScript } from "../../domain/webScriptExport.js";
+import { supportsJavaScriptSource } from "../../domain/browserScriptLanguage.js";
 
 /** Project verified Debugger sources without fetching resource URLs. */
 export const pageScripts = (
@@ -49,7 +50,7 @@ const scriptContent = (
         reason: "source-not-included",
         message: script.source.reason || "Debugger source was not included.",
       }
-    : script.language !== null && script.language !== "JavaScript"
+    : !supportsJavaScriptSource(script.language)
       ? {
           state: "unavailable",
           reason: "unsupported-language",

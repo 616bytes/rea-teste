@@ -235,6 +235,15 @@ const browserWorkerSchema = z.object({
       scripts: z.array(
         z.object({
           script_id: z.string().min(1),
+          length: z
+            .number()
+            .int()
+            .nonnegative()
+            .nullable()
+            .optional()
+            .describe(
+              "Producer-reported script length; null when unavailable, omitted in legacy captures.",
+            ),
           is_module: z.boolean().nullable(),
           language: z.string().nullable(),
           source_map_url: z.string().nullable(),

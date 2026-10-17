@@ -31,6 +31,258 @@ import {
 
 const source = 'postMessage("worker 🧪");';
 
+it.each(["WebAssembly", "JavaScript", undefined, "Other"])(
+  "respects worker script language before reading or matching: %s",
+  async (scriptLanguage) => {
+    const { provider, input, browser } = await fixture({
+      commandEvents: (command, origin) =>
+        command.method === "Debugger.enable" &&
+        command.sessionId === "worker-own"
+          ? [
+              {
+                method: "Debugger.scriptParsed",
+                sessionId: "worker-own",
+                params: {
+                  scriptId: "language",
+                  url: origin + "/same.js",
+                  scriptLanguage,
+                  length: 0,
+                },
+              },
+            ]
+          : undefined,
+      commandResult: (command) =>
+        command.method === "Debugger.getScriptSource" &&
+        command.sessionId === "worker-own"
+          ? { scriptSource: "", bytecode: "AGFzbQ==" }
+          : undefined,
+    });
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    const script = captured.value.workers.find((w) => w.target_id === "own")!
+      .observation!.scripts[0]!;
+    const javascript =
+      scriptLanguage === undefined || scriptLanguage === "JavaScript";
+    expect(script.language).toBe(scriptLanguage ?? null);
+    expect(script.source.included).toBe(javascript);
+    expect(
+      browser.commands.some(
+        (c) =>
+          c.method === "Debugger.getScriptSource" &&
+          c.sessionId === "worker-own",
+      ),
+    ).toBe(javascript);
+    // Historical captures with included bytes still cannot reinterpret Wasm as JS.
+    script.source = {
+      included: true,
+      artifact: createWebTextArtifact("", "text/javascript"),
+    };
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      input,
+      captured.value,
+      provider.identity(),
+    );
+    const projection = projectRuntimeCaptures(parseRuntimeCaptures([evidence]));
+    expect(
+      projection.entities.filter((entity) => entity.parentWorkerKey === "own"),
+    ).toHaveLength(javascript ? 1 : 0);
+    expect(
+      selectScriptCapture(evidence).scripts.find(
+        (s) =>
+          s.source.kind === "worker-script" && s.source.target_id === "own",
+      )?.content.state,
+    ).toBe(javascript ? "captured" : "unavailable");
+  },
+);
+
+it("retains worker length through capture, reconciliation and passive diff", async () => {
+  const { provider, input } = await fixture();
+  const selected = { ...input, include_script_sources: false };
+  const result = await provider.inspectPage(selected);
+  if (!result.ok) throw result.error;
+  const before = result.value;
+  const script = before.workers.find((w) => w.target_id === "own")!.observation!
+    .scripts[0]!;
+  expect(script.length).toBe(source.length);
+  script.cdp_hash = null;
+  const after = structuredClone(before);
+  after.workers.find(
+    (w) => w.target_id === "own",
+  )!.observation!.scripts[0]!.length = source.length + 1;
+  const evidence = createBrowserEvidence(
+    "inspect_web_page",
+    selected,
+    before,
+    provider.identity(),
+  );
+  expect(
+    projectRuntimeCaptures(parseRuntimeCaptures([evidence])).entities.find(
+      (e) => e.parentWorkerKey === "own",
+    )?.node.observations[0]?.properties.length,
+  ).toBe(source.length);
+  const diff = compareWebCaptures({
+    before: { inspection: before, webmcp: null },
+    after: { inspection: after, webmcp: null },
+  });
+  expect(diff.dimensions.scripts.total_changes).toBe(1);
+  delete script.length;
+  expect(() =>
+    parseRuntimeCaptures([
+      createBrowserEvidence(
+        "inspect_web_page",
+        selected,
+        before,
+        provider.identity(),
+      ),
+    ]),
+  ).not.toThrow();
+});
+
+it("rejects a repeated worker script identity with a changed length", async () => {
+  const { provider, input } = await fixture({
+    commandEvents: (command, origin) =>
+      command.method === "Debugger.enable" && command.sessionId === "worker-own"
+        ? [1, 2].map((length) => ({
+            method: "Debugger.scriptParsed",
+            sessionId: "worker-own",
+            params: { scriptId: "same", url: origin + "/same.js", length },
+          }))
+        : undefined,
+  });
+  expect(await provider.inspectPage(input)).toMatchObject({
+    ok: false,
+    error: { reason: "target_changed" },
+  });
+});
+
+it.each([-32601, -32000])(
+  "bounds unsupported worker source requests while preserving per-script failures: %s",
+  async (code) => {
+    const { provider, input, browser } = await fixture({
+      commandEvents: (command, origin) =>
+        command.method === "Debugger.enable" &&
+        command.sessionId === "worker-own"
+          ? Array.from({ length: 16 }, (_, index) => ({
+              method: "Debugger.scriptParsed",
+              sessionId: "worker-own",
+              params: { scriptId: String(index), url: origin + "/same.js" },
+            }))
+          : undefined,
+      commandError: (command) =>
+        command.method === "Debugger.getScriptSource" &&
+        command.sessionId === "worker-own" &&
+        (code === -32601 || command.params.scriptId === "0")
+          ? { code, message: "Source unavailable" }
+          : undefined,
+    });
+    const captured = await provider.inspectPage({
+      ...input,
+      worker_target_ids: ["shared"],
+    });
+    if (!captured.ok) throw captured.error;
+    const observation = captured.value.workers.find(
+      (w) => w.target_id === "own",
+    )!.observation!;
+    expect(
+      browser.commands.filter(
+        (c) =>
+          c.method === "Debugger.getScriptSource" &&
+          c.sessionId === "worker-own",
+      ),
+    ).toHaveLength(code === -32601 ? 1 : 16);
+    expect(observation.scripts.filter((s) => s.source.included)).toHaveLength(
+      code === -32601 ? 0 : 15,
+    );
+    expect(
+      observation.limitations.filter((s) =>
+        s.includes("Debugger.getScriptSource was unavailable"),
+      ),
+    ).toHaveLength(code === -32601 ? 1 : 0);
+    expect(
+      captured.value.workers.find((w) => w.target_id === "shared")!.observation!
+        .scripts[0]!.source.included,
+    ).toBe(true);
+  },
+);
+
+it.each(["revoked", "selected", "controlled"])(
+  "charges worker event bytes only within collection scope: %s",
+  async (scope) => {
+    const { provider, input } = await fixture({
+      eventsBeforeReply: [
+        "ServiceWorker.enable",
+        "Target.setAutoAttach",
+        "Network.enable",
+      ],
+      commandEvents(command, origin) {
+        const version = (clients: string[]): CdpEvent => ({
+          method: "ServiceWorker.workerVersionUpdated",
+          sessionId: "session-1",
+          params: {
+            versions: [{ targetId: "service", controlledClients: clients }],
+          },
+        });
+        if (command.method === "ServiceWorker.enable")
+          return [version(["allowed-page"])];
+        if (
+          command.method === "Target.setAutoAttach" &&
+          command.params.autoAttach === true &&
+          command.sessionId === "session-1"
+        )
+          return [
+            {
+              method: "Target.attachedToTarget",
+              sessionId: "session-1",
+              params: {
+                sessionId: "worker-service",
+                targetInfo: {
+                  targetId: "service",
+                  type: "service_worker",
+                  url: origin + "/service.js",
+                  attached: true,
+                },
+              },
+            },
+          ];
+        if (
+          command.method === "Network.enable" &&
+          command.sessionId === "worker-service"
+        )
+          return [
+            version(scope === "controlled" ? ["allowed-page"] : ["other-page"]),
+            ...Array.from({ length: 10 }, () => ({
+              method: "Runtime.consoleAPICalled",
+              sessionId: "worker-service",
+              params: {
+                type: "log",
+                args: [{ type: "string", value: "x".repeat(900_000) }],
+              },
+            })),
+          ];
+        return undefined;
+      },
+    });
+    const captured = await provider.inspectPage({
+      ...input,
+      worker_target_ids: scope === "selected" ? ["service"] : [],
+    });
+    if (scope === "revoked") {
+      if (!captured.ok) throw captured.error;
+      expect(captured.value.target.target_id).toBe("allowed-page");
+      expect(
+        captured.value.workers
+          .find((w) => w.target_id === "service")!
+          .observation!.lifecycle.at(-1),
+      ).toMatchObject({ controls_page: false });
+    } else
+      expect(captured).toMatchObject({
+        ok: false,
+        error: { reason: "payload_limit" },
+      });
+  },
+);
+
 it.each(["missing", "observation"] as const)(
   "rejects an explicitly selected worker without retained %s",
   async (kind) => {

@@ -1,4 +1,5 @@
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
+import { supportsJavaScriptSource } from "../domain/browserScriptLanguage.js";
 import type { CaptureContext } from "./CdpPageCapture.js";
 import type { CdpEvent } from "./CdpConnection.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
@@ -78,6 +79,7 @@ export class CdpWorkerCapture {
   #stopped = false;
   #eventBytes = 0;
   #sourceBytes = 0;
+  readonly #unavailableSourceSessions = new Set<string | undefined>();
   readonly #abort = new AbortController();
   readonly signal: AbortSignal;
 
@@ -397,12 +399,19 @@ export class CdpWorkerCapture {
       )
     )
       return;
+    const worker = this.#sessions.get(event.sessionId ?? "");
     if (
       !event.method.startsWith("Target.") &&
-      !event.method.startsWith("ServiceWorker.") &&
-      event.sessionId === this.context.sessionId
-    )
-      return;
+      !event.method.startsWith("ServiceWorker.")
+    ) {
+      if (worker === undefined || !worker.enabled || worker.detached) return;
+      if (
+        worker.item.type === "service_worker" &&
+        !this.#controlled.has(worker.item.target_id) &&
+        !worker.item.observation.selected_explicitly
+      )
+        return;
+    }
     this.#eventBytes += Buffer.byteLength(JSON.stringify(event));
     if (this.#eventBytes > WEB_RUNTIME_LIMITS.retainedEventBytes)
       throw new BrowserObservationError(
@@ -530,14 +539,7 @@ export class CdpWorkerCapture {
       }
       return;
     }
-    const worker = this.#sessions.get(event.sessionId ?? "");
     if (worker === undefined || !worker.enabled || worker.detached) return;
-    if (
-      worker.item.type === "service_worker" &&
-      !this.#controlled.has(worker.item.target_id) &&
-      !worker.item.observation.selected_explicitly
-    )
-      return;
     worker.events.ingest(event);
     if (event.method === "Runtime.executionContextCreated") {
       const context = recordValue(params.context);
@@ -573,6 +575,7 @@ export class CdpWorkerCapture {
       script_id: script.scriptId,
       is_module: script.isModule,
       language: script.language,
+      length: script.length,
       source_map_url: script.sourceMapUrl,
       execution_context_id:
         contextId !== undefined && Number.isSafeInteger(contextId)
@@ -590,6 +593,7 @@ export class CdpWorkerCapture {
         previous.execution_context_id !== item.execution_context_id ||
         previous.is_module !== item.is_module ||
         previous.language !== item.language ||
+        previous.length !== item.length ||
         previous.source_map_url !== item.source_map_url
       )
         throw new BrowserObservationError(
@@ -599,6 +603,12 @@ export class CdpWorkerCapture {
       return;
     }
     worker.sources.set(script.scriptId, item);
+    if (!supportsJavaScriptSource(item.language)) {
+      item.source = sourceExcluded(
+        `Debugger reported language ${item.language}; JavaScript source capture was not inferred.`,
+      );
+      return;
+    }
     if (this.context.input.include_script_sources) {
       this.#sourceReads.push({ worker, item });
       if (this.#readingSources) return;
@@ -616,15 +626,21 @@ export class CdpWorkerCapture {
       ) {
         const { worker, item } = this.#sourceReads[index]!;
         try {
-          const source = worker.detached
-            ? undefined
-            : await this.#command(
-                "Debugger.getScriptSource",
-                { scriptId: item.script_id },
-                worker.sessionId,
-                worker.item.observation.limitations,
-              );
+          const source =
+            worker.detached ||
+            this.#unavailableSourceSessions.has(worker.sessionId)
+              ? undefined
+              : await this.#command(
+                  "Debugger.getScriptSource",
+                  { scriptId: item.script_id },
+                  worker.sessionId,
+                  worker.item.observation.limitations,
+                );
           if (source === undefined) {
+            // Undefined from the optional command means method-not-found.
+            // Cache that capability per session, preserving per-script failures.
+            if (!worker.detached)
+              this.#unavailableSourceSessions.add(worker.sessionId);
             item.source = sourceExcluded(
               "Worker source retrieval is unavailable",
             );

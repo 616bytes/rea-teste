@@ -369,7 +369,9 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         options.signal,
         this.#resources,
         this.#fileSystem,
-      );
+      ).catch((cause: unknown) => {
+        throw providerError(cause);
+      });
       let containsApp: boolean;
       try {
         containsApp = await runWithExecutionLimits(

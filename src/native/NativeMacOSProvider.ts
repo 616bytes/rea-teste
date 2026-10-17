@@ -825,7 +825,7 @@ class NativeMacOSClient implements AnalysisClient {
               unreadablePlist(
                 plist.value,
                 requested,
-                `plutil could not decode it as a property list (${plutilDiagnostic(xml.value.stderr, plist.value)})`,
+                `plutil could not decode it as a property list (${plutilDiagnostic(xml.value, plist.value)})`,
               ),
             );
           const parsed =
@@ -1209,9 +1209,19 @@ const parseEntitlements = (
   return { value: jsonValueSchema.parse(value), omittedPrototypeKeys };
 };
 
-/** plutil prefixes its diagnostic with the path the message already names. */
-const plutilDiagnostic = (stderr: string, path: string): string => {
-  const text = stderr.trim();
+/**
+ * plutil writes its decode diagnostic to the stream selected by `-o`, so a
+ * failed `-o -` conversion reports on stdout; stderr stays empty. Read either
+ * stream and drop the path prefix the surrounding message already names.
+ */
+const plutilDiagnostic = (
+  capture: Pick<NativeCommandCapture, "stdout" | "stderr">,
+  path: string,
+): string => {
+  const text = [capture.stderr, capture.stdout]
+    .map((stream) => stream.trim())
+    .find((stream) => stream.length > 0);
+  if (text === undefined) return "plutil printed no diagnostic";
   return text.startsWith(`${path}: `) ? text.slice(path.length + 2) : text;
 };
 

@@ -289,6 +289,11 @@ jobs:
           retention-days: 7
 
   build:
+    # Keep completed task entries alive until the portable snapshot is staged.
+    # A later Turbo dry run can otherwise evict entries from a restored cache.
+    env:
+      TURBO_CACHE_MAX_AGE: "0"
+      TURBO_CACHE_MAX_SIZE: "0"
     name: Build package
     needs: changes
     # Reusable provider workflows consume this run's portable build artifact,
@@ -369,6 +374,11 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
+      - name: Apply configured cache retention after staging
+        shell: bash
+        run: |
+          env -u TURBO_CACHE_MAX_AGE -u TURBO_CACHE_MAX_SIZE \
+            npm run --silent test:prepare -- --dry=json > /dev/null
 
   sqlite-runtime:
     # Preserve all selected coverage, but admit expensive host/provider work

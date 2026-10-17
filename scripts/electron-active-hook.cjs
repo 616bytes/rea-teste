@@ -716,6 +716,7 @@ const patchIpcMain = (ipcMain) => {
   if (typeof removeAllListeners !== "function") return;
   const nativeRemoveListener = ipcMain.removeListener;
   const nativeRawListeners = ipcMain.rawListeners;
+  const nativeOff = ipcMain.off;
   const completionAvailable =
     typeof nativeRemoveListener === "function" &&
     typeof nativeRawListeners === "function";
@@ -725,70 +726,105 @@ const patchIpcMain = (ipcMain) => {
   // pass-through for every direct call — unchanged arguments and receiver,
   // no metadata reads — so direct removal semantics stay byte-identical to
   // plain EventEmitter. Its only addition serves a translated removal in
-  // flight: when the listener argument equals that flight's translated
+  // flight: when this call's receiver is the emitter that flight was
+  // created for and the listener argument equals the flight's translated
   // target, the application forwarded the removal (a decorator that
   // swallows never reaches the instance's removeListener), and the live
   // list is walked — without executing application getters — for the last
   // registration the forwarded native call can match: the argument itself,
   // or an entry whose data `.listener` names it. Native removeListener
   // always removes its last match, so finding one proves the forwarded
-  // call removes a registration and this request is already satisfied;
-  // accessor metadata is unpredictable rather than read. Applications that
-  // captured removeListener before the hook loaded bypass this marker, the
-  // same trust boundary as the other patched methods: the hook loads
-  // through -r before application code.
-  if (completionAvailable)
-    ipcMain.removeListener = function patchedIpcMainRemoveListener(...args) {
-      if (listenerRemovalFlights.length === 0)
-        return applyFunction(nativeRemoveListener, this, args);
-      const channel = args[0];
-      const removalTarget = args[1];
-      let forwarded = false;
-      for (
-        let index = listenerRemovalFlights.length - 1;
-        index >= 0;
-        index -= 1
+  // call removes a registration and this request is already satisfied. An
+  // entry reached before that proof whose `.listener` is an accessor is
+  // not a proven miss: the application's own native call executes that
+  // getter, so its match outcome is unpredictable, and the hook favors
+  // keeping the registration over removing behind the application's back.
+  // The receiver check keeps a decorator from marking an unrelated
+  // emitter's call: a captured patched method applied to another emitter
+  // marks nothing and only runs that emitter's own native removal.
+  // Applications that dispatch around the instance's own properties — a
+  // removeListener or off captured before the hook loaded, or explicit
+  // EventEmitter.prototype.removeListener/off calls — bypass this marker
+  // by construction of JavaScript dispatch; patching the shared prototype
+  // would affect every emitter in the process, which this observation
+  // hook must not do. Those paths keep plain native behavior exactly as
+  // an unhooked emitter, the same trust boundary as the other patched
+  // methods: the hook loads through -r before application code.
+  const markForwardedRemoval = (receiver, channel, removalTarget) => {
+    let forwarded = false;
+    for (
+      let index = listenerRemovalFlights.length - 1;
+      index >= 0;
+      index -= 1
+    ) {
+      const flight = listenerRemovalFlights[index];
+      if (
+        flight.emitter === receiver &&
+        flight.channel === channel &&
+        flight.removalTarget === removalTarget
       ) {
-        const flight = listenerRemovalFlights[index];
-        if (
-          flight.channel === channel &&
-          flight.removalTarget === removalTarget
-        ) {
-          flight.forwarded = true;
-          forwarded = true;
-        }
+        flight.forwarded = true;
+        forwarded = true;
       }
-      if (forwarded) {
-        const registrations = nativeRawListeners.call(this, channel);
-        let satisfied = false;
-        for (let index = registrations.length - 1; index >= 0; index -= 1) {
-          const entry = registrations[index];
-          if (entry === removalTarget) {
-            satisfied = true;
-            break;
-          }
-          const descriptor = listenerDataDescriptor(entry);
-          if (descriptor != null && descriptor.value === removalTarget) {
-            satisfied = true;
-            break;
-          }
-        }
-        if (satisfied)
-          for (
-            let index = listenerRemovalFlights.length - 1;
-            index >= 0;
-            index -= 1
-          ) {
-            const flight = listenerRemovalFlights[index];
-            if (
-              flight.channel === channel &&
-              flight.removalTarget === removalTarget
-            )
-              flight.satisfiedByNative = true;
-          }
+    }
+    if (!forwarded) return;
+    const registrations = nativeRawListeners.call(receiver, channel);
+    let satisfied = false;
+    for (let index = registrations.length - 1; index >= 0; index -= 1) {
+      const entry = registrations[index];
+      if (entry === removalTarget) {
+        satisfied = true;
+        break;
       }
+      const descriptor = listenerDataDescriptor(entry);
+      // A null descriptor is accessor metadata or an opaque chain: the
+      // native call executes that getter during its own scan, so the
+      // entry's match is unpredictable rather than a proven miss. An
+      // undefined descriptor is a proven miss: no metadata to match.
+      if (descriptor === null) {
+        satisfied = true;
+        break;
+      }
+      if (descriptor !== undefined && descriptor.value === removalTarget) {
+        satisfied = true;
+        break;
+      }
+    }
+    if (!satisfied) return;
+    for (
+      let index = listenerRemovalFlights.length - 1;
+      index >= 0;
+      index -= 1
+    ) {
+      const flight = listenerRemovalFlights[index];
+      if (
+        flight.emitter === receiver &&
+        flight.channel === channel &&
+        flight.removalTarget === removalTarget
+      )
+        flight.satisfiedByNative = true;
+    }
+  };
+  if (completionAvailable) {
+    ipcMain.removeListener = function patchedIpcMainRemoveListener(...args) {
+      if (listenerRemovalFlights.length !== 0)
+        markForwardedRemoval(this, args[0], args[1]);
       return applyFunction(nativeRemoveListener, this, args);
     };
+    // Verified on Node 24: EventEmitter.prototype.off is the same function
+    // as EventEmitter.prototype.removeListener, and this.off(...) does not
+    // dispatch through the instance's own removeListener property. A
+    // decorator forwarding through off would therefore bypass the marker
+    // above, so off carries the identical pass-through and marker; its
+    // direct calls keep unchanged arguments and receiver through the
+    // captured native off.
+    if (typeof nativeOff === "function")
+      ipcMain.off = function patchedIpcMainOff(...args) {
+        if (listenerRemovalFlights.length !== 0)
+          markForwardedRemoval(this, args[0], args[1]);
+        return applyFunction(nativeOff, this, args);
+      };
+  }
   // Node owns its live-array traversal. A forwarding receiver translates only
   // our "on" entries before calling the current application removal method,
   // including decorators installed/replaced during traversal. Application
@@ -800,7 +836,7 @@ const patchIpcMain = (ipcMain) => {
   // application's own native match — is completed by wrapper identity
   // through the native removal captured here, scoped to the removal it
   // translates. Completion is observed through the patched
-  // ipcMain.removeListener above, never inferred from end state: a listener
+  // ipcMain.removeListener/off above, never inferred from end state: a listener
   // count or metadata observed after the decorator returns cannot show what
   // the application's own call matched, because a decorator can remove
   // another callback on the same channel during the flight, or forward
@@ -844,6 +880,7 @@ const patchIpcMain = (ipcMain) => {
                 const channel = methodArgs[0];
                 const flight = {
                   channel,
+                  emitter,
                   entry,
                   forwarded: false,
                   reregistered: false,
@@ -859,11 +896,12 @@ const patchIpcMain = (ipcMain) => {
                   arrayPop(listenerRemovalFlights);
                 }
                 // Complete only on observed forwarding: the patched
-                // ipcMain.removeListener proved the application's chain
-                // passed the translated target to a native removal, and
-                // that call had no registration it could match — so this
-                // request removed nothing, and a matched sibling stands
-                // down, keeping one removal per request. A wrapper
+                // ipcMain.removeListener/off proved the application's chain
+                // passed the translated target to a native removal on this
+                // emitter, and that call had no registration it provably
+                // could match — so this request removed nothing, and a
+                // matched or unpredictable sibling stands down, keeping one
+                // removal per request. A wrapper
                 // re-registered on this channel during the call is a
                 // deliberate restore. The wrapper still registered by
                 // identity on a re-read of the live list (shift-proof

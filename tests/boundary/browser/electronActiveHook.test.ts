@@ -2722,6 +2722,275 @@ process.stdout.write(JSON.stringify({
   expect(result.hooked).toEqual(result.plain);
 });
 
+it("keeps an ipcMain registration a decorator forwards onto another emitter", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-removal-other-emitter-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "removal-other-emitter.cjs");
+  await writeFile(
+    script,
+    `const { EventEmitter } = require("node:events");
+const { ipcMain } = require("electron");
+// The decorator forwards the translated removal by applying the captured
+// removeListener to ANOTHER emitter that has no matching registration,
+// keeping the original registration. The forwarding marker must not treat
+// that call as this emitter's removal: completion stays down and the
+// original listener survives, exactly like a plain EventEmitter.
+const scenario = (emitter) => {
+  const calls = [];
+  const listener = () => { calls.push("call"); };
+  const other = new EventEmitter();
+  const capturedRemove = emitter.removeListener;
+  const seen = [];
+  emitter.on("removeListener", () => {});
+  emitter.on("ch", listener);
+  emitter.removeListener = function(channel, candidate) {
+    if (channel === "ch") {
+      seen.push(candidate === listener);
+      return Reflect.apply(capturedRemove, other, [channel, candidate]);
+    }
+    return Reflect.apply(capturedRemove, this, arguments);
+  };
+  emitter.removeAllListeners("ch");
+  emitter.removeListener = capturedRemove;
+  emitter.emit("ch", {});
+  return {
+    seen,
+    otherRemaining: other.listenerCount("ch"),
+    remaining: emitter.listenerCount("ch"),
+    calls: calls.length,
+  };
+};
+process.stdout.write(JSON.stringify({
+  plain: scenario(new EventEmitter()),
+  hooked: scenario(ipcMain),
+  hook_error: globalThis.__reaElectronActiveSnapshot().hook_error,
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const result = JSON.parse(
+    execution.stdout.trim().split("\n").at(-1) ?? "null",
+  ) as {
+    readonly plain: {
+      readonly seen: readonly boolean[];
+      readonly otherRemaining: number;
+      readonly remaining: number;
+      readonly calls: number;
+    };
+    readonly hooked: {
+      readonly seen: readonly boolean[];
+      readonly otherRemaining: number;
+      readonly remaining: number;
+      readonly calls: number;
+    };
+    readonly hook_error: boolean;
+  };
+  expect(result.hook_error).toBe(false);
+  // The other emitter has no matching callback, so nothing is removed
+  // anywhere and the original registration survives the decorator's call.
+  expect(result.plain).toEqual({
+    seen: [true],
+    otherRemaining: 0,
+    remaining: 1,
+    calls: 1,
+  });
+  expect(result.hooked).toEqual(result.plain);
+});
+
+it("stands down ipcMain completion when an accessor sibling masks the native match", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-removal-accessor-sibling-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "removal-accessor-sibling.cjs");
+  await writeFile(
+    script,
+    `const { EventEmitter } = require("node:events");
+const { ipcMain } = require("electron");
+// A helper entry whose .listener getter returns the app callback is
+// registered before the callback itself; the decorator mutates the
+// callback registration's data metadata and forwards the translated
+// callback. Plain native removal matches the callback registration by
+// identity and keeps the helper; the hook's forwarded call matches the
+// helper through its getter and keeps the wrapper. Both keep exactly one
+// registration, and the decorator's rejection of the later traversal
+// dispatch must not turn that single removal into a double removal.
+const scenario = (emitter) => {
+  const calls = [];
+  const target = () => { calls.push("call"); };
+  const helper = () => { calls.push("call"); };
+  let getterRuns = 0;
+  Object.defineProperty(helper, "listener", {
+    configurable: true,
+    get() { getterRuns += 1; return target; },
+  });
+  const capturedRemove = emitter.removeListener;
+  const seen = [];
+  let forwarded = false;
+  emitter.on("removeListener", () => {});
+  emitter.on("ch", helper);
+  emitter.on("ch", target);
+  emitter.removeListener = function(channel, candidate) {
+    if (channel === "ch" && !forwarded && candidate === target) {
+      forwarded = true;
+      seen.push("forward");
+      const entries = emitter.rawListeners("ch");
+      entries[entries.length - 1].listener = () => {};
+      return Reflect.apply(capturedRemove, this, arguments);
+    }
+    seen.push("reject");
+    return this;
+  };
+  emitter.removeAllListeners("ch");
+  emitter.removeListener = capturedRemove;
+  emitter.emit("ch", {});
+  return {
+    seen,
+    remaining: emitter.listenerCount("ch"),
+    calls: calls.length,
+    getterRuns,
+  };
+};
+process.stdout.write(JSON.stringify({
+  plain: scenario(new EventEmitter()),
+  hooked: scenario(ipcMain),
+  hook_error: globalThis.__reaElectronActiveSnapshot().hook_error,
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const result = JSON.parse(
+    execution.stdout.trim().split("\n").at(-1) ?? "null",
+  ) as {
+    readonly plain: {
+      readonly seen: readonly string[];
+      readonly remaining: number;
+      readonly calls: number;
+      readonly getterRuns: number;
+    };
+    readonly hooked: {
+      readonly seen: readonly string[];
+      readonly remaining: number;
+      readonly calls: number;
+      readonly getterRuns: number;
+    };
+    readonly hook_error: boolean;
+  };
+  expect(result.hook_error).toBe(false);
+  // Plain removes the callback registration by identity; the helper and
+  // its never-executed getter survive the later rejected dispatch.
+  expect(result.plain).toEqual({
+    seen: ["forward", "reject"],
+    remaining: 1,
+    calls: 1,
+    getterRuns: 0,
+  });
+  // The hook's forwarded native call matches the helper through its
+  // getter and keeps the wrapper instead: same dispatch sequence, one
+  // surviving registration, one invocation — no double removal.
+  expect(result.hooked).toEqual({
+    seen: result.plain.seen,
+    remaining: result.plain.remaining,
+    calls: result.plain.calls,
+    // The hook's scan never executes the accessor; the application's own
+    // forwarded native call does, exactly once, and the unpredictable
+    // match stands completion down instead of removing the wrapper too.
+    getterRuns: 1,
+  });
+});
+
+it("completes ipcMain removal a decorator forwards through off", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-removal-off-forward-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "removal-off-forward.cjs");
+  await writeFile(
+    script,
+    `const { EventEmitter } = require("node:events");
+const { ipcMain } = require("electron");
+// Verified against plain Node 24: EventEmitter.prototype.off is the same
+// function as EventEmitter.prototype.removeListener, and this.off(...)
+// does not dispatch through the instance's own removeListener property.
+// A decorator forwarding through this.off must still reach the forwarding
+// marker, or a mutated-metadata miss would leave the wrapper registered
+// after removeAllListeners. Direct off calls keep plain semantics:
+// unchanged arguments, receiver and return value.
+const scenario = (emitter) => {
+  const listener = () => {};
+  const capturedRemove = emitter.removeListener;
+  const seen = [];
+  let offForwarded = false;
+  emitter.on("removeListener", () => {});
+  emitter.on("ch", listener);
+  emitter.removeListener = function(channel, candidate) {
+    if (channel === "ch" && !offForwarded) {
+      offForwarded = true;
+      seen.push(candidate === listener);
+      const entries = emitter.rawListeners("ch");
+      entries[entries.length - 1].listener = () => {};
+      return this.off(channel, candidate);
+    }
+    return Reflect.apply(capturedRemove, this, arguments);
+  };
+  emitter.removeAllListeners("ch");
+  const traversalRemaining = emitter.listenerCount("ch");
+  emitter.removeListener = capturedRemove;
+  emitter.on("ch", listener);
+  const directReturn = emitter.off("ch", listener);
+  return {
+    seen,
+    traversalRemaining,
+    directRemaining: emitter.listenerCount("ch"),
+    directReturnsEmitter: directReturn === emitter,
+  };
+};
+process.stdout.write(JSON.stringify({
+  plain: scenario(new EventEmitter()),
+  hooked: scenario(ipcMain),
+  hook_error: globalThis.__reaElectronActiveSnapshot().hook_error,
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const result = JSON.parse(
+    execution.stdout.trim().split("\n").at(-1) ?? "null",
+  ) as {
+    readonly plain: {
+      readonly seen: readonly boolean[];
+      readonly traversalRemaining: number;
+      readonly directRemaining: number;
+      readonly directReturnsEmitter: boolean;
+    };
+    readonly hooked: {
+      readonly seen: readonly boolean[];
+      readonly traversalRemaining: number;
+      readonly directRemaining: number;
+      readonly directReturnsEmitter: boolean;
+    };
+    readonly hook_error: boolean;
+  };
+  expect(result.hook_error).toBe(false);
+  // The forwarded off call misses the mutated metadata in both worlds and
+  // completion removes the wrapper by identity; a direct off removal keeps
+  // its plain contract.
+  expect(result.plain).toEqual({
+    seen: [true],
+    traversalRemaining: 0,
+    directRemaining: 0,
+    directReturnsEmitter: true,
+  });
+  expect(result.hooked).toEqual(result.plain);
+});
+
 it("limits ipcMain listener-list scans to forwarded translated removals", async () => {
   const root = await createTestTempDirectory(
     "rea-electron-hook-removal-scans-",

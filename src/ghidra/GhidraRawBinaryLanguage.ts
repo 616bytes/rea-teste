@@ -12,7 +12,8 @@ export interface GhidraRawBinaryLanguage {
  * supported generic compiler specification. These are analysis conventions,
  * not evidence of the target's original compiler. Each family has one fixed
  * byte order: m68k is big-endian and the others are little-endian. Big-endian
- * ARM, Thumb-only, Cortex-M, and other processor variants are out of scope.
+ * ARM, Thumb-only, Cortex-M, SH-4 big-endian, and other processor variants are
+ * out of scope.
  */
 export const ghidraRawBinaryLanguage = (
   architecture: RawBinaryAdmission["architecture"],
@@ -29,6 +30,12 @@ export const ghidraRawBinaryLanguage = (
       // MC68000-only variant is declared in the 68000 processor module.
       return {
         languageId: "68000:BE:32:default",
+        compilerSpecId: "default",
+        defaultAddressSpace: "ram",
+      };
+    case "sh4":
+      return {
+        languageId: "SuperH4:LE:32:default",
         compilerSpecId: "default",
         defaultAddressSpace: "ram",
       };

@@ -986,6 +986,15 @@ past `0xffffffff` without replacing the active session, and runtime cleanup.
 Windows Ghidra P0 does not admit m68k, so this is not a Windows lane. The lane
 has been run on macOS; Linux has not been exercised.
 
+`npm run verify:ghidra:sh4` needs no assembler: its little-endian SH-4 fixture
+is source-owned annotated hex in the verifier and is loaded at `0x8c010000`.
+With an installed Ghidra 12.1.x release and full JDK on Linux or macOS, it
+verifies the `SuperH4:LE:32:default` BinaryLoader import, real CLI/stdio MCP
+load-image parity, exact source bytes, decoded instructions, decompilation,
+rejection of a misaligned entry and of a mapping past `0xffffffff` without
+replacing the active session, and runtime cleanup. Windows Ghidra P0 does not
+admit SH-4.
+
 `npm run verify:ghidra:raw` uses a generated ARM little-endian headerless image
 through the compiled CLI and stdio MCP server. With the same Ghidra/JDK
 prerequisites, it checks preparation and bridge startup, verified load mappings,

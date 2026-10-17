@@ -122,6 +122,7 @@ it.each([
   ["arm", "0x08000000", "0x8000000", "1eff2fe1"],
   ["6502", "0x008001", "0x8001", "a92a60"],
   ["m68k", "0x00001000", "0x1000", "4e714e7170014e75"],
+  ["sh4", "0x8c010000", "0x8c010000", "2ae00b000900"],
 ])(
   "opens a headerless %s image when architecture and entry are supplied",
   async (architecture, entryPoint, canonical, bytes) => {
@@ -152,6 +153,7 @@ it.each([
 it.each([
   ["arm64", "c0035fd6", "0x8000001", "must be 4-byte aligned"],
   ["m68k", "4e75", "0x1001", "must be 2-byte aligned"],
+  ["sh4", "0b00", "0x8c010001", "must be 2-byte aligned"],
 ])(
   "rejects an unaligned %s entry before selecting or starting a provider",
   async (architecture, bytes, entryPoint, reason) => {

@@ -71,6 +71,7 @@ cliTest(
 cliTest.for([
   ["arm64", "c0035fd6", "0x8000001", "must be 4-byte aligned"],
   ["m68k", "4e75", "0x1001", "must be 2-byte aligned"],
+  ["sh4", "0b00", "0x8c010001", "must be 2-byte aligned"],
 ] as const)(
   "rejects an unaligned %s entry before provider startup",
   async ([architecture, bytes, entryPoint, reason], { cli }) => {

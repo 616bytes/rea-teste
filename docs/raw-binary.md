@@ -25,14 +25,15 @@ rea inspect-native-load-image /absolute/path/to/ecu.bin --target-format raw-bina
 }
 ```
 
-`architecture` is one of `x86`, `x86_64`, `arm`, `arm64`, `6502`, or `m68k`. `entry_point` is a
+`architecture` is one of `x86`, `x86_64`, `arm`, `arm64`, `6502`, `m68k`, or
+`sh4`. `entry_point` is a
 hexadecimal address of the form `0x…`. The complete file is mapped starting at
 that address, and Ghidra seeds an `entry` function there before auto-analysis.
-ARM and AArch64 entries must be 4-byte aligned; m68k entries must be 2-byte
-aligned; x86 and 6502 entries may be byte-aligned.
+ARM and AArch64 entries must be 4-byte aligned; m68k and SH-4 entries must be
+2-byte aligned; x86 and 6502 entries may be byte-aligned.
 For 6502, the entry and complete mapped file must fit within `0x0000..0xffff`;
 images that cross the 16-bit boundary are rejected before provider startup.
-For m68k, the mapping must fit within `0x0..0xffffffff`.
+For m68k and SH-4, the mapping must fit within `0x0..0xffffffff`.
 `open_binary` and an open `binary_session` return the canonical `entry_point`
 for raw targets so callers can verify the selected mapping directly.
 Omitted `format` keeps header-based detection; architecture and entry without
@@ -42,14 +43,15 @@ Ghidra imports a private snapshot with `BinaryLoader` and these generic
 languages and compiler specifications. Each family has one fixed byte order:
 m68k is big-endian and the others are little-endian.
 
-| architecture | language_id           | compiler_spec_id |
-| ------------ | --------------------- | ---------------- |
-| x86          | `x86:LE:32:default`   | `gcc`            |
-| x86_64       | `x86:LE:64:default`   | `gcc`            |
-| arm          | `ARM:LE:32:v7`        | `default`        |
-| arm64        | `AARCH64:LE:64:v8A`   | `default`        |
-| 6502         | `6502:LE:16:default`  | `default`        |
-| m68k         | `68000:BE:32:default` | `default`        |
+| architecture | language_id             | compiler_spec_id |
+| ------------ | ----------------------- | ---------------- |
+| x86          | `x86:LE:32:default`     | `gcc`            |
+| x86_64       | `x86:LE:64:default`     | `gcc`            |
+| arm          | `ARM:LE:32:v7`          | `default`        |
+| arm64        | `AARCH64:LE:64:v8A`     | `default`        |
+| 6502         | `6502:LE:16:default`    | `default`        |
+| m68k         | `68000:BE:32:default`   | `default`        |
+| sh4          | `SuperH4:LE:32:default` | `default`        |
 
 Compiler specifications select analysis conventions; they do not identify the
 original compiler or ABI of a headerless target. Ghidra's x86 languages do not
@@ -138,12 +140,37 @@ and file offset, misaligned and out-of-range mappings, unchanged source bytes an
 runtime cleanup. It has been run with Ghidra 12.1.4 on macOS; Linux has not been
 exercised.
 
+## SuperH SH-4
+
+```bash
+rea function /absolute/path/to/image.bin 0x8c010000 --target-format raw-binary --architecture sh4 --entry-point 0x8c010000 --provider ghidra --json
+rea inspect-native-load-image /absolute/path/to/image.bin --target-format raw-binary --architecture sh4 --entry-point 0x8c010000 --provider ghidra --json
+```
+
+Select only headerless little-endian SH-4 code with a known, even entry at file
+offset 0. Ghidra's `SuperH4:LE:32:default` language supplies static
+instructions, functions, pseudocode, and references. Evidence preserves the
+caller-selected `sh4` architecture, language, entry, file digest, and verified
+source mapping. The compiler specification is an analysis convention, not a
+recovered source ABI.
+
+This lane does not emulate Dreamcast memory-mapped devices, cache behavior,
+exception delivery, or boot sequencing. It does not infer an entry or load
+address from the file, and it does not admit big-endian SH-4 images. Windows
+Ghidra P0 does not admit SH-4.
+
+`npm run verify:ghidra:sh4` uses a source-owned little-endian SH-4 fixture
+written as annotated hex in the verifier. The lane checks real CLI/MCP
+load-image parity, exact mapped bytes, decoded instructions, decompilation,
+misaligned and out-of-range mapping rejection, unchanged source bytes, and
+runtime cleanup.
+
 ## Limitations
 
 - Headers are not discovered from file bytes. This increment does not guess
   load addresses, vector tables, or memory maps.
-- Big-endian ARM, Thumb-only, Cortex-M, and other Ghidra processor variants are
-  unsupported. m68k is the only big-endian family.
+- Big-endian ARM, Thumb-only, Cortex-M, big-endian SH-4, and other Ghidra
+  processor variants are unsupported. m68k is the only big-endian family.
 - Reset vectors, memory-mapped I/O, and firmware boot sequences are not
   emulated.
 - Independent load-image verification covers source identity, mapped file

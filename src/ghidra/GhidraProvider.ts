@@ -90,6 +90,7 @@ const SUPPORTED_ARCHITECTURES = new Set([
   "riscv",
   "powerpc",
   "m68k",
+  "sh4",
 ]);
 
 /** Ghidra candidate backed by an isolated ephemeral headless import. */
@@ -274,7 +275,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         status: "unsupported",
         code: "architecture_unsupported",
         reason:
-          "Ghidra v1 requires a supported x86, x86_64, arm, arm64, MIPS, RISC-V, raw 6502, or raw m68k target profile.",
+          "Ghidra v1 requires a supported x86, x86_64, arm, arm64, MIPS, RISC-V, raw 6502, raw m68k, or raw SH-4 target profile.",
         diagnostics,
       };
     return {

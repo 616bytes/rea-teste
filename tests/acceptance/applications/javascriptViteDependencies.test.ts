@@ -17,6 +17,7 @@ interface ViteScenario {
   readonly resolved: readonly string[];
   readonly unknown: boolean;
   readonly callSource?: string;
+  readonly callSources?: readonly string[];
   readonly callOccurrences?: readonly number[];
   readonly unknownCallOccurrences?: readonly number[];
 }
@@ -27,29 +28,33 @@ interface ExpectedCallRange {
 }
 
 const expectedCallRanges = (scenario: ViteScenario): ExpectedCallRange[] => {
-  const callSource = scenario.callSource ?? defaultCall;
   const occurrences =
     scenario.callOccurrences ??
     (scenario.resolved.length === 0 && !scenario.unknown ? [] : [0]);
-  const starts: number[] = [];
-  let cursor = 0;
-  for (;;) {
-    const start = scenario.source.indexOf(callSource, cursor);
-    if (start === -1) break;
-    starts.push(start);
-    cursor = start + callSource.length;
+  const starts: { readonly offset: number; readonly callSource: string }[] = [];
+  for (const callSource of scenario.callSources ?? [
+    scenario.callSource ?? defaultCall,
+  ]) {
+    let cursor = 0;
+    for (;;) {
+      const offset = scenario.source.indexOf(callSource, cursor);
+      if (offset === -1) break;
+      starts.push({ offset, callSource });
+      cursor = offset + callSource.length;
+    }
   }
+  starts.sort((left, right) => left.offset - right.offset);
   return occurrences.map((occurrence) => {
-    const start = starts[occurrence];
-    if (start === undefined)
+    const match = starts[occurrence];
+    if (match === undefined)
       throw new Error(
         `fixture ${scenario.file} omitted authored call ${occurrence}`,
       );
-    const before = scenario.source.slice(0, start).split("\n");
+    const before = scenario.source.slice(0, match.offset).split("\n");
     const column = before.at(-1)?.length ?? 0;
     return {
       start: { line: before.length, column },
-      end: { line: before.length, column: column + callSource.length },
+      end: { line: before.length, column: column + match.callSource.length },
     };
   });
 };
@@ -226,6 +231,160 @@ const allScenarios: readonly ViteScenario[] = [
       "[1, 2]",
     ),
     resolved: ["last.js"],
+    unknown: true,
+  },
+  ...[
+    {
+      file: "returned-table-helper-escape.js",
+      entry: "m",
+      mutation: 'alias.f[0] = "./last.js";',
+    },
+    {
+      file: "returned-table-wrapper-helper-escape.js",
+      entry: "{helper: m}",
+      mutation: 'alias.helper.f[0] = "./last.js";',
+    },
+    {
+      file: "returned-table-nested-wrapper-helper-escape.js",
+      entry: "{box: {helper: m}}",
+      mutation: 'alias.box.helper.f[0] = "./last.js";',
+    },
+    {
+      file: "returned-table-getter-helper-escape.js",
+      entry: "{get helper() { return m; }}",
+      mutation:
+        'function mutate(box) { box.helper.f[0] = "./last.js"; } mutate(alias);',
+    },
+    {
+      file: "returned-table-function-helper-escape.js",
+      entry: "() => m",
+      mutation: 'alias().f[0] = "./last.js";',
+    },
+    {
+      file: "returned-table-call-helper-escape.js",
+      entry: "runtimeObject(m)",
+      mutation: 'alias.f[0] = "./last.js";',
+    },
+  ].map(({ file, entry, mutation }): ViteScenario => ({
+    file,
+    callSources: ["__vite__mapDeps([1])", defaultCall],
+    callOccurrences: [0, 1],
+    source: mapDependencies('["./first.js", ' + entry + "]", "[1]").replace(
+      "__vite__mapDeps([1]);",
+      "const alias = __vite__mapDeps([1])[0]; " +
+        mutation +
+        " " +
+        defaultCall +
+        ";",
+    ),
+    resolved: [],
+    unknown: true,
+  })),
+  {
+    file: "returned-assigned-table-helper-escape.js",
+    callSources: [defaultCall, "__vite__mapDeps([1])"],
+    callOccurrences: [0, 1, 2],
+    source:
+      mapDependencies('["./first.js"]', "[0]") +
+      '\n__vite__mapDeps.f[1] = __vite__mapDeps; const alias = __vite__mapDeps([1])[0]; alias.f[0] = "./last.js"; __vite__mapDeps([0]);',
+    resolved: [],
+    unknown: true,
+  },
+  {
+    file: "returned-named-cache-property-helper-escape.js",
+    callSources: [defaultCall, '__vite__mapDeps(["owned"])'],
+    callOccurrences: [0, 1, 2],
+    source:
+      mapDependencies('["./first.js"]', "[0]") +
+      '\n__vite__mapDeps.f.owned = __vite__mapDeps; const alias = __vite__mapDeps(["owned"])[0]; alias.f[0] = "./last.js"; __vite__mapDeps([0]);',
+    resolved: [],
+    unknown: true,
+  },
+  {
+    file: "returned-independent-named-cache-property.js",
+    callSources: [defaultCall, '__vite__mapDeps(["owned"])'],
+    callOccurrences: [0, 1, 2],
+    unknownCallOccurrences: [1],
+    source:
+      mapDependencies('["./first.js"]', "[0]") +
+      '\n__vite__mapDeps.f.owned = {}; const alias = __vite__mapDeps(["owned"])[0]; alias.value = "./last.js"; __vite__mapDeps([0]);',
+    resolved: ["first.js", "first.js"],
+    unknown: true,
+  },
+  {
+    file: "returned-custom-table-helper-escape.js",
+    callSources: [defaultCall, "__vite__mapDeps([1], void 0, table)"],
+    callOccurrences: [0, 1, 2],
+    source:
+      mapDependencies('["./first.js"]', "[0]") +
+      '\nconst table = [null, __vite__mapDeps]; const alias = __vite__mapDeps([1], void 0, table)[0]; alias.f[0] = "./last.js"; __vite__mapDeps([0]);',
+    resolved: [],
+    unknown: true,
+  },
+  {
+    file: "returned-independent-table-object.js",
+    callSources: ["__vite__mapDeps([1])", defaultCall],
+    callOccurrences: [0, 1],
+    unknownCallOccurrences: [0],
+    source: mapDependencies('["./first.js", {data: []}]', "[1]").replace(
+      "__vite__mapDeps([1]);",
+      'const alias = __vite__mapDeps([1])[0]; alias.data[0] = "./last.js"; __vite__mapDeps([0]);',
+    ),
+    resolved: ["first.js"],
+    unknown: true,
+  },
+  {
+    file: "returned-table-string-container-replacement.js",
+    callOccurrences: [0, 1],
+    source: mapDependencies('["./first.js"]', "[0]").replace(
+      defaultCall + ";",
+      'const box = {value: __vite__mapDeps([0])[0]}; box.value = "./last.js"; __vite__mapDeps([0]);',
+    ),
+    resolved: ["first.js", "first.js"],
+    unknown: false,
+  },
+  {
+    file: "returned-table-string-with-unselected-helper-escape.js",
+    callOccurrences: [0, 1],
+    source: mapDependencies('["./first.js", m]', "[0]").replace(
+      defaultCall + ";",
+      "const path = __vite__mapDeps([0])[0]; opaque(path); __vite__mapDeps([0]);",
+    ),
+    resolved: ["first.js", "first.js"],
+    unknown: false,
+  },
+  {
+    file: "returned-table-array-with-unselected-helper-replacement.js",
+    callOccurrences: [0, 1],
+    source: mapDependencies('["./first.js", m]', "[0]").replace(
+      defaultCall + ";",
+      'const paths = __vite__mapDeps([0]); paths[0] = "./last.js"; __vite__mapDeps([0]);',
+    ),
+    resolved: ["first.js", "first.js"],
+    unknown: false,
+  },
+  {
+    file: "returned-mixed-table-array-selected-string-escape.js",
+    callSources: ["__vite__mapDeps([0, 1])", defaultCall],
+    callOccurrences: [0, 0, 1],
+    unknownCallOccurrences: [1],
+    source: mapDependencies('["./first.js", m]', "[0, 1]").replace(
+      "__vite__mapDeps([0, 1]);",
+      "const values = __vite__mapDeps([0, 1]); opaque(values[0]); __vite__mapDeps([0]);",
+    ),
+    resolved: ["first.js", "first.js"],
+    unknown: true,
+  },
+  {
+    file: "returned-table-array-helper-detachment.js",
+    callSources: ["__vite__mapDeps([1])", defaultCall],
+    callOccurrences: [0, 1],
+    unknownCallOccurrences: [0],
+    source: mapDependencies('["./first.js", m]', "[1]").replace(
+      "__vite__mapDeps([1]);",
+      'const values = __vite__mapDeps([1]); values[0] = {}; values[0].f = []; values[0].f[0] = "./last.js"; __vite__mapDeps([0]);',
+    ),
+    resolved: ["first.js"],
     unknown: true,
   },
   {
@@ -1838,6 +1997,9 @@ cliTest.for(
     for (const scenario of scenarios) {
       const callRanges = expectedCallRanges(scenario);
       const unknownRanges = expectedUnknownCallRanges(scenario, callRanges);
+      const knownRanges = callRanges.filter(
+        (_, index) => !scenario.unknownCallOccurrences?.includes(index),
+      );
       const imports = graph.edges.filter(
         ({ relation, properties, evidence }) =>
           relation === "imports" &&
@@ -1925,7 +2087,7 @@ cliTest.for(
             scenario.unknownCallOccurrences !== undefined &&
             resolved !== null
           )
-            expect.soft(unknownRanges, scenario.file).not.toContainEqual({
+            expect.soft(knownRanges, scenario.file).toContainEqual({
               start: location.value.start,
               end: location.value.end,
             });

@@ -75,7 +75,9 @@ const arrayInvocation = (
 export function* invalidateJavaScriptViteCachesSteps(
   program: t.Program,
   tables: Map<string, CacheTable | null>,
+  cacheTables: ReadonlyMap<string, t.ArrayExpression>,
   initializations: ReadonlySet<t.Node | undefined>,
+  admittedNodes: WeakSet<t.Node>,
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void> {
   const interop = createSemanticModuleInterop(state);
@@ -89,8 +91,12 @@ export function* invalidateJavaScriptViteCachesSteps(
     state,
   );
   const objectPrototypeUncertain = uncertainPrototypes.has("Object");
-  const { writes, calls, exposures, admittedHelpers } =
-    yield* indexCacheEffectsSteps(program, identities, initializations, state);
+  const { writes, calls, exposures } = yield* indexCacheEffectsSteps(
+    program,
+    identities,
+    initializations,
+    admittedNodes,
+  );
   const reads = yield* createViteCacheReadProofSteps(tables, state, (node) =>
     identities.read(node),
   );
@@ -106,10 +112,10 @@ export function* invalidateJavaScriptViteCachesSteps(
     objectPrototypeUncertain,
     uncertainPrototypes,
     dataDefinitions,
-    admittedHelpers,
+    admittedNodes: admittedNodes,
     unsafeTargets: new Set(),
   };
-  yield* identities.initializeSteps(tables.keys());
+  yield* identities.initializeSteps(cacheTables);
   yield* identities.solveSteps();
   context.unsafeTargets = yield* unsafeAssignmentTargetsSteps(
     { calls, exposures, writes },
@@ -502,7 +508,7 @@ interface CacheEffectContext {
   readonly objectPrototypeUncertain: boolean;
   readonly uncertainPrototypes: ReadonlySet<string>;
   readonly dataDefinitions: ReadonlySet<Call>;
-  readonly admittedHelpers: WeakSet<t.Node>;
+  readonly admittedNodes: WeakSet<t.Node>;
   unsafeTargets: ReadonlySet<ViteCacheAllocation>;
 }
 
@@ -515,30 +521,20 @@ function* indexCacheEffectsSteps(
   program: t.Program,
   identities: ViteCacheIdentities,
   initializations: ReadonlySet<t.Node | undefined>,
-  state: JavaScriptSemanticAnalysisState,
+  admittedNodes: WeakSet<t.Node>,
 ): Generator<
   void,
   {
     writes: ViteCacheWrite[];
     calls: Call[];
     exposures: CacheExposure[];
-    admittedHelpers: WeakSet<t.Node>;
   }
 > {
   const writes: ViteCacheWrite[] = [];
   const calls: Call[] = [];
   const exposures: CacheExposure[] = [];
-  // Recognition already proves these bodies consist only of default guards
-  // and the index projection. Their scalar d[i] returns are not cache escapes.
-  const admittedHelpers = new WeakSet<t.Node>();
-  for (const initialization of initializations) {
-    let parent = initialization;
-    while (parent !== undefined && !t.isFunction(parent)) {
-      yield;
-      parent = state.parentsByNode.get(parent);
-    }
-    if (parent !== undefined) admittedHelpers.add(parent);
-  }
+  // The identity graph owns the validated map projection's selected values.
+  // Default table expressions and their nested functions still expose effects.
   type DeferredEffect =
     | {
         readonly kind: "values";
@@ -559,7 +555,7 @@ function* indexCacheEffectsSteps(
   };
   yield* traverseJavaScriptAstSteps(program, {
     enter: (node, parent) => {
-      if (admittedHelpers.has(node)) admittedDepth++;
+      if (admittedNodes.has(node)) admittedDepth++;
       if (t.isExpression(node)) identities.normalize(node);
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
         calls.push(node);
@@ -655,7 +651,7 @@ function* indexCacheEffectsSteps(
         });
     },
     exit: (node) => {
-      if (admittedHelpers.has(node)) admittedDepth--;
+      if (admittedNodes.has(node)) admittedDepth--;
     },
   });
   let examined = 0;
@@ -710,7 +706,7 @@ function* indexCacheEffectsSteps(
       });
     }
   }
-  return { writes, calls, exposures, admittedHelpers };
+  return { writes, calls, exposures };
 }
 
 function* collectIntrinsicWritesSteps(
@@ -825,7 +821,7 @@ function* retainImplicitReceiverEffectsSteps(
   };
   let examined = 0;
   yield* traverseJavaScriptAstSteps(program, {
-    skip: (node) => context.admittedHelpers.has(node),
+    skip: (node) => context.admittedNodes.has(node),
     enter: (node, parent) => {
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         const invocation = context.interop.intrinsicInvocation(node);
@@ -931,6 +927,7 @@ function* retainImplicitReceiverEffectsSteps(
       allocation.kind === "cache" ||
       (allocation.kind === "container" &&
         (t.isArrayExpression(allocation.node) ||
+          allocation.helperResult !== undefined ||
           allocation.copy?.initializer.copyKind === "array-rest"));
     const namespace = array
       ? "Array"
@@ -953,6 +950,7 @@ function* retainImplicitReceiverEffectsSteps(
       dataOnly =
         allocation.kind === "cache" ||
         allocation.kind === "helper" ||
+        allocation.helperResult !== undefined ||
         allocation.copy !== undefined ||
         t.isArrayExpression(allocation.node) ||
         (t.isObjectExpression(allocation.node) &&

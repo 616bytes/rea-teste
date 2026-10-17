@@ -68,6 +68,7 @@ export class ViteCacheProperties {
     ViteCacheAllocation,
     boolean
   >();
+  private readonly firstArraySpreads = new WeakMap<t.ArrayExpression, number>();
   constructor(
     private readonly state: JavaScriptSemanticAnalysisState,
     private readonly graph: ViteCachePropertyGraph,
@@ -393,7 +394,10 @@ export class ViteCacheProperties {
     let ordinary = true;
     if (allocation.kind === "container" && allocation.copy === undefined) {
       const node = allocation.node;
-      ordinary = t.isObjectExpression(node) || t.isArrayExpression(node);
+      ordinary =
+        t.isObjectExpression(node) ||
+        t.isArrayExpression(node) ||
+        allocation.helperResult !== undefined;
       if (
         t.isCallExpression(node) &&
         this.graph.objectCall(node) === "create"
@@ -463,6 +467,30 @@ export class ViteCacheProperties {
     if (previous !== undefined) return previous;
     const slot = this.graph.vertex();
     slots.set(key, slot);
+    if (allocation.helperResult !== undefined) {
+      const mapped = allocation.helperResult;
+      const index = semanticArrayIndex(key);
+      if (index === null) slot.seed = FOREIGN;
+      else {
+        const uncertain =
+          mapped.unknownFrom !== undefined && index >= mapped.unknownFrom;
+        const tableKey = mapped.keys[index];
+        if (!uncertain && tableKey === undefined) slot.seed = FOREIGN;
+        else if (!uncertain && typeof tableKey === "string")
+          this.graph.connect(slot, {
+            kind: "select",
+            source: mapped.cache,
+            key: tableKey,
+            read: mapped.read,
+          });
+        else {
+          slot.seed = UNKNOWN;
+          this.graph.connect(slot, { kind: "family", source: mapped.family });
+        }
+      }
+      this.graph.enqueue(slot);
+      return slot;
+    }
     if (allocation.copy !== undefined) {
       this.copySlot(slot, allocation.copy, key);
       this.graph.enqueue(slot);
@@ -530,28 +558,29 @@ export class ViteCacheProperties {
     node: t.ArrayExpression,
     key: string,
   ): Generator<void> {
-    const index = semanticArrayIndex(key) ?? -1;
-    let uncertain = false;
-    for (
-      let cursor = 0;
-      cursor <= index && cursor < node.elements.length;
-      cursor++
-    ) {
-      if (cursor % 1024 === 0) yield;
-      const element = node.elements[cursor];
-      if (t.isSpreadElement(element)) uncertain = true;
-      if (
-        cursor === index &&
-        element !== null &&
-        element !== undefined &&
-        !uncertain
-      )
+    const index = semanticArrayIndex(key);
+    if (index === null) return;
+    let firstSpread = this.firstArraySpreads.get(node);
+    if (firstSpread === undefined) {
+      firstSpread = -1;
+      for (let cursor = 0; cursor < node.elements.length; cursor++) {
+        if (cursor % 1024 === 0) yield;
+        if (t.isSpreadElement(node.elements[cursor])) {
+          firstSpread = cursor;
+          break;
+        }
+      }
+      this.firstArraySpreads.set(node, firstSpread);
+    }
+    if (firstSpread >= 0 && index >= firstSpread) slot.seed = UNKNOWN;
+    else {
+      const element = node.elements[index];
+      if (element !== null && element !== undefined)
         this.graph.connect(slot, {
           kind: "alias",
           source: this.graph.normalize(element),
         });
     }
-    if (uncertain) slot.seed = UNKNOWN;
   }
   private *callSlotSteps(
     slot: Vertex,

@@ -69,6 +69,11 @@ export class ViteCacheIdentities {
   private readonly vertices = new Map<VertexKey, Vertex>();
   private readonly normalizeQueue: t.Node[] = [];
   private readonly allocations = new Map<string, Vertex>();
+  private readonly cacheInitializations = new WeakSet<t.Node>();
+  private readonly helperResults = new WeakMap<
+    t.CallExpression | t.OptionalCallExpression,
+    Vertex
+  >();
   ambiguousCacheFamily = false;
   private readonly reads = new Map<Vertex, Map<Key, Map<t.Node, Vertex>>>();
   private readonly pending: Vertex[] = [];
@@ -145,17 +150,24 @@ export class ViteCacheIdentities {
     return vertex;
   }
 
-  *initializeSteps(owners: Iterable<string>): Generator<void> {
+  *initializeSteps(
+    tables: ReadonlyMap<string, t.ArrayExpression>,
+  ): Generator<void> {
     let examined = 0;
     const admitted = new Set<string>();
     const patternWrites = new WeakMap<t.AssignmentExpression, Set<string>>();
-    for (const owner of owners) {
+    for (const [owner, table] of tables) {
       if (examined++ % 1024 === 0) yield;
       admitted.add(owner);
       const helper: ViteCacheAllocation = { kind: "helper", owner };
       const cache = this.vertex({});
-      cache.seed = { allocation: { kind: "cache", owner }, owner };
+      cache.seed = { allocation: { kind: "cache", owner, node: table }, owner };
       this.allocations.set(owner, cache);
+      const tableVertex = this.normalize(table);
+      this.connect(cache, { kind: "family", source: tableVertex });
+      const initialization = this.state.parentsByNode.get(table);
+      if (initialization !== undefined)
+        this.cacheInitializations.add(initialization);
       this.allocationVertices.set(cache.seed.allocation!, cache);
       const helperVertex = this.vertex(owner);
       helperVertex.seed = { allocation: helper, owner };
@@ -255,6 +267,9 @@ export class ViteCacheIdentities {
     let examined = 0;
     for (const write of writes) {
       if (examined++ % 1024 === 0) yield;
+      // The admitted initializer already defines this cache allocation and its
+      // literal slots; it is not a later replacement of the helper's f property.
+      if (this.cacheInitializations.has(write.node)) continue;
       const receiver = this.normalize(write.receiver);
       const receivers = this.writeReceivers.get(receiver) ?? [];
       receivers.push(write);
@@ -325,23 +340,25 @@ export class ViteCacheIdentities {
         const source = input.source.fact;
         if (source === undefined) continue;
         const value =
-          input.kind === "select"
-            ? yield* this.selectSteps(source, input, vertex)
-            : input.kind === "alias"
-              ? source
-              : {
-                  allocation: vertex.seed?.allocation ?? null,
-                  owner:
-                    input.kind === "copy-family" &&
-                    source.allocation?.kind === "cache"
-                      ? source.children
-                      : source.owner,
-                  children:
-                    input.kind === "copy-family" &&
-                    source.allocation?.kind === "cache"
-                      ? source.children
-                      : source.owner,
-                };
+          input.kind === "helper-result"
+            ? yield* this.helperResultSteps(source, input, vertex)
+            : input.kind === "select"
+              ? yield* this.selectSteps(source, input, vertex)
+              : input.kind === "alias"
+                ? source
+                : {
+                    allocation: vertex.seed?.allocation ?? null,
+                    owner:
+                      input.kind === "copy-family" &&
+                      source.allocation?.kind === "cache"
+                        ? source.children
+                        : source.owner,
+                    children:
+                      input.kind === "copy-family" &&
+                      source.allocation?.kind === "cache"
+                        ? source.children
+                        : source.owner,
+                  };
         if (value !== undefined) incoming = joinIdentity(incoming, value);
       }
       if (incoming === undefined) continue;
@@ -385,6 +402,72 @@ export class ViteCacheIdentities {
       this.vertices.set(key, vertex);
     }
     return vertex;
+  }
+
+  private *helperResultSteps(
+    source: ViteCacheIdentity,
+    input: Extract<Input, { kind: "helper-result" }>,
+    target: Vertex,
+  ): Generator<void, ViteCacheIdentity | undefined> {
+    if (source.allocation?.kind !== "helper")
+      return { allocation: null, owner: source.owner };
+    const owner = source.allocation.owner ?? "";
+    const cache = this.allocations.get(owner);
+    if (cache === undefined) return UNKNOWN;
+    let result = this.helperResults.get(input.call);
+    if (result === undefined) {
+      result = this.vertex({});
+      this.helperResults.set(input.call, result);
+      const indexes = input.call.arguments[0];
+      const selection =
+        indexes === undefined
+          ? undefined
+          : unwrapJavaScriptExpression(indexes).node;
+      const keys: (string | null | undefined)[] = [];
+      let unknownFrom: number | undefined = t.isArrayExpression(selection)
+        ? undefined
+        : 0;
+      let uncertain = !t.isArrayExpression(selection);
+      if (t.isArrayExpression(selection)) {
+        let examined = 0;
+        for (const index of selection.elements) {
+          if (examined++ % 1024 === 0) yield;
+          if (t.isSpreadElement(index)) {
+            unknownFrom = keys.length;
+            uncertain = true;
+            break;
+          }
+          const key =
+            index === null ? undefined : semanticStaticPropertyKey(index, true);
+          keys.push(key);
+          if (key === undefined) continue;
+          if (key === null) uncertain = true;
+          else
+            this.connect(result, {
+              kind: "family",
+              source: this.project(cache, [key], input.call),
+            });
+        }
+      }
+      if (uncertain)
+        this.connect(result, { kind: "copy-family", source: cache });
+      const allocation: ViteCacheAllocation = {
+        kind: "container",
+        node: input.call,
+        helperResult: {
+          cache,
+          keys,
+          unknownFrom,
+          read: input.call,
+          family: result,
+        },
+      };
+      result.seed = { allocation, owner: undefined };
+      this.allocationVertices.set(allocation, result);
+      this.enqueue(result);
+    }
+    result.listeners.add(target);
+    return result.fact;
   }
 
   private enqueue(vertex: Vertex): void {
@@ -465,6 +548,17 @@ export class ViteCacheIdentities {
         viteCacheObjectOperation(expression, this.invocation) !== undefined
       ) {
         yield* this.normalizeContainerSteps(vertex, expression);
+        continue;
+      }
+      if (
+        t.isCallExpression(expression) ||
+        t.isOptionalCallExpression(expression)
+      ) {
+        this.connect(vertex, {
+          kind: "helper-result",
+          source: this.normalize(expression.callee),
+          call: expression,
+        });
         continue;
       }
       if (t.isIdentifier(expression)) {

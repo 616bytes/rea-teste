@@ -14,6 +14,13 @@ export interface ViteCacheAllocation {
     readonly source: Vertex;
     readonly initializer: Initializer;
   };
+  readonly helperResult?: {
+    readonly cache: Vertex;
+    readonly keys: readonly (string | null | undefined)[];
+    readonly unknownFrom: number | undefined;
+    readonly read: t.Node;
+    readonly family: Vertex;
+  };
 }
 
 /** a single identity and a finite join of reachable cache owners. */
@@ -33,6 +40,11 @@ export interface Vertex {
 }
 
 export type Input =
+  | {
+      readonly kind: "helper-result";
+      readonly source: Vertex;
+      readonly call: t.CallExpression | t.OptionalCallExpression;
+    }
   | {
       readonly kind: "alias" | "family" | "copy-family";
       readonly source: Vertex;

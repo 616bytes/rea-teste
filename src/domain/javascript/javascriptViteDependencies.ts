@@ -35,16 +35,29 @@ export function* classifyParsedJavaScriptViteDependencySpecifiersSteps(
   });
   const calls = new Map<ViteDependencyCall, ViteDependencyTable>();
   if (candidates.length === 0) return calls;
-  const tables = yield* viteBindingTablesSteps(candidates, state);
+  const { tables, cacheTables } = yield* viteBindingTablesSteps(
+    candidates,
+    state,
+  );
   const initializations = new Set<t.Node | undefined>();
-  for (const [index, { table }] of candidates.entries()) {
+  const admittedNodes = new WeakSet<t.Node>();
+  for (const [
+    index,
+    { table, projection, cacheReads },
+  ] of candidates.entries()) {
     if (index % 1024 === 0) yield;
     initializations.add(state.parentsByNode.get(table));
+    admittedNodes.add(projection);
+    // These exact guard reads address the admitted helper's own cache. Other
+    // default expressions, including table contents, retain ordinary effects.
+    for (const read of cacheReads) admittedNodes.add(read);
   }
   yield* invalidateJavaScriptViteCachesSteps(
     file.program,
     tables,
+    cacheTables,
     initializations,
+    admittedNodes,
     state,
   );
   const classifiedCalls: {
@@ -80,8 +93,15 @@ export function* classifyParsedJavaScriptViteDependencySpecifiersSteps(
 function* viteBindingTablesSteps(
   candidates: readonly JavaScriptViteHelperCandidate[],
   state: JavaScriptSemanticAnalysisState,
-): Generator<void, Map<string, ViteDependencyTable | null>> {
+): Generator<
+  void,
+  {
+    tables: Map<string, ViteDependencyTable | null>;
+    cacheTables: Map<string, t.ArrayExpression>;
+  }
+> {
   const tables = new Map<string, ViteDependencyTable | null>();
+  const cacheTables = new Map<string, t.ArrayExpression>();
   for (const [
     index,
     { name, helper, table, uncertain },
@@ -89,6 +109,7 @@ function* viteBindingTablesSteps(
     if (index % 1024 === 0) yield;
     const binding = resolveSemanticBindingState(state, name, name.name);
     if (binding === undefined) continue;
+    cacheTables.set(binding.bindingId, table);
     const initializer = semanticStableInitializer(binding, state);
     const unchanged =
       !uncertain &&
@@ -100,7 +121,7 @@ function* viteBindingTablesSteps(
       unchanged ? yield* exactTableSlotsSteps(table) : null,
     );
   }
-  return tables;
+  return { tables, cacheTables };
 }
 
 function* exactTableSlotsSteps(

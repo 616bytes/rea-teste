@@ -66,6 +66,9 @@ it("bounds Vite table and index work per step while retaining exact call facts",
     step = steps.next();
   }
   expect(yields).toBeGreaterThan(1);
+  // Wide projections must index positional layout once, rather than rescan
+  // every prefix for each returned slot, even when each scan yields fairly.
+  expect(reads).toBeLessThan(count * 64);
   expect(step.value.size).toBe(1);
   expect([...step.value.keys()]).toEqual([call]);
   expect(step.value.get(call)).toEqual(values);

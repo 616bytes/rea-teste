@@ -19,6 +19,8 @@ export interface JavaScriptViteHelperCandidate {
   readonly name: t.Identifier;
   readonly helper: ViteHelper;
   readonly table: t.ArrayExpression;
+  readonly projection: t.ArrowFunctionExpression | t.FunctionExpression;
+  readonly cacheReads: readonly [t.Node, t.Node];
   readonly uncertain: boolean;
 }
 
@@ -58,23 +60,26 @@ export const readJavaScriptViteHelper = (
   if (parameterNames.size !== 3 || parameterNames.has(name.name))
     return undefined;
   const { cache } = defaults;
+  const projection = dependencyIndexProjection(
+    defaults.returned,
+    defaults.indexes,
+    defaults.dependencies,
+  );
   if (
     !t.isLogicalExpression(cache, { operator: "||" }) ||
     !isNamedMember(cache.left, defaults.map, "f") ||
     !t.isAssignmentExpression(cache.right, { operator: "=" }) ||
     !isNamedMember(cache.right.left, defaults.map, "f") ||
     !t.isArrayExpression(cache.right.right) ||
-    !mapsDependencyIndexes(
-      defaults.returned,
-      defaults.indexes,
-      defaults.dependencies,
-    )
+    projection === undefined
   )
     return undefined;
   return {
     name,
     helper,
     table: cache.right.right,
+    projection,
+    cacheReads: [cache.left, cache.right.left],
     uncertain:
       defaults.uncertain ||
       state.ambientWrites.covers(["global", "Array", "prototype", "map"]) ||
@@ -438,17 +443,17 @@ const isNamedMember = (
   t.isIdentifier(node.object, { name: object }) &&
   semanticStaticPropertyKey(node.property, node.computed) === property;
 
-const mapsDependencyIndexes = (
+const dependencyIndexProjection = (
   body: t.Node,
   indexes: string,
   dependencies: string,
-): boolean => {
+): t.ArrowFunctionExpression | t.FunctionExpression | undefined => {
   if (
     !t.isCallExpression(body) ||
     !isNamedMember(body.callee, indexes, "map") ||
     body.arguments.length !== 1
   )
-    return false;
+    return undefined;
   const callback = body.arguments[0];
   if (
     (!t.isArrowFunctionExpression(callback) &&
@@ -460,12 +465,12 @@ const mapsDependencyIndexes = (
     !t.isIdentifier(callback.params[0]) ||
     callback.params[0].name === dependencies
   )
-    return false;
+    return undefined;
   const returned = singleReturnedExpression(callback.body);
-  return (
-    t.isMemberExpression(returned) &&
+  return t.isMemberExpression(returned) &&
     returned.computed &&
     t.isIdentifier(returned.object, { name: dependencies }) &&
     t.isIdentifier(returned.property, { name: callback.params[0].name })
-  );
+    ? callback
+    : undefined;
 };

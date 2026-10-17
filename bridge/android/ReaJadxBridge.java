@@ -216,22 +216,20 @@ class ReaJadxBridge {
       String query = args.has("query") ? string(args, "query") : "";
       int offset = integer(args, "offset", 0);
       int limit = integer(args, "limit", 200);
-      int total = names.size();
+      int start = Math.min(offset, names.size());
+      int end = start;
       List<String> items;
       if (query.isEmpty()) {
-        int start = Math.min(offset, names.size());
-        int end = (int) Math.min((long) start + limit, names.size());
+        end = (int) Math.min((long) start + limit, names.size());
         items = names.subList(start, end);
       } else {
-        total = 0;
         items = new ArrayList<>();
-        for (String nameInInventory : names) {
-          if (!nameInInventory.contains(query)) continue;
-          if (total >= offset && items.size() < limit) items.add(nameInInventory);
-          total++;
+        while (end < names.size() && items.size() < limit) {
+          String nameInInventory = names.get(end++);
+          if (nameInInventory.contains(query)) items.add(nameInInventory);
         }
       }
-      return json(Map.of("total", total, "total_classes", names.size(),
+      return json(Map.of("total_classes", names.size(), "next_offset", end,
           "scope", "top_level", "offset", offset, "limit", limit,
           "items", items));
     }
@@ -339,7 +337,7 @@ class ReaJadxBridge {
           new kotlinx.serialization.json.JsonObject(Map.of(
               "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("string"))));
       String description = switch (name) {
-        case "list_classes" -> "Pages of case-sensitive matching top-level class names; omitted or empty query inventories all names.";
+        case "list_classes" -> "Pages of case-sensitive matching top-level class names; offset and next_offset are inventory positions, limit bounds matching rows. Omitted or empty query inventories all names.";
         case "get_class_summary" -> "Parsed member metadata for one exact class name; no source generation.";
         case "get_method_body" -> "Source for an exact class and stable same-name overload index; static initializers use smali to preserve folded field initialization.";
         default -> "Complete static using-node inventory for an exact class or selected method overload; one node may contain multiple invoke instructions, and source lines are unresolved.";

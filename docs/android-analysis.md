@@ -165,8 +165,9 @@ the same source byte limit and explicit truncation reporting.
   upstream engine and should be checked against the retained XML when needed.
   Signature verification is explicitly `not_performed`.
 - Class search filters the engine's cached top-level names before transferring
-  pages, then consumes all matching pages and checks their selection, scope and
-  counts. Complete producer replies stay in Evidence; an empty `query`
+  pages, then follows contiguous inventory positions without rescanning earlier
+  rows. It checks selection, scope, examined ranges and counts before reporting
+  complete coverage. Complete producer replies stay in Evidence; an empty `query`
   inventories all class-name rows; class names are decompiler representations.
   Repeated names remain repeated in `matches` so the inventory row count and
   producer evidence stay visible. `duplicate_names` identifies matching names

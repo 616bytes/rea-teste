@@ -102,14 +102,19 @@ register("get_android_manifest", () => {
   return text('<manifest package="fixture"/>');
 });
 register("list_classes", ({ offset, limit, query = "" }) => {
-  const matching = classes.filter((name) => name.includes(query));
+  const matching = [];
+  let nextOffset = offset;
+  while (nextOffset < classes.length && matching.length < limit) {
+    const name = classes[nextOffset++];
+    if (name.includes(query)) matching.push(name);
+  }
   return json({
     scope: "top_level",
     total_classes: classes.length,
-    total: matching.length,
+    next_offset: nextOffset,
     offset,
     limit,
-    items: mode === "empty-page" ? [] : matching.slice(offset, offset + limit),
+    items: mode === "empty-page" ? [] : matching,
   });
 });
 register("get_class_summary", () =>

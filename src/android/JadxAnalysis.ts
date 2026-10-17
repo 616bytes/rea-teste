@@ -138,40 +138,42 @@ const searchClasses = async (
 ): Promise<JsonValue> => {
   const matches: string[] = [];
   const pageSize = 4096;
-  let total: number | undefined;
+  let offset = 0;
   do {
     const page = jadxClassPageSchema.parse(
       await tools.json("list_classes", {
         query: request.input.query,
-        offset: matches.length,
+        offset,
         limit: pageSize,
       }),
     );
     if (
-      (total !== undefined && total !== page.total) ||
       page.total_classes !== loaded.class_count ||
-      page.total > page.total_classes ||
-      (request.input.query === "" && page.total !== page.total_classes) ||
-      page.offset !== matches.length ||
+      page.offset !== offset ||
       page.limit !== pageSize ||
+      page.next_offset < offset ||
+      page.next_offset > loaded.class_count ||
       page.items.length > pageSize ||
+      page.items.length > page.next_offset - offset ||
+      (request.input.query === "" &&
+        page.items.length !== page.next_offset - offset) ||
       page.items.some((name) => !name.includes(request.input.query))
     )
       throw new AnalysisOutputError(
         request.operation,
         "JADX class pagination changed identity or counts",
       );
-    total = page.total;
-    matches.push(...page.items);
     if (
-      matches.length > total ||
-      (page.items.length === 0 && matches.length < total)
+      (offset < loaded.class_count && page.next_offset === offset) ||
+      (page.next_offset < loaded.class_count && page.items.length !== pageSize)
     )
       throw new AnalysisOutputError(
         request.operation,
         "JADX class pagination is incomplete",
       );
-  } while (matches.length < total);
+    matches.push(...page.items);
+    offset = page.next_offset;
+  } while (offset < loaded.class_count);
   const occurrences = new Map<string, number>();
   for (const name of matches)
     occurrences.set(name, (occurrences.get(name) ?? 0) + 1);

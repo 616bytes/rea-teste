@@ -68,8 +68,7 @@ const summarizeInventoryCall = (call: JsonValue): JsonValue => {
  * Retain the complete search Evidence — full raw provider calls included —
  * in the session record, then deliver a bounded summary Evidence inline.
  * Callers without a retaining session receive complete source Evidence inline.
- * Coverage metadata stays truthful in
- * both copies: matching page totals and examined inventory scope stay separate.
+ * Both copies preserve examined inventory ranges separately from matching rows.
  */
 export const summarizeRetainedAndroidSearch = (
   evidence: Evidence,

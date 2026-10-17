@@ -968,7 +968,7 @@ const upsertTomlServerSection = (
     pending.length = 0;
   };
   const flushPending = (): void => {
-    kept.push(...pending);
+    for (const line of pending) kept.push(line);
     pending.length = 0;
   };
   const lineIndexAt = (offset: number): number => {
@@ -1039,7 +1039,7 @@ const upsertTomlServerSection = (
           : undefined;
       if (disabledLines !== undefined) {
         flushPending();
-        kept.push(...disabledLines);
+        for (const line of disabledLines) kept.push(line);
         lineIndex = endLine + 1;
         mode = "none";
         continue;
@@ -1064,7 +1064,7 @@ const upsertTomlServerSection = (
             edited === undefined
               ? text.slice(lineStart, statementEnd)
               : `${prefix}${edited}${suffix}`;
-          kept.push(...replacement.split("\n"));
+          for (const line of replacement.split("\n")) kept.push(line);
           inlineServerTable = true;
         } else discardPending();
       } else {

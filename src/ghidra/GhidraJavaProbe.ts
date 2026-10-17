@@ -14,7 +14,10 @@ import {
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
-import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
+import {
+  prepareProcessOwnershipInspection,
+  systemProcessOwnershipHost,
+} from "../process/ProcessOwnershipObservation.js";
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 import { constants, accessSync, statSync } from "node:fs";
 import { posix, win32 } from "node:path";
@@ -140,14 +143,16 @@ export const probeGhidraJava = async (
 };
 
 /**
- * Prepare ownership inspection before the probe deadline starts. Native
- * preparation has its own bounded compiler lifecycle, and a cold Swift SDK
+ * Prepare macOS ownership inspection before the probe deadline starts. The
+ * helper compile has its own bounded compiler lifecycle, and a cold Swift SDK
  * cache can take longer than the five-second probe. Failures keep the shapes
  * runOwnedCommand reports for preparation inside its deadline.
  */
 const prepareOwnershipBeforeDeadline = async (
   signal: AbortSignal | undefined,
 ): Promise<void> => {
+  // Linux preparation runs an unbounded `ps` check; keep it inside the probe deadline.
+  if (systemProcessOwnershipHost.platform !== "darwin") return;
   try {
     await prepareProcessOwnershipInspection(signal);
   } catch (cause: unknown) {

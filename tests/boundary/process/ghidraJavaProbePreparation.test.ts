@@ -52,8 +52,8 @@ const probe = (command: string, signal?: AbortSignal) =>
     },
   );
 
-it.skipIf(process.platform === "win32")(
-  "spends a cold ownership preparation outside the Java probe deadline",
+it.runIf(process.platform === "darwin")(
+  "spends a cold macOS ownership preparation outside the Java probe deadline",
   async () => {
     const java = await writeJava();
     const prepare = systemProcessOwnershipHost.prepare;
@@ -76,6 +76,32 @@ it.skipIf(process.platform === "win32")(
       value: { version: "21.0.11", major: 21 },
     });
     await expect(access(java.launched)).resolves.toBeUndefined();
+  },
+);
+
+it.runIf(process.platform === "linux")(
+  "keeps Linux ownership preparation inside the Java probe deadline",
+  async () => {
+    const java = await writeJava();
+    vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
+      // A stalled `ps` check has no time limit of its own.
+      async (signal) => {
+        await delay(60_000, undefined, { signal });
+      },
+    );
+
+    const result = await probe(java.command);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        processErrorCode: "ETIMEDOUT",
+        detail: expect.stringContaining(
+          "Command deadline elapsed during ownership preparation.",
+        ),
+      },
+    });
+    await expect(access(java.launched)).rejects.toThrow();
   },
 );
 

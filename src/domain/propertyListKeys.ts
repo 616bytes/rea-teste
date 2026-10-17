@@ -358,7 +358,7 @@ const readUid = (view: DataView, offset: number, byteCount: number): number => {
   for (let i = 0; i < byteCount; i++) {
     value = value * 256 + view.getUint8(offset + i);
   }
-  return Number.isSafeInteger(value) ? value : -1;
+  return value;
 };
 
 /**

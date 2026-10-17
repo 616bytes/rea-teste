@@ -490,4 +490,21 @@ describe("XML plist nesting preflight", () => {
       status: "observed",
     });
   });
+
+  it("preserves oversized eight-byte UIDs and discloses precision warning without reporting -1", () => {
+    // Binary plist with eight-byte UID marker 0x87 (0x87 0x00 0x20 0x00 0x00 0x00 0x00 0x00 0x00 = 2^53 = 9007199254740992) for $top.root
+    const hex =
+      "62706c6973743030d40102030405060a0f5924617263686976657258246f626a656374735424746f70582476657273696f6e5f100f4e534b657965644172636869766572a307080955246e756c6c140000000000000000ffffffffffffffff137fffffffffffffffd20b0c0d0e536d617854726f6f74800287002000000000000012000186a008111b24293244484e5f686d717678810000000000000101000000000000001000000000000000000000000000000086";
+    const graph = decodeKeyedArchiveBytes(Buffer.from(hex, "hex"), {
+      offset: 0,
+      limit: 10,
+    });
+    expect(graph.roots).toEqual({
+      max: { UID: 2 },
+      root: { UID: 9007199254740992 },
+    });
+    expect(graph.limitations).toContain(
+      "1 number(s) beyond the exact integer range remain as decoded because their source integer/real type or reference marker cannot be associated unambiguously; integer precision loss remains possible.",
+    );
+  });
 });

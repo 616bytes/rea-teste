@@ -518,7 +518,7 @@ export function* collectSemanticMemberMutationsSteps(
           if (effect === "escape")
             binding.escapedPaths.push({ path, node: mutation });
           else binding.memberWrites.push({ path, node: mutation });
-          clearSemanticValueCaches(state);
+          clearSemanticValueCaches(state, binding);
           for (const initializer of origins.initializers)
             pending.push({
               node: initializer.node,

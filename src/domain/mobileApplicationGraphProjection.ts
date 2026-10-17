@@ -73,7 +73,7 @@ export const projectionCoverage = (
   inventory_complete: inventory.complete,
 });
 
-/** Flatten every inventoried occurrence into authenticated path components. */
+/** Project authenticated content components; directory trees remain in the inventory. */
 export const projectedComponents = (
   inventory: ParsedInventorySet["inventory"],
 ): ProjectedComponent[] => {
@@ -83,7 +83,9 @@ export const projectedComponents = (
   return inventory.occurrences
     .filter(
       (occurrence) =>
-        occurrence.artifact_id !== null && occurrence.logical_path !== ".",
+        occurrence.artifact_id !== null &&
+        occurrence.logical_path !== "." &&
+        occurrence.entry_kind !== "directory",
     )
     .map((occurrence) => {
       const node = nodes.get(occurrence.artifact_id ?? "");

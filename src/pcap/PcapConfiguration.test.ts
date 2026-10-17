@@ -95,6 +95,20 @@ describe("parseCapinfosOutput", () => {
     expect(
       parseCapinfosOutput(withTimes("n/a", "2026-10-11 14:13:40.981978")),
     ).toMatchObject({ captureStart: null, captureEnd: null });
+    // a packet before the epoch prints with a leading minus; the whole seconds
+    // and the fraction are borrowed so the instant stays exact
+    expect(parseCapinfosOutput(withTimes("-1", "-1.250000"))).toMatchObject({
+      captureStart: "1969-12-31T23:59:59Z",
+      captureEnd: "1969-12-31T23:59:58.750000Z",
+    });
+    expect(parseCapinfosOutput(withTimes("-0.5", "0"))).toMatchObject({
+      captureStart: "1969-12-31T23:59:59.5Z",
+      captureEnd: "1970-01-01T00:00:00Z",
+    });
+    // beyond the RFC 3339 year range in either direction stays unknown
+    expect(
+      parseCapinfosOutput(withTimes("-62167219201", "253402300800")),
+    ).toMatchObject({ captureStart: null, captureEnd: null });
   });
 
   it("keeps missing capture timestamps unknown", () => {

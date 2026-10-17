@@ -29,21 +29,35 @@ export interface CapinfosMetadata {
 
 /**
  * capinfos -S prints each packet timestamp as seconds since the Unix epoch
- * with the capture's own fractional precision. Its default spelling is a
- * zone-less local wall-clock time, so one capture reads differently on hosts
- * in different time zones. Project the exact value to an RFC 3339 UTC
- * instant, keeping every fractional digit. "n/a" (an empty capture), a
- * wall-clock spelling and a pre-epoch or unrepresentable value stay unknown.
+ * with the capture's own fractional precision, a leading minus for an instant
+ * before the epoch. Its default spelling is a zone-less local wall-clock time,
+ * so one capture reads differently on hosts in different time zones. Project
+ * the exact value to an RFC 3339 UTC instant, keeping the fractional digit
+ * count. "n/a" (an empty capture), a wall-clock spelling and a value outside
+ * years 0000 to 9999 stay unknown.
  */
 const captureInstant = (value: string | undefined): string | null => {
-  const match = /^(\d+)(?:\.(\d+))?$/u.exec(value ?? "");
-  if (match === null) return null;
-  const seconds = Number(match[1]);
-  if (!Number.isSafeInteger(seconds)) return null;
-  const date = new Date(seconds * 1000);
-  if (Number.isNaN(date.getTime()) || date.getUTCFullYear() > 9999) return null;
-  const fraction = match[2] === undefined ? "" : `.${match[2]}`;
-  return `${date.toISOString().slice(0, 19)}${fraction}Z`;
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/u.exec(value ?? "");
+  if (match?.[2] === undefined) return null;
+  const negative = match[1] === "-";
+  let seconds = BigInt(match[2]);
+  let fraction = match[3] ?? "";
+  if (negative) {
+    // -1.25 is one and a quarter seconds before the epoch: whole second
+    // -2 plus 0.75, so the fraction is borrowed from the next whole second.
+    const digits = fraction.length;
+    const borrowed = digits > 0 && BigInt(fraction) > 0n;
+    seconds = -seconds - (borrowed ? 1n : 0n);
+    if (borrowed)
+      fraction = (10n ** BigInt(digits) - BigInt(fraction))
+        .toString()
+        .padStart(digits, "0");
+  }
+  if (seconds < -62_167_219_200n || seconds > 253_402_300_799n) return null;
+  const date = new Date(Number(seconds) * 1000);
+  const year = date.getUTCFullYear();
+  if (Number.isNaN(year) || year < 0 || year > 9999) return null;
+  return `${date.toISOString().slice(0, 19)}${fraction === "" ? "" : `.${fraction}`}Z`;
 };
 
 /** capinfos -M with a C locale provides exact numbers instead of "20 k". */

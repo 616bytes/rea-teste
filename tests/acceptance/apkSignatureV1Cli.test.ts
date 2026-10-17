@@ -16,6 +16,7 @@ import {
   LEAF_SHA256,
   LEAF_SUBJECT,
   OPENSSL_BLOCK_ISSUER_SERIAL,
+  OPENSSL_BLOCK_KEY_ID,
   ROOT_CERTIFICATE,
   v2SchemeValue,
   v3SchemeValue,
@@ -240,6 +241,45 @@ cliTest(
     ]);
     expect(paddedEvidence.limitations).toContain(
       `${block}: 2 bytes follow the PKCS#7 ContentInfo and were ignored, as apksig ignores them.`,
+    );
+
+    // Two blocks with one name: apksig rejects the v1 signature
+    // ("Duplicate entry"); REA keeps one signer for the name, unknown.
+    const duplicated = join(root, "duplicate-names.apk");
+    const twoBlocks = Buffer.from(
+      await zipWith(
+        [
+          { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
+          { name: block, data: OPENSSL_BLOCK_ISSUER_SERIAL },
+          { name: "META-INF/CERU.EC", data: OPENSSL_BLOCK_KEY_ID },
+        ],
+        { dataDescriptor: false },
+      ),
+    );
+    const second = zipEntryOffsets(twoBlocks, "META-INF/CERU.EC");
+    twoBlocks.write(block, second.central + 46, "latin1");
+    twoBlocks.write(block, second.local + 30, "latin1");
+    await writeFile(duplicated, twoBlocks);
+    const duplicatedResult = await cli.run({
+      arguments: ["inspect-apk-signature", duplicated, "--json"],
+    });
+    expect(duplicatedResult.exitCode, duplicatedResult.stderr).toBe(0);
+    const duplicatedEvidence = toolContract(
+      "inspect_apk_signature",
+    ).outputSchema.parse(duplicatedResult.json);
+    expect(duplicatedEvidence.normalized_result.schemes.v1).toMatchObject({
+      present: true,
+      block_files: [block, block],
+      signers: [
+        {
+          block_file: block,
+          certificate: null,
+          decode_error: `duplicate entry: ${block}`,
+        },
+      ],
+    });
+    expect(duplicatedEvidence.limitations.join(" ")).toContain(
+      `more than one entry named ${block}`,
     );
 
     for (const [path, decodeError] of cases) {

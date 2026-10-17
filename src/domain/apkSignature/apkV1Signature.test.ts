@@ -83,8 +83,10 @@ describe("APK v1 (JAR) signature detection", () => {
         {
           signatureFile: "META-INF/sub/CERT.SF",
           block: entry("META-INF/sub/CERT.DSA"),
+          duplicate: null,
         },
       ],
+      duplicateNames: [],
     });
     // A block without its own .SF partner is not a v1 signer.
     expect(
@@ -179,6 +181,44 @@ describe("APK v1 (JAR) signature detection", () => {
     );
     expect(v1.present).toBe(false);
     expect(v1.signatureFiles).toEqual([]);
+  });
+});
+
+describe("APK v1 duplicate signing names", () => {
+  it("flags duplicate signing names and keeps one signer per block name", () => {
+    const v1 = detectV1Signature(
+      entries([
+        "META-INF/CERT.SF",
+        "META-INF/CERT.RSA",
+        "META-INF/CERT.RSA",
+        "META-INF/OK.SF",
+        "META-INF/OK.EC",
+        "META-INF/TWO.SF",
+        "META-INF/TWO.SF",
+        "META-INF/TWO.DSA",
+        "META-INF/MANIFEST.MF",
+        "META-INF/MANIFEST.MF",
+      ]),
+    );
+    expect(v1.duplicateNames).toEqual([
+      "META-INF/CERT.RSA",
+      "META-INF/TWO.SF",
+      "META-INF/MANIFEST.MF",
+    ]);
+    expect(
+      v1.signers.map(({ block, duplicate }) => [block.name, duplicate]),
+    ).toEqual([
+      ["META-INF/CERT.RSA", "META-INF/CERT.RSA"],
+      ["META-INF/OK.EC", null],
+      ["META-INF/TWO.DSA", "META-INF/TWO.SF"],
+    ]);
+    // The observed names stay as the central directory lists them.
+    expect(v1.blockFiles).toEqual([
+      "META-INF/CERT.RSA",
+      "META-INF/CERT.RSA",
+      "META-INF/OK.EC",
+      "META-INF/TWO.DSA",
+    ]);
   });
 });
 

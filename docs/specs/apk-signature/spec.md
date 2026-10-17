@@ -24,7 +24,8 @@ code executes, no device or `adb`, no acquisition, no mutation.
   there is not exactly one `SignerInfo` or it names no carried certificate. A
   block that cannot be read (including an encrypted entry or a local header
   that disagrees with the central directory, as apksig checks) carries
-  `decode_error`, never an absent signer.
+  `decode_error`, never an absent signer; so does a signer whose block or
+  `.SF` name is duplicated (apksig's "Duplicate entry"), with a limitation.
 - The APK Signing Block located from the ZIP end-of-central-directory (Zip64
   followed) and framed into id-value pairs; v2, v3 and v3.1 signers decoded:
   digests by signature-algorithm id, X.509 certificate DER, v3 min/max SDK,

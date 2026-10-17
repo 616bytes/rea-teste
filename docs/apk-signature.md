@@ -37,6 +37,10 @@ rea inspect-apk-signature /path/app.apk
   disagrees with the central directory on the name, data-descriptor flag,
   CRC-32 or a size, as apksig refuses it, or over a bound) keeps its names
   and carries `decode_error`; it is never reported as an absent signer.
+  A signing name (`MANIFEST.MF`, `.SF` or a block) the central directory
+  holds more than once, which apksig rejects as a "Duplicate entry", leaves
+  one signer per block name with `decode_error` `duplicate entry: <name>`,
+  and a limitation names the duplicates; other entries are not checked.
   Bytes after the block's `ContentInfo` are ignored, as apksig's BER parser
   ignores them, and a limitation names the block and their count.
 - **Per signer:** the certificate's **SHA-256 fingerprint over the raw embedded

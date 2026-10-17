@@ -268,6 +268,10 @@ const postureSigner = (signer: Signer | SignerV3): ApkPostureSigner => {
   };
 };
 
+/** Why apksig would reject the v1 signature of an archive with duplicate names. */
+const duplicateEntriesLimitation = (names: readonly string[]): string =>
+  `The central directory holds more than one entry named ${names.join(", ")}; apksig rejects such a v1 signature ("Duplicate entry"), so the affected v1 signers are not decoded. Duplicates are checked among the v1 signing entries (MANIFEST.MF, .SF and signature blocks) only.`;
+
 const LAYOUT_LIMITATION =
   "The content digest was not recomputed because the central directory is not immediately followed by the end-of-central-directory record (declared size mismatch or an intervening Zip64 record); matches_apk is null for those digests.";
 
@@ -417,6 +421,9 @@ export class ApkSignatureProvider implements ApkSignaturePort {
         limitations: [
           ...APK_SIGNATURE_LIMITATIONS,
           ...(matcher.layoutPreventedRecompute() ? [LAYOUT_LIMITATION] : []),
+          ...(v1.duplicateNames.length > 0
+            ? [duplicateEntriesLimitation(v1.duplicateNames)]
+            : []),
           ...v1SignerNotes(v1Decoded),
           ...derived.notes,
         ],

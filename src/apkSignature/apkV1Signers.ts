@@ -61,6 +61,10 @@ export const decodeV1Signer = (
     decoded: { ok: false, error },
   });
   const { block } = entry;
+  // apksig rejects the archive's v1 signature outright; which copy it would
+  // read is not defined, so the signer stays unknown.
+  if (entry.duplicate !== null)
+    return fail(`duplicate entry: ${entry.duplicate}`);
   const limit = APK_SIGNATURE_LIMITS.v1BlockBytes;
   // Locating reads no data, and names a Zip64 sentinel size as such rather
   // than as a size over the bound.

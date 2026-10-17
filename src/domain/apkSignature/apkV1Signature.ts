@@ -92,7 +92,13 @@ export interface ApkV1Entry {
 /** A v1 signer as apksig pairs it: one signature block and its `.SF` partner. */
 export interface ApkV1SignerEntry {
   readonly signatureFile: string;
+  /** The first central-directory entry with the block's name. */
   readonly block: ApkV1Entry;
+  /**
+   * The block or `.SF` name the central directory holds more than once, which
+   * apksig rejects ("Duplicate entry"); null when both are unique.
+   */
+  readonly duplicate: string | null;
 }
 
 export interface ApkV1Signature {
@@ -103,8 +109,10 @@ export interface ApkV1Signature {
   readonly signatureFiles: readonly string[];
   /** `META-INF/**.(RSA|DSA|EC)` PKCS#7 signature blocks. */
   readonly blockFiles: readonly string[];
-  /** Blocks paired with their `.SF` file, in central-directory order. */
+  /** Blocks paired with their `.SF` file, one per block name, in central-directory order. */
   readonly signers: readonly ApkV1SignerEntry[];
+  /** Signing-relevant names the central directory holds more than once. */
+  readonly duplicateNames: readonly string[];
 }
 
 const NAME_DECODER = new TextDecoder("utf-8", { fatal: false });
@@ -192,14 +200,24 @@ export const detectV1Signature = (
 ): ApkV1Signature => {
   const selected = entries.filter((entry) => entry.name.startsWith(META_INF));
   // Case-sensitive throughout, as apksig matches JAR signature entries.
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const { name } of selected)
+    if (seen.has(name)) duplicates.add(name);
+    else seen.add(name);
   const signatureFiles = selected
     .map((entry) => entry.name)
     .filter(isSignatureFile);
   const blocks = selected.filter((entry) => isSignatureBlock(entry.name));
   const sfNames = new Set(signatureFiles);
+  const paired = new Set<string>();
   const signers = blocks.flatMap((block) => {
     const signatureFile = signatureFileFor(block.name);
-    return sfNames.has(signatureFile) ? [{ signatureFile, block }] : [];
+    if (!sfNames.has(signatureFile) || paired.has(block.name)) return [];
+    paired.add(block.name);
+    const duplicate =
+      [block.name, signatureFile].find((name) => duplicates.has(name)) ?? null;
+    return [{ signatureFile, block, duplicate }];
   });
   return {
     present: signers.length > 0,
@@ -207,6 +225,7 @@ export const detectV1Signature = (
     signatureFiles,
     blockFiles: blocks.map((block) => block.name),
     signers,
+    duplicateNames: [...duplicates],
   };
 };
 

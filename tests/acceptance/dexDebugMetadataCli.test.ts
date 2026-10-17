@@ -132,6 +132,62 @@ cliTest(
   },
 );
 
+cliTest(
+  "prefers the exactly stored spelling, names spellings when none is exact, and refuses a ZIP directory as unavailable",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-dex-spell-");
+    const apk = join(root, "both.apk");
+    await writeFile(
+      apk,
+      await zipArchive([
+        { name: "classes.dex", bytes: debuggableDex() },
+        { name: "classes2.dex", bytes: debuggableDex() },
+        { name: "./classes2.dex", bytes: debuggableDex(5) },
+      ]),
+    );
+    const select = (path: string, entry: string) =>
+      cli.run({
+        arguments: [
+          "inspect-dex-debug-metadata",
+          path,
+          "--entry",
+          entry,
+          "--json",
+        ],
+      });
+    for (const [entry, positions] of [
+      ["classes2.dex", 1],
+      ["./classes2.dex", 6],
+    ] as const) {
+      const selected = await select(apk, entry);
+      expect(selected.exitCode, selected.stdout + selected.stderr).toBe(0);
+      const result = evidenceOf(selected.json).normalized_result;
+      if (result.mode !== "summary") throw new Error("Expected summary");
+      expect(result.members).toMatchObject([
+        { entry, summary: { line_positions: positions } },
+      ]);
+    }
+    const neither = await select(apk, "././classes2.dex");
+    expect(neither.exitCode).toBe(1);
+    expect(neither.json).toMatchObject({ code: "invalid_request" });
+    expect(JSON.stringify(neither.json)).toContain(
+      String.raw`stored as \"classes2.dex\", \"./classes2.dex\"`,
+    );
+
+    const directory = join(root, "dir.apk");
+    await writeFile(
+      directory,
+      await zipArchive([{ name: "classes.dex/", bytes: new Uint8Array() }]),
+    );
+    const refused = await select(directory, "classes.dex/");
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({ code: "unsupported_target" });
+    expect(JSON.stringify(refused.json)).toContain(
+      "stored as a ZIP directory, which REA does not read as member bytes; its debug metadata is unavailable, not absent.",
+    );
+  },
+);
+
 cliTest("refuses a non-DEX file through the public CLI", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-dex-cli-bad-");
   const path = join(root, "bad.dex");

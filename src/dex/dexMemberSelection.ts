@@ -2,8 +2,9 @@
  * Choose which DEX members of an APK/ZIP one inspection reads: the member the
  * caller selected with `entry`, or the multidex sequence Android auto-loads.
  * Both match the raw stored central-directory name, as ART's libziparchive
- * does (a leading `./` is optional in `entry`); the Info-ZIP Unicode Path name
- * is never consulted. Canonical members Android would not load are named
+ * does (a leading `./` is optional in `entry`, and the exactly stored
+ * spelling wins when the archive holds several); the Info-ZIP Unicode Path
+ * name is never consulted. Canonical members Android would not load are named
  * (never silently dropped) on the summary and on every selection refusal.
  */
 import type { ArtifactEntry } from "../artifacts/ArtifactReader.js";
@@ -43,6 +44,13 @@ interface ArchiveListing {
   readonly candidates: readonly Candidate[];
   /** Occurrences by the requested name, or by exact stored canonical name. */
   readonly occurrences: ReadonlyMap<string, number>;
+  /** Members stored exactly as the caller spelled `entry`. */
+  readonly exactOccurrences: number;
+  /** Stored spellings matching the requested name (bounded), and how many were not kept. */
+  readonly spellings: ReadonlySet<string>;
+  readonly unnamedSpellings: number;
+  /** ZIP directory members (stored with a trailing `/`) matching the requested name. */
+  readonly directories: number;
   /** Canonical names by stored spelling (bounded), and how many were not kept. */
   readonly canonical: ReadonlySet<string>;
   readonly unnamedCanonical: number;
@@ -73,15 +81,23 @@ const entryError = (message: string): AnalysisInputError =>
  * ~8 KB of decoded metadata per kept entry): the requested name, or the
  * canonical names up to one past the member cap (enough to detect "over the
  * cap"). Two occurrences of a name already prove it ambiguous, so no more are
- * kept. Canonical names past the cap are remembered by name only, bounded.
+ * kept; the exactly stored spelling of `entry` is kept on its own count, so
+ * other spellings of the same name cannot crowd it out. Canonical names past
+ * the cap, and the spellings of a requested name, are remembered by name
+ * only, bounded.
  */
 const listArchive = async (
   reader: ZipArtifactReader,
+  entry: string | undefined,
   requested: string | undefined,
   signal: AbortSignal | undefined,
 ): Promise<ArchiveListing> => {
   const candidates: Candidate[] = [];
   const occurrences = new Map<string, number>();
+  let exactOccurrences = 0;
+  const spellings = new Set<string>();
+  let unnamedSpellings = 0;
+  let directories = 0;
   const canonical = new Set<string>();
   let unnamedCanonical = 0;
   // Load positions of exactly stored canonical names, one bit each (~36 KiB).
@@ -108,12 +124,32 @@ const listArchive = async (
   };
   const keep = (member: ArtifactEntry): boolean => {
     const stored = member.storedPath ?? member.path;
+    if (member.kind === "directory") {
+      if (
+        requested !== undefined &&
+        normalizeArchiveMemberPath(stored) === requested
+      )
+        directories += 1;
+      return false;
+    }
     if (member.kind !== "file" || !wanted(stored)) return false;
     // Every occurrence is counted for the report; two are enough to keep.
     const key = requested ?? stored;
     const seen = (occurrences.get(key) ?? 0) + 1;
     occurrences.set(key, seen);
-    if (seen > 2) return false;
+    let exact = false;
+    if (requested !== undefined) {
+      if (spellings.has(stored)) {
+        // A repeated spelling is already named.
+      } else if (spellings.size < DEX_LIMITS.maxNamedCanonicalMembers)
+        spellings.add(stored);
+      else unnamedSpellings += 1;
+      if (stored === entry) {
+        exactOccurrences += 1;
+        exact = exactOccurrences <= 2;
+      }
+    }
+    if (seen > 2 && !exact) return false;
     candidates.push({ entry: stored, member });
     return true;
   };
@@ -125,7 +161,17 @@ const listArchive = async (
     (exactPositions[autoLoaded >>> 3]! & (1 << (autoLoaded & 7))) !== 0
   )
     autoLoaded += 1;
-  return { candidates, occurrences, canonical, unnamedCanonical, autoLoaded };
+  return {
+    candidates,
+    occurrences,
+    exactOccurrences,
+    spellings,
+    unnamedSpellings,
+    directories,
+    canonical,
+    unnamedCanonical,
+    autoLoaded,
+  };
 };
 
 /** Whether a stored spelling is one of the members Android auto-loads. */
@@ -243,19 +289,48 @@ const resolveAutoLoaded = (
   });
 };
 
-/** The one member the caller selected with `entry`. */
+/** The stored spellings that answer a requested name, for a refusal. */
+const spellingsOf = (listing: ArchiveListing): string =>
+  [
+    ...[...listing.spellings].map((name) => JSON.stringify(name)),
+    ...(listing.unnamedSpellings === 0
+      ? []
+      : [`${String(listing.unnamedSpellings)} more`]),
+  ].join(", ");
+
+/**
+ * The one member the caller selected with `entry`: the member stored exactly
+ * as spelled when there is one (ART looks members up by exact stored name),
+ * otherwise the only member whose stored name normalizes to it.
+ */
 const resolveRequested = (
   path: string,
+  entry: string,
   requested: string,
   listing: ArchiveListing,
 ): Result<DexMemberSelection, AnalysisError> => {
-  const matches = listing.candidates;
-  if (matches.length === 0)
-    return err(entryError(`No member ${requested} exists in ${path}.`));
+  if (listing.candidates.length === 0)
+    return listing.directories > 0
+      ? err(
+          new AnalysisUnsupportedTargetError(
+            OPERATION,
+            path,
+            `The selected entry ${entry} is stored as a ZIP directory, which REA does not read as member bytes; its debug metadata is unavailable, not absent.`,
+          ),
+        )
+      : err(entryError(`No member ${requested} exists in ${path}.`));
+  if (listing.exactOccurrences > 1)
+    return err(
+      entryError(
+        `${path} holds ${String(listing.exactOccurrences)} members stored as ${JSON.stringify(entry)}; the identity is ambiguous.`,
+      ),
+    );
+  const exact = listing.candidates.filter((m) => m.entry === entry);
+  const matches = exact.length === 1 ? exact : listing.candidates;
   if (matches.length > 1)
     return err(
       entryError(
-        `${path} holds ${String(listing.occurrences.get(requested) ?? 0)} members named ${requested}; the identity is ambiguous.`,
+        `${path} holds ${String(listing.occurrences.get(requested) ?? 0)} members named ${requested} (stored as ${spellingsOf(listing)}); the identity is ambiguous. Select one by its exact stored name.`,
       ),
     );
   const only = matches[0]!;
@@ -264,7 +339,7 @@ const resolveRequested = (
       new AnalysisUnsupportedTargetError(
         OPERATION,
         path,
-        `The selected member ${requested} is encrypted and cannot be read without a key; unavailable, not absent.`,
+        `The selected member ${only.entry} is encrypted and cannot be read without a key; unavailable, not absent.`,
       ),
     );
   return ok({ members: [only] });
@@ -279,8 +354,8 @@ export const selectDexMembers = async (
 ): Promise<Result<DexMemberSelection, AnalysisError>> => {
   const requested =
     entry === undefined ? undefined : normalizeArchiveMemberPath(entry);
-  const listing = await listArchive(reader, requested, signal);
-  return requested === undefined
+  const listing = await listArchive(reader, entry, requested, signal);
+  return entry === undefined || requested === undefined
     ? resolveAutoLoaded(path, listing)
-    : resolveRequested(path, requested, listing);
+    : resolveRequested(path, entry, requested, listing);
 };

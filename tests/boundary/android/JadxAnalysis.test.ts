@@ -467,7 +467,7 @@ it("does not name an inlined holder when the method name is overloaded", async (
           class_name: "fixture.Target",
           method_name: "highlightText",
           full_name: "fixture.Target.highlightText",
-          overload_index: input.overload_index,
+          overload_index: 1,
           overload_count: 2,
           mode: "java",
           fell_back: false,

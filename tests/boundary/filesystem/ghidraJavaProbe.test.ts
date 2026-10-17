@@ -1,5 +1,6 @@
 import { probeGhidraJava } from "../../../src/ghidra/GhidraJavaProbe.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
+import { snapshotEnvironment } from "../../../src/process/snapshotEnvironment.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 
 import { mkdir, writeFile, readFile } from "node:fs/promises";
@@ -39,6 +40,16 @@ const writeJavaProbe = async (
   );
 };
 
+const windowsNodeProbeEnvironment = (environment: NodeJS.ProcessEnv = {}) => {
+  const systemRoot = process.env.SYSTEMROOT;
+  if (systemRoot === undefined || systemRoot.length === 0)
+    throw new Error("The Windows Node fixture requires its actual SYSTEMROOT.");
+  return snapshotEnvironment(
+    { SYSTEMROOT: systemRoot, ...environment },
+    "win32",
+  );
+};
+
 // Windows executes the controlled JS prerequisite with the real owned Node exe;
 // POSIX executes its selected shebang path. Neither fixture is a real JVM.
 const probeHost =
@@ -58,6 +69,9 @@ const probeHost =
                 ...spawn,
                 command: process.execPath,
                 arguments: [`${command}.cjs`, ...spawn.arguments],
+                hostEnvironment: windowsNodeProbeEnvironment(
+                  spawn.hostEnvironment,
+                ),
               }),
           }),
       };

@@ -293,6 +293,15 @@ it.each([
   },
 );
 
+it.each([true, false])(
+  "rejects invoke coverage %s without the corresponding site list",
+  async (exhaustive) => {
+    await expect(
+      traceWithReference({ direct_invokes_exhaustive: exhaustive }),
+    ).rejects.toThrow();
+  },
+);
+
 it.each([
   { ...invokeSite, dex_code_unit_offset: -1 },
   {
@@ -307,19 +316,22 @@ it.each([
   ).rejects.toThrow();
 });
 
-it("preserves bounded instruction coverage separately from using-node coverage", async () => {
-  const result = await traceWithReference({
-    direct_invokes: [invokeSite],
-    direct_invokes_exhaustive: false,
-  });
-  expect(result).toMatchObject({
-    coverage: "complete",
-    reference_unit: "using_node",
-    references: [
-      { direct_invokes: [invokeSite], direct_invokes_exhaustive: false },
-    ],
-  });
-});
+it.each([true, false])(
+  "preserves instruction coverage %s separately from using-node coverage",
+  async (exhaustive) => {
+    const result = await traceWithReference({
+      direct_invokes: [invokeSite],
+      direct_invokes_exhaustive: exhaustive,
+    });
+    expect(result).toMatchObject({
+      coverage: "complete",
+      reference_unit: "using_node",
+      references: [
+        { direct_invokes: [invokeSite], direct_invokes_exhaustive: exhaustive },
+      ],
+    });
+  },
+);
 
 it.each([
   "not-a-dex-descriptor",

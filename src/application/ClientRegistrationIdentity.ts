@@ -116,16 +116,22 @@ const isOwnedPackageReference = (packageReference: string): boolean => {
 /** Check that one parsed command points to REA's MCP entry point. */
 export type ClientRegistrationCommandIdentity = "owned" | "foreign" | "unknown";
 
-/** POSIX bin links can name the same dispatcher without changing stored commands. */
-const sameEntrypointPath = (candidate: string, current: string): boolean => {
-  if (!isAbsolute(candidate) || !isAbsolute(current)) return false;
-  if (resolve(candidate) === current) return true;
+/** Compare launcher identity without treating failed resolution as a mismatch. */
+const classifyEntrypointPath = (
+  candidate: string,
+  current: string | undefined,
+): ClientRegistrationCommandIdentity => {
+  if (!isAbsolute(candidate) || current === undefined || !isAbsolute(current))
+    return "unknown";
+  if (resolve(candidate) === current) return "owned";
   // Windows package bins are command shims, not links to the dispatcher.
-  if (process.platform === "win32") return false;
+  if (process.platform === "win32") return "foreign";
   try {
-    return realpathSync(candidate) === realpathSync(current);
+    return realpathSync(candidate) === realpathSync(current)
+      ? "owned"
+      : "foreign";
   } catch {
-    return false;
+    return "unknown";
   }
 };
 
@@ -136,66 +142,29 @@ export const classifyClientRegistrationCommand = (
 ): ClientRegistrationCommandIdentity => {
   const packageReference = clientRegistrationPackageReference(command);
   if (packageReference !== undefined)
-    return isOwnedClientRegistrationCommand(command, currentCommandPath)
-      ? "owned"
-      : "foreign";
-  const currentPathAvailable =
-    currentCommandPath !== undefined && currentCommandPath.length > 0;
-  const nodeScript = command.length === 3 && command[2] === "mcp";
-  if (nodeScript) {
-    if (
-      !isAbsolute(command[0] ?? "") ||
-      !isAbsolute(command[1] ?? "") ||
-      !currentPathAvailable
-    )
+    return isOwnedPackageReference(packageReference) ? "owned" : "foreign";
+  if (command.length === 3 && command[2] === "mcp") {
+    const executable = command[0] ?? "";
+    const script = command[1] ?? "";
+    if (!isAbsolute(executable) || !isAbsolute(script)) return "unknown";
+    if (currentCommandPath === undefined || currentCommandPath.length === 0)
       return "unknown";
-    return isOwnedClientRegistrationCommand(command, currentCommandPath)
-      ? "owned"
-      : "foreign";
+    if (resolve(executable) !== resolve(process.execPath)) return "foreign";
+    return classifyEntrypointPath(script, currentCommandPath);
   }
   if (command.length === 2 && command[1] === "mcp") {
     const executable = command[0] ?? "";
     if (executable === PRODUCT_IDENTITY.cliBinary) return "owned";
-    const relativePathLike =
-      !isAbsolute(executable) && /[./\\]/u.test(executable);
-    if (relativePathLike || (isAbsolute(executable) && !currentPathAvailable))
-      return "unknown";
+    if (isAbsolute(executable))
+      return classifyEntrypointPath(executable, currentCommandPath);
+    if (/[./\\]/u.test(executable)) return "unknown";
   }
-  if (isOwnedClientRegistrationCommand(command, currentCommandPath))
-    return "owned";
   return "foreign";
 };
 
+/** Mutation admission requires positive ownership from the shared classifier. */
 export const isOwnedClientRegistrationCommand = (
   command: readonly string[],
   currentCommandPath: string | undefined,
-): boolean => {
-  if (
-    currentCommandPath !== undefined &&
-    currentCommandPath.length > 0 &&
-    command.length === 3 &&
-    command[2] === "mcp" &&
-    isAbsolute(command[0] ?? "") &&
-    isAbsolute(command[1] ?? "") &&
-    resolve(command[0] ?? "") === resolve(process.execPath) &&
-    sameEntrypointPath(command[1] ?? "", currentCommandPath)
-  )
-    return true;
-
-  if (command.length === 2 && command[1] === "mcp") {
-    const executable = command[0] ?? "";
-    if (
-      executable === PRODUCT_IDENTITY.cliBinary ||
-      (isAbsolute(executable) &&
-        currentCommandPath !== undefined &&
-        currentCommandPath.length > 0 &&
-        sameEntrypointPath(executable, currentCommandPath))
-    )
-      return true;
-  }
-
-  const packageReference = clientRegistrationPackageReference(command);
-  return (
-    packageReference !== undefined && isOwnedPackageReference(packageReference)
-  );
-};
+): boolean =>
+  classifyClientRegistrationCommand(command, currentCommandPath) === "owned";

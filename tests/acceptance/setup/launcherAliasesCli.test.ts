@@ -62,3 +62,56 @@ cliTest.skipIf(process.platform === "win32").for([
     });
   },
 );
+
+cliTest.skipIf(process.platform === "win32").for(["direct", "node"] as const)(
+  "doctor keeps a broken %s launcher unknown and uninstall retains its registration",
+  async (form, { cli }) => {
+    const home = await createTestTempDirectory("rea-unresolved-launcher-");
+    const launcher = join(home, "broken");
+    await symlink(join(home, "removed.mjs"), launcher);
+    const command =
+      form === "direct"
+        ? [launcher, "mcp"]
+        : [process.execPath, launcher, "mcp"];
+    const config = join(home, ".cursor/mcp.json");
+    await mkdir(join(home, ".cursor"));
+    const original = JSON.stringify({
+      mcpServers: {
+        rea: { command: command[0], args: command.slice(1) },
+        unrelated: { command: "other-server", args: [] },
+      },
+    });
+    await writeFile(config, original);
+    const environment = {
+      HOME: home,
+      USERPROFILE: home,
+      XDG_CONFIG_HOME: join(home, ".config"),
+    };
+
+    const doctor = await cli.run({
+      arguments: ["doctor", "--client", "cursor", "--skill=false", "--json"],
+      environment,
+    });
+    expect(doctor.exitCode, doctor.stderr).toBe(1);
+    expect(JSON.parse(doctor.stdout)).toMatchObject({
+      identity: {
+        registrations: expect.arrayContaining([
+          expect.objectContaining({
+            client: "cursor",
+            command,
+            state: "unknown",
+            remediation: expect.stringContaining(
+              "executable identity cannot be verified",
+            ),
+          }),
+        ]),
+      },
+    });
+    const uninstall = await cli.run({
+      arguments: ["uninstall", "--json"],
+      environment,
+    });
+    expect(uninstall.exitCode, uninstall.stderr).toBe(0);
+    expect(await readFile(config, "utf8")).toBe(original);
+  },
+);

@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +7,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
+import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 
 beforeEach(clearClientLocationEnvironment);
@@ -53,17 +54,21 @@ describe("client registration status", () => {
       join(home, ".codex/config.toml"),
       `[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "${PRODUCT_IDENTITY.registrationPackageSpecifier}", "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n`,
     );
+    const current = join(home, "current.mjs");
+    const foreign = join(home, "foreign.mjs");
+    await writeFile(current, "// current dispatcher\n");
+    await writeFile(foreign, "// another dispatcher\n");
     await writeFile(
       join(home, ".cursor/mcp.json"),
       JSON.stringify({
         mcpServers: {
-          rea: { command: "/old/rea", args: ["mcp"], env: { SECRET: "x" } },
+          rea: { command: foreign, args: ["mcp"], env: { SECRET: "x" } },
         },
       }),
     );
     await writeFile(join(home, ".gemini/settings.json"), "not-json");
 
-    const statuses = await readClientRegistrationStatuses(home, "/current/rea");
+    const statuses = await readClientRegistrationStatuses(home, current);
     expect(statuses).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -74,7 +79,7 @@ describe("client registration status", () => {
         expect.objectContaining({
           client: "cursor",
           state: "stale",
-          command: ["/old/rea", "mcp"],
+          command: [foreign, "mcp"],
           remediation: expect.any(String),
         }),
         expect.objectContaining({
@@ -249,6 +254,41 @@ describe("client registration launcher identity", () => {
     expect(status?.remediation).toContain("does not resolve package-runner");
     expect(status?.remediation).toContain("rea setup --client codex");
   });
+});
+
+describe("unresolved current launcher identity", () => {
+  it.skipIf(process.platform === "win32").each(["direct", "node"] as const)(
+    "keeps a %s registration unknown and outside maintenance when the current alias cannot resolve",
+    async (form) => {
+      const home = await createTestTempDirectory("rea-registration-alias-");
+      const current = join(home, "broken-current");
+      const alias = join(home, "registered.mjs");
+      await writeFile(alias, "// registered dispatcher\n");
+      await symlink(join(home, "removed.mjs"), current);
+      await mkdir(join(home, ".cursor"));
+      const command =
+        form === "direct" ? [alias, "mcp"] : [process.execPath, alias, "mcp"];
+      const config = join(home, ".cursor/mcp.json");
+      const original = JSON.stringify({
+        mcpServers: { rea: { command: command[0], args: command.slice(1) } },
+      });
+      await writeFile(config, original);
+
+      const [status] = await readClientRegistrationStatuses(home, current);
+
+      expect(status).toMatchObject({
+        client: "cursor",
+        command,
+        state: "unknown",
+        remediation: expect.stringContaining(
+          "executable identity cannot be verified",
+        ),
+      });
+      await expect(
+        existingMaintenanceScope(home, current, process.env),
+      ).resolves.toMatchObject({ clients: [] });
+    },
+  );
 });
 
 describe("commandcode registration status", () => {

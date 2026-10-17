@@ -732,7 +732,7 @@ describe("client registration command ownership", () => {
   );
 
   it.skipIf(process.platform === "win32")(
-    "does not own a same-named launcher for another script or a dangling link",
+    "distinguishes a different script from unresolved launcher identities",
     async () => {
       const root = await createTestTempDirectory("rea-launcher-foreign-");
       const owned = join(root, "entry.mjs");
@@ -742,14 +742,27 @@ describe("client registration command ownership", () => {
       await symlink(owned, join(root, "rea"));
       await symlink(foreign, join(root, "rea-agents"));
       await symlink(join(root, "missing.mjs"), join(root, "missing"));
-      for (const candidate of ["rea-agents", "missing"]) {
-        const command = [join(root, candidate), "mcp"];
-        expect(
-          classifyClientRegistrationCommand(command, join(root, "rea")),
-        ).toBe("foreign");
-        expect(
-          isOwnedClientRegistrationCommand(command, join(root, "rea")),
-        ).toBe(false);
+      await symlink(join(root, "cycle-b"), join(root, "cycle-a"));
+      await symlink(join(root, "cycle-a"), join(root, "cycle-b"));
+      for (const [candidate, current, identity] of [
+        ["rea-agents", "rea", "foreign"],
+        ["missing", "rea", "unknown"],
+        ["rea", "missing", "unknown"],
+        ["cycle-a", "rea", "unknown"],
+        ["rea", "cycle-a", "unknown"],
+        ["missing", "cycle-a", "unknown"],
+      ] as const) {
+        for (const command of [
+          [join(root, candidate), "mcp"],
+          [process.execPath, join(root, candidate), "mcp"],
+        ]) {
+          expect(
+            classifyClientRegistrationCommand(command, join(root, current)),
+          ).toBe(identity);
+          expect(
+            isOwnedClientRegistrationCommand(command, join(root, current)),
+          ).toBe(false);
+        }
       }
     },
   );

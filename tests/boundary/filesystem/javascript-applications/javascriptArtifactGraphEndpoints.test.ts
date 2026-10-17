@@ -992,6 +992,42 @@ const completedWriteAndConsumerSources = [
       '(function*(){yield*(function*(){new Socket("wss://example.test/review-latest");yield 0})()})().next();const Socket=globalThis.WebSocket;',
     present: false,
   },
+  {
+    file: "returned-eager.js",
+    source:
+      '(()=>()=>new Socket("wss://example.test/review-latest"))()();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "returned-stored.js",
+    source:
+      'const run=(()=>()=>new Socket("wss://example.test/review-latest"))();const Socket=globalThis.WebSocket;run();',
+    present: true,
+  },
+  {
+    file: "nested-pattern-failure.js",
+    source:
+      '(async()=>{const [[x],y=await 0]=(function*(){try{yield null;yield undefined;}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "nested-pattern-wait.js",
+    source:
+      '(async()=>{const [[x],y=await 0]=(function*(){try{yield [];yield undefined;}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "do-test-wait.js",
+    source:
+      '(async()=>{const pending=(async()=>{await 0;new Socket("wss://example.test/review-latest")})();do{}while(await pending);const Socket=globalThis.WebSocket;})();',
+    present: false,
+  },
+  {
+    file: "do-test-bypassed.js",
+    source:
+      '(async()=>{const pending=(async()=>{await 0;new Socket("wss://example.test/review-latest")})();do{break;}while(await pending);const Socket=globalThis.WebSocket;})();',
+    present: true,
+  },
 ];
 
 it("retains reviewed completion endpoints with filesystem source provenance", async () => {
@@ -1007,7 +1043,7 @@ it("retains reviewed completion endpoints with filesystem source provenance", as
     const observations = graph.nodes
       .filter((node) => node.kind === "endpoint")
       .flatMap((node) => node.observations);
-    expect(observations).toHaveLength(27);
+    expect(observations).toHaveLength(30);
     for (const { file, present } of completedWriteAndConsumerSources) {
       const matching = observations.filter(
         ({ evidence }) =>

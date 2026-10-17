@@ -38,20 +38,22 @@ import {
 } from "./javascriptSymbolicControlFlow.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
 
-/** A selected getter read owns its exact returned value, separately from its body. */
-const webSocketReturnedGetter = (
+/** A direct return preserves the value separately from the completed activation. */
+const webSocketReturnedOwner = (
   value: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): t.ObjectMethod | t.ClassMethod | undefined => {
+): t.Function | undefined => {
   const statement = state.parentsByNode.get(value);
+  if (t.isArrowFunctionExpression(statement) && statement.body === value)
+    return semanticDirectFunctionReturn(statement) === value
+      ? statement
+      : undefined;
   if (!t.isReturnStatement(statement) || statement.argument !== value)
     return undefined;
   const block = state.parentsByNode.get(statement);
   const owner =
     block === undefined ? undefined : state.parentsByNode.get(block);
-  return (t.isObjectMethod(owner) || t.isClassMethod(owner)) &&
-    owner.kind === "get" &&
-    semanticDirectFunctionReturn(owner) === value
+  return t.isFunction(owner) && semanticDirectFunctionReturn(owner) === value
     ? owner
     : undefined;
 };
@@ -90,11 +92,14 @@ const webSocketOuterExpression = (
       parent === undefined ||
       unwrapJavaScriptExpression(parent).node !== identity
     ) {
-      const getter = webSocketReturnedGetter(current, state);
+      const owner = webSocketReturnedOwner(current, state);
       const selection =
-        getter === undefined
+        owner === undefined
           ? undefined
-          : webSocketFreshMethodSelection(getter, getter, state);
+          : (t.isObjectMethod(owner) || t.isClassMethod(owner)) &&
+              owner.kind === "get"
+            ? webSocketFreshMethodSelection(owner, owner, state)
+            : webSocketImmediateInvocation(owner, state);
       if (selection === undefined) return current;
       current = selection;
       identity = selection;
@@ -1217,8 +1222,8 @@ export const webSocketExecutionContexts = (
       if (suspendedOwner === parent && !directOnly)
         return [...contexts, ...webSocketWaitingContexts(invocation, state)];
       point = invocation;
-      // A returned callable executes outside the getter's completed activation.
-      if (webSocketReturnedGetter(parent, state) !== undefined) {
+      // A returned callable executes outside its producer's completed activation.
+      if (webSocketReturnedOwner(parent, state) !== undefined) {
         current = invocation;
         continue;
       }

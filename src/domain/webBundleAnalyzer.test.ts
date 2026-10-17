@@ -4317,6 +4317,86 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "returned arrow is immediately invoked",
+    "(()=>()=>new Socket(URL))()();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "returned ordinary function is immediately called",
+    "(function(){return function(){new Socket(URL)}})().call(null);const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "stored returned arrow remains deferred",
+    "const run=(()=>()=>new Socket(URL))();const Socket=globalThis.WebSocket;run();",
+    true,
+  ],
+  [
+    "async return does not synchronously invoke its value",
+    "(async()=>()=>new Socket(URL))().then(run=>run());const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "returned invocation retains awaited producer arguments",
+    "(async()=>{(()=>()=>new Socket(URL))(await 0)()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "nested returned calls retain eager activation",
+    "(()=>()=>()=>new Socket(URL))()()();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "null nested pattern closes before unreachable wait",
+    "(async()=>{const [[x],y=await 0]=(function*(){try{yield null;yield undefined;}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "undefined nested pattern closes before unreachable wait",
+    "(async()=>{const [[x],y=await 0]=(function*(){try{yield undefined;yield undefined;}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "void nested pattern closes before unreachable wait",
+    "(async()=>{const [[x],y=await 0]=(function*(){try{yield void 0;yield undefined;}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "empty nested pattern still requires an iterable",
+    "(async()=>{const [[],y=await 0]=(function*(){try{yield null;yield undefined;}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "iterable nested pattern permits later default wait",
+    "(async()=>{const [[x],y=await 0]=(function*(){try{yield [];yield undefined;}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "earlier wait precedes failing nested pattern cleanup",
+    "(async()=>{const [x=await 0,[y]]=(function*(){try{yield undefined;yield null;}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "mandatory do test blocks initializer",
+    "(async()=>{const pending=(async()=>{await 0;new Socket(URL)})();do{}while(await pending);const Socket=globalThis.WebSocket;})();",
+    false,
+  ],
+  [
+    "nonthrowing do body retains blocking test",
+    "(async()=>{const pending=(async()=>{await 0;new Socket(URL)})();do{const x=1;}while(await pending);const Socket=globalThis.WebSocket;})();",
+    false,
+  ],
+  [
+    "do break can skip blocking test",
+    "(async()=>{const pending=(async()=>{await 0;new Socket(URL)})();do{break;}while(await pending);const Socket=globalThis.WebSocket;})();",
+    true,
+  ],
+  [
+    "caught do body failure can skip blocking test",
+    "(async()=>{const pending=(async()=>{await 0;new Socket(URL)})();try{do{throw 0;}while(await pending)}catch{}const Socket=globalThis.WebSocket;})();",
+    true,
+  ],
+  [
     "optional argument follows earlier wait",
     "(async()=>{maybe?.(await 0,new Socket(URL));})();const Socket=globalThis.WebSocket;",
     true,

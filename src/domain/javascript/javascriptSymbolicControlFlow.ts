@@ -632,9 +632,14 @@ export const createUnconditionalEvaluationProof = (
         child !== parent.right
       )
         return false;
-      else if (t.isDoWhileStatement(parent) && child === parent.test)
-        return false;
-      else if (
+      else if (t.isDoWhileStatement(parent) && child === parent.test) {
+        // Its first test is mandatory only if no body exit can bypass it.
+        if (
+          syntaxMayExitByJump(parent.body) ||
+          !syntaxEvaluationCannotThrow(parent.body)
+        )
+          return false;
+      } else if (
         (t.isSwitchCase(parent) && parent !== boundary) ||
         t.isCatchClause(parent)
       )

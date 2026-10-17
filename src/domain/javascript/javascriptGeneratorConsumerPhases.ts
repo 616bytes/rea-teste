@@ -148,6 +148,16 @@ const undefinedPatternValue = (
   );
 };
 
+/** Both object coercion and iterator acquisition reject nullish slot values. */
+const nullishPatternValue = (
+  value: PatternValue,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  undefinedPatternValue(value, state) ||
+  (value.known &&
+    value.node !== undefined &&
+    t.isNullLiteral(patternValueNode(value.node)));
+
 /** Use the same mutation and iterator proof as ordinary literal projections. */
 const patternPropertyValue = (
   value: PatternValue,
@@ -270,13 +280,7 @@ const patternCompletedSuspension = (
   if (t.isObjectPattern(pattern)) {
     // RequireObjectCoercible precedes property keys and rest operations.
     // A definite failure also blocks waits in later consumed slots.
-    if (
-      undefinedPatternValue(value, state) ||
-      (value.known &&
-        value.node !== undefined &&
-        t.isNullLiteral(patternValueNode(value.node)))
-    )
-      return "blocked";
+    if (nullishPatternValue(value, state)) return "blocked";
     for (const property of pattern.properties) {
       if (t.isRestElement(property)) continue;
       if (property.computed)
@@ -302,7 +306,9 @@ const patternCompletedSuspension = (
       if (targetPath?.has(property)) return phase;
     }
   }
-  if (t.isArrayPattern(pattern))
+  if (t.isArrayPattern(pattern)) {
+    // GetIterator runs even for an empty pattern, before later slots/defaults.
+    if (nullishPatternValue(value, state)) return "blocked";
     for (const [index, element] of pattern.elements.entries()) {
       if (element === null) continue;
       const completion = patternCompletedSuspension(
@@ -320,6 +326,7 @@ const patternCompletedSuspension = (
       if (patternBlocked(phase)) return phase;
       if (targetPath?.has(element)) return phase;
     }
+  }
   return phase;
 };
 

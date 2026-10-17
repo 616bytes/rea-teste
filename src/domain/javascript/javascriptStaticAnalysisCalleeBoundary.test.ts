@@ -72,6 +72,40 @@ it.each(expressionWrappers)(
   },
 );
 
+it("omits resolved keyed-collection receivers from network classification", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    const records = new Map([["/accounts", { name: "Alice" }]]);
+    records.get("/accounts");
+    records.delete("/settings");
+    const aliased = records;
+    aliased.get("./accounts");
+    new Map([["/a", 1]]).get("/a");
+    let reassigned = new Map();
+    reassigned = records;
+    reassigned.get("/changed");
+    const conditional = flag ? new Map() : records;
+    conditional.get("/conditional");
+    records.put("/not-a-keyed-method");
+    class LocalMap {}
+    const shadowed = new LocalMap();
+    shadowed.get("/local-constructor");
+  `);
+  expect(analysis.parse_error_count).toBe(0);
+  expect(analysis.parse_status).toBe("complete");
+  expect(
+    analysis.endpoints.map(({ value, interpretation }) => [
+      value,
+      interpretation ?? null,
+    ]),
+  ).toEqual([
+    ["/a", null],
+    ["/changed", null],
+    ["/conditional", null],
+    ["/not-a-keyed-method", null],
+    ["/local-constructor", null],
+  ]);
+});
+
 it("retains uncertainty and module evidence for wrapped get receivers", () => {
   const analysis = analyzeJavaScriptStaticSource(`
     const vscode = otherLibrary;

@@ -550,7 +550,8 @@ const xhrOpenUrl = (
     : undefined;
 };
 
-const KEYED_COLLECTION_CONSTRUCTORS = new Set([
+/** Built-in constructors whose instances take keys, not request URLs. */
+export const KEYED_COLLECTION_CONSTRUCTORS = new Set([
   "FormData",
   "Headers",
   "Map",
@@ -643,12 +644,16 @@ export const endpointArgument = (
     const value = stringValue(args[0]);
     // Only get and delete also belong to the keyed-collection APIs, whose
     // keys are header, field, and parameter names rather than URLs or paths.
-    // Configuration `get` reads setting keys.
+    // Configuration `get` reads setting keys. A resolved keyed-collection
+    // receiver fact proves the built-in identity: its built-in methods take
+    // keys of any shape and cannot observe a network endpoint.
+    const resolvedKeyedCollection = receiverFact === "keyed-collection";
     if (value === undefined) return undefined;
     if (
       (method === "get" || method === "delete") &&
-      !isRequestUrlOrPathLiteral(value) &&
+      (!isRequestUrlOrPathLiteral(value) || resolvedKeyedCollection) &&
       (isKeyedCollectionReceiver(callee) ||
+        resolvedKeyedCollection ||
         (method === "get" &&
           (receiverFact === "configuration" ||
             receiverFact === "extension-state")))

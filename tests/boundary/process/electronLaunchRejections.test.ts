@@ -12,6 +12,7 @@ import {
 const script = `
 import { PlaywrightElectronActiveProvider } from "./dist/browser/PlaywrightElectronActiveProvider.js";
 import { electronActiveObservationInputSchema } from "./dist/domain/javascript/electronActiveObservation.js";
+import { projectAnalysisError } from "./dist/domain/analysisErrorProjection.js";
 
 const [scenario, executable, root] = JSON.parse(process.argv[1]);
 let observedRejections = 0;
@@ -114,9 +115,10 @@ console.log(JSON.stringify({
   during,
   after: process.listenerCount("unhandledRejection"),
   observedRejections,
-  reasons: results.map((result) => result.ok ? null : result.error.reason ?? null),
+  codes: results.map((result) => result.ok ? null : projectAnalysisError(result.error).code),
   ok: results.map((result) => result.ok),
-  causeReasons: results.map((result) => result.ok ? null : result.error.cause?.reason ?? null),
+  primaryReasons: results.map((result) => result.ok || result.error.cleanupPrimary === undefined ? null : projectAnalysisError(result.error.cleanupPrimary).details?.reason ?? null),
+  cleanupIncomplete: results.map((result) => result.ok ? false : result.error.cleanupIncomplete),
   cleanupResources: results.map((result) => result.ok ? null : result.error.cleanupResources ?? null),
   causes: results.map((result) => result.ok ? null : String(result.error.cause?.message).split("\\n")[0]),
 }));
@@ -133,8 +135,9 @@ type Outcome = {
   readonly ok: readonly boolean[];
   readonly causes: readonly (string | null)[];
   readonly observedRejections: number;
-  readonly reasons: readonly (string | null)[];
-  readonly causeReasons: readonly (string | null)[];
+  readonly codes: readonly (string | null)[];
+  readonly primaryReasons: readonly (string | null)[];
+  readonly cleanupIncomplete: readonly boolean[];
   readonly cleanupResources: readonly (readonly string[] | null)[];
 };
 
@@ -304,17 +307,15 @@ processTest(
     expect(observed.observedRejections).toBe(3);
     expect(observed.ok).toEqual([false, false, false, false, false]);
     expect(observed.causes[0]).toBe("electron.launch: alpha failed");
-    expect(observed.reasons).toEqual([
-      null,
-      "cleanup_failed",
-      "cleanup_failed",
-      "cleanup_failed",
-      "cleanup_failed",
+    expect(observed.codes).toEqual([
+      "execution_failure",
+      ...Array.from({ length: 4 }, () => "cleanup_incomplete"),
     ]);
-    expect(observed.causeReasons).toEqual([
+    expect(observed.primaryReasons).toEqual([
       null,
       ...Array.from({ length: 4 }, () => "process_ownership_unavailable"),
     ]);
+    expect(observed.cleanupIncomplete).toEqual([false, true, true, true, true]);
     expect(observed.cleanupResources).toEqual([
       [],
       ...Array.from({ length: 4 }, () => ["owned_process_group"]),

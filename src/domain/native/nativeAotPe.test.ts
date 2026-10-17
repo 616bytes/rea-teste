@@ -173,6 +173,24 @@ describe("NativeAOT PE header extent enforcement", () => {
     ).toMatchObject({ status: "not_applicable" });
   });
 
+  it("rejects probe reads that straddle SizeOfHeaders even when an overlapping section exists", () => {
+    const bytes = nativeAotPeFixture();
+    const header = 0x600;
+    bytes.writeUInt32LE(204, header + 40);
+    bytes.writeBigUInt64LE(0x140000000n + 0x3fcn, header + 48);
+    bytes.writeBigUInt64LE(0x140000000n + 0x3fcn + 8n, header + 56);
+
+    // Overlapping section at RVA 0x3fc covering the straddled range
+    const peOffset = bytes.readUInt32LE(0x3c);
+    const optional = peOffset + 24;
+    const sectionTable = optional + 0xf0;
+    bytes.writeUInt32LE(0x3fc, sectionTable + 12);
+
+    expect(
+      parseNativeAotPe(bytes, nativeAotPeDigest(bytes), SUMMARY_BUDGET).summary,
+    ).toMatchObject({ status: "not_applicable" });
+  });
+
   it("rejects an optional header smaller than required mapping field extents", () => {
     const bytes = nativeAotPeFixture();
     const peOffset = 0x80;

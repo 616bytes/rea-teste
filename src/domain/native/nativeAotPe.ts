@@ -455,11 +455,14 @@ class PeImage {
     const rva = address - this.imageBase;
     if (rva > BigInt(Number.MAX_SAFE_INTEGER)) return null;
     const relative = Number(rva);
-    if (
-      relative <= this.#sizeOfHeaders - size &&
-      relative <= this.#bytes.length - size
-    )
-      return this.#bytes.subarray(relative, relative + size);
+    if (relative < this.#sizeOfHeaders) {
+      if (
+        relative <= this.#sizeOfHeaders - size &&
+        relative <= this.#bytes.length - size
+      )
+        return this.#bytes.subarray(relative, relative + size);
+      return null;
+    }
     for (const section of this.sections) {
       if (this.#budget !== undefined && !this.#budget.consumeWork(1))
         return null;

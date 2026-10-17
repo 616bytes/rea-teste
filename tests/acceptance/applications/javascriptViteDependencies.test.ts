@@ -414,6 +414,29 @@ const allScenarios: readonly ViteScenario[] = [
     unknown: true,
   },
   {
+    file: "custom-index-map-callback-cache-mutation.js",
+    callSources: [
+      '__vite__mapDeps({map(read) { read(1).f[0] = "./last.js"; return []; }})',
+      defaultCall,
+    ],
+    callOccurrences: [0, 1],
+    source: mapDependencies('["./first.js", m]', "[0]").replace(
+      defaultCall + ";",
+      '__vite__mapDeps({map(read) { read(1).f[0] = "./last.js"; return []; }}); ' +
+        defaultCall +
+        ";",
+    ),
+    resolved: [],
+    unknown: true,
+  },
+  {
+    file: "inert-negative-index-entry.js",
+    callSource: "__vite__mapDeps([0, -1, 1])",
+    source: mapDependencies('["./first.js", "./last.js"]', "[0, -1, 1]"),
+    resolved: ["first.js", "last.js"],
+    unknown: true,
+  },
+  {
     file: "returned-cyclic-table-default.js",
     callSources: ["__vite__mapDeps([1], void 0, a)", defaultCall],
     callOccurrences: [0, 1],

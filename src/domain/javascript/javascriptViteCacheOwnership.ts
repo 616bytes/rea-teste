@@ -113,6 +113,7 @@ export function* invalidateJavaScriptViteCachesSteps(
     uncertainPrototypes,
     dataDefinitions,
     admittedNodes: admittedNodes,
+    cacheTables,
     unsafeTargets: new Set(),
   };
   yield* identities.initializeSteps(cacheTables);
@@ -240,6 +241,23 @@ function* indexCallExposuresSteps(
     // An admitted helper reads its proven parameters by value. Supplied table
     // and mapper arguments must not register as ordinary call escapes.
     const readOnly = new Set(context.identities.readOnlyHelperArguments(call));
+    // An unproven indexes protocol runs mapped reads through arbitrary code.
+    // Expose the mapped cache so later reads cannot trust stale owners.
+    {
+      const indexes = call.arguments[0];
+      const selection =
+        indexes === undefined
+          ? undefined
+          : unwrapJavaScriptExpression(indexes).node;
+      if (!t.isArrayExpression(selection)) {
+        const owner = context.identities.read(call.callee)?.owner;
+        const table =
+          typeof owner === "string"
+            ? context.cacheTables.get(owner)
+            : undefined;
+        if (table !== undefined) exposures.push({ node: call, value: table });
+      }
+    }
     for (let index = 0; index < values.length; index++) {
       if (examined++ % 1024 === 0) yield;
       if (selected !== undefined && !selected.has(index)) continue;
@@ -517,6 +535,7 @@ interface CacheEffectContext {
   readonly uncertainPrototypes: ReadonlySet<string>;
   readonly dataDefinitions: ReadonlySet<Call>;
   readonly admittedNodes: WeakSet<t.Node>;
+  readonly cacheTables: ReadonlyMap<string, t.ArrayExpression>;
   unsafeTargets: ReadonlySet<ViteCacheAllocation>;
 }
 

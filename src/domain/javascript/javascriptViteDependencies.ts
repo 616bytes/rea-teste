@@ -142,6 +142,22 @@ function* exactTableSlotsSteps(
   return slots;
 }
 
+/** An inert unary index cannot execute code; unsupported slots stay unknown. */
+const inertIndexSlot = (
+  value: t.Node,
+): { readonly numeric?: number } | undefined => {
+  if (
+    !t.isUnaryExpression(value) ||
+    !(value.operator === "+" || value.operator === "-") ||
+    !t.isNumericLiteral(value.argument)
+  )
+    return undefined;
+  return {
+    numeric:
+      value.operator === "+" ? value.argument.value : -value.argument.value,
+  };
+};
+
 function* selectedDependencySpecifiersSteps(
   node: ViteDependencyCall,
   table: ViteDependencyTable | null | undefined,
@@ -158,13 +174,17 @@ function* selectedDependencySpecifiersSteps(
     if (index > 0 && index % 1024 === 0) yield;
     if (element === null) continue;
     const value = unwrapJavaScriptExpression(element).node;
-    if (!t.isIdentifier(value) && !readExactJavaScriptLiteral(value).found)
+    const inert = inertIndexSlot(value);
+    if (
+      !t.isIdentifier(value) &&
+      !readExactJavaScriptLiteral(value).found &&
+      inert === undefined
+    )
       return [undefined];
+    const numeric = t.isNumericLiteral(value) ? value.value : inert?.numeric;
     selected.push(
-      t.isNumericLiteral(value) &&
-        Number.isSafeInteger(value.value) &&
-        value.value >= 0
-        ? table[value.value]
+      numeric !== undefined && Number.isSafeInteger(numeric) && numeric >= 0
+        ? table[numeric]
         : undefined,
     );
   }

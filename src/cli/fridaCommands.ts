@@ -2,6 +2,7 @@ import { z } from "incur";
 
 import {
   FridaInstrumentationService,
+  fridaDeviceListOutput,
   withRecoveredFridaCleanup,
 } from "../application/frida/FridaInstrumentationService.js";
 import type {
@@ -121,10 +122,7 @@ export const registerFridaCommands = (
           service.listDevices(remoteFrom(options)),
         );
         return result.ok
-          ? {
-              devices: result.value.devices,
-              cleanup_error: result.value.cleanupError,
-            }
+          ? fridaDeviceListOutput(result.value)
           : projectAnalysisError(result.error);
       }),
   });

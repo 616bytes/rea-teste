@@ -1,9 +1,57 @@
 import { expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { FridaInstrumentationPort } from "../../../src/application/frida/FridaInstrumentationPort.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { FridaInstrumentationManager } from "../../../src/frida/FridaInstrumentationManager.js";
+
+it.each([
+  { devices: [], cleanupError: null },
+  {
+    devices: [{ deviceId: "local", name: "Local System", type: "local" }],
+    cleanupError: null,
+  },
+  {
+    devices: [{ deviceId: "remote-device", name: "endpoint", type: "remote" }],
+    cleanupError: "remote removal failed",
+  },
+])("returns canonical Frida device JSON for %j", async (observation) => {
+  const provider: FridaInstrumentationPort = new FridaInstrumentationManager();
+  provider.listDevices = async () => ({ ok: true, value: observation });
+  let closed = false;
+  provider.closeAll = async () => {
+    closed = true;
+  };
+  let stdout = "";
+  let exitCode = 0;
+  await createCli({}, undefined, provider).serve(
+    ["list-frida-devices", "--json"],
+    {
+      env: {},
+      exit: (code) => {
+        exitCode = code;
+      },
+      stdout: (text) => {
+        stdout += text;
+      },
+    },
+  );
+  expect(exitCode).toBe(0);
+  expect(closed).toBe(true);
+  const output: unknown = JSON.parse(stdout);
+  expect(
+    toolContract("list_frida_devices").outputSchema.safeParse(output).success,
+  ).toBe(true);
+  expect(output).toEqual({
+    devices: observation.devices.map(({ deviceId, name, type }) => ({
+      device_id: deviceId,
+      name,
+      type,
+    })),
+    cleanup_error: observation.cleanupError,
+  });
+});
 
 it("maps one-shot Frida CLI target, script, duration, and remote options", async () => {
   const calls: unknown[] = [];

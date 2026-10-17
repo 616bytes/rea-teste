@@ -150,6 +150,29 @@ export const resolveJavaScriptIntrinsicInvocation = (
     visited.add(stateKey);
     const virtual = virtualMember;
     virtualMember = undefined;
+    // A captured member substituting its owner as callee leaves `virtual`
+    // pending: `invoke` aliasing `IntrinsicOwner.call` names FP.call
+    // applied to the owner, not the owner itself. Consume the member
+    // before the owner's intrinsic path is accepted — `invoke(t, args)`
+    // invokes the owner with `t` as receiver, never with the raw list.
+    if (virtual !== undefined && intrinsicPath(callee) !== undefined) {
+      if (virtual.key === "bind") {
+        const bindPath = intrinsicInvocationMemberPath("bind");
+        const bindTarget = explicitReceiver ? receiver : callee;
+        if (!t.isExpression(bindTarget))
+          return { kind: "opaque", path: bindPath, arguments: undefined };
+        return {
+          kind: "known",
+          path: bindPath,
+          receiver: bindTarget,
+          arguments: arguments_,
+        };
+      }
+      receiver = arguments_?.[0];
+      explicitReceiver = true;
+      arguments_ = invocationArguments(virtual.key, arguments_);
+      continue;
+    }
     let path = intrinsicPath(callee);
     if (path !== undefined && intrinsicReadChanged(callee, path))
       return { kind: "opaque", path, arguments: undefined };

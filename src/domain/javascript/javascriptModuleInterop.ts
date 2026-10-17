@@ -588,17 +588,36 @@ export const createSemanticModuleInterop = (
     segment: string | number | null,
   ): t.Node | undefined => {
     if (typeof segment === "number" && t.isArrayExpression(node)) {
+      // A spread at or before the target index shifts runtime positions;
+      // a hole stores no value. Later spreads cannot move element `segment`.
+      for (let index = 0; index <= segment; index += 1) {
+        const element = node.elements[index];
+        if (element !== null && t.isSpreadElement(element)) return undefined;
+      }
       const element = node.elements[segment];
       return element === null || element === undefined ? undefined : element;
     }
-    if (t.isObjectExpression(node))
-      for (const property of node.properties)
+    if (t.isObjectExpression(node)) {
+      // Later definitions override earlier duplicates, so the effective
+      // value is the LAST matching entry — a trailing spread or an
+      // unmodelable method value hides the real owner.
+      let effective: t.Node | undefined;
+      for (const property of node.properties) {
+        if (t.isSpreadElement(property)) {
+          effective = undefined;
+          continue;
+        }
         if (
-          t.isObjectProperty(property) &&
-          t.isExpression(property.value) &&
-          semanticStaticPropertyKey(property.key, property.computed) === segment
+          semanticStaticPropertyKey(property.key, property.computed) !== segment
         )
-          return property.value;
+          continue;
+        effective =
+          t.isObjectProperty(property) && t.isExpression(property.value)
+            ? property.value
+            : undefined;
+      }
+      return effective;
+    }
     return undefined;
   };
 

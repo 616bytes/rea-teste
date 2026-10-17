@@ -923,6 +923,67 @@ describe("captured member containers and deep chains", () => {
     expect(writes).toContainEqual(["intrinsic", "Object", "create"]);
   });
 
+  it("reads the effective last value for duplicate literal keys", () => {
+    // `{box: change, box: {call: noop}}` stores the SECOND box, so
+    // `invoke` holds `noop` — resolving the shadowed first `box` would
+    // fabricate an `Object.create` write that never happens.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const {box: {call: invoke}} = {box: change, box: {call: () => {}}};
+      Reflect.apply(invoke, change, [null, {value: customCreate}]);`,
+    );
+    expect(invocations.at(-1)).not.toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("rejects a literal container behind a spread", () => {
+    // `{box: change, ...rest}` — `rest` may itself carry `box`, so the
+    // effective value is unknown; `invoke` must not resolve through the
+    // literal `change` that a first-match scan would pick.
+    const { invocations, writes } = collectedWrites(
+      `const change = Object.defineProperty.bind(null,Object,"create");
+      const rest = {box: {call: () => {}}};
+      const {box: {call: invoke}} = {box: change, ...rest};
+      Reflect.apply(invoke, change, [null, {value: customCreate}]);`,
+    );
+    expect(invocations.at(-1)).not.toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
+  it("applies a captured virtual member before an owner intrinsic path", () => {
+    // `invoke` captures `Object.defineProperty.call` — Function.prototype.call
+    // applied to the intrinsic — so `Reflect.apply(invoke, ODP, args)` shifts
+    // the receiver before the owner path is returned. The write is
+    // `metadata.x`, not an opaque intrinsic mutation.
+    const { invocations } = collectedWrites(
+      `const metadata = {};
+      const [{call: invoke}] = [Object.defineProperty];
+      Reflect.apply(invoke, Object.defineProperty, [null, metadata, "x", {value: 1}]);`,
+    );
+    const invocation = invocations.at(-1);
+    expect(invocation).toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(
+      invocation?.kind === "known" && t.isIdentifier(invocation.arguments?.[0])
+        ? (invocation.arguments?.[0] as t.Identifier).name
+        : undefined,
+    ).toBe("metadata");
+  });
+
   it("follows long captured-member owner chains iteratively", () => {
     // Deep alias chains must not overflow the call stack — owner descent
     // is an explicit work stack, not recursion.

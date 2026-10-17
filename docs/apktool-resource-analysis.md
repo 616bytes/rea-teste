@@ -24,14 +24,29 @@ missing launcher reports `capability_unavailable` with the
 `binary_session` uses the same host probe for tool availability; it does not
 validate a particular APK or guarantee that the selected input can be decoded.
 
-Client inspection and decode results disclose CVE-2024-21633 when the
-reported version predates its upstream 2.9.2 fix. This advisory-specific
-limitation preserves older supported distribution builds. A launcher version
-does not prove the decoder's contents, downstream backports, or overall safety;
-verify the selected decoder's patches before decoding untrusted APKs. See the
-[upstream advisories](https://github.com/iBotPeaches/Apktool/security/advisories),
-including the Windows follow-up and later regression; the compatibility floor
-above is not a security recommendation.
+Client inspection and decode results disclose the following reported-version
+advisory windows without refusing otherwise compatible launchers:
+
+| Advisory                                                                                              | Reported version window                          | Host scope |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ---------- |
+| [CVE-2024-21633](https://github.com/iBotPeaches/Apktool/security/advisories/GHSA-2hqv-2xv4-5h5w)      | Before 2.9.2                                     | All        |
+| [GHSA-vgwr-4w3p-xmjv](https://github.com/iBotPeaches/Apktool/security/advisories/GHSA-vgwr-4w3p-xmjv) | Before 2.9.3                                     | Windows    |
+| [CVE-2026-39973](https://github.com/iBotPeaches/Apktool/security/advisories/GHSA-m8mh-x359-vm8m)      | 3.0.0 release line through versions before 3.0.2 | All        |
+
+The 2026 advisory names 3.0.1 and its 3.0.2 fix. Inclusion of 3.0.0 is
+source-derived: [tagged 3.0.0](https://github.com/iBotPeaches/Apktool/blob/f770b39e425af4fa6ac4ca1e9ea6c4824339c6d3/brut.apktool/apktool-lib/src/main/java/brut/androlib/res/table/ResTypeSpec.java)
+passes type names through unchanged; the [3.0.2 patch](https://github.com/iBotPeaches/Apktool/commit/65dd8480dfcb63068562ffaa527f71bb0a9f772c)
+validates those names at their owner before they reach the output-path producer.
+Prereleases before the fixed release are conservatively disclosed; the exact
+`-dirty` downstream marker is compared as a release while preserving its spelling.
+This is version guidance, not verification of a particular prerelease or decoder.
+
+A launcher version does not prove the decoder's contents, execution platform,
+downstream backports, or overall safety. Windows applicability uses the selected
+local host; an opaque wrapper may run another engine. A missing warning means
+only that none of these version/host windows matched. Verify the selected
+decoder's patches before decoding untrusted APKs; the compatibility floor above
+is not a security recommendation. REA does not fetch advisories at runtime.
 
 On Windows, a `.bat` or `.cmd` launcher (such as Chocolatey's `apktool.bat`)
 runs through an explicit `cmd.exe /d /s /c` call. That call has no AutoRun,
@@ -70,8 +85,11 @@ select Android's `values-pt-rBR`; Android qualifiers such as `pt-rBR` and
   truncated when larger.
 - **Strings are projected verbatim.** Escaped entities stay escaped, and
   entries containing nested markup (`<b>`, `<xliff:g>`) are counted as
-  unparsed rather than flattened — the limitation names the count. The
-  default table is bounded to 2000 entries with partial coverage when more
+  unparsed rather than flattened — the limitation names the examined count.
+  Malformed XML and a wrong document root are whole-document projection
+  failures: the result is partial, the failure reason is disclosed, and entry
+  counts remain unknown. They are not counted as one unsupported string.
+  The default table is bounded to 2000 entries with partial coverage when more
   exist. `locales` lists observed regular `strings.xml` tables whose exact
   `values-<locale>` directory is selectable by the request's locale grammar.
   Locale suffixes allow up to 23 ASCII characters, derived from Apktool's

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { throwIfJadxInterrupted } from "./JadxInterruption.js";
 import { chmod, copyFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,14 +8,10 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisOutputError,
   AnalysisInputError,
-  AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -30,14 +26,10 @@ import {
 import {
   hashStableFile,
   stableFileHashCause,
-  StableFileHashFailure,
 } from "../filesystem/StableFileHash.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
-import {
-  RegularFileCleanupFailure,
-  regularFileCancellation,
-} from "../filesystem/OwnedRegularFile.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
   inspectJadxAvailability,
   resolveJadxConfigurationInputs,
@@ -47,6 +39,7 @@ import {
 import type { JadxLauncher } from "./JadxMcpTransport.js";
 
 import { JadxSession } from "./JadxSession.js";
+import { captureJadxFailure } from "./JadxFailure.js";
 
 const BRIDGE_SOURCE = fileURLToPath(
   new URL("../../bridge/android/ReaJadxBridge.java", import.meta.url),
@@ -59,7 +52,12 @@ const waitForTurn = (
   signal?: AbortSignal,
 ): Promise<void> =>
   new Promise((resolve, reject) => {
-    const abort = () => reject(new AnalysisCancelledError(request.operation));
+    const abort = () =>
+      reject(
+        new AnalysisCancelledError(request.operation, {
+          cause: signal?.reason,
+        }),
+      );
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted === true) abort();
     void predecessor.then(() => {
@@ -67,104 +65,6 @@ const waitForTurn = (
       resolve();
     });
   });
-
-const executionError = (context: {
-  cause: unknown;
-  request: AndroidRequest;
-  timeout: AbortSignal;
-  timeoutMs: number;
-  signal: AbortSignal | undefined;
-  session: JadxSession | undefined;
-}): AnalysisError => {
-  const { cause, request, timeout, timeoutMs, signal, session } = context;
-  const cancellation = regularFileCancellation(cause);
-  const cancellationError =
-    cancellation === undefined
-      ? undefined
-      : timeout.aborted && cancellation.reason === timeout.reason
-        ? new AnalysisTimeoutError(request.operation, timeoutMs, {
-            cause: cancellation.reason,
-          })
-        : new AnalysisCancelledError(request.operation, {
-            cause: cancellation.reason,
-          });
-  if (cause instanceof RegularFileCleanupFailure) {
-    const primaryCause =
-      cause.outcome.kind === "failed"
-        ? stableFileHashCause(cause.outcome.cause)
-        : cause;
-    const primary =
-      cancellationError ??
-      (primaryCause instanceof AnalysisError
-        ? primaryCause
-        : new ProviderAdapterError("jadx", request.operation, {
-            cause: primaryCause,
-            userMessage:
-              primaryCause instanceof Error
-                ? primaryCause.message
-                : String(primaryCause),
-          }));
-    const cleanup = new ProviderCleanupError(
-      "jadx",
-      [cause.path],
-      {
-        reason:
-          cause.cleanupCause instanceof Error
-            ? cause.cleanupCause.message
-            : String(cause.cleanupCause),
-      },
-      { operation: request.operation, cause },
-    );
-    return analysisErrorWithCleanupFailure(primary, cleanup, request.operation);
-  }
-  if (cancellationError !== undefined) return cancellationError;
-  if (cause instanceof StableFileHashFailure)
-    return new ProviderAdapterError("jadx", request.operation, {
-      cause: cause.cause,
-      userMessage: cause.message,
-    });
-  if (cause instanceof AnalysisError) return cause;
-  if (signal?.aborted === true)
-    return new AnalysisCancelledError(request.operation, { cause });
-  if (timeout.aborted)
-    return new AnalysisTimeoutError(request.operation, timeoutMs);
-  const protocolFailure = session?.transport.failureReason();
-  if (protocolFailure !== undefined && protocolFailure !== null)
-    return new AnalysisOutputError(request.operation, protocolFailure, {
-      cause,
-    });
-  if (cause instanceof z.ZodError)
-    return new AnalysisOutputError(
-      request.operation,
-      "JADX response violated the pinned upstream protocol",
-      { cause },
-    );
-  if (session !== undefined && !session.initialized()) {
-    const stderr = session.transport.diagnostics();
-    const reason = `Java could not start REA's Android bridge using ${session.transport.options.command}: ${cause instanceof Error ? cause.message : String(cause)}.${stderr.length === 0 ? "" : ` Java diagnostics: ${stderr}`} Select a full JDK including jdk.compiler via JAVA_HOME, or a working java on PATH; verify it with java --list-modules. A JRE cannot compile REA's source bridge. If the JDK works, verify the REA bridge and configured JADX JAR installation.`;
-    return new AnalysisCapabilityUnavailableError(
-      "jadx",
-      request.operation,
-      reason,
-      {
-        cause,
-        userMessage: reason,
-        capturedOutput: {
-          stdout: "",
-          stderr,
-          truncated: session.transport.diagnosticsTruncated(),
-        },
-      },
-    );
-  }
-  return new ProviderAdapterError("jadx", request.operation, {
-    cause,
-    diagnostics: {
-      reason: cause instanceof Error ? cause.message : String(cause),
-      stderr: session?.transport.diagnostics() ?? "",
-    },
-  });
-};
 
 const androidTargetChanged = (
   operation: string,
@@ -212,6 +112,7 @@ const hashAndroidSource = async (
 };
 
 interface PendingCleanup {
+  readonly operation: string;
   session: JadxSession | undefined;
   root: JadxWorkspaceRoot | undefined;
   readonly fileHandles: Map<OwnedFileHandle, string>;
@@ -220,14 +121,36 @@ interface PendingCleanup {
   reportedErrors: WeakRef<AnalysisError>[];
 }
 
+const cleanupResources = (resources: PendingCleanup): readonly string[] => [
+  ...(resources.session === undefined
+    ? []
+    : [resources.session.transport.runId]),
+  ...(resources.root === undefined ? [] : [resources.root.path]),
+  ...resources.fileHandles.values(),
+];
+
+/** The retained acquisition record owns both retry and current resource attribution. */
+const cleanupFailure = (
+  resources: PendingCleanup,
+  cleanup: ProviderCleanupError,
+): AnalysisError =>
+  (resources.previousError === undefined
+    ? cleanup
+    : analysisErrorWithCleanupFailure(
+        resources.previousError,
+        cleanup,
+        resources.operation,
+      )
+  ).bindCleanupResourceOwner({
+    get cleanupResources() {
+      return cleanupResources(resources);
+    },
+  });
+
 const cleanup = async (
   resources: PendingCleanup,
 ): Promise<Result<void, AnalysisError>> => {
-  const { session, root, previousError } = resources;
-  const diagnostics = {
-    previous_error:
-      previousError === undefined ? null : projectAnalysisError(previousError),
-  };
+  const { session, root } = resources;
   let sessionCloseFailed = false;
   let sessionCloseCause: unknown;
   try {
@@ -239,43 +162,29 @@ const cleanup = async (
     sessionCloseFailed = true;
     sessionCloseCause = cause;
   }
-  const failedHandles: {
-    readonly path: string;
-    readonly owner: OwnedFileHandle;
-    readonly cause: unknown;
-  }[] = [];
-  for (const [owner, path] of resources.fileHandles) {
+  const fileCloseCauses: unknown[] = [];
+  for (const owner of resources.fileHandles.keys()) {
     try {
       await owner.close();
       if (
         resources.operationCause instanceof RegularFileCleanupFailure &&
         resources.operationCause.owner === owner
       )
-        previousError?.resolveCleanup();
+        resources.previousError?.resolveCleanup();
       resources.fileHandles.delete(owner);
     } catch (cause: unknown) {
-      failedHandles.push({ path, owner, cause });
+      fileCloseCauses.push(cause);
     }
   }
-  if (sessionCloseFailed || failedHandles.length > 0) {
+  if (sessionCloseFailed || fileCloseCauses.length > 0) {
     const cleanupCauses = [
       ...(sessionCloseFailed ? [sessionCloseCause] : []),
-      ...failedHandles.map(({ cause }) => cause),
-    ];
-    const cleanupResources = [
-      ...(!sessionCloseFailed
-        ? []
-        : [
-            session?.transport.runId ?? "unknown",
-            ...(root ? [root.path] : []),
-          ]),
-      ...failedHandles.map(({ path }) => path),
+      ...fileCloseCauses,
     ];
     const cleanupError = new ProviderCleanupError(
       "jadx",
-      cleanupResources,
+      cleanupResources(resources),
       {
-        ...diagnostics,
         reason: cleanupCauses
           .map((failure) =>
             failure instanceof Error ? failure.message : String(failure),
@@ -291,19 +200,14 @@ const cleanup = async (
         ),
       },
       {
+        operation: resources.operation,
         cause: new AggregateError(
-          [
-            ...(previousError === undefined ? [] : [previousError]),
-            resources.operationCause,
-            ...cleanupCauses,
-          ],
-          "JADX operation and resource cleanup failed",
+          cleanupCauses,
+          "JADX resource cleanup failed",
         ),
       },
     );
-    if (previousError?.partialObservation !== undefined)
-      cleanupError.retainPartialObservation(previousError.partialObservation);
-    return err(cleanupError);
+    return err(cleanupFailure(resources, cleanupError));
   }
   try {
     await root?.close();
@@ -311,16 +215,13 @@ const cleanup = async (
   } catch (cause) {
     const error = new ProviderCleanupError(
       "jadx",
-      [root?.path ?? "unknown"],
+      cleanupResources(resources),
       {
-        ...diagnostics,
         reason: cause instanceof Error ? cause.message : String(cause),
       },
-      { cause: previousError ?? cause },
+      { operation: resources.operation, cause },
     );
-    if (previousError?.partialObservation !== undefined)
-      error.retainPartialObservation(previousError.partialObservation);
-    return err(error);
+    return err(cleanupFailure(resources, error));
   }
   return ok(undefined);
 };
@@ -359,7 +260,11 @@ export class JadxProvider implements AndroidAnalysisPort {
     options?: ExecutionOptions,
   ): Promise<Outcome> {
     if (this.#shutdown.signal.aborted)
-      return err(new AnalysisCancelledError(request.operation));
+      return err(
+        new AnalysisCancelledError(request.operation, {
+          cause: this.#shutdown.signal.reason,
+        }),
+      );
     const signal =
       options?.signal === undefined
         ? this.#shutdown.signal
@@ -371,13 +276,21 @@ export class JadxProvider implements AndroidAnalysisPort {
     });
     try {
       await waitForTurn(predecessor, request, signal);
-    } catch {
+    } catch (cause) {
       void predecessor.then(release);
-      return err(new AnalysisCancelledError(request.operation));
+      return err(
+        cause instanceof AnalysisError
+          ? cause
+          : new AnalysisCancelledError(request.operation, { cause }),
+      );
     }
     try {
       if (signal.aborted)
-        return err(new AnalysisCancelledError(request.operation));
+        return err(
+          new AnalysisCancelledError(request.operation, {
+            cause: signal.reason,
+          }),
+        );
       clearTimeout(this.#idle);
       if (this.#pendingCleanup !== undefined) {
         const retired = await this.#retire();
@@ -410,6 +323,7 @@ export class JadxProvider implements AndroidAnalysisPort {
   async #retire(): Promise<Result<void, AnalysisError>> {
     if (this.#pendingCleanup === undefined && this.#retained !== undefined) {
       this.#pendingCleanup = {
+        operation: "close_binary",
         session: this.#retained.session,
         root: this.#retained.root,
         fileHandles: new Map(),
@@ -484,7 +398,7 @@ export class JadxProvider implements AndroidAnalysisPort {
         request.operation,
         signal,
       );
-      signal.throwIfAborted();
+      throwIfJadxInterrupted(signal);
       const jarHash = await hashAndroidSource(
         configuration.jar,
         request.operation,
@@ -575,7 +489,7 @@ export class JadxProvider implements AndroidAnalysisPort {
             BRIDGE_SOURCE,
             undefined,
           );
-        workspaceSignal.throwIfAborted();
+        throwIfJadxInterrupted(workspaceSignal);
         session = new JadxSession(
           {
             command: configuration.java,
@@ -618,11 +532,11 @@ export class JadxProvider implements AndroidAnalysisPort {
           timeoutMs: timeoutMs.value,
         }),
       );
-      activeSignal.throwIfAborted();
+      throwIfJadxInterrupted(activeSignal);
       this.#retained = retained;
       return outcome;
     } catch (cause) {
-      const previousError = executionError({
+      const failure = captureJadxFailure({
         cause,
         request,
         timeout,
@@ -630,23 +544,23 @@ export class JadxProvider implements AndroidAnalysisPort {
         signal: options?.signal,
         session,
       });
-      const partialObservation = session?.partialObservation();
-      if (partialObservation !== undefined)
-        previousError.retainPartialObservation(partialObservation);
       // Admission can fail before selecting an existing session for execution.
       root ??= this.#retained?.root;
       session ??= this.#retained?.session;
       this.#retained = undefined;
       this.#pendingCleanup = {
+        operation: request.operation,
         session,
         root,
         fileHandles,
-        previousError,
+        get previousError() {
+          return failure();
+        },
         operationCause: cause,
         reportedErrors: [],
       };
       const retired = await this.#retire();
-      return retired.ok ? err(previousError) : retired;
+      return retired.ok ? err(failure()) : retired;
     }
   }
 }

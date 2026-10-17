@@ -1,7 +1,7 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { expect } from "vitest";
-import { stringify } from "yaml";
+import { Scalar, stringify } from "yaml";
 
 import {
   effectiveClientServer,
@@ -32,6 +32,155 @@ const scenarios = [
     },
   },
 ] as const;
+
+cliTest.for([
+  {
+    client: "cursor",
+    format: "json",
+    path: ".cursor/mcp.json",
+    position: "value",
+  },
+  {
+    client: "cursor",
+    format: "json",
+    path: ".cursor/mcp.json",
+    position: "name",
+  },
+  {
+    client: "dsh",
+    format: "dsh",
+    path: ".dsh/cordis.patch.yml",
+    position: "value",
+  },
+  {
+    client: "dsh",
+    format: "dsh",
+    path: ".dsh/cordis.patch.yml",
+    position: "name",
+  },
+  {
+    client: "dsh",
+    format: "dsh",
+    path: ".dsh/cordis.patch.yml",
+    position: "expression name",
+  },
+] as const)(
+  "refuses a NUL environment $position in $client before setup writes",
+  async (scenario, { cli }) => {
+    const home = await createTestTempDirectory("rea-registration-nul-");
+    const config = join(home, scenario.path);
+    await mkdir(dirname(config), { recursive: true });
+    const environment = {
+      HOME: home,
+      USERPROFILE: home,
+      XDG_CONFIG_HOME: join(home, ".config"),
+      DSH_HOME: join(home, ".dsh"),
+      HOPPER_LAUNCHER_PATH: join(home, "missing-hopper"),
+    };
+    const registration = (env: Readonly<Record<string, string>>) => {
+      const entry = clientRegistrationEntry(
+        scenario.format,
+        [process.execPath, resolve("scripts/rea.mjs"), "mcp"],
+        env,
+      );
+      if (scenario.position === "expression name")
+        entry.env = Object.fromEntries(
+          Object.entries(env).map(([key, value]) => {
+            if (!key.includes("\0")) return [key, value];
+            const expression = new Scalar("process.env.CALLER_SETTING");
+            expression.tag = "tag:yaml.org,2002:js";
+            return [key, expression];
+          }),
+        );
+      return scenario.format === "dsh"
+        ? stringify([
+            {
+              insert: [
+                {
+                  id: "rea-mcp",
+                  name: "@deepseek-ai/dsh-mcp-client",
+                  config: entry,
+                },
+              ],
+            },
+          ])
+        : JSON.stringify({ mcpServers: { rea: entry } });
+    };
+    const valueMarker = "reaNulFixtureValue_6c04e2";
+    const original = registration(
+      scenario.position === "value"
+        ? { CALLER_SETTING: `${valueMarker}\0value` }
+        : { ["CALLER\0SETTING"]: `${valueMarker} value` },
+    );
+    await writeFile(config, original);
+    const doctor = await cli.run({
+      arguments: [
+        "doctor",
+        "--client",
+        scenario.client,
+        "--skill=false",
+        "--json",
+      ],
+      cwd: home,
+      environment,
+    });
+    expect(doctor.exitCode).toBe(1);
+    expect(doctor.json).toMatchObject({
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: `registration:${scenario.client}`,
+          ok: false,
+          classification: "config_drift",
+          remediation: expect.stringContaining("NUL"),
+        }),
+      ]),
+    });
+    const setup = await cli.run({
+      arguments: [
+        "setup",
+        "--client",
+        scenario.client,
+        "--skill=false",
+        "--yes",
+        "--json",
+      ],
+      cwd: home,
+      environment,
+    });
+    expect(setup.exitCode).toBe(1);
+    expect(setup.json).toMatchObject({
+      status: "needs_human",
+      plannedActions: [],
+      appliedActions: [],
+      remediation: expect.stringContaining("NUL"),
+    });
+    expect(setup.stdout + doctor.stdout).not.toContain(valueMarker);
+    expect(await readFile(config, "utf8")).toBe(original);
+    await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    const repaired = registration({
+      CALLER_SETTING: "ordinary\nvalue=二\t",
+      EMPTY_SETTING: "",
+    });
+    await writeFile(config, repaired);
+    const healthy = await cli.run({
+      arguments: [
+        "doctor",
+        "--client",
+        scenario.client,
+        "--skill=false",
+        "--json",
+      ],
+      cwd: home,
+      environment,
+    });
+    expect(healthy.exitCode, healthy.stdout).toBe(0);
+    expect(healthy.json).toMatchObject({ healthy: true });
+    expect(await readFile(config, "utf8")).toBe(repaired);
+  },
+);
 
 for (const scenario of scenarios)
   cliTest(
@@ -175,9 +324,11 @@ cliTest(
       HOME: home,
       USERPROFILE: home,
       XDG_CONFIG_HOME: join(home, ".config"),
-      // Select an absent launcher so host-installed Hopper cannot make this
+      // Select absent provider locations so installed tools cannot make this
       // configuration merge test plan an unrelated provider-environment edit.
       HOPPER_LAUNCHER_PATH: join(home, "missing-hopper"),
+      GHIDRA_INSTALL_DIR: join(home, "missing-ghidra"),
+      JAVA_HOME: join(home, "missing-java"),
     };
     const run = (args: readonly string[]) =>
       cli.run({ arguments: [...args, "--json"], cwd: home, environment });
@@ -321,6 +472,142 @@ cliTest(
   },
   120_000,
 );
+
+for (const [client, provider] of [
+  ["codex", "ida"],
+  ["kimi", "ida"],
+  ["kimi", "auto"],
+] as const)
+  cliTest(
+    `public ${client} setup and doctor use the effective IDA registration request budget with ${provider} selection`,
+    async ({ cli }) => {
+      const home = await createTestTempDirectory(
+        "rea-ida-registration-budget-",
+      );
+      const clientHome = join(home, client);
+      await mkdir(clientHome, { recursive: true });
+      const idaConfig = join(home, "ida.json");
+      const writeRegistration = (timeoutMs: number) =>
+        writeFile(
+          idaConfig,
+          JSON.stringify({
+            url: "http://127.0.0.1:12345/mcp",
+            headers: { Authorization: "Bearer fixture-credential" },
+            timeoutMs,
+          }),
+        );
+      await writeRegistration(1_800_001);
+      const environment = {
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: join(home, ".config"),
+        CODEX_HOME: clientHome,
+        KIMI_CODE_HOME: clientHome,
+        HOPPER_LAUNCHER_PATH: join(home, "missing-hopper"),
+      };
+      const setupArguments = [
+        "setup",
+        "--client",
+        client,
+        "--skill=false",
+        "--yes",
+        "--json",
+      ];
+      const configured = await cli.run({
+        arguments: setupArguments,
+        cwd: home,
+        environment: {
+          ...environment,
+          REA_ANALYSIS_PROVIDER: provider,
+          REA_IDA_MCP_CONFIG: idaConfig,
+        },
+      });
+      expect(configured.exitCode, configured.stdout).toBe(0);
+      const config = join(
+        clientHome,
+        client === "codex" ? "config.toml" : "mcp.json",
+      );
+      const text = await readFile(config, "utf8");
+      expect(
+        effectiveClientServer(
+          parseClientConfiguration(text, client === "codex" ? "toml" : "kimi"),
+          "rea",
+        ),
+      ).toMatchObject({
+        ...(client === "codex"
+          ? { tool_timeout_sec: 1921 }
+          : { toolTimeoutMs: 1_920_001 }),
+        env: { REA_ANALYSIS_PROVIDER: provider, REA_IDA_MCP_CONFIG: idaConfig },
+      });
+      expect(text).not.toContain("fixture-credential");
+      const run = (arguments_: readonly string[]) =>
+        cli.run({ arguments: arguments_, cwd: home, environment });
+      const healthy = await run(["doctor", "--client", client, "--json"]);
+      expect(healthy.exitCode, healthy.stdout).toBe(0);
+      expect(JSON.stringify(healthy.json)).not.toContain('"advisory"');
+
+      // Only the stored client's provider path identifies this changed budget;
+      // the doctor/setup process has no IDA configuration in its environment.
+      await writeRegistration(2_400_001);
+      const doctor = await run(["doctor", "--client", client, "--json"]);
+      expect(doctor.exitCode, doctor.stdout).toBe(0);
+      expect(doctor.json).toMatchObject({
+        identity: {
+          registrations: expect.arrayContaining([
+            expect.objectContaining({
+              client,
+              state: "aligned",
+              advisory: expect.stringContaining(
+                client === "codex"
+                  ? "tool_timeout_sec = 2521 seconds"
+                  : "toolTimeoutMs = 2520001 ms",
+              ),
+            }),
+          ]),
+        },
+      });
+      const repeated = await run(setupArguments);
+      expect(repeated.exitCode, repeated.stdout).toBe(0);
+      expect(repeated.json).toMatchObject({
+        status: "ready",
+        plannedActions: [],
+        appliedActions: [],
+      });
+      expect(await readFile(config, "utf8")).toBe(text);
+      await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      if (provider === "ida") {
+        await writeRegistration(0);
+        const invalidDoctor = await run([
+          "doctor",
+          "--client",
+          client,
+          "--json",
+        ]);
+        expect(invalidDoctor.exitCode).toBe(1);
+        expect(invalidDoctor.json).toMatchObject({
+          identity: {
+            registrations: expect.arrayContaining([
+              expect.objectContaining({
+                client,
+                state: "invalid",
+                remediation: expect.stringContaining("REA_IDA_MCP_CONFIG"),
+              }),
+            ]),
+          },
+        });
+        const invalidSetup = await run(setupArguments);
+        expect(invalidSetup.exitCode).toBe(1);
+        expect(invalidSetup.stdout).toContain("REA_IDA_MCP_CONFIG");
+        expect(await readFile(config, "utf8")).toBe(text);
+        await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      }
+    },
+    120_000,
+  );
 
 for (const invalidSetting of [
   { setting: "REA_MCP_INPUT_SCHEMA_PROFILE", value: "unknown" },

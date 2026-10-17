@@ -7,7 +7,7 @@ import {
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
 import { access } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 
 import { z } from "zod";
 import { valid } from "semver";
@@ -35,6 +35,7 @@ import type { SetupClient } from "./SupportedClients.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { dshDocument } from "./DshCordisPatch.js";
 import { clientRegistrationEnvironmentDetails } from "./ClientRegistrationEnvironment.js";
+import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 interface ClientRegistrationStatusBase {
@@ -98,6 +99,7 @@ interface ClientRegistrationReadOptions {
   readonly platform?: NodeJS.Platform;
   readonly environment?: NodeJS.ProcessEnv;
   readonly resources?: ArtifactResourceScope;
+  readonly resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
 }
 
 /** Registration facts shared by diagnostics and update maintenance. */
@@ -227,10 +229,26 @@ export const readClientRegistrationInspections = async (
       const registration = parseRegistration(raw, effectiveClient);
       const registrationEnvironment =
         client.name === "kimi" || client.name === "codex"
-          ? clientRegistrationEnvironmentDetails(parsed)
+          ? clientRegistrationEnvironmentDetails(
+              parsed,
+              {},
+              "effective",
+              options.resolveProviderRequestBudget,
+            )
           : undefined;
-      if (registrationEnvironment !== undefined && !registrationEnvironment.ok)
-        throw registrationEnvironment.error;
+      if (
+        registrationEnvironment !== undefined &&
+        !registrationEnvironment.ok
+      ) {
+        record({
+          client: client.name,
+          config_path: configPath,
+          command: [],
+          state: "invalid",
+          remediation: registrationEnvironment.error.message,
+        });
+        continue;
+      }
       const command: RegistrationCommand = [
         registration.command,
         ...registration.args,
@@ -385,27 +403,11 @@ const registrationAligned = ({
     })
   )
     return "aligned";
-  if (
-    currentCommandPath !== undefined &&
-    currentCommandPath.length > 0 &&
-    command.length === 3 &&
-    command[2] === "mcp" &&
-    isAbsolute(command[0] ?? "") &&
-    isAbsolute(command[1] ?? "") &&
-    resolve(command[0] ?? "") === resolve(process.execPath) &&
-    resolve(command[1] ?? "") === currentCommandPath
-  )
-    return "aligned";
-  if (
-    currentCommandPath !== undefined &&
-    currentCommandPath.length > 0 &&
-    command.length === 2 &&
-    command[1] === "mcp" &&
-    isAbsolute(command[0] ?? "") &&
-    resolve(command[0] ?? "") === currentCommandPath
-  )
-    return "aligned";
-  return "stale";
+  // Other owned package references remain stale until pinned to this version.
+  if (clientRegistrationPackageReference(command) !== undefined) return "stale";
+  // The identity owner already established an exact direct launcher match.
+  // A bare command still depends on the client's PATH, so cannot prove alignment.
+  return isAbsolute(command[0] ?? "") ? "aligned" : "stale";
 };
 
 const parseRegistration = (

@@ -180,6 +180,20 @@ const makeProvider = (
           trace.calls.push(operation);
           const results: Readonly<Record<string, unknown>> = {
             health: null,
+            read_binary_inventory_summary: {
+              document: "fixture",
+              procedure_count: 1,
+              string_count: 1,
+              segment_count: 1,
+              segments: [
+                {
+                  name: "__TEXT",
+                  start: "0x1000",
+                  end: "0x2000",
+                  length: 4096,
+                },
+              ],
+            },
             list_segments: [
               {
                 name: "__TEXT",
@@ -246,6 +260,9 @@ const createSnapshotReplayFixture = async (
         readConfiguration: () => parseConfig({}),
         createBinarySession: () => createTestBinarySession(provider),
         createArtifactBinarySession: () => createTestBinarySession(provider),
+        createNativeDispatchBinarySession: () =>
+          createTestBinarySession(provider),
+        createNativeBinarySession: () => createTestBinarySession(provider),
         createManagedBinarySession: () => createTestBinarySession(provider),
       };
     },
@@ -470,14 +487,14 @@ const verifyWindowsSnapshotAdmission = async (
 };
 
 it.each([
-  { tool: "binary_overview", arguments: {}, priorRevision: 3 },
+  { tool: "binary_overview", arguments: {}, priorRevision: 4 },
   {
     tool: "inspect_native_api",
     arguments: { procedure: "0x1000" },
-    priorRevision: undefined,
+    priorRevision: 1,
   },
 ] as const)(
-  "refreshes pre-coverage $tool Evidence and replays the current revision",
+  "refreshes unattributed $tool Evidence and replays the current revision",
   async (scenario) => {
     const fixture = await createSnapshotReplayFixture("rea-prior-coverage-");
     const limitation = "Original PDB names may be missing.";
@@ -523,7 +540,9 @@ it.each([
         options,
       ),
     );
-    expect(refreshed.limitations).toContain(limitation);
+    expect(refreshed.limitations).toEqual(
+      expect.arrayContaining(first.limitations),
+    );
     expect(refreshed.analysis_profile?.digest).not.toBe(priorProfile.digest);
     expect(refreshed.normalized_result).toEqual(first.normalized_result);
     const starts = [...fixture.starts];
@@ -1000,6 +1019,8 @@ describe("workflow snapshot profile and cancellation binding", () => {
       readConfiguration: () => parseConfig({}),
       createBinarySession: () => session,
       createArtifactBinarySession: () => session,
+      createNativeDispatchBinarySession: () => session,
+      createNativeBinarySession: () => session,
       createManagedBinarySession: () => session,
     };
     const result = await runDirectAnalysis(

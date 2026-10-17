@@ -73,12 +73,16 @@ to rerun it.
 A process that the MSIX app started, such as a terminal in Claude Desktop's
 Code tab, sees the package's private files at their `%APPDATA%` paths even
 though it reports no package identity. Setup compares one of those files at
-both paths. When it finds that redirected view, the app is running, so setup
-and uninstall refuse to change Claude Desktop's configuration; rerun them from
-a terminal that Claude Desktop did not start. If the package has no private
-file to compare, setup and uninstall cannot rule that out and also refuse; open
-Claude Desktop once if it has never run, quit it fully, then rerun. Doctor
-reads the same file from either kind of process.
+both paths: first one from the package's private `Claude` folder, and when
+that folder has none (some installations keep writing the real
+`%APPDATA%\Claude`), one from the package's other private roaming folders,
+which the package redirects in the same way. When it finds that redirected
+view, the app is running, so setup and uninstall refuse to change Claude
+Desktop's configuration; rerun them from a terminal that Claude Desktop did not
+start. If the package keeps no private roaming file at all, setup and
+uninstall cannot rule that out and also refuse; with Claude Desktop fully
+quit, add or remove REA's entry in the `%APPDATA%` file by hand. Doctor reads
+the same file from either kind of process.
 
 The same process also writes everything under `%APPDATA%` and
 `%LOCALAPPDATA%` into the package's private storage, where other apps never

@@ -289,7 +289,7 @@ export const registrationWriteBlocker = (
   const name = client.displayName ?? client.name;
   return msix.processView === "redirected"
     ? `This process was started from ${name}'s MSIX package ${msix.packageFamilyName}: its AppData is redirected into that package, so ${name} is running and would overwrite ${msix.privateConfigPath} from memory. Quit ${name} fully, then rerun ${operation} from a terminal that ${name} did not start.`
-    : `REA cannot tell whether ${name}'s MSIX package ${msix.packageFamilyName} started this process, because none of its files under ${dirname(msix.privateConfigPath)} could be compared with ${dirname(msix.appDataConfigPath)}. A running ${name} would overwrite the change. Open ${name} once if it has never run, quit it fully, then rerun ${operation} from a terminal that ${name} did not start.`;
+    : `REA cannot tell whether ${name}'s MSIX package ${msix.packageFamilyName} started this process, because no private file under ${dirname(dirname(msix.privateConfigPath))} could be compared with ${dirname(dirname(msix.appDataConfigPath))}, and a ${name} that started it would overwrite the change from memory. ${operation === "setup" ? `Add REA's entry to ${msix.appDataConfigPath}` : `Remove REA's entry from ${msix.appDataConfigPath}`} by hand while ${name} is fully quit, or rerun ${operation} from a terminal that ${name} did not start once REA can compare a private file there.`;
 };
 
 /** The MSIX package view, if any, that redirects this process's AppData writes. */

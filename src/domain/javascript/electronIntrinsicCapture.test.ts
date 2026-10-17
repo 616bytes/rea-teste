@@ -984,6 +984,24 @@ describe("captured member containers and deep chains", () => {
     ).toBe("metadata");
   });
 
+  it("selects the explicit receiver over the captured intrinsic owner", () => {
+    // `Reflect.apply(invoke, noop, args)` — `invoke` stores
+    // Function.prototype.call, so the callable is the explicit receiver
+    // `noop`, never the member's owner `Object.defineProperty`.
+    const { invocations, writes } = collectedWrites(
+      `const [{call: invoke}] = [Object.defineProperty];
+      const noop = () => {};
+      Reflect.apply(invoke, noop, [null, Object, "create", {value: customCreate}]);`,
+    );
+    expect(invocations.at(-1)).not.toEqual(
+      expect.objectContaining({
+        kind: "known",
+        path: ["intrinsic", "Object", "defineProperty"],
+      }),
+    );
+    expect(writes).not.toContainEqual(["intrinsic", "Object", "create"]);
+  });
+
   it("follows long captured-member owner chains iteratively", () => {
     // Deep alias chains must not overflow the call stack — owner descent
     // is an explicit work stack, not recursion.

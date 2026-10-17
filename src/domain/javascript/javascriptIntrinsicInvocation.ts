@@ -168,6 +168,17 @@ export const resolveJavaScriptIntrinsicInvocation = (
           arguments: arguments_,
         };
       }
+      // FP.call/apply uses the explicit receiver as its callable, even
+      // when the member was read from an intrinsic owner: `Reflect.apply(
+      // ODP.call, noop, args)` invokes `noop`, never ODP.
+      const callable: t.Node | undefined = explicitReceiver ? receiver : callee;
+      if (!t.isExpression(callable))
+        return {
+          kind: "opaque",
+          path: intrinsicPath(callee) ?? ["intrinsic"],
+          arguments: undefined,
+        };
+      callee = callable;
       receiver = arguments_?.[0];
       explicitReceiver = true;
       arguments_ = invocationArguments(virtual.key, arguments_);

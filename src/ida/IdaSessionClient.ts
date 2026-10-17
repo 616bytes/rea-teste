@@ -34,7 +34,10 @@ import {
 import { nativeTools } from "./IdaNativeProtocol.js";
 import { readSettledHealth } from "./IdaBusyHealth.js";
 import { isX86OnlyTarget } from "./IdaCallGraph.js";
-import { IdaOperationRunner } from "./IdaOperationRunner.js";
+import {
+  IdaOperationRunner,
+  type IdaRawObservation,
+} from "./IdaOperationRunner.js";
 import {
   IDA_LIMITATIONS,
   IDA_OPERATIONS,
@@ -187,6 +190,8 @@ export class IdaSessionClient implements AnalysisClient {
   #initialIdentity: string | undefined;
   #metadata: JsonValue = null;
   #lifecycle: JsonValue[] = [];
+  /** Hex-Rays health reads of the current operation, kept whole beside the parsed metadata. */
+  #healthObservations: IdaRawObservation[] = [];
 
   constructor(
     private readonly config: IdaConfiguration,
@@ -301,6 +306,7 @@ export class IdaSessionClient implements AnalysisClient {
           },
         ]),
       );
+    this.#healthObservations = [];
     const failureContext: IdaOperationFailureContext = {
       runner: undefined,
       metadataBefore: undefined,
@@ -336,6 +342,7 @@ export class IdaSessionClient implements AnalysisClient {
             metadata_before: before,
             metadata_after: after,
             observations: jsonValueSchema.parse(runner.raw),
+            ...this.#healthEvidence(),
           },
           limitations: [...IDA_LIMITATIONS, ...runner.limitations],
           ...(runner.relationshipCoverage === undefined
@@ -516,6 +523,7 @@ export class IdaSessionClient implements AnalysisClient {
             ...(metadataAfter === undefined
               ? {}
               : { metadata_after: metadataAfter }),
+            ...this.#healthEvidence(),
             post_operation_identity_check: context.postOperationIdentityCheck,
           },
           confidence: "observed",
@@ -764,6 +772,27 @@ export class IdaSessionClient implements AnalysisClient {
     };
   }
 
+  async #readHexRaysHealth(database: string): Promise<JsonValue> {
+    const observation = await runHexRaysQuery(
+      this.connection,
+      database,
+      "server_health",
+      {},
+      this.config.timeoutMs,
+    );
+    this.#healthObservations.push(observation);
+    return observation.result;
+  }
+
+  /** The bridge digest and engine output behind this operation's identity checks. */
+  #healthEvidence() {
+    return this.#healthObservations.length === 0
+      ? {}
+      : {
+          health_observations: jsonValueSchema.parse(this.#healthObservations),
+        };
+  }
+
   async #nativeMetadata(): Promise<JsonValue> {
     if (this.connection.readResource === undefined)
       throw new AnalysisProtocolError(
@@ -802,15 +831,7 @@ export class IdaSessionClient implements AnalysisClient {
       // Hex-Rays execute_python waits for initial auto-analysis before running.
       const raw =
         idaProtocol(this.config) === "hexrays"
-          ? (
-              await runHexRaysQuery(
-                this.connection,
-                this.#database,
-                "server_health",
-                {},
-                this.config.timeoutMs,
-              )
-            ).result
+          ? await this.#readHexRaysHealth(this.#database)
           : await readSettledHealth(this.connection, {
               database: this.#database,
               timeoutMs: this.config.timeoutMs,

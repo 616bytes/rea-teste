@@ -38,6 +38,8 @@ export class RecordingHexRaysIdaMcp implements IdaMcpConnection {
   loseOpenReply: { leased: boolean } | undefined;
   /** Reject close_database; `keepLease` leaves the worker registered. */
   rejectClose: { keepLease: boolean } | undefined;
+  /** Engine output reported beside every execute_python result. */
+  engineOutput = { stdout: "", stderr: "" };
   closes = 0;
   detaches = 0;
   #nextId = 0;
@@ -125,7 +127,7 @@ export class RecordingHexRaysIdaMcp implements IdaMcpConnection {
           .record(z.string(), jsonValueSchema)
           .parse(JSON.parse(z.string().parse(JSON.parse(match[2] ?? ""))));
         const result = await this.reads.call(tool, { ...query, database: id });
-        return { result, stdout: "", stderr: "" };
+        return { result, ...this.engineOutput };
       }
       default:
         throw new Error(`Unimplemented producer tool ${name}`);

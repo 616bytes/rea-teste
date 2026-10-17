@@ -178,6 +178,33 @@ describe("Hex-Rays IDA MCP startup profile", () => {
   });
 });
 
+describe("Hex-Rays IDA MCP evidence", () => {
+  it("keeps the bridge digest and engine output of identity and operation reads", async () => {
+    const { producer, client } = await fixture();
+    producer.engineOutput = { stdout: "", stderr: "engine warning" };
+    const result = await client.execute("list_procedures", {});
+    if (!result.ok) throw result.error;
+    const raw = result.value.rawResult as {
+      health_observations: {
+        tool: string;
+        arguments: { query: string; bridge_sha256: string };
+        output?: { stderr: string };
+      }[];
+      observations: { output?: { stderr: string } }[];
+    };
+    // One identity read before and one after the operation.
+    expect(raw.health_observations).toHaveLength(2);
+    for (const observation of raw.health_observations) {
+      expect(observation.tool).toBe("execute_python");
+      expect(observation.arguments.query).toBe("server_health");
+      expect(observation.arguments.bridge_sha256).toMatch(/^[0-9a-f]{64}$/u);
+      expect(observation.output?.stderr).toBe("engine warning");
+    }
+    expect(raw.observations[0]?.output?.stderr).toBe("engine warning");
+    expect((await client.close()).ok).toBe(true);
+  });
+});
+
 describe("Hex-Rays IDA MCP session", () => {
   it("leases a private idalib worker, answers reads through the query bridge, and releases it", async () => {
     const { root, target, producer, client } = await fixture();

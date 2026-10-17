@@ -99,6 +99,16 @@ describe("v1 signature block (PKCS#7 SignedData)", () => {
     expect(block.certificates.map(sha256)).toEqual([LEAF_SHA256]);
   });
 
+  it("reads the ContentInfo and counts trailing bytes, as apksig ignores them", () => {
+    expect(decoded(OPENSSL_BLOCK_ISSUER_SERIAL).trailingBytes).toBe(0);
+    const block = decoded(
+      Uint8Array.from([...OPENSSL_BLOCK_ISSUER_SERIAL, 0, 0xff, 7]),
+    );
+    expect(block.trailingBytes).toBe(3);
+    expect(block.signerInfos[0]?.certificateIndex).toBe(0);
+    expect(block.certificates.map(sha256)).toEqual([LEAF_SHA256, ROOT_SHA256]);
+  });
+
   it("reports malformed structure instead of an empty signer", () => {
     expect(errorOf(OPENSSL_BLOCK_ISSUER_SERIAL.subarray(0, 200)).kind).toBe(
       "malformed-pkcs7",
@@ -115,11 +125,6 @@ describe("v1 signature block (PKCS#7 SignedData)", () => {
     ).toEqual({
       kind: "malformed-pkcs7",
       detail: "contentType 1.2.840.113549.1.7.1 is not SignedData",
-    });
-    const trailing = Uint8Array.from([...OPENSSL_BLOCK_ISSUER_SERIAL, 0]);
-    expect(errorOf(trailing)).toEqual({
-      kind: "malformed-pkcs7",
-      detail: "1 bytes follow the ContentInfo",
     });
     expect(
       errorOf(

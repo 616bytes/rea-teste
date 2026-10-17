@@ -50,6 +50,11 @@ export interface ApkV1SignedData {
   /** Raw DER of each certificate in `SignedData.certificates`, in block order. */
   readonly certificates: readonly Uint8Array[];
   readonly signerInfos: readonly ApkV1SignerInfo[];
+  /**
+   * Bytes after the ContentInfo. apksig's BER parser reads one top-level value
+   * and ignores what follows, so they do not make the block unreadable.
+   */
+  readonly trailingBytes: number;
 }
 
 const OID_SIGNED_DATA = "1.2.840.113549.1.7.2";
@@ -337,10 +342,6 @@ const decode = (bytes: Uint8Array): ApkV1SignedData => {
     TAG.sequence,
     "ContentInfo",
   );
-  if (contentInfo.end !== bytes.length)
-    throw malformed(
-      `${String(bytes.length - contentInfo.end)} bytes follow the ContentInfo`,
-    );
   const [contentType, explicit] = reader.children(contentInfo);
   const type = oidText(
     reader.content(expectTag(contentType, TAG.oid, "contentType")),
@@ -391,6 +392,7 @@ const decode = (bytes: Uint8Array): ApkV1SignedData => {
     signerInfos: infos.map((info, index) =>
       signerInfo(reader, info, identities, index),
     ),
+    trailingBytes: bytes.length - contentInfo.end,
   };
 };
 

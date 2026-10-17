@@ -37,6 +37,8 @@ rea inspect-apk-signature /path/app.apk
   disagrees with the central directory on the name, data-descriptor flag,
   CRC-32 or a size, as apksig refuses it, or over a bound) keeps its names
   and carries `decode_error`; it is never reported as an absent signer.
+  Bytes after the block's `ContentInfo` are ignored, as apksig's BER parser
+  ignores them, and a limitation names the block and their count.
 - **Per signer:** the certificate's **SHA-256 fingerprint over the raw embedded
   DER** (the same value `apksigner --print-certs` prints), plus subject, issuer,
   serial, ISO 8601 validity and public-key algorithm when the X.509 parser can

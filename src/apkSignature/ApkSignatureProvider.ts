@@ -72,6 +72,7 @@ import {
   decodeV1Signer,
   projectedV1SignerBytes,
   v1SignerFacts,
+  v1SignerNotes,
   type DecodedV1Signer,
 } from "./apkV1Signers.js";
 
@@ -416,6 +417,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
         limitations: [
           ...APK_SIGNATURE_LIMITATIONS,
           ...(matcher.layoutPreventedRecompute() ? [LAYOUT_LIMITATION] : []),
+          ...v1SignerNotes(v1Decoded),
           ...derived.notes,
         ],
       }) as ApkSignatureExecution,

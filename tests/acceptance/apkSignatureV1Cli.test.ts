@@ -176,6 +176,16 @@ cliTest(
       ],
       { dataDescriptor: false },
     );
+    const padded = await zipWith(
+      [
+        { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
+        {
+          name: block,
+          data: Uint8Array.from([...OPENSSL_BLOCK_ISSUER_SERIAL, 0, 0]),
+        },
+      ],
+      { dataDescriptor: false },
+    );
     const mutated = async (
       name: string,
       mutate: (bytes: Buffer, at: { central: number; local: number }) => void,
@@ -214,6 +224,24 @@ cliTest(
         "Zip64 entry sizes are not read",
       ],
     ] as const;
+    // Bytes after the ContentInfo are ignored, as apksig ignores them, and
+    // reported as a limitation rather than refusing the block.
+    const paddedPath = join(root, "trailing-bytes.apk");
+    await writeFile(paddedPath, padded);
+    const paddedResult = await cli.run({
+      arguments: ["inspect-apk-signature", paddedPath, "--json"],
+    });
+    expect(paddedResult.exitCode, paddedResult.stderr).toBe(0);
+    const paddedEvidence = toolContract(
+      "inspect_apk_signature",
+    ).outputSchema.parse(paddedResult.json);
+    expect(paddedEvidence.normalized_result.schemes.v1.signers).toMatchObject([
+      { certificate: { sha256_fingerprint: LEAF_SHA256 }, decode_error: null },
+    ]);
+    expect(paddedEvidence.limitations).toContain(
+      `${block}: 2 bytes follow the PKCS#7 ContentInfo and were ignored, as apksig ignores them.`,
+    );
+
     for (const [path, decodeError] of cases) {
       const result = await cli.run({
         arguments: ["inspect-apk-signature", path, "--json"],

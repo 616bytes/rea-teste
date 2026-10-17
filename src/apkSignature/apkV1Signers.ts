@@ -97,6 +97,16 @@ export const decodeV1Signer = (
   );
 };
 
+/** Facts about decoded v1 blocks that the report has no field for. */
+export const v1SignerNotes = (signers: readonly DecodedV1Signer[]): string[] =>
+  signers.flatMap(({ entry, decoded }) =>
+    decoded.ok && decoded.value.trailingBytes > 0
+      ? [
+          `${entry.block.name}: ${String(decoded.value.trailingBytes)} bytes follow the PKCS#7 ContentInfo and were ignored, as apksig ignores them.`,
+        ]
+      : [],
+  );
+
 /** Materialise one v1 signer's declared facts through the shared certificate owner. */
 export const v1SignerFacts = ({
   entry,

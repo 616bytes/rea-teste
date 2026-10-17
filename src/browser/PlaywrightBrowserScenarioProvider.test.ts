@@ -715,6 +715,7 @@ describe("PlaywrightBrowserScenarioProvider request cancellation", () => {
           capture: {
             browser: { cleanup: "terminated-owned-process" },
             steps: [{ status: "completed" }, { status: "cancelled" }],
+            completeness: { status: "incomplete" },
           },
         },
       },

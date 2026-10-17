@@ -8,6 +8,7 @@ import { silentLogger } from "../../../src/logger.js";
 import { startMcpTransport } from "../../../src/main/transport.js";
 import type { RuntimeDependencies } from "../../../src/main/types.js";
 import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 
 it("keeps the shared browser scenario provider open when the SDK discards its discovery probe", async () => {
@@ -71,7 +72,12 @@ it("keeps the shared browser scenario provider open when the SDK discards its di
     expect(scenarioClose).not.toHaveBeenCalled();
     expect(electronClose).not.toHaveBeenCalled();
 
-    await expect(transport.closeOptionalProviders()).rejects.toMatchObject({
+    await expect(
+      Promise.all([
+        transport.closeOptionalProviders(),
+        transport.closeOptionalProviders(),
+      ]),
+    ).rejects.toMatchObject({
       errors: [expect.objectContaining({ message: "Scenario cleanup failed" })],
     });
     expect(browserClose).toHaveBeenCalledTimes(1);
@@ -84,6 +90,36 @@ it("keeps the shared browser scenario provider open when the SDK discards its di
     expect(electronClose).toHaveBeenCalledTimes(1);
   } finally {
     await transport.closeAndroid();
+    await session.close();
+  }
+});
+
+it("lets a standalone server own optional provider cleanup by default", async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("Unexpected deep provider");
+  });
+  const close = vi.fn(async () => undefined);
+  const server = createServer(
+    { kind: "session", session },
+    {
+      browserScenarioCapture: {
+        identity: () => ({
+          id: "fake-browser",
+          name: "Fake browser",
+          version: "1",
+        }),
+        captureScenario: async () => {
+          throw new Error("Unexpected scenario capture");
+        },
+        close,
+      },
+    },
+  );
+  try {
+    await server.close();
+    await server.close();
+    expect(close).toHaveBeenCalledTimes(1);
+  } finally {
     await session.close();
   }
 });

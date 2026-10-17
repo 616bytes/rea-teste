@@ -176,15 +176,15 @@ it.skipIf(process.platform === "win32")(
       "adb",
       `#!/bin/sh
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-printf '%s\\n' "$*" >> "$root/calls"
+printf '%s\\0' "$@" >> "$root/calls"
+printf '\\0' >> "$root/calls"
 if [ "$1" = version ]; then
   printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\nInstalled as %s\\n' "$0"
   exit 0
 fi
 if [ "$1" = -s ] && [ "$3" = install ]; then
-  if [ "$4" = -r ]; then selected="$5"; else selected="$4"; fi
-  cmp "$selected" "$root/app with spaces.apk" || exit 1
-  printf '%s\\n' "$selected" >> "$root/snapshots"
+  if [ "$4" = -r ]; then input="$5"; else input="$4"; fi
+  cmp "$input" "$root/app with spaces.apk" || exit 1
   if [ -f "$root/installed" ]; then
     if [ "$4" != -r ]; then
       printf 'Failure [INSTALL_FAILED_ALREADY_EXISTS]\\n'
@@ -228,8 +228,12 @@ exit 1
     expect(freshReplace).toMatchObject({
       ok: true,
       data: {
-        parameters: { replace: true },
-        normalized_result: { replace_requested: true, replaced: null },
+        parameters: { apk_path: apk, replace: true },
+        normalized_result: {
+          apk_path: apk,
+          replace_requested: true,
+          replaced: null,
+        },
         confidence: "observed",
       },
     });
@@ -241,8 +245,12 @@ exit 1
     expect(existingReplace).toMatchObject({
       ok: true,
       data: {
-        parameters: { replace: true },
-        normalized_result: { replace_requested: true, replaced: null },
+        parameters: { apk_path: apk, replace: true },
+        normalized_result: {
+          apk_path: apk,
+          replace_requested: true,
+          replaced: null,
+        },
       },
     });
 
@@ -251,22 +259,39 @@ exit 1
     expect(freshDefault).toMatchObject({
       ok: true,
       data: {
-        parameters: { replace: false },
-        normalized_result: { replace_requested: false, replaced: null },
+        parameters: { apk_path: apk, replace: false },
+        normalized_result: {
+          apk_path: apk,
+          replace_requested: false,
+          replaced: null,
+        },
       },
     });
     expect(await readFile(workspace.path("events"), "utf8")).toBe(
       "fresh-install\nreplacement\nfresh-install\n",
     );
-    const snapshots = (await readFile(workspace.path("snapshots"), "utf8"))
-      .trim()
-      .split("\n");
+    const calls = await readFile(workspace.path("calls"), "utf8");
+    const commands = calls
+      .split("\0\0")
+      .filter(Boolean)
+      .map((command) => command.split("\0"));
+    expect(commands).toEqual([
+      ["version"],
+      ["-s", "emulator-5554", "install", "-r", expect.any(String)],
+      ["version"],
+      ["-s", "emulator-5554", "install", "-r", expect.any(String)],
+      ["version"],
+      ["-s", "emulator-5554", "install", expect.any(String)],
+    ]);
+    const snapshots = commands
+      .filter((args) => args[2] === "install")
+      .map((command) => z.string().parse(command.at(-1)));
     expect(snapshots).toHaveLength(3);
     expect(new Set(snapshots).size).toBe(3);
-    for (const snapshot of snapshots) {
-      expect(snapshot).not.toBe(apk);
-      expect(basename(snapshot)).toBe(basename(apk));
-      await expect(lstat(dirname(snapshot))).rejects.toMatchObject({
+    for (const staged of snapshots) {
+      expect(staged).not.toBe(apk);
+      expect(basename(staged)).toBe(basename(apk));
+      await expect(lstat(dirname(staged))).rejects.toMatchObject({
         code: "ENOENT",
       });
     }
@@ -277,15 +302,6 @@ exit 1
         bytes: 3,
         sha256: createHash("sha256").update("apk").digest("hex"),
       });
-    const calls = await readFile(workspace.path("calls"), "utf8");
-    expect(calls.split("\n").filter((line) => line !== "")).toEqual([
-      "version",
-      `-s emulator-5554 install -r ${snapshots[0]}`,
-      "version",
-      `-s emulator-5554 install -r ${snapshots[1]}`,
-      "version",
-      `-s emulator-5554 install ${snapshots[2]}`,
-    ]);
   },
 );
 

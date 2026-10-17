@@ -148,7 +148,7 @@ it("waits for an aborted pre-session hash before retrying its late close owner",
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(previewSettled).toBe(false);
     expect(closeSettled).toBe(false);
-    expect(binary.status()).toMatchObject({ cleanup_pending: true });
+    expect(await binary.status()).toMatchObject({ cleanup_pending: true });
     releaseClose();
     const preview = await previewWork;
     expect(preview).toMatchObject({
@@ -158,7 +158,7 @@ it("waits for an aborted pre-session hash before retrying its late close owner",
         cleanupIncomplete: true,
       },
     });
-    if (preview.ok) throw new Error("Cancelled profile unexpectedly passed");
+    if (preview.ok) throw new Error("Cancellation unexpectedly succeeded");
     expect(preview.error.cause).toBe(controller.signal.reason);
     expect(preview.error.cleanupResources).toEqual([fixture.kuna]);
     expect(projectAnalysisError(preview.error)).toMatchObject({
@@ -171,13 +171,13 @@ it("waits for an aborted pre-session hash before retrying its late close owner",
       ok: false,
       error: { cleanupIncomplete: true },
     });
-    expect(binary.status()).toMatchObject({ cleanup_pending: true });
+    expect(await binary.status()).toMatchObject({ cleanup_pending: true });
     expect(close).toHaveBeenCalledTimes(2);
     expect(close.mock.contexts[1]).toBe(close.mock.contexts[0]);
 
     close.mockRestore();
     expect(await binary.close()).toEqual({ ok: true, value: null });
-    expect(binary.status()).toMatchObject({ cleanup_pending: false });
+    expect(await binary.status()).toMatchObject({ cleanup_pending: false });
     if (firstClose.ok) throw new Error("Cleanup unexpectedly succeeded");
     expect(preview.error.cleanupIncomplete).toBe(false);
     const recovered = projectAnalysisError(preview.error);

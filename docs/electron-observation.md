@@ -109,6 +109,63 @@ The result records action status and targets, correlated app/window/WebContents,
 preload, session, navigation, shell, permission, popup, download, protocol,
 native-addon, process, and IPC timeline events. IPC channels and argument-shape
 metadata retain their observed lengths; payload values are never retained.
+Observed `ipcMain` event listeners record through a wrapper that stays the
+channel's raw-listener entry; its public `.listener` names the application's
+original callback. Removal keeps application semantics: removing by the
+original function, including through application decorators of
+`removeListener` and Node's removal traversal, receives and removes that
+function. The hook also patches `removeListener` and `off` as pure
+pass-throughs — direct removals keep unchanged arguments and receivers — and a
+hook-maintained registry, not the mutable raw-listener metadata, owns the
+callback identity, so application mutation of `.listener` cannot defeat
+removal; when mutated metadata breaks the application's own native match,
+the hook completes removal by wrapper identity without rewriting public
+metadata. Completion is observed rather than inferred from end state,
+because a decorator can remove another callback on the same channel during
+the translated call or restore mutated metadata after forwarding, and
+neither a listener count nor post-call metadata can show what the
+application's own native call matched. Completion is scoped to the removal
+it translates and fires only when the decorator chain actually forwarded
+the translated callback to the instance's `removeListener` or `off` — the
+patched method marks the in-flight removal only for the emitter it was
+created for, so a decorator that swallows, or forwards through a captured
+patched method applied to another emitter, keeps the registration exactly
+like a plain EventEmitter — and the forwarded native call had no
+registration it provably could match: the patched method walks the live
+list without executing application getters for the last entry that is the
+translated callback itself or whose data `.listener` names it, and native
+removal always removes its last match, so such an entry proves the
+forwarded call already removed one registration. That satisfied request
+stands down, which keeps one removal per request for duplicated
+registrations of the same callback. An entry reached before that proof
+whose `.listener` is an accessor is not a proven miss: the application's
+own native call executes that getter, so its match outcome is
+unpredictable, and the request stands down favoring the kept registration
+over removing behind the application's back. A wrapper re-registered on the same channel during its
+own removal is a deliberate restore and survives; registering it on
+another channel is a separate registration whose original-channel
+completion stays armed. The wrapper is then re-found by identity on a
+re-read of the live list (observers that prepend during traversal cannot
+shield it) before the captured native removal deletes it. Ordinary
+removals do no listener-list work: no listener count is captured and the
+traversal dispatch machinery reads no list — the only list reads are the
+patched method's forwarding check on translated removals and the
+completion check itself. Forwarding paths that bypass the instance's own
+`removeListener`/`off` properties cannot be observed: a method captured
+before the hook loaded, or explicit
+`EventEmitter.prototype.removeListener`/`off` dispatch, never reaches an
+instance property by construction of JavaScript dispatch, and patching the
+shared prototype would affect every emitter in the process, which this
+observation hook must not do. In those cases completion defers to plain
+native behavior exactly as an unhooked emitter; like the other patched
+methods, the hook loads through `-r` before application code, so
+application code observes the patched surface.
+Application accessors installed as entry metadata stay
+untranslated: they execute during the application's own native removal
+exactly as for a bare entry, preserving plain EventEmitter parity for
+throwing accessors. This is listener
+removal policy, not complete JavaScript introspection transparency: the
+recording wrapper itself remains visible to `rawListeners()` inspection.
 Renderer crash/restart and deep-link actions are synthetic
 scenario controls; their attempted and observed outcomes remain in the
 timeline. The active hook blocks and records external shell/navigation,

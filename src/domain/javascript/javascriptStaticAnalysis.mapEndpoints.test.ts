@@ -1,6 +1,16 @@
 import { expect, it } from "vitest";
+import * as t from "@babel/types";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { inspectCall } from "./javascriptStaticAnalysisCalls.js";
+import { createJavaScriptAnalysisAccumulator } from "./javascriptStaticAnalysisState.js";
+import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
+import {
+  completeSemanticSteps,
+  traverseJavaScriptAst,
+} from "./javascriptSemanticTraversal.js";
 
 it("does not classify a local Map lookup as a network endpoint", () => {
   const analysis = analyzeJavaScriptStaticSource(`
@@ -19,6 +29,9 @@ it.each([
   'new Map().delete("https://example.test/accounts")',
   'const records = new Map(); const alias = records; alias.get("/accounts")',
   'const records = new globalThis.Map(); records?.["get"]("/accounts")',
+  'function inspect() { const records = new Map(); return records.get("/accounts"); }',
+  'const inspect = () => { const records = new Map(); const alias = records; return alias.delete("/accounts"); }',
+  'const browser = window; browser.open("about:blank"); new Map().get("/accounts")',
 ])("omits a proven Map operation: %s", (source) => {
   expect(analyzeJavaScriptStaticSource(source).endpoints).toEqual([]);
 });
@@ -32,8 +45,68 @@ it.each([
   'const records = new Map(); records.__proto__ = { get: fetch }; records.get("/accounts")',
   'const records = new Map(); const alias = records; alias.__proto__ = { get: fetch }; records.get("/accounts")',
   'const records = new Map(); records["__proto__"] = { delete: fetch }; records.delete("/accounts")',
+  'function inspect() { records.get("/accounts"); const records = new Map(); }',
+  'const alias = records; const records = new Map(); alias.get("/accounts")',
+  'function inspect() { const alias = records; const records = new Map(); alias.get("/accounts"); }',
+  'function inspect() { const records = new Map(); records.get = fetch; records.get("/accounts"); }',
+  'patch(Map.prototype); const records = new Map(); records.get("/accounts")',
+  'const prototype = Map.prototype; patch(prototype); new Map().get("/accounts")',
+  'patch(Map); new Map().get("/accounts")',
+  'new Patch(Map.prototype); new Map().get("/accounts")',
+  'Map.prototype.patch = function () { this.get = fetch; }; Map.prototype.patch(); new Map().get("/accounts")',
+  'Map.patch(); new Map().get("/accounts")',
+  'globalThis.patch = function () { this.Map.prototype.get = fetch; }; globalThis.patch(); new Map().get("/accounts")',
+  'window.open = function () { this.Map.prototype.get = fetch; }; window.open(); new Map().get("/accounts")',
+  'function invoke() { window.open(); } window.open = patch; invoke(); new Map().get("/accounts")',
+  'patch`prototype ${Map.prototype}`; new Map().get("/accounts")',
+  'const box = { prototype: Map.prototype }; patch(box); new Map().get("/accounts")',
+  'patch([Map.prototype]); new Map().get("/accounts")',
+  'Object.setPrototypeOf(Map.prototype, custom); new Map().get("/accounts")',
 ])("keeps unresolved lookup semantics as a candidate: %s", (source) => {
   expect(analyzeJavaScriptStaticSource(source).endpoints).toMatchObject([
     { kind: "network", value: "/accounts", interpretation: "candidate" },
   ]);
 });
+
+it.each([
+  ['new Headers().get("content-type")', 0],
+  ['new URLSearchParams().delete("q")', 0],
+  ['new Map().get("/accounts")', 0],
+  ['new Map().delete("/accounts")', 0],
+  ['client.get("/accounts")', 0],
+  ['const client = createClient(); client.get("/accounts")', 0],
+  ['const records = new Map(); records.get("/accounts")', 1],
+] as const)(
+  "requests mutation facts only for unresolved local receivers: %s",
+  (source, pending) => {
+    const file = parseJavaScriptSource(source);
+    if (file === null) throw new Error("Expected parsed source");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(file.program),
+    );
+    completeSemanticSteps(index.indexAmbientWritesSteps());
+    const accumulator = createJavaScriptAnalysisAccumulator(source.length);
+    const context = {
+      source,
+      accumulator,
+      vitePreloadDependencyTable: null,
+      openReceiverFacts: index.receivers.openReceivers,
+      rpcScan: createJavaScriptRpcScan(
+        source,
+        index.receivers.rpcClientRoots,
+        index,
+      ),
+    };
+    traverseJavaScriptAst(file.program, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) ||
+          t.isOptionalCallExpression(node) ||
+          t.isNewExpression(node)
+        )
+          inspectCall(source, node, context, index.bindings);
+      },
+    });
+    expect(accumulator.pendingNetworkCalls).toHaveLength(pending);
+  },
+);

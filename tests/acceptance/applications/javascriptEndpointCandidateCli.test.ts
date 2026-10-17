@@ -22,6 +22,11 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
     (client.get as any)("/api/items");
     const records = new Map([["/accounts", { name: "Alice" }]]);
     console.log(records.get("/accounts"));
+    function inspect() {
+      const records = new Map();
+      const alias = records;
+      return alias.get("/local-accounts");
+    }
     fetch("/network");
     (new Headers().get as any)("content-type");
     (new URLSearchParams() as any).delete("q");
@@ -34,6 +39,10 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
     const cache = caches as CacheStorage;
     (cache.open as any)("fixture-cache");
   `,
+  );
+  await writeFile(
+    join(root, "escaped.mjs"),
+    'patch(Map.prototype); new Map().get("/escaped");',
   );
   const { stdout } = await execute(
     process.execPath,
@@ -52,7 +61,16 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
         )
         .sort(),
     )
-    .toEqual(["/api/items", "/network", "session"]);
+    .toEqual(["/api/items", "/escaped", "/network", "session"]);
+  const escaped = result.graph.nodes.find(
+    ({ kind, observations }) =>
+      kind === "endpoint" &&
+      observations.some(({ properties }) => properties.value === "/escaped"),
+  );
+  expect(escaped?.observations[0]).toMatchObject({
+    properties: { interpretation: "candidate" },
+    evidence: { state: "inferred", confidence: "low" },
+  });
   const lookup = result.graph.nodes.find(
     ({ kind, observations }) =>
       kind === "endpoint" &&
@@ -100,4 +118,62 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
     ({ target_node_id }) => target_node_id === endpoint?.node_id,
   );
   expect(edge?.properties).toMatchObject({ interpretation: "candidate" });
+}, 20_000);
+
+it("preserves SQLite constructor certainty through the public worker and graph", async () => {
+  const root = await createTestTempDirectory("rea-storage-candidate-cli-");
+  await writeFile(
+    join(root, "main.mjs"),
+    `
+    import Known from "better-sqlite3";
+    class Database { constructor(name) { this.name = name; } }
+    new Database("local");
+    function uncertain(Database) { return new Database("shared"); }
+    { const Database = Known; new Database("shared"); }
+  `,
+  );
+  const { stdout } = await execute(
+    process.execPath,
+    ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
+    { cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024 },
+  );
+  const result = javascriptApplicationAnalysisResultSchema.parse(
+    parseEvidence(JSON.parse(stdout)).normalized_result,
+  );
+  const storage = result.graph.nodes.filter((node) => node.kind === "storage");
+  expect(storage).toHaveLength(2);
+  const candidate = storage.find(
+    (node) => node.observations[0]?.properties.interpretation === "candidate",
+  );
+  const observed = storage.find(
+    (node) => node.observations[0]?.properties.interpretation === undefined,
+  );
+  expect(candidate?.node_id).not.toBe(observed?.node_id);
+  expect(candidate?.observations[0]).toMatchObject({
+    properties: { storage_kind: "sqlite", name: "shared" },
+    evidence: {
+      state: "inferred",
+      confidence: "low",
+      limitations: expect.arrayContaining([
+        expect.stringContaining("only a candidate"),
+      ]),
+    },
+  });
+  expect(observed?.observations[0]).toMatchObject({
+    properties: { storage_kind: "sqlite", name: "shared" },
+    evidence: { state: "observed", confidence: "exact" },
+  });
+  expect(
+    result.graph.edges.find(
+      (edge) => edge.target_node_id === candidate?.node_id,
+    ),
+  ).toMatchObject({
+    properties: { interpretation: "candidate" },
+    evidence: {
+      confidence: "low",
+      limitations: expect.arrayContaining([
+        expect.stringContaining("only a candidate"),
+      ]),
+    },
+  });
 }, 20_000);

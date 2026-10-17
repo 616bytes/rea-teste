@@ -42,8 +42,14 @@ import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticAmbientWrites.js";
-import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
-import { semanticTopLevelEffectFollowsCapture } from "./javascriptSemanticMutationInitializers.js";
+import {
+  evaluateSemanticExpression,
+  evaluateSemanticExpressionProvenance,
+} from "./javascriptSemanticValues.js";
+import {
+  semanticBindingAtRead,
+  semanticTopLevelEffectFollowsCapture,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticFactoryLoaderMemberAt,
   semanticFactoryRequireLoaderAt,
@@ -470,8 +476,23 @@ const inspectEndpointCall = (
   // browser request API. Do not let the literal fallback turn it into one.
   if (isNetworkRequestSpelling(name)) return;
   if (first !== undefined && /(?:^|\.)(?:get|delete)$/u.test(name)) {
-    context.accumulator.pendingNetworkCalls.push({ node, name });
-    return;
+    // Apply existing literal exclusions before requesting whole-source alias
+    // mutation facts. Inline receivers and unbound names need no such index.
+    if (
+      endpointArgumentHelper(
+        name,
+        node.arguments,
+        node.callee,
+        context.openReceiverFacts?.get(node.start ?? -1),
+      ) === undefined
+    )
+      return;
+    const mapLookup = isMapLookup(node, bindings);
+    if (mapLookup === true) return;
+    if (mapLookup === undefined) {
+      context.accumulator.pendingNetworkCalls.push({ node, name });
+      return;
+    }
   }
   inspectLiteralEndpointCall(node, name, context);
 };
@@ -563,20 +584,22 @@ export const finishPartialNetworkEndpoints = (
   );
 };
 
-/** A URL-shaped Map key is still a lookup when its receiver and method are unchanged. */
+/** Undefined requests mutation facts only after proving a local Map origin. */
 const isMapLookup = (
   node: JavaScriptCallLike,
   bindings: JavaScriptSemanticAnalysisState,
-  index: JavaScriptBindingIndex,
-): boolean => {
+  index?: JavaScriptBindingIndex,
+): boolean | undefined => {
   const callee = unwrapJavaScriptExpression(node.callee).node;
   if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
     return false;
   const method = semanticStaticPropertyName(callee.property, callee.computed);
   if (method !== "get" && method !== "delete") return false;
   if (
-    ["Map", "Object"].some((owner) =>
-      bindings.ambientWrites.covers(["global", owner, "prototype", method]),
+    ["Map", "Object"].some(
+      (owner) =>
+        bindings.ambientWrites.covers(["global", owner, "prototype", method]) ||
+        bindings.ambientEscapes.covers(["global", owner, "prototype", method]),
     )
   )
     return false;
@@ -584,30 +607,34 @@ const isMapLookup = (
   const seen = new Set<string>();
   while (t.isIdentifier(receiver)) {
     if (
-      index.referenceMayHaveChangedAt(node, receiver, [method]) ||
-      index.referenceMayHaveChangedAt(node, receiver, ["__proto__"])
+      index !== undefined &&
+      (index.referenceMayHaveChangedAt(node, receiver, [method]) ||
+        index.referenceMayHaveChangedAt(node, receiver, ["__proto__"]))
     )
       return false;
-    const binding = index.bindingForReferenceAt(receiver);
+    const binding = resolveSemanticBindingState(
+      bindings,
+      receiver,
+      receiver.name,
+    );
     if (binding === undefined || seen.has(binding.bindingId)) return false;
     seen.add(binding.bindingId);
     const initializer = semanticStableInitializer(binding, bindings);
     if (
       initializer === undefined ||
       initializer.projection.length !== 0 ||
-      !semanticTopLevelEffectFollowsCapture(
-        initializer.node,
-        node,
-        bindings.parentsByNode,
-      )
+      !semanticBindingAtRead(binding, receiver, bindings.parentsByNode)
+        .hasDefiniteInitializer
     )
       return false;
     receiver = unwrapJavaScriptExpression(initializer.node).node;
   }
-  return (
-    t.isNewExpression(receiver) &&
-    isUnmodifiedGlobalReference(receiver.callee, bindings, "Map")
-  );
+  if (
+    !t.isNewExpression(receiver) ||
+    !isUnmodifiedGlobalReference(receiver.callee, bindings, "Map")
+  )
+    return false;
+  return index === undefined && seen.size > 0 ? undefined : true;
 };
 
 const addPartialNetworkEndpoint = (
@@ -811,6 +838,10 @@ const inspectStorageCall = (
   first: string | undefined,
   context: FindingContext,
 ): void => {
+  if (name === "Database" || name.endsWith(".Database")) {
+    context.accumulator.pendingSqliteCalls.push({ node, name });
+    return;
+  }
   const receiverFact = context.openReceiverFacts?.get(node.start ?? -1);
   const storage =
     receiverFact === "local" ||
@@ -835,6 +866,53 @@ const inspectStorageCall = (
       location: range(node),
     },
   });
+};
+
+/** Constructor spelling selects a candidate; source provenance owns certainty. */
+export const finishSqliteStorageCalls = (
+  context: FindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
+): void => {
+  for (const { node, name } of context.accumulator.pendingSqliteCalls) {
+    const callee = unwrapJavaScriptExpression(node.callee).node;
+    const provenance = evaluateSemanticExpressionProvenance(callee, bindings);
+    const changed = index.referenceMayHaveChangedAt(node, callee);
+    if (!changed && t.isIdentifier(callee) && provenance.status === "local")
+      continue;
+    const origin =
+      provenance.status === "module" ? provenance.origins[0] : undefined;
+    const path = origin?.importedPath;
+    const imported = origin?.resolutionMode !== "require";
+    const known =
+      !changed &&
+      origin !== undefined &&
+      ((origin.specifier === "better-sqlite3" &&
+        ((origin.resolutionMode === "require" && path?.length === 0) ||
+          (imported && path?.length === 1 && path[0] === "default"))) ||
+        (origin.specifier === "sqlite3" &&
+          ((path?.length === 1 && path[0] === "Database") ||
+            (imported &&
+              path?.length === 2 &&
+              (path[0] === "default" || path[0] === "*") &&
+              path[1] === "Database"))));
+    const first = stringValue(node.arguments[0]);
+    addLocatedFinding(context, {
+      collection: context.accumulator.storage,
+      key: `storage\0sqlite\0${known ? "api" : "candidate"}\0${first ?? ""}`,
+      node,
+      value: {
+        kind: "sqlite",
+        name: first ?? null,
+        mechanism: `call:${name}`,
+        ...(known ? {} : { interpretation: "candidate" as const }),
+        module_key: null,
+        location: range(node),
+      },
+    });
+  }
+  context.accumulator.pendingSqliteCalls.length = 0;
+  context.accumulator.storage.sort((left, right) => left.offset - right.offset);
 };
 
 export const addReference = (

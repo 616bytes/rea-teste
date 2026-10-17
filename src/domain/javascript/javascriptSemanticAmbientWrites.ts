@@ -52,7 +52,11 @@ const createAmbientPathResolver = (
   possibleWrites: boolean,
 ) => {
   const cached = new WeakMap<t.Node, readonly AmbientPath[]>();
-  return (node: t.Node, capture?: t.Node): readonly AmbientPath[] => {
+  return (
+    node: t.Node,
+    capture?: t.Node,
+    escapedContents = false,
+  ): readonly AmbientPath[] => {
     const prior = possibleWrites ? undefined : cached.get(node);
     if (prior !== undefined) return prior;
     const result = new Map<string, AmbientPath>();
@@ -176,6 +180,26 @@ const createAmbientPathResolver = (
         continue;
       }
       const key = suffix?.[0];
+      // Container escapes reuse the finite worklist, including alias cycles.
+      if (escapedContents && suffix?.length === 0) {
+        if (t.isObjectExpression(root)) {
+          for (const property of root.properties)
+            if (t.isSpreadElement(property))
+              continueWith(property.argument, []);
+            else if (
+              t.isObjectProperty(property) &&
+              t.isExpression(property.value)
+            )
+              continueWith(property.value, []);
+          continue;
+        }
+        if (t.isArrayExpression(root)) {
+          for (const element of root.elements)
+            if (t.isSpreadElement(element)) continueWith(element.argument, []);
+            else if (t.isExpression(element)) continueWith(element, []);
+          continue;
+        }
+      }
       if (suffix !== undefined && key === undefined) continue;
       if (t.isObjectExpression(root)) {
         if (possibleWrites) {
@@ -258,6 +282,7 @@ export function* indexJavaScriptAmbientWritesSteps(
 ): Generator<void> {
   const ambientReads = createAmbientPathResolver(state, false);
   const ambientWrites = createAmbientPathResolver(state, true);
+  const browserReceiverMethods = new Set<string>();
   const interop = createSemanticModuleInterop(state, {
     intrinsicPath: (node) => {
       const [path] = ambientReads(node);
@@ -285,7 +310,52 @@ export function* indexJavaScriptAmbientWritesSteps(
       state.ambientWrites.retain(path);
       state.ambientWriteEffects.push({ path, node });
     },
+    (node, invocation) => {
+      // Escaping objects can change contents without replacing their identity.
+      const retainEscape = (target: t.Node, browserReceiver = false) => {
+        for (const path of ambientWrites(target, node, true))
+          // Only proven browser APIs keep their global receiver from user code.
+          if (!(browserReceiver && path.length === 1 && path[0] === "global"))
+            state.ambientEscapes.retain([...path, null]);
+      };
+      for (const argument of t.isTaggedTemplateExpression(node)
+        ? node.quasi.expressions
+        : node.arguments)
+        if (t.isNode(argument))
+          retainEscape(
+            t.isSpreadElement(argument) ? argument.argument : argument,
+          );
+      const callee = unwrapJavaScriptExpression(
+        t.isTaggedTemplateExpression(node) ? node.tag : node.callee,
+      ).node;
+      const browserMethod =
+        invocation?.kind === "known" &&
+        invocation.path.length === 2 &&
+        ["open", "fetch"].includes(invocation.path[1] ?? "")
+          ? invocation.path[1]
+          : undefined;
+      if (
+        !t.isNewExpression(node) &&
+        (t.isMemberExpression(callee) ||
+          t.isOptionalMemberExpression(callee)) &&
+        !(
+          invocation?.kind === "known" &&
+          ["Object", "Reflect"].includes(invocation.path[1] ?? "")
+        )
+      ) {
+        if (browserMethod !== undefined)
+          browserReceiverMethods.add(browserMethod);
+        retainEscape(callee.object, browserMethod !== undefined);
+      }
+    },
   );
+  // A function may call a browser method replaced later in source order.
+  if (
+    [...browserReceiverMethods].some((method) =>
+      state.ambientWrites.covers(["global", method]),
+    )
+  )
+    state.ambientEscapes.retain(["global", null]);
 }
 
 /**

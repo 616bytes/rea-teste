@@ -120,7 +120,7 @@ lineage nodes are capped at 32 each (real APKs use a handful; apksig accepts
 at most 10 v1 signers). Each v1 block is inflated to at most 1 MiB, and its DER
 is read within 32 levels of nesting and 65,536 elements, with at most 32
 certificates and 32 `SignerInfo`s; BER indefinite lengths are accepted. The report's size is
-estimated from those counts before anything is materialised, and the exact
+bounded from above by those counts before anything is materialised, and the exact
 serialized size is then checked against an 8 MiB output budget (the exact check
 is authoritative); an over-budget report is refused, not truncated.
 

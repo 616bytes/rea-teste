@@ -40,9 +40,26 @@ export const certificateFacts = (der: Uint8Array): Certificate => {
 };
 
 /**
- * Estimated serialized size of one certificate's facts. RFC 2253-escaped DNs
- * can reach ~2.6x the DER once JSON-escaped, hence 3x; this is an admission
- * estimate — the provider's exact serialized re-check is authoritative.
+ * Serialized bytes per DER byte of a distinguished name. RFC 2253 escapes a
+ * byte as `\XX` or `\"`, which JSON-escapes to 4 bytes (measured with the
+ * platform parser); the serial's hex is 2 bytes per DER byte, and the
+ * subject, issuer and serial are disjoint parts of the DER.
+ */
+const DN_EXPANSION = 4;
+
+/**
+ * Upper bound on one certificate's serialized facts, for admission before
+ * materialising; the provider's exact serialized re-check stays authoritative.
  */
 export const certificateBytes = (der: Uint8Array | undefined): number =>
-  256 + 3 * (der?.length ?? 0);
+  256 + DN_EXPANSION * (der?.length ?? 0);
+
+/** Upper bound on a certificate summary (fingerprint and subject). */
+export const certificateSummaryBytes = (der: Uint8Array): number =>
+  128 + DN_EXPANSION * der.length;
+
+/**
+ * Upper bound on a serialized string: a UTF-16 unit is at most 3 UTF-8 bytes,
+ * and a control character JSON-escapes to `\u00XX` (6 bytes).
+ */
+export const jsonStringBytes = (text: string): number => 2 + 6 * text.length;

@@ -79,32 +79,85 @@ const integer = (value: number): Uint8Array =>
   tlv(0x02, Uint8Array.from([value]));
 const algorithm = (dotted: string): Uint8Array => tlv(0x30, oid(dotted));
 
+interface DerSpan {
+  readonly start: number;
+  readonly content: number;
+  readonly end: number;
+}
+
+/** Definite-length children of `bytes[start, end)`; fixture certificates only. */
+const derChildren = (
+  bytes: Uint8Array,
+  start: number,
+  end: number,
+): DerSpan[] => {
+  const out: DerSpan[] = [];
+  for (let at = start; at < end;) {
+    const first = bytes[at + 1] ?? 0;
+    const count = first > 0x80 ? first & 0x7f : 0;
+    let length = first > 0x80 ? 0 : first;
+    for (let i = 0; i < count; i += 1)
+      length = length * 256 + (bytes[at + 2 + i] ?? 0);
+    const content = at + 2 + count;
+    out.push({ start: at, content, end: content + length });
+    at = content + length;
+  }
+  return out;
+};
+
+/** The v3 tbsCertificate fields of a fixture certificate, and its outer parts. */
+const certificateParts = (certificate: Uint8Array) => {
+  const [cert] = derChildren(certificate, 0, certificate.length);
+  const [tbs, ...outer] = derChildren(certificate, cert!.content, cert!.end);
+  return {
+    fields: derChildren(certificate, tbs!.content, tbs!.end),
+    outer,
+  };
+};
+
 /** tbsCertificate fields a SignerInfo names: issuer Name TLV and serial content. */
 const issuerAndSerial = (certificate: Uint8Array): Uint8Array => {
   // Fixture certificates are v3 with short-form serials: walk the known layout.
-  const children = (bytes: Uint8Array, start: number, end: number) => {
-    const out: { start: number; content: number; end: number }[] = [];
-    for (let at = start; at < end;) {
-      const first = bytes[at + 1] ?? 0;
-      const count = first > 0x80 ? first & 0x7f : 0;
-      let length = first > 0x80 ? 0 : first;
-      for (let i = 0; i < count; i += 1)
-        length = length * 256 + (bytes[at + 2 + i] ?? 0);
-      const content = at + 2 + count;
-      out.push({ start: at, content, end: content + length });
-      at = content + length;
-    }
-    return out;
-  };
-  const [cert] = children(certificate, 0, certificate.length);
-  const [tbs] = children(certificate, cert!.content, cert!.end);
-  const fields = children(certificate, tbs!.content, tbs!.end);
+  const { fields } = certificateParts(certificate);
   const serial = fields[1]!;
   const issuer = fields[3]!;
   return tlv(
     0x30,
     certificate.subarray(issuer.start, issuer.end),
     certificate.subarray(serial.start, serial.end),
+  );
+};
+
+/** A Name of `count` OU attributes, each a UTF8String of `value`. */
+export const organizationalUnits = (count: number, value: string): Uint8Array =>
+  tlv(
+    0x30,
+    ...Array.from({ length: count }, () =>
+      tlv(
+        0x31,
+        tlv(0x30, oid("2.5.4.11"), tlv(0x0c, new TextEncoder().encode(value))),
+      ),
+    ),
+  );
+
+/**
+ * `certificate` with its subject replaced. The signature no longer matches,
+ * which nothing here verifies; issuer and serial are kept so a SignerInfo
+ * still names it.
+ */
+export const withSubject = (
+  certificate: Uint8Array,
+  subject: Uint8Array,
+): Uint8Array => {
+  const { fields, outer } = certificateParts(certificate);
+  const part = ({ start, end }: DerSpan) => certificate.subarray(start, end);
+  return tlv(
+    0x30,
+    tlv(
+      0x30,
+      ...fields.map((field, index) => (index === 5 ? subject : part(field))),
+    ),
+    ...outer.map(part),
   );
 };
 

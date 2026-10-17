@@ -18,6 +18,8 @@ import {
 import {
   certificateBytes,
   certificateFacts,
+  certificateSummaryBytes,
+  jsonStringBytes,
   type Certificate,
 } from "./apkCertificateFacts.js";
 import { APK_SIGNATURE_LIMITS } from "./ApkSignatureRelease.js";
@@ -32,17 +34,32 @@ export interface DecodedV1Signer {
     | { readonly ok: false; readonly error: string };
 }
 
-/** Estimated serialized size of one v1 signer, before it is materialised. */
+/**
+ * One serialized SignerInfo: two OIDs of at most 64 content bytes, each at
+ * most 4 dotted-text bytes per content byte, plus a fingerprint and keys.
+ */
+const SIGNER_INFO_BYTES = 768;
+
+/** Upper bound on one v1 signer's serialized size, before it is materialised. */
 export const projectedV1SignerBytes = ({
   entry,
   decoded,
 }: DecodedV1Signer): number => {
-  let total = 512 + 3 * (entry.signatureFile.length + entry.block.name.length);
-  if (!decoded.ok) return total;
-  // The named certificate appears in full and again in `certificates`.
-  for (const der of decoded.value.certificates)
-    total += 2 * certificateBytes(der);
-  return total + 256 * decoded.value.signerInfos.length;
+  const total =
+    512 +
+    jsonStringBytes(entry.signatureFile) +
+    jsonStringBytes(entry.block.name);
+  if (!decoded.ok) return total + jsonStringBytes(decoded.error);
+  const { certificates, signerInfos } = decoded.value;
+  // Every certificate is summarised in `certificates`; at most one, the
+  // named signer, also appears in full as `certificate`.
+  let largest = 0;
+  let summaries = 0;
+  for (const der of certificates) {
+    summaries += certificateSummaryBytes(der);
+    largest = Math.max(largest, certificateBytes(der));
+  }
+  return total + summaries + largest + SIGNER_INFO_BYTES * signerInfos.length;
 };
 
 /**

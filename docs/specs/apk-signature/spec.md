@@ -77,7 +77,7 @@ accepts at most 10 v1 signers); pairs and per-signer elements at 4096. Each v1
 block inflates to at most 1 MiB (bounded by the inflater, not by the declared
 size), and its DER is read within 32 nesting levels and 65,536 elements, with
 at most 32 certificates and 32 `SignerInfo`s. The result size is projected from decoded counts before
-materialisation (an estimate), and the exact serialized size is checked against
+materialisation (an upper bound), and the exact serialized size is checked against
 the 8 MiB output budget (authoritative); over-budget is a capacity refusal, not
 truncation. The content digest is
 computed at most once per algorithm in 1 MiB chunks. Peak memory is about

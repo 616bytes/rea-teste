@@ -66,6 +66,7 @@ import {
 import {
   certificateBytes,
   certificateFacts,
+  jsonStringBytes,
   type Certificate,
 } from "./apkCertificateFacts.js";
 import {
@@ -171,13 +172,20 @@ const lineageOf = (
     : nodes;
 };
 
-/** Project the result size from decoded counts before materialising any of it. */
+/**
+ * Upper bound on the result size from decoded counts, before materialising
+ * any of it. The stamp certificate is no larger than its block value.
+ */
 const projectedOutputBytes = (
   schemes: readonly DecodedScheme[],
-  v1: readonly DecodedV1Signer[],
+  v1: ApkV1Signature,
+  v1Decoded: readonly DecodedV1Signer[],
+  stamp: Uint8Array | undefined,
 ): number => {
-  let total = 4096;
-  for (const signer of v1) total += projectedV1SignerBytes(signer);
+  let total = 4096 + certificateBytes(stamp);
+  for (const name of [...v1.signatureFiles, ...v1.blockFiles])
+    total += 1 + jsonStringBytes(name);
+  for (const signer of v1Decoded) total += projectedV1SignerBytes(signer);
   for (const scheme of schemes)
     for (const { signer, rotation } of scheme.signers) {
       total += 128 + certificateBytes(signer.certificates[0]);
@@ -350,7 +358,9 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     // Account for representation expansion before allocating the report.
     const projected = projectedOutputBytes(
       [v2.value, v3.value, v31.value],
+      v1,
       v1Decoded,
+      sourceStampPair(block.value)?.value,
     );
     if (projected > APK_SIGNATURE_LIMITS.outputBytes)
       return err(apkOutputBudgetError(projected));
@@ -465,12 +475,14 @@ const readV1 = (
 };
 
 /** The declared stamp certificate, preferring the V2 stamp block as apksig does. */
+const sourceStampPair = (block: ApkSigningBlock | null) =>
+  block?.pairs.find((p) => p.id === APK_BLOCK_ID.sourceStampV2) ??
+  block?.pairs.find((p) => p.id === APK_BLOCK_ID.sourceStampV1);
+
 const sourceStampFacts = (
   block: ApkSigningBlock | null,
 ): ApkSignatureResult["source_stamp"] => {
-  const pair =
-    block?.pairs.find((p) => p.id === APK_BLOCK_ID.sourceStampV2) ??
-    block?.pairs.find((p) => p.id === APK_BLOCK_ID.sourceStampV1);
+  const pair = sourceStampPair(block);
   if (pair === undefined)
     return { present: false, certificate: null, decode_error: null };
   const certificate = decodeSourceStampCertificate(pair.value);

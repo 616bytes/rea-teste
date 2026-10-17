@@ -102,7 +102,9 @@ export class KunaReferenceQueries {
         if (!retired.ok && !(retired.error instanceof AnalysisCancelledError))
           return retired;
         if (signal?.aborted === true)
-          return err(new AnalysisCancelledError(operation));
+          return err(
+            new AnalysisCancelledError(operation, { cause: signal.reason }),
+          );
         return this.#loadGraph(installation, operation, signal);
       }
       if (this.#pendingGraph === undefined) {
@@ -230,7 +232,9 @@ export class KunaReferenceQueries {
       if (!retired.ok && !(retired.error instanceof AnalysisCancelledError))
         return retired;
       if (signal?.aborted === true)
-        return err(new AnalysisCancelledError("xrefs"));
+        return err(
+          new AnalysisCancelledError("xrefs", { cause: signal.reason }),
+        );
       return this.incoming(installation, address, signal);
     }
     if (pending === undefined) {

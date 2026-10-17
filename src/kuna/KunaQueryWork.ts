@@ -47,13 +47,21 @@ export class KunaQueryWork {
   ): Promise<Result<KunaTargetCommandSnapshot, AnalysisError>> {
     const local = await this.#nativeSlots.acquire(request.signal);
     if (local === undefined)
-      return err(new AnalysisCancelledError(request.operation));
+      return err(
+        new AnalysisCancelledError(request.operation, {
+          cause: request.signal.reason,
+        }),
+      );
     let release: (() => void) | undefined;
     try {
       const foreground = await this.lifetime.runSlots.acquire(request.signal);
       if (foreground === undefined) {
         local();
-        return err(new AnalysisCancelledError(request.operation));
+        return err(
+          new AnalysisCancelledError(request.operation, {
+            cause: request.signal.reason,
+          }),
+        );
       }
       release = () => {
         foreground();
@@ -119,7 +127,9 @@ export class KunaQueryWork {
   ): ReturnType<typeof matchRegexValues> {
     const release = await this.#regexSlots.acquire(signal);
     if (release === undefined)
-      return err(new AnalysisCancelledError(input.operation));
+      return err(
+        new AnalysisCancelledError(input.operation, { cause: signal.reason }),
+      );
     try {
       return await matchRegexValues({
         ...input,
@@ -164,17 +174,18 @@ export class KunaQueryWork {
     try {
       const result = await waitForAbortable(pending.promise, signal);
       if (result === ABORTED && pending.waiters === 1 && !pending.settled) {
-        pending.controller.abort();
+        pending.controller.abort(signal?.reason);
         const stopped = await pending.promise;
         if (!stopped.ok && !(stopped.error instanceof AnalysisCancelledError))
           return stopped;
       }
       return result === ABORTED
-        ? err(new AnalysisCancelledError(operation))
+        ? err(new AnalysisCancelledError(operation, { cause: signal?.reason }))
         : result;
     } finally {
       pending.waiters -= 1;
-      if (pending.waiters === 0 && !pending.settled) pending.controller.abort();
+      if (pending.waiters === 0 && !pending.settled)
+        pending.controller.abort(signal?.reason);
     }
   }
 }

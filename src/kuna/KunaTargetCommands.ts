@@ -79,7 +79,11 @@ export class KunaTargetCommands {
     if (this.#closing || request.signal.aborted) {
       request.releaseRun?.();
       return Promise.resolve(
-        err(new AnalysisCancelledError(request.operation)),
+        err(
+          new AnalysisCancelledError(request.operation, {
+            cause: request.signal.aborted ? request.signal.reason : undefined,
+          }),
+        ),
       );
     }
     return this.#run(request);
@@ -88,7 +92,15 @@ export class KunaTargetCommands {
   /** Establish the immutable input before waiting for a foreground run slot. */
   prepare(): Promise<Result<null, AnalysisError>> {
     if (this.#closing || this.lifetime.signal.aborted)
-      return Promise.resolve(err(new AnalysisCancelledError("kuna:workspace")));
+      return Promise.resolve(
+        err(
+          new AnalysisCancelledError("kuna:workspace", {
+            cause: this.lifetime.signal.aborted
+              ? this.lifetime.signal.reason
+              : undefined,
+          }),
+        ),
+      );
     return this.#admit("kuna:workspace", () =>
       this.#ensureWorkspace().then((workspace) =>
         workspace.ok ? ok(null) : workspace,

@@ -311,7 +311,10 @@ const commandFailure = (
   if (cause.reason === "cancelled")
     return {
       kind: "failed",
-      error: new AnalysisCancelledError(operation, details),
+      error: new AnalysisCancelledError(operation, {
+        ...details,
+        cause: cause.cancellation?.reason,
+      }),
     };
   if (cause.reason === "timeout")
     return {

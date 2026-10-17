@@ -58,6 +58,11 @@ const probeHost =
                 ...spawn,
                 command: process.execPath,
                 arguments: [`${command}.cjs`, ...spawn.arguments],
+                // Node needs the Windows system directory to initialize CSPRNG.
+                hostEnvironment: {
+                  ...spawn.hostEnvironment,
+                  SystemRoot: process.env.SystemRoot,
+                },
               }),
           }),
       };

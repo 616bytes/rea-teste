@@ -12,7 +12,11 @@
  * for display builds its canonical bytes.
  */
 
-const NAME_DECODER = new TextDecoder("utf-8", { fatal: false });
+// Java keeps a leading U+FEFF, so the decoder must not strip a BOM.
+const NAME_DECODER = new TextDecoder("utf-8", {
+  fatal: false,
+  ignoreBOM: true,
+});
 
 /** U+FFFD encoded as UTF-8. */
 const REPLACEMENT = [0xef, 0xbf, 0xbd] as const;

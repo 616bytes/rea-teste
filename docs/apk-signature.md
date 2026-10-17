@@ -57,10 +57,12 @@ rea inspect-apk-signature /path/app.apk
   name (apksigner: `Duplicate entry: dup�`). REA reproduces Java's
   replacement rather than WHATWG `TextDecoder`'s; the two differ for encoded
   surrogates (`ED A0..BF`), which Java replaces as one unit. This was checked
-  against OpenJDK 25's `new String(bytes, UTF_8)` on 300,039 malformed and
-  well-formed sequences; other Java runtimes are not checked. The same
+  against OpenJDK 25's `new String(bytes, UTF_8)` on about 300,000 malformed
+  and well-formed sequences, including a leading byte-order mark, which Java
+  keeps; other Java runtimes are not checked. The same
   decoding names v1 entries and compares a local header's name with the
-  central directory's. apksig takes the record count from the classic
+  central directory's; as in apksig, a local name longer in bytes than the
+  directory's is refused before decoding. apksig takes the record count from the classic
   end-of-central-directory record's 16-bit field and ignores a Zip64 count,
   so it reads only the first 65,535 records of a larger directory: the
   limitation then says so, counts as duplicates for apksig only names whose

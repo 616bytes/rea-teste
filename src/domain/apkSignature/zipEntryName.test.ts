@@ -30,6 +30,9 @@ describe("ZIP entry names as apksig decodes them", () => {
     ["f09080c0", ["fffd", "fffd"]],
     ["f09f9880", ["1f600"]],
     ["636166c3a9", ["0063", "0061", "0066", "00e9"]],
+    // Java keeps a leading byte-order mark as U+FEFF.
+    ["efbbbf41", ["feff", "0041"]],
+    ["efbbbfefbbbf", ["feff", "feff"]],
   ])("decodes %s as Java does", (stored, expected) => {
     expect(units(decodeZipName(hex(stored)))).toEqual(expected);
   });

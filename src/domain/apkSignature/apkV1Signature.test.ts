@@ -340,6 +340,46 @@ describe("APK v1 duplicate signing names", () => {
   });
 });
 
+/** A local file header for `block`, then `extra` and the stored data. */
+const localRecord = (
+  block: ApkV1Entry,
+  data: readonly number[],
+  override: {
+    readonly flags?: number;
+    readonly crc32?: number;
+    readonly compressedSize?: number;
+    readonly uncompressedSize?: number;
+    readonly name?: string | Uint8Array;
+  } = {},
+): Uint8Array => {
+  const name =
+    override.name === undefined
+      ? block.rawName
+      : typeof override.name === "string"
+        ? new TextEncoder().encode(override.name)
+        : override.name;
+  const local = new Uint8Array(30 + name.length + 3 + data.length);
+  const view = new DataView(local.buffer);
+  view.setUint32(0, 0x04034b50, true);
+  view.setUint16(6, override.flags ?? block.flags, true);
+  view.setUint32(14, override.crc32 ?? block.crc32, true);
+  view.setUint32(18, override.compressedSize ?? block.compressedSize, true);
+  view.setUint32(22, override.uncompressedSize ?? block.uncompressedSize, true);
+  view.setUint16(26, name.length, true);
+  view.setUint16(28, 3, true);
+  local.set(name, 30);
+  local.set(data, 30 + name.length + 3);
+  return local;
+};
+const block: ApkV1Entry = {
+  ...entry("META-INF/A.RSA"),
+  crc32: 0x01020304,
+  compressedSize: 4,
+  uncompressedSize: 4,
+};
+const data = [9, 8, 7, 6];
+const dataStart = 30 + block.rawName.length + 3;
+
 describe("APK v1 signature block locations", () => {
   it("keeps each record's data location for its signature block", () => {
     const record = cdRecord("META-INF/CERT.RSA");
@@ -370,48 +410,6 @@ describe("APK v1 signature block locations", () => {
       },
     ]);
   });
-
-  /** A local file header for `block`, then `extra` and the stored data. */
-  const localRecord = (
-    block: ApkV1Entry,
-    data: readonly number[],
-    override: {
-      readonly flags?: number;
-      readonly crc32?: number;
-      readonly compressedSize?: number;
-      readonly uncompressedSize?: number;
-      readonly name?: string;
-    } = {},
-  ): Uint8Array => {
-    const name =
-      override.name === undefined
-        ? block.rawName
-        : new TextEncoder().encode(override.name);
-    const local = new Uint8Array(30 + name.length + 3 + data.length);
-    const view = new DataView(local.buffer);
-    view.setUint32(0, 0x04034b50, true);
-    view.setUint16(6, override.flags ?? block.flags, true);
-    view.setUint32(14, override.crc32 ?? block.crc32, true);
-    view.setUint32(18, override.compressedSize ?? block.compressedSize, true);
-    view.setUint32(
-      22,
-      override.uncompressedSize ?? block.uncompressedSize,
-      true,
-    );
-    view.setUint16(26, name.length, true);
-    view.setUint16(28, 3, true);
-    local.set(name, 30);
-    local.set(data, 30 + name.length + 3);
-    return local;
-  };
-  const block: ApkV1Entry = {
-    ...entry("META-INF/A.RSA"),
-    crc32: 0x01020304,
-    compressedSize: 4,
-    uncompressedSize: 4,
-  };
-  const data = [9, 8, 7, 6];
-  const dataStart = 30 + block.rawName.length + 3;
 
   it("locates stored data through the local header, within the entry region", () => {
     const local = localRecord(block, data);
@@ -460,6 +458,21 @@ describe("APK v1 signature block locations", () => {
     expect(refusal(localRecord(block, data, { name: "META-INF/A.RS" }))).toBe(
       "local header name differs from the central directory's",
     );
+    // Names that decode alike: apksig accepts a local name no longer in bytes
+    // than the directory's and refuses a longer one before decoding.
+    const malformed = (tail: number[]) =>
+      Uint8Array.from([...new TextEncoder().encode("META-INF/K"), ...tail]);
+    const short = { ...block, rawName: malformed([0xed, 0xa0, 0x80]) };
+    expect(
+      refusal(localRecord(short, data, { name: malformed([0xff]) }), short),
+    ).toBeNull();
+    const long = { ...block, rawName: malformed([0xff]) };
+    expect(
+      refusal(
+        localRecord(long, data, { name: malformed([0xed, 0xa0, 0x80]) }),
+        long,
+      ),
+    ).toBe("local header name differs from the central directory's");
     expect(refusal(localRecord(block, data, { flags: 0x8 }))).toBe(
       "local header and central directory disagree on the data-descriptor flag",
     );

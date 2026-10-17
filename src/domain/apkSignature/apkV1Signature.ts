@@ -423,7 +423,8 @@ export interface ApkLocalEntryData {
  * signing block or central directory) and its declared sizes must be read
  * directly, so Zip64-sized entries are reported, not guessed. As apksig's
  * LocalFileRecord does, the local header must agree with the central
- * directory on the name (compared as decoded, as apksig compares them), the
+ * directory on the name (no longer in bytes, then equal once decoded, as
+ * apksig compares them), the
  * data-descriptor flag and (without a data
  * descriptor) the CRC-32 and both sizes: a disagreement leaves the entry's
  * bytes unknown, never read from one side. Like LocalFileRecord, the
@@ -475,6 +476,8 @@ export const localEntryData = (
   const nameStart = at + LOCAL_FIXED_SIZE;
   if (
     nameStart + nameLength > limit ||
+    // apksig refuses a local name longer in bytes before decoding either.
+    nameLength > entry.rawName.length ||
     !sameZipName(
       bytes.subarray(nameStart, nameStart + nameLength),
       entry.rawName,

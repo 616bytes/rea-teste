@@ -637,6 +637,38 @@ describe("streamed CLI TOON output", () => {
     }
   });
 
+  it.each([
+    [[], false],
+    [["--format", "toon"], true],
+  ] as const)(
+    "leaves default terminal TOON to Incur's human rendering: %j",
+    async (options, streamed) => {
+      const chunks: Buffer[] = [];
+      const destination = new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          chunks.push(chunk);
+          callback();
+        },
+      });
+      Object.defineProperty(destination, "isTTY", { value: true });
+      const output = createCliResultOutput(
+        ["inspect-managed-members", "fixture.dll", ...options],
+        destination,
+      );
+      if (output === undefined) throw new Error("Missing output surface");
+      expect(
+        await output.write(
+          { assembly: "Fixture" },
+          { command: "fixture", duration: "1ms", format: "toon" },
+        ),
+      ).toBe(streamed);
+      expect(output.handled).toBe(streamed);
+      expect(Buffer.concat(chunks).toString("utf8")).toBe(
+        streamed ? "assembly: Fixture\n" : "",
+      );
+    },
+  );
+
   it("streams TOON output past the engine string limit", async () => {
     const leaf = "x".repeat(64 * 1024);
     const row = `  ${leaf}\n`;

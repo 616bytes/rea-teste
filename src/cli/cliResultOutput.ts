@@ -17,6 +17,7 @@ import {
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
 import {
+  isTerminal,
   jsonOutputParts,
   writeJsonOutput,
   writeOutputText,
@@ -142,12 +143,14 @@ export const createCliResultOutput = (
         ? Filter.apply(value, Filter.parse(options.filterOutput))
         : value;
       // TOON is written line by line unless a token window or count needs
-      // Incur's complete string. Leave successful YAML and Markdown rendering
-      // to Incur. The custom boundary is otherwise needed only for a full
-      // failure envelope, whose error sentinel drops category, remediation,
-      // and details.
+      // Incur's complete string, or Incur renders for a human: a terminal
+      // without an explicit format applies command output policies and
+      // notices. Leave successful YAML and Markdown rendering to Incur. The
+      // custom boundary is otherwise needed only for a full failure envelope,
+      // whose error sentinel drops category, remediation, and details.
       const streamToon =
         format === "toon" &&
+        (options.formatExplicit || !isTerminal(destination)) &&
         !options.tokenCount &&
         options.tokenLimit === undefined &&
         options.tokenOffset === undefined;

@@ -6,9 +6,11 @@ import {
   isWindowsNativeHost,
 } from "../process/WindowsAuthority.js";
 import { systemWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
+import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { err, ok, type Result } from "../domain/result.js";
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import {
@@ -17,10 +19,12 @@ import {
 } from "../process/ExecFileOutput.js";
 import type { DoctorProviderCheck } from "../application/Doctor.js";
 import {
+  DEFAULT_JADX_OPERATION_TIMEOUT_MS,
   JADX_JAR_CONFIGURATION_REMEDIATION,
   JADX_JAVA_PROBE_REMEDIATION,
   JADX_JAVA_RUNTIME_REMEDIATION,
   JADX_JVM_OPTIONS_REMEDIATION,
+  JADX_OPERATION_TIMEOUT_REMEDIATION,
   JADX_UNSUPPORTED_HOST_REMEDIATION,
   JADX_WINDOWS_NATIVE_REMEDIATION,
 } from "./JadxRelease.js";
@@ -60,6 +64,7 @@ export type JadxFailureKind =
   | "java_runtime"
   | "java_home"
   | "jvm_options"
+  | "operation_timeout"
   | "jar"
   | "java_probe"
   | "unsupported_host";
@@ -71,6 +76,7 @@ export const JADX_FAILURE_KINDS: readonly JadxFailureKind[] = [
   "java_runtime",
   "java_home",
   "jvm_options",
+  "operation_timeout",
   "jar",
   "java_probe",
   "unsupported_host",
@@ -117,6 +123,11 @@ export const projectJadxFailureOutcome = (
         remediation: JADX_JVM_OPTIONS_REMEDIATION,
         classification: drift,
       };
+    case "operation_timeout":
+      return {
+        remediation: JADX_OPERATION_TIMEOUT_REMEDIATION,
+        classification: drift,
+      };
     case "jar":
       return {
         remediation: JADX_JAR_CONFIGURATION_REMEDIATION,
@@ -158,6 +169,7 @@ export const inspectJadxAvailability = async (
   signal?: AbortSignal,
 ): Promise<ProviderAvailability> => {
   try {
+    const operationTimeoutMs = readOperationTimeout(environment);
     const configuration = await readJadxConfigurationInputs(
       environment,
       signal,
@@ -172,6 +184,7 @@ export const inspectJadxAvailability = async (
         java_executable: configuration.java,
         jdk_compiler: true,
         jar_path: configuration.jar,
+        operation_timeout_ms: operationTimeoutMs,
       },
     };
   } catch (cause) {
@@ -184,6 +197,22 @@ export const inspectJadxAvailability = async (
         diagnostics: { ...cause.diagnostics, failure_kind: cause.kind },
       };
     throw cause;
+  }
+};
+
+/**
+ * Resolve the whole-operation deadline before any admission work starts, so
+ * one value bounds the provider operation and each upstream call.
+ */
+export const resolveJadxOperationTimeout = (
+  environment: Readonly<Record<string, string | undefined>>,
+  operation: AndroidOperation,
+): Result<number, AnalysisCapabilityUnavailableError> => {
+  try {
+    return ok(readOperationTimeout(environment));
+  } catch (cause) {
+    if (!(cause instanceof JadxConfigurationFailure)) throw cause;
+    return err(projectConfigurationFailure(operation, cause));
   }
 };
 
@@ -509,6 +538,21 @@ const resolveJvmArguments = (
     result.push(`${prefix}${value}${suffix}`);
   }
   return result;
+};
+
+const readOperationTimeout = (
+  environment: Readonly<Record<string, string | undefined>>,
+): number => {
+  const value = environment.REA_JADX_OPERATION_TIMEOUT_MS;
+  if (value === undefined) return DEFAULT_JADX_OPERATION_TIMEOUT_MS;
+  const parsed = providerStartupTimeoutSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  throw configurationFailure(
+    "open_options_invalid",
+    `REA_JADX_OPERATION_TIMEOUT_MS must be a decimal millisecond count from 1 to 2147483647; received ${value}.`,
+    { setting: "REA_JADX_OPERATION_TIMEOUT_MS", value },
+    "operation_timeout",
+  );
 };
 
 const inspectJavaRuntime = async (

@@ -266,11 +266,22 @@ export const dexDebugMetadataMatchesSubject = (
     subject.format === "apk" ||
     subject.format === "zip");
 
+/** Whether a reported stored member name answers a normalized `entry`. */
+const answersEntry = (
+  reported: string | null | undefined,
+  requested: string,
+): boolean =>
+  typeof reported === "string" &&
+  normalizeArchiveMemberPath(reported) === requested;
+
 /**
  * The report answers exactly what was asked: class detail iff a class was
  * requested (for that class), and, when an entry was selected, only that
  * member. Guards the application boundary against a provider answering a
- * different selection under the caller's parameters.
+ * different selection under the caller's parameters. A member is reported
+ * under its raw stored name while `entry` may omit a leading `./`, so both
+ * sides are compared in the one shared normalized form; the reader refuses a
+ * request that more than one stored spelling could answer.
  */
 export const dexReportMatchesSelection = (
   report: DexDebugMetadataResult,
@@ -287,10 +298,11 @@ export const dexReportMatchesSelection = (
     return (
       selection.class_descriptor === undefined &&
       (entry === undefined ||
-        (report.members.length === 1 && report.members[0]?.entry === entry))
+        (report.members.length === 1 &&
+          answersEntry(report.members[0]?.entry, entry)))
     );
   return (
     report.class_detail.descriptor === selection.class_descriptor &&
-    (entry === undefined || report.class_detail.entry === entry)
+    (entry === undefined || answersEntry(report.class_detail.entry, entry))
   );
 };

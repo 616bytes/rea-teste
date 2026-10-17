@@ -83,6 +83,55 @@ cliTest(
   },
 );
 
+cliTest(
+  "selects a ./-stored member by either spelling and reports its stored name over CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-dex-dot-");
+    const apk = join(root, "dot.apk");
+    await writeFile(
+      apk,
+      await zipArchive([
+        { name: "classes.dex", bytes: debuggableDex() },
+        { name: "./classes2.dex", bytes: debuggableDex() },
+      ]),
+    );
+    const { call } = await connectLocalToolsMcp();
+    for (const entry of ["classes2.dex", "./classes2.dex"])
+      for (const classDescriptor of [undefined, CLASS]) {
+        const viaCli = await cli.run({
+          arguments: [
+            "inspect-dex-debug-metadata",
+            apk,
+            "--entry",
+            entry,
+            ...(classDescriptor === undefined
+              ? []
+              : ["--class-descriptor", classDescriptor]),
+            "--json",
+          ],
+        });
+        expect(viaCli.exitCode, viaCli.stdout + viaCli.stderr).toBe(0);
+        const result = evidenceOf(viaCli.json).normalized_result;
+        expect(
+          result.mode === "summary"
+            ? result.members.map((member) => member.entry)
+            : [result.class_detail.entry],
+        ).toEqual(["./classes2.dex"]);
+        const viaMcp = await call(TOOL, {
+          path: apk,
+          entry,
+          ...(classDescriptor === undefined
+            ? {}
+            : { class_descriptor: classDescriptor }),
+        });
+        expect(viaMcp.isError, JSON.stringify(viaMcp.content)).not.toBe(true);
+        expect(evidenceOf(viaMcp.structuredContent).normalized_result).toEqual(
+          result,
+        );
+      }
+  },
+);
+
 cliTest("refuses a non-DEX file through the public CLI", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-dex-cli-bad-");
   const path = join(root, "bad.dex");

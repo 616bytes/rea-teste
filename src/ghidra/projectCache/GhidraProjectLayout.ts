@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { lstat, mkdir, readdir } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 
@@ -18,8 +18,10 @@ import type { GhidraProjectFileRecord } from "./GhidraProjectManifest.js";
 /**
  * Admit a stored project directory: an expanded Ghidra project (regular
  * `rea-project.gpr` marker plus a `rea-project.rep` directory), with no
- * symlink/reparse at either entry. Mirrors the existing-project admission so a
- * stored entry cannot smuggle a foreign path into a later launch.
+ * symlink/reparse and no unreadable or non-regular entry anywhere in the data
+ * tree. Mirrors the existing-project admission so a stored entry cannot smuggle
+ * a foreign path into a later launch, and rejects a damaged entry during
+ * `prepare` instead of failing the runtime copy after a hit was selected.
  */
 export const admitGhidraProjectDirectory = async (
   directory: string,
@@ -65,7 +67,97 @@ export const admitGhidraProjectDirectory = async (
         directory,
       ),
     );
-  return ok(undefined);
+  return admitGhidraProjectTree(join(directory, GHIDRA_PROJECT_DATA_DIRECTORY));
+};
+
+/**
+ * Recursively verify a stored data directory: every entry is a regular file or
+ * directory (never a symlink/reparse), and every file can be opened for
+ * reading. A hit that fails this is discarded before launch rather than failing
+ * the runtime copy and being selected again by every later session.
+ */
+const admitGhidraProjectTree = async (
+  root: string,
+): Promise<Result<void, GhidraProjectCacheError>> => {
+  const walk = async (
+    directory: string,
+  ): Promise<Result<void, GhidraProjectCacheError>> => {
+    let names: string[];
+    try {
+      names = await readdir(directory);
+    } catch (cause: unknown) {
+      return err(
+        new GhidraProjectCacheError(
+          "io",
+          "Stored Ghidra project directory is unreadable",
+          directory,
+          { cause },
+        ),
+      );
+    }
+    for (const name of names) {
+      const path = join(directory, name);
+      let entry;
+      try {
+        entry = await lstat(path);
+      } catch (cause: unknown) {
+        return err(
+          new GhidraProjectCacheError(
+            "io",
+            "Stored Ghidra project entry is unreadable",
+            path,
+            { cause },
+          ),
+        );
+      }
+      if (entry.isSymbolicLink())
+        return err(
+          new GhidraProjectCacheError(
+            "layout",
+            "Stored Ghidra project contains a symbolic link",
+            path,
+          ),
+        );
+      if (entry.isDirectory()) {
+        const nested = await walk(path);
+        if (!nested.ok) return nested;
+        continue;
+      }
+      if (!entry.isFile())
+        return err(
+          new GhidraProjectCacheError(
+            "layout",
+            "Stored Ghidra project contains a non-regular entry",
+            path,
+          ),
+        );
+      const readable = await probeReadableFile(path);
+      if (readable !== undefined) return err(readable);
+    }
+    return ok(undefined);
+  };
+  return walk(root);
+};
+
+const probeReadableFile = async (
+  path: string,
+): Promise<GhidraProjectCacheError | undefined> => {
+  let handle: FileHandle;
+  try {
+    handle = await open(path, "r");
+  } catch (cause: unknown) {
+    return new GhidraProjectCacheError(
+      "io",
+      "Stored Ghidra project file is unreadable",
+      path,
+      { cause },
+    );
+  }
+  try {
+    return undefined;
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
 };
 
 /** Copy the marker and data entries of a project into an empty destination. */

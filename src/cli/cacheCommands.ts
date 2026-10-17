@@ -5,7 +5,11 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { parseConfig } from "../config/parseConfig.js";
 import type { GhidraProjectCacheConfig } from "../config/ghidraProjectCache.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  projectAnalysisError,
+  type AnalysisErrorProjection,
+} from "../domain/analysisErrorProjection.js";
+import type { GhidraProjectCacheError } from "../ghidra/projectCache/GhidraProjectCacheTypes.js";
 import { GhidraProjectStore } from "../ghidra/projectCache/GhidraProjectStore.js";
 import type { CliInstance } from "./types.js";
 
@@ -85,8 +89,86 @@ const storeFor = (config: GhidraProjectCacheConfig): GhidraProjectStore =>
       : { maxAgeDays: config.maxAgeDays }),
   });
 
+/** Project an expected store failure into the shared CLI error envelope. */
+const cacheErrorEnvelope = (
+  label: string,
+  error: GhidraProjectCacheError,
+): { readonly error: string } & AnalysisErrorProjection => {
+  const details = { ...error.diagnostics };
+  switch (error.reason) {
+    case "busy":
+      return {
+        error: label,
+        code: "resource_constraint",
+        category: "resource_constraint",
+        message: error.message,
+        retryable: true,
+        remediation: {
+          action:
+            "Wait for the active publisher to finish, then retry the cache operation.",
+        },
+        details,
+      };
+    case "capacity":
+      return {
+        error: label,
+        code: "resource_constraint",
+        category: "resource_constraint",
+        message: error.message,
+        retryable: false,
+        remediation: {
+          action:
+            "Remove stored projects with cache-remove or raise REA_GHIDRA_PROJECT_CACHE_MAX_BYTES.",
+        },
+        details,
+      };
+    case "disabled":
+      return {
+        error: label,
+        code: "configuration_invalid",
+        category: "invalid_input",
+        message: error.message,
+        retryable: false,
+        remediation: {
+          action:
+            "Enable the cache with REA_GHIDRA_PROJECT_CACHE before maintaining it.",
+        },
+        details,
+      };
+    case "io":
+      return {
+        error: label,
+        code: "unreadable_output",
+        category: "execution_failure",
+        message: error.message,
+        retryable: false,
+        remediation: {
+          action:
+            "Check read and write access to the reported cache path, then retry.",
+        },
+        details,
+      };
+    default:
+      return {
+        error: label,
+        code: "artifact_operation_failed",
+        category: "execution_failure",
+        message: error.message,
+        retryable: false,
+        remediation: {
+          action:
+            "Remove the reported corrupt entry with cache-remove, or re-run cache-verify --repair, then retry.",
+        },
+        details,
+      };
+  }
+};
+
 const listCache = async (config: GhidraProjectCacheConfig) => {
-  const entries = await storeFor(config).list();
+  const listed = await storeFor(config).list();
+  if (!listed.ok)
+    return cacheErrorEnvelope("Cache listing failed", listed.error);
+  const entries = listed.value;
   return {
     cache_directory: config.directory,
     mode: config.mode,
@@ -106,21 +188,19 @@ const listCache = async (config: GhidraProjectCacheConfig) => {
 
 const pruneCache = async (config: GhidraProjectCacheConfig) => {
   const pruned = await storeFor(config).prune();
+  if (!pruned.ok) return cacheErrorEnvelope("Cache prune failed", pruned.error);
   return {
     cache_directory: config.directory,
     max_bytes: config.maxBytes,
-    removed_keys: pruned.removed,
-    freed_bytes: pruned.bytes,
+    removed_keys: pruned.value.removed,
+    freed_bytes: pruned.value.bytes,
   };
 };
 
 const removeCache = async (config: GhidraProjectCacheConfig, key: string) => {
   const removed = await storeFor(config).remove(key);
   if (!removed.ok)
-    return {
-      error: "Cache removal failed",
-      diagnostics: removed.error.diagnostics,
-    };
+    return cacheErrorEnvelope("Cache removal failed", removed.error);
   return { cache_directory: config.directory, key, removed: removed.value };
 };
 
@@ -129,7 +209,10 @@ const verifyCache = async (
   repair: boolean,
 ) => {
   const store = storeFor(config);
-  const results = await store.verify();
+  const verified = await store.verify();
+  if (!verified.ok)
+    return cacheErrorEnvelope("Cache verification failed", verified.error);
+  const results = verified.value;
   const invalid = results.filter((entry) => !entry.ok);
   const repaired: string[] = [];
   if (repair)

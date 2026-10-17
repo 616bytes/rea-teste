@@ -9,12 +9,13 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { err, ok, type Result } from "../../domain/result.js";
 import type { GhidraProjectCacheMode } from "../../config/ghidraProjectCache.js";
 import {
   GHIDRA_PROJECT_CACHE_SCHEMA_VERSION,
+  GHIDRA_PROJECT_LEASE_DIRECTORY,
   GHIDRA_PROJECT_LOCK_DIRECTORY,
   GHIDRA_PROJECT_MANIFEST_FILE,
   GHIDRA_PROJECT_STAGING_DIRECTORY,
@@ -28,6 +29,7 @@ import {
   digestGhidraProjectDirectory,
 } from "./GhidraProjectLayout.js";
 import {
+  ghidraProjectManifestIdentity,
   parseGhidraProjectManifest,
   serializeGhidraProjectManifest,
   type GhidraProjectManifest,
@@ -38,6 +40,13 @@ const KEY_PATTERN = /^[a-f0-9]{64}$/u;
 // A publisher that died mid-analysis can leave a lock behind. Steal one only
 // after this age, and only once; a live publisher is not preempted.
 const LOCK_STALE_MS = 10 * 60 * 1000;
+// A copy interrupted by process exit leaves its staging directory behind. Reap
+// one only after it has been silent for longer than any plausible copy.
+const STAGING_STALE_MS = 60 * 60 * 1000;
+// A hit records a lease so a concurrent `prune` cannot evict an entry that is
+// still being read for its runtime copy. The protection lapses once the last
+// reader stops refreshing the lease.
+const LEASE_PROTECTED_MS = 30 * 60 * 1000;
 
 /** A resolved cache lookup or a reserved staging slot for a fresh import. */
 export interface GhidraProjectReservation {
@@ -72,6 +81,19 @@ export interface GhidraProjectStoreOptions {
   readonly maxBytes: number;
   /** Discard entries older than this many days; unset applies no age limit. */
   readonly maxAgeDays?: number;
+}
+
+/** One row of a store-wide integrity verification. */
+export interface GhidraProjectVerification {
+  readonly key: string;
+  readonly ok: boolean;
+  readonly issues: readonly string[];
+}
+
+/** Outcome of a store-wide prune. */
+export interface GhidraProjectPruneResult {
+  readonly removed: readonly string[];
+  readonly bytes: number;
 }
 
 /** Owns the on-disk store of previously analyzed Ghidra projects. */
@@ -119,19 +141,26 @@ export class GhidraProjectStore {
         });
       }
       const manifest = await this.#readManifest(entryPath);
-      if (!manifest.ok || manifest.value.key !== key) {
+      if (!manifest.ok) {
         await this.#discard(entryPath);
         return ok({
           ...this.#miss(key, entryPath, input.mode),
-          invalidEntry: manifest.ok
-            ? new GhidraProjectCacheError(
-                "identity",
-                "Stored Ghidra project manifest key does not match its directory",
-                entryPath,
-              )
-            : manifest.error,
+          invalidEntry: manifest.error,
         });
       }
+      const identityError = this.#manifestIdentityError(
+        manifest.value,
+        key,
+        entryPath,
+      );
+      if (identityError !== undefined) {
+        await this.#discard(entryPath);
+        return ok({
+          ...this.#miss(key, entryPath, input.mode),
+          invalidEntry: identityError,
+        });
+      }
+      await this.#touchLease(key);
       return ok({
         key,
         hit: true,
@@ -253,6 +282,14 @@ export class GhidraProjectStore {
       );
     const entryPath = this.#entryPath(key);
     try {
+      if (await this.#isLeased(key))
+        return err(
+          new GhidraProjectCacheError(
+            "busy",
+            "Stored Ghidra project is in use by another session",
+            entryPath,
+          ),
+        );
       const existing = await lstat(entryPath).catch(() => undefined);
       if (existing === undefined) return ok(false);
       await this.#discard(entryPath);
@@ -269,31 +306,23 @@ export class GhidraProjectStore {
    * full per-file digest recorded at publish. Returns one row per entry; a row
    * with issues is corrupt and may be removed with {@link remove}.
    */
-  async verify(signal?: AbortSignal): Promise<
-    readonly {
-      readonly key: string;
-      readonly ok: boolean;
-      readonly issues: readonly string[];
-    }[]
+  async verify(
+    signal?: AbortSignal,
+  ): Promise<
+    Result<readonly GhidraProjectVerification[], GhidraProjectCacheError>
   > {
-    const results: {
-      readonly key: string;
-      readonly ok: boolean;
-      readonly issues: readonly string[];
-    }[] = [];
-    for (const key of await this.#entryKeys(signal))
+    const keys = await this.#entryKeys(signal);
+    if (!keys.ok) return keys;
+    const results: GhidraProjectVerification[] = [];
+    for (const key of keys.value)
       results.push(await this.#verifyEntry(key, signal));
-    return results;
+    return ok(results);
   }
 
   async #verifyEntry(
     key: string,
     signal?: AbortSignal,
-  ): Promise<{
-    readonly key: string;
-    readonly ok: boolean;
-    readonly issues: readonly string[];
-  }> {
+  ): Promise<GhidraProjectVerification> {
     const entryPath = this.#entryPath(key);
     const issues: string[] = [];
     const admitted = await admitGhidraProjectDirectory(entryPath);
@@ -301,12 +330,17 @@ export class GhidraProjectStore {
     const manifest = await this.#readManifest(entryPath);
     if (!manifest.ok) {
       issues.push(manifest.error.message);
-    } else if (manifest.value.key !== key) {
-      issues.push("Manifest key does not match its directory");
-    } else if (admitted.ok) {
-      issues.push(
-        ...(await this.#digestIssues(entryPath, manifest.value, signal)),
+    } else {
+      const identityError = this.#manifestIdentityError(
+        manifest.value,
+        key,
+        entryPath,
       );
+      if (identityError !== undefined) issues.push(identityError.message);
+      else if (admitted.ok)
+        issues.push(
+          ...(await this.#digestIssues(entryPath, manifest.value, signal)),
+        );
     }
     return { key, ok: issues.length === 0, issues };
   }
@@ -329,21 +363,71 @@ export class GhidraProjectStore {
     }
   }
 
+  /**
+   * Recompute the cache key a stored manifest commits and compare it with the
+   * entry directory. A manifest whose key or identity fields no longer derive
+   * its directory describes different analysis than the entry claims, so it is
+   * never accepted as a hit.
+   */
+  #manifestIdentityError(
+    manifest: GhidraProjectManifest,
+    key: string,
+    entryPath: string,
+  ): GhidraProjectCacheError | undefined {
+    if (manifest.key !== key)
+      return new GhidraProjectCacheError(
+        "identity",
+        "Stored Ghidra project manifest key does not match its directory",
+        entryPath,
+      );
+    let derived: string;
+    try {
+      derived = ghidraProjectCacheKey(ghidraProjectManifestIdentity(manifest));
+    } catch (cause: unknown) {
+      return new GhidraProjectCacheError(
+        "identity",
+        "Stored Ghidra project manifest identity is invalid",
+        entryPath,
+        { cause },
+      );
+    }
+    if (derived === key) return undefined;
+    return new GhidraProjectCacheError(
+      "identity",
+      "Stored Ghidra project manifest identity does not match its cache key",
+      entryPath,
+    );
+  }
+
   /** Every valid stored manifest, for discovery and pruning. */
-  async list(signal?: AbortSignal): Promise<readonly GhidraProjectManifest[]> {
+  async list(
+    signal?: AbortSignal,
+  ): Promise<
+    Result<readonly GhidraProjectManifest[], GhidraProjectCacheError>
+  > {
+    const keys = await this.#entryKeys(signal);
+    if (!keys.ok) return keys;
     const manifests: GhidraProjectManifest[] = [];
-    for (const key of await this.#entryKeys(signal)) {
+    for (const key of keys.value) {
       const manifest = await this.#readManifest(this.#entryPath(key));
       if (manifest.ok) manifests.push(manifest.value);
     }
-    return manifests;
+    return ok(manifests);
   }
 
-  /** Remove stale entries, then the oldest until the store fits its ceiling. */
+  /**
+   * Remove stale entries and abandoned staging copies, then the oldest entries
+   * until the store fits its ceiling. Entries a hit recently leased for its
+   * runtime copy are protected from removal.
+   */
   async prune(
     signal?: AbortSignal,
-  ): Promise<{ readonly removed: readonly string[]; readonly bytes: number }> {
-    const manifests = [...(await this.list(signal))];
+  ): Promise<Result<GhidraProjectPruneResult, GhidraProjectCacheError>> {
+    const listed = await this.list(signal);
+    if (!listed.ok) return listed;
+    await this.#pruneStaging(signal);
+    const protectedKeys = await this.#protectedKeys(signal);
+    const manifests = [...listed.value];
     const removed: string[] = [];
     let freed = 0;
     const drop = async (manifest: GhidraProjectManifest): Promise<void> => {
@@ -354,6 +438,10 @@ export class GhidraProjectStore {
     const nowMs = Date.now();
     const fresh: GhidraProjectManifest[] = [];
     for (const manifest of manifests) {
+      if (protectedKeys.has(manifest.key)) {
+        fresh.push(manifest);
+        continue;
+      }
       const ageMs = nowMs - Date.parse(manifest.last_used_at);
       if (
         this.#maxAgeDays !== undefined &&
@@ -364,7 +452,7 @@ export class GhidraProjectStore {
       else fresh.push(manifest);
     }
     let total = fresh.reduce((sum, entry) => sum + entry.size_bytes, 0);
-    if (total <= this.#maxBytes) return { removed, bytes: freed };
+    if (total <= this.#maxBytes) return ok({ removed, bytes: freed });
     fresh.sort((left, right) =>
       left.last_used_at < right.last_used_at
         ? -1
@@ -376,10 +464,11 @@ export class GhidraProjectStore {
     );
     for (const manifest of fresh) {
       if (total <= this.#maxBytes) break;
+      if (protectedKeys.has(manifest.key)) continue;
       await drop(manifest);
       total -= manifest.size_bytes;
     }
-    return { removed, bytes: freed };
+    return ok({ removed, bytes: freed });
   }
 
   #miss(
@@ -405,6 +494,74 @@ export class GhidraProjectStore {
 
   #lockPath(key: string): string {
     return join(this.#root, GHIDRA_PROJECT_LOCK_DIRECTORY, `${key}.lock`);
+  }
+
+  #leasePath(key: string): string {
+    return join(this.#root, GHIDRA_PROJECT_LEASE_DIRECTORY, `${key}.lease`);
+  }
+
+  /** Record that a hit is in use so a concurrent prune leaves it alone. */
+  async #touchLease(key: string): Promise<void> {
+    const path = this.#leasePath(key);
+    try {
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+      await writeFile(path, `${new Date().toISOString()}\n`, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+    } catch {
+      // A lease is a best-effort eviction guard; a hit stays valid without it.
+    }
+  }
+
+  /** Whether a recent hit leased this key for its runtime copy. */
+  async #isLeased(key: string): Promise<boolean> {
+    const stats = await lstat(this.#leasePath(key)).catch(() => undefined);
+    return (
+      stats !== undefined && Date.now() - stats.mtimeMs <= LEASE_PROTECTED_MS
+    );
+  }
+
+  /** Keys a recent hit leased for its runtime copy, refreshed as leases renew. */
+  async #protectedKeys(signal?: AbortSignal): Promise<ReadonlySet<string>> {
+    const directory = join(this.#root, GHIDRA_PROJECT_LEASE_DIRECTORY);
+    const entries = await readdir(directory, { withFileTypes: true }).catch(
+      () => [],
+    );
+    const protectedKeys = new Set<string>();
+    const nowMs = Date.now();
+    for (const entry of entries) {
+      signal?.throwIfAborted();
+      if (!entry.isFile() || !entry.name.endsWith(".lease")) continue;
+      const key = entry.name.slice(0, -".lease".length);
+      if (!KEY_PATTERN.test(key)) continue;
+      const path = join(directory, entry.name);
+      const stats = await lstat(path).catch(() => undefined);
+      if (stats === undefined) continue;
+      if (nowMs - stats.mtimeMs <= LEASE_PROTECTED_MS) protectedKeys.add(key);
+      else await rm(path, { force: true }).catch(() => undefined);
+    }
+    return protectedKeys;
+  }
+
+  /** Remove staging copies abandoned by an interrupted publish. */
+  async #pruneStaging(signal?: AbortSignal): Promise<readonly string[]> {
+    const directory = join(this.#root, GHIDRA_PROJECT_STAGING_DIRECTORY);
+    const entries = await readdir(directory, { withFileTypes: true }).catch(
+      () => [],
+    );
+    const removed: string[] = [];
+    const nowMs = Date.now();
+    for (const entry of entries) {
+      signal?.throwIfAborted();
+      const path = join(directory, entry.name);
+      const stats = await lstat(path).catch(() => undefined);
+      if (stats === undefined) continue;
+      if (nowMs - stats.mtimeMs <= STAGING_STALE_MS) continue;
+      await rm(path, { recursive: true, force: true }).catch(() => undefined);
+      removed.push(entry.name);
+    }
+    return removed;
   }
 
   async #readManifest(
@@ -441,15 +598,27 @@ export class GhidraProjectStore {
     return parseGhidraProjectManifest(value, entryPath);
   }
 
-  async #entryKeys(signal?: AbortSignal): Promise<readonly string[]> {
-    const entries = await readdir(this.#root, { withFileTypes: true }).catch(
-      () => [],
-    );
+  async #entryKeys(
+    signal?: AbortSignal,
+  ): Promise<Result<readonly string[], GhidraProjectCacheError>> {
+    let entries;
+    try {
+      entries = await readdir(this.#root, { withFileTypes: true });
+    } catch (cause: unknown) {
+      // Only a missing root is an empty store; any other failure is reported so
+      // `cache-list`, `cache-verify`, and `cache-prune` do not look empty.
+      if (isNotFound(cause)) return ok([]);
+      return err(
+        this.#io("Ghidra project cache root is unreadable", this.#root, cause),
+      );
+    }
     signal?.throwIfAborted();
-    return entries
-      .filter((entry) => entry.isDirectory() && KEY_PATTERN.test(entry.name))
-      .map((entry) => entry.name)
-      .sort();
+    return ok(
+      entries
+        .filter((entry) => entry.isDirectory() && KEY_PATTERN.test(entry.name))
+        .map((entry) => entry.name)
+        .sort(),
+    );
   }
 
   async #withLock<Value>(
@@ -509,3 +678,8 @@ const isAlreadyExists = (cause: unknown): boolean =>
   cause instanceof Error &&
   "code" in cause &&
   (cause as { readonly code?: string }).code === "EEXIST";
+
+const isNotFound = (cause: unknown): boolean =>
+  cause instanceof Error &&
+  "code" in cause &&
+  (cause as { readonly code?: string }).code === "ENOENT";

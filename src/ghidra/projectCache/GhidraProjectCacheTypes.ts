@@ -16,6 +16,7 @@ export const GHIDRA_PROJECT_MANIFEST_FILE = "manifest.json";
 /** Subdirectories of the cache root. Kept free of a leading dot. */
 export const GHIDRA_PROJECT_LOCK_DIRECTORY = "locks";
 export const GHIDRA_PROJECT_STAGING_DIRECTORY = "staging";
+export const GHIDRA_PROJECT_LEASE_DIRECTORY = "leases";
 
 /** Immutable identity inputs used to derive a cache key. */
 export interface GhidraProjectCacheIdentity {

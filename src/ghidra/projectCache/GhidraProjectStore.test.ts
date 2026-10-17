@@ -4,6 +4,8 @@ import {
   readFile,
   rm,
   stat,
+  symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -174,6 +176,43 @@ describe("GhidraProjectStore", () => {
     expect(result.ok && result.value.published).toBe(false);
     await expect(stat(stagingPath)).rejects.toThrow();
   });
+
+  it("rejects a stored manifest whose identity fields do not derive its key", async () => {
+    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const miss = await store.prepare({ identity: identity(), mode: "on" });
+    await store.publish(publishable(store, miss));
+    const key = ghidraProjectCacheKey(identity());
+    const manifest = JSON.parse(
+      await readFile(join(root, key, "manifest.json"), "utf8"),
+    ) as GhidraProjectManifest;
+    manifest.import_profile_digest = "f".repeat(64);
+    await writeFile(
+      join(root, key, "manifest.json"),
+      serializeGhidraProjectManifest(manifest),
+    );
+    const hit = await store.prepare({ identity: identity(), mode: "on" });
+    expect(hit.ok && hit.value?.invalidEntry?.reason).toBe("identity");
+    expect(hit.ok && hit.value?.hit === false).toBe(true);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "discards a stored entry containing a symbolic link",
+    async () => {
+      const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+      const key = ghidraProjectCacheKey(identity());
+      await mkdir(join(root, key, "rea-project.rep", "idata"), {
+        recursive: true,
+      });
+      await writeFile(join(root, key, "rea-project.gpr"), "");
+      await symlink(
+        join(root, key, "rea-project.gpr"),
+        join(root, key, "rea-project.rep", "linked.gpr"),
+      );
+      const miss = await store.prepare({ identity: identity(), mode: "on" });
+      expect(miss.ok && miss.value?.invalidEntry?.reason).toBe("layout");
+      expect(miss.ok && miss.value?.hit === false).toBe(true);
+    },
+  );
 });
 
 describe("GhidraProjectStore maintenance", () => {
@@ -185,7 +224,9 @@ describe("GhidraProjectStore maintenance", () => {
     const key = ghidraProjectCacheKey(identity());
     const removed = await store.remove(key);
     expect(removed.ok && removed.value).toBe(true);
-    expect(await store.list()).toHaveLength(0);
+    const listed = await store.list();
+    if (!listed.ok) throw new Error("list failed");
+    expect(listed.value).toHaveLength(0);
     const again = await store.remove(key);
     expect(again.ok && again.value).toBe(false);
     expect((await store.remove("not-a-key")).ok).toBe(false);
@@ -196,12 +237,16 @@ describe("GhidraProjectStore maintenance", () => {
     const miss = await store.prepare({ identity: identity(), mode: "on" });
     await store.publish(publishable(store, miss));
     const key = ghidraProjectCacheKey(identity());
-    expect(await store.verify()).toEqual([{ key, ok: true, issues: [] }]);
+    const clean = await store.verify();
+    if (!clean.ok) throw new Error("verify failed");
+    expect(clean.value).toEqual([{ key, ok: true, issues: [] }]);
     await writeFile(
       join(root, key, "rea-project.rep", "idata", "db.gbf"),
       "tampered",
     );
-    const [row] = await store.verify();
+    const verified = await store.verify();
+    if (!verified.ok) throw new Error("verify failed");
+    const [row] = verified.value;
     expect(row?.ok).toBe(false);
     expect(row?.issues.join(" ")).toMatch(/digest/u);
   });
@@ -231,18 +276,23 @@ describe("GhidraProjectStore maintenance", () => {
       const published = await store.publish({
         ...publishable(store, reservation),
         identity: id,
+        target: { ...target, sha256: id.targetSha256 },
         now,
       });
       expect(published.ok).toBe(true);
     }
-    expect(await store.list()).toHaveLength(2);
+    const listed = await store.list();
+    if (!listed.ok) throw new Error("list failed");
+    expect(listed.value).toHaveLength(2);
 
-    const [firstSize] = (await store.list()).map((entry) => entry.size_bytes);
+    const [firstSize] = listed.value.map((entry) => entry.size_bytes);
     const smaller = new GhidraProjectStore({ root, maxBytes: firstSize ?? 1 });
     const pruned = await smaller.prune();
-    expect(pruned.removed).toEqual([ghidraProjectCacheKey(older)]);
+    if (!pruned.ok) throw new Error("prune failed");
+    expect(pruned.value.removed).toEqual([ghidraProjectCacheKey(older)]);
     const remaining = await smaller.list();
-    expect(remaining.map((entry) => entry.key)).toEqual([
+    if (!remaining.ok) throw new Error("list failed");
+    expect(remaining.value.map((entry) => entry.key)).toEqual([
       ghidraProjectCacheKey(newer),
     ]);
   });
@@ -263,6 +313,7 @@ describe("GhidraProjectStore maintenance", () => {
       const published = await store.publish({
         ...publishable(store, reservation),
         identity: id,
+        target: { ...target, sha256: id.targetSha256 },
         now: at,
       });
       expect(published.ok).toBe(true);
@@ -273,10 +324,92 @@ describe("GhidraProjectStore maintenance", () => {
       maxAgeDays: 30,
     });
     const pruned = await aged.prune();
-    expect(pruned.removed).toEqual([ghidraProjectCacheKey(older)]);
-    expect((await aged.list()).map((entry) => entry.key)).toEqual([
+    if (!pruned.ok) throw new Error("prune failed");
+    expect(pruned.value.removed).toEqual([ghidraProjectCacheKey(older)]);
+    const remaining = await aged.list();
+    if (!remaining.ok) throw new Error("list failed");
+    expect(remaining.value.map((entry) => entry.key)).toEqual([
       ghidraProjectCacheKey(newer),
     ]);
+  });
+});
+
+describe("GhidraProjectStore resilience", () => {
+  it("reports an unreadable cache root instead of an empty store", async () => {
+    const container = await mkdtemp(join(tmpdir(), "rea-ghidra-cache-file-"));
+    const root = join(container, "store");
+    await writeFile(root, "not a directory");
+    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const listed = await store.list();
+    expect(listed.ok).toBe(false);
+    expect(!listed.ok && listed.error.reason).toBe("io");
+  });
+
+  it("reaps an abandoned staging copy but keeps a current one", async () => {
+    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const abandoned = join(root, "staging", randomUUID());
+    const current = join(root, "staging", randomUUID());
+    await mkdir(abandoned, { recursive: true });
+    await mkdir(current, { recursive: true });
+    await writeFile(join(abandoned, "partial.gbf"), "partial");
+    const stale = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    await utimes(abandoned, stale, stale);
+    const pruned = await store.prune();
+    expect(pruned.ok).toBe(true);
+    await expect(stat(abandoned)).rejects.toThrow();
+    await expect(stat(current)).resolves.toBeDefined();
+  });
+
+  it("protects a recently used entry from size trimming", async () => {
+    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const older = { ...identity(), targetSha256: "5".repeat(64) };
+    const newer = { ...identity(), targetSha256: "6".repeat(64) };
+    for (const [id, now] of [
+      [older, "2020-01-01T00:00:00.000Z"],
+      [newer, "2021-01-01T00:00:00.000Z"],
+    ] as const) {
+      const reservation = await store.prepare({ identity: id, mode: "on" });
+      if (!reservation.ok || reservation.value === null)
+        throw new Error("expected a reservation");
+      await store.publish({
+        ...publishable(store, reservation),
+        identity: id,
+        target: { ...target, sha256: id.targetSha256 },
+        now,
+      });
+    }
+    // A hit leases the older entry for its runtime copy.
+    const hit = await store.prepare({ identity: older, mode: "on" });
+    if (!hit.ok) throw new Error(`prepare failed: ${hit.error.message}`);
+    if (hit.value === null || hit.value.hit !== true)
+      throw new Error(
+        `expected a hit, reason=${hit.value?.invalidEntry?.reason ?? "none"}`,
+      );
+
+    const listed = await store.list();
+    if (!listed.ok) throw new Error("list failed");
+    const [firstSize] = listed.value.map((entry) => entry.size_bytes);
+    const smaller = new GhidraProjectStore({ root, maxBytes: firstSize ?? 1 });
+    const pruned = await smaller.prune();
+    if (!pruned.ok) throw new Error("prune failed");
+    expect(pruned.value.removed).toEqual([ghidraProjectCacheKey(newer)]);
+    const remaining = await smaller.list();
+    if (!remaining.ok) throw new Error("list failed");
+    expect(remaining.value.map((entry) => entry.key)).toEqual([
+      ghidraProjectCacheKey(older),
+    ]);
+  });
+
+  it("refuses to remove an entry leased by a recent hit", async () => {
+    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const miss = await store.prepare({ identity: identity(), mode: "on" });
+    await store.publish(publishable(store, miss));
+    const key = ghidraProjectCacheKey(identity());
+    const hit = await store.prepare({ identity: identity(), mode: "on" });
+    expect(hit.ok && hit.value?.hit).toBe(true);
+    const removed = await store.remove(key);
+    expect(removed.ok).toBe(false);
+    expect(!removed.ok && removed.error.reason).toBe("busy");
   });
 });
 

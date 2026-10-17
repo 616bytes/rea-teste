@@ -446,10 +446,29 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         mode: this.config.ghidraProjectCache.mode,
         ...(signal === undefined ? {} : { signal }),
       });
-    } catch {
+    } catch (cause: unknown) {
+      this.logger.warn(
+        { error: providerFailureText(cause) },
+        "Ghidra project cache lookup failed; importing fresh",
+      );
       return undefined;
     }
-    if (!prepared.ok || prepared.value === null) return undefined;
+    if (!prepared.ok) {
+      this.logger.warn(
+        { reason: prepared.error.reason, path: prepared.error.path },
+        "Ghidra project cache lookup failed; importing fresh",
+      );
+      return undefined;
+    }
+    if (prepared.value === null) return undefined;
+    if (prepared.value.invalidEntry !== undefined)
+      this.logger.warn(
+        {
+          reason: prepared.value.invalidEntry.reason,
+          path: prepared.value.invalidEntry.path,
+        },
+        "Discarded a corrupt stored Ghidra project; a fresh import will rebuild it",
+      );
     const parameters: Record<string, JsonValue> = {
       ...intentProfile.parameters,
     };

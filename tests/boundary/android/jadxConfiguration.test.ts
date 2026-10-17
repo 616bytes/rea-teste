@@ -82,7 +82,7 @@ it("accepts a full JDK and canonicalizes the selected JAR", async () => {
   ).resolves.toEqual({
     jar: await realpath(jar),
     java: join(javaHome, "bin", "java"),
-    jvmArguments: [],
+    jvmArguments: ["-XX:-UsePerfData"],
   });
 });
 
@@ -135,6 +135,7 @@ it("configures heap and visible processors independently without forcing either"
     "inspect_android_package",
   );
   expect(configuration.jvmArguments).toEqual([
+    "-XX:-UsePerfData",
     "-Xmx8192m",
     "-XX:ActiveProcessorCount=4",
   ]);

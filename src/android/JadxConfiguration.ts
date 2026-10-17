@@ -505,10 +505,13 @@ const requireJavaHomeExecutable = async (
   }
 };
 
+// Without this the JVM leaves hsperfdata_<user> in the caller's temp directory.
+const JADX_JVM_BASE_ARGUMENTS = ["-XX:-UsePerfData"] as const;
+
 const resolveJvmArguments = (
   environment: Readonly<Record<string, string | undefined>>,
 ): readonly string[] => {
-  const result: string[] = [];
+  const result: string[] = [...JADX_JVM_BASE_ARGUMENTS];
   for (const [name, prefix, suffix] of [
     ["REA_JADX_HEAP_MIB", "-Xmx", "m"],
     ["REA_JADX_ACTIVE_PROCESSOR_COUNT", "-XX:ActiveProcessorCount=", ""],
@@ -560,12 +563,16 @@ const inspectJavaRuntime = async (
   let stdout: string;
   let stderr: string;
   try {
-    ({ stdout, stderr } = await execFileOutput(java, ["--list-modules"], {
-      env: { ...environment },
-      timeout: JAVA_MODULE_LISTING_TIMEOUT_MS,
-      maxBuffer: JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES,
-      ...(signal === undefined ? {} : { signal }),
-    }));
+    ({ stdout, stderr } = await execFileOutput(
+      java,
+      [...JADX_JVM_BASE_ARGUMENTS, "--list-modules"],
+      {
+        env: { ...environment },
+        timeout: JAVA_MODULE_LISTING_TIMEOUT_MS,
+        maxBuffer: JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES,
+        ...(signal === undefined ? {} : { signal }),
+      },
+    ));
   } catch (cause) {
     if (signal?.aborted === true) throw cause;
     const output = execFileOutputFailure(cause);

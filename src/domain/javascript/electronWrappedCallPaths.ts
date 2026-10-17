@@ -1,6 +1,7 @@
 import * as t from "@babel/types";
 import { runtimeFunctionParameters } from "./javascriptAstValues.js";
 import { JavaScriptSymbolicBindings } from "./javascriptSymbolicBindings.js";
+import { referencesElectronModule } from "./javascriptElectronMemberWrites.js";
 import {
   symbolicVariants,
   symbolicTruth,
@@ -91,6 +92,12 @@ export const collectElectronWrappedCallPaths = (
   accumulator: JavaScriptAnalysisAccumulator,
   identity: JavaScriptElectronIdentity,
 ): readonly ElectronCallPath[] => {
+  // Every path starts at an Electron exposure or IPC registration, and every
+  // Electron value the resolver can reach starts at a require or import of the
+  // Electron module. Without one, the walk cannot emit a path: it would only
+  // evaluate the module and attribute each unresolved read to the file as an
+  // unknown finding.
+  if (!referencesElectronModule(accumulator.references)) return [];
   // Bounds repeated interprocedural expansion independently of bundle bytes.
   // Exhaustion is reported as unknown coverage, never as a negative finding.
   let remainingVisits = 1_000_000;

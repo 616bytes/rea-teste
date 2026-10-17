@@ -150,23 +150,41 @@ export const readRegularFileText = (
 ): Promise<string> =>
   readRegularFileContent(
     path,
-    (bytes) => {
-      try {
-        return new TextDecoder("utf-8", {
-          fatal: true,
-          ignoreBOM: true,
-        }).decode(bytes);
-      } catch (cause: unknown) {
-        if (!(cause instanceof TypeError)) throw cause;
-        throw new InvalidUtf8FileError(path, cause);
-      }
-    },
+    (bytes) => decodeRegularFileText(path, bytes),
     options,
   );
 
+/** Text and metadata from the same admitted, stable regular-file read. */
+export interface RegularFileTextSnapshot {
+  readonly text: string;
+  readonly state: Stats;
+}
+
+export const readRegularFileTextSnapshot = (
+  path: string,
+  options: RegularFileReadOptions = {},
+): Promise<RegularFileTextSnapshot> =>
+  readRegularFileContent(
+    path,
+    (bytes, state) => ({ text: decodeRegularFileText(path, bytes), state }),
+    options,
+  );
+
+const decodeRegularFileText = (path: string, bytes: Buffer): string => {
+  try {
+    return new TextDecoder("utf-8", {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(bytes);
+  } catch (cause: unknown) {
+    if (!(cause instanceof TypeError)) throw cause;
+    throw new InvalidUtf8FileError(path, cause);
+  }
+};
+
 const readRegularFileContent = <Value>(
   path: string,
-  decode: (bytes: Buffer) => Value,
+  decode: (bytes: Buffer, stats: Stats) => Value,
   options: RegularFileReadOptions,
 ): Promise<Value> =>
   withRegularFile(
@@ -179,7 +197,7 @@ const readRegularFileContent = <Value>(
       );
       if (bytes === undefined || bytes.length !== stats.size)
         throw new RegularFileChangedError(path);
-      return decode(bytes);
+      return decode(bytes, stats);
     },
     options,
   );

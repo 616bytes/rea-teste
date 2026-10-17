@@ -1535,7 +1535,7 @@ export class AdbProvider {
               installer_package_name: details.installerPackageName,
               user_id: details.userId,
               pkg_flags: details.pkgFlags,
-              requested_permissions_count: details.requestedPermissions,
+              requested_permissions_count: details.parsedPackage === null ? null : details.requestedPermissions,
               coverage:
                 details.versionCode === null && details.versionName === null
                   ? "partial"

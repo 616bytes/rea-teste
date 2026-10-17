@@ -1,4 +1,5 @@
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { artifactFilePrimaryFailure } from "../artifacts/ArtifactFileOperation.js";
 import { fileURLToPath } from "node:url";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 
@@ -93,7 +94,10 @@ import {
   windowsP0Limitations,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
-import type { GhidraSessionError } from "./GhidraSessionError.js";
+import {
+  GHIDRA_STARTUP_DEADLINE_ELAPSED,
+  type GhidraSessionError,
+} from "./GhidraSessionError.js";
 import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
 import { ghidraExtensionFailure } from "./extensions/GhidraExtensionFailures.js";
 import {
@@ -369,19 +373,15 @@ export const createGhidraProviderClient = (input: {
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly logger: Logger;
   readonly clientFactory: GhidraProviderClientFactory;
-  readonly target: BinaryTarget;
-  readonly profile?: AnalysisProfileCommitment;
+  readonly admission: GhidraClientAdmission;
   readonly context?: AnalysisClientContext;
   readonly installation: GhidraInstallationInspection;
-}): AnalysisClient => {
-  const { config, logger, clientFactory, target, context, installation } =
-    input;
-  const prerequisites = ghidraClientPrerequisites(
-    target,
-    input.profile,
-    installation,
-  );
-  if (!prerequisites.ok) return unavailableClient(prerequisites.error);
+  readonly signal: AbortSignal;
+}): Result<AnalysisClient, AnalysisError> => {
+  const { config, logger, clientFactory, context, installation } = input;
+  const { target, profile } = input.admission;
+  const prerequisites = ghidraClientPrerequisites(profile, installation);
+  if (!prerequisites.ok) return err(prerequisites.error);
   const committedProfile = prerequisites.value.profile;
   const psp = isGhidraPspTarget(target);
   const pspExtension = psp
@@ -395,7 +395,7 @@ export const createGhidraProviderClient = (input: {
       committedProfile.parameters.language_id !== "Allegrex:LE:32:default" ||
       committedProfile.parameters.loader !== "PspElfLoader")
   )
-    return unavailableClient(
+    return err(
       new ProviderAdapterError("ghidra", "open_binary", {
         diagnostics: {
           reason:
@@ -409,7 +409,7 @@ export const createGhidraProviderClient = (input: {
     (committedProfile.parameters.mips_soft_float_storage ===
       GHIDRA_MIPS_SOFT_FLOAT_STORAGE)
   )
-    return unavailableClient(
+    return err(
       new ProviderAdapterError("ghidra", "open_binary", {
         diagnostics: {
           reason:
@@ -425,7 +425,7 @@ export const createGhidraProviderClient = (input: {
     (config.ghidraNativeAotJar !== undefined &&
       extensionProfile.data.length === 0)
   )
-    return unavailableClient(
+    return err(
       new ProviderAdapterError("ghidra", "open_binary", {
         diagnostics: {
           reason:
@@ -441,7 +441,7 @@ export const createGhidraProviderClient = (input: {
     !seedProfile.success ||
     (config.ghidraSeedFile === undefined) !== (seedProfile.data === undefined)
   )
-    return unavailableClient(
+    return err(
       new ProviderAdapterError("ghidra", "open_binary", {
         diagnostics: {
           reason:
@@ -456,7 +456,7 @@ export const createGhidraProviderClient = (input: {
   const pinnedLanguage = ghidraPinnedMipsLanguage(committedProfile.parameters);
   const targetLanguage = ghidraPinnedLanguage(target);
   if (pinnedLanguage !== undefined && targetLanguage === undefined)
-    return unavailableClient(
+    return err(
       new ProviderAdapterError("ghidra", "open_binary", {
         diagnostics: {
           reason:
@@ -471,7 +471,7 @@ export const createGhidraProviderClient = (input: {
     pinnedLanguage !== undefined &&
     config.ghidraLanguageOverride !== undefined
   )
-    return unavailableClient(
+    return err(
       new ProviderAdapterError("ghidra", "open_binary", {
         diagnostics: {
           reason:
@@ -485,7 +485,7 @@ export const createGhidraProviderClient = (input: {
       config.ghidraLanguageOverride ?? targetLanguage,
     )
   )
-    return unavailableClient(
+    return err(
       new ProviderAdapterError("ghidra", "open_binary", {
         diagnostics: {
           reason:
@@ -505,7 +505,7 @@ export const createGhidraProviderClient = (input: {
       config.ghidraDisabledAnalyzers,
     )
   )
-    return unavailableClient(
+    return err(
       new ProviderAdapterError("ghidra", "open_binary", {
         diagnostics: {
           reason:
@@ -521,7 +521,7 @@ export const createGhidraProviderClient = (input: {
     installation.platform,
   );
   if (invalidProfile !== null)
-    return unavailableClient(
+    return err(
       new ProviderAdapterError("ghidra", "open_binary", {
         diagnostics: { reason: invalidProfile },
       }),
@@ -548,13 +548,11 @@ export const createGhidraProviderClient = (input: {
     ...(target.format === "raw-binary"
       ? [
           "Headerless raw-binary analysis uses the caller-supplied architecture and entry address; file offset 0 is mapped at that address. Headers are not discovered from file bytes.",
-          "Little-endian generic Ghidra languages are used for x86, x86_64, arm, arm64, and NMOS 6502. Big-endian, Thumb-only, Cortex-M, 65C02, 65816, and other processor variants are unsupported in this increment.",
+          "Little-endian generic Ghidra languages are used for x86, x86_64, arm, arm64, and NMOS 6502; m68k uses the big-endian 68000 default language, which decodes the 68040 superset. Big-endian ARM, Thumb-only, Cortex-M, 65C02, 65816, separate 68020/68030/CPU32/ColdFire variants, and other processor variants are unsupported in this increment.",
           "Static analysis does not emulate reset vectors, memory-mapped I/O, or firmware boot sequences.",
         ]
       : []),
-    ...(target.kind === "executable" && target.architecture === "mips"
-      ? (target.mips.limitations ?? [])
-      : []),
+    ...(target.architecture === "mips" ? (target.mips.limitations ?? []) : []),
     ...(committedProfile.parameters.mips_abi_basis ===
     "inferred-o32-assumption-v1"
       ? [
@@ -574,12 +572,21 @@ export const createGhidraProviderClient = (input: {
             "macOS sessions require a matching executable Ghidra native decompiler; REA checks for it but does not build native components or change Gatekeeper quarantine state.",
           ]
         : [];
+  if (input.signal.aborted)
+    return err(
+      new AnalysisCancelledError("create_analysis_client", {
+        cause: input.signal.reason,
+        diagnostics: ghidraInstallationDiagnostics(installation),
+      }),
+    );
   const client = clientFactory({
     startupTimeoutMs: config.ghidraStartupTimeoutMs,
     platform: installation.platform,
     launcher: new GhidraHeadlessLauncher({
       environment: input.environment,
       analyzeHeadlessPath: prerequisites.value.analyzeHeadlessPath,
+      configurationDirectoryName:
+        prerequisites.value.configurationDirectoryName,
       javaHome: prerequisites.value.javaHome,
       ...(installation.javaVmName === undefined
         ? {}
@@ -768,7 +775,7 @@ export const createGhidraProviderClient = (input: {
     if (!parsed.ok) return parsed;
     return ok(projectExecution(operation, parsed.value, called.value));
   };
-  return {
+  return ok<AnalysisClient>({
     execute: async (operation, parameters, options) => {
       if (extensionFailure !== undefined) return err(extensionFailure);
       if (
@@ -981,21 +988,28 @@ export const createGhidraProviderClient = (input: {
       nativeAotOwner?.close();
       return client.close();
     },
-  };
+  });
 };
 
 interface GhidraClientCoordinates {
   readonly analyzeHeadlessPath: string;
+  readonly configurationDirectoryName: string | null;
   readonly javaHome: string;
   readonly providerVersion: string;
   readonly profile: AnalysisProfileCommitment;
 }
 
-const ghidraClientPrerequisites = (
+export interface GhidraClientAdmission {
+  readonly target: Extract<BinaryTarget, { readonly kind: "executable" }>;
+  readonly profile: AnalysisProfileCommitment;
+}
+
+/** Admit caller inputs and native authority before Java work starts. */
+export const admitGhidraClient = (
   target: BinaryTarget,
   profile: AnalysisProfileCommitment | undefined,
-  installation: GhidraInstallationInspection,
-): Result<GhidraClientCoordinates, AnalysisError> => {
+  platform: NodeJS.Platform,
+): Result<GhidraClientAdmission, AnalysisError> => {
   if (target.kind !== "executable")
     return err(
       new AnalysisCapabilityUnavailableError(
@@ -1004,6 +1018,26 @@ const ghidraClientPrerequisites = (
         `Ghidra cannot import ${target.kind} targets through this adapter.`,
       ),
     );
+  if (platform === "win32") {
+    const readiness = inspectWindowsNativeReadiness(platform);
+    if (!readiness.available)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "ghidra",
+          "health",
+          readiness.reason,
+        ),
+      );
+  }
+  if (profile === undefined || profile.provider.id !== "ghidra")
+    return err(new ProviderAdapterError("ghidra", "health"));
+  return ok({ target, profile });
+};
+
+const ghidraClientPrerequisites = (
+  profile: AnalysisProfileCommitment,
+  installation: GhidraInstallationInspection,
+): Result<GhidraClientCoordinates, AnalysisError> => {
   if (installation.status === "unavailable")
     return err(
       new ProviderAdapterError("ghidra", "health", {
@@ -1022,20 +1056,25 @@ const ghidraClientPrerequisites = (
         readiness.reason,
       ),
     );
-  if (profile === undefined || profile.provider.id !== "ghidra")
-    return err(new ProviderAdapterError("ghidra", "health"));
+  if (profile.provider.version !== installation.providerVersion)
+    return err(
+      new ProviderAdapterError("ghidra", "health", {
+        diagnostics: {
+          reason:
+            "The current installation version differs from the selected analysis profile; resolve the profile again.",
+          selected_provider_version: profile.provider.version,
+          current_installation: ghidraInstallationDiagnostics(installation),
+        },
+      }),
+    );
   return ok({
     analyzeHeadlessPath: installation.analyzeHeadlessPath,
+    configurationDirectoryName: installation.configurationDirectoryName,
     javaHome: installation.javaHome,
     providerVersion: installation.providerVersion,
     profile,
   });
 };
-
-const unavailableClient = (failure: AnalysisError): AnalysisClient => ({
-  execute: () => Promise.resolve(err(failure)),
-  close: () => Promise.resolve(ok(null)),
-});
 
 const projectSessionError = (
   operation: AnalysisOperation,
@@ -1055,7 +1094,7 @@ const projectSessionError = (
         primary,
         failure.cleanupFailure,
         operation,
-      );
+      ).bindCleanupDependencies([primary, failure.cleanupFailure]);
 };
 
 const projectPrimarySessionError = (
@@ -1065,18 +1104,19 @@ const projectPrimarySessionError = (
   health?: ProviderOperationHealth,
 ): AnalysisError => {
   const context = { cause: failure, diagnostics: failure.diagnostics };
-  if (failure.cause instanceof AnalysisAccessDeniedError)
+  const physicalCause = artifactFilePrimaryFailure(failure.cause);
+  if (physicalCause instanceof AnalysisAccessDeniedError)
     return new AnalysisAccessDeniedError(
       operation,
-      failure.cause.path,
-      failure.cause.systemCode,
+      physicalCause.path,
+      physicalCause.systemCode,
       context,
     );
-  if (failure.cause instanceof AnalysisArtifactChangedError)
+  if (physicalCause instanceof AnalysisArtifactChangedError)
     return new AnalysisArtifactChangedError(
       operation,
-      failure.cause.path,
-      failure.cause.reason,
+      physicalCause.path,
+      physicalCause.reason,
       context,
     );
   if (
@@ -1091,7 +1131,13 @@ const projectPrimarySessionError = (
     failure.kind === "cancelled" ||
     (failure.kind === "remote" && failure.remoteCode === "decompile_cancelled")
   )
-    return new AnalysisCancelledError(operation, context);
+    return new AnalysisCancelledError(operation, {
+      ...context,
+      cause:
+        failure.cancellation === undefined
+          ? failure
+          : failure.cancellation.reason,
+    });
   if (failure.kind === "analysis_timeout")
     return new AnalysisTimeoutError(
       operation,
@@ -1135,12 +1181,16 @@ const projectPrimarySessionError = (
     context,
   );
   if (memoryFailure !== undefined) return memoryFailure;
-  if (failure.kind === "timeout")
+  if (failure.kind === "timeout") {
+    const timeoutMs = failure.timeoutMs ?? startupTimeoutMs;
     return new AnalysisTimeoutError(
       operation,
-      failure.timeoutMs ?? startupTimeoutMs,
-      context,
+      timeoutMs,
+      failure.message === GHIDRA_STARTUP_DEADLINE_ELAPSED
+        ? { ...context, ...ghidraStartupTimeoutGuidance(timeoutMs) }
+        : context,
     );
+  }
   const exited = exitedProviderMessage(operation, failure, health);
   if (exited !== undefined)
     return new ProviderAdapterError("ghidra", operation, {
@@ -1233,6 +1283,12 @@ const projectObservedJvmMemoryFailure = (
     },
   );
 };
+
+/** Name the settings that change Ghidra's import-and-analysis startup deadline. */
+const ghidraStartupTimeoutGuidance = (timeoutMs: number) => ({
+  userMessage: `Ghidra did not finish importing and analyzing the target within its ${String(timeoutMs)} ms startup deadline (REA_GHIDRA_STARTUP_TIMEOUT_MS).`,
+  remediationAction: `Large binaries can need longer: set REA_GHIDRA_STARTUP_TIMEOUT_MS above ${String(timeoutMs)} in the environment that starts REA, or skip expensive analyzers with REA_GHIDRA_DISABLED_ANALYZERS, then open the target again. An MCP client's own tool-call timeout is separate and may also need raising.`,
+});
 
 /** A provider already observed as running can be restarted by reopening. */
 const exitedProviderMessage = (

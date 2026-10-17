@@ -89,6 +89,7 @@ it.each([
           env: {
             ...process.env,
             ...environment,
+            TURBO_CACHE_DIR: join(root, ".turbo/cache"),
             TURBO_TELEMETRY_DISABLED: "1",
           },
         },
@@ -112,6 +113,7 @@ it.each([
     );
     const normalEnvironment: NodeJS.ProcessEnv = {
       ...process.env,
+      TURBO_CACHE_DIR: join(root, ".turbo/cache"),
       TURBO_TELEMETRY_DISABLED: "1",
     };
     delete normalEnvironment.TURBO_CACHE_MAX_AGE;

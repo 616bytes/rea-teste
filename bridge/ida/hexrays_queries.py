@@ -205,6 +205,9 @@ def _call_targets(f):
     """Code and pointer targets of every call instruction in `f`, in address order."""
     insn = ida_ua.insn_t()
     for ea in idautils.FuncItems(f.start_ea):
+        # Inline data, such as a jump table, can decode as a call and refer to a function.
+        if not idc.is_code(idc.get_full_flags(ea)):
+            continue
         if not ida_ua.decode_insn(insn, ea) or not ida_idp.is_call_insn(insn):
             continue
         yield from idautils.CodeRefsFrom(ea, False)

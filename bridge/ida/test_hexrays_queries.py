@@ -38,7 +38,7 @@ class Xref:
         self.frm, self.iscode, self.flow = frm, iscode, flow
 
 
-FUNCS = [Func(0x1000, 0x1014, "main"), Func(0x2000, 0x2008, "helper")]
+FUNCS = [Func(0x1000, 0x1018, "main"), Func(0x2000, 0x2008, "helper")]
 # address -> (text, is_call, code targets, data targets)
 INSNS = {
     0x1000: ("push rbp", False, [], []),
@@ -46,10 +46,13 @@ INSNS = {
     0x1008: ("call cs:puts_ptr", True, [], [0x5000]),
     0x100C: ("call loc_3000", True, [0x3000], []),
     0x1010: ("call helper", True, [0x2000], []),
+    # Inline data whose bytes decode as a call and that refers to an import.
+    0x1014: ("dq offset exit", True, [], [0x5008]),
     0x2000: ("mov eax, 1", False, [], []),
     0x2004: ("retn", False, [], []),
 }
-IMPORTS = {0x5000: "puts"}
+DATA_HEADS = {0x1014}
+IMPORTS = {0x5000: "puts", 0x5008: "exit"}
 NAMES = {"main": 0x1000, "helper": 0x2000, "data_label": 0x4000}
 XREFS = {0x2000: [Xref(0x1004, True), Xref(0x1ffc, True, flow=True), Xref(0x1004, True)]}
 STRINGS = [(0x6000 + index, f"string {index}") for index in range(5)]
@@ -131,8 +134,9 @@ def stand_ins():
 
     m["idautils"].XrefsTo = xrefs_to
     m["idautils"].Strings = lambda: [StringItem(ea, text) for ea, text in STRINGS]
-    m["idc"].get_full_flags = lambda ea: 0
-    m["idc"].is_code = lambda flags: True
+    # Flags stand in for their address, so is_code can consult DATA_HEADS.
+    m["idc"].get_full_flags = lambda ea: ea
+    m["idc"].is_code = lambda flags: flags not in DATA_HEADS
     return m
 
 
@@ -155,7 +159,7 @@ class BridgeTest(unittest.TestCase):
 
     def test_lookup_reports_entries_containment_and_missing_names(self):
         rows = self.query("lookup_funcs", {"queries": ["main", "0x2004", "data_label", "absent", 'a"\\\n ']})
-        self.assertEqual(rows[0]["fn"], {"addr": "0x1000", "name": "main", "size": "0x14"})
+        self.assertEqual(rows[0]["fn"], {"addr": "0x1000", "name": "main", "size": "0x18"})
         self.assertEqual(rows[1]["fn"]["addr"], "0x2000")
         self.assertEqual([row["error"] for row in rows[2:]], ["Not a function", "Not found", "Not found"])
         self.assertEqual(rows[4]["query"], 'a"\\\n ')
@@ -215,7 +219,7 @@ class BridgeTest(unittest.TestCase):
         [row] = self.query("xrefs_to", {"addrs": ["0x2000"], "limit": 1000})
         self.assertEqual(
             row,
-            {"xrefs": [{"addr": "0x1004", "type": "code", "fn": {"addr": "0x1000", "name": "main", "size": "0x14"}}], "more": False},
+            {"xrefs": [{"addr": "0x1004", "type": "code", "fn": {"addr": "0x1000", "name": "main", "size": "0x18"}}], "more": False},
         )
 
     def test_health_and_survey_shapes(self):

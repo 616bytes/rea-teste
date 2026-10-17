@@ -38,7 +38,11 @@ beforeEach(() => {
  */
 const armFaults = (
   target: string,
-  faults: { readonly readFailure?: unknown; readonly closeFailure: unknown },
+  faults: {
+    readonly readFailure?: unknown;
+    readonly closeFailure: unknown;
+    readonly onClose?: () => void;
+  },
 ) => {
   mockOpen.mockImplementation(
     async (path: unknown, ...rest: unknown[]): Promise<FileHandle> => {
@@ -53,6 +57,7 @@ const armFaults = (
         }
         const closeFailure = faults.closeFailure;
         handle.close = (async () => {
+          faults.onClose?.();
           throw closeFailure;
         }) as unknown as FileHandle["close"];
         openedHandles.push(handle);
@@ -204,20 +209,10 @@ describe("electron fuse final-close failures", () => {
     );
     // Synchronize the abort with the finalization boundary itself: the abort
     // fires inside the faulted close, so no fixed delay is involved.
-    mockOpen.mockImplementation(
-      async (openPath: unknown, ...rest: unknown[]): Promise<FileHandle> => {
-        const handle = await passthroughOpen(openPath, ...rest);
-        if (String(openPath) === path) {
-          originalCloses.set(handle, handle.close.bind(handle));
-          handle.close = (async () => {
-            controller.abort(abortReason);
-            throw closeFailure;
-          }) as unknown as FileHandle["close"];
-          openedHandles.push(handle);
-        }
-        return handle;
-      },
-    );
+    armFaults(path, {
+      closeFailure,
+      onClose: () => controller.abort(abortReason),
+    });
 
     const result = await new ElectronFuseProvider().inspect(
       { path },
@@ -262,5 +257,47 @@ describe("electron fuse final-close failures", () => {
     const serialized = JSON.stringify(partial);
     expect(serialized).toContain("Partial observation");
     expect(serialized).toContain("electron-fuses");
+  });
+});
+
+describe("electron fuse read failure precedence", () => {
+  it("preserves an earlier read failure when cancellation arrives during failed close", async () => {
+    const root = await createTestTempDirectory("rea-fuse-read-cancel-close-");
+    const path = await writeElfImage(root, "app.elf");
+    const controller = new AbortController();
+    const readFailure = Object.assign(
+      new Error("primary read failed before cancellation"),
+      {
+        code: "EIO",
+      },
+    );
+    const closeFailure = Object.assign(new Error("final close failed"), {
+      code: "EACCES",
+    });
+    armFaults(path, {
+      readFailure,
+      closeFailure,
+      onClose: () => controller.abort(new Error("late close cancellation")),
+    });
+
+    const result = await new ElectronFuseProvider().inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected an error result");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toContain(path);
+    expect(JSON.stringify(result.error.diagnostics)).toContain(
+      readFailure.message,
+    );
+    const aggregate = result.error.cause as AggregateError;
+    expect(aggregate).toBeInstanceOf(AggregateError);
+    expect(aggregate.errors[0]).not.toBeInstanceOf(AnalysisCancelledError);
+    const retained = findRegularFileCleanupFailure(result.error);
+    expect(retained?.outcome).toEqual({ kind: "failed", cause: readFailure });
+    expect(retained?.cleanupCause).toBe(closeFailure);
+    expect(retained?.owner.handle).toBe(openedHandles[0]);
+    expect(() => fstatSync(openedHandles[0]?.fd ?? -1)).not.toThrow();
   });
 });

@@ -1,3 +1,4 @@
+import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { ElectronFusePort } from "../application/electron/ElectronFusePort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -157,10 +158,11 @@ const cleanupIncompleteFor = (
   const cleanup = cleanupErrorFor(cause);
   // Cancellation must not hide the failed cleanup: compose it as the primary
   // outcome while keeping the incomplete-cleanup report and descriptor owner.
-  if (signal?.aborted)
+  const cancellation = regularFileCancellation(cause);
+  if (cancellation !== undefined)
     return analysisErrorWithCleanupFailure(
       new AnalysisCancelledError(OPERATION, {
-        cause: signal.reason,
+        cause: cancellation.reason,
         ...(cause.outcome.kind === "completed"
           ? {
               partialObservation: fuseImagePartialEvidence(
@@ -175,7 +177,12 @@ const cleanupIncompleteFor = (
     );
   if (cause.outcome.kind === "failed")
     return analysisErrorWithCleanupFailure(
-      failureFor(cause.outcome.cause, path, signal),
+      failureFor(
+        cause.outcome.cause,
+        path,
+        // A late abort during close must not replace an earlier read failure.
+        cause.outcome.cause === signal?.reason ? signal : undefined,
+      ),
       cleanup,
       OPERATION,
     );
@@ -209,7 +216,13 @@ const failureFor = (
       path,
       signal,
     );
-  if (signal?.aborted) return new AnalysisCancelledError(OPERATION);
+  const cancellation = regularFileCancellation(cause);
+  if (cancellation !== undefined)
+    return new AnalysisCancelledError(OPERATION, {
+      cause: cancellation.reason,
+    });
+  if (signal?.aborted)
+    return new AnalysisCancelledError(OPERATION, { cause: signal.reason });
   if (cause instanceof ElectronFusePathFailure)
     return new AnalysisInputError(OPERATION, { cause }, [
       { path: ["path"], reason: cause.reason, message: cause.message },

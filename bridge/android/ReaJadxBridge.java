@@ -7,6 +7,7 @@ import jadx.api.plugins.input.data.ICodeReader;
 import jadx.api.plugins.input.data.IMethodRef;
 import jadx.api.plugins.input.insns.InsnIndexType;
 import jadx.api.plugins.input.insns.Opcode;
+import jadx.core.dex.info.AccessInfo;
 import jadx.core.dex.info.MethodInfo;
 import jadx.core.dex.nodes.*;
 import java.io.PrintStream;
@@ -24,6 +25,9 @@ import kotlinx.serialization.json.JsonObject;
 /** REA-owned metadata boundary for the unmodified jadx-headless-mcp 0.7.1 JAR. */
 class ReaJadxBridge {
   private static final Gson JSON = new Gson();
+  /** The engine's own text for a method without code; the CLI maps it to not_available. */
+  private static final String NO_DECOMPILED_BODY =
+      "// method exists but has no decompiled body (native/abstract)";
   private final SessionHolder holder;
   private JadxSession indexedSession;
   private Map<String, List<ClassSnapshot>> classes = Map.of();
@@ -140,6 +144,12 @@ class ReaJadxBridge {
 
   private JadxSession.SmartCode methodBody(JadxSession current, ClassSnapshot cls,
       MethodSnapshot selected, JavaMethod method) {
+    // Native and abstract methods have no code of their own. The engine's slice
+    // for one can run on into neighbouring members, so report the engine's
+    // no-body result directly instead of asking it for one.
+    AccessInfo access = method.getAccessFlags();
+    if (access.isNative() || access.isAbstract())
+      return new JadxSession.SmartCode(NO_DECOMPILED_BODY, "java", false, List.of());
     if (!selected.shortId().equals("<clinit>()V"))
       return current.getMethodBodySmart(method, current.getMaxSourceBytes(), true);
     // Java code generation can fold all or part of <clinit> into field declarations.

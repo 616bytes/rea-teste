@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { inspectJadxProvider } from "./android/JadxDoctor.js";
 import { inspectSystemGhidraProvider } from "./ghidra/GhidraDoctor.js";
 import { inspectIdaRegistration } from "./ida/IdaDoctor.js";
+import { inspectKunaProvider } from "./kuna/KunaDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { parseJebMcpEndpoint } from "./jeb/JebMcpEndpoint.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
@@ -15,6 +16,7 @@ import { ok } from "./domain/result.js";
 /** Compose provider diagnostics at the outer CLI adapter boundary. */
 export const createSystemDoctorHost = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  signal?: AbortSignal,
 ): DoctorHost => {
   const selectedJebEndpoint = environment.REA_JEB_MCP_URL;
   const selectedJebRegistrationEnvironment: Readonly<Record<string, string>> =
@@ -25,6 +27,7 @@ export const createSystemDoctorHost = (
       : {};
   return systemDoctorHost({
     environment,
+    ...(signal === undefined ? {} : { signal }),
     providerRegistrationEnvironment: () => selectedJebRegistrationEnvironment,
     resolveProviderRequestBudget: (
       analysisProvider,
@@ -41,10 +44,17 @@ export const createSystemDoctorHost = (
       // parser-owned error when IDA itself was explicitly selected.
       return analysisProvider === "ida" ? registration : ok(undefined);
     },
-    providerInspections: async () => [
-      await inspectSystemGhidraProvider(environment),
+    providerInspections: async (fileCloseResources, inspectionSignal) => [
+      await inspectSystemGhidraProvider(
+        environment,
+        fileCloseResources,
+        inspectionSignal,
+      ),
       inspectIdaRegistration(environment.REA_IDA_MCP_CONFIG),
       await inspectJadxProvider(environment),
+      await inspectKunaProvider(environment, process.platform, {
+        fileCloseResources,
+      }),
     ],
     linuxDemoRuntimeCheck: () => inspectLinuxPrivateDisplay(environment),
   });

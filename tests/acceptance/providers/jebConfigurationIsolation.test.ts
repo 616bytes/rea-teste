@@ -8,7 +8,8 @@ import { workspaceCliTest as test } from "../../support/cli/workspaceCliFixture.
 import type { TestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
 const isolatedEnvironment = (workspace: TestWorkspace) => ({
-  PATH: "",
+  // Linux process supervision requires the host's procps ps during discovery.
+  PATH: process.platform === "linux" ? (process.env.PATH ?? "") : "",
   HOME: workspace.home,
   USERPROFILE: workspace.home,
   APPDATA: workspace.path("appdata"),
@@ -35,7 +36,10 @@ test("keeps compiled CLI discovery usable while JEB rejects its malformed timeou
       arguments: [command, "--json"],
       environment,
     });
-    expect(result.exitCode, result.stderr).toBe(0);
+    expect(
+      result.exitCode,
+      `${command}: ${result.stdout}${result.stderr}`,
+    ).toBe(0);
     expect(result.json).toMatchObject({
       capabilities: expect.arrayContaining([
         expect.objectContaining({

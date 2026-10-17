@@ -18,7 +18,10 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import * as nativeLoader from "../windows/WindowsNativeLoader.js";
 import { WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON } from "../process/WindowsAuthority.js";
-import { fixtureDosLoadImage } from "./GhidraLoadImage.fixture.js";
+import {
+  fixtureDosLoadImage,
+  compareDosClientFixture,
+} from "./GhidraLoadImage.fixture.js";
 import { fixtureRawBinaryLoadImage } from "./GhidraRawBinaryLoadImage.fixture.js";
 import {
   nativeAotPeDigest,
@@ -32,6 +35,7 @@ import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { parseConfig } from "../config/parseConfig.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { parseExecutableHeader } from "../domain/binaryTarget.js";
+import { elf } from "../domain/binaryTarget.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import type { GhidraTargetSnapshot } from "./GhidraClient.js";
 import type { GhidraProviderClientFactory } from "./GhidraProviderClient.js";
@@ -268,6 +272,7 @@ describe("Ghidra provider", () => {
           target_format: "dos-mz",
           architecture: "x86",
           loader: "MzLoader",
+          load_image_evidence: "independent-mz-mapping-relocations-v2",
           language_id: "x86:LE:16:Real Mode",
           compiler_spec_id: "default",
           load_segment: "0x1000",
@@ -277,6 +282,37 @@ describe("Ghidra provider", () => {
     });
     const windows = provider(installationHost("win32"));
     expect(windows.inspectTargetSupport(target).status).toBe("unsupported");
+  });
+  it("admits parsed Hexagon ELF targets through Ghidra profile selection and declines them on Windows", async () => {
+    const parsed = parseExecutableHeader(elf(1, 1, 164), "x64");
+    if (!parsed.ok) throw new Error("Expected valid Hexagon ELF target");
+    const target: BinaryTarget = {
+      path: "/tmp/chre_pal.so",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      ...parsed.value,
+    };
+    const ghidra = provider();
+    expect(ghidra.inspectTargetSupport(target)).toMatchObject({
+      status: "supported",
+    });
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    expect(resolved.ok && resolved.value).toMatchObject({
+      profile: {
+        parameters: {
+          target_format: "elf",
+          architecture: "hexagon",
+          loader: "auto-from-header",
+          language_id: "auto-from-header",
+          compiler_spec_id: "auto-default",
+        },
+      },
+    });
+    const windows = provider(installationHost("win32"));
+    expect(windows.inspectTargetSupport(target)).toMatchObject({
+      status: "unsupported",
+      code: "target_format_unsupported",
+    });
   });
   it("re-observes the exact installation for each fresh task without launching Ghidra", async () => {
     let probeCount = 0;
@@ -1500,8 +1536,12 @@ describe("Ghidra measured DOS load-image projection", () => {
         ...(state === "missing-snapshot"
           ? {}
           : {
-              readTargetSnapshot: () =>
-                Promise.resolve(ok({ kind: "captured", bytes: fixture.bytes })),
+              attestDosTargetSnapshot: async (observations) =>
+                compareDosClientFixture(
+                  fixture.bytes,
+                  fixture.sha256,
+                  observations,
+                ),
             }),
       });
       const ghidra = provider(installationHost(), factory);

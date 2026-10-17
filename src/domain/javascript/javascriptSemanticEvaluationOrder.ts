@@ -187,6 +187,7 @@ export const semanticIterationCardinality = (
   prototypeMayAffectEnumeration: boolean | undefined,
 ): JavaScriptSemanticIterationCardinality => {
   const iterable = unwrapJavaScriptExpression(loop.right).node;
+  const literal = readExactJavaScriptLiteral(iterable);
   if (t.isForOfStatement(loop)) {
     if (prototypeMayAffectEnumeration !== false) return "unknown";
     if (t.isArrayExpression(iterable)) {
@@ -199,8 +200,8 @@ export const semanticIterationCardinality = (
         return "nonempty";
       return "unknown";
     }
-    if (t.isStringLiteral(iterable))
-      return iterable.value.length === 0 ? "empty" : "nonempty";
+    if (literal.found && typeof literal.value === "string")
+      return literal.value.length === 0 ? "empty" : "nonempty";
     return "unknown";
   }
   if (t.isObjectExpression(iterable)) {
@@ -225,10 +226,14 @@ export const semanticIterationCardinality = (
       return "unknown";
     return prototypeMayAffectEnumeration === false ? "empty" : "unknown";
   }
-  if (t.isNullLiteral(iterable)) return "empty";
-  if (t.isStringLiteral(iterable) && iterable.value.length > 0)
+  if (literal.found && literal.value === null) return "empty";
+  if (
+    literal.found &&
+    typeof literal.value === "string" &&
+    literal.value.length > 0
+  )
     return "nonempty";
-  if (readExactJavaScriptLiteral(iterable).found)
+  if (literal.found)
     return prototypeMayAffectEnumeration === false ? "empty" : "unknown";
   return "unknown";
 };

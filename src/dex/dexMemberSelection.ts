@@ -23,7 +23,11 @@ import {
   multidexIndex,
   multidexName,
 } from "./dexEntry.js";
-import { displayName, NamedMembers } from "./dexDisplayText.js";
+import {
+  displayName,
+  type MemberStorage,
+  NamedMembers,
+} from "./dexDisplayText.js";
 import { DEX_LIMITS } from "./DexFileRelease.js";
 
 const OPERATION = "inspect_dex_debug_metadata";
@@ -124,14 +128,14 @@ const listArchive = async (
   // ART (libziparchive) finds members by their raw central-directory name and
   // ignores the Info-ZIP Unicode Path field, so the stored name, not the
   // logical path, decides eligibility and is the member's reported identity.
-  const wanted = (stored: string, symlink: boolean): boolean => {
+  const wanted = (stored: string, storage: MemberStorage): boolean => {
     if (requested !== undefined)
       return normalizeArchiveMemberPath(stored) === requested;
     const index = multidexIndex(normalizeArchiveMemberPath(stored));
     if (index === null) return false;
-    // Named with its link status, so a note never advises selecting a member
-    // REA cannot read, whatever its spelling.
-    canonical.add(stored, symlink);
+    // Named with how it is stored, so a note never advises selecting a
+    // member entry would refuse, whatever its spelling.
+    canonical.add(stored, storage);
     // Only an exactly stored canonical name is auto-loaded, so a member
     // stored as `./classes.dex` is not (it stays selectable).
     if (multidexIndex(stored) === null) return false;
@@ -150,7 +154,8 @@ const listArchive = async (
       return false;
     }
     const symlink = member.kind === "symlink";
-    if ((member.kind !== "file" && !symlink) || !wanted(stored, symlink))
+    const storage = { symlink, encrypted: member.encrypted };
+    if ((member.kind !== "file" && !symlink) || !wanted(stored, storage))
       return false;
     // Every occurrence is counted for the report; two are enough to keep.
     const key = requested ?? stored;
@@ -158,7 +163,7 @@ const listArchive = async (
     occurrences.set(key, seen);
     let exact = false;
     if (requested !== undefined) {
-      spellings.add(stored, symlink);
+      spellings.add(stored, storage);
       if (stored === entry) {
         exactOccurrences += 1;
         exactSymlink ||= symlink;
@@ -230,15 +235,18 @@ const skippedMembersNote = (
     ...skipped.map((name) => canonical.display(name)),
     ...(more === 0 ? [] : [`${String(more)} more canonical DEX member(s)`]),
   ].join(", ");
-  // Advise entry only for members REA can read (unnamed ones may be either).
-  const readable =
-    skipped.filter((name) => !canonical.isSymlink(name)).length + more;
+  // Advise entry only for members it would select: stored once, as a file
+  // REA reads (unnamed ones may be either).
+  const selectable =
+    skipped.filter((name) => canonical.isSelectable(name)).length + more;
   const pick = (): string => {
-    if (readable === skipped.length + more)
-      return readable === 1 ? "it" : "one";
-    return readable === 1 && more === 0 ? "the readable one" : "a readable one";
+    if (selectable === skipped.length + more)
+      return selectable === 1 ? "it" : "one";
+    return selectable === 1 && more === 0
+      ? "the unmarked one"
+      : "an unmarked one";
   };
-  const advice = readable === 0 ? "" : ` Select ${pick()} with entry.`;
+  const advice = selectable === 0 ? "" : ` Select ${pick()} with entry.`;
   return `${path} also holds ${names}, which Android does not auto-load: it loads classes.dex, classes2.dex, ... only while each is present under its exact stored name.${advice}`;
 };
 

@@ -68,29 +68,53 @@ export const displayName = (name: string, quoted = false): string =>
 export const displayNote = (note: string): string =>
   shortened(note, DEX_LIMITS.noteDisplayChars, "note", (part) => part);
 
-/** Marks a named member REA does not read, so a note never advises selecting it. */
-const SYMLINK_MARK = " (symbolic-link mode; REA does not read it)";
-const SYMLINK_MARK_BYTES = utf8Bytes(SYMLINK_MARK);
+/** How a stored member is held, as far as `entry` would refuse it. */
+export interface MemberStorage {
+  /** Stored with a symbolic-link mode, which REA does not read. */
+  readonly symlink?: boolean;
+  /** Encrypted, which REA does not read. */
+  readonly encrypted?: boolean;
+}
 
 interface Named {
+  /** Occurrences under this name; every one is counted while it is kept. */
+  occurrences: number;
   /** Whether a member stored under this name has a symbolic-link mode. */
   symlink: boolean;
-  /** Occurrences seen while named, counted as unnamed if the name is dropped. */
-  occurrences: number;
+  /** Whether a member stored under this name is encrypted. */
+  encrypted: boolean;
 }
 
 /**
+ * Why `entry` refuses a named member, shown beside its name so a note never
+ * advises selecting it. A name stored more than once is refused as ambiguous
+ * before its storage is considered.
+ */
+const refusalMark = ({ occurrences, symlink, encrypted }: Named): string =>
+  occurrences > 1
+    ? ` (stored ${String(occurrences)} times; ambiguous)`
+    : symlink
+      ? " (symbolic-link mode; REA does not read it)"
+      : encrypted
+        ? " (encrypted; REA does not read it)"
+        : "";
+
+/**
  * Distinct names remembered for display, bounded by count and by the UTF-8
- * bytes of their display text (a symbolic-link mark included); every name not
- * kept is counted, so a note can say how many members it did not name. A name
- * already kept costs nothing, unless a later occurrence adds the mark; one
- * whose mark no longer fits is dropped and counted rather than shown unmarked.
+ * bytes of their display text (a refusal mark included); every name not kept
+ * is counted, so a note can say how many members it did not name. Names are
+ * admitted only until one is left out, so every occurrence of a kept name is
+ * counted against it and its mark is never shown short. A later occurrence
+ * that grows a kept name's mark past the budget drops the name, counting all
+ * its occurrences, rather than show it unmarked.
  */
 export class NamedMembers {
   readonly #names = new Map<string, Named>();
   readonly #quoted: boolean;
   #bytes = 0;
   #unnamed = 0;
+  /** Set once a name is left out; no name is admitted after it. */
+  #closed = false;
 
   constructor(quoted: boolean) {
     this.#quoted = quoted;
@@ -101,29 +125,40 @@ export class NamedMembers {
     return utf8Bytes(displayName(name, this.#quoted)) + 2;
   }
 
-  add(name: string, symlink = false): void {
+  add(
+    name: string,
+    { symlink = false, encrypted = false }: MemberStorage = {},
+  ): void {
     const kept = this.#names.get(name);
-    if (kept !== undefined) {
-      kept.occurrences += 1;
-      if (!symlink || kept.symlink) return;
-      if (this.#bytes + SYMLINK_MARK_BYTES <= DEX_LIMITS.namedMembersBytes) {
-        kept.symlink = true;
-        this.#bytes += SYMLINK_MARK_BYTES;
+    if (kept === undefined) {
+      const named = { occurrences: 1, symlink, encrypted };
+      const cost = this.#cost(name) + utf8Bytes(refusalMark(named));
+      if (
+        !this.#closed &&
+        this.#names.size < DEX_LIMITS.maxNamedCanonicalMembers &&
+        this.#bytes + cost <= DEX_LIMITS.namedMembersBytes
+      ) {
+        this.#names.set(name, named);
+        this.#bytes += cost;
       } else {
-        this.#names.delete(name);
-        this.#bytes -= this.#cost(name);
-        this.#unnamed += kept.occurrences;
+        this.#closed = true;
+        this.#unnamed += 1;
       }
       return;
     }
-    const cost = this.#cost(name) + (symlink ? SYMLINK_MARK_BYTES : 0);
-    if (
-      this.#names.size < DEX_LIMITS.maxNamedCanonicalMembers &&
-      this.#bytes + cost <= DEX_LIMITS.namedMembersBytes
-    ) {
-      this.#names.set(name, { symlink, occurrences: 1 });
-      this.#bytes += cost;
-    } else this.#unnamed += 1;
+    const before = utf8Bytes(refusalMark(kept));
+    kept.occurrences += 1;
+    kept.symlink ||= symlink;
+    kept.encrypted ||= encrypted;
+    const grown = utf8Bytes(refusalMark(kept)) - before;
+    if (this.#bytes + grown <= DEX_LIMITS.namedMembersBytes) {
+      this.#bytes += grown;
+      return;
+    }
+    this.#names.delete(name);
+    this.#bytes -= this.#cost(name) + before;
+    this.#unnamed += kept.occurrences;
+    this.#closed = true;
   }
 
   /** The kept names, in first-seen order. */
@@ -136,13 +171,18 @@ export class NamedMembers {
     return this.#unnamed;
   }
 
-  /** Whether a kept name is stored (at least once) with a symbolic-link mode. */
-  isSymlink(name: string): boolean {
-    return this.#names.get(name)?.symlink === true;
+  /**
+   * Whether `entry` could select the one member under a kept name: stored
+   * once, as a file REA reads.
+   */
+  isSelectable(name: string): boolean {
+    const named = this.#names.get(name);
+    return named !== undefined && refusalMark(named) === "";
   }
 
-  /** A kept name as prose shows it, marked when REA does not read it. */
+  /** A kept name as prose shows it, marked when `entry` would refuse it. */
   display(name: string): string {
-    return `${displayName(name, this.#quoted)}${this.isSymlink(name) ? SYMLINK_MARK : ""}`;
+    const named = this.#names.get(name);
+    return `${displayName(name, this.#quoted)}${named === undefined ? "" : refusalMark(named)}`;
   }
 }

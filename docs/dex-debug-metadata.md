@@ -123,10 +123,14 @@ Limits and refusals a caller can meet:
   differing Unicode Path name, directory attributes on a file) is carried into
   `limitations`, each note shortened past 1,024 UTF-16 code units and all within
   8 KiB; further notes are counted. Canonical members Android would not load
-  are named in `limitations` and on any selection refusal. Named members and
-  spellings stop at 128 names or 4 KiB and the rest are counted as members; a
-  name (or caller `class_descriptor`) longer than 160 UTF-16 code units is
-  shortened in that prose by its two ends, with a marker counting characters,
+  are named in `limitations` and on any selection refusal. A named member
+  `entry` would refuse is marked: a name stored more than once ("stored N
+  times; ambiguous"), a symbolic-link member, or an encrypted one ("encrypted;
+  REA does not read it"); the note advises `entry` only while a member it
+  would select remains. Named members and spellings stop at 128 names or
+  4 KiB, marks included, and the rest are counted as members; a name (or
+  caller `class_descriptor`) longer than 160 UTF-16 code units is shortened
+  in that prose by its two ends, with a marker counting characters,
   while the reported `entry` stays the exact stored name and the lookup uses
   the caller's value whole. An `entry` that is empty once its leading `./`
   segments are removed is refused as invalid. More than 64 auto-loaded members
@@ -159,9 +163,9 @@ Limits and refusals a caller can meet:
   does not read it: such a member inside the auto-loaded run refuses the
   summary, and selecting it with `entry` is refused, each as unavailable rather
   than absent. A link member Android skips is named with a
-  "symbolic-link mode; REA does not read it" mark, and the note advises
-  `entry` only for members REA can read. A name stored both as a link and as a
-  file is ambiguous, refused alike with or without `entry`.
+  "symbolic-link mode; REA does not read it" mark and is never advised for
+  `entry`. A name stored both as a link and as a file is ambiguous, refused
+  alike with or without `entry`.
 - **Budgets.** Decoding work is proportional to each member's size; the result
   and its repeated `limitations` (the copy the Evidence carries beside it) are
   bounded to 8 MiB, projected before the report is built; the rest of the

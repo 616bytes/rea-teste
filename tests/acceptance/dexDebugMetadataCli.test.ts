@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 
 import { toolContract } from "../../src/contracts/toolContracts.js";
+import { DEX_LIMITS } from "../../src/dex/DexFileRelease.js";
 import {
   debuggableDex,
   SYMLINK_ATTRIBUTES,
@@ -318,7 +319,102 @@ cliTest(
     expect(mixed).toContain(
       `also holds classes3.dex ${mark}, classes4.dex, which`,
     );
-    expect(mixed).toContain("Select the readable one with entry.");
+    expect(mixed).toContain("Select the unmarked one with entry.");
+  },
+);
+
+cliTest(
+  "marks skipped members entry would refuse as ambiguous or encrypted and advises only selectable ones",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-dex-refused-note-");
+    let count = 0;
+    const archive = async (
+      members: Parameters<typeof zipArchive>[0],
+    ): Promise<string> => {
+      count += 1;
+      const apk = join(root, `${String(count)}.apk`);
+      await writeFile(apk, await zipArchive(members));
+      return apk;
+    };
+    const noteOf = async (apk: string): Promise<string> => {
+      const summary = await inspect(cli, apk);
+      expect(summary.exitCode, summary.stdout).toBe(0);
+      return evidenceOf(summary.json).normalized_result.limitations.join(" ");
+    };
+    const base = { name: "classes.dex", bytes: debuggableDex() };
+    const twice = [
+      { name: "classes3.dex", bytes: debuggableDex() },
+      { name: "classes3.dex", bytes: debuggableDex(5) },
+    ];
+    const duplicated = await archive([base, ...twice]);
+    const ambiguous = await noteOf(duplicated);
+    expect(ambiguous).toContain(
+      "also holds classes3.dex (stored 2 times; ambiguous), which",
+    );
+    expect(ambiguous).not.toContain("with entry");
+    const refusedAmbiguous = await inspect(cli, duplicated, "classes3.dex");
+    expect(refusedAmbiguous.json).toMatchObject({ code: "invalid_request" });
+
+    const locked = await archive([
+      base,
+      { name: "classes3.dex", bytes: debuggableDex(), password: "secret" },
+    ]);
+    const encrypted = await noteOf(locked);
+    expect(encrypted).toContain(
+      "also holds classes3.dex (encrypted; REA does not read it), which",
+    );
+    expect(encrypted).not.toContain("with entry");
+    const refusedEncrypted = await inspect(cli, locked, "classes3.dex");
+    expect(refusedEncrypted.json).toMatchObject({ code: "unsupported_target" });
+
+    const mixed = await noteOf(
+      await archive([
+        base,
+        ...twice,
+        { name: "classes4.dex", bytes: debuggableDex() },
+      ]),
+    );
+    expect(mixed).toContain(
+      "also holds classes3.dex (stored 2 times; ambiguous), classes4.dex, which",
+    );
+    expect(mixed).toContain("Select the unmarked one with entry.");
+
+    // Fill the name budget to within 10 bytes, ending with `last`, then store
+    // `last` again as a link and as a file: its mark no longer fits, so it is
+    // counted, never shown again unmarked as if selectable.
+    const longName = (index: number, prefixes: number): string =>
+      `${"./".repeat(prefixes)}classes${String(index)}.dex`;
+    const fillers: string[] = [];
+    let room = DEX_LIMITS.namedMembersBytes - ("classes.dex".length + 2);
+    for (let index = 10; room > 172; index += 1) {
+      fillers.push(longName(index, 70));
+      room -= fillers.at(-1)!.length + 2;
+    }
+    // classesNN.dex is 13 characters; the rest is whole `./` prefixes.
+    const last = longName(
+      fillers.length + 10,
+      Math.floor((room - 2 - 10 - 13) / 2),
+    );
+    const left = room - (last.length + 2);
+    // Less than the shortest mark, " (stored 2 times; ambiguous)".
+    expect(left).toBeGreaterThanOrEqual(0);
+    expect(left).toBeLessThan(28);
+    expect(last.length).toBeLessThanOrEqual(DEX_LIMITS.nameDisplayChars);
+    const crowded = await noteOf(
+      await archive([
+        base,
+        ...fillers.map((name) => ({ name, bytes: debuggableDex() })),
+        { name: last, bytes: debuggableDex() },
+        {
+          name: last,
+          bytes: debuggableDex(),
+          externalFileAttributes: SYMLINK_ATTRIBUTES,
+        },
+        { name: last, bytes: debuggableDex() },
+      ]),
+    );
+    expect(crowded).toContain(`${fillers.at(-1)!}, 3 more canonical DEX`);
+    expect(crowded).not.toContain(last);
   },
 );
 

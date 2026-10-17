@@ -1,4 +1,4 @@
-import { open, readFile } from "node:fs/promises";
+import { open, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
@@ -11,6 +11,11 @@ const state = vi.hoisted(() => ({
   removeCopiedRecovery: false,
   initialCleanupFailure: undefined as unknown,
   readbackCleanupFailure: undefined as unknown,
+  rollbackCleanupFailure: undefined as unknown,
+  readbackAttempted: false,
+  beforeReadbackFailure: undefined as
+    | undefined
+    | ((path: string) => Promise<void>),
 }));
 
 afterEach(() => {
@@ -20,6 +25,9 @@ afterEach(() => {
   state.removeCopiedRecovery = false;
   state.initialCleanupFailure = undefined;
   state.readbackCleanupFailure = undefined;
+  state.rollbackCleanupFailure = undefined;
+  state.readbackAttempted = false;
+  state.beforeReadbackFailure = undefined;
 });
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -83,11 +91,21 @@ vi.mock("../../src/application/RegularFileRead.js", async (importOriginal) => {
     ) =>
       state.initialCleanupFailure !== undefined
         ? Promise.reject(state.initialCleanupFailure)
-        : state.readbackFailed && state.readbackCleanupFailure !== undefined
-          ? Promise.reject(state.readbackCleanupFailure)
-          : state.readbackFailed
-            ? Promise.reject(new Error("injected readback failure"))
-            : original.readRegularFileText(...arguments_),
+        : original.readRegularFileText(...arguments_),
+    readRegularFileTextSnapshot: async (
+      ...arguments_: Parameters<typeof original.readRegularFileTextSnapshot>
+    ) => {
+      if (state.readbackFailed && !state.readbackAttempted) {
+        state.readbackAttempted = true;
+        await state.beforeReadbackFailure?.(arguments_[0]);
+        throw (
+          state.readbackCleanupFailure ?? new Error("injected readback failure")
+        );
+      }
+      if (state.readbackFailed && state.rollbackCleanupFailure !== undefined)
+        throw state.rollbackCleanupFailure;
+      return original.readRegularFileTextSnapshot(...arguments_);
+    },
   };
 });
 
@@ -322,4 +340,79 @@ it("retains readback cleanup ownership when rollback also fails", async () => {
   });
   expect(cleanupOwnerError.owner).toBe(owner);
   expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
+});
+
+it.each([false, true])(
+  "preserves a concurrent update before rollback (existing file: %s)",
+  async (existing) => {
+    const root = await createTestTempDirectory("rea-config-rollback-conflict-");
+    const path = join(root, "client.json");
+    const original = '{"keep":"original"}\n';
+    const changed = '{"keep":"external"}\n';
+    if (existing) await writeFile(path, original);
+    state.beforeReadbackFailure = (target) => writeFile(target, changed);
+
+    const result = await configureClientConfiguration({
+      name: "cursor",
+      configPath: path,
+      format: "json",
+    });
+
+    expect(result).toMatchObject({ status: "failed", reason: "conflict" });
+    expect(await readFile(path, "utf8")).toBe(changed);
+    if (existing)
+      expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
+  },
+);
+
+it("retains both readback and rollback read owners until host cleanup can release them", async () => {
+  const root = await createTestTempDirectory("rea-config-two-read-owners-");
+  const path = join(root, "client.json");
+  const original = '{"keep":"original"}\n';
+  await writeFile(path, original);
+  const primary = await ownReadHandle(path);
+  const secondary = await ownReadHandle(path);
+  const primaryClose = vi
+    .spyOn(primary.handle, "close")
+    .mockRejectedValue(new Error("primary close held"));
+  const secondaryClose = vi
+    .spyOn(secondary.handle, "close")
+    .mockRejectedValue(new Error("secondary close held"));
+  state.readbackCleanupFailure = new RegularFileCleanupFailure(
+    path,
+    primary,
+    { kind: "failed", cause: new Error("readback unavailable") },
+    new Error("primary close held"),
+  );
+  state.rollbackCleanupFailure = new RegularFileCleanupFailure(
+    path,
+    secondary,
+    { kind: "failed", cause: new Error("rollback read unavailable") },
+    new Error("secondary close held"),
+  );
+  const host = systemSetupHost(
+    { platform: "linux", homeDirectory: root } as DoctorHost,
+    { HOME: root },
+  );
+  try {
+    await expect(
+      host.configureClient(
+        { name: "cursor", configPath: path, format: "json" },
+        {},
+        ["rea", "mcp"],
+      ),
+    ).rejects.toMatchObject({
+      cause: {
+        owner: primary,
+        rollbackCleanupFailure: { owner: secondary },
+      },
+    });
+    expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
+  } finally {
+    primaryClose.mockRestore();
+    secondaryClose.mockRestore();
+    expect(await host.close?.()).toBeUndefined();
+  }
+  expect(primary.handle.fd).toBe(-1);
+  expect(secondary.handle.fd).toBe(-1);
 });

@@ -404,6 +404,15 @@ const runClientConfigurationOperation = async <Value>(
         return await operation();
       } catch (cause: unknown) {
         if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
+        if (
+          cause instanceof ClientConfigurationCleanupRollbackFailure &&
+          cause.rollbackCleanupFailure !== undefined
+        )
+          resources.retain({
+            kind: "file-handle",
+            handle: cause.rollbackCleanupFailure.owner,
+            resource: cause.rollbackCleanupFailure.path,
+          });
         const cleanup = await retryRegularFileCleanup(cause, resources);
         const primary =
           cleanup.outcome.kind === "failed"

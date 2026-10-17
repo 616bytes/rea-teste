@@ -1,0 +1,219 @@
+import {
+  lstat,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { join } from "node:path";
+import { afterEach, expect, it, vi } from "vitest";
+
+const writers = vi.hoisted(() => ({
+  before: undefined as undefined | ((path: string) => Promise<void>),
+  after: undefined as undefined | ((path: string) => Promise<void>),
+}));
+
+vi.mock("write-file-atomic", async (importOriginal) => {
+  const actual = await importOriginal<{
+    default: typeof import("write-file-atomic");
+  }>();
+  return {
+    ...actual,
+    default: async (...args: Parameters<typeof actual.default>) => {
+      await writers.before?.(args[0]);
+      await actual.default(...args);
+      await writers.after?.(args[0]);
+    },
+  };
+});
+
+import { configureClientConfiguration } from "../../src/application/SetupClientConfiguration.js";
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+
+afterEach(() => {
+  writers.before = undefined;
+  writers.after = undefined;
+});
+
+it("preserves an unrelated concurrent edit when a matching recovery backup already exists", async () => {
+  const root = await createTestTempDirectory("rea-config-conflict-");
+  const path = join(root, "config.json");
+  const original = '{"theme":"dark"}\n';
+  const changed =
+    '{"theme":"light","mcpServers":{"other":{"command":"other"}}}\n';
+  await writeFile(path, original);
+  await writeFile(`${path}.rea.backup`, original);
+  writers.before = (target) => writeFile(target, changed);
+
+  const result = await configureClientConfiguration({
+    name: "cursor",
+    configPath: path,
+    format: "json",
+  });
+
+  expect(result).toMatchObject({ status: "failed", reason: "conflict" });
+  expect(await readFile(path, "utf8")).toBe(changed);
+  expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
+  expect(await readdir(root)).toEqual([
+    "config.json",
+    "config.json.rea.backup",
+  ]);
+  writers.before = undefined;
+  const retry = await configureClientConfiguration({
+    name: "cursor",
+    configPath: path,
+    format: "json",
+  });
+  expect(retry.status).toBe("configured");
+  if (retry.status !== "configured" || retry.backupPath === undefined)
+    throw new Error("Retry did not preserve its current recovery snapshot");
+  expect(await readFile(retry.backupPath, "utf8")).toBe(changed);
+  expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
+    theme: "light",
+    mcpServers: { other: { command: "other" } },
+  });
+  expect(
+    await configureClientConfiguration({
+      name: "cursor",
+      configPath: path,
+      format: "json",
+    }),
+  ).toEqual({ status: "unchanged" });
+});
+
+it("does not overwrite a file created by another writer during first-run setup", async () => {
+  const root = await createTestTempDirectory("rea-config-first-run-conflict-");
+  const path = join(root, "config.json");
+  const changed = '{"theme":"light"}\n';
+  writers.before = (target) => writeFile(target, changed);
+
+  expect(
+    await configureClientConfiguration({
+      name: "cursor",
+      configPath: path,
+      format: "json",
+    }),
+  ).toMatchObject({ status: "failed", reason: "conflict" });
+  expect(await readFile(path, "utf8")).toBe(changed);
+  expect(await readdir(root)).toEqual(["config.json"]);
+});
+
+it("does not recreate a configuration deleted during setup", async () => {
+  const root = await createTestTempDirectory("rea-config-deleted-");
+  const path = join(root, "config.json");
+  await writeFile(path, "{}\n");
+  writers.before = (target) => rm(target);
+
+  expect(
+    await configureClientConfiguration({
+      name: "cursor",
+      configPath: path,
+      format: "json",
+    }),
+  ).toMatchObject({ status: "failed", reason: "conflict" });
+  await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("preserves an external edit made after the atomic write without rolling it back", async () => {
+  const root = await createTestTempDirectory("rea-config-after-write-");
+  const path = join(root, "config.json");
+  const changed = '{"theme":"external"}\n';
+  await writeFile(path, "{}\n");
+  writers.after = (target) => writeFile(target, changed);
+
+  expect(
+    await configureClientConfiguration({
+      name: "cursor",
+      configPath: path,
+      format: "json",
+    }),
+  ).toMatchObject({ status: "failed", reason: "conflict" });
+  expect(await readFile(path, "utf8")).toBe(changed);
+});
+
+it("does not adopt another writer's replacement merely because its bytes match", async () => {
+  const root = await createTestTempDirectory("rea-config-replaced-");
+  const path = join(root, "config.json");
+  const replacement = join(root, "replacement.json");
+  let replacementInode: number | undefined;
+  writers.after = async (target) => {
+    await writeFile(replacement, await readFile(target));
+    replacementInode = (await lstat(replacement)).ino;
+    await rename(replacement, target);
+  };
+
+  expect(
+    await configureClientConfiguration({
+      name: "cursor",
+      configPath: path,
+      format: "json",
+    }),
+  ).toMatchObject({ status: "failed", reason: "conflict" });
+  expect((await lstat(path)).ino).toBe(replacementInode);
+});
+
+it("detects a replacement of the original file even when its contents are identical", async () => {
+  const root = await createTestTempDirectory("rea-config-original-replaced-");
+  const path = join(root, "config.json");
+  const replacement = join(root, "replacement.json");
+  await writeFile(path, "{}\n");
+  let replacementInode: number | undefined;
+  writers.before = async (target) => {
+    await writeFile(replacement, await readFile(target));
+    replacementInode = (await lstat(replacement)).ino;
+    await rename(replacement, target);
+  };
+  expect(
+    await configureClientConfiguration({
+      name: "cursor",
+      configPath: path,
+      format: "json",
+    }),
+  ).toMatchObject({ status: "failed", reason: "conflict" });
+  expect((await lstat(path)).ino).toBe(replacementInode);
+  expect(await readFile(path, "utf8")).toBe("{}\n");
+});
+
+it.skipIf(process.platform === "win32")(
+  "does not follow a retargeted configuration symlink",
+  async () => {
+    const root = await createTestTempDirectory("rea-config-retargeted-");
+    const path = join(root, "config.json");
+    const first = join(root, "first.json");
+    const second = join(root, "second.json");
+    await writeFile(first, "{}\n");
+    await writeFile(second, '{"external":true}\n');
+    await symlink(first, path);
+    writers.before = async () => {
+      await rm(path);
+      await symlink(second, path);
+    };
+
+    expect(
+      await configureClientConfiguration({
+        name: "cursor",
+        configPath: path,
+        format: "json",
+      }),
+    ).toMatchObject({ status: "failed", reason: "conflict" });
+    expect(await readFile(first, "utf8")).toBe("{}\n");
+    expect(await readFile(second, "utf8")).toBe('{"external":true}\n');
+  },
+);
+
+it("merges concurrent setup requests from the latest file instead of racing stale snapshots", async () => {
+  const root = await createTestTempDirectory("rea-config-queued-");
+  const path = join(root, "config.json");
+  const client = { name: "cursor", configPath: path, format: "json" } as const;
+  const results = await Promise.all([
+    configureClientConfiguration(client, { FIRST: "1" }),
+    configureClientConfiguration(client, { SECOND: "2" }),
+  ]);
+
+  expect(results.every((result) => result.status === "configured")).toBe(true);
+  expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
+    mcpServers: { rea: { env: { FIRST: "1", SECOND: "2" } } },
+  });
+});

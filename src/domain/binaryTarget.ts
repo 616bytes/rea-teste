@@ -38,6 +38,11 @@ export type ExecutableMetadata =
       readonly powerpc: PowerPcElfMetadata;
     }
   | {
+      readonly format: "elf";
+      readonly architecture: "hexagon";
+      readonly availableArchitectures: readonly "hexagon"[];
+    }
+  | {
       readonly format: "mach-o" | "elf" | "dos-mz" | "dos-com";
       readonly architecture: HeaderArchitecture;
       readonly availableArchitectures: readonly HeaderArchitecture[];
@@ -243,6 +248,12 @@ const parseElf = (
           riscv: metadata,
         });
   }
+  if (architecture === "hexagon")
+    return ok({
+      format: "elf",
+      architecture,
+      availableArchitectures: [architecture],
+    });
   return ok({
     format: "elf",
     architecture,

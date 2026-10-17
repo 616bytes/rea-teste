@@ -106,12 +106,13 @@ export const resolveHopperAnalysisProfile = async (
 
 /** Ghidra owns these lanes; Hopper names the family it declines rather than guessing. */
 const HOPPER_DECLINED_ARCHITECTURE_LABELS: Record<
-  ElfMetadataArchitecture,
+  ElfMetadataArchitecture | "hexagon",
   string
 > = {
   mips: "MIPS",
   riscv: "RISC-V",
   powerpc: "PowerPC",
+  hexagon: "Hexagon",
 };
 
 /** Derive Hopper's complete non-interactive CLI loader selection. */
@@ -128,7 +129,7 @@ export const hopperLoaderArgsForTarget = (
   if (target.format === "raw-binary")
     return err(new ProviderAdapterError("hopper", "resolve_analysis_profile"));
   const architecture = target.architecture;
-  if (isElfMetadataArchitecture(architecture))
+  if (isElfMetadataArchitecture(architecture) || architecture === "hexagon")
     return err(
       new AnalysisCapabilityUnavailableError(
         "hopper",

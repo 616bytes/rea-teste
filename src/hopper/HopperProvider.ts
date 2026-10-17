@@ -129,7 +129,10 @@ export class HopperProvider implements AnalysisProviderCandidate {
         reason: null,
         diagnostics,
       };
-    if (isElfMetadataArchitecture(target.architecture))
+    if (
+      isElfMetadataArchitecture(target.architecture) ||
+      target.architecture === "hexagon"
+    )
       return {
         status: "unsupported",
         code: "architecture_unsupported",
@@ -138,7 +141,9 @@ export class HopperProvider implements AnalysisProviderCandidate {
             ? "MIPS"
             : target.architecture === "riscv"
               ? "RISC-V"
-              : "PowerPC"
+              : target.architecture === "powerpc"
+                ? "PowerPC"
+                : "Hexagon"
         } targets.`,
         diagnostics,
       };

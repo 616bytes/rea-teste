@@ -2,6 +2,7 @@
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · **Français** · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
 · [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md)
+
 # REA : rétro-ingénierie de tout
 
 ### Un seul MCP pour la rétro-ingénierie des binaires, des applications et du comportement à l'exécution.
@@ -148,6 +149,7 @@ REA nécessite Node.js 22.x (>=22.19), 24.x (>=24.11) ou 26+, ainsi que npm. Les
 | Artefact WASM                | Validation, sections, formes WAT exactes d'import/export et WAT décodé                                      | WABT 1.0.42 fourni par l'utilisateur ; `inspect_wasm_artifact`                                                                    |
 | Bytecode EVM                 | Sélecteurs de dispatch, offsets en octets, arguments inférés et mutabilité                                  | Fichier local brut ou hexadécimal sous Linux x64 ; [guide EVM hors ligne](../evm-bytecode.md)                                     |
 | Rust binaries                | Embedded cargo-auditable dependency list                                                                    | [Rust binaries](../rust-binaries.md)                                                                                              |
+| Erlang BEAM                  | IFF chunks, atoms, exports, and tables                                                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                 |
 | Crashs Linux enregistrés     | Notes brutes, registres et signaux de chaque thread enregistré, et correspondances de mappings facultatives | pwntools fourni par l'utilisateur sous Linux x64 ; GDB/pwndbg en option ; [crashs enregistrés](../recorded-crashes.md)            |
 | JavaScript / Electron        | Modules, imports, source maps, routes, IPC et relations avec les modules natifs                             | Node.js et npm ; [analyse d'applications](../javascript-application-workflows.md)                                                 |
 | Sites web                    | Structure des pages, scripts, observations réseau et captures d'écran demandées                             | Un navigateur de la famille Chrome ; [analyse du navigateur](../browser-observation.md)                                           |

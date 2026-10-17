@@ -43,6 +43,8 @@ export type CliOutputArgumentValidation =
 interface ParsedCliOutputArguments {
   readonly filterOutput: string | undefined;
   readonly format: string;
+  /** Whether --json or --format selected the format, which disables Incur's human TTY mode. */
+  readonly formatExplicit: boolean;
   readonly fullOutput: boolean;
   /** First valued output flag that Incur skips because it has no value. */
   readonly missingValue: string | undefined;
@@ -58,6 +60,7 @@ export const parseCliOutputArguments = (
   arguments_: readonly string[],
 ): ParsedCliOutputArguments => {
   let format: string = "toon";
+  let formatExplicit = false;
   let filterOutput: string | undefined;
   let fullOutput = false;
   let missingValue: string | undefined;
@@ -67,6 +70,7 @@ export const parseCliOutputArguments = (
   const parsed = (parseError: boolean): ParsedCliOutputArguments => ({
     filterOutput,
     format,
+    formatExplicit,
     fullOutput,
     missingValue,
     parseError,
@@ -82,6 +86,7 @@ export const parseCliOutputArguments = (
     // normalizeCliOutputArguments has produced. Mirror those effective values.
     if (argument === "--json") {
       format = "json";
+      formatExplicit = true;
       continue;
     }
     if (argument === "--format") {
@@ -91,6 +96,7 @@ export const parseCliOutputArguments = (
         // output controls. Let it report that malformed flag itself.
         if (!INCUR_OUTPUT_FORMATS.has(value)) return parsed(true);
         format = value;
+        formatExplicit = true;
         index += 1;
       } else missingValue ??= argument;
       continue;

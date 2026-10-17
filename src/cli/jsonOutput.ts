@@ -22,7 +22,7 @@ export const writeJsonOutput = async (
     await writeOutputText(destination, part);
 };
 
-const isTerminal = (destination: Writable): boolean =>
+export const isTerminal = (destination: Writable): boolean =>
   "isTTY" in destination && destination.isTTY === true;
 
 export const writeOutputText = (

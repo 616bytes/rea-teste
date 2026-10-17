@@ -1,6 +1,6 @@
 <div align="center">
 
-[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · **Tiếng Việt** · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · [Ελληνικά](README_el.md) · [Shqip](README_sq.md)
+[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · **Tiếng Việt** · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Shqip](README_sq.md)
 
 # REA: Kỹ thuật dịch ngược cho mọi thứ
 
@@ -271,7 +271,7 @@ Báo cáo lỗ hổng theo [SECURITY.md](../../SECURITY.md).
 
 ## Lịch sử sao
 
-🎉 **250.000 sao trên GitHub — xin cảm ơn!**
+🎉 **300.000 sao trên GitHub — xin cảm ơn!**
 
 Cảm ơn mọi người đã sử dụng REA, báo lỗi, đề xuất tính năng, kiểm thử bản dựng và đóng góp bản sửa lỗi.
 

@@ -9,7 +9,6 @@ import { firmwareResultSchemas } from "../../../src/domain/firmware/firmwareAnal
 import { FirmwareAnalysisService } from "../../../src/application/firmware/FirmwareAnalysisService.js";
 import { FirmwareProvider } from "../../../src/firmware/FirmwareProvider.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { ToolResultDelivery } from "../../../src/server/toolResult.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
@@ -197,10 +196,30 @@ it("retains a setup-failed publication tree for provider cleanup retry", async (
       ok: false,
       error: {
         cleanupIncomplete: true,
+        cleanupResources: expect.arrayContaining([fixture.output]),
+      },
+    });
+    if (result.ok) throw new Error("Expected retained setup-failure cleanup");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
         diagnostics: {
-          previous_error: expect.stringContaining(
-            "injected post-acquisition setup failure",
-          ),
+          primary_error: {
+            details: {
+              diagnostics: {
+                reason: "injected post-acquisition setup failure",
+              },
+            },
+          },
+          cleanup_error: {
+            code: "cleanup_incomplete",
+            details: {
+              diagnostics: {
+                previous_error: "injected post-acquisition setup failure",
+                reason: "injected first cleanup failure",
+              },
+            },
+          },
         },
       },
     });
@@ -266,10 +285,20 @@ it("retains the complete firmware result when published output cleanup stays unc
       },
     });
     if (result.ok) throw new Error("Expected unresolved descriptor cleanup");
-    expect(result.error).toBeInstanceOf(ProviderCleanupError);
+    expect(result.error.cleanupResources).toContain(fixture.output);
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "cleanup_incomplete",
       details: {
+        diagnostics: {
+          primary_error: { details: { operation: "extract_firmware" } },
+          cleanup_error: {
+            code: "cleanup_incomplete",
+            details: {
+              operation: "extract_firmware",
+              resources: expect.arrayContaining([fixture.output]),
+            },
+          },
+        },
         partial_observation: {
           kind: "firmware",
           result: { output_directory: fixture.output },

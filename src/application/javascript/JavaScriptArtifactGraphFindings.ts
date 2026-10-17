@@ -29,7 +29,10 @@ import {
   resolveArtifactPathByContext,
   type ArtifactPathResolution,
 } from "./JavaScriptArtifactPathResolution.js";
-import { moduleResolutionModeForJavaScriptReference } from "../../domain/javascript/javascriptModuleResolutionMode.js";
+import {
+  moduleResolutionModeForJavaScriptReference,
+  isJsonModuleTarget,
+} from "../../domain/javascript/javascriptModuleResolutionMode.js";
 
 type StaticReference = JavaScriptStaticAnalysis["references"][number];
 type StaticEndpoint = JavaScriptStaticAnalysis["endpoints"][number];
@@ -79,7 +82,9 @@ export function* addJavaScriptStaticFindingsSteps(
   }
   yield* propagateApplicationOwners(context, omissions.imports);
   for (const [container, gaps] of context.applicationModuleGapSources) {
-    const possible = new Set<string>();
+    const possible =
+      context.applicationPossibleRootsByContainer.get(container) ??
+      new Set<string>();
     for (const gap of gaps) {
       yield;
       for (const root of context.applicationRootsBySource.get(gap) ?? [])
@@ -607,8 +612,8 @@ const resolveReference = (
         : context.unanalyzedFiles?.get(resolution.candidate_path)?.kind;
     // Inventory kinds are case-folded; the loader's extension dispatch is not.
     const targetIsJson =
-      resolution.candidate_path?.endsWith(".json") === true &&
-      (targetKind === "json" || targetKind === "package-json");
+      resolution.candidate_path !== undefined &&
+      isJsonModuleTarget(resolution.candidate_path, targetKind);
     return source === undefined
       ? null
       : {

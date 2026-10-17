@@ -1,4 +1,5 @@
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
+import { isJsonModuleTarget } from "../../domain/javascript/javascriptModuleResolutionMode.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import { htmlInlineScriptLimitation } from "./JavaScriptArtifactAnalysis.js";
 import {
@@ -18,6 +19,7 @@ import type { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGra
 import {
   addArtifactContainsEdge,
   applicationManifestPath,
+  applicationContainerIdentity,
   addApplicationRootCandidate,
   dependencyManifest,
   addUnavailableStaticParseScope,
@@ -525,6 +527,11 @@ export const addJavaScriptPackageNodes = (
       const defaultEntry = context.filesByPath.get(defaultPath);
       if (defaultEntry?.container_sha256 === file.container_sha256)
         registerPackageEntrypointOwner(context, file, defaultPath);
+      else if (
+        context.unanalyzedFiles?.get(defaultPath)?.container_sha256 ===
+        file.container_sha256
+      )
+        registerPossiblePackageOwner(context, file);
     }
     addPackageRole(context, {
       packageNode: node,
@@ -645,6 +652,15 @@ const addPackageRole = (
       input.packageFile,
       resolution.resolved_path,
     );
+  else if (
+    resolution.resolution_status === "unavailable" &&
+    resolution.candidate_path !== undefined &&
+    !isJsonModuleTarget(
+      resolution.candidate_path,
+      context.unanalyzedFiles?.get(resolution.candidate_path)?.kind,
+    )
+  )
+    registerPossiblePackageOwner(context, input.packageFile);
   const role = createElectronRoleNode(context, {
     kind: input.kind,
     anchor: input.packageFile,
@@ -688,11 +704,23 @@ const registerPackageEntrypointOwner = (
 ): void => {
   const roots =
     context.applicationRootsBySource.get(sourcePath) ?? new Set<string>();
-  addApplicationRootCandidate(
-    roots,
-    packageFile.path.slice(0, -"package.json".length).replace(/\/$/u, ""),
-  );
+  addApplicationRootCandidate(roots, packageRoot(packageFile));
   context.applicationRootsBySource.set(sourcePath, roots);
+};
+
+const packageRoot = (file: JavaScriptArtifactFile): string =>
+  file.path.slice(0, -"package.json".length).replace(/\/$/u, "");
+
+const registerPossiblePackageOwner = (
+  context: JavaScriptArtifactGraphContext,
+  file: JavaScriptArtifactFile,
+): void => {
+  const container = applicationContainerIdentity(context.fileSet, file);
+  const roots =
+    context.applicationPossibleRootsByContainer.get(container) ??
+    new Set<string>();
+  addApplicationRootCandidate(roots, packageRoot(file));
+  context.applicationPossibleRootsByContainer.set(container, roots);
 };
 
 const containerProperties = (container: JavaScriptArtifactContainer) => ({

@@ -95,29 +95,51 @@ it.each([
   "unavailable-json",
   "unavailable-package-json",
   "unavailable-uppercase-json",
+  "unavailable-main",
+  "unavailable-default-main",
+  "unavailable-json-main",
 ] as const)(
   "distinguishes hidden imports from inert unavailable data through %s",
   async (omission) => {
     const root = await createTestTempDirectory("rea-competing-gap-");
     const targetPath =
-      omission === "unavailable-json"
-        ? "b/config.json"
-        : omission === "unavailable-package-json"
-          ? "b/node_modules/pkg/package.json"
-          : omission === "unavailable-uppercase-json"
-            ? "shared/bridge.JSON"
-            : "shared/bridge.cjs";
+      omission === "unavailable-default-main"
+        ? "b/index.js"
+        : omission === "unavailable-json-main"
+          ? "b/config.json"
+          : omission === "unavailable-main"
+            ? "b/main.cjs"
+            : omission === "unavailable-json"
+              ? "b/config.json"
+              : omission === "unavailable-package-json"
+                ? "b/node_modules/pkg/package.json"
+                : omission === "unavailable-uppercase-json"
+                  ? "shared/bridge.JSON"
+                  : "shared/bridge.cjs";
     const inertJson =
       omission === "unavailable-json" ||
-      omission === "unavailable-package-json";
+      omission === "unavailable-package-json" ||
+      omission === "unavailable-json-main";
     await writeFixtureFiles(root, {
       "a/package.json": JSON.stringify({ main: "main.cjs" }),
-      "b/package.json": JSON.stringify({ main: "main.cjs" }),
+      "b/package.json": JSON.stringify(
+        omission === "unavailable-default-main"
+          ? {}
+          : {
+              main:
+                omission === "unavailable-json-main"
+                  ? "config.json"
+                  : "main.cjs",
+            },
+      ),
+      "b/index.js": 'require("../shared/window.cjs");',
       "a/main.cjs": 'require("../shared/window.cjs");',
       "b/main.cjs":
-        omission === "dynamic"
-          ? "require(process.env.CHILD);"
-          : `require(${JSON.stringify(targetPath.startsWith("b/") ? `./${targetPath.slice(2)}` : `../${targetPath}`)});`,
+        omission === "unavailable-main"
+          ? 'require("../shared/window.cjs");'
+          : omission === "dynamic"
+            ? "require(process.env.CHILD);"
+            : `require(${JSON.stringify(targetPath.startsWith("b/") ? `./${targetPath.slice(2)}` : `../${targetPath}`)});`,
       "b/config.json": "{}",
       "b/node_modules/pkg/package.json": "{}",
       "shared/bridge.JSON": 'require("./window.cjs");',

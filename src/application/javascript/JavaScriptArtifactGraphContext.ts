@@ -413,7 +413,11 @@ export const createElectronRoleNode = (
   input: RoleNodeInput,
 ): ApplicationNode => {
   const target =
-    input.resolution.resolved_path ?? input.resolution.declared_path;
+    input.resolution.resolved_path ??
+    (input.resolution.runtime_path_base_proven === true
+      ? input.resolution.candidate_path
+      : undefined) ??
+    input.resolution.declared_path;
   // Raw application-relative declarations keep their source occurrence even
   // when identical source bytes appear under separate application prefixes.
   const identityPath =

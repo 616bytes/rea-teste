@@ -82,7 +82,7 @@ it.each([
 );
 
 describe("cross-version source module identity", () => {
-  it("keeps a source module unchanged when only a sibling file changes", async () => {
+  it("preserves source-module identity when changed siblings leave relationships unresolved", async () => {
     const root = await createTestTempDirectory("rea-source-module-sibling-");
     const versions = await Promise.all(
       ["left", "right"].map(async (name) => {
@@ -97,6 +97,8 @@ describe("cross-version source module identity", () => {
     const [left, right] = versions;
     if (left === undefined || right === undefined)
       throw new Error("Missing JavaScript application version");
+    expect(left.graph.coverage.status).toBe("complete");
+    expect(right.graph.coverage.status).toBe("complete");
     const leftModule = findSourceModule(left.graph, "main.js");
     const rightModule = findSourceModule(right.graph, "main.js");
     if (leftModule === undefined || rightModule === undefined)
@@ -134,7 +136,11 @@ describe("cross-version source module identity", () => {
         ({ left_node_id }) => left_node_id === leftModule.node_id,
       ),
     ).toMatchObject({
-      status: "unchanged",
+      status: "unknown",
+      dimensions: [],
+      limitations: [
+        "Relationship target identity remains unresolved; equal node kinds do not establish cross-version alignment.",
+      ],
       right_node_id: rightModule.node_id,
       match: {
         status: "matched",

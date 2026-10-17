@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { expect } from "vitest";
+
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -74,4 +75,5 @@ for (const scenario of [
       expect(parseToml(remaining)).toEqual(parseToml(original));
       expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
     },
+  );
   );

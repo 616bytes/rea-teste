@@ -1,4 +1,10 @@
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  ArtifactFileCleanupFailure,
+  assertArtifactReadActive,
+  bindArtifactFileCleanup,
+  artifactFileCancellationCause,
+} from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -17,6 +23,7 @@ import {
 import {
   goBinarySchema,
   type GoBinary,
+  type GoModuleMetadata,
   type InspectGoBinaryInput,
 } from "../domain/go/goBinary.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -39,19 +46,16 @@ const OPERATION = "inspect_go_binary";
 const INPUT_BYTES = 256 * 1024 * 1024;
 const OUTPUT_BYTES = 8 * 1024 * 1024;
 
-const failureForPrimary = (
-  cause: unknown,
-  path: string,
-  signal?: AbortSignal,
-): AnalysisError => {
+const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
     return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
       cause,
     });
   if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    return new AnalysisCancelledError(OPERATION, { cause });
-  if (signal?.aborted) return new AnalysisCancelledError(OPERATION, { cause });
+    return new AnalysisCancelledError(OPERATION, {
+      cause: artifactFileCancellationCause(cause),
+    });
   if (cause instanceof GoBinaryResourceFailure)
     return new AnalysisResourceConstraintError(
       OPERATION,
@@ -118,7 +122,13 @@ const failureFor = (
   path: string,
   signal?: AbortSignal,
 ): AnalysisError => {
-  const primary = failureForPrimary(cause, path, signal);
+  const primary =
+    cause instanceof ArtifactFileCleanupFailure &&
+    cause.fileCleanupFailure.outcome.kind === "failed"
+      ? failureForPrimary(cause.fileCleanupFailure.outcome.cause, path)
+      : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
+        ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
+        : failureForPrimary(cause, path);
   if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
     return primary;
   const cleanup = new ProviderCleanupError(
@@ -127,7 +137,9 @@ const failureFor = (
     { reason: cause.cleanup.reason },
     { operation: OPERATION, cause },
   );
-  return analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
+  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
+  bindArtifactFileCleanup(cause, error);
+  return error;
 };
 
 const outputLimit = (path: string) =>
@@ -138,13 +150,59 @@ const outputLimit = (path: string) =>
     { maximum_output_bytes: OUTPUT_BYTES },
   );
 
+/** Fixed reader boundaries plus unknowns left by the observed metadata. */
+const limitationsFor = (
+  info: { go_version: string | null; module_text: string | null } | null,
+  module: GoModuleMetadata | null,
+): string[] => [
+  "Embedded build metadata is observed file content, not proof of compiler identity, dependency authenticity or runtime behavior.",
+  "Only Go build information is inspected; function names, source mappings, type metadata and decompiled code are not recovered.",
+  "Resource guards bound stable artifact reads and cumulative header searches to 256 MiB each, aggregate embedded strings to 1 MiB, structural table decoding to 16 MiB and complete metadata payloads to 8 MiB; these are not operating-system memory or CPU limits.",
+  ...(info !== null && (info.go_version === null || info.module_text === null)
+    ? [
+        "Some embedded Go strings contain non-UTF8 bytes; undecodable text is null and exact source bytes are preserved as base64.",
+      ]
+    : []),
+  ...(info === null
+    ? [
+        "No recognized Go build-info record was found in the inspected image; absent metadata does not establish that the binary is not Go.",
+      ]
+    : []),
+  ...(module !== null && module.main === null
+    ? [
+        "Dependency coverage is unknown because no main-module record was decoded from the embedded module information, as in GOPATH-mode builds. Decoded dependency records remain visible; an empty list does not establish the absence of dependencies.",
+      ]
+    : []),
+  ...(module?.complete === false
+    ? [
+        "Some embedded module-text records could not be parsed completely; their original lines are preserved and additional metadata remains unknown.",
+      ]
+    : []),
+];
+
 /** Stable in-process metadata inspection without subprocesses, temporary files or Go installation. */
 export class GoBinaryProvider implements GoBinaryPort {
   readonly identity = GO_BINARY_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
-  close(): Promise<void> {
-    return this.#resources.close();
+  async close(): Promise<void> {
+    try {
+      await this.#resources.close();
+    } catch (cause: unknown) {
+      if (
+        !(cause instanceof ArtifactReaderFailure) ||
+        cause.cleanup === undefined
+      )
+        throw cause;
+      const error = new ProviderCleanupError(
+        GO_BINARY_PROVIDER_IDENTITY.id,
+        cause.cleanup.resources,
+        { reason: cause.cleanup.reason },
+        { cause, operation: OPERATION },
+      );
+      bindArtifactFileCleanup(cause, error);
+      throw error;
+    }
   }
 
   /** Read complete compiler/module metadata while preserving original byte identity and source ranges. */
@@ -153,77 +211,57 @@ export class GoBinaryProvider implements GoBinaryPort {
     options?: ExecutionOptions,
   ): Promise<Result<GoBinary, AnalysisError>> {
     try {
-      const snapshot = await this.#resources.run(() =>
-        readStableArtifact(
+      return await this.#resources.run(async () => {
+        const snapshot = await readStableArtifact(
           input.path,
           INPUT_BYTES,
           options?.signal,
           undefined,
           this.#resources,
-        ),
-      );
-      options?.signal?.throwIfAborted();
-      const image = readGoBinaryImage(snapshot.bytes);
-      const info = image.build_info;
-      if (
-        info !== null &&
-        ((info.module_text !== null &&
-          Buffer.byteLength(info.module_text) > OUTPUT_BYTES) ||
-          Buffer.byteLength(info.module_bytes_base64) > OUTPUT_BYTES)
-      )
-        throw outputLimit(input.path);
-      const module =
-        info === null
-          ? null
-          : info.module_text === null
-            ? parseGoModuleBytes(
-                Buffer.from(info.module_bytes_base64, "base64").subarray(
-                  16,
-                  -16,
-                ),
-              )
-            : parseGoModuleText(info.module_text);
-      const report = {
-        ...image,
-        artifact: {
-          path: input.path,
-          sha256: snapshot.sha256,
-          bytes: snapshot.bytes.length,
-        },
-        build_info: info === null ? null : { ...info, module },
-        limitations: [
-          "Embedded build metadata is observed file content, not proof of compiler identity, dependency authenticity or runtime behavior.",
-          "Only Go build information is inspected; function names, source mappings, type metadata and decompiled code are not recovered.",
-          "Resource guards bound stable artifact reads and cumulative header searches to 256 MiB each, aggregate embedded strings to 1 MiB, structural table decoding to 16 MiB and complete metadata payloads to 8 MiB; these are not operating-system memory or CPU limits.",
-          ...(info !== null &&
-          (info.go_version === null || info.module_text === null)
-            ? [
-                "Some embedded Go strings contain non-UTF8 bytes; undecodable text is null and exact source bytes are preserved as base64.",
-              ]
-            : []),
-          ...(info === null
-            ? [
-                "No recognized Go build-info record was found in the inspected image; absent metadata does not establish that the binary is not Go.",
-              ]
-            : []),
-          ...(module?.complete === false
-            ? [
-                "Some embedded module-text records could not be parsed completely; their original lines are preserved and additional metadata remains unknown.",
-              ]
-            : []),
-        ],
-      };
-      if (Buffer.byteLength(JSON.stringify(report), "utf8") > OUTPUT_BYTES)
-        throw outputLimit(input.path);
-      const parsed = goBinarySchema.safeParse(report);
-      if (!parsed.success)
-        throw new AnalysisOutputError(
-          OPERATION,
-          "Go reader produced invalid source ranges or report values.",
-          { cause: parsed.error },
         );
-      options?.signal?.throwIfAborted();
-      return ok(parsed.data);
+        assertArtifactReadActive(options?.signal);
+        const image = readGoBinaryImage(snapshot.bytes);
+        const info = image.build_info;
+        if (
+          info !== null &&
+          ((info.module_text !== null &&
+            Buffer.byteLength(info.module_text) > OUTPUT_BYTES) ||
+            Buffer.byteLength(info.module_bytes_base64) > OUTPUT_BYTES)
+        )
+          throw outputLimit(input.path);
+        const module =
+          info === null
+            ? null
+            : info.module_text === null
+              ? parseGoModuleBytes(
+                  Buffer.from(info.module_bytes_base64, "base64").subarray(
+                    16,
+                    -16,
+                  ),
+                )
+              : parseGoModuleText(info.module_text);
+        const report = {
+          ...image,
+          artifact: {
+            path: input.path,
+            sha256: snapshot.sha256,
+            bytes: snapshot.bytes.length,
+          },
+          build_info: info === null ? null : { ...info, module },
+          limitations: limitationsFor(info, module),
+        };
+        if (Buffer.byteLength(JSON.stringify(report), "utf8") > OUTPUT_BYTES)
+          throw outputLimit(input.path);
+        const parsed = goBinarySchema.safeParse(report);
+        if (!parsed.success)
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Go reader produced invalid source ranges or report values.",
+            { cause: parsed.error },
+          );
+        assertArtifactReadActive(options?.signal);
+        return ok(parsed.data);
+      });
     } catch (cause: unknown) {
       return err(failureFor(cause, input.path, options?.signal));
     }

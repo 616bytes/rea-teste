@@ -150,6 +150,54 @@ describe("stringified structured tool arguments", () => {
     expect(calls[0]).toEqual({ path: "[]" });
   });
 
+  it("recovers structured arguments on application-validated registrations", async () => {
+    const { client, calls } = await connect((server, record) => {
+      server.registerTool(
+        "inspect_capture_ordinals",
+        {
+          inputSchema: applicationValidatedInputSchema(
+            z.object({ record_ordinals: z.array(z.number()) }),
+          ),
+        },
+        (input: unknown) => {
+          record(input);
+          return { content: [] };
+        },
+      );
+    });
+
+    await client.callTool({
+      name: "inspect_capture_ordinals",
+      arguments: { record_ordinals: "[0]" },
+    });
+
+    expect(calls[0]).toEqual({ record_ordinals: [0] });
+  });
+
+  it("keeps application-owned failures on the caller's original arguments", async () => {
+    const { client, calls } = await connect((server, record) => {
+      server.registerTool(
+        "inspect_capture_ordinals",
+        {
+          inputSchema: applicationValidatedInputSchema(
+            z.object({ record_ordinals: z.array(z.number()) }),
+          ),
+        },
+        (input: unknown) => {
+          record(input);
+          return { content: [] };
+        },
+      );
+    });
+
+    await client.callTool({
+      name: "inspect_capture_ordinals",
+      arguments: { record_ordinals: '{"0":0}' },
+    });
+
+    expect(calls[0]).toEqual({ record_ordinals: '{"0":0}' });
+  });
+
   it("still rejects structured text that is not JSON", async () => {
     const example = toolContract("capture_browser_scenario").examples[0].input;
     const { client } = await connect((server, record) =>

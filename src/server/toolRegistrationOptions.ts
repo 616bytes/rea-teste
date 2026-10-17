@@ -8,13 +8,28 @@ import {
 /** Preserve advertised contracts while the application owns structured input failures. */
 export const applicationValidatedInputSchema = (
   schema: StandardSchemaWithJSON,
-): StandardSchemaWithJSON => ({
-  "~standard": {
-    ...schema["~standard"],
-    vendor: "rea-application",
-    validate: (value: unknown) => ({ value }),
-  },
-});
+): StandardSchemaWithJSON => {
+  const standard = schema["~standard"];
+  return {
+    "~standard": {
+      ...standard,
+      vendor: "rea-application",
+      // The canonical parser only chooses between the caller's bag and its
+      // JSON-text recovery, and only client-supplied bags are returned, so
+      // application-owned parsing stays in the handler.
+      validate: async (value: unknown) => {
+        const recoveredArguments = recoveredArgumentBag(value);
+        if (recoveredArguments !== undefined) {
+          const recoveredResult = await standard.validate(recoveredArguments);
+          if (!("issues" in recoveredResult))
+            return { value: recoveredArguments };
+          if ("issues" in (await standard.validate(value))) return { value };
+        }
+        return { value };
+      },
+    },
+  };
+};
 
 /** Parse structured argument text a client serialized instead of sending as JSON. */
 const structuredArgumentText = (supplied: unknown): unknown => {
@@ -31,6 +46,25 @@ const structuredArgumentText = (supplied: unknown): unknown => {
 };
 
 /**
+ * Merge JSON-text structured arguments into the supplied bag; undefined when
+ * nothing needs recovery so callers keep the caller's exact bag.
+ */
+const recoveredArgumentBag = (
+  value: unknown,
+): Record<string, unknown> | undefined => {
+  if (typeof value !== "object" || value === null) return undefined;
+  const suppliedArguments = value as Record<string, unknown>;
+  const recovered = new Map<string, unknown>();
+  for (const [argument, supplied] of Object.entries(suppliedArguments)) {
+    const parsed = structuredArgumentText(supplied);
+    if (parsed !== supplied) recovered.set(argument, parsed);
+  }
+  return recovered.size === 0
+    ? undefined
+    : { ...suppliedArguments, ...Object.fromEntries(recovered) };
+};
+
+/**
  * Recover structured arguments a client delivered as JSON text before the
  * canonical parser runs. Claude Desktop serializes array and object arguments
  * to strings (morluto/rea#3408), so every structured parameter of every tool
@@ -39,8 +73,9 @@ const structuredArgumentText = (supplied: unknown): unknown => {
  * validation failure, and native JSON values are untouched. Recovery applies
  * to the argument bag as a whole, so a call that mixes recovered structured
  * arguments with JSON text a string parameter accepts keeps its rejection.
- * Application-owned validators are excluded: they always accept, so recovery
- * could replace a JSON-looking string the handler would have accepted.
+ * Application-owned validators recover through their own wrapper
+ * (applicationValidatedInputSchema), which uses the same helper and keeps
+ * failures in the handler.
  */
 export const acceptStringifiedStructuredArguments = (
   schema: StandardSchemaWithJSON,
@@ -53,22 +88,11 @@ export const acceptStringifiedStructuredArguments = (
     "~standard": {
       ...standard,
       validate: async (value: unknown) => {
-        if (typeof value !== "object" || value === null)
-          return standard.validate(value);
-        const suppliedArguments = value as Record<string, unknown>;
-        const recovered = new Map<string, unknown>();
-        for (const [argument, supplied] of Object.entries(suppliedArguments)) {
-          const parsed = structuredArgumentText(supplied);
-          if (parsed !== supplied) recovered.set(argument, parsed);
-        }
-        if (recovered.size === 0) return standard.validate(value);
-        const recoveredArguments = {
-          ...suppliedArguments,
-          ...Object.fromEntries(recovered),
-        };
+        const recoveredArguments = recoveredArgumentBag(value);
+        if (recoveredArguments === undefined) return standard.validate(value);
         const parsedResult = await standard.validate(recoveredArguments);
         if (!("issues" in parsedResult)) return parsedResult;
-        const unchangedResult = await standard.validate(suppliedArguments);
+        const unchangedResult = await standard.validate(value);
         if (!("issues" in unchangedResult)) return unchangedResult;
         return parsedResult;
       },

@@ -16,6 +16,8 @@ it.each([
   "Object.defineProperty(box,'owner',{value:1});",
   "Reflect.defineProperty(box,'owner',{value:1});",
   "Object.defineProperties(box,{owner:{value:1}});",
+  "Object.defineProperty(box,'owner',{writable:true});",
+  "Object.prototype.value=module; Object.defineProperty(box,'owner',{value:1});",
 ])("keeps module-free values written to local properties: %s", (write) => {
   expect(
     analyzeJavaScriptSemantics(`const box={}; ${write}
@@ -29,6 +31,14 @@ it.each([
 it.each([
   "const value={owner:module}; box.owner=value;",
   "const value={}; box.owner=value; value.owner=module;",
+  "const holder={child:{}}; box.owner=holder.child; holder.child.owner=module;",
+  "const holder={child:{}}; const saved=holder.child; box.owner=saved; holder.child.owner=module;",
+  "const holder={child:{}}; Object.assign(box,{owner:holder.child}); holder.child.owner=module;",
+  "const holder={child:{}}; Object.defineProperty(box,'owner',{value:holder.child}); holder.child.owner=module;",
+  "Object.prototype.value=module; Object.defineProperty(box,'owner',{writable:true});",
+  "Object.prototype.value=module; Reflect.defineProperty(box,'owner',{writable:true});",
+  "Object.prototype.value=module; Object.defineProperties(box,{owner:{writable:true}});",
+  "const prototype=Object.prototype; prototype.value=module; Object.defineProperty(box,'owner',{writable:true});",
   "box.child={owner:module};",
   "box.owner=box; box.child=module;",
   "box.owner ||= module;",
@@ -125,6 +135,8 @@ it.each([
   "const box={owner:{}}; box.other=module; Object.assign({},box.owner); require('fs').readFileSync('kept');",
   "const box={owner:{}}; Object.assign({},box.owner); require('fs').readFileSync('kept'); box.owner=module;",
   "const box={owner:{}}; const saved=box.owner; box.owner=module; Object.assign({},saved); require('fs').readFileSync('kept');",
+  "const holder={child:{}}; const box={}; box.owner=holder.child; holder.child=module; Object.assign({},box.owner); require('fs').readFileSync('kept');",
+  "const holder={child:{}}; const box={}; box.owner=holder.child; Object.assign({},box.owner); require('fs').readFileSync('kept'); holder.child.owner=module;",
 ])("keeps written local exposure scoped to the read: %s", (body) => {
   expect(
     analyzeJavaScriptSemantics(`Object.assign=(target,value)=>{value.require=replacement};

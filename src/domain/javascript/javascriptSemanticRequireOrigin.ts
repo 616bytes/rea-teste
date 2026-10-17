@@ -458,6 +458,27 @@ const writesModuleRequire = (
       )
     )
       return undefined;
+    // ToPropertyDescriptor also reads inherited fields. An omitted value is
+    // only module-free while its prototype lookup remains unmodified; own
+    // fields shadow that lookup, and plainObject already excludes accessors.
+    for (const field of [
+      "value",
+      "writable",
+      "enumerable",
+      "configurable",
+      "get",
+      "set",
+    ])
+      if (
+        !data.properties.some(
+          (property) =>
+            t.isObjectProperty(property) &&
+            semanticStaticPropertyKey(property.key, property.computed) ===
+              field,
+        ) &&
+        state.ambientWrites.covers(["global", "Object", "prototype", field])
+      )
+        return undefined;
     return [{ node: data, path: ["value"] }];
   };
   const exposesModule = (nodes: readonly t.Node[], call: t.Node): boolean => {
@@ -513,14 +534,19 @@ const writesModuleRequire = (
           })
         )
           continue;
-        // A saved object remains shared; a saved property value retains its
-        // earlier capture. Such timing-dependent proofs cannot be reused at
+        // A saved object's contents remain shared through this call; replacing
+        // its selected parent slot is checked at the earlier capture instead.
+        // Such timing-dependent proofs cannot be reused at
         // another alias use merely because they reached the same initializer.
         timeDependent = true;
         if (
           effect.node !== call &&
           effect.node !== state.parentsByNode.get(readAt) &&
-          semanticEffectTiming(readAt, effect.node, state) !== "after"
+          semanticEffectTiming(
+            effect.path.length > path.length ? call : readAt,
+            effect.node,
+            state,
+          ) !== "after"
         ) {
           const key = effect.path.at(-1);
           const values =

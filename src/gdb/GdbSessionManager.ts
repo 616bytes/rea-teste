@@ -1316,14 +1316,16 @@ export class GdbSessionManager {
               );
             if (groupCount > 0 && !session.inferiorTtyVerified)
               return err(
-                new AnalysisInputError("close_gdb_session", undefined, [
+                new AnalysisCapabilityUnavailableError(
+                  "gdb",
+                  "close_gdb_session",
+                  "a live GDB inferior remains and no verified durable inferior TTY is configured",
                   {
-                    path: ["session_id"],
-                    reason: "invalid_value",
-                    message:
+                    retryable: true,
+                    userMessage:
                       "Live GDB thread groups remain and no verified durable inferior TTY is configured. Select a safe disposition through the GDB console or restart with inferior_tty before closing.",
                   },
-                ]),
+                ),
               );
             if (groupCount === 0) {
               session.noInferiorVerified = true;

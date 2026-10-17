@@ -8,6 +8,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, expect, it } from "vitest";
 
 import { AnalysisTimeoutError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   commandMayChangeInferiorOutput,
   gdbErrorMessage,
@@ -1765,10 +1766,24 @@ it("refuses to close a session while GDB reports a live target", async () => {
   const closed = await manager.close(started.value.session_id);
 
   expect(closed.ok).toBe(false);
-  if (!closed.ok)
-    expect(JSON.stringify(closed.error)).toContain(
-      "Live GDB thread groups remain",
-    );
+  if (closed.ok) return;
+  // A live inferior without a verified durable TTY is a lifecycle precondition,
+  // not a rejected session_id: the session stays ready and a retry succeeds
+  // after a disposition, so it must not project as caller input.
+  expect(closed.error).toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+    operation: "close_gdb_session",
+  });
+  expect(manager.status(started.value.session_id)?.state).toBe("ready");
+  const projected = projectAnalysisError(closed.error);
+  expect(projected.category).toBe("unavailable");
+  expect(projected.category).not.toBe("invalid_input");
+  expect(projected).toMatchObject({
+    code: "capability_unavailable",
+    retryable: true,
+  });
+  expect(projected.message).toContain("Live GDB thread groups remain");
+  expect(projected.remediation.action).not.toContain("arguments");
 });
 
 it.each([

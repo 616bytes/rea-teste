@@ -115,6 +115,11 @@ const HOPPER_DECLINED_ARCHITECTURE_LABELS: Record<
   hexagon: "Hexagon",
 };
 
+export const hopperDeclinedArchitectureReason = (
+  architecture: ElfMetadataArchitecture | "hexagon",
+): string =>
+  `REA's Hopper adapter does not admit ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} targets. Select a verified Ghidra ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} profile instead.`;
+
 /** Derive Hopper's complete non-interactive CLI loader selection. */
 export const hopperLoaderArgsForTarget = (
   target: BinaryTarget,
@@ -134,7 +139,7 @@ export const hopperLoaderArgsForTarget = (
       new AnalysisCapabilityUnavailableError(
         "hopper",
         "resolve_analysis_profile",
-        `REA's Hopper adapter does not admit ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} targets. Select a verified Ghidra ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} profile instead.`,
+        hopperDeclinedArchitectureReason(architecture),
       ),
     );
   const flag = hopperArchitectureFlag(architecture);

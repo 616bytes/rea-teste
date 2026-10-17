@@ -47,6 +47,10 @@ describe("PlaywrightElectronActiveProvider cleanup retry", () => {
     expect(result.error.diagnostics?.cleanup_error).toBeDefined();
     expect(result.error.cleanupResources).toContain("/fake/app/package.json");
     expect(result.error.cause).toBeInstanceOf(AggregateError);
+
+    const cleanupError = (result.error.cause as AggregateError).errors[1];
+    cleanupError.resolveCleanup();
+    expect(result.error.cleanupIncomplete).toBe(false);
   });
 
   it("finishAnalysisCommand combines close failure with primary result for CLI", async () => {

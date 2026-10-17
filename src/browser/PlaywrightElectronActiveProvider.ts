@@ -515,7 +515,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
             outcome.error,
             cleanupError,
             OPERATION,
-          ),
+          ).bindCleanupDependencies([outcome.error, cleanupError]),
         );
       }
     }

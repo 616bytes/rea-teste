@@ -113,7 +113,8 @@ export const ghidraRiscvProfileParameters = (
         ? {
             has_interpreter: true,
             load_model: "pie",
-            load_base: target.riscv.elfClass === 32 ? "0x10000" : "0x100000",
+            expected_default_image_base:
+              target.riscv.elfClass === 32 ? "0x10000" : "0x100000",
           }
         : {}),
     },

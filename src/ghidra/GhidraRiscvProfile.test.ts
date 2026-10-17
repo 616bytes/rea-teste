@@ -192,7 +192,7 @@ describe("bounded Ghidra RISC-V admission: position-independent executables", ()
       tso_declared: false,
       has_interpreter: true,
       load_model: "pie",
-      load_base: "0x100000",
+      expected_default_image_base: "0x100000",
     });
     expect(wide.value.profile?.parameters.riscv_support_lane).toBe(
       "elf64-pie-le-double-float-generic-v1",
@@ -211,7 +211,7 @@ describe("bounded Ghidra RISC-V admission: position-independent executables", ()
       tso_declared: false,
       has_interpreter: true,
       load_model: "pie",
-      load_base: "0x10000",
+      expected_default_image_base: "0x10000",
     });
   });
 });

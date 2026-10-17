@@ -72,9 +72,9 @@ The lane identity is `elf32-exec-le-double-float-generic-v1` or
 (PIE). `riscv_elf` retains `elf_class`, `byte_order`, `type`, and the raw `flags`
 alongside the read-only booleans `float_abi_double`, `rvc_declared`,
 `rve_declared`, and `tso_declared`. For PIE images, `riscv_elf` also records
-`has_interpreter: true`, `load_model: "pie"`, and the load base Ghidra
-applied (`load_base: "0x10000"` for RV32, `"0x100000"` for RV64). Those fields
-report declarations the header makes; none of them is evidence of the original
+`has_interpreter: true`, `load_model: "pie"`, and the expected default image
+base (`expected_default_image_base: "0x10000"` for RV32, `"0x100000"` for RV64).
+Those fields report declarations the header makes; none of them is evidence of the original
 compiler, of instruction conformance, or of a floating-point calling convention
 beyond the ABI the pinned language models.
 

@@ -44,10 +44,14 @@ export async function buildRiscvFixture(directory, bits, { pie = false } = {}) {
   const linkerVersion = await execute(linker, ["--version"], options);
   const readerVersion = await execute(reader, ["--version"], options);
   await execute(compiler, args, { ...options, timeout: 60000 });
-  const { stdout, stderr } = await execute(reader, ["-h", "-s", "-W", path], {
-    ...options,
-    env: { ...process.env, LC_ALL: "C" },
-  });
+  const { stdout, stderr } = await execute(
+    reader,
+    ["-h", "-l", "-s", "-W", path],
+    {
+      ...options,
+      env: { ...process.env, LC_ALL: "C" },
+    },
+  );
   assert.equal(stderr.trim(), "", "Unexpected ELF reader diagnostics");
   const field = (expression, label) => {
     const matches = [...stdout.matchAll(expression)];
@@ -60,6 +64,19 @@ export async function buildRiscvFixture(directory, bits, { pie = false } = {}) {
     field(/^\s*Type:\s*(.+)$/gmu, "type"),
     pie ? /^DYN\b/u : /^EXEC\b/u,
   );
+  if (pie) {
+    assert.match(
+      stdout,
+      /^\s*INTERP\b/mu,
+      "Expected PT_INTERP program header in PIE fixture",
+    );
+  } else {
+    assert.doesNotMatch(
+      stdout,
+      /^\s*INTERP\b/mu,
+      "Unexpected PT_INTERP program header in static ET_EXEC fixture",
+    );
+  }
   assert.match(field(/^\s*Machine:\s*(.+)$/gmu, "machine"), /^RISC-V\b/u);
   const flags = Number(field(/^\s*Flags:\s*(0x[\da-f]+).*$/gmu, "flags"));
   assert.equal(flags, 5, "Compiler did not declare RVC and double-float ABI");

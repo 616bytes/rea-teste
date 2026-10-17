@@ -118,7 +118,11 @@ function. A hook-maintained registry, not the mutable raw-listener metadata,
 owns the callback identity, so application mutation of `.listener` cannot
 defeat removal; when mutated metadata breaks the application's own native
 match, the hook completes removal by wrapper identity without rewriting public
-metadata. Application accessors installed as entry metadata stay
+metadata. Completion is scoped to the removal it translates: the raw-listener
+slot observed before the translated call must still hold that wrapper and no
+observer may have re-registered it meanwhile, so one removal request removes
+exactly one registration and a deliberately restored wrapper survives.
+Application accessors installed as entry metadata stay
 untranslated: they execute during the application's own native removal
 exactly as for a bare entry, preserving plain EventEmitter parity for
 throwing accessors. This is listener

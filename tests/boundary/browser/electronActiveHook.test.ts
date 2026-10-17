@@ -2083,6 +2083,168 @@ it("completes observed ipcMain listener removal across decorators and metadata s
   });
 });
 
+it("removes one registration per removal request for duplicated ipcMain listeners with mutated metadata", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-removal-duplicate-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "removal-duplicate.cjs");
+  await writeFile(
+    script,
+    `const { EventEmitter } = require("node:events");
+const { ipcMain } = require("electron");
+// The same callback registered twice; the LAST raw entry's metadata is
+// mutated. One removal request must remove exactly one registration, even
+// when a decorator rejects later requests.
+const rejection = (emitter) => {
+  const listener = () => {};
+  const nativeRemove = emitter.removeListener;
+  const seen = [];
+  let count = 0;
+  let failure = null;
+  emitter.on("removeListener", () => {});
+  emitter.on("ch", listener);
+  emitter.on("ch", listener);
+  emitter.rawListeners("ch")[1].listener = () => {};
+  emitter.removeListener = function (channel, candidate) {
+    if (channel === "ch") {
+      count += 1;
+      seen.push(candidate === listener);
+      if (count > 1) throw new Error("second removal rejected");
+    }
+    return Reflect.apply(nativeRemove, this, arguments);
+  };
+  try { emitter.removeAllListeners("ch"); } catch (cause) { failure = cause.message; }
+  emitter.removeListener = nativeRemove;
+  return { seen, remaining: emitter.listenerCount("ch"), failure };
+};
+const forwarding = (emitter) => {
+  const listener = () => {};
+  const nativeRemove = emitter.removeListener;
+  const seen = [];
+  emitter.on("removeListener", () => {});
+  emitter.on("second", listener);
+  emitter.on("second", listener);
+  emitter.rawListeners("second")[1].listener = () => {};
+  emitter.removeListener = function (channel, candidate) {
+    if (channel === "second") seen.push(candidate === listener);
+    return Reflect.apply(nativeRemove, this, arguments);
+  };
+  emitter.removeAllListeners("second");
+  emitter.removeListener = nativeRemove;
+  return { seen, remaining: emitter.listenerCount("second") };
+};
+process.stdout.write(JSON.stringify({
+  rejection: { plain: rejection(new EventEmitter()), hooked: rejection(ipcMain) },
+  forwarding: { plain: forwarding(new EventEmitter()), hooked: forwarding(ipcMain) },
+  hook_error: globalThis.__reaElectronActiveSnapshot().hook_error,
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const result = JSON.parse(
+    execution.stdout.trim().split("\n").at(-1) ?? "null",
+  ) as {
+    readonly rejection: {
+      readonly plain: {
+        readonly seen: readonly boolean[];
+        readonly remaining: number;
+        readonly failure: string | null;
+      };
+      readonly hooked: {
+        readonly seen: readonly boolean[];
+        readonly remaining: number;
+        readonly failure: string | null;
+      };
+    };
+    readonly forwarding: {
+      readonly plain: {
+        readonly seen: readonly boolean[];
+        readonly remaining: number;
+      };
+      readonly hooked: {
+        readonly seen: readonly boolean[];
+        readonly remaining: number;
+      };
+    };
+    readonly hook_error: boolean;
+  };
+  expect(result.hook_error).toBe(false);
+  // A plain EventEmitter forwards the original callback to the decorator on
+  // each traversal step, and a rejected second removal keeps one listener.
+  expect(result.rejection.plain).toEqual({
+    seen: [true, true],
+    remaining: 1,
+    failure: "second removal rejected",
+  });
+  expect(result.rejection.hooked).toEqual(result.rejection.plain);
+  expect(result.forwarding.plain).toEqual({ seen: [true, true], remaining: 0 });
+  expect(result.forwarding.hooked).toEqual(result.forwarding.plain);
+});
+
+it("keeps an ipcMain wrapper restored by a removeListener observer during completion", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-removal-restore-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "removal-restore.cjs");
+  await writeFile(
+    script,
+    `const { EventEmitter } = require("node:events");
+const { ipcMain } = require("electron");
+// An observer saves the raw listener entry and re-registers it once a
+// removal is announced. The restored registration is deliberate and must
+// survive, with exactly one removal notification.
+const scenario = (emitter) => {
+  const listener = () => {};
+  emitter.on("ch", listener);
+  const saved = emitter.rawListeners("ch")[0];
+  const notifications = [];
+  let restored = false;
+  emitter.on("removeListener", (channel, observed) => {
+    if (channel !== "ch") return;
+    notifications.push(observed === listener);
+    if (!restored) { restored = true; emitter.on("ch", saved); }
+  });
+  emitter.removeAllListeners("ch");
+  const remaining = emitter.listenerCount("ch");
+  emitter.emit("ch", { sender: { id: 9 } });
+  return { notifications, remaining };
+};
+process.stdout.write(JSON.stringify({
+  plain: scenario(new EventEmitter()),
+  hooked: scenario(ipcMain),
+  hook_error: globalThis.__reaElectronActiveSnapshot().hook_error,
+}) + "\\n");
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const result = JSON.parse(
+    execution.stdout.trim().split("\n").at(-1) ?? "null",
+  ) as {
+    readonly plain: {
+      readonly notifications: readonly boolean[];
+      readonly remaining: number;
+    };
+    readonly hooked: {
+      readonly notifications: readonly boolean[];
+      readonly remaining: number;
+    };
+    readonly hook_error: boolean;
+  };
+  expect(result.hook_error).toBe(false);
+  // A plain EventEmitter announces one removal and keeps the restored
+  // registration.
+  expect(result.plain).toEqual({ notifications: [true], remaining: 1 });
+  // The hook must not delete the restored wrapper through its completion
+  // fallback, nor announce a second removal for it.
+  expect(result.hooked).toEqual(result.plain);
+});
+
 it("preserves fatal process termination after recording uncaught exceptions", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-fatal-");
   temporary.push(root);

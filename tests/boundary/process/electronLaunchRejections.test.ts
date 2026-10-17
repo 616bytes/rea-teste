@@ -2,6 +2,7 @@ import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, vi } from "vitest";
+import type { AnalysisErrorProjection } from "../../../src/domain/analysisErrorProjection.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
@@ -115,12 +116,8 @@ console.log(JSON.stringify({
   during,
   after: process.listenerCount("unhandledRejection"),
   observedRejections,
-  codes: results.map((result) => result.ok ? null : projectAnalysisError(result.error).code),
+  errors: results.map((result) => result.ok ? null : projectAnalysisError(result.error)),
   ok: results.map((result) => result.ok),
-  primaryReasons: results.map((result) => result.ok || result.error.cleanupPrimary === undefined ? null : projectAnalysisError(result.error.cleanupPrimary).details?.reason ?? null),
-  cleanupIncomplete: results.map((result) => result.ok ? false : result.error.cleanupIncomplete),
-  cleanupResources: results.map((result) => result.ok ? null : result.error.cleanupResources ?? null),
-  causes: results.map((result) => result.ok ? null : String(result.error.cause?.message).split("\\n")[0]),
 }));
 `;
 
@@ -133,12 +130,8 @@ type Outcome = {
   readonly during: number;
   readonly after: number;
   readonly ok: readonly boolean[];
-  readonly causes: readonly (string | null)[];
+  readonly errors: readonly (AnalysisErrorProjection | null)[];
   readonly observedRejections: number;
-  readonly codes: readonly (string | null)[];
-  readonly primaryReasons: readonly (string | null)[];
-  readonly cleanupIncomplete: readonly boolean[];
-  readonly cleanupResources: readonly (readonly string[] | null)[];
 };
 
 const run = async (
@@ -179,7 +172,17 @@ processTest(
       during: outcome(result).before + 1,
       after: outcome(result).before,
       ok: [false],
-      causes: ["electron.launch: Process failed to launch!"],
+      errors: [
+        {
+          details: {
+            diagnostics: {
+              message: expect.stringContaining(
+                "electron.launch: Process failed to launch!",
+              ),
+            },
+          },
+        },
+      ],
     });
   },
 );
@@ -201,7 +204,17 @@ processTest.skipIf(process.platform === "win32")(
     expect(result.exitCode, result.stderr).toBe(0);
     expect(outcome(result)).toMatchObject({
       ok: [false],
-      causes: ["electron.launch: Process failed to launch!"],
+      errors: [
+        {
+          details: {
+            diagnostics: {
+              message: expect.stringContaining(
+                "electron.launch: Process failed to launch!",
+              ),
+            },
+          },
+        },
+      ],
     });
     expect(outcome(result).after).toBe(outcome(result).before);
   },
@@ -231,7 +244,17 @@ processTest(
     expect(outcome(result)).toMatchObject({
       observedRejections: 1,
       ok: [false],
-      causes: ["electron.launch: Process failed to launch!"],
+      errors: [
+        {
+          details: {
+            diagnostics: {
+              message: expect.stringContaining(
+                "electron.launch: Process failed to launch!",
+              ),
+            },
+          },
+        },
+      ],
     });
   },
 );
@@ -306,19 +329,37 @@ processTest(
     expect(observed.after).toBe(observed.before);
     expect(observed.observedRejections).toBe(3);
     expect(observed.ok).toEqual([false, false, false, false, false]);
-    expect(observed.causes[0]).toBe("electron.launch: alpha failed");
-    expect(observed.codes).toEqual([
-      "execution_failure",
-      ...Array.from({ length: 4 }, () => "cleanup_incomplete"),
-    ]);
-    expect(observed.primaryReasons).toEqual([
-      null,
-      ...Array.from({ length: 4 }, () => "process_ownership_unavailable"),
-    ]);
-    expect(observed.cleanupIncomplete).toEqual([false, true, true, true, true]);
-    expect(observed.cleanupResources).toEqual([
-      [],
-      ...Array.from({ length: 4 }, () => ["owned_process_group"]),
+    expect(observed.errors).toMatchObject([
+      {
+        details: {
+          diagnostics: {
+            message: expect.stringContaining("electron.launch: alpha failed"),
+          },
+        },
+      },
+      ...Array.from({ length: 4 }, () => ({
+        code: "cleanup_incomplete",
+        details: {
+          cleanup: "incomplete",
+          resources: ["owned_process_group"],
+          diagnostics: {
+            primary_error: {
+              code: "unreadable_output",
+              details: {
+                reason: "process_ownership_unavailable",
+              },
+            },
+            cleanup_error: {
+              code: "cleanup_incomplete",
+              details: {
+                reason: "cleanup_failed",
+                cleanup: "incomplete",
+                resources: ["owned_process_group"],
+              },
+            },
+          },
+        },
+      })),
     ]);
   },
 );

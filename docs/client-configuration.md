@@ -178,6 +178,15 @@ compact profile, run `rea setup --client kimi` or add
 `REA_MCP_INPUT_SCHEMA_PROFILE=compact` to the registration's `env`, then restart
 Kimi Code. An explicit `full` profile remains respected and can still exceed
 Moonshot's limit.
+Setup selects the same compact advertisement for new or refreshed Claude Desktop
+registrations unless their stored configuration or setup environment explicitly
+selects a profile. Claude Desktop's connector refused to register
+`compare_web_captures` while the full profile advertised a 179,878-byte schema
+for that tool — more than five times the next largest REA tool — and reported
+"a problem with that connector"; the compact presentation bounds the same
+schema to 224 bytes. `rea doctor --client claude_desktop` reports a
+registration with no explicit profile as stale, and the registration keeps any
+explicitly selected `full` or `compact` value.
 Kimi Code also discovers personal skills in `~/.agents/skills` and project-local
 `.agents/skills`, so no separate skill root is required; setup still installs
 and verifies the matching skill files through the normal shared-skill flow.

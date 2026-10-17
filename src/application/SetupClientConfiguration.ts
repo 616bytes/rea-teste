@@ -37,6 +37,7 @@ import {
   recommendedMcpToolTimeoutMs,
   recommendedMcpToolTimeoutSeconds,
 } from "../mcpStartupPolicy.js";
+import { compactInputSchemaProfileByDefault } from "../config/mcpInputSchemaProfile.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { packageReadTargetChanged } from "./MsixPackageStorage.js";
 import {
@@ -731,7 +732,7 @@ const clientConfigurationDesired = (
   );
   if (!environment.ok) throw environment.error;
   const registrationEnvironment =
-    client.name === "kimi" &&
+    compactInputSchemaProfileByDefault(client.name) &&
     environment.value.REA_MCP_INPUT_SCHEMA_PROFILE === undefined
       ? {
           ...environment.value,

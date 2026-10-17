@@ -12,6 +12,7 @@ import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { valid } from "semver";
 
+import { compactInputSchemaProfileByDefault } from "../config/mcpInputSchemaProfile.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import {
@@ -228,7 +229,8 @@ export const readClientRegistrationInspections = async (
           : client;
       const registration = parseRegistration(raw, effectiveClient);
       const registrationEnvironment =
-        client.name === "kimi" || client.name === "codex"
+        compactInputSchemaProfileByDefault(client.name) ||
+        client.name === "codex"
           ? clientRegistrationEnvironmentDetails(
               parsed,
               {},
@@ -264,7 +266,7 @@ export const readClientRegistrationInspections = async (
         client: effectiveClient,
         currentCommandPath,
         platform: options.platform ?? process.platform,
-        kimiInputSchemaProfileSelected:
+        compactInputSchemaProfileSelected:
           registrationEnvironment?.ok === true &&
           registrationEnvironment.value.values.REA_MCP_INPUT_SCHEMA_PROFILE !==
             undefined,
@@ -334,13 +336,13 @@ const registrationAligned = ({
   client,
   currentCommandPath,
   platform,
-  kimiInputSchemaProfileSelected,
+  compactInputSchemaProfileSelected,
 }: {
   readonly registration: z.output<typeof registrationSchema>;
   readonly client: SetupClient;
   readonly currentCommandPath: string | undefined;
   readonly platform: NodeJS.Platform;
-  readonly kimiInputSchemaProfileSelected: boolean;
+  readonly compactInputSchemaProfileSelected: boolean;
 }): "aligned" | "stale" | "unknown" => {
   const command = [registration.command, ...registration.args];
   const identity = classifyClientRegistrationCommand(
@@ -367,7 +369,11 @@ const registrationAligned = ({
       registration.toolTimeoutMs === undefined)
   )
     return "stale";
-  if (client.name === "kimi" && !kimiInputSchemaProfileSelected) return "stale";
+  if (
+    compactInputSchemaProfileByDefault(client.name) &&
+    !compactInputSchemaProfileSelected
+  )
+    return "stale";
   if (
     (client.format === "kimi" ||
       client.format === "omp" ||

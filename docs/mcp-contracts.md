@@ -779,6 +779,13 @@ server to apply changes, as with `REA_MCP_MAX_RESPONSE_BYTES`. The default
 value `full` keeps the complete advertisement unchanged. Compact presentation
 also reduces schemas whose expanded JSON tree exceeds ten levels, the limit
 reported by strict-depth MCP clients in [#2813](https://github.com/morluto/rea/issues/2813).
+Claude Desktop's connector has also refused to register a single REA tool while
+the full profile advertised it: `compare_web_captures` returned "a problem with
+that connector" with a 179,878-byte input schema while every other tool
+registered, and the compact presentation bounds that schema to 224 bytes
+([#4081](https://github.com/morluto/rea/issues/4081)). Setup therefore selects
+the compact profile by default for Claude Desktop registrations, as it does for
+Kimi.
 WorkBuddy/CodeBuddy gateways have also rejected full REA catalogs with an
 opaque `11133` error while accepting the compact profile
 ([#2999](https://github.com/morluto/rea/issues/2999)); compatibility depends on

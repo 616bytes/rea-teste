@@ -36,6 +36,7 @@ import {
 import {
   APK_SIGNATURE_LIMITATIONS,
   deriveApkPosture,
+  type ApkPostureSigner,
   type ApkSignatureResult,
 } from "../domain/apkSignature/apkSignatureReport.js";
 import {
@@ -248,12 +249,23 @@ const signerFingerprintsOf = (
 ): (string | null)[] =>
   signers.map((s) => s.certificate?.sha256_fingerprint ?? null);
 
-const lineageFingerprintsOf = (
-  nodes: readonly { readonly certificate: Certificate }[],
-): string[] =>
-  nodes.flatMap((n) =>
-    n.certificate === null ? [] : [n.certificate.sha256_fingerprint],
-  );
+/** A reported block-scheme signer as the posture derivation reads it. */
+const postureSigner = (signer: Signer | SignerV3): ApkPostureSigner => {
+  const fingerprint = signer.certificate?.sha256_fingerprint ?? null;
+  if (!("rotation" in signer) || !signer.rotation.present)
+    return { fingerprint, lineage: { kind: "absent" } };
+  if (signer.rotation.decode_error !== null)
+    return { fingerprint, lineage: { kind: "undecoded" } };
+  return {
+    fingerprint,
+    lineage: {
+      kind: "decoded",
+      fingerprints: signer.rotation.lineage.map(
+        (node) => node.certificate?.sha256_fingerprint ?? null,
+      ),
+    },
+  };
+};
 
 const LAYOUT_LIMITATION =
   "The content digest was not recomputed because the central directory is not immediately followed by the end-of-central-directory record (declared size mismatch or an intervening Zip64 record); matches_apk is null for those digests.";
@@ -351,15 +363,24 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     const v31signers = v31.value.signers.map((s) => v3Signer(s, matcher));
 
     const sourceStamp = sourceStampFacts(block.value);
-    const rotationPresent = [...v3signers, ...v31signers].some(
-      (s) => s.rotation.present,
-    );
-    const lineageFingerprints = [...v3signers, ...v31signers].flatMap(
-      (signer) => lineageFingerprintsOf(signer.rotation.lineage),
-    );
-    const lineageUnknown = [...v3signers, ...v31signers].some(
-      (signer) => signer.rotation.decode_error !== null,
-    );
+    const derived = deriveApkPosture({
+      v1Present: v1.present,
+      v2Present: v2.value.present,
+      v3Present: v3.value.present,
+      v31Present: v31.value.present,
+      sourceStampPresent: sourceStamp.present,
+      blockSchemes: [
+        { scheme: "v2", signers: v2signers.map(postureSigner) },
+        { scheme: "v3", signers: v3signers.map(postureSigner) },
+        { scheme: "v3.1", signers: v31signers.map(postureSigner) },
+      ],
+      v1SignerFingerprints: signerFingerprintsOf(v1signers),
+      selfConsistent: selfConsistency([
+        ...v2signers,
+        ...v3signers,
+        ...v31signers,
+      ]),
+    });
 
     const result: ApkSignatureResult = {
       artifact,
@@ -376,25 +397,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
         "v3.1": { present: v31.value.present, signers: v31signers },
       },
       source_stamp: sourceStamp,
-      posture: deriveApkPosture({
-        v1Present: v1.present,
-        v2Present: v2.value.present,
-        v3Present: v3.value.present,
-        v31Present: v31.value.present,
-        sourceStampPresent: sourceStamp.present,
-        rotationPresent,
-        schemeSignerFingerprints: [v2signers, v3signers, v31signers].map(
-          signerFingerprintsOf,
-        ),
-        v1SignerFingerprints: signerFingerprintsOf(v1signers),
-        lineageFingerprints,
-        lineageUnknown,
-        selfConsistent: selfConsistency([
-          ...v2signers,
-          ...v3signers,
-          ...v31signers,
-        ]),
-      }),
+      posture: derived.posture,
       runtime_execution: "not-performed",
     };
 
@@ -410,9 +413,11 @@ export class ApkSignatureProvider implements ApkSignaturePort {
       createAnalysisExecution(result, APK_SIGNATURE_PROVIDER_IDENTITY, {
         subject: { path: artifact.path, format, sha256: artifact.sha256 },
         locations: [{ kind: "artifact-path", path: artifact.path }],
-        limitations: matcher.layoutPreventedRecompute()
-          ? [...APK_SIGNATURE_LIMITATIONS, LAYOUT_LIMITATION]
-          : [...APK_SIGNATURE_LIMITATIONS],
+        limitations: [
+          ...APK_SIGNATURE_LIMITATIONS,
+          ...(matcher.layoutPreventedRecompute() ? [LAYOUT_LIMITATION] : []),
+          ...derived.notes,
+        ],
       }) as ApkSignatureExecution,
     );
   }

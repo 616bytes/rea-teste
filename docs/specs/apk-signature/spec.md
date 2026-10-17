@@ -46,8 +46,11 @@ code executes, no device or `adb`, no acquisition, no mutation.
   _set_; `signer_change_declared_by_rotation` says whether every differing
   signer appears in a declared lineage (`null` when identity or a needed
   lineage is unknown); `v1_signers_match_block_signers` compares the v1
-  signer set with the lowest block scheme that has signers (v2, else v3,
-  else v3.1), `null` when either side's identity is unknown. Also `v1_only` (which cannot distinguish a v1-only APK
+  signer set with what the lowest block scheme that has signers (v2, else
+  v3, else v3.1) expects: its signers, or the first (original) certificate
+  of a v3/v3.1 signer's declared lineage, as apksig requires; `null` when
+  either side's identity is unknown, with a limitation when the lineage
+  origin is the unknown side. Also `v1_only` (which cannot distinguish a v1-only APK
   from one whose v2/v3 block was removed, since `X-Android-APK-Signed` is not
   read), strongest scheme, rotation and source-stamp presence.
 - Unknown is never reported as absent: a central directory that cannot be

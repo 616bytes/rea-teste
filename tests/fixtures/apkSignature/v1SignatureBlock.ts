@@ -221,3 +221,49 @@ export const withSigningBlock = (
 };
 
 export const APK_SIGNATURE_V2_ID = 0x7109871a;
+
+export const APK_SIGNATURE_V3_ID = 0xf05368c0;
+const PROOF_OF_ROTATION_ATTR_ID = 0x3ba06f8c;
+
+/**
+ * An APK Signature Scheme v3 value with one signer carrying `certificate` and,
+ * when given, a proof-of-rotation lineage over `lineage` (oldest first, every
+ * capability retained). Node signatures are empty: nothing here is verified.
+ */
+export const v3SchemeValue = (
+  certificate: Uint8Array,
+  lineage?: readonly Uint8Array[],
+): Uint8Array => {
+  const digest = lp(
+    Buffer.concat([Buffer.from(u32(0x0103)), lp(new Uint8Array(32))]),
+  );
+  const node = (cert: Uint8Array): Buffer =>
+    lp(
+      Buffer.concat([
+        lp(Buffer.concat([lp(cert), Buffer.from(u32(0))])),
+        Buffer.from(u32(0x17)),
+        Buffer.from(u32(0)),
+        lp(new Uint8Array(0)),
+      ]),
+    );
+  const attributes =
+    lineage === undefined
+      ? []
+      : [
+          lp(
+            Buffer.concat([
+              Buffer.from(u32(PROOF_OF_ROTATION_ATTR_ID)),
+              Buffer.from(u32(1)),
+              ...lineage.map(node),
+            ]),
+          ),
+        ];
+  const signedData = Buffer.concat([
+    lp(digest),
+    lp(lp(certificate)),
+    Buffer.from(u32(28)),
+    Buffer.from(u32(0x7fffffff)),
+    lp(Buffer.concat(attributes)),
+  ]);
+  return Uint8Array.from(lp(lp(lp(signedData))));
+};

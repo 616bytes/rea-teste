@@ -508,6 +508,44 @@ try {
     true,
   );
 
+  // 3a') The same rotation without v2: v1 keeps the original key and v3 signs
+  //      with the new one. apksig requires the v1 signer to be the lineage's
+  //      first node, so v1 is compared with that node, not the v3 signer.
+  const rotatedNoV2 = join(workspace, "rotated-legacy-no-v2.apk");
+  await run(apksigner, [
+    "sign",
+    ...ks("k1"),
+    "--next-signer",
+    ...ks("k2"),
+    "--lineage",
+    lineage,
+    "--rotation-min-sdk-version",
+    "28",
+    "--v2-signing-enabled",
+    "false",
+    "--out",
+    rotatedNoV2,
+    legacyBase,
+  ]);
+  const noV2Oracle = await oracleVerify(rotatedNoV2);
+  assert.equal(noV2Oracle.verifies, true, "oracle must accept v1 + rotated v3");
+  assert.equal(noV2Oracle.v1, true);
+  assert.equal(noV2Oracle.v2, false);
+  const noV2Report = await inspectBoth(rotatedNoV2);
+  assert.equal(noV2Report.schemes.v2.present, false);
+  await assertV1Signer(rotatedNoV2, noV2Report, fullOracle.signerSha256);
+  assert.deepEqual(
+    noV2Report.schemes.v3.signers[0].rotation.lineage.map(
+      (n) => n.certificate.sha256_fingerprint,
+    ),
+    await oracleLineage(rotatedNoV2),
+  );
+  assert.equal(
+    noV2Report.posture.v1_signers_match_block_signers,
+    true,
+    "a v1 signer equal to the lineage origin is the expected rotation layout",
+  );
+
   // 3b) Rotation targeting SDK 33 is carried by v3.1; v3 keeps the original signer.
   const rotated31 = join(workspace, "rotated31.apk");
   await run(apksigner, [

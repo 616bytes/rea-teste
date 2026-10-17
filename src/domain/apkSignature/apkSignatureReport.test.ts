@@ -4,37 +4,58 @@ import {
   apkSignatureResultSchema,
   deriveApkPosture,
   inspectApkSignatureInputSchema,
+  type ApkPostureInput,
+  type ApkPostureLineage,
+  type ApkPostureSigner,
 } from "./apkSignatureReport.js";
 
-const base = {
+const base: ApkPostureInput = {
   v1Present: false,
   v2Present: false,
   v3Present: false,
   v31Present: false,
   sourceStampPresent: false,
-  rotationPresent: false,
-  schemeSignerFingerprints: [] as (string | null)[][],
-  v1SignerFingerprints: [] as (string | null)[],
-  lineageFingerprints: [] as string[],
-  lineageUnknown: false,
+  blockSchemes: [],
+  v1SignerFingerprints: [],
   selfConsistent: null,
 };
 
+const absent: ApkPostureLineage = { kind: "absent" };
+const signer = (
+  fingerprint: string | null,
+  lineage: ApkPostureLineage = absent,
+): ApkPostureSigner => ({ fingerprint, lineage });
+const decoded = (...fingerprints: (string | null)[]): ApkPostureLineage => ({
+  kind: "decoded",
+  fingerprints,
+});
+/** Signers per block scheme, lowest first: v2, v3, v3.1. */
+const blocks = (
+  ...schemes: (string | null | ApkPostureSigner)[][]
+): ApkPostureInput["blockSchemes"] =>
+  (["v2", "v3", "v3.1"] as const).map((scheme, index) => ({
+    scheme,
+    signers: (schemes[index] ?? []).map((s) =>
+      typeof s === "object" && s !== null ? s : signer(s),
+    ),
+  }));
+const derive = (input: Partial<ApkPostureInput>) =>
+  deriveApkPosture({ ...base, ...input }).posture;
+
 describe("deriveApkPosture", () => {
   it("flags v1-only when only JAR signing is present", () => {
-    const p = deriveApkPosture({ ...base, v1Present: true });
+    const p = derive({ v1Present: true });
     expect(p.v1_only).toBe(true);
     expect(p.strongest_scheme).toBe("v1");
     expect(p.schemes_agree_on_signer).toBeNull();
   });
 
   it("picks the strongest scheme and is not v1-only when v3 is present", () => {
-    const p = deriveApkPosture({
-      ...base,
+    const p = derive({
       v1Present: true,
       v2Present: true,
       v3Present: true,
-      schemeSignerFingerprints: [["aa"], ["aa"]],
+      blockSchemes: blocks(["aa"], ["aa"]),
     });
     expect(p.v1_only).toBe(false);
     expect(p.strongest_scheme).toBe("v3");
@@ -42,106 +63,87 @@ describe("deriveApkPosture", () => {
   });
 
   it("observes different signers across schemes as disagreement", () => {
-    const p = deriveApkPosture({
-      ...base,
+    const p = derive({
       v2Present: true,
       v3Present: true,
-      schemeSignerFingerprints: [["aa"], ["bb"]],
+      blockSchemes: blocks(["aa"], ["bb"]),
     });
     expect(p.schemes_agree_on_signer).toBe(false);
   });
 
   it("keeps observed disagreement separate from a declared rotation", () => {
-    const p = deriveApkPosture({
-      ...base,
+    const p = derive({
       v2Present: true,
       v3Present: true,
-      rotationPresent: true,
-      schemeSignerFingerprints: [["old"], ["new"]],
-      lineageFingerprints: ["old", "new"],
+      blockSchemes: blocks(["old"], [signer("new", decoded("old", "new"))]),
     });
     expect(p.schemes_agree_on_signer).toBe(false);
     expect(p.signer_change_declared_by_rotation).toBe(true);
+    expect(p.rotation_present).toBe(true);
   });
 
   it("does not credit rotation when a signer is missing from the lineage", () => {
-    const p = deriveApkPosture({
-      ...base,
+    const p = derive({
       v2Present: true,
       v3Present: true,
-      rotationPresent: true,
-      schemeSignerFingerprints: [["evil"], ["new"]],
-      lineageFingerprints: ["old", "new"],
+      blockSchemes: blocks(["evil"], [signer("new", decoded("old", "new"))]),
     });
     expect(p.signer_change_declared_by_rotation).toBe(false);
   });
 
   it("leaves a declared signer change unknown when a lineage or identity is unknown", () => {
-    const changed = {
-      ...base,
-      v2Present: true,
-      v3Present: true,
-      rotationPresent: true,
-      schemeSignerFingerprints: [["old"], ["new"]],
-    };
+    const undecoded: ApkPostureLineage = { kind: "undecoded" };
+    const changed = { v2Present: true, v3Present: true };
     expect(
-      deriveApkPosture({ ...changed, lineageUnknown: true })
-        .signer_change_declared_by_rotation,
+      derive({
+        ...changed,
+        blockSchemes: blocks(["old"], [signer("new", undecoded)]),
+      }).signer_change_declared_by_rotation,
     ).toBeNull();
     expect(
-      deriveApkPosture({
+      derive({
         ...changed,
-        schemeSignerFingerprints: [["old"], [null]],
-        lineageFingerprints: ["old"],
+        blockSchemes: blocks(["old"], [signer(null, decoded("old"))]),
       }).signer_change_declared_by_rotation,
     ).toBeNull();
     // An undecoded lineage cannot hide a change when the signers agree.
     expect(
-      deriveApkPosture({
+      derive({
         ...changed,
-        schemeSignerFingerprints: [["same"], ["same"]],
-        lineageUnknown: true,
+        blockSchemes: blocks(["same"], [signer("same", undecoded)]),
       }).signer_change_declared_by_rotation,
     ).toBe(false);
   });
 
   it("leaves agreement unknown when a signer carries no certificate", () => {
-    const p = deriveApkPosture({
-      ...base,
+    const p = derive({
       v2Present: true,
       v3Present: true,
-      schemeSignerFingerprints: [["aa"], [null]],
+      blockSchemes: blocks(["aa"], [null]),
     });
     expect(p.schemes_agree_on_signer).toBeNull();
   });
 
   it("compares signer sets, so an extra signer in one scheme is disagreement", () => {
-    const p = deriveApkPosture({
-      ...base,
+    const p = derive({
       v2Present: true,
       v3Present: true,
-      schemeSignerFingerprints: [["aa", "bb"], ["aa"]],
+      blockSchemes: blocks(["aa", "bb"], ["aa"]),
     });
     expect(p.schemes_agree_on_signer).toBe(false);
-    const same = deriveApkPosture({
-      ...base,
+    const same = derive({
       v2Present: true,
       v3Present: true,
-      schemeSignerFingerprints: [
-        ["bb", "aa"],
-        ["aa", "bb"],
-      ],
+      blockSchemes: blocks(["bb", "aa"], ["aa", "bb"]),
     });
     expect(same.schemes_agree_on_signer).toBe(true);
   });
 
   it("surfaces rotation, source stamp and self-consistency", () => {
-    const p = deriveApkPosture({
-      ...base,
+    const p = derive({
       v3Present: true,
-      rotationPresent: true,
       sourceStampPresent: true,
-      schemeSignerFingerprints: [["aa"]],
+      blockSchemes: blocks([], [signer("aa", decoded("aa"))]),
       selfConsistent: true,
     });
     expect(p.rotation_present).toBe(true);
@@ -163,44 +165,75 @@ describe("deriveApkPosture", () => {
 });
 
 describe("deriveApkPosture v1 comparison", () => {
+  const v1 = (
+    v1SignerFingerprints: (string | null)[],
+    ...schemes: (string | null | ApkPostureSigner)[][]
+  ) =>
+    deriveApkPosture({
+      ...base,
+      v1Present: true,
+      v2Present: (schemes[0]?.length ?? 0) > 0,
+      v3Present: true,
+      blockSchemes: blocks(...schemes),
+      v1SignerFingerprints,
+    });
+
   it("compares v1 signers with the lowest block scheme that has signers", () => {
-    const v1 = (
-      v1SignerFingerprints: (string | null)[],
-      schemeSignerFingerprints: (string | null)[][],
-    ) =>
-      deriveApkPosture({
-        ...base,
-        v1Present: true,
-        v2Present: schemeSignerFingerprints[0]?.length !== 0,
-        v3Present: true,
-        schemeSignerFingerprints,
-        v1SignerFingerprints,
-      }).v1_signers_match_block_signers;
-    expect(v1(["aa"], [["aa"], ["aa"], []])).toBe(true);
+    const match = (...args: Parameters<typeof v1>) =>
+      v1(...args).posture.v1_signers_match_block_signers;
+    expect(match(["aa"], ["aa"], ["aa"])).toBe(true);
     // A rotated v3 signer does not hide that v1 and v2 agree.
-    expect(v1(["old"], [["old"], ["new"], []])).toBe(true);
+    expect(
+      match(["old"], ["old"], [signer("new", decoded("old", "new"))]),
+    ).toBe(true);
     // The JAR signature naming another key is a mismatch, not agreement.
-    expect(v1(["other"], [["aa"], ["aa"], []])).toBe(false);
-    // Without v2 the comparison falls to v3.
-    expect(v1(["aa"], [[], ["aa"], []])).toBe(true);
-    expect(v1(["aa", "bb"], [["aa"], [], []])).toBe(false);
+    expect(match(["other"], ["aa"], ["aa"])).toBe(false);
+    // Without v2 or a lineage the comparison falls to the v3 signer itself.
+    expect(match(["aa"], [], ["aa"])).toBe(true);
+    expect(match(["aa", "bb"], ["aa"])).toBe(false);
     // Unknown identity on either side stays unknown.
-    expect(v1([null], [["aa"], [], []])).toBeNull();
-    expect(v1(["aa"], [[null], [], []])).toBeNull();
+    expect(match([null], ["aa"])).toBeNull();
+    expect(match(["aa"], [null])).toBeNull();
     // v1-only or no v1: nothing to compare.
     expect(
-      deriveApkPosture({
-        ...base,
-        v1Present: true,
-        v1SignerFingerprints: ["aa"],
-      }).v1_signers_match_block_signers,
+      derive({ v1Present: true, v1SignerFingerprints: ["aa"] })
+        .v1_signers_match_block_signers,
     ).toBeNull();
     expect(
-      deriveApkPosture({
-        ...base,
-        v2Present: true,
-        schemeSignerFingerprints: [["aa"]],
-      }).v1_signers_match_block_signers,
+      derive({ v2Present: true, blockSchemes: blocks(["aa"]) })
+        .v1_signers_match_block_signers,
     ).toBeNull();
+  });
+
+  it("compares v1 with a v3 lineage's original certificate when v2 is absent", () => {
+    // Rotated v1 + v3 without v2: v1 keeps the original key, v3 the newest.
+    const rotated = v1(["old"], [], [signer("new", decoded("old", "new"))]);
+    expect(rotated.posture.v1_signers_match_block_signers).toBe(true);
+    expect(rotated.notes).toEqual([]);
+    // v1 signed with the newest key is not the lineage origin apksig requires.
+    expect(
+      v1(["new"], [], [signer("new", decoded("old", "new"))]).posture
+        .v1_signers_match_block_signers,
+    ).toBe(false);
+    // The same holds for v3.1 when it is the lowest scheme with signers.
+    expect(
+      v1(["old"], [], [], [signer("new", decoded("old", "mid", "new"))]).posture
+        .v1_signers_match_block_signers,
+    ).toBe(true);
+  });
+
+  it("leaves the v1 comparison unknown, with a reason, when the lineage origin is unknown", () => {
+    for (const lineage of [
+      { kind: "undecoded" } as const,
+      decoded(),
+      decoded(null, "new"),
+    ]) {
+      const unknown = v1(["old"], [], [signer("new", lineage)]);
+      expect(unknown.posture.v1_signers_match_block_signers).toBeNull();
+      expect(unknown.notes).toHaveLength(1);
+      expect(unknown.notes[0]).toMatch(
+        /^v1_signers_match_block_signers is null: the v3 signer's declared rotation lineage/,
+      );
+    }
   });
 });

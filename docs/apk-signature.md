@@ -74,12 +74,16 @@ rea inspect-apk-signature /path/app.apk
     signer's identity is unknown, or when the signers differ and a declared
     lineage could not be decoded.
   - `v1_signers_match_block_signers` (observed): the v1 signer certificates
-    equal the signer set of the lowest block scheme that has signers (v2,
-    else v3, else v3.1). `false` is notable: the JAR signature names a
-    different key than the block signature. A key rotation keeps v1 and v2 on
-    the old key, so it reads `true` while `schemes_agree_on_signer` reads
-    `false`. `null` when v1 or a block scheme is absent, or any signer's
-    identity is unknown (a `decode_error` or a `null` certificate).
+    equal what the lowest block scheme that has signers (v2, else v3, else
+    v3.1) expects v1 to carry. That is its signer set, except that a v3/v3.1
+    signer declaring a rotation lineage expects the lineage's first
+    (original) certificate, as apksig requires. `false` is notable: the JAR
+    signature names a different key than the block signature. A key rotation
+    keeps v1 (and v2) on the original key, so it reads `true` while
+    `schemes_agree_on_signer` reads `false`, with or without v2. `null` when
+    v1 or a block scheme is absent, any signer's identity is unknown (a
+    `decode_error` or a `null` certificate), or the lineage's original
+    certificate cannot be identified; a limitation then says why.
   - `strongest_scheme`, `rotation_present`, `source_stamp_present`,
     `self_consistent`.
 

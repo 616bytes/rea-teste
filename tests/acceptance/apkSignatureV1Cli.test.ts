@@ -11,11 +11,14 @@ import { parseEvidence } from "../../src/domain/evidence.js";
 import { createServer } from "../../src/server/createServer.js";
 import {
   APK_SIGNATURE_V2_ID,
+  APK_SIGNATURE_V3_ID,
+  LEAF_CERTIFICATE,
   LEAF_SHA256,
   LEAF_SUBJECT,
   OPENSSL_BLOCK_ISSUER_SERIAL,
   ROOT_CERTIFICATE,
   v2SchemeValue,
+  v3SchemeValue,
   withSigningBlock,
   zipWith,
 } from "../fixtures/apkSignature/v1SignatureBlock.js";
@@ -43,6 +46,36 @@ cliTest(
       ]),
     );
 
+    // Rotated v1 + v3 without v2: v1 keeps the original key (the lineage's
+    // first node), v3 signs with the newest. That is the expected layout.
+    const rotated = join(root, "v1-v3-rotated.apk");
+    await writeFile(
+      rotated,
+      withSigningBlock(v1Zip, [
+        {
+          id: APK_SIGNATURE_V3_ID,
+          value: v3SchemeValue(ROOT_CERTIFICATE, [
+            LEAF_CERTIFICATE,
+            ROOT_CERTIFICATE,
+          ]),
+        },
+      ]),
+    );
+    // A lineage that does not start at the v1 key is still a mismatch.
+    const misrotated = join(root, "v1-v3-misrotated.apk");
+    await writeFile(
+      misrotated,
+      withSigningBlock(v1Zip, [
+        {
+          id: APK_SIGNATURE_V3_ID,
+          value: v3SchemeValue(LEAF_CERTIFICATE, [
+            ROOT_CERTIFICATE,
+            LEAF_CERTIFICATE,
+          ]),
+        },
+      ]),
+    );
+
     const contract = toolContract("inspect_apk_signature");
     const viaCli = async (path: string) => {
       const result = await cli.run({
@@ -53,6 +86,8 @@ cliTest(
     };
     const cliV1 = await viaCli(v1Only);
     const cliMixed = await viaCli(mixed);
+    const cliRotated = await viaCli(rotated);
+    const cliMisrotated = await viaCli(misrotated);
 
     expect(cliV1.normalized_result.schemes.v1.signers).toMatchObject([
       {
@@ -70,6 +105,15 @@ cliTest(
       v1_only: false,
       v1_signers_match_block_signers: false,
     });
+    expect(cliRotated.normalized_result.posture).toMatchObject({
+      v1_only: false,
+      rotation_present: true,
+      signer_change_declared_by_rotation: false,
+      v1_signers_match_block_signers: true,
+    });
+    expect(
+      cliMisrotated.normalized_result.posture.v1_signers_match_block_signers,
+    ).toBe(false);
     expect(cliV1.limitations.join(" ")).toContain("NOT verified");
 
     const session = composeBinarySession(new AnalysisProviderRegistry([]));
@@ -93,6 +137,7 @@ cliTest(
       for (const [path, fromCli] of [
         [v1Only, cliV1],
         [mixed, cliMixed],
+        [rotated, cliRotated],
       ] as const) {
         const reply = await client.callTool({
           name: tool.name,

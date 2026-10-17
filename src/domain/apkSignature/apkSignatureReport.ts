@@ -179,10 +179,14 @@ export const apkSignatureResultSchema = z.strictObject({
      */
     signer_change_declared_by_rotation: z.boolean().nullable(),
     /**
-     * Observed: the set of v1 signer certificates equals the signer set of the
-     * lowest present block scheme with signers (v2, else v3, else v3.1). False
-     * is notable: the JAR signature names a different key. Null when v1 or a
-     * block scheme is absent, or any signer's identity is unknown.
+     * Observed: the set of v1 signer certificates equals what the lowest
+     * present block scheme with signers (v2, else v3, else v3.1) expects v1 to
+     * carry: its signer set, or, for a v3/v3.1 signer that declares a rotation
+     * lineage, that lineage's first (original) certificate, as apksig requires.
+     * False is notable: the JAR signature names a different key. Null when v1
+     * or a block scheme is absent, any signer's identity is unknown, or a
+     * declared lineage's original certificate cannot be identified (a
+     * limitation then says why).
      */
     v1_signers_match_block_signers: z.boolean().nullable(),
     rotation_present: z.boolean(),
@@ -206,6 +210,25 @@ export const APK_SIGNATURE_LIMITATIONS: readonly string[] = [
   "Not read: v4 .apk.idsig, verity digests (matches_apk null), and the v1 X-Android-APK-Signed marker, so v1_only cannot distinguish a v1-only APK from one whose v2/v3 block was removed.",
 ];
 
+/** A block-scheme signer's declared rotation lineage, oldest certificate first. */
+export type ApkPostureLineage =
+  | { readonly kind: "absent" }
+  | {
+      readonly kind: "decoded";
+      /** Per node, its certificate fingerprint; `null` when unknown. */
+      readonly fingerprints: readonly (string | null)[];
+    }
+  | { readonly kind: "undecoded" };
+
+/** One block-scheme signer as the posture derivation sees it. */
+export interface ApkPostureSigner {
+  /** `null` for a signer that carries no certificate (identity unknown). */
+  readonly fingerprint: string | null;
+  readonly lineage: ApkPostureLineage;
+}
+
+export type ApkBlockScheme = "v2" | "v3" | "v3.1";
+
 /** Inputs to the pure posture derivation (scheme presence + agreement facts). */
 export interface ApkPostureInput {
   readonly v1Present: boolean;
@@ -213,19 +236,20 @@ export interface ApkPostureInput {
   readonly v3Present: boolean;
   readonly v31Present: boolean;
   readonly sourceStampPresent: boolean;
-  readonly rotationPresent: boolean;
-  /**
-   * Per present block scheme, the fingerprint of every signer's certificate;
-   * `null` for a signer that carries no certificate (identity unknown).
-   */
-  readonly schemeSignerFingerprints: readonly (readonly (string | null)[])[];
+  /** Per present block scheme, lowest first, its signers. */
+  readonly blockSchemes: readonly {
+    readonly scheme: ApkBlockScheme;
+    readonly signers: readonly ApkPostureSigner[];
+  }[];
   /** Per v1 signer, the certificate its SignerInfo names; `null` when unknown. */
   readonly v1SignerFingerprints: readonly (string | null)[];
-  /** Fingerprints of every certificate in the declared v3/v3.1 rotation lineage(s). */
-  readonly lineageFingerprints: readonly string[];
-  /** True when any declared v3/v3.1 lineage could not be decoded. */
-  readonly lineageUnknown: boolean;
   readonly selfConsistent: boolean | null;
+}
+
+/** The posture plus why a derived fact stayed unknown, where it is not self-evident. */
+export interface ApkPostureDerivation {
+  readonly posture: ApkSignatureResult["posture"];
+  readonly notes: readonly string[];
 }
 
 const setKey = (fingerprints: readonly string[]): string =>
@@ -244,23 +268,66 @@ const signerChangeDeclared = (
   return lineageUnknown ? null : false;
 };
 
-/** v1 against the lowest block scheme with signers; unknown identity stays unknown. */
+type Expected =
+  | { readonly ok: true; readonly fingerprint: string | null }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * The certificate v1 is expected to carry for one signer of the lowest block
+ * scheme. A v3/v3.1 signer that declares a lineage rotated away from the key
+ * v1 (and v2) keep, so apksig requires the v1 signer to be the lineage's first
+ * node; without a lineage it requires the v3 signer itself.
+ */
+const expectedV1Certificate = (
+  scheme: ApkBlockScheme,
+  signer: ApkPostureSigner,
+): Expected => {
+  if (scheme === "v2" || signer.lineage.kind === "absent")
+    return { ok: true, fingerprint: signer.fingerprint };
+  if (signer.lineage.kind === "undecoded")
+    return {
+      ok: false,
+      reason: `the ${scheme} signer's declared rotation lineage could not be decoded`,
+    };
+  const origin = signer.lineage.fingerprints[0];
+  return origin === undefined || origin === null
+    ? {
+        ok: false,
+        reason: `the ${scheme} signer's declared rotation lineage names no readable original certificate`,
+      }
+    : { ok: true, fingerprint: origin };
+};
+
+/** v1 against what the lowest block scheme with signers expects; unknown stays unknown. */
 const v1MatchesBlockSigners = (
   v1: readonly (string | null)[],
-  blockSets: readonly (readonly (string | null)[])[],
-): boolean | null => {
-  const lowest = blockSets[0];
-  if (v1.length === 0 || lowest === undefined) return null;
-  if (v1.includes(null) || lowest.includes(null)) return null;
-  return (
-    setKey(v1 as readonly string[]) === setKey(lowest as readonly string[])
-  );
+  lowest: ApkPostureInput["blockSchemes"][number] | undefined,
+): { readonly match: boolean | null; readonly note: string | null } => {
+  if (v1.length === 0 || lowest === undefined)
+    return { match: null, note: null };
+  const expected: (string | null)[] = [];
+  for (const signer of lowest.signers) {
+    const one = expectedV1Certificate(lowest.scheme, signer);
+    if (!one.ok)
+      return {
+        match: null,
+        note: `v1_signers_match_block_signers is null: ${one.reason}, so the original certificate v1 is expected to carry is unknown.`,
+      };
+    expected.push(one.fingerprint);
+  }
+  if (v1.includes(null) || expected.includes(null))
+    return { match: null, note: null };
+  return {
+    match:
+      setKey(v1 as readonly string[]) === setKey(expected as readonly string[]),
+    note: null,
+  };
 };
 
 /** Derive the conservative signing posture from observed and declared scheme facts. */
 export const deriveApkPosture = (
   input: ApkPostureInput,
-): ApkSignatureResult["posture"] => {
+): ApkPostureDerivation => {
   const blockPresent = input.v2Present || input.v3Present || input.v31Present;
   const strongest = input.v31Present
     ? "v3.1"
@@ -271,7 +338,12 @@ export const deriveApkPosture = (
         : input.v1Present
           ? "v1"
           : "none";
-  const sets = input.schemeSignerFingerprints.filter((fps) => fps.length > 0);
+  const withSigners = input.blockSchemes.filter(
+    ({ signers }) => signers.length > 0,
+  );
+  const sets = withSigners.map(({ signers }) =>
+    signers.map(({ fingerprint }) => fingerprint),
+  );
   // A signer without a certificate has unknown identity: agreement is unknown,
   // never assumed.
   const identityUnknown = sets.some((fps) => fps.includes(null));
@@ -279,26 +351,39 @@ export const deriveApkPosture = (
     fps.filter((fp): fp is string => fp !== null),
   );
   const union = new Set(known.flat());
-  const lineage = new Set(input.lineageFingerprints);
-  return {
-    v1_only: input.v1Present && !blockPresent,
-    schemes_agree_on_signer:
-      sets.length === 0 || identityUnknown
-        ? null
-        : new Set(known.map(setKey)).size === 1,
-    signer_change_declared_by_rotation: signerChangeDeclared(
-      identityUnknown,
-      union,
-      lineage,
-      input.lineageUnknown,
+  const lineages = input.blockSchemes.flatMap(({ signers }) =>
+    signers.map(({ lineage }) => lineage),
+  );
+  const lineage = new Set(
+    lineages.flatMap((l) =>
+      l.kind === "decoded"
+        ? l.fingerprints.filter((fp): fp is string => fp !== null)
+        : [],
     ),
-    v1_signers_match_block_signers: input.v1Present
-      ? v1MatchesBlockSigners(input.v1SignerFingerprints, sets)
-      : null,
-    rotation_present: input.rotationPresent,
-    source_stamp_present: input.sourceStampPresent,
-    strongest_scheme: strongest,
-    self_consistent: input.selfConsistent,
+  );
+  const v1Match = input.v1Present
+    ? v1MatchesBlockSigners(input.v1SignerFingerprints, withSigners[0])
+    : { match: null, note: null };
+  return {
+    posture: {
+      v1_only: input.v1Present && !blockPresent,
+      schemes_agree_on_signer:
+        sets.length === 0 || identityUnknown
+          ? null
+          : new Set(known.map(setKey)).size === 1,
+      signer_change_declared_by_rotation: signerChangeDeclared(
+        identityUnknown,
+        union,
+        lineage,
+        lineages.some((l) => l.kind === "undecoded"),
+      ),
+      v1_signers_match_block_signers: v1Match.match,
+      rotation_present: lineages.some((l) => l.kind !== "absent"),
+      source_stamp_present: input.sourceStampPresent,
+      strongest_scheme: strongest,
+      self_consistent: input.selfConsistent,
+    },
+    notes: v1Match.note === null ? [] : [v1Match.note],
   };
 };
 

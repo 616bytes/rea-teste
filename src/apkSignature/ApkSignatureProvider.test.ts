@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   APK_SIGNATURE_V2_ID,
+  APK_SIGNATURE_V3_ID,
   LEAF_CERTIFICATE,
   LEAF_SHA256,
   LEAF_SUBJECT,
@@ -353,6 +354,28 @@ describe("ApkSignatureProvider v1 signers", () => {
       ),
     );
     expect(other.posture.v1_signers_match_block_signers).toBe(false);
+  });
+
+  it("says why the v1 comparison is unknown when the v3 lineage cannot be decoded", async () => {
+    const v1Zip = await zipWith([
+      { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
+      { name: "META-INF/CERT.EC", data: OPENSSL_BLOCK_ISSUER_SERIAL },
+    ]);
+    const lineage = [...u32(0x3ba06f8c), ...u32(1), ...u32(999)];
+    const result = await provider.inspect({
+      path: await write(
+        "v1-v3-undecoded-lineage.apk",
+        withSigningBlock(v1Zip, [
+          { id: APK_SIGNATURE_V3_ID, value: v3Value([lineage]) },
+        ]),
+      ),
+    });
+    if (!result.ok) throw new Error(result.error.message);
+    const report = result.value.result as Report;
+    expect(report.posture.v1_signers_match_block_signers).toBeNull();
+    expect(result.value.limitations).toContain(
+      "v1_signers_match_block_signers is null: the v3 signer's declared rotation lineage could not be decoded, so the original certificate v1 is expected to carry is unknown.",
+    );
   });
 
   it("keeps a damaged or ambiguous v1 block as an explicit unknown", async () => {

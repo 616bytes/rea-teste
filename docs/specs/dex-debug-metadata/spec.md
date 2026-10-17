@@ -60,8 +60,14 @@ Known differences from ART: REA does not run ART's verifier, so cross-list
 index repeats (an instance and a static field, a virtual and a direct method),
 access-flag and list placement, and code-presence rules are not checked, and a
 `class_data` ART rejects can still be reported. ART's `IsValidEntryName`
-refuses a whole APK when any member name contains NUL or, without the UTF-8
-flag, invalid UTF-8; REA does not.
+refuses a whole APK when any central-directory name contains NUL or is not
+valid UTF-8, with or without the UTF-8 flag; REA refuses invalid UTF-8 only in
+a name that sets the flag, decodes an unflagged name as CP437, and tolerates
+NUL. ART loads a `classes*.dex` stored with a symbolic-link unix mode; REA does
+not read link members, so one in the auto-loaded run, or selected by `entry`,
+is refused as unavailable, not absent. Names in notes and refusals are bounded
+(128 names or 4 KiB, a 160-character name display, 8 KiB of reader notes) and
+the rest counted; reported `entry` identities are never shortened.
 
 ## Authority and overlap
 

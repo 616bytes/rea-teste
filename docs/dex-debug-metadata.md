@@ -121,9 +121,13 @@ Limits and refusals a caller can meet:
   `entry` stored as a ZIP directory (`classes.dex/`) is refused as unavailable,
   not absent. What the archive reader notes about a member it reads (a
   differing Unicode Path name, directory attributes on a file) is carried into
-  `limitations`. Canonical members Android would not load are named in
-  `limitations` and on any selection refusal. More than 64 auto-loaded members
-  is refused; select one with `entry`.
+  `limitations`, each note shortened past 1,024 characters and all within
+  8 KiB; further notes are counted. Canonical members Android would not load
+  are named in `limitations` and on any selection refusal. Named members and
+  spellings stop at 128 names or 4 KiB and the rest are counted as members; a
+  name longer than 160 characters is shortened in that prose, with a marker,
+  while the reported `entry` stays the exact stored name. More than 64
+  auto-loaded members is refused; select one with `entry`.
 - **`file_size` framing.** A header `file_size` larger than the bytes present,
   or smaller than the 0x70-byte header, is refused. When it is smaller than the
   member, analysis reads only the first `file_size` bytes (as ART on Android 15+
@@ -140,13 +144,21 @@ Limits and refusals a caller can meet:
   without) are not checked, so a `class_data` ART would reject can still be
   reported.
 - **Archive name validation (known difference).** ART's `IsValidEntryName`
-  refuses a whole APK when any member name contains NUL or, without the UTF-8
-  flag, invalid UTF-8. REA does not refuse such an APK; it reads the selected
-  or auto-loaded DEX members regardless of the other members' names.
+  refuses a whole APK when any central-directory name contains NUL or is not
+  valid UTF-8, whether or not the name sets the UTF-8 flag. REA refuses the
+  APK only for a name that sets the UTF-8 flag and is not valid UTF-8 ("ZIP
+  filename is not valid UTF-8"); it decodes an unflagged name as CP437 and
+  tolerates NUL, so it reads DEX members of an APK ART would refuse.
+- **Symbolic-link members (known difference).** ART ignores a member's unix
+  mode and loads a `classes*.dex` stored with a symbolic-link mode as DEX
+  bytes. REA does not read link members: such a member inside the auto-loaded
+  run refuses the summary, and selecting it with `entry` is refused, each as
+  unavailable rather than absent.
 - **Budgets.** Decoding work is proportional to each member's size; output is
-  bounded to 8 MiB and projected before the report is built. Exceeding either is
-  refused, naming the member. Size refusals report their own bound: the 64 MiB
-  DEX member, the 512 MiB archive, the 16 MiB archive-metadata read, or the
+  bounded to 8 MiB, counting both copies of `limitations` the Evidence carries,
+  and projected before the report is built. Exceeding either is refused,
+  naming the member. Size refusals report their own bound: the 64 MiB DEX
+  member, the 512 MiB archive, the 16 MiB archive-metadata read, or the
   archive's decompression budget.
 
 Verified by the `verify:dex` real lane, which compiles an owned Java fixture with

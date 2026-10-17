@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -7,6 +8,7 @@ import {
   elfNoteFixture,
   gnuAbiTagNote,
   gnuBuildIdNote,
+  gnuPropertyNote,
 } from "./ElfNotes.fixture.js";
 import { parseElfNotes } from "./ElfNoteParser.js";
 
@@ -121,6 +123,111 @@ it("reads a big-endian ELF32 GNU build-id", () => {
     "0123456789abcdef0123456789abcdef01234567",
   );
 });
+
+it("reads an 8-aligned GNU property note from a PT_NOTE program header", () => {
+  const notes = gnuPropertyNote();
+  expect(notes.length).toBe(48);
+  const report = parse(
+    elfNoteFixture({ ownership: "program", notes, alignment: 8 }),
+  );
+  expect(report.tables).toEqual([
+    expect.objectContaining({ kind: "program", alignment: 8 }),
+  ]);
+  expect(report.entries).toHaveLength(1);
+  expect(report.entries[0]).toMatchObject({
+    owner: "GNU",
+    type: 5,
+    type_name: "gnu_property",
+    namesz: 4,
+    descsz: 32,
+  });
+  expect(report.entries[0]?.descriptor.location.offset).toBe(
+    (report.entries[0]?.location.offset ?? 0) + 16,
+  );
+});
+
+it("reads an 8-aligned GNU property note from an SHT_NOTE section", () => {
+  const report = parse(
+    elfNoteFixture({
+      ownership: "section",
+      notes: gnuPropertyNote(),
+      alignment: 8,
+      sectionName: ".note.gnu.property",
+    }),
+  );
+  expect(report.tables).toEqual([
+    expect.objectContaining({
+      kind: "section",
+      name: ".note.gnu.property",
+      alignment: 8,
+    }),
+  ]);
+  expect(report.entries[0]?.type_name).toBe("gnu_property");
+  expect(report.entries[0]?.descriptor.bytes).toBe(32);
+});
+
+it.each([0, 1] as const)(
+  "treats declared note alignment %i as 4-byte padding",
+  (alignment) => {
+    const report = parse(elfNoteFixture({ ownership: "program", alignment }));
+    expect(report.tables[0]?.alignment).toBe(4);
+    expect(
+      report.entries.some((entry) => entry.type_name === "gnu_build_id"),
+    ).toBe(true);
+    expect(
+      report.entries.some((entry) => entry.type_name === "gnu_abi_tag"),
+    ).toBe(true);
+  },
+);
+
+const hostElf = [
+  "/bin/ls",
+  "/usr/bin/ls",
+  "/usr/bin/env",
+].reduce<Buffer | null>((found, path) => {
+  if (found) return found;
+  try {
+    const bytes = readFileSync(path);
+    if (
+      bytes.length > 64 &&
+      bytes[0] === 0x7f &&
+      bytes[1] === 0x45 &&
+      bytes[2] === 0x4c &&
+      bytes[3] === 0x46
+    )
+      return bytes;
+  } catch {
+    return found;
+  }
+  return found;
+}, null);
+
+it.skipIf(hostElf === null)(
+  "parses GNU property, build-id, and ABI-tag notes from a host ELF when present",
+  () => {
+    const report = parse(hostElf!);
+    expect(report.coverage.status).toBe("complete");
+    const types = report.entries.map((entry) => entry.type_name);
+    if (report.tables.some((table) => table.alignment === 8))
+      expect(types).toContain("gnu_property");
+    const buildId = report.entries.find(
+      (entry) => entry.type_name === "gnu_build_id",
+    );
+    const abi = report.entries.find(
+      (entry) => entry.type_name === "gnu_abi_tag",
+    );
+    if (buildId !== undefined)
+      expect(buildId.gnu?.build_id_hex).toMatch(/^[0-9a-f]+$/u);
+    if (abi !== undefined)
+      expect(abi.gnu?.abi_tag).toMatchObject({
+        os: expect.any(Number),
+        major: expect.any(Number),
+        minor: expect.any(Number),
+        subminor: expect.any(Number),
+      });
+    expect(report.entries.length).toBeGreaterThan(0);
+  },
+);
 
 it("fails when the entry budget is exhausted", () => {
   const notes = Buffer.concat([

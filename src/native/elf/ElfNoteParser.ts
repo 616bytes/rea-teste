@@ -106,6 +106,9 @@ class ElfReader {
   }
 }
 
+/** Note name/descriptor padding follows the containing table's p_align or
+ *  sh_addralign: 8 stays 8; 0, 1, 4, and other values pad as 4, matching
+ *  readelf/binutils. */
 const noteAlignment = (declared: number): number => (declared === 8 ? 8 : 4);
 
 interface ParsedNote {
@@ -141,13 +144,17 @@ const parseNoteStream = (
     const namesz = reader.u32(header);
     const descsz = reader.u32(header + 4);
     const type = reader.u32(header + 8);
-    const namePad = alignTo(namesz, alignment);
-    const descPad = alignTo(descsz, alignment);
-    const next = at + 12 + namePad + descPad;
+    // Align offsets from the start of this note. Independently rounding
+    // namesz/descsz disagrees with binutils when alignment is 8 because the
+    // 12-byte note header is not 8-aligned (GNU property namesz=4 then starts
+    // its descriptor at 16, not 20).
+    const descRel = alignTo(12 + namesz, alignment);
+    const nextRel = alignTo(descRel + descsz, alignment);
+    const next = at + nextRel;
     if (next > size) fail("ELF note entry exceeds its table.");
     if (next <= at) fail("ELF note alignment did not advance.");
     const nameBytes = reader.slice(header + 12, namesz);
-    const descriptor = reader.slice(header + 12 + namePad, descsz);
+    const descriptor = reader.slice(header + descRel, descsz);
     const ownerEnd = nameBytes.indexOf(0);
     notes.push({
       location: { offset: header, bytes: next - at },
@@ -160,7 +167,7 @@ const parseNoteStream = (
           : nameBytes.subarray(0, ownerEnd).toString("latin1"),
       owner_bytes_hex: nameBytes.toString("hex"),
       descriptor,
-      descriptor_offset: header + 12 + namePad,
+      descriptor_offset: header + descRel,
     });
     at = next;
   }

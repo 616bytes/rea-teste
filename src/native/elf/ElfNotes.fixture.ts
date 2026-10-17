@@ -3,13 +3,8 @@ const concat = (...parts: Buffer[]): Buffer => Buffer.concat(parts);
 const alignTo = (value: number, alignment: number): number =>
   Math.ceil(value / alignment) * alignment;
 
-const pad = (bytes: Buffer, alignment: number): Buffer => {
-  const size = alignTo(bytes.length, alignment);
-  if (size === bytes.length) return bytes;
-  const padded = Buffer.alloc(size);
-  bytes.copy(padded);
-  return padded;
-};
+/** Effective namesz/descsz padding: 8 stays 8; 0, 1, 4, and other values use 4. */
+const notePadding = (declared: number): number => (declared === 8 ? 8 : 4);
 
 const writeWord = (
   bytes: Buffer,
@@ -47,7 +42,7 @@ const write32 = (
   else bytes.writeUInt32BE(value, offset);
 };
 
-/** Encode one ELF note with 4-byte name/descriptor padding. */
+/** Encode one ELF note, padding name/descriptor to the table alignment. */
 export const elfNote = (
   owner: string,
   type: number,
@@ -56,11 +51,15 @@ export const elfNote = (
   alignment = 4,
 ): Buffer => {
   const name = Buffer.from(`${owner}\0`, "latin1");
-  const header = Buffer.alloc(12);
-  write32(header, 0, name.length, little);
-  write32(header, 4, descriptor.length, little);
-  write32(header, 8, type, little);
-  return concat(header, pad(name, alignment), pad(descriptor, alignment));
+  const pad = notePadding(alignment);
+  const descOff = alignTo(12 + name.length, pad);
+  const bytes = Buffer.alloc(alignTo(descOff + descriptor.length, pad));
+  write32(bytes, 0, name.length, little);
+  write32(bytes, 4, descriptor.length, little);
+  write32(bytes, 8, type, little);
+  name.copy(bytes, 12);
+  descriptor.copy(bytes, descOff);
+  return bytes;
 };
 
 /** GNU NT_GNU_BUILD_ID note with a 20-byte descriptor. */
@@ -79,6 +78,18 @@ export const gnuAbiTagNote = (little = true): Buffer => {
   return elfNote("GNU", 1, descriptor, little);
 };
 
+/** GNU NT_GNU_PROPERTY_TYPE_0 note with 8-byte table padding. */
+export const gnuPropertyNote = (little = true): Buffer => {
+  const descriptor = Buffer.alloc(32);
+  write32(descriptor, 0, 0xc0000002, little);
+  write32(descriptor, 4, 4, little);
+  write32(descriptor, 8, 3, little);
+  write32(descriptor, 16, 0xc0008002, little);
+  write32(descriptor, 20, 4, little);
+  write32(descriptor, 24, 1, little);
+  return elfNote("GNU", 5, descriptor, little, 8);
+};
+
 export interface ElfNoteImageOptions {
   readonly bits?: 32 | 64;
   readonly little?: boolean;
@@ -86,6 +97,8 @@ export interface ElfNoteImageOptions {
   readonly ownership?: "program" | "section" | "both" | "none";
   readonly machine?: number;
   readonly type?: number;
+  readonly alignment?: number;
+  readonly sectionName?: string;
 }
 
 /** Minimal ELF32/ELF64 image declaring PT_NOTE and/or SHT_NOTE. */
@@ -96,17 +109,20 @@ export const elfNoteFixture = (options: ElfNoteImageOptions = {}): Buffer => {
   const notes =
     options.notes ??
     concat(gnuBuildIdNote(undefined, little), gnuAbiTagNote(little));
+  const declaredAlign = options.alignment ?? 4;
+  const pad = notePadding(declaredAlign);
   const header = bits === 64 ? 64 : 52;
   const phent = bits === 64 ? 56 : 32;
   const shent = bits === 64 ? 64 : 40;
   const program = ownership === "program" || ownership === "both";
   const section = ownership === "section" || ownership === "both";
   const phnum = program ? 1 : 0;
-  const shstrtab = Buffer.from("\0.note.gnu.build-id\0.shstrtab\0", "latin1");
+  const sectionName = options.sectionName ?? ".note.gnu.build-id";
+  const shstrtab = Buffer.from(`\0${sectionName}\0.shstrtab\0`, "latin1");
   const shnum = section ? 3 : 0;
   const phoff = header;
   const shoff = phoff + phnum * phent;
-  const noteOff = alignTo(shoff + shnum * shent, 4);
+  const noteOff = alignTo(shoff + shnum * shent, pad);
   const strOff = noteOff + notes.length;
   const bytes = Buffer.alloc(strOff + (section ? shstrtab.length : 0));
   bytes.writeUInt32LE(0x464c457f, 0);
@@ -144,18 +160,18 @@ export const elfNoteFixture = (options: ElfNoteImageOptions = {}): Buffer => {
       writeWord(bytes, ph + 8, noteOff, bits, little);
       writeWord(bytes, ph + 32, notes.length, bits, little);
       writeWord(bytes, ph + 40, notes.length, bits, little);
-      writeWord(bytes, ph + 48, 4, bits, little);
+      writeWord(bytes, ph + 48, declaredAlign, bits, little);
     } else {
       writeWord(bytes, ph + 4, noteOff, bits, little);
       writeWord(bytes, ph + 16, notes.length, bits, little);
       writeWord(bytes, ph + 20, notes.length, bits, little);
       write32(bytes, ph + 24, 4, little);
-      writeWord(bytes, ph + 28, 4, bits, little);
+      writeWord(bytes, ph + 28, declaredAlign, bits, little);
     }
   }
   if (section) {
     const noteName = 1;
-    const strName = ".note.gnu.build-id\0".length + 1;
+    const strName = `${sectionName}\0`.length + 1;
     const noteSh = shoff + shent;
     const strSh = shoff + 2 * shent;
     write32(bytes, noteSh, noteName, little);
@@ -168,7 +184,13 @@ export const elfNoteFixture = (options: ElfNoteImageOptions = {}): Buffer => {
       bits,
       little,
     );
-    writeWord(bytes, noteSh + (bits === 64 ? 48 : 32), 4, bits, little);
+    writeWord(
+      bytes,
+      noteSh + (bits === 64 ? 48 : 32),
+      declaredAlign,
+      bits,
+      little,
+    );
     write32(bytes, strSh, strName, little);
     write32(bytes, strSh + 4, 3, little);
     writeWord(bytes, strSh + (bits === 64 ? 24 : 16), strOff, bits, little);

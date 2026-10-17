@@ -198,3 +198,22 @@ it("keeps CFPropertyList's non-finite real spellings in XML evidence", () => {
     '1 non-finite real value(s) are reported as { "$plist_type": "real", "value": null } because the decoder observed a non-finite number without a property-list spelling.',
   ]);
 });
+
+it("keeps a conversion-spelled non-finite real unknown for a binary source", () => {
+  const xml =
+    '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>Ratio</key><real>+infinity</real></dict></plist>';
+  const observed = parsePlistXml(xml, { sourceFormat: "xml" });
+  const converted = parsePlistXml(xml, { sourceFormat: "binary" });
+  expect(observed.ok && observed.value.value).toEqual({
+    Ratio: { $plist_type: "real", value: "+infinity" },
+  });
+  expect(converted.ok && converted.value.value).toEqual({
+    Ratio: { $plist_type: "real", value: null },
+  });
+  expect(converted.ok && converted.value.limitations).toContain(
+    '1 non-finite real value(s) are reported as { "$plist_type": "real", "value": null } because the decoder observed a non-finite number without a property-list spelling.',
+  );
+  expect(converted.ok && converted.value.limitations).not.toContain(
+    expect.stringContaining("with the CFPropertyList spelling"),
+  );
+});

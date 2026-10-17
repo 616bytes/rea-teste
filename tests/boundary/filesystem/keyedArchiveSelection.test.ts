@@ -318,7 +318,7 @@ it.skipIf(process.platform === "darwin" || process.platform === "win32")(
   },
 );
 
-it("keeps an archive readable when a non-finite real is an explicit unknown", async () => {
+it("keeps an archive readable when a non-finite real is spelled", async () => {
   const root = await bundle();
   const bytes = Buffer.from(
     build({
@@ -337,14 +337,15 @@ it("keeps an archive readable when a non-finite real is an explicit unknown", as
     path: "Contents/Resources/NonFinite.plist",
   });
 
+  // plist writes NaN as <real>nan</real>, one of CFPropertyList's spellings
   expect(result.objects).toContainEqual(
     expect.objectContaining({
       id: 1,
-      value: { $plist_type: "real", value: null },
+      value: { $plist_type: "real", value: "nan" },
     }),
   );
   expect(result.limitations).toContain(
-    '1 non-finite real value(s) are reported as { "$plist_type": "real", "value": null } because JSON evidence cannot preserve NaN vs infinity.',
+    '1 non-finite real value(s) are reported as { "$plist_type": "real", "value": "<spelling>" } with the CFPropertyList spelling nan, +infinity or -infinity because a JSON number cannot carry them.',
   );
 });
 

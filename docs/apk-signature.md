@@ -27,7 +27,11 @@ rea inspect-apk-signature /path/app.apk
   block's one `SignerInfo` names by `issuerAndSerialNumber` or
   `subjectKeyIdentifier` (not by position), with the same facts and raw-DER
   SHA-256 as a v2/v3 signer, so a v1-only APK can be fingerprinted and
-  clustered with v2/v3-signed ones. `certificates` lists every certificate the
+  clustered with v2/v3-signed ones. apksig resolves only
+  `issuerAndSerialNumber`, so its v1 verification fails for a block whose
+  `SignerInfo` uses `subjectKeyIdentifier`: REA still reports the declared
+  certificate (`identified_by: subject-key-identifier`), adds a limitation,
+  and treats that signer as unknown in `v1_signers_match_block_signers`. `certificates` lists every certificate the
   block carries (SHA-256 and subject) and `signer_infos` gives each
   `SignerInfo`'s certificate and digest/signature algorithm OIDs.
   `certificate` is `null` when the block has more than one `SignerInfo` (with
@@ -96,8 +100,9 @@ rea inspect-apk-signature /path/app.apk
     keeps v1 (and v2) on the original key, so it reads `true` while
     `schemes_agree_on_signer` reads `false`, with or without v2. `null` when
     v1 or a block scheme is absent, any signer's identity is unknown (a
-    `decode_error` or a `null` certificate), or the lineage's original
-    certificate cannot be identified; a limitation then says why.
+    `decode_error`, a `null` certificate or a `subjectKeyIdentifier`
+    `SignerInfo`), or the lineage's original certificate cannot be
+    identified; a limitation then says why.
   - `strongest_scheme`, `rotation_present`, `source_stamp_present`,
     `self_consistent`.
 

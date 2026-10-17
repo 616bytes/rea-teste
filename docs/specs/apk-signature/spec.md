@@ -19,7 +19,10 @@ code executes, no device or `adb`, no acquisition, no mutation.
 - Each paired v1 block's PKCS#7 `SignedData` read with bounded DER (BER
   indefinite lengths accepted): every carried certificate, and per
   `SignerInfo` the certificate it names by `issuerAndSerialNumber` or
-  `subjectKeyIdentifier` plus its digest/signature algorithm OIDs. The signer
+  `subjectKeyIdentifier` plus its digest/signature algorithm OIDs (apksig
+  resolves only `issuerAndSerialNumber`, so a `subjectKeyIdentifier` signer is
+  reported as declared, with a limitation, and is unknown to the posture's v1
+  comparison). The signer
   `certificate` goes through the same X.509 owner as v2/v3; it is `null` when
   there is not exactly one `SignerInfo` or it names no carried certificate. A
   block that cannot be read (including a local header that disagrees with

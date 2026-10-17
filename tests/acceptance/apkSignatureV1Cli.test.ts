@@ -163,6 +163,56 @@ cliTest(
 );
 
 cliTest(
+  "keeps a subjectKeyIdentifier v1 signer out of the posture match, as apksig cannot resolve it",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apk-v1-ski-");
+    // The same key in v1 and v2, but the JAR block names it by
+    // subjectKeyIdentifier, which apksig cannot resolve.
+    const keyIdentified = join(root, "v1-ski-v2.apk");
+    await writeFile(
+      keyIdentified,
+      withSigningBlock(
+        await zipWith([
+          { name: "META-INF/MANIFEST.MF", data: "Manifest-Version: 1.0" },
+          { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
+          { name: "META-INF/CERT.EC", data: OPENSSL_BLOCK_KEY_ID },
+        ]),
+        [{ id: APK_SIGNATURE_V2_ID, value: v2SchemeValue(LEAF_CERTIFICATE) }],
+      ),
+    );
+
+    const run = await cli.run({
+      arguments: ["inspect-apk-signature", keyIdentified, "--json"],
+    });
+    expect(run.exitCode, run.stderr).toBe(0);
+    const cliKeyIdentified = toolContract(
+      "inspect_apk_signature",
+    ).outputSchema.parse(run.json);
+
+    expect(cliKeyIdentified.normalized_result.schemes.v1.signers).toMatchObject(
+      [
+        {
+          certificate: { sha256_fingerprint: LEAF_SHA256 },
+          signer_infos: [
+            {
+              identified_by: "subject-key-identifier",
+              certificate_sha256: LEAF_SHA256,
+            },
+          ],
+          decode_error: null,
+        },
+      ],
+    );
+    expect(
+      cliKeyIdentified.normalized_result.posture.v1_signers_match_block_signers,
+    ).toBeNull();
+    expect(cliKeyIdentified.limitations.join(" ")).toContain(
+      "META-INF/CERT.EC: a SignerInfo names its certificate by subjectKeyIdentifier, which apksig does not resolve",
+    );
+  },
+);
+
+cliTest(
   "keeps a v1 signer unknown where apksig refuses its signature block entry",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-apk-v1-entry-");

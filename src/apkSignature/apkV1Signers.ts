@@ -133,12 +133,32 @@ export const v1SignerNotes = (signers: readonly DecodedV1Signer[]): string[] =>
           `${entry.block.name}: the entry declares encryption (general-purpose flag bit 0); apksig ignores the flag, so its bytes were read as stored and the PKCS#7 decoding decides.`,
         ]
       : []),
+    ...(decoded.ok &&
+    decoded.value.signerInfos.some(
+      (info) => info.identifiedBy === "subject-key-identifier",
+    )
+      ? [
+          `${entry.block.name}: a SignerInfo names its certificate by subjectKeyIdentifier, which apksig does not resolve (it matches issuerAndSerialNumber only), so apksig's v1 verification fails for this block. The certificate it names is reported as declared, and v1_signers_match_block_signers treats this signer as unknown.`,
+        ]
+      : []),
     ...(decoded.ok && decoded.value.trailingBytes > 0
       ? [
           `${entry.block.name}: ${String(decoded.value.trailingBytes)} bytes follow the PKCS#7 ContentInfo and were ignored, as apksig ignores them.`,
         ]
       : []),
   ]);
+
+/**
+ * The certificate the posture compares for one v1 signer: null (unknown) when
+ * a SignerInfo is identified by subjectKeyIdentifier, which apksig cannot
+ * resolve, so no match is claimed that apksig would reject.
+ */
+export const v1PostureFingerprint = (signer: V1Signer): string | null =>
+  signer.signer_infos.some(
+    (info) => info.identified_by === "subject-key-identifier",
+  )
+    ? null
+    : (signer.certificate?.sha256_fingerprint ?? null);
 
 /** Materialise one v1 signer's declared facts through the shared certificate owner. */
 export const v1SignerFacts = ({

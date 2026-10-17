@@ -68,11 +68,11 @@ import {
   certificateBytes,
   certificateFacts,
   jsonStringBytes,
-  type Certificate,
 } from "./apkCertificateFacts.js";
 import {
   decodeV1Signer,
   projectedV1SignerBytes,
+  v1PostureFingerprint,
   v1SignerFacts,
   v1SignerNotes,
   type DecodedV1Signer,
@@ -253,12 +253,6 @@ const selfConsistency = (
   return results.every(Boolean);
 };
 
-/** Signer fingerprints; null marks a signer whose certificate is absent. */
-const signerFingerprintsOf = (
-  signers: readonly { readonly certificate: Certificate }[],
-): (string | null)[] =>
-  signers.map((s) => s.certificate?.sha256_fingerprint ?? null);
-
 /** A reported block-scheme signer as the posture derivation reads it. */
 const postureSigner = (signer: Signer | SignerV3): ApkPostureSigner => {
   const fingerprint = signer.certificate?.sha256_fingerprint ?? null;
@@ -396,7 +390,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
         { scheme: "v3", signers: v3signers.map(postureSigner) },
         { scheme: "v3.1", signers: v31signers.map(postureSigner) },
       ],
-      v1SignerFingerprints: signerFingerprintsOf(v1signers),
+      v1SignerFingerprints: v1signers.map(v1PostureFingerprint),
       selfConsistent: selfConsistency([
         ...v2signers,
         ...v3signers,

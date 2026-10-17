@@ -184,9 +184,10 @@ export const apkSignatureResultSchema = z.strictObject({
      * carry: its signer set, or, for a v3/v3.1 signer that declares a rotation
      * lineage, that lineage's first (original) certificate, as apksig requires.
      * False is notable: the JAR signature names a different key. Null when v1
-     * or a block scheme is absent, any signer's identity is unknown, or a
-     * declared lineage's original certificate cannot be identified (a
-     * limitation then says why).
+     * or a block scheme is absent, any signer's identity is unknown
+     * (including a v1 SignerInfo identified by subjectKeyIdentifier, which
+     * apksig cannot resolve), or a declared lineage's original certificate
+     * cannot be identified (a limitation then says why).
      */
     v1_signers_match_block_signers: z.boolean().nullable(),
     rotation_present: z.boolean(),

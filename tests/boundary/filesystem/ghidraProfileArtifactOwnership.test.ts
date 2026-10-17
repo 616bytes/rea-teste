@@ -1,3 +1,5 @@
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { STARTUP_OWNER_CLOSED } from "../../../src/process/SharedStartupAttempt.js";
 import * as extensionModule from "../../../src/ghidra/extensions/GhidraExtensions.js";
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
@@ -323,7 +325,7 @@ it.each(["seed", "extension"] as const)(
   },
 );
 
-it("joins whole provider resolution before shutdown and gates the next admission", async () => {
+it("cancels and joins profile resolution before admitting its replacement", async () => {
   const root = await createTestTempDirectory("rea-profile-completion-");
   const jar = join(root, "extension.jar");
   const seed = join(root, "seeds.tsv");
@@ -365,7 +367,17 @@ it("joins whole provider resolution before shutdown and gates the next admission
     expect(opens).toBe(count);
     expect(provider.hasPendingOwnedResources()).toBe(true);
     release.resolve();
-    expect((await resolving).ok).toBe(true);
+    const interrupted = await resolving;
+    expect(interrupted.ok).toBe(false);
+    if (interrupted.ok)
+      throw new Error("Expected provider shutdown cancellation");
+    expect(interrupted.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(interrupted.error).toMatchObject({
+      operation: "resolve_analysis_profile",
+    });
+    expect(interrupted.error.cause).toBe(STARTUP_OWNER_CLOSED);
+    expect(interrupted.error.cleanupIncomplete).toBe(false);
+    expect(interrupted.error.cleanupResources).toEqual([]);
     expect(await closing).toEqual({ ok: true, value: null });
     expect((await next).ok).toBe(true);
     expect(provider.hasPendingOwnedResources()).toBe(false);

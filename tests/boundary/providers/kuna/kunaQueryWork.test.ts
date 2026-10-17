@@ -257,3 +257,52 @@ it("preserves producer physical failure over cancellation when last waiter depar
   lifetime.abort();
   expect(await commands.close()).toEqual({ ok: true, value: null });
 });
+
+it("preserves explicit null cancellation reason when slot acquisition is aborted", async () => {
+  const lifetime = new AbortController();
+  const commands = new KunaTargetCommands(
+    {
+      path: "/unused/program",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "elf",
+      architecture: "x86_64",
+      availableArchitectures: ["x86_64"],
+    },
+    { signal: lifetime.signal },
+  );
+  const work = new KunaQueryWork(commands, {
+    signal: lifetime.signal,
+    own: (promise) => promise,
+    runSlots: new KunaRunSlots(1),
+  });
+
+  const caller = new AbortController();
+  caller.abort(null);
+
+  const result = await work.run({
+    installation: {
+      executable: "/unused",
+      version: "1.0",
+      verified: true,
+      sha256: "b".repeat(64),
+      bytes: 100,
+      script: false,
+      configuration: {} as any,
+    },
+    operation: "list_procedures",
+    arguments: () => [],
+    timeoutMs: 1000,
+    outputBytes: 100,
+    signal: caller.signal,
+  });
+
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(null);
+  }
+
+  lifetime.abort();
+  expect(await commands.close()).toEqual({ ok: true, value: null });
+});

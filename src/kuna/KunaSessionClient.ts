@@ -413,7 +413,7 @@ export class KunaSessionClient implements AnalysisClient {
       if (cancelled(options.signal))
         return err(
           new AnalysisCancelledError(operation, {
-            cause: options.signal?.reason ?? cause,
+            cause: options.signal?.reason,
           }),
         );
       return err(failure(operation, cause));

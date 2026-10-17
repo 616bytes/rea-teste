@@ -36,9 +36,11 @@ import {
 import { artifactInspectionResultSchema } from "../artifactInspection.js";
 import {
   parseOwnedJavaScriptApplicationAnalysisSteps,
+  javascriptApplicationAnalysisResultSchema,
   type JavaScriptApplicationAnalysisResult,
 } from "../javascript/javascriptApplicationAnalysis.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
+import { sealedAnalysisViewInterpretation } from "./analysisViewParent.js";
 import { projectBinaryLayoutView } from "./binaryLayoutView.js";
 import { projectJavaScriptApplicationView } from "./javascriptApplicationView.js";
 import {
@@ -737,31 +739,44 @@ export const sealAnalysisView = (
 
 const parentDigest = (evidenceId: string): string => evidenceId.slice(3);
 
-const parseJavaScriptParent = (
-  input: unknown,
-): Result<JavaScriptApplicationAnalysisResult, AnalysisError> => {
-  try {
-    // Only the existing realm-private graph proofs permit reuse. Imported or
-    // merely frozen graphs still receive full canonical validation.
-    const steps = parseOwnedJavaScriptApplicationAnalysisSteps(input);
-    let step = steps.next();
-    while (!step.done) step = steps.next();
-    return ok(step.value);
-  } catch (cause: unknown) {
-    if (!(cause instanceof z.ZodError)) throw cause;
-    return err(
-      analysisInputErrorFromIssues(
-        INSPECT_ANALYSIS_VIEW_OPERATION,
-        cause.issues.map((issue) => ({
-          ...issue,
-          path: ["source", "normalized_result", ...issue.path],
-        })),
-        { source: { normalized_result: input } },
-        { cause },
-      ),
-    );
-  }
-};
+/**
+ * Interpret one JavaScript application parent.
+ *
+ * Inside the producer realm the owned parse reuses realm-private graph proofs.
+ * An imported or merely frozen result still receives full canonical validation
+ * on first use, and a sealed parent keeps that completed interpretation for its
+ * later pages instead of repeating the whole schema and binding check.
+ */
+const javascriptParentInterpretation = (
+  parent: AnalysisViewParent,
+): Result<JavaScriptApplicationAnalysisResult, AnalysisError> =>
+  sealedAnalysisViewInterpretation(
+    parent,
+    javascriptApplicationAnalysisResultSchema,
+    () => {
+      try {
+        const steps = parseOwnedJavaScriptApplicationAnalysisSteps(
+          parent.normalizedResult,
+        );
+        let step = steps.next();
+        while (!step.done) step = steps.next();
+        return ok(step.value);
+      } catch (cause: unknown) {
+        if (!(cause instanceof z.ZodError)) throw cause;
+        return err(
+          analysisInputErrorFromIssues(
+            INSPECT_ANALYSIS_VIEW_OPERATION,
+            cause.issues.map((issue) => ({
+              ...issue,
+              path: ["source", "normalized_result", ...issue.path],
+            })),
+            { source: { normalized_result: parent.normalizedResult } },
+            { cause },
+          ),
+        );
+      }
+    },
+  );
 
 const unsupportedParent = (
   parent: AnalysisViewParent,
@@ -841,23 +856,31 @@ export const projectAnalysisView = (
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   if (parent.operation === "inspect_binary_layout") {
-    const layout = binaryLayoutSchema.safeParse(parent.normalizedResult);
-    if (!layout.success)
-      return err(
-        analysisViewInputError([
-          {
-            path: ["source"],
-            reason: "invalid_value",
-            message:
-              "Parent Evidence result does not match inspect_binary_layout.",
-          },
-        ]),
-      );
-    const projected = projectBinaryLayoutView(parent, layout.data, view);
+    const layout = sealedAnalysisViewInterpretation(
+      parent,
+      binaryLayoutSchema,
+      () => {
+        const parsed = binaryLayoutSchema.safeParse(parent.normalizedResult);
+        return parsed.success
+          ? ok(parsed.data)
+          : err(
+              analysisViewInputError([
+                {
+                  path: ["source"],
+                  reason: "invalid_value",
+                  message:
+                    "Parent Evidence result does not match inspect_binary_layout.",
+                },
+              ]),
+            );
+      },
+    );
+    if (!layout.ok) return layout;
+    const projected = projectBinaryLayoutView(parent, layout.value, view);
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   if (parent.operation === "analyze_javascript_application") {
-    const analysis = parseJavaScriptParent(parent.normalizedResult);
+    const analysis = javascriptParentInterpretation(parent);
     if (!analysis.ok) return analysis;
     const projected = projectJavaScriptApplicationView(
       parent,

@@ -1543,6 +1543,53 @@ describe("application workflow CLI and MCP constant branches", () => {
   }, 20_000);
 });
 
+it("retains exported constants and captures through CLI and MCP comparison", async () => {
+  const root = await createTestTempDirectory("rea-exported-branch-values-");
+  const roots = await writeComparisonSources(root, [
+    `export const enabled = true;
+     const saved = true ? enabled : true;
+     export const source = { value: 1 }, snapshot = true ? source.value : 0,
+       ignored = mutate(source);
+     function mutate(value) { value.value = 2; }
+     export default function config() { return { type: "config", enabled: saved, value: snapshot }; }`,
+    `export default () => ({ type: "config", enabled: true, value: 1 });`,
+  ]);
+  for (const path of roots)
+    expect(await runtimeDefaultExport(join(path, "parser.mjs"))).toEqual({
+      type: "config",
+      enabled: true,
+      value: 1,
+    });
+  const [left, right] = await Promise.all(
+    roots.map((path) =>
+      runCli(["analyze-javascript-application", path, "--json"]),
+    ),
+  );
+  const input = {
+    left,
+    right,
+    left_module_path: "parser.mjs",
+    left_export_name: "default",
+    right_module_path: "parser.mjs",
+    right_export_name: "default",
+  };
+  const expected = {
+    normalized_result: {
+      summary: { added: 0, removed: 0, changed: 0, unknown: 0 },
+      changes: [],
+      coverage: { status: "complete-within-inputs" },
+    },
+  };
+  expect(
+    await runCliWithRequestFile(
+      root,
+      "compare-javascript-export-shapes",
+      input,
+    ),
+  ).toMatchObject(expected);
+  expect(await compareThroughStdioMcp(input)).toMatchObject(expected);
+}, 20_000);
+
 it.each(["const", "let"])(
   "preserves loop-body %s TDZ uncertainty and valid deferred captures through CLI and MCP",
   async (kind) => {

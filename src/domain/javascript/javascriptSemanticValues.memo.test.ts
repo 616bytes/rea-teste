@@ -115,6 +115,63 @@ it("bounds sensitivity checks across independent queries with many effectful obj
   expect(large).toBeLessThan(3 * small);
 });
 
+it("bounds sensitivity indexing while the producer appends many member writes", () => {
+  const measure = (width: number) => {
+    const parsed = parseJavaScriptSource(
+      Array.from(
+        { length: width },
+        (_, index) => `
+        const x${index} = ${index};
+        const o${index} = { value: true ? x${index} : 0 };
+        o${index}.value = 2;
+      `,
+      ).join("\n"),
+      "incremental-write-sensitivity.js",
+    );
+    if (parsed === null) throw new Error("Expected parsed source");
+    const indexing = indexJavaScriptBindingsSteps(parsed.program);
+    let indexed = indexing.next();
+    while (indexed.done !== true) indexed = indexing.next();
+    const state = indexed.value;
+    const values = state.bindingsById.values.bind(state.bindingsById);
+    let visits = 0;
+    const scan = vi
+      .spyOn(state.bindingsById, "values")
+      .mockImplementation(function* () {
+        for (const binding of values()) {
+          visits++;
+          yield binding;
+        }
+        return undefined;
+      });
+    try {
+      const effects = collectSemanticMemberMutationsSteps(
+        parsed.program,
+        state,
+      );
+      let effect = effects.next();
+      while (effect.done !== true) effect = effects.next();
+      for (const binding of values()) {
+        const value = evaluateSemanticBinding(binding, state);
+        if (binding.name.startsWith("o"))
+          expect(property(value, "value").status).toBe("unknown");
+        else
+          expect(value).toEqual({
+            status: "literal",
+            value: Number(binding.name.slice(1)),
+          });
+      }
+      return visits;
+    } finally {
+      scan.mockRestore();
+    }
+  };
+  const small = measure(16);
+  const large = measure(32);
+  expect(small).toBeGreaterThan(0);
+  expect(large).toBeLessThan(3 * small);
+});
+
 it("refreshes capture sensitivity when the effect producer invalidates values", () => {
   const parsed = parseJavaScriptSource(
     `

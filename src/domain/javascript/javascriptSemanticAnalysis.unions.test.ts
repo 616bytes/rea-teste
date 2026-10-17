@@ -327,6 +327,42 @@ describe("logical primitive unions", () => {
   });
 });
 
+describe("exported lexical branch operands", () => {
+  it.each(["const", "let"])(
+    "orders exported %s declarations and their declarators",
+    (kind) => {
+      for (const source of [
+        `export ${kind} enabled = true; const saved = true ? enabled : true;`,
+        `export ${kind} enabled = true, saved = enabled && true;`,
+        `export ${kind} enabled = true, saved = enabled || false;`,
+        `export ${kind} enabled = true, saved = enabled ?? false;`,
+      ])
+        expect(
+          topLevelBinding(analyzeJavaScriptSemantics(source), "saved").value,
+        ).toEqual({ status: "literal", value: true });
+      for (const source of [
+        `const saved = enabled ? "on" : "off"; export ${kind} enabled = true;`,
+        `export ${kind} saved = enabled ? "on" : "off", enabled = true;`,
+      ])
+        expect(
+          topLevelBinding(analyzeJavaScriptSemantics(source), "saved").value,
+        ).toEqual({ status: "union", values: ["off", "on"] });
+    },
+  );
+});
+
+it("preserves capture timing across exported declarators before a later escape", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    export const source = { value: 1 },
+      saved = true ? source.value : 0,
+      ignored = mutate(source);
+  `);
+  expect(topLevelBinding(ir, "saved").value).toEqual({
+    status: "literal",
+    value: 1,
+  });
+});
+
 describe("loop branch source reads", () => {
   it.each(["const", "let"])(
     "keeps future loop-body %s reads uncertain while preserving initialized and deferred reads",

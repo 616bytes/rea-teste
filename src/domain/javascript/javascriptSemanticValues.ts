@@ -161,15 +161,32 @@ const capturedBindingValuesByState = new WeakMap<
   WeakMap<t.Node, Map<string, JavaScriptSemanticValue>>
 >();
 
-/** Discard every state-owned value derived before the effects boundary changed. */
+/** Values always expire; a known appended effect can extend sensitivity in place. */
 export const clearSemanticValueCaches = (
   state: JavaScriptSemanticAnalysisState,
+  addedEffectBinding?: JavaScriptSemanticBindingState,
 ): void => {
   primitiveBindingValuesByState.delete(state);
   capturedBindingValuesByState.delete(state);
   primitiveExpressionValuesByState.delete(state);
   callerIndependentBindingValuesByState.delete(state);
-  captureSensitiveBindingsByState.delete(state);
+  const dependencies = dependencyProofsByState.get(state);
+  if (
+    addedEffectBinding !== undefined &&
+    dependencies !== undefined &&
+    captureSensitiveBindingsByState.has(state)
+  ) {
+    captureSensitiveBindingsByState.set(
+      state,
+      dependencies.union(
+        captureSensitiveBindingsByState.get(state),
+        dependencies.binding(addedEffectBinding.bindingId),
+      ),
+    );
+  } else {
+    // Unspecified changes may remove effects; only a full rebuild is sound.
+    captureSensitiveBindingsByState.delete(state);
+  }
 };
 
 const callerIndependentBindingValuesFor = (

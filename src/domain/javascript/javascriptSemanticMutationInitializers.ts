@@ -88,13 +88,24 @@ const statementPosition = (
   parents: WeakMap<t.Node, t.Node>,
   declarator?: t.VariableDeclarator,
 ): StatementPosition | null => {
-  const parent = parents.get(statement);
+  const declaration =
+    t.isExportNamedDeclaration(statement) &&
+    t.isVariableDeclaration(statement.declaration)
+      ? statement.declaration
+      : statement;
+  const enclosing = parents.get(declaration);
+  const owner =
+    t.isExportNamedDeclaration(enclosing) &&
+    enclosing.declaration === declaration
+      ? enclosing
+      : declaration;
+  const parent = parents.get(owner);
   if (!t.isProgram(parent) && !t.isBlockStatement(parent)) return null;
-  const index = parent.body.indexOf(statement);
-  const declarations = t.isVariableDeclaration(statement)
-    ? statement.declarations
-    : t.isForStatement(statement) && t.isVariableDeclaration(statement.init)
-      ? statement.init.declarations
+  const index = parent.body.indexOf(owner);
+  const declarations = t.isVariableDeclaration(declaration)
+    ? declaration.declarations
+    : t.isForStatement(declaration) && t.isVariableDeclaration(declaration.init)
+      ? declaration.init.declarations
       : undefined;
   return index < 0
     ? null
@@ -104,7 +115,7 @@ const statementPosition = (
         declaratorIndex:
           declarations !== undefined && declarator !== undefined
             ? declarations.indexOf(declarator)
-            : t.isForStatement(statement) && declarations !== undefined
+            : t.isForStatement(declaration) && declarations !== undefined
               ? declarations.length
               : -1,
       };

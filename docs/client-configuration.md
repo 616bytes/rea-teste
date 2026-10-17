@@ -457,9 +457,14 @@ Save a JSON file, for example `rea-mcp.json`:
 Replace both paths with your installation's actual paths. For a project-local npm
 installation, run `npm root` in that project; the script is under
 `$(npm root)/rea-agents/scripts/rea.mjs`. For a global installation, use
-`$(npm root -g)/rea-agents/scripts/rea.mjs` instead. Copy the resulting absolute
-path into the JSON; llama-server does not expand shell expressions there.
-`node -p process.execPath` prints the executable for your current Node.js.
+`$(npm root -g)/rea-agents/scripts/rea.mjs` instead. Write the resulting absolute
+paths as JSON strings; llama-server does not expand shell expressions there.
+On Windows, use forward slashes, such as `"C:/Program Files/nodejs/node.exe"`,
+or double each backslash, as in `"C:\\Program Files\\nodejs\\node.exe"`.
+Apply this to both `command` and the script path in `args`. Single backslashes
+can make the JSON invalid or change the path through escape sequences.
+`node -p "JSON.stringify(process.execPath)"` prints your current Node.js executable
+as a quoted, escaped JSON string that can be used as the `command` value.
 Use the version supported by REA. Preserve any other
 servers if you are adding REA to an existing configuration. `timeout_ms` is
 llama.cpp's per-tool-call timeout, including cold engine startup. The example

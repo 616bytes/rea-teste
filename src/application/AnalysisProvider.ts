@@ -205,14 +205,7 @@ export interface AnalysisClientContext {
 
 /** One lifecycle owner for descriptor cleanup and abortable inspection work. */
 export interface FileCloseResourceOwner {
-  retain(
-    owner: {
-      close(): Promise<void>;
-      /** Complete labels authored by this exact owner; the display label is only a fallback. */
-      readonly cleanupResources?: readonly string[] | undefined;
-    },
-    resource: string,
-  ): void;
+  retain(owner: { close(): Promise<void> }, resource: string): void;
   run<T>(operation: () => Promise<T>): Promise<T>;
 }
 

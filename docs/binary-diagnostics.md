@@ -8,9 +8,11 @@ ordinary binary inspection use the same modular capability.
 
 ## Bring your own engine
 
-Initial real verification covers **Linux x64, ELF64 x86-64 little-endian
-EXEC/DYN/REL**. Provide an absolute Python executable whose environment already
-contains unchanged pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2:
+The decoder runs on a Linux x64 host. Real verification covers **ELF
+EXEC/DYN/REL targets for x86, x86-64, ARM, AArch64, RISC-V, MIPS and PowerPC
+(32/64-bit, little/big-endian)**. Provide an absolute Python executable whose
+environment already contains unchanged pwntools 4.15.0, pyelftools 0.33 and
+Unicorn 2.1.2:
 
 ```sh
 REA_PWNTOOLS_PYTHON=/absolute/isolated-env/bin/python \

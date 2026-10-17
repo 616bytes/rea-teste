@@ -57,7 +57,11 @@ export const registerBinaryDiagnosticsCommands = (
     description:
       "Inspect binary file/linked layout without executing the selected object",
     args: z.object({
-      path: z.string().describe("Local ELF binary or relocatable object"),
+      path: z
+        .string()
+        .describe(
+          "Local ELF binary or relocatable object (x86, x86-64, ARM, AArch64, RISC-V, MIPS or PowerPC)",
+        ),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>

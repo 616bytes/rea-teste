@@ -85,9 +85,19 @@ const nestedInspection = (
   };
 };
 // Historical Evidence has neither nesting facts nor declared-name digests.
-const recordedBefore = ({ nesting_read, types, ...rest }: Inspection) => ({
+const recordedBefore = ({
+  nesting_read: _nesting_read,
+  types,
+  ...rest
+}: Inspection) => ({
   ...rest,
-  types: types.map(({ enclosing_type_token, name_sha256, ...type }) => type),
+  types: types.map(
+    ({
+      enclosing_type_token: _enclosing_type_token,
+      name_sha256: _name_sha256,
+      ...type
+    }) => type,
+  ),
 });
 const compare = (
   left: ReturnType<typeof nestedInspection>,

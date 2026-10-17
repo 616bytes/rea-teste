@@ -10,7 +10,6 @@ import type {
   OwnedProviderProcessSpawnOptions,
   SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
-import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
@@ -25,13 +24,6 @@ const MAX_OPERATION_BYTES = 32 * 1024 * 1024;
 export type JadxLauncher = (
   options: OwnedProviderProcessSpawnOptions,
 ) => Promise<SpawnedOwnedProviderProcess>;
-
-/** The first observed failure, recorded before notifying the SDK or beginning cleanup. */
-export type JadxTransportFailure =
-  | { readonly kind: "process"; readonly cause: unknown }
-  | { readonly kind: "exit" }
-  | { readonly kind: "protocol"; readonly cause: Error }
-  | { readonly kind: "interrupted"; readonly reason: unknown };
 
 /** SDK-framed stdio with REA-owned process cleanup rather than an unowned child. */
 export class JadxMcpTransport implements Transport {
@@ -48,7 +40,7 @@ export class JadxMcpTransport implements Transport {
   #closed = false;
   #closePromise: Promise<void> | undefined;
   #starting: Promise<void> | undefined;
-  #failure: JadxTransportFailure | undefined;
+  #failure: string | null = null;
 
   constructor(
     readonly options: Omit<OwnedProviderProcessSpawnOptions, "runId" | "stdin">,
@@ -60,10 +52,7 @@ export class JadxMcpTransport implements Transport {
     if (this.#started || this.#closed)
       throw new Error("JADX transport cannot be restarted");
     this.#started = true;
-    this.#starting = this.#acquire().catch((cause: unknown) => {
-      this.#failure ??= { kind: "process", cause };
-      throw cause;
-    });
+    this.#starting = this.#acquire();
     return this.#starting;
   }
 
@@ -91,7 +80,6 @@ export class JadxMcpTransport implements Transport {
     )
       throw new Error("JADX launcher did not supply protocol stdin/stdout");
     spawned.process.stdout.on("data", this.#read);
-    spawned.process.stdout.on("error", this.#error);
     spawned.process.stderr?.on("data", this.#countStderr);
     spawned.process.on("error", this.#error);
     spawned.process.once("exit", this.#exit);
@@ -105,18 +93,9 @@ export class JadxMcpTransport implements Transport {
     if (this.#closed || input === undefined || input === null)
       throw new Error("JADX protocol process is not writable");
     await new Promise<void>((resolve, reject) => {
-      try {
-        input.write(serializeMessage(message), (cause) => {
-          if (cause === null || cause === undefined) resolve();
-          else {
-            this.#failure ??= { kind: "process", cause };
-            reject(cause);
-          }
-        });
-      } catch (cause) {
-        this.#failure ??= { kind: "process", cause };
-        reject(cause);
-      }
+      input.write(serializeMessage(message), (cause) =>
+        cause === null || cause === undefined ? resolve() : reject(cause),
+      );
     });
   }
 
@@ -129,32 +108,18 @@ export class JadxMcpTransport implements Transport {
     return this.#closePromise;
   }
 
-  /** Keep the interruption reason distinct from errors produced by its teardown. */
-  interrupt(reason: unknown): Promise<void> {
-    this.#failure ??= { kind: "interrupted", reason };
-    return this.close();
+  /** Captured provider stderr without persisting inherited environment values. */
+  diagnostics(): string {
+    return this.#supervisor?.snapshot().stderr.text ?? "";
   }
 
-  /** Captured provider stderr without persisting inherited environment values. */
-  diagnostics(): AnalysisCapturedOutput | undefined {
-    const owner = this.#supervisor;
-    if (owner === undefined) return undefined;
-    const snapshot = owner.snapshot();
-    return {
-      stdout: "",
-      stderr: snapshot.stderr.text,
-      stderr_bytes: snapshot.stderr.observedBytes,
-      truncated:
-        snapshot.diagnosticTruncated === true || !owner.observedOutputClose(),
-      ...(snapshot.exitCode === undefined
-        ? {}
-        : { exit_code: snapshot.exitCode }),
-      ...(snapshot.signal === undefined ? {} : { signal: snapshot.signal }),
-    };
+  /** Whether the retained startup/operation diagnostics lost bytes. */
+  diagnosticsTruncated(): boolean {
+    return this.#supervisor?.snapshot().diagnosticTruncated ?? false;
   }
 
   /** Preserve the failed protocol/resource constraint after the SDK closes requests. */
-  observedFailure(): JadxTransportFailure | undefined {
+  failureReason(): string | null {
     return this.#failure;
   }
 
@@ -172,7 +137,6 @@ export class JadxMcpTransport implements Transport {
     await this.#starting?.catch(() => undefined);
     const process = this.#spawned?.process;
     process?.stdout?.off("data", this.#read);
-    process?.stdout?.off("error", this.#error);
     process?.stderr?.off("data", this.#countStderr);
     process?.off("error", this.#error);
     process?.off("exit", this.#exit);
@@ -193,20 +157,14 @@ export class JadxMcpTransport implements Transport {
     if (stopped?.status === "incomplete")
       throw new ProviderCleanupError("jadx", [this.runId], {
         reason: stopped.reason,
-        stderr: this.diagnostics()?.stderr ?? "",
+        stderr: this.diagnostics(),
       });
   }
 
   readonly #error = (error: Error): void => {
-    this.#failure ??= { kind: "process", cause: error };
     this.onerror?.(error);
-    // Reject pending SDK work after joining the same owned teardown on every path.
-    void this.close().catch((cause: unknown) =>
-      this.onerror?.(cause instanceof Error ? cause : new Error(String(cause))),
-    );
   };
   readonly #exit = (): void => {
-    this.#failure ??= { kind: "exit" };
     this.onclose?.();
   };
   readonly #countStderr = (chunk: Buffer | string): void => {
@@ -269,7 +227,12 @@ export class JadxMcpTransport implements Transport {
     this.#frameLength = frameBytes;
   }
   #fail(error: Error): void {
-    this.#failure ??= { kind: "protocol", cause: error };
-    this.#error(error);
+    this.#failure ??= error.message;
+    this.onerror?.(error);
+    // Closing immediately rejects the SDK's outstanding request. The owner
+    // awaits close again and retains a cleanup failure in the returned Result.
+    void this.close().catch((cause: unknown) =>
+      this.onerror?.(cause instanceof Error ? cause : new Error(String(cause))),
+    );
   }
 }

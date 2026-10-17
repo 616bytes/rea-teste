@@ -121,8 +121,8 @@ const registerDoctorCommand = (
         .describe("Require the installed REA skill identity to be aligned"),
     }),
     run: ({ options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "doctor", async () => {
+      logCliCommand(logger, "doctor", () =>
+        withCommandCancellation(async (signal) => {
           const [{ runDoctorOwned }, { createSystemDoctorHost }] =
             await Promise.all([
               import("../application/Doctor.js"),

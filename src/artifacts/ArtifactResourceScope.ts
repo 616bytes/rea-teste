@@ -179,12 +179,7 @@ export class ArtifactResourceScope {
     }
     if (failures.length === 0) return;
     const observations = failures.map(({ owner, cause }) =>
-      ArtifactReaderFailure.cleanupObservation(
-        cause,
-        owner.kind === "lease" && owner.lease instanceof AnalysisCleanupLease
-          ? (owner.lease.cleanupResources ?? owner.resource)
-          : owner.resource,
-      ),
+      ArtifactReaderFailure.cleanupObservation(cause, owner.resource),
     );
     const resources = [
       ...new Set(observations.flatMap(({ resources }) => resources)),

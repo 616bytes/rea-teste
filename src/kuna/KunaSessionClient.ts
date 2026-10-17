@@ -1,4 +1,3 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { z } from "zod";
 
 import {
@@ -1383,7 +1382,7 @@ export class KunaSessionClient implements AnalysisClient {
         this.#fileCloseResources.retain({
           kind: "lease",
           resource,
-          lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+          lease: { release: () => owner.close() },
         }),
       run: <T>(operation: () => Promise<T>) =>
         this.#fileCloseResources.run(operation),

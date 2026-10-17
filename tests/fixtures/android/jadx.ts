@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { expect, onTestFinished } from "vitest";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
 import { createAndroidAnalysisProvider } from "../../../src/composition/android.js";
-import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
@@ -138,8 +138,7 @@ export const createJadxProtocolFixture = async (
     } catch (cause) {
       if (
         mode !== "cleanup-failure" ||
-        !(cause instanceof ProviderAdapterError) ||
-        !cause.cleanupIncomplete ||
+        !(cause instanceof ProviderCleanupError) ||
         cause.providerId !== "jadx"
       )
         throw cause;

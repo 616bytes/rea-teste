@@ -205,14 +205,11 @@ export class ArtifactReaderFailure extends Error {
   /** Give otherwise opaque cleanup failures a concrete owned resource. */
   static cleanupObservation(
     cause: unknown,
-    resource: string | readonly string[],
+    resource: string,
   ): AnalysisCleanupObservation {
     if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
       return cause.cleanup;
-    return {
-      reason: errorMessage(cause),
-      resources: typeof resource === "string" ? [resource] : [...resource],
-    };
+    return { reason: errorMessage(cause), resources: [resource] };
   }
 }
 

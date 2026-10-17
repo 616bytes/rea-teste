@@ -10,7 +10,10 @@ export const createInspectionResources = () => {
       scope.retain({
         kind: "lease",
         resource,
-        lease: AnalysisCleanupLease.forCloseOwner(resourceOwner, resource),
+        lease: new AnalysisCleanupLease(
+          () => resourceOwner.close(),
+          [resource],
+        ),
       }),
     run: (operation) => scope.run(operation),
   };

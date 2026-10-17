@@ -10,10 +10,7 @@ import {
 } from "./javascriptFactsView.js";
 import { javaScriptSourceSelectionSchema } from "../javascript/javascriptSourceSelection.js";
 
-import {
-  AnalysisInputError,
-  AnalysisUnsupportedTargetError,
-} from "../analysisErrorCore.js";
+import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
 import {
   INSPECT_ANALYSIS_VIEW_OPERATION,
   analysisViewInputError,
@@ -24,7 +21,10 @@ import { evidenceSchema, type Evidence } from "../evidence.js";
 import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { binaryLayoutSchema } from "../native/binaryLayout.js";
+import {
+  binaryLayoutArchitectureSchema,
+  binaryLayoutSchema,
+} from "../native/binaryLayout.js";
 import { functionDossierSchema } from "../hopperValues.js";
 import {
   artifactGraphManifestSchema,
@@ -286,11 +286,7 @@ const artifactSchema = z.strictObject({
 const layoutSummarySchema = z.strictObject({
   bytes: z.number().int().nonnegative(),
   format: z.literal("elf"),
-  architecture: z.strictObject({
-    machine: z.literal("EM_X86_64"),
-    bits: z.literal(64),
-    byte_order: z.literal("little"),
-  }),
+  architecture: binaryLayoutArchitectureSchema,
   image_type: z.enum(["ET_EXEC", "ET_DYN", "ET_REL"]),
   entry: z.strictObject({
     reported_value: z.string().min(1),

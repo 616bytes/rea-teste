@@ -26,7 +26,7 @@ export class AnalysisClientCreation {
       this.#inspectionResources.retain({
         kind: "lease",
         resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+        lease: new AnalysisCleanupLease(() => owner.close(), [resource]),
       }),
     run: (operation) => this.#inspectionResources.run(operation),
   };

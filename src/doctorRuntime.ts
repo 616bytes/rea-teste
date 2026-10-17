@@ -51,11 +51,7 @@ export const createSystemDoctorHost = (
         inspectionSignal,
       ),
       inspectIdaRegistration(environment.REA_IDA_MCP_CONFIG),
-      await inspectJadxProvider(
-        environment,
-        fileCloseResources,
-        inspectionSignal,
-      ),
+      await inspectJadxProvider(environment),
       await inspectKunaProvider(environment, process.platform, {
         fileCloseResources,
       }),

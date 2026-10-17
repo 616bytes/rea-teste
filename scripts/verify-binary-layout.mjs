@@ -1074,7 +1074,9 @@ try {
       }
     }
   }
-  unsupported.writeUInt16LE(183, 18);
+  // EM_SPARC (2) is outside the admitted machine set; EM_AARCH64 (183) is
+  // admitted, so it must not be used as the unsupported-machine case.
+  unsupported.writeUInt16LE(2, 18);
   const core = Buffer.from(object);
   core.writeUInt16LE(4, 16);
   for (const [name, bytes, category] of [
@@ -1099,13 +1101,260 @@ try {
       "invalid_input",
     ],
     ["undersized-program-header", undersizedProgramHeader, "invalid_input"],
-    ["arm64", unsupported, "unsupported_target"],
+    ["sparc", unsupported, "unsupported_target"],
     ["core", core, "unsupported_target"],
   ]) {
     const path = join(root.path, name);
     await writeFile(path, bytes);
     for (const mode of ["cli", "mcp"]) {
       await inspect(mode, path, category);
+      assert.deepEqual(await readFile(path), bytes);
+      cases++;
+    }
+  }
+  // The CI host toolchain only produces x86-64 objects, so the expanded
+  // machine profile is verified with hand-built objects carrying real
+  // section and symbol tables (one PT_LOAD plus
+  // .text/.symtab/.strtab/.shstrtab).
+  const buildMultiArchObject = (machine, bits, littleEndian) => {
+    const is64 = bits === 64;
+    const u16 = (value) => ["setUint16", value];
+    const u32 = (value) => ["setUint32", value];
+    const u64 = (value) => ["setBigUint64", BigInt(value)];
+    const u8 = (value) => ["setUint8", value];
+    const packFields = (fields) => {
+      const widths = {
+        setUint8: 1,
+        setUint16: 2,
+        setUint32: 4,
+        setBigUint64: 8,
+      };
+      const buffer = Buffer.alloc(
+        fields.reduce((size, [setter]) => size + widths[setter], 0),
+      );
+      const view = new DataView(
+        buffer.buffer,
+        buffer.byteOffset,
+        buffer.length,
+      );
+      let offset = 0;
+      for (const [setter, value] of fields) {
+        view[setter](offset, value, littleEndian);
+        offset += widths[setter];
+      }
+      return buffer;
+    };
+    const text = Buffer.alloc(16, 0);
+    const strtab = Buffer.from("\x00_start\x00", "utf8");
+    const shstrtab = Buffer.from(
+      "\x00.text\x00.symtab\x00.strtab\x00.shstrtab\x00",
+      "utf8",
+    );
+    const shName = (name) => shstrtab.indexOf(name);
+    const base = is64 ? 0x400000 : 0x8048000;
+    const symtab = is64
+      ? packFields([
+          u32(0),
+          u8(0),
+          u8(0),
+          u16(0),
+          u64(0),
+          u64(0),
+          u32(1),
+          u8(0x12),
+          u8(0),
+          u16(1),
+          u64(base),
+          u64(16),
+        ])
+      : packFields([
+          u32(0),
+          u32(0),
+          u32(0),
+          u8(0),
+          u8(0),
+          u16(0),
+          u32(1),
+          u32(base),
+          u32(16),
+          u8(0x12),
+          u8(0),
+          u16(1),
+        ]);
+    const ehsize = is64 ? 64 : 52;
+    const phentsize = is64 ? 56 : 32;
+    const shentsize = is64 ? 64 : 40;
+    let offset = ehsize + phentsize;
+    const textOff = offset;
+    offset += text.length;
+    const symtabOff = offset;
+    offset += symtab.length;
+    const strtabOff = offset;
+    offset += strtab.length;
+    const shstrtabOff = offset;
+    offset += shstrtab.length;
+    const shoff = Math.ceil(offset / 16) * 16;
+    const totalSize = shoff + 5 * shentsize;
+    const ehdr = is64
+      ? packFields([
+          u16(2),
+          u16(machine),
+          u32(1),
+          u64(base),
+          u64(ehsize),
+          u64(shoff),
+          u32(0),
+          u16(ehsize),
+          u16(phentsize),
+          u16(1),
+          u16(shentsize),
+          u16(5),
+          u16(4),
+        ])
+      : packFields([
+          u16(2),
+          u16(machine),
+          u32(1),
+          u32(base),
+          u32(ehsize),
+          u32(shoff),
+          u32(0),
+          u16(ehsize),
+          u16(phentsize),
+          u16(1),
+          u16(shentsize),
+          u16(5),
+          u16(4),
+        ]);
+    const phdr = is64
+      ? packFields([
+          u32(1),
+          u32(5),
+          u64(0),
+          u64(base),
+          u64(base),
+          u64(totalSize),
+          u64(totalSize),
+          u64(0x1000),
+        ])
+      : packFields([
+          u32(1),
+          u32(0),
+          u32(base),
+          u32(base),
+          u32(totalSize),
+          u32(totalSize),
+          u32(5),
+          u32(0x1000),
+        ]);
+    const shdr = (
+      name,
+      type,
+      flags,
+      addr,
+      sectionOffset,
+      size,
+      link,
+      info,
+      align,
+      entsize,
+    ) =>
+      packFields(
+        is64
+          ? [
+              u32(shName(name)),
+              u32(type),
+              u64(flags),
+              u64(addr),
+              u64(sectionOffset),
+              u64(size),
+              u32(link),
+              u32(info),
+              u64(align),
+              u64(entsize),
+            ]
+          : [
+              u32(shName(name)),
+              u32(type),
+              u32(flags),
+              u32(addr),
+              u32(sectionOffset),
+              u32(size),
+              u32(link),
+              u32(info),
+              u32(align),
+              u32(entsize),
+            ],
+      );
+    const sections = [
+      shdr("\x00", 0, 0, 0, 0, 0, 0, 0, 0, 0),
+      shdr(".text", 1, 6, base, textOff, text.length, 0, 0, 16, 0),
+      shdr(
+        ".symtab",
+        2,
+        0,
+        0,
+        symtabOff,
+        symtab.length,
+        3,
+        1,
+        is64 ? 8 : 4,
+        is64 ? 24 : 16,
+      ),
+      shdr(".strtab", 3, 0, 0, strtabOff, strtab.length, 0, 0, 1, 0),
+      shdr(".shstrtab", 3, 0, 0, shstrtabOff, shstrtab.length, 0, 0, 1, 0),
+    ];
+    const ident = Buffer.from([
+      0x7f,
+      0x45,
+      0x4c,
+      0x46,
+      is64 ? 2 : 1,
+      littleEndian ? 1 : 2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+    ]);
+    const body = Buffer.concat([
+      ident,
+      ehdr,
+      phdr,
+      text,
+      symtab,
+      strtab,
+      shstrtab,
+    ]);
+    return Buffer.concat([
+      body,
+      Buffer.alloc(shoff - body.length, 0),
+      ...sections,
+    ]);
+  };
+  for (const [name, machine, bits, littleEndian, expectedMachine] of [
+    ["multi-arch-aarch64", 183, 64, true, "EM_AARCH64"],
+    ["multi-arch-arm", 40, 32, true, "EM_ARM"],
+    ["multi-arch-ppc", 20, 32, false, "EM_PPC"],
+  ]) {
+    const path = join(root.path, name);
+    const bytes = buildMultiArchObject(machine, bits, littleEndian);
+    await writeFile(path, bytes);
+    for (const mode of ["cli", "mcp"]) {
+      const value = await inspect(mode, path);
+      assert.equal(value.architecture.machine, expectedMachine);
+      assert.equal(value.architecture.bits, bits);
+      assert.equal(
+        value.architecture.byte_order,
+        littleEndian ? "little" : "big",
+      );
+      assert.ok(value.sections.length > 0);
+      assert.ok(value.symbols.length > 0);
       assert.deepEqual(await readFile(path), bytes);
       cases++;
     }

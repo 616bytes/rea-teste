@@ -37,7 +37,7 @@ import {
   KUNA_PROVIDER_IDENTITY,
   kunaCapabilities,
 } from "./KunaProviderCapabilities.js";
-import { KUNA_COMMAND_REMEDIATION, KUNA_PROVIDER_ID } from "./KunaRelease.js";
+import { KUNA_COMMAND_REMEDIATION } from "./KunaRelease.js";
 import { KunaRunSlots } from "./KunaRunSlots.js";
 import { KunaSessionClient } from "./KunaSessionClient.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";

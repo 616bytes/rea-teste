@@ -228,7 +228,13 @@ const cancellationCases = cancellationCommands.flatMap((command) =>
 
 it.each(cancellationCases)(
   "$command preserves $signal status and awaited cleanup during CDP discovery",
-  async ({ command, operation, buildArgs, signal, expectedExitCode }) => {
+  async ({
+    command: _command,
+    operation,
+    buildArgs,
+    signal,
+    expectedExitCode,
+  }) => {
     const sockets = new Set<Socket>();
     const server = createServer(() => undefined);
     server.on("connection", (socket) => {

@@ -92,17 +92,9 @@ export const createKunaFileCloseScope = (
   return {
     owner: {
       retain: (owner, resource) => {
-        const lease = AnalysisCleanupLease.forCloseOwner(owner, resource);
+        const lease = new AnalysisCleanupLease(() => owner.close(), [resource]);
         leases.set(owner, lease);
-        parent.retain(
-          {
-            close: () => lease.release(),
-            get cleanupResources() {
-              return lease.cleanupResources ?? [resource];
-            },
-          },
-          resource,
-        );
+        parent.retain({ close: () => lease.release() }, resource);
       },
       run: (operation) => parent.run(operation),
     },

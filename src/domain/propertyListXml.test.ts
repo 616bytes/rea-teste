@@ -87,6 +87,18 @@ it("retains native decoder null and nested-envelope behavior", () => {
 });
 
 it.each([
+  ["AQID", "AQID"],
+  [" A Q I D\n", "AQID"],
+  ["AQI", ""],
+  ["AQ!ID", "AQID"],
+])("decodes native Base64 data spelling %s", (source, expected) => {
+  const parsed = parseXmlPropertyList(`<plist><data>${source}</data></plist>`);
+  expect(parsed.value).toEqual(
+    Uint8Array.from(Buffer.from(expected, "base64")),
+  );
+});
+
+it.each([
   ["nan", NaN],
   ["NaN", NaN],
   ["+infinity", Infinity],

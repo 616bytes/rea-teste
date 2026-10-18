@@ -133,7 +133,15 @@ export const decodeXmlPropertyList = (document: Document) => {
         return value;
       }
       case "data": {
-        const binary = atob(content(node, textNode).text.replace(/\s+/gu, ""));
+        const encoded = content(node, textNode).text.replace(
+          /[^A-Za-z0-9+/=]/gu,
+          "",
+        );
+        const complete = encoded.slice(
+          0,
+          encoded.length - (encoded.length % 4),
+        );
+        const binary = atob(complete);
         return Uint8Array.from(binary, (character) => character.charCodeAt(0));
       }
       case "date": {

@@ -20,6 +20,20 @@ it("retains complete segmented XML keys in native plist fallback evidence", () =
   );
 });
 
+it.each([
+  ["AQID", "AQID"],
+  [" A Q I D\n", "AQID"],
+  ["AQI", ""],
+  ["AQ!ID", "AQID"],
+])("projects native Base64 data spelling %s", (source, expected) => {
+  const parsed = parsePlistXml(`<plist><data>${source}</data></plist>`);
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.value).toEqual({
+    $plist_type: "data",
+    base64: expected,
+  });
+});
+
 it("does not relabel integral CDATA reals as integers in native JSON or XML evidence", () => {
   const xml =
     "<plist><dict><key>integer</key><integer>9007199254740992</integer><key>real</key><real>9007199254<![CDATA[740992]]></real></dict></plist>";

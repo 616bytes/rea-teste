@@ -211,7 +211,11 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     return this.network.get(candidate.requestId);
   }
 
-  responseBodyUnavailable(candidate: ResponseBodyCandidate): void {
+  /** Record a body without a shape; a budget reason marks it truncated instead. */
+  responseBodyUnavailable(
+    candidate: ResponseBodyCandidate,
+    reason?: "resource_budget_exhausted",
+  ): void {
     if (this.currentResponseBodyRequest(candidate) === undefined) return;
     this.#responseBodyExaminedOccurrences.set(
       candidate.requestId,
@@ -219,7 +223,8 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     );
     if (this.malformedRedirectRequestIds.has(candidate.requestId)) return;
     bodyShapes.updateResponseBodyShape(this, candidate.requestId, null);
-    this.completeness.unavailable("json_body_shapes");
+    if (reason === undefined) this.completeness.unavailable("json_body_shapes");
+    else this.completeness.exclude("json_body_shapes", reason);
   }
 
   /**

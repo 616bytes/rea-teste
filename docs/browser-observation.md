@@ -337,6 +337,31 @@ Retained workers include validated opener-target and parent-frame IDs when CDP
 provides them; these relationships do not expand the exact-origin boundary or
 prove static module ownership.
 
+`inspect_web_page` and `analyze_web_bundle` also observe the network requests of
+the page's own dedicated workers, including workers started by other workers.
+REA auto-attaches those workers without pausing their startup and enables only
+their Network domain and nested-worker auto-attachment; worker requests pass
+the same origin policy as page requests, and workers on other origins are not
+enabled. Requests a worker sends before REA reaches it are unavailable, so
+short-lived workers can be partially observed. One capture attaches at most
+256 workers. It tracks at most 50,000 worker requests and WebSockets, holding
+8 MiB of their URLs, methods, initiator URLs, and redirect details plus JSON
+request bodies when JSON body shapes are captured, 8 MiB of worker JSON response bodies read for shapes, 8 MiB of
+worker response MIME types and kept header values, and 50,000 worker WebSocket
+frames, holding 8 MiB of text frame payload when WebSocket shapes are captured. A worker's `attached` value is its state
+before REA auto-attached; a worker that started later includes REA's own
+attachment, and the limitations say so. A worker REA does not observe, because of its origin,
+this limit, or a rejected command, is recorded under `network_requests`,
+`websocket_connections`, and `websocket_frames` with an unknown count, and up
+to 256 such workers per capture are detached without stopping them; any other
+session is released with the page session. An omitted request counts under
+`network_requests`, and an omitted WebSocket under `websocket_connections` and
+`websocket_frames`, as `resource_budget_exhausted`; omitted frames count in
+`dropped_events`. A request or WebSocket whose ID another session, page or
+worker, already uses is reported as `invalid_protocol_value` instead of being
+merged.
+Service and shared worker requests are not observed.
+
 ## Completeness and limits
 
 The default inspection window is 500 ms; callers choose its duration. The

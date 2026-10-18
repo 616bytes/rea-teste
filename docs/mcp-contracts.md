@@ -404,14 +404,19 @@ at that bounded check. These are historical snapshots, not live process
 inventories, and do not claim that no short-lived descendant existed.
 
 `binary_session.cleanup_pending` reports whether the session retains a provider
-client, session file resource, or provider-candidate resource whose cleanup has
-not succeeded. It can be true with `open: false`; target retirement does not
-establish resource release. Health, activity, and lineage remain available
-under a retained client's original `analysis_run.run_id` where the provider
-supplies them. Successful client cleanup clears the retained run; a replacement
-client receives a fresh run ID. Follow the cleanup error's reported resources
-and recovery action before reopening; a missing health observation does not
-establish an idle provider.
+client, session file resource, or provider-candidate resource whose cleanup
+has not succeeded. It can be true with
+`open: false`; target retirement does not establish resource release. For a
+retained provider client, health, activity, and lineage remain available under
+its original `analysis_run.run_id` where the provider supplies them.
+Successful provider cleanup clears the retained run;
+a replacement client receives a fresh run ID. Follow the cleanup error's
+reported resources and recovery action before reopening; a missing health
+observation does not establish an idle provider.
+File cleanup can also remain after snapshot publication or after profile
+inspection fails or is cancelled before a provider client exists. If no client
+remains, no provider run or health observation is available; follow the cleanup
+error's reported resources.
 
 ## Progress and cancellation
 
@@ -430,6 +435,9 @@ Provider calls receive the request cancellation signal. Artifact traversal,
 hashing, version comparisons, Hopper requests, and process capture
 check the same signal. Cancellation is distinct from timeout. A cleanup failure
 uses `cleanup_incomplete` and lists only the owned resource kinds that remain.
+Once those owners confirm cleanup, composed failures recover their original
+typed primary outcome and recovery guidance. Historical composition diagnostics
+remain in `details.cleanup_history`, separate from the primary diagnostics.
 An atomic Evidence bundle or snapshot write can publish its complete output
 before staging cleanup fails. In that case, `details.published: true`,
 `details.published_path`, and `details.bytes` retain the publication receipt.
@@ -448,6 +456,15 @@ attempt and its delivery result in `details.partial_observation`, with
 `elapsed_ms` and `exit_code` null when no exit was observed.
 Derived comparisons and reconstruction verification yield before computation
 and before publication, so cancellation cannot race with successful Evidence.
+
+Bundle recovery requires a recorded Evidence ID. Some provider errors carry
+typed raw observations in `details.partial_observation` instead of Evidence.
+Those raw observations are not recorded in the Evidence bundle. If the SDK
+suppresses the error reply after client cancellation, Evidence tools cannot
+recover them. An empty bundle does not prove that no partial work or side
+effect occurred; output receipts and cleanup observations remain distinct.
+The broader retention decision is tracked in
+[#4276](https://github.com/morluto/rea/issues/4276).
 
 `analyze_javascript_application` also yields between reconstruction phases and
 during graph/result sealing, cross-graph binding checks, Evidence JSON validation,
@@ -507,6 +524,12 @@ analysis runtime. These failures are reported at the operation that needs
 them. A configured provider or an endpoint alone does not establish that a
 target is supported.
 
+Composite Hopper regex searches report failures against the accepted
+`search_strings` or `search_procedures` operation. The underlying inventory
+method and request ID remain in `details.diagnostics.provider_request`, with
+the bridge error code and diagnostic type when available. Reattribution
+preserves the failure class, captured output, and live cleanup ownership.
+
 Evidence bundles, snapshots, and extraction use the paths and output behavior
 declared by their tools. Artifact extraction materializes the selected regular
 files into a fresh REA-chosen temporary directory and reports its path.
@@ -516,6 +539,25 @@ and returns its result and Evidence inline. Its owned analysis worker and privat
 temporary source files are declared as `launchesProcess` and `writesFilesystem`,
 including for a single JavaScript source. This internal analysis does not execute
 the supplied application code.
+
+## Static Ghidra bytes and source mappings
+
+`read_bytes` returns initialized analysis memory, including loader fixups, rather
+than live process memory. Check `returned_bytes` and `complete` before decoding:
+reads stop at unmapped or uninitialized bytes. Missing bytes are unknown; do not
+pad an incomplete read with zeros and treat the result as an observation.
+
+`list_segments` reports memory-block initialization and address-space facts.
+`address_to_file_offset` maps one address through the provider's source-byte
+mapping. A successful start-address mapping does not establish that an entire
+range is contiguous in the original file, or that its bytes equal analysis
+memory after loader fixups. Uninitialized, missing, and ambiguous mappings fail
+explicitly; preserve the reported failure rather than guessing an offset.
+
+For constructor-populated pointer or resource slots, a static zero is not proof
+of a later null value. Inspect the slot's `xrefs` and the writer's assembly or
+pseudocode, retaining uncertainty about execution order and runtime values.
+These operations inspect static evidence and do not execute the target.
 
 ## Ghidra first-query deadlines and recovery
 

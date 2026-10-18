@@ -36,13 +36,19 @@ const architectureForSubject = (architecture: string) => {
 export class RustBinaryService {
   constructor(readonly provider: RustBinaryPort) {}
 
+  close(): Promise<void> {
+    return this.provider.close?.() ?? Promise.resolve();
+  }
+
   /** Inspect one explicitly selected file without acquiring a binary session. */
   async inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      return err(
+        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
+      );
     const input = inspectRustBinaryInputSchema.safeParse(rawInput);
     if (!input.success)
       return err(
@@ -71,9 +77,8 @@ export class RustBinaryService {
         ),
       );
     return completeProviderEvidence(
-      ok(evidenceFor(this.provider.identity, input.data, report.data)),
-      OPERATION,
-      options,
+      evidenceFor(this.provider.identity, input.data, report.data),
+      options?.signal,
     );
   }
 }

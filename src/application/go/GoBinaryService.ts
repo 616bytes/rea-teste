@@ -45,7 +45,9 @@ export class GoBinaryService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      return err(
+        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
+      );
     const input = inspectGoBinaryInputSchema.safeParse(rawInput);
     if (!input.success)
       return err(
@@ -76,38 +78,35 @@ export class GoBinaryService {
     const value = report.data;
     const architecture = architectureForSubject(value.architecture);
     return completeProviderEvidence(
-      ok(
-        createEvidence(
-          {
-            path: value.artifact.path,
-            sha256: value.artifact.sha256,
-            format: value.format === "macho" ? "mach-o" : value.format,
-            ...(architecture === undefined ? {} : { architecture }),
-          },
-          this.provider.identity,
-          {
-            operation: OPERATION,
-            parameters: input.data,
-            result: value,
-            confidence: "observed",
-            limitations: value.limitations,
-            locations: [
-              { kind: "artifact-path", path: value.artifact.path },
-              ...(value.build_info === null
-                ? []
-                : [
-                    {
-                      kind: "file-offset-range" as const,
-                      start: value.build_info.header_offset,
-                      end: value.build_info.header_offset + 32,
-                    },
-                  ]),
-            ],
-          },
-        ),
+      createEvidence(
+        {
+          path: value.artifact.path,
+          sha256: value.artifact.sha256,
+          format: value.format === "macho" ? "mach-o" : value.format,
+          ...(architecture === undefined ? {} : { architecture }),
+        },
+        this.provider.identity,
+        {
+          operation: OPERATION,
+          parameters: input.data,
+          result: value,
+          confidence: "observed",
+          limitations: value.limitations,
+          locations: [
+            { kind: "artifact-path", path: value.artifact.path },
+            ...(value.build_info === null
+              ? []
+              : [
+                  {
+                    kind: "file-offset-range" as const,
+                    start: value.build_info.header_offset,
+                    end: value.build_info.header_offset + 32,
+                  },
+                ]),
+          ],
+        },
       ),
-      OPERATION,
-      options,
+      options?.signal,
     );
   }
 }

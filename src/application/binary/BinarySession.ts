@@ -46,7 +46,7 @@ import {
   commitExecutionProfile,
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
-import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
+import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 const OFFICIAL_OPERATIONS: ReadonlySet<string> = new Set(
   OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name),
@@ -203,8 +203,12 @@ export class BinarySession
       stagedSnapshotMatches: (target, profile) =>
         this.matchesSnapshot(target, profile),
     }).then((resolved) =>
-      isAborted(options.signal)
-        ? err(new AnalysisCancelledError("open_binary"))
+      resolved.ok && isAborted(options.signal)
+        ? err(
+            new AnalysisCancelledError("open_binary", {
+              cause: options.signal?.reason,
+            }),
+          )
         : resolved,
     );
   }
@@ -337,7 +341,9 @@ export class BinarySession
         ),
       );
     const runId = randomUUID();
-    const client = route.createClient(target, { runId });
+    const client = route.createClient(target, {
+      runId,
+    });
     const run: SessionRun = { client, route, runId };
     const started = await client.execute("health", {}, options);
     if (!started.ok) {
@@ -499,26 +505,29 @@ export class BinarySession
     if (clearRecords) this.clearSessionRecords();
     this.#clearRuntimeAvailability();
     const fileResources = await this.closeWriteResources();
-    const candidates = await this.#providerRouter.closeOwnedResources();
-    let lifecycle: Result<null, AnalysisError>;
-    if (!closed.ok && !fileResources.ok)
-      lifecycle = err(
-        analysisErrorWithCleanupFailure(
-          closed.error,
-          fileResources.error,
+    const candidateResources = await this.#providerRouter.closeOwnedResources();
+    const resourceFailures = [
+      ...(fileResources.ok ? [] : [fileResources.error]),
+      ...(candidateResources.ok ? [] : [candidateResources.error]),
+    ];
+    let resourceFailure = resourceFailures[0];
+    for (const next of resourceFailures.slice(1))
+      if (resourceFailure !== undefined)
+        resourceFailure = analysisErrorWithCleanupFailure(
+          resourceFailure,
+          next,
           "close_binary",
-        ),
-      );
-    else lifecycle = closed.ok ? fileResources : closed;
-    if (!lifecycle.ok && !candidates.ok)
+        );
+    if (!closed.ok && resourceFailure !== undefined)
       return err(
         analysisErrorWithCleanupFailure(
-          lifecycle.error,
-          candidates.error,
+          closed.error,
+          resourceFailure,
           "close_binary",
         ),
       );
-    return lifecycle.ok ? candidates : lifecycle;
+    if (!closed.ok) return closed;
+    return resourceFailure === undefined ? ok(null) : err(resourceFailure);
   }
 
   async #retireClient(
@@ -582,10 +591,11 @@ export class BinarySession
   }
 
   /** Describe the active binary session. */
-  status(): JsonValue {
+  status(options: { readonly signal?: AbortSignal } = {}): Promise<JsonValue> {
     const run = this.#active ?? this.#pendingCleanup?.run;
     const client = run?.client;
     return binarySessionStatus({
+      ...options,
       target: this.#active?.target,
       route: this.#currentRoute(),
       router: this.#providerRouter,
@@ -596,7 +606,7 @@ export class BinarySession
       providerOperationHealth: client?.operationHealthSnapshot?.() ?? null,
       cleanupPending:
         this.#pendingCleanup !== undefined ||
-        this.hasPendingWriteResources ||
+        this.hasPendingFileResources ||
         this.#providerRouter.hasPendingOwnedResources(),
     });
   }
@@ -917,6 +927,7 @@ export class BinarySession
     client: AnalysisClient,
     options: Pick<BinarySessionOpenOptions, "signal">,
   ): Promise<boolean> {
+    if (client.reuseReadiness?.() === "blocked") return false;
     const snapshot = client.operationHealthSnapshot?.();
     if (snapshot !== undefined)
       return snapshot.state === "idle" || snapshot.state === "busy";
@@ -932,7 +943,9 @@ export class BinarySession
   ): Promise<Result<null, AnalysisError>> {
     if (previous === undefined) return ok(null);
     const runId = randomUUID();
-    const client = previous.route.createClient(previous.target, { runId });
+    const client = previous.route.createClient(previous.target, {
+      runId,
+    });
     const run: SessionRun = { client, route: previous.route, runId };
     const started = await client.execute("health", {});
     if (started.ok) {

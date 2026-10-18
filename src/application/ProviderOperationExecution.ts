@@ -7,12 +7,12 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
 } from "../domain/analysisErrorCore.js";
-import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { jsonObjectSchema } from "../domain/jsonValue.js";
+import type { Evidence } from "../domain/evidence.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type {
-  AnalysisExecution,
-  ExecutionOptions,
+import {
+  createAnalysisExecutionEvidence,
+  type AnalysisExecution,
+  type ExecutionOptions,
 } from "./AnalysisProvider.js";
 
 /** Validated caller-selected request carrying its operation input. */
@@ -29,24 +29,6 @@ export interface ProviderOperationPort<
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>>;
 }
-
-/** Preserve valid completed Evidence when cancellation arrives at completion. */
-export const completeProviderEvidence = (
-  completed: Result<Evidence, AnalysisError>,
-  operation: string,
-  options?: ExecutionOptions,
-  errorOptions?: Omit<AnalysisErrorOptions, "partialObservation">,
-): Result<Evidence, AnalysisError> => {
-  if (!completed.ok) return completed;
-  return options?.signal?.aborted
-    ? err(
-        new AnalysisCancelledError(operation, {
-          ...errorOptions,
-          partialObservation: completed.value,
-        }),
-      )
-    : completed;
-};
 
 /**
  * Shared CLI/MCP admission, execution, and Evidence composition for
@@ -65,30 +47,36 @@ export const executeProviderOperation = async <
   confidence: "observed" | "derived",
 ): Promise<Result<Evidence, AnalysisError>> => {
   if (options?.signal?.aborted)
-    return err(new AnalysisCancelledError(operation));
+    return err(
+      new AnalysisCancelledError(operation, { cause: options.signal.reason }),
+    );
   const request = schema.safeParse({ operation, input });
   if (!request.success)
     return err(new AnalysisInputError(operation, { cause: request.error }));
   const executed = await provider.execute(request.data, options);
   if (!executed.ok) return executed;
-  const execution = executed.value;
-  const evidence = createEvidence(
-    execution.subject ?? undefined,
-    execution.provider,
-    {
-      operation,
-      parameters: jsonObjectSchema.parse(request.data.input),
-      result: execution.result,
-      rawResult: execution.rawResult,
-      limitations: execution.limitations,
-      locations: execution.locations,
-      confidence,
-    },
+  const evidence = createAnalysisExecutionEvidence(
+    operation,
+    request.data.input,
+    executed.value,
+    confidence,
   );
-  // A provider that cannot observe the signal may finish its work after the
-  // caller cancelled, so re-check rather than reporting a completed operation
-  // the caller no longer wants. The observation it completed is still this
-  // provider's Evidence, so the cancellation carries it as the partial
-  // observation instead of discarding a finished result.
-  return completeProviderEvidence(ok(evidence), operation, options);
+  return completeProviderEvidence(evidence, options?.signal);
+};
+
+/** Classify completion after Evidence assembly, preserving facts on late abort. */
+export const completeProviderEvidence = (
+  evidence: Evidence,
+  signal?: AbortSignal,
+  capturedOutput?: AnalysisErrorOptions["capturedOutput"],
+): Result<Evidence, AnalysisCancelledError> => {
+  if (signal?.aborted)
+    return err(
+      new AnalysisCancelledError(evidence.operation, {
+        cause: signal.reason,
+        partialObservation: evidence,
+        ...(capturedOutput === undefined ? {} : { capturedOutput }),
+      }),
+    );
+  return ok(evidence);
 };

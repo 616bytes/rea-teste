@@ -18,8 +18,8 @@ export const finishAnalysisCommand = async <
   service: { close(): Promise<void> },
   providerId: string,
   canonicalOperation: string,
+  signal: AbortSignal,
   fallbackResource?: string,
-  signal?: AbortSignal,
 ): Promise<Value | ReturnType<typeof projectAnalysisError>> => {
   let result: Result<Value, AnalysisError>;
   try {
@@ -34,9 +34,9 @@ export const finishAnalysisCommand = async <
     };
   }
   try {
+    // Resource owners may resolve their retained errors during close. This
+    // adapter cannot infer resolution of a producer's earlier cleanup failure.
     await service.close();
-    if (!result.ok && result.error.cleanupIncomplete)
-      result.error.resolveCleanup();
   } catch (cause) {
     let cleanup: AnalysisError;
     if (cause instanceof AnalysisError) cleanup = cause;
@@ -69,7 +69,7 @@ export const finishAnalysisCommand = async <
           ),
     );
   }
-  if (result.ok && signal?.aborted === true)
+  if (result.ok && signal.aborted)
     return projectAnalysisError(
       new AnalysisCancelledError(canonicalOperation, {
         cause: signal.reason,

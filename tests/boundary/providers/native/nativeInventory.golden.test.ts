@@ -500,7 +500,6 @@ it("keeps the result when a non-default slice's entitlements hold data or protot
       expect.stringMatching(
         /^Entitlements of the x86_64 slice: .*__proto__.*$/u,
       ),
-      'Entitlements of the x86_64 slice: data and date values are reported as typed objects such as { "$plist_type": "data", "base64": ... }.',
       'Mach-O slices signed differently from the arm64 slice: x86_64 (identifier com.example.x86slice; hardened runtime off; entitlements com.apple.security.cs.disable-library-validation absent, com.apple.security.get-task-allow: true, com.example.blob: {"$plist_type":"data","base64":"AQID"}).',
     ]),
   );

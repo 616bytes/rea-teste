@@ -97,6 +97,10 @@ it("preserves meaningful provider failure and cancellation before/after executio
     error: {
       _tag: "AnalysisCancelledError",
       capturedOutput: observed.diagnostics,
+      partialObservation: {
+        operation: "inspect_evm_interface",
+        normalized_result: observed,
+      },
     },
   });
   if (!late.ok) {
@@ -135,3 +139,22 @@ it("keeps malformed interface output ahead of a late cancellation", async () => 
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });
+
+it.each([null, "caller stopped", { requested: "stop" }])(
+  "preserves the exact admission reason without invoking the provider: %j",
+  async (reason) => {
+    const controller = new AbortController();
+    controller.abort(reason);
+    const service = new EvmInterfaceService({
+      inspect: () => {
+        throw new Error("must not start");
+      },
+    });
+    const result = await service.inspect(
+      { path: "/selected.hex", encoding: "hex" },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error.cause).toBe(reason);
+  },
+);

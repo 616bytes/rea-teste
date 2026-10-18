@@ -42,8 +42,15 @@ export interface JavaScriptAnalysisAccumulator {
   electronCallPathLimitReached?: boolean;
   readonly references: LocatedJavaScriptFinding<JavaScriptStaticReference>[];
   readonly endpoints: LocatedJavaScriptFinding<JavaScriptStaticEndpoint>[];
-  /** Dynamic targets held until the shared mutation index is requested on demand. */
+  /** Target and receiver identities awaiting the shared mutation index. */
   readonly pendingNetworkCalls: {
+    readonly node:
+      | t.CallExpression
+      | t.OptionalCallExpression
+      | t.NewExpression;
+    readonly name: string;
+  }[];
+  readonly pendingSqliteCalls: {
     readonly node:
       | t.CallExpression
       | t.OptionalCallExpression
@@ -55,6 +62,7 @@ export interface JavaScriptAnalysisAccumulator {
   readonly sourceMaps: JavaScriptStaticAnalysis["source_map_urls"][number][];
   readonly registrations: JavaScriptBundlerRegistration[];
   readonly browserWindows: LocatedJavaScriptFinding<ElectronBrowserWindowFinding>[];
+  readonly pendingBrowserWindows: t.NewExpression[];
   readonly contextBridgeApis: LocatedJavaScriptFinding<ElectronContextBridgeFinding>[];
   readonly ipc: LocatedJavaScriptFinding<ElectronIpcFinding>[];
   readonly senderValidations: LocatedJavaScriptFinding<ElectronSenderValidationFinding>[];
@@ -116,10 +124,12 @@ export const createJavaScriptAnalysisAccumulator = (
   endpoints: [],
   pendingNetworkCalls: [],
   storage: [],
+  pendingSqliteCalls: [],
   roles: [],
   sourceMaps: [],
   registrations: [],
   browserWindows: [],
+  pendingBrowserWindows: [],
   contextBridgeApis: [],
   ipc: [],
   senderValidations: [],

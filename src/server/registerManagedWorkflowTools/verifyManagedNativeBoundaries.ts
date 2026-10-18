@@ -85,8 +85,7 @@ export const registerVerifyManagedNativeBoundaries = (
             verification.summary.native_body_unresolved > 0;
           const output = unknown
             ? options.recordEvidenceWithUnknown?.(result.value, {
-                question:
-                  "Which managed/native boundaries remain unresolved or contradicted by the supplied native Evidence?",
+                question: `Which managed/native boundaries remain unresolved or contradicted by the supplied native Evidence? (evidence ${result.value.evidence_id})`,
                 severity: "medium",
                 domain: "managed-native-verification",
                 supporting_evidence_ids: [result.value.evidence_id],

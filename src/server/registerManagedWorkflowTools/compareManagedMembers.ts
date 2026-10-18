@@ -66,8 +66,7 @@ export const registerCompareManagedMembers = (
           const unknown = comparison.summary.unknown > 0;
           const output = unknown
             ? options.recordEvidenceWithUnknown?.(result.value, {
-                question:
-                  "Which managed members remain unmatched or ambiguous across these versions?",
+                question: `Which managed members remain unmatched or ambiguous across these versions? (evidence ${result.value.evidence_id})`,
                 severity: "medium",
                 domain: "managed-member-comparison",
                 supporting_evidence_ids: [result.value.evidence_id],

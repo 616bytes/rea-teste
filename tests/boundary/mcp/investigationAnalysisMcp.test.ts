@@ -56,8 +56,7 @@ it("aggregates comparison Evidence and records an approved runtime gap", async (
     });
     expect(session.listUnknowns({ domain: "changed-behavior" })).toMatchObject([
       {
-        question:
-          "Did both versions behave the same under a complete controlled replay?",
+        question: `Did both versions behave the same under a complete controlled replay? (evidence ${evidence.evidence_id})`,
       },
     ]);
   } finally {
@@ -406,8 +405,7 @@ it.each([
       else
         expect(session.listUnknowns({ domain: "call-path" })).toMatchObject([
           {
-            question:
-              "Can the requested call path be established from complete analysis?",
+            question: `Can the requested call path be established from complete analysis? (evidence ${evidence.evidence_id})`,
             supporting_evidence_ids: [evidence.evidence_id],
           },
         ]);
@@ -417,27 +415,40 @@ it.each([
   },
 );
 
-it("records a safe unresolved call-path question", async () => {
+it("records independent unresolved call-path questions and keeps exact repeats idempotent", async () => {
   const { session, server, client } = await connected();
   const dossier = dossierWithCallees(["0x2000"]);
   expect(session.recordEvidence(dossier).ok).toBe(true);
   try {
-    const response = await client.callTool({
-      name: "build_call_path",
-      arguments: {
-        ...INVESTIGATION_EXAMPLES.build_call_path,
-        functions: [dossier],
-        start: { address: "0x1000" },
-        goal: { address: "0x3000" },
-      },
-    });
-    expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    expect(session.listUnknowns({ domain: "call-path" })).toMatchObject([
-      {
-        question:
-          "Can the requested call path be established from complete analysis?",
-      },
-    ]);
+    const evidenceIds: string[] = [];
+    for (const goal of ["0x3000", "0x4000", "0x3000"]) {
+      const response = await client.callTool({
+        name: "build_call_path",
+        arguments: {
+          ...INVESTIGATION_EXAMPLES.build_call_path,
+          functions: [dossier],
+          start: { address: "0x1000" },
+          goal: { address: goal },
+        },
+      });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      evidenceIds.push(inlineEvidence(response.structuredContent).evidence_id);
+    }
+    expect(evidenceIds[2]).toBe(evidenceIds[0]);
+    expect(
+      session
+        .listUnknowns({ domain: "call-path" })
+        .map((unknown) => unknown.question)
+        .sort(),
+    ).toEqual(
+      evidenceIds
+        .slice(0, 2)
+        .map(
+          (id) =>
+            `Can the requested call path be established from complete analysis? (evidence ${id})`,
+        )
+        .sort(),
+    );
   } finally {
     await close(session, server, client);
   }
@@ -586,7 +597,7 @@ it("cannot omit a session-owned active unknown from reconstruction input", async
       session.listUnknowns({ domain: "reconstruction-verification" }),
     ).toContainEqual(
       expect.objectContaining({
-        question: "Does the reconstruction satisfy every declared claim?",
+        question: `Does the reconstruction satisfy every declared claim? (evidence ${evidence.evidence_id})`,
       }),
     );
   } finally {

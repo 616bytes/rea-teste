@@ -65,7 +65,9 @@ export const recordWorkflowEvidence = (
     return recordDerivedEvidence(session, evidence, undefined);
   }
   return recordDerivedEvidence(session, evidence, {
-    question: input.question,
+    // Unscoped workflow questions share one unknown identity; name the
+    // derived Evidence so independent results do not collide.
+    question: `${input.question} (evidence ${evidence.evidence_id})`,
     severity: "high",
     domain: input.domain,
     supporting_evidence_ids: [evidence.evidence_id],

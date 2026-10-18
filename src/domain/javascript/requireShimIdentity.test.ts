@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
 // esbuild emits this CommonJS `require` shim for a Node/Electron target: the
 // IIFE selects the host `require` when it exists and otherwise returns the
@@ -27,6 +28,42 @@ const DIRECT_CONSUMER =
 
 const electronOf = (source: string) =>
   analyzeJavaScriptStaticSource(source).electron;
+
+describe("Electron namespace identity around direct eval", () => {
+  it.each(["require", "Q"])("invalidates references loaded by %s", (loader) => {
+    for (const consumer of ["E", "alias"]) {
+      expect(
+        electronOf(
+          `${SHIM}const E=${loader}("electron");const alias=E;eval("alias.BrowserWindow=other");new ${consumer}.BrowserWindow({});`,
+        ).browser_windows,
+      ).toEqual([]);
+    }
+  });
+
+  it.each(["require", "Q"])(
+    "invalidates a cross-scope alias loaded by %s",
+    (loader) => {
+      expect(
+        electronOf(
+          `${SHIM}const E=${loader}("electron");eval("E.BrowserWindow=other");function use(){const alias=E;new alias.BrowserWindow({});}use();`,
+        ).browser_windows,
+      ).toEqual([]);
+    },
+  );
+
+  it.each([
+    'new alias.BrowserWindow({});eval("alias.BrowserWindow=other");',
+    'function eval(){}eval("alias.BrowserWindow=other");new alias.BrowserWindow({});',
+  ])("preserves references beside unrelated eval effects: %s", (consumer) => {
+    for (const loader of ["require", "Q"]) {
+      expect(
+        electronOf(
+          `${SHIM}const E=${loader}("electron");const alias=E;${consumer}`,
+        ).browser_windows,
+      ).toHaveLength(1);
+    }
+  });
+});
 
 describe("host require delegate identity", () => {
   it.each([
@@ -155,6 +192,37 @@ describe("Electron identity through esbuild's __require shim", () => {
           'new (Q("electron").BrowserWindow)({webPreferences:{preload:"./p.js"}});',
       ).browser_windows,
     ).toMatchObject([{ preload_path: "./p.js" }]);
+  });
+
+  it.each([
+    'const alias=E;new alias.BrowserWindow({});alias.ipcMain.handle("alias",()=>{});',
+    'const {BrowserWindow,ipcMain}=E;new BrowserWindow({});ipcMain.handle("alias",()=>{});',
+    'const Window=E.BrowserWindow,main=E.ipcMain;new Window({});main.handle("alias",()=>{});',
+  ])("preserves the loaded module through ordinary aliases: %s", (consumer) => {
+    const electron = electronOf(`${SHIM}const E=Q("electron");${consumer}`);
+    expect(electron.browser_windows).toHaveLength(1);
+    expect(electron.ipc).toMatchObject([{ channel: "alias", side: "main" }]);
+  });
+
+  it.each([
+    "const alias=E;alias.BrowserWindow=other;new E.BrowserWindow({});",
+    "E.BrowserWindow=other;const alias=E;new alias.BrowserWindow({});",
+    "let alias=E;alias=other;new alias.BrowserWindow({});",
+    "const alias=E;Object.assign(alias,{BrowserWindow:other});new E.BrowserWindow({});",
+  ])(
+    "retains mutation uncertainty through shim-loaded aliases: %s",
+    (consumer) => {
+      expect(
+        electronOf(`${SHIM}const E=Q("electron");${consumer}`).browser_windows,
+      ).toEqual([]);
+    },
+  );
+
+  it("leaves other module families unresolved through the shim", () => {
+    const analysis = analyzeJavaScriptSemantics(
+      `${SHIM}const a=require("node:fs");a.readFileSync=other;const b=Q("node:fs");b.readFileSync("wrong");`,
+    );
+    expect(analysis.configurationOperations).toEqual([]);
   });
 
   it("follows the shim when the availability test is written out", () => {

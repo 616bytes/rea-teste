@@ -3,6 +3,7 @@ import {
   indexSemanticOpaqueEffects,
   semanticOpaqueBindingEffects,
   semanticBindingCanBeRebound,
+  semanticOpaqueGlobalMayHaveChanged,
 } from "./javascriptSemanticOpaqueEffects.js";
 import * as t from "@babel/types";
 
@@ -801,12 +802,17 @@ export function* indexJavaScriptElectronIdentitySteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, JavaScriptElectronIdentity> {
+  yield* indexSemanticAmbientWritesSteps(state);
   const facts = new Map<number, readonly string[]>();
   const interop = createSemanticModuleInterop(state);
   const writes = new SemanticPropertyPathCoverage();
   let collectedWrites = false;
   const exportsByBinding = new Map<string, readonly string[] | null>();
   const rootExport = (root: t.Node): readonly string[] | undefined => {
+    // Eval can replace shared exports even without a visible namespace alias.
+    // Keep nominal origins while collecting writes; check integrity at use.
+    if (collectedWrites && semanticOpaqueGlobalMayHaveChanged(root, state))
+      return undefined;
     if (t.isIdentifier(root)) {
       if (semanticResolutionBlocked(state, root, root.name)) return undefined;
       const binding = resolveSemanticBindingState(state, root, root.name);

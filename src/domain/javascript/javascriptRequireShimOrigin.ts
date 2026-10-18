@@ -20,11 +20,6 @@ import {
   semanticOpaqueBindingReadMayHaveChanged,
 } from "./javascriptSemanticOpaqueEffects.js";
 
-const proofs = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  WeakMap<t.CallExpression, string | null>
->();
-
 /**
  * Recover a literal require reached through esbuild's CommonJS `__require` shim.
  *
@@ -120,19 +115,10 @@ const bindsRequireShim = (
     !t.isCallExpression(stable.node)
   )
     return false;
-  const initializer = stable.node;
-  let byCall = proofs.get(state);
-  if (byCall === undefined) {
-    byCall = new WeakMap();
-    proofs.set(state, byCall);
-  }
-  const cached = byCall.get(initializer);
-  if (cached !== undefined) return cached === binding.bindingId;
-  byCall.set(
-    initializer,
-    shimSelectsRequire(initializer, state) ? binding.bindingId : null,
-  );
-  return byCall.get(initializer) === binding.bindingId;
+  // Provenance can be queried while effect indexing is still in progress.
+  // The proof includes host-loader integrity, so do not retain it beyond the
+  // shared provenance owner's dependency-aware query lifetime.
+  return shimSelectsRequire(stable.node, state);
 };
 
 /**

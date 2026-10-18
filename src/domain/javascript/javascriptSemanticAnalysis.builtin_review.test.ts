@@ -1070,6 +1070,27 @@ it.each([
   },
 );
 
+it.each([
+  "remove();",
+  "remove.call(null);",
+  "remove.apply(null,[]);",
+  "const again=remove.bind(null);again();",
+])("retains captured inputs of generic intrinsic calls: %s", (invoke) => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `const fs=require('fs');const remove=Reflect.deleteProperty.bind(null,fs,'readFileSync');${invoke}fs.readFileSync('wrong');`,
+    ).configurationOperations,
+  ).toEqual([]);
+});
+
+it("keeps reads before a generic bound intrinsic is called", () => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `const fs=require('fs');const remove=Reflect.deleteProperty.bind(null,fs,'readFileSync');fs.readFileSync('kept');remove();fs.readFileSync('wrong');`,
+    ).configurationOperations.map(({ key }) => key),
+  ).toEqual(["kept"]);
+});
+
 it("does not invoke an intrinsic merely by binding its target", () => {
   expect(
     analyzeJavaScriptSemantics(

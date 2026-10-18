@@ -18,6 +18,7 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
     "const holder={child:{}},box={};box.owner=holder.child;Object.freeze(holder);holder.child={};holder.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-frozen-replacement');",
     "const bound=Reflect.set.bind(null,module);Reflect.set(Reflect,'set',bound,(0,Reflect));Reflect.set('require',replacement);require('fs').readFileSync('wrong-sequence-bound');",
     "Reflect.set(module,'require',replacement,1+2);require('fs').readFileSync('receiver-expression.json');",
+    "const fs=require('fs');const remove=Reflect.deleteProperty.bind(null,fs,'readFileSync');remove();fs.readFileSync('wrong-bound-delete');",
     "import fs from 'node:fs';Reflect.set(fs,'readFileSync',custom);fs.readFileSync('wrong-default-set');",
     "const holder={child:{}}; const box={}; box.owner=holder.child; outer:{if(flag)break outer;holder.child={};} holder.child.owner=module; Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-labeled-allocation');",
     "const holder={child:{}}; const box={}; box.owner=holder.child; do{if(flag)continue;holder.child={};}while(false);holder.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-loop-allocation');",

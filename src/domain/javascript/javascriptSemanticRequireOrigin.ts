@@ -566,6 +566,20 @@ const writesModuleRequire = (
       args.some(t.isSpreadElement)
     )
       return false;
+    let ancestor: t.Node | undefined = args[0];
+    while (ancestor !== undefined && ancestor !== node)
+      ancestor = state.parentsByNode.get(ancestor);
+    if (ancestor === undefined) {
+      // Normalized bound inputs retain their capture location. Compare the
+      // complete target allocation, including member projections, rather than
+      // only its root binding: holder.inner may change while holder does not.
+      const captured = literalAllocation(args[0]!, [], args[0]!);
+      if (
+        captured === undefined ||
+        captured !== literalAllocation(args[0]!, [], node)
+      )
+        return false;
+    }
     const operation = invocation.path.join(".");
     if (operation === "intrinsic.Object.defineProperty") {
       const definite = nativeDataDefinition(node);
@@ -659,39 +673,13 @@ const writesModuleRequire = (
       path = [...members, ...path];
       if (!t.isIdentifier(root) || path.includes(null)) return false;
       const binding = resolveSemanticBindingState(state, root, root.name);
-      if (binding === owner) {
-        const captured = semanticBindingAtRead(
-          owner,
-          root,
-          state.parentsByNode,
-        );
-        const applied = semanticBindingAtRead(
-          owner,
-          mutation!,
-          state.parentsByNode,
-        );
-        // A normalized bound argument keeps its original read location. A
-        // later reassignment cannot make that captured target the current one.
-        if (
-          captured.status !== "ordered" ||
-          applied.status !== "ordered" ||
-          !captured.hasDefiniteInitializer ||
-          !applied.hasDefiniteInitializer ||
-          captured.binding.initializers.length !== 1 ||
-          applied.binding.initializers.length !== 1 ||
-          captured.binding.referenceInitializers.length !== 0 ||
-          applied.binding.referenceInitializers.length !== 0 ||
-          captured.binding.initializers[0]!.node !==
-            applied.binding.initializers[0]!.node
-        )
-          return false;
+      if (binding === owner)
         return (
           (visited.size === 0 ||
             semanticStableInitializer(owner, state) !== undefined) &&
           path.length === effect.path.length &&
           path.every((key, index) => key === effect.path[index])
         );
-      }
       if (binding === undefined || visited.has(binding.bindingId)) return false;
       visited.add(binding.bindingId);
       const read = semanticBindingAtRead(binding, root, state.parentsByNode);

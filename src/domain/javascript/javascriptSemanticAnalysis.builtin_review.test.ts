@@ -1226,3 +1226,23 @@ it.each([
     ).toEqual([]);
   },
 );
+
+it.each(
+  [
+    "Reflect.set.bind(null,holder.inner,'child',{})",
+    "Reflect.defineProperty.bind(null,holder.inner,'child',{value:{}})",
+    "Object.defineProperty.bind(null,holder.inner,'child',{value:{}})",
+  ].flatMap((capture) =>
+    [false, true].map((retarget) => ({ capture, retarget })),
+  ),
+)(
+  "preserves captured member target identity: $capture, $retarget",
+  ({ capture, retarget }) => {
+    const reassign = retarget ? "holder.inner={child:{}};" : "";
+    expect(
+      analyzeJavaScriptSemantics(
+        `const holder={inner:{child:{}}},box={};const replace=${capture};${reassign}box.owner=holder.inner.child;replace();holder.inner.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('kept');`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(retarget ? [] : ["kept"]);
+  },
+);

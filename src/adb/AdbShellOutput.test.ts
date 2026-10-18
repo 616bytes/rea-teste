@@ -340,6 +340,24 @@ describe("parseAmStartOutput", () => {
     });
   });
 
+  it("refuses a message-free Java exception even when Starting is present", () => {
+    expect(
+      parseAmStartOutput(`${starting}\njava.lang.NullPointerException\n`),
+    ).toMatchObject({
+      status: "refused",
+      reason: "java.lang.NullPointerException",
+    });
+  });
+
+  it("recognizes a base Java exception type with a message", () => {
+    expect(
+      parseAmStartOutput(`${starting}\njava.lang.Exception: failure\n`),
+    ).toMatchObject({
+      status: "refused",
+      reason: "java.lang.Exception: failure",
+    });
+  });
+
   it("prefers a specific Java exception over generic error headers", () => {
     expect(
       parseAmStartOutput(

@@ -288,6 +288,15 @@ export const decodeObjcDispatchFacets = (input: {
       for (let index = 0; index < count; index++) {
         if (!budget.admit()) break;
         const entry = ivarList + 8n + BigInt(index * stride);
+        // One empty ivar name is reported on its own, so the class and its
+        // other ivars keep their decoded records.
+        const ivarName = read.string(read.pointer(entry + 8n));
+        if (ivarName.length === 0) {
+          failures.push(
+            `Objective-C ivar ${String(index)} of ${name} at ${hex(entry)} has an empty name`,
+          );
+          continue;
+        }
         const encodedOffset = read.pointer(entry);
         let value: number | null = null;
         try {

@@ -57,6 +57,23 @@ const issuesFrom = (action: () => unknown) => {
 };
 
 describe("immutable JavaScript result reuse", () => {
+  it("preserves parser copies shared across owned graphs and result metadata", () => {
+    const owned = ownedExample();
+    const input = freezeJsonSnapshot({
+      ...owned,
+      limitations: owned.graph.limitations,
+    });
+    for (let repeat = 0; repeat < 2; repeat += 1) {
+      const parsed = complete(
+        parseOwnedJavaScriptApplicationAnalysisSteps(input),
+      );
+      expect(parsed).not.toBe(input);
+      expect(parsed.graph).toBe(input.graph);
+      expect(parsed.limitations).toEqual(input.graph.limitations);
+      expect(parsed.limitations).not.toBe(parsed.graph.limitations);
+    }
+  });
+
   it.each(["hidden-extra", "changed-enumerability"])(
     "preserves parsed results when the source has %s normalization",
     (kind) => {

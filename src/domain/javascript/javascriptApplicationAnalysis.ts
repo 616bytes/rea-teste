@@ -189,10 +189,7 @@ export function* parseOwnedJavaScriptApplicationAnalysisSteps(
 ): Generator<void, JavaScriptApplicationAnalysisResult> {
   if (isValidatedImmutableResult(input)) return input;
   const prepared = ownedAnalysisResultShape.safeParse(input);
-  let result: JavaScriptApplicationAnalysisResult;
-  if (!prepared.success)
-    result = javascriptApplicationAnalysisResultSchema.parse(input);
-  else {
+  if (prepared.success) {
     const issues: BindingIssue[] = [];
     yield* checkApplicationBindingsSteps(prepared.data, {
       addIssue: (issue) => {
@@ -200,8 +197,11 @@ export function* parseOwnedJavaScriptApplicationAnalysisSteps(
       },
     });
     if (issues.length > 0) throw new z.ZodError(issues);
-    result = prepared.data;
+    // Keep this existing fast path and its metadata normalization. Rewalking
+    // already owned graphs just to borrow the wrapper would add full-graph work.
+    return prepared.data;
   }
+  const result = javascriptApplicationAnalysisResultSchema.parse(input);
   // Borrow only if parsing preserved the exact representation. A future schema
   // default/normalization must still return its parsed value, without caching.
   // Admission follows full validation, including completion of yielding checks.

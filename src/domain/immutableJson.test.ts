@@ -237,4 +237,33 @@ describe("borrowing a parsed JSON snapshot", () => {
       }),
     ).toBe(false);
   });
+
+  it.each(["direct", "nested"])(
+    "detects shared-node splits across a %s preserved subtree",
+    (kind) => {
+      const shared = { value: 1 };
+      const source = freezeJsonSnapshot({
+        preserved: kind === "direct" ? shared : { nested: shared },
+        cloned: shared,
+      });
+      expect(
+        canBorrowParsedJsonSnapshot(source, {
+          preserved: source.preserved,
+          cloned: { value: 1 },
+        }),
+      ).toBe(false);
+      expect(canBorrowParsedJsonSnapshot(source, source)).toBe(true);
+    },
+  );
+
+  it("keeps the parsed result when a parser merges distinct source nodes", () => {
+    const source = freezeJsonSnapshot({
+      left: { value: 1 },
+      right: { value: 1 },
+    });
+    const shared = { value: 1 };
+    expect(
+      canBorrowParsedJsonSnapshot(source, { left: shared, right: shared }),
+    ).toBe(false);
+  });
 });

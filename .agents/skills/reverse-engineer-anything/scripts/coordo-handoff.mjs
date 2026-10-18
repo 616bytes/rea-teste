@@ -14,7 +14,6 @@ const evidenceIdPattern = /^[A-Za-z0-9._:-]{1,200}$/u;
 // over 128 KiB (MAX_ARG_STRLEN), so stay well below it on every platform.
 const maxDescriptionBytes = 32 * 1024;
 const maxEvidenceIdsPerTask = 256;
-const maxErrorExcerpt = 2000;
 
 const fail = (message) => {
   throw new Error(message);
@@ -136,17 +135,6 @@ async function fileSha256(path) {
   return hash.digest("hex");
 }
 
-// Keep the CLI's own failure reason, bounded, without echoing credentials that
-// a backend error may embed in a connection URL.
-function errorExcerpt(text) {
-  const redacted = String(text ?? "")
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/giu, "$1<redacted>@")
-    .trim();
-  return redacted.length > maxErrorExcerpt
-    ? `${redacted.slice(0, maxErrorExcerpt)}…`
-    : redacted;
-}
-
 function run(command, arguments_, root) {
   const result = spawnSync(command, arguments_, {
     cwd: root,
@@ -155,9 +143,10 @@ function run(command, arguments_, root) {
     maxBuffer: 1024 * 1024,
   });
   if (result.error || result.status !== 0) {
-    const reason = errorExcerpt(result.stderr || result.stdout);
+    // Child diagnostics are untrusted: remote backends may include transport
+    // headers or credentials. Report the exit state without echoing them.
     fail(
-      `${command} failed (${result.error?.code ?? result.status ?? "unknown"})${reason ? `: ${reason}` : ""}`,
+      `${command} failed (${result.error?.code ?? result.status ?? "unknown"})`,
     );
   }
   return result.stdout;

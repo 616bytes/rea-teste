@@ -22,6 +22,9 @@ const SHIM =
 const CONSUMER =
   'var cy=Q("electron");new cy.BrowserWindow({webPreferences:{preload:"./preload.js",contextIsolation:!1}});cy.ipcMain.handle("get-version",()=>"1");';
 
+const DIRECT_CONSUMER =
+  'new (Q("electron").BrowserWindow)({});Q("electron").ipcMain.handle("get-version",()=>"1");';
+
 const electronOf = (source: string) =>
   analyzeJavaScriptStaticSource(source).electron;
 
@@ -34,6 +37,9 @@ describe("host require delegate identity", () => {
     "Object.assign(module,{require(){return other}})",
     "Object.defineProperties(module,{[key]:{value:other}})",
     "Object.setPrototypeOf(module,other)",
+    "module.__proto__={require:other}",
+    'Reflect.set(module,"__proto__",{require:other})',
+    'Object.assign(module,{["__proto__"]:{require:other}})',
   ])("keeps direct and saved loaders unresolved after %s", (write) => {
     for (const loader of ["require", "Q"]) {
       expect(
@@ -49,6 +55,21 @@ describe("host require delegate identity", () => {
       expect(
         electronOf(
           `${SHIM}Object.assign(module,{unrelated:true});Object.defineProperties(module,{other:{value:true}});Reflect.set(module,"extra",true);new (${loader}("electron").BrowserWindow)({});`,
+        ).browser_windows,
+      ).toHaveLength(1);
+    }
+  });
+
+  it.each([
+    "Object.assign(module,{__proto__:{require:other}})",
+    'Object.defineProperty(module,"__proto__",{value:other})',
+    'Object.defineProperties(module,{["__proto__"]:{value:other}})',
+    'Reflect.defineProperty(module,"__proto__",{value:other})',
+  ])("preserves loaders when %s leaves their prototype intact", (write) => {
+    for (const loader of ["require", "Q"]) {
+      expect(
+        electronOf(
+          `${SHIM}${write};new (${loader}("electron").BrowserWindow)({});`,
         ).browser_windows,
       ).toHaveLength(1);
     }
@@ -71,6 +92,18 @@ describe("Electron identity through esbuild's __require shim", () => {
     expect(electron.browser_windows).toMatchObject([
       { preload_path: "./preload.js" },
     ]);
+    expect(electron.ipc).toMatchObject([
+      { channel: "get-version", side: "main" },
+    ]);
+  });
+
+  it.each([
+    ["ordinary block", `{${DIRECT_CONSUMER}}`],
+    ["conditional block", `if(flag){${DIRECT_CONSUMER}}`],
+    ["loop body", `while(flag){${DIRECT_CONSUMER}}`],
+  ])("preserves initialized loaders inside an enclosing %s", (_kind, body) => {
+    const electron = electronOf(SHIM + body);
+    expect(electron.browser_windows).toHaveLength(1);
     expect(electron.ipc).toMatchObject([
       { channel: "get-version", side: "main" },
     ]);
@@ -122,6 +155,14 @@ describe("Electron identity through esbuild's __require shim", () => {
     [
       "a call before the shim initializer in one declaration",
       'var cy=Q("electron"),Q=(e=>typeof require<"u"?require:e)(function(e){throw e});new cy.BrowserWindow({});',
+    ],
+    [
+      "a function called before the shim initializer",
+      `function load(){${CONSUMER}}load();${SHIM}`,
+    ],
+    [
+      "an IIFE called before the shim initializer",
+      `(()=>{${CONSUMER}})();${SHIM}`,
     ],
     [
       "a shim initialized conditionally",

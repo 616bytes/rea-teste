@@ -314,7 +314,8 @@ const writesModuleRequire = (
         }
         if (
           members.length === 1 &&
-          members[0] === "require" &&
+          (members[0] === "require" ||
+            (members[0] === "__proto__" && t.isAssignmentExpression(node))) &&
           isModuleObject(root)
         )
           writes.push(node);
@@ -348,7 +349,12 @@ const writesModuleRequire = (
               isModuleObject(args?.[3] ?? t.nullLiteral())))
         ) {
           const key = interop.staticString(args?.[1]);
-          if (key === "require" || key === undefined) writes.push(node);
+          if (
+            key === "require" ||
+            key === undefined ||
+            (key === "__proto__" && owner === "Reflect" && method === "set")
+          )
+            writes.push(node);
         } else if (
           (owner === "Object" || owner === "Reflect") &&
           method === "setPrototypeOf" &&
@@ -367,7 +373,12 @@ const writesModuleRequire = (
           method === "assign" &&
           isModuleObject(args?.[0] ?? t.nullLiteral())
         ) {
-          if (args?.slice(1).some(objectMayDefineRequire)) writes.push(node);
+          if (
+            args
+              ?.slice(1)
+              .some((source) => objectMayDefineRequire(source, true))
+          )
+            writes.push(node);
         }
       }
     },
@@ -377,12 +388,23 @@ const writesModuleRequire = (
 };
 
 /** Unknown keys and spreads cannot prove the loader delegate was untouched. */
-const objectMayDefineRequire = (node: t.Node | undefined): boolean =>
+const objectMayDefineRequire = (
+  node: t.Node | undefined,
+  invokesSetters = false,
+): boolean =>
   !t.isObjectExpression(node) ||
   node.properties.some((property) => {
     if (t.isSpreadElement(property)) return true;
     const key = semanticStaticPropertyKey(property.key, property.computed);
-    return key === null || key === "require";
+    return (
+      key === null ||
+      key === "require" ||
+      // Object.assign invokes the legacy prototype setter for an own
+      // __proto__ key. A literal prototype initializer creates no own key.
+      (invokesSetters &&
+        key === "__proto__" &&
+        (t.isObjectMethod(property) || property.computed || property.shorthand))
+    );
   });
 
 /** Whether the original global process object can still own effects at this source site. */

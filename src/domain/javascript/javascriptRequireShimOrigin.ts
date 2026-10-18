@@ -63,12 +63,19 @@ export const semanticRequireShimOrigin = (
     binding === undefined ||
     semanticResolutionBlocked(state, current.callee, current.callee.name) ||
     binding.definitions.length !== 1 ||
-    binding.definitions[0]?.kind === "assignment" ||
-    !bindsRequireShim(
-      semanticBindingAtRead(binding, current.callee, state.parentsByNode)
-        .binding,
-      state,
-    ) ||
+    binding.definitions[0]?.kind === "assignment"
+  )
+    return undefined;
+  const atRead = semanticBindingAtRead(
+    binding,
+    current.callee,
+    state.parentsByNode,
+  );
+  if (
+    // Unordered reads retain possible initializers for conservative alias
+    // effects. They do not prove that the loader exists at this call site.
+    !atRead.hasDefiniteInitializer ||
+    !bindsRequireShim(atRead.binding, state) ||
     // The shim captured `require` at its own definition, so a later bare
     // `require = ...` does not change the saved loader and is not a reason to
     // reject here. A write to the module `require` delegate still redirects the

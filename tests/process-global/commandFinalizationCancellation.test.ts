@@ -24,8 +24,6 @@ const host = vi.hoisted(() => ({
   },
 }));
 
-// Module mocks require an isolated worker: another CLI test may already have
-// cached wasmCommands with the real cancellation binding.
 vi.mock("../../src/cli/commandCancellation.js", async (importOriginal) => {
   const original =
     await importOriginal<

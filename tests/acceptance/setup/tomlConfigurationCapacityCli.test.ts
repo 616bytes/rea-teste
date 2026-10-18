@@ -51,6 +51,7 @@ for (const scenario of [
         clients: { [scenario.client]: { status: "configured" } },
       });
       expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+
       const configured = await readFile(config, "utf8");
       expect(configured.startsWith(original.trimEnd())).toBe(true);
       expect(parseToml(configured)).toMatchObject({
@@ -68,9 +69,11 @@ for (const scenario of [
       const removed = await run(["uninstall", "--json"]);
       expect(removed.exitCode, removed.stdout).toBe(0);
       expect(removed.json).toMatchObject({ status: "complete" });
+
       const remaining = await readFile(config, "utf8");
       expect(remaining.startsWith(original.trimEnd())).toBe(true);
       expect(parseToml(remaining)).toEqual(parseToml(original));
       expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
     },
+  );
   );

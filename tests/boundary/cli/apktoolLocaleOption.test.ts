@@ -140,6 +140,31 @@ it("still refuses a locale the apktool input owner refuses", async () => {
   expect(result.requests).toEqual([]);
 });
 
+it("refuses the r-prefixed three-digit region that no Android table carries", async () => {
+  for (const locale of ["en-r419", "es-r419"]) {
+    const result = await invoke([
+      "decode-android-resources",
+      "/targets/app.apk",
+      "--locale",
+      locale,
+      "--json",
+    ]);
+
+    expect(result.exitCode, `exit code for locale ${locale}`).not.toBe(0);
+    expect(result.requests, `request for locale ${locale}`).toEqual([]);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        {
+          path: "locale",
+          message:
+            "Locale must look like de, pt-BR, pt-rBR, es-419, or b+zh+Hans+CN",
+        },
+      ],
+    });
+  }
+});
+
 it("forwards --no-strings with --locale preserving caller options", async () => {
   const result = await invoke([
     "decode-android-resources",

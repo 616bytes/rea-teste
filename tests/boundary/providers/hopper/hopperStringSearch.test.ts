@@ -61,17 +61,13 @@ describe("Hopper string search", () => {
     expect(byQuery("zzz-absent", false)).toEqual([]);
   });
 
-  it("projects only matched records after building the inventory once", async () => {
+  it("builds the record inventory once and never reprojects it for matches", async () => {
     const results = await runProbe();
     const [cold, ...warm] = results;
     // The first query builds the complete inventory needed for matching.
-    expect(cold?.projections[0]).toBeNull();
-    expect(cold?.projections.slice(1)).toEqual([
-      cold?.expected.map((item) => item.address),
-    ]);
+    expect(cold?.projections).toEqual([null]);
     for (const result of warm) {
-      const matched = result.expected.map((item) => item.address);
-      expect(result.projections).toEqual(matched.length ? [matched] : []);
+      expect(result.projections).toEqual([]);
     }
   });
 

@@ -70,6 +70,9 @@ describe("official operation arguments", () => {
     const dependencies = {
       readConfiguration: () => parseConfig({}),
       createBinarySession: createSession,
+      createArtifactBinarySession: createSession,
+      createNativeDispatchBinarySession: createSession,
+      createNativeBinarySession: createSession,
       createManagedBinarySession: createSession,
     };
     const client = await connect({ execute });

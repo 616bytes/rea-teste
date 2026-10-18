@@ -9,11 +9,37 @@ export const JADX_RELEASE = Object.freeze({
 /** Identity of REA's metadata bridge, distinct from the producing engine. */
 export const JADX_BRIDGE_IDENTITY = Object.freeze({
   name: "rea-jadx-bridge",
-  version: "1",
+  version: "4",
 });
 
 /** Remediation when `REA_JADX_MCP_JAR` is missing or not an absolute path. */
 export const JADX_JAR_CONFIGURATION_REMEDIATION = `Set REA_JADX_MCP_JAR to the absolute path of a caller-supplied jadx-headless-mcp ${JADX_RELEASE.version} JAR. REA does not download or install it.`;
+
+/** Remediation when the selected Java runtime cannot satisfy the JADX bridge. */
+export const JADX_JAVA_RUNTIME_REMEDIATION =
+  "Select a full JDK including jdk.compiler via JAVA_HOME or PATH, then verify it with java --list-modules. REA does not install Java.";
+
+/** Remediation when a JADX JVM resource override is malformed. */
+export const JADX_JVM_OPTIONS_REMEDIATION =
+  "Set REA_JADX_HEAP_MIB to a positive integer (heap size in MiB) and REA_JADX_ACTIVE_PROCESSOR_COUNT to a positive integer within the JVM's signed 32-bit range.";
+
+/** Whole-operation deadline used when REA_JADX_OPERATION_TIMEOUT_MS is unset. */
+export const DEFAULT_JADX_OPERATION_TIMEOUT_MS = 120_000;
+
+/** Remediation when the JADX operation deadline override is malformed. */
+export const JADX_OPERATION_TIMEOUT_REMEDIATION = `Set REA_JADX_OPERATION_TIMEOUT_MS to a decimal millisecond count from 1 to 2147483647, or unset it to keep the ${String(DEFAULT_JADX_OPERATION_TIMEOUT_MS)} ms default.`;
+
+/** Remediation when the host cannot run the Android JADX subprocess. */
+export const JADX_UNSUPPORTED_HOST_REMEDIATION =
+  "Use Linux, macOS, or Windows x64 with its bundled native controls for Android JADX analysis.";
+
+/** Remediation when the Windows native backend cannot take process ownership. */
+export const JADX_WINDOWS_NATIVE_REMEDIATION =
+  "Use a matching current Windows x64 REA package with its bundled native controls. The native failure above identifies the failed constraint; Java installation or registration changes cannot enable a missing native backend.";
+
+/** Remediation when the Java module-listing probe cannot establish the runtime. */
+export const JADX_JAVA_PROBE_REMEDIATION =
+  "Verify the selected Java launcher with java --list-modules: it must start promptly and emit a concise module listing including a parseable java.base version. REA does not install Java.";
 
 /** Producing engine identity used by Evidence and the generated product catalog. */
 export const JADX_PROVIDER_IDENTITY = Object.freeze({

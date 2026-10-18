@@ -1,6 +1,8 @@
+import { javaScriptSemanticUnknownOmissionsSchema } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import { z } from "zod";
 import { digestSchema } from "../../domain/digests.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
+import { JAVASCRIPT_AST_FINGERPRINT_ALGORITHM } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type {
   JavaScriptSemanticProperty,
   JavaScriptSemanticValue,
@@ -139,6 +141,7 @@ const windowShape = {
   web_preferences: z.array(
     z.strictObject({ name: z.string(), value: staticValue }),
   ),
+  resolution_sources: z.array(range).exactOptional(),
 };
 const bridgeShape = {
   resolution_basis: z.literal("wrapper-substitution").optional(),
@@ -327,6 +330,8 @@ export const javaScriptWorkerStaticAnalysisSchema = z
         kind: z.enum(["route", "network"]),
         value: z.string(),
         mechanism: z.string(),
+        interpretation: z.literal("candidate").exactOptional(),
+        resolution: z.literal("partial").exactOptional(),
       }),
     ),
     storage: z.array(
@@ -339,6 +344,7 @@ export const javaScriptWorkerStaticAnalysisSchema = z
           "cache-storage",
           "sqlite",
         ]),
+        interpretation: z.literal("candidate").exactOptional(),
         name: z.string().nullable(),
         mechanism: z.string(),
       }),
@@ -363,7 +369,9 @@ export const javaScriptWorkerStaticAnalysisSchema = z
             exports: strings,
             location: range,
             structural_fingerprint_sha256: digestSchema,
-            structural_fingerprint_algorithm: z.literal("babel-ast-v1"),
+            structural_fingerprint_algorithm: z.literal(
+              JAVASCRIPT_AST_FINGERPRINT_ALGORITHM,
+            ),
           }),
         ),
         location: range,
@@ -413,6 +421,7 @@ const resourceLimit = z.enum([
   "primitive-candidates",
   "primitive-bytes",
   "expression-depth",
+  "getter-expansion",
 ]);
 const primitive = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 const property: z.ZodType<JavaScriptSemanticProperty> = z.lazy(() =>
@@ -646,8 +655,10 @@ export const javaScriptWorkerGraphRecordSchema = z.discriminatedUnion("kind", [
 
 /** Portable per-file header, before any graph binding or immutable proof. */
 export const javaScriptWorkerProjectionHeaderSchema = z.strictObject({
+  omittedUnknownOccurrences:
+    javaScriptSemanticUnknownOmissionsSchema.exactOptional(),
   roots: z.array(javaScriptSemanticNodeSchema.shape.node_id),
-  truncated: z.boolean(),
+  nodesTruncated: z.boolean(),
 });
 
 /** Module facts are transferred individually to avoid a whole-IR JSON string. */

@@ -18,14 +18,14 @@ import {
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { functionDossierSchema } from "../dist/domain/hopperValues.js";
-import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildArmFixture } from "../tests/conformance/ghidra/arm-fixture.mjs";
 import {
   requireMcpToolError,
   requireMcpOperationResult,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
-import { selectArmObjcopy } from "./lib/arm-objcopy.mjs";
+import { removeArmAttributes } from "./lib/arm-objcopy.mjs";
 
 // Optional cross-target lane. No tool acquisition and no target execution.
 if (!["linux", "darwin"].includes(process.platform))
@@ -34,7 +34,7 @@ if (!["linux", "darwin"].includes(process.platform))
   );
 if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error("Missing prerequisite: caller-supplied GHIDRA_INSTALL_DIR");
-const installation = inspectGhidraInstallation({
+const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
   installDir: process.env.GHIDRA_INSTALL_DIR,
   ...(process.env.JAVA_HOME === undefined
@@ -52,7 +52,6 @@ const objcopyCandidates = [
   "llvm-objcopy-21",
   "objcopy",
 ].filter((candidate) => candidate !== undefined);
-const objcopyTool = await selectArmObjcopy(objcopyCandidates, execute);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
 const workspace = await mkdtemp(join(tmpdir(), "rea-arm-proof-"));
@@ -352,11 +351,17 @@ try {
   );
   const noAttributesPath = join(workspace, "arm-v7-noattributes.elf");
   await writeFile(noAttributesPath, await readFile(fixture.path));
-  await execute(
-    objcopyTool,
-    ["--remove-section", ".ARM.attributes", noAttributesPath],
-    { timeout: 30000 },
+  // Candidate selection is proven by this operation, not by --version: GNU
+  // objcopy on Fedora answers --version and then cannot parse ARM input.
+  const stripped = await removeArmAttributes(
+    objcopyCandidates,
+    execute,
+    noAttributesPath,
   );
+  const stripReceipt = {
+    attribute_strip_tool: stripped.tool,
+    attribute_strip_fallbacks: stripped.failures,
+  };
   const variantMetadata = [
     { label: "v8a", path: v8Path, cpuArch: 14, profile: "A", pattern: /v8-A/u },
     {
@@ -460,6 +465,7 @@ try {
       "pinned ARM:LE:32:v7 language checked after import",
       "ARM and Thumb-2 probe encodings",
       "typed refusals for legacy EABI, BE8, v8-A, Realtime profile, and absent attributes",
+      stripReceipt,
       "snapshot round-trip and CLI parity",
     ],
     refusals,

@@ -19,7 +19,7 @@ import type { GhidraInstallationHost } from "./GhidraInstallation.js";
 import type { GhidraClientOptions } from "./GhidraClientTypes.js";
 import type { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
-import { ok } from "../domain/result.js";
+import { ok, ok as javaProbeOk } from "../domain/result.js";
 
 // Fake installation inspection tests admission/profile contracts, not Ghidra.
 const host: GhidraInstallationHost = {
@@ -27,13 +27,16 @@ const host: GhidraInstallationHost = {
   architecture: "x64",
   readText: () => "application.version=12.1.4\napplication.java.min=21\n",
   executable: () => true,
-  probeJava: () => ({
-    version: "21.0.11",
-    major: 21,
-    home: "/jdk-21",
-    bits: 64,
-    runtime: "jdk",
-  }),
+  probeJava: () =>
+    javaProbeOk({
+      osArch: "amd64",
+      osName: "Linux",
+      version: "21.0.11",
+      major: 21,
+      home: "/jdk-21",
+      bits: 64,
+      runtime: "jdk",
+    }),
 };
 // Main now verifies the installation directory exists on the host, so the
 // admission tests point at a real temporary directory.

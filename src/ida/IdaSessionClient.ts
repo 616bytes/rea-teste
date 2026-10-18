@@ -12,6 +12,8 @@ import {
   AnalysisProtocolError,
   AnalysisOutputError,
   AnalysisInputError,
+  AnalysisTimeoutError,
+  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -105,7 +107,6 @@ interface UpstreamSession {
 /** A failed cleanup retains its private workspace and reports the remaining resource. */
 class IdaCleanupError extends ProviderAdapterError {
   override readonly cleanupIncomplete = true;
-  override readonly cleanupResources: readonly string[];
   constructor(
     path: string,
     cause: unknown,
@@ -146,7 +147,7 @@ class IdaCleanupError extends ProviderAdapterError {
             }),
       },
     });
-    this.cleanupResources = [path];
+    this.setCleanupResources([path]);
   }
 }
 
@@ -162,6 +163,7 @@ export class IdaSessionClient implements AnalysisClient {
   #databaseCloseCompleted = false;
   #openAttempted = false;
   #openCompleted = false;
+  #ready = false;
   #blockingSessions: readonly UpstreamSession[] | undefined;
   #openRejected = false;
   #callGraphAdvertised = false;
@@ -197,11 +199,10 @@ export class IdaSessionClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
   ) {
-    if (!this.#openCompleted || this.#closed || this.#closing)
+    if (!this.#ready || this.#closed || this.#closing)
       return Promise.resolve(undefined);
     const call = this.#tail.then(() => {
-      if (!this.#openCompleted || this.#closed || this.#closing)
-        return undefined;
+      if (!this.#ready || this.#closed || this.#closing) return undefined;
       if (wasCancelled(options))
         return err(new AnalysisCancelledError(operation));
       return this.#execute(operation, parameters, options, true);
@@ -292,7 +293,7 @@ export class IdaSessionClient implements AnalysisClient {
       parameters,
     };
     try {
-      if (!readyOnly) await this.#start();
+      if (!readyOnly) await this.#start(operation);
       const before = await this.#observe(options);
       failureContext.metadataBefore = before;
       if (wasCancelled(options)) throw new AnalysisCancelledError(operation);
@@ -386,7 +387,7 @@ export class IdaSessionClient implements AnalysisClient {
     context: IdaOperationFailureContext,
   ) {
     let failure: AnalysisError;
-    if (wasCancelled(options))
+    if (wasCancelled(options)) {
       failure = new AnalysisCancelledError(operation, {
         cause,
         ...(cause instanceof AnalysisError
@@ -405,7 +406,11 @@ export class IdaSessionClient implements AnalysisClient {
             }
           : {}),
       });
-    else if (
+      if (cause instanceof AnalysisError)
+        failure
+          .bindCleanupDependencies([cause])
+          .bindCleanupResourceOwner(cause);
+    } else if (
       cause instanceof ProviderAdapterError &&
       cause.operation === "transport"
     )
@@ -420,13 +425,6 @@ export class IdaSessionClient implements AnalysisClient {
             "Check the configured upstream MCP registration and selected target; see docs/ida-provider.md.",
         },
       });
-    else if (
-      cause instanceof AnalysisError &&
-      (cause.partialObservation !== undefined ||
-        cause.cleanupIncomplete ||
-        cause.capturedOutput !== undefined)
-    )
-      failure = cause;
     else if (cause instanceof AnalysisError) failure = cause;
     else if (cause instanceof z.ZodError)
       failure = new AnalysisOutputError(
@@ -507,9 +505,62 @@ export class IdaSessionClient implements AnalysisClient {
     return err(failure);
   }
 
-  #start(): Promise<void> {
+  async #start(operation: string): Promise<void> {
     this.#startup ??= this.#initialize();
-    return this.#startup;
+    try {
+      await this.#startup;
+    } catch (cause: unknown) {
+      if (
+        !(cause instanceof AnalysisTimeoutError) &&
+        !(cause instanceof AnalysisResourceConstraintError) &&
+        !(cause instanceof ProviderAdapterError)
+      )
+        throw cause;
+      // Transport adapters already receive caller attribution in #failure.
+      if (
+        cause instanceof ProviderAdapterError &&
+        cause.operation === "transport"
+      )
+        throw cause;
+      const options = {
+        cause,
+        capturedOutput: cause.capturedOutput,
+        partialObservation: cause.partialObservation,
+        cleanup: cause.cleanup,
+        ...(cause.userMessage === undefined
+          ? {}
+          : { userMessage: cause.userMessage }),
+        ...(cause.remediationAction === undefined
+          ? {}
+          : { remediationAction: cause.remediationAction }),
+        diagnostics: {
+          ...cause.diagnostics,
+          startup_operation: cause.operation,
+        },
+      };
+      // Startup is shared, but each accepted operation owns its attribution.
+      // Keep the original cached failure unchanged for later callers.
+      const failure =
+        cause instanceof AnalysisTimeoutError
+          ? new AnalysisTimeoutError(operation, cause.timeoutMs, options)
+          : cause instanceof AnalysisResourceConstraintError
+            ? new AnalysisResourceConstraintError(
+                operation,
+                cause.resource,
+                cause.reason,
+                cause.reportedLimits,
+                {
+                  ...options,
+                  ...(cause.retryable === undefined
+                    ? {}
+                    : { retryable: cause.retryable }),
+                },
+              )
+            : new ProviderAdapterError(cause.providerId, operation, options);
+      throw failure
+        .bindCleanupDependencies([cause])
+        .bindCleanupResourceOwner(cause);
+    }
   }
 
   async #initialize(): Promise<void> {
@@ -601,6 +652,7 @@ export class IdaSessionClient implements AnalysisClient {
         );
       this.#database = opened.session.session_id;
     }
+    this.#ready = true;
   }
 
   async #nativeMetadata(): Promise<JsonValue> {

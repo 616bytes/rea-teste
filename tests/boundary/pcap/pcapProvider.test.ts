@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { watch } from "node:fs";
 import { chmod, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
 
 import { PcapProvider } from "../../../src/pcap/PcapProvider.js";
@@ -13,6 +13,9 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
+import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
+import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
+import type { PcapCommandLauncher } from "../../../src/pcap/PcapCommand.js";
 
 const it = test.skipIf(process.platform !== "linux");
 
@@ -23,6 +26,8 @@ const CAPINFOS_OUTPUT = [
   "Packet size limit:   file hdr: 262144 bytes",
   "Number of packets:   3",
   "Capture duration:    0.123 seconds",
+  "Earliest packet time: 1791728020.608505",
+  "Latest packet time:   1791728020.981978",
 ].join("\n");
 
 const TSHARK_JSON = JSON.stringify([
@@ -83,7 +88,7 @@ exit 0
     capinfos,
     `#!/bin/sh
 if [ "$1" = "--version" ]; then printf 'Capinfos (Wireshark) 4.6.6-stub\\n'; exit 0; fi
-[ "$1" = "-M" ] && [ "$2" = "--" ] && [ "$#" = "3" ] || exit 2
+[ "$1" = "-M" ] && [ "$2" = "-S" ] && [ "$3" = "--" ] && [ "$#" = "4" ] || exit 2
 if [ "${String(options.failCapinfos === true)}" = "true" ]; then
   printf 'capinfos: The file is not a capture file' >&2; exit 1
 fi
@@ -97,13 +102,23 @@ exit 0
   return { tshark, capinfos };
 };
 
-const providerWith = async (options: { failCapinfos?: boolean } = {}) => {
+const providerWith = async (
+  options: {
+    failCapinfos?: boolean;
+    launcher?: PcapCommandLauncher;
+    beforeClose?: () => void;
+  } = {},
+) => {
   const root = await createTestTempDirectory("rea-pcap-");
   const { tshark, capinfos } = await writeStubTools(root, options);
   const provider = new PcapProvider({
     environment: { REA_TSHARK_COMMAND: tshark, REA_CAPINFOS_COMMAND: capinfos },
+    ...(options.launcher === undefined ? {} : { launcher: options.launcher }),
   });
-  onTestFinished(() => provider.close());
+  onTestFinished(async () => {
+    options.beforeClose?.();
+    await provider.close();
+  });
   return {
     provider,
     root,
@@ -152,6 +167,8 @@ it("inspects a capture with endpoints, DNS, TLS SNI, and HTTP", async () => {
     sha256: createHash("sha256").update("pcap-fixture-bytes").digest("hex"),
   });
   expect(result.file_type).toBe("Wireshark/tcpdump/... - pcap");
+  expect(result.capture_start).toBe("2026-10-11T14:13:40.608505Z");
+  expect(result.capture_end).toBe("2026-10-11T14:13:40.981978Z");
   expect(result.packet_count).toBe(3);
   expect(result.endpoints).toEqual(
     expect.arrayContaining([
@@ -170,6 +187,122 @@ it("inspects a capture with endpoints, DNS, TLS SNI, and HTTP", async () => {
   expect(result.http_request_uris).toEqual(["http://api.example.com/v1/data"]);
   expect(result.coverage).toBe("complete");
 });
+
+it.each([
+  { stage: "capinfos", denySnapshotClose: false },
+  { stage: "tshark", denySnapshotClose: false },
+  { stage: "capinfos", denySnapshotClose: true },
+  { stage: "tshark", denySnapshotClose: true },
+] as const)(
+  "retires $stage cleanup with its snapshot (snapshot close denied: $denySnapshotClose)",
+  async ({ stage, denySnapshotClose }) => {
+    let mayClean = false;
+    let producerLaunches = 0;
+    let cleanupAttempts = 0;
+    const launcher: PcapCommandLauncher = async (spawn) => {
+      const selectedStage = spawn.arguments.includes("-M")
+        ? "capinfos"
+        : spawn.arguments.includes("-T")
+          ? "tshark"
+          : undefined;
+      const launched = await spawnOwnedProviderProcess(spawn);
+      if (selectedStage !== stage) return launched;
+      producerLaunches += 1;
+      const cleanupOwned =
+        launched.cleanup ??
+        (() => cleanupOwnedProcessGroup(launched.ownership));
+      return {
+        ...launched,
+        cleanup: async () => {
+          cleanupAttempts++;
+          const cleaned = await cleanupOwned();
+          if (!mayClean) throw new Error("injected retained cleanup failure");
+          return cleaned;
+        },
+      };
+    };
+    const { provider, root } = await providerWith({
+      launcher,
+      beforeClose: () => {
+        mayClean = true;
+      },
+    });
+    const path = await captureFixture(root);
+    const result = await provider.execute({
+      operation: "inspect_pcap_capture",
+      input: { path },
+    });
+    if (result.ok) throw new Error("Expected cleanup to remain unresolved");
+    expect(result.error).toMatchObject({ cleanupIncomplete: true });
+    expect(result.error.diagnostics).toMatchObject({
+      reason: "injected retained cleanup failure",
+      previous_error: null,
+      captured_output: {
+        stdout: stage === "capinfos" ? CAPINFOS_OUTPUT + "\n" : TSHARK_JSON,
+        truncated: false,
+      },
+    });
+    expect(result.error.partialObservation).toMatchObject({
+      normalized_result:
+        stage === "capinfos"
+          ? {
+              stage: "capinfos-complete-tshark-not-run",
+              packet_count: 3,
+            }
+          : {
+              coverage: "complete",
+              packet_count: 3,
+              endpoints: expect.any(Array),
+            },
+    });
+    expect(producerLaunches).toBe(1);
+    expect(await readFile(path)).toEqual(Buffer.from("pcap-fixture-bytes"));
+    const snapshotPath = result.error.cleanupResources.find((resource) =>
+      resource.endsWith("/capture.pcap"),
+    );
+    if (snapshotPath === undefined)
+      throw new Error("Missing retained snapshot");
+    expect(
+      result.error.cleanupResources.some((resource) =>
+        resource.startsWith("process-group:"),
+      ),
+    ).toBe(true);
+    const originatingCause = result.error.cause;
+    const originatingObservation = result.error.partialObservation;
+    const attemptsBeforeClose = cleanupAttempts;
+    mayClean = true;
+    if (denySnapshotClose) {
+      const close = PrivateRuntimeRoot.prototype.close;
+      const denied = vi
+        .spyOn(PrivateRuntimeRoot.prototype, "close")
+        .mockImplementation(function (this: PrivateRuntimeRoot) {
+          if (this.path === dirname(snapshotPath))
+            return Promise.reject(new Error("injected snapshot close failure"));
+          return close.call(this);
+        });
+      try {
+        await expect(provider.close()).rejects.toMatchObject({
+          cleanupIncomplete: true,
+        });
+        expect(result.error.cleanupIncomplete).toBe(true);
+        expect(cleanupAttempts).toBe(attemptsBeforeClose + 1);
+        await expect(readFile(snapshotPath)).resolves.toEqual(
+          Buffer.from("pcap-fixture-bytes"),
+        );
+      } finally {
+        denied.mockRestore();
+      }
+    }
+    await provider.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cause).toBe(originatingCause);
+    expect(result.error.partialObservation).toBe(originatingObservation);
+    expect(cleanupAttempts).toBe(attemptsBeforeClose + 1);
+    await expect(readFile(snapshotPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
 
 it("reports a non-capture file as unsupported", async () => {
   const { provider, root } = await providerWith({ failCapinfos: true });
@@ -526,6 +659,7 @@ it.each([false, true])(
       spy.mockRestore();
     }
     await provider.close();
+    if (!result.ok) expect(result.error.cleanupIncomplete).toBe(false);
     await expect(
       readFile(join(retained!.path, "capture.pcap")),
     ).rejects.toMatchObject({ code: "ENOENT" });

@@ -1,6 +1,6 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { expect, it } from "vitest";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { nativeAotPeFixture } from "../../fixtures/nativeaotPe.js";
@@ -13,7 +13,6 @@ import {
   sessionEvidence,
 } from "./ghidraMcpHarness.js";
 import { spawn } from "node:child_process";
-import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
@@ -106,6 +105,24 @@ it("retains byte-search coverage and rejects malformed pages before creating Evi
         error: { code: "unreadable_output" },
       });
       expect(invalidCoverage.structuredContent).toBeUndefined();
+    }
+    for (const [address, segment] of [
+      ["0x402000", ".bss"],
+      ["overlay:0x401000", ".text"],
+      ["invalid", ".text"],
+    ]) {
+      output = jsonValueSchema.parse({
+        ...page,
+        matches: [{ ...page.matches[0], address, segment }],
+      });
+      const outsideCoverage = await harness.mcp.callTool({
+        name: "search_bytes",
+        arguments: { pattern: "48 ??" },
+      });
+      expect(parseMcpToolError(outsideCoverage)).toMatchObject({
+        error: { code: "unreadable_output" },
+      });
+      expect(outsideCoverage.structuredContent).toBeUndefined();
     }
     const calls = harness.calls.length;
     for (const args of [{ pattern: "??" }, { pattern: "48", mask: "ffff" }]) {
@@ -316,7 +333,7 @@ it("retains missing PDB coverage in empty PE name-search Evidence and snapshot r
     const evidence = sessionEvidence(harness.session, reply.structuredContent);
     expect(evidence.normalized_result).toEqual([]);
     expect(evidence.analysis_profile?.parameters.pdb_observations).toBe(
-      "program-info-v1",
+      "program-info-v5",
     );
     const limitation = evidence.limitations.find((value) =>
       value.includes(pdb.file),

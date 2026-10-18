@@ -51,10 +51,14 @@ change the modeled calling convention.
 Clang (`arm-linux-gnueabihf`, ARMv7-A, hard float, linked with `lld`)
 containing both an ARM-mode probe and a Thumb-2 interworked probe with fixed
 reviewable encodings, checks REA's ELF interpretation against GNU readelf
-(with `llvm-objcopy` or GNU `objcopy` building the attributes-stripped
-refusal variant), asserts the pinned language after import, decodes both
+(with the attributes-stripped refusal variant built by `llvm-objcopy`,
+GNU `objcopy` when it can read ARM input, or a built-in ELF section-header
+neutralizer when neither can), asserts the pinned language after import, decodes both
 instruction-set states, walks a snapshot round-trip, and proves typed
 refusals for legacy-EABI, BE8, v8-A, Realtime-profile, and stripped
 attributes variants plus CLI/MCP parity. No third-party binary is analyzed
 and no target code is executed. The build tools can be redirected with
-`REA_ARM_CLANG`, `REA_ARM_READELF`, and `REA_ARM_OBJCOPY`.
+`REA_ARM_CLANG` and `REA_ARM_READELF`; `REA_ARM_OBJCOPY` is optional. The
+objcopy candidate is selected by performing the strip, not by asking for its
+version, so a GNU objcopy built without the ARM target falls through instead of
+failing the lane. The verification report records which tool built the variant.

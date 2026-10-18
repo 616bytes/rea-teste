@@ -68,6 +68,7 @@ export const evmInterfaceFailure = (
       );
     if (cause.reason === "cancelled")
       return new AnalysisCancelledError("inspect_evm_interface", {
+        cause: cause.cancellation?.reason,
         ...outputOptions,
         ...cleanupOptions,
       });
@@ -183,6 +184,9 @@ export const evmInterfaceFailure = (
     {
       cause,
       ...cleanupOptions,
+      ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
+        ? { capturedOutput: capturedEvmOutput(cause.snapshot) }
+        : {}),
       diagnostics: {
         phase,
         path,
@@ -198,13 +202,6 @@ export const evmInterfaceFailure = (
               failure_kind: cause.reason,
               exit_code: cause.snapshot?.exitCode ?? null,
               signal: cause.snapshot?.signal ?? null,
-              stdout: cause.snapshot?.stdout.text ?? null,
-              stderr: cause.snapshot?.stderr.text ?? null,
-              ...(cause.snapshot === null
-                ? {}
-                : {
-                    captured_output: { ...capturedEvmOutput(cause.snapshot) },
-                  }),
             }
           : {}),
       },

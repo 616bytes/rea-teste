@@ -110,9 +110,14 @@ rendered declarations. Keep canonical rejection checks separate from the
 intentionally reduced compact advertisement, and probe actual client renderers
 when changing schema representations.
 
-The reused CLI boundary workers cap V8 old space at 384 MiB, based on their
-profiled allocation and cleanup behavior. This encourages collection between
-files; spawned REA processes retain their own heap settings.
+The reused CLI boundary workers cap V8 old space at 384 MiB for ordinary runs
+and 512 MiB with coverage enabled. Covered ADB fixtures exhaust the ordinary
+384 MiB budget; those fixtures also complete with the shared CLI graph preloaded
+at 512 MiB. This is a measured capacity control, not a suite-wide speedup claim.
+Both profiles keep the
+same bounded worker count, and spawned REA processes retain their own heap
+settings. Explicitly disabling coverage retains the ordinary profile; coverage
+provider options alone do not enable instrumentation.
 
 Vitest worker limits do not bound subprocesses launched within a test. Bound
 those batches separately so repeated CLI validation cannot oversubscribe the
@@ -215,6 +220,12 @@ controlled production seam for interleavings that cannot be reproduced reliably.
 | Children have mixed health or cleanup outcomes                                          | Missing peer health does not erase an observed failure or activity. Idle plus unknown stays unknown. Retry a failed child without closing a successful peer again, including after a close-option change.                      |
 | Cleanup fails after success or primary failure                                          | Public output retains the completed observation or primary diagnostic, remaining resources, and owner recovery action. Restore the denied resource and verify the owning cleanup retry.                                        |
 | Target exits without an acknowledgement, or transport disappears while it stays alive   | Positive owned exit proof resolves target lifetime; other resources still need cleanup. Lost transport alone does not prove exit. Verify unrelated/attached targets survive and same-connection recovery works when supported. |
+
+Shared process-supervision controls separate leader exit from output closure.
+Cover output during held or failed cleanup, bounded retention and drain timeout,
+retry, and borrowed stream authority. The POSIX inherited-stderr control uses a
+separate pipe as a release barrier after leader exit; it does not establish
+native Windows Job Object behavior.
 
 Synchronize cancellation with the finalization boundary being tested; a fixed
 delay after dispatch does not establish that phase. Use markers, barriers, or
@@ -528,9 +539,14 @@ that generator's entry. Native outputs are not stored in this cache.
 
 Native package jobs, the Windows curated lane, and the Apple artifact lane reuse
 the same workflow's Turbo cache for portable compiled JavaScript, skills, and
-catalogs. The producer stages only the completed `test:prepare` task hashes into
-`.cache/ci-build-cache/`, preserving their archives, metadata, and available manifests.
-Missing required entries fail publication; older cross-run entries stay in the
+catalogs. The key parser retains the validated `test:prepare` task identities in
+`.cache/ci-build-plan.json`; staging reads this plan without starting another
+Turbo run that could evict cache entries. The producer stages matching archives,
+metadata, and available manifests into `.cache/ci-build-cache/`.
+`portable-build-cache.json` records availability per task. Evicted or partially
+missing entries are omitted as whole entries, and consumers rebuild cache misses,
+including when every entry is unavailable. Malformed plans, non-file entries,
+and I/O errors other than disappearance still fail publication. Older cross-run entries stay in the
 original cache. The Windows lane relies on the Linux static job for typechecking. They retain the normal build and prepack
 commands, which restore matching outputs or rebuild on a cache miss. Native
 artifacts, dependency installs, package archives, and runtime verification remain

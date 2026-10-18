@@ -57,14 +57,26 @@ Before applying changes, REA checks your current configuration. The plan lists:
 Malformed or unsafe existing configuration blocks the whole transaction before
 Hopper installation or any file write. Declining or pressing Ctrl-C makes no
 changes. Agent configuration writes preserve unrelated entries and comments,
-create backups, use atomic replacement, and verify their result. Setup and
-uninstall retain an existing `.rea.backup` rather than replacing the first snapshot.
+create backups, stage changes in a private directory, and verify their result.
+Before publication, they refuse detected changes to the selected configuration.
+Replacement uses an explicit destination under the selected canonical parent;
+it does not follow a newly inserted destination symlink. First-run setup uses
+an exclusive hard link and fails without overwriting a newly created destination;
+filesystems without hard-link support cannot publish a first-run configuration.
+Setup and uninstall retain an existing `.rea.backup` rather than replacing the
+first snapshot.
 If that snapshot differs from the current configuration, setup and uninstall
 preserve a verified `.rea.backup.<sha256>.recovery` copy of the current bytes
 before editing; setup also previews it. Both snapshots remain available.
 When an edit made a backup, a failed uninstall update or restore, and a failed
 setup readback or rollback, name the backup path that holds the bytes from just
 before that edit.
+If setup cannot verify a newly created configuration, it retains the file and
+reports manual recovery instead of deleting a pathname that may have changed.
+For an existing configuration, setup and uninstall recovery refuse a detected
+replacement or edit and name the recovery backup. Quit clients before editing their configuration;
+these checks do not lock out another writer modifying the same file in place,
+or exclude pathname changes between the final check and publication.
 Setup also retains valid environment overrides in REA's existing server entry,
 such as `REA_MCP_INPUT_SCHEMA_PROFILE`, `REA_MCP_OUTPUT_SCHEMA_PROFILE`, and
 `REA_MCP_MAX_RESPONSE_BYTES`.
@@ -264,14 +276,14 @@ Register with the variable unset:
 <!-- x-release-please-start-version -->
 
 ```bash
-claude mcp add --scope local rea -- npx -y rea-agents@6.5.0 mcp
+claude mcp add --scope local rea -- npx -y rea-agents@6.6.0 mcp
 ```
 
 On native Windows, use the same project directory and wrap the package-runner
 shim so the stdio client can launch it:
 
 ```powershell
-claude mcp add --scope local rea -- cmd.exe /d /c npx -y rea-agents@6.5.0 mcp
+claude mcp add --scope local rea -- cmd.exe /d /c npx -y rea-agents@6.6.0 mcp
 ```
 
 <!-- x-release-please-end -->
@@ -1175,7 +1187,7 @@ For a client that requires manual configuration, use:
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@6.5.0", "mcp"]
+      "args": ["-y", "rea-agents@6.6.0", "mcp"]
     }
   }
 }

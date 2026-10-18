@@ -116,6 +116,23 @@ XML node tree; optional `_w.txt` and `_g.txt` files retain opaque WebSocket and
 gRPC message bytes. Missing members remain null, distinct from empty bodies.
 See Telerik's [SAZ format reference](https://www.telerik.com/fiddler/fiddler-everywhere/documentation/knowledge-base/fiddler-archives).
 
+## Protobuf and gRPC bodies
+
+When `record_ordinals` selects records, a retained body whose declared content
+type is `application/grpc`, `application/grpc+proto`, `application/grpc-web+proto`,
+`application/grpc-web-text` or `application/x-protobuf` also gets a `protobuf`
+decoding. The declared type is the body's HAR `mimeType`, else the message's
+`content-type` header. The retained base64 and SHA-256 stay the source of truth.
+
+gRPC frames are split into a compressed flag, byte offset and length. `grpc-web-text`
+is base64-decoded first, and trailer frames expose `grpc-status` and
+`grpc-message`. Compressed frames are reported but not decompressed. Each data
+frame is decoded like `protoc --decode_raw`: field numbers, wire types, exact
+varint/fixed values and tag offsets. Without a schema a length-delimited field may be a
+string, bytes, a nested message or packed numbers, so `interpretation` is a guess
+and `inferred` lists every reading that parses. Malformed input keeps the fields before the
+first bad offset and reports it in `error`. Schema-based decoding is not provided.
+
 The existing ZIP reader verifies read members; expanded archive contents are
 limited to 32 MiB in addition to the input/output budgets below. Exceeding this
 expanded-byte budget returns `invalid_request` / `invalid_input` through both

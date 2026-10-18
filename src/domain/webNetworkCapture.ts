@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { jsonValueSchema } from "./jsonValue.js";
 import { localPathStringSchema } from "./localPath.js";
+import { protobufDecodingSchema } from "./protobufWire.js";
 import { qlogCaptureFactsSchema } from "./qlogCapture.js";
 
 /** Complete historical evidence budgets; exceeding a budget returns no partial capture. */
@@ -127,6 +128,12 @@ export const webNetworkCaptureRecordSchema = z.strictObject({
   numeric_literals: z.array(numberSchema),
   redactions: z.array(redactionSchema),
   limitations: z.array(z.string()),
+  protobuf: z
+    .array(protobufDecodingSchema)
+    .exactOptional()
+    .describe(
+      "Wire-format decoding of retained protobuf/gRPC(-web) bodies, present only for caller-selected record_ordinals. Field offsets are exact; string/nested/packed readings of length-delimited fields are inferred without a schema.",
+    ),
 });
 
 /** The selected offline parser profile, independent of authenticated producer identity. */

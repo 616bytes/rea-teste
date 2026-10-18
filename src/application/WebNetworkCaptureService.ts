@@ -1,5 +1,6 @@
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { excludeCaptureCoordinates } from "../domain/webNetworkCaptureCoordinates.js";
+import { decodeRecordProtobuf } from "../domain/protobufWire.js";
 import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
@@ -122,9 +123,15 @@ export class WebNetworkCaptureService {
             },
           ]),
         );
+      // Decoding is gated on explicit selection so default whole-capture output stays small.
+      const protobuf =
+        input.record_ordinals === undefined
+          ? []
+          : decodeRecordProtobuf(record, redactText);
       records.push({
         ...record,
         limitations: record.limitations.map(redactText),
+        ...(protobuf.length === 0 ? {} : { protobuf }),
       });
     }
     const safePath = input.sensitive_values.some((literal) =>
